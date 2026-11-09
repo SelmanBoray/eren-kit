@@ -27,6 +27,7 @@ import type {
   YeniSayfaSonucu,
 } from "./sozlesme.ts";
 import type { DevirIsi } from "./konusma-metin.ts";
+import { tuketimKayitlari } from "./tuketim.ts";
 import {
   DEVIR_ISTEGI,
   devirMetni,
@@ -1001,6 +1002,21 @@ export const konusmaKur: KonusmaFabrikasi = ({
 
   const sonucIsle = (c: Calisan, olay: Extract<AkisOlayi, { tur: "result" }>): void => {
     if (!c.initGoruldu) gunluk.uyari("konusma", "init_gorulmedi", { sohbet_id, nesil: c.nesil });
+    // Tüketim her `result` için bir kez (boru ofsetsiz), tursuz ve devir sonuçları dahil; yardımcı kayıt, hatası turu bozmaz.
+    guvenli("tuketim_yazilamadi", () =>
+      depo.tuketimEkle(
+        tuketimKayitlari(olay, {
+          ts_ms: saat.simdiMs(),
+          kaynak: "sohbet",
+          sohbet_id,
+          is_id: null,
+          turn_id: c.tur?.turn_id ?? null,
+          nesil: c.nesil,
+          rol: c.tur?.rol ?? null,
+          model: c.model,
+        }),
+      ),
+    );
     // Yalnız init'i görülmüş, hatasız sonuç oturumun sağlam açıldığını kanıtlar; hata sonucu çıkışta resume hatası sayılır.
     const saglam = c.initGoruldu && !olay.is_error;
     if (saglam) c.ilkSonuc = true;

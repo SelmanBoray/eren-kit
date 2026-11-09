@@ -43,8 +43,10 @@ import type {
   Sonuc,
   SurecKaydi,
   SurecKimligi,
+  TuketimKaydi,
   UzlastirmaOzeti,
 } from "./sozlesme.ts";
+import { tuketimKayitlari } from "./tuketim.ts";
 
 type SistemNotu = Extract<OlayGirdisi, { type: "system_notice" }>;
 
@@ -119,6 +121,11 @@ interface AktifIs {
   baslama: Promise<void>;
   durdurmaSozu: Promise<void> | null;
   initDenetlendi: boolean;
+  /**
+   * Tüketim: bu servis ömründe görülen init modeli; kalıcı değil. Yeniden başlayınca init ofsetin
+   * gerisinde kalır, `null` olur (`ana_usage` satırı "bilinmiyor" der; `model_farki` modeli kendi taşır).
+   */
+  initModeli: string | null;
   telefonKoprusuz: boolean;
   zorunlu: IsBitisDurumu | null;
   okumaHatasi: number;
@@ -212,6 +219,7 @@ export const islerKur: IslerFabrikasi = ({
     baslama: Promise.resolve(),
     durdurmaSozu: null,
     initDenetlendi: false,
+    initModeli: null,
     telefonKoprusuz: false,
     // Başlatma anı da yoksa süreç hiç başlatılmamıştır: `[karar]` yarım, kilit durumundan bağımsız.
     zorunlu: k.pid === null && k.olusturma_ms === null ? "yarim" : null,
@@ -556,13 +564,34 @@ export const islerKur: IslerFabrikasi = ({
     const yeniResultlar: IsSonResult[] = [];
     let init: Extract<AkisOlayi, { tur: "init" }> | null = null;
     let limit: Extract<AkisOlayi, { tur: "rate_limit" }> | null = null;
+    const tuketim: TuketimKaydi[] = [];
+    const islemeMs = saat.simdiMs();
+    let sonucSirasi = 0;
     for (const satir of satirlar) {
       const o = akis.satirCoz(satir);
       if (o === null) continue;
-      if (o.tur === "init") init ??= o;
+      if (o.tur === "init") {
+        init ??= o;
+        if (o.model !== null) a.initModeli = o.model;
+      }
       // Gelen result öncekini ezer, ama geçerli rapor raporsuz sonrakine yenilmez (`sonResultSec`).
-      else if (o.tur === "result") yeniResultlar.push(sonResultOzeti(o));
-      else if (o.tur === "rate_limit") limit = o;
+      else if (o.tur === "result") {
+        yeniResultlar.push(sonResultOzeti(o));
+        // Depo bir sonucu ts_ms ve kimliklerle tanır: partideki her sonuç ayrı sayılsın diye sıra eklenir.
+        const ts_ms = islemeMs + sonucSirasi++;
+        tuketim.push(
+          ...tuketimKayitlari(o, {
+            ts_ms,
+            kaynak: "is",
+            sohbet_id: a.sohbet_id,
+            is_id: a.is_id,
+            turn_id: null,
+            nesil: null,
+            rol: null,
+            model: a.initModeli,
+          }),
+        );
+      } else if (o.tur === "rate_limit") limit = o;
     }
     const eksikKopruler = init !== null && !a.initDenetlendi ? kopruleriDenetle(a, init.mcp_servers) : [];
     const ofset = a.ofset + tuketilen;
@@ -579,6 +608,8 @@ export const islerKur: IslerFabrikasi = ({
         ...(sonResult === null ? {} : { son_result: sonResult }),
         ...(calisiyor ? { durum: "calisiyor" as const } : {}),
       });
+      // Ofsetle aynı işlemde: ya ikisi birden yazılır ya hiçbiri; tam bir kez.
+      depo.tuketimEkle(tuketim);
       for (const ad of eksikKopruler) notEkle(a.sohbet_id, "uyari", "diger", `İş ${a.is_id}: ${ad} bağlı değil.`);
     });
     a.ofset = ofset;

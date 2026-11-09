@@ -10,6 +10,7 @@ import {
   kimlikImzaMetni,
   PROTOKOL_SURUMU,
   sha256Hex,
+  SOHBET_SINIRLARI,
   SOHBET_SURUMU,
   sohbetYukariCoz,
   utf8Bayt,
@@ -49,6 +50,7 @@ import type {
   UserMessageMesaji,
   WsBaglantisi,
 } from "./sozlesme.ts";
+import { gunSinirlari } from "./tuketim.ts";
 
 const EL_SIKISMA_MS = 10_000;
 const ADRES_DENEME_MS = 30_000;
@@ -545,6 +547,26 @@ export const gatewayKur: GatewayFabrikasi = ({
     ackYolla(s.b, client_msg_id, ack);
   };
 
+  // Salt okunur istek-yanıt çifti: `ack` yok, `client_msg_id` yok, tekilleştirme defterine girmez. Hata
+  // bağlantıyı kapatmaz ve çerçeve göndermez; yalnız günlüğe yazılır.
+  const tuketimYanitla = (b: WsBaglantisi, istek_id: string): void => {
+    try {
+      const simdi = saat.simdiMs();
+      const gun = gunSinirlari(simdi);
+      const ozet = depo.tuketimOzeti({ ...gun, isAdet: SOHBET_SINIRLARI.TUKETIM_IS_ADET });
+      sohbetYolla(b, {
+        v: SOHBET_SURUMU,
+        type: "usage_report",
+        istek_id,
+        olcum_ms: simdi,
+        gun_baslangic_ms: gun.gunBaslangicMs,
+        ...ozet,
+      });
+    } catch (e) {
+      hataYaz("tuketim_hatasi", e);
+    }
+  };
+
   // ------------------------------------------------------------------------------------------
   // Çerçeve
   // ------------------------------------------------------------------------------------------
@@ -583,6 +605,8 @@ export const gatewayKur: GatewayFabrikasi = ({
           case "chat_rename":
           case "chat_delete":
             return isMesajiAl(asama.sohbet, m);
+          case "usage_request":
+            return tuketimYanitla(asama.sohbet.b, m.istek_id);
           default:
             return reddet(g, "yetkisiz");
         }
