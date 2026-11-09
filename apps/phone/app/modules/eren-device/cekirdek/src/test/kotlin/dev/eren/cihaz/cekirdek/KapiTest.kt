@@ -382,6 +382,26 @@ class KapiTest {
             ret(DeniedNeden.ON_PLAN_IZIN_DISI, Kapi.ekranDenetimi(girdi(CmdArg.Screenshot, izn, u)))
             ret(DeniedNeden.ON_PLAN_IZIN_DISI, Kapi.ekranDenetimi(girdi(CmdArg.Key(Tus.BACK, 1), izin(IzinModu.YAZ, listOf(mesaj, notlar)), u)))
         }
+        // SystemUI'nin pencere olayı (heads-up, perde toplanması) yalnız son olayı değiştirdiyse ön plan aynıdır.
+        val su = "com.android.systemui"
+        val suOlayi = cubuklu().copy(sonOlayPaketi = su)
+        izinli(Kapi.ekranDenetimi(girdi(CmdArg.Elements(null), izn, suOlayi)))
+        izinli(Kapi.ekranDenetimi(girdi(CmdArg.Foreground, izn, suOlayi)))
+        izinli(Kapi.ekranDenetimi(girdi(CmdArg.Screenshot, izn, suOlayi)))
+        izinli(Kapi.ekranDenetimi(girdi(CmdArg.Key(Tus.BACK, 1), izin(IzinModu.YAZ, listOf(mesaj, notlar)), suOlayi)))
+        // ...ama aktif kök ya da odak SystemUI ise (perde açık) ya da biri başka uygulamaysa ret aynen.
+        for (u in listOf(
+            suOlayi.copy(odakPaketi = su),
+            suOlayi.copy(aktifKokPaketi = su),
+            suOlayi.copy(odakPaketi = notlar),
+            suOlayi.copy(aktifKokPaketi = diger),
+            suOlayi.copy(odakPaketi = null),
+        )) {
+            ret(DeniedNeden.ON_PLAN_IZIN_DISI, Kapi.ekranDenetimi(girdi(CmdArg.Elements(null), izn, u)))
+        }
+        ret(DeniedNeden.DEGISMEZ_RET, Kapi.ekranDenetimi(girdi(CmdArg.Elements(null), izn, temiz(su))))
+        ret(DeniedNeden.HASSAS_UYGULAMA, Kapi.ekranDenetimi(girdi(CmdArg.Elements(null), izin(paketler = listOf(mesaj, banka)), temiz(banka).copy(sonOlayPaketi = su))))
+        ret(DeniedNeden.ON_PLAN_IZIN_DISI, Kapi.ekranDenetimi(girdi(CmdArg.Elements(null), izn, temiz(diger).copy(sonOlayPaketi = su))))
         // uyuşmazlık değişmez listeden önce: bir köşe değişmez, diğeri izinli olsa da ilk kural
         ret(
             DeniedNeden.ON_PLAN_IZIN_DISI,
@@ -718,6 +738,8 @@ class KapiTest {
             d.copy(sonOlayPaketi = diger),
             d.copy(odakPaketi = diger),
             d.copy(odakPaketi = klavyePaketi),
+            // Görüntü sırasında beliren heads-up resme girmiş olabilir: kural 12 SystemUI olayında da katı.
+            d.copy(sonOlayPaketi = "com.android.systemui"),
         )
         for (s in degisenler) {
             ret(DeniedNeden.ON_PLAN_IZIN_DISI, goruntu(s, SahteEkran.goruntuTamam(0.0), izn = iki))

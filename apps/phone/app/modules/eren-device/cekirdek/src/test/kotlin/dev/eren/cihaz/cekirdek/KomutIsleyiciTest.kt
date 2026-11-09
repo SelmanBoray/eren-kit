@@ -805,6 +805,113 @@ class KomutIsleyiciTest {
         return testler
     }
 
+    /**
+     * Gerileme (0.4.3, HyperOS, 2026-11-09): `foreground` ok, ardından PC bildiriminin heads-up'ı
+     * kapanınca SystemUI'nin `TYPE_WINDOW_STATE_CHANGED` olayı son olayı `com.android.systemui` yaptı;
+     * aktif kök ve odak izinli uygulamada kaldığı hâlde `elements`/`screenshot`/`zoom` kalıcı olarak
+     * `on_plan_izin_disi` ve boş başlık aldı. SystemUI olayı ön plan uygulamasının değiştiği anlamına
+     * gelmez; aktif kök ve odak aynı izinli paketteyse ret olmamalı.
+     */
+    @Test
+    fun systemUiPencereOlayiIzinliOnPlaniBozmaz() {
+        val t = KiTezgah()
+        val izin = t.izinVer(mod = IzinModu.YAZ, butce = 5)
+        val cubuklar = listOf(
+            SahteEkran.uygulamaPenceresi(mesaj, katman = 1),
+            SahteEkran.sistemPenceresi(PencereTuru.DURUM_CUBUGU, KiPaket.SYSTEMUI, katman = 2),
+        )
+        val once = SahteEkran.anlikDurum(mesaj, "Mesajlar", 0L, cubuklar)
+        val sonra = once.copy(sonOlayPaketi = KiPaket.SYSTEMUI)
+
+        t.sahteEkran.anlikSenaryo(once)
+        assertEquals("Mesajlar", t.tamam(t.cmd(izin, "foreground")).baslik)
+
+        // Heads-up kapandı: yalnız son olay değişti.
+        t.sahteEkran.anlikSenaryo(sonra)
+        t.sahteEkran.okuma = ElementOkumasi(
+            listOf(
+                SahteEkran.dugum(1, mesaj, ad = "Abonelikler"),
+                SahteEkran.dugum(2, KiPaket.SYSTEMUI, ad = "$KI_GIZLI-BILDIRIM"),
+            ),
+            false,
+        )
+        val e = t.tamam(t.cmd(izin, "elements", """{"query":"Abonelikler"}"""))
+        assertEquals("Mesajlar", e.baslik)
+        assertEquals(mesaj, e.paket)
+        assertEquals(listOf(1L), e.elementler().map { KiJson.tam(it["id"]) }) { "yalnız izinli paketin düğümü" }
+
+        assertEquals("image", t.tamam(t.cmd(izin, "screenshot")).yukTuru)
+        assertEquals("image", t.tamam(t.cmd(izin, "zoom", """{"x0":0,"y0":0,"x1":720,"y1":1600}""")).yukTuru)
+
+        // Eylem tabanı (`eylemYeriIzinli`) da aynı ön planı kabul eder.
+        t.tamam(t.cmd(izin, "click", """{"element":5}"""))
+        assertEquals(1, t.sahteEylem.cagrilar.size)
+    }
+
+    @TestFactory
+    fun systemUiOlayiGuvenlikRetleriniGevsetmez(): List<DynamicTest> {
+        class D(val ad: String, val anlik: AnlikDurum, val neden: DeniedNeden, val paketler: List<String> = listOf(mesaj))
+        val su = KiPaket.SYSTEMUI
+        val durumlar = listOf(
+            // Perde açık / SystemUI diyaloğu: SystemUI gerçekten önde, değişmez.
+            D("SystemUI önde", onPlan(su), DeniedNeden.DEGISMEZ_RET),
+            D("SystemUI önde, izinde olsa da", onPlan(su), DeniedNeden.DEGISMEZ_RET, listOf(mesaj, su)),
+            D("odak SystemUI", onPlan(mesaj).copy(sonOlayPaketi = su, odakPaketi = su), DeniedNeden.ON_PLAN_IZIN_DISI),
+            D("aktif kök SystemUI", onPlan(mesaj).copy(sonOlayPaketi = su, aktifKokPaketi = su), DeniedNeden.ON_PLAN_IZIN_DISI),
+            D("hassas önde", onPlan(KiPaket.BANKA).copy(sonOlayPaketi = su), DeniedNeden.HASSAS_UYGULAMA),
+            D("değişmez önde", onPlan(KiPaket.AYARLAR).copy(sonOlayPaketi = su), DeniedNeden.DEGISMEZ_RET),
+            D("plan dışı önde", onPlan(KiPaket.HARITA).copy(sonOlayPaketi = su), DeniedNeden.ON_PLAN_IZIN_DISI),
+            D("kurulu değil önde", onPlan(KiPaket.KURULMAMIS).copy(sonOlayPaketi = su), DeniedNeden.YENI_UYGULAMA),
+            D("ön plan bilinmiyor", onPlan(null).copy(sonOlayPaketi = su), DeniedNeden.ON_PLAN_IZIN_DISI),
+        )
+        val testler = ArrayList<DynamicTest>()
+        for (d in durumlar) {
+            for (komut in listOf("elements", "foreground", "screenshot")) {
+                testler += DynamicTest.dynamicTest("$komut: ${d.ad}") {
+                    val t = KiTezgah()
+                    val izin = t.izinVer(paketler = d.paketler)
+                    t.sahteEkran.anlikSenaryo(d.anlik)
+                    val c = t.ret(t.cmd(izin, komut), d.neden, DeniedNeden.IZIN_DISI_PENCERE)
+                    assertTrue(c.onPlan == null || c.baslik == "") { "izin dışı ön planda başlık dolu: $c" }
+                    assertFalse("elementler" in t.ekran.olaylar)
+                    assertEquals(0, t.sahteEkran.goruntuSayisi)
+                }
+            }
+            testler += DynamicTest.dynamicTest("click: ${d.ad}") {
+                val t = KiTezgah()
+                // Yazma izni tek paketlidir; çok paketli planda okuma modunda düğüme tıklama.
+                val mod = if (d.paketler.size == 1) IzinModu.YAZ else IzinModu.OKU
+                val izin = t.izinVer(mod = mod, paketler = d.paketler)
+                t.sahteEkran.anlikSenaryo(d.anlik)
+                t.ret(t.cmd(izin, "click", """{"element":5}"""), d.neden)
+            }
+        }
+        // SystemUI son olayı varken görünen heads-up: görüntü ve o noktaya dokunma yine reddedilir.
+        val headsUp = SahteEkran.anlikDurum(
+            mesaj,
+            "Mesajlar",
+            0L,
+            listOf(
+                SahteEkran.uygulamaPenceresi(mesaj, katman = 1),
+                SahteEkran.sistemPenceresi(PencereTuru.HEADS_UP, su, katman = 2),
+            ),
+        ).copy(sonOlayPaketi = su)
+        testler += DynamicTest.dynamicTest("screenshot: heads-up görünür") {
+            val t = KiTezgah()
+            val izin = t.izinVer()
+            t.sahteEkran.anlikSenaryo(headsUp)
+            t.ret(t.cmd(izin, "screenshot"), DeniedNeden.IZIN_DISI_PENCERE)
+            assertEquals(0, t.sahteEkran.goruntuSayisi)
+        }
+        testler += DynamicTest.dynamicTest("click noktası: heads-up üstünde") {
+            val t = KiTezgah()
+            val izin = t.izinVer(mod = IzinModu.YAZ)
+            t.sahteEkran.anlikSenaryo(headsUp)
+            t.ret(t.cmd(izin, "click", """{"x":10,"y":10}"""), DeniedNeden.ON_PLAN_IZIN_DISI)
+        }
+        return testler
+    }
+
     @TestFactory
     fun openAppZinciriHedefeUygulanir(): List<DynamicTest> = listOf(
         Triple("hassas hedef", KiPaket.BANKA, DeniedNeden.HASSAS_UYGULAMA),

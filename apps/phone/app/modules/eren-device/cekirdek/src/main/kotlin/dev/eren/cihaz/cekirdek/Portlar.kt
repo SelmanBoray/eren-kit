@@ -136,7 +136,10 @@ data class Pencere(
 data class AnlikDurum(
     /** `rootInActiveWindow.packageName`. */
     val aktifKokPaketi: String?,
-    /** Son `TYPE_WINDOW_STATE_CHANGED` olayının paketi; izin yokken olay işlenmediği için `null` olabilir. */
+    /**
+     * Son `TYPE_WINDOW_STATE_CHANGED` olayının paketi; izin yokken olay işlenmediği için `null` olabilir.
+     * Ham olay: SystemUI'ninki de gelir; kapı onu ön plan değişimi saymaz (`SISTEM_ARAYUZU_PAKETI`).
+     */
     val sonOlayPaketi: String?,
     /** `isFocused` pencerenin kök paketi. */
     val odakPaketi: String?,

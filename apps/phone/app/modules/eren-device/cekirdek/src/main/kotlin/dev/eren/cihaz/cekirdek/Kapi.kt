@@ -1,6 +1,23 @@
 package dev.eren.cihaz.cekirdek
 
 /**
+ * SystemUI'nin `TYPE_WINDOW_STATE_CHANGED` olayı (heads-up açılıp kapanması, bildirim perdesinin
+ * toplanması, Dynamic Island) ön plan uygulamasının değiştiğini söylemez: SystemUI görev sahibi değildir.
+ * Gerçekten öne geldiğinde (perde açık, SystemUI diyaloğu) aktif kök ve odak da SystemUI olur; o zaman
+ * zincir `DEGISMEZ_RET` verir. Görünen SystemUI penceresini pencere denetimleri, görüntü sırasındaki
+ * olayı kural 12 (`onPlanDegisti`, burada gevşetilmez) ayrıca yakalar. Gerileme: 0.4.3, HyperOS; PC
+ * bildiriminin heads-up'ı kapanınca son olay SystemUI'de kaldı, izinli ön planda her okuma reddedildi.
+ */
+internal const val SISTEM_ARAYUZU_PAKETI = "com.android.systemui"
+
+/**
+ * Son olay, aktif kök ve odağın söylediği `paket` ile uyuşuyor mu: aynı paket ya da SystemUI olayı.
+ * `null` uyuşmaz (kapı için; `KomutIsleyici` tabanı `null`'ı ayrıca kabul eder).
+ */
+internal fun sonOlayOnPlanla(sonOlay: String?, paket: String): Boolean =
+    sonOlay == paket || sonOlay == SISTEM_ARAYUZU_PAKETI
+
+/**
  * Telefon kapısının saf kararı (TASARIM.md "Kapı kural sırası"; ilk takılan döner). Girdinin hepsi
  * telefonun kendi okuduğu durum ve bellekteki izindir; PC tümüyle kandırılmış olsa da izin, ön plan
  * ve mod tutmuyorsa eylem burada durur. Belirsiz her durumda ret: kaynaklar uyuşmuyor, pencere türü
@@ -121,10 +138,13 @@ object Kapi : KapiIslemi {
         }
     }
 
-    /** Aktif kök, son olay ve odak aynı (paket biçimli) paketi söylüyorsa o paket; yoksa null. */
+    /**
+     * Aktif kök, son olay ve odak aynı (paket biçimli) paketi söylüyorsa o paket; yoksa null. Son olay
+     * SystemUI ise (`sonOlayOnPlanla`) yalnız aktif kök ve odak yeter.
+     */
     private fun tutarliOnPlan(a: AnlikDurum): String? {
         val p = a.aktifKokPaketi ?: return null
-        return if (paketBicimi(p) && a.sonOlayPaketi == p && a.odakPaketi == p) p else null
+        return if (paketBicimi(p) && sonOlayOnPlanla(a.sonOlayPaketi, p) && a.odakPaketi == p) p else null
     }
 
     private fun zincir(paket: String, g: EkranDenetimGirdisi): DeniedNeden? =

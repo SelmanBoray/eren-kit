@@ -14,7 +14,12 @@ import android.os.PowerManager
 import android.os.SystemClock
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
+import android.util.Log
 import dev.eren.cihaz.cekirdek.AnahtarPortu
+import dev.eren.cihaz.cekirdek.CihazHatasi
+import dev.eren.cihaz.cekirdek.CmdAdi
+import dev.eren.cihaz.cekirdek.DeniedNeden
+import dev.eren.cihaz.cekirdek.IzinKaynagi
 import dev.eren.cihaz.cekirdek.CihazOturumu
 import dev.eren.cihaz.cekirdek.DenetimKaydi
 import dev.eren.cihaz.cekirdek.DenetimPortu
@@ -314,7 +319,7 @@ class CihazServisi : Service() {
             denetim = denetim,
             paket = paket,
         )
-        c.komutIsleyici = komutIsleyiciKur.kur(ekran, eylem, saat, izinler, listeler, denetim, vekil)
+        c.komutIsleyici = komutIsleyiciKur.kur(ekran, eylem, saat, izinler, listeler, TaniliDenetim(denetim, ekran), vekil)
         cekirdek = c
         eslesmeDeposu = EslesmeDeposu(this)
         // Tarama sürerken servis durdurulduysa yayınlanmaz; `kapat` sırada bekliyor.
@@ -540,4 +545,51 @@ class CihazServisi : Service() {
         cekirdek?.let { if (Adaptor.cekirdek === it) Adaptor.cekirdek = null }
         cekirdek = null
     }
+}
+
+/**
+ * Tanı günlüğü (yalnız logcat, release dahil): ön plan kaynaklı her rette tek satır, etiket
+ * `ErenKapi`. Komut işleyicinin denetim çağrısını aynen iletir, davranışı değiştirmez; günlük
+ * hatası yutulur. Yalnız komut adı, ret nedeni, paket adları ve pencere türleri (`EkranOkuyucu.
+ * sonAnlikOzeti`): başlık, ekran metni, düğüm içeriği, jeton, kimlik yazılmaz. Kural 8, 11 ve 12'nin
+ * her ret dalında son `anlik()` okuması kararın girdisidir; satır o okumayı gösterir.
+ */
+private class TaniliDenetim(private val asil: DenetimKaydi, private val ekran: EkranOkuyucu) : DenetimKaydi {
+    private companion object {
+        const val ETIKET = "ErenKapi"
+        val ON_PLAN_RETLERI: Set<DeniedNeden> = setOf(
+            DeniedNeden.ON_PLAN_IZIN_DISI,
+            DeniedNeden.DEGISMEZ_RET,
+            DeniedNeden.HASSAS_UYGULAMA,
+            DeniedNeden.YENI_UYGULAMA,
+            DeniedNeden.IZIN_DISI_PENCERE,
+        )
+    }
+
+    override fun komut(
+        cmdId: String,
+        grantId: String?,
+        komut: CmdAdi?,
+        denied: DeniedNeden?,
+        hata: CihazHatasi?,
+        paket: String?,
+    ) {
+        try {
+            if (denied != null && denied in ON_PLAN_RETLERI) {
+                Log.i(ETIKET, "ret komut=${komut?.kablo ?: "?"} neden=${denied.kablo} ${ekran.sonAnlikOzeti()}")
+            }
+        } catch (_: Exception) {
+            // Tanı yalnız yardımcıdır.
+        }
+        asil.komut(cmdId, grantId, komut, denied, hata, paket)
+    }
+
+    override fun izinVerildi(grantId: String, paketler: List<String>, kaynak: IzinKaynagi) =
+        asil.izinVerildi(grantId, paketler, kaynak)
+
+    override fun izinGeriCekildi(grantId: String, neden: GrantNedeni) = asil.izinGeriCekildi(grantId, neden)
+
+    override fun baglantiAcildi() = asil.baglantiAcildi()
+
+    override fun baglantiKoptu() = asil.baglantiKoptu()
 }

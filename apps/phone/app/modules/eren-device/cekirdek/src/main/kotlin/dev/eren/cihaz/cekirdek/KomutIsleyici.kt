@@ -390,7 +390,9 @@ private class KomutIsleyiciGercek(
     private fun onPlanIzinli(anlik: AnlikDurum, izin: IzinKaydi): Boolean {
         val aktif = anlik.aktifKokPaketi
         val sonOlay = anlik.sonOlayPaketi
-        return izinliPaket(aktif, izin) && anlik.odakPaketi == aktif && (sonOlay == null || sonOlay == aktif)
+        // SystemUI son olayı ön plan değişimi değildir (bkz. `SISTEM_ARAYUZU_PAKETI`).
+        return izinliPaket(aktif, izin) && anlik.odakPaketi == aktif &&
+            (sonOlay == null || (aktif != null && sonOlayOnPlanla(sonOlay, aktif)))
     }
 
     /** İzin dışı ya da tutarsız ön planda başlık boş; paket biçimsizse `foreground:null`. */

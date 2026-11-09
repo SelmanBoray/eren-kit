@@ -287,7 +287,8 @@ internal class MtEvren(private val tohum: Long, private val adim: Int, private v
                 else -> odak = baska
             }
         }
-        val tutarli = p != null && kok == olay && olay == odak
+        // SystemUI son olayı ön plan değişimi değildir (heads-up/perde; 0.4.3 HyperOS gerilemesi).
+        val tutarli = p != null && kok == odak && (olay == kok || olay == KiPaket.SYSTEMUI)
         val baslik = if (tutarli) "Baslik $p" else "$KI_GIZLI-UYUSMAZ"
         val pencereler = ArrayList<Pencere>()
         pencereler += Pencere(PencereTuru.UYGULAMA, kok, 1, Dikdortgen(0, 0, G, Y), true, true)
@@ -926,7 +927,8 @@ internal class MtEvren(private val tohum: Long, private val adim: Int, private v
 
     private fun onPlanUygun(w: MtDunya, m: MtIzin): Boolean {
         val p = w.kok ?: return false
-        return p == w.olay && p == w.odak && p in m.paketler && KiPaket.durum(p) == UygulamaDurumu.ACIK
+        val olayUyar = p == w.olay || w.olay == KiPaket.SYSTEMUI
+        return olayUyar && p == w.odak && p in m.paketler && KiPaket.durum(p) == UygulamaDurumu.ACIK
     }
 
     private fun pencerelerUygun(w: MtDunya, m: MtIzin): Boolean = w.pencereler.all {
