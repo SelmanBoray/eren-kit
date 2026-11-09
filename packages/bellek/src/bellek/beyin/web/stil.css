@@ -466,7 +466,7 @@ body:has(#zaman-serit:empty) #gelen-panel {
   z-index: 15;
   left: calc(var(--bosluk) + 6px + env(safe-area-inset-left, 0px));
   bottom: calc(var(--bosluk) * 2 + var(--serit-yukseklik) + 2px);
-  max-width: calc(100vw - 48px);
+  max-width: calc(100vw - 48px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
   padding: 2px 8px;
   border-radius: 999px;
   background: rgb(var(--zemin-rgb) / 0.6);
