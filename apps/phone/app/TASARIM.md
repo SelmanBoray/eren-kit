@@ -88,7 +88,7 @@ dosya olarak anılır ama saf sabit olduğu için burada dondurulmuştur ve eşi
 | `Kanonik.kt`, `PlanHash.kt` | `protocol/src/kanonik.ts` portu: kanonik JSON + SHA-256; `plan-hash.json` vektörleri geçer. `[protocol]` | `Json` | `object Kanonik : KanonikIslemi` (`kanonik`, `sha256Hex`), `object PlanHash : PlanHashIslemi` (`planHash(JsonDeger): String?`) |
 | `Sema.kt` | Ham JSON → `Cmd`/`Plan`/`TelefonIzinIstegi` çözümü ve giden çerçeve kurucuları. `Sozlesme.kt`'nin tiplerini **yeniden tanımlamaz**; yalnız üretir. `[karar]` | `Json`, `Sinirlar`, `Sozlesme` | `object Sema : SemaIslemi`: `gelen(ham): GelenCerceve`, `planCoz(ham): Plan?`, giden kurucular |
 | `Izinler.kt` | Bellekteki izin kümesi (`IzinKaydi`), jeton sabit zamanlı karşılaştırma, bütçe ve monotonik süre düşümü. Jeton diske/günlüğe girmez. `ekle`'nin tek çağıranı onay akışıdır. `[karar; guvenlik]` | `Portlar`(Saat, Denetim), `Sozlesme` | `val izinlerKur: IzinlerFabrikasi` → `Izinler` (`ekle`, `bul`, `harca`, `geriCek`, `suresiGecenler`, `aktifler`, `eskiSurectenKalanlar`) |
-| `Listeler.kt` | Uygulama durum listeleri: `degismez` ret listesi (bu uygulamanın kendisi, Ayarlar, kurucu, Play, izin denetleyicisi, üretici güvenlik uygulaması, Tailscale, kilit ekranı, systemui — sabit adlar + intent çözümü), `hassas`, `yeni` (0.4.3: yalnız kurulu olmayan paket; sıradan kurulu uygulama varsayılan açık, banka/para otomatik hassas). `[karar]` | `Sozlesme` | `val listelerKur: ListelerFabrikasi` → `Listeler` (`durum`, `uygulamalar`, `guncelle`) |
+| `Listeler.kt` | Uygulama durum listeleri: `degismez` ret listesi (bu uygulamanın kendisi, Ayarlar, kurucu, Play, izin denetleyicisi, üretici güvenlik uygulaması, Tailscale, kilit ekranı, systemui, HOME çözen tüm paketler ve etkin klavyeler — sabit adlar + intent çözümü), `hassas`, `yeni` (0.4.3: kurulu değil ya da imzası okunamayan paket; sıradan kurulu uygulama varsayılan açık, banka/para/kimlik uygulaması ve sistem bileşeni (başlatıcı simgesi olmayan sistem paketi) otomatik hassas). `[karar]` | `Sozlesme` | `val listelerKur: ListelerFabrikasi` → `Listeler` (`durum`, `uygulamalar`, `guncelle`) |
 | `Etiket.kt` | Gönder/sil/öde sözlüğü; Türkçe İ/ı katlama; görünmez karakter atma. `[karar]` | yok | `object Etiket : EtiketIslemi` (`katla`, `eslesir`, `etiketli`, `parolaAlani`) |
 | `Kapi.kt` | Saf karar: aşağıdaki "Kapı kural sırası". Port çağırmaz, `Karar` döner. `[karar]` | `Portlar`, `Izinler`, `Listeler`, `Etiket`, `Sozlesme` | `object Kapi : KapiIslemi`: `izinDenetimi` (1-5), `durumDenetimi` (6-7), `ekranDenetimi` (8-10, 11), `goruntuDenetimi` (12) |
 | `KomutIsleyici.kt` | `isle(ham): List<String>`: çöz → kapı → port → giden çerçeve. `KomutIsleyici` arayüzünü gerçekler. `[karar]` | hepsi + `Sema` | `val komutIsleyiciKur: KomutIsleyiciFabrikasi` → `KomutIsleyici`; yalnız `cmd` çerçevesi alır |
@@ -134,7 +134,7 @@ tipini kendi dosyasında bildirir. `[karar]`
    `izin_geri_cekildi` (mezar taşı listesi). 4. `jeton_yanlis` (sabit zamanlı). 5. `izin_suresi_bitti`
    (telefonun monotonik saati; PC saati uzatamaz). 6. `erisilebilirlik_kapali`. 7. `kilit_ekrani`.
 8. **Ön plan (taze anlık):** aktif kök, son olay, odak paketi uyuşmazsa `on_plan_izin_disi`;
-   `degismez_ret` → `hassas_uygulama` → `yeni_uygulama` (paket kurulu değil) → izin dışı paket
+   `degismez_ret` → `hassas_uygulama` → `yeni_uygulama` (paket kurulu değil ya da imzası okunamıyor) → izin dışı paket
    `on_plan_izin_disi`. `open_app` aynı zinciri hedefe uygular. `screenshot`/`zoom`: durum ve gezinti
    çubuğu dışında görünen her pencere izinli pakette olmalı; perde, heads-up, klavye, balon, PiP görünürse
    `izin_disi_pencere`. `x,y` tıklamada noktadaki en üst pencere, `element` tıklamada tazelenmiş düğüm
@@ -157,7 +157,7 @@ Okunan metin yapısal döner (çit PC köprüsünde kurulur, telefonda değil). 
 60 dk / 300. Eylemler arası en az 250 ms, görüntüler arası en az 1 sn. İzinler yalnız bellekte; diskte
 jetonsuz izin kimlikleri (`DenetimPortu.izinKimlikleri`), süreç yeniden açılınca bunlar için
 `grant_revoked{suresi_bitti}`. Erişilebilirlik koparsa hepsi `erisilebilirlik_kapandi`. İzin yokken
-erişilebilirlik olayları işlenmez. Kurulu olmayan paket `yeni`; kurulu sıradan uygulama varsayılan `acik`, banka/para otomatik `hassas` (0.4.3). `[karar]`
+erişilebilirlik olayları işlenmez. Kurulu olmayan ya da imzası okunamayan paket `yeni`; kurulu sıradan uygulama varsayılan `acik`, banka/para/kimlik uygulaması ve sistem bileşeni otomatik `hassas` (0.4.3). `[karar]`
 
 ## Köprü API ve yapısal sınırlar
 

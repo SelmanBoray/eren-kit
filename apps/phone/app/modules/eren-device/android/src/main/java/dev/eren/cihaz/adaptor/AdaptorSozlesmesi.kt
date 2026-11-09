@@ -194,7 +194,12 @@ interface A11yBagi {
  * metin; yalnız onay/liste ekranlarında ve `app_list`'te). `Listeler.guncelle` girdisini üretir.
  */
 interface PaketKapisi {
-    /** Kurulu uygulamalar + çözülen değişmezler + o anki kullanıcı kararları. */
+    /**
+     * Kurulu uygulamalar + çözülen değişmezler + o anki kullanıcı kararları. `KuruluUygulama.sistemIci`:
+     * FLAG_SYSTEM olup CATEGORY_LAUNCHER çözümünde olmayan paket. Değişmezler: Ayarlar, kurucu, Play,
+     * izin denetleyicisi ile HOME çözen tüm paketler ve etkin klavyeler (şart aranmaz; değişmez yapmak
+     * yalnız kısıtlar). İmza özeti okunamazsa boş gelir.
+     */
     fun listeGirdisi(): ListeGirdisi
 
     /** SHA-256 imza özeti; paket yoksa `null`. */
@@ -366,7 +371,8 @@ interface DenetimKapisi {
  *   RecognizerIntent (tr-TR; RECORD_AUDIO yok; köprüdeki `dikte()` ile aynı yol). Kart, geri sayım,
  *   Gönder/İptal düğmesi YOKTUR: boş olmayan metin gelince onay sormadan hemen `KisayolDeposu.koy`
  *   (DEĞİŞMEZ 6: tek çağıran burası; yanlış tanınan dikte de gider); kısa Toast ("<asistanAdi()>
- *   oturumuna gönderildi · <bağlam adı>"); JS ayakta değilse (`Adaptor.olaylar == null`) uygulamanın
+ *   oturumuna gönderildi · <bağlam adı>"; gösterilen ad temizlenir: Unicode FORMAT/CONTROL/ayırıcı
+ *   karakterler atılır, 40 karaktere kısaltılır; yalnız gösterim, depoya giden bağlam değişmez); JS ayakta değilse (`Adaptor.olaylar == null`) uygulamanın
  *   başlatıcı etkinliğini başlatır; sonra kapanır. Dikte iptal ya da boşsa hiçbir şey göndermeden kapanır.
  *
  * EslestirmeActivity : android.app.Activity
@@ -377,8 +383,10 @@ interface DenetimKapisi {
  *
  * UygulamaListesiActivity : android.app.Activity
  *   Uygulamalar ekranı, iki durumlu: Açık / Kapalı (`acik`/`hassas`); değişmezler "Kilitli" ve
- *   düğmesizdir. Varsayılan açıktır; banka/para/kimlik uygulamaları `HassasUygulamalar` ile otomatik
- *   kapalı başlar (notla gösterilir). "Açık" biyometri ya da ekran kilidi ister, "Kapalı" istemez; ikisi
+ *   düğmesizdir. Varsayılan açıktır; banka/para/kimlik uygulamaları (`HassasUygulamalar`) ve başlatıcı
+ *   simgesi olmayan sistem iç paketleri (`sistemIci`) otomatik kapalı başlar. Not iki türlüdür: "Banka,
+ *   para ya da kimlik uygulaması: otomatik kapalı" ya da "Sistem bileşeni: otomatik kapalı". Sistem
+ *   bileşenleri listenin sonunda gösterilir. "Açık" biyometri ya da ekran kilidi ister, "Kapalı" istemez; ikisi
  *   de imza özetini karar anında alır. "Yeni" ve kararı silme seçeneği yoktur. `KullaniciKarari` (durum +
  *   o anki imza özeti) deposunu yazar; `cekirdek.listeler.guncelle` + `oturumGuncelle.uygulamalarDegisti`.
  *

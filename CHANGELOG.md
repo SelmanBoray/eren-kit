@@ -27,7 +27,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - The voice shortcut now sends the dictated message without asking for confirmation.
   - The voice shortcut does not run while the device is locked.
   - In the shortcut prompt, the assistant no longer asks clarifying questions; it acts on the most reasonable reading.
-  - App permissions are on by default. Banking, money and identity apps start off automatically, and the Apps screen is now a simple On/Off switch.
+  - App permissions: user-visible apps are on by default. Banking, money and identity apps (including password managers and 2FA) and system components are turned off automatically. The assistant can never use the home screen or keyboard apps, and the user cannot turn them on. The Apps screen is now a simple On/Off switch.
 
 ## [0.1.0] - 2026-11-09
 

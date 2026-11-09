@@ -11,7 +11,7 @@ Durum: v1; Dilim 1 (geçmişi sil, iş profili, servis bilgisi, `/sohbet` v2); D
 - Telefon uygulaması React Native + Expo, içinde Kotlin modülü. Önce Android; iPad'e yalnız sohbet. Giriş yazı ve sesle dikte.
 - Ağ yalnız Tailscale + eşleştirme; internete port açılmaz. Bildirim uygulamadan, yedek olarak Telegram'dan (yalnız kısa not).
 - Ana oturum arka planda otomatik başlar, pencere açmaz.
-- Telefon yönetimi ilk sürümde vardır; uygulamalar varsayılan açıktır, ama banka/para/kimlik uygulamaları otomatik hassas sayılıp kapalı başlar (0.4.3; kullanıcı Uygulamalar ekranından değiştirir). Asıl şart: karşı taraftan okunan bir mesaj hiçbir zaman komut olarak alınmaz, yalnız kullanıcının kendi emirleri uygulanır.
+- Telefon yönetimi ilk sürümde vardır; uygulamalar varsayılan açıktır, ama banka/para/kimlik uygulamaları ve sistem bileşenleri (başlatıcı simgesi olmayan sistem paketleri) otomatik hassas sayılıp kapalı başlar (0.4.3; kullanıcı Uygulamalar ekranından değiştirir). Asıl şart: karşı taraftan okunan bir mesaj hiçbir zaman komut olarak alınmaz, yalnız kullanıcının kendi emirleri uygulanır.
 - Kimlik notları, kişisel yollar ve cihaz adları repoya girmez.
 
 ## Bileşenler

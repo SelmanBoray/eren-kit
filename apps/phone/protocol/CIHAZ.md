@@ -231,7 +231,7 @@ Kapalı listedir. Listede olmayan değer şemadan geçmez.
 | `deadline_gecti` | Bkz. Saat |
 | `on_plan_izin_disi` | Ön plan paketi izin listesinde değil |
 | `hassas_uygulama` | Paket hassas listede |
-| `yeni_uygulama` | Paket telefonda kurulu değil (0.4.3'ten beri yalnız bu anlamda; kurulu sıradan uygulama varsayılan açıktır, banka/para uygulamaları otomatik hassastır) |
+| `yeni_uygulama` | Paket telefonda kurulu değil ya da imzası okunamıyor (0.4.3'ten beri yalnız bu anlamda; kurulu sıradan uygulama varsayılan açıktır, banka/para/kimlik uygulamaları ve sistem bileşenleri otomatik hassastır) |
 | `degismez_ret` | eren-kit telefon uygulaması, Ayarlar, kurucu, Play, izin diyalogları, üretici güvenlik uygulaması, Tailscale |
 | `izin_disi_pencere` | Ekran görüntüsü sırasında izin dışı pencere görünüyor |
 | `kilit_ekrani` | Telefon kilitli |
@@ -279,7 +279,7 @@ Kapalı listedir. Listede olmayan değer şemadan geçmez.
 {"v":1,"type":"device_state","a11y":true,"adb_enabled":false,"kilitli":false}
 ```
 
-`app_list`, telefondan: bağlanınca ve kurulum değişince, tam liste. En çok 2000 uygulama. `ad` PackageManager'dan gelir, en çok 120 karakter, güvenilmez metindir. `durum`: `acik`, `hassas`, `yeni` (0.4.3'ten beri yalnız kurulu olmayan paket; tam listede kurulu uygulama için normalde görülmez), `degismez`.
+`app_list`, telefondan: bağlanınca ve kurulum değişince, tam liste. En çok 2000 uygulama. `ad` PackageManager'dan gelir, en çok 120 karakter, güvenilmez metindir. `durum`: `acik`, `hassas`, `yeni` (0.4.3'ten beri kurulu olmayan ya da imzası okunamayan paket; tam listede kurulu uygulama için normalde görülmez), `degismez`.
 
 ```json
 {"v":1,"type":"app_list","uygulamalar":[{"paket":"com.example.mesaj","ad":"Mesajlar","durum":"acik"}]}
