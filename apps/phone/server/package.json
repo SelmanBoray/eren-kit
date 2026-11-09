@@ -1,0 +1,29 @@
+{
+  "name": "@eren/server",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Bilgisayar servisi: telefon bağlantısı, konuşma süreci, iş oturumları",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SelmanBoray/eren-kit.git",
+    "directory": "apps/phone/server"
+  },
+  "homepage": "https://github.com/SelmanBoray/eren-kit#readme",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "node --disable-warning=ExperimentalWarning --test \"test/**/*.test.ts\"",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@eren/protocol": "1.0.0",
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "ws": "8.22.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/ws": "8.18.2"
+  }
+}

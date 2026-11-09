@@ -1,0 +1,65 @@
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.log
+build/
+out/
+coverage/
+
+# Expo / React Native
+.expo/
+.expo-shared/
+app/android/
+app/ios/
+*.apk
+*.aab
+*.ipa
+*.jks
+*.keystore
+.metro-health-check*
+.metro-cache/
+metro-cache/
+
+# Gradle
+.gradle/
+.gradle
+
+# TypeScript
+*.tsbuildinfo
+dist/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+config.local.*
+
+# Runtime data
+data/
+logs/
+runtime/
+*.sqlite
+*.sqlite3
+*.db

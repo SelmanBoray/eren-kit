@@ -1,0 +1,28 @@
+{
+  "name": "eren",
+  "version": "0.0.0",
+  "private": true,
+  "description": "eren-kit telefon uygulaması: telefondan PC'deki ana Claude Code oturumuyla konuşma ve Android yönetimi (npm workspaces kökü)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SelmanBoray/eren-kit.git",
+    "directory": "apps/phone"
+  },
+  "homepage": "https://github.com/SelmanBoray/eren-kit#readme",
+  "engines": {
+    "node": ">=24"
+  },
+  "workspaces": [
+    "protocol",
+    "server",
+    "app"
+  ],
+  "scripts": {
+    "test:protocol": "npm test -w protocol",
+    "typecheck:protocol": "npm run typecheck -w protocol"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "typescript": "6.0.3"
+  }
+}

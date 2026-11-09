@@ -1,0 +1,90 @@
+{
+  "aciklama": "plan_hash test vektörleri. Her gerçekleme (TypeScript, Kotlin) `plan` nesnesinden aynı `kanonik` metni ve aynı `plan_hash` değerini üretmelidir.",
+  "vektorler": [
+    {
+      "ad": "pc-turkce",
+      "aciklama": "Türkçe karakter, kaçış, emoji, sayı dizisi",
+      "plan": {
+        "plan_id": "plan-0001",
+        "baslik": "Çalışma günlüğünü düzelt",
+        "tur": "pc",
+        "cwd": "C:\\Proje\\örnek",
+        "gorev_metni": "Satır 1: \"şçğüöıİ\" karakterlerini koru.\nSatır 2:\tsekme ve \\ ters bölü.\nEmoji: 😀",
+        "kesin_yapilacaklar": [
+          "Testleri çalıştır",
+          "Sonucu rapora yaz"
+        ],
+        "kesin_yapilmayacaklar": [
+          "Ana dala gönderme"
+        ],
+        "mcp_profili": "rea",
+        "kirli_kaynak": [
+          7,
+          12
+        ]
+      },
+      "kanonik": "{\"baslik\":\"Çalışma günlüğünü düzelt\",\"cwd\":\"C:\\\\Proje\\\\örnek\",\"gorev_metni\":\"Satır 1: \\\"şçğüöıİ\\\" karakterlerini koru.\\nSatır 2:\\tsekme ve \\\\ ters bölü.\\nEmoji: 😀\",\"kesin_yapilacaklar\":[\"Testleri çalıştır\",\"Sonucu rapora yaz\"],\"kesin_yapilmayacaklar\":[\"Ana dala gönderme\"],\"kirli_kaynak\":[7,12],\"mcp_profili\":\"rea\",\"plan_id\":\"plan-0001\",\"tur\":\"pc\"}",
+      "plan_hash": "3f975f2aa322634dcb0345def656168012826fb324f4ae753cbfbfb0d7000e2c"
+    },
+    {
+      "ad": "telefon-yaz",
+      "aciklama": "Telefon planı, iç içe nesne, boş dizi, boş cwd",
+      "plan": {
+        "plan_id": "plan-0002",
+        "baslik": "Mesajı gönder",
+        "tur": "telefon",
+        "cwd": "",
+        "gorev_metni": "Açık sohbete izinli metni yaz.",
+        "kesin_yapilacaklar": [
+          "Yalnız izinli metni yaz"
+        ],
+        "kesin_yapilmayacaklar": [],
+        "telefon_izin_istegi": {
+          "uygulamalar": [
+            "com.example.mesaj"
+          ],
+          "mod": "yaz",
+          "izinli_metin": [
+            "Geliyorum, on dakikaya oradayım."
+          ]
+        }
+      },
+      "kanonik": "{\"baslik\":\"Mesajı gönder\",\"cwd\":\"\",\"gorev_metni\":\"Açık sohbete izinli metni yaz.\",\"kesin_yapilacaklar\":[\"Yalnız izinli metni yaz\"],\"kesin_yapilmayacaklar\":[],\"plan_id\":\"plan-0002\",\"telefon_izin_istegi\":{\"izinli_metin\":[\"Geliyorum, on dakikaya oradayım.\"],\"mod\":\"yaz\",\"uygulamalar\":[\"com.example.mesaj\"]},\"tur\":\"telefon\"}",
+      "plan_hash": "129b9b4b302dbdc90902ac800cc22b92f4cb0cbdcaaf9102b980b51a824c0bb3"
+    },
+    {
+      "ad": "ayrisik-unicode",
+      "aciklama": "Birleşmemiş karakterler normalleştirilmez",
+      "plan": {
+        "plan_id": "plan-0003",
+        "baslik": "şç ayrışık yazım",
+        "tur": "pc",
+        "cwd": "C:/Proje",
+        "gorev_metni": "Unicode normalleştirme yapılmaz.",
+        "kesin_yapilacaklar": [
+          "Baytlar olduğu gibi özetlenir"
+        ],
+        "kesin_yapilmayacaklar": []
+      },
+      "kanonik": "{\"baslik\":\"şç ayrışık yazım\",\"cwd\":\"C:/Proje\",\"gorev_metni\":\"Unicode normalleştirme yapılmaz.\",\"kesin_yapilacaklar\":[\"Baytlar olduğu gibi özetlenir\"],\"kesin_yapilmayacaklar\":[],\"plan_id\":\"plan-0003\",\"tur\":\"pc\"}",
+      "plan_hash": "ba65b23662434b578595874f849000c7b04b0a77ac5695a0953aee47008ab773"
+    },
+    {
+      "ad": "birlesik-unicode",
+      "aciklama": "Aynı görünen metnin birleşik hali: özet farklıdır",
+      "plan": {
+        "plan_id": "plan-0003",
+        "baslik": "şç ayrışık yazım",
+        "tur": "pc",
+        "cwd": "C:/Proje",
+        "gorev_metni": "Unicode normalleştirme yapılmaz.",
+        "kesin_yapilacaklar": [
+          "Baytlar olduğu gibi özetlenir"
+        ],
+        "kesin_yapilmayacaklar": []
+      },
+      "kanonik": "{\"baslik\":\"şç ayrışık yazım\",\"cwd\":\"C:/Proje\",\"gorev_metni\":\"Unicode normalleştirme yapılmaz.\",\"kesin_yapilacaklar\":[\"Baytlar olduğu gibi özetlenir\"],\"kesin_yapilmayacaklar\":[],\"plan_id\":\"plan-0003\",\"tur\":\"pc\"}",
+      "plan_hash": "fc00f26967de446b64e5f2323d017552f34251da53668ebc33a93d9b975f7d22"
+    }
+  ]
+}

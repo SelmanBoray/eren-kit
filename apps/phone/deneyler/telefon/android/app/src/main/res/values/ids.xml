@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item name="normal" type="id" />
+    <item name="parola" type="id" />
+    <item name="say" type="id" />
+    <item name="sayac" type="id" />
+    <item name="durum" type="id" />
+    <item name="gizli" type="id" />
+    <item name="gizli_say" type="id" />
+    <item name="gizli_sayac" type="id" />
+</resources>
