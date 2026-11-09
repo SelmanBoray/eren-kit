@@ -7,6 +7,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- macOS support: `install.sh` (LaunchAgent for the brain service, hooks registered with an absolute
+  Python 3.11+ path, assistant name in `settings.json` `env`, dry-run and uninstall), with tests and
+  macOS CI jobs. On macOS the installer points to Claude Code's built-in computer use instead of
+  installing `computer-use-windows`.
+- iPhone/iPad: the brain web UI ships a web manifest and home-screen icon (CSP `manifest-src 'self'`);
+  `--tailscale-host` allows the tailnet host for the service (kept on re-install, `""` clears it).
+  The sign-in screen accepts a pasted key or address; only in home-screen (standalone) mode is the
+  key kept in `localStorage`, browser tabs stay session-only.
+- `settings_hooks.py --python` to choose the hook interpreter (default stays `python`).
 - `apps/phone`: the full experimental phone app is now in the repo: Expo / React Native Android app
   with the Kotlin `eren-device` module, the PC service, install scripts (`kurulum/kur.ts`) and docs.
   Talk to the main Claude Code session from the phone, one session per chat, and manage an Android
@@ -23,6 +32,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- `bellek`: one per-platform data directory (`bellek.platform_dirs.data_dir`): Windows
+  `%LOCALAPPDATA%\Bellek` (unchanged), macOS `~/Library/Application Support/Bellek`, Linux
+  `$XDG_DATA_HOME/Bellek`. `state_dir` now defaults to it; the template no longer hard-codes
+  `%LOCALAPPDATA%`, which stayed literal on macOS.
+- `bellek` tests run on macOS: process-tree cleanup without `taskkill`, platform-correct
+  undefined-variable syntax.
+- `bellek`: the brain service no longer does a reverse DNS lookup (`socket.getfqdn`) when it binds;
+  on macOS this could hang startup indefinitely.
 - `apps/phone` 0.4.3 (2026-11-09):
   - The voice shortcut now sends the dictated message without asking for confirmation.
   - The voice shortcut does not run while the device is locked.

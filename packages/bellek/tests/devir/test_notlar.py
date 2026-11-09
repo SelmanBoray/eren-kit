@@ -1,5 +1,6 @@
 """devir.notlar testleri (sözleşmeden yazıldı)."""
 import importlib
+import os
 import random
 import re
 from datetime import datetime, timedelta, timezone
@@ -8,6 +9,10 @@ from pathlib import Path
 import pytest
 
 from bellek.devir.notlar import DEVIR_KOK, oto_not_yaz, notlari_listele, dizin_metni
+
+# Tanımsız değişken başvurusu: Windows'ta %AD%, POSIX'te ${AD} (POSIX'te %AD% bilerek literal kalır).
+TANIMSIZ = ("%BELLEK_TEST_TANIMSIZ_DEGISKEN%" if os.name == "nt"
+            else "${BELLEK_TEST_TANIMSIZ_DEGISKEN}")
 
 SIMDI = datetime(2026, 11, 8, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -474,7 +479,7 @@ def test_dizin_varsayilan_sinir_1500(tmp_path):
 
 
 @pytest.mark.parametrize("ilgisiz", [
-    "[[source]]\nname = 'a'\npath = '%BELLEK_TEST_TANIMSIZ_DEGISKEN%/x'\n",
+    "[[source]]\nname = 'a'\npath = '" + TANIMSIZ + "/x'\n",
     "[[source]]\nname = 'a'\npath = 'x'\n[[source]]\nname = 'a'\npath = 'y'\n",
     "[server]\nport = 'sayi-degil'\n",
     "[bilinmeyen]\nx = 1\n",
@@ -497,7 +502,7 @@ def test_devir_kok_vault_cozulemezse_uyari_gorunur(monkeypatch, tmp_path, capsys
     import bellek.devir.notlar as m
     monkeypatch.delenv("BELLEK_TEST_TANIMSIZ_DEGISKEN", raising=False)
     ayar = tmp_path / "ayar.toml"
-    ayar.write_text("[bellek]\nvault = '%BELLEK_TEST_TANIMSIZ_DEGISKEN%/kasa'\n", encoding="utf-8")
+    ayar.write_text("[bellek]\nvault = '" + TANIMSIZ + "/kasa'\n", encoding="utf-8")
     monkeypatch.setenv("BELLEK_CONFIG", str(ayar))
     try:
         paket = Path(m.__file__).resolve().parents[3]

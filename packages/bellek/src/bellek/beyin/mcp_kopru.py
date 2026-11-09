@@ -151,8 +151,9 @@ _BASLANGIC = datetime.now()
 # --------------------------------------------------------------------------- yollar, günlük
 
 def _veri_klasoru() -> Path:
-    taban = os.environ.get("LOCALAPPDATA")
-    return (Path(taban) if taban else Path.home() / "AppData" / "Local") / "Bellek"
+    from bellek.platform_dirs import data_dir
+
+    return data_dir()
 
 
 def _kuyruk_yolu() -> Path:

@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 
 from bellek.beyin import db
+from tests._surec import YENI_OTURUM, agaci_oldur
 
 SRC = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
@@ -69,8 +70,7 @@ def _saglik_tamam(port: int) -> bool:
 
 def _kapat(surecler: list) -> None:
     for p in surecler:
-        subprocess.run(["taskkill", "/T", "/F", "/PID", str(p.pid)],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        agaci_oldur(p)
         try:
             p.wait(timeout=5)
         except subprocess.TimeoutExpired:
@@ -87,7 +87,7 @@ def _kapat(surecler: list) -> None:
 def _servis_baslat(o: dict) -> None:
     p = subprocess.Popen(
         [sys.executable, "-m", "bellek.beyin", "servis", "--port", str(o["port"])],
-        env=o["env"], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        env=o["env"], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **YENI_OTURUM,
     )
     o["surecler"].append(p)
     son = time.time() + 15

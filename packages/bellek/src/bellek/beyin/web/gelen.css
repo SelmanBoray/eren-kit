@@ -15,7 +15,7 @@
 }
 
 #gelen-panel {
-  position: fixed; left: 12px; top: 64px; bottom: 64px; width: min(380px, calc(100vw - 24px));
+  position: fixed; left: calc(12px + env(safe-area-inset-left, 0px)); top: calc(64px + env(safe-area-inset-top, 0px)); bottom: 64px; width: min(380px, calc(100vw - 24px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)));
   display: flex; flex-direction: column;
   background: var(--yuzey); border: 1px solid var(--kenar-cizgi); border-radius: var(--yaricap);
   box-shadow: var(--golge), 0 0 24px color-mix(in srgb, var(--spor) 25%, transparent);
@@ -79,5 +79,5 @@
   #gelen-panel .spor-kart.dagil { animation: none; opacity: 0; }
 }
 @media (max-width: 600px) {
-  #gelen-panel { left: 6px; right: 6px; width: auto; top: 56px; bottom: 56px; }
+  #gelen-panel { left: calc(6px + env(safe-area-inset-left, 0px)); right: calc(6px + env(safe-area-inset-right, 0px)); width: auto; top: calc(56px + env(safe-area-inset-top, 0px)); bottom: 56px; }
 }

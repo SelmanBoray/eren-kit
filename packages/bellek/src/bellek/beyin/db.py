@@ -194,12 +194,13 @@ _FTS_HEPSI = "DELETE FROM dugum_fts;\n" + _FTS_EKLE + ";\n"
 
 
 def varsayilan_yol() -> Path:
-    """`BELLEK_BEYIN_DB` varsa o, yoksa `%LOCALAPPDATA%\\Bellek\\beyin.db`."""
+    """`BELLEK_BEYIN_DB` varsa o, yoksa platform veri kökündeki `beyin.db` (Windows: `%LOCALAPPDATA%\\Bellek`)."""
     ortam = os.environ.get("BELLEK_BEYIN_DB")
     if ortam:
         return Path(ortam)
-    yerel = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
-    return Path(yerel) / "Bellek" / "beyin.db"
+    from bellek.platform_dirs import data_dir
+
+    return data_dir() / "beyin.db"
 
 
 def baglan(yol: str | os.PathLike[str] | None = None, salt_okunur: bool = False) -> sqlite3.Connection:
