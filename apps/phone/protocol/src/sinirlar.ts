@@ -95,6 +95,8 @@ export const SOHBET_SINIRLARI = {
   SOHBET_ADET: 8,
   /** Kısayol bağlamının uygulama adı (v4): 1-80 UTF-16 birimi, kontrol karakteri yok. */
   BAGLAM_ADI: 80,
+  /** `usage_report.isler` en çok bu kadar öğe (en yeni işler). */
+  TUKETIM_IS_ADET: 50,
 } as const;
 
 /** Tek bir kablo çerçevesinin ayrıştırma öncesi üst sınırı. */

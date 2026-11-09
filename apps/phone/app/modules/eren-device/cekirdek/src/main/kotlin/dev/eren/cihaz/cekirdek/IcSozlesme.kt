@@ -240,7 +240,17 @@ interface EtiketIslemi {
 /** `app_list` elemanı (cihaz.ts `UygulamaBilgisi`). `ad` PackageManager'dan, güvenilmez metin. */
 data class UygulamaBilgisi(val paket: String, val ad: String, val durum: UygulamaDurumu)
 
-data class KuruluUygulama(val paket: String, val ad: String, val imzaOzeti: String)
+/**
+ * Kurulu paket. `imzaOzeti` okunamadıysa boş gelir; boş imza kurulu değil gibi `YENI` sayılır.
+ * `sistemIci`: başlatıcı simgesi olmayan sistem paketi (Play hizmetleri, sağlayıcılar vb.); adaptör
+ * hesaplar, kararsızken otomatik `HASSAS` başlar.
+ */
+data class KuruluUygulama(
+    val paket: String,
+    val ad: String,
+    val imzaOzeti: String,
+    val sistemIci: Boolean = false,
+)
 
 /** Kullanıcının Uygulamalar ekranındaki kararı: yalnız `ACIK` ya da `HASSAS`; imza özeti karar anındaki. */
 data class KullaniciKarari(val durum: UygulamaDurumu, val imzaOzeti: String)
@@ -249,15 +259,18 @@ data class KullaniciKarari(val durum: UygulamaDurumu, val imzaOzeti: String)
 data class ListeGirdisi(
     val kurulu: List<KuruluUygulama>,
     val kararlar: Map<String, KullaniciKarari>,
-    /** Intent çözümüyle bulunanlar: Ayarlar, kurucu, Play, izin denetleyicisi, ev/kilit ekranı. */
+    /** Intent çözümüyle bulunanlar: Ayarlar, kurucu, Play, izin denetleyicisi, HOME çözen tüm paketler, varsayılan klavye. */
     val cozulenDegismez: Set<String>,
 )
 
 interface Listeler {
     /**
-     * Önce `DEGISMEZ` (sabit adlar: Ayarlar, kurucu, Play, izin denetleyicisi, üretici güvenlik uygulaması,
-     * Tailscale, kilit ekranı, systemui; `kendiPaketi`; `cozulenDegismez`), sonra kullanıcı kararı
-     * (imza özeti şimdikiyle aynıysa). Kararı yok, kurulu değil ya da imzası değişmişse `YENI`.
+     * Sırayla: 1) `DEGISMEZ` (sabit adlar: Ayarlar, kurucu, Play, izin denetleyicisi, üretici güvenlik
+     * uygulaması, Tailscale, kilit ekranı, systemui; `kendiPaketi`; `cozulenDegismez`). 2) Kurulu değilse
+     * ya da imza özeti boşsa (okunamadı) `YENI`. 3) Kullanıcı kararı `HASSAS` ise `HASSAS`, imza değişmiş
+     * olsa bile. 4) Kullanıcı kararı `ACIK` ve imza özeti şimdikiyle aynıysa `ACIK`. 5) Aksi halde (karar
+     * yok ya da `ACIK` kararının imzası değişmiş) `HassasUygulamalar.otomatikHassasMi(paket, ad)` ya da
+     * `sistemIci` ise `HASSAS`, değilse `ACIK`; `ad` kurulu listesindeki görünen addır.
      */
     fun durum(paket: String): UygulamaDurumu
 

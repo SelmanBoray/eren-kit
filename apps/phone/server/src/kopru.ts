@@ -21,11 +21,13 @@ import {
   RaporOkuCikti,
   SORU_ARACLARI,
   TELEFON_ARACLARI,
+  UygulamalarCikti,
 } from "@eren/protocol";
 import type { HataKodu, KopruFiili } from "@eren/protocol";
 import type { z } from "zod";
 import { ekranMetniKur } from "./ekran-metni.ts";
 import type { BoruBaglantisi, Gunluk, KopruIstemciAyari, RastgelePortu } from "./sozlesme.ts";
+import { UygulamalarAracGirdi, uygulamaMetniKur } from "./uygulama-metni.ts";
 
 const MODUL = "kopru";
 const ILK_GECIKME_MS = 1_000;
@@ -44,6 +46,11 @@ const ROL_ARACLARI: Readonly<Record<KopruRolu, Readonly<Record<string, AracSemas
   telefon: TELEFON_ARACLARI,
 };
 
+/** Yalnız köprüde uygulanan girdi: modele bu şema yayınlanır, boruya `{}` gider. */
+const YEREL_GIRDILER: Readonly<Record<string, z.ZodType>> = {
+  uygulamalar: UygulamalarAracGirdi,
+};
+
 const ARAC_ACIKLAMALARI: Readonly<Record<string, string>> = {
   plan_oner:
     "İş planı önerir. İş başlatmaz, telefonda onay kartı açar. " +
@@ -55,7 +62,9 @@ const ARAC_ACIKLAMALARI: Readonly<Record<string, string>> = {
   oturumlar: "İş oturumlarını ve bilgisayarın bellek durumunu listeler.",
   rapor_oku: "Biten bir işin raporunu okur.",
   projeler: "Kayıtlı projeleri listeler.",
-  uygulamalar: "Telefondaki uygulamaları ve durumlarını listeler.",
+  uygulamalar:
+    "Telefondaki uygulamaları ve telefon işine açık/kapalı durumlarını listeler. " +
+    "Liste uzunsa kesilir; adı bilinen uygulama için ara ver.",
   oturum_durdur: "Bir iş oturumunu durdurur.",
   devir_ozeti: "Konuşma devri için özeti teslim eder.",
   kullaniciya_sor: "Kullanıcıya telefondan soru sorar ve cevabı bekler.",
@@ -317,7 +326,7 @@ export async function kopruCalistir(
   const tools: Tool[] = Object.entries(araclar).map(([name, arac]) => ({
     name,
     description: ARAC_ACIKLAMALARI[name],
-    inputSchema: jsonSemasi(arac.girdi) as Tool["inputSchema"],
+    inputSchema: jsonSemasi(YEREL_GIRDILER[name] ?? arac.girdi) as Tool["inputSchema"],
   }));
 
   const icHata = (fiil: string): CallToolResult => {
@@ -339,7 +348,12 @@ export async function kopruCalistir(
     return { content };
   };
 
-  const sonucCevir = (fiil: KopruFiili, ham: unknown): CallToolResult => {
+  const sonucCevir = (fiil: KopruFiili, ham: unknown, yerel?: unknown): CallToolResult => {
+    if (fiil === "uygulamalar") {
+      const r = UygulamalarCikti.safeParse(ham);
+      if (!r.success) return icHata(fiil);
+      return metinSonucu(uygulamaMetniKur(r.data, (yerel ?? {}) as UygulamalarAracGirdi));
+    }
     if (fiil === "rapor_oku") {
       const r = RaporOkuCikti.safeParse(ham);
       if (!r.success) return icHata(fiil);
@@ -365,6 +379,7 @@ ${govde}`,
     fiil: KopruFiili,
     girdi: unknown,
     sinyal: AbortSignal,
+    yerel?: unknown,
   ): Promise<CallToolResult> => {
     const kopukKodu: HataKodu = ayar.rol === "telefon" ? "telefon_bagli_degil" : "ic_hata";
     const engel = await boru.hazirBekle(sinyal, false);
@@ -372,7 +387,7 @@ ${govde}`,
     const y = await boru.istekYolla(fiil, girdi, sinyal);
     switch (y.tur) {
       case "basari":
-        return sonucCevir(fiil, y.sonuc);
+        return sonucCevir(fiil, y.sonuc, yerel);
       case "hata":
         return hataSonucu(y.code);
       case "koptu":
@@ -427,12 +442,15 @@ ${govde}`,
     const arac = Object.hasOwn(araclar, ad) ? araclar[ad] : undefined;
     if (arac === undefined) return hataSonucu("rol_fiil_izinsiz");
     // Servis şemaya uymayan çerçevede boruyu kapatır: bozuk girdi boruya çıkmamalı.
-    const girdi = arac.girdi.safeParse(ham ?? {});
+    const yerel = Object.hasOwn(YEREL_GIRDILER, ad) ? YEREL_GIRDILER[ad] : undefined;
+    const girdi = (yerel ?? arac.girdi).safeParse(ham ?? {});
     if (!girdi.success) return hataSonucu("gecersiz_mesaj");
     try {
       return ayar.rol === "soru"
         ? await soruSor(girdi.data as object, sinyal)
-        : await tekSeferlik(ad as KopruFiili, girdi.data, sinyal);
+        : yerel !== undefined
+          ? await tekSeferlik(ad as KopruFiili, {}, sinyal, girdi.data)
+          : await tekSeferlik(ad as KopruFiili, girdi.data, sinyal);
     } catch {
       return icHata(ad);
     }

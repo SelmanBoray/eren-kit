@@ -33,52 +33,83 @@ internal object KiPaket {
     const val NOTLAR = "com.example.notlar"
     const val KLAVYE = "com.example.klavye"
     const val BANKA = "com.example.banka"
+
+    /** Kurulu, kararsız sıradan uygulama ("yeni kurulmuş"): kural 5'le ACIK. */
     const val YENI = "com.example.yeni"
+
+    /** ACIK kararının imzası değişmiş sıradan uygulama: kural 5'le ACIK. */
     const val DEGISTI = "com.example.degisti"
+
+    /** Kurulu, kararsız gerçek banka paketi: kural 5'le otomatik HASSAS. */
+    const val ZIRAAT = "com.ziraat.ziraatmobil"
     const val BASLATICI = "com.example.baslatici"
     const val KURULMAMIS = "com.example.kurulmamis"
     const val AYARLAR = "com.android.settings"
     const val SYSTEMUI = "com.android.systemui"
     const val KENDI = "dev.eren.app"
 
-    /** Testin kendi durum modeli; üretimdeki `Listeler`'e bakmadan beklentiyi kurar. */
-    val ACIKLAR: Set<String> = setOf(MESAJ, HARITA, NOTLAR, KLAVYE)
     val DEGISMEZLER: List<String> = listOf(
         AYARLAR, "com.android.vending", "com.google.android.packageinstaller", "com.android.packageinstaller",
         "com.google.android.permissioncontroller", "com.android.permissioncontroller", "com.miui.securitycenter",
         "com.tailscale.ipn", SYSTEMUI, KENDI, BASLATICI,
     )
 
+    /**
+     * Kurala göre banka/para sayılan fikstür paketleri. Testin kendi elle seçtiği küme: üretimdeki
+     * `HassasUygulamalar`'a sorulmaz (BANKA ayrıca kullanıcı kararıyla da HASSAS).
+     */
+    val OTOMATIK_HASSAS: Set<String> = setOf(BANKA, ZIRAAT)
+
+    private val KURULU: List<KuruluUygulama> = listOf(
+        KuruluUygulama(MESAJ, "Mesajlar", "i-mesaj"),
+        KuruluUygulama(HARITA, "Harita", "i-harita"),
+        KuruluUygulama(NOTLAR, "Notlar", "i-notlar"),
+        KuruluUygulama(KLAVYE, "Klavye", "i-klavye"),
+        KuruluUygulama(BANKA, "Banka", "i-banka"),
+        KuruluUygulama(YENI, "Yeni", "i-yeni"),
+        KuruluUygulama(DEGISTI, "Degisti", "i-degisti-yeni"),
+        KuruluUygulama(ZIRAAT, "Ziraat Mobil", "i-ziraat"),
+        KuruluUygulama(BASLATICI, "Baslatici", "i-baslatici"),
+    )
+
+    private val KARARLAR: Map<String, KullaniciKarari> = mapOf(
+        MESAJ to KullaniciKarari(UygulamaDurumu.ACIK, "i-mesaj"),
+        HARITA to KullaniciKarari(UygulamaDurumu.ACIK, "i-harita"),
+        NOTLAR to KullaniciKarari(UygulamaDurumu.ACIK, "i-notlar"),
+        KLAVYE to KullaniciKarari(UygulamaDurumu.ACIK, "i-klavye"),
+        BANKA to KullaniciKarari(UygulamaDurumu.HASSAS, "i-banka"),
+        // Kullanıcı açık demiş ama imza o günden beri değişti: karar geçersiz, varsayılana (sıradan: ACIK) düşer.
+        DEGISTI to KullaniciKarari(UygulamaDurumu.ACIK, "i-degisti-eski"),
+        // Intent çözümüyle değişmez: kullanıcı kararı bunu açamaz.
+        BASLATICI to KullaniciKarari(UygulamaDurumu.ACIK, "i-baslatici"),
+        // YENI ve ZIRAAT bilerek kararsız.
+    )
+
+    /**
+     * Testin kendi durum modeli (degisiklik 0.4.3 §4 kuralı, sırayla); üretimdeki `Listeler`'e bakmadan
+     * beklentiyi kurar. `null` (ön plan bilinmiyor) hiçbir pakete denk gelmez: ACIK dışı bir değer yeter.
+     */
     fun durum(paket: String?): UygulamaDurumu {
         if (paket == null) return UygulamaDurumu.YENI
+        // 1. Değişmez her kararın önünde.
         if (paket in DEGISMEZLER) return UygulamaDurumu.DEGISMEZ
-        if (paket == BANKA) return UygulamaDurumu.HASSAS
-        if (paket in ACIKLAR) return UygulamaDurumu.ACIK
-        return UygulamaDurumu.YENI
+        // 2. Yalnız kurulu olmayan paket YENI.
+        val imza = KURULU.firstOrNull { it.paket == paket }?.imzaOzeti ?: return UygulamaDurumu.YENI
+        val karar = KARARLAR[paket]
+        // 3. HASSAS kararı imza değişse de HASSAS.
+        if (karar?.durum == UygulamaDurumu.HASSAS) return UygulamaDurumu.HASSAS
+        // 4. ACIK kararı yalnız aynı imzayla ACIK (bilerek açılmış banka dahil).
+        if (karar?.durum == UygulamaDurumu.ACIK && karar.imzaOzeti == imza) return UygulamaDurumu.ACIK
+        // 5. Karar yok ya da ACIK kararının imzası değişmiş: banka/para HASSAS, kalanı ACIK.
+        return if (paket in OTOMATIK_HASSAS) UygulamaDurumu.HASSAS else UygulamaDurumu.ACIK
     }
 
+    /** Modelin ACIK saydığı kurulu paketler (başlık yalnız bunlarda dolu olabilir). */
+    val ACIKLAR: Set<String> = KURULU.map { it.paket }.filter { durum(it) == UygulamaDurumu.ACIK }.toSet()
+
     fun girdi(): ListeGirdisi = ListeGirdisi(
-        kurulu = listOf(
-            KuruluUygulama(MESAJ, "Mesajlar", "i-mesaj"),
-            KuruluUygulama(HARITA, "Harita", "i-harita"),
-            KuruluUygulama(NOTLAR, "Notlar", "i-notlar"),
-            KuruluUygulama(KLAVYE, "Klavye", "i-klavye"),
-            KuruluUygulama(BANKA, "Banka", "i-banka"),
-            KuruluUygulama(YENI, "Yeni", "i-yeni"),
-            KuruluUygulama(DEGISTI, "Degisti", "i-degisti-yeni"),
-            KuruluUygulama(BASLATICI, "Baslatici", "i-baslatici"),
-        ),
-        kararlar = mapOf(
-            MESAJ to KullaniciKarari(UygulamaDurumu.ACIK, "i-mesaj"),
-            HARITA to KullaniciKarari(UygulamaDurumu.ACIK, "i-harita"),
-            NOTLAR to KullaniciKarari(UygulamaDurumu.ACIK, "i-notlar"),
-            KLAVYE to KullaniciKarari(UygulamaDurumu.ACIK, "i-klavye"),
-            BANKA to KullaniciKarari(UygulamaDurumu.HASSAS, "i-banka"),
-            // Kullanıcı açık demiş ama imza o günden beri değişti: yeniden "yeni".
-            DEGISTI to KullaniciKarari(UygulamaDurumu.ACIK, "i-degisti-eski"),
-            // Intent çözümüyle değişmez: kullanıcı kararı bunu açamaz.
-            BASLATICI to KullaniciKarari(UygulamaDurumu.ACIK, "i-baslatici"),
-        ),
+        kurulu = KURULU.toList(),
+        kararlar = KARARLAR.toMap(),
         cozulenDegismez = setOf(BASLATICI),
     )
 }
@@ -727,11 +758,17 @@ class KomutIsleyiciTest {
         val durumlar = ArrayList<D>()
         durumlar += D("hassas", onPlan(KiPaket.BANKA), DeniedNeden.HASSAS_UYGULAMA)
         durumlar += D("hassas izinde olsa da", onPlan(KiPaket.BANKA), DeniedNeden.HASSAS_UYGULAMA, listOf(mesaj, KiPaket.BANKA))
+        durumlar += D("kararsız banka (otomatik hassas)", onPlan(KiPaket.ZIRAAT), DeniedNeden.HASSAS_UYGULAMA)
+        durumlar += D(
+            "kararsız banka izinde olsa da", onPlan(KiPaket.ZIRAAT), DeniedNeden.HASSAS_UYGULAMA, listOf(mesaj, KiPaket.ZIRAAT),
+        )
         for (p in KiPaket.DEGISMEZLER) durumlar += D("değişmez $p", onPlan(p), DeniedNeden.DEGISMEZ_RET)
         durumlar += D("değişmez izinde olsa da", onPlan(KiPaket.AYARLAR), DeniedNeden.DEGISMEZ_RET, listOf(mesaj, KiPaket.AYARLAR))
-        durumlar += D("yeni", onPlan(KiPaket.YENI), DeniedNeden.YENI_UYGULAMA)
-        durumlar += D("imzası değişmiş", onPlan(KiPaket.DEGISTI), DeniedNeden.YENI_UYGULAMA)
+        // Kararsız sıradan ve imzası değişmiş sıradan uygulama ACIK: plan dışındaysa yalnız plan reddi.
+        durumlar += D("yeni (kararsız sıradan) izin dışı", onPlan(KiPaket.YENI), DeniedNeden.ON_PLAN_IZIN_DISI)
+        durumlar += D("imzası değişmiş sıradan izin dışı", onPlan(KiPaket.DEGISTI), DeniedNeden.ON_PLAN_IZIN_DISI)
         durumlar += D("kurulu değil", onPlan(KiPaket.KURULMAMIS), DeniedNeden.YENI_UYGULAMA)
+        durumlar += D("kurulu değil izinde olsa da", onPlan(KiPaket.KURULMAMIS), DeniedNeden.YENI_UYGULAMA, listOf(mesaj, KiPaket.KURULMAMIS))
         durumlar += D("açık ama izin dışı", onPlan(KiPaket.HARITA), DeniedNeden.ON_PLAN_IZIN_DISI)
         durumlar += D("aktif kök uyuşmuyor", onPlan(mesaj).copy(aktifKokPaketi = KiPaket.HARITA), DeniedNeden.ON_PLAN_IZIN_DISI)
         durumlar += D("odak uyuşmuyor", onPlan(mesaj).copy(odakPaketi = KiPaket.HARITA), DeniedNeden.ON_PLAN_IZIN_DISI)
@@ -768,14 +805,123 @@ class KomutIsleyiciTest {
         return testler
     }
 
+    /**
+     * Gerileme (0.4.3, HyperOS, 2026-11-09): `foreground` ok, ardından PC bildiriminin heads-up'ı
+     * kapanınca SystemUI'nin `TYPE_WINDOW_STATE_CHANGED` olayı son olayı `com.android.systemui` yaptı;
+     * aktif kök ve odak izinli uygulamada kaldığı hâlde `elements`/`screenshot`/`zoom` kalıcı olarak
+     * `on_plan_izin_disi` ve boş başlık aldı. SystemUI olayı ön plan uygulamasının değiştiği anlamına
+     * gelmez; aktif kök ve odak aynı izinli paketteyse ret olmamalı.
+     */
+    @Test
+    fun systemUiPencereOlayiIzinliOnPlaniBozmaz() {
+        val t = KiTezgah()
+        val izin = t.izinVer(mod = IzinModu.YAZ, butce = 5)
+        val cubuklar = listOf(
+            SahteEkran.uygulamaPenceresi(mesaj, katman = 1),
+            SahteEkran.sistemPenceresi(PencereTuru.DURUM_CUBUGU, KiPaket.SYSTEMUI, katman = 2),
+        )
+        val once = SahteEkran.anlikDurum(mesaj, "Mesajlar", 0L, cubuklar)
+        val sonra = once.copy(sonOlayPaketi = KiPaket.SYSTEMUI)
+
+        t.sahteEkran.anlikSenaryo(once)
+        assertEquals("Mesajlar", t.tamam(t.cmd(izin, "foreground")).baslik)
+
+        // Heads-up kapandı: yalnız son olay değişti.
+        t.sahteEkran.anlikSenaryo(sonra)
+        t.sahteEkran.okuma = ElementOkumasi(
+            listOf(
+                SahteEkran.dugum(1, mesaj, ad = "Abonelikler"),
+                SahteEkran.dugum(2, KiPaket.SYSTEMUI, ad = "$KI_GIZLI-BILDIRIM"),
+            ),
+            false,
+        )
+        val e = t.tamam(t.cmd(izin, "elements", """{"query":"Abonelikler"}"""))
+        assertEquals("Mesajlar", e.baslik)
+        assertEquals(mesaj, e.paket)
+        assertEquals(listOf(1L), e.elementler().map { KiJson.tam(it["id"]) }) { "yalnız izinli paketin düğümü" }
+
+        assertEquals("image", t.tamam(t.cmd(izin, "screenshot")).yukTuru)
+        assertEquals("image", t.tamam(t.cmd(izin, "zoom", """{"x0":0,"y0":0,"x1":720,"y1":1600}""")).yukTuru)
+
+        // Eylem tabanı (`eylemYeriIzinli`) da aynı ön planı kabul eder.
+        t.tamam(t.cmd(izin, "click", """{"element":5}"""))
+        assertEquals(1, t.sahteEylem.cagrilar.size)
+    }
+
+    @TestFactory
+    fun systemUiOlayiGuvenlikRetleriniGevsetmez(): List<DynamicTest> {
+        class D(val ad: String, val anlik: AnlikDurum, val neden: DeniedNeden, val paketler: List<String> = listOf(mesaj))
+        val su = KiPaket.SYSTEMUI
+        val durumlar = listOf(
+            // Perde açık / SystemUI diyaloğu: SystemUI gerçekten önde, değişmez.
+            D("SystemUI önde", onPlan(su), DeniedNeden.DEGISMEZ_RET),
+            D("SystemUI önde, izinde olsa da", onPlan(su), DeniedNeden.DEGISMEZ_RET, listOf(mesaj, su)),
+            D("odak SystemUI", onPlan(mesaj).copy(sonOlayPaketi = su, odakPaketi = su), DeniedNeden.ON_PLAN_IZIN_DISI),
+            D("aktif kök SystemUI", onPlan(mesaj).copy(sonOlayPaketi = su, aktifKokPaketi = su), DeniedNeden.ON_PLAN_IZIN_DISI),
+            D("hassas önde", onPlan(KiPaket.BANKA).copy(sonOlayPaketi = su), DeniedNeden.HASSAS_UYGULAMA),
+            D("değişmez önde", onPlan(KiPaket.AYARLAR).copy(sonOlayPaketi = su), DeniedNeden.DEGISMEZ_RET),
+            D("plan dışı önde", onPlan(KiPaket.HARITA).copy(sonOlayPaketi = su), DeniedNeden.ON_PLAN_IZIN_DISI),
+            D("kurulu değil önde", onPlan(KiPaket.KURULMAMIS).copy(sonOlayPaketi = su), DeniedNeden.YENI_UYGULAMA),
+            D("ön plan bilinmiyor", onPlan(null).copy(sonOlayPaketi = su), DeniedNeden.ON_PLAN_IZIN_DISI),
+        )
+        val testler = ArrayList<DynamicTest>()
+        for (d in durumlar) {
+            for (komut in listOf("elements", "foreground", "screenshot")) {
+                testler += DynamicTest.dynamicTest("$komut: ${d.ad}") {
+                    val t = KiTezgah()
+                    val izin = t.izinVer(paketler = d.paketler)
+                    t.sahteEkran.anlikSenaryo(d.anlik)
+                    val c = t.ret(t.cmd(izin, komut), d.neden, DeniedNeden.IZIN_DISI_PENCERE)
+                    assertTrue(c.onPlan == null || c.baslik == "") { "izin dışı ön planda başlık dolu: $c" }
+                    assertFalse("elementler" in t.ekran.olaylar)
+                    assertEquals(0, t.sahteEkran.goruntuSayisi)
+                }
+            }
+            testler += DynamicTest.dynamicTest("click: ${d.ad}") {
+                val t = KiTezgah()
+                // Yazma izni tek paketlidir; çok paketli planda okuma modunda düğüme tıklama.
+                val mod = if (d.paketler.size == 1) IzinModu.YAZ else IzinModu.OKU
+                val izin = t.izinVer(mod = mod, paketler = d.paketler)
+                t.sahteEkran.anlikSenaryo(d.anlik)
+                t.ret(t.cmd(izin, "click", """{"element":5}"""), d.neden)
+            }
+        }
+        // SystemUI son olayı varken görünen heads-up: görüntü ve o noktaya dokunma yine reddedilir.
+        val headsUp = SahteEkran.anlikDurum(
+            mesaj,
+            "Mesajlar",
+            0L,
+            listOf(
+                SahteEkran.uygulamaPenceresi(mesaj, katman = 1),
+                SahteEkran.sistemPenceresi(PencereTuru.HEADS_UP, su, katman = 2),
+            ),
+        ).copy(sonOlayPaketi = su)
+        testler += DynamicTest.dynamicTest("screenshot: heads-up görünür") {
+            val t = KiTezgah()
+            val izin = t.izinVer()
+            t.sahteEkran.anlikSenaryo(headsUp)
+            t.ret(t.cmd(izin, "screenshot"), DeniedNeden.IZIN_DISI_PENCERE)
+            assertEquals(0, t.sahteEkran.goruntuSayisi)
+        }
+        testler += DynamicTest.dynamicTest("click noktası: heads-up üstünde") {
+            val t = KiTezgah()
+            val izin = t.izinVer(mod = IzinModu.YAZ)
+            t.sahteEkran.anlikSenaryo(headsUp)
+            t.ret(t.cmd(izin, "click", """{"x":10,"y":10}"""), DeniedNeden.ON_PLAN_IZIN_DISI)
+        }
+        return testler
+    }
+
     @TestFactory
     fun openAppZinciriHedefeUygulanir(): List<DynamicTest> = listOf(
         Triple("hassas hedef", KiPaket.BANKA, DeniedNeden.HASSAS_UYGULAMA),
         Triple("Ayarlar", KiPaket.AYARLAR, DeniedNeden.DEGISMEZ_RET),
         Triple("uygulamanın kendisi", KiPaket.KENDI, DeniedNeden.DEGISMEZ_RET),
         Triple("Play", "com.android.vending", DeniedNeden.DEGISMEZ_RET),
-        Triple("yeni", KiPaket.YENI, DeniedNeden.YENI_UYGULAMA),
-        Triple("imzası değişmiş", KiPaket.DEGISTI, DeniedNeden.YENI_UYGULAMA),
+        Triple("kararsız banka (otomatik hassas)", KiPaket.ZIRAAT, DeniedNeden.HASSAS_UYGULAMA),
+        // Kararsız ve imzası değişmiş sıradan uygulama ACIK: plan dışında olduğu için plan reddi.
+        Triple("yeni (kararsız sıradan) izin dışı", KiPaket.YENI, DeniedNeden.ON_PLAN_IZIN_DISI),
+        Triple("imzası değişmiş sıradan izin dışı", KiPaket.DEGISTI, DeniedNeden.ON_PLAN_IZIN_DISI),
         Triple("kurulu değil", KiPaket.KURULMAMIS, DeniedNeden.YENI_UYGULAMA),
         Triple("açık ama izin dışı", KiPaket.HARITA, DeniedNeden.ON_PLAN_IZIN_DISI),
     ).map { (ad, hedef, neden) ->
@@ -792,6 +938,51 @@ class KomutIsleyiciTest {
         val t = KiTezgah()
         val izin = t.izinVer(paketler = listOf(mesaj, KiPaket.BANKA))
         t.ret(t.cmd(izin, "open_app", """{"package":"${KiPaket.BANKA}"}"""), DeniedNeden.HASSAS_UYGULAMA)
+    }
+
+    @Test
+    fun openAppKararsizBankaIzindeOlsaDaReddedilir() {
+        val t = KiTezgah()
+        val izin = t.izinVer(paketler = listOf(mesaj, KiPaket.ZIRAAT), butce = 5)
+        t.ret(t.cmd(izin, "open_app", """{"package":"${KiPaket.ZIRAAT}"}"""), DeniedNeden.HASSAS_UYGULAMA)
+        assertEquals(5, t.butce(izin))
+    }
+
+    @Test
+    fun openAppKuruluOlmayanIzindeOlsaDaReddedilir() {
+        val t = KiTezgah()
+        val izin = t.izinVer(paketler = listOf(mesaj, KiPaket.KURULMAMIS), butce = 5)
+        t.ret(t.cmd(izin, "open_app", """{"package":"${KiPaket.KURULMAMIS}"}"""), DeniedNeden.YENI_UYGULAMA)
+        assertEquals(5, t.butce(izin))
+    }
+
+    /** Kararsız (yeni kurulmuş) ve imzası değişmiş sıradan uygulama ACIK: plandaysa izinli. */
+    @TestFactory
+    fun kararsizSiradanUygulamaPlandaIzinlidir(): List<DynamicTest> {
+        val testler = ArrayList<DynamicTest>()
+        for ((ad, p) in listOf("yeni (kararsız sıradan)" to KiPaket.YENI, "imzası değişmiş sıradan" to KiPaket.DEGISTI)) {
+            testler += DynamicTest.dynamicTest("open_app: $ad") {
+                val t = KiTezgah()
+                val izin = t.izinVer(paketler = listOf(mesaj, p), butce = 5)
+                val onceki = t.sahteEylem.cagrilar.size
+                t.tamam(t.cmd(izin, "open_app", """{"package":"$p"}"""))
+                assertEquals(listOf<EylemCagrisi>(EylemCagrisi.UygulamaAc(p)), t.sahteEylem.cagrilar.drop(onceki))
+                assertEquals(4, t.butce(izin))
+            }
+            testler += DynamicTest.dynamicTest("click: $ad") {
+                val t = KiTezgah()
+                val izin = t.izinVer(paketler = listOf(p), butce = 5)
+                t.sahteEkran.anlikSenaryo(onPlan(p, "Baslik $p"))
+                t.sahteEkran.dugumler[5] = SahteEkran.baglam(SahteEkran.dugum(5, p, ad = "Liste"))
+                val onceki = t.sahteEylem.cagrilar.size
+                val c = t.tamam(t.cmd(izin, "click", """{"element":5}"""))
+                assertEquals(p, c.paket)
+                assertEquals("Baslik $p", c.baslik)
+                assertEquals(listOf<EylemCagrisi>(EylemCagrisi.DugumeDokun(5, 1, false)), t.sahteEylem.cagrilar.drop(onceki))
+                assertEquals(4, t.butce(izin))
+            }
+        }
+        return testler
     }
 
     private fun katmanli(vararg ek: Pencere): AnlikDurum =

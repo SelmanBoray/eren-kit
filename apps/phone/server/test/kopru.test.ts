@@ -245,16 +245,87 @@ describe("kopru: araç listesi", () => {
 
 describe("kopru: çağrı ve sonuç", () => {
   it("eren aracı boru isteğine döner, sonuç JSON metni olur", async () => {
-    const sonuc = { telefon_bagli: false, uygulamalar: [] };
+    const sonuc = { projeler: [{ ad: "ornek", yol: "C:\\ornek" }] };
     const d = await kur("eren", (s) => {
       s.davranis = (m, bag, sv) => sv.yanit(bag, m["istek_id"], { ok: true, sonuc });
     });
-    const r = await d.istemci.callTool({ name: "uygulamalar", arguments: {} });
+    const r = await d.istemci.callTool({ name: "projeler", arguments: {} });
     assert.ok(!hataMi(r));
     assert.deepEqual(JSON.parse(metin(r)), sonuc);
-    const [istek] = d.servis.istekler("uygulamalar");
+    const [istek] = d.servis.istekler("projeler");
     assert.ok(OpakId.safeParse(istek!["istek_id"]).success);
     assert.deepEqual(istek!["girdi"], {});
+  });
+
+  describe("uygulamalar", () => {
+    const LISTE = {
+      telefon_bagli: true,
+      uygulamalar: [
+        { paket: "com.whatsapp", ad: "WhatsApp", durum: "acik" },
+        { paket: "com.ziraat.ziraatmobil", ad: "Ziraat Mobil", durum: "hassas" },
+        { paket: "com.android.settings", ad: "Ayarlar", durum: "degismez" },
+      ],
+    };
+    const kurListe = () =>
+      kur("eren", (s) => {
+        s.davranis = (m, bag, sv) => sv.yanit(bag, m["istek_id"], { ok: true, sonuc: LISTE });
+      });
+
+    it("sonuç sıkı metin olur; kapalılar işaretli, boruya {} gider", async () => {
+      const d = await kurListe();
+      const r = await d.istemci.callTool({ name: "uygulamalar", arguments: {} });
+      assert.ok(!hataMi(r));
+      const t = metin(r);
+      assert.ok(t.startsWith("uygulamalar: telefon_bagli=evet toplam=3 gosterilen=3\n"), t);
+      assert.ok(t.includes("\ncom.whatsapp WhatsApp"));
+      assert.ok(t.includes("\ncom.ziraat.ziraatmobil [kapalı:hassas] Ziraat Mobil"));
+      assert.ok(t.includes("\ncom.android.settings [kapalı:degismez] Ayarlar"));
+      const [istek] = d.servis.istekler("uygulamalar");
+      assert.deepEqual(istek!["girdi"], {});
+    });
+
+    it("ara köprüde süzer, boruya gitmez", async () => {
+      const d = await kurListe();
+      const r = await d.istemci.callTool({ name: "uygulamalar", arguments: { ara: "ziraat" } });
+      const t = metin(r);
+      assert.ok(t.includes("eslesen=1 gosterilen=1"), t);
+      assert.ok(t.includes("com.ziraat.ziraatmobil [kapalı:hassas]"));
+      assert.ok(!t.includes("com.whatsapp"));
+      assert.deepEqual(d.servis.istekler("uygulamalar")[0]!["girdi"], {});
+    });
+
+    it("geçersiz ara boruya çıkmadan gecersiz_mesaj olur", async () => {
+      const d = await kurListe();
+      for (const args of [{ ara: "" }, { ara: 5 }, { baska: true }]) {
+        const r = await d.istemci.callTool({ name: "uygulamalar", arguments: args });
+        assert.ok(hataMi(r));
+        assert.equal(metin(r).trim(), "hata: gecersiz_mesaj");
+      }
+      assert.equal(d.servis.istekler("uygulamalar").length, 0);
+    });
+
+    it("şemaya uymayan servis sonucu ic_hata olur", async () => {
+      const d = await kur("eren", (s) => {
+        s.davranis = (m, bag, sv) =>
+          sv.yanit(bag, m["istek_id"], { ok: true, sonuc: { telefon_bagli: true } });
+      });
+      const r = await d.istemci.callTool({ name: "uygulamalar", arguments: {} });
+      assert.ok(hataMi(r));
+      assert.equal(metin(r).trim(), "hata: ic_hata");
+    });
+
+    it("araç tanımı ara girdisini yayınlar, büyümesi 300 karakteri aşmaz", async () => {
+      const d = await kur("eren");
+      const { tools } = await d.istemci.listTools();
+      const t = tools.find((x) => x.name === "uygulamalar")!;
+      assert.deepEqual(Object.keys(t.inputSchema.properties ?? {}), ["ara"]);
+      assert.equal(t.inputSchema.required, undefined);
+      const eski =
+        "Telefondaki uygulamaları ve durumlarını listeler.".length +
+        JSON.stringify({ type: "object", properties: {}, additionalProperties: false }).length;
+      const yeni = (t.description ?? "").length + JSON.stringify(t.inputSchema).length;
+      assert.ok(yeni - eski <= 300, `büyüme ${yeni - eski}`);
+    });
   });
 
   it("boru hatası isError:true ve 'hata: <code>' olur, detail modele gitmez", async () => {

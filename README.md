@@ -578,6 +578,8 @@ eren-kit/
 
 ## 🧭 Roadmap
 
+Detailed proposals with evidence and cost: [docs/ONERILER.md](docs/ONERILER.md) (Turkish).
+
 Honest list of what is missing, in no particular order:
 
 - [ ] **English Opus Orkestra rules** (currently Turkish only).

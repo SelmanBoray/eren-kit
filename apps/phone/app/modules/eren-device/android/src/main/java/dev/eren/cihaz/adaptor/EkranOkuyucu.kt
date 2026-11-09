@@ -94,6 +94,9 @@ class EkranOkuyucu(baglam: Context) : EkranPortu, A11yBagi {
 
         val LISTELER = listOf("RecyclerView", "ListView", "GridView", "ScrollView", "ViewPager", "ViewPager2")
 
+        /** Tanı günlüğünde yalnız bu biçimdeki paket adı yazılır. */
+        val TANI_PAKET = Regex("^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+$")
+
         /** Ekran görüntüsü geri çağrısı bağlayıcı ipliğinde çalışır; yalnız sonucu bırakır. */
         val DOGRUDAN = Executor { it.run() }
 
@@ -196,12 +199,38 @@ class EkranOkuyucu(baglam: Context) : EkranPortu, A11yBagi {
 
     override fun anlik(): AnlikDurum {
         val zaman = SystemClock.elapsedRealtime()
-        val s = servis ?: return bosAnlik(zaman)
-        return try {
+        val s = servis ?: return bosAnlik(zaman).also { sonAnlik = it }
+        val a = try {
             anlikOku(s, zaman)
         } catch (e: Exception) {
             bosAnlik(zaman)
         }
+        sonAnlik = a
+        return a
+    }
+
+    /**
+     * Tanı günlüğü (`CihazServisi` "ErenKapi"): son `anlik()` okumasının yalnız paket adları ve pencere
+     * türleri. Kapının her ret dalında son okunan anlık kararın girdisidir (kural 8, 11, 12). Başlık,
+     * metin, düğüm içeriği yok; paket biçimine uymayan ad `?` olur.
+     */
+    @Volatile private var sonAnlik: AnlikDurum? = null
+
+    fun sonAnlikOzeti(): String {
+        val a = sonAnlik ?: return "anlik=yok"
+        // Çubuklar ve aktif kökün kendi uygulama penceresi dışındaki görünen pencereler: izin dışı adaylar.
+        val diger = a.pencereler
+            .filter { it.tur != PencereTuru.DURUM_CUBUGU && it.tur != PencereTuru.GEZINTI_CUBUGU }
+            .filter { !(it.tur == PencereTuru.UYGULAMA && it.paket == a.aktifKokPaketi) }
+            .joinToString(",") { "${it.tur.name}:${guvenliPaket(it.paket)}" }
+        return "kok=${guvenliPaket(a.aktifKokPaketi)} olay=${guvenliPaket(a.sonOlayPaketi)}" +
+            "odak=${guvenliPaket(a.odakPaketi)} pencereler=[$diger]"
+    }
+
+    private fun guvenliPaket(p: String?): String = when {
+        p == null -> "null"
+        p.length <= Sinirlar.PAKET_ADI && TANI_PAKET.matches(p) -> p
+        else -> "?"
     }
 
     override fun elementler(): ElementOkumasi {

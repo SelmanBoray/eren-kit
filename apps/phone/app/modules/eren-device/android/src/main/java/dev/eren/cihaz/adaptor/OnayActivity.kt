@@ -296,9 +296,9 @@ class OnayActivity : Activity() {
                 UygulamaDurumu.DEGISMEZ ->
                     sonuc.add("${temiz(u.ad)}: değişmez ret listesinde (sistem/güvenlik uygulaması ya da bu uygulamanın kendisi)")
                 UygulamaDurumu.HASSAS ->
-                    sonuc.add("${temiz(u.ad)}: hassas olarak işaretli (banka/parola türü)")
+                    sonuc.add("${temiz(u.ad)}: Uygulamalar ekranında kapalı; açmak için oradan açın")
                 UygulamaDurumu.YENI ->
-                    sonuc.add("${temiz(u.ad)}: yeni, kurulu değil ya da imzası değişmiş; önce Uygulamalar ekranından açın")
+                    sonuc.add("${temiz(u.ad)}: bu telefonda kurulu değil")
             }
         }
         if (biyometriGerek(i) && !biyometriVarMi()) {
@@ -607,9 +607,9 @@ class OnayActivity : Activity() {
 
     private fun durumAdi(d: UygulamaDurumu) = when (d) {
         UygulamaDurumu.ACIK -> "açık"
-        UygulamaDurumu.HASSAS -> "hassas"
-        UygulamaDurumu.YENI -> "yeni"
-        UygulamaDurumu.DEGISMEZ -> "değişmez"
+        UygulamaDurumu.HASSAS -> "kapalı"
+        UygulamaDurumu.YENI -> "kurulu değil"
+        UygulamaDurumu.DEGISMEZ -> "kilitli"
     }
 
     /** Güvenilmez metinde görünmez/yön değiştiren denetim karakterleri görünür işaretle değişir. */

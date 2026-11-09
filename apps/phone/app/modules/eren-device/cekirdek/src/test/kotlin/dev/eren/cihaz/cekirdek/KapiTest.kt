@@ -19,6 +19,14 @@ class KapiTest {
     private val yeniPaket = "com.example.yeni"
     private val imzaDegisen = "com.example.imza"
     private val diger = "com.example.diger"
+    // YENI = yalnız kurulu olmayan paket (kuralın 2. adımı); listeler girdisinde bilerek yok
+    private val kurulmamis = "com.example.kurulmamis"
+    // otomatik hassas banka, kullanıcı kararı yok
+    private val ziraat = "com.ziraat.ziraatmobil"
+    // otomatik hassas banka, kullanıcı bilerek aynı imzayla ACIK yaptı
+    private val bankaAcik = "com.garanti.cepsubesi"
+    // otomatik hassas banka, ACIK kararının imzası değişmiş
+    private val bankaImzaDegisen = "com.vakifbank.mobile"
     private val ev = "com.ornek.anaekran"
     private val klavyePaketi = "com.example.klavye"
 
@@ -46,6 +54,9 @@ class KapiTest {
                 KuruluUygulama(yeniPaket, "Yeni", "imza-y"),
                 KuruluUygulama(imzaDegisen, "Imza", "imza-yeni"),
                 KuruluUygulama(diger, "Diger", "imza-d"),
+                KuruluUygulama(ziraat, "Ziraat Mobil", "imza-z"),
+                KuruluUygulama(bankaAcik, "Garanti BBVA", "imza-g"),
+                KuruluUygulama(bankaImzaDegisen, "Vakif Mobil", "imza-v"),
             ),
             kararlar = mapOf(
                 mesaj to KullaniciKarari(UygulamaDurumu.ACIK, "imza-m"),
@@ -53,6 +64,8 @@ class KapiTest {
                 banka to KullaniciKarari(UygulamaDurumu.HASSAS, "imza-b"),
                 imzaDegisen to KullaniciKarari(UygulamaDurumu.ACIK, "imza-eski"),
                 diger to KullaniciKarari(UygulamaDurumu.ACIK, "imza-d"),
+                bankaAcik to KullaniciKarari(UygulamaDurumu.ACIK, "imza-g"),
+                bankaImzaDegisen to KullaniciKarari(UygulamaDurumu.ACIK, "imza-eski"),
             ),
             cozulenDegismez = setOf(ev),
         ),
@@ -235,16 +248,47 @@ class KapiTest {
 
     @Test
     fun hassasYeniVeImzasiDegisenPaketListedeOlsaBileRet() {
-        val hepsi = listOf(mesaj, banka, yeniPaket, imzaDegisen)
+        val hepsi = listOf(mesaj, banka, yeniPaket, imzaDegisen, kurulmamis)
         ret(DeniedNeden.HASSAS_UYGULAMA, Kapi.ekranDenetimi(girdi(CmdArg.Screenshot, izin(paketler = hepsi), temiz(banka))))
-        ret(DeniedNeden.YENI_UYGULAMA, Kapi.ekranDenetimi(girdi(CmdArg.Screenshot, izin(paketler = hepsi), temiz(yeniPaket))))
-        ret(DeniedNeden.YENI_UYGULAMA, Kapi.ekranDenetimi(girdi(CmdArg.Screenshot, izin(paketler = hepsi), temiz(imzaDegisen))))
+        // YENI yalnız kurulu olmayan paket
+        ret(DeniedNeden.YENI_UYGULAMA, Kapi.ekranDenetimi(girdi(CmdArg.Screenshot, izin(paketler = hepsi), temiz(kurulmamis))))
+        // kararsız ya da imzası değişmiş sıradan paket artık ACIK: listedeyse izinli
+        izinli(Kapi.ekranDenetimi(girdi(CmdArg.Screenshot, izin(paketler = hepsi), temiz(yeniPaket))))
+        izinli(Kapi.ekranDenetimi(girdi(CmdArg.Screenshot, izin(paketler = hepsi), temiz(imzaDegisen))))
         ret(DeniedNeden.HASSAS_UYGULAMA, Kapi.ekranDenetimi(girdi(CmdArg.OpenApp(banka), izin(paketler = hepsi))))
-        ret(DeniedNeden.YENI_UYGULAMA, Kapi.ekranDenetimi(girdi(CmdArg.OpenApp(yeniPaket), izin(paketler = hepsi))))
-        ret(DeniedNeden.YENI_UYGULAMA, Kapi.ekranDenetimi(girdi(CmdArg.OpenApp(imzaDegisen), izin(paketler = hepsi))))
-        // listede olmayan hassas / yeni: durum nedeni izin dışından önce gelir
+        ret(DeniedNeden.YENI_UYGULAMA, Kapi.ekranDenetimi(girdi(CmdArg.OpenApp(kurulmamis), izin(paketler = hepsi))))
+        izinli(Kapi.ekranDenetimi(girdi(CmdArg.OpenApp(yeniPaket), izin(paketler = hepsi))))
+        izinli(Kapi.ekranDenetimi(girdi(CmdArg.OpenApp(imzaDegisen), izin(paketler = hepsi))))
+        // listede olmayan hassas / kurulmamış: durum nedeni izin dışından önce gelir
         ret(DeniedNeden.HASSAS_UYGULAMA, Kapi.ekranDenetimi(girdi(CmdArg.Screenshot, anlik = temiz(banka))))
-        ret(DeniedNeden.YENI_UYGULAMA, Kapi.ekranDenetimi(girdi(CmdArg.Screenshot, anlik = temiz(yeniPaket))))
+        ret(DeniedNeden.YENI_UYGULAMA, Kapi.ekranDenetimi(girdi(CmdArg.Screenshot, anlik = temiz(kurulmamis))))
+        // listede olmayan açık (kararsız ya da imzası değişmiş) paket: yalnız plan dışı
+        ret(DeniedNeden.ON_PLAN_IZIN_DISI, Kapi.ekranDenetimi(girdi(CmdArg.Screenshot, anlik = temiz(yeniPaket))))
+        ret(DeniedNeden.ON_PLAN_IZIN_DISI, Kapi.ekranDenetimi(girdi(CmdArg.Screenshot, anlik = temiz(imzaDegisen))))
+    }
+
+    @Test
+    fun kararsizOtomatikHassasBankaListedeOlsaBileRet() {
+        val plan = listOf(mesaj, ziraat, bankaImzaDegisen)
+        // kararsız banka: plandaki izin listesinde olsa da HASSAS
+        ret(DeniedNeden.HASSAS_UYGULAMA, Kapi.ekranDenetimi(girdi(CmdArg.Screenshot, izin(paketler = plan), temiz(ziraat))))
+        ret(DeniedNeden.HASSAS_UYGULAMA, Kapi.ekranDenetimi(girdi(CmdArg.OpenApp(ziraat), izin(paketler = plan))))
+        ret(DeniedNeden.HASSAS_UYGULAMA, Kapi.ekranDenetimi(girdi(noktaTikla(), izin(IzinModu.YAZ, paketler = plan), temiz(ziraat))))
+        // listede olmasa da durum nedeni önce gelir
+        ret(DeniedNeden.HASSAS_UYGULAMA, Kapi.ekranDenetimi(girdi(CmdArg.Screenshot, anlik = temiz(ziraat))))
+        // ACIK kararının imzası değişmiş banka da varsayılana döner: HASSAS
+        ret(DeniedNeden.HASSAS_UYGULAMA, Kapi.ekranDenetimi(girdi(CmdArg.Screenshot, izin(paketler = plan), temiz(bankaImzaDegisen))))
+        // pozitif: aynı plandaki sıradan paket geçer
+        izinli(Kapi.ekranDenetimi(girdi(CmdArg.Screenshot, izin(paketler = plan))))
+    }
+
+    @Test
+    fun kullanicininAyniImzaylaAcikYaptigiBankaPlandaysaIzinli() {
+        val plan = listOf(mesaj, bankaAcik)
+        izinli(Kapi.ekranDenetimi(girdi(CmdArg.Screenshot, izin(paketler = plan), temiz(bankaAcik))))
+        izinli(Kapi.ekranDenetimi(girdi(CmdArg.OpenApp(bankaAcik), izin(paketler = plan))))
+        // plan dışındaysa yine plan kuralı geçerli
+        ret(DeniedNeden.ON_PLAN_IZIN_DISI, Kapi.ekranDenetimi(girdi(CmdArg.Screenshot, anlik = temiz(bankaAcik))))
     }
 
     @Test
@@ -255,19 +299,23 @@ class KapiTest {
 
     @Test
     fun openAppOnPlanZinciriniUygulamazYalnizHedefi() {
-        val hepsi = listOf(mesaj, notlar, banka, yeniPaket, imzaDegisen, diger)
-        // ön plan ana ekran (YENI) ya da uygulamanın kendi paketi: izinli hedefe açılabilir
+        val hepsi = listOf(mesaj, notlar, banka, yeniPaket, imzaDegisen, diger, kurulmamis)
+        // ön plan ana ekran ya da uygulamanın kendi paketi: izinli hedefe açılabilir
         for (on in listOf(ev, kendi)) {
             izinli(Kapi.ekranDenetimi(girdi(CmdArg.OpenApp(mesaj), izin(paketler = hepsi), temiz(on))))
         }
         izinli(Kapi.ekranDenetimi(girdi(CmdArg.OpenApp(mesaj), anlik = temiz(yeniPaket))))
+        // ön plan kurulu olmayan (YENI) paketken de izinli hedefe açılabilir: zincir uygulanmaz, yalnız hedef denetlenir
+        izinli(Kapi.ekranDenetimi(girdi(CmdArg.OpenApp(mesaj), anlik = temiz(kurulmamis))))
         // ön plan izinliyken kötü hedefler reddedilir
         for (p in sabitDegismez) {
             ret(DeniedNeden.DEGISMEZ_RET, Kapi.ekranDenetimi(girdi(CmdArg.OpenApp(p), izin(paketler = hepsi + p))))
         }
         ret(DeniedNeden.HASSAS_UYGULAMA, Kapi.ekranDenetimi(girdi(CmdArg.OpenApp(banka), izin(paketler = hepsi))))
-        ret(DeniedNeden.YENI_UYGULAMA, Kapi.ekranDenetimi(girdi(CmdArg.OpenApp(yeniPaket), izin(paketler = hepsi))))
-        ret(DeniedNeden.YENI_UYGULAMA, Kapi.ekranDenetimi(girdi(CmdArg.OpenApp(imzaDegisen), izin(paketler = hepsi))))
+        ret(DeniedNeden.YENI_UYGULAMA, Kapi.ekranDenetimi(girdi(CmdArg.OpenApp(kurulmamis), izin(paketler = hepsi))))
+        // kararsız ve imzası değişmiş sıradan hedef artık ACIK: listedeyse açılır
+        izinli(Kapi.ekranDenetimi(girdi(CmdArg.OpenApp(yeniPaket), izin(paketler = hepsi))))
+        izinli(Kapi.ekranDenetimi(girdi(CmdArg.OpenApp(imzaDegisen), izin(paketler = hepsi))))
         ret(DeniedNeden.ON_PLAN_IZIN_DISI, Kapi.ekranDenetimi(girdi(CmdArg.OpenApp(notlar))))
         ret(DeniedNeden.ON_PLAN_IZIN_DISI, Kapi.ekranDenetimi(girdi(CmdArg.OpenApp(diger))))
         // ön plan ana ekranken de kötü hedef reddedilir
@@ -334,6 +382,26 @@ class KapiTest {
             ret(DeniedNeden.ON_PLAN_IZIN_DISI, Kapi.ekranDenetimi(girdi(CmdArg.Screenshot, izn, u)))
             ret(DeniedNeden.ON_PLAN_IZIN_DISI, Kapi.ekranDenetimi(girdi(CmdArg.Key(Tus.BACK, 1), izin(IzinModu.YAZ, listOf(mesaj, notlar)), u)))
         }
+        // SystemUI'nin pencere olayı (heads-up, perde toplanması) yalnız son olayı değiştirdiyse ön plan aynıdır.
+        val su = "com.android.systemui"
+        val suOlayi = cubuklu().copy(sonOlayPaketi = su)
+        izinli(Kapi.ekranDenetimi(girdi(CmdArg.Elements(null), izn, suOlayi)))
+        izinli(Kapi.ekranDenetimi(girdi(CmdArg.Foreground, izn, suOlayi)))
+        izinli(Kapi.ekranDenetimi(girdi(CmdArg.Screenshot, izn, suOlayi)))
+        izinli(Kapi.ekranDenetimi(girdi(CmdArg.Key(Tus.BACK, 1), izin(IzinModu.YAZ, listOf(mesaj, notlar)), suOlayi)))
+        // ...ama aktif kök ya da odak SystemUI ise (perde açık) ya da biri başka uygulamaysa ret aynen.
+        for (u in listOf(
+            suOlayi.copy(odakPaketi = su),
+            suOlayi.copy(aktifKokPaketi = su),
+            suOlayi.copy(odakPaketi = notlar),
+            suOlayi.copy(aktifKokPaketi = diger),
+            suOlayi.copy(odakPaketi = null),
+        )) {
+            ret(DeniedNeden.ON_PLAN_IZIN_DISI, Kapi.ekranDenetimi(girdi(CmdArg.Elements(null), izn, u)))
+        }
+        ret(DeniedNeden.DEGISMEZ_RET, Kapi.ekranDenetimi(girdi(CmdArg.Elements(null), izn, temiz(su))))
+        ret(DeniedNeden.HASSAS_UYGULAMA, Kapi.ekranDenetimi(girdi(CmdArg.Elements(null), izin(paketler = listOf(mesaj, banka)), temiz(banka).copy(sonOlayPaketi = su))))
+        ret(DeniedNeden.ON_PLAN_IZIN_DISI, Kapi.ekranDenetimi(girdi(CmdArg.Elements(null), izn, temiz(diger).copy(sonOlayPaketi = su))))
         // uyuşmazlık değişmez listeden önce: bir köşe değişmez, diğeri izinli olsa da ilk kural
         ret(
             DeniedNeden.ON_PLAN_IZIN_DISI,
@@ -624,7 +692,9 @@ class KapiTest {
         ret(DeniedNeden.ON_PLAN_IZIN_DISI, Kapi.ekranDenetimi(girdi(CmdArg.Key(Tus.BACK, 1), anlik = temiz(diger))))
         ret(DeniedNeden.DEGISMEZ_RET, Kapi.ekranDenetimi(girdi(CmdArg.TypeText("x"), anlik = temiz("com.android.settings"), hedef = dugumBaglam())))
         ret(DeniedNeden.HASSAS_UYGULAMA, Kapi.ekranDenetimi(girdi(noktaTikla(), anlik = temiz(banka))))
-        ret(DeniedNeden.YENI_UYGULAMA, Kapi.ekranDenetimi(girdi(CmdArg.Drag(1, 1, 2, 2), anlik = temiz(yeniPaket))))
+        ret(DeniedNeden.YENI_UYGULAMA, Kapi.ekranDenetimi(girdi(CmdArg.Drag(1, 1, 2, 2), anlik = temiz(kurulmamis))))
+        // kararsız sıradan paket ACIK: yalnız plan dışı olduğu için ön plan kuralı reddeder
+        ret(DeniedNeden.ON_PLAN_IZIN_DISI, Kapi.ekranDenetimi(girdi(CmdArg.Drag(1, 1, 2, 2), anlik = temiz(yeniPaket))))
         // 8 (ön plan) önce, 10 (bütçe) sonra
         ret(DeniedNeden.ON_PLAN_IZIN_DISI, Kapi.ekranDenetimi(girdi(CmdArg.Key(Tus.BACK, 1), izin(IzinModu.YAZ, butce = 0), temiz(diger))))
         // durum çubuğuna x,y: ön plan (8) ham dokunmadan (9) önce
@@ -668,6 +738,8 @@ class KapiTest {
             d.copy(sonOlayPaketi = diger),
             d.copy(odakPaketi = diger),
             d.copy(odakPaketi = klavyePaketi),
+            // Görüntü sırasında beliren heads-up resme girmiş olabilir: kural 12 SystemUI olayında da katı.
+            d.copy(sonOlayPaketi = "com.android.systemui"),
         )
         for (s in degisenler) {
             ret(DeniedNeden.ON_PLAN_IZIN_DISI, goruntu(s, SahteEkran.goruntuTamam(0.0), izn = iki))

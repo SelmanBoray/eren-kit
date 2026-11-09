@@ -20,16 +20,28 @@ private class ListeGoruntusu(kendiPaketi: String, girdi: ListeGirdisi) {
     private val kararlar: Map<String, KullaniciKarari> = girdi.kararlar.toMap()
     private val kurulu: List<KuruluUygulama> = girdi.kurulu.toList()
 
+    /**
+     * Kararı olmayan (ya da açık kararının imzası değişmiş) kurulu uygulamanın varsayılanı; görüntüyle bir kez
+     * hesaplanır. Banka ve benzeri ile başlatıcısı olmayan sistem iç paketleri hassas başlar.
+     */
+    private val varsayilan: Map<String, UygulamaDurumu> = girdi.kurulu.associate {
+        val hassas = HassasUygulamalar.otomatikHassasMi(it.paket, it.ad) || it.sistemIci
+        it.paket to if (hassas) UygulamaDurumu.HASSAS else UygulamaDurumu.ACIK
+    }
+
     fun durum(paket: String): UygulamaDurumu {
+        // 1. Değişmez her kararın önündedir.
         if (paket in degismez) return UygulamaDurumu.DEGISMEZ
-        val imza = imzalar[paket] ?: return UygulamaDurumu.YENI
-        val karar = kararlar[paket] ?: return UygulamaDurumu.YENI
-        if (karar.imzaOzeti != imza) return UygulamaDurumu.YENI
-        return when (karar.durum) {
-            UygulamaDurumu.ACIK -> UygulamaDurumu.ACIK
-            UygulamaDurumu.HASSAS -> UygulamaDurumu.HASSAS
-            UygulamaDurumu.YENI, UygulamaDurumu.DEGISMEZ -> UygulamaDurumu.YENI
-        }
+        // 2. Kurulu değil ya da imza okunamadı (boş özet): güvenilir imza yok, kapı reddeder.
+        val imza = imzalar[paket]
+        if (imza.isNullOrEmpty()) return UygulamaDurumu.YENI
+        val karar = kararlar[paket]
+        // 3. Kullanıcının HASSAS kararı imza değişse de geçerli: daha kısıtlayıcı olan güvenlidir.
+        if (karar?.durum == UygulamaDurumu.HASSAS) return UygulamaDurumu.HASSAS
+        // 4. Kullanıcının ACIK kararı yalnız aynı imzayla geçerli (bilerek açılmış banka dahil).
+        if (karar?.durum == UygulamaDurumu.ACIK && karar.imzaOzeti == imza) return UygulamaDurumu.ACIK
+        // 5. Karar yok ya da açık kararın imzası değişmiş: banka ve benzeri hassas, kalanı açık.
+        return varsayilan[paket] ?: UygulamaDurumu.HASSAS
     }
 
     fun uygulamalar(): List<UygulamaBilgisi> =

@@ -38,6 +38,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `%LOCALAPPDATA%`, which stayed literal on macOS.
 - `bellek` tests run on macOS: process-tree cleanup without `taskkill`, platform-correct
   undefined-variable syntax.
+- `bellek`: the brain service no longer does a reverse DNS lookup (`socket.getfqdn`) when it binds;
+  on macOS this could hang startup indefinitely.
+- `apps/phone` 0.4.3 (2026-11-09):
+  - The voice shortcut now sends the dictated message without asking for confirmation.
+  - The voice shortcut does not run while the device is locked.
+  - In the shortcut prompt, the assistant no longer asks clarifying questions; it acts on the most reasonable reading.
+  - App permissions: user-visible apps are on by default. Banking, money and identity apps (including password managers and 2FA) and system components are turned off automatically. The assistant can never use the home screen or the default keyboard app, and the user cannot turn them on. The Apps screen is now a simple On/Off switch.
 
 ## [0.1.0] - 2026-11-09
 

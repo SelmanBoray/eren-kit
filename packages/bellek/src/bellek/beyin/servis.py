@@ -1,6 +1,7 @@
 """Beyin servisi: veritabanının tek yazarı, 127.0.0.1 üzerinde JSON HTTP API."""
 from __future__ import annotations
 
+import errno
 import hmac
 import html
 import importlib
@@ -11,10 +12,12 @@ import queue
 import re
 import secrets
 import socket
+import socketserver
 import sqlite3
 import sys
 import tempfile
 import threading
+import time
 import traceback
 from collections import OrderedDict
 from datetime import datetime
@@ -151,6 +154,28 @@ class ServisBaslatilamadi(RuntimeError):
     pass
 
 
+class ServisCakismasi(ServisBaslatilamadi):
+    """Kilit ya da port başka bir süreçte: yeniden başlatmak durumu düzeltmez."""
+
+
+class ServisZatenCalisiyor(ServisCakismasi):
+    pass
+
+
+class PortKullanimda(ServisCakismasi):
+    pass
+
+
+# Gözetmen (macOS launchd, KeepAlive SuccessfulExit=false) bu değişkeni "1" verir: çakışmada
+# 0 ile çıkılır ki launchd sonsuza dek yeniden denemesin. Port önce bir süre beklenir (çökmeden
+# hemen sonra eski bağlantıların TIME_WAIT'i portu kısa süre tutabilir). Verilmezse (Windows
+# Görev Zamanlayıcı, elle başlatma) davranış aynıdır: her başlatma hatası çıkış kodu 1.
+CAKISMADA_TEMIZ_CIK = "BELLEK_BEYIN_CAKISMADA_TEMIZ_CIK"
+PORT_BEKLEME = 60.0
+PORT_BEKLEME_ARALIK = 2.0
+_PORT_DOLU = {errno.EADDRINUSE, 10048}  # 10048: WSAEADDRINUSE
+
+
 # ------------------------------------------------------------ belirteç, kilit
 def _belirtec_dosyasi_hazirla(yol: Path, yasak: str | None = None) -> str:
     """Dosya yoksa 32 bayt rastgele hex üretip yazar; değeri döndürür.
@@ -229,7 +254,7 @@ class TekSurecKilidi:
                 fcntl.flock(self.f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
             self.f.close()
-            raise ServisBaslatilamadi(
+            raise ServisZatenCalisiyor(
                 f"Başka bir beyin servisi zaten çalışıyor (kilit dosyası: {self.yol}). "
                 "Tek yazar kuralı gereği ikinci servis açılmaz."
             )
@@ -1011,7 +1036,13 @@ class _Sunucu(ThreadingHTTPServer):
         if sys.platform == "win32":
             # Aynı porta ikinci sürecin bağlanmasını engelle (port gaspı / çift servis).
             self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
-        super().server_bind()
+        # HTTPServer.server_bind, server_name için socket.getfqdn(host) çağırır: ters DNS sorgusu.
+        # macOS'ta (ör. GitHub runner) bu 127.0.0.1 için dakikalarca takılabilir ve servis açılmaz.
+        # Servis yalnız yerel adrese bağlanır; ad olarak adresin kendisi yeterlidir.
+        socketserver.TCPServer.server_bind(self)
+        host, port = self.server_address[:2]
+        self.server_name = host
+        self.server_port = port
 
 
 class Sunucu:
@@ -1032,7 +1063,8 @@ class Sunucu:
                 self.http = _Sunucu((host, port),
                                     _yapilandir(self.durum, self.belirtec, ref, self.arayuz_belirtec))
             except OSError as e:
-                raise ServisBaslatilamadi(f"{host}:{port} dinlenemedi ({e.strerror or type(e).__name__}); port kullanımda olabilir.")
+                tur = PortKullanimda if e.errno in _PORT_DOLU else ServisBaslatilamadi
+                raise tur(f"{host}:{port} dinlenemedi ({e.strerror or type(e).__name__}); port kullanımda olabilir.")
             ref[0] = self.http
             kuyruk_bosalt(self.durum)
             self.kuyruk_is_parcacigi = threading.Thread(target=self._kuyruk_dongusu, name="beyin-kuyruk", daemon=True)
@@ -1082,11 +1114,24 @@ def sunucu_olustur(host: str = "127.0.0.1", port: int | None = None):
 def calistir(host: str = "127.0.0.1", port: int | None = None) -> None:
     if host not in ("127.0.0.1", "localhost"):
         host = "127.0.0.1"  # dış erişim sonraki aşama
-    try:
-        srv, _ = sunucu_olustur(host, port)
-    except ServisBaslatilamadi as e:
-        gunluk(f"başlatılamadı: {e}")
-        print(f"Beyin servisi başlatılamadı: {e}", file=sys.stderr)
+    temiz = os.environ.get(CAKISMADA_TEMIZ_CIK) == "1"
+    son = time.monotonic() + PORT_BEKLEME
+    while True:
+        try:
+            srv, _ = sunucu_olustur(host, port)
+            break
+        except PortKullanimda as e:
+            if temiz and time.monotonic() < son:
+                time.sleep(PORT_BEKLEME_ARALIK)
+                continue
+            hata = e
+        except ServisBaslatilamadi as e:
+            hata = e
+        gunluk(f"başlatılamadı: {hata}")
+        print(f"Beyin servisi başlatılamadı: {hata}", file=sys.stderr)
+        if temiz and isinstance(hata, ServisCakismasi):
+            gunluk("çakışma: yeniden denenmesin diye 0 ile çıkılıyor")
+            sys.exit(0)
         sys.exit(1)
     gunluk(f"servis başladı {srv.server_address}")
     try:
