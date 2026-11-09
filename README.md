@@ -8,7 +8,7 @@
 **Memory, orchestration and hands for Claude Code.**
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Platform: Windows 10 | 11](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D6.svg)](#-quick-start)
+[![Platform: Windows 10 | 11 · macOS](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20%C2%B7%20macOS-0078D6.svg)](#-quick-start)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-3776AB.svg)](packages/bellek/pyproject.toml)
 [![Node 24+ (phone only)](https://img.shields.io/badge/node-24%2B%20(phone%20only)-5FA04E.svg)](apps/phone/package.json)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-toolkit-D97757.svg)](https://docs.claude.com/en/docs/claude-code/overview)
@@ -108,7 +108,7 @@ experimental.
 
 | Requirement | Needed for | Notes |
 | --- | --- | --- |
-| Windows 10 or 11 | everything | macOS and Linux are not supported yet |
+| Windows 10 or 11 | everything | On macOS use `install.sh`, see [macOS & iOS](#-macos--ios). Linux is not supported yet |
 | PowerShell | the installer | PowerShell 7 recommended; Windows PowerShell 5.1 also works |
 | Python 3.12+ | Memory & Brain, Handoff | computer-use-windows and the installer need 3.11+ |
 | `python` on `PATH`, 3.11+ | Handoff and Opus Orkestra hooks | The hooks call plain `python`, and the installer checks its version. Tick **"Add python.exe to PATH"** when installing Python |
@@ -164,6 +164,52 @@ ask for it.
 ```
 
 Running the installer again is safe: it updates what changed and leaves the rest alone.
+
+## 🍎 macOS & iOS
+
+<p align="center">
+  <img src="docs/assets/macos.svg" alt="eren-kit on macOS: install.sh writes hooks, skills and the beyin MCP for Claude Code, and a LaunchAgent that runs the brain service; iPhone and iPad open the brain as a home-screen web app over Tailscale" width="100%">
+</p>
+
+On macOS, `install.sh` does what `install.ps1` does on Windows, with the same rules: it merges
+`settings.json` instead of overwriting it, backs up everything it changes, is safe to re-run, and
+removes only what it installed.
+
+```bash
+git clone https://github.com/SelmanBoray/eren-kit.git && cd eren-kit
+./install.sh --dry-run                    # list what would change, change nothing
+./install.sh --assistant-name "Ada"       # install beyin, devir, orkestra
+./install.sh --uninstall                  # remove them again (venvs and your data stay)
+```
+
+Needs Python 3.12+ (`brew install python@3.13`) and the Claude Code CLI. Flags mirror the Windows
+installer: `--components`, `--claude-home`, `--skip-mcp`, `--no-service`, `--replace-existing`, plus
+`--tailscale-host` (see below).
+
+| | Windows | macOS |
+| --- | --- | --- |
+| Brain service | Task Scheduler task at logon | LaunchAgent `com.eren-kit.beyin-servis` (`~/Library/LaunchAgents`), restarts on crash, log in `~/Library/Logs/eren-kit` |
+| Local data | `%LOCALAPPDATA%\Bellek` | `~/Library/Application Support/Bellek` |
+| Hook interpreter | `python` on `PATH` | absolute path of a Python 3.11+ (`python` usually does not exist on macOS) |
+| Assistant name | user environment variable | `env` block of `settings.json` and the service plist |
+| Computer use | `computer-use-windows` MCP | Claude Code's [built-in computer use](https://code.claude.com/docs/en/computer-use): in a session run `/mcp`, pick `computer-use`, **Enable** (Pro/Max, interactive sessions) |
+
+**iPhone and iPad.** The brain's web UI works in mobile Safari and can be added to the home screen
+as an app (it ships a web manifest and icon). Expose it to your own devices only, over your tailnet:
+
+```bash
+tailscale serve --bg --http 80 http://127.0.0.1:47321
+./install.sh --components beyin --tailscale-host "<mac>.<tailnet>.ts.net"
+packages/bellek/.venv/bin/beyin ac --yazdir --taban "http://<mac>.<tailnet>.ts.net"
+```
+
+Open the printed address on the phone, then Share → **Add to Home Screen**. The home-screen app has
+its own storage, so on its first launch paste the same address (or just the key) into the field on
+the sign-in screen; it is remembered for that app only. In a normal browser tab the key still lasts
+only for the session. Nothing is opened to the internet: no funnel, and the service still binds to
+`127.0.0.1`.
+
+<p align="center"><img src="docs/assets/ios-beyin.png" alt="The brain web UI in Safari on an iPhone simulator" width="260"></p>
 
 ## 🛠️ `install.ps1` reference
 
@@ -423,7 +469,7 @@ It can also run without cloning, through `uvx`; see
 | `CLAUDE_CONFIG_DIR` | installer | `%USERPROFILE%\.claude` | Claude Code's settings folder; the installer uses it as the default for `-ClaudeHome` |
 | `EREN_KIT_ASSISTANT_NAME` | brain web UI, phone app | `Claude` | Display name of the assistant. Set by `-AssistantName`. It does not rename Claude inside Claude Code |
 | `BELLEK_CONFIG` | Memory & Brain, Handoff | `packages\bellek\bellek.toml` | Path of the config file |
-| `BELLEK_BEYIN_DB` | Memory & Brain | `%LOCALAPPDATA%\Bellek\beyin.db` | Brain database |
+| `BELLEK_BEYIN_DB` | Memory & Brain | `%LOCALAPPDATA%\Bellek\beyin.db` (macOS: `~/Library/Application Support/Bellek/beyin.db`) | Brain database |
 | `BELLEK_BEYIN_PORT` | Memory & Brain | `47321` | Port of the local brain service |
 | `BELLEK_BEYIN_IZINLI_HOST` | Memory & Brain | empty | Extra `Host` values the service accepts (comma-separated), for access from another device |
 | `BELLEK_DEVIR_DIR` | Handoff | `<vault>\devir` | Root folder of handoff notes |
@@ -442,7 +488,7 @@ installer copies it to `packages\bellek\bellek.toml`, which is git-ignored. The 
 ```toml
 [bellek]
 vault = "vault"                        # your notes folder; handoff notes go to vault/devir
-state_dir = "%LOCALAPPDATA%/Bellek"    # indexes and logs, kept out of the vault
+# state_dir = "..."                    # optional; default %LOCALAPPDATA%/Bellek (macOS: ~/Library/Application Support/Bellek)
 
 [server]
 host = "127.0.0.1"                     # local only
@@ -455,7 +501,7 @@ You can also add read-only note sources (`[[source]]`) and map folders to projec
 ## 🔒 Privacy & safety
 
 - **Your data stays local.** The brain database, notes, logs and tokens live under
-  `%LOCALAPPDATA%\Bellek` and your vault folder. The brain service listens on `127.0.0.1` only.
+  `%LOCALAPPDATA%\Bellek` (macOS: `~/Library/Application Support/Bellek`) and your vault folder. The brain service listens on `127.0.0.1` only.
 - **Nothing personal goes into the repository.** `bellek.toml`, `vault/`, eval data, databases,
   `.env` files and keys are listed in [`.gitignore`](.gitignore).
 - **Mind the model provider.** Whatever a tool returns (brain entries, screenshots, screen text)
@@ -495,8 +541,9 @@ Honest list of what is missing, in no particular order:
 
 - [ ] **English Opus Orkestra rules** (currently Turkish only).
 - [ ] **A usable phone app:** the client app, authentication and pairing are not done yet.
-- [ ] **macOS and Linux support.** Today everything assumes Windows; computer-use-windows is
-      Windows-only by design.
+- [x] **macOS support** (`install.sh`, LaunchAgent, built-in computer use) and the brain web UI on
+      iPhone/iPad. computer-use-windows stays Windows-only by design.
+- [ ] **Linux support** (paths are ready; there is no installer or service unit yet).
 - [ ] **One-line install with `uvx`** for the whole kit (today only computer-use-windows can run
       through `uvx`).
 - [ ] More English documentation for the `bellek` package.

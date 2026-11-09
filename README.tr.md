@@ -8,7 +8,7 @@
 **Claude Code için bellek, orkestrasyon ve eller.**
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Platform: Windows 10 | 11](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D6.svg)](#-hızlı-başlangıç)
+[![Platform: Windows 10 | 11 · macOS](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20%C2%B7%20macOS-0078D6.svg)](#-hızlı-başlangıç)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-3776AB.svg)](packages/bellek/pyproject.toml)
 [![Node 24+ (phone only)](https://img.shields.io/badge/node-24%2B%20(phone%20only)-5FA04E.svg)](apps/phone/package.json)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-toolkit-D97757.svg)](https://docs.claude.com/en/docs/claude-code/overview)
@@ -108,7 +108,7 @@ tur bittiğinde devir notlarını yazar. Beyin veritabanının tek bir yazıcıs
 
 | Gereksinim | Ne için gerekli | Notlar |
 | --- | --- | --- |
-| Windows 10 veya 11 | her şey | macOS ve Linux henüz desteklenmiyor |
+| Windows 10 veya 11 | her şey | macOS'ta `install.sh` kullanın, bkz. [macOS ve iOS](#-macos-ve-ios). Linux henüz desteklenmiyor |
 | PowerShell | kurulum betiği | PowerShell 7 önerilir; Windows PowerShell 5.1 de çalışır |
 | Python 3.12+ | Bellek & Beyin, Devir | computer-use-windows ve kurulum betiği için 3.11+ yeterli |
 | `PATH` üzerinde `python`, 3.11+ | Devir ve Opus Orkestra hook'ları | Hook'lar doğrudan `python` komutunu çağırır ve kurulum betiği sürümünü denetler. Python'u kurarken **"Add python.exe to PATH"** kutusunu işaretleyin |
@@ -164,6 +164,52 @@ siz isterseniz kurulur.
 ```
 
 Kurulum betiğini yeniden çalıştırmak güvenlidir: değişeni günceller, geri kalanına dokunmaz.
+
+## 🍎 macOS ve iOS
+
+<p align="center">
+  <img src="docs/assets/macos.tr.svg" alt="eren-kit macOS üzerinde: install.sh Claude Code için hook, skill ve beyin MCP'sini, beyin servisini çalıştıran bir LaunchAgent'ı yazar; iPhone ve iPad beyni Tailscale üzerinden ana ekran web uygulaması olarak açar" width="100%">
+</p>
+
+macOS'ta `install.sh`, Windows'taki `install.ps1` ile aynı işi aynı kurallarla yapar: `settings.json`
+dosyasını birleştirir, değiştirdiği her şeyi yedekler, yeniden çalıştırmak güvenlidir ve yalnızca
+kendi kurduğunu kaldırır.
+
+```bash
+git clone https://github.com/SelmanBoray/eren-kit.git && cd eren-kit
+./install.sh --dry-run                    # neyin değişeceğini listele, hiçbir şeyi değiştirme
+./install.sh --assistant-name "Ada"       # beyin, devir, orkestra kur
+./install.sh --uninstall                  # geri kaldır (venv'ler ve verin kalır)
+```
+
+Python 3.12+ (`brew install python@3.13`) ve Claude Code CLI gerekir. Seçenekler Windows betiğiyle
+aynıdır: `--components`, `--claude-home`, `--skip-mcp`, `--no-service`, `--replace-existing`; ayrıca
+`--tailscale-host` (aşağıda).
+
+| | Windows | macOS |
+| --- | --- | --- |
+| Beyin servisi | Oturum açılışında Görev Zamanlayıcı görevi | LaunchAgent `com.eren-kit.beyin-servis` (`~/Library/LaunchAgents`); çökerse yeniden başlar, günlük `~/Library/Logs/eren-kit` altında |
+| Yerel veri | `%LOCALAPPDATA%\Bellek` | `~/Library/Application Support/Bellek` |
+| Hook yorumlayıcısı | `PATH`'teki `python` | 3.11+ bir Python'un mutlak yolu (macOS'ta `python` komutu genelde yoktur) |
+| Asistan adı | kullanıcı ortam değişkeni | `settings.json` içindeki `env` alanı ve servis plist'i |
+| Computer use | `computer-use-windows` MCP | Claude Code'un [yerleşik computer use'u](https://code.claude.com/docs/en/computer-use): oturumda `/mcp` → `computer-use` → **Enable** (Pro/Max, etkileşimli oturum) |
+
+**iPhone ve iPad.** Beynin web arayüzü mobil Safari'de çalışır ve ana ekrana uygulama olarak
+eklenebilir (web manifesti ve ikonu vardır). Yalnızca kendi cihazlarına, tailnet üzerinden aç:
+
+```bash
+tailscale serve --bg --http 80 http://127.0.0.1:47321
+./install.sh --components beyin --tailscale-host "<mac>.<tailnet>.ts.net"
+packages/bellek/.venv/bin/beyin ac --yazdir --taban "http://<mac>.<tailnet>.ts.net"
+```
+
+Yazdırılan adresi telefonda aç, ardından Paylaş → **Ana Ekrana Ekle**. Ana ekran uygulamasının ayrı
+depolaması vardır; ilk açılışta aynı adresi (ya da yalnızca anahtarı) giriş ekranındaki alana
+yapıştır, yalnızca o uygulama için hatırlanır. Normal tarayıcı sekmesinde anahtar yine yalnızca
+oturum boyunca tutulur. İnternete hiçbir şey açılmaz: funnel yok, servis yine yalnızca `127.0.0.1`
+üzerinde dinler.
+
+<p align="center"><img src="docs/assets/ios-beyin.png" alt="iPhone simülatöründe Safari'de beyin web arayüzü" width="260"></p>
 
 ## 🛠️ `install.ps1` başvurusu
 
@@ -422,7 +468,7 @@ Klonlamadan, `uvx` ile de çalıştırılabilir; bkz.
 | `CLAUDE_CONFIG_DIR` | kurulum betiği | `%USERPROFILE%\.claude` | Claude Code'un ayar klasörü; kurulum betiği `-ClaudeHome` için varsayılan olarak bunu kullanır |
 | `EREN_KIT_ASSISTANT_NAME` | beyin web arayüzü, telefon uygulaması | `Claude` | Asistanın görünen adı. `-AssistantName` ile ayarlanır. Claude Code içinde Claude'u yeniden adlandırmaz |
 | `BELLEK_CONFIG` | Bellek & Beyin, Devir | `packages\bellek\bellek.toml` | Yapılandırma dosyasının yolu |
-| `BELLEK_BEYIN_DB` | Bellek & Beyin | `%LOCALAPPDATA%\Bellek\beyin.db` | Beyin veritabanı |
+| `BELLEK_BEYIN_DB` | Bellek & Beyin | `%LOCALAPPDATA%\Bellek\beyin.db` (macOS: `~/Library/Application Support/Bellek/beyin.db`) | Beyin veritabanı |
 | `BELLEK_BEYIN_PORT` | Bellek & Beyin | `47321` | Yerel beyin servisinin bağlantı noktası |
 | `BELLEK_BEYIN_IZINLI_HOST` | Bellek & Beyin | boş | Servisin kabul ettiği ek `Host` değerleri (virgülle ayrılmış); başka bir cihazdan erişim için |
 | `BELLEK_DEVIR_DIR` | Devir | `<vault>\devir` | Devir notlarının kök klasörü |
@@ -441,7 +487,7 @@ betiği onu `packages\bellek\bellek.toml` olarak kopyalar, bu dosya git tarafın
 ```toml
 [bellek]
 vault = "vault"                        # your notes folder; handoff notes go to vault/devir
-state_dir = "%LOCALAPPDATA%/Bellek"    # indexes and logs, kept out of the vault
+# state_dir = "..."                    # isteğe bağlı; varsayılan %LOCALAPPDATA%/Bellek (macOS: ~/Library/Application Support/Bellek)
 
 [server]
 host = "127.0.0.1"                     # local only
@@ -454,7 +500,7 @@ eşleyebilirsiniz (`[projects]`); şablon ikisini de açıklar.
 ## 🔒 Gizlilik ve güvenlik
 
 - **Verileriniz yerelde kalır.** Beyin veritabanı, notlar, günlükler ve token'lar
-  `%LOCALAPPDATA%\Bellek` ile vault klasörünüzde durur. Beyin servisi yalnızca `127.0.0.1` üzerinde dinler.
+  `%LOCALAPPDATA%\Bellek` (macOS: `~/Library/Application Support/Bellek`) ile vault klasörünüzde durur. Beyin servisi yalnızca `127.0.0.1` üzerinde dinler.
 - **Depoya kişisel hiçbir şey girmez.** `bellek.toml`, `vault/`, değerlendirme verileri,
   veritabanları, `.env` dosyaları ve anahtarlar [`.gitignore`](.gitignore) içinde listelidir.
 - **Model sağlayıcısına dikkat edin.** Bir aracın döndürdüğü her şey (beyin girdileri, ekran
@@ -494,8 +540,9 @@ Eksik olanların dürüst listesi, sıralama gözetmeksizin:
 
 - [ ] **İngilizce Opus Orkestra kuralları** (şu an yalnızca Türkçe).
 - [ ] **Kullanılabilir bir telefon uygulaması:** istemci uygulaması, kimlik doğrulama ve eşleştirme henüz yapılmadı.
-- [ ] **macOS ve Linux desteği.** Bugün her şey Windows'u varsayar; computer-use-windows tasarım
-      gereği yalnızca Windows içindir.
+- [x] **macOS desteği** (`install.sh`, LaunchAgent, yerleşik computer use) ve iPhone/iPad'de beyin
+      web arayüzü. computer-use-windows tasarım gereği yalnızca Windows içindir.
+- [ ] **Linux desteği** (yollar hazır; kurulum betiği ve servis birimi henüz yok).
 - [ ] **Tüm takım için `uvx` ile tek satırlık kurulum** (bugün yalnızca computer-use-windows `uvx`
       üzerinden çalışabiliyor).
 - [ ] `bellek` paketi için daha fazla İngilizce belge.
