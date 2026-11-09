@@ -3,7 +3,12 @@
 install.ps1 tarafından çağrılır; elle çalıştırmak da güvenlidir.
 
     python -I settings_hooks.py --settings <yol> --repo <repo> --components devir,orkestra
-        [--uninstall] [--dry-run] [--replace-legacy] [--backup-dir <klasör>]
+        [--uninstall] [--dry-run] [--replace-legacy] [--backup-dir <klasör>] [--python <komut>]
+
+--python: hook komutlarındaki yorumlayıcı. Varsayılan "python" (Windows'ta PATH'teki python).
+macOS'ta "python" komutu genelde yoktur; install.sh 3.11+ bir python3'ün yolunu verir.
+Bir hook'un "bizim" olduğu betik yolundan tanındığı için yorumlayıcı değişse de kayıt
+ikiye katlanmaz, yerinde güncellenir.
 
 Kurallar:
 - Var olan ayarlar ve başka hook'lar korunur; yalnız eren-kit'in hook'ları eklenir/güncellenir.
@@ -37,12 +42,18 @@ LEGACY_HINTS = {
 }
 
 
-def hook_specs(repo: str) -> dict:
-    devir_cmd = f'python -I "{repo}{DEVIR_TAIL}" || true'
+def _quote_exe(python: str) -> str:
+    """Boşluk içeren yorumlayıcı yolu tırnaklanır; düz komut adı ("python") olduğu gibi kalır."""
+    return f'"{python}"' if any(c.isspace() for c in python) else python
+
+
+def hook_specs(repo: str, python: str = "python") -> dict:
+    py = _quote_exe(python)
+    devir_cmd = f'{py} -I "{repo}{DEVIR_TAIL}" || true'
     ork = f"{repo}{ORKESTRA_TAIL}"
     ork_hooks = []
     for n in range(1, 5):
-        h = {"type": "command", "command": f'python -I "{ork}" --parca {n}', "timeout": 15}
+        h = {"type": "command", "command": f'{py} -I "{ork}" --parca {n}', "timeout": 15}
         if n == 1:
             h["statusMessage"] = "Opus Orkestra kuralı yükleniyor..."
         ork_hooks.append(h)
@@ -151,7 +162,7 @@ def write_atomic(path: str, data: dict) -> None:
 
 def run(args) -> dict:
     repo = args.repo.replace("\\", "/").rstrip("/")
-    specs = hook_specs(repo)
+    specs = hook_specs(repo, args.python)
     keys = [k.strip() for k in args.components.split(",") if k.strip()]
     for k in keys:
         if k not in specs:
@@ -242,6 +253,8 @@ def main(argv=None) -> int:
     p.add_argument("--replace-legacy", action="store_true",
                    help="aynı betiğin repo dışındaki eski kopyalarının hook kayıtlarını kaldır")
     p.add_argument("--backup-dir")
+    p.add_argument("--python", default="python",
+                   help='hook komutlarındaki yorumlayıcı (varsayılan "python")')
     args = p.parse_args(argv)
     try:
         report = run(args)
