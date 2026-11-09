@@ -1,0 +1,72 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "computer-use-windows"
+version = "0.1.0"
+description = "MCP server: token-frugal computer use for terminal AI agents on Windows"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "SelmanBoray" }]
+keywords = [
+    "mcp",
+    "computer-use",
+    "claude-code",
+    "windows",
+    "ui-automation",
+    "automation",
+    "ai-agents",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Desktop Environment",
+    "Topic :: Software Development :: Testing",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "mcp>=1.30.0,<2",
+    "mss>=10.2.0",
+    "Pillow>=13.0.0",
+    "comtypes>=1.4.17",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff"]
+
+[project.scripts]
+computer-use-windows = "computer_use_windows.server:main"
+
+[project.urls]
+Homepage = "https://github.com/SelmanBoray/eren-kit/tree/main/packages/computer-use-windows"
+Issues = "https://github.com/SelmanBoray/eren-kit/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/computer_use_windows"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+markers = [
+    "integration: moves the mouse, types or opens windows; opt-in with -m integration",
+]
+addopts = '-m "not integration"'

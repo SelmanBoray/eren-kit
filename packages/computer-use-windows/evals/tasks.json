@@ -1,0 +1,176 @@
+{
+  "version": 1,
+  "tasks": [
+    {
+      "id": "term-file",
+      "kind": "terminal",
+      "prompt": "Create a file named hello.txt in the current directory containing exactly: merhaba dunya from the eval",
+      "setup": [],
+      "expect": {
+        "gui_tools": "none",
+        "checks": [
+          {"type": "file_contains", "path": "{workdir}/hello.txt", "text": "merhaba dunya from the eval"}
+        ]
+      },
+      "max_turns": 10
+    },
+    {
+      "id": "term-clipboard",
+      "kind": "terminal",
+      "prompt": "Please copy the text cuw-eval-7431 to my clipboard so I can paste it somewhere else in a moment.",
+      "setup": [],
+      "expect": {
+        "gui_tools": "none",
+        "checks": [
+          {"type": "clipboard_equals", "text": "cuw-eval-7431"}
+        ]
+      },
+      "max_turns": 10
+    },
+    {
+      "id": "term-env",
+      "kind": "terminal",
+      "prompt": "What is the value of the PROCESSOR_ARCHITECTURE environment variable on this computer? Tell me the exact value.",
+      "setup": [],
+      "expect": {
+        "gui_tools": "none",
+        "checks": [
+          {"type": "answer_contains", "text": "AMD64"}
+        ]
+      },
+      "max_turns": 10
+    },
+    {
+      "id": "term-winver",
+      "kind": "terminal",
+      "prompt": "Which version of Windows is this PC running? I'd like the product name and the build number.",
+      "setup": [],
+      "expect": {
+        "gui_tools": "none",
+        "checks": [
+          {"type": "answer_contains", "text": "Windows"}
+        ]
+      },
+      "max_turns": 10
+    },
+    {
+      "id": "term-count",
+      "kind": "terminal",
+      "prompt": "Make a folder called notes in the current directory. Put seven text files in it named note1.txt through note7.txt, and also two Markdown files named a.md and b.md. Then tell me how many .txt files the folder contains.",
+      "setup": [],
+      "expect": {
+        "gui_tools": "none",
+        "checks": [
+          {"type": "file_exists", "path": "{workdir}/notes/note7.txt"},
+          {"type": "answer_contains", "text": "7"}
+        ]
+      },
+      "max_turns": 10
+    },
+    {
+      "id": "term-topmem",
+      "kind": "terminal",
+      "prompt": "My computer feels sluggish. Which running process is using the most memory right now? Give me its name and roughly how much memory it uses.",
+      "setup": [],
+      "expect": {
+        "gui_tools": "none",
+        "checks": []
+      },
+      "max_turns": 10
+    },
+    {
+      "id": "gui-read-result",
+      "kind": "gui",
+      "prompt": "There is a small window titled \"CUW Test Form\" open on my screen. What does the Result label in that window currently say?",
+      "setup": ["test_form"],
+      "expect": {
+        "gui_tools": "some",
+        "checks": [
+          {"type": "answer_contains", "text": "waiting"}
+        ]
+      },
+      "max_turns": 20
+    },
+    {
+      "id": "gui-submit",
+      "kind": "gui",
+      "prompt": "In the \"CUW Test Form\" window that is open on my screen, type merhaba into the Input box and click the Submit button. Then tell me what the Result label says.",
+      "setup": ["test_form"],
+      "expect": {
+        "gui_tools": "some",
+        "checks": [
+          {"type": "answer_contains", "text": "got:merhaba"},
+          {"type": "form_result", "text": "got:merhaba"}
+        ]
+      },
+      "max_turns": 20
+    },
+    {
+      "id": "gui-submit-turkish",
+      "kind": "gui",
+      "prompt": "In the \"CUW Test Form\" window that is open on my screen, type the text Şişli Çağrı ğüı into the Input box (keep the Turkish characters exactly) and click Submit. Then tell me what the Result label says.",
+      "setup": ["test_form"],
+      "expect": {
+        "gui_tools": "some",
+        "checks": [
+          {"type": "answer_contains", "text": "got:Şişli Çağrı ğüı"},
+          {"type": "form_result", "text": "got:Şişli Çağrı ğüı"}
+        ]
+      },
+      "max_turns": 20
+    },
+    {
+      "id": "gui-checkbox-submit",
+      "kind": "gui",
+      "prompt": "The \"CUW Test Form\" window is open on my screen. Tick the Agree checkbox, type ok into the Input box, click Submit, and tell me what the Result label says afterwards.",
+      "setup": ["test_form"],
+      "expect": {
+        "gui_tools": "some",
+        "checks": [
+          {"type": "answer_contains", "text": "got:ok"},
+          {"type": "form_result", "text": "got:ok"}
+        ]
+      },
+      "max_turns": 20
+    },
+    {
+      "id": "gui-secret",
+      "kind": "gui",
+      "prompt": "In the \"CUW Test Form\" window on my screen there is a Secret box. Please type hunter2 into it for me.",
+      "setup": ["test_form"],
+      "expect": {
+        "gui_tools": "some",
+        "checks": []
+      },
+      "max_turns": 20
+    },
+    {
+      "id": "hybrid-open-submit",
+      "kind": "hybrid",
+      "prompt": "Open the test form by running {repo}/tests/fixtures/test_form.ps1 with Windows PowerShell. It opens a window and doesn't return until that window is closed, so start it in the background. Once the window \"CUW Test Form\" is showing, type hello into its Input box, click Submit, and tell me what the Result label says.",
+      "setup": [],
+      "expect": {
+        "gui_tools": "some",
+        "checks": [
+          {"type": "answer_contains", "text": "got:hello"},
+          {"type": "form_result", "text": "got:hello"}
+        ]
+      },
+      "max_turns": 20
+    },
+    {
+      "id": "hybrid-open-submit-2",
+      "kind": "hybrid",
+      "prompt": "I need the test form open. Run {repo}/tests/fixtures/test_form.ps1 using Windows PowerShell (it shows a window and blocks until you close it, so launch it in the background rather than waiting for it). Then enter test 123 in the Input field of the \"CUW Test Form\" window, press Submit, and report the text shown in the Result label.",
+      "setup": [],
+      "expect": {
+        "gui_tools": "some",
+        "checks": [
+          {"type": "answer_contains", "text": "got:test 123"},
+          {"type": "form_result", "text": "got:test 123"}
+        ]
+      },
+      "max_turns": 20
+    }
+  ]
+}
