@@ -1,0 +1,67 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Node / TypeScript
+node_modules/
+npm-debug.log*
+*.tsbuildinfo
+coverage/
+out/
+
+# Private / local data (never committed)
+packages/bellek/bellek.toml
+vault/
+eval/data/
+packages/bellek/eval/data/
+packages/bellek/eval/manifests/
+*.sqlite
+*.sqlite3
+*.sqlite3*
+*.db
+apps/phone/runtime/
+.env*
+!.env.example
+*.pem
+*.key
+secrets/
+config.local.*
+*.log
+
+# Android / Expo
+.expo/
+.expo-shared/
+.gradle/
+app/build/
+app/android/
+app/ios/
+local.properties
+*.apk
+*.aab
+*.ipa
+*.keystore
+*.jks
+.metro-health-check*
+.metro-cache/
+metro-cache/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
