@@ -255,9 +255,12 @@ data class ListeGirdisi(
 
 interface Listeler {
     /**
-     * Önce `DEGISMEZ` (sabit adlar: Ayarlar, kurucu, Play, izin denetleyicisi, üretici güvenlik uygulaması,
-     * Tailscale, kilit ekranı, systemui; `kendiPaketi`; `cozulenDegismez`), sonra kullanıcı kararı
-     * (imza özeti şimdikiyle aynıysa). Kararı yok, kurulu değil ya da imzası değişmişse `YENI`.
+     * Sırayla: 1) `DEGISMEZ` (sabit adlar: Ayarlar, kurucu, Play, izin denetleyicisi, üretici güvenlik
+     * uygulaması, Tailscale, kilit ekranı, systemui; `kendiPaketi`; `cozulenDegismez`). 2) Kurulu değilse
+     * (imza bilgisi yok) `YENI`. 3) Kullanıcı kararı `HASSAS` ise `HASSAS`, imza değişmiş olsa bile.
+     * 4) Kullanıcı kararı `ACIK` ve imza özeti şimdikiyle aynıysa `ACIK`. 5) Aksi halde (karar yok ya da
+     * `ACIK` kararının imzası değişmiş) `HassasUygulamalar.otomatikHassasMi(paket, ad)` ise `HASSAS`,
+     * değilse `ACIK`; `ad` kurulu listesindeki görünen addır.
      */
     fun durum(paket: String): UygulamaDurumu
 
