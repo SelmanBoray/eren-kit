@@ -195,7 +195,7 @@ export function KurulumEkrani(p: { cihaz: ErenCihaz; cekirdek: Cekirdek }): Reac
         <View style={{ height: cizgi.ince, backgroundColor: renk.kenar }} />
         <Satir
           ad="Uygulamalar"
-          aciklama={`${ASISTAN_ADI} telefonda hangi uygulamaları kullanabilir, seç; yeni uygulamalar sen seçene kadar kapalı kalır.`}
+          aciklama={`${ASISTAN_ADI} telefonda banka, para ve kimlik uygulamaları (banka, e-para, kripto, borsa, iki adımlı doğrulama, e-Devlet) dışındaki her uygulamayı kullanabilir; istemediğini buradan kapatabilirsin.`}
           dugme={<Dugme yazi="Uygulamalar" tur="ikincil" kapali={!cihaz.desteklenir} basinca={() => void ekranAc("uygulamalar")} />}
         />
         <Satir

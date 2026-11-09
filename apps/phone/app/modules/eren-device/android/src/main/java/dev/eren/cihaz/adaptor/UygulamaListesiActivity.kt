@@ -18,6 +18,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import dev.eren.cihaz.cekirdek.KullaniciKarari
 import dev.eren.cihaz.cekirdek.UygulamaBilgisi
 import dev.eren.cihaz.cekirdek.UygulamaDurumu
 import java.util.concurrent.Executors
@@ -41,8 +42,9 @@ class UygulamaListesiActivity : Activity() {
         ust = TextView(this).apply {
             textSize = 14f
             setTextColor(Renkler.metinIkincil)
-            text = "Hangi uygulamalarda ${asistanAdi()} uygulamasına izin verebileceğinizi seçin. Açık yapmak " +
-                "doğrulama ister; hassas ya da yeni yapmak istemez. Kilitli olanlar değişmez."
+            text = "Açık uygulamalarda ${asistanAdi()} uygulamasına izin verebilirsiniz; kapalı olanlarda " +
+                "verilemez. Uygulamalar (yeni kurulanlar da) açık başlar; banka ve para uygulamaları " +
+                "kendiliğinden kapalıdır. Açmak doğrulama ister, kapatmak istemez. Kilitli olanlar değişmez."
         }
         kok.addView(ust)
         liste = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -69,30 +71,31 @@ class UygulamaListesiActivity : Activity() {
             return
         }
         arka.execute {
-            val uygulamalar = try {
+            val sonuc = try {
                 // Depo ile liste aynı anda yenilenir; çekirdek görüntüsü güncel kararı yansıtsın.
-                c.listeler.guncelle(c.paket.listeGirdisi())
-                c.listeler.uygulamalar().sortedBy { it.ad.lowercase() }
+                val girdi = c.paket.listeGirdisi()
+                c.listeler.guncelle(girdi)
+                c.listeler.uygulamalar().sortedBy { it.ad.lowercase() } to girdi.kararlar
             } catch (_: Exception) {
                 null
             }
             runOnUiThread {
                 if (isDestroyed) return@runOnUiThread
-                if (uygulamalar == null) {
+                if (sonuc == null) {
                     ust.text = "Liste okunamadı."
                     return@runOnUiThread
                 }
-                ciz(uygulamalar)
+                ciz(sonuc.first, sonuc.second)
             }
         }
     }
 
-    private fun ciz(uygulamalar: List<UygulamaBilgisi>) {
+    private fun ciz(uygulamalar: List<UygulamaBilgisi>, kararlar: Map<String, KullaniciKarari>) {
         liste.removeAllViews()
-        for (u in uygulamalar) liste.addView(satir(u))
+        for (u in uygulamalar) liste.addView(satir(u, kararlar[u.paket]))
     }
 
-    private fun satir(u: UygulamaBilgisi): View {
+    private fun satir(u: UygulamaBilgisi, karar: KullaniciKarari?): View {
         val kap = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(0, dp(12), 0, dp(12))
@@ -116,6 +119,15 @@ class UygulamaListesiActivity : Activity() {
                 setTextColor(Renkler.metinIkincil)
             })
             return kap
+        }
+        // Kapalı ama kullanıcı kapatmadıysa (kararı yok ya da açık kararının imzası eskidi) kapalılık
+        // çekirdeğin otomatik hassas kuralından gelir: banka/para uygulaması.
+        if (u.durum == UygulamaDurumu.HASSAS && karar?.durum != UygulamaDurumu.HASSAS) {
+            kap.addView(TextView(this).apply {
+                text = "Banka/para uygulaması: otomatik kapalı"
+                textSize = 13f
+                setTextColor(Renkler.metinIkincil)
+            })
         }
         val dugmeler = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         for ((durum, ad) in SECENEKLER) {
@@ -192,7 +204,7 @@ class UygulamaListesiActivity : Activity() {
             val imza = c.paket.imzaOzeti(u.paket)
             val bilgi = c.paket as? PaketBilgisi
             val yazildi = bilgi != null && imza != null && try {
-                if (hedef == UygulamaDurumu.YENI) bilgi.kararSil(u.paket) else bilgi.kararYaz(u.paket, hedef, imza)
+                bilgi.kararYaz(u.paket, hedef, imza)
                 true
             } catch (_: Exception) {
                 false
@@ -221,10 +233,10 @@ class UygulamaListesiActivity : Activity() {
     }
 
     private companion object {
+        /** Kapalı = `HASSAS` kararı; varsayılana dönüş (karar silme) bilerek seçenek değil. */
         val SECENEKLER = listOf(
             UygulamaDurumu.ACIK to "Açık",
-            UygulamaDurumu.HASSAS to "Hassas",
-            UygulamaDurumu.YENI to "Yeni",
+            UygulamaDurumu.HASSAS to "Kapalı",
         )
     }
 }
