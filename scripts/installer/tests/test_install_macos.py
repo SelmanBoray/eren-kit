@@ -113,8 +113,152 @@ def test_plist_icerigi(tmp_path):
     assert p["ProgramArguments"][0].endswith("/packages/bellek/.venv/bin/python")
     assert p["EnvironmentVariables"]["EREN_KIT_ASSISTANT_NAME"] == "Ada"
     assert p["EnvironmentVariables"]["BELLEK_BEYIN_IZINLI_HOST"] == "mac.tail.ts.net"
-    assert p["RunAtLoad"] is True and p["KeepAlive"] == {"Crashed": True}
+    assert p["RunAtLoad"] is True
     plistlib.dumps(p)  # geçerli plist
+
+
+def test_plist_cokmede_yeniden_baslatir_cakismada_dongu_kurmaz(tmp_path):
+    p = im.service_plist(_ctx(tmp_path))
+    # Sıfır olmayan çıkış (istisna, sys.exit(1)) ve sinyal yeniden başlatır...
+    assert p["KeepAlive"] == {"SuccessfulExit": False, "Crashed": True}
+    # ...kilit/port çakışmasında servis 0 ile çıksın diye bayrak verilir (sonsuz deneme yok).
+    assert p["EnvironmentVariables"][im.CONFLICT_ENV] == "1"
+    assert p["ThrottleInterval"] >= 10
+
+
+# ---------------------------------------------------------------- venv
+
+def _venv_pkg(tmp_path: Path) -> Path:
+    pkg = tmp_path / "pkg"
+    (pkg / ".venv" / "bin").mkdir(parents=True)
+    (pkg / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
+    return pkg
+
+
+def test_venv_pip_basarisizsa_hazir_sayilmaz(tmp_path):
+    calls = []
+
+    def fake_run(args, **kw):
+        calls.append(args)
+        return im.subprocess.CompletedProcess(args, 1, "", "ERROR: paket bulunamadı")
+
+    pkg = _venv_pkg(tmp_path)
+    ctx = _ctx(tmp_path, run=fake_run, venv_python=sys.executable)
+    with pytest.raises(im.StepError, match="pip install başarısız"):
+        im.install_venv(ctx, pkg, "packages/bellek")
+    assert str(pkg) not in ctx.venvs_done
+    # Aynı çalıştırmadaki ikinci bileşen (devir) "hazır" demez, görünür biçimde düşer; pip yeniden koşmaz.
+    with pytest.raises(im.StepError, match="kurulamadı"):
+        im.install_venv(ctx, pkg, "packages/bellek")
+    assert len(calls) == 1
+
+
+def test_venv_basariliysa_ikinci_cagri_tekrar_kurmaz(tmp_path):
+    calls = []
+
+    def fake_run(args, **kw):
+        calls.append(args)
+        return im.subprocess.CompletedProcess(args, 0, "", "")
+
+    pkg = _venv_pkg(tmp_path)
+    ctx = _ctx(tmp_path, run=fake_run, venv_python=sys.executable)
+    assert im.install_venv(ctx, pkg, "packages/bellek").status == "ok"
+    r = im.install_venv(ctx, pkg, "packages/bellek")
+    assert r.status == "ok" and "bu çalıştırmada hazırlandı" in r.message
+    assert len(calls) == 1
+
+
+def test_venv_dry_run_ikinci_cagrida_da_dry(tmp_path):
+    ctx = _ctx(tmp_path, dry_run=True, run=lambda *a, **k: pytest.fail("dry-run komut çalıştırdı"))
+    pkg = tmp_path / "pkg"
+    assert im.install_venv(ctx, pkg, "packages/bellek").status == "dry"
+    assert im.install_venv(ctx, pkg, "packages/bellek").status == "dry"
+    assert not pkg.exists()
+
+
+# ---------------------------------------------------------------- servis adı (beyin kurulmadan)
+
+def _launchctl_kayit(calls):
+    def fake_run(args, **kw):
+        calls.append(args)
+        rc = 113 if args[:2] == ["launchctl", "print"] else 0
+        return im.subprocess.CompletedProcess(args, rc, "", "")
+    return fake_run
+
+
+def _plist_yaz(ctx: im.Ctx, name: str) -> Path:
+    ctx.launch_agents.mkdir(parents=True, exist_ok=True)
+    path = ctx.launch_agents / f"{im.SERVICE_LABEL}.plist"
+    data = {"Label": im.SERVICE_LABEL, "ProgramArguments": ["/x/python", "-m", "bellek.beyin", "servis"],
+            "EnvironmentVariables": {im.ENV_NAME: name, "BELLEK_BEYIN_IZINLI_HOST": "mac.tail.ts.net"}}
+    path.write_bytes(plistlib.dumps(data))
+    return path
+
+
+@pytest.fixture()
+def sahte_launchd(monkeypatch):
+    monkeypatch.setattr(im.os, "getuid", lambda: 501, raising=False)
+    monkeypatch.setattr(im, "_health", lambda *a, **k: True)
+    monkeypatch.setattr(im.time, "sleep", lambda *_: None)
+
+
+def test_ad_degisince_plist_guncellenir_servis_yeniden_yuklenir(tmp_path, sahte_launchd):
+    calls = []
+    ctx = _ctx(tmp_path, assistant_name="Bob", run=_launchctl_kayit(calls))
+    path = _plist_yaz(ctx, "Ada")
+    r = im.service_name_sync(ctx)
+    assert r.status == "ok" and "Bob" in r.message
+    d = plistlib.loads(path.read_bytes())
+    assert d["EnvironmentVariables"][im.ENV_NAME] == "Bob"
+    assert d["EnvironmentVariables"]["BELLEK_BEYIN_IZINLI_HOST"] == "mac.tail.ts.net"  # diğerleri korunur
+    assert d["ProgramArguments"] == ["/x/python", "-m", "bellek.beyin", "servis"]
+    assert plistlib.loads((ctx.backup_dir / "launchd" / path.name).read_bytes())["EnvironmentVariables"][im.ENV_NAME] == "Ada"
+    assert [c[1] for c in calls] == ["bootout", "print", "bootstrap"]
+    calls.clear()
+    assert im.service_name_sync(ctx).status == "ok" and calls == []  # ad aynı: yeniden yükleme yok
+
+
+def test_ad_settings_jsondan_okunur(tmp_path, sahte_launchd):
+    calls = []
+    ctx = _ctx(tmp_path, run=_launchctl_kayit(calls))
+    ctx.settings.write_text(json.dumps({"env": {im.ENV_NAME: "Bob"}}), encoding="utf-8")
+    path = _plist_yaz(ctx, "Ada")
+    assert im.service_name_sync(ctx).status == "ok"
+    assert plistlib.loads(path.read_bytes())["EnvironmentVariables"][im.ENV_NAME] == "Bob"
+
+
+def test_plist_yoksa_ad_icin_plist_olusturulmaz(tmp_path):
+    ctx = _ctx(tmp_path, assistant_name="Bob", run=lambda *a, **k: pytest.fail("launchctl çağrıldı"))
+    assert im.service_name_sync(ctx).status == "skip"
+    assert not ctx.launch_agents.exists()
+
+
+def test_ad_esitleme_dry_run_yazmaz(tmp_path):
+    ctx = _ctx(tmp_path, assistant_name="Bob", dry_run=True, run=lambda *a, **k: pytest.fail("launchctl çağrıldı"))
+    path = _plist_yaz(ctx, "Ada")
+    before = path.read_bytes()
+    assert im.service_name_sync(ctx).status == "dry"
+    assert path.read_bytes() == before and not (ctx.claude_home / "backups").exists()
+
+
+def test_main_beyin_disi_bilesenle_ad_degisince_plist_yenilenir(tmp_path, monkeypatch):
+    monkeypatch.setenv("EREN_KIT_FORCE_MACOS", "1")
+    home = tmp_path / "claude"
+    home.mkdir()
+    plist = tmp_path / "LaunchAgents" / f"{im.SERVICE_LABEL}.plist"
+    plist.parent.mkdir()
+    plist.write_bytes(plistlib.dumps({"Label": im.SERVICE_LABEL, "EnvironmentVariables": {im.ENV_NAME: "Ada"}}))
+    reloads = []
+    monkeypatch.setattr(im, "_plist_path", lambda ctx: plist)
+    monkeypatch.setattr(im, "_reload_service", lambda ctx, path: reloads.append(path) or im.Step("ok", "yüklendi"))
+    args = ["--components", "kapi", "--claude-home", str(home), "--skip-mcp", "--skip-repo-setup",
+            "--hook-python", sys.executable, "--assistant-name", "Bob"]
+    assert im.main(args) == 0
+    assert json.loads((home / "settings.json").read_text(encoding="utf-8"))["env"][im.ENV_NAME] == "Bob"
+    assert plistlib.loads(plist.read_bytes())["EnvironmentVariables"][im.ENV_NAME] == "Bob"
+    assert reloads == [plist]
+    assert im.main(args) == 0 and reloads == [plist]  # tekrar çalıştırma: ad aynı, yeniden yükleme yok
+    assert im.main(args + ["--uninstall"]) == 0 and plist.exists()  # kaldırma servis plist'ine dokunmaz
 
 
 def test_tailscale_host_yeniden_kurulumda_korunur_bos_verilince_kalkar(tmp_path):

@@ -52,6 +52,8 @@ SERVICE_LABEL = "com.eren-kit.beyin-servis"
 MARKER = ".eren-kit"
 ENV_NAME = "EREN_KIT_ASSISTANT_NAME"
 SERVICE_PORT = 47321
+# Servis bu değişken "1" iken kilit/port çakışmasında 0 ile çıkar (bkz. bellek/beyin/servis.py).
+CONFLICT_ENV = "BELLEK_BEYIN_CAKISMADA_TEMIZ_CIK"
 
 P = {
     "bellek": REPO / "packages" / "bellek",
@@ -116,6 +118,7 @@ class Ctx:
     run: Callable[..., subprocess.CompletedProcess] = subprocess.run
     backup_used: bool = False
     venvs_done: set = field(default_factory=set)
+    venvs_failed: set = field(default_factory=set)
 
     @property
     def settings(self) -> Path:
@@ -173,12 +176,27 @@ def find_python(minimum: tuple[int, int]) -> str | None:
 def install_venv(ctx: Ctx, pkg: Path, label: str) -> Step:
     if ctx.skip_repo_setup:
         return Step("skip", f"venv/pip atlandı (--skip-repo-setup): {label}")
-    py = pkg / ".venv" / "bin" / "python"
-    if str(pkg) in ctx.venvs_done:
+    key = str(pkg)
+    if key in ctx.venvs_failed:
+        raise StepError(f"venv bu çalıştırmada kurulamadı: {label} (hata yukarıda)")
+    if key in ctx.venvs_done:
+        if ctx.dry_run:
+            return Step("dry", f"{label}: venv bu çalıştırmada zaten hazırlanacak")
         return Step("ok", f"venv bu çalıştırmada hazırlandı: {label}")
-    ctx.venvs_done.add(str(pkg))
     if ctx.dry_run:
+        ctx.venvs_done.add(key)
         return Step("dry", f"{label}: .venv oluşturulur/güncellenir, pip install -e çalışır")
+    try:
+        step = _create_venv(ctx, pkg, label)
+    except BaseException:
+        ctx.venvs_failed.add(key)  # başarısız kurulum "hazır" sayılmaz; sonraki bileşen de düşer
+        raise
+    ctx.venvs_done.add(key)
+    return step
+
+
+def _create_venv(ctx: Ctx, pkg: Path, label: str) -> Step:
+    py = pkg / ".venv" / "bin" / "python"
     if not ctx.venv_python:
         raise StepError("venv için Python 3.12+ bulunamadı (brew install python@3.13)")
     if not py.exists():
@@ -419,7 +437,7 @@ def mcp_unregister(ctx: Ctx, name: str) -> Step:
 # ---------------------------------------------------------------- launchd servisi
 
 def service_plist(ctx: Ctx) -> dict:
-    env = {"PYTHONUNBUFFERED": "1"}
+    env = {"PYTHONUNBUFFERED": "1", CONFLICT_ENV: "1"}
     name = ctx.assistant_name or current_assistant_name(ctx)
     if name:
         env[ENV_NAME] = name
@@ -438,9 +456,10 @@ def service_plist(ctx: Ctx) -> dict:
         "WorkingDirectory": str(P["bellek"]),
         "EnvironmentVariables": env,
         "RunAtLoad": True,
-        # Yalnız çökmede (sinyal) yeniden başlar. "exit 1" (ör. port/kilit başka serviste)
-        # yeniden denenmez: SuccessfulExit=false olsaydı launchd 30 sn'de bir sonsuza dek denerdi.
-        "KeepAlive": {"Crashed": True},
+        # Çökmede yeniden başlar: sıfır olmayan çıkış (yakalanmamış istisna, sys.exit(1)) ve
+        # sinyal. Port/kilit başka bir süreçteyse servis CONFLICT_ENV sayesinde 0 ile çıkar; böylece
+        # launchd 30 sn'de bir sonsuza dek yeniden denemez.
+        "KeepAlive": {"SuccessfulExit": False, "Crashed": True},
         "ThrottleInterval": 30,
         "ProcessType": "Background",
         "StandardOutPath": str(ctx.log_dir / "beyin-servis.log"),
@@ -478,6 +497,11 @@ def service_install(ctx: Ctx) -> Step:
         tmp = path.with_suffix(".tmp")
         tmp.write_bytes(data)
         os.replace(tmp, path)
+    return _reload_service(ctx, path)
+
+
+def _reload_service(ctx: Ctx, path: Path) -> Step:
+    ctx.log_dir.mkdir(parents=True, exist_ok=True)  # plist'teki günlük yolu launchd'den önce var olmalı
     domain = f"gui/{os.getuid()}"
     run_cmd(ctx, ["launchctl", "bootout", f"{domain}/{SERVICE_LABEL}"], timeout=30)  # yoksa hata: önemsiz
     for _ in range(25):  # bootout eşzamansız: servis domain'den düşene kadar bekle (en çok ~5 sn)
@@ -497,6 +521,36 @@ def service_install(ctx: Ctx) -> Step:
             return Step("ok", f"beyin servisi çalışıyor (launchd: {SERVICE_LABEL}, 127.0.0.1:{SERVICE_PORT})")
         time.sleep(0.5)
     return Step("warn", f"LaunchAgent yüklendi ama /api/saglik yanıt vermedi; günlük: {ctx.log_dir / 'beyin-servis.log'}")
+
+
+def service_name_sync(ctx: Ctx) -> Step:
+    """Beyin bileşeni kurulmadan ad değişirse kurulu plist'teki adı yeniler (plist yoksa yazmaz)."""
+    if ctx.no_service:
+        return Step("skip", "servis atlandı (--no-service)")
+    path = _plist_path(ctx)
+    if not path.exists():
+        return Step("skip", "LaunchAgent kurulu değil; servis adı güncellenmedi")
+    name = ctx.assistant_name or current_assistant_name(ctx)
+    if not name:
+        return Step("skip", "asistan adı bilinmiyor; LaunchAgent'a dokunulmadı")
+    try:
+        data = plistlib.loads(path.read_bytes())
+        env = data.setdefault("EnvironmentVariables", {})
+        if not isinstance(env, dict):
+            raise ValueError("EnvironmentVariables bir sözlük değil")
+    except (OSError, ValueError, plistlib.InvalidFileException, AttributeError) as e:
+        return Step("warn", f"LaunchAgent okunamadı, servisteki ad güncellenmedi ({type(e).__name__}): {path}")
+    if env.get(ENV_NAME) == name:
+        return Step("ok", f'servis adı güncel: "{name}"')
+    if ctx.dry_run:
+        return Step("dry", f"LaunchAgent'taki ad \"{name}\" olarak güncellenir, servis yeniden yüklenir: {path}")
+    env[ENV_NAME] = name
+    shutil.copy2(path, ctx.backup_path(f"launchd/{path.name}"))
+    tmp = path.with_suffix(".tmp")
+    tmp.write_bytes(plistlib.dumps(data))
+    os.replace(tmp, path)
+    r = _reload_service(ctx, path)
+    return Step(r.status, f'servis adı "{name}" olarak güncellendi; {r.message}')
 
 
 def service_uninstall(ctx: Ctx) -> Step:
@@ -719,6 +773,15 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as e:  # noqa: BLE001
             line("fail", f"asistan adı yazılamadı: {e}")
             results.append(("asistan-adı", "fail", str(e)))
+        if "beyin" not in selected:  # beyin seçiliyse servis adımı plist'i zaten yeniden yazar
+            try:
+                r = service_name_sync(ctx)
+                line(r.status, r.message)
+                if r.status in ("warn", "fail"):
+                    results.append(("servis-adı", r.status, r.message))
+            except Exception as e:  # noqa: BLE001
+                line("fail", f"servis adı güncellenemedi: {e}")
+                results.append(("servis-adı", "fail", str(e)))
 
     steps = build_steps(ctx)
     for k in selected:
