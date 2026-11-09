@@ -85,7 +85,7 @@ Kişiye özel ayar dosyasıdır, git'te yok sayılır. Şablon: [bellek.example.
 | Tablo | Anahtar | Varsayılan | Anlam |
 | --- | --- | --- | --- |
 | `[bellek]` | `vault` | yok (zorunlu) | Notların gerçek kaynak klasörü |
-| `[bellek]` | `state_dir` | `%LOCALAPPDATA%/Bellek` | İndeks ve günlükler; vault'un içine konmaz |
+| `[bellek]` | `state_dir` | platform veri kökü: Windows `%LOCALAPPDATA%/Bellek`, macOS `~/Library/Application Support/Bellek`, Linux `~/.local/share/Bellek` | İndeks ve günlükler; vault'un içine konmaz |
 | `[server]` | `host` | `127.0.0.1` | Yerel servis adresi (yalnız bu makine önerilir) |
 | `[server]` | `port` | `47321` | 1-65535 |
 | `[[source]]` | `name`, `path` | yok | Salt-okunur ek not kaynağı; Bellek bu yollara asla yazmaz. `name` benzersiz olmalı |

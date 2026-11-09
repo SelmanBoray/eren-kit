@@ -12,6 +12,10 @@ from pathlib import Path
 
 import pytest
 
+# Tanımsız değişken başvurusu: Windows'ta %AD%, POSIX'te ${AD} (POSIX'te %AD% bilerek literal kalır).
+TANIMSIZ = ("%BELLEK_TEST_TANIMSIZ_DEGISKEN%" if os.name == "nt"
+            else "${BELLEK_TEST_TANIMSIZ_DEGISKEN}")
+
 # Paketin kendi hook'u (tests/devir/../../src/bellek/devir/hook.py); kurulu kopyaya bağlı değil.
 HOOK = str(Path(__file__).resolve().parents[2] / "src" / "bellek" / "devir" / "hook.py")
 
@@ -344,14 +348,14 @@ def test_sessionstart_ilgisiz_ayar_hatasinda_vault_devir_kullanilir(ortam):
     (kasa / "devir").mkdir(parents=True)
     not_yaz({**ortam, "notlar": kasa / "devir"}, "eski-oturum", "Kasadaki devir notu QQQ")
     p = _ss_ayarla(ortam, "[bellek]\nvault = 'kasa'\n[[source]]\nname = 'a'\n"
-                          "path = '%BELLEK_TEST_TANIMSIZ_DEGISKEN%/x'\n")
+                          "path = '" + TANIMSIZ + "/x'\n")
     metin = cikti(p)["hookSpecificOutput"]["additionalContext"]
     assert "Kasadaki devir notu QQQ" in metin
     assert "Uyarı" not in metin
 
 
 def test_sessionstart_vault_cozulemezse_uyari_baglamda_ve_logda(ortam):
-    p = _ss_ayarla(ortam, "[bellek]\nvault = '%BELLEK_TEST_TANIMSIZ_DEGISKEN%/kasa'\n")
+    p = _ss_ayarla(ortam, "[bellek]\nvault = '" + TANIMSIZ + "/kasa'\n")
     assert "BELLEK_TEST_TANIMSIZ_DEGISKEN" in p.stderr  # stderr UTF-8 çözülebilir
     metin = cikti(p)["hookSpecificOutput"]["additionalContext"]
     assert "Uyarı (Bellek ayarı)" in metin and "BELLEK_TEST_TANIMSIZ_DEGISKEN" in metin

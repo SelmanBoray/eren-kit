@@ -662,6 +662,45 @@ body:has(#zaman-serit:empty) #durum {
   text-wrap: pretty;
 }
 
+/* Anahtarı yapıştırma (telefon / ana ekran uygulaması) */
+.giris-yapistir {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--kenar-cizgi);
+}
+.giris-yapistir .komut { white-space: normal; }
+.giris-yapistir-satir {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+.giris-yapistir input {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--kenar-cizgi-guclu);
+  border-radius: 10px;
+  background: rgb(var(--zemin-rgb) / 0.6);
+  color: var(--metin);
+  font: inherit;
+  font-size: 1rem; /* iOS: 16px altı odaklanınca sayfayı yakınlaştırır */
+}
+.giris-yapistir input:focus-visible,
+.giris-yapistir button:focus-visible {
+  outline: 2px solid var(--isik);
+  outline-offset: 2px;
+}
+.giris-yapistir button {
+  padding: 10px 16px;
+  border: 1px solid rgb(var(--isik-rgb) / 0.55);
+  border-radius: 10px;
+  background: var(--isik-hale-guclu);
+  color: var(--metin);
+  font: inherit;
+  cursor: pointer;
+}
+#giris-anahtar-uyari { color: var(--tehlike); }
+
 .komut {
   display: inline-block;
   padding: 2px 10px 3px;

@@ -42,7 +42,7 @@ UI_ONEK = "/api/ui/"
 GUVENLIK_BASLIKLARI = (
     ("Content-Security-Policy",
      "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
-     "connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"),
+     "connect-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"),
     ("Referrer-Policy", "no-referrer"),
     ("X-Frame-Options", "DENY"),
     ("Cross-Origin-Resource-Policy", "same-origin"),
@@ -58,6 +58,7 @@ STATIK_TURLER = {
     ".json": "application/json; charset=utf-8",
     ".png": "image/png",
     ".ico": "image/x-icon",
+    ".webmanifest": "application/manifest+json; charset=utf-8",
     ".txt": "text/plain; charset=utf-8",
 }
 _UI_SAYI = re.compile(r"[0-9]{1,18}")
@@ -65,8 +66,9 @@ _UI_SAYI = re.compile(r"[0-9]{1,18}")
 
 # --------------------------------------------------------------------- yollar
 def _veri_klasoru() -> Path:
-    taban = os.environ.get("LOCALAPPDATA")
-    return (Path(taban) if taban else Path.home() / "AppData" / "Local") / "Bellek"
+    from bellek.platform_dirs import data_dir
+
+    return data_dir()
 
 
 def _durum_klasoru() -> Path:

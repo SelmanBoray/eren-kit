@@ -22,6 +22,7 @@ from urllib.parse import quote
 import pytest
 
 from bellek.beyin import db
+from tests._surec import YENI_OTURUM, agaci_oldur
 
 SRC = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
@@ -111,8 +112,7 @@ def _ortam_kur(kok_dizin: Path) -> dict:
 
 def _kapat(surecler: list) -> None:
     for p in surecler:
-        subprocess.run(["taskkill", "/T", "/F", "/PID", str(p.pid)],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        agaci_oldur(p)
         try:
             p.wait(timeout=5)
         except subprocess.TimeoutExpired:
@@ -137,7 +137,7 @@ def _oku(yol: str) -> str:
 def _servis_baslat(o: dict) -> dict:
     p = subprocess.Popen(
         [sys.executable, "-m", "bellek.beyin", "servis", "--port", str(o["port"])],
-        env=o["env"], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        env=o["env"], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **YENI_OTURUM,
     )
     o["surecler"].append(p)
     son = time.time() + 15
@@ -795,6 +795,24 @@ def test_statik(paylasilan):
     for yol in ("/static/../../pyproject.toml", "/static/..%2f..%2fpyproject.toml"):
         r = ui_get(o, yol, ui=None)
         assert r.kod != 200 and b"[project]" not in r.ham
+
+
+def test_pwa_manifest_ve_ikon(paylasilan):
+    """iPhone/iPad ana ekranına eklenebilmesi için manifest + apple-touch-icon sunulur ve CSP izin verir."""
+    import json as _json
+    o = paylasilan
+    r = ui_get(o, "/static/manifest.webmanifest", ui=None)
+    assert r.kod == 200
+    assert r.basliklar.get("content-type", "").startswith("application/manifest+json")
+    m = _json.loads(r.ham.decode("utf-8"))
+    assert m["display"] == "standalone" and m["start_url"] == "/"
+    for ikon in m["icons"]:
+        ri = ui_get(o, ikon["src"], ui=None)
+        assert ri.kod == 200 and ri.basliklar.get("content-type") == "image/png"
+        assert ri.ham[:8] == b"\x89PNG\r\n\x1a\n"
+    sayfa = ui_get(o, "/", ui=None)
+    assert b'rel="manifest"' in sayfa.ham and b'rel="apple-touch-icon"' in sayfa.ham
+    assert "manifest-src 'self'" in sayfa.basliklar.get("content-security-policy", "")
 
 
 # ------------------------------------------------------------------ 9b. gelen kararı: duzeltme biçimi (regresyon)

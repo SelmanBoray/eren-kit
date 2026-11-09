@@ -8,6 +8,57 @@ const ZAMAN_ASIMI_MS = 15000;
 /** sessionStorage kullanılamazsa belirteç burada tutulur. */
 let bellekBelirteci = null;
 
+/**
+ * Ana ekrana eklenmiş web uygulaması (iOS/iPadOS "Ana Ekrana Ekle") mı?
+ * Bu modda uygulama Safari'den ayrı depolama ile ve her açılışta `start_url` (`/`) ile başlar;
+ * `#t=` taşınamaz. Belirteç yalnız bu modda localStorage'da kalıcı tutulur; tarayıcı sekmesinde
+ * davranış değişmez (yalnız sessionStorage).
+ */
+export const bagimsizMod = (() => {
+  try {
+    return navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
+  } catch (_) { return false; }
+})();
+
+/** Elle yapıştırılan değer: düz belirteç ya da `#t=` içeren tam adres. */
+const BELIRTEC_BICIMI = /^[A-Za-z0-9_-]{32,256}$/;
+
+function kalicidanOku() {
+  if (!bagimsizMod) return null;
+  try { return localStorage.getItem(ANAHTAR); } catch (_) { return null; }
+}
+
+function sakla(t) {
+  bellekBelirteci = t;
+  try { sessionStorage.setItem(ANAHTAR, t); } catch (_) { /* bellekte kaldı */ }
+  if (bagimsizMod) {
+    try { localStorage.setItem(ANAHTAR, t); } catch (_) { /* yalnız bu oturum */ }
+  }
+}
+
+/**
+ * Giriş ekranına yapıştırılan anahtarı (ya da `beyin ac --yazdir` adresini) kaydeder.
+ * @param {string} ham
+ * @returns {boolean} geçerli biçimde bir belirteç bulunup kaydedildi mi
+ */
+export function belirtecKaydet(ham) {
+  let t = String(ham || '').trim();
+  const i = t.indexOf('#');
+  if (i >= 0) {
+    try { t = new URLSearchParams(t.slice(i + 1)).get('t') || ''; } catch (_) { t = ''; }
+  }
+  if (!BELIRTEC_BICIMI.test(t)) return false;
+  sakla(t);
+  return true;
+}
+
+/** Geçersizleşen belirteci her depodan siler (yeniden yapıştırma istenebilsin). */
+export function belirtecSil() {
+  bellekBelirteci = null;
+  try { sessionStorage.removeItem(ANAHTAR); } catch (_) { /* yoksay */ }
+  try { localStorage.removeItem(ANAHTAR); } catch (_) { /* yoksay */ }
+}
+
 export class ApiHatasi extends Error {
   /**
    * @param {string} mesaj
@@ -25,7 +76,7 @@ function belirtecOku() {
     const d = sessionStorage.getItem(ANAHTAR);
     if (d) return d;
   } catch (_) { /* sessionStorage kullanılamıyor */ }
-  return bellekBelirteci;
+  return bellekBelirteci || kalicidanOku();
 }
 
 /**
@@ -39,8 +90,7 @@ export function belirtecVar() {
       const p = new URLSearchParams(h);
       const t = p.get('t');
       if (t) {
-        bellekBelirteci = t;
-        try { sessionStorage.setItem(ANAHTAR, t); } catch (_) { /* bellekte kaldı */ }
+        sakla(t);
         p.delete('t');
         // Hash'i tümüyle sil (kalan parametre varsa korumak istenirse burada eklenir).
         history.replaceState(null, '', location.pathname + location.search);
