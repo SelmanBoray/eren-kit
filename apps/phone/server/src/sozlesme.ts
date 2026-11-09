@@ -334,7 +334,7 @@ export type GunlukFabrikasi = (b: GunlukBagimliliklari) => Gunluk;
 // ---------------------------------------------------------------------------------------------
 
 export interface ErenYollari {
-  /** `EREN_KIT_DATA_DIR`, yoksa `%LOCALAPPDATA%\eren-kit`. */
+  /** `EREN_KIT_DATA_DIR`, yoksa Windows `%LOCALAPPDATA%\eren-kit`, macOS `~/Library/Application Support/eren-kit`. */
   kok: string;
   vt: string;
   log: string;
@@ -423,6 +423,8 @@ export interface AyarBagimliliklari {
   /** `process.env`'in kopyası. */
   ortam: Ortam;
   execPath: string;
+  /** Yol kuralları için hedef platform; verilmezse `process.platform`. */
+  platform?: NodeJS.Platform;
 }
 
 export type AyarFabrikasi = (b: AyarBagimliliklari) => Promise<Ayar>;

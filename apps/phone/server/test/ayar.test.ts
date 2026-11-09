@@ -10,6 +10,7 @@ async function kur(ek: Record<string, string> = {}) {
     dosya,
     ortam: { LOCALAPPDATA: "C:\\Yerel", PATH: "C:\\bin", ...ek },
     execPath: "C:\\bin\\node.exe",
+    platform: "win32",
   });
 }
 
@@ -44,8 +45,8 @@ test("EREN_KIT_DATA_DIR veri kökünü belirler, göreli yol reddedilir", async 
   assert.equal(a.yollar.yerelAyar, "D:\\Veri\\kit\\ayar.local.json");
   // Paylaşılan Claude limit kilidi veri kökünü izlemez.
   assert.equal(a.yollar.limitKilit, "C:\\Yerel\\ClaudeLimitKilit\\kilit.json");
-  assert.equal(yollariUret({ LOCALAPPDATA: "C:\\Yerel", EREN_KIT_DATA_DIR: "E:/a/../b" }).kok, "E:\\b");
-  assert.throws(() => yollariUret({ LOCALAPPDATA: "C:\\Yerel", EREN_KIT_DATA_DIR: "veri" }), /EREN_KIT_DATA_DIR mutlak yol olmalı/);
+  assert.equal(yollariUret({ LOCALAPPDATA: "C:\\Yerel", EREN_KIT_DATA_DIR: "E:/a/../b" }, "win32").kok, "E:\\b");
+  assert.throws(() => yollariUret({ LOCALAPPDATA: "C:\\Yerel", EREN_KIT_DATA_DIR: "veri" }, "win32"), /EREN_KIT_DATA_DIR mutlak yol olmalı/);
   // Yerel ayar dosyası da özel kökten okunur.
   const dosya = sahteDosya();
   dosya.yaz("C:\\bin\\claude.exe", "x");
@@ -54,6 +55,38 @@ test("EREN_KIT_DATA_DIR veri kökünü belirler, göreli yol reddedilir", async 
     dosya,
     ortam: { LOCALAPPDATA: "C:\\Yerel", PATH: "C:\\bin", EREN_KIT_DATA_DIR: "D:\\Veri" },
     execPath: "C:\\bin\\node.exe",
+    platform: "win32",
   });
   assert.equal(b.wsPort, 50001);
+});
+
+test("macOS: veri kökü Application Support altında, claude PATH'ten ya da ~/.local/bin'den bulunur", async () => {
+  const dosya = sahteDosya();
+  dosya.yaz("/Users/k/.local/bin/claude", "x");
+  const a = await ayarKur({ dosya, ortam: { HOME: "/Users/k", PATH: "/usr/bin:/bin" }, execPath: "/opt/homebrew/bin/node", platform: "darwin" });
+  assert.equal(a.yollar.kok, "/Users/k/Library/Application Support/eren-kit");
+  assert.equal(a.yollar.vt, "/Users/k/Library/Application Support/eren-kit/eren.db");
+  assert.equal(a.yollar.limitKilit, "/Users/k/Library/Application Support/ClaudeLimitKilit/kilit.json");
+  assert.equal(a.claudeExe, "/Users/k/.local/bin/claude");
+  assert.equal(a.isYollari(7).out, "/Users/k/Library/Application Support/eren-kit/isler/7/out.jsonl");
+  // PATH'teki claude önce gelir; .exe kuralı POSIX'te aranmaz.
+  dosya.yaz("/usr/bin/claude", "x");
+  const b = await ayarKur({ dosya, ortam: { HOME: "/Users/k", PATH: "/usr/bin:/bin" }, execPath: "/n", platform: "darwin" });
+  assert.equal(b.claudeExe, "/usr/bin/claude");
+});
+
+test("POSIX: EREN_KIT_DATA_DIR mutlak olmalı; HOME yoksa açık hata; Linux XDG kökü", () => {
+  assert.equal(yollariUret({ HOME: "/h", EREN_KIT_DATA_DIR: "/v/a/../b" }, "darwin").kok, "/v/b");
+  assert.throws(() => yollariUret({ HOME: "/h", EREN_KIT_DATA_DIR: "veri" }, "darwin"), /EREN_KIT_DATA_DIR mutlak yol olmalı/);
+  assert.throws(() => yollariUret({}, "darwin"), /HOME tanımlı/);
+  assert.equal(yollariUret({ HOME: "/h", XDG_DATA_HOME: "/x" }, "linux").kok, "/x/eren-kit");
+  assert.equal(yollariUret({ HOME: "/h" }, "linux").kok, "/h/.local/share/eren-kit");
+});
+
+test("POSIX: claude bulunamazsa ya da claude_exe göreli ise açık hata", async () => {
+  const dosya = sahteDosya();
+  await assert.rejects(
+    ayarKur({ dosya, ortam: { HOME: "/h", PATH: "/yok" }, execPath: "/n", platform: "darwin" }),
+    /claude bulunamadı/,
+  );
 });
