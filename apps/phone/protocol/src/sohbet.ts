@@ -228,6 +228,12 @@ export const ChatRename = sohbetMesaj("chat_rename", {
  */
 export const ChatDelete = sohbetMesaj("chat_delete", { client_msg_id: OpakId, sohbet_id: SohbetId });
 
+/**
+ * Tüketim isteği (v4'e eklenen tür). Telefon yollar; `client_msg_id` yok, `ack` almaz, outbox'a girmez.
+ * Yanıt `usage_report`, `istek_id` ile eşleşir.
+ */
+export const UsageRequest = sohbetMesaj("usage_request", { istek_id: OpakId });
+
 export const SohbetYukari = z.discriminatedUnion("type", [
   Hello,
   PairRequest,
@@ -241,6 +247,7 @@ export const SohbetYukari = z.discriminatedUnion("type", [
   ChatCreate,
   ChatRename,
   ChatDelete,
+  UsageRequest,
 ]);
 export type SohbetYukari = z.infer<typeof SohbetYukari>;
 
@@ -508,6 +515,53 @@ export const ErrorMesaji = sohbetMesaj("error", {
   detail: z.string().max(SINIRLAR.HATA_DETAYI).optional(),
 });
 
+/** Negatif olmayan güvenli tam sayı sayaç (token, sonuç adedi). */
+export const Sayac = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
+export type Sayac = z.infer<typeof Sayac>;
+
+/** Bir kapsamın tüketim toplamı. `maliyet_usd` yalnız en az bir satırda maliyet varsa yazılır. */
+export const TuketimToplami = z.strictObject({
+  girdi: Sayac,
+  cache_yazma: Sayac,
+  cache_okuma: Sayac,
+  cikti: Sayac,
+  sonuc_adet: Sayac,
+  maliyet_usd: z.number().min(0).max(1e7).optional(),
+});
+export type TuketimToplami = z.infer<typeof TuketimToplami>;
+
+/** Aynı kapsamın iki dökümü: ana oturum (sohbet) ve iş. */
+export const TuketimIkilisi = z.strictObject({
+  sohbet: TuketimToplami,
+  is: TuketimToplami,
+});
+export type TuketimIkilisi = z.infer<typeof TuketimIkilisi>;
+
+/**
+ * Tüketim raporu (v4'e eklenen tür). `sohbetler`: silinmemiş, satırı olan sohbetlerin tüm zaman toplamı
+ * (işleri ayrık dahil); kimlikler tekil. `isler`: en çok `TUKETIM_IS_ADET` öğe, `is_id` kesin azalan
+ * (tekilliği de içerir).
+ */
+export const UsageReport = sohbetMesaj("usage_report", {
+  istek_id: OpakId,
+  olcum_ms: ZamanMs,
+  gun_baslangic_ms: ZamanMs,
+  bugun: TuketimIkilisi,
+  son_7_gun: TuketimIkilisi,
+  sohbetler: z
+    .array(z.strictObject({ sohbet_id: SohbetId, toplam: TuketimIkilisi }))
+    .max(SOHBET_SINIRLARI.SOHBET_ADET)
+    .refine((l) => new Set(l.map((s) => s.sohbet_id)).size === l.length, { message: "yinelenen sohbet_id" }),
+  silinmis_sohbetler: TuketimIkilisi.optional(),
+  isler: z
+    .array(z.strictObject({ is_id: IsId, toplam: TuketimToplami }))
+    .max(SOHBET_SINIRLARI.TUKETIM_IS_ADET)
+    .refine((l) => l.every((s, i) => i === 0 || l[i - 1]!.is_id > s.is_id), {
+      message: "is_id kesin azalan olmalı (tekil)",
+    }),
+});
+export type UsageReport = z.infer<typeof UsageReport>;
+
 export const SohbetAsagi = z.discriminatedUnion("type", [
   AuthChallenge,
   Welcome,
@@ -518,5 +572,6 @@ export const SohbetAsagi = z.discriminatedUnion("type", [
   EventMesaji,
   ServerStatus,
   ErrorMesaji,
+  UsageReport,
 ]);
 export type SohbetAsagi = z.infer<typeof SohbetAsagi>;
