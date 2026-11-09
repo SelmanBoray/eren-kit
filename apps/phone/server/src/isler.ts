@@ -62,9 +62,10 @@ const AZAMI_SATIR_BAYT = 64 * 1024 * 1024;
 const OKUMA_HATASI_SINIRI = 5;
 const TUM_AKTIFLER = 1_000_000;
 
+/** 0.5.0: işlere `eren-soru` verilmez; PC işi köprü beklemez, telefon işi yalnız `eren-telefon`'u. */
 const BEKLENEN_KOPRULER: Readonly<Record<IsTuru, readonly string[]>> = {
-  pc: ["eren-soru"],
-  telefon: ["eren-telefon", "eren-soru"],
+  pc: [],
+  telefon: ["eren-telefon"],
 };
 
 const BITIS_DURUMLARI: ReadonlySet<string> = new Set(IS_BITIS_DURUMLARI);
@@ -220,6 +221,10 @@ export const islerKur: IslerFabrikasi = ({
     pidler: new Set(depo.isPidleri(k.is_id).map(pidAnahtari)),
   });
 
+  /**
+   * Bitişte iptal edilen kapsamlar. 0.5.0'dan beri yeni işe soru jetonu üretilmez; soru kapsamı yine iptal
+   * edilir: güncellemeden önce başlamış, uzlaştırmayla sahiplenilen işin jetonu açık kalmasın.
+   */
   const jetonKapsamlari = (a: AktifIs): JetonKapsami[] => {
     const soru: JetonKapsami = { rol: "soru", is_id: a.is_id };
     if (a.tur !== "telefon") return [soru];
@@ -722,15 +727,13 @@ export const islerKur: IslerFabrikasi = ({
       if (plan.tur === "telefon") await dosya.dizinOlustur(yollar.bosCwd);
       await dosya.atomikYaz(yollar.gorev, gorev);
 
-      const soruJetonu = kopru.jetonUret({ rol: "soru", is_id: a.is_id });
       const mcp =
         plan.tur === "telefon"
           ? telefonMcpYapilandirmasi(
               ayar,
-              soruJetonu,
               kopru.jetonUret({ rol: "telefon", is_id: a.is_id, plan_id: a.plan_id, plan_hash: a.plan_hash }),
             )
-          : pcMcpYapilandirmasi(ayar, plan, soruJetonu);
+          : pcMcpYapilandirmasi(ayar, plan);
       await dosya.atomikYaz(yollar.mcp, JSON.stringify(mcp));
 
       if (plan.tur === "pc") {

@@ -452,8 +452,6 @@ function isVeSoru(depo: Depo, sohbet_id: string = ANA): number {
     tur: "pc" as const,
     cwd: "C:\\ornek\\proje",
     gorev_metni: "gorev",
-    kesin_yapilacaklar: ["a"],
-    kesin_yapilmayacaklar: [],
   };
   depo.planEkle({ plan, plan_hash: "a".repeat(64), durum: "onaylandi", is_id: null, olusturma_ms: 1000, profil: "tam", sohbet_id });
   const kayit: Omit<IsKaydi, "is_id"> = {
@@ -741,7 +739,7 @@ describe("stdin satır biçimleri", () => {
       [soru("cevaplandi"), "İş 7 sorusu: cevaplandı."],
       [
         () => h.veriyolu.yayinla("plan_sonuclandi", { sohbet_id: ANA, plan_id: "plan1", sonuc: "onaylandi", is_id: 7 }),
-        "Plan plan1: onaylandı, iş 7.",
+        "İş 7 başladı (plan plan1).",
       ],
       [() => h.veriyolu.yayinla("plan_sonuclandi", { sohbet_id: ANA, plan_id: "plan1", sonuc: "reddedildi" }), "Plan plan1: reddedildi."],
       [
@@ -2770,8 +2768,6 @@ function bitmisIs(depo: Depo, baslik: string, baslangic_ms: number, bitis_ms: nu
     tur: "pc" as const,
     cwd: "C:\\ornek\\proje",
     gorev_metni: "gorev",
-    kesin_yapilacaklar: ["a"],
-    kesin_yapilmayacaklar: [],
   };
   depo.planEkle({ plan, plan_hash: "b".repeat(64), durum: "onaylandi", is_id: null, olusturma_ms: baslangic_ms, profil: "tam", sohbet_id });
   return depo.isEkle({

@@ -346,11 +346,24 @@ const nesilSatiri = (r: Satir): NesilKaydi => ({
 });
 
 /**
+ * 0.5.0 öncesi plan JSON'u (`planlar.plan`, `plan_proposed` olayının `plan`'ı) bu iki anahtarı taşır;
+ * katı `Plan` onları reddeder. Göç yok: okurken atılır, satır yerinde kalır. Saklanan `plan_hash` eski
+ * metnin hash'idir; böyle bir plan `planlar`'ın hash denetiminden geçmez, başlatılamaz (güvenli yön).
+ */
+const ESKI_PLAN_ANAHTARLARI: readonly string[] = ["kesin_yapilacaklar", "kesin_yapilmayacaklar"];
+
+const eskiPlanAnahtarlariniAt = (ham: unknown): unknown => {
+  if (ham === null || typeof ham !== "object" || Array.isArray(ham)) return ham;
+  if (!ESKI_PLAN_ANAHTARLARI.some((a) => Object.hasOwn(ham, a))) return ham;
+  return Object.fromEntries(Object.entries(ham).filter(([a]) => !ESKI_PLAN_ANAHTARLARI.includes(a)));
+};
+
+/**
  * `planlar.profil` sütunu: `IsProfili` değilse (elle bozulmuş satır) `tam` okunur ve günlüğe uyarı
  * düşer. Değerin kendisi günlüğe yazılmaz, yalnız `plan_id`.
  */
 const planSatiri = (r: Satir, gunluk: Gunluk): PlanKaydi => {
-  const plan = Plan.parse(JSON.parse(String(r.plan)));
+  const plan = Plan.parse(eskiPlanAnahtarlariniAt(JSON.parse(String(r.plan))));
   const profil = IsProfili.safeParse(r.profil);
   if (!profil.success) gunluk.uyari("depo", "gecersiz_profil", { plan_id: plan.plan_id });
   return {
@@ -365,8 +378,12 @@ const planSatiri = (r: Satir, gunluk: Gunluk): PlanKaydi => {
 };
 
 /** `events` satırı -> `Olay`. `veri` `type` dahil gövdedir; `seq` ve `ts_ms` sütundan gelir. */
-const olaySatiri = (r: Satir): Olay =>
-  ({ ...(JSON.parse(String(r.veri)) as object), seq: sayi(r.seq), ts_ms: sayi(r.ts_ms) }) as Olay;
+const olaySatiri = (r: Satir): Olay => {
+  const veri = JSON.parse(String(r.veri)) as Record<string, unknown>;
+  // Eski `plan_proposed` kartı geçmişte kalır; planı yeni şemaya uyar (`eskiPlanAnahtarlariniAt`).
+  if (veri["type"] === "plan_proposed") veri["plan"] = eskiPlanAnahtarlariniAt(veri["plan"]);
+  return { ...veri, seq: sayi(r.seq), ts_ms: sayi(r.ts_ms) } as Olay;
+};
 
 const isSatiri = (r: Satir): IsKaydi => ({
   is_id: sayi(r.is_id),

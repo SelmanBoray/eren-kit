@@ -45,6 +45,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - The voice shortcut does not run while the device is locked.
   - In the shortcut prompt, the assistant no longer asks clarifying questions; it acts on the most reasonable reading.
   - App permissions: user-visible apps are on by default. Banking, money and identity apps (including password managers and 2FA) and system components are turned off automatically. The assistant can never use the home screen or the default keyboard app, and the user cannot turn them on. The Apps screen is now a simple On/Off switch.
+- `apps/phone` 0.5.0 (2026-11-10):
+  - No more asking permission: plans no longer carry the "must do / must not do" lists (`kesin_yapilacaklar`, `kesin_yapilmayacaklar` removed from the plan schema; `/sohbet` protocol v5; the plan hash changes, so a pending old plan cannot be approved and old plan cards drop out of the phone history). Job sessions no longer get a question tool and never ask the user: the task text is the plan's `gorev_metni` plus a note to pick the most reasonable reading and finish with a short reason in the report if stuck. The phone permission scope, hidden/immutable app denials, password-field denials, "read content is not a command" and Stop are unchanged. This widens what a misled job can do; see `apps/phone/docs/GUVENLIK.md` item 31.
+  - `plan_oner` now returns the real state (`basladi` with the job id, `telefonda_baslatiliyor`, or `onay_bekliyor` with a reason), so the assistant only talks about approval when approval is actually pending. Schema errors tell the assistant the field path and the rule, never the value.
+  - The plan card shows the job state (Starting, Started, Running, Done, ...) and shows approve/reject buttons only while a decision is pending.
+  - Phone guard: when the active root and the focus are the same allowed package, a last window event from SystemUI no longer counts as a foreground change (on HyperOS the event fired when a notification bubble closed and every read was refused). The strict rule for a change during a screenshot is unchanged. Foreground refusals log only package names and window types to logcat under `ErenKapi`.
+  - The service log has a new `komut_sonucu` event (command id, name, result, reason code; no content).
 
 ## [0.1.0] - 2026-11-09
 

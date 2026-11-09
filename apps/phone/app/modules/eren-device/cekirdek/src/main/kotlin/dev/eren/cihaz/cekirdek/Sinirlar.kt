@@ -31,8 +31,6 @@ object Sinirlar {
     const val PLAN_BASLIK = 120
     const val PLAN_CWD = 1_024
     const val GOREV_METNI = 20_000
-    const val PLAN_MADDE = 500
-    const val PLAN_MADDE_ADET = 64
     const val PLAN_UYGULAMA_ADET = 16
     const val IZINLI_METIN = 4_000
     const val IZINLI_METIN_ADET = 16

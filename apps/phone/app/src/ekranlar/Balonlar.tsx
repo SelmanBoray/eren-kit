@@ -378,7 +378,7 @@ export const IsSatiri = memo(function IsSatiri(p: { oge: IsKarti; basinca?: () =
 const MESAJ_ADI: Record<IsMesaji["type"], string> = {
   user_message: "Mesaj",
   interrupt: "Turu kesme isteği",
-  plan_decision: "Plan kararı",
+  plan_decision: "İş kararı",
   question_answer: "Soru cevabı",
   job_cancel: "İş iptali",
   // Çekirdek bunu `bekleyenler`/`hatalar`'a koymaz; tip bütünlüğü için.
@@ -511,7 +511,7 @@ export const ZamanCizelgesiOgesi = memo(function ZamanCizelgesiOgesi(p: {
     case "plan":
       return <PlanKartiEkrani kart={o} sohbet={p.sohbet} cihaz={p.cihaz} />;
     case "plan_gizlendi":
-      return <Serit tur="hata" metin="Bir plan doğrulanamadığı için gizlendi. Karar verilemez." />;
+      return <Serit tur="hata" metin="Bir iş kartı doğrulanamadığı için gizlendi." />;
     case "is":
       return <IsSatiri oge={o} basinca={o.durum === "suruyor" ? p.onIsler : undefined} />;
     case "rapor":

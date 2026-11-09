@@ -1,7 +1,19 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { kanonikJson, Plan, planHash, PlanTaslagi, SINIRLAR, TelefonIzinIstegi } from "../src/index.ts";
+import {
+  jsonSemasi,
+  kanonikJson,
+  Plan,
+  PLAN_CWD_ACIKLAMASI,
+  planHash,
+  PlanOnerGirdi,
+  PlanTaslagi,
+  SINIRLAR,
+  SOHBET_SURUMU,
+  SohbetAsagi,
+  TelefonIzinIstegi,
+} from "../src/index.ts";
 import { PLAN_PC, PLAN_TELEFON } from "./ornekler.ts";
 
 type Vektor = { ad: string; plan: Plan; kanonik: string; plan_hash: string };
@@ -38,8 +50,8 @@ const GECERSIZ_PLANLAR: [string, unknown][] = [
   ["telefon planında izin yok", { ...PLAN_TELEFON, telefon_izin_istegi: undefined }],
   ["telefon planında mcp profili", { ...PLAN_TELEFON, mcp_profili: "rea" }],
   ["bilinmeyen mcp profili", { ...PLAN_PC, mcp_profili: "adb" }],
-  ["yapılacaklar boş", { ...PLAN_PC, kesin_yapilacaklar: [] }],
-  ["satır sonlu madde", { ...PLAN_PC, kesin_yapilacaklar: ["a\n- sahte madde"] }],
+  ["kaldırılan alan: kesin_yapilacaklar", { ...PLAN_PC, kesin_yapilacaklar: ["Testleri çalıştır"] }],
+  ["kaldırılan alan: kesin_yapilmayacaklar", { ...PLAN_PC, kesin_yapilmayacaklar: [] }],
   ["satır sonlu başlık", { ...PLAN_PC, baslik: "a\nb" }],
   ["boş kirli kaynak", { ...PLAN_PC, kirli_kaynak: [] }],
   ["ondalık kirli kaynak", { ...PLAN_PC, kirli_kaynak: [1.5] }],
@@ -99,23 +111,11 @@ test("telefon izin isteği kuralları", () => {
 });
 
 test("plan boyut sınırları reddedilir", () => {
-  const madde = "x".repeat(SINIRLAR.PLAN_MADDE);
   const ornekler: [string, unknown, boolean][] = [
     ["başlık sınırda", { ...PLAN_PC, baslik: "x".repeat(SINIRLAR.PLAN_BASLIK) }, true],
     ["başlık aşan", { ...PLAN_PC, baslik: "x".repeat(SINIRLAR.PLAN_BASLIK + 1) }, false],
     ["görev sınırda", { ...PLAN_PC, gorev_metni: "x".repeat(SINIRLAR.GOREV_METNI) }, true],
     ["görev aşan", { ...PLAN_PC, gorev_metni: "x".repeat(SINIRLAR.GOREV_METNI + 1) }, false],
-    ["madde aşan", { ...PLAN_PC, kesin_yapilacaklar: [madde + "x"] }, false],
-    [
-      "madde adedi sınırda",
-      { ...PLAN_PC, kesin_yapilmayacaklar: Array(SINIRLAR.PLAN_MADDE_ADET).fill(madde) },
-      true,
-    ],
-    [
-      "madde adedi aşan",
-      { ...PLAN_PC, kesin_yapilmayacaklar: Array(SINIRLAR.PLAN_MADDE_ADET + 1).fill(madde) },
-      false,
-    ],
     ["cwd aşan", { ...PLAN_PC, cwd: "C:\\" + "x".repeat(SINIRLAR.PLAN_CWD) }, false],
   ];
   for (const [ad, deger, beklenen] of ornekler) {
@@ -134,10 +134,10 @@ test("plan_hash sabit vektörleri: kanonik metin ve özet", () => {
 test("plan_hash sabit test vektörü", () => {
   // Bu değerler node:crypto ve sıralı JSON.stringify ile, bu paketin kodu kullanılmadan üretildi.
   const beklenen: Record<string, string> = {
-    "pc-turkce": "3f975f2aa322634dcb0345def656168012826fb324f4ae753cbfbfb0d7000e2c",
-    "telefon-yaz": "129b9b4b302dbdc90902ac800cc22b92f4cb0cbdcaaf9102b980b51a824c0bb3",
-    "ayrisik-unicode": "ba65b23662434b578595874f849000c7b04b0a77ac5695a0953aee47008ab773",
-    "birlesik-unicode": "fc00f26967de446b64e5f2323d017552f34251da53668ebc33a93d9b975f7d22",
+    "pc-turkce": "d6d4f9f222b6f56056f04c949d2cbaf55623e00922860fd96843cef9577ac914",
+    "telefon-yaz": "1d5a8f1739832c213223335f51a6e0d17ed839e83b7b7a7619add627096a774a",
+    "ayrisik-unicode": "43924f6e239a906a3a921bad9fe42b4317107bfed2693c657a792da8071b28b0",
+    "birlesik-unicode": "80bc95e7a657c9ababc2574d3a2b1e84500e5596d3d9cd2a5354695d4e4a697b",
   };
   for (const [ad, ozet] of Object.entries(beklenen)) {
     assert.equal(vektor(ad).plan_hash, ozet, ad);
@@ -174,11 +174,9 @@ test("plan_hash her alanın değişimini yakalar", () => {
     { ...PLAN_PC, baslik: "Başka" },
     { ...PLAN_PC, cwd: "C:\\Baska" },
     { ...PLAN_PC, gorev_metni: "Başka görev" },
-    { ...PLAN_PC, kesin_yapilacaklar: ["Başka"] },
-    { ...PLAN_PC, kesin_yapilmayacaklar: [] },
     { ...PLAN_PC, mcp_profili: "rea" },
     { ...PLAN_PC, kirli_kaynak: [1] },
-    { ...PLAN_PC, kesin_yapilacaklar: ["b", "a"] },
+    { ...PLAN_PC, kirli_kaynak: [2, 1] },
   ];
   const gorulen = new Set([taban]);
   for (const plan of degisimler) {
@@ -187,8 +185,8 @@ test("plan_hash her alanın değişimini yakalar", () => {
     gorulen.add(ozet);
   }
   assert.notEqual(
-    planHash({ ...PLAN_PC, kesin_yapilacaklar: ["a", "b"] }),
-    planHash({ ...PLAN_PC, kesin_yapilacaklar: ["b", "a"] }),
+    planHash({ ...PLAN_PC, kirli_kaynak: [1, 2] }),
+    planHash({ ...PLAN_PC, kirli_kaynak: [2, 1] }),
   );
 });
 
@@ -204,4 +202,45 @@ test("plan taslağı servis alanlarını kabul etmez", () => {
   assert.equal(PlanTaslagi.safeParse(PLAN_PC).success, false, "plan_id servisindir");
   assert.equal(PlanTaslagi.safeParse({ ...taslak, kirli_kaynak: [1] }).success, false);
   assert.equal(PlanTaslagi.safeParse({ ...taslak, cwd: "" }).success, false);
+});
+
+test("kaldırılan plan maddeleri (kesin yapılacaklar/yapılmayacaklar) her plan şemasında reddedilir", () => {
+  const { plan_id: _id, ...taslak } = PLAN_PC;
+  const { plan_id: _id2, ...telefonTaslak } = PLAN_TELEFON;
+  const eskiAlanlar = [
+    { kesin_yapilacaklar: ["Testleri çalıştır"] },
+    { kesin_yapilmayacaklar: [] },
+    { kesin_yapilacaklar: ["a"], kesin_yapilmayacaklar: ["b"] },
+  ];
+  for (const eski of eskiAlanlar) {
+    const ad = JSON.stringify(eski);
+    assert.equal(Plan.safeParse({ ...PLAN_PC, ...eski }).success, false, `Plan ${ad}`);
+    assert.equal(Plan.safeParse({ ...PLAN_TELEFON, ...eski }).success, false, `Plan telefon ${ad}`);
+    assert.equal(PlanTaslagi.safeParse({ ...taslak, ...eski }).success, false, `PlanTaslagi ${ad}`);
+    assert.equal(PlanOnerGirdi.safeParse({ ...taslak, ...eski }).success, false, `PlanOnerGirdi ${ad}`);
+    assert.equal(PlanOnerGirdi.safeParse({ ...telefonTaslak, ...eski }).success, false, `telefon girdisi ${ad}`);
+    assert.throws(() => planHash({ ...PLAN_PC, ...eski } as Plan), ad);
+    const olay = { seq: 1, ts_ms: 1, type: "plan_proposed", plan: { ...PLAN_PC, ...eski }, plan_hash: "a".repeat(64) };
+    assert.equal(SohbetAsagi.safeParse({ v: SOHBET_SURUMU, type: "event", event: olay }).success, false, `plan_proposed ${ad}`);
+  }
+  // Alanlar olmadan plan tam ve geçerlidir; şemada ve kanonik metinde iz kalmaz.
+  assert.equal(PlanOnerGirdi.safeParse(taslak).success, true);
+  assert.equal(PlanOnerGirdi.safeParse(telefonTaslak).success, true);
+  for (const sema of [Plan, PlanTaslagi, PlanOnerGirdi]) {
+    assert.doesNotMatch(JSON.stringify(jsonSemasi(sema)), /kesin_yapil/);
+  }
+  assert.doesNotMatch(kanonikJson(Plan.parse(PLAN_PC)), /kesin_yapil/);
+  for (const v of vektorler) assert.doesNotMatch(JSON.stringify(v), /kesin_yapil/, v.ad);
+});
+
+test("plan_oner cwd açıklaması telefon planında boş bırakılacağını söyler; kural aynen kalır", () => {
+  const sema = jsonSemasi(PlanOnerGirdi) as { properties: { cwd: { description?: string } } };
+  assert.equal(sema.properties.cwd.description, PLAN_CWD_ACIKLAMASI);
+  assert.match(PLAN_CWD_ACIKLAMASI, /Telefon planında boş bırakılır/);
+  const { plan_id: _id, ...telefonTaslak } = PLAN_TELEFON;
+  assert.equal(PlanOnerGirdi.safeParse({ ...telefonTaslak, cwd: "C:\Proje" }).success, false);
+  assert.equal(PlanOnerGirdi.safeParse({ ...telefonTaslak, cwd: "" }).success, true);
+  // Açıklama plana ve özete girmez: Plan şemasının cwd'si açıklamasızdır.
+  const planSemasi = jsonSemasi(Plan) as { properties: { cwd: { description?: string } } };
+  assert.equal(planSemasi.properties.cwd.description, undefined);
 });

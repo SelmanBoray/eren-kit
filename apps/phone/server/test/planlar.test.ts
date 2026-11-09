@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { after, describe, it } from "node:test";
+import { DatabaseSync } from "node:sqlite";
 import { planHash } from "@eren/protocol";
 import { ANA_SOHBET_ID, PlanOnerCikti, PlanTaslagi, SOHBET_SURUMU } from "@eren/protocol";
 import type { SohbetId } from "@eren/protocol";
@@ -36,8 +40,6 @@ const pcTaslak = (ek: Record<string, unknown> = {}): Record<string, unknown> => 
   tur: "pc",
   cwd: PC_CWD,
   gorev_metni: "Ornek gorev metni.",
-  kesin_yapilacaklar: ["Birinci madde"],
-  kesin_yapilmayacaklar: [],
   ...ek,
 });
 
@@ -46,8 +48,6 @@ const telefonTaslak = (ek: Record<string, unknown> = {}): Record<string, unknown
   tur: "telefon",
   cwd: "",
   gorev_metni: "Telefonda ornek gorev.",
-  kesin_yapilacaklar: ["Uygulamayi oku"],
-  kesin_yapilmayacaklar: [],
   telefon_izin_istegi: { uygulamalar: ["com.ornek.uygulama"], mod: "oku" },
   ...ek,
 });
@@ -58,13 +58,15 @@ const kur = (
     nesil?: number;
     insanTuru?: (s: SohbetSecimi) => string | null;
     tamYetki?: () => boolean;
+    /** Verilirse dosya veritabanı (ham SQL ile eski biçim yazmak için); yoksa bellek. */
+    yol?: string;
   } = {},
 ) => {
   const zaman = sahteZaman();
   const gunluk = sahteGunluk();
   const rastgele = sahteRastgele();
   const veriyolu = veriyoluKur({ gunluk });
-  const depo = depoKur({ yol: ":memory:", saat: zaman.saat, veriyolu, gunluk });
+  const depo = depoKur({ yol: sec.yol ?? ":memory:", saat: zaman.saat, veriyolu, gunluk });
   for (const sohbet_id of [A_ID, B_ID]) {
     depo.sohbetEkle({ sohbet_id, ad: `Sohbet ${sohbet_id}`, olusturma_ms: zaman.simdi(), son_etkinlik_ms: zaman.simdi() });
   }
@@ -165,7 +167,10 @@ describe("planlar: plan_oner", () => {
     const t = kur();
     const c = await t.oner(pcTaslak());
     assert.equal(PlanOnerCikti.safeParse(c).success, true);
-    assert.equal(c.durum, "onay_bekliyor");
+    assert.deepEqual(
+      { durum: c.durum, neden: c.neden, is_id: c.is_id },
+      { durum: "onay_bekliyor", neden: "tam_yetki_kapali", is_id: undefined },
+    );
     assert.equal(t.baslatmalar.length, 0);
     const kayit = t.depo.planGetir(c.plan_id);
     assert.equal(kayit?.durum, "bekliyor");
@@ -175,10 +180,16 @@ describe("planlar: plan_oner", () => {
     assert.equal(t.olaylar.filter((o) => o.ad === "plan_onerildi").length, 1);
   });
 
-  it("telefon planı da iş başlatmaz", async () => {
-    const t = kur();
-    await t.oner(telefonTaslak());
-    assert.equal(t.baslatmalar.length, 0);
+  it("telefon planı da iş başlatmaz; dönüş telefonda_baslatiliyor (tam yetki ve insan turu fark etmez)", async () => {
+    for (const sec of [{}, { tamYetki: () => true, insanTuru: () => "tur-1" }]) {
+      const t = kur(sec);
+      const c = await t.oner(telefonTaslak());
+      assert.equal(t.baslatmalar.length, 0);
+      assert.equal(PlanOnerCikti.safeParse(c).success, true);
+      assert.equal(c.durum, "telefonda_baslatiliyor");
+      assert.equal(c.is_id, undefined);
+      assert.equal(c.neden, undefined);
+    }
   });
 
   it("plan_id servisindir ve her planda farklıdır", async () => {
@@ -206,7 +217,10 @@ describe("planlar: plan_oner", () => {
     const t = kur();
     for (const kotu of [
       pcTaslak({ cwd: "goreli\\yol" }),
-      pcTaslak({ kesin_yapilacaklar: [] }),
+      // 0.5.0: eski plan anahtarları katı şemada geçersiz.
+      pcTaslak({ kesin_yapilacaklar: ["Birinci madde"] }),
+      pcTaslak({ kesin_yapilmayacaklar: [] }),
+      telefonTaslak({ kesin_yapilacaklar: ["Uygulamayi oku"], kesin_yapilmayacaklar: [] }),
       pcTaslak({ gorev_metni: "x".repeat(30_001) }),
       telefonTaslak({ telefon_izin_istegi: undefined }),
     ]) {
@@ -727,16 +741,12 @@ describe("planlar: işi olan plan (regresyon)", () => {
 });
 
 describe("planlar: komut satırı sınırı (regresyon)", () => {
-  it("tırnak ağırlıklı görev ve 16x490 maddeyle plan_gecersiz, detail gorev_metni", async () => {
+  it("tırnak ağırlıklı görev: ham uzunluk sığar, kaçış sonrası aşar; plan_gecersiz, detail gorev_metni", async () => {
     const t = kur();
-    const s = await t.planlar.planOner(
-      pcTaslak({
-        gorev_metni: 'ab "'.repeat(5000),
-        kesin_yapilacaklar: Array.from({ length: 16 }, () => "x".repeat(490)),
-      }) as never,
-      "tam",
-      ANA,
-    );
+    // Ham 20.000 birim (şema sınırı, geçerli); kaçış sonrası 30.002, bütçe ~27.000.
+    const taslak = pcTaslak({ gorev_metni: 'a"'.repeat(10_000) });
+    assert.equal(PlanTaslagi.safeParse(taslak).success, true, "şemaya uyar: ret komut satırı sınırından");
+    const s = await t.planlar.planOner(taslak as never, "tam", ANA);
     assert.equal(s.ok, false);
     if (!s.ok) {
       assert.equal(s.code, "plan_gecersiz");
@@ -750,6 +760,12 @@ describe("planlar: komut satırı sınırı (regresyon)", () => {
     const s = await t.planlar.planOner(pcTaslak({ gorev_metni: 'ab "'.repeat(100) }) as never, "tam", ANA);
     assert.equal(s.ok, true);
   });
+
+  it("şema sınırında tırnaklı görev (ham 20.000, kaçış sonrası 25.002) kabul edilir", async () => {
+    const t = kur();
+    const s = await t.planlar.planOner(pcTaslak({ gorev_metni: 'ab "'.repeat(5000) }) as never, "tam", ANA);
+    assert.equal(s.ok, true);
+  });
 });
 
 describe("planlar: insan turunda onaysız başlatma", () => {
@@ -759,7 +775,10 @@ describe("planlar: insan turunda onaysız başlatma", () => {
   it("PC planı tek isler.baslat çağırır, olay sırası plan_proposed sonra plan_resolved, plan onaylandı", async () => {
     const t = kur({ insanTuru: () => "tur-1" });
     const c = await t.oner(pcTaslak());
-    assert.equal(c.durum, "onay_bekliyor");
+    assert.equal(PlanOnerCikti.safeParse(c).success, true);
+    assert.equal(c.durum, "basladi");
+    assert.equal(c.neden, undefined);
+    assert.equal(c.is_id, t.depo.planGetir(c.plan_id)?.is_id, "dönüşteki is_id başlayan iş");
     assert.equal(t.baslatmalar.length, 1);
     const tipler = t.depo.olaylariGetir(0, 50).map((o) => o.type).filter((x) => x.startsWith("plan_"));
     assert.deepEqual(tipler, ["plan_proposed", "plan_resolved"]);
@@ -785,6 +804,7 @@ describe("planlar: insan turunda onaysız başlatma", () => {
     t.durum.serbest = false;
     const c = await t.oner(pcTaslak());
     assert.equal(c.durum, "onay_bekliyor");
+    assert.equal(c.neden, "limit_kilitli");
     assert.equal(t.baslatmalar.length, 0);
     assert.equal(t.depo.planGetir(c.plan_id)?.durum, "bekliyor");
     assert.equal(resolvedlar(t).length, 0);
@@ -795,6 +815,7 @@ describe("planlar: insan turunda onaysız başlatma", () => {
     t.durum.baslatHata = true;
     const c = await t.oner(pcTaslak());
     assert.equal(c.durum, "onay_bekliyor");
+    assert.equal(c.neden, "baslatma_hatasi");
     assert.equal(t.depo.planGetir(c.plan_id)?.durum, "bekliyor");
     assert.equal(resolvedlar(t).length, 0);
   });
@@ -805,6 +826,7 @@ describe("planlar: insan turunda onaysız başlatma", () => {
       const t = kur({ insanTuru: () => (n++ === 0 ? "tur-1" : sonraki) });
       const c = await t.oner(pcTaslak());
       assert.equal(c.durum, "onay_bekliyor");
+      assert.equal(c.neden, "tur_bitti");
       assert.equal(t.baslatmalar.length, 0);
       assert.equal(t.depo.planGetir(c.plan_id)?.durum, "bekliyor");
       assert.equal(resolvedlar(t).length, 0);
@@ -818,6 +840,7 @@ describe("planlar: insan turunda onaysız başlatma", () => {
       },
     });
     const c1 = await atan.oner(pcTaslak());
+    assert.deepEqual([c1.durum, c1.neden], ["onay_bekliyor", "tam_yetki_kapali"]);
     assert.equal(atan.baslatmalar.length, 0);
     assert.equal(atan.depo.planGetir(c1.plan_id)?.durum, "bekliyor");
     const yok = kur();
@@ -831,6 +854,7 @@ describe("planlar: insan turunda onaysız başlatma", () => {
     const kirli = t.kirliIs("p-kirli", true);
     const c = await t.oner(pcTaslak({ dayandigi_isler: [kirli] }));
     assert.deepEqual(t.depo.planGetir(c.plan_id)?.plan.kirli_kaynak, [kirli]);
+    assert.deepEqual([c.durum, c.neden], ["onay_bekliyor", "kirli_kaynak"]);
     assert.equal(t.baslatmalar.length, 0);
     assert.equal(t.depo.planGetir(c.plan_id)?.durum, "bekliyor");
     assert.equal(resolvedlar(t).length, 0);
@@ -853,7 +877,9 @@ describe("planlar: tam yetki (Dilim 3b)", () => {
     it(`sentetik turdaki PC planı karar beklemeden başlar (${ad})`, async () => {
       const t = kur({ tamYetki: () => true, ...(insanTuru !== undefined ? { insanTuru } : {}) });
       const c = await t.oner(pcTaslak(), "hafif");
-      assert.equal(c.durum, "onay_bekliyor");
+      assert.equal(c.durum, "basladi");
+      assert.equal(c.is_id, t.depo.planGetir(c.plan_id)?.is_id);
+      assert.ok(c.is_id !== undefined);
       assert.equal(t.baslatmalar.length, 1);
       assert.equal(t.baslatmalar[0]!.plan_hash, c.plan_hash);
       assert.equal(t.baslatmalar[0]!.profil, "hafif");
@@ -910,6 +936,7 @@ describe("planlar: tam yetki (Dilim 3b)", () => {
       const t = kur({ tamYetki: () => true, insanTuru: () => (n++ === 0 ? "tur-1" : sonraki) });
       const c = await t.oner(pcTaslak());
       assert.equal(c.durum, "onay_bekliyor");
+      assert.equal(c.neden, "tur_bitti");
       assert.equal(t.baslatmalar.length, 0);
       assert.equal(t.depo.planGetir(c.plan_id)?.durum, "bekliyor");
       assert.equal(resolvedlar(t).length, 0);
@@ -959,6 +986,7 @@ describe("planlar: tam yetki (Dilim 3b)", () => {
     t.durum.baslatHata = true;
     const c = await t.oner(pcTaslak());
     assert.equal(c.durum, "onay_bekliyor");
+    assert.equal(c.neden, "baslatma_hatasi");
     assert.equal(t.depo.planGetir(c.plan_id)!.durum, "bekliyor");
     assert.equal(resolvedlar(t).length, 0);
   });
@@ -993,6 +1021,7 @@ describe("planlar: tam yetki (Dilim 3b)", () => {
       },
     });
     const c1 = await atan.oner(pcTaslak());
+    assert.deepEqual([c1.durum, c1.neden], ["onay_bekliyor", "tam_yetki_kapali"]);
     assert.equal(atan.baslatmalar.length, 0);
     assert.equal(atan.depo.planGetir(c1.plan_id)!.durum, "bekliyor");
     assert.equal(atan.gunluk.bul("tam_yetki_okunamadi", "hata").length, 1);
@@ -1326,7 +1355,7 @@ describe("planlar: çoklu sohbet (Dilim 2)", () => {
       const k = yalnizAninTuru();
       const t = kur({ insanTuru: k.insanTuru });
       const b = await t.oner(pcTaslak(), "tam", B);
-      assert.equal(b.durum, "onay_bekliyor");
+      assert.deepEqual([b.durum, b.neden], ["onay_bekliyor", "tam_yetki_kapali"]);
       assert.equal(t.baslatmalar.length, 0, "B'nin önerisi A'nın insan turunda başlamamalı");
       assert.equal(t.depo.planGetir(b.plan_id)!.durum, "bekliyor");
       assert.equal(planOlaylari(t, "plan_resolved").length, 0);
@@ -1350,7 +1379,8 @@ describe("planlar: çoklu sohbet (Dilim 2)", () => {
       const k = yalnizAninTuru();
       const t = kur({ insanTuru: k.insanTuru });
       const a = await t.oner(pcTaslak(), "hafif", A);
-      assert.equal(a.durum, "onay_bekliyor");
+      assert.equal(a.durum, "basladi");
+      assert.equal(a.is_id, t.depo.planGetir(a.plan_id)!.is_id);
       assert.equal(t.baslatmalar.length, 1);
       assert.equal(t.baslatmalar[0]!.sohbet_id, A_ID);
       assert.equal(t.baslatmalar[0]!.profil, "hafif");
@@ -1377,7 +1407,7 @@ describe("planlar: çoklu sohbet (Dilim 2)", () => {
         insanTuru: (s) => (s.sohbet_id === B_ID ? (n++ === 0 ? "tur-B" : null) : "tur-A"),
       });
       const b = await t.oner(pcTaslak(), "tam", B);
-      assert.equal(b.durum, "onay_bekliyor");
+      assert.deepEqual([b.durum, b.neden], ["onay_bekliyor", "tur_bitti"]);
       assert.equal(t.baslatmalar.length, 0);
       assert.equal(t.depo.planGetir(b.plan_id)!.durum, "bekliyor");
     });
@@ -1547,5 +1577,65 @@ describe("planlar: çoklu sohbet (Dilim 2)", () => {
       assert.equal(planOlaylari(t, "plan_resolved").length, 2);
       assert.equal(t.baslatmalar.length, 0);
     });
+  });
+});
+
+describe("planlar: 0.5.0 öncesi biçimde saklı plan", () => {
+  const kok = mkdtempSync(join(tmpdir(), "eren-planlar-test-"));
+  const acik: Array<{ kapat(): void }> = [];
+  after(() => {
+    for (const d of acik) d.kapat();
+    rmSync(kok, { recursive: true, force: true });
+  });
+  let no = 0;
+
+  /** Kartı yeni kodla önerir, sonra satırı ve olayı eski biçime (iki eski anahtar, eski hash) çevirir. */
+  const eskiKart = async () => {
+    const yol = join(kok, `vt-${++no}.db`);
+    const t = kur({ yol });
+    acik.push(t.depo);
+    const c = await t.oner(pcTaslak());
+    const plan = t.depo.planGetir(c.plan_id)!.plan;
+    const eski = { ...plan, kesin_yapilacaklar: ["Birinci madde"], kesin_yapilmayacaklar: [] };
+    const ESKI_HASH = "b".repeat(64);
+    const ham = new DatabaseSync(yol);
+    try {
+      ham.prepare("UPDATE planlar SET plan = ?, plan_hash = ? WHERE plan_id = ?").run(JSON.stringify(eski), ESKI_HASH, c.plan_id);
+      const r = ham.prepare("SELECT seq, veri FROM events WHERE type = 'plan_proposed'").get() as { seq: number; veri: string };
+      const veri = { ...(JSON.parse(r.veri) as object), plan: eski, plan_hash: ESKI_HASH };
+      ham.prepare("UPDATE events SET veri = ? WHERE seq = ?").run(JSON.stringify(veri), r.seq);
+    } finally {
+      ham.close();
+    }
+    return { t, plan, plan_id: c.plan_id, ESKI_HASH };
+  };
+
+  it("kart ve geçmiş okunur; onay iş başlatmaz (ic_hata), plan bekliyor kalır", async () => {
+    const { t, plan, plan_id, ESKI_HASH } = await eskiKart();
+    const k = t.depo.planGetir(plan_id)!;
+    assert.deepEqual(k.plan, plan);
+    assert.equal(k.plan_hash, ESKI_HASH);
+    const kart = t.depo.olaylariGetir(0, 50).find((o) => o.type === "plan_proposed");
+    assert.ok(kart?.type === "plan_proposed");
+    assert.deepEqual(kart.plan, plan);
+    assert.deepEqual(t.depo.bekleyenPlanlar().map((p) => p.plan.plan_id), [plan_id]);
+
+    const s = await t.karar(plan_id, ESKI_HASH);
+    assert.equal(s.ok === false && s.code, "ic_hata");
+    assert.equal(t.baslatmalar.length, 0);
+    assert.equal(t.depo.planGetir(plan_id)!.durum, "bekliyor");
+    assert.ok(t.gunluk.girdiler.some((g) => JSON.stringify(g).includes("depo_plan_degismis")));
+  });
+
+  it("ret ve sohbet iptali eski kartı kapatır", async () => {
+    const r = await eskiKart();
+    const s = await r.t.karar(r.plan_id, r.ESKI_HASH, "ret");
+    assert.equal(s.ok, true);
+    assert.equal(r.t.depo.planGetir(r.plan_id)!.durum, "reddedildi");
+
+    const i = await eskiKart();
+    assert.equal(i.t.planlar.bekleyenleriIptal(ANA), 1);
+    assert.equal(i.t.depo.planGetir(i.plan_id)!.durum, "iptal");
+    assert.equal(i.t.baslatmalar.length, 0);
   });
 });

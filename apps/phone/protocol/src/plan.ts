@@ -26,6 +26,11 @@ export const IS_PROFILI_ACIKLAMASI =
   "tam: kod yazma ya da düzenleme, çok adımlı iş, araştırma, kullanıcının ayarlarını ve " +
   "orkestrasını gerektiren her iş. Emin değilsen tam.";
 
+/** `plan_oner` girdisindeki `cwd` alanının modele giden açıklaması (JSON Schema `description`). */
+export const PLAN_CWD_ACIKLAMASI =
+  "pc planında işin çalışacağı klasörün mutlak Windows yolu (ör. C:\\Proje). " +
+  'Telefon planında boş bırakılır: "" (servis boş bir klasör kullanır).';
+
 export const TelefonIzinIstegi = z
   .strictObject({
     uygulamalar: z.array(PaketAdi).min(1).max(SINIRLAR.PLAN_UYGULAMA_ADET),
@@ -63,11 +68,6 @@ const PLAN_ALANLARI = {
   /** `pc`: mutlak Windows yolu. `telefon`: boş metin; servis boş bir klasör kullanır. */
   cwd: planSatiri(0, SINIRLAR.PLAN_CWD),
   gorev_metni: planMetni(1, SINIRLAR.GOREV_METNI),
-  kesin_yapilacaklar: z
-    .array(planSatiri(1, SINIRLAR.PLAN_MADDE))
-    .min(1)
-    .max(SINIRLAR.PLAN_MADDE_ADET),
-  kesin_yapilmayacaklar: z.array(planSatiri(1, SINIRLAR.PLAN_MADDE)).max(SINIRLAR.PLAN_MADDE_ADET),
   mcp_profili: McpProfili.optional(),
   telefon_izin_istegi: TelefonIzinIstegi.optional(),
 };
@@ -143,6 +143,7 @@ export type PlanTaslagi = z.infer<typeof PlanTaslagi>;
 export const PlanOnerGirdi = z
   .strictObject({
     ...TASLAK_ALANLARI,
+    cwd: PLAN_ALANLARI.cwd.describe(PLAN_CWD_ACIKLAMASI),
     profil: IsProfili.optional().describe(IS_PROFILI_ACIKLAMASI),
   })
   .superRefine(turKurallari);

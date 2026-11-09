@@ -1422,8 +1422,11 @@ export type PlanKararHatasi = Extract<
 
 export interface PlanYoneticisi {
   /**
-   * Kart doğurur. Çağrı anında `insanTuru()` doluysa ve plan `pc` ise kartla birlikte `karar`'ın onay
-   * yolundan başlatır; dönüş yine `onay_bekliyor`dur (`PlanOnerCikti`), başladığı `plan_resolved`'dan bilinir.
+   * Kart doğurur. PC planı tam yetkide ya da çağrı anında `insanTuru()` doluysa (ve plan kirli değilse)
+   * kartla birlikte `karar`'ın onay yolundan başlatılır. 0.5.0: dönüş planın gerçek durumunu taşır
+   * (`PlanOnerCikti`): `basladi` + `is_id`; telefon planında `telefonda_baslatiliyor`; başlamayan PC
+   * planında `onay_bekliyor` + `neden` (`PLAN_BEKLEME_NEDENLERI`). Başlatma sonucu ne olursa olsun kart
+   * yazılmıştır, öneri başarılıdır.
    * Dilim 1 (uygulama: planlar.ts, çağıran ana.ts): `profil` plan dışıdır. `ana` `plan_oner` girdisini
    * (`PlanOnerGirdi`) `{profil, ...taslak}` diye ayırır, `profil ?? "tam"` verir; `taslak`'ta `profil`
    * olmadığı için plana sızamaz. `planlar` onu `PlanKaydi.profil`'e yazar (telefon planında `tam`).

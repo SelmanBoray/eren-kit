@@ -36,8 +36,6 @@ const telefonPlani = (plan_id: string): Plan =>
     tur: "telefon",
     cwd: "",
     gorev_metni: "Son mesajları oku",
-    kesin_yapilacaklar: ["oku"],
-    kesin_yapilmayacaklar: [],
     telefon_izin_istegi: { uygulamalar: ["com.whatsapp"], mod: "oku" },
   }) as Plan;
 
@@ -48,8 +46,6 @@ const pcPlani = (plan_id: string): Plan =>
     tur: "pc",
     cwd: "C:\\proje",
     gorev_metni: "Derle",
-    kesin_yapilacaklar: ["derle"],
-    kesin_yapilmayacaklar: [],
   }) as Plan;
 
 /** Testlerin "şimdi"si; kartlar varsayılan olarak bundan 1 sn önce önerilmiş. */

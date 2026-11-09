@@ -66,8 +66,6 @@ const GIRDI: Record<KopruFiili, unknown> = {
     tur: "pc",
     cwd: "C:\\ornek\\",
     gorev_metni: "Ornek gorev",
-    kesin_yapilacaklar: ["bir sey"],
-    kesin_yapilmayacaklar: [],
   },
   oturumlar: {},
   rapor_oku: { id: 1 },

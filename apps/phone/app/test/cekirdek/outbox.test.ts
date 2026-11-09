@@ -252,22 +252,22 @@ describe("outbox", () => {
     o.ack(ackCerceve(r.client_msg_id));
     assert.equal(o.ogeler().length, 0);
   });
-  it("ekle v4 üretir: kuyruktaki, yollanan ve diske yazılan mesajda v SOHBET_SURUMU", async () => {
+  it("ekle güncel sürüm üretir: kuyruktaki, yollanan ve diske yazılan mesajda v SOHBET_SURUMU", async () => {
     const { o, depo } = kur();
     await o.yukle();
     const k = kablo();
     o.kimlikTamam(k.gonder);
     const r = await o.ekle(yazi("selam"));
     assert.ok(r.ok);
-    assert.equal(SOHBET_SURUMU, 4);
-    assert.equal(o.ogeler()[0]?.mesaj.v, 4);
+    assert.equal(SOHBET_SURUMU, 5);
+    assert.equal(o.ogeler()[0]?.mesaj.v, SOHBET_SURUMU);
     assert.equal(k.yollanan.length, 1);
-    assert.equal(k.yollanan[0]?.v, 4);
+    assert.equal(k.yollanan[0]?.v, SOHBET_SURUMU);
     const kayit = JSON.parse(depo.kv.get(OUTBOX_ANAHTARI) ?? "{}") as { ogeler: { mesaj: { v: number } }[] };
-    assert.deepEqual(kayit.ogeler.map((g) => g.mesaj.v), [4]);
+    assert.deepEqual(kayit.ogeler.map((g) => g.mesaj.v), [SOHBET_SURUMU]);
   });
 
-  it("chat_clear geçici öğedir: v4 yollanır, ack sonrası kuyrukta ve hatalarda iz kalmaz, kopmada yeniden yollanmaz", async () => {
+  it("chat_clear geçici öğedir: güncel sürümle yollanır, ack sonrası kuyrukta ve hatalarda iz kalmaz, kopmada yeniden yollanmaz", async () => {
     // MODULLER.md: chat_clear `outbox.ekle` ile gecici öğe olarak girer ama `ogeler`'de görünmez;
     // burada yalnız gözlenebilir sözleşme sabitlenir: ok:true ack'te kuyruk boş, hata yok.
     const { o } = kur();
@@ -277,7 +277,7 @@ describe("outbox", () => {
     const r = await o.ekle({ type: "chat_clear", sohbet_id: "ana" }, { gecici: true });
     assert.ok(r.ok);
     assert.equal(k.yollanan[0]?.type, "chat_clear");
-    assert.equal(k.yollanan[0]?.v, 4);
+    assert.equal(k.yollanan[0]?.v, SOHBET_SURUMU);
     o.ack(ackCerceve(r.client_msg_id, true, { seq: 9 }));
     assert.equal(o.ogeler().length, 0);
     assert.equal(o.hatalar().length, 0);
@@ -290,12 +290,12 @@ describe("outbox", () => {
     assert.equal(k2.yollanan.length, 0);
   });
 
-  describe("v1/v2 kayıtların güncel sürüme (v4) yükseltilmesi (K1)", () => {
+  describe("v1/v2 kayıtların güncel sürüme (SOHBET_SURUMU) yükseltilmesi (K1)", () => {
     const v1 = (client_msg_id: string, text: string) => ({ v: 1, type: "user_message", client_msg_id, input: "yazi", text });
     const diskeKoy = (depo: SahteDepo, kayit: Record<string, unknown>) =>
       depo.kv.set(OUTBOX_ANAHTARI, JSON.stringify({ donem: "abc", sayac: 7, ogeler: [], hatalar: [], ...kayit }));
 
-    it("kuyruktaki v1/v2 öğeler atılmaz, v4 olur, eksik sohbet_id 'ana' olur, kimlik ve sıra korunur", async () => {
+    it("kuyruktaki v1/v2 öğeler atılmaz, güncel sürüm olur, eksik sohbet_id 'ana' olur, kimlik ve sıra korunur", async () => {
       const depo = new SahteDepo();
       diskeKoy(depo, {
         ogeler: [
@@ -307,13 +307,13 @@ describe("outbox", () => {
       const { o } = kur(depo);
       await o.yukle();
       assert.deepEqual(o.ogeler().map((g) => g.client_msg_id), ["abc-3", "abc-1", "abc-5"]);
-      assert.ok(o.ogeler().every((g) => g.mesaj.v === 4));
+      assert.ok(o.ogeler().every((g) => g.mesaj.v === SOHBET_SURUMU));
       const k = kablo();
       o.kimlikTamam(k.gonder);
       assert.deepEqual(k.yollanan.map((m) => [m.v, (m as { client_msg_id: string }).client_msg_id]), [
-        [4, "abc-3"],
-        [4, "abc-1"],
-        [4, "abc-5"],
+        [SOHBET_SURUMU, "abc-3"],
+        [SOHBET_SURUMU, "abc-1"],
+        [SOHBET_SURUMU, "abc-5"],
       ]);
       assert.equal(k.metinler().slice(0, 2).join(), "uc,bir");
     });
@@ -325,10 +325,10 @@ describe("outbox", () => {
       });
       const { o } = kur(depo);
       await o.yukle();
-      assert.deepEqual(o.hatalar().map((h) => [h.client_msg_id, h.kod, h.mesaj.v]), [["abc-2", "limit_kilitli", 4]]);
+      assert.deepEqual(o.hatalar().map((h) => [h.client_msg_id, h.kod, h.mesaj.v]), [["abc-2", "limit_kilitli", SOHBET_SURUMU]]);
     });
 
-    it("yükseltilen kayıt bir sonraki yazımda v4 olarak diske yazılır, sayaç sürer", async () => {
+    it("yükseltilen kayıt bir sonraki yazımda güncel sürümle diske yazılır, sayaç sürer", async () => {
       const depo = new SahteDepo();
       diskeKoy(depo, { ogeler: [{ mesaj: v1("abc-7", "eski"), gecici: false }] });
       const { o } = kur(depo);
@@ -338,7 +338,7 @@ describe("outbox", () => {
       assert.equal(r.client_msg_id, "abc-8");
       await o.bosalt();
       const kayit = JSON.parse(depo.kv.get(OUTBOX_ANAHTARI) ?? "{}") as { ogeler: { mesaj: { v: number; client_msg_id: string } }[] };
-      assert.deepEqual(kayit.ogeler.map((g) => [g.mesaj.client_msg_id, g.mesaj.v]), [["abc-7", 4], ["abc-8", 4]]);
+      assert.deepEqual(kayit.ogeler.map((g) => [g.mesaj.client_msg_id, g.mesaj.v]), [["abc-7", SOHBET_SURUMU], ["abc-8", SOHBET_SURUMU]]);
     });
 
     it("yükseltilince de şemadan geçmeyen öğe atılır, geçerliler kalır", async () => {
@@ -393,7 +393,7 @@ describe("outbox", () => {
           o.ogeler().map((g) => [g.client_msg_id, sohbetIdsi(g.mesaj)]),
           [["abc-1", "ana"], ["abc-2", "ana"], ["abc-3", "s-x"]],
         );
-        assert.ok(o.ogeler().every((g) => g.mesaj.v === 4));
+        assert.ok(o.ogeler().every((g) => g.mesaj.v === SOHBET_SURUMU));
       });
 
       it("hatalar listesinde: v2 interrupt 'ana' ile yükselir, v2 chat_clear geçici tür olarak atılır", async () => {
@@ -408,7 +408,7 @@ describe("outbox", () => {
         assert.deepEqual(await o.yukle(), { yukseltilen: 1, atilan: 1 });
         assert.deepEqual(
           o.hatalar().map((h) => [h.client_msg_id, sohbetIdsi(h.mesaj), h.mesaj.v]),
-          [["abc-2", "ana", 4]],
+          [["abc-2", "ana", SOHBET_SURUMU]],
         );
       });
 
@@ -425,16 +425,16 @@ describe("outbox", () => {
         const oz = await o.yukle();
         assert.deepEqual(oz, { yukseltilen: 3, atilan: 0 });
         assert.deepEqual(o.ogeler().map((g) => g.mesaj.type), ["plan_decision", "question_answer", "job_cancel"]);
-        assert.ok(o.ogeler().every((g) => g.mesaj.v === 4 && !("sohbet_id" in g.mesaj)));
+        assert.ok(o.ogeler().every((g) => g.mesaj.v === SOHBET_SURUMU && !("sohbet_id" in g.mesaj)));
       });
 
-      it("v4 kayıt olduğu gibi kalır ve yükseltilen sayılmaz; başka v atılır", async () => {
+      it("güncel sürüm kaydı olduğu gibi kalır ve yükseltilen sayılmaz; başka v atılır", async () => {
         const depo = new SahteDepo();
         diskeKoy(depo, {
           ogeler: [
-            { mesaj: { v: 4, type: "user_message", client_msg_id: "abc-1", sohbet_id: "s-abc-1", input: "yazi", text: "a" }, gecici: false },
-            { mesaj: { v: 4, type: "chat_create", client_msg_id: "abc-2", sohbet_id: "s-abc-1", ad: "X" }, gecici: false },
-            { mesaj: { v: 5, type: "user_message", client_msg_id: "abc-3", sohbet_id: "ana", input: "yazi", text: "z" }, gecici: false },
+            { mesaj: { v: SOHBET_SURUMU, type: "user_message", client_msg_id: "abc-1", sohbet_id: "s-abc-1", input: "yazi", text: "a" }, gecici: false },
+            { mesaj: { v: SOHBET_SURUMU, type: "chat_create", client_msg_id: "abc-2", sohbet_id: "s-abc-1", ad: "X" }, gecici: false },
+            { mesaj: { v: SOHBET_SURUMU + 1, type: "user_message", client_msg_id: "abc-3", sohbet_id: "ana", input: "yazi", text: "z" }, gecici: false },
             { mesaj: { v: 0, type: "user_message", client_msg_id: "abc-4", sohbet_id: "ana", input: "yazi", text: "z" }, gecici: false },
           ],
         });
@@ -443,7 +443,23 @@ describe("outbox", () => {
         assert.deepEqual(o.ogeler().map((g) => g.client_msg_id), ["abc-1", "abc-2"]);
       });
 
-      it("Dilim 3: v3 kuyruk ve hata öğeleri kayıpsız v4 olur; alanlar, kimlik ve sıra aynı kalır", async () => {
+      it("0.5.0: v4 kayıt (kısayol ve baglam dahil) kayıpsız güncel sürüme yükselir; yalnız v değişir", async () => {
+        const depo = new SahteDepo();
+        const baglam = { paket: "com.whatsapp", ad: "WhatsApp" };
+        const v4Ogeler = [
+          { v: 4, type: "user_message", client_msg_id: "abc-1", sohbet_id: "ana", input: "kisayol", text: "a", baglam },
+          { v: 4, type: "plan_decision", client_msg_id: "abc-2", plan_id: "p", plan_hash: HASH_A, karar: "onay" },
+        ];
+        diskeKoy(depo, { ogeler: v4Ogeler.map((mesaj) => ({ mesaj, gecici: false })) });
+        const { o } = kur(depo);
+        assert.deepEqual(await o.yukle(), { yukseltilen: 2, atilan: 0 });
+        assert.deepEqual(
+          o.ogeler().map((g) => g.mesaj),
+          v4Ogeler.map((m) => ({ ...m, v: SOHBET_SURUMU })),
+        );
+      });
+
+      it("Dilim 3: v3 kuyruk ve hata öğeleri kayıpsız güncel sürüm olur; alanlar, kimlik ve sıra aynı kalır", async () => {
         const depo = new SahteDepo();
         const v3Ogeler = [
           { v: 3, type: "chat_create", client_msg_id: "abc-1", sohbet_id: "s-abc-1", ad: "Alışveriş" },
@@ -463,20 +479,20 @@ describe("outbox", () => {
         assert.deepEqual(await o.yukle(), { yukseltilen: 8, atilan: 0 });
         assert.deepEqual(
           o.ogeler().map((g) => g.mesaj),
-          v3Ogeler.map((m) => ({ ...m, v: 4 })),
+          v3Ogeler.map((m) => ({ ...m, v: SOHBET_SURUMU })),
         );
         assert.deepEqual(o.ogeler().map((g) => g.client_msg_id), v3Ogeler.map((m) => m.client_msg_id));
-        assert.deepEqual(o.hatalar(), [{ client_msg_id: "abc-8", mesaj: { ...v3Hata, v: 4 }, kod: "sohbet_bulunamadi" }]);
+        assert.deepEqual(o.hatalar(), [{ client_msg_id: "abc-8", mesaj: { ...v3Hata, v: SOHBET_SURUMU }, kod: "sohbet_bulunamadi" }]);
         // Kablo da v4 görür, aynı sırayla.
         const k = kablo();
         o.kimlikTamam(k.gonder);
         assert.deepEqual(
           k.yollanan.map((m) => [m.v, (m as { client_msg_id: string }).client_msg_id]),
-          v3Ogeler.map((m) => [4, m.client_msg_id]),
+          v3Ogeler.map((m) => [SOHBET_SURUMU, m.client_msg_id]),
         );
       });
 
-      it("Dilim 3: v3 kayıt sonraki yazımda v4 yazılır; v3'te sohbet_id'siz user_message 'ana'ya bağlanmaz, atılır", async () => {
+      it("Dilim 3: v3 kayıt sonraki yazımda güncel sürümle yazılır; v3'te sohbet_id'siz user_message 'ana'ya bağlanmaz, atılır", async () => {
         const depo = new SahteDepo();
         diskeKoy(depo, {
           ogeler: [
@@ -490,7 +506,7 @@ describe("outbox", () => {
         await o.ekle(yazi("yeni", "s-abc-1"));
         await o.bosalt();
         const kayit = diskKayit(depo);
-        assert.deepEqual(kayit.ogeler.map((g) => [g.mesaj.client_msg_id, g.mesaj.v]), [["abc-1", 4], ["abc-10", 4]]);
+        assert.deepEqual(kayit.ogeler.map((g) => [g.mesaj.client_msg_id, g.mesaj.v]), [["abc-1", SOHBET_SURUMU], ["abc-10", SOHBET_SURUMU]]);
       });
 
       it("Dilim 3: eski sürümde olamayacak kısayol alanları taşıyan v1/v2/v3 kayıt atılır", async () => {
@@ -510,7 +526,7 @@ describe("outbox", () => {
         assert.deepEqual(o.ogeler().map((g) => g.client_msg_id), ["abc-5"]);
       });
 
-      it("Dilim 3: v4 kısayol mesajı baglam'ıyla diske yazılır ve yeniden yüklemede aynen döner", async () => {
+      it("Dilim 3: kısayol mesajı baglam'ıyla diske yazılır ve yeniden yüklemede aynen döner", async () => {
         const depo = new SahteDepo();
         const a = kur(depo);
         await a.o.yukle();
@@ -526,7 +542,7 @@ describe("outbox", () => {
         await a.o.bosalt();
         const { o } = kur(depo);
         assert.deepEqual(await o.yukle(), { yukseltilen: 0, atilan: 0 });
-        assert.deepEqual(o.ogeler().map((g) => g.mesaj), [{ ...govde, v: 4, client_msg_id: r.client_msg_id }]);
+        assert.deepEqual(o.ogeler().map((g) => g.mesaj), [{ ...govde, v: SOHBET_SURUMU, client_msg_id: r.client_msg_id }]);
       });
 
       it("Dilim 3: ekle kısayol dışı girdide baglam'ı ve geçersiz baglam'ı reddeder (gecersiz), sayaç ilerlemez", async () => {
@@ -545,7 +561,7 @@ describe("outbox", () => {
         assert.equal("baglam" in o.ogeler()[0]!.mesaj, false);
       });
 
-      it("karışık v2 kayıtla yüklemeden sonra diske yazılan her kayıt v4, sayaç sürer", async () => {
+      it("karışık v2 kayıtla yüklemeden sonra diske yazılan her kayıt güncel sürümde, sayaç sürer", async () => {
         const depo = new SahteDepo();
         diskeKoy(depo, {
           sayac: 7,
@@ -559,8 +575,8 @@ describe("outbox", () => {
         await o.bosalt();
         const kayit = diskKayit(depo);
         assert.equal(kayit.sayac, 8);
-        assert.ok(kayit.ogeler.every((g) => g.mesaj.v === 4));
-        assert.ok(kayit.hatalar.every((h) => h.mesaj.v === 4));
+        assert.ok(kayit.ogeler.every((g) => g.mesaj.v === SOHBET_SURUMU));
+        assert.ok(kayit.hatalar.every((h) => h.mesaj.v === SOHBET_SURUMU));
         assert.deepEqual(kayit.ogeler.map((g) => g.mesaj.client_msg_id), ["abc-7", "abc-8"]);
       });
     });
@@ -629,7 +645,7 @@ describe("outbox", () => {
       it("yüklemede kalan hedefsiz interrupt (gecici bayraklı) baglanti_koptu olur, atılmaz", async () => {
         const depo = new SahteDepo();
         diskeKoy(depo, {
-          ogeler: [{ mesaj: { v: 4, type: "interrupt", client_msg_id: "abc-1", sohbet_id: "ana" }, gecici: true }],
+          ogeler: [{ mesaj: { v: SOHBET_SURUMU, type: "interrupt", client_msg_id: "abc-1", sohbet_id: "ana" }, gecici: true }],
         });
         const { o } = kur(depo);
         assert.deepEqual(await o.yukle(), { yukseltilen: 0, atilan: 0 });

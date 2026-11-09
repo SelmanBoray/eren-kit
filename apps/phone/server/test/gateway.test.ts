@@ -51,7 +51,7 @@ const KOD = "ABC123XYZ9";
 const SERVIS: ServisBilgisi = { surum: "abc123def456", baslangic_ms: BASLANGIC - 5000 };
 const MEZAR_SEQ = 4242;
 
-/** Kanal başına çerçeve sürümü: `/sohbet` `SOHBET_SURUMU` (v4), `/cihaz` v1. */
+/** Kanal başına çerçeve sürümü: `/sohbet` `SOHBET_SURUMU` (v5), `/cihaz` v1. */
 const vYol = (yol: WsYolu): number => (yol === "/sohbet" ? SOHBET_SURUMU : 1);
 
 const helloMesaji = (yol: WsYolu, device_id = "tel-1", nonce = ISTEMCI_NONCE, last_seq = 0): Msg =>
@@ -1541,8 +1541,8 @@ describe("gateway: gelen değer yankılanmaz", () => {
 // ---------------------------------------------------------------------------------------------
 
 describe("gateway: Dilim 1, çerçeve sürümü", () => {
-  it("sözleşme: /sohbet sürümü 4 (dilim 3b)", () => {
-    assert.equal(SOHBET_SURUMU, 4);
+  it("sözleşme: /sohbet sürümü 5 (0.5.0)", () => {
+    assert.equal(SOHBET_SURUMU, 5);
   });
 
   it("/sohbet'e giden her çerçeve türü SOHBET_SURUMU: auth_challenge, welcome, event, stream_snapshot, server_status, ack, assistant_delta", async () => {
@@ -2260,21 +2260,22 @@ describe("gateway: Dilim 3b, v4 ve kısayol bağlamı", () => {
     ...ek,
   });
 
-  it("v4 el sıkışma: hello/auth_response v4 kabul, welcome v4; v3 istemci protokol_uyumsuz ile kapanır", async () => {
-    assert.equal(SOHBET_SURUMU, 4);
+  it("güncel sürüm el sıkışma: hello/auth_response kabul, welcome güncel; bir önceki sürüm istemci protokol_uyumsuz ile kapanır", async () => {
+    assert.equal(SOHBET_SURUMU, 5);
+    const ESKI = SOHBET_SURUMU - 1; // 4 artık eski sürüm
     const o = await hazir();
     const ist = await o.giris();
-    assert.equal(ist.hamTur("welcome")[0]!.v, 4);
-    assert.ok(ist.hamKareler.every((k) => k.v === 4));
+    assert.equal(ist.hamTur("welcome")[0]!.v, SOHBET_SURUMU);
+    assert.ok(ist.hamKareler.every((k) => k.v === SOHBET_SURUMU));
 
-    const v3 = o.bagla("/sohbet");
-    await v3.gonder({ v: 3, type: "hello", device_id: "tel-1", last_seq: 0, client_nonce: ISTEMCI_NONCE });
-    reddedildi(v3, "protokol_uyumsuz");
-    assert.equal(v3.hamTur("error")[0]!.v, 4);
-    assert.equal(v3.hamTur("auth_challenge").length, 0);
+    const eski = o.bagla("/sohbet");
+    await eski.gonder({ v: ESKI, type: "hello", device_id: "tel-1", last_seq: 0, client_nonce: ISTEMCI_NONCE });
+    reddedildi(eski, "protokol_uyumsuz");
+    assert.equal(eski.hamTur("error")[0]!.v, SOHBET_SURUMU);
+    assert.equal(eski.hamTur("auth_challenge").length, 0);
 
-    // Kimlik sonrası v3 iş mesajı da (outbox'ta kalmış eski kayıt) aynı yoldan kapanır, hiçbir şey yazılmaz.
-    await ist.gonder({ ...kullaniciMesaji("m1"), v: 3 });
+    // Kimlik sonrası eski sürüm iş mesajı da (outbox'ta kalmış eski kayıt) aynı yoldan kapanır, hiçbir şey yazılmaz.
+    await ist.gonder({ ...kullaniciMesaji("m1"), v: ESKI });
     assert.equal(ist.tur("error").at(-1)!.code, "protokol_uyumsuz");
     assert.ok(ist.kapali);
     assert.equal(o.insanMesajlari.length, 0);

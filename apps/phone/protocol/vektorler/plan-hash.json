@@ -10,21 +10,14 @@
         "tur": "pc",
         "cwd": "C:\\Proje\\örnek",
         "gorev_metni": "Satır 1: \"şçğüöıİ\" karakterlerini koru.\nSatır 2:\tsekme ve \\ ters bölü.\nEmoji: 😀",
-        "kesin_yapilacaklar": [
-          "Testleri çalıştır",
-          "Sonucu rapora yaz"
-        ],
-        "kesin_yapilmayacaklar": [
-          "Ana dala gönderme"
-        ],
         "mcp_profili": "rea",
         "kirli_kaynak": [
           7,
           12
         ]
       },
-      "kanonik": "{\"baslik\":\"Çalışma günlüğünü düzelt\",\"cwd\":\"C:\\\\Proje\\\\örnek\",\"gorev_metni\":\"Satır 1: \\\"şçğüöıİ\\\" karakterlerini koru.\\nSatır 2:\\tsekme ve \\\\ ters bölü.\\nEmoji: 😀\",\"kesin_yapilacaklar\":[\"Testleri çalıştır\",\"Sonucu rapora yaz\"],\"kesin_yapilmayacaklar\":[\"Ana dala gönderme\"],\"kirli_kaynak\":[7,12],\"mcp_profili\":\"rea\",\"plan_id\":\"plan-0001\",\"tur\":\"pc\"}",
-      "plan_hash": "3f975f2aa322634dcb0345def656168012826fb324f4ae753cbfbfb0d7000e2c"
+      "kanonik": "{\"baslik\":\"Çalışma günlüğünü düzelt\",\"cwd\":\"C:\\\\Proje\\\\örnek\",\"gorev_metni\":\"Satır 1: \\\"şçğüöıİ\\\" karakterlerini koru.\\nSatır 2:\\tsekme ve \\\\ ters bölü.\\nEmoji: 😀\",\"kirli_kaynak\":[7,12],\"mcp_profili\":\"rea\",\"plan_id\":\"plan-0001\",\"tur\":\"pc\"}",
+      "plan_hash": "d6d4f9f222b6f56056f04c949d2cbaf55623e00922860fd96843cef9577ac914"
     },
     {
       "ad": "telefon-yaz",
@@ -35,10 +28,6 @@
         "tur": "telefon",
         "cwd": "",
         "gorev_metni": "Açık sohbete izinli metni yaz.",
-        "kesin_yapilacaklar": [
-          "Yalnız izinli metni yaz"
-        ],
-        "kesin_yapilmayacaklar": [],
         "telefon_izin_istegi": {
           "uygulamalar": [
             "com.example.mesaj"
@@ -49,8 +38,8 @@
           ]
         }
       },
-      "kanonik": "{\"baslik\":\"Mesajı gönder\",\"cwd\":\"\",\"gorev_metni\":\"Açık sohbete izinli metni yaz.\",\"kesin_yapilacaklar\":[\"Yalnız izinli metni yaz\"],\"kesin_yapilmayacaklar\":[],\"plan_id\":\"plan-0002\",\"telefon_izin_istegi\":{\"izinli_metin\":[\"Geliyorum, on dakikaya oradayım.\"],\"mod\":\"yaz\",\"uygulamalar\":[\"com.example.mesaj\"]},\"tur\":\"telefon\"}",
-      "plan_hash": "129b9b4b302dbdc90902ac800cc22b92f4cb0cbdcaaf9102b980b51a824c0bb3"
+      "kanonik": "{\"baslik\":\"Mesajı gönder\",\"cwd\":\"\",\"gorev_metni\":\"Açık sohbete izinli metni yaz.\",\"plan_id\":\"plan-0002\",\"telefon_izin_istegi\":{\"izinli_metin\":[\"Geliyorum, on dakikaya oradayım.\"],\"mod\":\"yaz\",\"uygulamalar\":[\"com.example.mesaj\"]},\"tur\":\"telefon\"}",
+      "plan_hash": "1d5a8f1739832c213223335f51a6e0d17ed839e83b7b7a7619add627096a774a"
     },
     {
       "ad": "ayrisik-unicode",
@@ -60,14 +49,10 @@
         "baslik": "şç ayrışık yazım",
         "tur": "pc",
         "cwd": "C:/Proje",
-        "gorev_metni": "Unicode normalleştirme yapılmaz.",
-        "kesin_yapilacaklar": [
-          "Baytlar olduğu gibi özetlenir"
-        ],
-        "kesin_yapilmayacaklar": []
+        "gorev_metni": "Unicode normalleştirme yapılmaz."
       },
-      "kanonik": "{\"baslik\":\"şç ayrışık yazım\",\"cwd\":\"C:/Proje\",\"gorev_metni\":\"Unicode normalleştirme yapılmaz.\",\"kesin_yapilacaklar\":[\"Baytlar olduğu gibi özetlenir\"],\"kesin_yapilmayacaklar\":[],\"plan_id\":\"plan-0003\",\"tur\":\"pc\"}",
-      "plan_hash": "ba65b23662434b578595874f849000c7b04b0a77ac5695a0953aee47008ab773"
+      "kanonik": "{\"baslik\":\"şç ayrışık yazım\",\"cwd\":\"C:/Proje\",\"gorev_metni\":\"Unicode normalleştirme yapılmaz.\",\"plan_id\":\"plan-0003\",\"tur\":\"pc\"}",
+      "plan_hash": "43924f6e239a906a3a921bad9fe42b4317107bfed2693c657a792da8071b28b0"
     },
     {
       "ad": "birlesik-unicode",
@@ -77,14 +62,10 @@
         "baslik": "şç ayrışık yazım",
         "tur": "pc",
         "cwd": "C:/Proje",
-        "gorev_metni": "Unicode normalleştirme yapılmaz.",
-        "kesin_yapilacaklar": [
-          "Baytlar olduğu gibi özetlenir"
-        ],
-        "kesin_yapilmayacaklar": []
+        "gorev_metni": "Unicode normalleştirme yapılmaz."
       },
-      "kanonik": "{\"baslik\":\"şç ayrışık yazım\",\"cwd\":\"C:/Proje\",\"gorev_metni\":\"Unicode normalleştirme yapılmaz.\",\"kesin_yapilacaklar\":[\"Baytlar olduğu gibi özetlenir\"],\"kesin_yapilmayacaklar\":[],\"plan_id\":\"plan-0003\",\"tur\":\"pc\"}",
-      "plan_hash": "fc00f26967de446b64e5f2323d017552f34251da53668ebc33a93d9b975f7d22"
+      "kanonik": "{\"baslik\":\"şç ayrışık yazım\",\"cwd\":\"C:/Proje\",\"gorev_metni\":\"Unicode normalleştirme yapılmaz.\",\"plan_id\":\"plan-0003\",\"tur\":\"pc\"}",
+      "plan_hash": "80bc95e7a657c9ababc2574d3a2b1e84500e5596d3d9cd2a5354695d4e4a697b"
     }
   ]
 }

@@ -32,7 +32,7 @@ describe("olaylar", () => {
     assert.deepEqual(o.ogeler().map((g) => g.tur), ["plan_gizlendi"]);
     const json = JSON.stringify(o.ogeler());
     assert.ok(!json.includes("Ornek is"));
-    assert.ok(!json.includes("kesin_yapilacaklar"));
+    assert.ok(!json.includes("Bir sey yap"));
   });
 
   it("gizlenen plana ait plan_resolved kimseyi etkilemez; başka özetin sonucu kartı kapatamaz", () => {

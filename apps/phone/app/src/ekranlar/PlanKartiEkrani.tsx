@@ -1,36 +1,23 @@
-import { useState } from "react";
+import { useCallback, useState, useSyncExternalStore } from "react";
 import type { ReactNode } from "react";
 import { Text, View } from "react-native";
 import type { GonderSonucu, PlanKarti, Sohbet } from "../cekirdek/index.ts";
 import type { ErenCihaz } from "../cihaz/erenDevice.ts";
 import { BolumAdi, Dugme, DurumEtiketi, Duz, KartKabi, Serit } from "./Bilesenler.tsx";
 import { otoIzinKartGorunumu, useOtoIzinDeneniyor, useOtoIzinDeposu, useOtoIzinNotu } from "./otoIzin.ts";
+import { isDurumuBul, planKartiDurumu, yoldakiKarar } from "./planKartiDurumu.ts";
+import type { YoldakiKarar } from "./planKartiDurumu.ts";
 import { bosluk, renk, yazi } from "./tema.ts";
-import type { RenkAdi } from "./tema.ts";
 
 interface Not {
   metin: string;
   hata: boolean;
 }
 
-const DURUM_RENGI: Record<PlanKarti["durum"], RenkAdi> = {
-  bekliyor: "vurgu",
-  onaylandi: "basari",
-  reddedildi: "metinSonuk",
-  iptal: "metinSonuk",
-};
-
-const DURUM: Record<PlanKarti["durum"], string> = {
-  bekliyor: "Onayını bekliyor",
-  onaylandi: "Onaylandı",
-  reddedildi: "Reddedildi",
-  iptal: "İptal edildi",
-};
-
 const RED: Record<string, string> = {
-  plan_sonuclandi: "Plan zaten sonuçlanmış.",
+  plan_sonuclandi: "Bu iş zaten sonuçlanmış.",
   zaten_yollandi: "Karar zaten gönderildi.",
-  plan_yok: "Plan bulunamadı.",
+  plan_yok: "İş kartı bulunamadı.",
   depo_hatasi: "Telefonda kayıt hatası.",
 };
 
@@ -39,10 +26,13 @@ export function PlanKartiEkrani(p: { kart: PlanKarti; sohbet: Sohbet; cihaz: Ere
   const pl = kart.plan;
   const [not, setNot] = useState<Not | null>(null);
   const [mesgul, setMesgul] = useState(false);
-  const bekliyor = kart.durum === "bekliyor";
   const otoDepo = useOtoIzinDeposu();
   // Otomatik deneme sürerken "deneniyor" yazılır ve düğmeler kapanır; sonuçlanmış kartta not yok.
   const oto = otoIzinKartGorunumu(kart.durum, useOtoIzinNotu(kart), useOtoIzinDeneniyor(kart));
+  const { isDurumu, karar: yoldaki } = useSohbettekiPlanBilgisi(sohbet, kart);
+  // "Onay" dili ve karar düğmeleri yalnız gerçekten karar beklenirken (planKartiDurumu.ts).
+  const durum = planKartiDurumu(kart.durum, isDurumu, yoldaki, oto.kilitli);
+  const bekliyor = durum.onayBekleniyor;
   const kapali = mesgul || oto.kilitli;
 
   const sonucNotu = (s: GonderSonucu): void =>
@@ -97,8 +87,8 @@ export function PlanKartiEkrani(p: { kart: PlanKarti; sohbet: Sohbet; cihaz: Ere
   return (
     <KartKabi bekliyor={bekliyor}>
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: bosluk[2] }}>
-        <BolumAdi metin={pl.tur === "pc" ? "PC işi planı" : "Telefon işi planı"} />
-        <DurumEtiketi metin={DURUM[kart.durum]} renkAdi={DURUM_RENGI[kart.durum]} />
+        <BolumAdi metin={pl.tur === "pc" ? "PC işi" : "Telefon işi"} />
+        <DurumEtiketi metin={durum.metin} renkAdi={durum.renk} />
       </View>
       <Text style={[yazi.baslik, { color: renk.metin }]} selectable>
         {pl.baslik}
@@ -106,27 +96,13 @@ export function PlanKartiEkrani(p: { kart: PlanKarti; sohbet: Sohbet; cihaz: Ere
       {pl.kirli_kaynak !== undefined && (
         <Serit
           tur="uyari"
-          metin={`Kirli: bu plan, güvenilmeyen olabilecek rapor(lar)a dayanıyor (iş ${pl.kirli_kaynak.join(", ")}). Görev metnini dikkatle oku.`}
+          metin={`Kirli: bu iş, güvenilmeyen olabilecek rapor(lar)a dayanıyor (iş ${pl.kirli_kaynak.join(", ")}). Görev metnini dikkatle oku.`}
         />
       )}
       {pl.cwd !== "" && <Duz boyut="kod" metin={`Klasör: ${pl.cwd}`} />}
       <View style={bolum}>
         <BolumAdi metin="Görev metni" />
         <Duz metin={pl.gorev_metni} />
-      </View>
-      <View style={bolum}>
-        <BolumAdi metin="Kesin yapılacaklar" />
-        {pl.kesin_yapilacaklar.map((m, i) => (
-          <Madde key={i} metin={m} />
-        ))}
-      </View>
-      <View style={bolum}>
-        <BolumAdi metin="Kesin yapılmayacaklar" />
-        {pl.kesin_yapilmayacaklar.length === 0 ? (
-          <Duz boyut="kucuk" renk="metinSonuk" metin="Belirtilmemiş" />
-        ) : (
-          pl.kesin_yapilmayacaklar.map((m, i) => <Madde key={i} metin={m} />)
-        )}
       </View>
       {pl.telefon_izin_istegi !== undefined && (
         <View style={bolum}>
@@ -137,7 +113,7 @@ export function PlanKartiEkrani(p: { kart: PlanKarti; sohbet: Sohbet; cihaz: Ere
           )}
         </View>
       )}
-      {oto.satir !== null && <Duz boyut="kucuk" renk="metinIkincil" metin={oto.satir} />}
+      {bekliyor && oto.satir !== null && <Duz boyut="kucuk" renk="metinIkincil" metin={oto.satir} />}
       {bekliyor && (
         <View style={{ flexDirection: "row", gap: bosluk[2], marginTop: bosluk[2] }}>
           <Dugme yazi="Reddet" tur="ikincil" esnek kapali={kapali} basinca={() => void karar("ret")} />
@@ -167,14 +143,22 @@ export function PlanKartiEkrani(p: { kart: PlanKarti; sohbet: Sohbet; cihaz: Ere
 
 const bolum = { gap: bosluk[2], marginTop: bosluk[2] } as const;
 
-/** Asılı girintili madde: 16 dp işaret sütunu + esnek metin (6.7). */
-function Madde(p: { metin: string }): ReactNode {
-  return (
-    <View style={{ flexDirection: "row" }}>
-      <Text style={[yazi.govde, { color: renk.metin, width: bosluk[4] }]}>•</Text>
-      <View style={{ flex: 1 }}>
-        <Duz metin={p.metin} />
-      </View>
-    </View>
-  );
+/**
+ * Kartın sohbetten okuduğu iki bilgi: `is_id`'sinin iş durumu ve bu planın yoldaki kararı. Kart
+ * nesnesi iş bitince değişmez; bu yüzden sohbete abone olunur. Anlık görüntü düz metindir (sabit).
+ */
+function useSohbettekiPlanBilgisi(
+  sohbet: Sohbet,
+  kart: PlanKarti,
+): { isDurumu: ReturnType<typeof isDurumuBul>; karar: YoldakiKarar } {
+  const abone = useCallback((f: () => void) => sohbet.abone(() => f()), [sohbet]);
+  const anlik = useSyncExternalStore(abone, () => {
+    const d = sohbet.durum();
+    return `${isDurumuBul(d.ogeler, kart.is_id) ?? ""}|${yoldakiKarar(kart.plan_id, d.bekleyenler, d.hatalar) ?? ""}`;
+  });
+  const [is, karar] = anlik.split("|");
+  return {
+    isDurumu: is === "" || is === undefined ? null : (is as NonNullable<ReturnType<typeof isDurumuBul>>),
+    karar: karar === "onay" || karar === "ret" ? karar : null,
+  };
 }

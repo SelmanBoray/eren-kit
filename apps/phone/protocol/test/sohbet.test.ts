@@ -27,7 +27,7 @@ import {
 } from "../src/index.ts";
 import { ANAHTAR, HASH, IMZA, NONCE, PLAN_PC, RAPOR } from "./ornekler.ts";
 
-// `/sohbet` `SOHBET_SURUMU` (4) konuşur; eşleştirme (`pair_request`, `pair_result`) ve QR Kotlin'e bağlı
+// `/sohbet` `SOHBET_SURUMU` (5) konuşur; eşleştirme (`pair_request`, `pair_result`) ve QR Kotlin'e bağlı
 // olduğu için v1 kalır.
 const v = SOHBET_SURUMU;
 const v1 = PROTOKOL_SURUMU;
@@ -488,12 +488,12 @@ test("kimlik imzası metni rol ve kanala bağlıdır", () => {
 
 // v3: çoklu sohbet
 
-test("sürüm 4'tür; eşleştirme dışındaki her tür, yeniler dahil, bu sürümü bekler", () => {
-  assert.equal(SOHBET_SURUMU, 4);
+test("sürüm 5'tir; eşleştirme dışındaki her tür, yeniler dahil, bu sürümü bekler", () => {
+  assert.equal(SOHBET_SURUMU, 5);
   assert.equal(PROTOKOL_SURUMU, 1);
   assert.deepEqual([...SOHBET_V1_TURLERI], ["pair_request", "pair_result"]);
   for (const t of ["chat_create", "chat_rename", "chat_delete", "chat_clear", "user_message", "server_status", "event"]) {
-    assert.equal(sohbetSurumu(t), 4, t);
+    assert.equal(sohbetSurumu(t), 5, t);
   }
   assert.equal(sohbetSurumu("pair_request"), 1);
   assert.equal(sohbetSurumu("pair_result"), 1);

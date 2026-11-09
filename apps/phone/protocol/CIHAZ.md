@@ -1,6 +1,6 @@
 # `/cihaz` sözleşmesi
 
-Telefondaki Kotlin ön plan servisi ile bilgisayar servisi arasındaki kanal. Dilim 3'te (tam yetki, kısayol) bu kablo ve `vektorler/` değişmedi; değişiklikler `/sohbet` v4'te ve telefonun içindedir. JavaScript bu kanalı görmez. Kotlin bu paketi kullanmaz, JSON'u kendi işler; kaynak gerçek `src/cihaz.ts` şemalarıdır ve bu belgenin bütün JSON örnekleri test sırasında o şemalardan geçirilir.
+Telefondaki Kotlin ön plan servisi ile bilgisayar servisi arasındaki kanal. Dilim 3'te (tam yetki, kısayol) bu kablo ve `vektorler/` değişmedi; değişiklikler `/sohbet` v4'te ve telefonun içindedir. `/sohbet` v5'te (plandan `kesin_yapilacaklar` ve `kesin_yapilmayacaklar` kalktı) bu kablo yine değişmedi, ama `vektorler/plan-hash.json` yeniden üretildi: Kotlin onay ekranının plan çözümü ve özeti bu alanlar olmadan kurulur. JavaScript bu kanalı görmez. Kotlin bu paketi kullanmaz, JSON'u kendi işler; kaynak gerçek `src/cihaz.ts` şemalarıdır ve bu belgenin bütün JSON örnekleri test sırasında o şemalardan geçirilir.
 
 ## Bağlantı
 

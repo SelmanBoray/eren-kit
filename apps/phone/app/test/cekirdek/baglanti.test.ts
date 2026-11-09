@@ -168,17 +168,17 @@ describe("baglanti: kimlik", () => {
   });
 });
 
-describe("baglanti: /sohbet v4", () => {
-  it("giden hello ve auth_response v4 taşır", async () => {
+describe("baglanti: /sohbet güncel sürüm", () => {
+  it("giden hello ve auth_response SOHBET_SURUMU taşır", async () => {
     const { ws, b } = kur(4);
     b.baslat();
     await bosalt();
     await elSikis(ws.son());
     const giden = ws.son().giden();
-    assert.equal(SOHBET_SURUMU, 4);
+    assert.equal(SOHBET_SURUMU, 5);
     assert.deepEqual(giden.map((m) => [m["type"], m["v"]]), [
-      ["hello", 4],
-      ["auth_response", 4],
+      ["hello", SOHBET_SURUMU],
+      ["auth_response", SOHBET_SURUMU],
     ]);
   });
 
@@ -330,7 +330,7 @@ describe("baglanti: /sohbet v4", () => {
     c.gel(welcome(0));
     await bosalt();
     assert.equal(b.gonder(CLEAR), true);
-    assert.deepEqual(c.giden().at(-1), { v: 4, type: "chat_clear", client_msg_id: "c-1", sohbet_id: "ana" });
+    assert.deepEqual(c.giden().at(-1), { v: SOHBET_SURUMU, type: "chat_clear", client_msg_id: "c-1", sohbet_id: "ana" });
     // Koptuktan sonra yine gitmez.
     c.kopsun();
     assert.equal(b.gonder(CLEAR), false);

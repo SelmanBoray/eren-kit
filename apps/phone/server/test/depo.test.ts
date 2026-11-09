@@ -110,8 +110,6 @@ const pcPlan = (plan_id = "plan1"): Plan => ({
   tur: "pc",
   cwd: "C:\\ornek\\proje",
   gorev_metni: "Türkçe görev\nikinci satır \u{1F600}",
-  kesin_yapilacaklar: ["birinci", "ikinci"],
-  kesin_yapilmayacaklar: [],
   mcp_profili: "rea",
 });
 
@@ -121,8 +119,6 @@ const telefonPlan = (plan_id = "plan2"): Plan => ({
   tur: "telefon",
   cwd: "",
   gorev_metni: "oku",
-  kesin_yapilacaklar: ["bak"],
-  kesin_yapilmayacaklar: ["dokunma"],
   telefon_izin_istegi: { uygulamalar: ["com.ornek.uygulama"], mod: "oku" },
   kirli_kaynak: [1],
 });
@@ -1326,6 +1322,72 @@ describe("depo: planlar", () => {
       const sutun = h.prepare("SELECT sohbet_id FROM planlar WHERE plan_id = 'pb'").get() as { sohbet_id: string };
       assert.equal(sutun.sohbet_id, B_ID);
     });
+  });
+
+  it("0.5.0: kesin_yapilacaklar/kesin_yapilmayacaklar taşıyan eski plan ve plan_proposed okunurken atılır; satır yerinde kalır", () => {
+    const yol = yeniYol();
+    const { depo } = kur(yol);
+    const yeniPc = pcPlan("eski-pc");
+    const yeniTel = telefonPlan("eski-tel");
+    // Yeni biçimle yazılır, ham SQL ile eski biçime çevrilir (göç yok, yalnız okuma yolu).
+    depo.planEkle(planKaydi(yeniPc, "hafif", A_ID));
+    depo.planEkle(planKaydi(yeniTel));
+    const olay = depo.olayEkle({ type: "plan_proposed", sohbet_id: ANA_SOHBET_ID, plan: yeniPc, plan_hash: planHash(yeniPc) });
+    const eskiPc = { ...yeniPc, kesin_yapilacaklar: ["birinci"], kesin_yapilmayacaklar: [] };
+    const eskiTel = { ...yeniTel, kesin_yapilacaklar: ["bak"], kesin_yapilmayacaklar: ["dokunma"] };
+    const ESKI_HASH = "e".repeat(64);
+    hamAc(yol, (h) => {
+      const g = h.prepare("UPDATE planlar SET plan = ?, plan_hash = ? WHERE plan_id = ?");
+      g.run(JSON.stringify(eskiPc), ESKI_HASH, "eski-pc");
+      g.run(JSON.stringify(eskiTel), ESKI_HASH, "eski-tel");
+      const { seq: _s, ts_ms: _t, ...govde } = olay;
+      h.prepare("UPDATE events SET veri = ? WHERE seq = ?").run(
+        JSON.stringify({ ...govde, plan: eskiPc, plan_hash: ESKI_HASH }),
+        olay.seq,
+      );
+    });
+
+    const pc = depo.planGetir("eski-pc");
+    assert.ok(pc, "eski plan okunur");
+    assert.deepEqual(pc.plan, yeniPc);
+    assert.ok(!("kesin_yapilacaklar" in pc.plan) && !("kesin_yapilmayacaklar" in pc.plan));
+    assert.equal(pc.plan_hash, ESKI_HASH, "saklanan hash değişmez");
+    assert.notEqual(planHash(pc.plan), pc.plan_hash, "eski plan hash denetiminden geçmez");
+    assert.equal(pc.profil, "hafif");
+    assert.equal(pc.sohbet_id, A_ID);
+    assert.deepEqual(depo.planGetir("eski-tel")?.plan, yeniTel);
+    assert.deepEqual(
+      depo
+        .bekleyenPlanlar()
+        .map((p) => p.plan.plan_id)
+        .sort(),
+      ["eski-pc", "eski-tel"],
+    );
+    depo.planGuncelle("eski-pc", "iptal", null);
+    assert.equal(depo.planGetir("eski-pc")?.durum, "iptal");
+
+    const [geri] = depo.olaylariGetir(olay.seq - 1, 1);
+    assert.ok(geri?.type === "plan_proposed");
+    assert.deepEqual(geri.plan, yeniPc, "geçmişteki kart yeni şemaya uyar");
+    assert.equal(geri.plan_hash, ESKI_HASH);
+    assert.equal(geri.seq, olay.seq);
+
+    hamAc(yol, (h) => {
+      const r = h.prepare("SELECT plan FROM planlar WHERE plan_id = 'eski-pc'").get() as { plan: string };
+      assert.ok(r.plan.includes('"kesin_yapilacaklar"'), "satır yerinde değiştirilmez (göç yok)");
+    });
+  });
+
+  it("eski anahtar dışındaki bilinmeyen alan yine reddedilir (katı şema gevşemez)", () => {
+    const yol = yeniYol();
+    const { depo } = kur(yol);
+    depo.planEkle(planKaydi(pcPlan("bozuk")));
+    hamAc(yol, (h) => {
+      h.prepare("UPDATE planlar SET plan = ? WHERE plan_id = 'bozuk'").run(
+        JSON.stringify({ ...pcPlan("bozuk"), kesin_yapilacaklar: ["a"], yabanci: 1 }),
+      );
+    });
+    assert.throws(() => depo.planGetir("bozuk"));
   });
 });
 

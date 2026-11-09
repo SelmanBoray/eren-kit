@@ -6,14 +6,16 @@ import { isRaporuJsonSemasi, ROL_FIILLERI } from "@eren/protocol";
 import type { IsProfili, KopruRolu, Plan } from "@eren/protocol";
 import type { Ayar } from "./sozlesme.ts";
 
-/** `[is-oturumu §7]`: stdio'da sessizlik sınırı 30 dk; kullanıcı saatlerce cevap vermeyebilir. */
+/** `[is-oturumu §7]`: stdio'da sessizlik sınırı 30 dk; telefon aracı (izin bekleme) uzun sürebilir. */
 const MCP_ZAMAN_ASIMI_MS = 86_400_000;
 
-const SORU_ARACI = "mcp__eren-soru__kullaniciya_sor";
-
-const SORU_NOTU =
-  `Çalışırken kullanıcıdan karar ya da bilgi gerekirse yalnız ${SORU_ARACI} aracını kullan; ` +
-  "cevap aynı çağrıdan döner.";
+/**
+ * 0.5.0: iş oturumu kullanıcıya soru sormaz (`eren-soru` bağlanmaz). Görev metnine planın `gorev_metni`
+ * dışında giren tek bölüm bu nottur.
+ */
+const SORU_YOK_NOTU =
+  "Kullanıcıya soru sorma. Belirsiz bir nokta olursa en makul yorumu seçip ilerle. " +
+  "İş hiç ilerleyemiyorsa nedenini raporda kısaca yazıp bitir.";
 
 /** `{ad}` yer tutucusu `kullaniciAdi` ile dolar. Ölçülen metindir, kısaltılmış hali ölçülmedi: `[tuzak]`. */
 const TELEFON_GUVENLIK_KALIBI = [
@@ -31,17 +33,9 @@ const TELEFON_GUVENLIK_KALIBI = [
 
 export const telefonGuvenlikMetni = (ad: string): string => TELEFON_GUVENLIK_KALIBI.split("{ad}").join(ad);
 
-const maddeler = (baslik: string, liste: readonly string[]): string =>
-  [baslik, ...(liste.length === 0 ? ["- yok"] : liste.map((m) => `- ${m}`))].join("\n");
-
-/** `gorev.txt` ve `-p` argümanı. Bu metin onaylanan plandan bire bir türer. */
-export const gorevMetni = (plan: Plan): string => {
-  const metin = [
-    plan.gorev_metni,
-    maddeler("Kesin yapılacaklar:", plan.kesin_yapilacaklar),
-    maddeler("Kesin yapılmayacaklar:", plan.kesin_yapilmayacaklar),
-    SORU_NOTU,
-  ].join("\n\n");
+/** `gorev.txt` ve `-p` argümanı: planın `gorev_metni` + soru notu. Onaylanan plandan bire bir türer. */
+export const gorevMetni = (plan: Pick<Plan, "gorev_metni">): string => {
+  const metin = [plan.gorev_metni, SORU_YOK_NOTU].join("\n\n");
   // `-` ile başlayan görev argümanı komut satırında bayrak diye okunabilir.
   return metin.startsWith("-") ? ` ${metin}` : metin;
 };
@@ -61,12 +55,12 @@ export interface McpYapilandirmasi {
   mcpServers: Record<string, unknown>;
 }
 
+/** PC işi köprü almaz (`eren-soru` 0.5.0'da kalktı): ayarda varsa `computer-use-windows`, plan isterse `rea`. */
 export const pcMcpYapilandirmasi = (
-  ayar: KopruAyari & Pick<Ayar, "computerUse" | "mcpProfilSunucusu">,
+  ayar: Pick<Ayar, "computerUse" | "mcpProfilSunucusu">,
   plan: Pick<Plan, "mcp_profili">,
-  soruJetonu: string,
 ): McpYapilandirmasi => {
-  const sunucular: Record<string, unknown> = { "eren-soru": kopruSunucusu(ayar, "soru", soruJetonu) };
+  const sunucular: Record<string, unknown> = {};
   if (ayar.computerUse !== null) sunucular["computer-use-windows"] = ayar.computerUse;
   if (plan.mcp_profili === "rea") {
     const rea = ayar.mcpProfilSunucusu("rea");
@@ -75,14 +69,10 @@ export const pcMcpYapilandirmasi = (
   return { mcpServers: sunucular };
 };
 
-export const telefonMcpYapilandirmasi = (
-  ayar: KopruAyari,
-  soruJetonu: string,
-  telefonJetonu: string,
-): McpYapilandirmasi => ({
+/** Telefon işi yalnız `eren-telefon` köprüsünü alır. */
+export const telefonMcpYapilandirmasi = (ayar: KopruAyari, telefonJetonu: string): McpYapilandirmasi => ({
   mcpServers: {
     "eren-telefon": kopruSunucusu(ayar, "telefon", telefonJetonu),
-    "eren-soru": kopruSunucusu(ayar, "soru", soruJetonu),
   },
 });
 
@@ -105,7 +95,7 @@ export const HAFIF_PC_MODELI = "sonnet";
  * - `--disable-slash-commands`: skill 19 → 0, slash komutu 55 → 0, `Skill` aracı gider.
  * - `--settings {"autoMemoryEnabled":false}`: bayrak ayarı `--setting-sources`'tan bağımsız uygulanır,
  *   auto memory yeniden kapanır (`memory_paths` yok, kanarya hayır). Başka anahtar taşımaz.
- * `--safe-mode` seçilmedi: `--mcp-config` sunucusunu da düşürüyor (`mcp_servers: []`), `eren-soru` gelmezdi.
+ * `--safe-mode` seçilmedi: `--mcp-config` sunucusunu da düşürüyor (`mcp_servers: []`), `computer-use-windows` gelmezdi.
  * `--bare` seçilmedi: OAuth okumaz, yalnız `ANTHROPIC_API_KEY`.
  */
 const HAFIF_EKLERI: readonly string[] = [
@@ -143,8 +133,7 @@ export const pcArgv = (g: KomutGirdisi, profil: IsProfili, pcIsModeli: string | 
   ];
 };
 
-const telefonIzinliAraclar = (): string =>
-  [...ROL_FIILLERI.telefon.map((ad) => `mcp__eren-telefon__${ad}`), SORU_ARACI].join(",");
+const telefonIzinliAraclar = (): string => ROL_FIILLERI.telefon.map((ad) => `mcp__eren-telefon__${ad}`).join(",");
 
 export const telefonArgv = (g: KomutGirdisi, model: string, kullaniciAdi: string): readonly string[] => [
   "-p",

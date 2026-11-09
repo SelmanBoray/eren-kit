@@ -17,6 +17,7 @@ import {
   KOPRU_FIIL_SEMALARI,
   kopruAsagiCoz,
   KopruRolu,
+  PlanOnerCikti,
   PROTOKOL_SURUMU,
   RaporOkuCikti,
   SORU_ARACLARI,
@@ -24,7 +25,7 @@ import {
   UygulamalarCikti,
 } from "@eren/protocol";
 import type { HataKodu, KopruFiili } from "@eren/protocol";
-import type { z } from "zod";
+import { z } from "zod";
 import { ekranMetniKur } from "./ekran-metni.ts";
 import type { BoruBaglantisi, Gunluk, KopruIstemciAyari, RastgelePortu } from "./sozlesme.ts";
 import { UygulamalarAracGirdi, uygulamaMetniKur } from "./uygulama-metni.ts";
@@ -53,8 +54,9 @@ const YEREL_GIRDILER: Readonly<Record<string, z.ZodType>> = {
 
 const ARAC_ACIKLAMALARI: Readonly<Record<string, string>> = {
   plan_oner:
-    "İş planı önerir. İş başlatmaz, telefonda onay kartı açar. " +
-    "Pc planında iş profilini sen seçersin (profil alanı; verilmezse tam). " +
+    "İşi yeni bir oturuma verir. Onay gerekmiyorsa hemen başlar, gerekiyorsa telefonda onay kartı açar; " +
+    "sonuç hangisinin olduğunu söyler. " +
+    "PC işinde iş profilini sen seçersin (profil alanı; verilmezse tam). " +
     "hafif: dosya oluşturma ya da taşıma, sistem bilgisi, kısa komut, tek adımlı iş; hızlı ve ucuzdur, " +
     "kullanıcı ayarları, hook'lar ve orkestra yüklenmez. " +
     "tam: kod yazma ya da düzenleme, çok adımlı iş, araştırma, orkestra gereken her iş; varsayılandır. " +
@@ -101,7 +103,8 @@ export interface KopruCalisani {
 
 type BoruYaniti =
   | { tur: "basari"; sonuc: unknown }
-  | { tur: "hata"; code: HataKodu }
+  /** `detail` yalnız `planGecersizDetayi` izin listesinden geçerse modele ulaşır. */
+  | { tur: "hata"; code: HataKodu; detail?: string }
   /** İstek yollandı, yanıt gelmeden boru koptu: sonuç bilinmiyor. */
   | { tur: "koptu" }
   /** Boru yoktu, istek çıkmadı. */
@@ -202,7 +205,9 @@ function boruIstemciKur(ayar: KopruIstemciAyari, b: KopruBagimliliklari): BoruIs
           if (bekleyen === undefined) return;
           bekleyenler.delete(m.istek_id);
           bekleyen(
-            m.ok ? { tur: "basari", sonuc: m.sonuc } : { tur: "hata", code: m.code ?? "ic_hata" },
+            m.ok
+              ? { tur: "basari", sonuc: m.sonuc }
+              : { tur: "hata", code: m.code ?? "ic_hata", detail: m.detail },
           );
         }
       });
@@ -302,10 +307,117 @@ function metinSonucu(text: string): CallToolResult {
   return { content: [{ type: "text", text }] };
 }
 
-/** `detail` modele gitmez. */
-function hataSonucu(code: HataKodu): CallToolResult {
-  return { isError: true, content: [{ type: "text", text: `hata: ${code}` }] };
+/** Servisin `detail`'i modele gitmez. `ek` yalnız köprünün kurduğu kısa metindir (alan yolu ve kural). */
+function hataSonucu(code: HataKodu, ek?: string): CallToolResult {
+  const text = ek === undefined || ek === "" ? `hata: ${code}` : `hata: ${code}\n${ek}`;
+  return { isError: true, content: [{ type: "text", text }] };
 }
+
+type SemaSorunu = z.ZodError["issues"][number];
+
+/** Modele en çok bu kadar sorun satırı gider; düzeltip yeniden çağırınca kalanı görür. */
+const AZAMI_SORUN = 5;
+/** Yol parçası, tür ve biçim adları yalnız bu kalıba uyarsa yazılır; uymayan `?` olur. */
+const GUVENLI_AD = /^[A-Za-z0-9_]{1,40}$/;
+const KURAL_METNI = 80;
+
+const guvenliAd = (ad: unknown): string =>
+  typeof ad === "number" ? String(ad) : typeof ad === "string" && GUVENLI_AD.test(ad) ? ad : "?";
+
+const yolMetni = (yol: readonly PropertyKey[]): string =>
+  yol.length === 0 ? "girdi" : yol.map(guvenliAd).join(".");
+
+const birimli = (sinir: number | bigint, origin: string): string =>
+  origin === "string" ? `${sinir} karakter` : origin === "array" ? `${sinir} öğe` : String(sinir);
+
+/** Şemanın kuralı; girdideki değer hiç yazılmaz. `custom` iletileri protokolün sabit metinleridir. */
+const kuralMetni = (s: SemaSorunu): string => {
+  switch (s.code) {
+    case "invalid_type":
+      return `beklenen tür ${guvenliAd(s.expected)} (alan eksik olabilir)`;
+    case "too_big":
+      return `en çok ${birimli(s.maximum, s.origin)}`;
+    case "too_small":
+      return `en az ${birimli(s.minimum, s.origin)}`;
+    case "invalid_format":
+      return `biçim geçersiz (${guvenliAd(s.format)})`;
+    case "invalid_value":
+      return `izinli değerler: ${s.values.map((d) => guvenliAd(String(d))).join(", ")}`;
+    case "custom":
+      return s.message.replace(/[\p{Cc}\p{Cf}]/gu, " ").slice(0, KURAL_METNI);
+    default:
+      return "geçersiz";
+  }
+};
+
+/** `gecersiz_mesaj` ekine: her satır `alan.yolu: kural`. Bilinmeyen anahtar kendi satırını alır. */
+export const semaHatasiMetni = (sorunlar: readonly SemaSorunu[]): string => {
+  const satirlar: string[] = [];
+  for (const s of sorunlar) {
+    if (s.code === "unrecognized_keys") {
+      for (const k of s.keys) satirlar.push(`${yolMetni([...s.path, k])}: bilinmeyen alan, kaldır`);
+    } else {
+      satirlar.push(`${yolMetni(s.path)}: ${kuralMetni(s)}`);
+    }
+  }
+  const tekil = [...new Set(satirlar)];
+  const kesik = tekil.slice(0, AZAMI_SORUN);
+  if (tekil.length > kesik.length) kesik.push(`(+${tekil.length - kesik.length} sorun daha)`);
+  return kesik.join("\n");
+};
+
+/**
+ * Servisin `plan_gecersiz` ayrıntısı modele yalnız bu listeden geçerse gider (`planlar.planOner`).
+ * Şema kuralları köprüde zaten denetlenir; bunlar yalnız serviste anlaşılabilenlerdir.
+ */
+const PLAN_GECERSIZ_DETAYI: Readonly<Record<string, string>> = {
+  cwd: "cwd: klasör bulunamadı",
+  gorev_metni: "gorev_metni: komut satırına sığmıyor, kısalt",
+};
+
+const planGecersizDetayi = (detail: string | undefined): string | undefined =>
+  detail !== undefined && Object.hasOwn(PLAN_GECERSIZ_DETAYI, detail) ? PLAN_GECERSIZ_DETAYI[detail] : undefined;
+
+/** Başlama notunun kalıbı; `konusma-metin.planSonucuMetni` ile aynı. */
+const baslamaNotu = (plan_id: string): string => `"İş <no> başladı (plan ${plan_id})."`;
+
+/** `onay_bekliyor` nedeninin modele giden kısa açıklaması; asistan bunu kullanıcıya tek cümleyle aktarır. */
+export const PLAN_BEKLEME_NEDENI_METNI: Readonly<Record<NonNullable<PlanOnerCikti["neden"]>, string>> = {
+  tam_yetki_kapali: "PC'de tam yetki kapalı olduğu için onay bekliyor",
+  kirli_kaynak: "plan telefondan okunan güvenilmez veriye dayandığı (kaynak kirli) için onay gerekiyor",
+  tur_bitti: "kullanıcının turu bittiği ya da değiştiği için onay gerekiyor",
+  limit_kilitli: "kullanım limiti kilitli olduğu için başlayamadı",
+  baslatma_hatasi: "başlatma hatası yüzünden başlayamadı",
+};
+
+/**
+ * Modele giden kısa ve doğru metin: iş başladı mı, telefonda mı, yoksa gerçekten onay mı bekliyor (ve
+ * neden). Girdi protokolün `PlanOnerCikti`'sidir; `plan_hash` metne girmez, modele gitmez.
+ */
+export const planOnerMetni = ({ plan_id, durum, is_id, neden }: PlanOnerCikti): string => {
+  switch (durum) {
+    case "basladi":
+      return (
+        `plan_oner: iş başladı (${is_id === undefined ? "" : `iş ${is_id}, `}plan ${plan_id}). ` +
+        'Kullanıcıya kısaca "başlattım" de; plan ya da onaydan söz etme.'
+      );
+    case "telefonda_baslatiliyor":
+      return (
+        `plan_oner: iş telefona gitti, telefonda başlatılıyor (plan ${plan_id}). Telefonda tam yetki ve ` +
+        "uygulama açıksa kendiliğinden başlar, değilse kullanıcı telefonda onaylar; servis hangisi olduğunu " +
+        `şu an bilemez. Başlayınca ${baslamaNotu(plan_id)} notu gelir. Kullanıcıya "telefonda başlatıyorum" de; ` +
+        "onaydan yalnız iş başlamazsa söz et."
+      );
+    case "onay_bekliyor":
+      return (
+        `plan_oner: iş başlamadı, kullanıcının telefonda onayı bekleniyor (plan ${plan_id}). ` +
+        (neden === undefined
+          ? "Kullanıcıya bunu kısaca söyle. "
+          : `Neden: ${PLAN_BEKLEME_NEDENI_METNI[neden]}. Kullanıcıya nedeni tek cümleyle söyle. `) +
+        `Onaylanınca ${baslamaNotu(plan_id)} notu gelir.`
+      );
+  }
+};
 
 /** İptal edilen çağrının yanıtını SDK yollamaz, bu metin kimseye ulaşmaz. */
 function iptalSonucu(): CallToolResult {
@@ -349,6 +461,11 @@ export async function kopruCalistir(
   };
 
   const sonucCevir = (fiil: KopruFiili, ham: unknown, yerel?: unknown): CallToolResult => {
+    if (fiil === "plan_oner") {
+      const r = PlanOnerCikti.safeParse(ham);
+      if (!r.success) return icHata(fiil);
+      return metinSonucu(planOnerMetni(r.data));
+    }
     if (fiil === "uygulamalar") {
       const r = UygulamalarCikti.safeParse(ham);
       if (!r.success) return icHata(fiil);
@@ -389,7 +506,10 @@ ${govde}`,
       case "basari":
         return sonucCevir(fiil, y.sonuc, yerel);
       case "hata":
-        return hataSonucu(y.code);
+        return hataSonucu(
+          y.code,
+          fiil === "plan_oner" && y.code === "plan_gecersiz" ? planGecersizDetayi(y.detail) : undefined,
+        );
       case "koptu":
         return hataSonucu("belirsiz");
       case "yollanmadi":
@@ -444,7 +564,7 @@ ${govde}`,
     // Servis şemaya uymayan çerçevede boruyu kapatır: bozuk girdi boruya çıkmamalı.
     const yerel = Object.hasOwn(YEREL_GIRDILER, ad) ? YEREL_GIRDILER[ad] : undefined;
     const girdi = (yerel ?? arac.girdi).safeParse(ham ?? {});
-    if (!girdi.success) return hataSonucu("gecersiz_mesaj");
+    if (!girdi.success) return hataSonucu("gecersiz_mesaj", semaHatasiMetni(girdi.error.issues));
     try {
       return ayar.rol === "soru"
         ? await soruSor(girdi.data as object, sinyal)

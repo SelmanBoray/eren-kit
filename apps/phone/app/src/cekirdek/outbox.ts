@@ -3,12 +3,13 @@
  * yazılmadan yollanmaz: çökmeden sonra aynı kimlik başka mesaja verilseydi servis eski `ack`'i
  * döner, yeni mesaj sessizce düşerdi. Kimlikten sonra sırayla yollanır, `ack` gelince silinir;
  * `ok:false` yeniden yollanmaz, kullanıcıya hata olur. Bilinmeyen ya da ikinci `ack` zararsızdır.
- * Giden her mesaj `v: SOHBET_SURUMU`; diskte kalmış v1/v2/v3 öğeler yüklemede v4'e yükseltilir.
+ * Giden her mesaj `v: SOHBET_SURUMU`; diskte kalmış eski sürüm (v1-v4) öğeler yüklemede güncel sürüme
+ * yükseltilir.
  * Dilim 2: sohbet kimlikleri (`sohbetIdUret`) aynı kalıcı sayaçtan; `kaldir` sohbet artıklarını siler.
  * `ack ok` almış `chat_create` kuyruktan çıkar ama `kaldir` onu bırakana dek diskte (kuyruğun başında)
  * kalır: `chat_created` telafi günlüğüne yazılmadan süreç ölürse sohbet adıyla birlikte kaybolmasın.
  * Yeniden yüklemede kuyruğa döner ve aynı kimlikle yeniden yollanır; servis aynı `ack`'i döner.
- * TASARIM.md "Outbox v2 → v3" (Dilim 3: v3 → v4 aynı kalıpla); protocol README `/sohbet`; tipler
+ * TASARIM.md "Outbox v2 → v3" (Dilim 3: v3 → v4, 0.5.0: v4 → v5 aynı kalıpla); protocol README `/sohbet`; tipler
  * sozlesme.ts "Dilim 2".
  */
 import { ANA_SOHBET_ID, HataKodu, SOHBET_SURUMU, SohbetYukari } from "@eren/protocol";
@@ -95,18 +96,22 @@ const mesajCoz = (ham: unknown): IsMesaji | null => {
 };
 
 /**
- * Diskte kalmış olabilecek eski `/sohbet` sürümleri: v1 (Dilim 1 öncesi), v2 (Dilim 1), v3 (Dilim 2).
- * `sohbet_id`'siz olanlar (v1, v2) `ana`'ya bağlanır; v3 kaydı v4'ün alt kümesidir, yalnız `v` değişir.
+ * Diskte kalmış olabilecek eski `/sohbet` sürümleri: v1 (Dilim 1 öncesi), v2 (Dilim 1), v3 (Dilim 2),
+ * v4 (Dilim 3). `sohbet_id`'siz olanlar (v1, v2) `ana`'ya bağlanır; v3 kaydı v4'ün alt kümesidir.
+ * v4 → v5 yalnız aşağı olaylardaki planı değiştirdi (iki plan listesi kalktı); yukarı mesajlar
+ * aynıdır, yalnız `v` değişir.
  */
 const SOHBET_IDSIZ_SURUMLER: ReadonlySet<unknown> = new Set([1, 2]);
-const ESKI_SOHBET_SURUMLERI: ReadonlySet<unknown> = new Set([1, 2, 3]);
+/** Kısayol girdisi (`input: "kisayol"`, `baglam`) v4'te geldi: daha eski kayıtta olamaz. */
+const KISAYOLSUZ_SURUMLER: ReadonlySet<unknown> = new Set([1, 2, 3]);
+const ESKI_SOHBET_SURUMLERI: ReadonlySet<unknown> = new Set([1, 2, 3, 4]);
 
 /**
- * Diskteki kayıtlı mesaj. Güncel sürümse (v4) olduğu gibi çözülür. `v` 1, 2 ya da 3 ise `v`
+ * Diskteki kayıtlı mesaj. Güncel sürümse olduğu gibi çözülür. `v` 1, 2, 3 ya da 4 ise `v`
  * `SOHBET_SURUMU` yapılır; v1/v2 `user_message`/`interrupt`/`chat_clear`'da `sohbet_id` yoksa
  * `ANA_SOHBET_ID` eklenir; sonra yeniden çözülür. Kimlik ve öteki alanlar aynı kalır; yükseltilmiş
- * hali de şemadan geçmezse `null` (çağıran `atilan`'a sayar). Eski sürümde olamayacak v4 alanları
- * (`input: "kisayol"`, `baglam`) taşıyan kayıt bozuktur: `null`. Başka `v` `null`.
+ * hali de şemadan geçmezse `null` (çağıran `atilan`'a sayar). v1-v3'te olamayacak v4 alanları
+ * (`input: "kisayol"`, `baglam`) taşıyan v1-v3 kaydı bozuktur: `null`. Başka `v` `null`.
  */
 const kayitliMesajCoz = (ham: unknown): { mesaj: IsMesaji; yukseltildi: boolean } | null => {
   const mesaj = mesajCoz(ham);
@@ -114,7 +119,7 @@ const kayitliMesajCoz = (ham: unknown): { mesaj: IsMesaji; yukseltildi: boolean 
   if (typeof ham !== "object" || ham === null || Array.isArray(ham)) return null;
   const eski = ham as { v?: unknown; type?: unknown; sohbet_id?: unknown; input?: unknown };
   if (!ESKI_SOHBET_SURUMLERI.has(eski.v)) return null;
-  if (eski.input === "kisayol" || "baglam" in eski) return null;
+  if (KISAYOLSUZ_SURUMLER.has(eski.v) && (eski.input === "kisayol" || "baglam" in eski)) return null;
   const yeni: Record<string, unknown> = { ...ham, v: SOHBET_SURUMU };
   if (
     SOHBET_IDSIZ_SURUMLER.has(eski.v) &&
@@ -249,7 +254,7 @@ export const outboxKur: OutboxFabrikasi = ({ depo, saat, degisti }) => {
       let yukseltilen = 0;
       let atilan = 0;
       // Sıra diskteki sıradır; yükseltme sırayı ve kimliği değiştirmez. Yükseltilen kayıt bir
-      // sonraki yazımda güncel sürümle (v4) yazılır.
+      // sonraki yazımda güncel sürümle (`SOHBET_SURUMU`) yazılır.
       const gorulen = new Set<string>();
       for (const h of diziMi(kayit.ogeler)) {
         if (typeof h !== "object" || h === null) {

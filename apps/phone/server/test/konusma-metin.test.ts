@@ -6,7 +6,7 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { sistemIstemi } from "../src/konusma-metin.ts";
+import { planSonucuMetni, sistemIstemi } from "../src/konusma-metin.ts";
 
 // --- Ortak metnin anlık değeri -------------------------------------------------------------------
 
@@ -26,7 +26,9 @@ const MASAUSTU =
 
 const SILME = "Geri dönüşü zor işten (silme, kurma, kaldırma, ayar/kayıt defteri değiştirme) önce sor, cevabı bekle.";
 
-const PLAN_ORTAK = "plan_oner yine onay_bekliyor döner, başladığını servis notu bildirir.";
+/** Kullanıcıya dönüş kuralı (0.5.0 §3): iki modda da aynı. */
+const PLAN_ORTAK =
+  'plan_oner sonucuna göre konuş; "plan", "onay" sözünü yalnız onay bekleniyorsa kullan.';
 
 const PROJE = 'Proje belirtilmediyse cwd "Genel" projesinin yoludur.';
 
@@ -68,9 +70,9 @@ const KISAYOL = `${KISAYOL_SES} ilkinde "bu", "baktığım" o ekrandır. ${KISAY
 
 // --- Moda bağlı cümleler -------------------------------------------------------------------------
 
-const PLAN = `Kullanıcının kendi isteğiyle önerdiğin PC planı onaysız başlar; ${PLAN_ORTAK} Telefon planlarını ve servis bildirimiyle önerdiklerini kullanıcı telefonda onaylar. ${PROJE}`;
+const PLAN = `Kullanıcının kendi isteğiyle verdiğin PC işi onaysız başlar; telefon işlerini ve servis bildirimi üzerine verdiklerini kullanıcı telefonda onaylar. ${PLAN_ORTAK} ${PROJE}`;
 
-const PLAN_TAM = `Önerdiğin her PC planı onaysız başlar; ${PLAN_ORTAK} Telefon planını telefon izne çevirir; orada tam yetki kapalıysa ya da uygulama listede açık değilse kullanıcı onaylar. ${PROJE}`;
+const PLAN_TAM = `Verdiğin her PC işi onaysız başlar. Telefon işi, telefonda tam yetki kapalıysa ya da uygulama listede açık değilse onay bekler. ${PLAN_ORTAK} ${PROJE}`;
 
 const TELEFON_RAPORU =
   "Telefon işlerinin raporu sana verilmez, telefonda gösterilir; iş dosyalarından da okuma.";
@@ -183,13 +185,48 @@ describe("sistemIstemi", () => {
     for (const masaustu of [false, true]) {
       const tam = sistemIstemi("", masaustu, true, AD);
       assert.ok(!tam.includes("Telefon işlerinin raporu sana verilmez"));
-      assert.ok(!tam.includes("Kullanıcının kendi isteğiyle önerdiğin PC planı"));
-      assert.ok(!tam.includes("servis bildirimiyle önerdiklerini kullanıcı telefonda onaylar"));
+      assert.ok(!tam.includes("Kullanıcının kendi isteğiyle verdiğin PC işi"));
+      assert.ok(!tam.includes("servis bildirimi üzerine verdiklerini kullanıcı telefonda onaylar"));
 
       const dar = sistemIstemi("", masaustu, false, AD);
       assert.ok(!dar.includes("rapor_oku ile okuyabilirsin"));
-      assert.ok(!dar.includes("Önerdiğin her PC planı"));
+      assert.ok(!dar.includes("Verdiğin her PC işi"));
       assert.ok(!dar.includes("tam yetki"));
     }
+  });
+
+  it("tamYetki=true: plan öner/onay bekle söylemi yok; PC işi onaysız, onay sözü yalnız gerçekten beklenirken (0.5.0 §3)", () => {
+    for (const masaustu of [false, true]) {
+      const tam = sistemIstemi("", masaustu, true, AD);
+      // Eski söylem: plan önerme, onay_bekliyor dönüşü, "PC planı".
+      for (const eski of ["onay_bekliyor", "Önerdiğin", "önerdiğin", "PC planı", "Telefon planını", "kullanıcı onaylar", "onay kartı"]) {
+        assert.ok(!tam.includes(eski), `masaustu=${masaustu}: eski söylem kaldı: ${eski}`);
+      }
+      assert.ok(tam.includes("Verdiğin her PC işi onaysız başlar."));
+      assert.ok(tam.includes(PLAN_ORTAK), "kullanıcıya dönüş kuralı yok");
+      // "onay" yalnız iki yerde: telefon işinin gerçekten beklediği durum ve kullanıcıya dönüş kuralı.
+      const onaylar = tam.match(/onay(?!sız)/g) ?? [];
+      assert.equal(onaylar.length, 3, `onay sayısı: ${onaylar.length}`);
+      assert.ok(tam.includes("tam yetki kapalıysa ya da uygulama listede açık değilse onay bekler."));
+    }
+  });
+
+  it("iki modda da plan_oner'in onay_bekliyor dönüşü istemde anlatılmaz; dönüş kuralı ve silme sorusu durur", () => {
+    for (const [masaustu, tamYetki] of BIRLESIMLER) {
+      const metin = sistemIstemi("", masaustu, tamYetki, AD);
+      assert.ok(!metin.includes("onay_bekliyor"));
+      assert.ok(metin.includes(PLAN_ORTAK));
+      assert.ok(metin.includes(SILME), "geri dönüşü zor işten önce sor kuralı yok");
+    }
+  });
+});
+
+describe("planSonucuMetni", () => {
+  it("başlayan iş için 'başladı' der, 'onaylandı' demez (tam yetkide kimse onaylamaz)", () => {
+    assert.equal(planSonucuMetni("plan1", "onaylandi", 7), "İş 7 başladı (plan plan1).");
+    assert.equal(planSonucuMetni("plan1", "onaylandi", undefined), "Plan plan1: başladı.");
+    assert.equal(planSonucuMetni("plan1", "reddedildi", undefined), "Plan plan1: reddedildi.");
+    assert.equal(planSonucuMetni("plan1", "iptal", undefined), "Plan plan1: iptal edildi.");
+    assert.ok(!planSonucuMetni("plan1", "onaylandi", 7).includes("onay"));
   });
 });

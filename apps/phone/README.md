@@ -8,7 +8,7 @@
 
 ## Ne yapar
 
-Telefon uygulamasından, bilgisayardaki ana Claude oturumuyla konuşursun. Ana oturum işin kendisini yapmaz, kod yazmaz; her iş için yeni bir Claude Code oturumu açar, işi o oturuma verir ve sonucu sana raporlar. Yapılacak ve yapılmayacak işlerin listesini ana oturum yazar, telefonda gösterir, sen onaylarsın. Birden fazla sohbet açılabilir; her sohbetin kendi ana oturumu vardır. Telefon da yönetilebilir: bir iş oturumu, kısıtlı bir araç kümesiyle (ekran okuma, dokunma, yazma) Android telefonu kontrol eder.
+Telefon uygulamasından, bilgisayardaki ana Claude oturumuyla konuşursun. Ana oturum işin kendisini yapmaz, kod yazmaz; her iş için yeni bir Claude Code oturumu açar, işi o oturuma verir ve sonucu sana raporlar. Ana oturum işi bir plan olarak yazar ve telefonda gösterir; tam yetki açıkken plan onay beklemeden başlar, onay yalnız gerçekten karar gereken durumlarda istenir. Birden fazla sohbet açılabilir; her sohbetin kendi ana oturumu vardır. Telefon da yönetilebilir: bir iş oturumu, kısıtlı bir araç kümesiyle (ekran okuma, dokunma, yazma) Android telefonu kontrol eder.
 
 Asistan adı `EREN_KIT_ASSISTANT_NAME` ortam değişkeninden gelir (varsayılan "Claude"); sunucu bunu `Ayar.asistanAdi` olarak okur, uygulama derleme anında alır. Kodda geçen `eren` önekli adlar (`@eren/protocol`, `dev.eren.*`, `eren-device`, `eren-servis` vb.) tanımlayıcıdır; kişilik adı değildir ve kurulu uygulamanın güncellenebilmesi için değişmez.
 
@@ -130,7 +130,7 @@ Mevcut veritabanındaki ana sohbetin adı yeniden adlandırılmaz; yeni ad yaln�
 
 - Deneme sunucusunda kimlik doğrulama yoktur; yalnızca özel, güvenilir bir ağda ve izinli IP ile çalıştır.
 - Tasarlanan servis modeli: eşleştirme normalde kapalıdır, telefon Keystore'da anahtar üretir, PC yalnızca açık anahtarı saklar, her bağlantıda karşılıklı imza sınaması yapılır; paylaşılan sır yoktur.
-- Telefon iş oturumları Bash, dosya ve web aracı almaz; yalnızca telefon ve soru araçlarını kullanır. Hassas uygulamalar paket listesiyle (değişmez ret listesi) korunur; `FLAG_SECURE`'a güvenilmez.
+- Telefon iş oturumları Bash, dosya ve web aracı almaz; yalnızca telefon araçlarını kullanır; kullanıcıya soru sormaz, belirsizlikte en makul yorumla ilerler. Hassas uygulamalar paket listesiyle (değişmez ret listesi) korunur; `FLAG_SECURE`'a güvenilmez.
 - Model davranışı güvenlik kanıtı sayılmaz: güvence Kotlin kapısından ve izin modelinden gelir. Ayrıntı, kalan açıklar ve ölçüm sınırları: [docs/GUVENLIK.md](docs/GUVENLIK.md), [docs/OLCUMLER.md](docs/OLCUMLER.md).
 - Deneme sırasında hassas uygulama açma, gerçek parola girme.
 

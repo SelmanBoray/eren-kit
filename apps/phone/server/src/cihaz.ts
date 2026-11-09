@@ -35,6 +35,7 @@ interface Bekleyen {
   baglanti: DogrulanmisCihazBaglantisi;
   coz: (s: Sonuc<CmdSonucu, KomutHatasi>) => void;
   son: number;
+  ad: string;
   temizle: () => void;
 }
 
@@ -152,6 +153,14 @@ export const cihazKur: CihazFabrikasi = ({
     if (m.payload !== undefined) sonuc.payload = m.payload;
     if (m.denied !== undefined) sonuc.denied = m.denied;
     if (m.hata !== undefined) sonuc.hata = m.hata;
+    // Yalnız tür ve kısa neden KODU yazılır; ekran, öğe metni, başlık ve payload asla.
+    if (m.denied !== undefined) {
+      gunluk.uyari("cihaz", "komut_sonucu", { cmd_id: m.cmd_id, ad: bek.ad, sonuc: "denied", neden: m.denied });
+    } else if (m.hata !== undefined) {
+      gunluk.uyari("cihaz", "komut_sonucu", { cmd_id: m.cmd_id, ad: bek.ad, sonuc: "hata", neden: m.hata });
+    } else {
+      gunluk.bilgi("cihaz", "komut_sonucu", { cmd_id: m.cmd_id, ad: bek.ad, sonuc: m.ok ? "ok" : "hata" });
+    }
     bekleyeniBitir(m.cmd_id, { ok: true, deger: sonuc });
   };
 
@@ -330,6 +339,7 @@ export const cihazKur: CihazFabrikasi = ({
         baglanti: b,
         coz,
         son,
+        ad,
         temizle: () => {
           iptalZaman();
           sinyal.removeEventListener("abort", sinyalDinleyici);

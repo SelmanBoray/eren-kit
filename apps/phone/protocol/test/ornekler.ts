@@ -12,8 +12,6 @@ export const PLAN_PC: Plan = {
   tur: "pc",
   cwd: "C:\\Proje\\ornek",
   gorev_metni: "Kırık testleri düzelt.\nRaporu yaz.",
-  kesin_yapilacaklar: ["Testleri çalıştır"],
-  kesin_yapilmayacaklar: ["Ana dala gönderme"],
 };
 
 export const PLAN_TELEFON: Plan = {
@@ -22,8 +20,6 @@ export const PLAN_TELEFON: Plan = {
   tur: "telefon",
   cwd: "",
   gorev_metni: "Son mesajı oku ve özetle.",
-  kesin_yapilacaklar: ["Yalnız oku"],
-  kesin_yapilmayacaklar: [],
   telefon_izin_istegi: { uygulamalar: ["com.example.mesaj"], mod: "oku" },
 };
 

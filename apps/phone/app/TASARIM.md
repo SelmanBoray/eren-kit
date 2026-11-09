@@ -133,7 +133,7 @@ tipini kendi dosyasında bildirir. `[karar]`
 1. `mesgul` (çalışan komut varken ikinci). 2. `deadline_gecti` (yalnız tazelik, PC saati). 3. `izin_yok`/
    `izin_geri_cekildi` (mezar taşı listesi). 4. `jeton_yanlis` (sabit zamanlı). 5. `izin_suresi_bitti`
    (telefonun monotonik saati; PC saati uzatamaz). 6. `erisilebilirlik_kapali`. 7. `kilit_ekrani`.
-8. **Ön plan (taze anlık):** aktif kök, son olay, odak paketi uyuşmazsa `on_plan_izin_disi`;
+8. **Ön plan (taze anlık):** aktif kök, son olay, odak paketi uyuşmazsa `on_plan_izin_disi`; istisna (0.5.0): aktif kök ve odak aynı izinli paketteyse SystemUI'den (`com.android.systemui`) gelen son olay ön plan değişimi sayılmaz (HyperOS'ta bildirim balonu kapanırken gelen olay her okumayı reddettiriyordu; ölçüm 2026-11-09, YouTube ve Instagram işleri); gerçekten SystemUI öne gelirse aktif kök ve odak da SystemUI olur, zincir `degismez_ret` verir. Görüntü sırasında son olay değişirse resmin atılması kuralı katı kalır. Ön plan retlerinde logcat'e `ErenKapi` etiketiyle yalnız paket adları ve pencere türleri yazılır;
    `degismez_ret` → `hassas_uygulama` → `yeni_uygulama` (paket kurulu değil ya da imzası okunamıyor) → izin dışı paket
    `on_plan_izin_disi`. `open_app` aynı zinciri hedefe uygular. `screenshot`/`zoom`: durum ve gezinti
    çubuğu dışında görünen her pencere izinli pakette olmalı; perde, heads-up, klavye, balon, PiP görünürse
@@ -333,7 +333,7 @@ aynıdır. `[protocol]`
 
 ### Outbox v2 → v3 (`outbox.ts`)
 
-- Giden her mesaj `v: SOHBET_SURUMU` (Dilim 2'de 3, Dilim 3'ten beri 4). İş türleri `IsMesajiTuru`'nun tamamı; `outbox.ts` ve `baglanti.ts`
+- Giden her mesaj `v: SOHBET_SURUMU` (Dilim 2'de 3, Dilim 3'te 4, 0.5.0'dan beri 5). İş türleri `IsMesajiTuru`'nun tamamı; `outbox.ts` ve `baglanti.ts`
   kümeleri `Record<IsMesajiTuru, true>` gibi bir yapıyla tipe bağlanır (biri eksik kalırsa `tsc` kırılır).
 - **Geçici** (`GeciciIsTuru`: `chat_clear`, `chat_delete`): `ekle` seçeneğinden bağımsız hep geçici; kopunca
   yeniden yollanmaz (hatalara `baglanti_koptu` düşer, `index` gizler); yüklemede önceki süreçten kalanı
@@ -362,10 +362,10 @@ aynıdır. `[protocol]`
 Aynı kalıp, bir sürüm yukarı. `/sohbet` v4: `GIRDI_YOLLARI` `["yazi","dikte","kisayol"]`, `user_message` ve
 `user_echo`'da isteğe bağlı `baglam{paket, ad}` (yalnız `input:"kisayol"` iken). `[protocol]`
 
-- **Yükseltme** (`kayitliMesajCoz`): v4 olduğu gibi çözülür. `v` 1, 2 ya da 3 ise `v` 4 yapılır, yeniden
+- **Yükseltme** (`kayitliMesajCoz`): güncel sürüm olduğu gibi çözülür. `v` 1-4 ise `v` güncel sürüm (0.5.0'dan beri 5) yapılır, yeniden
   çözülür, geçmezse atılır. `sohbet_id` eklemesi yalnız v1/v2 içindir (`SOHBET_IDSIZ_SURUMLER`); v3 kaydı
   v4'ün alt kümesidir, yalnız `v` değişir. Kimlik ve sıra değişmez; yükseltilen kayıt bir sonraki yazımda
-  v4 yazılır. `YuklemeOzeti.yukseltilen` v3'ü de sayar.
+  güncel sürümle yazılır. `YuklemeOzeti.yukseltilen` v3'ü de sayar.
 - **Bozuk kayıt:** eski sürümde olamayacak v4 alanını taşıyan kayıt (`input:"kisayol"` ya da `baglam`
   anahtarı) eski `v` ile gelmişse bozuktur: atılır (`atilan`), yükseltilmez.
 - **`mesajYolla(metin, input, baglam?)`** (`Sohbet`): `baglam` yalnız `input === "kisayol"` ile kabul edilir
@@ -375,6 +375,14 @@ Aynı kalıp, bir sürüm yukarı. `/sohbet` v4: `GIRDI_YOLLARI` `["yazi","dikte
   (= `KisayolBaglami`).
 - **Görünüm:** `olaylar.ts` `user_echo.baglam`'ı `KullaniciBalonu.baglam?` olarak taşır (alan yoksa yoktur);
   görünüm modelinde kullanıcı mesajı `baglam?` taşır.
+
+### Outbox v4 → v5 (`outbox.ts`, 0.5.0)
+
+`/sohbet` v5 yalnız plan şemasını değiştirdi (`kesin_yapilacaklar` ve `kesin_yapilmayacaklar` kalktı; aşağı olaylardaki plan). Yukarı mesajlar aynıdır: diskteki v4 kaydı yalnız `v` değişerek v5'e yükselir (`ESKI_SOHBET_SURUMLERI` 1-4); kısayol alanları yalnız v1-v3 kayıtta bozuk sayılır (`KISAYOLSUZ_SURUMLER`).
+
+### Plan kartı durumu (0.5.0, `planKartiDurumu.ts`)
+
+Kart yalnız gerçekten karar beklenirken "Onayını bekliyor" der ve karar düğmelerini gösterir (`onayBekleniyor`). Onay ya da otomatik deneme yoldaysa "Başlatılıyor", ret yoldaysa "Reddediliyor"; `onaylandi` iken kartın `is_id`'sinin iş kartı durumu gösterilir (Çalışıyor, Bitti, Hatayla bitti, Yarım kaldı, Limitte durdu, İptal edildi), iş kartı henüz yoksa "Başladı". Tam yetkiyle hemen başlayacak PC planı `plan_resolved` gelene dek "bekliyor" görünebilir (`plan_proposed` onay beklenip beklenmediğini taşımaz). Eski biçimli (iki listeli) plan olayları v5 şemasından geçmez: telefonda eski plan kartları geçmişten düşer.
 
 ### Telafi (`telafi.ts`)
 
@@ -770,7 +778,7 @@ gider ve ona dayanan PC işleri onaysız başlar; telefonda okuma, yazma, gönde
 kısayoldan (Hızlı Ayarlar kutucuğu, bildirim eylemi) sesle mesaj gider. **Hâlâ geçerli kalanlar:** değişmez
 ret listesi (asistanın kendi uygulaması, Ayarlar, kurucu, Play, izin diyalogları, üretici güvenlik, Tailscale, kilit
 ekranı), kullanıcının "hassas" listesi (banka/para/kimlik uygulamaları otomatik hassas; 0.4.3), parola alanı, URL/intent yasağı, izin süresi ve bütçesi, kalıcı
-bildirim + Durdur, denetim günlüğü. Etiketler: `[protocol]` = `/sohbet` v4 (`SOHBET_SURUMU` 4). Sözleşme
+bildirim + Durdur, denetim günlüğü. Etiketler: `[protocol]` = `/sohbet` v5 (`SOHBET_SURUMU` 5; Dilim 3'te 4). Sözleşme
 dosyaları `Sozlesme.kt`, `Portlar.kt`, `IcSozlesme.kt`, `AdaptorSozlesmesi.kt`, `ErenDevice.types.ts` ve
 `sozlesme.ts` yeniden dondurulmuştur; burası davranıştır.
 

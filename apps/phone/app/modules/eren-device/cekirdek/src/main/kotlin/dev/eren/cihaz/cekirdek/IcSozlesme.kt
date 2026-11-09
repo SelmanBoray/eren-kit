@@ -366,8 +366,6 @@ data class Plan(
     val tur: IsTuru,
     val cwd: String,
     val gorevMetni: String,
-    val kesinYapilacaklar: List<String>,
-    val kesinYapilmayacaklar: List<String>,
     val mcpProfili: McpProfili?,
     /** `TELEFON` planında dolu, `PC` planında null. */
     val telefonIzinIstegi: TelefonIzinIstegi?,

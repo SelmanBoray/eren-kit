@@ -211,7 +211,7 @@ Gömülü font önerisi ayrı (bölüm 9) ve isteğe bağlıdır.
 | `govde` | 16 | 24 | 400 | Mesaj metni, kart gövdesi, liste satırı adı, girdi. |
 | `govdeKalin` | 16 | 24 | 600 | Düğme yazısı, seçili sohbet adı, durum değeri. |
 | `kucuk` | 14 | 20 | 400 | Alt başlık, önizleme, sistem notu, şerit metni, bölüm notu. |
-| `kucukKalin` | 14 | 20 | 600 | Kart türü ve bölüm adı ("Kesin yapılacaklar"), menü başlığı. |
+| `kucukKalin` | 14 | 20 | 600 | Kart türü ve bölüm adı ("Görev metni"), menü başlığı. |
 | `mini` | 12 | 16 | 400 | Zaman, balon altı durum ("Bağlantı bekliyor"). En küçük boyut budur. |
 | `miniKalin` | 12 | 16 | 600 | Okunmamış rozeti. |
 | `kod` | 14 | 20 | 400 | Makine metni (`monospace`). |
@@ -431,11 +431,12 @@ Plan, rapor ve soru kartı tam genişliktir (balon değildir): zemin `yuzey`, ke
   "Plan · PC işi · Onayını bekliyor" iki ayrı öğeye bölünür.
 - **Kart türü adları**: "PC işi planı", "Telefon işi planı", "İş 12 raporu", "İş 12 sorusu".
 - **Başlık**: `baslik` `metin`.
-- **Bölüm adları**: `kucukKalin` `metinIkincil`, cümle düzeninde ("Görev metni", "Kesin yapılacaklar",
-  "Kesin yapılmayacaklar", "Yapıldı", "Yapılmadı", "Dosyalar", "Açık noktalar").
+- **Bölüm adları**: `kucukKalin` `metinIkincil`, cümle düzeninde ("Görev metni", "Yapıldı",
+  "Yapılmadı", "Dosyalar", "Açık noktalar"). Plan kartında "Kesin yapılacaklar" ve "Kesin yapılmayacaklar"
+  bölümleri 0.5.0'da kalktı.
 - **Maddeler**: satır = 16 dp genişlikte "•" + esnek metin (asılı girinti). `govde` `metin`.
 - **Makine metni** (klasör, dosya, paket adı): `kod` `metinIkincil`, `selectable`.
-- **Karar bekleyen kart** (plan `bekliyor`, soru `bekliyor`): kenar 1 dp `vurgu`. Yalnız bunlar; ekrandaki
+- **Karar bekleyen kart** (plan gerçekten onay beklerken, soru `bekliyor`): kenar 1 dp `vurgu`. Yalnız bunlar; ekrandaki
   sarı çerçeve "senden bir şey bekleniyor" demektir.
 - **Sonuçlanmış plan kartı** varsayılan kapalıdır: başlık satırı + başlık + "Ayrıntı" metin düğmesi;
   açılınca "Gizle". Rapor açık gelir ama her liste ilk 5 maddeyi gösterir, fazlası için
@@ -448,8 +449,11 @@ Durum etiketleri (nokta ve metin aynı renk):
 
 | Kart | Durum | Metin | Renk |
 |---|---|---|---|
-| Plan | `bekliyor` | Onayını bekliyor | `vurgu` |
-| Plan | `onaylandi` | Onaylandı | `basari` |
+| Plan | `bekliyor`, karar yok | Onayını bekliyor | `vurgu` |
+| Plan | `bekliyor`, onay yolda ya da otomatik deneme sürüyor | Başlatılıyor | `bilgi` |
+| Plan | `bekliyor`, ret yolda | Reddediliyor | `metinSonuk` |
+| Plan | `onaylandi`, iş kartı henüz yok | Başladı | `basari` |
+| Plan | `onaylandi`, iş kartı var | İş durumu: Çalışıyor (`bilgi`), Bitti (`basari`), Hatayla bitti (`hata`), Yarım kaldı ve Limitte durdu (`uyari`), İptal edildi (`metinSonuk`) | iş durumuna göre |
 | Plan | `reddedildi` | Reddedildi | `metinSonuk` |
 | Plan | `iptal` | İptal edildi | `metinSonuk` |
 | Rapor | `tamam` | Tamamlandı | `basari` |
@@ -467,9 +471,9 @@ Durum etiketleri (nokta ve metin aynı renk):
 
 ### 6.8 Plan, rapor ve soru kartına özel
 
-- **Plan**: başlık altında kirli uyarısı (şerit), sonra `kod` ile "Klasör: …", görev metni, kesin
-  yapılacaklar / yapılmayacaklar, telefon izni bölümü (mod "okuma"/"yazma", uygulamalar `kod` ile alt
-  alta, serbest metin isteği uyarı şeridiyle). Düğmeler: "Reddet" (ikincil) + "Onayla" (birincil);
+- **Plan**: başlık altında kirli uyarısı (şerit), sonra `kod` ile "Klasör: …", görev metni,
+  telefon izni bölümü (mod "okuma"/"yazma", uygulamalar `kod` ile alt
+  alta, serbest metin isteği uyarı şeridiyle). Düğmeler (yalnız karar beklenirken görünür; onaysız başlayan planda yoktur): "Reddet" (ikincil) + "Onayla" (birincil);
   telefon işinde "Telefonda izin iste" (birincil). Meşgulken iki düğme de kapalı, birincil yazısı
   "Gönderiliyor".
 - **Rapor**: kirli uyarısı (şerit) başlığın altında; rapor yoksa `kucuk` `metinSonuk` "Rapor yok."

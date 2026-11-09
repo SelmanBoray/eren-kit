@@ -269,7 +269,8 @@ export interface YuklemeOzeti {
    * Dilim 2. v1 ya da v2 diskten v3'e çevrilip korunan öğe: `v` `SOHBET_SURUMU` olur;
    * `user_message`/`interrupt`/`chat_clear`'a `sohbet_id` yoksa `"ana"` (`ANA_SOHBET_ID`) eklenir.
    * Kimlik ve sıra değişmez; bir sonraki yazımda güncel sürüm yazılır. Dilim 3: v3 öğe de yükseltilir
-   * (yalnız `v` 4 olur); v1/v2/v3 kayıtta `input: "kisayol"` ya da `baglam` varsa bozuktur, atılır.
+   * (yalnız `v` güncel olur); v1/v2/v3 kayıtta `input: "kisayol"` ya da `baglam` varsa bozuktur, atılır.
+   * 0.5.0: v4 öğe de yalnız `v`'si değişerek yükseltilir.
    */
   yukseltilen: number;
   /**

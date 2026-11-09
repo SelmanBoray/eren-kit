@@ -7,6 +7,7 @@ import {
   KOPRU_BORU_ADI,
   KOPRU_FIILLERI,
   OpakId,
+  PLAN_BEKLEME_NEDENLERI,
   ROL_FIILLERI,
   SORU_ARACLARI,
   TELEFON_ARACLARI,
@@ -16,7 +17,7 @@ import type { BoruBaglantisi } from "../src/sozlesme.ts";
 import { sahteGunluk, sahteRastgele } from "./sahte.ts";
 // VARSAYIM: üretim `kopru.ts` testlenebilir giriş olarak `kopruCalistir` dışa aktarır. Gerçek ad
 // ya da imza farklıysa yalnız aşağıdaki `kur` değişir (şef bağlar).
-import { kopruCalistir } from "../src/kopru.ts";
+import { kopruCalistir, PLAN_BEKLEME_NEDENI_METNI } from "../src/kopru.ts";
 
 const JETON = "j".repeat(43);
 
@@ -296,10 +297,15 @@ describe("kopru: çağrı ve sonuç", () => {
 
     it("geçersiz ara boruya çıkmadan gecersiz_mesaj olur", async () => {
       const d = await kurListe();
-      for (const args of [{ ara: "" }, { ara: 5 }, { baska: true }]) {
+      const durumlar: Array<[Record<string, unknown>, string]> = [
+        [{ ara: "" }, "ara: en az 1 karakter"],
+        [{ ara: 5 }, "ara: beklenen tür string"],
+        [{ baska: true }, "baska: bilinmeyen alan"],
+      ];
+      for (const [args, satir] of durumlar) {
         const r = await d.istemci.callTool({ name: "uygulamalar", arguments: args });
         assert.ok(hataMi(r));
-        assert.equal(metin(r).trim(), "hata: gecersiz_mesaj");
+        assert.ok(metin(r).startsWith(`hata: gecersiz_mesaj\n${satir}`), metin(r));
       }
       assert.equal(d.servis.istekler("uygulamalar").length, 0);
     });
@@ -348,6 +354,165 @@ describe("kopru: çağrı ve sonuç", () => {
     assert.ok(hataMi(r));
     assert.equal(metin(r).trim(), "hata: rol_fiil_izinsiz");
     assert.ok(!JSON.stringify(r).includes("ic-ayrinti"));
+  });
+});
+
+describe("kopru: plan_oner", () => {
+  const HASH = "a".repeat(64);
+  const PC = { baslik: "Ornek is", tur: "pc", cwd: "C:\\ornek", gorev_metni: "Ornek gorev" };
+  const TELEFON = {
+    baslik: "Telefon isi",
+    tur: "telefon",
+    cwd: "",
+    gorev_metni: "Ekrani oku",
+    telefon_izin_istegi: { uygulamalar: ["com.whatsapp"], mod: "oku" },
+  };
+  const yanitla = (sonuc: unknown) => (s: SahteServis) => {
+    s.davranis = (m, bag, sv) => sv.yanit(bag, m["istek_id"], sonuc as Record<string, unknown>);
+  };
+
+  it("araç açıklaması onay kartı/başlatmaz demez, eski plan alanlarını anmaz", async () => {
+    const d = await kur("eren");
+    const { tools } = await d.istemci.listTools();
+    const t = tools.find((x) => x.name === "plan_oner")!;
+    const aciklama = t.description ?? "";
+    assert.ok(!aciklama.includes("İş başlatmaz"), aciklama);
+    assert.ok(!aciklama.includes("planı önerir"), aciklama);
+    assert.ok(aciklama.includes("hemen başlar"), aciklama);
+    assert.ok(!JSON.stringify(t).includes("kesin_yapil"));
+    assert.ok(!Object.keys(t.inputSchema.properties ?? {}).some((k) => k.startsWith("kesin_")));
+  });
+
+  const basari = async (sonuc: Record<string, unknown>): Promise<string> => {
+    const d = await kur("eren", yanitla({ ok: true, sonuc: { plan_id: "plan_x1", plan_hash: HASH, ...sonuc } }));
+    const r = await d.istemci.callTool({ name: "plan_oner", arguments: PC });
+    assert.ok(!hataMi(r), metin(r));
+    assert.deepEqual(d.servis.istekler("plan_oner")[0]!["girdi"], PC);
+    const t = metin(r);
+    assert.ok(!t.includes(HASH), t);
+    assert.ok(!t.includes("onay_bekliyor") && !t.includes("telefonda_baslatiliyor"), t);
+    return t;
+  };
+
+  it("basladi: iş başladı der, 'başlattım' dedirtir; plan/onay söylemi yok", async () => {
+    const t = await basari({ durum: "basladi", is_id: 7 });
+    assert.ok(t.startsWith("plan_oner: iş başladı (iş 7, plan plan_x1)."), t);
+    assert.ok(t.includes('"başlattım" de'), t);
+    assert.ok(!/onay(?!dan söz etme)/.test(t), t);
+    const t2 = await basari({ durum: "basladi" });
+    assert.ok(t2.startsWith("plan_oner: iş başladı (plan plan_x1)."), t2);
+  });
+
+  it("telefonda_baslatiliyor: telefonda başlatılıyor der; onayı yalnız iş başlamazsa söyletir", async () => {
+    const t = await basari({ durum: "telefonda_baslatiliyor" });
+    assert.ok(t.startsWith("plan_oner: iş telefona gitti, telefonda başlatılıyor (plan plan_x1)."), t);
+    assert.ok(t.includes("onaydan yalnız iş başlamazsa söz et"), t);
+    // Not metni konusma-metin.planSonucuMetni ile aynı kalıpta.
+    assert.ok(t.includes('"İş <no> başladı (plan plan_x1)."'), t);
+  });
+
+  it("onay_bekliyor: gerçekten onay beklendiğini açıkça söyler", async () => {
+    const t = await basari({ durum: "onay_bekliyor" });
+    assert.ok(t.startsWith("plan_oner: iş başlamadı, kullanıcının telefonda onayı bekleniyor (plan plan_x1)."), t);
+    assert.ok(!t.includes("Neden:"), t);
+  });
+
+  it("onay_bekliyor: her neden kısa Türkçe ile söylenir; ham kod ve hash modele gitmez", async () => {
+    const beklenen: Record<(typeof PLAN_BEKLEME_NEDENLERI)[number], string> = {
+      tam_yetki_kapali: "tam yetki kapalı olduğu için onay bekliyor",
+      kirli_kaynak: "kaynak kirli",
+      tur_bitti: "turu bittiği ya da değiştiği için onay gerekiyor",
+      limit_kilitli: "limiti kilitli olduğu için başlayamadı",
+      baslatma_hatasi: "başlatma hatası",
+    };
+    for (const neden of PLAN_BEKLEME_NEDENLERI) {
+      const t = await basari({ durum: "onay_bekliyor", neden });
+      assert.ok(t.startsWith("plan_oner: iş başlamadı, kullanıcının telefonda onayı bekleniyor (plan plan_x1)."), t);
+      assert.ok(t.includes(`Neden: ${PLAN_BEKLEME_NEDENI_METNI[neden]}.`), t);
+      assert.ok(t.includes(beklenen[neden]), t);
+      assert.ok(t.includes("nedeni tek cümleyle söyle"), t);
+      assert.ok(!PLAN_BEKLEME_NEDENLERI.some((k) => t.includes(k)), t);
+    }
+  });
+
+  it("katı protokol şeması: neden/is_id yanlış durumla ya da bilinmeyen alan ic_hata olur", async () => {
+    for (const sonuc of [
+      { durum: "basladi", neden: "tur_bitti" },
+      { durum: "onay_bekliyor", is_id: 3 },
+      { durum: "onay_bekliyor", neden: "baska" },
+      { durum: "basladi", fazla: 1 },
+    ]) {
+      const d = await kur("eren", yanitla({ ok: true, sonuc: { plan_id: "plan_x1", plan_hash: HASH, ...sonuc } }));
+      const r = await d.istemci.callTool({ name: "plan_oner", arguments: PC });
+      assert.ok(hataMi(r), JSON.stringify(sonuc));
+      assert.equal(metin(r), "hata: ic_hata");
+    }
+  });
+
+  it("bilinmeyen durum ic_hata olur", async () => {
+    const d = await kur("eren", yanitla({ ok: true, sonuc: { plan_id: "plan_x1", plan_hash: HASH, durum: "baska" } }));
+    const r = await d.istemci.callTool({ name: "plan_oner", arguments: PC });
+    assert.ok(hataMi(r));
+    assert.equal(metin(r), "hata: ic_hata");
+  });
+
+  it("eski kesin_* alanı boruya çıkmadan gecersiz_mesaj; alan adı ve 'bilinmeyen alan' modele gider", async () => {
+    const d = await kur("eren");
+    const r = await d.istemci.callTool({
+      name: "plan_oner",
+      arguments: { ...PC, kesin_yapilacaklar: ["a"], kesin_yapilmayacaklar: [] },
+    });
+    assert.ok(hataMi(r));
+    const t = metin(r);
+    assert.ok(t.startsWith("hata: gecersiz_mesaj\n"), t);
+    assert.ok(t.includes("kesin_yapilacaklar: bilinmeyen alan"), t);
+    assert.ok(t.includes("kesin_yapilmayacaklar: bilinmeyen alan"), t);
+    assert.equal(d.servis.istekler("plan_oner").length, 0);
+  });
+
+  it("telefon planında cwd dolu: alan yolu ve kural metni gider, girdi değeri gitmez", async () => {
+    const d = await kur("eren");
+    const r = await d.istemci.callTool({ name: "plan_oner", arguments: { ...TELEFON, cwd: "C:\\GIZLI-YOL-77" } });
+    assert.ok(hataMi(r));
+    const t = metin(r);
+    assert.equal(t, "hata: gecersiz_mesaj\ncwd: telefon planında cwd boş olur");
+    assert.ok(!t.includes("GIZLI-YOL-77"));
+    assert.equal(d.servis.istekler("plan_oner").length, 0);
+  });
+
+  it("eksik alan, sınır ve enum ihlalleri alan yoluyla; değer metni sızmaz", async () => {
+    const d = await kur("eren");
+    const { gorev_metni: _g, ...eksik } = PC;
+    const r1 = await d.istemci.callTool({ name: "plan_oner", arguments: eksik });
+    assert.match(metin(r1), /^hata: gecersiz_mesaj\ngorev_metni: beklenen tür string/);
+    const r2 = await d.istemci.callTool({ name: "plan_oner", arguments: { ...PC, tur: "GIZLI-TUR" } });
+    assert.ok(metin(r2).includes("tur: izinli değerler: pc, telefon"), metin(r2));
+    assert.ok(!metin(r2).includes("GIZLI-TUR"));
+    const r3 = await d.istemci.callTool({ name: "plan_oner", arguments: { ...PC, baslik: "x".repeat(5000) } });
+    assert.match(metin(r3), /\nbaslik: en çok \d+ karakter/);
+    const r4 = await d.istemci.callTool({
+      name: "plan_oner",
+      arguments: { ...TELEFON, telefon_izin_istegi: { uygulamalar: ["com.a", "com.b"], mod: "yaz" } },
+    });
+    assert.ok(metin(r4).includes("telefon_izin_istegi.uygulamalar: yazma izni tek paket içindir"), metin(r4));
+    assert.equal(d.servis.istekler("plan_oner").length, 0);
+  });
+
+  it("anahtar adı güvenli kalıba uymuyorsa '?' yazılır", async () => {
+    const d = await kur("eren");
+    const r = await d.istemci.callTool({ name: "plan_oner", arguments: { ...PC, "gizli veri: 123": 1 } });
+    const t = metin(r);
+    assert.ok(t.includes("?: bilinmeyen alan"), t);
+    assert.ok(!t.includes("gizli veri"));
+  });
+
+  it("servisin plan_gecersiz ayrıntısı yalnız izin listesindeyse modele gider", async () => {
+    const d1 = await kur("eren", yanitla({ ok: false, code: "plan_gecersiz", detail: "cwd" }));
+    const r1 = await d1.istemci.callTool({ name: "plan_oner", arguments: PC });
+    assert.equal(metin(r1), "hata: plan_gecersiz\ncwd: klasör bulunamadı");
+    const d2 = await kur("eren", yanitla({ ok: false, code: "plan_gecersiz", detail: "GIZLI-AYRINTI-9" }));
+    const r2 = await d2.istemci.callTool({ name: "plan_oner", arguments: PC });
+    assert.equal(metin(r2), "hata: plan_gecersiz");
   });
 });
 

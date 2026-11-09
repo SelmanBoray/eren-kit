@@ -145,14 +145,6 @@ class OnayActivity : Activity() {
 
         kok.addView(baslik("Görev (PC'den gelen metin, tamamı)"))
         kok.addView(kutu(temiz(p.gorevMetni), fg))
-        if (p.kesinYapilacaklar.isNotEmpty()) {
-            kok.addView(baslik("Kesin yapılacaklar"))
-            kok.addView(kutu(p.kesinYapilacaklar.joinToString("\n") { "• " + temiz(it) }, fg))
-        }
-        if (p.kesinYapilmayacaklar.isNotEmpty()) {
-            kok.addView(baslik("Kesin yapılmayacaklar"))
-            kok.addView(kutu(p.kesinYapilmayacaklar.joinToString("\n") { "• " + temiz(it) }, fg))
-        }
 
         kok.addView(baslik("Mod"))
         kok.addView(

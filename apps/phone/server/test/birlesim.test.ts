@@ -97,8 +97,6 @@ const pcTaslak = (ek: J = {}): J => ({
   tur: "pc",
   cwd: PROJE,
   gorev_metni: `Gorev metni ${K.plan}`,
-  kesin_yapilacaklar: ["Birinci yapilacak"],
-  kesin_yapilmayacaklar: ["Yasak madde"],
   ...ek,
 });
 
@@ -107,8 +105,6 @@ const telefonTaslak = (ek: J = {}): J => ({
   tur: "telefon",
   cwd: "",
   gorev_metni: `Telefon gorevi ${K.plan}`,
-  kesin_yapilacaklar: ["Ekrani oku"],
-  kesin_yapilmayacaklar: ["Hicbir sey yazma"],
   telefon_izin_istegi: { uygulamalar: [PAKET], mod: "oku" },
   ...ek,
 });
@@ -606,9 +602,18 @@ async function ortamKur(sec: OrtamSecenegi = {}) {
       const mcp = JSON.parse(metin) as J;
       return mcp["mcpServers"]["eren"]["env"]["EREN_KOPRU_JETON"] as string;
     },
-    isJetonu: (is_id: number, sunucu: "eren-soru" | "eren-telefon"): string => {
+    isJetonu: (is_id: number, sunucu: "eren-telefon"): string => {
       const mcp = JSON.parse(d.dosya.icerik(ayar.isYollari(is_id).mcp)!) as J;
       return mcp["mcpServers"][sunucu]["env"]["EREN_KOPRU_JETON"] as string;
+    },
+    /**
+     * 0.5.0: işe `eren-soru` verilmez (mcp.json'da yok, jeton üretilmez). Soru altyapısı sunucuda durur;
+     * 0.5.0 öncesi başlamış (uzlaştırmayla sahiplenilen) işin elindeki soru jetonu gibi depoya jeton yazılır.
+     */
+    eskiSoruJetonu: (is_id: number): string => {
+      const mcp = JSON.parse(d.dosya.icerik(ayar.isYollari(is_id).mcp)!) as J;
+      assert.equal(mcp["mcpServers"]["eren-soru"], undefined, "işin mcp.json'unda eren-soru var");
+      return o.servis.kopru.jetonUret({ rol: "soru", is_id });
     },
     kopruBaglan: async (rol: KopruRolu, jeton: string): Promise<Kopru> => {
       const k = kopruSar(d.boru.baglan());
@@ -702,6 +707,8 @@ async function ortamKur(sec: OrtamSecenegi = {}) {
     planOner: async (h: Pick<Hazir, "erenKopru">, taslak: J): Promise<{ plan_id: string; plan_hash: string }> => {
       const y = await h.erenKopru.cagir("plan_oner", taslak);
       assert.equal(y["ok"], true, `plan_oner: ${JSON.stringify(y)}`);
+      // 0.5.0: telefon planı telefona gider; servis onu başlatmaz, onay da beklediğini söylemez.
+      if (taslak["tur"] === "telefon") assert.equal(y["sonuc"]["durum"], "telefonda_baslatiliyor");
       return y["sonuc"] as { plan_id: string; plan_hash: string };
     },
 
@@ -742,7 +749,7 @@ async function ortamKur(sec: OrtamSecenegi = {}) {
       assert.equal(a["ok"], true, `pc onayı: ${JSON.stringify(a)}`);
       const kayit = o.servis.depo.isPlanaGore(p.plan_id);
       assert.ok(kayit, "onaydan sonra iş kaydı yok");
-      await o.isInit(kayit.is_id, ["eren-soru", "computer-use-windows"]);
+      await o.isInit(kayit.is_id, ["computer-use-windows"]);
       await o.erenBosalt();
       return { ...p, is_id: kayit.is_id };
     },
@@ -755,7 +762,7 @@ async function ortamKur(sec: OrtamSecenegi = {}) {
       assert.equal(a["ok"], true, `telefon onayı: ${JSON.stringify(a)}`);
       const kayit = o.servis.depo.isPlanaGore(p.plan_id);
       assert.ok(kayit, "onaydan sonra iş kaydı yok");
-      await o.isInit(kayit.is_id, ["eren-telefon", "eren-soru"]);
+      await o.isInit(kayit.is_id, ["eren-telefon"]);
       await o.erenBosalt();
       return { ...p, is_id: kayit.is_id, izin };
     },
@@ -856,8 +863,10 @@ describe("birleşim: ana akış", () => {
     // plan_oner insan turunda, PC planı: kart, sonra onaysız iş (plan_proposed, job_started, plan_resolved).
     const y = await erenKopru.cagir("plan_oner", pcTaslak());
     assert.equal(y["ok"], true, JSON.stringify(y));
-    const { plan_id, plan_hash, durum } = y["sonuc"] as J;
-    assert.equal(durum, "onay_bekliyor");
+    const { plan_id, plan_hash, durum, is_id: donenIs, neden } = y["sonuc"] as J;
+    // 0.5.0: dönüş gerçek durumu taşır; köprü borusunda protokol şemasından geçti.
+    assert.equal(durum, "basladi");
+    assert.equal(neden, undefined);
     assert.equal(d.surec.ayriklar().length, 1, "insan turunda PC planı başlamalı");
     const kart = sohbet.olaylar("plan_proposed").at(-1)!;
     assert.equal(kart["plan"]["plan_id"], plan_id);
@@ -868,6 +877,7 @@ describe("birleşim: ana akış", () => {
     const basladi = sohbet.olaylar("job_started").at(-1)!;
     const coz = sohbet.olaylar("plan_resolved").at(-1)!;
     const is_id = basladi["is_id"] as number;
+    assert.equal(donenIs, is_id, "plan_oner dönüşündeki is_id başlayan iş değil");
     // `profil` verilmedi: `tam`; plan kartında yok.
     assert.equal(basladi["profil"], "tam");
     assert.equal("profil" in (kart["plan"] as J), false);
@@ -897,13 +907,18 @@ describe("birleşim: ana akış", () => {
     assert.equal(eren.istek.ortam["CLAUDE_CODE_ORNEK"], undefined, "ana oturum ortamında CLAUDE* kaldı");
     assert.equal(eren.istek.ortam["CLAUDE_CODE_DISABLE_FILE_MENTIONS"], "1");
 
-    assert.deepEqual(o.yeniStdin(), [sentetikSatir(`Plan ${plan_id}: onaylandı, iş ${is_id}.`)]);
+    assert.deepEqual(o.yeniStdin(), [sentetikSatir(`İş ${is_id} başladı (plan ${plan_id}).`)]);
     await o.erenTurBitir("Not aldim.");
 
     // İş `init` görür, `calisiyor`.
     assert.equal(o.servis.depo.isGetir(is_id)?.durum, "baslatiliyor");
-    await o.isInit(is_id, ["eren-soru", "computer-use-windows"]);
+    await o.isInit(is_id, ["computer-use-windows"]);
     assert.equal(o.servis.depo.isGetir(is_id)?.durum, "calisiyor");
+    // 0.5.0: işe soru aracı verilmez; görev metni yalnız plan metni + soru notu.
+    assert.ok(!isSurec.istek.argv.join(" ").includes("kullaniciya_sor"), "iş argümanında soru aracı");
+    const isGorevi = isSurec.istek.argv[isSurec.istek.argv.indexOf("-p") + 1]!;
+    assert.ok(!isGorevi.includes("Kesin yapılacaklar") && !isGorevi.includes("Kesin yapılmayacaklar"));
+    assert.ok(isGorevi.includes("Kullanıcıya soru sorma."), "görev metninde soru notu yok");
     const oturumlar = await erenKopru.cagir("oturumlar", {});
     assert.equal(oturumlar["ok"], true, JSON.stringify(oturumlar));
     assert.deepEqual(
@@ -912,8 +927,8 @@ describe("birleşim: ana akış", () => {
     );
     assert.equal(sohbet.sonDurum()["aktif_is"], 1);
 
-    // Soru: köprü `mcp.json`'daki jetonla bağlanır, bekler, telefon cevaplar.
-    const soruJeton = o.isJetonu(is_id, "eren-soru");
+    // Soru (yalnız 0.5.0 öncesi işin jetonuyla mümkün): köprü bağlanır, bekler, telefon cevaplar.
+    const soruJeton = o.eskiSoruJetonu(is_id);
     const soruKopru = await o.kopruBaglan("soru", soruJeton);
     const soru_id = "soru_ornek_1";
     const sorIstek = soruKopru.gonder("kullaniciya_sor", { soru_id, soru: `Hangisi olsun? ${K.soru}` });
@@ -1108,7 +1123,7 @@ describe("birleşim: servis öldür-kur", () => {
     const h = await o.hazirla();
 
     const is = await o.pcIsi(h);
-    const soruJeton = o.isJetonu(is.is_id, "eren-soru");
+    const soruJeton = o.eskiSoruJetonu(is.is_id);
     const erenJetonu = o.erenJetonu();
     const oturum = oturumKimligi(o.eren());
     const soruKopru = await o.kopruBaglan("soru", soruJeton);
@@ -1627,7 +1642,7 @@ describe("birleşim: telefon planı ve kirli zincir", () => {
     assert.ok(argv[argv.indexOf("--system-prompt") + 1]!.includes(AD), "güvenlik metninde ad yok");
 
     // Köprü gerçek jetonla, komut gerçek izin jetonuyla telefona.
-    await o.isInit(is_id, ["eren-telefon", "eren-soru"]);
+    await o.isInit(is_id, ["eren-telefon"]);
     assert.equal(o.servis.depo.isGetir(is_id)?.durum, "calisiyor");
     const kopru = await o.kopruBaglan("telefon", o.isJetonu(is_id, "eren-telefon"));
     const istek = kopru.gonder("elements", {});
@@ -1760,7 +1775,7 @@ describe("birleşim: telefon planı ve kirli zincir", () => {
     assert.equal(a["ok"], true, JSON.stringify(a));
     const pcKayit = o.servis.depo.isPlanaGore(sonra.plan_id);
     assert.ok(pcKayit);
-    await o.isInit(pcKayit.is_id, ["eren-soru", "computer-use-windows"]);
+    await o.isInit(pcKayit.is_id, ["computer-use-windows"]);
     await o.isBitir(pcKayit.is_id);
     const pcBiten = sohbet.olaylar("job_finished").at(-1)!;
     assert.equal(pcBiten["is_id"], pcKayit.is_id);
@@ -2066,7 +2081,7 @@ describe("birleşim: iş profili (Dilim 1)", () => {
     assert.equal(argv[argv.indexOf("--model") + 1], "sonnet", "hafif: model sonnet değil");
     assert.ok(argv.includes("--dangerously-skip-permissions"), "hafif de PC'de tam yetkili");
     await o.erenTurBitir("Hafif plan onerdim.");
-    await o.isInit(is_id, ["eren-soru", "computer-use-windows"]);
+    await o.isInit(is_id, ["computer-use-windows"]);
     await o.isBitir(is_id);
     await o.erenBosalt();
 
@@ -2146,7 +2161,7 @@ const kartliPcIsi = async (o: Ortami, kopru: Kopru, sohbet: Kanal, ek: J = {}) =
   assert.equal(a["ok"], true, JSON.stringify(a));
   const kayit = o.servis.depo.isPlanaGore(plan_id);
   assert.ok(kayit, "onaydan sonra iş kaydı yok");
-  await o.isInit(kayit.is_id, ["eren-soru", "computer-use-windows"]);
+  await o.isInit(kayit.is_id, ["computer-use-windows"]);
   return { plan_id, plan_hash, is_id: kayit.is_id };
 };
 
@@ -2307,7 +2322,8 @@ describe("birleşim: çoklu sohbet (Dilim 2)", () => {
     assert.notEqual(o.ana().insanTuru(), null);
     const yB = await bKopru.cagir("plan_oner", pcTaslak({ baslik: "B plani" }));
     assert.equal(yB["ok"], true, JSON.stringify(yB));
-    const bPlan = yB["sonuc"] as { plan_id: string; plan_hash: string };
+    const bPlan = yB["sonuc"] as { plan_id: string; plan_hash: string; durum: string; neden?: string };
+    assert.deepEqual([bPlan.durum, bPlan.neden], ["onay_bekliyor", "tam_yetki_kapali"]);
     assert.equal(d.surec.ayriklar().length, 0, "A'nın insan turu B'nin planını onaysız başlattı");
     assert.equal(o.servis.depo.isPlanaGore(bPlan.plan_id), null);
     assert.equal(o.servis.depo.planGetir(bPlan.plan_id)?.sohbet_id, B);
@@ -2320,16 +2336,18 @@ describe("birleşim: çoklu sohbet (Dilim 2)", () => {
     // Aynı anda A'nın ana oturumu kendi insan turunda önerir: onaysız başlar, iş A'nındır.
     const yA = await h.erenKopru.cagir("plan_oner", pcTaslak({ baslik: "A plani" }));
     assert.equal(yA["ok"], true, JSON.stringify(yA));
-    const aPlan = yA["sonuc"] as { plan_id: string; plan_hash: string };
+    const aPlan = yA["sonuc"] as { plan_id: string; plan_hash: string; durum: string; is_id?: number };
     assert.equal(d.surec.ayriklar().length, 1, "A'nın kendi insan turundaki planı başlamadı");
     const aBasladi = sohbet.olaylar("job_started").at(-1)!;
     assert.equal(aBasladi["plan_id"], aPlan.plan_id);
+    assert.equal(aPlan.durum, "basladi");
+    assert.equal(aPlan.is_id, aBasladi["is_id"]);
     assert.equal(aBasladi["sohbet_id"], ANA_SOHBET_ID);
     const aIs = aBasladi["is_id"] as number;
     assert.equal(o.servis.depo.isGetir(aIs)?.sohbet_id, ANA_SOHBET_ID);
     assert.equal(o.servis.depo.planGetir(aPlan.plan_id)?.sohbet_id, ANA_SOHBET_ID);
     await o.erenTurBitir("A plan onerdi", anaEren);
-    assert.deepEqual(o.yeniStdin(anaEren), [sentetikSatir(`Plan ${aPlan.plan_id}: onaylandı, iş ${aIs}.`)]);
+    assert.deepEqual(o.yeniStdin(anaEren), [sentetikSatir(`İş ${aIs} başladı (plan ${aPlan.plan_id}).`)]);
     await o.erenBosalt(anaEren);
     assert.deepEqual(o.yeniStdin(bEren), [], "A'nın planının notu B'ye gitti");
 
@@ -2343,11 +2361,11 @@ describe("birleşim: çoklu sohbet (Dilim 2)", () => {
     assert.equal(o.servis.depo.isGetir(bIs)?.sohbet_id, B);
     const bCozum = sohbet.olaylar("plan_resolved").at(-1)!;
     assert.deepEqual([bCozum["plan_id"], bCozum["sohbet_id"], bCozum["sonuc"]], [bPlan.plan_id, B, "onaylandi"]);
-    assert.deepEqual(o.yeniStdin(bEren), [sentetikSatir(`Plan ${bPlan.plan_id}: onaylandı, iş ${bIs}.`)]);
+    assert.deepEqual(o.yeniStdin(bEren), [sentetikSatir(`İş ${bIs} başladı (plan ${bPlan.plan_id}).`)]);
     assert.deepEqual(o.yeniStdin(anaEren), [], "B'nin plan notu A'ya gitti");
     await o.erenBosalt(bEren);
-    await o.isInit(aIs, ["eren-soru", "computer-use-windows"]);
-    await o.isInit(bIs, ["eren-soru", "computer-use-windows"]);
+    await o.isInit(aIs, ["computer-use-windows"]);
+    await o.isInit(bIs, ["computer-use-windows"]);
 
     // Ana oturum yalnız kendi sohbetinin işlerini görür, okur ve durdurur; başkasınınki yokmuş gibi.
     const oturumlarOf = async (k: Kopru): Promise<number[]> => {
@@ -3063,14 +3081,15 @@ describe("birleşim: tam yetki ve kısayol (Dilim 3)", () => {
     // Sentetik turda PC planı: kart, ardından kararsız iş (job_started, plan_resolved{onaylandi}).
     const y1 = await erenKopru.cagir("plan_oner", pcTaslak({ baslik: "Servis notu uzerine" }));
     assert.equal(y1["ok"], true, JSON.stringify(y1));
-    const p1 = y1["sonuc"] as { plan_id: string; plan_hash: string; durum: string };
-    assert.equal(p1.durum, "onay_bekliyor", "plan_oner yine onay_bekliyor döner");
+    const p1 = y1["sonuc"] as { plan_id: string; plan_hash: string; durum: string; is_id?: number };
+    assert.equal(p1.durum, "basladi", "plan_oner tam yetkide başladığını söyler");
     assert.equal(d.surec.ayriklar().length, ayrikOnce + 1, "tam yetkide sentetik turdaki PC planı başlamadı");
     const kart1 = sohbet.olaylar("plan_proposed").at(-1)!;
     assert.equal(kart1["plan"]["plan_id"], p1.plan_id);
     assert.equal(kart1["plan"]["kirli_kaynak"], undefined, "okunmamış rapor planı kirletmemeli");
     const basladi1 = sohbet.olaylar("job_started").at(-1)!;
     assert.equal(basladi1["plan_id"], p1.plan_id);
+    assert.equal(p1.is_id, basladi1["is_id"]);
     const coz1 = sohbet.olaylar("plan_resolved").at(-1)!;
     assert.deepEqual([coz1["plan_id"], coz1["sonuc"], coz1["is_id"]], [p1.plan_id, "onaylandi", basladi1["is_id"]]);
     assert.ok((kart1["seq"] as number) < (basladi1["seq"] as number), "kart iş başlamadan önce yazılmalı");
@@ -3086,7 +3105,8 @@ describe("birleşim: tam yetki ve kısayol (Dilim 3)", () => {
     assert.equal(r["sonuc"]["kirli"], true);
     const y2 = await erenKopru.cagir("plan_oner", pcTaslak({ baslik: "Rapora dayanan" }));
     assert.equal(y2["ok"], true, JSON.stringify(y2));
-    const p2 = y2["sonuc"] as { plan_id: string; plan_hash: string };
+    const p2 = y2["sonuc"] as { plan_id: string; plan_hash: string; durum: string };
+    assert.equal(p2.durum, "basladi", "tam yetkide kirli kaynaklı PC planı da başladı demeli");
     const kart2 = sohbet.olaylar("plan_proposed").at(-1)!;
     assert.equal(kart2["plan"]["plan_id"], p2.plan_id);
     assert.deepEqual(kart2["plan"]["kirli_kaynak"], [tel.is_id], "kirli okuma plana yazılmadı");
@@ -3104,9 +3124,9 @@ describe("birleşim: tam yetki ve kısayol (Dilim 3)", () => {
       [p1, basladi1],
       [p2, basladi2],
     ] as const) {
-      assert.ok(o.tumStdin().includes(`Plan ${p.plan_id}: onaylandı, iş ${String(b["is_id"])}.`), "başlama notu ana oturuma gitmedi");
+      assert.ok(o.tumStdin().includes(`İş ${String(b["is_id"])} başladı (plan ${p.plan_id}).`), "başlama notu ana oturuma gitmedi");
     }
-    await o.isInit(is2, ["eren-soru", "computer-use-windows"]);
+    await o.isInit(is2, ["computer-use-windows"]);
     await o.isBitir(is2);
     const biten = sohbet.olaylar("job_finished").at(-1)!;
     assert.deepEqual([biten["is_id"], biten["kirli"]], [is2, true], "kirli rapora dayanan PC işi kirli bitmeli");

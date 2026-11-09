@@ -9,9 +9,10 @@ export const PROTOKOL_SURUMU = 1 as const;
  * `/sohbet` kanalının sürümü: eşleştirme dışındaki bütün `/sohbet` mesajları bunu taşır.
  * Hangi türün hangi sürümde olduğu `sohbetSurumu` (sohbet.ts) ve README "Sürümleme"dedir.
  * 2: dilim 1 (geçmişi sil, servis bilgisi). 3: dilim 2 (çoklu sohbet, `sohbet_id`). 4: dilim 3 (kısayol: `input:"kisayol"`, `baglam`).
+ * 5: plandan `kesin_yapilacaklar` ve `kesin_yapilmayacaklar` kalktı (`plan_proposed`, `plan_hash`).
  * `kurulum/kur.ts` bu satırı metin olarak okur: satır başında `export const SOHBET_SURUMU = <n>` kalmalı.
  */
-export const SOHBET_SURUMU = 4 as const;
+export const SOHBET_SURUMU = 5 as const;
 
 /** Karakter sınırları UTF-16 birimi, adet sınırları öğe sayısıdır. */
 export const SINIRLAR = {
@@ -38,8 +39,6 @@ export const SINIRLAR = {
   PLAN_CWD: 1_024,
   /** Windows komut satırı sınırı olan 32.767 karakterin altında kalır. */
   GOREV_METNI: 20_000,
-  PLAN_MADDE: 500,
-  PLAN_MADDE_ADET: 64,
   PLAN_UYGULAMA_ADET: 16,
   IZINLI_METIN: 4_000,
   IZINLI_METIN_ADET: 16,

@@ -113,8 +113,6 @@ test("en büyük rapor ve plan olayı çerçeve sınırına sığar", () => {
     ...PLAN_PC,
     baslik: "ş".repeat(SINIRLAR.PLAN_BASLIK),
     gorev_metni: "ş".repeat(SINIRLAR.GOREV_METNI),
-    kesin_yapilacaklar: Array<string>(SINIRLAR.PLAN_MADDE_ADET).fill("ş".repeat(SINIRLAR.PLAN_MADDE)),
-    kesin_yapilmayacaklar: Array<string>(SINIRLAR.PLAN_MADDE_ADET).fill("ş".repeat(SINIRLAR.PLAN_MADDE)),
   };
   const planMesaji = {
     v,

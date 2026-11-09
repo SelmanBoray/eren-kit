@@ -29,8 +29,6 @@ test("paket adıyla içe aktarılır, şema hem değer hem tiptir", () => {
     tur: "pc",
     cwd: "C:\\Proje",
     gorev_metni: "Görev",
-    kesin_yapilacaklar: ["Bir"],
-    kesin_yapilmayacaklar: [],
   };
   assert.equal(Plan.parse(plan).plan_id, "p1");
   assert.match(planHash(plan), /^[0-9a-f]{64}$/);

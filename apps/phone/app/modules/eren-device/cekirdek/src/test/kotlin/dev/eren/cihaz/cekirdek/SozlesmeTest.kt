@@ -135,8 +135,6 @@ class SozlesmeTest {
         "PLAN_BASLIK" to Sinirlar.PLAN_BASLIK,
         "PLAN_CWD" to Sinirlar.PLAN_CWD,
         "GOREV_METNI" to Sinirlar.GOREV_METNI,
-        "PLAN_MADDE" to Sinirlar.PLAN_MADDE,
-        "PLAN_MADDE_ADET" to Sinirlar.PLAN_MADDE_ADET,
         "PLAN_UYGULAMA_ADET" to Sinirlar.PLAN_UYGULAMA_ADET,
         "IZINLI_METIN" to Sinirlar.IZINLI_METIN,
         "IZINLI_METIN_ADET" to Sinirlar.IZINLI_METIN_ADET,

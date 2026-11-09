@@ -691,8 +691,6 @@ const pcPlan = (plan_id: string): Plan => ({
   tur: "pc",
   cwd: "C:\\ornek\\proje",
   gorev_metni: "görev",
-  kesin_yapilacaklar: ["birinci"],
-  kesin_yapilmayacaklar: [],
   mcp_profili: "rea",
 });
 

@@ -17,11 +17,50 @@ const Cit = z
 
 // Ana oturum araçları (`--rol eren`)
 
-export const PlanOnerCikti = z.strictObject({
-  plan_id: OpakId,
-  plan_hash: PlanHash,
-  durum: z.literal("onay_bekliyor"),
-});
+/**
+ * `plan_oner` sonucunda planın o anki gerçek durumu (0.5.0):
+ * - `basladi`: PC planı karar beklemeden başladı; `is_id` işin numarası.
+ * - `telefonda_baslatiliyor`: telefon planı telefona gitti. Telefonda tam yetki ve uygulama açıksa
+ *   kendiliğinden başlar, değilse kullanıcı telefonda onaylar; servis hangisi olacağını bu anda bilemez.
+ * - `onay_bekliyor`: PC planı gerçekten kullanıcının kararını bekliyor; `neden` niçin başlamadığı.
+ */
+export const PLAN_ONER_DURUMLARI = ["basladi", "telefonda_baslatiliyor", "onay_bekliyor"] as const;
+
+/**
+ * `onay_bekliyor`un nedeni:
+ * - `tam_yetki_kapali`: PC tam yetkisi kapalı ve öneri kullanıcının mesajıyla başlayan turda gelmedi.
+ * - `kirli_kaynak`: tam yetki kapalı; plan telefondan okunan (güvenilmez) veriye dayanıyor.
+ * - `tur_bitti`: kullanıcının turu öneri işlenirken bitti ya da değişti (kesme, yeni mesaj).
+ * - `limit_kilitli`: başlatma denendi, limit kilidi başlatmaya izin vermedi.
+ * - `baslatma_hatasi`: başlatma denendi, başka bir nedenle olmadı.
+ */
+export const PLAN_BEKLEME_NEDENLERI = [
+  "tam_yetki_kapali",
+  "kirli_kaynak",
+  "tur_bitti",
+  "limit_kilitli",
+  "baslatma_hatasi",
+] as const;
+
+export const PlanOnerCikti = z
+  .strictObject({
+    plan_id: OpakId,
+    plan_hash: PlanHash,
+    durum: z.enum(PLAN_ONER_DURUMLARI),
+    /** Yalnız `basladi` ile. */
+    is_id: IsId.optional(),
+    /** Yalnız `onay_bekliyor` ile. */
+    neden: z.enum(PLAN_BEKLEME_NEDENLERI).optional(),
+  })
+  .superRefine((c, ctx) => {
+    if (c.is_id !== undefined && c.durum !== "basladi") {
+      ctx.addIssue({ code: "custom", path: ["is_id"], message: "is_id yalnız basladi ile" });
+    }
+    if (c.neden !== undefined && c.durum !== "onay_bekliyor") {
+      ctx.addIssue({ code: "custom", path: ["neden"], message: "neden yalnız onay_bekliyor ile" });
+    }
+  });
+export type PlanOnerCikti = z.infer<typeof PlanOnerCikti>;
 
 export const OturumOzeti = z.strictObject({
   is_id: IsId,

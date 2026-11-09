@@ -32,7 +32,7 @@ Tek bağımlılık `zod`, sürüm kilitli. Geçişli bağımlılığı yoktur, J
 İki tam sayı, ikisi de `src/sinirlar.ts` içinde:
 
 - `PROTOKOL_SURUMU` (= 1): `/cihaz`, köprü borusu, QR (`EslestirmeQr`), eşleştirme (`pair_request`, `pair_result`) ve kimlik imza metninin öneki (`eren-auth-v1`). Kotlin bu değeri ve `SINIRLAR` bloğunu birebir kopyalar (`Sinirlar.kt`; `SozlesmeTest.kt` değeri ve anahtar kümesini sınar), eşleştirme ekranı `v == 1`'i elle denetler. Süren iş oturumlarının köprüleri de v1 konuşur. Bu yüzden **artmaz**.
-- `SOHBET_SURUMU` (= 4): eşleştirme dışındaki bütün `/sohbet` mesajları. Telefon uygulaması (JS) ve servis birlikte güncellenir. `kurulum/kur.ts` bu değeri `sinirlar.ts`'ten metin olarak okur (`export const SOHBET_SURUMU = <n>` satırı; test sabitler).
+- `SOHBET_SURUMU` (= 5): eşleştirme dışındaki bütün `/sohbet` mesajları. Telefon uygulaması (JS) ve servis birlikte güncellenir. `kurulum/kur.ts` bu değeri `sinirlar.ts`'ten metin olarak okur (`export const SOHBET_SURUMU = <n>` satırı; test sabitler).
 
 `/sohbet` sürüm geçmişi:
 
@@ -42,12 +42,13 @@ Tek bağımlılık `zod`, sürüm kilitli. Geçişli bağımlılığı yoktur, J
 | 2 | 1 | `chat_clear` ↑, `chat_cleared` olayı, `server_status.servis`, `sohbet_mesgul` |
 | 3 | 2 (çoklu sohbet) | `chat_create`, `chat_rename`, `chat_delete` ↑; `chat_created`, `chat_renamed`, `chat_deleted` olayları; zorunlu `sohbet_id`: `user_message`, `interrupt`, `chat_clear` ↑, `assistant_delta`, `stream_snapshot` ↓; olay zarfına isteğe bağlı `sohbet_id`; `server_status.eren` yerine `server_status.sohbetler`; `sohbet_bulunamadi`, `sohbet_siniri`, `sohbet_silinemez` |
 | 4 | 3 (kısayol) | `GIRDI_YOLLARI`'na `kisayol`; `user_message` ↑ ve `user_echo` olayında isteğe bağlı `baglam{paket, ad}` (yalnız `input:"kisayol"` iken) |
+| 5 | 0.5.0 (sade plan) | `Plan`, `PlanTaslagi` ve `PlanOnerGirdi` içinden `kesin_yapilacaklar` ve `kesin_yapilmayacaklar` kalktı (katı şema: bu anahtarları taşıyan plan geçersiz); `plan_hash` kanonik metni değişti (vektör yeniden üretildi); `PLAN_MADDE*` sabitleri kalktı |
 
 | Kanal | Mesaj | `v` | Kotlin |
 |---|---|---|---|
 | `/sohbet` | `pair_request` ↑, `pair_result` ↓ | 1 | Kurar / `v == 1` ve alan kümesiyle doğrular |
 | QR | `EslestirmeQr` | 1 | `v == 1` ile doğrular |
-| `/sohbet` | `hello`, `auth_response`, `user_message`, `interrupt`, `plan_decision`, `question_answer`, `job_cancel`, `chat_clear`, `chat_create`, `chat_rename`, `chat_delete` ↑; `auth_challenge`, `welcome`, `ack`, `assistant_delta`, `stream_snapshot`, `event`, `server_status`, `error` ↓ | 4 | Görmez: çerçeveyi JS kurar ve çözer, Kotlin yalnız `client_nonce` ve imza verir |
+| `/sohbet` | `hello`, `auth_response`, `user_message`, `interrupt`, `plan_decision`, `question_answer`, `job_cancel`, `chat_clear`, `chat_create`, `chat_rename`, `chat_delete` ↑; `auth_challenge`, `welcome`, `ack`, `assistant_delta`, `stream_snapshot`, `event`, `server_status`, `error` ↓ | 5 | Görmez: çerçeveyi JS kurar ve çözer, Kotlin yalnız `client_nonce` ve imza verir |
 | `/cihaz` | hepsi | 1 | Hepsini `v == 1` ile çözer |
 | Boru | hepsi | 1 | Yok |
 | İmza metni | `eren-auth-v1` | 1 | `KimlikMetni.kt` aynı metni kurar |
@@ -104,7 +105,7 @@ Kural, kanal başına: mesaj, alan, kapalı liste öğesi eklemek ya da sınır�
 - `chat_rename{client_msg_id, sohbet_id, ad}`: outbox'ta bekleyebilir. Yoksa ya da silinmişse `sohbet_bulunamadi`. Ad aynıysa yan etkisiz `ok`; değiştiyse `chat_renamed`, `ack.seq` onun.
 - `chat_delete{client_msg_id, sohbet_id}`: telefon yalnız bağlıyken yollar (iki adım onaydan sonra), kopunca yeniden yollamaz. `ana` → `sohbet_silinemez`; yoksa ya da silinmişse `sohbet_bulunamadi`; o sohbette tur, devir, çalışan iş ya da bekleyen soru varsa `sohbet_mesgul`. Başarıda servis tek işlemde o sohbetin `SILINMEZ_OLAY_TURLERI` dışındaki bütün olaylarını siler, bekleyen planlarını iptal eder ve `chat_deleted` yazar (ayrıca `chat_cleared` yazılmaz); sonra o sohbetin ana oturum sürecini kapatır ve transkriptlerini siler. İş kayıtları kalır. `ack.seq` `chat_deleted`'in.
 - `chat_clear{client_msg_id, sohbet_id}`: aşağıda "Geçmişi sil", artık sohbet başına.
-- `user_message{client_msg_id, sohbet_id, input, text, baglam?}` (v4, Dilim 3: kısayol): `input` `yazi`, `dikte` ya da `kisayol`; `baglam{paket, ad}` yalnız `input:"kisayol"` iken izinlidir (`paket`: Android paket adı deseni, en çok 255; `ad`: 1-80 UTF-16 birimi, C0/C1 kontrol karakteri yok) ve `user_echo`'ya aynen geçer. v3 sürümlü mesaj `protokol_uyumsuz` alır. `interrupt{client_msg_id, sohbet_id, turn_id?}`: sohbet yoksa ya da silinmişse `sohbet_bulunamadi`.
+- `user_message{client_msg_id, sohbet_id, input, text, baglam?}` (v4'te geldi, Dilim 3: kısayol; güncel sürüm v5): `input` `yazi`, `dikte` ya da `kisayol`; `baglam{paket, ad}` yalnız `input:"kisayol"` iken izinlidir (`paket`: Android paket adı deseni, en çok 255; `ad`: 1-80 UTF-16 birimi, C0/C1 kontrol karakteri yok) ve `user_echo`'ya aynen geçer. Güncel olmayan (v4 ve altı) sürümlü mesaj `protokol_uyumsuz` alır. `interrupt{client_msg_id, sohbet_id, turn_id?}`: sohbet yoksa ya da silinmişse `sohbet_bulunamadi`.
 
 **Yaşam döngüsü olayları** (`SOHBET_YASAM_OLAYLARI`): `chat_created{sohbet_id, ad}`, `chat_renamed{sohbet_id, ad}` (en yenisi geçerli), `chat_deleted{sohbet_id}`. Mezar taşıyla (`chat_cleared`) birlikte `SILINMEZ_OLAY_TURLERI`'ndedir: servis bunları hiçbir silmede silmez. Telefon sohbet listesini bu olaylardan ve `server_status.sohbetler`'den kurar; ayrı liste isteği yoktur. Telefon `chat_deleted` gelince o sohbetin yaşam döngüsü dışındaki olaylarını yerel günlüğünden siler ve sohbeti listeden kaldırır; yaşam döngüsü olaylarını tutar (`last_seq = 0` ile gelen yeni telefon da listeyi kurabilsin).
 
@@ -131,7 +132,11 @@ Servis `plan_proposed{plan, plan_hash}` yollar. Telefon özeti yeniden hesaplar,
 - `tur: "pc"`: `plan_decision{karar:"onay"}` yeter.
 - `tur: "telefon"`: `plan_decision` yetmez, aynı `plan_hash` ile `/cihaz`'dan `grant_issued` da gerekir. Eksikse `ack.code` `izin_bekleniyor` olur, servis izin gelince başlatır. Ret için `karar:"ret"` yeter.
 
+`Plan` alanları: `plan_id`, `baslik`, `tur`, `cwd`, `gorev_metni`, isteğe bağlı `mcp_profili`, `telefon_izin_istegi`, `kirli_kaynak`. 0.5.0'dan beri `kesin_yapilacaklar` ve `kesin_yapilmayacaklar` yoktur; kanonik JSON ve `plan_hash` bunları içermez, eski biçimde saklı plan okunurken iki anahtar atılır (bekleyen eski plan onaylanırsa hash uyuşmadığı için başlamaz). `PlanOnerGirdi.cwd` telefon planında boş bırakılır.
+
 `kirli_kaynak` planın parçasıdır, özete girer ve servis doldurur: `plan_oner` girdisinde (`PlanTaslagi`) bu alan ve `plan_id` yoktur.
+
+`plan_oner` sonucu (`PlanOnerCikti`) planın o anki gerçek durumunu taşır: `{plan_id, plan_hash, durum}`; `durum` `basladi` (PC planı onaysız başladı, `is_id` ile), `telefonda_baslatiliyor` (telefon planı telefona gitti; tam yetki ve uygulama açıksa kendiliğinden başlar, değilse kullanıcı telefonda onaylar) ya da `onay_bekliyor` (`neden`: `tam_yetki_kapali`, `kirli_kaynak`, `tur_bitti`, `limit_kilitli`, `baslatma_hatasi`). `is_id` yalnız `basladi` ile, `neden` yalnız `onay_bekliyor` ile gelir. Ana oturum "plan/onay" sözünü yalnız gerçekten `onay_bekliyor` iken kullanır. Girdi şemadan geçmezse asistana alan yolu ve kural metni gider; değer gitmez.
 
 `plan_oner` girdisi `PlanOnerGirdi` = `PlanTaslagi` + isteğe bağlı `profil: "hafif" | "tam"` (varsayılan `tam`, `IS_PROFILLERI`). `profil` planın parçası **değildir**: plana, `plan_hash`'e, `plan_proposed`'a ve telefona giden plana girmez (Kotlin plan çözümü katıdır). Servis onu planla birlikte ayrı saklar, PC iş oturumunun komutunu seçer ve `job_started.profil`'e yazar. Telefon planında yok sayılır. Profil güvenlik sınırı değildir: iki profil de PC'de tam yetkilidir.
 

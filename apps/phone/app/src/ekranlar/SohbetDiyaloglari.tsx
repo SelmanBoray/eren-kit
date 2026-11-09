@@ -323,7 +323,7 @@ function SilOnayi(p: { acik: boolean; onKapat: () => void; bekleyenPlan: number;
       onayMetni={kurgu.onayMetni}
       tehlikeli
       mesgul={mesgul ? "Siliniyor" : undefined}
-      uyariMetni={kurgu.uyari && bekleyenPlan > 0 ? `Onay bekleyen ${bekleyenPlan} plan iptal edilir.` : undefined}
+      uyariMetni={kurgu.uyari && bekleyenPlan > 0 ? `Onay bekleyen ${bekleyenPlan} iş iptal edilir.` : undefined}
       hataMetni={hata ?? undefined}
       onOnay={() => void sil()}
       onIptal={() => {

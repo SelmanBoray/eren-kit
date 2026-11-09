@@ -315,8 +315,6 @@ export const ornekPlan = (plan_id = "plan1") => ({
   tur: "pc",
   cwd: "C:\\ornek\\proje",
   gorev_metni: "Bir sey yap",
-  kesin_yapilacaklar: ["a"],
-  kesin_yapilmayacaklar: [],
 });
 
 /** Bağlantıyı `welcome`'a kadar götürür. */

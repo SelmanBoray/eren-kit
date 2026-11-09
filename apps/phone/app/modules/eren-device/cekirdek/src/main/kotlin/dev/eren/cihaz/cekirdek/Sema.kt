@@ -190,8 +190,8 @@ object Sema : SemaIslemi {
     // -----------------------------------------------------------------------------------------
 
     private val PLAN_ANAHTARLARI = setOf(
-        "plan_id", "baslik", "tur", "cwd", "gorev_metni", "kesin_yapilacaklar",
-        "kesin_yapilmayacaklar", "mcp_profili", "telefon_izin_istegi", "kirli_kaynak",
+        "plan_id", "baslik", "tur", "cwd", "gorev_metni", "mcp_profili", "telefon_izin_istegi",
+        "kirli_kaynak",
     )
 
     override fun planCoz(ham: String): Plan? {
@@ -205,12 +205,6 @@ object Sema : SemaIslemi {
         val tur = IsTuru.entries.firstOrNull { it.kablo == turAdi } ?: return null
         val cwd = planSatiri(a["cwd"], 0, Sinirlar.PLAN_CWD) ?: return null
         val gorev = planMetni(a["gorev_metni"], 1, Sinirlar.GOREV_METNI) ?: return null
-        val yapilacak = liste(a["kesin_yapilacaklar"], 1, Sinirlar.PLAN_MADDE_ADET) {
-            planSatiri(it, 1, Sinirlar.PLAN_MADDE)
-        } ?: return null
-        val yapilmayacak = liste(a["kesin_yapilmayacaklar"], 0, Sinirlar.PLAN_MADDE_ADET) {
-            planSatiri(it, 1, Sinirlar.PLAN_MADDE)
-        } ?: return null
         val mcp = a["mcp_profili"]?.let { d ->
             val ad = (d as? JsonDeger.Metin)?.deger
             McpProfili.entries.firstOrNull { it.kablo == ad } ?: return null
@@ -233,8 +227,6 @@ object Sema : SemaIslemi {
             tur = tur,
             cwd = cwd,
             gorevMetni = gorev,
-            kesinYapilacaklar = yapilacak,
-            kesinYapilmayacaklar = yapilmayacak,
             mcpProfili = mcp,
             telefonIzinIstegi = izin,
             kirliKaynak = kirli.orEmpty(),

@@ -97,8 +97,9 @@ class PlanHashTest {
         for (ek in listOf(gorev + " ", gorev + "\n", " $gorev", gorev.dropLast(2), gorev.uppercase())) {
             assertTrue(hepsi.add(hash("gorev_metni", JsonDeger.Metin(ek))!!), "çakışma: ${ek.takeLast(5)}")
         }
-        val dizi = plan.alanlar.getValue("kesin_yapilacaklar") as JsonDeger.Dizi
-        assertTrue(hepsi.add(hash("kesin_yapilacaklar", JsonDeger.Dizi(dizi.ogeler.reversed()))!!))
+        val dizi = plan.alanlar.getValue("kirli_kaynak") as JsonDeger.Dizi
+        assertTrue(dizi.ogeler.size >= 2, "kirli_kaynak sırası sınanamıyor")
+        assertTrue(hepsi.add(hash("kirli_kaynak", JsonDeger.Dizi(dizi.ogeler.reversed()))!!))
         assertTrue(hepsi.add(hash("yeni", JsonDeger.Bos)!!))
     }
 

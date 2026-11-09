@@ -1567,7 +1567,7 @@ describe("çekirdek: adlandir", () => {
 describe("çekirdek: kısayol mesajı (Dilim 3)", () => {
   const BAGLAM = { paket: "com.whatsapp", ad: "WhatsApp" } as const;
 
-  it("mesajYolla(metin, 'kisayol', baglam): user_message v4 baglam'la gider; bekleyende ve yankıdan sonra balonda baglam var", async () => {
+  it("mesajYolla(metin, 'kisayol', baglam): user_message baglam'la gider; bekleyende ve yankıdan sonra balonda baglam var", async () => {
     const k = kur();
     await baslat(k);
     const b = k.ws.son();
@@ -1584,7 +1584,7 @@ describe("çekirdek: kısayol mesajı (Dilim 3)", () => {
       text: "buna ne cevap vereyim",
       baglam: BAGLAM,
     });
-    assert.equal(v, 4);
+    assert.equal(v, 5);
     const bekleyen = k.s.durum().bekleyenler[0]?.mesaj;
     assert.ok(bekleyen?.type === "user_message");
     assert.deepEqual(bekleyen.baglam, BAGLAM);
@@ -1680,7 +1680,7 @@ describe("çekirdek: kısayol mesajı (Dilim 3)", () => {
     assert.deepEqual([um?.["sohbet_id"], um?.["input"], um?.["baglam"]], [ac.sohbet_id, "kisayol", BAGLAM]);
   });
 
-  it("diskte kalmış v3 kullanıcı mesajı yüklemede v4 olur ve aynı kimlikle gider", async () => {
+  it("diskte kalmış v3 kullanıcı mesajı yüklemede güncel sürüm olur ve aynı kimlikle gider", async () => {
     const depo = new SahteDepo();
     depo.kv.set(
       OUTBOX_ANAHTARI,
@@ -1700,6 +1700,6 @@ describe("çekirdek: kısayol mesajı (Dilim 3)", () => {
     await baslat(k);
     assert.deepEqual(k.s.durum().bekleyenler.map((x) => x.client_msg_id), ["abc-3"]);
     const [um] = turdekiler(k.ws.son(), "user_message");
-    assert.deepEqual([um?.["v"], um?.["client_msg_id"], um?.["input"], um?.["text"]], [4, "abc-3", "dikte", "eski"]);
+    assert.deepEqual([um?.["v"], um?.["client_msg_id"], um?.["input"], um?.["text"]], [v, "abc-3", "dikte", "eski"]);
   });
 });

@@ -10,6 +10,7 @@
  * süzgecinden geçmez: başka sohbetin kirli işine dayanan plan da kirlidir (güvenli yön, bilinçli).
  */
 import { Plan, SINIRLAR, isRaporuJsonSemasi, planHash } from "@eren/protocol";
+import type { PlanOnerCikti } from "@eren/protocol";
 import type {
   IsNo,
   PlanKararHatasi,
@@ -26,12 +27,10 @@ const KOMUT_SATIRI_AZAMI = 32_766;
  * oturum kimliği, model, telefon güvenlik metnindeki üç kullanıcı adı.
  */
 const AYAR_PAYI = 2 * 1_024 + 64 + 256 + 3 * 256;
-/** Bayraklar ve sabit metinler. Ölçülen: pc 174, telefon 1.406 (güvenlik metni, araç listesi). */
+/** Bayraklar ve sabit metinler. Ölçülen (0.5.0): pc 174, hafif 288, telefon 1.395 (güvenlik metni, araç listesi). */
 const PROFIL_PAYI = { pc: 1_000, telefon: 3_000 } as const;
-/** Görev argümanındaki başlıklar, `- yok`, soru notu, tırnaklar. Ölçülen: 194. */
+/** Görev argümanında `gorev_metni` dışındakiler: soru notu, ayraç, tırnaklar, baştaki boşluk. Ölçülen (0.5.0): 144. */
 const GOREV_SABIT_PAYI = 1_000;
-/** Madde başına `- ` ve satır sonu. */
-const MADDE_AYRACI = 3;
 
 /**
  * libuv `quote_cmd_arg`'ın kaçış sonrası uzunluğuna üst sınır: argüman hep tırnaklı sayılır; her `"`,
@@ -56,10 +55,7 @@ const kacisliUzunluk = (s: string): number => {
 };
 
 const komutSatiriUstSiniri = (plan: Plan, semaUzunlugu: number): number => {
-  let gorev = GOREV_SABIT_PAYI + kacisliUzunluk(plan.gorev_metni);
-  for (const m of [...plan.kesin_yapilacaklar, ...plan.kesin_yapilmayacaklar]) {
-    gorev += MADDE_AYRACI + kacisliUzunluk(m);
-  }
+  const gorev = GOREV_SABIT_PAYI + kacisliUzunluk(plan.gorev_metni);
   return AYAR_PAYI + PROFIL_PAYI[plan.tur] + 1 + semaUzunlugu + 1 + gorev;
 };
 
@@ -326,34 +322,47 @@ export const planlarKur: PlanlarFabrikasi = ({
     }
   };
 
-  /**
-   * Kullanıcının mesajıyla başlayan turda önerilen PC planı karar beklemeden onay yolundan başlar. Tur bu
-   * arada bittiyse (kesme, kilit, süreç ölümü) ya da başlatma olmazsa kart kalır, kullanıcı onaylar.
-   */
-  const insanTurundaBaslat = async (
-    plan_id: string,
-    plan_hash: string,
-    turn_id: string,
-    sohbet: SohbetSecimi,
-  ): Promise<void> => {
-    // Aynı sohbetin aynı turu: başka sohbetin turu ya da aynı sohbetin sonraki turu sayılmaz.
-    if (aktifInsanTuru(sohbet) !== turn_id) {
-      gunluk.bilgi("planlar", "insan_turu_bitti", { plan_id });
-      return;
-    }
-    const sonuc = await kararIsle(plan_id, plan_hash, "onay");
-    if (sonuc.ok) gunluk.bilgi("planlar", "onaysiz_basladi", { plan_id });
-    else gunluk.uyari("planlar", "onaysiz_baslatilamadi", { plan_id, code: sonuc.code });
-  };
+  type OnerDurumu = Pick<PlanOnerCikti, "durum" | "is_id" | "neden">;
 
   /**
-   * Tam yetkide PC planı tur ve kirli kaynak ayrımı olmadan karar beklemeden onay yolundan başlar.
-   * Kilit, işi olan plan ve eşzamanlı karar kuralları `kararIsle`'de aynen; olmazsa kart kalır.
+   * Yeni PC planını karar beklemeden onay yolundan başlatmayı dener ve `plan_oner`'in gerçek durumunu
+   * döner. Tam yetkide tur ve kirli kaynak ayrımı yoktur; kapalıyken yalnız kullanıcının mesajıyla
+   * başlayan turda önerilen temiz plan başlar. Kullanıcının turu öneri işlenirken bittiyse (kesme, yeni
+   * mesaj) iki durumda da kart kalır. Kilit, işi olan plan ve eşzamanlı karar kuralları `kararIsle`'de
+   * aynen; başlatma olmazsa kart kalır, kullanıcı onaylar.
    */
-  const tamYetkiyleBaslat = async (plan_id: string, plan_hash: string, kirli: boolean): Promise<void> => {
-    const sonuc = await kararIsle(plan_id, plan_hash, "onay");
-    if (sonuc.ok) gunluk.bilgi("planlar", "onaysiz_basladi", { plan_id, tam_yetki: true, kirli });
-    else gunluk.uyari("planlar", "onaysiz_baslatilamadi", { plan_id, code: sonuc.code, tam_yetki: true, kirli });
+  const pcOnaysizBaslat = async (
+    plan: Plan,
+    plan_hash: string,
+    turn_id: string | null,
+    sohbet: SohbetSecimi,
+  ): Promise<OnerDurumu> => {
+    const plan_id = plan.plan_id;
+    const kirli = plan.kirli_kaynak !== undefined;
+    const tam = tamYetkiAcik();
+    if (!tam && turn_id === null) return { durum: "onay_bekliyor", neden: "tam_yetki_kapali" };
+    if (!tam && kirli) return { durum: "onay_bekliyor", neden: "kirli_kaynak" };
+    const iz: Record<string, boolean> = tam ? { tam_yetki: true, kirli } : {};
+    try {
+      // Aynı sohbetin aynı turu: başka sohbetin turu ya da aynı sohbetin sonraki turu sayılmaz.
+      if (turn_id !== null && aktifInsanTuru(sohbet) !== turn_id) {
+        gunluk.bilgi("planlar", "insan_turu_bitti", { plan_id, ...iz });
+        return { durum: "onay_bekliyor", neden: "tur_bitti" };
+      }
+      const sonuc = await kararIsle(plan_id, plan_hash, "onay");
+      // Eşzamanlı bir karar (telefon) planı bu arada başlatmış olabilir: depodaki gerçek kazanır.
+      const kayit = sonuc.ok || sonuc.code === "plan_zaten_sonuclandi" ? depo.planGetir(plan_id) : null;
+      if (kayit !== null && kayit.durum === "onaylandi") {
+        gunluk.bilgi("planlar", "onaysiz_basladi", { plan_id, ...iz });
+        return kayit.is_id === null ? { durum: "basladi" } : { durum: "basladi", is_id: kayit.is_id };
+      }
+      const code = sonuc.ok ? "durum_okunamadi" : sonuc.code;
+      gunluk.uyari("planlar", "onaysiz_baslatilamadi", { plan_id, code, ...iz });
+      return { durum: "onay_bekliyor", neden: code === "limit_kilitli" ? "limit_kilitli" : "baslatma_hatasi" };
+    } catch {
+      gunluk.hata("planlar", "onaysiz_baslatma_istisna", { plan_id });
+      return { durum: "onay_bekliyor", neden: "baslatma_hatasi" };
+    }
   };
 
   return {
@@ -459,30 +468,16 @@ export const planlarKur: PlanlarFabrikasi = ({
           return { ok: false, code: "plan_gecersiz", detail: "sohbet" };
         }
         veriyolu.yayinla("plan_onerildi", { plan_id: plan.plan_id, sohbet_id: sahip.sohbet_id });
-        // Kart yazıldı: başlatmanın sonucu ne olursa olsun öneri başarılıdır.
+        // Kart yazıldı: başlatmanın sonucu ne olursa olsun öneri başarılıdır; dönüş gerçek durumu taşır.
         // Tam yetkide her PC planı (insan ya da sentetik tur, kirli_kaynak dolu ya da boş) karar
-        // beklemeden başlar; kirli_kaynak yine hesaplanıp plana yazılmıştır (iz). Telefon planı izin bekler.
+        // beklemeden başlar; kirli_kaynak yine hesaplanıp plana yazılmıştır (iz). Telefon planı telefona
+        // gider: telefonun tam yetkisi ve uygulama durumu orada karar verir, servis bu anda bilemez.
         // Tam yetki kapalıyken güvenilmez telefon verisine dayanan plan insan turunda da onay bekler.
-        if (plan.tur === "pc") {
-          const tam = tamYetkiAcik();
-          if (tam || (turn_id !== null && plan.kirli_kaynak === undefined)) {
-            try {
-              if (tam) {
-                // İnsan turunda gelen öneri: tur bu arada kesildiyse (ya da değiştiyse) kart kalır,
-                // tam yetki kapalıyken `insanTurundaBaslat`'ın yaptığı denetimle aynı.
-                if (turn_id !== null && aktifInsanTuru(sahip) !== turn_id) {
-                  gunluk.bilgi("planlar", "insan_turu_bitti", { plan_id: plan.plan_id, tam_yetki: true });
-                } else {
-                  await tamYetkiyleBaslat(plan.plan_id, hash, plan.kirli_kaynak !== undefined);
-                }
-              }
-              else if (turn_id !== null) await insanTurundaBaslat(plan.plan_id, hash, turn_id, sahip);
-            } catch {
-              gunluk.hata("planlar", "onaysiz_baslatma_istisna", { plan_id: plan.plan_id });
-            }
-          }
-        }
-        return { ok: true, deger: { plan_id: plan.plan_id, plan_hash: hash, durum: "onay_bekliyor" } };
+        const durum: OnerDurumu =
+          plan.tur === "pc"
+            ? await pcOnaysizBaslat(plan, hash, turn_id, sahip)
+            : { durum: "telefonda_baslatiliyor" };
+        return { ok: true, deger: { plan_id: plan.plan_id, plan_hash: hash, ...durum } };
       } catch {
         gunluk.hata("planlar", "plan_oner_istisna");
         return { ok: false, code: "plan_gecersiz", detail: "ic_hata" };

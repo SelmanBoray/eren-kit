@@ -239,6 +239,24 @@ describe("cihaz: komut gidiş", () => {
     }
   });
 
+  it("komut sonucu günlüğe tür ve neden koduyla yazılır; gövde metni girmez", async () => {
+    const { o, b } = hazir();
+    const p = o.cihaz.komut(BAGLAM, "type_text", { text: "x" }, new AbortController().signal);
+    await tur();
+    const c = Cmd.parse(cmdler(b)[0]);
+    sonucYolla(b, c.cmd_id, {
+      ok: false,
+      denied: "on_plan_izin_disi",
+      foreground: { baslik: "GizliBaslikXYZ", paket: "com.example.mesaj" },
+    });
+    await p;
+    const g = o.gunluk.bul("komut_sonucu");
+    assert.equal(g.length, 1);
+    assert.equal(g[0]?.seviye, "uyari");
+    assert.deepEqual(g[0]?.alanlar, { cmd_id: c.cmd_id, ad: "type_text", sonuc: "denied", neden: "on_plan_izin_disi" });
+    assert.ok(!JSON.stringify(o.gunluk.girdiler).includes("GizliBaslikXYZ"));
+  });
+
   it("ok servisin başarı ölçütü değildir: parola alanındaki ok:true olduğu gibi geçer", async () => {
     const { o, b } = hazir();
     const p = o.cihaz.komut(BAGLAM, "elements", {}, new AbortController().signal);

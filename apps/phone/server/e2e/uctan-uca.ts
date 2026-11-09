@@ -871,7 +871,7 @@ async function senaryo2(d: Duzenek, sc: Senaryo): Promise<void> {
   );
   sc.kontrol("ack ok", g.ack.ok === true);
   const pp = await planBekle(d, g.idx, "pc");
-  sc.not(`plan: tur=${pp.plan.tur} cwd=${pp.plan.cwd === d.proje ? "<proje>" : kisalt(pp.plan.cwd, 60)} madde=${pp.plan.kesin_yapilacaklar.length}`);
+  sc.not(`plan: tur=${pp.plan.tur} cwd=${pp.plan.cwd === d.proje ? "<proje>" : kisalt(pp.plan.cwd, 60)}`);
   planDenetle(d, sc, pp, sc.bas);
   await d.erenBos();
   const yanlis = pp.plan_hash.replace(/^./, (c: string) => (c === "0" ? "1" : "0"));
@@ -914,13 +914,14 @@ async function senaryo2(d: Duzenek, sc: Senaryo): Promise<void> {
   sc.not(`iş özeti: ${JSON.stringify(d.isOzeti(js.is_id))}`);
 }
 
-const KANARYA = `zumrut${Math.random().toString(36).slice(2, 8)}`;
-
+/**
+ * 0.5.0: iş oturumu kullanıcıya soru soramaz (`eren-soru` bağlanmaz). Ana oturum işe "bana sor" dese de iş
+ * soru sormadan en makul yorumla ilerler ya da nedenini raporlayıp biter; `question_asked` hiç gelmez.
+ */
 async function senaryo3(d: Duzenek, sc: Senaryo): Promise<void> {
   const g = await d.mesaj(
-    "Yeni bir PC işi planla, 'deneme' projesinin klasöründe çalışsın. İş önce kullaniciya_sor aracıyla bana " +
-      "'soru.txt dosyasına hangi kelime yazılsın?' diye sorsun, sonra cevap olarak aldığı kelimeyi tek başına soru.txt dosyasına yazsın " +
-      "ve raporda yazdığı kelimeyi belirtsin. Planı plan_oner ile öner.",
+    "Yeni bir PC işi planla, 'deneme' projesinin klasöründe çalışsın. İş soru.txt dosyasına tek bir kelime yazsın; " +
+      "hangi kelime olacağı belli değil, iş en uygun gördüğünü seçsin ve raporda yazdığı kelimeyi belirtsin. Planı plan_oner ile öner.",
   );
   sc.kontrol("ack ok", g.ack.ok === true);
   const pp = await planBekle(d, g.idx, "pc");
@@ -928,58 +929,29 @@ async function senaryo3(d: Duzenek, sc: Senaryo): Promise<void> {
   await d.erenBos();
   const idx = d.sohbet!.gelenler.length;
   const ack = await d.karar(pp.plan.plan_id, pp.plan_hash, "onay");
-  sc.kontrol("onay ack ok", ack.ok === true, ack.code);
-  const js = await d.olay((e) => e.type === "job_started", 60_000, "job_started", idx);
+  sc.not(`onay ack: ok=${ack.ok}${ack.code ? ` code=${ack.code}` : ""}`);
+  const js = await d.olay((e) => e.type === "job_started" && e.plan_id === pp.plan.plan_id, 60_000, "job_started", g.idx);
   sc.isler.push(js.is_id);
-  const qa = await d.olay((e) => e.type === "question_asked" && e.is_id === js.is_id, IS_ZAMAN_MS, "question_asked", idx);
-  sc.kontrol("question_asked geldi", typeof qa.soru === "string" && qa.soru.length > 0, `${qa.soru.length} kr`);
-  const cTs = Date.now();
-  const ca = await d.cevapla(qa.soru_id, KANARYA);
-  sc.kontrol("question_answer ack ok", ca.ok === true, ca.code);
-  const qr = await d.olay((e) => e.type === "question_resolved" && e.soru_id === qa.soru_id, 30_000, "question_resolved", idx);
-  sc.kontrol("question_resolved cevaplandi", qr.sonuc === "cevaplandi", `${Date.now() - cTs} ms`);
-  // Anlık denetim: rapor henüz yokken cevap ana oturuma hiçbir yoldan ulaşmamış olmalı.
-  await uyu(3000);
-  const sid = d.erenOturumu();
-  const tYol = sid === null ? null : d.transkriptYolu(sid);
-  const anlik = tYol !== null && existsSync(tYol) ? readFileSync(tYol, "utf8") : null;
-  sc.kontrol("cevap çözüldükten sonra ana oturum transkriptinde cevap yok (anlık)", anlik !== null && !anlik.includes(KANARYA), anlik === null ? "transkript bulunamadı" : `${anlik.length} bayt`);
-  sc.kontrol("cevap çözüldükten sonra ana oturum stdin satırlarında cevap yok (anlık)", !d.erenGirdileri().some((x) => x.satir.includes(KANARYA)));
+  const gorevYolu = join(d.kok, "isler", String(js.is_id), "gorev.txt");
+  const gorev = existsSync(gorevYolu) ? readFileSync(gorevYolu, "utf8") : null;
+  sc.kontrol(
+    "görev metni: plan metni + soru notu, eski bölüm yok",
+    gorev !== null && gorev.includes("Kullanıcıya soru sorma.") && !gorev.includes("Kesin yapılacaklar") && !gorev.includes("kullaniciya_sor"),
+    gorev === null ? "gorev.txt yok" : `${gorev.length} kr`,
+  );
   const jf = await d.olay((e) => e.type === "job_finished" && e.is_id === js.is_id, IS_ZAMAN_MS, "job_finished", idx);
-  const raporMetni = JSON.stringify(jf.rapor ?? {});
-  sc.kontrol("job_finished tamam ve cevap raporda", jf.durum === "tamam" && raporMetni.includes(KANARYA), `durum=${jf.durum}`);
+  sc.kontrol("job_finished tamam ve rapor var", jf.durum === "tamam" && jf.rapor !== undefined, `durum=${jf.durum}`);
+  const sorular = [...d.olaylar.values()].filter((e) => e.type === "question_asked" && e.is_id === js.is_id);
+  sc.kontrol("iş soru sormadı (question_asked yok)", sorular.length === 0, `${sorular.length} soru`);
+  const ozet = d.isOzeti(js.is_id);
+  const mcp = (ozet["mcp"] ?? []) as string[];
+  const araclar = (ozet["araclar"] ?? []) as string[];
+  sc.kontrol("işin init'inde eren-soru yok", !mcp.some((m) => m.startsWith("eren-soru:")), mcp.join(","));
+  sc.kontrol("iş kullaniciya_sor çağırmadı", !araclar.some((a) => a.includes("kullaniciya_sor")));
   const dosya = join(d.proje, "soru.txt");
   const icerik = existsSync(dosya) ? readFileSync(dosya, "utf8") : null;
-  sc.kontrol("soru.txt cevabı içeriyor", icerik !== null && icerik.includes(KANARYA), icerik === null ? "dosya yok" : JSON.stringify(kisalt(icerik, 40)));
-  await d.erenBos(6000);
-  const sentetik = d.erenGirdileri(sc.bas).map((x) => JSON.parse(x.satir) as Msg).filter((o) => o.isSynthetic === true).map((o) => String(o.message.content));
-  sc.kontrol(
-    "sentetik notlar: soru sordu + sorusu cevaplandı, cevapsız",
-    sentetik.some((s) => s.includes(`İş ${js.is_id} kullanıcıya soru sordu`)) && sentetik.some((s) => s.includes(`İş ${js.is_id} sorusu: cevaplandı`)),
-    sentetik.map((s) => kisalt(s, 70)).join(" | "),
-  );
-  sc.kontrol("cevap ana oturumun hiçbir stdin satırında yok (senaryo sonu)", !d.erenGirdileri().some((x) => x.satir.includes(KANARYA)));
-  // Transkriptte cevabın geçtiği yerler: yalnız rapor_oku sonucu (izinli yol) ya da ondan sonraki asistan metni olabilir.
-  if (tYol !== null && existsSync(tYol)) {
-    const yerler: string[] = [];
-    let raporOkundu = false;
-    const raporIdleri = new Set<string>();
-    for (const s of jsonSatirlari<Msg>(tYol)) {
-      const icerikler = (Array.isArray(s.message?.content) ? s.message.content : [{ type: "text", text: String(s.message?.content ?? "") }]) as Msg[];
-      for (const c of icerikler) {
-        if (c.type === "tool_use" && String(c.name).endsWith("rapor_oku")) raporIdleri.add(c.id);
-        const metin = JSON.stringify(c);
-        if (!metin.includes(KANARYA)) continue;
-        if (c.type === "tool_result" && raporIdleri.has(c.tool_use_id)) {
-          raporOkundu = true;
-          yerler.push("rapor_oku sonucu");
-        } else if (s.type === "assistant" && raporOkundu) yerler.push("rapor okunduktan sonra asistan metni");
-        else yerler.push(`BEKLENMEYEN: ${s.type}/${c.type}${s.isMeta ? " isMeta" : ""}`);
-      }
-    }
-    sc.kontrol("transkriptte cevap yalnız rapor_oku yolundan geçiyor", !yerler.some((y) => y.startsWith("BEKLENMEYEN")), yerler.length === 0 ? "hiç geçmiyor" : [...new Set(yerler)].join(", "));
-  }
-  sc.not(`iş özeti: ${JSON.stringify(d.isOzeti(js.is_id))}`);
+  sc.not(`soru.txt: ${icerik === null ? "yok" : JSON.stringify(kisalt(icerik, 40))}`);
+  sc.not(`iş özeti: ${JSON.stringify(ozet)}`);
 }
 
 async function senaryo4(d: Duzenek, sc: Senaryo): Promise<void> {
@@ -1262,7 +1234,7 @@ async function senaryo7(d: Duzenek, sc: Senaryo): Promise<void> {
 const SENARYOLAR: Record<number, { ad: string; f: (d: Duzenek, sc: Senaryo) => Promise<void> }> = {
   1: { ad: "Mesaj", f: senaryo1 },
   2: { ad: "Plan ve PC işi", f: senaryo2 },
-  3: { ad: "Soru", f: senaryo3 },
+  3: { ad: "Soru yok", f: senaryo3 },
   4: { ad: "Kurtarma (servis öldürme)", f: senaryo4 },
   5: { ad: "Kilit tatbikatı", f: senaryo5 },
   6: { ad: "Telefon işi", f: senaryo6 },
