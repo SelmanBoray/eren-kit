@@ -640,6 +640,7 @@ function New-ServiceTaskDefinition {
 }
 
 # Aynı servisi çalıştıran başka adlı görevler (aynı portu kullanır, çakışır).
+# Her öğe: Id (yol+ad) ve Disabled (görev devre dışıysa çakışma sayılmaz).
 function Find-ConflictingServiceTask {
     param([string]$Name, [string]$ArgumentPattern)
     $api = Get-TaskApi
@@ -648,7 +649,10 @@ function Find-ConflictingServiceTask {
         if (-not $t -or $t.TaskName -eq $Name) { continue }
         foreach ($a in @($t.Actions)) {
             if ($a -and $a.PSObject.Properties['Arguments'] -and "$($a.Arguments)" -match $ArgumentPattern) {
-                $found += ('{0}{1}' -f $t.TaskPath, $t.TaskName)
+                $found += [pscustomobject]@{
+                    Id       = ('{0}{1}' -f $t.TaskPath, $t.TaskName)
+                    Disabled = ("$($t.State)" -eq 'Disabled')
+                }
                 break
             }
         }
@@ -661,7 +665,12 @@ function Install-ServiceTask {
         [string]$ConflictPattern)
     $api = Get-TaskApi
     $existing = & $api.Get $Name
-    $conflicts = @(Find-ConflictingServiceTask $Name $ConflictPattern)
+    $others = @(Find-ConflictingServiceTask $Name $ConflictPattern)
+    # Yalnız etkin görevler çakışır; devre dışı görev port tutmaz.
+    $conflicts = @($others | Where-Object { -not $_.Disabled } | ForEach-Object { $_.Id })
+    foreach ($d in @($others | Where-Object { $_.Disabled })) {
+        Write-StepLine info ('aynı servisi çalıştıran başka bir görev var ama devre dışı: {0} (çakışma sayılmaz)' -f $d.Id)
+    }
     foreach ($c in $conflicts) {
         Write-StepLine warn ('aynı servisi çalıştıran başka bir görev var: {0} (aynı portu kullanır; birini devre dışı bırak)' -f $c)
     }
