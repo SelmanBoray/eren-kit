@@ -70,7 +70,9 @@ node --disable-warning=ExperimentalWarning kurulum/kur.ts --yalniz-test # yalnı
 node --disable-warning=ExperimentalWarning kurulum/kur.ts --durum       # salt okunur: veri kökü, olası çakışmalar
 ```
 
-`--durum` (ve `eren durum`) veri kökünü ve eski kurulumla olası çakışmaları gösterir. Zamanlanmış görevin kaydı (`kurulum/gorev-kaydet.ts`), geri alma (`--geri-al`), `eren` komutu ve diğer bayraklar [docs/SERVIS.md](docs/SERVIS.md) içindedir.
+Temizlik denetimi (commit'lenmemiş değişiklik var mı, test sürerken kod değişti mi) yalnız `apps/phone` ağacına bakar: depodaki başka paketlerde değişiklik ya da depoya giren ilgisiz bir commit kurulumu durdurmaz. Kurulum, yeni sürümün beklenen veri kökünde çalıştığını doğrulamadan başarı bildirmez (bekçinin bildirdiği kök; bunu bildirmeyen eski bekçide beklenen kökteki servis günlüğü). Servis başka bir kökte açılırsa `guncel` önceki sürüme döner, servis durdurulur ve görev kapatılır; ortam düzeltilince `eren baslat` ile açılır.
+
+`--durum` (ve `eren durum`) veri kökünü, bekçinin çalıştığı veri kökünü ve eski kurulumla olası çakışmaları gösterir. Zamanlanmış görevin kaydı (`kurulum/gorev-kaydet.ts`), geri alma (`--geri-al`), `eren` komutu ve diğer bayraklar [docs/SERVIS.md](docs/SERVIS.md) içindedir.
 
 **Ortam değişkenlerini kalıcı kullanıcı ortamına yaz.** Görev Zamanlayıcı'nın başlattığı servis yalnız kalıcı ortamı görür; bir kabukta geçici verilen değişken servise ulaşmaz. Önce değişkenleri kalıcı kullanıcı ortamına yaz, sonra yeni bir kabuk aç (açık kabuk sonradan yazılan değeri görmez), sonra `kur.ts`'i çalıştır:
 
@@ -82,12 +84,12 @@ node --disable-warning=ExperimentalWarning kurulum/kur.ts --durum       # salt o
 
 Değişken vermezsen varsayılanlar geçerlidir (aşağıda "Ortam değişkenleri"); yalnız varsayılanlarla kuruyorsan bu adım gerekmez.
 
-**Kabuk ile kalıcı ortam uyuşmazsa kurulum durur.** `kur.ts` (`--geri-al` dahil) ve `gorev-kaydet.ts`, hiçbir şeye dokunmadan önce kabuktaki değerleri kalıcı ortamla karşılaştırır. `EREN_KIT_DATA_DIR` kabukta ve kalıcı ortamda farklıysa kurulum "hiçbir şey değişmedi" diyerek durur: aksi halde servis başka köke yazar ve veri bölünür. Çözüm: değeri kalıcı ortama yaz ya da kabuktaki değeri kaldır, sonra yeni bir kabuk aç. Görev adı ya da asistan adı farkı yalnız uyarıdır; kurulum sürer. Görev Zamanlayıcı'nın yeni kalıcı ortamı oturumu kapatıp açmadan görüp görmediği ölçülmedi.
+**Kabuk ile kalıcı ortam uyuşmazsa kurulum durur.** `kur.ts` (`--geri-al` dahil) ve `gorev-kaydet.ts`, hiçbir şeye dokunmadan önce kabuktaki değerleri kalıcı ortamla karşılaştırır. `EREN_KIT_DATA_DIR` kabukta ve kalıcı ortamda farklıysa kurulum "hiçbir şey değişmedi" diyerek durur: aksi halde servis başka köke yazar ve veri bölünür. Çözüm: değeri kalıcı ortama yaz ya da kabuktaki değeri kaldır, sonra yeni bir kabuk aç. Görev adı ya da asistan adı farkı yalnız uyarıdır; kurulum sürer. Görev Zamanlayıcı'nın yeni kalıcı ortamı oturumu kapatıp açmadan görüp görmediği ölçülmedi; görmezse kurulum sonrası veri kökü doğrulaması bunu yakalar.
 
-**Eski kurulum korumaları.** Daha önceki bir kurulumun görevi ya da verisi (eski adlar aşağıda "Mevcut bir kurulumu sürdürmek"te) yeni ayarlarla çakışırsa `kur.ts` (`--geri-al` dahil) ve `gorev-kaydet.ts`, hiçbir şeye dokunmadan önce durur:
+**Eski kurulum korumaları.** Daha önceki bir kurulumun görevi ya da verisi (eski adlar aşağıda "Mevcut bir kurulumu sürdürmek"te) yeni ayarlarla çakışırsa `kur.ts` (`--geri-al` dahil), `gorev-kaydet.ts`, `eren dur` ve `eren baslat`, hiçbir şeye dokunmadan önce durur:
 
 1. Eski görev kayıtlıysa ve etkin görev adı başkaysa durur (iki servis çalışmasın diye). Bayrakla geçilemez: ya görev adını eskiye bağla ya da eski görevi önce sil.
-2. Eski veri klasöründe `uygulama` ya da veritabanı (`eren.db`) varsa ve etkin veri kökü başkaysa durur (veri bölünmesin diye). Yeni kökle bilerek kurmak için `--eski-koku-yoksay` ver (`kur.ts`, `kur.ts --geri-al` ve `gorev-kaydet.ts` ile).
+2. Eski veri klasöründe `uygulama` ya da veritabanı (`eren.db`) varsa ve etkin veri kökü başkaysa durur (veri bölünmesin diye). Yeni kökle bilerek kurmak için `--eski-koku-yoksay` ver (`kur.ts`, `kur.ts --geri-al`, `gorev-kaydet.ts`, `eren dur` ve `eren baslat` ile).
 
 Ayrıntı ve yer tutuculu örnekler: [docs/SERVIS.md](docs/SERVIS.md#ortam-değişkenleri-ve-mevcut-kurulum); ilk kurulum ve güncelleme akışı: [İlk kurulum](docs/SERVIS.md#ilk-kurulum), [Güncelleme ve geri alma](docs/SERVIS.md#güncelleme-ve-geri-alma).
 

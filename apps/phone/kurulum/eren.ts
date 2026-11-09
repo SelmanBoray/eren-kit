@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { closeSync, existsSync, fstatSync, openSync, readSync } from "node:fs";
 import { join } from "node:path";
 import { bekciIstegi, guncelSha } from "./kur.ts";
-import { eskiKurulumSorunlari, gorevAdi, uygulamaKoku, veriKoku } from "./ortam.ts";
+import { ESKI_KOK_BAYRAGI, ayniYolMu, eskiKurulumSorunlari, gorevAdi, uygulamaKoku, veriKoku } from "./ortam.ts";
 import type { Ortam } from "./ortam.ts";
 
 const PORT = 47821;
@@ -21,6 +21,8 @@ const YARDIM = `Kullanım: eren <komut>
   yeniden-baslat        bekçiye "yenile" der (güncel sürümden yeniden başlatır)
   dur                   görevi kapatır, sonra bekçiye "kapan" der (kalıcı durur)
   baslat                görevi açar (/enable), sonra çalıştırır (/run)
+                        (dur ve baslat eski kurulumla çakışmada hiçbir şeye dokunmadan durur;
+                        eski veri kökü doluyken bilerek sürdürmek için ${ESKI_KOK_BAYRAGI})
   log [n] [--bekci]     son n (varsayılan 20) olay; --bekci ile bekci.log
   yardim | -h           bu yardım`;
 
@@ -156,6 +158,12 @@ const durumKomutu = async (): Promise<number> => {
     const sonCikis = kod !== null ? String(kod) : yb > 0 ? "öldürüldü/başlatılamadı (kod yok)" : "yok";
     console.log(`Yeniden başlatma: ${yb}, son çıkış: ${sonCikis}`);
     surum = typeof d.surum === "string" ? d.surum : null;
+    if (typeof d.veri_koku === "string") {
+      console.log(`Bekçinin veri kökü: ${d.veri_koku}`);
+      if (!ayniYolMu(d.veri_koku, veriKoku(process.env))) {
+        console.log("UYARI: bekçi bu kabuğun veri kökünden başka bir kökte çalışıyor (Görev Zamanlayıcı kalıcı ortamı görür)");
+      }
+    }
   }
 
   let guncel: string | null = null;
@@ -196,6 +204,26 @@ export type Bag = {
   readonly uyu: (ms: number) => Promise<void>;
   readonly simdi: () => number;
   readonly canli: (pid: number) => boolean;
+  /** Yol var mı (eski kurulum izi); verilmezse existsSync. */
+  readonly varMi?: (yol: string) => boolean;
+};
+
+export type Secenek = { readonly eskiKokuYoksay?: boolean };
+
+/**
+ * `kur.ts` ile aynı eski kurulum koruması (ortam.ts `eskiKurulumSorunlari`): eski görev kayıtlıyken başka
+ * adla görev kapatmak/açmak eski görevi bırakır (5 dk içinde servisi geri açar ya da ikinci servis doğar).
+ * Sorun varsa hiçbir şeye dokunmadan yazar ve false döner. Görev yoklaması `schtasks /query` (değiştirmez).
+ */
+const eskiKurulumDenetle = (b: Bag, ortam: Ortam, komut: string, secenek: Secenek): boolean => {
+  const sorunlar = eskiKurulumSorunlari(
+    ortam,
+    { gorevVar: (ad) => b.schtasks(["/query", "/tn", ad]), varMi: b.varMi ?? existsSync },
+    { eskiKokuYoksay: secenek.eskiKokuYoksay === true },
+  );
+  if (sorunlar.length === 0) return true;
+  console.error(`eren ${komut} durdu, hiçbir şey değişmedi:\n- ${sorunlar.join("\n- ")}`);
+  return false;
 };
 
 const pidCanli = (pid: number): boolean => {
@@ -221,8 +249,9 @@ const bekciAyakta = async (b: Bag): Promise<boolean> => {
   return d !== null && d.ok === true && d.durum !== "kapaniyor";
 };
 
-export const durKomutu = async (b: Bag = gercekBag, ortam: Ortam = process.env): Promise<number> => {
+export const durKomutu = async (b: Bag = gercekBag, ortam: Ortam = process.env, secenek: Secenek = {}): Promise<number> => {
   const gorev = gorevAdi(ortam);
+  if (!eskiKurulumDenetle(b, ortam, "dur", secenek)) return 1;
   const gorevVar = b.schtasks(["/query", "/tn", gorev]);
   if (gorevVar) {
     if (!b.schtasks(["/change", "/tn", gorev, "/disable"])) {
@@ -258,8 +287,9 @@ export const durKomutu = async (b: Bag = gercekBag, ortam: Ortam = process.env):
   return 1;
 };
 
-export const baslatKomutu = async (b: Bag = gercekBag, ortam: Ortam = process.env): Promise<number> => {
+export const baslatKomutu = async (b: Bag = gercekBag, ortam: Ortam = process.env, secenek: Secenek = {}): Promise<number> => {
   const gorev = gorevAdi(ortam);
+  if (!eskiKurulumDenetle(b, ortam, "baslat", secenek)) return 1;
   if (!b.schtasks(["/change", "/tn", gorev, "/enable"])) {
     console.error(`Görev '${gorev}' açılamadı (kayıtlı değil olabilir). Önce gorev-kaydet.ts çalıştırılmalı.`);
     return 1;
@@ -314,9 +344,15 @@ const komutCalistir = async (argv: readonly string[]): Promise<number> => {
     case "yeniden-baslat":
       return bekciyeSoyle("yenile", "Yeniden başlatma istendi.");
     case "dur":
-      return durKomutu();
-    case "baslat":
-      return baslatKomutu();
+    case "baslat": {
+      const bilinmeyen = geri.find((a) => a !== ESKI_KOK_BAYRAGI);
+      if (bilinmeyen !== undefined) {
+        console.error(`Bilinmeyen seçenek: ${bilinmeyen}\n${YARDIM}`);
+        return 2;
+      }
+      const secenek = { eskiKokuYoksay: geri.includes(ESKI_KOK_BAYRAGI) };
+      return komut === "dur" ? durKomutu(gercekBag, process.env, secenek) : baslatKomutu(gercekBag, process.env, secenek);
+    }
     case "log":
       return logKomutu(geri);
     case undefined:

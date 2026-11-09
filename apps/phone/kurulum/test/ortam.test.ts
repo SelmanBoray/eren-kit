@@ -204,22 +204,95 @@ const sessiz = async <T>(is: () => Promise<T>): Promise<T> => {
   }
 };
 
+const degistirenler = (c: readonly string[][]): string[][] => c.filter((a) => a[0] !== "/query");
+
 test("eren dur/baslat ortamsız: görev adı eren-kit-telefon", async () => {
   const d = sahteBag();
-  assert.equal(await sessiz(() => durKomutu(d.bag, {})), 1);
-  assert.deepEqual(d.cagrilar[0], ["/query", "/tn", "eren-kit-telefon"]);
+  assert.equal(await sessiz(() => durKomutu(d.bag, { LOCALAPPDATA: LA })), 1);
+  assert.ok(d.cagrilar.some((a) => a.join(" ") === "/query /tn eren-kit-telefon"), JSON.stringify(d.cagrilar));
   const b = sahteBag();
-  assert.equal(await sessiz(() => baslatKomutu(b.bag, {})), 1);
-  assert.deepEqual(b.cagrilar, [["/change", "/tn", "eren-kit-telefon", "/enable"]]);
+  assert.equal(await sessiz(() => baslatKomutu(b.bag, { LOCALAPPDATA: LA })), 1);
+  assert.deepEqual(degistirenler(b.cagrilar), [["/change", "/tn", "eren-kit-telefon", "/enable"]]);
 });
 
 test("eren dur/baslat ortamlı: EREN_KIT_PHONE_TASK_NAME kullanılır", async () => {
   const d = sahteBag();
-  await sessiz(() => durKomutu(d.bag, { EREN_KIT_PHONE_TASK_NAME: "Eren" }));
+  await sessiz(() => durKomutu(d.bag, { LOCALAPPDATA: LA, EREN_KIT_PHONE_TASK_NAME: "Eren" }));
   assert.deepEqual(d.cagrilar[0], ["/query", "/tn", "Eren"]);
   const b = sahteBag();
-  await sessiz(() => baslatKomutu(b.bag, { EREN_KIT_PHONE_TASK_NAME: "Eren" }));
-  assert.deepEqual(b.cagrilar[0], ["/change", "/tn", "Eren", "/enable"]);
+  await sessiz(() => baslatKomutu(b.bag, { LOCALAPPDATA: LA, EREN_KIT_PHONE_TASK_NAME: "Eren" }));
+  assert.deepEqual(degistirenler(b.cagrilar)[0], ["/change", "/tn", "Eren", "/enable"]);
+});
+
+/** Verilen görevler kayıtlı, schtasks değişiklikleri başarılı, bekçi ayakta; yapılan her şeyi kaydeder. */
+const kayitliBag = (gorevler: readonly string[], yollar: readonly string[] = []) => {
+  const cagrilar: string[][] = [];
+  const bekciCagrilari: string[] = [];
+  let kapandi = false;
+  let saat = 0;
+  const bag: Bag = {
+    schtasks: (args) => {
+      cagrilar.push([...args]);
+      if (args[0] === "/query") return gorevler.some((g) => g.toLowerCase() === (args[2] ?? "").toLowerCase());
+      return true;
+    },
+    bekci: async (komut) => {
+      bekciCagrilari.push(komut);
+      if (kapandi) return null; // kapan'dan sonra boru yok
+      if (komut === "kapan") kapandi = true;
+      return { ok: true, durum: "calisiyor", bekci_pid: 1 };
+    },
+    uyu: async (ms) => {
+      saat += ms;
+    },
+    simdi: () => (saat += 1),
+    canli: () => false,
+    varMi: (y) => yollar.some((p) => p.toLowerCase() === y.toLowerCase()),
+  };
+  return { bag, cagrilar, bekciCagrilari };
+};
+
+/** console.error çıktısını toplar, console.log'u susturur. */
+const hataCiktisi = async (is: () => Promise<number>): Promise<{ kod: number; hata: string }> => {
+  const { log, error } = console;
+  const satirlar: string[] = [];
+  console.log = () => {};
+  console.error = (...a: unknown[]) => satirlar.push(a.map(String).join(" "));
+  try {
+    return { kod: await is(), hata: satirlar.join("\n") };
+  } finally {
+    console.log = log;
+    console.error = error;
+  }
+};
+
+test("eren dur/baslat: eski kurulum varken ortamsız, hiçbir şeye dokunmadan açıklayıcı biçimde durur", async () => {
+  for (const [ad, komut] of [["dur", durKomutu], ["baslat", baslatKomutu]] as const) {
+    // eski 'Eren' görevi kayıtlı, etkin ad eren-kit-telefon
+    const g = kayitliBag(["Eren"]);
+    const r = await hataCiktisi(() => komut(g.bag, { LOCALAPPDATA: LA }));
+    assert.equal(r.kod, 1, ad);
+    assert.deepEqual(degistirenler(g.cagrilar), [], `${ad}: görev değiştirilmemeli`);
+    assert.deepEqual(g.bekciCagrilari, [], `${ad}: bekçiye bir şey gönderilmemeli`);
+    assert.match(r.hata, /eski 'Eren' görevi kayıtlı/, ad);
+    assert.match(r.hata, /hiçbir şey değişmedi/, ad);
+
+    // eski veri kökü dolu: kur gibi durur, bayrakla geçilir
+    const k = kayitliBag([], ESKI_IZLER);
+    const rk = await hataCiktisi(() => komut(k.bag, { LOCALAPPDATA: LA }));
+    assert.equal(rk.kod, 1, ad);
+    assert.deepEqual(degistirenler(k.cagrilar), [], ad);
+    assert.deepEqual(k.bekciCagrilari, [], ad);
+    assert.match(rk.hata, /veri bölünür/, ad);
+    const kb = kayitliBag(["eren-kit-telefon"], ESKI_IZLER);
+    await sessiz(() => komut(kb.bag, { LOCALAPPDATA: LA }, { eskiKokuYoksay: true }));
+    assert.ok(degistirenler(kb.cagrilar).length > 0, `${ad}: ${ESKI_KOK_BAYRAGI} ile devam etmeli`);
+  }
+  // mevcut kurulumu sürdüren üç değişkenle eski görev hedeflenir
+  const m = kayitliBag(["Eren"], ESKI_IZLER);
+  await sessiz(() => durKomutu(m.bag, MEVCUT));
+  assert.deepEqual(degistirenler(m.cagrilar), [["/change", "/tn", "Eren", "/disable"]]);
+  assert.ok(m.bekciCagrilari.includes("kapan"));
 });
 
 test("eren logDizini: ortamsız / ortamlı / göreli", () => {

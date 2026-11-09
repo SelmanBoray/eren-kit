@@ -13,7 +13,7 @@ import win32 from "node:path/win32";
 import { parseArgs } from "node:util";
 import { bekciKur } from "./bekci.ts";
 import { veriKokuCoz } from "./veri-koku.ts";
-import type { BekciEylemi, BekciOlayi } from "./bekci.ts";
+import type { BekciDurumu, BekciEylemi, BekciOlayi } from "./bekci.ts";
 
 const MODUL = "bekci";
 const KONTROL_BORUSU = "\\\\.\\pipe\\eren-bekci";
@@ -125,13 +125,43 @@ const gunlukKur = (dizin: string | null): Gunluk => {
 };
 
 /**
- * `<veri kökü>\logs`: servisle aynı kök (`EREN_KIT_DATA_DIR`, yoksa `%LOCALAPPDATA%\eren-kit`).
+ * Veri kökü: servisle aynı kural (`EREN_KIT_DATA_DIR`, yoksa `%LOCALAPPDATA%\eren-kit`); çözülemezse null.
  * `ayar.ts` içe aktarılmaz: bekçi `@eren/protocol`'e bağlı kalmasın; kural bağımlılıksız `veri-koku.ts`'ten.
+ * Ana bekçinin ortamını değiştirmeden devralır (`spawn`'a `env` verilmez): ana'nın kökü de budur.
  */
-const gunlukDizini = (): string | null => {
+const veriKokuBul = (): string | null => {
   const r = veriKokuCoz(process.env);
-  return r.ok ? win32.join(r.kok, "logs") : null;
+  return r.ok ? r.kok : null;
 };
+
+/** `<veri kökü>\logs`. */
+const gunlukDizini = (kok: string | null): string | null => (kok === null ? null : win32.join(kok, "logs"));
+
+/**
+ * Kontrol borusunun `durum` cevabı. `veri_koku`: kurulum, yeni sürümün beklenen veri kökünde çalıştığını
+ * bununla doğrular (Görev Zamanlayıcı kalıcı ortamı görmezse servis başka köke açılır).
+ */
+export const durumCevabiYap = (g: {
+  readonly bekciPid: number;
+  readonly baslangicMs: number;
+  readonly durum: BekciDurumu;
+  readonly surum: string | null;
+  readonly anaYolu: string;
+  readonly veriKoku: string | null;
+}): Readonly<Record<string, unknown>> => ({
+  ok: true,
+  bekci_pid: g.bekciPid,
+  bekci_baslangic_ms: g.baslangicMs,
+  durum: g.durum.durum,
+  ana_pid: g.durum.anaPid,
+  ana_baslangic_ms: g.durum.anaBaslangicMs,
+  yeniden_baslatma: g.durum.yenidenBaslatma,
+  son_cikis_kodu: g.durum.sonCikisKodu,
+  son_nabiz_ms: g.durum.sonNabizMs,
+  surum: g.surum,
+  ana_yolu: g.anaYolu,
+  veri_koku: g.veriKoku,
+});
 
 // ---------------------------------------------------------------------------------------------
 // Yollar, sürüm, öldürme
@@ -221,7 +251,8 @@ const giris = async (): Promise<void> => {
   process.stderr.on("error", bos);
 
   const baslangicMs = Date.now();
-  const gunluk = gunlukKur(gunlukDizini());
+  const veriKoku = veriKokuBul();
+  const gunluk = gunlukKur(gunlukDizini(veriKoku));
 
   let cocuk: ChildProcess | null = null;
   let sunucu: Server | null = null;
@@ -428,22 +459,8 @@ const giris = async (): Promise<void> => {
   };
 
   // --- kontrol borusu bağlantısı: tek satır istek, tek satır cevap, kapat ---
-  const durumCevabi = (): Cevap => {
-    const d = bekci.durum();
-    return {
-      ok: true,
-      bekci_pid: process.pid,
-      bekci_baslangic_ms: baslangicMs,
-      durum: d.durum,
-      ana_pid: d.anaPid,
-      ana_baslangic_ms: d.anaBaslangicMs,
-      yeniden_baslatma: d.yenidenBaslatma,
-      son_cikis_kodu: d.sonCikisKodu,
-      son_nabiz_ms: d.sonNabizMs,
-      surum,
-      ana_yolu: anaYolu,
-    };
-  };
+  const durumCevabi = (): Cevap =>
+    durumCevabiYap({ bekciPid: process.pid, baslangicMs, durum: bekci.durum(), surum, anaYolu, veriKoku });
 
   const baglantiIsle = (soket: Socket): void => {
     acikBaglantilar.add(soket);

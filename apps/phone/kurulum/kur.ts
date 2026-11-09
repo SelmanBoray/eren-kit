@@ -26,13 +26,17 @@
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
+  closeSync,
   copyFileSync,
   existsSync,
+  fstatSync,
   lstatSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
   readlinkSync,
+  readSync,
   realpathSync,
   renameSync,
   rmdirSync,
@@ -743,10 +747,20 @@ const git = (kok: string, ...arg: string[]): string => {
   return r.stdout;
 };
 
-const kirliSatirlar = (kok: string): string[] =>
-  git(kok, "status", "--porcelain")
+/**
+ * `kok` ağacındaki commit'lenmemiş değişiklikler (izlenmeyen dosyalar dahil). Kaynak, toplu bir deponun
+ * alt klasörü olabilir (ör. `apps/phone`): `-- .` yalnız bu ağaca bakar, depodaki başka paketler sayılmaz.
+ */
+export const kirliSatirlar = (kok: string): string[] =>
+  git(kok, "status", "--porcelain", "--", ".")
     .split(/\r?\n/)
     .filter((s) => s.length > 0);
+
+/**
+ * HEAD'deki `kok` ağacının git ağaç kimliği (`HEAD:./`, `-C kok`'a göreli). Yalnız bu ağaca giren commit
+ * değiştirir; depoya giren ilgisiz commit değiştirmez. "Test edilen kod kopyalanan kod mu" denetimi bunu karşılaştırır.
+ */
+export const kaynakKimligi = (kok: string): string => git(kok, "rev-parse", "HEAD:./").trim();
 
 const mb = (bayt: number): string => `${(bayt / 1_048_576).toFixed(1)} MB`;
 const sn = (ms: number): string => `${(ms / 1000).toFixed(1)} sn`;
@@ -1027,18 +1041,151 @@ const kararliMi = (d: Record<string, unknown>, sha: string, tetik: number, bekci
   );
 };
 
-const yeniSurumuBekle = async (sha: string, tetik: number, bekciYeni: boolean): Promise<void> => {
+/** Servis beklenenden başka bir veri kökünde çalışıyor: geri alma akışı bunu ayrı ele alır. */
+class VeriKokuHatasi extends KurHatasi {
+  override name = "VeriKokuHatasi";
+}
+
+/** Servis günlüğünde aranacak son bölüm: başlangıç kaydı birkaç saniye önce yazıldı. */
+const GUNLUK_OKUMA_BAYT = 1_048_576;
+
+const dosyaSonu = (yol: string, bayt: number): string | null => {
+  let fd: number;
+  try {
+    fd = openSync(yol, "r");
+  } catch {
+    return null;
+  }
+  try {
+    const boyut = fstatSync(fd).size;
+    const bas = Math.max(0, boyut - bayt);
+    const tampon = Buffer.alloc(boyut - bas);
+    readSync(fd, tampon, 0, tampon.length, bas);
+    return tampon.toString("utf8");
+  } catch {
+    return null;
+  } finally {
+    closeSync(fd);
+  }
+};
+
+/**
+ * `<logDizini>\servis.log` (dönmüşse `servis.1.log`) içinde bu pid'li ana'nın `enErkenMs`'ten sonraki
+ * başlangıç kaydı (`modul:"ana", olay:"basladi"`) var mı. Ana bu kaydı kendi veri kökünün günlüğüne yazar:
+ * beklenen kökte bulunması, ana'nın o kökte çalıştığının kanıtıdır.
+ */
+export const anaBasladiGunlukte = (logDizini: string, pid: number, enErkenMs: number): boolean => {
+  for (const ad of ["servis.log", "servis.1.log"]) {
+    const metin = dosyaSonu(join(logDizini, ad), GUNLUK_OKUMA_BAYT);
+    if (metin === null) continue;
+    for (const satir of metin.split("\n")) {
+      if (!satir.includes('"basladi"')) continue;
+      try {
+        const j = JSON.parse(satir) as Record<string, unknown>;
+        if (j.modul === "ana" && j.olay === "basladi" && j.pid === pid && typeof j.ts_ms === "number" && j.ts_ms >= enErkenMs) {
+          return true;
+        }
+      } catch {
+        // yarım ya da bozuk satır
+      }
+    }
+  }
+  return false;
+};
+
+export type DogrulamaKarari =
+  | { readonly tur: "tamam"; readonly kanit: string }
+  | { readonly tur: "bekle"; readonly sebep: string | null }
+  | { readonly tur: "uyusmuyor"; readonly servisKoku: string };
+
+/**
+ * Yeni sürüm kararlı mı VE beklenen veri kökünde mi. Kök iki yoldan doğrulanır:
+ * 1. Bekçi durum cevabında `veri_koku` bildiriyorsa (bu sürümden itibaren) o; farklıysa hemen `uyusmuyor`.
+ *    Ana, bekçinin ortamını değiştirmeden devralır: kökü bekçininkiyle aynıdır.
+ * 2. Bildirmiyorsa (eski bekçi: geri alınan sürüm ya da görevsiz yenileme) beklenen kökün servis günlüğünde
+ *    bu ana'nın başlangıç kaydı aranır; yoksa `bekle` (zaman aşımında doğrulanamadı hatası).
+ * Kararlı değilse kökten bağımsız `bekle`.
+ */
+export const servisDogrula = (
+  d: Record<string, unknown>,
+  o: {
+    readonly sha: string;
+    readonly tetik: number;
+    readonly bekciYeni: boolean;
+    readonly beklenenKok: string;
+    readonly anaBasladi?: (logDizini: string, pid: number, enErkenMs: number) => boolean;
+  },
+): DogrulamaKarari => {
+  if (!kararliMi(d, o.sha, o.tetik, o.bekciYeni)) return { tur: "bekle", sebep: null };
+  const bildirilen = d.veri_koku;
+  if (typeof bildirilen === "string") {
+    return ayniYol(bildirilen, o.beklenenKok) ? { tur: "tamam", kanit: "bekçinin bildirdiği kök" } : { tur: "uyusmuyor", servisKoku: bildirilen };
+  }
+  const pid = d.ana_pid as number; // kararliMi sayı olduğunu denetledi
+  const anaBas = typeof d.ana_baslangic_ms === "number" ? d.ana_baslangic_ms : o.tetik;
+  const logDizini = join(o.beklenenKok, "logs");
+  const ara = o.anaBasladi ?? anaBasladiGunlukte;
+  // 1 sn pay: ana kaydı bekçinin başlatma anından hemen sonra yazar, saat aynı.
+  if (ara(logDizini, pid, Math.min(anaBas, o.tetik) - 1000)) return { tur: "tamam", kanit: "beklenen kökteki servis günlüğü" };
+  return {
+    tur: "bekle",
+    sebep: `bekçi veri kökünü bildirmiyor ve ${join(logDizini, "servis.log")} içinde ana pid ${pid} için başlangıç kaydı yok`,
+  };
+};
+
+const veriKokuMesaji = (beklenen: string, servis: string): string =>
+  `servis beklenen veri kökünde çalışmıyor: beklenen ${beklenen}, servisin kullandığı ${servis}. ` +
+  "Görev Zamanlayıcı'nın başlattığı servis kalıcı ortamı görür; değişken yeni yazıldıysa Görev Zamanlayıcı onu henüz " +
+  "görmüyor olabilir (oturumu kapatıp açın)";
+
+const yeniSurumuBekle = async (sha: string, tetik: number, bekciYeni: boolean, beklenenKok: string): Promise<void> => {
   const son = Date.now() + BASLAMA_BEKLEME_MS;
   let d: Record<string, unknown> | null = null;
+  let kokSebebi: string | null = null;
   while (Date.now() < son) {
     d = await bekciIstegi("durum", 2000);
-    if (d !== null && kararliMi(d, sha, tetik, bekciYeni)) {
-      console.log(`Servis ${sha} sürümünde çalışıyor (ana pid ${String(d.ana_pid)}).`);
-      return;
+    if (d !== null) {
+      const k = servisDogrula(d, { sha, tetik, bekciYeni, beklenenKok });
+      if (k.tur === "tamam") {
+        console.log(`Servis ${sha} sürümünde, ${beklenenKok} veri kökünde çalışıyor (ana pid ${String(d.ana_pid)}; kanıt: ${k.kanit}).`);
+        return;
+      }
+      if (k.tur === "uyusmuyor") throw new VeriKokuHatasi(veriKokuMesaji(beklenenKok, k.servisKoku));
+      kokSebebi = k.sebep;
     }
     await bekle(1000);
   }
+  if (kokSebebi !== null) {
+    throw new KurHatasi(`servis ${sha} sürümünde çalışıyor ama ${beklenenKok} veri kökünde çalıştığı doğrulanamadı: ${kokSebebi}`);
+  }
   throw new KurHatasi(`servis ${BASLAMA_BEKLEME_MS / 1000} sn içinde ${sha} sürümünde kararlı çalışmadı (${durumOzeti(d)})`);
+};
+
+/**
+ * Yanlış veri kökünde çalışan servisi durdurur: görev kayıtlıysa önce kapatılır (yoksa 5 dk içinde aynı
+ * yanlış kökle geri gelir), sonra bekçiye kapan. Fırlatmaz; ne yapıldığını tek satırda döner.
+ */
+const yanlisKoktekiServisiDurdur = async (): Promise<string> => {
+  const parcalar: string[] = [];
+  try {
+    if (gorevDurumu().tur !== "yok") {
+      const r = spawnSync("schtasks", ["/change", "/tn", gorev(), "/disable"], { stdio: "ignore", windowsHide: true });
+      parcalar.push(
+        r.error === undefined && r.status === 0
+          ? `'${gorev()}' görevi kapatıldı (eren baslat ile açılır)`
+          : `'${gorev()}' görevi kapatılamadı: servis 5 dk içinde aynı köke yeniden başlayabilir`,
+      );
+    }
+    const ilk = await bekciIstegi("durum");
+    const pid = ilk !== null && typeof ilk.bekci_pid === "number" ? ilk.bekci_pid : null;
+    const c = await bekciIstegi("kapan");
+    if (c === null) parcalar.push("bekçi zaten çalışmıyor");
+    else if (c.ok !== true) parcalar.push(`bekçi kapan isteğini kabul etmedi (${String(c.hata)})`);
+    else parcalar.push((await bekciBitsin(pid, KAPANMA_BEKLEME_MS)) ? "servis durduruldu" : "bekçi 60 sn içinde kapanmadı");
+  } catch (e) {
+    parcalar.push(`servis durdurulamadı: ${tekSatir(e)}`);
+  }
+  return parcalar.join(", ");
 };
 
 /**
@@ -1047,12 +1194,16 @@ const yeniSurumuBekle = async (sha: string, tetik: number, bekciYeni: boolean): 
  */
 type YenilemeSonucu =
   | { readonly tamam: true }
-  | { readonly tamam: false; readonly asama: "kapanma" | "baslatma" | "dogrulama"; readonly sebep: string };
+  | { readonly tamam: false; readonly asama: "kapanma" | "baslatma" | "dogrulama" | "veri_koku"; readonly sebep: string };
 
-/** Sözleşme adım 7-8. Görev kayıtlı değilse ve bekçi yoksa yalnız kayıt satırını yazar. Fırlatmaz. */
+/**
+ * Sözleşme adım 7-8. Görev kayıtlı değilse ve bekçi yoksa yalnız kayıt satırını yazar. Fırlatmaz.
+ * Doğrulama sürümle birlikte veri kökünü de kapsar ("veri_koku" = servis başka kökte çalışıyor).
+ */
 const servisiYenile = async (kaynak: string, sha: string): Promise<YenilemeSonucu> => {
   let asama: "kapanma" | "baslatma" | "dogrulama" = "kapanma";
   try {
+    const beklenenKok = veriKoku(process.env);
     const gorevKayitli = gorevDurumu().tur !== "yok";
     const ilk = await bekciIstegi("durum");
     const tetik = Date.now();
@@ -1089,11 +1240,33 @@ const servisiYenile = async (kaynak: string, sha: string): Promise<YenilemeSonuc
     }
     asama = "dogrulama";
     console.log(`${sha} sürümünün ayağa kalkması bekleniyor…`);
-    await yeniSurumuBekle(sha, tetik, bekciYeni);
+    await yeniSurumuBekle(sha, tetik, bekciYeni, beklenenKok);
     return { tamam: true };
   } catch (e) {
-    return { tamam: false, asama, sebep: tekSatir(e) };
+    return { tamam: false, asama: e instanceof VeriKokuHatasi ? "veri_koku" : asama, sebep: tekSatir(e) };
   }
+};
+
+/**
+ * Servis yanlış kökte: önceki sürüm de aynı ortamla aynı yanlış köke açılırdı, yeniden başlatmak çözmez.
+ * guncel geri alınır (varsa), servis durdurulur ve görev kapatılır; yanlış kökte oluşan dosyalara dokunulmaz.
+ */
+const veriKokuHatasindanCik = async (hedef: string, sha: string, onceki: string | null, sebep: string): Promise<never> => {
+  let guncelNotu: string;
+  if (onceki !== null && onceki !== sha) {
+    otomatikGeriAl(hedef, sha, onceki);
+    console.error(`otomatik geri alındı: ${sha} → ${onceki}`);
+    sohbetUyarisi(hedef, onceki, sha);
+    guncelNotu = `otomatik geri alındı: ${sha} → ${onceki}`;
+  } else {
+    guncelNotu = `guncel ${sha} olarak kaldı (geri alınacak önceki sürüm yok)`;
+  }
+  const durdurma = await yanlisKoktekiServisiDurdur();
+  throw new KurHatasi(
+    `${sebep}; ${guncelNotu}; servis yanlış köke yazmasın diye yeniden başlatılmadı: ${durdurma}. ` +
+      "Yanlış kökte oluşmuş olabilecek eren.db ve sunucu-anahtar.pem'e dokunulmadı. " +
+      "Ortamı düzeltip (oturumu kapatıp açın) `eren baslat` ile başlatın, `eren durum` ile veri kökünü denetleyin, sonra kurulumu yineleyin",
+  );
 };
 
 /**
@@ -1110,6 +1283,7 @@ const etkinlestir = async (kaynak: string, hedef: string, sha: string): Promise<
   console.log(`guncel: ${onceki ?? "yok"} → ${sha}`);
   const s = await servisiYenile(kaynak, sha);
   if (s.tamam) return;
+  if (s.asama === "veri_koku") await veriKokuHatasindanCik(hedef, sha, onceki, s.sebep);
   if (onceki === null) {
     throw new KurHatasi(`${s.sebep}; önceki sürüm yok, otomatik geri alma yapılamadı (guncel ${sha})`);
   }
@@ -1124,6 +1298,13 @@ const etkinlestir = async (kaynak: string, hedef: string, sha: string): Promise<
   }
   const g = await servisiYenile(kaynak, onceki);
   if (!g.tamam) {
+    if (g.asama === "veri_koku") {
+      const durdurma = await yanlisKoktekiServisiDurdur();
+      throw new KurHatasi(
+        `${s.sebep}; otomatik geri alındı: ${sha} → ${onceki}, ama ${g.sebep}; servis yeniden başlatılmadı: ${durdurma}. ` +
+          "Ortamı düzeltip (oturumu kapatıp açın) `eren baslat` ile başlatın",
+      );
+    }
     throw new KurHatasi(
       `${s.sebep}; otomatik geri alındı: ${sha} → ${onceki}, ama ${onceki} de ayakta kalmadı: ${g.sebep}; servis kapalı olabilir, elle bakılmalı`,
     );
@@ -1138,8 +1319,9 @@ const kur = async (o: { kirli: boolean; testsiz: boolean; eskiKokuYoksay: boolea
   const hedef = uygulamaKokuOrtamdan();
   kurulumOnDenetimi(o.eskiKokuYoksay);
 
-  // (1) temiz ağaç
+  // (1) temiz ağaç (yalnız kaynak ağacı; toplu depodaki başka paketler sayılmaz)
   const kirli = kirliSatirlar(kaynak);
+  const kimlik = kaynakKimligi(kaynak);
   if (kirli.length > 0 && !o.kirli) {
     throw new KurHatasi(`çalışma ağacı temiz değil (${kirli.length} değişiklik); commit'leyin ya da --kirli ile geçin`);
   }
@@ -1163,10 +1345,10 @@ const kur = async (o: { kirli: boolean; testsiz: boolean; eskiKokuYoksay: boolea
   if (s.yeni) console.log(`Kopyalandı: ${s.yol} (${s.dosya} dosya, ${mb(s.bayt)}, ${sn(Date.now() - bas)})`);
   else console.log(`Sürüm zaten kurulu, yeniden kullanılıyor: ${s.yol}`);
 
-  // Testten/kopyadan sonra ağaç değiştiyse kopya test edilen commit değildir.
+  // Testten/kopyadan sonra kaynak ağacı değiştiyse kopya test edilen kod değildir. Depoya giren ilgisiz
+  // commit HEAD'i değiştirir ama kaynak ağacını değiştirmez: sürüm adı yine testin başındaki HEAD'dir.
   if (kirli.length === 0) {
-    const simdi = git(kaynak, "rev-parse", "--short=10", "HEAD").trim();
-    if (simdi !== kisa || kirliSatirlar(kaynak).length > 0) {
+    if (kaynakKimligi(kaynak) !== kimlik || kirliSatirlar(kaynak).length > 0) {
       if (s.yeni) agacSil(s.yol);
       throw new KurHatasi("kurulum sırasında çalışma ağacı değişti; kopya silindi, yeniden deneyin");
     }
@@ -1197,6 +1379,13 @@ const geriAl = async (eskiKokuYoksay: boolean): Promise<number> => {
   console.log(`guncel: ${g ?? "yok"} → ${o}`);
   if (g !== null) sohbetUyarisi(hedef, o, g);
   const s = await servisiYenile(kaynakKoku(), o);
+  if (!s.tamam && s.asama === "veri_koku") {
+    const durdurma = await yanlisKoktekiServisiDurdur();
+    throw new KurHatasi(
+      `${s.sebep} (guncel ${o}); servis yanlış köke yazmasın diye durduruldu: ${durdurma}. ` +
+        "Ortamı düzeltip (oturumu kapatıp açın) `eren baslat` ile başlatın",
+    );
+  }
   if (!s.tamam) throw new KurHatasi(`${s.sebep} (guncel ${o}; elle geri almada otomatik geri dönüş yapılmaz)`);
   return 0;
 };
@@ -1251,6 +1440,12 @@ const durumKomutu = async (): Promise<number> => {
     const anaBas = typeof d.ana_baslangic_ms === "number" ? tarihMetni(d.ana_baslangic_ms) : "?";
     console.log(d.ana_pid === null ? "Ana: çalışmıyor" : `Ana: pid ${String(d.ana_pid)}, başlangıç ${anaBas}`);
     console.log(`Bekçinin sürümü: ${String(d.surum)}, ana yolu: ${String(d.ana_yolu)}`);
+    if (typeof d.veri_koku === "string") {
+      console.log(`Bekçinin veri kökü: ${d.veri_koku}`);
+      if (!ayniYol(d.veri_koku, veriKoku(process.env))) {
+        console.log("UYARI: bekçi bu kabuğun veri kökünden başka bir kökte çalışıyor (Görev Zamanlayıcı kalıcı ortamı görür)");
+      }
+    }
     console.log(
       `Yeniden başlatma: ${String(d.yeniden_baslatma)}, son çıkış kodu: ${String(d.son_cikis_kodu)}, son nabız: ${
         typeof d.son_nabiz_ms === "number" ? tarihMetni(d.son_nabiz_ms) : "yok"
