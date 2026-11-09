@@ -44,6 +44,7 @@ computer-use MCP server. Everything runs on your machine, and one PowerShell scr
 | --- | --- | --- | --- |
 | [**Memory & Brain**](#memory--brain-beyin) (`packages/bellek`) | Persistent, hierarchical knowledge tree about you and your work, exposed to Claude as the `beyin` MCP server, with a local web UI | MCP · CLI · Web UI | Working (alpha) |
 | [**Handoff**](#handoff-devir) (`packages/bellek`) | Writes handoff notes so the next session can pick up where the last one stopped; warns about expensive long contexts | Hooks · Skill | Working (alpha) |
+| [**Doc gate**](#doc-gate-kapi) (`packages/bellek`) | Map-first gate: the first read of a big Markdown file (16 KB+) is refused with a heading map, so agents read only the section they need | Hook | Working (alpha) |
 | [**Opus Orkestra**](#opus-orkestra) (`packages/opus-orkestra`) | Working rule: the lead model does not write code itself, it splits work across many narrow sub-agents and verifies the result | Skill · Hook | Working; rules in Turkish |
 | [**computer-use-windows**](#computer-use-windows) (`packages/computer-use-windows`) | Screen, UI Automation, mouse and keyboard for terminal agents on Windows, with guard rails | MCP | Working (0.1.0) |
 | [**Phone app**](#phone-app-experimental) (`apps/phone`) | Talk to the main Claude session on your PC from your phone | App | **Experimental**, not ready for use |
@@ -62,6 +63,7 @@ flowchart LR
 
         subgraph HOOKS["Hooks (settings.json)"]
             HD["devir hook<br/>SessionStart · UserPromptSubmit · Stop"]
+            HK["kapi hook<br/>PreToolUse · big .md reads"]
             HO["Opus Orkestra hook<br/>SessionStart, 4 parts"]
         end
 
@@ -85,6 +87,7 @@ flowchart LR
     CC <--> BMCP
     CC <--> CUW
     HD --> CC
+    HK --> CC
     HO --> CC
     CC --> SD
     CC --> SO
@@ -111,7 +114,7 @@ experimental.
 | Windows 10 or 11 | everything | macOS and Linux are not supported yet |
 | PowerShell | the installer | PowerShell 7 recommended; Windows PowerShell 5.1 also works |
 | Python 3.12+ | Memory & Brain, Handoff | computer-use-windows and the installer need 3.11+ |
-| `python` on `PATH`, 3.11+ | Handoff and Opus Orkestra hooks | The hooks call plain `python`, and the installer checks its version. Tick **"Add python.exe to PATH"** when installing Python |
+| `python` on `PATH`, 3.11+ | Handoff, doc gate and Opus Orkestra hooks | The hooks call plain `python`, and the installer checks its version. Tick **"Add python.exe to PATH"** when installing Python |
 | [Claude Code CLI](https://docs.claude.com/en/docs/claude-code/setup) (`claude`) | MCP registration | Without it the installer skips MCP steps and prints the manual command |
 | Node 24+ and npm | Phone app only | Not needed for the default install |
 
@@ -153,11 +156,12 @@ Then:
 
 ### Pick components
 
-The default set is `beyin, devir, orkestra, computer-use`. The phone app is installed only when you
+The default set is `beyin, devir, kapi, orkestra, computer-use`. The phone app is installed only when you
 ask for it.
 
 ```powershell
 .\install.ps1 -Components beyin,devir          # memory + handoff only
+.\install.ps1 -Components kapi                 # just the doc gate hook
 .\install.ps1 -Components orkestra             # just the orchestration rule
 .\install.ps1 -Components computer-use         # just the Windows computer-use server
 .\install.ps1 -Components phone                # experimental phone app dependencies (npm ci)
@@ -174,20 +178,21 @@ Running the installer again is safe: it updates what changed and leaves the rest
 
 | Parameter | Description |
 | --- | --- |
-| `-Components` | Comma-separated component list, e.g. `-Components beyin,devir`. Valid: `beyin`, `devir`, `orkestra`, `computer-use`, `phone`. Default: `beyin, devir, orkestra, computer-use` |
+| `-Components` | Comma-separated component list, e.g. `-Components beyin,devir`. Valid: `beyin`, `devir`, `kapi`, `orkestra`, `computer-use`, `phone`. Default: `beyin, devir, kapi, orkestra, computer-use` |
 | `-AssistantName` | Assistant name, written to the `EREN_KIT_ASSISTANT_NAME` user environment variable. If omitted, an existing value is kept; otherwise `"Claude"` |
 | `-ClaudeHome` | Claude Code settings folder. Default: the `CLAUDE_CONFIG_DIR` environment variable if set, otherwise `%USERPROFILE%\.claude` |
 | `-DryRun` | Changes nothing; lists what would be done |
 | `-Uninstall` | Removes the selected components' MCP registrations, hooks, copied skills and the brain service task. Does **not** delete venvs or user data |
 | `-SkipMcp` | Skips the `claude mcp add/remove` steps |
 | `-NoService` | Does not install (or remove) the brain service's scheduled task; you manage the service yourself |
-| `-ReplaceExisting` | Removes `settings.json` entries for older copies of the same hook scripts outside the repository (e.g. a `bellek\devir\hook.py` in another folder, `~\.claude\hooks\opus-orkestra-sessionstart.py`), with a backup. Without it they stay and the hooks run twice |
+| `-ReplaceExisting` | Removes `settings.json` entries for older copies of the same hook scripts outside the repository (e.g. a `bellek\devir\hook.py` in another folder, `~\.claude\hooks\opus-orkestra-sessionstart.py`, or an older doc gate registration), with a backup. Without it they stay and the hooks run twice |
 | `-Help` | Shows the built-in help (in Turkish) |
 
 | Component | What the installer does |
 | --- | --- |
 | `beyin` | Creates `packages\bellek\.venv` and runs `pip install -e`; copies `bellek.example.toml` to `bellek.toml` if missing; checks that `bellek.beyin` imports; registers the `beyin` MCP server (user scope); registers and starts the brain service task (see below) |
 | `devir` | Uses the same venv; checks that `python` on `PATH` is 3.11+; adds the handoff hook to `SessionStart`, `UserPromptSubmit` and `Stop`; copies the skill to `<ClaudeHome>\skills\devir` |
+| `kapi` | Checks that `python` on `PATH` is 3.11+; adds the doc gate hook to `PreToolUse` for Markdown reads. No venv, no skill |
 | `orkestra` | Checks that `python` on `PATH` is 3.11+; copies `SKILL.md` to `<ClaudeHome>\skills\opus-orkestra`; adds four `SessionStart` hook commands |
 | `computer-use` | Creates `packages\computer-use-windows\.venv` and runs `pip install -e`; registers the `computer-use-windows` MCP server (user scope) |
 | `phone` | Checks for Node 24+ and npm; runs `npm ci` in `apps\phone`. Nothing is registered; it is started by hand |
@@ -308,6 +313,24 @@ handoff note"*.
 
 Details: [packages/bellek/README.md](packages/bellek/README.md) and the skill
 [packages/bellek/skills/devir/SKILL.md](packages/bellek/skills/devir/SKILL.md).
+
+### Doc gate (`kapi`)
+
+A map-first gate for big Markdown files. Agents (the main session and sub-agents alike) tended to
+read large project documents again and again in 275-280 line chunks; the gate makes them look at
+the map first.
+
+- **How it works:** a `PreToolUse` hook (`packages/bellek/src/bellek/kapi/hook.py`). The first time
+  an agent touches a Markdown file of 16 KB or more, the read is refused and the reason carries a
+  heading map: each heading's line range and size. The agent then reads only the section it needs,
+  with `offset` / `limit`.
+- **Never locks:** targeted reads of 80 lines or fewer pass, and a second attempt always passes.
+- **Fail-open:** on any error the hook lets the read through.
+- **No wasted processes:** the hook is registered with an `if` filter (`Read(//**/*.md)`,
+  `Read(//**/*.markdown)`), so no process starts for other reads.
+- **Off switch:** set the environment variable `BELLEK_KAPI=kapali`, or remove it with
+  `.\install.ps1 -Uninstall -Components kapi`.
+- **Measurement log:** `%LOCALAPPDATA%\Bellek\kapi\kapi.jsonl`.
 
 ### Opus Orkestra
 
@@ -443,6 +466,7 @@ installer copies it to `packages\bellek\bellek.toml`, which is git-ignored. The 
 [bellek]
 vault = "vault"                        # your notes folder; handoff notes go to vault/devir
 state_dir = "%LOCALAPPDATA%/Bellek"    # indexes and logs, kept out of the vault
+| `BELLEK_KAPI` | Doc gate | empty (on) | Set to `kapali` to switch the doc gate off |
 
 [server]
 host = "127.0.0.1"                     # local only

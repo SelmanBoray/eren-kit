@@ -7,7 +7,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [string[]]$Components = @('beyin', 'devir', 'orkestra', 'computer-use'),
+    [string[]]$Components = @('beyin', 'devir', 'kapi', 'orkestra', 'computer-use'),
     [string]$AssistantName,
     # Claude Code ile aynı kural: CLAUDE_CONFIG_DIR ayarlıysa orası, değilse ~\.claude.
     [string]$ClaudeHome = $(if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $HOME '.claude' }),
@@ -28,7 +28,7 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
-$AllComponents = @('beyin', 'devir', 'orkestra', 'computer-use', 'phone')
+$AllComponents = @('beyin', 'devir', 'kapi', 'orkestra', 'computer-use', 'phone')
 
 function Show-Usage {
     $text = @'
@@ -38,9 +38,10 @@ Kullanım:
   .\install.ps1 [-Components <liste>] [-AssistantName <ad>] [-ClaudeHome <klasör>]
                 [-DryRun] [-Uninstall] [-SkipMcp] [-NoService] [-ReplaceExisting] [-Help]
 
-Bileşenler (varsayılan: beyin, devir, orkestra, computer-use):
+Bileşenler (varsayılan: beyin, devir, kapi, orkestra, computer-use):
   beyin          Yerel ikinci beyin (bellek), "beyin" MCP sunucusu ve arka plan servisi
   devir          Oturum devri hook'ları ve devir skill'i (beyin ile aynı venv)
+  kapi           Belge kapısı: büyük .md okumalarında önce başlık haritası döndüren PreToolUse hook'u
   orkestra       Opus Orkestra skill'i ve SessionStart hook'ları
   computer-use   Windows computer use MCP sunucusu
   phone          Telefon uygulaması: geliştirme bağımlılıkları (npm ci); servis kaydı yapılmaz,
@@ -58,7 +59,7 @@ Parametreler:
   -SkipMcp        "claude mcp add/remove" adımlarını atlar
   -NoService      beyin servisinin zamanlanmış görevini kurmaz/kaldırmaz (servisi elle yönetirsin)
   -ReplaceExisting  Aynı hook betiklerinin repo dışındaki eski kopyalarının (ör. başka klasördeki
-                  bellek\devir\hook.py, ~\.claude\hooks\opus-orkestra-sessionstart.py) settings.json
+                  bellek\devir\hook.py, bellek\kapi\hook.py, ~\.claude\hooks\opus-orkestra-sessionstart.py) settings.json
                   kayıtlarını kaldırır (yedekli). Verilmezse bunlar kalır ve hook'lar iki kez çalışır.
   -Help           Bu yardımı gösterir
 
@@ -144,6 +145,7 @@ $P.BellekPy = Join-Path $P.Bellek '.venv\Scripts\python.exe'
 $P.CuwExe = Join-Path $P.ComputerUse '.venv\Scripts\computer-use-windows.exe'
 $P.DevirHook = Join-Path $P.Bellek 'src\bellek\devir\hook.py'
 $P.DevirSkill = Join-Path $P.Bellek 'skills\devir'
+$P.KapiHook = Join-Path $P.Bellek 'src\bellek\kapi\hook.py'
 $P.OrkHook = Join-Path $P.Orkestra 'hooks\opus-orkestra-sessionstart.py'
 $P.OrkSkill = Join-Path $P.Orkestra 'skill'
 
@@ -336,6 +338,10 @@ if (-not $Uninstall) {
         @{ Name = 'hook'; Run = { Invoke-Hooks 'devir' $P.DevirHook } },
         @{ Name = 'skill'; Run = { Install-Skill -Component 'devir' -Name 'devir' -SourceDir $P.DevirSkill -ClaudeHome $ClaudeHome } }
     )
+    $S['kapi'] = @(
+        @{ Name = 'python'; Run = { Test-HookPython } },
+        @{ Name = 'hook'; Run = { Invoke-Hooks 'kapi' $P.KapiHook } }
+    )
     $S['orkestra'] = @(
         @{ Name = 'python'; Run = { Test-HookPython } },
         @{ Name = 'skill'; Run = { Install-Skill -Component 'orkestra' -Name 'opus-orkestra' -SourceDir $P.OrkSkill -ClaudeHome $ClaudeHome -Files @('SKILL.md') } },
@@ -387,6 +393,7 @@ if (-not $Uninstall) {
         @{ Name = 'hook'; Run = { Invoke-Hooks 'devir' $P.DevirHook } },
         @{ Name = 'skill'; Run = { Uninstall-Skill -Name 'devir' -SourceDir $P.DevirSkill -ClaudeHome $ClaudeHome } }
     )
+    $S['kapi'] = @(@{ Name = 'hook'; Run = { Invoke-Hooks 'kapi' $P.KapiHook } })
     $S['orkestra'] = @(
         @{ Name = 'hook'; Run = { Invoke-Hooks 'orkestra' $P.OrkHook } },
         @{ Name = 'skill'; Run = { Uninstall-Skill -Name 'opus-orkestra' -SourceDir $P.OrkSkill -ClaudeHome $ClaudeHome -Files @('SKILL.md') } }
@@ -398,6 +405,7 @@ if (-not $Uninstall) {
 $Titles = @{
     'beyin'        = 'Beyin (bellek + MCP)'
     'devir'        = 'Devir (hook + skill)'
+    'kapi'         = 'Belge kapısı (hook)'
     'orkestra'     = 'Opus Orkestra (skill + hook)'
     'computer-use' = 'Computer use (MCP)'
     'phone'        = 'Phone (telefon uygulaması)'

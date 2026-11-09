@@ -647,3 +647,63 @@ Eklendiği tarih: 2026-11-08. Beyin grafını toprak altı bir mantar ve miselyu
 
 **Testler.** `tests/beyin/test_dis_host.py`: `BELLEK_BEYIN_IZINLI_HOST` ile ek Host kabulü (kırpma, küçük harf, tam eşleşme, joker yok) ve değişkensiz eski davranış. `tests/beyin/test_ac_taban.py`: `ac --taban` adres üretimi ve geçersiz taban için çıkış 2. `tests/beyin/test_arayuz_veri.py`: projeksiyonlar (graf, düğüm, ara, gelen, geçmiş, değişim); gizlilik kalıtımı, `ozel`/`sir_icerir` gövde yokluğu, `gecmis` dugum eşlemesi ve bugünkü gizlilik, sayfalama, 200 sınırı. `tests/beyin/test_arayuz_servis.py`: gerçek servis üzerinde belirteç ayrımı, Origin/`Sec-Fetch-Site`/Host, yol varyantları, OPTIONS ve güvenlik başlıkları, belirteç sızıntısı, gelen kararı, hata kodları, `ac` CLI'ı ve statik dosyalar.
 
+## 17. Belge kapısı (`src/bellek/kapi/`)
+
+Eklenme: 2026-11-09. Arama/enjeksiyon hattından (§8) bağımsız, yalnız stdlib çalışan bir PreToolUse hook'udur (§15'teki devir hook'uyla aynı kalıp).
+
+### 17.1 Amaç ve kanıt
+Kullanıcının isteği (2026-11-09): "ilk adımı geçmeden sonraki adımı görmesin". Ajan büyük bir belgeyi, ne olduğunu görmeden parça parça okumasın; önce başlık haritasını görsün, sonra gereken bölümü okusun.
+
+Ölçüm (2026-11-08 22:00 – 2026-11-09, 348 transcript):
+- Beyin MCP araçları toplam ≈174 bin karakter döndürmüş (beyin md okumuyor; SQLite + servis). Sorun orada değil.
+- `.md` Read'leri milyonlarca karakter; %83'ü alt agent'larda.
+- ~158 bin karakterlik (993 satır) bir proje belgesi: 18 agent, 50 okuma; 48'i offset/limit'li ama 275-280 satırlık parçalar. Agent başına belgenin ≈%31'i okunmuş; istenen satırların %38'i aynı agent'ın tekrar okuması.
+- Bir başka proje belgesinde agent başına ≈%34, tekrar %7.
+- Bu belge (`packages/bellek/DESIGN.md`) için: dar bölümler (133/658 satır), örnek davranış.
+- Sonuç: kapı "tamamı istenirse" değil "ilk dokunuşta" çalışır; offset/limit tek başına yetmedi.
+
+### 17.2 Davranış
+Hook: PreToolUse, matcher `Read`; komut `python -I -S "<depo kökü>/packages/bellek/src/bellek/kapi/hook.py" || true`, timeout 10 (`|| true` gerekçesi §15 ile aynı).
+
+Kayıt: hook'u elle değil kurulum betiği kaydeder. `install.ps1` bileşeni `kapi` varsayılan kurulumdadır; `scripts/installer/settings_hooks.py` PreToolUse grubunu matcher `Read` ile ve iki handler olarak yazar: `if` filtreleri `Read(//**/*.md)` ve `Read(//**/*.markdown)`. Claude Code belgesine göre eşleşmeyen `if` süreç başlatmaz; bu yüzden `.md` dışı okumalarda Python hiç çalışmaz. `-ReplaceExisting` depo dışındaki eski kapı kayıtlarını kaldırır.
+
+Karar sırası:
+1. `BELLEK_KAPI=kapali` → izin.
+2. Araç Read değil → izin.
+3. Dosya `.md`/`.markdown` değil → izin (`if` filtresi bunu çoğu durumda süreç açılmadan eler; kod yine de savunmacı olarak denetler).
+4. Dosya yok ya da `BELLEK_KAPI_ESIK` (16384 bayt) altında → izin.
+   Boyut `BELLEK_KAPI_TAVAN` (5_000_000 bayt) üstündeyse → izin (`cok_buyuk`).
+5. `limit` ≤ `BELLEK_KAPI_HEDEFLI` (80) → hedefli izin; harita görülmüş sayılmaz.
+6. 3'ten az başlık → izin.
+7. (oturum, ajan, dosya) için ilk dokunuş → ret + başlık haritası (`permissionDecision: deny`, `permissionDecisionReason`). Karar, ajan klasöründe `<anahtar>.harita` işaret dosyasının atomik (`O_CREAT|O_EXCL`) oluşturulmasıyla verilir: aynı ajanın paralel okumalarından yalnız biri harita alır. İşaret varsa dosya ayrıştırılmaz.
+8. Sonraki dokunuşlar → izin.
+
+Ajan = hook girdisindeki `agent_id`; yoksa ana oturum. Böylece her alt agent kendi haritasını görür.
+
+Harita (`bellek.kapi.harita`):
+- ATX başlıklar (`#`..`######`); çitli kod blokları ve YAML ön bilgisi yok sayılır.
+- Satır numaraları Read'in numaralarıyla birebir aynıdır (ajan `offset`/`limit`'i doğrudan haritadan verebilir).
+- Haritada en çok 80 başlık satırı; başlık metni 120 karakteri aşarsa 119 karakter + `…` ile kısaltılır. Haritada dosyanın yalnız adı geçer.
+- stdout JSON ≤ 9000 karakter (Claude Code hook stdout'unu 10.000'de keser); aşılırsa harita kısaltılır.
+
+### 17.3 Durum ve ölçüm
+Kök `%LOCALAPPDATA%\Bellek\kapi` (`BELLEK_KAPI_STATE`); vault'a ya da bulut senkron klasörüne konmaz (§4).
+- `oturumlar/<oturum>/<ajan>/<anahtar>.jsonl`: dokunuş kayıtları; 7 günden eski oturum klasörleri temizlenir.
+- `kapi.jsonl`: ölçüm günlüğü. Alanlar: karar ∈ {`harita`, `izin`, `hedefli`, `az_baslik`, `cok_uzun`, `cok_buyuk`}, istenen aralık, tekrar bayrağı. `yol` normcase edilir. 5 MB'ı aşınca `kapi.jsonl.1`'e döner.
+- `hook.log`: hata kaydı (≈1 MB'a kırpılır).
+
+Fail-open: her hatada çıkış 0 ve boş stdout; oturumu asla bozmaz.
+
+| Değişken | Varsayılan | Anlam |
+|---|---|---|
+| `BELLEK_KAPI` | (açık) | `kapali` ise hook hiçbir şey yapmaz |
+| `BELLEK_KAPI_ESIK` | `16384` | Bu bayttan küçük dosyalar kapıdan geçer |
+| `BELLEK_KAPI_TAVAN` | `5000000` | Bu bayttan büyük dosyalar ayrıştırılmadan geçer (`cok_buyuk`) |
+| `BELLEK_KAPI_HEDEFLI` | `80` | Bu satır sayısı ve altındaki `limit` hedefli okumadır |
+| `BELLEK_KAPI_STATE` | `%LOCALAPPDATA%\Bellek\kapi` | Durum kökü |
+
+### 17.4 Bilinçli olarak yapılmayanlar ve açık kararlar
+- Tekrar okumalar engellenmez, yalnız kaydedilir. `aralik`/`tekrar` istek düzeyindedir: hook aracın sonucunu görmez; Claude Code'un hata verdiği (ör. 25K token sınırı) ya da başka bir hook'un reddettiği okumalar da okunmuş sayılır. Bu yüzden engelleme kararı `kapi.jsonl`'daki `tekrar`la değil, transcript'lerdeki gerçek araç sonuçlarıyla ölçülerek verilecek; engelleme yapılırsa aralık PostToolUse'da (yalnız başarıda) yazılmalıdır.
+- Bash ile `cat`/`Get-Content` okumaları kapsam dışıdır.
+- `bypassPermissions` modunda `deny`: 2026-11-09'da bu modda gerçek oturumda doğrulandı; ret uygulanıyor (ana oturum ve alt agent).
+- Başarı ölçütü: aynı ölçüm betiğiyle önce/sonra (a) `.md` Read karakteri, (b) agent başına okunan belge oranı. "Çalışıyor" demek yetmez, sayı gösterilir (§14).

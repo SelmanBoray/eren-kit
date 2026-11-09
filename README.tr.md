@@ -44,6 +44,7 @@ biçiminde **eller**. Her şey kendi makinenizde çalışır ve kurulum tek bir 
 | --- | --- | --- | --- |
 | [**Bellek & Beyin**](#bellek--beyin-beyin) (`packages/bellek`) | Sizin ve işleriniz hakkında kalıcı, hiyerarşik bir bilgi ağacı; Claude'a `beyin` MCP sunucusu olarak sunulur, yerel bir web arayüzü vardır | MCP · CLI · Web arayüzü | Çalışıyor (alfa) |
 | [**Devir**](#devir-devir) (`packages/bellek`) | Bir sonraki oturumun kaldığı yerden devam edebilmesi için devir notları yazar; pahalı uzun bağlamlar için uyarır | Hook · Skill | Çalışıyor (alfa) |
+| [**Önce harita belge kapısı**](#önce-harita-belge-kapısı-kapi) (`packages/bellek`) | Büyük Markdown belgelerini ilk okumada reddedip başlık haritasını döndürür; ajan yalnız gereken bölümü okur | Hook | Çalışıyor (alfa) |
 | [**Opus Orkestra**](#opus-orkestra) (`packages/opus-orkestra`) | Çalışma kuralı: ana model kodu kendisi yazmaz, işi çok sayıda dar kapsamlı alt agent'a böler ve sonucu doğrular | Skill · Hook | Çalışıyor; kurallar Türkçe |
 | [**computer-use-windows**](#computer-use-windows) (`packages/computer-use-windows`) | Windows'ta terminal agent'ları için ekran, UI Automation, fare ve klavye; koruma önlemleriyle | MCP | Çalışıyor (0.1.0) |
 | [**Telefon uygulaması (deneysel)**](#telefon-uygulaması-deneysel) (`apps/phone`) | Telefonunuzdan PC'nizdeki ana Claude oturumuyla konuşun | Uygulama | **Deneysel**, kullanıma hazır değil |
@@ -62,6 +63,7 @@ flowchart LR
 
         subgraph HOOKS["Hook'lar (settings.json)"]
             HD["devir hook'u<br/>SessionStart · UserPromptSubmit · Stop"]
+            HK["kapı hook'u<br/>PreToolUse · Read *.md"]
             HO["Opus Orkestra hook'u<br/>SessionStart, 4 parça"]
         end
 
@@ -86,6 +88,7 @@ flowchart LR
     CC <--> CUW
     HD --> CC
     HO --> CC
+    HK -->|"büyük .md okumasını reddeder, harita döndürür"| CC
     CC --> SD
     CC --> SO
     BMCP <--> SVC
@@ -153,7 +156,7 @@ Ardından:
 
 ### Bileşenleri seçin
 
-Varsayılan küme `beyin, devir, orkestra, computer-use` bileşenleridir. Telefon uygulaması yalnızca
+Varsayılan küme `beyin, devir, kapi, orkestra, computer-use` bileşenleridir. Telefon uygulaması yalnızca
 siz isterseniz kurulur.
 
 ```powershell
@@ -174,20 +177,21 @@ Kurulum betiğini yeniden çalıştırmak güvenlidir: değişeni günceller, ge
 
 | Parametre | Açıklama |
 | --- | --- |
-| `-Components` | Virgülle ayrılmış bileşen listesi, ör. `-Components beyin,devir`. Geçerli değerler: `beyin`, `devir`, `orkestra`, `computer-use`, `phone`. Varsayılan: `beyin, devir, orkestra, computer-use` |
+| `-Components` | Virgülle ayrılmış bileşen listesi, ör. `-Components beyin,devir`. Geçerli değerler: `beyin`, `devir`, `kapi`, `orkestra`, `computer-use`, `phone`. Varsayılan: `beyin, devir, kapi, orkestra, computer-use` |
 | `-AssistantName` | Asistan adı; `EREN_KIT_ASSISTANT_NAME` kullanıcı ortam değişkenine yazılır. Verilmezse mevcut değer korunur, o da yoksa `"Claude"` kullanılır |
 | `-ClaudeHome` | Claude Code ayar klasörü. Varsayılan: `CLAUDE_CONFIG_DIR` ortam değişkeni tanımlıysa o, değilse `%USERPROFILE%\.claude` |
 | `-DryRun` | Hiçbir şeyi değiştirmez; yapılacakları listeler |
 | `-Uninstall` | Seçilen bileşenlerin MCP kayıtlarını, hook'larını, kopyalanan skill'lerini ve beyin servisi görevini kaldırır. Venv'leri ve kullanıcı verisini **silmez** |
 | `-SkipMcp` | `claude mcp add/remove` adımlarını atlar |
 | `-NoService` | Beyin servisinin zamanlanmış görevini kurmaz (veya kaldırmaz); servisi kendiniz yönetirsiniz |
-| `-ReplaceExisting` | `settings.json` içinde, depo dışındaki aynı hook betiklerinin eski kopyalarına ait girdileri (ör. başka bir klasördeki `bellek\devir\hook.py`, `~\.claude\hooks\opus-orkestra-sessionstart.py`) yedek alarak kaldırır. Bu anahtar olmadan eskiler kalır ve hook'lar iki kez çalışır |
+| `-ReplaceExisting` | `settings.json` içinde, depo dışındaki aynı hook betiklerinin eski kopyalarına ait girdileri (ör. başka bir klasördeki `bellek\devir\hook.py` ya da `bellek\kapi\hook.py`, `~\.claude\hooks\opus-orkestra-sessionstart.py`) yedek alarak kaldırır. Bu anahtar olmadan eskiler kalır ve hook'lar iki kez çalışır |
 | `-Help` | Yerleşik yardımı gösterir (Türkçe) |
 
 | Bileşen | Kurulum betiği ne yapar |
 | --- | --- |
 | `beyin` | `packages\bellek\.venv` oluşturur ve `pip install -e` çalıştırır; yoksa `bellek.example.toml` dosyasını `bellek.toml` olarak kopyalar; `bellek.beyin` modülünün içe aktarılabildiğini denetler; `beyin` MCP sunucusunu kaydeder (kullanıcı kapsamı); beyin servisi görevini kaydedip başlatır (aşağıya bakın) |
 | `devir` | Aynı venv'i kullanır; `PATH` üzerindeki `python` komutunun 3.11+ olduğunu denetler; devir hook'unu `SessionStart`, `UserPromptSubmit` ve `Stop` olaylarına ekler; skill'i `<ClaudeHome>\skills\devir` klasörüne kopyalar |
+| `kapi` | `PATH` üzerindeki `python` komutunun 3.11+ olduğunu denetler; kapı hook'unu `PreToolUse` olayına ekler (`Read` için `.md`/`.markdown` filtresiyle). Venv ya da skill yoktur |
 | `orkestra` | `PATH` üzerindeki `python` komutunun 3.11+ olduğunu denetler; `SKILL.md` dosyasını `<ClaudeHome>\skills\opus-orkestra` klasörüne kopyalar; dört `SessionStart` hook komutu ekler |
 | `computer-use` | `packages\computer-use-windows\.venv` oluşturur ve `pip install -e` çalıştırır; `computer-use-windows` MCP sunucusunu kaydeder (kullanıcı kapsamı) |
 | `phone` | Node 24+ ve npm olup olmadığına bakar; `apps\phone` içinde `npm ci` çalıştırır. Hiçbir şey kaydedilmez; elle başlatılır |
@@ -305,6 +309,24 @@ klasörüdür (otomatik notlar `devir\oto\` içinde).
 
 Ayrıntılar: [packages/bellek/README.md](packages/bellek/README.md) ve skill dosyası
 [packages/bellek/skills/devir/SKILL.md](packages/bellek/skills/devir/SKILL.md).
+
+### Önce harita belge kapısı (`kapi`)
+
+Büyük bir Markdown belgesini baştan sona okumak bağlamı boşuna doldurur. Kapı, Bellek paketindeki bir
+Claude Code `PreToolUse` hook'udur (`packages/bellek/src/bellek/kapi/hook.py`): bir ajan (ana oturum ya
+da alt agent) ≥16 KB'lık bir Markdown dosyasına ilk kez dokunduğunda okumayı reddeder ve gerekçe olarak
+başlık haritasını (her başlığın satır aralığı ve boyutu) döndürür. Ajan sonra yalnız gereken bölümü
+`offset`/`limit` ile okur.
+
+- **Neden:** ölçümde alt agent'lar büyük proje belgelerini tekrar tekrar 275-280 satırlık parçalar
+  halinde okuyordu.
+- **Geçenler:** ≤80 satırlık hedefli okumalar geçer; ikinci deneme her zaman geçer, yani kapı asla
+  kilitlemez.
+- **Ucuz:** hook `if` filtresiyle (`Read(//**/*.md)`, `Read(//**/*.markdown)`) kayıtlıdır; diğer
+  okumalarda süreç başlatılmaz.
+- **Hata durumunda sessiz (fail-open):** herhangi bir hatada okuma olduğu gibi geçer.
+- **Kapatma:** `BELLEK_KAPI=kapali` ortam değişkeni ya da `.\install.ps1 -Uninstall -Components kapi`.
+- **Ölçüm günlüğü:** `%LOCALAPPDATA%\Bellek\kapi\kapi.jsonl`.
 
 ### Opus Orkestra
 
@@ -441,6 +463,7 @@ betiği onu `packages\bellek\bellek.toml` olarak kopyalar, bu dosya git tarafın
 ```toml
 [bellek]
 vault = "vault"                        # your notes folder; handoff notes go to vault/devir
+| `BELLEK_KAPI` | Önce harita belge kapısı | boş (açık) | `kapali` yapılırsa kapı hiçbir okumayı reddetmez |
 state_dir = "%LOCALAPPDATA%/Bellek"    # indexes and logs, kept out of the vault
 
 [server]

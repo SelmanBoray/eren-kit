@@ -2,7 +2,7 @@
 
 install.ps1 tarafından çağrılır; elle çalıştırmak da güvenlidir.
 
-    python -I settings_hooks.py --settings <yol> --repo <repo> --components devir,orkestra
+    python -I settings_hooks.py --settings <yol> --repo <repo> --components devir,orkestra,kapi
         [--uninstall] [--dry-run] [--replace-legacy] [--backup-dir <klasör>]
 
 Kurallar:
@@ -10,6 +10,8 @@ Kurallar:
 - Bir hook "bizim" sayılır, komutu repo-göreli betik yolunu içeriyorsa
   (ör. ".../packages/bellek/src/bellek/devir/hook.py"). Böylece repo taşınmışsa eski
   kayıt güncellenir, aynı komut iki kez eklenmez.
+- Bir bileşen bir olay için grup düzeyi "matcher" isteyebilir (ör. kapi: PreToolUse + "Read");
+  matcher'sız bileşenlerin grubu yalnız "hooks" alanını taşır.
 - Değişiklik yoksa dosyaya dokunulmaz. Değişiklik varsa önce yedek alınır
   (--backup-dir verildiyse ve bu çalıştırmada henüz alınmadıysa).
 - Dosya UTF-8 (BOM'suz), 2 boşluk girintili yazılır.
@@ -28,16 +30,19 @@ import tempfile
 
 DEVIR_TAIL = "/packages/bellek/src/bellek/devir/hook.py"
 ORKESTRA_TAIL = "/packages/opus-orkestra/hooks/opus-orkestra-sessionstart.py"
+KAPI_TAIL = "/packages/bellek/src/bellek/kapi/hook.py"
 
 # Repo dışından kurulmuş olası eski kopyalar: varsayılan olarak yalnız uyarılır;
 # --replace-legacy (install.ps1 -ReplaceExisting) verilirse kayıtları kaldırılır.
 LEGACY_HINTS = {
     "devir": "/bellek/devir/hook.py",
     "orkestra": "opus-orkestra-sessionstart.py",
+    "kapi": "/bellek/kapi/hook.py",
 }
 
 
 def hook_specs(repo: str) -> dict:
+    """Bileşen -> {"tail", "events": {olay: [handler]}, isteğe bağlı "matchers": {olay: matcher}}."""
     devir_cmd = f'python -I "{repo}{DEVIR_TAIL}" || true'
     ork = f"{repo}{ORKESTRA_TAIL}"
     ork_hooks = []
@@ -46,6 +51,11 @@ def hook_specs(repo: str) -> dict:
         if n == 1:
             h["statusMessage"] = "Opus Orkestra kuralı yükleniyor..."
         ork_hooks.append(h)
+    kapi_cmd = f'python -I -S "{repo}{KAPI_TAIL}" || true'
+    kapi_hooks = [
+        {"type": "command", "command": kapi_cmd, "if": f"Read(//**/*.{ext})", "timeout": 10}
+        for ext in ("md", "markdown")
+    ]
     return {
         "devir": {
             "tail": DEVIR_TAIL,
@@ -59,7 +69,19 @@ def hook_specs(repo: str) -> dict:
             "tail": ORKESTRA_TAIL,
             "events": {"SessionStart": ork_hooks},
         },
+        "kapi": {
+            "tail": KAPI_TAIL,
+            "events": {"PreToolUse": kapi_hooks},
+            "matchers": {"PreToolUse": "Read"},
+        },
     }
+
+
+def make_group(handlers: list, matcher: str | None) -> dict:
+    """Olay listesine eklenecek grup; matcher yoksa alan hiç yazılmaz (eski kayıtlarla bayt düzeyinde aynı)."""
+    group = {} if matcher is None else {"matcher": matcher}
+    group["hooks"] = copy.deepcopy(handlers)
+    return group
 
 
 def norm(s: str) -> str:
@@ -167,6 +189,7 @@ def run(args) -> dict:
     for k in keys:
         spec = specs[k]
         tail = spec["tail"]
+        matchers = spec.get("matchers", {})
         added = removed_total = legacy_removed = 0
         if args.replace_legacy and not args.uninstall:
             # Eski kopyalar her olaydan çıkarılır; bizimki ilgili olayda onların yerine konur.
@@ -200,7 +223,7 @@ def run(args) -> dict:
                     hooks[event] = groups
             else:
                 pos = len(groups) if first is None else min(first, len(groups))
-                groups.insert(pos, {"hooks": copy.deepcopy(desired)})
+                groups.insert(pos, make_group(desired, matchers.get(event)))
                 hooks[event] = groups
                 added += len(desired)
         report["components"][k] = {
