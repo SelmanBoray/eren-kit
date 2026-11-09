@@ -1,6 +1,7 @@
 package dev.eren.cihaz.adaptor
 
 import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -41,6 +42,7 @@ class PaketBilgisi(context: Context) : PaketKapisi {
 
     override fun listeGirdisi(): ListeGirdisi {
         val kurulu = ArrayList<KuruluUygulama>()
+        val baslaticilar = baslaticiPaketleri()
         for (bilgi in pm.getInstalledApplications(0)) {
             val paket = bilgi.packageName
             // Okunamayan imza boş kalır; hiçbir kullanıcı kararıyla eşleşmez.
@@ -51,9 +53,25 @@ class PaketBilgisi(context: Context) : PaketKapisi {
             } catch (_: Exception) {
                 paket
             }
-            kurulu.add(KuruluUygulama(paket, ad, imza))
+            // Sistem iç paketi: sistem uygulaması VE başlatıcı simgesi yok. Kullanıcının kurduğu her
+            // paket ve simgeli sistem uygulamaları (Telefon, Mesajlar, Chrome...) false.
+            val sistemIci = bilgi.flags and ApplicationInfo.FLAG_SYSTEM != 0 && paket !in baslaticilar
+            kurulu.add(KuruluUygulama(paket, ad, imza, sistemIci))
         }
         return ListeGirdisi(kurulu, kararlariOku(), degismezleriCoz())
+    }
+
+    /**
+     * Başlatıcı simgesi olan paketler (ACTION_MAIN + CATEGORY_LAUNCHER), tek sorguda küme olarak.
+     * Sorgu başarısızsa boş küme: o turda her sistem paketi sistem içi sayılır (güvenli yön, kapalı).
+     */
+    private fun baslaticiPaketleri(): Set<String> {
+        return try {
+            val niyet = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+            pm.queryIntentActivities(niyet, 0).mapNotNullTo(HashSet()) { it.activityInfo?.packageName }
+        } catch (_: Exception) {
+            emptySet()
+        }
     }
 
     override fun imzaOzeti(paket: String): String? {
@@ -115,7 +133,13 @@ class PaketBilgisi(context: Context) : PaketKapisi {
         return sonuc
     }
 
-    /** Ayarlar, paket kurucu, izin denetleyicisi: yalnız sistem uygulaması olan çözümler. Ana ekran bilerek yok. */
+    /**
+     * Intent çözümüyle değişmezler.
+     * - Ayarlar, paket kurucu, izin denetleyicisi: yalnız sistem uygulaması olan çözümler.
+     * - Ana ekran (ACTION_MAIN + CATEGORY_HOME) çözen her paket ve varsayılan klavyenin
+     *   paketi: sistem şartı YOK. Değişmez yapmak yalnız kısıtlar, kötüye kullanılamaz;
+     *   kullanıcının kurduğu bir başlatıcı ya da klavye de değişmez olur (kabul edildi).
+     */
     private fun degismezleriCoz(): Set<String> {
         val niyetler = listOf(
             Intent(Settings.ACTION_SETTINGS),
@@ -138,6 +162,22 @@ class PaketBilgisi(context: Context) : PaketKapisi {
             } catch (_: Exception) {
                 // Çözülemeyen intent atlanır; sabit adlar çekirdekte zaten var.
             }
+        }
+        // Ana ekran: bayraksız sorgu (MATCH_DEFAULT_ONLY, DEFAULT kategorisi bildirmeyen başlatıcıları kaçırır).
+        try {
+            val ev = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+            for (r in pm.queryIntentActivities(ev, 0)) {
+                r.activityInfo?.packageName?.let { sonuc.add(it) }
+            }
+        } catch (_: Exception) {
+        }
+        // Klavye: yalnız varsayılan giriş yöntemi ("paket/sınıf"). Okunamazsa ya da boşsa eklenmez.
+        try {
+            Settings.Secure.getString(ctx.contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)
+                ?.let { ComponentName.unflattenFromString(it)?.packageName }
+                ?.takeIf { it.isNotEmpty() }
+                ?.let { sonuc.add(it) }
+        } catch (_: Exception) {
         }
         return sonuc
     }

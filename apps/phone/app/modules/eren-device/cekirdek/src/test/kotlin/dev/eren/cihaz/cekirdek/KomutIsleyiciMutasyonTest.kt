@@ -40,6 +40,7 @@ class KomutIsleyiciMutasyonTest {
         assertTrue(sayac.goruntu >= 50) { "az resim döndü: $sayac" }
         assertTrue(sayac.elementler >= 50) { "az elements döndü: $sayac" }
         assertTrue(sayac.ret >= 1_000) { "az ret: $sayac" }
+        assertTrue(sayac.bankaDenemesi >= 100) { "kararsız banka az denendi: $sayac" }
     }
 
     private companion object {
@@ -58,13 +59,16 @@ internal class MtSayac {
     var hata = 0
     var eszamanli = 0
 
+    /** İzni kararsız bankayı (otomatik hassas) içeren ve ön planı ya da open_app hedefi o banka olan komutlar. */
+    var bankaDenemesi = 0
+
     @Volatile
     var eszamanliKapali = false
     val nedenler = TreeMap<String, Int>()
 
     override fun toString(): String =
         "adım=$adim komut=$komut eylem=$eylem resim=$goruntu elements=$elementler ret=$ret hata=$hata " +
-            "eşzamanlı=$eszamanli nedenler=$nedenler"
+            "eşzamanlı=$eszamanli banka=$bankaDenemesi nedenler=$nedenler"
 }
 
 private class MtIzin(
@@ -243,10 +247,10 @@ internal class MtEvren(private val tohum: Long, private val adim: Int, private v
             val mod = if (r.nextBoolean()) IzinModu.OKU else IzinModu.YAZ
             val paketler: List<String> = if (mod == IzinModu.OKU) {
                 val secim = ACIK_HAVUZ.filter { r.nextBoolean() }.ifEmpty { listOf(ACIK_HAVUZ.random(r)) }.toMutableList()
-                if (r.nextInt(100) < 10) secim += listOf(KiPaket.BANKA, KiPaket.YENI).random(r)
+                if (r.nextInt(100) < 10) secim += listOf(KiPaket.BANKA, KiPaket.ZIRAAT, KiPaket.YENI, KiPaket.DEGISTI).random(r)
                 secim
             } else {
-                listOf(if (r.nextInt(100) < 10) KiPaket.BANKA else ACIK_HAVUZ.random(r))
+                listOf(if (r.nextInt(100) < 10) listOf(KiPaket.BANKA, KiPaket.ZIRAAT).random(r) else ACIK_HAVUZ.random(r))
             }
             val metinler = if (mod == IzinModu.YAZ) List(r.nextInt(4)) { METIN_HAVUZU.random(r) } else emptyList()
             val serbest = mod == IzinModu.YAZ && r.nextInt(10) == 0
@@ -610,6 +614,11 @@ internal class MtEvren(private val tohum: Long, private val adim: Int, private v
 
         val ad = rastgeleAd()
         val arg = rastgeleArg(ad, model)
+        if (model != null && KiPaket.ZIRAAT in model.paketler &&
+            (dunya.kok == KiPaket.ZIRAAT || (arg as? CmdArg.OpenApp)?.paket == KiPaket.ZIRAAT)
+        ) {
+            sayac.bankaDenemesi++
+        }
         val args = argAlanlari(arg)
         val pc = oturum.pcSimdiMs()
         val taban = pc ?: saat.duvarMs()
@@ -911,6 +920,10 @@ internal class MtEvren(private val tohum: Long, private val adim: Int, private v
 
     private fun izinli(p: String?, m: MtIzin): Boolean = p != null && p in m.paketler
 
+    /** Modelden bağımsız: banka (kararlı ya da kararsız) ön planda, odakta, son olayda ya da bir pencerede. */
+    private fun bankaGorunur(w: MtDunya): Boolean =
+        w.kok in BANKALAR || w.olay in BANKALAR || w.odak in BANKALAR || w.pencereler.any { it.paket in BANKALAR }
+
     private fun onPlanUygun(w: MtDunya, m: MtIzin): Boolean {
         val p = w.kok ?: return false
         return p == w.olay && p == w.odak && p in m.paketler && KiPaket.durum(p) == UygulamaDurumu.ACIK
@@ -974,9 +987,11 @@ internal class MtEvren(private val tohum: Long, private val adim: Int, private v
         if (arg is CmdArg.OpenApp) {
             if (c != EylemCagrisi.UygulamaAc(arg.paket)) s += "eylem komutla uyuşmuyor: $c"
             if (arg.paket !in m.paketler || KiPaket.durum(arg.paket) != UygulamaDurumu.ACIK) s += "izin dışı uygulama açıldı: ${arg.paket}"
+            if (arg.paket in BANKALAR) s += "[banka] hassas banka uygulaması açıldı: ${arg.paket}"
             return
         }
         if (!onPlanUygun(w, m)) s += "izin dışı ön planda eylem: ${w.ozet()}"
+        if (bankaGorunur(w)) s += "[banka] banka ön plandayken eylem: ${w.ozet()}"
         when (arg) {
             is CmdArg.Click -> {
                 val el = arg.element
@@ -1107,6 +1122,7 @@ internal class MtEvren(private val tohum: Long, private val adim: Int, private v
             return
         }
         if (!onPlanUygun(wg, m)) ihlal(b, "[değişmez] görüntü anında ön plan izin dışıydı: ${wg.ozet()}")
+        if (bankaGorunur(wg)) ihlal(b, "[değişmez] [banka] banka görünürken resim döndü: ${wg.ozet()}")
         if (!pencerelerUygun(wg, m)) ihlal(b, "[değişmez] görüntü anında izin dışı pencere vardı: ${wg.pencereler.map { it.tur to it.paket }}")
         val wp = b.goruntuSonrasiDunya
         if (wp == null) {
@@ -1134,6 +1150,7 @@ internal class MtEvren(private val tohum: Long, private val adim: Int, private v
             return
         }
         if (!onPlanUygun(we, m)) ihlal(b, "[değişmez] izin dışı ön planda düğümler döndü: ${we.ozet()}")
+        if (bankaGorunur(we)) ihlal(b, "[değişmez] [banka] banka ön plandayken düğümler döndü: ${we.ozet()}")
         for (e in c.elementler()) {
             val ad = KiJson.metin(e["ad"])
             val d = okuma.dugumler.firstOrNull { it.ad == ad }
@@ -1142,6 +1159,7 @@ internal class MtEvren(private val tohum: Long, private val adim: Int, private v
                 continue
             }
             if (!izinli(d.paket, m)) ihlal(b, "[değişmez] izin dışı paket düğümü döndü: ${d.paket}")
+            if (d.paket in BANKALAR) ihlal(b, "[değişmez] [banka] banka düğümü döndü: ${d.paket}")
             if (parolaMi(d) && e.containsKey("deger")) ihlal(b, "[değişmez] parola alanının değeri döndü")
             if (d.parola && KiJson.mantik(e["password"]) != true) ihlal(b, "parola alanı password:true değil")
         }
@@ -1154,6 +1172,7 @@ internal class MtEvren(private val tohum: Long, private val adim: Int, private v
         val p = c.paket
         val uygun = b.baslangicGecerli && m != null && izinli(p, m) && KiPaket.durum(p) == UygulamaDurumu.ACIK && bs == "Baslik $p"
         if (!uygun) ihlal(b, "[değişmez] izin dışı ön planın başlığı yollandı: paket=$p")
+        if (p in BANKALAR) ihlal(b, "[değişmez] [banka] banka başlığı yollandı: paket=$p")
     }
 
     private fun grantRevokedIsle(b: MtBaglam, g: String?, n: String?) {
@@ -1205,15 +1224,20 @@ internal class MtEvren(private val tohum: Long, private val adim: Int, private v
         const val YANLIS_JETON = "yanlisJetonYanlisJetonYanlisJetonYanlis0000"
         val SAYI = Regex("^-?\\d+(\\.\\d+)?$")
         val ACIK_HAVUZ = listOf(KiPaket.MESAJ, KiPaket.HARITA, KiPaket.NOTLAR)
+
+        /** Fikstürde hiçbir bankanın aynı imzalı ACIK kararı yok: kural 3 ve 5'le ikisi de hiç porta ulaşmamalı. */
+        val BANKALAR = setOf(KiPaket.BANKA, KiPaket.ZIRAAT)
         val METIN_HAVUZU = listOf("Geliyorum", "Görüşürüz", "Tamam", "Yolda")
         val ON_PLAN_HAVUZU = listOf(
-            KiPaket.MESAJ, KiPaket.HARITA, KiPaket.NOTLAR, KiPaket.BANKA, KiPaket.YENI, KiPaket.DEGISTI, KiPaket.KLAVYE,
-            KiPaket.BASLATICI, KiPaket.AYARLAR, KiPaket.SYSTEMUI, KiPaket.KENDI, KiPaket.KURULMAMIS, null,
+            KiPaket.MESAJ, KiPaket.HARITA, KiPaket.NOTLAR, KiPaket.BANKA, KiPaket.ZIRAAT, KiPaket.YENI, KiPaket.DEGISTI,
+            KiPaket.KLAVYE, KiPaket.BASLATICI, KiPaket.AYARLAR, KiPaket.SYSTEMUI, KiPaket.KENDI, KiPaket.KURULMAMIS, null,
         )
-        val UYUSMAZ_HAVUZU = listOf(KiPaket.MESAJ, KiPaket.HARITA, KiPaket.NOTLAR, KiPaket.BANKA, KiPaket.KLAVYE, KiPaket.SYSTEMUI)
+        val UYUSMAZ_HAVUZU = listOf(
+            KiPaket.MESAJ, KiPaket.HARITA, KiPaket.NOTLAR, KiPaket.BANKA, KiPaket.ZIRAAT, KiPaket.KLAVYE, KiPaket.SYSTEMUI,
+        )
         val ACILACAK_HAVUZ = listOf(
-            KiPaket.MESAJ, KiPaket.HARITA, KiPaket.NOTLAR, KiPaket.BANKA, KiPaket.YENI, KiPaket.AYARLAR, KiPaket.KENDI,
-            KiPaket.KLAVYE, KiPaket.KURULMAMIS, KiPaket.BASLATICI,
+            KiPaket.MESAJ, KiPaket.HARITA, KiPaket.NOTLAR, KiPaket.BANKA, KiPaket.ZIRAAT, KiPaket.YENI, KiPaket.DEGISTI,
+            KiPaket.AYARLAR, KiPaket.KENDI, KiPaket.KLAVYE, KiPaket.KURULMAMIS, KiPaket.BASLATICI,
         )
         val URL_HAVUZU = listOf(
             "https://ornek.com/x", "intent:#Intent;component=com.example.banka/.Ana;end", "market://details?id=com.example.yeni",

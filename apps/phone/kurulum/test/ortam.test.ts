@@ -188,6 +188,7 @@ const sahteBag = (): { bag: Bag; cagrilar: string[][] } => {
     uyu: async () => {},
     simdi: () => 0,
     canli: () => false,
+    kaliciOrtam: () => ({}),
   };
   return { bag, cagrilar };
 };
@@ -204,22 +205,96 @@ const sessiz = async <T>(is: () => Promise<T>): Promise<T> => {
   }
 };
 
+const degistirenler = (c: readonly string[][]): string[][] => c.filter((a) => a[0] !== "/query");
+
 test("eren dur/baslat ortamsız: görev adı eren-kit-telefon", async () => {
   const d = sahteBag();
-  assert.equal(await sessiz(() => durKomutu(d.bag, {})), 1);
-  assert.deepEqual(d.cagrilar[0], ["/query", "/tn", "eren-kit-telefon"]);
+  assert.equal(await sessiz(() => durKomutu(d.bag, { LOCALAPPDATA: LA })), 1);
+  assert.ok(d.cagrilar.some((a) => a.join(" ") === "/query /tn eren-kit-telefon"), JSON.stringify(d.cagrilar));
   const b = sahteBag();
-  assert.equal(await sessiz(() => baslatKomutu(b.bag, {})), 1);
-  assert.deepEqual(b.cagrilar, [["/change", "/tn", "eren-kit-telefon", "/enable"]]);
+  assert.equal(await sessiz(() => baslatKomutu(b.bag, { LOCALAPPDATA: LA })), 1);
+  assert.deepEqual(degistirenler(b.cagrilar), [["/change", "/tn", "eren-kit-telefon", "/enable"]]);
 });
 
 test("eren dur/baslat ortamlı: EREN_KIT_PHONE_TASK_NAME kullanılır", async () => {
   const d = sahteBag();
-  await sessiz(() => durKomutu(d.bag, { EREN_KIT_PHONE_TASK_NAME: "Eren" }));
+  await sessiz(() => durKomutu(d.bag, { LOCALAPPDATA: LA, EREN_KIT_PHONE_TASK_NAME: "Eren" }));
   assert.deepEqual(d.cagrilar[0], ["/query", "/tn", "Eren"]);
   const b = sahteBag();
-  await sessiz(() => baslatKomutu(b.bag, { EREN_KIT_PHONE_TASK_NAME: "Eren" }));
-  assert.deepEqual(b.cagrilar[0], ["/change", "/tn", "Eren", "/enable"]);
+  await sessiz(() => baslatKomutu(b.bag, { LOCALAPPDATA: LA, EREN_KIT_PHONE_TASK_NAME: "Eren" }));
+  assert.deepEqual(degistirenler(b.cagrilar)[0], ["/change", "/tn", "Eren", "/enable"]);
+});
+
+/** Verilen görevler kayıtlı, schtasks değişiklikleri başarılı, bekçi ayakta; yapılan her şeyi kaydeder. */
+const kayitliBag = (gorevler: readonly string[], yollar: readonly string[] = []) => {
+  const cagrilar: string[][] = [];
+  const bekciCagrilari: string[] = [];
+  let kapandi = false;
+  let saat = 0;
+  const bag: Bag = {
+    schtasks: (args) => {
+      cagrilar.push([...args]);
+      if (args[0] === "/query") return gorevler.some((g) => g.toLowerCase() === (args[2] ?? "").toLowerCase());
+      return true;
+    },
+    bekci: async (komut) => {
+      bekciCagrilari.push(komut);
+      if (kapandi) return null; // kapan'dan sonra boru yok
+      if (komut === "kapan") kapandi = true;
+      return { ok: true, durum: "calisiyor", bekci_pid: 1 };
+    },
+    uyu: async (ms) => {
+      saat += ms;
+    },
+    simdi: () => (saat += 1),
+    canli: () => false,
+    kaliciOrtam: () => ({}),
+    varMi: (y) => yollar.some((p) => p.toLowerCase() === y.toLowerCase()),
+  };
+  return { bag, cagrilar, bekciCagrilari };
+};
+
+/** console.error çıktısını toplar, console.log'u susturur. */
+const hataCiktisi = async (is: () => Promise<number>): Promise<{ kod: number; hata: string }> => {
+  const { log, error } = console;
+  const satirlar: string[] = [];
+  console.log = () => {};
+  console.error = (...a: unknown[]) => satirlar.push(a.map(String).join(" "));
+  try {
+    return { kod: await is(), hata: satirlar.join("\n") };
+  } finally {
+    console.log = log;
+    console.error = error;
+  }
+};
+
+test("eren dur/baslat: eski kurulum varken ortamsız, hiçbir şeye dokunmadan açıklayıcı biçimde durur", async () => {
+  for (const [ad, komut] of [["dur", durKomutu], ["baslat", baslatKomutu]] as const) {
+    // eski 'Eren' görevi kayıtlı, etkin ad eren-kit-telefon
+    const g = kayitliBag(["Eren"]);
+    const r = await hataCiktisi(() => komut(g.bag, { LOCALAPPDATA: LA }));
+    assert.equal(r.kod, 1, ad);
+    assert.deepEqual(degistirenler(g.cagrilar), [], `${ad}: görev değiştirilmemeli`);
+    assert.deepEqual(g.bekciCagrilari, [], `${ad}: bekçiye bir şey gönderilmemeli`);
+    assert.match(r.hata, /eski 'Eren' görevi kayıtlı/, ad);
+    assert.match(r.hata, /hiçbir şey değişmedi/, ad);
+
+    // eski veri kökü dolu: kur gibi durur, bayrakla geçilir
+    const k = kayitliBag([], ESKI_IZLER);
+    const rk = await hataCiktisi(() => komut(k.bag, { LOCALAPPDATA: LA }));
+    assert.equal(rk.kod, 1, ad);
+    assert.deepEqual(degistirenler(k.cagrilar), [], ad);
+    assert.deepEqual(k.bekciCagrilari, [], ad);
+    assert.match(rk.hata, /veri bölünür/, ad);
+    const kb = kayitliBag(["eren-kit-telefon"], ESKI_IZLER);
+    await sessiz(() => komut(kb.bag, { LOCALAPPDATA: LA }, { eskiKokuYoksay: true }));
+    assert.ok(degistirenler(kb.cagrilar).length > 0, `${ad}: ${ESKI_KOK_BAYRAGI} ile devam etmeli`);
+  }
+  // mevcut kurulumu sürdüren üç değişkenle eski görev hedeflenir
+  const m = kayitliBag(["Eren"], ESKI_IZLER);
+  await sessiz(() => durKomutu(m.bag, MEVCUT));
+  assert.deepEqual(degistirenler(m.cagrilar), [["/change", "/tn", "Eren", "/disable"]]);
+  assert.ok(m.bekciCagrilari.includes("kapan"));
 });
 
 test("eren logDizini: ortamsız / ortamlı / göreli", () => {
@@ -288,4 +363,112 @@ test("gorev-kaydet --goster (alt süreç, kaydetmez): ortamsız, ortamlı ve gö
   } finally {
     temizle();
   }
+});
+
+// --- eren baslat: kalıcı ortam ve veri kökü doğrulaması ------------------------------------------
+
+const YENI_KOK = "C:\\ornek\\Veri";
+const YANLIS_KOK = "C:\\ornek\\Yerel\\eren-kit";
+
+/**
+ * Görev kayıtlı; /run'a kadar bekçi yok, sonra `cevap(saat, baslangic)` döner. Saat yalnız ilerler
+ * (simdi her çağrıda +1, uyu kadar): sınır döngüleri sahte saatle biter. Çağrı sınırı takılmayı yakalar.
+ */
+const baslatBagi = (o: {
+  kalici: Record<string, string> | null;
+  cevap: (saat: number, baslangic: number) => Record<string, unknown>;
+  anaBasladi?: boolean;
+}) => {
+  const cagrilar: string[][] = [];
+  const bekciCagrilari: string[] = [];
+  let saat = 1_000_000;
+  let baslangic: number | null = null;
+  let kapandi = false;
+  let adim = 0;
+  const ilerle = (ms: number): number => {
+    if (++adim > 100_000) throw new Error("sahte bağ: çok fazla çağrı (saat ilerlemiyor mu?)");
+    saat += ms;
+    return saat;
+  };
+  const bag: Bag = {
+    schtasks: (args) => {
+      cagrilar.push([...args]);
+      if (args[0] === "/query") return (args[2] ?? "").toLowerCase() === "eren-kit-telefon";
+      if (args[0] === "/run" && baslangic === null) baslangic = ilerle(1);
+      return true;
+    },
+    bekci: async (komut) => {
+      ilerle(1);
+      bekciCagrilari.push(komut);
+      if (baslangic === null || kapandi) return null;
+      if (komut === "kapan") {
+        kapandi = true;
+        return { ok: true };
+      }
+      return { ok: true, durum: "calisiyor", bekci_pid: 77, bekci_baslangic_ms: baslangic, ...o.cevap(saat, baslangic) };
+    },
+    uyu: async (ms) => {
+      ilerle(ms);
+    },
+    simdi: () => ilerle(1),
+    canli: () => false,
+    varMi: () => false,
+    kaliciOrtam: () => o.kalici,
+    anaBasladi: () => o.anaBasladi === true,
+  };
+  return { bag, cagrilar, bekciCagrilari };
+};
+
+/** Ana bekçiden hemen sonra açılmış, şu ana dek ayakta. */
+const anaAyakta = (kok?: string) => (_saat: number, b: number): Record<string, unknown> => ({
+  ana_pid: 88,
+  ana_baslangic_ms: b + 1,
+  surum: "aaaaaaaaaa",
+  ...(kok === undefined ? {} : { veri_koku: kok }),
+});
+
+test("eren baslat: kabuk ve kalıcı ortamda veri kökü farklıysa kur gibi hiçbir şeye dokunmadan durur", async () => {
+  const ortam: Ortam = { LOCALAPPDATA: LA, EREN_KIT_DATA_DIR: YENI_KOK };
+  const s = baslatBagi({ kalici: {}, cevap: anaAyakta(YENI_KOK) });
+  const r = await hataCiktisi(() => baslatKomutu(s.bag, ortam));
+  assert.equal(r.kod, 1);
+  assert.deepEqual(degistirenler(s.cagrilar), [], "görev açılmamalı/çalıştırılmamalı");
+  assert.deepEqual(s.bekciCagrilari, []);
+  assert.match(r.hata, /hiçbir şey değişmedi/);
+  assert.match(r.hata, /EREN_KIT_DATA_DIR bu kabukta "C:\\ornek\\Veri", kalıcı ortamda \(yok\)/);
+});
+
+test("eren baslat: servis başka veri kökünde açılırsa durdurur, görevi kapatır ve açıkça söyler", async () => {
+  const ortam: Ortam = { LOCALAPPDATA: LA, EREN_KIT_DATA_DIR: YENI_KOK };
+  const s = baslatBagi({ kalici: { EREN_KIT_DATA_DIR: YENI_KOK }, cevap: anaAyakta(YANLIS_KOK) });
+  const r = await hataCiktisi(() => baslatKomutu(s.bag, ortam));
+  assert.equal(r.kod, 1);
+  const d = degistirenler(s.cagrilar).map((a) => `${a[0]} ${a[3] ?? ""}`.trim());
+  assert.deepEqual(d.slice(0, 2), ["/change /enable", "/run"]);
+  assert.ok(d.includes("/change /disable"), `görev kapatılmalı: ${JSON.stringify(d)}`);
+  assert.ok(s.bekciCagrilari.includes("kapan"), "bekçiye kapan gönderilmeli");
+  assert.match(r.hata, /beklenen veri kökünde çalışmıyor/);
+  assert.ok(r.hata.includes(YANLIS_KOK) && r.hata.includes(YENI_KOK), r.hata);
+  assert.match(r.hata, /durduruldu/);
+});
+
+test("eren baslat: servis beklenen kökte kararlı açılınca başarı; eski bekçide günlük kanıtı", async () => {
+  const ortam: Ortam = { LOCALAPPDATA: LA, EREN_KIT_DATA_DIR: YENI_KOK };
+  const kalici = { EREN_KIT_DATA_DIR: YENI_KOK };
+  const s = baslatBagi({ kalici, cevap: anaAyakta(YENI_KOK) });
+  assert.equal(await sessiz(() => baslatKomutu(s.bag, ortam)), 0);
+  assert.ok(!degistirenler(s.cagrilar).some((a) => a[3] === "/disable"), "durdurulmamalı");
+  // veri kökünü bildirmeyen eski bekçi: beklenen kökün günlüğünde ana'nın kaydı
+  const e = baslatBagi({ kalici, cevap: anaAyakta(), anaBasladi: true });
+  assert.equal(await sessiz(() => baslatKomutu(e.bag, ortam)), 0);
+});
+
+test("eren baslat: kök doğrulanamazsa (kanıt yok) başarı demez ama servisi durdurmaz", async () => {
+  const ortam: Ortam = { LOCALAPPDATA: LA, EREN_KIT_DATA_DIR: YENI_KOK };
+  const s = baslatBagi({ kalici: { EREN_KIT_DATA_DIR: YENI_KOK }, cevap: anaAyakta(), anaBasladi: false });
+  const r = await hataCiktisi(() => baslatKomutu(s.bag, ortam));
+  assert.equal(r.kod, 1);
+  assert.match(r.hata, /doğrulanamadı/);
+  assert.ok(!degistirenler(s.cagrilar).some((a) => a[3] === "/disable"));
+  assert.ok(!s.bekciCagrilari.includes("kapan"));
 });

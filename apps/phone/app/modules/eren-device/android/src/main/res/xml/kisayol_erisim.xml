@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Ses tuşu kısayolu tetik servisinin (KisayolErisimServisi) en dar yapılandırması: olay türü yok,
+  pencere içeriği yok, jest yok, ekran görüntüsü yok, tuş süzme yok. Servis yalnız bağlanınca
+  KisayolActivity'yi açar ve kendini kapatır. flagRequestAccessibilityButton bilerek YOK: o bayrakla
+  (targetSdk > 29) kısayol servisi açıp kapatmak yerine açık servise tıklama yollar.
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:canPerformGestures="false"
+    android:canRequestFilterKeyEvents="false"
+    android:canRetrieveWindowContent="false"
+    android:canTakeScreenshot="false"
+    android:description="@string/eren_kisayol_aciklama" />

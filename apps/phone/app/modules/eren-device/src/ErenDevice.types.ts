@@ -36,6 +36,8 @@ export interface CihazDurumu {
   kullanim_erisimi: boolean;
   /** Telefondaki tam yetki bayrağı; yalnız biyometrili ekrandan açılır, kapatmak serbest. */
   tam_yetki: boolean;
+  /** Ses tuşu erişilebilirlik kısayolu (`KisayolErisimServisi`) kurulu mu: sistemde hedef olarak seçili mi. */
+  ses_kisayolu: boolean;
 }
 
 export interface EslesmeBilgisi {
@@ -159,6 +161,11 @@ export interface ErenDeviceModulu {
   kisayolTuket(id: string): Promise<void>;
   /** Sistemden Hızlı Ayarlar'a asistan kutucuğunu ekleme ister (Android 13+; altında `desteklenmiyor`). */
   kisayolKutucuguEkle(): Promise<"eklendi" | "zaten" | "reddedildi" | "desteklenmiyor">;
+  /**
+   * Ses tuşu kısayolunu kurar (iki ses tuşunu basılı tutmak asistanı açar). `yetki_yok`: `WRITE_SECURE_SETTINGS`
+   * verilmemiş; `hata`: kurulamadı ya da bağlam yok.
+   */
+  sesKisayoluKur(): Promise<"kuruldu" | "yetki_yok" | "hata">;
   addListener<E extends keyof ErenDeviceOlaylari>(
     olay: E,
     dinleyici: (veri: ErenDeviceOlaylari[E]) => void,

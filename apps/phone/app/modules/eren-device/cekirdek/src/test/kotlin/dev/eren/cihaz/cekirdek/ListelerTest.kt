@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test
 
 class ListelerTest {
     private val kendi = "com.ornek.eren"
+    private val banka = "com.ziraat.ziraatmobil"
 
     private val sabitler = listOf(
         kendi,
@@ -19,8 +20,12 @@ class ListelerTest {
         "com.android.systemui",
     )
 
-    private fun kurulu(paket: String, imza: String = "imza1", ad: String = "Ad $paket") =
-        KuruluUygulama(paket, ad, imza)
+    private fun kurulu(
+        paket: String,
+        imza: String = "imza1",
+        ad: String = "Ad $paket",
+        sistemIci: Boolean = false,
+    ) = KuruluUygulama(paket, ad, imza, sistemIci)
 
     private fun girdi(
         kurulu: List<KuruluUygulama> = emptyList(),
@@ -50,24 +55,84 @@ class ListelerTest {
     }
 
     @Test
-    fun bilinmeyenPaketYeni() {
+    fun cozulenDegismezKararsizVeBankaAdliOlsaDaDegismez() {
+        val l = listelerKur.kur(
+            kendi,
+            girdi(listOf(kurulu("com.ornek.ev"), kurulu(banka)), cozulen = setOf("com.ornek.ev", banka)),
+        )
+        assertEquals(UygulamaDurumu.DEGISMEZ, l.durum("com.ornek.ev"))
+        assertEquals(UygulamaDurumu.DEGISMEZ, l.durum(banka))
+    }
+
+    @Test
+    fun kararsizSiradanUygulamaAcik() {
         val l = listelerKur.kur(kendi, girdi(listOf(kurulu("com.ornek.a"))))
-        assertEquals(UygulamaDurumu.YENI, l.durum("com.ornek.a"))
+        assertEquals(UygulamaDurumu.ACIK, l.durum("com.ornek.a"))
+    }
+
+    @Test
+    fun kararsizBankaHassas() {
+        val l = listelerKur.kur(kendi, girdi(listOf(kurulu(banka, ad = "Ziraat Mobil"))))
+        assertEquals(UygulamaDurumu.HASSAS, l.durum(banka))
+    }
+
+    @Test
+    fun adiBankaIpucuVerenBilinmeyenPaketHassas() {
+        val l = listelerKur.kur(kendi, girdi(listOf(kurulu("com.ornek.xyz", ad = "Örnek Bankası"))))
+        assertEquals(UygulamaDurumu.HASSAS, l.durum("com.ornek.xyz"))
+    }
+
+    @Test
+    fun kuruluOlmayanPaketYeni() {
+        val l = listelerKur.kur(kendi, girdi(listOf(kurulu("com.ornek.a"))))
         assertEquals(UygulamaDurumu.YENI, l.durum("com.ornek.hic"))
+        assertEquals(UygulamaDurumu.YENI, l.durum(banka))
     }
 
     @Test
     fun kuruluOlmayanPaketinKarariYoksayilir() {
-        val kararlar = mapOf("com.ornek.a" to KullaniciKarari(UygulamaDurumu.ACIK, "imza1"))
+        val kararlar = mapOf(
+            "com.ornek.a" to KullaniciKarari(UygulamaDurumu.ACIK, "imza1"),
+            banka to KullaniciKarari(UygulamaDurumu.HASSAS, "imza1"),
+        )
         val l = listelerKur.kur(kendi, girdi(emptyList(), kararlar))
         assertEquals(UygulamaDurumu.YENI, l.durum("com.ornek.a"))
+        assertEquals(UygulamaDurumu.YENI, l.durum(banka))
     }
 
     @Test
-    fun imzaDegisinceYeni() {
+    fun hassasKarariImzaDegisinceDeHassas() {
+        val kararlar = mapOf(
+            "com.ornek.a" to KullaniciKarari(UygulamaDurumu.HASSAS, "imza1"),
+            banka to KullaniciKarari(UygulamaDurumu.HASSAS, "imza1"),
+        )
+        val l = listelerKur.kur(
+            kendi,
+            girdi(listOf(kurulu("com.ornek.a", "imza2"), kurulu(banka, "imza2", "Ziraat")), kararlar),
+        )
+        assertEquals(UygulamaDurumu.HASSAS, l.durum("com.ornek.a"))
+        assertEquals(UygulamaDurumu.HASSAS, l.durum(banka))
+    }
+
+    @Test
+    fun bankaIcinAcikKarariAyniImzadaAcik() {
+        val kararlar = mapOf(banka to KullaniciKarari(UygulamaDurumu.ACIK, "imza1"))
+        val l = listelerKur.kur(kendi, girdi(listOf(kurulu(banka, "imza1", "Ziraat Mobil")), kararlar))
+        assertEquals(UygulamaDurumu.ACIK, l.durum(banka))
+    }
+
+    @Test
+    fun bankaIcinAcikKarariImzaDegisinceHassas() {
+        val kararlar = mapOf(banka to KullaniciKarari(UygulamaDurumu.ACIK, "imza1"))
+        val l = listelerKur.kur(kendi, girdi(listOf(kurulu(banka, "imza2", "Ziraat Mobil")), kararlar))
+        assertEquals(UygulamaDurumu.HASSAS, l.durum(banka))
+    }
+
+    @Test
+    fun siradanUygulamaIcinAcikKarariImzaDegisinceAcik() {
         val kararlar = mapOf("com.ornek.a" to KullaniciKarari(UygulamaDurumu.ACIK, "imza1"))
         val l = listelerKur.kur(kendi, girdi(listOf(kurulu("com.ornek.a", "imza2")), kararlar))
-        assertEquals(UygulamaDurumu.YENI, l.durum("com.ornek.a"))
+        assertEquals(UygulamaDurumu.ACIK, l.durum("com.ornek.a"))
     }
 
     @Test
@@ -87,19 +152,21 @@ class ListelerTest {
     }
 
     @Test
-    fun gecersizKararDurumuYeniOlur() {
+    fun gecersizKararKararYokSayilir() {
         val l = listelerKur.kur(
             kendi,
             girdi(
-                listOf(kurulu("com.ornek.a"), kurulu("com.ornek.b")),
+                listOf(kurulu("com.ornek.a"), kurulu("com.ornek.b"), kurulu(banka, ad = "Ziraat")),
                 mapOf(
                     "com.ornek.a" to KullaniciKarari(UygulamaDurumu.DEGISMEZ, "imza1"),
                     "com.ornek.b" to KullaniciKarari(UygulamaDurumu.YENI, "imza1"),
+                    banka to KullaniciKarari(UygulamaDurumu.DEGISMEZ, "imza1"),
                 ),
             ),
         )
-        assertEquals(UygulamaDurumu.YENI, l.durum("com.ornek.a"))
-        assertEquals(UygulamaDurumu.YENI, l.durum("com.ornek.b"))
+        assertEquals(UygulamaDurumu.ACIK, l.durum("com.ornek.a"))
+        assertEquals(UygulamaDurumu.ACIK, l.durum("com.ornek.b"))
+        assertEquals(UygulamaDurumu.HASSAS, l.durum(banka))
     }
 
     @Test
@@ -114,9 +181,10 @@ class ListelerTest {
                 setOf("com.ornek.c"),
             ),
         )
-        assertEquals(UygulamaDurumu.YENI, l.durum("com.ornek.a"))
+        assertEquals(UygulamaDurumu.ACIK, l.durum("com.ornek.a"))
         assertEquals(UygulamaDurumu.HASSAS, l.durum("com.ornek.b"))
         assertEquals(UygulamaDurumu.DEGISMEZ, l.durum("com.ornek.c"))
+        assertEquals(UygulamaDurumu.YENI, l.durum("com.ornek.d"))
         assertEquals(listOf("com.ornek.a", "com.ornek.b"), l.uygulamalar().map { it.paket })
         assertEquals(UygulamaDurumu.DEGISMEZ, l.durum(kendi))
     }
@@ -130,15 +198,111 @@ class ListelerTest {
                     kurulu("com.ornek.z", ad = "Z"),
                     kurulu("com.android.settings", ad = "Ayarlar"),
                     kurulu("com.ornek.a", ad = "A"),
+                    kurulu(banka, ad = "Ziraat Mobil"),
+                    kurulu("com.ornek.h", ad = "H"),
                 ),
-                mapOf("com.ornek.a" to KullaniciKarari(UygulamaDurumu.ACIK, "imza1")),
+                mapOf(
+                    "com.ornek.a" to KullaniciKarari(UygulamaDurumu.ACIK, "imza1"),
+                    "com.ornek.h" to KullaniciKarari(UygulamaDurumu.HASSAS, "imza1"),
+                ),
             ),
         )
         assertEquals(
             listOf(
-                UygulamaBilgisi("com.ornek.z", "Z", UygulamaDurumu.YENI),
+                UygulamaBilgisi("com.ornek.z", "Z", UygulamaDurumu.ACIK),
                 UygulamaBilgisi("com.android.settings", "Ayarlar", UygulamaDurumu.DEGISMEZ),
                 UygulamaBilgisi("com.ornek.a", "A", UygulamaDurumu.ACIK),
+                UygulamaBilgisi(banka, "Ziraat Mobil", UygulamaDurumu.HASSAS),
+                UygulamaBilgisi("com.ornek.h", "H", UygulamaDurumu.HASSAS),
+            ),
+            l.uygulamalar(),
+        )
+    }
+
+    private val gms = "com.google.android.gms"
+    private val gmsAd = "Google Play hizmetleri"
+
+    @Test
+    fun kararsizSistemIciSiradanPaketHassas() {
+        val l = listelerKur.kur(kendi, girdi(listOf(kurulu(gms, ad = gmsAd, sistemIci = true))))
+        assertEquals(UygulamaDurumu.HASSAS, l.durum(gms))
+    }
+
+    @Test
+    fun sistemIciAcikKarariAyniImzadaAcik() {
+        val kararlar = mapOf(gms to KullaniciKarari(UygulamaDurumu.ACIK, "imza1"))
+        val l = listelerKur.kur(kendi, girdi(listOf(kurulu(gms, "imza1", gmsAd, sistemIci = true)), kararlar))
+        assertEquals(UygulamaDurumu.ACIK, l.durum(gms))
+    }
+
+    @Test
+    fun sistemIciAcikKarariImzaDegisinceHassas() {
+        val kararlar = mapOf(gms to KullaniciKarari(UygulamaDurumu.ACIK, "imza1"))
+        val l = listelerKur.kur(kendi, girdi(listOf(kurulu(gms, "imza2", gmsAd, sistemIci = true)), kararlar))
+        assertEquals(UygulamaDurumu.HASSAS, l.durum(gms))
+    }
+
+    @Test
+    fun sistemIciOlmayanKararsizSiradanPaketAcik() {
+        val l = listelerKur.kur(kendi, girdi(listOf(kurulu(gms, ad = gmsAd, sistemIci = false))))
+        assertEquals(UygulamaDurumu.ACIK, l.durum(gms))
+    }
+
+    @Test
+    fun sistemIciHassasKarariAyniImzadaHassas() {
+        val kararlar = mapOf(gms to KullaniciKarari(UygulamaDurumu.HASSAS, "imza1"))
+        val l = listelerKur.kur(kendi, girdi(listOf(kurulu(gms, "imza1", gmsAd, sistemIci = true)), kararlar))
+        assertEquals(UygulamaDurumu.HASSAS, l.durum(gms))
+    }
+
+    @Test
+    fun sistemIciOlupDegismezListesindeOlanPaketDegismez() {
+        val miui = "com.miui.home"
+        val l = listelerKur.kur(
+            kendi,
+            girdi(listOf(kurulu(miui, ad = "Sistem Başlatıcı", sistemIci = true)), cozulen = setOf(miui)),
+        )
+        assertEquals(UygulamaDurumu.DEGISMEZ, l.durum(miui))
+    }
+
+    @Test
+    fun bosImzaliKuruluPaketYeniAcikKarariOlsaBile() {
+        val kararlar = mapOf("com.ornek.a" to KullaniciKarari(UygulamaDurumu.ACIK, "imza1"))
+        val l = listelerKur.kur(kendi, girdi(listOf(kurulu("com.ornek.a", imza = "")), kararlar))
+        assertEquals(UygulamaDurumu.YENI, l.durum("com.ornek.a"))
+    }
+
+    @Test
+    fun bosImzaliBankaPaketiYeni() {
+        val l = listelerKur.kur(kendi, girdi(listOf(kurulu(banka, imza = "", ad = "Ziraat Mobil"))))
+        assertEquals(UygulamaDurumu.YENI, l.durum(banka))
+    }
+
+    @Test
+    fun bosImzaliSistemIciPaketYeni() {
+        val l = listelerKur.kur(kendi, girdi(listOf(kurulu(gms, imza = "", ad = gmsAd, sistemIci = true))))
+        assertEquals(UygulamaDurumu.YENI, l.durum(gms))
+    }
+
+    @Test
+    fun uygulamalarSistemIciVeBosImzaliDurumlariTasir() {
+        val l = listelerKur.kur(
+            kendi,
+            girdi(
+                listOf(
+                    kurulu(gms, ad = gmsAd, sistemIci = true),
+                    kurulu("com.ornek.bos", imza = "", ad = "Bos"),
+                    kurulu("com.ornek.a", ad = "A"),
+                    kurulu(banka, imza = "", ad = "Ziraat Mobil"),
+                ),
+            ),
+        )
+        assertEquals(
+            listOf(
+                UygulamaBilgisi(gms, gmsAd, UygulamaDurumu.HASSAS),
+                UygulamaBilgisi("com.ornek.bos", "Bos", UygulamaDurumu.YENI),
+                UygulamaBilgisi("com.ornek.a", "A", UygulamaDurumu.ACIK),
+                UygulamaBilgisi(banka, "Ziraat Mobil", UygulamaDurumu.YENI),
             ),
             l.uygulamalar(),
         )

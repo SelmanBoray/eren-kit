@@ -73,7 +73,8 @@ import dev.eren.cihaz.cekirdek.SaatPortu
  *       `TamYetki.kapat` her yerden serbesttir.
  *   (5) `Settings.Secure.put*` yalnız `ErisimAnahtari.kt`'de (erişilebilirlik servisini açıp kapatmak).
  *   (6) `KisayolDeposu.koy(`'un tek çağıranı `KisayolActivity.kt`'dir: kısayol mesajı yalnız
- *       kullanıcının o ekranda söyleyip göndermesiyle doğar.
+ *       kullanıcının o ekranda sesle söylemesiyle doğar (0.4.3'ten beri onay sorulmaz: boş olmayan
+ *       dikte hemen konur; iptal ya da boş dikte hiçbir şey koymaz).
  * =================================================================================================
  */
 
@@ -193,7 +194,12 @@ interface A11yBagi {
  * metin; yalnız onay/liste ekranlarında ve `app_list`'te). `Listeler.guncelle` girdisini üretir.
  */
 interface PaketKapisi {
-    /** Kurulu uygulamalar + çözülen değişmezler + o anki kullanıcı kararları. */
+    /**
+     * Kurulu uygulamalar + çözülen değişmezler + o anki kullanıcı kararları. `KuruluUygulama.sistemIci`:
+     * FLAG_SYSTEM olup CATEGORY_LAUNCHER çözümünde olmayan paket. Değişmezler: Ayarlar, kurucu, Play,
+     * izin denetleyicisi ile HOME çözen tüm paketler ve varsayılan klavye (şart aranmaz; değişmez yapmak
+     * yalnız kısıtlar). İmza özeti okunamazsa boş gelir.
+     */
     fun listeGirdisi(): ListeGirdisi
 
     /** SHA-256 imza özeti; paket yoksa `null`. */
@@ -269,6 +275,15 @@ interface DenetimKapisi {
  *   `servisBaglandi/servisKoptu` (`ErisimServisi`); `canliServis()`, `bekleniyor()`. Çağıranlar:
  *   `OnayActivity`/`OtoIzinKapisi` (`ac`), `DurdurAlici`/`CihazServisi.onDestroy` (`kapat`).
  *
+ * KisayolErisimServisi : android.accessibilityservice.AccessibilityService
+ *   Yeteneksiz tetik servisi: ses tuşu erişilebilirlik kısayoluna bağlıdır (iki ses tuşunu basılı
+ *   tutmak). Sistem onu bağlayınca cihaz kilitli DEĞİLSE `KisayolActivity`'yi açar; kilitliyse açmaz
+ *   (kilit `KeyguardManager.isKeyguardLocked` ile okunur, `KeyguardManager` alınamazsa kilitli sayılır).
+ *   Her yolda `disableSelf` çağırır. Koruma ayara değil buraya konmuştur: ölçümde
+ *   `accessibility_shortcut_on_lock_screen`=0 iken de kısayol kilitliyken tetiklendi. Kilit ekranında
+ *   sistemin kısa kısayol geri bildirimi (titreşim/ses) servis kodundan engellenemez. Olay işlemez,
+ *   ekran içeriği okumaz, eylem yapmaz; `ErisimServisi` ile ilgisi yoktur.
+ *
  * EkranOkuyucu  (EkranPortu, A11yBagi gerçekler)
  *   Erişilebilirlik ağacından okur; hiçbir okuma ekranı değiştirmez. `durum/anlik/elementler/dugum/
  *   odak/goruntu`. PencereTuru'nu üretici arayüzünün pencere türlerinden eşler; `rol`'ü sınıf adından türetir. Bağlı
@@ -306,7 +321,8 @@ interface DenetimKapisi {
  *   çağrılırsa kendini aktarır), sonuç ana iplikte tam bir kez. Sıra: `TamYetki.acik` (değilse
  *   `tam_yetki_kapali`) → plan `Sema.planCoz` ile sıkı çözülür, özet `PlanHash.planHash` ile yeniden
  *   hesaplanıp karşılaştırılır, tur telefon değilse `gecersiz` → çekirdek yoksa `cekirdek_yok` →
- *   plandaki her paket listede `acik` olmalı (`YENI` → `uygulama_listede_degil`; hassas/
+ *   plandaki her paket listede `acik` olmalı (`YENI`, yani kurulu olmayan paket →
+ *   `uygulama_listede_degil`; hassas/
  *   değişmez → `hassas`) → `ErisimAnahtari.ac`, `ACIK` değilse `erisim_acilamadi` →
  *   `izinler.ekle(OnayliIzin(..., kaynak = OTO))` (süre/bütçe/mod OnayActivity'nin önceden seçili
  *   varsayılanlarıyla; biyometri yok) → `Adaptor.oturumGuncelle?.izinEklendi(izin)` → ön plan plandaki
@@ -322,7 +338,7 @@ interface DenetimKapisi {
  *   (UsageStatsManager, son 60 sn'deki en son ACTIVITY_RESUMED; kendi paketimiz, systemui ve varsayılan
  *   başlatıcı hariç; en son olay başlatıcı ya da kendi paketimizse `null`: bayat ön plan gönderilmez;
  *   yetki yoksa `null`), `koy(ctx, metin, paket?): String` (DEĞİŞMEZ 6: tek çağıran
- *   `KisayolActivity`; paket hassas/değişmez ya da durumu bilinmiyorsa paket ve ad `null`; ad
+ *   `KisayolActivity`; paket hassas/değişmez ya da çekirdek yok/durum okunamıyorsa paket ve ad `null`; ad
  *   PackageManager etiketinden, en çok 80, kontrol karakterleri ayıklanmış; yeni mesaj eskisini siler;
  *   `Adaptor.olaylar?.kisayolGeldi(id)`), `al(): KisayolMesaji?`, `tuket(id)` (yalnız id eşleşirse).
  *
@@ -349,12 +365,15 @@ interface DenetimKapisi {
  *   (`"acildi"` | `"iptal"`); RESULT_CANCELED ya da extra yoksa köprü `iptal` sayar.
  *
  * KisayolActivity : android.app.Activity
- *   Saydam tema `@style/Eren.Saydam`, `taskAffinity=""`, excludeFromRecents, noHistory; kutucuk ve
- *   bildirimden açılır (köprüden değil). Açılır açılmaz `KisayolDeposu.onPlan`; sonra RecognizerIntent
- *   (tr-TR; RECORD_AUDIO yok; köprüdeki `dikte()` ile aynı yol). Metin gelince küçük kart (metin +
- *   "Bağlam: <ad>" + 3 sn geri sayım + İptal + Gönder); süre dolunca ya da Gönder'de `KisayolDeposu.koy`
- *   (DEĞİŞMEZ 6: tek çağıran burası); JS ayakta değilse (`Adaptor.olaylar == null`) uygulamanın
- *   başlatıcı etkinliğini başlatır; sonra kapanır. Dikte iptalse sessizce kapanır.
+ *   Saydam tema `@style/Eren.Saydam`, `taskAffinity=""`, excludeFromRecents; manifestte noHistory
+ *   BİLEREK YOK (tanıyıcı opak gelirse sonuç kaybolur). Kutucuk, bildirim ve ses tuşu kısayolundan
+ *   (`KisayolErisimServisi`) açılır (köprüden değil). Açılır açılmaz `KisayolDeposu.onPlan`; sonra
+ *   RecognizerIntent (tr-TR; RECORD_AUDIO yok; köprüdeki `dikte()` ile aynı yol). Kart, geri sayım,
+ *   Gönder/İptal düğmesi YOKTUR: boş olmayan metin gelince onay sormadan hemen `KisayolDeposu.koy`
+ *   (DEĞİŞMEZ 6: tek çağıran burası; yanlış tanınan dikte de gider); kısa Toast ("<asistanAdi()>
+ *   oturumuna gönderildi · <bağlam adı>"; gösterilen ad temizlenir: Unicode FORMAT/CONTROL/ayırıcı
+ *   karakterler atılır, 40 karaktere kısaltılır; yalnız gösterim, depoya giden bağlam değişmez); JS ayakta değilse (`Adaptor.olaylar == null`) uygulamanın
+ *   başlatıcı etkinliğini başlatır; sonra kapanır. Dikte iptal ya da boşsa hiçbir şey göndermeden kapanır.
  *
  * EslestirmeActivity : android.app.Activity
  *   FLAG_SECURE. QR'ı Google kod tarayıcı okur (CAMERA izni yok) ya da elle kod girişi. `EslestirmeQr`
@@ -363,7 +382,12 @@ interface DenetimKapisi {
  *   biyometri. Result `EslestirSonucu{sonuc, kod?}`.
  *
  * UygulamaListesiActivity : android.app.Activity
- *   Uygulamalar ekranı: izin verilecekler `acik`, banka/parola `hassas`. `KullaniciKarari` (durum +
+ *   Uygulamalar ekranı, iki durumlu: Açık / Kapalı (`acik`/`hassas`); değişmezler "Kilitli" ve
+ *   düğmesizdir. Varsayılan açıktır; banka/para/kimlik uygulamaları (`HassasUygulamalar`) ve başlatıcı
+ *   simgesi olmayan sistem iç paketleri (`sistemIci`) otomatik kapalı başlar. Not iki türlüdür: "Banka,
+ *   para ya da kimlik uygulaması: otomatik kapalı" ya da "Sistem bileşeni: otomatik kapalı". Sistem
+ *   bileşenleri listenin sonunda gösterilir. "Açık" biyometri ya da ekran kilidi ister, "Kapalı" istemez; ikisi
+ *   de imza özetini karar anında alır. "Yeni" ve kararı silme seçeneği yoktur. `KullaniciKarari` (durum +
  *   o anki imza özeti) deposunu yazar; `cekirdek.listeler.guncelle` + `oturumGuncelle.uygulamalarDegisti`.
  *
  * DenetimActivity : android.app.Activity
@@ -378,7 +402,8 @@ interface DenetimKapisi {
  *   Definition { Name("ErenDevice") ... }. Yüzeyi birebir `ErenDevice.types.ts` (DEĞİŞMEZ 3). Eşleme:
  *     durum()           → EkranPortu.durum() + eşleşme/VPN/pil/bildirim/biyometri bayrakları +
  *                         erisim_yetkisi (`ErisimAnahtari.yetkiVar`), kullanim_erisimi (AppOps
- *                         GET_USAGE_STATS izinli mi), tam_yetki (`TamYetki.acik`)
+ *                         GET_USAGE_STATS izinli mi), tam_yetki (`TamYetki.acik`), ses_kisayolu
+ *                         (`ErisimAnahtari.sesKisayoluKurulu`)
  *     eslesme()         → kalıcı `Eslesme` → {device_id, host, port} | null
  *     eslestir()        → EslestirmeActivity (startActivityForResult)
  *     sohbetHello()     → client_nonce = rastgele; `oturum` 30 sn tek kullanım (Kanal.SOHBET, /cihaz DEĞİL)
@@ -396,6 +421,7 @@ interface DenetimKapisi {
  *     kisayolTuket(id)  → KisayolDeposu.tuket
  *     kisayolKutucuguEkle() → StatusBarManager.requestAddTileService(KisayolKutucugu) (API 33+;
  *                         altı "desteklenmiyor") → "eklendi" | "zaten" | "reddedildi" | "desteklenmiyor"
+ *     sesKisayoluKur()  → ErisimAnahtari.sesKisayoluKur → "kuruldu" | "yetki_yok" | "hata" (bağlam yoksa hata)
  *   Olaylar: durumDegisti/izinlerDegisti/bildirimAcildi{tur}/kisayolGeldi{id} → `AdaptorOlaylari` ile
  *   `sendEvent`. `Adaptor.olaylar = this` (modül yıkımında null). Bu modülde cmd/cmd_result/token/ham
  *   çerçeve YOK.

@@ -33,52 +33,83 @@ internal object KiPaket {
     const val NOTLAR = "com.example.notlar"
     const val KLAVYE = "com.example.klavye"
     const val BANKA = "com.example.banka"
+
+    /** Kurulu, kararsız sıradan uygulama ("yeni kurulmuş"): kural 5'le ACIK. */
     const val YENI = "com.example.yeni"
+
+    /** ACIK kararının imzası değişmiş sıradan uygulama: kural 5'le ACIK. */
     const val DEGISTI = "com.example.degisti"
+
+    /** Kurulu, kararsız gerçek banka paketi: kural 5'le otomatik HASSAS. */
+    const val ZIRAAT = "com.ziraat.ziraatmobil"
     const val BASLATICI = "com.example.baslatici"
     const val KURULMAMIS = "com.example.kurulmamis"
     const val AYARLAR = "com.android.settings"
     const val SYSTEMUI = "com.android.systemui"
     const val KENDI = "dev.eren.app"
 
-    /** Testin kendi durum modeli; üretimdeki `Listeler`'e bakmadan beklentiyi kurar. */
-    val ACIKLAR: Set<String> = setOf(MESAJ, HARITA, NOTLAR, KLAVYE)
     val DEGISMEZLER: List<String> = listOf(
         AYARLAR, "com.android.vending", "com.google.android.packageinstaller", "com.android.packageinstaller",
         "com.google.android.permissioncontroller", "com.android.permissioncontroller", "com.miui.securitycenter",
         "com.tailscale.ipn", SYSTEMUI, KENDI, BASLATICI,
     )
 
+    /**
+     * Kurala göre banka/para sayılan fikstür paketleri. Testin kendi elle seçtiği küme: üretimdeki
+     * `HassasUygulamalar`'a sorulmaz (BANKA ayrıca kullanıcı kararıyla da HASSAS).
+     */
+    val OTOMATIK_HASSAS: Set<String> = setOf(BANKA, ZIRAAT)
+
+    private val KURULU: List<KuruluUygulama> = listOf(
+        KuruluUygulama(MESAJ, "Mesajlar", "i-mesaj"),
+        KuruluUygulama(HARITA, "Harita", "i-harita"),
+        KuruluUygulama(NOTLAR, "Notlar", "i-notlar"),
+        KuruluUygulama(KLAVYE, "Klavye", "i-klavye"),
+        KuruluUygulama(BANKA, "Banka", "i-banka"),
+        KuruluUygulama(YENI, "Yeni", "i-yeni"),
+        KuruluUygulama(DEGISTI, "Degisti", "i-degisti-yeni"),
+        KuruluUygulama(ZIRAAT, "Ziraat Mobil", "i-ziraat"),
+        KuruluUygulama(BASLATICI, "Baslatici", "i-baslatici"),
+    )
+
+    private val KARARLAR: Map<String, KullaniciKarari> = mapOf(
+        MESAJ to KullaniciKarari(UygulamaDurumu.ACIK, "i-mesaj"),
+        HARITA to KullaniciKarari(UygulamaDurumu.ACIK, "i-harita"),
+        NOTLAR to KullaniciKarari(UygulamaDurumu.ACIK, "i-notlar"),
+        KLAVYE to KullaniciKarari(UygulamaDurumu.ACIK, "i-klavye"),
+        BANKA to KullaniciKarari(UygulamaDurumu.HASSAS, "i-banka"),
+        // Kullanıcı açık demiş ama imza o günden beri değişti: karar geçersiz, varsayılana (sıradan: ACIK) düşer.
+        DEGISTI to KullaniciKarari(UygulamaDurumu.ACIK, "i-degisti-eski"),
+        // Intent çözümüyle değişmez: kullanıcı kararı bunu açamaz.
+        BASLATICI to KullaniciKarari(UygulamaDurumu.ACIK, "i-baslatici"),
+        // YENI ve ZIRAAT bilerek kararsız.
+    )
+
+    /**
+     * Testin kendi durum modeli (degisiklik 0.4.3 §4 kuralı, sırayla); üretimdeki `Listeler`'e bakmadan
+     * beklentiyi kurar. `null` (ön plan bilinmiyor) hiçbir pakete denk gelmez: ACIK dışı bir değer yeter.
+     */
     fun durum(paket: String?): UygulamaDurumu {
         if (paket == null) return UygulamaDurumu.YENI
+        // 1. Değişmez her kararın önünde.
         if (paket in DEGISMEZLER) return UygulamaDurumu.DEGISMEZ
-        if (paket == BANKA) return UygulamaDurumu.HASSAS
-        if (paket in ACIKLAR) return UygulamaDurumu.ACIK
-        return UygulamaDurumu.YENI
+        // 2. Yalnız kurulu olmayan paket YENI.
+        val imza = KURULU.firstOrNull { it.paket == paket }?.imzaOzeti ?: return UygulamaDurumu.YENI
+        val karar = KARARLAR[paket]
+        // 3. HASSAS kararı imza değişse de HASSAS.
+        if (karar?.durum == UygulamaDurumu.HASSAS) return UygulamaDurumu.HASSAS
+        // 4. ACIK kararı yalnız aynı imzayla ACIK (bilerek açılmış banka dahil).
+        if (karar?.durum == UygulamaDurumu.ACIK && karar.imzaOzeti == imza) return UygulamaDurumu.ACIK
+        // 5. Karar yok ya da ACIK kararının imzası değişmiş: banka/para HASSAS, kalanı ACIK.
+        return if (paket in OTOMATIK_HASSAS) UygulamaDurumu.HASSAS else UygulamaDurumu.ACIK
     }
 
+    /** Modelin ACIK saydığı kurulu paketler (başlık yalnız bunlarda dolu olabilir). */
+    val ACIKLAR: Set<String> = KURULU.map { it.paket }.filter { durum(it) == UygulamaDurumu.ACIK }.toSet()
+
     fun girdi(): ListeGirdisi = ListeGirdisi(
-        kurulu = listOf(
-            KuruluUygulama(MESAJ, "Mesajlar", "i-mesaj"),
-            KuruluUygulama(HARITA, "Harita", "i-harita"),
-            KuruluUygulama(NOTLAR, "Notlar", "i-notlar"),
-            KuruluUygulama(KLAVYE, "Klavye", "i-klavye"),
-            KuruluUygulama(BANKA, "Banka", "i-banka"),
-            KuruluUygulama(YENI, "Yeni", "i-yeni"),
-            KuruluUygulama(DEGISTI, "Degisti", "i-degisti-yeni"),
-            KuruluUygulama(BASLATICI, "Baslatici", "i-baslatici"),
-        ),
-        kararlar = mapOf(
-            MESAJ to KullaniciKarari(UygulamaDurumu.ACIK, "i-mesaj"),
-            HARITA to KullaniciKarari(UygulamaDurumu.ACIK, "i-harita"),
-            NOTLAR to KullaniciKarari(UygulamaDurumu.ACIK, "i-notlar"),
-            KLAVYE to KullaniciKarari(UygulamaDurumu.ACIK, "i-klavye"),
-            BANKA to KullaniciKarari(UygulamaDurumu.HASSAS, "i-banka"),
-            // Kullanıcı açık demiş ama imza o günden beri değişti: yeniden "yeni".
-            DEGISTI to KullaniciKarari(UygulamaDurumu.ACIK, "i-degisti-eski"),
-            // Intent çözümüyle değişmez: kullanıcı kararı bunu açamaz.
-            BASLATICI to KullaniciKarari(UygulamaDurumu.ACIK, "i-baslatici"),
-        ),
+        kurulu = KURULU.toList(),
+        kararlar = KARARLAR.toMap(),
         cozulenDegismez = setOf(BASLATICI),
     )
 }
@@ -727,11 +758,17 @@ class KomutIsleyiciTest {
         val durumlar = ArrayList<D>()
         durumlar += D("hassas", onPlan(KiPaket.BANKA), DeniedNeden.HASSAS_UYGULAMA)
         durumlar += D("hassas izinde olsa da", onPlan(KiPaket.BANKA), DeniedNeden.HASSAS_UYGULAMA, listOf(mesaj, KiPaket.BANKA))
+        durumlar += D("kararsız banka (otomatik hassas)", onPlan(KiPaket.ZIRAAT), DeniedNeden.HASSAS_UYGULAMA)
+        durumlar += D(
+            "kararsız banka izinde olsa da", onPlan(KiPaket.ZIRAAT), DeniedNeden.HASSAS_UYGULAMA, listOf(mesaj, KiPaket.ZIRAAT),
+        )
         for (p in KiPaket.DEGISMEZLER) durumlar += D("değişmez $p", onPlan(p), DeniedNeden.DEGISMEZ_RET)
         durumlar += D("değişmez izinde olsa da", onPlan(KiPaket.AYARLAR), DeniedNeden.DEGISMEZ_RET, listOf(mesaj, KiPaket.AYARLAR))
-        durumlar += D("yeni", onPlan(KiPaket.YENI), DeniedNeden.YENI_UYGULAMA)
-        durumlar += D("imzası değişmiş", onPlan(KiPaket.DEGISTI), DeniedNeden.YENI_UYGULAMA)
+        // Kararsız sıradan ve imzası değişmiş sıradan uygulama ACIK: plan dışındaysa yalnız plan reddi.
+        durumlar += D("yeni (kararsız sıradan) izin dışı", onPlan(KiPaket.YENI), DeniedNeden.ON_PLAN_IZIN_DISI)
+        durumlar += D("imzası değişmiş sıradan izin dışı", onPlan(KiPaket.DEGISTI), DeniedNeden.ON_PLAN_IZIN_DISI)
         durumlar += D("kurulu değil", onPlan(KiPaket.KURULMAMIS), DeniedNeden.YENI_UYGULAMA)
+        durumlar += D("kurulu değil izinde olsa da", onPlan(KiPaket.KURULMAMIS), DeniedNeden.YENI_UYGULAMA, listOf(mesaj, KiPaket.KURULMAMIS))
         durumlar += D("açık ama izin dışı", onPlan(KiPaket.HARITA), DeniedNeden.ON_PLAN_IZIN_DISI)
         durumlar += D("aktif kök uyuşmuyor", onPlan(mesaj).copy(aktifKokPaketi = KiPaket.HARITA), DeniedNeden.ON_PLAN_IZIN_DISI)
         durumlar += D("odak uyuşmuyor", onPlan(mesaj).copy(odakPaketi = KiPaket.HARITA), DeniedNeden.ON_PLAN_IZIN_DISI)
@@ -774,8 +811,10 @@ class KomutIsleyiciTest {
         Triple("Ayarlar", KiPaket.AYARLAR, DeniedNeden.DEGISMEZ_RET),
         Triple("uygulamanın kendisi", KiPaket.KENDI, DeniedNeden.DEGISMEZ_RET),
         Triple("Play", "com.android.vending", DeniedNeden.DEGISMEZ_RET),
-        Triple("yeni", KiPaket.YENI, DeniedNeden.YENI_UYGULAMA),
-        Triple("imzası değişmiş", KiPaket.DEGISTI, DeniedNeden.YENI_UYGULAMA),
+        Triple("kararsız banka (otomatik hassas)", KiPaket.ZIRAAT, DeniedNeden.HASSAS_UYGULAMA),
+        // Kararsız ve imzası değişmiş sıradan uygulama ACIK: plan dışında olduğu için plan reddi.
+        Triple("yeni (kararsız sıradan) izin dışı", KiPaket.YENI, DeniedNeden.ON_PLAN_IZIN_DISI),
+        Triple("imzası değişmiş sıradan izin dışı", KiPaket.DEGISTI, DeniedNeden.ON_PLAN_IZIN_DISI),
         Triple("kurulu değil", KiPaket.KURULMAMIS, DeniedNeden.YENI_UYGULAMA),
         Triple("açık ama izin dışı", KiPaket.HARITA, DeniedNeden.ON_PLAN_IZIN_DISI),
     ).map { (ad, hedef, neden) ->
@@ -792,6 +831,51 @@ class KomutIsleyiciTest {
         val t = KiTezgah()
         val izin = t.izinVer(paketler = listOf(mesaj, KiPaket.BANKA))
         t.ret(t.cmd(izin, "open_app", """{"package":"${KiPaket.BANKA}"}"""), DeniedNeden.HASSAS_UYGULAMA)
+    }
+
+    @Test
+    fun openAppKararsizBankaIzindeOlsaDaReddedilir() {
+        val t = KiTezgah()
+        val izin = t.izinVer(paketler = listOf(mesaj, KiPaket.ZIRAAT), butce = 5)
+        t.ret(t.cmd(izin, "open_app", """{"package":"${KiPaket.ZIRAAT}"}"""), DeniedNeden.HASSAS_UYGULAMA)
+        assertEquals(5, t.butce(izin))
+    }
+
+    @Test
+    fun openAppKuruluOlmayanIzindeOlsaDaReddedilir() {
+        val t = KiTezgah()
+        val izin = t.izinVer(paketler = listOf(mesaj, KiPaket.KURULMAMIS), butce = 5)
+        t.ret(t.cmd(izin, "open_app", """{"package":"${KiPaket.KURULMAMIS}"}"""), DeniedNeden.YENI_UYGULAMA)
+        assertEquals(5, t.butce(izin))
+    }
+
+    /** Kararsız (yeni kurulmuş) ve imzası değişmiş sıradan uygulama ACIK: plandaysa izinli. */
+    @TestFactory
+    fun kararsizSiradanUygulamaPlandaIzinlidir(): List<DynamicTest> {
+        val testler = ArrayList<DynamicTest>()
+        for ((ad, p) in listOf("yeni (kararsız sıradan)" to KiPaket.YENI, "imzası değişmiş sıradan" to KiPaket.DEGISTI)) {
+            testler += DynamicTest.dynamicTest("open_app: $ad") {
+                val t = KiTezgah()
+                val izin = t.izinVer(paketler = listOf(mesaj, p), butce = 5)
+                val onceki = t.sahteEylem.cagrilar.size
+                t.tamam(t.cmd(izin, "open_app", """{"package":"$p"}"""))
+                assertEquals(listOf<EylemCagrisi>(EylemCagrisi.UygulamaAc(p)), t.sahteEylem.cagrilar.drop(onceki))
+                assertEquals(4, t.butce(izin))
+            }
+            testler += DynamicTest.dynamicTest("click: $ad") {
+                val t = KiTezgah()
+                val izin = t.izinVer(paketler = listOf(p), butce = 5)
+                t.sahteEkran.anlikSenaryo(onPlan(p, "Baslik $p"))
+                t.sahteEkran.dugumler[5] = SahteEkran.baglam(SahteEkran.dugum(5, p, ad = "Liste"))
+                val onceki = t.sahteEylem.cagrilar.size
+                val c = t.tamam(t.cmd(izin, "click", """{"element":5}"""))
+                assertEquals(p, c.paket)
+                assertEquals("Baslik $p", c.baslik)
+                assertEquals(listOf<EylemCagrisi>(EylemCagrisi.DugumeDokun(5, 1, false)), t.sahteEylem.cagrilar.drop(onceki))
+                assertEquals(4, t.butce(izin))
+            }
+        }
+        return testler
     }
 
     private fun katmanli(vararg ek: Pencere): AnlikDurum =
