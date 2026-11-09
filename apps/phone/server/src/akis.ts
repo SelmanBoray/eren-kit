@@ -72,8 +72,12 @@ const pencerelerOku = (d: unknown): Record<string, number> => {
   return cikti;
 };
 
-/** Tüketim sayısı: sonlu ve negatif olmayan değilse 0 (bozuk alan atmaz, sayıyı bozmaz). */
-const tuketimSayisi = (d: unknown): number => (sayiMi(d) && d >= 0 ? d : 0);
+/** Tüketim sayısı: her zaman 0..MAX_SAFE_INTEGER tam sayı. Kesir aşağı yuvarlanır; bozuk, negatif, sonsuz ya da güvenli aralığı aşan 0. */
+const tuketimSayisi = (d: unknown): number => {
+  if (!sayiMi(d) || d < 0) return 0;
+  const t = Math.floor(d);
+  return t <= Number.MAX_SAFE_INTEGER ? t : 0;
+};
 
 /** `model_usage_since_last_result`: alan yoksa/nesne değilse `null`, `{}` ise `[]`. Nesne olmayan model satırı atlanır. */
 const modelKullanimlariOku = (d: unknown): ModelKullanimi[] | null => {

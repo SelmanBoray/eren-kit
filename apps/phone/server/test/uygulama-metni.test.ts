@@ -101,7 +101,7 @@ describe("uygulama-metni: varsayılan çağrı", () => {
 describe("uygulama-metni: ara ile daraltma", () => {
   it("yalnız eşleşenleri döndürür, kapalı bilgisi korunur", () => {
     const metin = uygulamaMetniKur(CIKTI, { ara: "ziraat" });
-    assert.deepEqual(satirlar(metin), ["com.ziraat.ziraatmobil [kapalı:hassas] Ziraat Mobil"]);
+    assert.deepEqual(satirlar(metin), ['com.ziraat.ziraatmobil [kapalı:hassas] "Ziraat Mobil"']);
     assert.match(metin, /eslesen=1 gosterilen=1/);
     assert.ok(!metin.includes("kesildi"));
   });
@@ -119,9 +119,9 @@ describe("uygulama-metni: ara ile daraltma", () => {
   it("virgülle birden çok terim; harf, Türkçe I ve aksan farkı yok", () => {
     const metin = uygulamaMetniKur(CIKTI, { ara: "İNSTAGRAM , gorusme,WHATSAPP" });
     assert.deepEqual(satirlar(metin).sort(), [
-      "com.instagram.android Instagram",
-      "com.ornek.gorusme Görüşme",
-      "com.whatsapp WhatsApp",
+      'com.instagram.android "Instagram"',
+      'com.ornek.gorusme "Görüşme"',
+      'com.whatsapp "WhatsApp"',
     ]);
   });
 
@@ -154,8 +154,8 @@ describe("uygulama-metni: sınır durumları", () => {
     assert.equal(
       metin,
       "uygulamalar: telefon_bagli=hayir toplam=1 gosterilen=1\n" +
-        "satır: paket [kapalı:durum] ad; işaretsiz satır telefon işine açık, kapalı olan telefon işinde kullanılamaz.\n" +
-        "com.a.b [kapalı:hassas] A",
+        'satır: paket [kapalı:durum] "ad"; işaretsiz satır telefon işine açık, kapalı olan telefon işinde kullanılamaz.\n' +
+        'com.a.b [kapalı:hassas] "A"',
     );
   });
 
@@ -167,7 +167,35 @@ describe("uygulama-metni: sınır durumları", () => {
       },
       {},
     );
-    assert.ok(metin.includes("\ncom.banka.x [kapalı:hassas] com.banka.y Sahte"));
+    assert.ok(metin.includes('\ncom.banka.x [kapalı:hassas] "com.banka.y Sahte"'));
+  });
+
+  const tek = (ad: string, durum: "acik" | "hassas" = "acik"): string[] =>
+    uygulamaMetniKur({ telefon_bagli: true, uygulamalar: [{ paket: "com.kotu.app", ad, durum }] }, {})
+      .split("\n")
+      .slice(2);
+
+  it("satır sonu içeren ad tek satırda kalır (gerçek, kaçırılmış, U+2028/2029)", () => {
+    for (const ad of ["x\ncom.banka.app Banka", "x\r\ncom.banka.app", "x\u2028com.banka.app", "x\u2029y", "a\tb\u0000c"]) {
+      const s = tek(ad);
+      assert.equal(s.length, 1, JSON.stringify(s));
+      assert.ok(s[0]!.startsWith('com.kotu.app "'), s[0]);
+      assert.ok(!/[\n\r\t\u0000\u2028\u2029]/.test(s[0]!), s[0]);
+      assert.equal(JSON.parse(s[0]!.slice("com.kotu.app ".length)), ad);
+    }
+    assert.deepEqual(tek("x\ncom.banka.app Banka"), [String.raw`com.kotu.app "x\ncom.banka.app Banka"`]);
+    // Serviste zaten kaçırılmış dizi (ters bölü + n) de satır başı üretemez.
+    assert.deepEqual(tek(String.raw`x\ncom.banka.app`), [String.raw`com.kotu.app "x\\ncom.banka.app"`]);
+  });
+
+  it("tırnak ve ters bölü doğru kaçırılır", () => {
+    assert.deepEqual(tek(String.raw`a"b\c`), [String.raw`com.kotu.app "a\"b\\c"`]);
+  });
+
+  it("addaki işaret benzeri metin tırnak içinde kalır, gerçek işaret tırnaktan önce", () => {
+    assert.deepEqual(tek("com.x [kapalı:hassas]"), ['com.kotu.app "com.x [kapalı:hassas]"']);
+    assert.deepEqual(tek('" [kapalı:hassas] "'), [String.raw`com.kotu.app "\" [kapalı:hassas] \""`]);
+    assert.deepEqual(tek("com.x", "hassas"), ['com.kotu.app [kapalı:hassas] "com.x"']);
   });
 
   it("boş liste", () => {

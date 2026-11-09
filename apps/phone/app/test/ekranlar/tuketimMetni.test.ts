@@ -34,6 +34,18 @@ describe("tokenKisalt", () => {
   });
 });
 
+describe("tokenKisalt Mr birimi", () => {
+  it("milyar ve üstü iki ondalıkla Mr, sondaki sıfırlar atılır", () => {
+    assert.equal(tokenKisalt(1000000000), "1 Mr");
+    assert.equal(tokenKisalt(1234567890), "1,23 Mr");
+    assert.equal(tokenKisalt(2000000000), "2 Mr");
+  });
+  it("Mn aralığında yuvarlama üst birime taşırsa Mr yazılır", () => {
+    assert.equal(tokenKisalt(999995000), "1 Mr");
+    assert.equal(tokenKisalt(999994999), "999,99 Mn");
+  });
+});
+
 describe("maliyetMetni", () => {
   it("undefined ve null için null", () => {
     assert.equal(maliyetMetni(undefined), null);

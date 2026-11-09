@@ -13,13 +13,15 @@ const ondalikliYaz = (tamSayi: number, basamak: number): string => {
   return kesir === "" ? String(tam) : `${tam},${kesir}`;
 };
 
-/** 850 → "850", 12.345 → "12,3 bin", 1.240.000 → "1,24 Mn". Yuvarlama üst birime taşarsa üst birim yazılır. */
+/** 850 → "850", 12.345 → "12,3 bin", 1.240.000 → "1,24 Mn", 1,23 milyar → "1,23 Mr". Yuvarlama üst birime taşarsa üst birim yazılır. */
 export const tokenKisalt = (n: number): string => {
   const x = Number.isFinite(n) && n > 0 ? n : 0;
   if (x < 1000) return String(Math.round(x));
   const onda = Math.round(x / 100);
   if (x < 1_000_000 && onda < 10_000) return `${ondalikliYaz(onda, 1)} bin`;
-  return `${ondalikliYaz(Math.round(x / 10_000), 2)} Mn`;
+  const yuzdeMn = Math.round(x / 10_000);
+  if (x < 1_000_000_000 && yuzdeMn < 100_000) return `${ondalikliYaz(yuzdeMn, 2)} Mn`;
+  return `${ondalikliYaz(Math.round(x / 10_000_000), 2)} Mr`;
 };
 
 /** Yoksa `null`; 0 → "$0"; 0 < x < 0,01 → "< $0,01"; aksi "≈ $2,34". */

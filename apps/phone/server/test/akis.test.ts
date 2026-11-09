@@ -678,3 +678,77 @@ test("result: bozuk costUSD (dize) ve eksik costUSD maliyet_usd null verir", () 
   assert.ok(o.model_kullanimlari !== null);
   for (const m of o.model_kullanimlari) assert.equal(m.maliyet_usd, null, m.model);
 });
+
+// --- tüketim sayaçları: 0 ≤ n ≤ MAX_SAFE_INTEGER tam sayı ---------------------------------------
+
+const MAX = Number.MAX_SAFE_INTEGER;
+// [girdi değeri, beklenen]
+const SAYAC_DURUMLARI: [string, unknown, number][] = [
+  ["kesirli 1.5", 1.5, 1],
+  ["kesirli 0.9", 0.9, 0],
+  ["MAX_SAFE_INTEGER", MAX, MAX],
+  ["2^53", 2 ** 53, 0],
+  ["1e300", 1e300, 0],
+  ["dize", "5", 0],
+  ["negatif", -3, 0],
+  ["negatif kesirli", -0.5, 0],
+  ["eksik", undefined, 0],
+  ["null", null, 0],
+];
+
+test("result: model_usage_since_last_result sayaçları güvenli tam sayıya indirgenir", () => {
+  for (const [ad, v, beklenen] of SAYAC_DURUMLARI) {
+    const alan = (k: string) => (v === undefined ? {} : { [k]: v });
+    const o = sonucOlayi({
+      model_usage_since_last_result: {
+        m: {
+          ...alan("inputTokens"),
+          ...alan("cacheCreationInputTokens"),
+          ...alan("cacheReadInputTokens"),
+          ...alan("outputTokens"),
+          costUSD: 0.5,
+        },
+      },
+    });
+    assert.ok(o.model_kullanimlari !== null, ad);
+    assert.deepEqual(
+      o.model_kullanimlari,
+      [{ model: "m", girdi: beklenen, cache_yazma: beklenen, cache_okuma: beklenen, cikti: beklenen, maliyet_usd: 0.5 }],
+      ad,
+    );
+  }
+});
+
+test("result: usage sayaçları güvenli tam sayıya indirgenir", () => {
+  for (const [ad, v, beklenen] of SAYAC_DURUMLARI) {
+    const alan = (k: string) => (v === undefined ? {} : { [k]: v });
+    const o = sonucOlayi({
+      usage: {
+        ...alan("input_tokens"),
+        ...alan("cache_creation_input_tokens"),
+        ...alan("cache_read_input_tokens"),
+        ...alan("output_tokens"),
+      },
+    });
+    assert.deepEqual(
+      o.ana_kullanim,
+      { girdi: beklenen, cache_yazma: beklenen, cache_okuma: beklenen, cikti: beklenen },
+      ad,
+    );
+  }
+});
+
+test("result: NaN ve sonsuz sayaç 0 sayılır (JSON'da null/dize olarak gelir)", () => {
+  // JSON.stringify NaN/Infinity'yi null yapar; ham metinle de dene
+  const ham = '{"type":"result","is_error":false,"usage":{"input_tokens":1e999,"output_tokens":-1e999,"cache_read_input_tokens":"NaN"}}';
+  const o = akis.satirCoz(ham);
+  assert.ok(o?.tur === "result");
+  assert.deepEqual(o.ana_kullanim, { girdi: 0, cache_yazma: 0, cache_okuma: 0, cikti: 0 });
+});
+
+test("result: sayaçlar karışık değerlerde alan alan bağımsız indirgenir", () => {
+  const o = sonucOlayi({
+    usage: { input_tokens: 7.9, cache_creation_input_tokens: -1, cache_read_input_tokens: 2 ** 53, output_tokens: 3 },
+  });
+  assert.deepEqual(o.ana_kullanim, { girdi: 7, cache_yazma: 0, cache_okuma: 0, cikti: 3 });
+});

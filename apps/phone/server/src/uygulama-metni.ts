@@ -3,7 +3,7 @@ import type { UygulamalarCiktiTipi } from "./sozlesme.ts";
 
 /**
  * `uygulamalar` aracının modele giden metni. Boru girdisi `{}` kalır (protokol değişmez); `ara`
- * yalnız köprüde uygulanır. Her satır `paket [kapalı:<durum>] ad` biçimindedir: paket boşluksuz
+ * yalnız köprüde uygulanır. Her satır `paket [kapalı:<durum>] "ad"` biçimindedir: paket boşluksuz
  * olduğundan ilk sözcüktür, işaret güvenilmez addan önce gelir. İşaretsiz satır `acik`tır.
  */
 export const UYGULAMA_SATIR_BUTCESI = 3_500;
@@ -29,8 +29,18 @@ function sade(s: string): string {
     .replaceAll("ı", "i");
 }
 
+/**
+ * Ad güvenilmezdir: `cihaz`daki `kacir`a ek olarak burada da JSON dize kaçışıyla tırnağa alınır
+ * (satır sonu, sekme, `"`, `\`, denetim karakteri; U+2028/2029 da). Ad satırı bölemez, kendi başına
+ * satır başı gibi görünemez.
+ */
+function adYaz(ad: string): string {
+  return JSON.stringify(ad).replace(/[\u2028\u2029]/g, (c) => `\\u${c.charCodeAt(0).toString(16)}`);
+}
+
 function satir(u: Uygulama): string {
-  return u.durum === "acik" ? `${u.paket} ${u.ad}` : `${u.paket} [kapalı:${u.durum}] ${u.ad}`;
+  const ad = adYaz(u.ad);
+  return u.durum === "acik" ? `${u.paket} ${ad}` : `${u.paket} [kapalı:${u.durum}] ${ad}`;
 }
 
 export function uygulamaMetniKur(cikti: UygulamalarCiktiTipi, girdi: UygulamalarAracGirdi): string {
@@ -66,7 +76,7 @@ export function uygulamaMetniKur(cikti: UygulamalarCiktiTipi, girdi: Uygulamalar
     `toplam=${cikti.uygulamalar.length}` +
     (terimler.length > 0 ? ` eslesen=${sirali.length}` : "") +
     ` gosterilen=${satirlar.length}\n` +
-    "satır: paket [kapalı:durum] ad; işaretsiz satır telefon işine açık, kapalı olan telefon işinde kullanılamaz.";
+    "satır: paket [kapalı:durum] \"ad\"; işaretsiz satır telefon işine açık, kapalı olan telefon işinde kullanılamaz.";
   const alt =
     kalan > 0
       ? `\nkesildi: ${kalan} uygulama gösterilmedi (önce açıklar); ara ile daralt.`

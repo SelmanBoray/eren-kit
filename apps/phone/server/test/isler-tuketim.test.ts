@@ -367,35 +367,136 @@ describe("isler tüketim: yeniden başlatma çift saymaz (ST4)", () => {
     satirlarDogrula(h, id, "bilinmiyor");
   });
 
-  it("tuketimEkle işlem içinde atarsa ofset de yazılmaz; yeniden başlayan servis o partiyi bir kez sayar", async () => {
+});
+
+// --- Tüketim yazım hatası: iş akışı durmaz, o partinin tüketimi düşer, sonra da sayılmaz -----------
+
+const RAPOR = { yapildi: ["Bir sey yapildi"], yapilmadi: [], dosyalar: [], acik_noktalar: [] };
+
+type Bozucu = "gecersiz_satir" | "yazip_atar";
+
+/** `isler` modülünün hata ya da uyarı girdileri (kural seviyeyi bağlamaz: "hata günlüğe yazılır"). */
+const gunlukHatalari = (h: H) =>
+  h.d.gunluk.girdiler.filter((g) => g.modul === "isler" && (g.seviye === "hata" || g.seviye === "uyari"));
+
+/**
+ * Parti 1 (init, R1, R2) normal. Parti 2 (R3, R4, raporlu R6) tüketim yazımında hata verir. Parti 3 (R5)
+ * normal. `gecersiz_satir`: sarmalayıcı ilk satırın sayacını kesirli yapıp gerçek depoya verir (depo
+ * denetimi atar). `yazip_atar`: gerçek depo satırları yazar, sarmalayıcı sonra atar.
+ */
+async function hataliPartiKur(bozucu: Bozucu) {
+  const h = await kur();
+  const id = await h.baslat(pcPlan());
+  const r = sonuclar(h, id);
+  const raporlu = resultSatiri(h, id, {
+    structured_output: RAPOR,
+    model_usage_since_last_result: { [HAIKU]: mu(7, 7, 7, 7, 0.0625) },
+  });
+  h.outEkle(id, h.initSatiri(id, ["eren-soru"]), r[0]!, r[1]!);
+  await h.yokla();
+  assert.equal(h.satirlar().length, 3);
+
+  const gercek = h.depo.tuketimEkle.bind(h.depo);
+  let bozulan = 0;
+  (h.depo as { tuketimEkle: unknown }).tuketimEkle = (k: readonly TuketimKaydi[]): void => {
+    if (k.length === 0 || bozulan > 0) return gercek(k);
+    bozulan++;
+    if (bozucu === "gecersiz_satir") return gercek([{ ...k[0]!, girdi: 1.5 }, ...k.slice(1)]);
+    gercek(k);
+    throw new Error("yazma sonrası çöküş");
+  };
+  const hataOnce = gunlukHatalari(h).length;
+  const parti2 = r[2]! + r[3]! + raporlu;
+  h.outEkle(id, parti2);
+  const ofsetOnce = h.depo.isGetir(id)!.out_ofset;
+  await h.yokla();
+  assert.equal(bozulan, 1, "sarmalayıcı devreye girdi");
+  return { h, id, r, ofsetOnce, parti2, hataOnce };
+}
+
+/** Hatalı partiden sonra: ofset ilerledi, `son_result` raporlu, tüketim yalnız parti 1, hata günlükte. */
+const hataSonrasiDogrula = (x: Awaited<ReturnType<typeof hataliPartiKur>>): void => {
+  const { h, id, ofsetOnce, parti2, hataOnce } = x;
+  const k = h.depo.isGetir(id)!;
+  assert.equal(k.out_ofset, ofsetOnce + Buffer.byteLength(parti2), "ofset hatalı partiyi geçti");
+  assert.deepEqual(k.son_result?.structured_output, RAPOR, "hatalı partinin son_result'ı kalıcı");
+  assert.equal(k.durum, "calisiyor");
+  assert.equal(h.satirlar().length, 3, "hatalı partiden tüketim satırı kalmadı");
+  assert.ok(gunlukHatalari(h).length > hataOnce, "hata günlüğe yazıldı");
+  assert.equal(h.d.gunluk.bul("akis_okuma_hatasi").length, 0, "akış okuması durmadı");
+};
+
+/** Bitişte: parti 1 (3 satır) + parti 3 (R5, 1 satır); hatalı parti yok. */
+const sonSatirlarDogrula = (h: H, id: IsNo): void => {
+  const b = beklenenSatirlar(id, INIT_MODELI);
+  const sade = h.satirlar().map(({ id: _i, ts_ms: _t, ...g }) => g);
+  assert.deepEqual(sade, [b[0], b[1], b[2], b[4]]);
+  const toplam = h.depo.tuketimOzeti({ gunBaslangicMs: 0, yediGunBaslangicMs: 0, isAdet: 10 }).isler.find(
+    (i) => i.is_id === id,
+  )?.toplam;
+  assert.equal(toplam?.sonuc_adet, 3);
+  assert.equal(toplam?.girdi, 100 + 10 + 5 + 1);
+};
+
+describe("isler tüketim: tüketim yazım hatası iş akışını durdurmaz", () => {
+  for (const bozucu of ["gecersiz_satir", "yazip_atar"] as const) {
+    it(`(a) ${bozucu}: iş sonuçlanır, ofset ilerler, o partiden satır yok, sonraki parti normal yazılır`, async () => {
+      const x = await hataliPartiKur(bozucu);
+      hataSonrasiDogrula(x);
+      const { h, id, r } = x;
+      h.outEkle(id, r[4]!);
+      await h.yokla();
+      assert.equal(h.satirlar().length, 4, "sonraki partinin tüketimi yazıldı");
+      h.surecOf(id).cik(0);
+      await h.yokla();
+      const k = h.depo.isGetir(id)!;
+      assert.equal(k.durum, "tamam");
+      assert.deepEqual(k.rapor, RAPOR);
+      sonSatirlarDogrula(h, id);
+    });
+
+    it(`(b) ${bozucu}: hata sonrası yeniden başlatma o partiyi yeniden saymaz`, async () => {
+      const x = await hataliPartiKur(bozucu);
+      hataSonrasiDogrula(x);
+      const { h, id, r } = x;
+      await h.yenidenBaslat();
+      assert.equal(h.satirlar().length, 3, "yeniden başlatma hatalı partiyi saymadı");
+      h.outEkle(id, r[4]!);
+      await h.yokla();
+      h.surecOf(id).cik(0);
+      await h.yokla();
+      assert.equal(h.depo.isGetir(id)!.durum, "tamam");
+      sonSatirlarDogrula(h, id);
+    });
+  }
+});
+
+describe("isler tüketim: ts_ms partiler arasında da kesin artan", () => {
+  it("iki parti aynı milisaniyede işlenir: bütün sonuçların ts_ms'i ayrık ve artan, sonuc_adet 4", async () => {
     const h = await kur();
     const id = await h.baslat(pcPlan());
     const r = sonuclar(h, id);
     h.outEkle(id, h.initSatiri(id, ["eren-soru"]), r[0]!, r[1]!);
     await h.yokla();
-    const ofset = h.depo.isGetir(id)!.out_ofset;
-
-    // Satırları gerçekten yazıp sonra atan sarmalayıcı: işlem geri alınmalı (satırlar da ofset de).
-    const gercek = h.depo.tuketimEkle.bind(h.depo);
-    let atti = 0;
-    (h.depo as { tuketimEkle: unknown }).tuketimEkle = (k: readonly TuketimKaydi[]): void => {
-      gercek(k);
-      if (k.length > 0 && atti === 0) {
-        atti++;
-        throw new Error("yazma sonrası çöküş");
-      }
-    };
+    assert.equal(h.satirlar().length, 3);
+    const an = h.d.zaman.simdi();
+    // İkinci parti çıkış dinleyicisiyle, saat hiç ilerlemeden işlenir.
     h.outEkle(id, r[2]!, r[3]!, r[4]!);
-    await h.yokla();
-    assert.equal(atti, 1, "sarmalayıcı devreye girdi");
-    assert.equal(h.depo.isGetir(id)!.out_ofset, ofset, "ofset ilerlemedi");
-    assert.equal(h.satirlar().length, 3, "atılan partinin satırları geri alındı");
-
-    (h.depo as { tuketimEkle: unknown }).tuketimEkle = gercek;
-    await h.yenidenBaslat();
     h.surecOf(id).cik(0);
-    await h.yokla();
-    satirlarDogrula(h, id, "bilinmiyor");
+    await h.yokla(0);
+    assert.equal(h.d.zaman.simdi(), an, "saat ilerlemedi");
+    const ham = h.satirlar();
+    assert.equal(ham.length, 5);
+    const ts = ham.map((x) => x["ts_ms"] as number);
+    assert.equal(ts[0], ts[1], "iki modelli sonucun satırları aynı ts_ms'te");
+    const sonucTs = [ts[0]!, ts[2]!, ts[3]!, ts[4]!];
+    for (let i = 1; i < sonucTs.length; i++) {
+      assert.ok(sonucTs[i]! > sonucTs[i - 1]!, `ts_ms kesin artan değil: ${JSON.stringify(sonucTs)}`);
+    }
+    const toplam = h.depo.tuketimOzeti({ gunBaslangicMs: 0, yediGunBaslangicMs: 0, isAdet: 10 }).isler.find(
+      (i) => i.is_id === id,
+    )?.toplam;
+    assert.equal(toplam?.sonuc_adet, 4);
   });
 });
 

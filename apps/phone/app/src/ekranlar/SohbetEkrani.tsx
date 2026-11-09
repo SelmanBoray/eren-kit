@@ -36,6 +36,7 @@ import {
   Yukleniyor,
   ZamanAyraci,
   ZamanCizelgesiOgesi,
+  ogePropEsit,
   useAzHareket,
 } from "./Balonlar.tsx";
 import { Dugme } from "./Bilesenler.tsx";
@@ -161,15 +162,18 @@ function erenKaynakli(o: GorunumOgesi): boolean {
 
 const anahtar = (o: GorunumOgesi): string => String(o.seq);
 
-const OgeSatiri = memo(function OgeSatiri(p: {
+type OgeSatiriProps = {
   oge: GorunumOgesi;
   ust: number;
   ayrac: number | null;
   sohbet: Sohbet;
   cihaz: ErenCihaz;
   onIsler: () => void;
+  /** Yalnız rapor kartı öğelerine verilir (diğerlerine `null`); değişimi `ogePropEsit` değerce karşılaştırır. */
   tuketimRaporu: TuketimRaporu | null;
-}): ReactNode {
+};
+
+const OgeSatiri = memo(function OgeSatiri(p: OgeSatiriProps): ReactNode {
   return (
     <View style={{ paddingTop: p.ust }}>
       {p.ayrac !== null && (
@@ -180,7 +184,7 @@ const OgeSatiri = memo(function OgeSatiri(p: {
       <ZamanCizelgesiOgesi oge={p.oge} sohbet={p.sohbet} cihaz={p.cihaz} onIsler={p.onIsler} tuketimRaporu={p.tuketimRaporu} />
     </View>
   );
-});
+}, (a, b) => a.ust === b.ust && a.ayrac === b.ayrac && ogePropEsit(a, b));
 
 // ---------------------------------------------------------------- Metinler
 
@@ -576,7 +580,7 @@ function SohbetEkraniIc(p: SohbetEkraniProps): ReactNode {
           sohbet={sohbet}
           cihaz={cihaz}
           onIsler={isleriAc}
-          tuketimRaporu={tuketimRaporu}
+          tuketimRaporu={item.tur === "rapor" ? tuketimRaporu : null}
         />
       );
     },
