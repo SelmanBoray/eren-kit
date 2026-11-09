@@ -575,6 +575,8 @@ eren-kit/
 
 ## 🧭 Yol haritası
 
+Kanıt ve maliyetleriyle ayrıntılı öneriler: [docs/ONERILER.md](docs/ONERILER.md).
+
 Eksik olanların dürüst listesi, sıralama gözetmeksizin:
 
 - [ ] **İngilizce Opus Orkestra kuralları** (şu an yalnızca Türkçe).
