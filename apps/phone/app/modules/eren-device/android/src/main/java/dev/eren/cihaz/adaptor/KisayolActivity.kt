@@ -34,6 +34,7 @@ class KisayolActivity : Activity() {
     private companion object {
         const val ISTEK_DIKTE = 0x4B01
         const val AD_EN_COK = 80
+        const val AD_GOSTERIM_EN_COK = 40
 
         const val D_BITTI = "bitti"
         const val D_PAKET = "paket"
@@ -152,7 +153,8 @@ class KisayolActivity : Activity() {
         if (!tamam) {
             bildir("${asistanAdi()} oturumuna iletilemedi.")
         } else {
-            val ek = if (ad == null) "" else " · $ad"
+            val gorunen = ad?.let { gosterimAdi(it) }
+            val ek = if (gorunen == null) "" else " · $gorunen"
             bildir("${asistanAdi()} oturumuna gönderildi$ek")
             if (Adaptor.olaylar == null) {
                 // JS ayakta değil: uygulama açılınca `kisayolAl` ile yuvadan çeker.
@@ -211,6 +213,37 @@ class KisayolActivity : Activity() {
     // ---------------------------------------------------------------------------------------------
     // Küçük yardımcılar
     // ---------------------------------------------------------------------------------------------
+
+    /**
+     * Yalnız Toast gösterimi için: FORMAT (yön değiştirenler dahil), CONTROL, satır/paragraf
+     * ayırıcıları boşlukla değiştirilir, ardışık boşluklar tekleşir, en çok 40 karakter ("…" ile).
+     * Depoya giden paket ve gönderilen metin bundan etkilenmez.
+     */
+    private fun gosterimAdi(ham: String): String? {
+        val sb = StringBuilder(ham.length)
+        var i = 0
+        while (i < ham.length) {
+            val cp = ham.codePointAt(i)
+            i += Character.charCount(cp)
+            val tur = Character.getType(cp)
+            val zararli = tur == Character.FORMAT.toInt() ||
+                tur == Character.CONTROL.toInt() ||
+                tur == Character.LINE_SEPARATOR.toInt() ||
+                tur == Character.PARAGRAPH_SEPARATOR.toInt()
+            if (zararli) {
+                if (sb.isNotEmpty() && sb.last() != ' ') sb.append(' ')
+            } else {
+                sb.appendCodePoint(cp)
+            }
+        }
+        var s = sb.toString().trim()
+        if (s.length > AD_GOSTERIM_EN_COK) {
+            var son = AD_GOSTERIM_EN_COK - 1
+            if (Character.isHighSurrogate(s[son - 1])) son--
+            s = s.substring(0, son).trim() + "…"
+        }
+        return s.ifEmpty { null }
+    }
 
     private fun bildir(s: String) {
         try {
