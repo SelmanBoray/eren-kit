@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bellek"
+dynamic = ["version"]
+description = "Claude Code için yerel, oturumlar arası hafıza: beyin bilgi grafı (MCP + web arayüzü) ve oturum devri."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+authors = [{ name = "SelmanBoray" }]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/SelmanBoray/eren-kit"
+Repository = "https://github.com/SelmanBoray/eren-kit"
+Issues = "https://github.com/SelmanBoray/eren-kit/issues"
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+bellek = "bellek.cli:main"
+beyin = "bellek.beyin.__main__:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "bellek.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"bellek.beyin" = ["web/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

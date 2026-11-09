@@ -1,0 +1,740 @@
+"""Claude Code oturum kaydından (JSONL) hızlı özet çıkarma.
+
+Hook'lar her turda çalıştığı için bu modül yalnız standart kütüphane kullanır
+ve dosyanın tamamını belleğe almaz: başından sınırlı bir parça ileriye,
+sonundan sınırlı bir parça geriye doğru okunur. Hiçbir genel fonksiyon istisna
+fırlatmaz; dosya yoksa ya da okunamıyorsa boş sonuç döner.
+
+Gerçek kayıtlardan doğrulanan şema (Claude Code 2.1.29x-2.1.31x):
+
+* Her satır bir JSON nesnesi, ``type`` alanı satır türünü verir.
+* ``user`` / ``assistant`` satırlarında ``sessionId``, ``cwd``, ``timestamp``
+  (ISO, ``...Z``), ``isSidechain``; içerik ``message`` altında.
+* ``assistant``: her içerik bloğu (thinking/text/tool_use) ayrı satırdır,
+  aynı yanıtın satırları aynı ``message.id`` ve ``requestId``'yi taşır,
+  ``message.usage`` tekrarlanır; ``apiBlockIndex`` 0'dan başlar. Hata/yapay
+  mesajlarda ``message.model == "<synthetic>"``.
+* Araç çağrısı: ``message.content[i]`` = ``{"type": "tool_use", "name",
+  "input"}``; Edit/Write/MultiEdit için ``input.file_path``, NotebookEdit için
+  ``input.notebook_path``.
+* ``user`` satırı türleri: araç sonucu (``content`` listesi, ``tool_result``
+  blokları, satırda ``toolUseResult`` alanı); gerçek istem (yeni sürümlerde
+  ``origin.kind == "human"``, ``promptSource`` typed/suggestion_accepted/
+  queued; SDK istemlerinde ``origin`` yok, ``promptSource == "sdk"``);
+  arka plan bildirimi (``origin.kind == "task-notification"``, metin
+  ``<task-notification>`` ile başlar); ``isMeta`` (skill metni,
+  ``<system-reminder>``, ``<local-command-caveat>``); slash komutu
+  (``<command-name>``/``<command-message>``/``<command-args>``) ve çıktısı
+  (``<local-command-stdout>``, ``<bash-input>``, ``<bash-stdout>``);
+  sıkıştırma özeti (``isCompactSummary``, ``isVisibleInTranscriptOnly``);
+  ``[Request interrupted by user...]`` metin bloğu.
+* Başlık satırları: ``{"type": "custom-title", "customTitle"}``,
+  ``{"type": "ai-title", "aiTitle"}``; eski biçim ``{"type": "summary",
+  "summary"}`` (güncel kayıtlarda görülmedi). Bu satırlar oturum boyunca
+  yeniden eklenir, sonuncusu genelde dosyanın son birkaç on KB'ındadır.
+* Hook çıktıları ``user`` değil ``attachment`` satırlarıdır (``attachment.type``
+  hook_success, hook_additional_context ...); ayrıca ``system`` satırları
+  (``subtype``) vardır. İkisi de özete girmez.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import time
+from pathlib import Path
+from typing import Iterator
+
+__all__ = ["oturum_ozeti", "son_istek_bilgisi", "maskele"]
+
+# Okuma sınırları (bayt).
+_BAS_BUTCE = 2 * 1024 * 1024          # ilk istem için baştan okunan en çok
+_SON_BUTCE = 12 * 1024 * 1024         # özet için sondan geriye okunan en çok
+_SON_ISTEK_BUTCE = 8 * 1024 * 1024    # son_istek_bilgisi için geriye en çok
+_BLOK = 256 * 1024
+_SAYIM_BLOK = 8 * 1024 * 1024
+_SAYIM_SURE = 0.12  # s; istek sayımında aşılırsa oranlayarak tahmin
+
+_DUZENLEME_ARACLARI = {"Edit": "file_path", "Write": "file_path",
+                       "MultiEdit": "file_path", "NotebookEdit": "notebook_path"}
+_EN_COK_DUZENLENEN = 15
+_ISTEM_UZUNLUK = 200
+_BASLIK_UZUNLUK = 80
+
+
+class _Isaretler:
+    """Satır türü için hızlı bayt ön-süzgeçleri (JSON çözmeden önce).
+
+    Claude Code sıkışık JSON yazar (``"type":"user"``); ``json.dumps``
+    varsayılanıyla (``"type": "user"``) üretilmiş kayıtlar da desteklenir.
+    Biçim dosya başına bir kez seçilir (bkz. ``_isaret_sec``), böylece sıcak
+    döngüde satır başına tek ``in`` taraması yapılır.
+    """
+
+    __slots__ = ("asistan", "kullanici", "basliklar", "duzenleme", "sikistirma")
+
+    def __init__(self, ayrac: str) -> None:
+        def isaret(anahtar: str, deger: str) -> bytes:
+            return f'"{anahtar}"{ayrac}"{deger}"'.encode()
+        self.asistan = isaret("type", "assistant")
+        self.kullanici = isaret("type", "user")
+        # sıkıştırma sınırı: system/compact_boundary ya da özet user satırı
+        self.sikistirma = (isaret("subtype", "compact_boundary"),
+                           f'"isCompactSummary"{ayrac}true'.encode())
+        self.basliklar = tuple(isaret("type", t)
+                               for t in ("custom-title", "ai-title", "summary"))
+        adlar = "|".join(re.escape(a) for a in _DUZENLEME_ARACLARI)
+        self.duzenleme = re.compile(
+            re.escape(f'"name"{ayrac}"').encode() + b"(?:" + adlar.encode() + b')"')
+
+
+_SIKISIK = _Isaretler(":")
+_BOSLUKLU = _Isaretler(": ")
+_ISARET_ARAC_SONUCU = b'"toolUseResult"'
+_ISARET_BLOK0 = b'"apiBlockIndex":0,'
+
+
+def _isaret_sec(f) -> _Isaretler:
+    """Dosyanın ilk 64 KB'ına bakıp JSON biçimini seçer.
+
+    Sıkışık bir kayıtta ``"type": "`` kaçışsız olarak geçemez (metin içindeki
+    tırnaklar ``\\"`` olarak yazılır), bu yüzden yanlış pozitif vermez.
+    """
+    try:
+        f.seek(0)
+        bas = f.read(64 * 1024)
+    except Exception:
+        return _SIKISIK
+    return _BOSLUKLU if b'"type": "' in bas else _SIKISIK
+
+
+_DUZENLEME_SURE = 0.10  # s; 12 MB ötesinde düzenleme aramanın süre sınırı
+
+# --------------------------------------------------------------------- maske
+
+_GIZLI = "[gizli]"
+
+
+def _tc_gecerli(n: str) -> bool:
+    """T.C. kimlik no algoritması (11 hane, ilk hane 0 değil, 10. ve 11.
+    haneler sağlama)."""
+    if len(n) != 11 or not n.isdigit() or n[0] == "0":
+        return False
+    d = [int(c) for c in n]
+    if ((d[0] + d[2] + d[4] + d[6] + d[8]) * 7 - (d[1] + d[3] + d[5] + d[7])) % 10 != d[9]:
+        return False
+    return sum(d[:10]) % 10 == d[10]
+
+
+def _luhn_gecerli(n: str) -> bool:
+    toplam = 0
+    for i, c in enumerate(reversed(n)):
+        r = int(c)
+        if i % 2:
+            r *= 2
+            if r > 9:
+                r -= 9
+        toplam += r
+    return toplam % 10 == 0
+
+
+def _iban_gecerli(n: str) -> bool:
+    """ISO 13616 mod-97 sağlaması (n boşluksuz, büyük harf)."""
+    if not (15 <= len(n) <= 34):
+        return False
+    duzen = n[4:] + n[:4]
+    try:
+        return int("".join(str(int(c, 36)) for c in duzen)) % 97 == 1
+    except ValueError:
+        return False
+
+
+def _iban_degistir(m: re.Match) -> str:
+    n = re.sub(r"[ \-]", "", m.group(0)).upper()
+    # TR + 24 rakam biçimi kendi başına yeterince belirgin; diğer ülke
+    # kodlarında yanlış alarmı önlemek için mod-97 sağlaması aranır.
+    if (n.startswith("TR") and len(n) == 26 and n[2:].isdigit()) or _iban_gecerli(n):
+        return _GIZLI
+    return m.group(0)
+
+
+def _kart_degistir(m: re.Match) -> str:
+    """13-19 hane, Luhn ve kart ağı ön eki (2-6: Mastercard/Amex/Visa/...,
+    9792: Troy); 1 ile başlayan milisaniye zaman damgaları böylece elenir.
+
+    Eşleşme ayraçla bitişen başka bir sayıyı da yutmuş olabilir ("4111 ...
+    1111 20"); bu durumda yalnız ayraç sınırında biten önekler denenir,
+    kalan kısım korunur. Bitişik rakam dizisi bölünmez.
+    """
+    metin = m.group(0)
+    if not (metin[0] in "23456" or metin.startswith("9792")):
+        return metin
+    konumlar = [i for i, c in enumerate(metin) if c.isdigit()]
+    rakamlar = "".join(metin[i] for i in konumlar)
+    for k in range(min(19, len(rakamlar)), 12, -1):
+        son = konumlar[k - 1] + 1
+        if son < len(metin) and metin[son].isdigit():
+            continue  # grup ortasında kesme
+        if _kart_bicimi(metin[:son]) and _luhn_gecerli(rakamlar[:k]):
+            return _GIZLI + metin[son:]
+    return metin
+
+
+_ISO_TARIH = re.compile(r"(?:19|20)\d\d-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])")
+_YIL = re.compile(r"(?:19|20)\d\d")
+
+
+def _kart_bicimi(metin: str) -> bool:
+    """Ayraçlı dizinin gerçek kart biçiminde olup olmadığı.
+
+    Kabul: bitişik 13-19 hane; 4'lü gruplar (son grup 1-4 hane: 4-4-4-4,
+    4-4-4-4-3, 4-4-4-1); Amex/Diners 4-6-5 ve 4-6-4. Ret: ISO tarih
+    (YYYY-AA-GG) barındıran ya da iki veya daha çok 19xx/20xx yıl grubu taşıyan
+    diziler ("2023 2024 2025 2026", "2025-01-02 2025-01-09").
+    """
+    if _ISO_TARIH.search(metin):
+        return False
+    gruplar = re.split(r"[ \-]+", metin.strip(" -"))
+    if len(gruplar) == 1:
+        return True
+    if sum(1 for g in gruplar if len(g) == 4 and _YIL.fullmatch(g)) >= 2:
+        return False
+    boylar = [len(g) for g in gruplar]
+    if boylar in ([4, 6, 5], [4, 6, 4]):
+        return True
+    return all(b == 4 for b in boylar[:-1]) and 1 <= boylar[-1] <= 4
+
+
+def _tc_degistir(m: re.Match) -> str:
+    return _GIZLI if _tc_gecerli(m.group(0)) else m.group(0)
+
+
+_HARF = "a-zçğıöşü"
+_MASKE_KALIPLARI: list[tuple[re.Pattern[str], object]] = [
+    # IBAN: ülke kodu + 2 sağlama + 11-30 alfasayısal, 4'lü gruplar boşluklu
+    # ya da bitişik (önce: içindeki rakamlar kart/TC kuralına takılmasın).
+    # Büyük harf zorunlu: küçük harfli hex dizileri aday bile olmaz.
+    (re.compile(r"(?<![A-Za-z0-9])[A-Z]{2}\d{2}(?:[ \-]?[A-Z0-9]{4}){2,7}"
+                r"(?:[ \-]?[A-Z0-9]{1,4})?(?![A-Za-z0-9])"), _iban_degistir),
+    # PIN/CVV/CVC/kart şifresi/... kodu + en çok 3 ara sözcük + 3-6 rakam:
+    # "Kart PIN 4821", "PIN kodum 4821", "CVV'si 123", "güvenlik kodu (CVV)
+    # 123", "kartın şifresi 4821". Ara sözcükler rakam içermez; Türkçe ekler
+    # kapalı listeden ("pinned", "spin" gibi İngilizce sözcükler eşleşmez).
+    (re.compile(
+        rf"(?i)(?<![{_HARF}0-9])("
+        rf"(?:pin|cvv2?|cvc2?|kart[{_HARF}]*\s+(?:şifre|sifre|parola)[{_HARF}]*"
+        rf"|(?:şifre|sifre|güvenlik|guvenlik|onay|doğrulama|dogrulama|sms)\s+kod[{_HARF}]*)"
+        rf"(?:'?(?:si|sı|su|sü|im|ım|um|üm|in|ın|un|ün|i|ı|u|ü|m|n|e|a|de|da|le|la|ni|nı))?)"
+        rf"(?![{_HARF}])"
+        rf"((?:[\s:=()\[\]\-–]*[^\s\d:=()\[\]]{{1,24}}?[)\]]?){{0,3}}?[\s:=()\[\]\-–]*)"
+        rf"(?<![0-9])\d{{3,6}}(?![\d.,/:\-]\d|\d)"),
+     r"\1\2" + _GIZLI),
+    # Anahtar sözcüklü TC kimlik no: sağlama aranmaz (bağlam açık).
+    (re.compile(
+        rf"(?i)(?<![{_HARF}0-9])(t\.?\s?c\.?(?:\s?kimlik)?(?:\s?no)?|tckn|"
+        rf"kimlik\s?(?:no|numarası|numaram)?)(\s*[:=]?\s*)\d{{11}}(?!\d)"),
+     r"\1\2" + _GIZLI),
+    # Kart numarası: 13-19 hane, boşluk/tire ayraçlı; Luhn ile doğrulanır.
+    (re.compile(r"(?<![\d\-])\d(?:[ \-]?\d){12,18}(?![\d])"), _kart_degistir),
+    # Anahtar sözcüksüz 11 haneli sayı: yalnız TC algoritmasından geçerse.
+    (re.compile(r"(?<![\d.,\-])[1-9]\d{10}(?![\d])"), _tc_degistir),
+    # URL'deki kullanıcı:parola -> scheme://kullanici:[gizli]@
+    (re.compile(r"(?i)\b([a-z][a-z0-9+.\-]*://[^\s:/@]+:)[^\s@/]+@"),
+     r"\1" + _GIZLI + "@"),
+    # JWT (base64url '{"' = eyJ), kısa olanlar da
+    (re.compile(r"\beyJ[A-Za-z0-9_\-]{8,}(?:\.[A-Za-z0-9_\-]*){0,2}"), _GIZLI),
+    # anahtar=deger / anahtar: deger -> anahtar korunur, değer gizlenir.
+    # Önde harf/rakam olmamalı ama "_" olabilir: DB_PASSWORD=, GITHUB_TOKEN=,
+    # MY_SECRET=, AWS_SECRET_ACCESS_KEY=. Türkçe ekli biçimler: şifrem:,
+    # parolası=. "key" yalnız "_KEY"/"-key" son eki olarak sayılır.
+    (re.compile(
+        r"(?i)(?<![a-z0-9çğıöşü])"
+        r"((?:password|passwd|pwd|passphrase|pass|secret|token|"
+        r"api[_-]?key|access[_-]?key|private[_-]?key|(?<=[_\-])key)"
+        r"|(?:parola|şifre|sifre)(?:m|n|si|sı|miz|mız|niz|nız)?)"
+        r"(\s*[:=]\s*)(\"[^\"]*\"|'[^']*'|\S+)"),
+     r"\1\2" + _GIZLI),
+    # boşlukla ayrılan parola: "password is hunter2", "parolam 1234".
+    # Yanlış pozitifi önlemek için değer en az 4 karakter olmalı ve rakam ya
+    # da simge içermeli ("şifre 2 aşamalı" dokunulmaz).
+    (re.compile(
+        r"(?i)(?<![a-z0-9çğıöşü])"
+        r"((?:password|passwd|passphrase)(?:\s+(?:is|was))?"
+        r"|(?:parola|şifre|sifre)(?:m|n|si|sı|miz|mız|niz|nız)?"
+        r"(?:\s+(?:şu|şudur))?)"
+        r"(\s+)(?=[^\s,;]*[0-9!@#$%^&*?_+\-])[^\s,;]{4,}"),
+     r"\1\2" + _GIZLI),
+    (re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/\-]{16,}=*"), "Bearer " + _GIZLI),
+    (re.compile(r"\bsk-[A-Za-z0-9_\-]{16,}"), _GIZLI),
+    (re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}"), _GIZLI),
+    (re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}"), _GIZLI),
+    (re.compile(r"\bAIza[0-9A-Za-z_\-]{30,}"), _GIZLI),
+    (re.compile(r"\bxox[bap]-[A-Za-z0-9\-]{10,}"), _GIZLI),
+    (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), _GIZLI),
+    # 32+ karakterlik kesintisiz hex/base64 benzeri dizi; en az bir rakam
+    # içermeli (uzun snake_case adları ve sözcükleri korumak için). "/"
+    # karakter sınıfında yok: dosya yolları maskelenmesin.
+    (re.compile(r"(?<![A-Za-z0-9+_\-])(?=[A-Za-z_\-+]*[0-9])"
+                r"[A-Za-z0-9+_\-]{32,}={0,2}(?![A-Za-z0-9+_\-])"), _GIZLI),
+]
+
+
+def maskele(metin: str) -> str:
+    """API anahtarı/token benzeri dizileri ``[gizli]`` ile değiştirir."""
+    try:
+        if not metin:
+            return metin if isinstance(metin, str) else ""
+        for kalip, yerine in _MASKE_KALIPLARI:
+            metin = kalip.sub(yerine, metin)
+        return metin
+    except Exception:
+        return ""
+
+# ------------------------------------------------------------------- okuma
+
+
+def _ileri_satirlar(f, butce: int) -> Iterator[bytes]:
+    """Dosyanın başından en çok ``butce`` bayt; yalnız tam satırlar."""
+    f.seek(0)
+    veri = f.read(butce)
+    tam = len(veri) < butce
+    satirlar = veri.split(b"\n")
+    if not tam:
+        satirlar.pop()  # yarım kalan son satır
+    for s in satirlar:
+        if s.strip():
+            yield s
+
+
+def _geri_satirlar(f, boyut: int, butce: int) -> Iterator[bytes]:
+    """Sondan başa doğru satırlar (en yeni önce), en çok ``butce`` bayt.
+
+    Çok uzun satırlar parça listesinde tutulur; birleştirme yalnız satır sonu
+    bulunduğunda yapılır, böylece okuma doğrusal kalır. Bütçe dolarsa en
+    baştaki yarım satır verilmez.
+    """
+    konum = boyut
+    okunan = 0
+    kuyruk: list[bytes] = []  # henüz satır sonu görülmemiş parçalar (ters sıra)
+    while konum > 0 and okunan < butce:
+        n = min(_BLOK, konum)
+        konum -= n
+        f.seek(konum)
+        parca = f.read(n)
+        okunan += n
+        i = parca.find(b"\n")
+        if i == -1:
+            kuyruk.append(parca)
+            continue
+        kuyruk.reverse()
+        bolum = parca[i + 1:] + b"".join(kuyruk)
+        for s in reversed(bolum.split(b"\n")):
+            if s.strip():
+                yield s
+        kuyruk = [parca[:i]]
+    if konum == 0 and kuyruk:
+        kuyruk.reverse()
+        s = b"".join(kuyruk)
+        if s.strip():
+            yield s
+
+
+def _coz(satir: bytes) -> dict | None:
+    try:
+        o = json.loads(satir)
+    except Exception:
+        try:
+            o = json.loads(satir.decode("utf-8", errors="replace"))
+        except Exception:
+            return None
+    return o if isinstance(o, dict) else None
+
+
+def _ac(transcript_path):
+    if not transcript_path:
+        return None
+    try:
+        yol = os.fspath(transcript_path)
+        f = open(yol, "rb")
+    except Exception:
+        return None
+    return f
+
+# ---------------------------------------------------------------- yorumlama
+
+
+def _kisalt(metin: str, n: int) -> str:
+    metin = " ".join(metin.split())
+    if len(metin) <= n:
+        return metin
+    return metin[: n - 1].rstrip() + "…"
+
+
+_SR_BLOK = re.compile(r"<system-reminder>.*?</system-reminder>", re.S)
+_KOMUT_AD = re.compile(r"<command-name>\s*(.*?)\s*</command-name>", re.S)
+_KOMUT_ARG = re.compile(r"<command-args>\s*(.*?)\s*</command-args>", re.S)
+
+
+def _istem_metni(o: dict) -> str | None:
+    """Satır gerçek bir kullanıcı istemiyse ham metnini, değilse None döner."""
+    if o.get("type") != "user" or o.get("isSidechain") is True:
+        return None
+    if o.get("isMeta") or o.get("isCompactSummary") or o.get("isVisibleInTranscriptOnly"):
+        return None
+    if "toolUseResult" in o:
+        return None
+    origin = o.get("origin")
+    if isinstance(origin, dict) and origin.get("kind") not in (None, "human"):
+        return None
+    mesaj = o.get("message")
+    if not isinstance(mesaj, dict):
+        return None
+    icerik = mesaj.get("content")
+    if isinstance(icerik, str):
+        metin = icerik
+    elif isinstance(icerik, list):
+        parcalar = []
+        for b in icerik:
+            if not isinstance(b, dict):
+                continue
+            if b.get("type") == "tool_result":
+                return None
+            if b.get("type") == "text" and isinstance(b.get("text"), str):
+                parcalar.append(b["text"])
+        metin = "\n".join(parcalar)
+    else:
+        return None
+    metin = _SR_BLOK.sub("", metin).strip()
+    if not metin or metin.startswith("[Request interrupted"):
+        return None
+    if metin.startswith("<"):
+        # Slash komutu: yalnız argümanı olan çağrılar istem sayılır.
+        ad = _KOMUT_AD.search(metin)
+        if ad and metin.lstrip().startswith(("<command-name>", "<command-message>")):
+            arg = _KOMUT_ARG.search(metin)
+            if arg and arg.group(1).strip():
+                return f"{ad.group(1).strip()} {arg.group(1).strip()}"
+            return None
+        if isinstance(origin, dict) and origin.get("kind") == "human":
+            return metin  # kullanıcı gerçekten "<" ile başlayan bir şey yazmış
+        return None  # task-notification, local-command-*, bash-* ...
+    return metin
+
+
+def _istek_bilgisi(o: dict) -> dict | None:
+    """Ana oturum assistant satırıysa (son_baglam, son_model, son_zaman)."""
+    if o.get("type") != "assistant" or o.get("isSidechain") is True:
+        return None
+    mesaj = o.get("message")
+    if not isinstance(mesaj, dict):
+        return None
+    model = mesaj.get("model")
+    if not model or model == "<synthetic>":
+        return None
+    u = mesaj.get("usage")
+    if not isinstance(u, dict):
+        return None
+    try:
+        p = (int(u.get("input_tokens") or 0)
+             + int(u.get("cache_read_input_tokens") or 0)
+             + int(u.get("cache_creation_input_tokens") or 0))
+    except Exception:
+        return None
+    zaman = o.get("timestamp")
+    return {"son_baglam": p, "son_model": str(model),
+            "son_zaman": zaman if isinstance(zaman, str) else None}
+
+
+def _duzenlenen_yollar(o: dict) -> list[str]:
+    """Satırdaki düzenleme aracı çağrılarının dosya yolları (satır içi sıra)."""
+    mesaj = o.get("message")
+    if not isinstance(mesaj, dict) or not isinstance(mesaj.get("content"), list):
+        return []
+    yollar = []
+    for b in mesaj["content"]:
+        if isinstance(b, dict) and b.get("type") == "tool_use":
+            alan = _DUZENLEME_ARACLARI.get(b.get("name"))
+            girdi = b.get("input")
+            if alan and isinstance(girdi, dict):
+                yol = girdi.get(alan)
+                if isinstance(yol, str) and yol:
+                    yollar.append(yol)
+    return yollar
+
+
+def _istek_sayisi(f, boyut: int, isr: _Isaretler) -> int:
+    """``"apiBlockIndex":0,`` işaretini tüm dosyada parça parça sayar.
+
+    Her API yanıtının ilk blok satırı bu işareti bir kez taşır; JSON metni
+    içinde geçen kopyalar kaçışlı (``\\"``) olduğundan eşleşmez. Gerçek
+    kayıtlarda tekil (message.id, requestId) sayısıyla %0-2 farkla örtüşür
+    (fark: ``apiBlockIndex`` taşımayan yapay/hata satırları). İşaret hiç
+    yoksa (eski sürüm ya da elle üretilmiş kayıt) ve dosya 64 MB'tan
+    küçükse assistant satırları çözülüp (message.id, requestId) çiftleri
+    tam olarak tekilleştirilir; daha büyükse 0 döner.
+
+    Sayım 0,12 sn'yi aşarsa (soğuk disk önbelleği, çok büyük dosya) okunan
+    kısımdaki yoğunluk dosya boyuna oranlanarak tahmin döner.
+    """
+    isaret = _ISARET_BLOK0
+    ortu = len(isaret) - 1
+    sayi = 0
+    okunan = 0
+    onceki = b""
+    baslangic = time.perf_counter()
+    f.seek(0)
+    while True:
+        parca = f.read(_SAYIM_BLOK)
+        if not parca:
+            break
+        okunan += len(parca)
+        veri = onceki + parca
+        sayi += veri.count(isaret)
+        # örtüşme bölgesinde tam eşleşme kalmasın diye kuyrukta işaret yok
+        onceki = veri[-ortu:] if len(veri) >= ortu else veri
+        if okunan < boyut and time.perf_counter() - baslangic > _SAYIM_SURE:
+            return round(sayi * boyut / okunan) if sayi else 0
+    if sayi:
+        return sayi
+    if boyut > 64 * 1024 * 1024:
+        return 0
+    ciftler: set[tuple] = set()
+    f.seek(0)
+    for satir in f:
+        if isr.asistan not in satir:
+            continue
+        o = _coz(satir)
+        if o is None or o.get("type") != "assistant" or o.get("isSidechain") is True:
+            continue
+        mesaj = o.get("message")
+        mid = mesaj.get("id") if isinstance(mesaj, dict) else None
+        rid = o.get("requestId")
+        if mid is None and rid is None:
+            continue
+        ciftler.add((str(mid), str(rid)))
+    return len(ciftler)
+
+# --------------------------------------------------------------- genel API
+
+
+def _bos_istek() -> dict:
+    return {"son_baglam": None, "son_model": None, "son_zaman": None}
+
+
+def _sikistirma_siniri_mi(satir: bytes, isr: _Isaretler) -> bool:
+    """Satır ana oturumda bir bağlam sıkıştırma sınırı mı?
+
+    Gerçek kayıtta sıkıştırma iki ardışık satır bırakır:
+    ``{"type":"system","subtype":"compact_boundary","compactMetadata":
+    {"preTokens","postTokens","trigger",...}}`` ve ardından özet metni taşıyan
+    ``{"type":"user","isCompactSummary":true,"isVisibleInTranscriptOnly":true}``.
+    Sıkıştırma yeni bir assistant satırı yazmaz; bu yüzden sınırdan önceki
+    son usage artık güncel bağlamı göstermez.
+    """
+    if not (isr.sikistirma[0] in satir or isr.sikistirma[1] in satir):
+        return False
+    o = _coz(satir)
+    if o is None or o.get("isSidechain") is True:
+        return False
+    tur = o.get("type")
+    return ((tur == "system" and o.get("subtype") == "compact_boundary")
+            or (tur == "user" and o.get("isCompactSummary") is True))
+
+
+def son_istek_bilgisi(transcript_path: str | Path) -> dict:
+    """Son ana-oturum assistant mesajının bağlam boyu, modeli ve zamanı.
+
+    Dosyanın yalnız sonundan geriye doğru okur (en çok 8 MB) ve ilk uygun
+    satırda durur. ``son_baglam`` = input_tokens + cache_read_input_tokens +
+    cache_creation_input_tokens. ``<synthetic>`` model ve alt agent
+    (isSidechain) satırları atlanır.
+
+    Son assistant satırından sonra bir sıkıştırma sınırı varsa
+    (``compact_boundary`` ya da ``isCompactSummary``) üç alan da None döner:
+    sıkıştırma sonrası henüz istek yapılmadı, eski usage yanıltıcıdır.
+    """
+    sonuc = _bos_istek()
+    f = _ac(transcript_path)
+    if f is None:
+        return sonuc
+    try:
+        with f:
+            boyut = os.fstat(f.fileno()).st_size
+            isr = _isaret_sec(f)
+            for satir in _geri_satirlar(f, boyut, _SON_ISTEK_BUTCE):
+                if isr.asistan not in satir:
+                    if _sikistirma_siniri_mi(satir, isr):
+                        return _bos_istek()
+                    continue
+                o = _coz(satir)
+                if o is None:
+                    continue
+                bilgi = _istek_bilgisi(o)
+                if bilgi:
+                    return bilgi
+    except Exception:
+        pass
+    return sonuc
+
+
+def oturum_ozeti(transcript_path: str | Path) -> dict:
+    """Oturum kaydının özeti (anahtarlar modül sözleşmesindeki gibi).
+
+    Okuma: baştan en çok 2 MB ileri (ilk istem, yedek sessionId/cwd), sondan
+    en çok 12 MB geriye (başlıklar, son istem, düzenlenen dosyalar, son
+    istek bilgisi, sessionId, cwd). Geriye okuma gereken her şey bulununca
+    erken durur. ``cwd`` ve ``oturum`` kaydın en son satırlarından alınır.
+
+    ``istek_sayisi``: tekil (message.id, requestId) assistant mesajı sayısının
+    yaklaşığıdır; tüm dosyada ``"apiBlockIndex":0,`` işareti 8 MB'lık
+    parçalarla sayılır, JSON çözülmez; sayım 0,12 sn'yi aşarsa
+    okunan kısmın yoğunluğundan oranlanır (bkz. ``_istek_sayisi``).
+
+    Son 12 MB içinde 15'ten az düzenleme varsa geriye okuma yalnız düzenleme
+    aracı çağrılarına bakarak sürer (ayrıştırma yok, bayt araması), en çok
+    0,10 sn; bu sürede dosyanın başına varılmazsa ``duzenlenen`` eksik kalır.
+
+    Son assistant satırından sonra sıkıştırma sınırı varsa (bkz.
+    ``_sikistirma_siniri_mi``) ``son_baglam`` None olur; ``son_model`` ve
+    ``son_zaman`` o assistant satırından gelmeye devam eder.
+
+    Sınırlar: ilk istem ilk 2 MB'ta yoksa ``ilk_istem`` None kalır; başlık ve
+    son istem son 12 MB'ta yoksa bulunamaz.
+    """
+    sonuc = {
+        "oturum": None, "cwd": None, "baslik": None,
+        "ilk_istem": None, "son_istem": None, "duzenlenen": [],
+        "son_baglam": None, "son_model": None, "son_zaman": None,
+        "istek_sayisi": 0,
+    }
+    f = _ac(transcript_path)
+    if f is None:
+        return sonuc
+    try:
+        with f:
+            boyut = os.fstat(f.fileno()).st_size
+            isr = _isaret_sec(f)
+            ozel = ai = ozet = None
+            son_istem_ham = None
+            istek = None
+            sikisti = False
+            duzenlenen: list[str] = []  # en yeni önce
+            gorulen: set[str] = set()
+
+            baslangic = time.perf_counter()
+            okunan = 0
+            for satir in _geri_satirlar(f, boyut, boyut):
+                okunan += len(satir) + 1
+                if len(duzenlenen) >= _EN_COK_DUZENLENEN:
+                    if (ozel is not None and son_istem_ham is not None
+                            and istek is not None and sonuc["cwd"] is not None):
+                        break
+                    if okunan > _SON_BUTCE:
+                        break
+                if okunan > _SON_BUTCE:
+                    # 2. evre: yalnız düzenleme aracı çağrıları aranır,
+                    # süre sınırıyla (bkz. docstring).
+                    if time.perf_counter() - baslangic > _DUZENLEME_SURE:
+                        break
+                    if (isr.asistan not in satir
+                            or isr.duzenleme.search(satir) is None):
+                        continue
+                    o = _coz(satir)
+                    if o is None or o.get("isSidechain") is True:
+                        continue
+                    for yol in reversed(_duzenlenen_yollar(o)):
+                        if yol not in gorulen and len(duzenlenen) < _EN_COK_DUZENLENEN:
+                            gorulen.add(yol)
+                            duzenlenen.append(yol)
+                    continue
+                asistan = isr.asistan in satir
+                if (istek is None and not sikisti and not asistan
+                        and _sikistirma_siniri_mi(satir, isr)):
+                    sikisti = True  # son assistant satırından sonra sıkıştırma
+                kullanici = (not asistan and isr.kullanici in satir
+                             and _ISARET_ARAC_SONUCU not in satir)
+                baslik_satiri = (not asistan and not kullanici
+                                 and len(satir) < 64 * 1024
+                                 and any(t in satir for t in isr.basliklar))
+                if not (asistan or kullanici or baslik_satiri):
+                    if sonuc["oturum"] is not None or len(satir) > 4096:
+                        continue
+                o = _coz(satir)
+                if o is None:
+                    continue
+                if sonuc["oturum"] is None and isinstance(o.get("sessionId"), str):
+                    sonuc["oturum"] = o["sessionId"]
+                if (sonuc["cwd"] is None and isinstance(o.get("cwd"), str)
+                        and o.get("isSidechain") is not True):
+                    sonuc["cwd"] = o["cwd"]
+                tur = o.get("type")
+                if tur == "custom-title":
+                    if ozel is None and isinstance(o.get("customTitle"), str) \
+                            and o["customTitle"].strip():
+                        ozel = o["customTitle"]
+                elif tur == "ai-title":
+                    if ai is None and isinstance(o.get("aiTitle"), str) \
+                            and o["aiTitle"].strip():
+                        ai = o["aiTitle"]
+                elif tur == "summary":
+                    if ozet is None and isinstance(o.get("summary"), str) \
+                            and o["summary"].strip():
+                        ozet = o["summary"]
+                elif tur == "assistant":
+                    if o.get("isSidechain") is True:
+                        continue
+                    if istek is None:
+                        istek = _istek_bilgisi(o)
+                    if len(duzenlenen) < _EN_COK_DUZENLENEN:
+                        for yol in reversed(_duzenlenen_yollar(o)):
+                            if yol not in gorulen:
+                                gorulen.add(yol)
+                                duzenlenen.append(yol)
+                elif tur == "user":
+                    if son_istem_ham is None:
+                        son_istem_ham = _istem_metni(o)
+
+            ilk_istem_ham = None
+            for satir in _ileri_satirlar(f, min(_BAS_BUTCE, boyut)):
+                if isr.kullanici not in satir or _ISARET_ARAC_SONUCU in satir:
+                    if sonuc["oturum"] is not None and sonuc["cwd"] is not None:
+                        continue
+                o = _coz(satir)
+                if o is None:
+                    continue
+                if sonuc["oturum"] is None and isinstance(o.get("sessionId"), str):
+                    sonuc["oturum"] = o["sessionId"]
+                if sonuc["cwd"] is None and isinstance(o.get("cwd"), str):
+                    sonuc["cwd"] = o["cwd"]
+                metin = _istem_metni(o)
+                if metin:
+                    ilk_istem_ham = metin
+                    break
+
+            if ilk_istem_ham is None and son_istem_ham is not None \
+                    and boyut <= _SON_BUTCE:
+                # dosyanın tamamı geriye okundu; ilk istem yoksa son istem de
+                # aynı tek istemdir (ör. başta 2 MB'ı aşan dev ekler).
+                ilk_istem_ham = son_istem_ham
+
+            if ilk_istem_ham:
+                sonuc["ilk_istem"] = _kisalt(maskele(ilk_istem_ham), _ISTEM_UZUNLUK)
+            if son_istem_ham:
+                sonuc["son_istem"] = _kisalt(maskele(son_istem_ham), _ISTEM_UZUNLUK)
+            for aday in (ozel, ai, ozet):
+                if aday:
+                    sonuc["baslik"] = _kisalt(maskele(aday), _BASLIK_UZUNLUK)
+                    break
+            else:
+                if ilk_istem_ham:
+                    sonuc["baslik"] = _kisalt(maskele(ilk_istem_ham), _BASLIK_UZUNLUK)
+            sonuc["duzenlenen"] = list(reversed(duzenlenen))
+            if istek:
+                sonuc.update(istek)
+            if sikisti:
+                sonuc["son_baglam"] = None
+            sonuc["istek_sayisi"] = _istek_sayisi(f, boyut, isr)
+    except Exception:
+        pass
+    return sonuc

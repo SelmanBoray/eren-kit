@@ -1,0 +1,423 @@
+"""Tohum (JSONL) dosyasini beyin veritabanina aktarir.
+
+Kullanim: ``ice_al(con, jsonl_yol) -> dict``
+
+Donen sozluk: dugum_eklendi, dugum_guncellendi, kenar, olgu, atlanan, hatalar.
+
+* Tek islem: her sey tek transaction'da yazilir, kritik hatada (dosya okunamaz,
+  kok satiri bozuk) HICBIR sey yazilmaz; sayaclar 0, hatalar dolu doner.
+  Istisna sizdirilmaz (beklenmeyen istisna da "hatalar"a yazilip geri alinir).
+* Iki gecis: once dugumler (anahtar ile), sonra kenarlar (birincil alt, ek alt,
+  ilgili) tohum satir sirasiyla.
+* Idempotent: var olan anahtar guncellenir, ayni normalize metinli aktif olgu
+  eklenmez, var olan kenar atlanir.
+* ``atlanan``: hata yuzunden atlanan satir/kenar/olgu + zaten var oldugu icin
+  eklenmeyen kenar/olgu sayisi.
+* Satir hatalari (bilinmeyen ebeveyn, dongu, alan siniri...) yalniz o satiri ya
+  da kenari atlatir; kokteki sorun hepsini durdurur.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+import sqlite3
+import unicodedata
+from pathlib import Path
+
+from . import db
+
+# Yeni tohumlarda kok satirinin anahtari (db ile ayni). Kok, anahtarindan degil turundan
+# taninir: tur='kok' olan tek satir, anahtari ne olursa olsun koktur (eski tohumlar).
+# Cocuklar koke hem o satirin anahtariyla hem KOK_ANAHTAR ile baglanabilir.
+KOK_ANAHTAR = db.KOK_ANAHTAR
+TURLER = {"kok", "dal", "proje", "kisi", "olay", "tercih", "kural", "arac", "bilgi"}
+GIZLILIKLER = {"normal", "ozel", "sir_icerir"}
+BASLIK_MAX = getattr(db, "BASLIK_SINIR", 120)
+DURUMLAR = set(getattr(db, "DUGUM_DURUMLARI", ("aktif", "bitti", "duraklatildi", "bekliyor", "bilinmiyor", "arsiv")))
+OZET_MAX = 200
+AYRINTI_MAX = 1500
+OLGU_MAX = 300
+_TARIH = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _norm(metin: str) -> str:
+    m = unicodedata.normalize("NFKC", metin).replace("İ", "i").replace("I", "ı")
+    return " ".join(m.casefold().split()).rstrip(" .;,")
+
+
+def _liste(v, ad, hatalar_yerel):
+    if v is None:
+        return []
+    if not isinstance(v, list) or not all(isinstance(x, str) for x in v):
+        hatalar_yerel.append(f"{ad} string listesi olmali")
+        return []
+    return v
+
+
+def _dogrula(no, ham):
+    """Bir satiri dogrular. (kayit|None, [hata]) doner."""
+    h: list[str] = []
+    try:
+        k = json.loads(ham)
+    except ValueError as e:
+        return None, [f"satir {no}: gecersiz JSON ({e})"]
+    if not isinstance(k, dict):
+        return None, [f"satir {no}: nesne degil"]
+    anahtar = k.get("anahtar")
+    if not isinstance(anahtar, str) or not anahtar.strip():
+        return None, [f"satir {no}: anahtar yok"]
+    anahtar = anahtar.strip()
+    ad = f"satir {no} [{anahtar}]"
+    baslik = k.get("baslik")
+    if not isinstance(baslik, str) or not baslik.strip():
+        h.append("baslik bos")
+    elif len(baslik.strip()) > BASLIK_MAX:
+        h.append(f"baslik {len(baslik.strip())} > {BASLIK_MAX}")
+    ozet = k.get("ozet") or ""
+    ayrinti = k.get("ayrinti") or ""
+    if not isinstance(ozet, str) or not isinstance(ayrinti, str):
+        h.append("ozet/ayrinti string olmali")
+    else:
+        if len(ozet) > OZET_MAX:
+            h.append(f"ozet {len(ozet)} > {OZET_MAX}")
+        if len(ayrinti) > AYRINTI_MAX:
+            h.append(f"ayrinti {len(ayrinti)} > {AYRINTI_MAX}")
+    tur = k.get("tur") or "bilgi"
+    if tur not in TURLER:
+        h.append(f"bilinmeyen tur {tur!r}")
+    gizlilik = k.get("gizlilik") or "normal"
+    if gizlilik not in GIZLILIKLER:
+        h.append(f"bilinmeyen gizlilik {gizlilik!r}")
+    tarih = k.get("tarih")
+    if tarih is not None and not (isinstance(tarih, str) and _TARIH.match(tarih)):
+        h.append(f"tarih biçimi YYYY-MM-DD degil: {tarih!r}")
+    durum = k.get("durum") or "aktif"
+    if not isinstance(durum, str) or durum not in DURUMLAR:
+        h.append(f"bilinmeyen durum {durum!r}")
+    bp = k.get("birincil_ebeveyn")
+    if bp is not None and not isinstance(bp, str):
+        h.append("birincil_ebeveyn string|null olmali")
+    ek = _liste(k.get("ek_ebeveynler"), "ek_ebeveynler", h)
+    ilgili = _liste(k.get("ilgili"), "ilgili", h)
+    kaynaklar = _liste(k.get("kaynaklar"), "kaynaklar", h)
+    olgular_ham = _liste(k.get("olgular"), "olgular", h)
+    if h:
+        return None, [f"{ad}: {x}" for x in h]
+    olgular, olgu_hata = [], []
+    for o in olgular_ham:
+        if not o.strip():
+            continue
+        if len(o) > OLGU_MAX:
+            olgu_hata.append(f"{ad}: olgu {len(o)} > {OLGU_MAX} karakter, atlandi: {o[:40]!r}...")
+        else:
+            olgular.append(o.strip())
+    return {
+        "no": no, "anahtar": anahtar, "baslik": baslik.strip(), "ozet": ozet,
+        "ayrinti": ayrinti, "tur": tur, "durum": durum, "gizlilik": gizlilik,
+        "tarih": tarih, "bp": bp.strip() if bp else None,
+        "ek": [x.strip() for x in ek], "ilgili": [x.strip() for x in ilgili],
+        "olgular": olgular, "kaynaklar": [x.strip() for x in kaynaklar if x.strip()],
+        "olgu_hata": olgu_hata,
+    }, []
+
+
+class _Sp:
+    """Kismi geri alim icin savepoint (hata olursa o islem geri sarilir)."""
+
+    def __init__(self, con, ad):
+        self.con, self.ad = con, ad
+
+    def __enter__(self):
+        self.con.execute(f"SAVEPOINT {self.ad}")
+
+    def __exit__(self, tp, v, tb):
+        if tp is None:
+            self.con.execute(f"RELEASE {self.ad}")
+        else:
+            self.con.execute(f"ROLLBACK TO {self.ad}")
+            self.con.execute(f"RELEASE {self.ad}")
+        return False
+
+
+_GIZLILIK_SIRA = {"normal": 0, "ozel": 1, "sir_icerir": 2}
+
+
+def _kaynak_bul_ya_da_ekle(con, tur, ref):
+    """Ayni (tur, ref) kaynak varsa onu kullanir, yoksa ekler."""
+    satir = con.execute(
+        "SELECT id FROM kaynak WHERE tur = ? AND ref = ? ORDER BY tarih LIMIT 1", (tur, ref)
+    ).fetchall()  # fetchall: acik imleç birakma (create_function kilitlenir)
+    if satir:
+        return satir[0][0]
+    return db.kaynak_ekle(con, tur, ref=ref, istemci="ice_al")
+
+
+def _gizlilik_gevsetme(con, dugum_id, yeni):
+    """Gizlilik yalniz kisitlayici yone gider: mevcut ile yeninin siki olani."""
+    satir = con.execute("SELECT gizlilik FROM dugum WHERE id = ?", (dugum_id,)).fetchall()
+    eski = satir[0][0] if satir else "normal"
+    return eski if _GIZLILIK_SIRA.get(eski, 0) > _GIZLILIK_SIRA.get(yeni, 0) else yeni
+
+
+def _kenar_satiri(con, e, c, tur):
+    satir = con.execute(
+        "SELECT birincil FROM kenar WHERE ebeveyn=? AND cocuk=? AND tur=?", (e, c, tur)
+    ).fetchall()
+    return satir[0] if satir else None
+
+
+def _mevcut_olgular(con, dugum_id):
+    """Dugumun HER durumdaki (aktif/eskidi/reddedildi) olgularinin normalize metinleri."""
+    return {db.normalize(r[0]) for r in con.execute("SELECT metin FROM olgu WHERE dugum = ?", (dugum_id,))}
+
+
+def _kok_satiri_mi(ham) -> bool:
+    """Gecersiz bir satirin kok satiri (tur='kok') olup olmadigi; JSON bozuksa False."""
+    try:
+        k = json.loads(ham)
+    except ValueError:
+        return False
+    return isinstance(k, dict) and k.get("tur") == "kok"
+
+
+def _sonuc(hatalar=None):
+    return {"dugum_eklendi": 0, "dugum_guncellendi": 0, "kenar": 0, "olgu": 0,
+            "atlanan": 0, "hatalar": list(hatalar or [])}
+
+
+def ice_al(con, jsonl_yol) -> dict:
+    """Tohumu aktarir; ayrintilar modul docstring'inde. Istisna sizdirmaz."""
+    yol = Path(jsonl_yol)
+    try:
+        veri = yol.read_bytes()
+        metin = veri.decode("utf-8-sig")
+    except (OSError, UnicodeDecodeError) as e:
+        return _sonuc([f"tohum okunamadi: {e}"])
+    sha = hashlib.sha256(veri).hexdigest()
+
+    # ---- Dogrulama (yazmadan) ----
+    hatalar: list[str] = []
+    atlanan = 0
+    kayitlar: dict[str, dict] = {}
+    sira: list[str] = []
+    kok_a: str | None = None  # tohumdaki kok satirinin anahtari
+    kok_bozuk = False
+    for no, ham in enumerate(metin.splitlines(), 1):
+        if not ham.strip():
+            continue
+        k, h = _dogrula(no, ham)
+        if k is None:
+            hatalar += h
+            atlanan += 1
+            if kok_a is None and _kok_satiri_mi(ham):
+                kok_bozuk = True
+            continue
+        if k["anahtar"] in kayitlar:
+            hatalar.append(f"satir {no} [{k['anahtar']}]: yinelenen anahtar, atlandi")
+            atlanan += 1
+            continue
+        if k["tur"] == "kok":
+            if kok_a is not None or kok_bozuk:
+                hatalar.append(f"satir {no} [{k['anahtar']}]: ikinci kok satiri, atlandi")
+                atlanan += 1
+                continue
+            kok_a = k["anahtar"]
+        hatalar += k.pop("olgu_hata")
+        atlanan += 0
+        kayitlar[k["anahtar"]] = k
+        sira.append(k["anahtar"])
+
+    # kok kontrolu (kritik)
+    kok = kayitlar.get(kok_a) if kok_a is not None else None
+    kritik = []
+    if kok is not None and kok["bp"] is not None:
+        kritik.append(f"kok [{kok_a}] birincil_ebeveyn tasiyor: {kok['bp']!r}")
+    if kok is None and kok_bozuk:
+        kritik.append("kok satiri gecersiz")
+    # koke baglanirken kullanilabilen anahtarlar: tohumdaki kok anahtari ve KOK_ANAHTAR
+    kok_adlari = {KOK_ANAHTAR} | ({kok_a} if kok_a is not None else set())
+    if kritik:
+        return _sonuc(["KRITIK: " + x for x in kritik] + hatalar)
+
+    # DB'de zaten var olan anahtarlar (ebeveyn cozumu icin) – okuma
+    def var_mi(a):
+        if a in kayitlar or db.anahtardan_id(con, a) is not None:
+            return True
+        # kok, tohumdaki kendi anahtariyla ya da KOK_ANAHTAR ile anilabilir
+        return a in kok_adlari and (kok_a is not None or db.kok_bul(con) is not None)
+
+    # kok olmayan ve birincil ebeveynsiz, bilinmeyen ebeveynli, dongulu satirlari ele
+    atilacak: dict[str, str] = {}
+    for a, k in kayitlar.items():
+        if a == kok_a:
+            continue
+        if k["bp"] is None:
+            atilacak[a] = "birincil_ebeveyn bos (yalniz kok null olabilir)"
+        elif k["bp"] == a:
+            atilacak[a] = "kendi kendisinin ebeveyni"
+        elif not var_mi(k["bp"]):
+            atilacak[a] = f"bilinmeyen birincil ebeveyn {k['bp']!r}"
+    degisti = True
+    while degisti:  # atilan ebeveynin cocuklari da duser
+        degisti = False
+        for a, k in kayitlar.items():
+            if a in atilacak or a == kok_a:
+                continue
+            if k["bp"] in atilacak:
+                atilacak[a] = f"birincil ebeveyn {k['bp']!r} atlandi"
+                degisti = True
+    for a, k in kayitlar.items():  # birincil zincirde dongu
+        if a in atilacak:
+            continue
+        gor, x = set(), a
+        while x in kayitlar and x not in atilacak and x not in gor and kayitlar[x]["bp"]:
+            gor.add(x)
+            x = kayitlar[x]["bp"]
+        if x in gor:
+            atilacak[a] = "birincil ebeveyn zincirinde dongu"
+    # dongu dugumlerinin torunlari tekrar dussun
+    degisti = True
+    while degisti:
+        degisti = False
+        for a, k in kayitlar.items():
+            if a not in atilacak and a != kok_a and k["bp"] in atilacak:
+                atilacak[a] = f"birincil ebeveyn {k['bp']!r} atlandi"
+                degisti = True
+    for a in sira:
+        if a in atilacak:
+            hatalar.append(f"satir {kayitlar[a]['no']} [{a}]: {atilacak[a]}, atlandi")
+            atlanan += 1
+    gecerli = [a for a in sira if a not in atilacak]
+
+    # ---- Yazma ----
+    sonuc = _sonuc()
+    if con.in_transaction:
+        con.commit()
+    try:
+        con.execute("BEGIN")
+        tohum_id = _kaynak_bul_ya_da_ekle(con, "tohum", f"{yol.resolve()} sha256:{sha}")
+        kok_dugum = db.kok_id(con)
+        idler: dict[str, int] = {}
+        kayn_onbellek: dict[str, int] = {}
+
+        def kaynak_idleri(yollar):
+            out = []
+            for p in yollar:
+                if p not in kayn_onbellek:
+                    kayn_onbellek[p] = _kaynak_bul_ya_da_ekle(con, "memory", p)
+                out.append(kayn_onbellek[p])
+            return out
+
+        # Gecis 1: dugumler (satir basina savepoint; kok disinda hata satiri atlatir)
+        yazilan: list[str] = []
+        for a in gecerli:
+            k = kayitlar[a]
+            try:
+                with _Sp(con, "sp_dugum"):
+                    kids = kaynak_idleri(k["kaynaklar"])
+                    kid = kids[0] if kids else tohum_id  # dugum kaynak izi: ilk kaynak yolu
+                    alan = dict(baslik=k["baslik"], ozet=k["ozet"], ayrinti=k["ayrinti"],
+                                tur=k["tur"], durum=k["durum"], gizlilik=k["gizlilik"],
+                                tarih=k["tarih"])
+                    if a == kok_a:
+                        nid, eklendi = kok_dugum, False
+                        alan["gizlilik"] = _gizlilik_gevsetme(con, nid, alan["gizlilik"])
+                        db.dugum_guncelle(con, nid, kaynak_id=tohum_id, **alan)
+                    else:
+                        nid = db.anahtardan_id(con, a)
+                        eklendi = nid is None
+                        if eklendi:
+                            nid = db.dugum_ekle(con, anahtar=a, kaynak_id=kid, **alan)
+                        else:
+                            alan["gizlilik"] = _gizlilik_gevsetme(con, nid, alan["gizlilik"])
+                            db.dugum_guncelle(con, nid, kaynak_id=kid, **alan)
+            except (ValueError, sqlite3.IntegrityError) as ex:
+                if a == kok_a:
+                    raise
+                hatalar.append(f"satir {k['no']} [{a}]: yazilamadi ({ex}), atlandi")
+                atlanan += 1
+                continue
+            sonuc["dugum_eklendi" if eklendi else "dugum_guncellendi"] += 1
+            idler[a] = nid
+            yazilan.append(a)
+        gecerli = yazilan
+
+        def coz(a):
+            if a in idler:
+                return idler[a]
+            if a in kok_adlari:
+                return kok_dugum
+            return db.anahtardan_id(con, a)
+
+        def kenar(e_anahtar, c_anahtar, tur, birincil, no, kid):
+            e, c = coz(e_anahtar), coz(c_anahtar)
+            ad = f"satir {no} [{c_anahtar}]"
+            if e is None:
+                hatalar.append(f"{ad}: bilinmeyen ebeveyn/ilgili {e_anahtar!r}, kenar atlandi")
+                return 0, 1
+            if e == c:
+                hatalar.append(f"{ad}: kendine kenar, atlandi")
+                return 0, 1
+            mevcut = _kenar_satiri(con, e, c, tur)
+            if mevcut is not None:
+                if birincil and not mevcut[0]:  # ek kenar birincile yukseltilir (tasima)
+                    try:
+                        with _Sp(con, "sp_kenar"):
+                            db.kenar_ekle(con, e, c, tur=tur, birincil=True, kaynak_id=kid)
+                    except ValueError as ex:
+                        hatalar.append(f"{ad}: birincil tasima {e_anahtar!r} -> {ex}, atlandi")
+                        return 0, 1
+                    return 0, 0
+                return 0, 1
+            try:
+                with _Sp(con, "sp_kenar"):
+                    db.kenar_ekle(con, e, c, tur=tur, birincil=birincil, kaynak_id=kid)
+            except ValueError as ex:
+                hatalar.append(f"{ad}: {tur} kenari {e_anahtar!r} -> dongu/gecersiz ({ex}), atlandi")
+                return 0, 1
+            except sqlite3.IntegrityError:
+                return 0, 1  # zaten var
+            return 1, 0
+
+        # Gecis 2: kenarlar (satir sirasiyla)
+        for a in gecerli:
+            k = kayitlar[a]
+            if a == kok_a:
+                pass
+            else:
+                n, s = kenar(k["bp"], a, "alt", True, k["no"], tohum_id)
+                sonuc["kenar"] += n; atlanan += s
+            for e in k["ek"]:
+                n, s = kenar(e, a, "alt", False, k["no"], tohum_id)
+                sonuc["kenar"] += n; atlanan += s
+            for r in k["ilgili"]:
+                n, s = kenar(a, r, "ilgili", False, k["no"], tohum_id)
+                sonuc["kenar"] += n; atlanan += s
+
+        # Olgular
+        for a in gecerli:
+            k = kayitlar[a]
+            nid = idler[a]
+            var = _mevcut_olgular(con, nid)
+            for o in k["olgular"]:
+                n = db.normalize(o)
+                if n in var:
+                    atlanan += 1
+                    continue
+                db.olgu_ekle(con, nid, o, kaynak_id=tohum_id)
+                var.add(n)
+                sonuc["olgu"] += 1
+
+        con.commit()
+    except Exception as ex:  # noqa: BLE001 - sozlesme: istisna sizdirma
+        try:
+            con.rollback()
+        except sqlite3.Error:
+            pass
+        return _sonuc(hatalar + [f"KRITIK: yazma basarisiz, geri alindi: {type(ex).__name__}: {ex}"])
+
+    sonuc["atlanan"] = atlanan
+    sonuc["hatalar"] = hatalar
+    return sonuc

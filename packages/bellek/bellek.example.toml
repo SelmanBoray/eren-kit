@@ -1,0 +1,41 @@
+# Bellek ayar şablonu.
+#
+# Kendi ayarınız için bu dosyayı aynı klasöre `bellek.toml` adıyla kopyalayıp
+# düzenleyin (kurulum betiği bunu sizin yerinize yapar). `bellek.toml` kişiye
+# özeldir ve git'te yok sayılır. `BELLEK_CONFIG` ortam değişkeni verilirse o
+# dosya kullanılır. `bellek.toml` yoksa Bellek bu şablonla çalışır.
+#
+# Göreli yollar bu dosyanın klasörüne göre çözülür. `~`, %VAR% ve $VAR açılır.
+
+# Ana ayarlar: vault (kaynak notlar; devir notları `vault/devir` altına yazılır)
+# ve yerel durum klasörü (indeks, günlük vb.).
+[bellek]
+vault = "vault"
+state_dir = "%LOCALAPPDATA%/Bellek"
+
+# Yerel servis: yalnızca bu makineden erişilir.
+[server]
+host = "127.0.0.1"
+port = 47321
+
+# Salt-okunur ek not kaynakları (Bellek bunlara asla yazmaz). Her kaynak için
+# benzersiz bir `name` ve bir klasör `path` verin. Örnekler (kullanmak için
+# yorumu kaldırın):
+#
+# Claude Code'un bir projeye ait auto-memory klasörü. <proje> yerine
+# ~/.claude/projects altındaki klasör adını yazın (Claude Code bunu proje
+# yolundan türetir).
+# [[source]]
+# name = "claude-memory"
+# path = "~/.claude/projects/<proje>/memory"
+#
+# Kendi tuttuğunuz herhangi bir not klasörü:
+# [[source]]
+# name = "notlarim"
+# path = "~/Belgeler/notlar"
+
+# Klasör -> proje eşlemesi. Oturum hangi klasörde açıldıysa (ya da onun alt
+# klasöründeyse) o projeye bağlanır; en uzun eşleşen klasör kazanır. Örnekler:
+[projects]
+# "~/kod/ornek-proje" = "ornek-proje"
+# "D:/isler/web-sitesi" = "web-sitesi"

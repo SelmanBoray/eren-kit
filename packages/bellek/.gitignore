@@ -1,0 +1,41 @@
+# Sanal ortam
+.venv/
+venv/
+
+# Python derleme artıkları
+__pycache__/
+*.pyc
+*.egg-info/
+
+# Test önbelleği
+.pytest_cache/
+
+# Derleme çıktıları
+build/
+dist/
+
+# Kullanıcıya özel ayar (şablon: bellek.example.toml)
+bellek.toml
+
+# Kişisel notlar repoya girmez
+vault/
+
+# Kişisel değerlendirme verisi
+eval/data/
+
+# SQLite veritabanı ve indeks dosyaları (WAL/SHM dahil)
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+
+# Beyin servisi çalışma dosyaları: kuyruk, günlük, belirteç, kilit
+kuyruk.jsonl*
+*.isleniyor
+*.log
+beyin_token*
+beyin_arayuz_token*
+*.kilit
+*.lock

@@ -1,0 +1,234 @@
+/* Zaman şeridi — ağın tohumdan bugüne büyümesi.
+   Renkler yalnız stil.css :root değişkenlerinden gelir (SOZLESME §0.1: pastel toprak tonları, yumuşak ışıma). */
+
+#zaman-serit {
+  --zs-basparmak: 14px;
+  position: fixed;
+  left: 50%;
+  bottom: max(12px, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  z-index: 20;
+  box-sizing: border-box;
+  max-width: calc(100vw - 32px);
+  padding: 6px 8px;
+  color: var(--metin);
+  font-family: var(--yazi);
+  font-size: 13px;
+  background: var(--yuzey);
+  border: 1px solid var(--kenar-cizgi);
+  border-radius: 999px;
+  box-shadow: var(--golge);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  transition: border-radius .25s ease, width .25s ease, box-shadow .3s ease, border-color .3s ease;
+}
+
+#zaman-serit [hidden] { display: none !important; }
+
+#zaman-serit.acik {
+  width: min(780px, calc(100vw - 32px));
+  padding: 8px 14px 10px;
+  border-radius: var(--yaricap);
+}
+
+#zaman-serit.zs-gecmiste {
+  border-color: color-mix(in srgb, var(--fosil) 45%, transparent);
+  box-shadow: var(--golge), 0 0 22px -10px color-mix(in srgb, var(--fosil) 35%, transparent);
+}
+
+/* --- üst sıra: aç/kapa + seçili an */
+#zaman-serit .zs-cubuk {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+#zaman-serit .zs-ac {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font: inherit;
+  white-space: nowrap;
+}
+
+#zaman-serit .zs-simge { font-size: 14px; line-height: 1; }
+
+#zaman-serit .zs-an {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-right: 6px;
+  color: var(--metin-soluk);
+  font-variant-numeric: tabular-nums;
+}
+
+#zaman-serit.zs-gecmiste .zs-an {
+  color: var(--fosil);
+}
+
+/* --- gövde */
+#zaman-serit .zs-govde {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+#zaman-serit .zs-kontroller {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+#zaman-serit .zs-kontroller .dugme {
+  min-height: 30px;
+  padding: 3px 10px;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
+#zaman-serit .zs-oynat {
+  min-width: 38px;
+  color: var(--isik);
+}
+
+#zaman-serit.zs-oynuyor .zs-oynat {
+  border-color: color-mix(in srgb, var(--isik) 55%, transparent);
+  box-shadow: 0 0 16px -6px color-mix(in srgb, var(--isik) 35%, transparent);
+}
+
+#zaman-serit .zs-hizlar {
+  display: inline-flex;
+  border-radius: 999px;
+  overflow: hidden;
+  border: 1px solid var(--kenar-cizgi);
+}
+
+#zaman-serit .zs-hizlar .dugme {
+  border: 0;
+  border-radius: 0;
+  min-width: 38px;
+  background: transparent;
+}
+
+#zaman-serit .zs-hizlar .dugme[aria-pressed="true"] {
+  color: var(--metin);
+  background: color-mix(in srgb, var(--isik) 32%, transparent);
+}
+
+#zaman-serit .zs-bilgi {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--metin-soluk);
+}
+
+#zaman-serit .dugme:disabled { opacity: .45; cursor: default; }
+
+/* --- iz: histogram + kaydırıcı. Canvas, başparmak merkezinin gezdiği aralıkla hizalı. */
+#zaman-serit .zs-iz {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+#zaman-serit .zs-histogram {
+  display: block;
+  height: 34px;
+  margin: 0 calc(var(--zs-basparmak) / 2);
+  width: calc(100% - var(--zs-basparmak));
+  border-bottom: 1px solid var(--kenar-cizgi);
+}
+
+#zaman-serit .zs-kaydirici {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 20px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+#zaman-serit .zs-kaydirici:disabled { cursor: default; opacity: .5; }
+
+#zaman-serit .zs-kaydirici::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 3px;
+  background: linear-gradient(90deg,
+    color-mix(in srgb, var(--fosil) 30%, transparent),
+    color-mix(in srgb, var(--isik) 50%, transparent));
+}
+
+#zaman-serit .zs-kaydirici::-moz-range-track {
+  height: 3px;
+  border-radius: 3px;
+  background: linear-gradient(90deg,
+    color-mix(in srgb, var(--fosil) 30%, transparent),
+    color-mix(in srgb, var(--isik) 50%, transparent));
+}
+
+#zaman-serit .zs-kaydirici::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: var(--zs-basparmak);
+  height: var(--zs-basparmak);
+  margin-top: calc((3px - var(--zs-basparmak)) / 2);
+  border-radius: 50%;
+  border: 2px solid var(--zemin);
+  background: radial-gradient(circle at 40% 35%, var(--metin), var(--isik-2) 65%);
+  box-shadow: 0 0 10px -2px color-mix(in srgb, var(--isik-2) 35%, transparent);
+}
+
+#zaman-serit .zs-kaydirici::-moz-range-thumb {
+  width: var(--zs-basparmak);
+  height: var(--zs-basparmak);
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 2px solid var(--zemin);
+  background: radial-gradient(circle at 40% 35%, var(--metin), var(--isik-2) 65%);
+  box-shadow: 0 0 10px -2px color-mix(in srgb, var(--isik-2) 35%, transparent);
+}
+
+#zaman-serit .zs-kaydirici:focus { outline: none; }
+
+#zaman-serit .zs-kaydirici:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--isik) 40%, transparent);
+}
+
+#zaman-serit .zs-kaydirici:focus-visible::-moz-range-thumb {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--isik) 40%, transparent);
+}
+
+#zaman-serit .zs-uclar {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--metin-soluk);
+  font-variant-numeric: tabular-nums;
+}
+
+#zaman-serit :focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--isik) 70%, transparent);
+  outline-offset: 2px;
+}
+
+/* --- dar ekran */
+@media (max-width: 560px) {
+  #zaman-serit .zs-bilgi { flex-basis: 100%; margin-left: 0; }
+  #zaman-serit .zs-an { font-size: 12px; }
+}
+
+/* --- az hareket */
+@media (prefers-reduced-motion: reduce) {
+  #zaman-serit,
+  #zaman-serit * {
+    transition: none !important;
+    animation: none !important;
+  }
+}
