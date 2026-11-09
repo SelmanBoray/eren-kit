@@ -188,6 +188,7 @@ const sahteBag = (): { bag: Bag; cagrilar: string[][] } => {
     uyu: async () => {},
     simdi: () => 0,
     canli: () => false,
+    kaliciOrtam: () => ({}),
   };
   return { bag, cagrilar };
 };
@@ -247,6 +248,7 @@ const kayitliBag = (gorevler: readonly string[], yollar: readonly string[] = [])
     },
     simdi: () => (saat += 1),
     canli: () => false,
+    kaliciOrtam: () => ({}),
     varMi: (y) => yollar.some((p) => p.toLowerCase() === y.toLowerCase()),
   };
   return { bag, cagrilar, bekciCagrilari };
@@ -361,4 +363,112 @@ test("gorev-kaydet --goster (alt süreç, kaydetmez): ortamsız, ortamlı ve gö
   } finally {
     temizle();
   }
+});
+
+// --- eren baslat: kalıcı ortam ve veri kökü doğrulaması ------------------------------------------
+
+const YENI_KOK = "C:\\ornek\\Veri";
+const YANLIS_KOK = "C:\\ornek\\Yerel\\eren-kit";
+
+/**
+ * Görev kayıtlı; /run'a kadar bekçi yok, sonra `cevap(saat, baslangic)` döner. Saat yalnız ilerler
+ * (simdi her çağrıda +1, uyu kadar): sınır döngüleri sahte saatle biter. Çağrı sınırı takılmayı yakalar.
+ */
+const baslatBagi = (o: {
+  kalici: Record<string, string> | null;
+  cevap: (saat: number, baslangic: number) => Record<string, unknown>;
+  anaBasladi?: boolean;
+}) => {
+  const cagrilar: string[][] = [];
+  const bekciCagrilari: string[] = [];
+  let saat = 1_000_000;
+  let baslangic: number | null = null;
+  let kapandi = false;
+  let adim = 0;
+  const ilerle = (ms: number): number => {
+    if (++adim > 100_000) throw new Error("sahte bağ: çok fazla çağrı (saat ilerlemiyor mu?)");
+    saat += ms;
+    return saat;
+  };
+  const bag: Bag = {
+    schtasks: (args) => {
+      cagrilar.push([...args]);
+      if (args[0] === "/query") return (args[2] ?? "").toLowerCase() === "eren-kit-telefon";
+      if (args[0] === "/run" && baslangic === null) baslangic = ilerle(1);
+      return true;
+    },
+    bekci: async (komut) => {
+      ilerle(1);
+      bekciCagrilari.push(komut);
+      if (baslangic === null || kapandi) return null;
+      if (komut === "kapan") {
+        kapandi = true;
+        return { ok: true };
+      }
+      return { ok: true, durum: "calisiyor", bekci_pid: 77, bekci_baslangic_ms: baslangic, ...o.cevap(saat, baslangic) };
+    },
+    uyu: async (ms) => {
+      ilerle(ms);
+    },
+    simdi: () => ilerle(1),
+    canli: () => false,
+    varMi: () => false,
+    kaliciOrtam: () => o.kalici,
+    anaBasladi: () => o.anaBasladi === true,
+  };
+  return { bag, cagrilar, bekciCagrilari };
+};
+
+/** Ana bekçiden hemen sonra açılmış, şu ana dek ayakta. */
+const anaAyakta = (kok?: string) => (_saat: number, b: number): Record<string, unknown> => ({
+  ana_pid: 88,
+  ana_baslangic_ms: b + 1,
+  surum: "aaaaaaaaaa",
+  ...(kok === undefined ? {} : { veri_koku: kok }),
+});
+
+test("eren baslat: kabuk ve kalıcı ortamda veri kökü farklıysa kur gibi hiçbir şeye dokunmadan durur", async () => {
+  const ortam: Ortam = { LOCALAPPDATA: LA, EREN_KIT_DATA_DIR: YENI_KOK };
+  const s = baslatBagi({ kalici: {}, cevap: anaAyakta(YENI_KOK) });
+  const r = await hataCiktisi(() => baslatKomutu(s.bag, ortam));
+  assert.equal(r.kod, 1);
+  assert.deepEqual(degistirenler(s.cagrilar), [], "görev açılmamalı/çalıştırılmamalı");
+  assert.deepEqual(s.bekciCagrilari, []);
+  assert.match(r.hata, /hiçbir şey değişmedi/);
+  assert.match(r.hata, /EREN_KIT_DATA_DIR bu kabukta "C:\\ornek\\Veri", kalıcı ortamda \(yok\)/);
+});
+
+test("eren baslat: servis başka veri kökünde açılırsa durdurur, görevi kapatır ve açıkça söyler", async () => {
+  const ortam: Ortam = { LOCALAPPDATA: LA, EREN_KIT_DATA_DIR: YENI_KOK };
+  const s = baslatBagi({ kalici: { EREN_KIT_DATA_DIR: YENI_KOK }, cevap: anaAyakta(YANLIS_KOK) });
+  const r = await hataCiktisi(() => baslatKomutu(s.bag, ortam));
+  assert.equal(r.kod, 1);
+  const d = degistirenler(s.cagrilar).map((a) => `${a[0]} ${a[3] ?? ""}`.trim());
+  assert.deepEqual(d.slice(0, 2), ["/change /enable", "/run"]);
+  assert.ok(d.includes("/change /disable"), `görev kapatılmalı: ${JSON.stringify(d)}`);
+  assert.ok(s.bekciCagrilari.includes("kapan"), "bekçiye kapan gönderilmeli");
+  assert.match(r.hata, /beklenen veri kökünde çalışmıyor/);
+  assert.ok(r.hata.includes(YANLIS_KOK) && r.hata.includes(YENI_KOK), r.hata);
+  assert.match(r.hata, /durduruldu/);
+});
+
+test("eren baslat: servis beklenen kökte kararlı açılınca başarı; eski bekçide günlük kanıtı", async () => {
+  const ortam: Ortam = { LOCALAPPDATA: LA, EREN_KIT_DATA_DIR: YENI_KOK };
+  const kalici = { EREN_KIT_DATA_DIR: YENI_KOK };
+  const s = baslatBagi({ kalici, cevap: anaAyakta(YENI_KOK) });
+  assert.equal(await sessiz(() => baslatKomutu(s.bag, ortam)), 0);
+  assert.ok(!degistirenler(s.cagrilar).some((a) => a[3] === "/disable"), "durdurulmamalı");
+  // veri kökünü bildirmeyen eski bekçi: beklenen kökün günlüğünde ana'nın kaydı
+  const e = baslatBagi({ kalici, cevap: anaAyakta(), anaBasladi: true });
+  assert.equal(await sessiz(() => baslatKomutu(e.bag, ortam)), 0);
+});
+
+test("eren baslat: kök doğrulanamazsa (kanıt yok) başarı demez ama servisi durdurmaz", async () => {
+  const ortam: Ortam = { LOCALAPPDATA: LA, EREN_KIT_DATA_DIR: YENI_KOK };
+  const s = baslatBagi({ kalici: { EREN_KIT_DATA_DIR: YENI_KOK }, cevap: anaAyakta(), anaBasladi: false });
+  const r = await hataCiktisi(() => baslatKomutu(s.bag, ortam));
+  assert.equal(r.kod, 1);
+  assert.match(r.hata, /doğrulanamadı/);
+  assert.ok(!degistirenler(s.cagrilar).some((a) => a[3] === "/disable"));
+  assert.ok(!s.bekciCagrilari.includes("kapan"));
 });

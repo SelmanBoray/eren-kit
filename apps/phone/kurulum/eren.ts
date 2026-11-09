@@ -3,9 +3,18 @@
 import { execFileSync } from "node:child_process";
 import { closeSync, existsSync, fstatSync, openSync, readSync } from "node:fs";
 import { join } from "node:path";
-import { bekciIstegi, guncelSha } from "./kur.ts";
-import { ESKI_KOK_BAYRAGI, ayniYolMu, eskiKurulumSorunlari, gorevAdi, uygulamaKoku, veriKoku } from "./ortam.ts";
-import type { Ortam } from "./ortam.ts";
+import { bekciIstegi, durumOzeti, guncelSha, servisiDogrulaBekle, veriKokuMesaji } from "./kur.ts";
+import {
+  ESKI_KOK_BAYRAGI,
+  ayniYolMu,
+  eskiKurulumSorunlari,
+  gorevAdi,
+  kaliciOrtamKarsilastir,
+  kaliciOrtamOku,
+  uygulamaKoku,
+  veriKoku,
+} from "./ortam.ts";
+import type { KaliciOrtam, Ortam } from "./ortam.ts";
 
 const PORT = 47821;
 
@@ -20,7 +29,9 @@ const YARDIM = `Kullanım: eren <komut>
   durum                 görev, bekçi, servis ve son olaylar
   yeniden-baslat        bekçiye "yenile" der (güncel sürümden yeniden başlatır)
   dur                   görevi kapatır, sonra bekçiye "kapan" der (kalıcı durur)
-  baslat                görevi açar (/enable), sonra çalıştırır (/run)
+  baslat                görevi açar (/enable), sonra çalıştırır (/run); servisin beklenen veri
+                        kökünde açıldığını doğrular, başka kökteyse durdurur
+                        (kabuk ile kalıcı ortamda veri kökü farklıysa hiçbir şeye dokunmadan durur)
                         (dur ve baslat eski kurulumla çakışmada hiçbir şeye dokunmadan durur;
                         eski veri kökü doluyken bilerek sürdürmek için ${ESKI_KOK_BAYRAGI})
   log [n] [--bekci]     son n (varsayılan 20) olay; --bekci ile bekci.log
@@ -206,6 +217,10 @@ export type Bag = {
   readonly canli: (pid: number) => boolean;
   /** Yol var mı (eski kurulum izi); verilmezse existsSync. */
   readonly varMi?: (yol: string) => boolean;
+  /** Görev Zamanlayıcı'nın göreceği kalıcı ortam (`kaliciOrtamOku`); `null` = okunamadı. */
+  readonly kaliciOrtam: () => KaliciOrtam;
+  /** Eski bekçide kök kanıtı: beklenen kökün servis günlüğünde ana'nın başlangıç kaydı; verilmezse kur.ts'teki. */
+  readonly anaBasladi?: (logDizini: string, pid: number, enErkenMs: number) => boolean;
 };
 
 export type Secenek = { readonly eskiKokuYoksay?: boolean };
@@ -226,6 +241,18 @@ const eskiKurulumDenetle = (b: Bag, ortam: Ortam, komut: string, secenek: Secene
   return false;
 };
 
+/**
+ * `kur.ts` ile aynı ön denetim: kabuktaki veri kökü Görev Zamanlayıcı'nın göreceği kalıcı değerden farklıysa
+ * servis başka köke açılır. Hata varsa hiçbir şeye dokunmadan yazar ve false döner; uyarıları yalnız yazar.
+ */
+const kaliciOrtamDenetle = (b: Bag, ortam: Ortam, komut: string): boolean => {
+  const { hatalar, uyarilar } = kaliciOrtamKarsilastir(ortam, b.kaliciOrtam());
+  for (const u of uyarilar) console.error(`UYARI: ${u}`);
+  if (hatalar.length === 0) return true;
+  console.error(`eren ${komut} durdu, hiçbir şey değişmedi:\n- ${hatalar.join("\n- ")}`);
+  return false;
+};
+
 const pidCanli = (pid: number): boolean => {
   try {
     process.kill(pid, 0);
@@ -241,6 +268,7 @@ const gercekBag: Bag = {
   uyu: (ms) => new Promise((coz) => setTimeout(coz, ms)),
   simdi: () => Date.now(),
   canli: pidCanli,
+  kaliciOrtam: () => kaliciOrtamOku(process.env),
 };
 
 // Bekçi borusu açık ve kapanmıyor mu?
@@ -252,6 +280,11 @@ const bekciAyakta = async (b: Bag): Promise<boolean> => {
 export const durKomutu = async (b: Bag = gercekBag, ortam: Ortam = process.env, secenek: Secenek = {}): Promise<number> => {
   const gorev = gorevAdi(ortam);
   if (!eskiKurulumDenetle(b, ortam, "dur", secenek)) return 1;
+  return servisiDurdur(b, gorev);
+};
+
+/** Görevi kapatır (kayıtlıysa), bekçiye kapan der ve bitmesini bekler (`eren dur` ve yanlış kökte `eren baslat`). */
+const servisiDurdur = async (b: Bag, gorev: string): Promise<number> => {
   const gorevVar = b.schtasks(["/query", "/tn", gorev]);
   if (gorevVar) {
     if (!b.schtasks(["/change", "/tn", gorev, "/disable"])) {
@@ -287,25 +320,72 @@ export const durKomutu = async (b: Bag = gercekBag, ortam: Ortam = process.env, 
   return 1;
 };
 
+/**
+ * Bekçi ayakta: servisin beklenen veri kökünde çalıştığını `kur` ile aynı yöntemle (`servisiDogrulaBekle`)
+ * doğrular. Başka kökteyse durdurur ve görevi kapatır; kanıt yoksa başarı demez ama durdurmaz.
+ */
+const kokuDogrula = async (
+  b: Bag,
+  gorev: string,
+  beklenenKok: string,
+  o: { readonly tetik: number; readonly bekciYeni: boolean },
+): Promise<number> => {
+  console.log(`Servisin ${beklenenKok} veri kökünde çalıştığı doğrulanıyor...`);
+  const r = await servisiDogrulaBekle(
+    { sha: null, tetik: o.tetik, bekciYeni: o.bekciYeni, beklenenKok },
+    {
+      durum: () => b.bekci("durum", 2000),
+      uyu: b.uyu,
+      simdi: b.simdi,
+      ...(b.anaBasladi === undefined ? {} : { anaBasladi: b.anaBasladi }),
+    },
+  );
+  if (r.tur === "tamam") {
+    console.log(`Servis ${beklenenKok} veri kökünde çalışıyor (ana pid ${String(r.d.ana_pid)}; kanıt: ${r.kanit}).`);
+    return 0;
+  }
+  if (r.tur === "uyusmuyor") {
+    console.error(`eren baslat: ${veriKokuMesaji(beklenenKok, r.servisKoku)}.`);
+    console.error("Servis yanlış köke yazmasın diye durduruluyor ve görev kapatılıyor...");
+    const kod = await servisiDurdur(b, gorev);
+    console.error(
+      kod === 0
+        ? "Servis durduruldu, görev kapalı. Yanlış kökte oluşmuş olabilecek eren.db ve sunucu-anahtar.pem'e dokunulmadı. " +
+            "Ortamı düzeltip (oturumu kapatıp açın) yeniden `eren baslat`."
+        : "Servis durdurulamadı: yanlış kökte çalışıyor olabilir; `eren dur` ile durdurun.",
+    );
+    return 1;
+  }
+  console.error(
+    `eren baslat: bekçi ayakta ama servisin ${beklenenKok} veri kökünde çalıştığı doğrulanamadı: ` +
+      `${r.kokSebebi ?? `servis kararlı çalışmadı (${durumOzeti(r.d)})`}. Servis durdurulmadı; \`eren durum\` ile bakın.`,
+  );
+  return 1;
+};
+
 export const baslatKomutu = async (b: Bag = gercekBag, ortam: Ortam = process.env, secenek: Secenek = {}): Promise<number> => {
   const gorev = gorevAdi(ortam);
   if (!eskiKurulumDenetle(b, ortam, "baslat", secenek)) return 1;
+  if (!kaliciOrtamDenetle(b, ortam, "baslat")) return 1;
+  const beklenenKok = veriKoku(ortam);
   if (!b.schtasks(["/change", "/tn", gorev, "/enable"])) {
     console.error(`Görev '${gorev}' açılamadı (kayıtlı değil olabilir). Önce gorev-kaydet.ts çalıştırılmalı.`);
     return 1;
   }
   if (await bekciAyakta(b)) {
     console.log("Görev açıldı; bekçi zaten çalışıyor.");
-    return 0;
+    // önceden çalışan bekçi: ana bu komuttan önce herhangi bir anda başlamış olabilir
+    return kokuDogrula(b, gorev, beklenenKok, { tetik: 0, bekciYeni: false });
   }
   for (let deneme = 1; deneme <= 3; deneme++) {
+    const tetik = b.simdi();
     const kosuldu = b.schtasks(["/run", "/tn", gorev]);
     if (kosuldu) {
       const bitis = b.simdi() + 10000;
       while (b.simdi() < bitis) {
         if (await bekciAyakta(b)) {
           console.log("Görev başlatıldı, bekçi ayakta.");
-          return 0;
+          return kokuDogrula(b, gorev, beklenenKok, { tetik, bekciYeni: true });
         }
         await b.uyu(500);
       }
