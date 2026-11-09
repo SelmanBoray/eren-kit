@@ -3,7 +3,10 @@ import { describe, it } from "node:test";
 import type { BekleyenOge, GidenHatasi, GorunumOgesi } from "../../src/cekirdek/index.ts";
 import {
   BASLATILIYOR_METNI,
+  IZIN_BEKLEME_SURESI_MS,
   isDurumuBul,
+  izinBeklemesiKalanMs,
+  izinGorulmeleriniKaydet,
   ONAY_BEKLENIYOR_METNI,
   planKartiDurumu,
   yoldakiKarar,
@@ -69,11 +72,64 @@ describe("isDurumuBul ve yoldakiKarar", () => {
 
   it("kuyruktaki karar ve izin_bekleniyor hatası sayılır; başka hata ve başka plan sayılmaz", () => {
     const bekleyen: BekleyenOge[] = [{ client_msg_id: "c-p1", mesaj: karar("p1", "onay"), durum: "kuyrukta" }];
-    assert.equal(yoldakiKarar("p1", bekleyen, []), "onay");
-    assert.equal(yoldakiKarar("p2", bekleyen, []), null);
+    assert.equal(yoldakiKarar("p1", bekleyen, [], new Map(), T0), "onay");
+    assert.equal(yoldakiKarar("p2", bekleyen, [], new Map(), T0), null);
     const izin: GidenHatasi[] = [{ client_msg_id: "c-p2", mesaj: karar("p2", "onay"), kod: "izin_bekleniyor" }];
-    assert.equal(yoldakiKarar("p2", [], izin), "onay");
+    assert.equal(yoldakiKarar("p2", [], izin, new Map(), T0), "onay");
     const baska: GidenHatasi[] = [{ client_msg_id: "c-p3", mesaj: karar("p3", "ret"), kod: "limit_kilitli" }];
-    assert.equal(yoldakiKarar("p3", [], baska), null);
+    assert.equal(yoldakiKarar("p3", [], baska, new Map(), T0), null);
+  });
+});
+
+const T0 = 1_000_000;
+
+describe("izin_bekleniyor kaydı süresiz 'yoldaki onay' sayılmaz", () => {
+  const izin: GidenHatasi[] = [{ client_msg_id: "c-p", mesaj: karar("p", "onay"), kod: "izin_bekleniyor" }];
+
+  it("süre içinde: Başlatılıyor, düğmesiz (çift karar koruması)", () => {
+    const gorulme = new Map([["c-p", T0]]);
+    const k = yoldakiKarar("p", [], izin, gorulme, T0 + IZIN_BEKLEME_SURESI_MS - 1);
+    assert.equal(k, "onay");
+    const d = planKartiDurumu("bekliyor", null, k, false);
+    assert.equal(d.metin, BASLATILIYOR_METNI);
+    assert.equal(d.onayBekleniyor, false);
+  });
+
+  it("izin gelmeden süre dolunca: kart yeniden 'Onayını bekliyor' ve düğmeler", () => {
+    const gorulme = new Map([["c-p", T0]]);
+    const k = yoldakiKarar("p", [], izin, gorulme, T0 + IZIN_BEKLEME_SURESI_MS);
+    assert.equal(k, null);
+    assert.deepEqual(planKartiDurumu("bekliyor", null, k, false), {
+      metin: ONAY_BEKLENIYOR_METNI,
+      renk: "vurgu",
+      onayBekleniyor: true,
+    });
+  });
+
+  it("saat geri giderse süre dolmuş sayılır (sınırsız bekleme yok)", () => {
+    const gorulme = new Map([["c-p", T0]]);
+    assert.equal(yoldakiKarar("p", [], izin, gorulme, T0 - 1), null);
+  });
+
+  it("süre dolduktan sonra verilen yeni karar kuyruktayken yine düğmeler gizli; o da izin beklerse kendi süresi işler", () => {
+    const yeni = { ...karar("p", "onay"), client_msg_id: "c-p-2" };
+    const kuyruk: BekleyenOge[] = [{ client_msg_id: "c-p-2", mesaj: yeni, durum: "kuyrukta" }];
+    const gorulme = new Map([["c-p", T0]]);
+    const sonra = T0 + IZIN_BEKLEME_SURESI_MS + 5;
+    assert.equal(yoldakiKarar("p", kuyruk, izin, gorulme, sonra), "onay");
+    const ikiIzin: GidenHatasi[] = [...izin, { client_msg_id: "c-p-2", mesaj: yeni, kod: "izin_bekleniyor" }];
+    gorulme.set("c-p-2", sonra);
+    assert.equal(yoldakiKarar("p", [], ikiIzin, gorulme, sonra + 1), "onay");
+    assert.equal(yoldakiKarar("p", [], ikiIzin, gorulme, sonra + IZIN_BEKLEME_SURESI_MS), null);
+  });
+
+  it("ilk görülme zamanı kaydedilir, varolan değiştirilmez; kalan süre hesaplanır", () => {
+    const gorulme = new Map<string, number>();
+    izinGorulmeleriniKaydet("p", izin, gorulme, T0);
+    izinGorulmeleriniKaydet("p", izin, gorulme, T0 + 500);
+    assert.equal(gorulme.get("c-p"), T0);
+    assert.equal(izinBeklemesiKalanMs("p", izin, gorulme, T0 + 500), IZIN_BEKLEME_SURESI_MS - 500);
+    assert.equal(izinBeklemesiKalanMs("p", izin, gorulme, T0 + IZIN_BEKLEME_SURESI_MS), null);
+    assert.equal(izinBeklemesiKalanMs("p", [], gorulme, T0), null);
   });
 });

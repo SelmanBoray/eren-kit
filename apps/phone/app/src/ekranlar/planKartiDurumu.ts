@@ -40,19 +40,76 @@ export function isDurumuBul(ogeler: SohbetDurumu["ogeler"], is_id: number | null
 }
 
 /**
- * Saf: bu planın yoldaki kararı. Kuyruktaki `plan_decision` ve servisin kabul edip telefon iznini
- * beklediği (`izin_bekleniyor`) karar sayılır; başka hatayla düşen karar sayılmaz (yeniden verilebilir).
+ * `izin_bekleniyor` kararının "yolda" sayıldığı en uzun süre. Telefon işinde izin karardan hemen
+ * önce verilir; karar izinden önce varırsa izin saniyeler içinde gelir. Gelmezse (süresi doldu, geri
+ * çekildi, kilit) servis işi başlatmaz ve bunu telefona bildiren bir olay yoktur: kayıt da kendiliğinden
+ * silinmez. Bu süreden sonra kart yeniden karar ister ki kullanıcı işi yeniden başlatabilsin.
+ */
+export const IZIN_BEKLEME_SURESI_MS = 2 * 60_000;
+
+/** Kaydın zamanı yok: her `izin_bekleniyor` kararının telefonda ilk görüldüğü an (`client_msg_id` → ms). */
+export type IzinGorulmeleri = Map<string, number>;
+
+const izinBekleyenMi = (h: GidenHatasi, plan_id: string): boolean =>
+  h.mesaj.type === "plan_decision" && h.mesaj.plan_id === plan_id && h.kod === "izin_bekleniyor";
+
+/** İlk görülmeden bu yana geçen süre sınır içinde mi; saat geri gittiyse dolmuş sayılır. Görülmemişse geçerli. */
+const izinKalanMs = (ilk: number | undefined, simdiMs: number): number | null => {
+  if (ilk === undefined) return IZIN_BEKLEME_SURESI_MS;
+  const gecen = simdiMs - ilk;
+  if (!Number.isFinite(gecen) || gecen < 0 || gecen >= IZIN_BEKLEME_SURESI_MS) return null;
+  return IZIN_BEKLEME_SURESI_MS - gecen;
+};
+
+/** Bu planın `izin_bekleniyor` kararlarının ilk görülme anını yazar; olanı değiştirmez. */
+export function izinGorulmeleriniKaydet(
+  plan_id: string,
+  hatalar: readonly GidenHatasi[],
+  gorulme: IzinGorulmeleri,
+  simdiMs: number,
+): void {
+  for (const h of hatalar) {
+    if (izinBekleyenMi(h, plan_id) && !gorulme.has(h.client_msg_id)) gorulme.set(h.client_msg_id, simdiMs);
+  }
+}
+
+/** Saf: bu planın hâlâ geçerli `izin_bekleniyor` kararının dolmasına kalan en uzun süre; yoksa `null`. */
+export function izinBeklemesiKalanMs(
+  plan_id: string,
+  hatalar: readonly GidenHatasi[],
+  gorulme: ReadonlyMap<string, number>,
+  simdiMs: number,
+): number | null {
+  let enUzun: number | null = null;
+  for (const h of hatalar) {
+    if (!izinBekleyenMi(h, plan_id)) continue;
+    const kalan = izinKalanMs(gorulme.get(h.client_msg_id), simdiMs);
+    if (kalan !== null && (enUzun === null || kalan > enUzun)) enUzun = kalan;
+  }
+  return enUzun;
+}
+
+/**
+ * Saf: bu planın yoldaki kararı. Kuyruktaki `plan_decision` her zaman sayılır. Servisin kabul edip
+ * telefon iznini beklediği (`izin_bekleniyor`) karar yalnız ilk görülmesinden
+ * `IZIN_BEKLEME_SURESI_MS` geçene dek sayılır. Başka hatayla düşen karar sayılmaz (yeniden verilebilir).
  */
 export function yoldakiKarar(
   plan_id: string,
   bekleyenler: readonly BekleyenOge[],
   hatalar: readonly GidenHatasi[],
+  gorulme: ReadonlyMap<string, number>,
+  simdiMs: number,
 ): YoldakiKarar {
   for (const b of bekleyenler) {
     if (b.mesaj.type === "plan_decision" && b.mesaj.plan_id === plan_id) return b.mesaj.karar;
   }
   for (const h of hatalar) {
-    if (h.mesaj.type === "plan_decision" && h.mesaj.plan_id === plan_id && h.kod === "izin_bekleniyor") {
+    if (
+      h.mesaj.type === "plan_decision" &&
+      izinBekleyenMi(h, plan_id) &&
+      izinKalanMs(gorulme.get(h.client_msg_id), simdiMs) !== null
+    ) {
       return h.mesaj.karar;
     }
   }
@@ -62,7 +119,8 @@ export function yoldakiKarar(
 /**
  * Saf: kartın durum satırı.
  * - `onaylandi`: iş durumu ("Çalışıyor", "Bitti", ...); iş kartı henüz görünmüyorsa "Başladı".
- * - `bekliyor`: otomatik deneme sürüyor ya da onay kararı yoldaysa "Başlatılıyor"; ret yoldaysa
+ * - `bekliyor`: otomatik deneme sürüyor ya da onay kararı yoldaysa (izin bekleyen karar yalnız
+ *   `IZIN_BEKLEME_SURESI_MS` boyunca) "Başlatılıyor"; ret yoldaysa
  *   "Reddediliyor"; yoksa kullanıcıdan karar bekleniyor.
  */
 export function planKartiDurumu(

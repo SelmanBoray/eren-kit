@@ -224,7 +224,7 @@ class EkranOkuyucu(baglam: Context) : EkranPortu, A11yBagi {
             .filter { !(it.tur == PencereTuru.UYGULAMA && it.paket == a.aktifKokPaketi) }
             .joinToString(",") { "${it.tur.name}:${guvenliPaket(it.paket)}" }
         return "kok=${guvenliPaket(a.aktifKokPaketi)} olay=${guvenliPaket(a.sonOlayPaketi)}" +
-            "odak=${guvenliPaket(a.odakPaketi)} pencereler=[$diger]"
+            " odak=${guvenliPaket(a.odakPaketi)} pencereler=[$diger]"
     }
 
     private fun guvenliPaket(p: String?): String = when {

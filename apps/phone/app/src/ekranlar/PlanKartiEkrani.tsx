@@ -1,12 +1,18 @@
-import { useCallback, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import type { ReactNode } from "react";
 import { Text, View } from "react-native";
 import type { GonderSonucu, PlanKarti, Sohbet } from "../cekirdek/index.ts";
 import type { ErenCihaz } from "../cihaz/erenDevice.ts";
 import { BolumAdi, Dugme, DurumEtiketi, Duz, KartKabi, Serit } from "./Bilesenler.tsx";
 import { otoIzinKartGorunumu, useOtoIzinDeneniyor, useOtoIzinDeposu, useOtoIzinNotu } from "./otoIzin.ts";
-import { isDurumuBul, planKartiDurumu, yoldakiKarar } from "./planKartiDurumu.ts";
-import type { YoldakiKarar } from "./planKartiDurumu.ts";
+import {
+  isDurumuBul,
+  izinBeklemesiKalanMs,
+  izinGorulmeleriniKaydet,
+  planKartiDurumu,
+  yoldakiKarar,
+} from "./planKartiDurumu.ts";
+import type { IzinGorulmeleri, YoldakiKarar } from "./planKartiDurumu.ts";
 import { bosluk, renk, yazi } from "./tema.ts";
 
 interface Not {
@@ -144,19 +150,40 @@ export function PlanKartiEkrani(p: { kart: PlanKarti; sohbet: Sohbet; cihaz: Ere
 const bolum = { gap: bosluk[2], marginTop: bosluk[2] } as const;
 
 /**
+ * `izin_bekleniyor` kararlarının telefonda ilk görüldüğü an (kayıtta zaman yok). Modül düzeyinde:
+ * liste kartı yeniden bağlasa da süre sıfırlanmaz; uygulama yeniden açılınca süre baştan işler.
+ */
+const izinGorulmeleri: IzinGorulmeleri = new Map();
+
+/**
  * Kartın sohbetten okuduğu iki bilgi: `is_id`'sinin iş durumu ve bu planın yoldaki kararı. Kart
  * nesnesi iş bitince değişmez; bu yüzden sohbete abone olunur. Anlık görüntü düz metindir (sabit).
+ * İzin bekleyen karar süre dolunca kendiliğinden düşer: o an için bir zamanlayıcı yeniden çizdirir.
  */
 function useSohbettekiPlanBilgisi(
   sohbet: Sohbet,
   kart: PlanKarti,
 ): { isDurumu: ReturnType<typeof isDurumuBul>; karar: YoldakiKarar } {
+  const [tik, setTik] = useState(0);
   const abone = useCallback((f: () => void) => sohbet.abone(() => f()), [sohbet]);
   const anlik = useSyncExternalStore(abone, () => {
     const d = sohbet.durum();
-    return `${isDurumuBul(d.ogeler, kart.is_id) ?? ""}|${yoldakiKarar(kart.plan_id, d.bekleyenler, d.hatalar) ?? ""}`;
+    const simdi = Date.now();
+    izinGorulmeleriniKaydet(kart.plan_id, d.hatalar, izinGorulmeleri, simdi);
+    const karar = yoldakiKarar(kart.plan_id, d.bekleyenler, d.hatalar, izinGorulmeleri, simdi);
+    const kalan = izinBeklemesiKalanMs(kart.plan_id, d.hatalar, izinGorulmeleri, simdi);
+    return `${isDurumuBul(d.ogeler, kart.is_id) ?? ""}|${karar ?? ""}|${kalan === null ? "" : "z"}`;
   });
-  const [is, karar] = anlik.split("|");
+  const [is, karar, zamanli] = anlik.split("|");
+  const izinliMi = zamanli === "z";
+  useEffect(() => {
+    if (!izinliMi) return;
+    const kalan = izinBeklemesiKalanMs(kart.plan_id, sohbet.durum().hatalar, izinGorulmeleri, Date.now());
+    if (kalan === null) return;
+    const t = setTimeout(() => setTik((n) => n + 1), kalan + 50);
+    return () => clearTimeout(t);
+    // `tik`: zamanlayıcı düştüğünde başka bir izin kaydı hâlâ geçerliyse onun için yeniden kurulur.
+  }, [izinliMi, kart.plan_id, sohbet, tik]);
   return {
     isDurumu: is === "" || is === undefined ? null : (is as NonNullable<ReturnType<typeof isDurumuBul>>),
     karar: karar === "onay" || karar === "ret" ? karar : null,
