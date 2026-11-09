@@ -16,6 +16,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   The sign-in screen accepts a pasted key or address; only in home-screen (standalone) mode is the
   key kept in `localStorage`, browser tabs stay session-only.
 - `settings_hooks.py --python` to choose the hook interpreter (default stays `python`).
+- `bellek`: map-first doc gate (`packages/bellek/src/bellek/kapi/`), a Claude Code PreToolUse hook.
+  On an agent's first touch of a Markdown file of 16 KB or more it denies the read and returns a
+  heading map (line ranges and sizes), so the agent reads only the section it needs. Targeted reads
+  (80 lines or fewer) and second attempts pass. Fail-open, with a measurement log; disable with
+  `BELLEK_KAPI=kapali`.
+- Installer: new `kapi` component (in the default set). `settings_hooks.py` now supports group-level
+  `matcher` and per-handler `if` filters, and `-ReplaceExisting` also removes out-of-repo copies of
+  the gate hook.
 
 ### Changed
 

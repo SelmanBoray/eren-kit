@@ -201,6 +201,21 @@ def test_main_macos_disinda_reddeder(monkeypatch, tmp_path):
     assert im.main(["--claude-home", str(tmp_path)]) == 2
 
 
+def test_main_kapi_hook_yorumlayiciyla_ve_filtreyle_kaydolur(tmp_path, monkeypatch):
+    monkeypatch.setenv("EREN_KIT_FORCE_MACOS", "1")
+    home = tmp_path / "claude"
+    home.mkdir()
+    args = ["--components", "kapi", "--claude-home", str(home), "--skip-mcp", "--no-service",
+            "--skip-repo-setup", "--hook-python", "/opt/homebrew/bin/python3"]
+    assert im.main(args) == 0
+    d = json.loads((home / "settings.json").read_text(encoding="utf-8"))
+    hs = [h for g in d["hooks"]["PreToolUse"] for h in g["hooks"]]
+    assert hs and all(h["command"].startswith("/opt/homebrew/bin/python3 -I -S ") for h in hs)
+    assert all(h.get("if", "").startswith("Read(") for h in hs)
+    assert im.main(args + ["--uninstall"]) == 0
+    assert "PreToolUse" not in json.loads((home / "settings.json").read_text(encoding="utf-8")).get("hooks", {})
+
+
 @pytest.mark.parametrize("bilesen", ["computer-use"])
 def test_computer_use_macosta_yerlesik_yonlendirir(tmp_path, bilesen):
     r = im.computer_use_info(_ctx(tmp_path))

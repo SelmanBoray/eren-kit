@@ -12,6 +12,7 @@ import sys
 import threading
 import time
 import urllib.error
+from pathlib import Path
 import urllib.request
 
 import pytest
@@ -139,7 +140,19 @@ def servis_baslat(ortam):
         except Exception:
             pass
         time.sleep(0.2)
-    raise AssertionError("servis 10 sn'de hazır olmadı")
+    # Teşhis: neden açılmadığı CI günlüğünde görünsün (süreç çıktısı + servis günlüğü).
+    agaci_oldur(p)
+    try:
+        out, err = p.communicate(timeout=5)
+    except Exception:
+        out, err = b"", b""
+    try:
+        gunluk = Path(ortam["env"]["BELLEK_BEYIN_LOG"]).read_text(encoding="utf-8", errors="replace")[-2000:]
+    except OSError:
+        gunluk = "(günlük yok)"
+    raise AssertionError("servis 10 sn'de hazır olmadı"
+                         f"\nstdout: {out.decode('utf-8', 'replace')[-1500:]}"
+                         f"\nstderr: {err.decode('utf-8', 'replace')[-1500:]}\ngünlük: {gunluk}")
 
 
 class Kopru:

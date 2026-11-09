@@ -1,6 +1,6 @@
 """eren-kit macOS kurulum betiği (install.sh tarafından çağrılır; install.ps1'in macOS karşılığı).
 
-    ./install.sh [--components beyin,devir,orkestra] [--assistant-name AD] [--claude-home KLASÖR]
+    ./install.sh [--components beyin,devir,kapi,orkestra] [--assistant-name AD] [--claude-home KLASÖR]
                  [--dry-run] [--uninstall] [--skip-mcp] [--no-service] [--replace-existing]
                  [--tailscale-host HOST] [--help]
 
@@ -46,8 +46,8 @@ sys.path.insert(0, str(HERE))
 import mcp_config  # noqa: E402
 import settings_hooks  # noqa: E402
 
-ALL_COMPONENTS = ["beyin", "devir", "orkestra", "computer-use", "phone"]
-DEFAULT_COMPONENTS = ["beyin", "devir", "orkestra"]
+ALL_COMPONENTS = ["beyin", "devir", "kapi", "orkestra", "computer-use", "phone"]
+DEFAULT_COMPONENTS = ["beyin", "devir", "kapi", "orkestra"]
 SERVICE_LABEL = "com.eren-kit.beyin-servis"
 MARKER = ".eren-kit"
 ENV_NAME = "EREN_KIT_ASSISTANT_NAME"
@@ -585,6 +585,7 @@ def build_steps(ctx: Ctx) -> dict[str, list[Callable[[], Step]]]:
             "beyin": [lambda: mcp_unregister(ctx, "beyin"), lambda: service_uninstall(ctx)],
             "devir": [lambda: settings_hooks_step(ctx, "devir"),
                       lambda: uninstall_skill(ctx, "devir", P["devir_skill"])],
+            "kapi": [lambda: settings_hooks_step(ctx, "kapi")],
             "orkestra": [lambda: settings_hooks_step(ctx, "orkestra"),
                          lambda: uninstall_skill(ctx, "opus-orkestra", P["ork_skill"], ["SKILL.md"])],
             "computer-use": [lambda: computer_use_info(ctx)],
@@ -597,6 +598,7 @@ def build_steps(ctx: Ctx) -> dict[str, list[Callable[[], Step]]]:
         "devir": [lambda: install_venv(ctx, P["bellek"], "packages/bellek"), lambda: hook_python_step(ctx),
                   lambda: settings_hooks_step(ctx, "devir"),
                   lambda: install_skill(ctx, "devir", "devir", P["devir_skill"])],
+        "kapi": [lambda: hook_python_step(ctx), lambda: settings_hooks_step(ctx, "kapi")],
         "orkestra": [lambda: hook_python_step(ctx),
                      lambda: install_skill(ctx, "orkestra", "opus-orkestra", P["ork_skill"], ["SKILL.md"]),
                      lambda: settings_hooks_step(ctx, "orkestra")],
@@ -606,6 +608,7 @@ def build_steps(ctx: Ctx) -> dict[str, list[Callable[[], Step]]]:
 
 
 TITLES = {"beyin": "Beyin (bellek + MCP + launchd servisi)", "devir": "Devir (hook + skill)",
+          "kapi": "Belge kapısı (PreToolUse hook)",
           "orkestra": "Opus Orkestra (skill + hook)", "computer-use": "Computer use",
           "phone": "Phone (deneysel)"}
 
@@ -689,7 +692,7 @@ def main(argv: list[str] | None = None) -> int:
     line("info", f"Bileşenler:  {', '.join(selected)}")
 
     title("Önkoşullar")
-    need_py = any(k in selected for k in ("beyin", "devir", "orkestra"))
+    need_py = any(k in selected for k in ("beyin", "devir", "kapi", "orkestra"))
     ctx.hook_python = a.hook_python or find_python((3, 11)) or "python3"
     ctx.venv_python = find_python((3, 12))
     if need_py and not a.uninstall:
@@ -708,7 +711,7 @@ def main(argv: list[str] | None = None) -> int:
         line("warn", "claude CLI bulunamadı: MCP kayıt adımları atlanacak (curl -fsSL https://claude.ai/install.sh | bash)")
 
     results: list[tuple[str, str, str]] = []
-    if not a.uninstall and any(k in selected for k in ("beyin", "devir", "orkestra")):
+    if not a.uninstall and any(k in selected for k in ("beyin", "devir", "kapi", "orkestra")):
         title("Asistan adı")
         try:
             r = settings_env_step(ctx, ctx.assistant_name)
