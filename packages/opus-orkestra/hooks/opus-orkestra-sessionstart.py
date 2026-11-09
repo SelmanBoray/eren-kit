@@ -4,7 +4,14 @@ SKILL.md bulma sirasi: --skill <yol> -> OPUS_ORKESTRA_SKILL ortam degiskeni ->
 ~/.claude/skills/opus-orkestra/SKILL.md -> bu betige gore ../skill/SKILL.md
 (--skill oldugu gibi kullanilir; digerlerinde ilk var olan dosya secilir).
 
-Kullanim: python opus-orkestra-sessionstart.py [--parca <n>] [--skill <yol>]
+Kullanim: python opus-orkestra-sessionstart.py [--parca <n>] [--skill <yol>] [--mod cekirdek|tam]
+
+Mod (varsayilan "cekirdek"; OPUS_ORKESTRA_MOD ortam degiskeni ya da --mod ile degisir):
+- cekirdek: yalniz kisa cekirdek kural (skill/CEKIRDEK.md, ~3 KB) 1. parcada enjekte edilir; 2-4.
+  parcalar bos gecer. Tam kurallar gerektiginde SKILL.md'den bolum bolum okunur. Her oturumda
+  ~33 KB yerine ~3 KB baglam harcanir.
+- tam: eski davranis; SKILL.md'nin tamami 4 parcaya bolunup enjekte edilir.
+Cekirdek dosyasi bulunamaz ya da bossa tam moda dusulur.
 Metin '## ' basliklarindan bloklara bolunur ve en fazla AZAMI_PARCA parcaya dagitilir;
 her parca ayri hook komutu olarak calisir (n. parca -> --parca n).
 """
@@ -139,6 +146,31 @@ def varsayilan_skill():
     return kurulum
 
 
+def cekirdek_yolu():
+    env = os.environ.get("OPUS_ORKESTRA_CEKIRDEK")
+    if env:
+        return env
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "skill", "CEKIRDEK.md")
+
+
+def defter_komutu():
+    """Bu makinede defter.py'yi çağıran tam komut (kurulum adımı gerektirmez)."""
+    yol = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "defter", "defter.py"))
+    py = sys.executable or "python"
+    q = lambda x: '"%s"' % x if any(c.isspace() for c in x) else x
+    return "%s -I %s" % (q(py.replace(os.sep, "/")), q(yol.replace(os.sep, "/")))
+
+
+def cekirdek_oku():
+    """Cekirdek metni; okunamaz ya da bossa None (tam moda dusulur)."""
+    try:
+        with open(cekirdek_yolu(), encoding="utf-8-sig") as f:
+            metin = govde_al(f.read())
+    except (OSError, UnicodeDecodeError):
+        return None
+    return metin if metin.strip() else None
+
+
 def argumanlar(argv):
     n = 1
     skill = None
@@ -151,6 +183,10 @@ def argumanlar(argv):
                 n = v if 1 <= v <= AZAMI_PARCA else 1
             except ValueError:
                 n = 1
+            i += 2
+            continue
+        if a == "--mod" and i + 1 < len(argv):
+            os.environ["OPUS_ORKESTRA_MOD"] = argv[i + 1]
             i += 2
             continue
         if a == "--skill" and i + 1 < len(argv):
@@ -193,6 +229,21 @@ def main():
         return 0
 
     govde = govde_al(text)
+    if (os.environ.get("OPUS_ORKESTRA_MOD") or "cekirdek").strip().lower() != "tam" and govde.strip():
+        cekirdek = cekirdek_oku()
+        if cekirdek is not None:
+            if n != 1:
+                return 0  # cekirdek tek parcadir; 2-4. hook komutlari bos gecer
+            metin = cekirdek.replace("~/.claude/skills/opus-orkestra/SKILL.md", SKILL_YOLU_GOSTERIM)
+            metin += "\n`defter` command here: `" + defter_komutu() + "` (run inside the git repo).\n"
+            if len(metin) > SINIR_KARAKTER:
+                metin = metin[:SINIR_KARAKTER - 200] + "\n\n[Çekirdek kesildi; tamamı için " + SKILL_YOLU_GOSTERIM + " oku.]"
+            yaz({
+                "hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": metin},
+                "systemMessage": "Opus Orkestra çekirdek kuralı yüklendi (tam kurallar: " + SKILL_YOLU_GOSTERIM + ").",
+                "suppressOutput": True,
+            })
+            return 0
     if not govde.strip():
         if n == 1:
             bildir("opus-orkestra SKILL.md boş (" + SKILL_YOLU_GOSTERIM + "); hook boş geçti, kurallar eksik. "

@@ -22,9 +22,14 @@ HEAD_RE = re.compile(r"^## .*$", re.M)
 FM = "---\nname: opus-orkestra\ndescription: GIZLIFRONTMATTER\n---\n"
 
 
-def run(args, stdin_data=b""):
+def run(args, stdin_data=b"", mod="tam"):
+    """Sözleşme testleri tam modu sınar; çekirdek mod ayrı testlerde (mod=None: varsayılan)."""
     cmd = [sys.executable, SCRIPT] + list(args)
-    return subprocess.run(cmd, input=stdin_data, capture_output=True, timeout=TIMEOUT)
+    env = dict(os.environ)
+    env.pop("OPUS_ORKESTRA_MOD", None)
+    if mod is not None:
+        env["OPUS_ORKESTRA_MOD"] = mod
+    return subprocess.run(cmd, input=stdin_data, capture_output=True, timeout=TIMEOUT, env=env)
 
 
 def ctx_of(proc):
@@ -697,6 +702,7 @@ class TestSkillResolution(Base):
     def run_env(self, args, env_skill=None, home=None):
         env = dict(os.environ)
         env.pop("OPUS_ORKESTRA_SKILL", None)
+        env["OPUS_ORKESTRA_MOD"] = "tam"
         if env_skill is not None:
             env["OPUS_ORKESTRA_SKILL"] = env_skill
         if home is not None:
@@ -773,3 +779,44 @@ class TestLabelExact(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CekirdekMod(unittest.TestCase):
+    """Varsayılan mod: yalnız kısa çekirdek kural enjekte edilir (her oturumda ~33 KB yerine ~3 KB)."""
+
+    def test_varsayilan_cekirdek_tek_parca_ve_kisa(self):
+        p1 = run(["--skill", REAL_SKILL, "--parca", "1"], mod=None)
+        self.assertEqual(p1.returncode, 0)
+        ctx = ctx_of(p1)
+        self.assertIn("core rule", ctx)
+        self.assertIn("defter oku", ctx)
+        self.assertRegex(ctx, r"`defter` command here: `.+defter/defter\.py`")
+        self.assertLess(len(ctx), 4000)
+        self.assertIn("çekirdek", json.loads(p1.stdout.decode("utf-8"))["systemMessage"])
+        for n in ("2", "3", "4"):
+            p = run(["--skill", REAL_SKILL, "--parca", n], mod=None)
+            self.assertEqual(p.returncode, 0)
+            self.assertEqual(p.stdout.strip(), b"")
+
+    def test_cekirdek_secilen_skill_yolunu_gosterir(self):
+        with tempfile.TemporaryDirectory() as d:
+            yol = os.path.join(d, "SKILL.md")
+            with open(yol, "w", encoding="utf-8") as f:
+                f.write(FM + "## A\nx\n")
+            ctx = ctx_of(run(["--skill", yol], mod="cekirdek"))
+            self.assertIn(yol.replace(os.sep, "/").split("/")[-1], ctx)
+            self.assertNotIn("~/.claude/skills/opus-orkestra/SKILL.md", ctx.replace(yol, ""))
+
+    def test_tam_mod_eski_davranis(self):
+        p = run(["--skill", REAL_SKILL, "--parca", "1"], mod="tam")
+        self.assertTrue(LABEL_RE.match(ctx_of(p).split("\n", 1)[0]))
+        p = run(["--skill", REAL_SKILL, "--parca", "1", "--mod", "tam"], mod=None)
+        self.assertTrue(LABEL_RE.match(ctx_of(p).split("\n", 1)[0]))
+
+    def test_cekirdek_yoksa_tam_moda_duser(self):
+        env = dict(os.environ)
+        env["OPUS_ORKESTRA_MOD"] = "cekirdek"
+        env["OPUS_ORKESTRA_CEKIRDEK"] = os.path.join(tempfile.gettempdir(), "yok-cekirdek.md")
+        p = subprocess.run([sys.executable, SCRIPT, "--skill", REAL_SKILL], capture_output=True,
+                           timeout=TIMEOUT, env=env)
+        self.assertTrue(LABEL_RE.match(ctx_of(p).split("\n", 1)[0]))
