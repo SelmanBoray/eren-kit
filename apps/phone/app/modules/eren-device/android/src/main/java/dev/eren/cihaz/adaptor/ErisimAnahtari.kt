@@ -15,6 +15,9 @@ import android.provider.Settings
 /** [ErisimAnahtari.ac] sonucu; geri çağrı her zaman tam bir kez ve ana iplikte gelir. */
 enum class AcmaSonucu { ACIK, YETKI_YOK, ZAMAN_ASIMI }
 
+/** [ErisimAnahtari.sesKisayoluKur] sonucu. */
+enum class SesKisayoluSonucu { KURULDU, YETKI_YOK, HATA }
+
 /**
  * Uygulamanın erişilebilirlik servisini (`ErisimServisi`) açıp kapatan süreç genelinde tek nesne ve
  * `Settings.Secure`'a yazan TEK yer. Karar: servis yalnız aktif izin varken açık; kurulumda bir kez
@@ -35,6 +38,12 @@ object ErisimAnahtari {
 
     /** Hiç olmamış olayın zamanı; `simdi - HIC` taşmaz. */
     private const val HIC = Long.MIN_VALUE / 4
+
+    /** AOSP `Settings.Secure.ACCESSIBILITY_SHORTCUT_TARGET_SERVICE` (@hide). */
+    private const val KISAYOL_HEDEF = "accessibility_shortcut_target_service"
+
+    /** AOSP `Settings.Secure.ACCESSIBILITY_SHORTCUT_DIALOG_SHOWN` (@hide). */
+    private const val KISAYOL_DIYALOG_GORULDU = "accessibility_shortcut_dialog_shown"
 
     private val kilit = Any()
     private val ana = Handler(Looper.getMainLooper())
@@ -169,6 +178,51 @@ object ErisimAnahtari {
 
     /** Bekleyen bir açma var mı. */
     fun bekleniyor(): Boolean = synchronized(kilit) { bekleyenler.isNotEmpty() }
+
+    // ---- Ses tuşu kısayolu (ses aç + ses kıs ~3 sn) ----
+
+    /**
+     * Ses tuşu kısayolunu `KisayolErisimServisi`'ne bağlar. DİKKAT: kullanıcının önceki kısayol hedefi
+     * (`accessibility_shortcut_target_service`) varsa ÜZERİNE YAZILIR. İki ayar yazılır:
+     * hedef servis ve `accessibility_shortcut_dialog_shown`=1 (ilk kullanımda sistem onay penceresi
+     * çıkmasın). Kilit ekranı anahtarı (`accessibility_shortcut_on_lock_screen`) yazılmaz: onay
+     * penceresi görülmüş sayıldığı için sistem varsayılanı zaten kilit ekranında da çalıştırır.
+     * `ENABLED_ACCESSIBILITY_SERVICES`'a dokunmaz; kısayol servisini sistem açıp kapatır.
+     * Herhangi bir iplikten çağrılabilir (iki küçük ayar yazımı). Anahtar adları `Settings.Secure`'ın
+     * gizli (@hide) alanlarıdır (AOSP `Settings.java`), bu yüzden dizge olarak yazılır.
+     */
+    fun sesKisayoluKur(ctx: Context): SesKisayoluSonucu {
+        val app = uygulama(ctx)
+        if (!yetkiVar(app)) return SesKisayoluSonucu.YETKI_YOK
+        return try {
+            val cr = app.contentResolver
+            val hedef = ComponentName(app, KisayolErisimServisi::class.java).flattenToString()
+            Settings.Secure.putString(cr, KISAYOL_HEDEF, hedef)
+            Settings.Secure.putInt(cr, KISAYOL_DIYALOG_GORULDU, 1)
+            SesKisayoluSonucu.KURULDU
+        } catch (e: SecurityException) {
+            SesKisayoluSonucu.HATA
+        } catch (e: RuntimeException) {
+            SesKisayoluSonucu.HATA
+        }
+    }
+
+    /**
+     * Kısayol hedef ayarı bu uygulamanın `KisayolErisimServisi` bileşenini içeriyor mu (yeni Android
+     * sürümlerinde hedef ':' ile ayrılmış liste olabilir; hem uzun hem kısa biçim tanınır).
+     */
+    fun sesKisayoluKurulu(ctx: Context): Boolean {
+        return try {
+            val app = uygulama(ctx)
+            val biz = ComponentName(app, KisayolErisimServisi::class.java)
+            Settings.Secure.getString(app.contentResolver, KISAYOL_HEDEF)
+                ?.split(':')
+                ?.any { it.isNotBlank() && ComponentName.unflattenFromString(it.trim()) == biz }
+                ?: false
+        } catch (e: RuntimeException) {
+            false
+        }
+    }
 
     // ---------------------------------------------------------------------------------------------
 

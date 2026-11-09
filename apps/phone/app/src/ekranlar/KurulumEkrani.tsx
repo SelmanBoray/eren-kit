@@ -31,7 +31,7 @@ type Etiket = { metin: string; renkAdi: "basari" | "hata" | "uyari" | "metinSonu
 const KURULUM_ACIKLAMA =
   "PC'de node kurulum/telefon.ts çalıştır (telefon USB ile bağlı; \"USB hata ayıklama\" ve \"USB hata ayıklama (Güvenlik ayarları)\" açık olmalı).";
 
-function Satir(p: { ad: string; etiket: Etiket; aciklama?: string; dugme?: ReactNode }): ReactNode {
+function Satir(p: { ad: string; etiket?: Etiket; aciklama?: string; dugme?: ReactNode }): ReactNode {
   return (
     <View>
       <View
@@ -47,7 +47,7 @@ function Satir(p: { ad: string; etiket: Etiket; aciklama?: string; dugme?: React
       >
         <View style={{ flex: 1, gap: bosluk[1] }}>
           <Text style={[yazi.govde, { color: renk.metin }]}>{p.ad}</Text>
-          <DurumEtiketi metin={p.etiket.metin} renkAdi={p.etiket.renkAdi} />
+          {p.etiket !== undefined && <DurumEtiketi metin={p.etiket.metin} renkAdi={p.etiket.renkAdi} />}
           {p.aciklama !== undefined && <Text style={[yazi.kucuk, { color: renk.metinIkincil }]}>{p.aciklama}</Text>}
         </View>
         {p.dugme}
@@ -89,7 +89,7 @@ export function KurulumEkrani(p: { cihaz: ErenCihaz; cekirdek: Cekirdek }): Reac
   };
 
   const [yetkiNotu, setYetkiNotu] = useState<string | null>(null);
-  const [kutucukNotu, setKutucukNotu] = useState<string | null>(null);
+  const [kisayolNotu, setKisayolNotu] = useState<string | null>(null);
 
   const tamYetkiAc = async (): Promise<void> => {
     const r = await cihaz.tamYetkiAc();
@@ -109,21 +109,29 @@ export function KurulumEkrani(p: { cihaz: ErenCihaz; cekirdek: Cekirdek }): Reac
     await yenile();
   };
 
-  const kutucukEkle = async (): Promise<void> => {
-    const r = await cihaz.kisayolKutucuguEkle();
-    if (!r.ok) {
-      setKutucukNotu("Kutucuk eklenemedi.");
+  const sesKisayoluKur = async (): Promise<void> => {
+    const r = await cihaz.sesKisayoluKur();
+    if (!r.ok || r.deger === "hata") {
+      setKisayolNotu(
+        "Kısayol kurulamadı. Ayarlar > Erişilebilirlik > Erişilebilirlik kısayolundan elle \"Ses tuşu kısayolu\" seçebilirsin.",
+      );
+    } else if (r.deger === "yetki_yok") {
+      setKisayolNotu("Kurulum adımı eksik: telefonu USB ile bağlayıp `node kurulum/telefon.ts` çalıştır.");
+    } else {
+      setKisayolNotu("Kısayol kuruldu. İlk kullanımda telefon bir kez onay isteyebilir.");
+    }
+    await yenile();
+  };
+
+  const [ekranNotu, setEkranNotu] = useState<string | null>(null);
+
+  const ekranAc = async (hangisi: "uygulamalar" | "denetim"): Promise<void> => {
+    const r = hangisi === "uygulamalar" ? await cihaz.uygulamaListesiAc() : await cihaz.denetimAc();
+    if (r.ok) {
+      setEkranNotu(null);
       return;
     }
-    setKutucukNotu(
-      r.deger === "eklendi"
-        ? "Kutucuk eklendi."
-        : r.deger === "zaten"
-          ? "Kutucuk zaten ekli."
-          : r.deger === "reddedildi"
-            ? "Kutucuk eklenmedi (reddedildi)."
-            : "Bu cihaz kutucuğu otomatik eklemeyi desteklemiyor. Elle ekle: bildirim perdesini aç, düzenle düğmesine bas, uygulamanın kutucuğunu perdeye sürükle.",
-    );
+    setEkranNotu(r.neden === "desteklenmiyor" ? "Bu cihazda bu ekran desteklenmiyor." : "Ekran açılamadı.");
   };
 
   const eslesmis = durum?.eslesmis === true;
@@ -183,6 +191,25 @@ export function KurulumEkrani(p: { cihaz: ErenCihaz; cekirdek: Cekirdek }): Reac
         )}
       </Bolum>
 
+      <Bolum ad="Uygulamalar ve denetim">
+        <View style={{ height: cizgi.ince, backgroundColor: renk.kenar }} />
+        <Satir
+          ad="Uygulamalar"
+          aciklama={`${ASISTAN_ADI} telefonda hangi uygulamaları kullanabilir, seç; yeni uygulamalar sen seçene kadar kapalı kalır.`}
+          dugme={<Dugme yazi="Uygulamalar" tur="ikincil" kapali={!cihaz.desteklenir} basinca={() => void ekranAc("uygulamalar")} />}
+        />
+        <Satir
+          ad="Denetim günlüğü"
+          aciklama={`${ASISTAN_ADI} telefonda ne yaptı, kaydı.`}
+          dugme={<Dugme yazi="Denetim günlüğü" tur="ikincil" kapali={!cihaz.desteklenir} basinca={() => void ekranAc("denetim")} />}
+        />
+        {ekranNotu !== null && (
+          <View style={{ ...yatay, paddingTop: bosluk[2] }}>
+            <Text style={[yazi.kucuk, { color: renk.metinSonuk }]}>{ekranNotu}</Text>
+          </View>
+        )}
+      </Bolum>
+
       <Bolum ad="Telefon ayarları">
         <View style={{ height: cizgi.ince, backgroundColor: renk.kenar }} />
         <Satir
@@ -222,6 +249,19 @@ export function KurulumEkrani(p: { cihaz: ErenCihaz; cekirdek: Cekirdek }): Reac
               : "Kısayolda ön plandaki uygulamayı görmek için."
           }
         />
+        <Satir
+          ad="Ses tuşu kısayolu"
+          etiket={
+            durum === null
+              ? { metin: "Bilinmiyor", renkAdi: "metinSonuk" }
+              : durum.ses_kisayolu
+                ? { metin: "Kurulu", renkAdi: "basari" }
+                : { metin: "Kurulu değil", renkAdi: "uyari" }
+          }
+          aciklama={`Ses açma ve kısma tuşlarını birlikte yaklaşık 3 saniye basılı tut: ${ASISTAN_ADI} dinlemeye başlar, baktığın uygulamayı bağlam olarak alır.`}
+          dugme={<Dugme yazi="Kur" tur="ikincil" kapali={!cihaz.desteklenir} basinca={() => void sesKisayoluKur()} />}
+        />
+        {kisayolNotu !== null && <Text style={[yazi.kucuk, { color: renk.metinSonuk }]}>{kisayolNotu}</Text>}
         {AYARLAR.map((a) => {
           const tamam = durum === null ? null : a.tamam(durum);
           return (
@@ -251,13 +291,6 @@ export function KurulumEkrani(p: { cihaz: ErenCihaz; cekirdek: Cekirdek }): Reac
           );
         })}
         <View style={{ ...yatay, paddingTop: bosluk[4], gap: bosluk[2] }}>
-          <Dugme
-            yazi="Hızlı Ayarlar'a kutucuk ekle"
-            tur="ikincil"
-            kapali={!cihaz.desteklenir}
-            basinca={() => void kutucukEkle()}
-          />
-          {kutucukNotu !== null && <Text style={[yazi.kucuk, { color: renk.metinSonuk }]}>{kutucukNotu}</Text>}
           <Dugme yazi="Durumu yenile" tur="ikincil" basinca={() => void yenile()} />
         </View>
       </Bolum>

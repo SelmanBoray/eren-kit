@@ -269,6 +269,11 @@ interface DenetimKapisi {
  *   `servisBaglandi/servisKoptu` (`ErisimServisi`); `canliServis()`, `bekleniyor()`. Çağıranlar:
  *   `OnayActivity`/`OtoIzinKapisi` (`ac`), `DurdurAlici`/`CihazServisi.onDestroy` (`kapat`).
  *
+ * KisayolErisimServisi : android.accessibilityservice.AccessibilityService
+ *   Yeteneksiz tetik servisi: ses tuşu erişilebilirlik kısayoluna bağlıdır (iki ses tuşunu basılı
+ *   tutmak). Sistem onu bağlayınca `KisayolActivity`'yi açar ve `disableSelf` çağırır. Olay işlemez,
+ *   ekran içeriği okumaz, eylem yapmaz; `ErisimServisi` ile ilgisi yoktur.
+ *
  * EkranOkuyucu  (EkranPortu, A11yBagi gerçekler)
  *   Erişilebilirlik ağacından okur; hiçbir okuma ekranı değiştirmez. `durum/anlik/elementler/dugum/
  *   odak/goruntu`. PencereTuru'nu üretici arayüzünün pencere türlerinden eşler; `rol`'ü sınıf adından türetir. Bağlı
@@ -378,7 +383,8 @@ interface DenetimKapisi {
  *   Definition { Name("ErenDevice") ... }. Yüzeyi birebir `ErenDevice.types.ts` (DEĞİŞMEZ 3). Eşleme:
  *     durum()           → EkranPortu.durum() + eşleşme/VPN/pil/bildirim/biyometri bayrakları +
  *                         erisim_yetkisi (`ErisimAnahtari.yetkiVar`), kullanim_erisimi (AppOps
- *                         GET_USAGE_STATS izinli mi), tam_yetki (`TamYetki.acik`)
+ *                         GET_USAGE_STATS izinli mi), tam_yetki (`TamYetki.acik`), ses_kisayolu
+ *                         (`ErisimAnahtari.sesKisayoluKurulu`)
  *     eslesme()         → kalıcı `Eslesme` → {device_id, host, port} | null
  *     eslestir()        → EslestirmeActivity (startActivityForResult)
  *     sohbetHello()     → client_nonce = rastgele; `oturum` 30 sn tek kullanım (Kanal.SOHBET, /cihaz DEĞİL)
@@ -396,6 +402,7 @@ interface DenetimKapisi {
  *     kisayolTuket(id)  → KisayolDeposu.tuket
  *     kisayolKutucuguEkle() → StatusBarManager.requestAddTileService(KisayolKutucugu) (API 33+;
  *                         altı "desteklenmiyor") → "eklendi" | "zaten" | "reddedildi" | "desteklenmiyor"
+ *     sesKisayoluKur()  → ErisimAnahtari.sesKisayoluKur → "kuruldu" | "yetki_yok" | "hata" (bağlam yoksa hata)
  *   Olaylar: durumDegisti/izinlerDegisti/bildirimAcildi{tur}/kisayolGeldi{id} → `AdaptorOlaylari` ile
  *   `sendEvent`. `Adaptor.olaylar = this` (modül yıkımında null). Bu modülde cmd/cmd_result/token/ham
  *   çerçeve YOK.

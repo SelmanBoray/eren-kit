@@ -27,11 +27,14 @@ export interface ErenCihaz {
   ayarAc(hedef: AyarHedefi): Promise<Sonuc<true>>;
   dikte(): Promise<Sonuc<DikteSonucu>>;
   tanilamaAc(): Promise<Sonuc<true>>;
+  uygulamaListesiAc(): Promise<Sonuc<true>>;
+  denetimAc(grant_id?: string): Promise<Sonuc<true>>;
   otoIzin(plan_json: string, plan_hash: string): Promise<Sonuc<OtoIzinSonucu>>;
   tamYetkiAc(): Promise<Sonuc<"acildi" | "iptal">>;
   tamYetkiKapat(): Promise<Sonuc<true>>;
   kisayolAl(): Promise<Sonuc<KisayolMesaji | null>>;
   kisayolTuket(id: string): Promise<Sonuc<true>>;
+  sesKisayoluKur(): Promise<Sonuc<"kuruldu" | "yetki_yok" | "hata">>;
   kisayolKutucuguEkle(): Promise<Sonuc<"eklendi" | "zaten" | "reddedildi" | "desteklenmiyor">>;
   /** `kisayolGeldi` olayına abone olur; modül yoksa ya da hata olursa boş kapatıcı döner. */
   kisayolGeldiDinle(f: (veri: { id: string }) => void): () => void;
@@ -81,11 +84,14 @@ export const erenCihazKur = (): ErenCihaz => {
     ayarAc: (h) => sar(async (x) => (await x.ayarAc(h), true as const)),
     dikte: () => sar((x) => x.dikte()),
     tanilamaAc: () => sar(async (x) => (await x.tanilamaAc(), true as const)),
+    uygulamaListesiAc: () => sar(async (x) => (await x.uygulamaListesiAc(), true as const)),
+    denetimAc: (g) => sar(async (x) => (await x.denetimAc(g), true as const)),
     otoIzin: (j, h) => sar((x) => x.otoIzin(j, h)),
     tamYetkiAc: () => sar((x) => x.tamYetkiAc()),
     tamYetkiKapat: () => sar(async (x) => (await x.tamYetkiKapat(), true as const)),
     kisayolAl: () => sar((x) => x.kisayolAl()),
     kisayolTuket: (id) => sar(async (x) => (await x.kisayolTuket(id), true as const)),
+    sesKisayoluKur: () => sar((x) => x.sesKisayoluKur()),
     kisayolKutucuguEkle: () => sar((x) => x.kisayolKutucuguEkle()),
     kisayolGeldiDinle: (f) => {
       if (m === null) return () => {};

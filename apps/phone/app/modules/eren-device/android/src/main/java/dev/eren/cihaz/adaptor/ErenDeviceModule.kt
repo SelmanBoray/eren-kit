@@ -293,6 +293,23 @@ class ErenDeviceModule : Module(), AdaptorOlaylari {
         }
 
         AsyncFunction("kisayolKutucuguEkle") { promise: Promise -> kutucukEkle(promise) }
+
+        AsyncFunction("sesKisayoluKur") { ->
+            val ctx = baglam()
+            if (ctx == null) {
+                "hata"
+            } else {
+                try {
+                    when (ErisimAnahtari.sesKisayoluKur(ctx)) {
+                        SesKisayoluSonucu.KURULDU -> "kuruldu"
+                        SesKisayoluSonucu.YETKI_YOK -> "yetki_yok"
+                        SesKisayoluSonucu.HATA -> "hata"
+                    }
+                } catch (_: Exception) {
+                    "hata"
+                }
+            }
+        }
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -360,7 +377,17 @@ class ErenDeviceModule : Module(), AdaptorOlaylari {
             "erisim_yetkisi" to erisimYetkisiVarMi(ctx),
             "kullanim_erisimi" to kullanimErisimiVarMi(ctx),
             "tam_yetki" to tamYetkiAcikMi(ctx),
+            "ses_kisayolu" to sesKisayoluKuruluMu(ctx),
         )
+    }
+
+    private fun sesKisayoluKuruluMu(ctx: Context?): Boolean {
+        if (ctx == null) return false
+        return try {
+            ErisimAnahtari.sesKisayoluKurulu(ctx)
+        } catch (_: Exception) {
+            false
+        }
     }
 
     // WRITE_SECURE_SETTINGS (kurulumda `adb shell pm grant`).
