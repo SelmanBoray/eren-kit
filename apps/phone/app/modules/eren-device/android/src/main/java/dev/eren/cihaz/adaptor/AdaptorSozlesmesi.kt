@@ -197,7 +197,7 @@ interface PaketKapisi {
     /**
      * Kurulu uygulamalar + çözülen değişmezler + o anki kullanıcı kararları. `KuruluUygulama.sistemIci`:
      * FLAG_SYSTEM olup CATEGORY_LAUNCHER çözümünde olmayan paket. Değişmezler: Ayarlar, kurucu, Play,
-     * izin denetleyicisi ile HOME çözen tüm paketler ve etkin klavyeler (şart aranmaz; değişmez yapmak
+     * izin denetleyicisi ile HOME çözen tüm paketler ve varsayılan klavye (şart aranmaz; değişmez yapmak
      * yalnız kısıtlar). İmza özeti okunamazsa boş gelir.
      */
     fun listeGirdisi(): ListeGirdisi

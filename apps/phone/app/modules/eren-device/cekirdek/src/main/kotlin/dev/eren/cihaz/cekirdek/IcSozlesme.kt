@@ -259,7 +259,7 @@ data class KullaniciKarari(val durum: UygulamaDurumu, val imzaOzeti: String)
 data class ListeGirdisi(
     val kurulu: List<KuruluUygulama>,
     val kararlar: Map<String, KullaniciKarari>,
-    /** Intent çözümüyle bulunanlar: Ayarlar, kurucu, Play, izin denetleyicisi, HOME çözen tüm paketler, etkin klavyeler. */
+    /** Intent çözümüyle bulunanlar: Ayarlar, kurucu, Play, izin denetleyicisi, HOME çözen tüm paketler, varsayılan klavye. */
     val cozulenDegismez: Set<String>,
 )
 

@@ -216,7 +216,7 @@ class KisayolActivity : Activity() {
 
     /**
      * Yalnız Toast gösterimi için: FORMAT (yön değiştirenler dahil), CONTROL, satır/paragraf
-     * ayırıcıları boşlukla değiştirilir, ardışık boşluklar tekleşir, en çok 40 karakter ("…" ile).
+     * ayırıcıları boşlukla değiştirilir ve bu yerine konan boşluklar tekleşir (addaki gerçek ardışık boşluklar kalır), en çok 40 karakter ("…" ile).
      * Depoya giden paket ve gönderilen metin bundan etkilenmez.
      */
     private fun gosterimAdi(ham: String): String? {
