@@ -9,7 +9,8 @@ param(
     [Parameter(Position = 0)]
     [string[]]$Components = @('beyin', 'devir', 'orkestra', 'computer-use'),
     [string]$AssistantName,
-    [string]$ClaudeHome = (Join-Path $HOME '.claude'),
+    # Claude Code ile aynı kural: CLAUDE_CONFIG_DIR ayarlıysa orası, değilse ~\.claude.
+    [string]$ClaudeHome = $(if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $HOME '.claude' }),
     [switch]$DryRun,
     [switch]$Uninstall,
     [switch]$SkipMcp,
@@ -48,7 +49,8 @@ Parametreler:
   -Components     Bileşen listesi, virgülle:  -Components beyin,devir
   -AssistantName  Asistan adı; EREN_KIT_ASSISTANT_NAME kullanıcı ortam değişkenine yazılır
                   (verilmezse var olan değer korunur, yoksa "Claude")
-  -ClaudeHome     Claude Code ayar klasörü (varsayılan: %USERPROFILE%\.claude)
+  -ClaudeHome     Claude Code ayar klasörü (varsayılan: CLAUDE_CONFIG_DIR ortam değişkeni
+                  ayarlıysa o klasör, değilse %USERPROFILE%\.claude)
   -DryRun         Hiçbir şeyi değiştirmez, yapılacakları listeler
   -Uninstall      Seçili bileşenlerin MCP kaydını, hook'larını, kopyalanan skill'lerini ve
                   beyin servis görevini kaldırır; venv'leri ve kullanıcı verisini silmez
@@ -152,7 +154,13 @@ Write-Host ''
 Write-Host 'eren-kit' -ForegroundColor Cyan -NoNewline
 Write-Host (' - {0}' -f $mode)
 Write-StepLine info ('Repo:        {0}' -f $RepoRoot)
-Write-StepLine info ('Claude Home: {0}' -f $ClaudeHome)
+$homeSource = ''
+if (-not $PSBoundParameters.ContainsKey('ClaudeHome') -and $env:CLAUDE_CONFIG_DIR) { $homeSource = '  (CLAUDE_CONFIG_DIR)' }
+Write-StepLine info ('Claude Home: {0}{1}' -f $ClaudeHome, $homeSource)
+if ($PSBoundParameters.ContainsKey('ClaudeHome') -and $env:CLAUDE_CONFIG_DIR -and
+    ([IO.Path]::GetFullPath($env:CLAUDE_CONFIG_DIR).TrimEnd('\') -ne $ClaudeHome.TrimEnd('\'))) {
+    Write-StepLine warn ('CLAUDE_CONFIG_DIR = {0}; Claude Code ayarları oradan yükler, -ClaudeHome ile verilen klasörü değil.' -f $env:CLAUDE_CONFIG_DIR)
+}
 Write-StepLine info ('Bileşenler:  {0}' -f ($selected -join ', '))
 
 # ---------------------------------------------------------------- önkoşullar
@@ -209,12 +217,19 @@ if ($selected -contains 'phone' -and -not $Uninstall) {
 }
 
 # Hook'lar PATH'teki "python" komutuyla çalışır.
+# Devir hook'u tomllib kullanır: en az 3.11 gerekir (py launcher'ın sürümü yetmez).
 function Test-HookPython {
+    $min = [version]'3.11'
     $exe = Find-Application 'python'
     if ($exe) {
-        $r = Invoke-Native $exe @('-c', 'import sys; print(sys.version_info[0])')
-        if ($r.ExitCode -eq 0 -and ($r.Output -join '') -match '3') {
-            return New-StepResult ok ('hook''lar için "python" PATH''te ({0})' -f $exe)
+        $r = Invoke-Native $exe @('-c', "import sys; print('.'.join(map(str, sys.version_info[:3])))")
+        $m = [regex]::Match(($r.Output -join ' '), '(\d+)\.(\d+)\.(\d+)')
+        if ($r.ExitCode -eq 0 -and $m.Success) {
+            $v = [version]$m.Value
+            if ($v -ge $min) {
+                return New-StepResult ok ('hook''lar için "python" PATH''te: {0} ({1})' -f $v, $exe)
+            }
+            return New-StepResult warn ('hook''lar PATH''teki "python" ile çalışır ama o Python {0} ({1}); en az {2} gerekli, yoksa hook''lar doğru çalışmaz (devir notları yanlış yere düşer). Python 3.12 kur (winget install Python.Python.3.12) ve PATH''te eski Python''dan önce gelmesini sağla; sonra yeni terminalde "python --version" ile doğrula.' -f $v, $exe, $min)
         }
     }
     return New-StepResult warn 'hook''lar "python" komutunu çağırır ama PATH''te çalışan bir python yok; Python kurulumunda "Add python.exe to PATH" seçeneğini aç.'
