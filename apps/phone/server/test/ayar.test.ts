@@ -126,7 +126,7 @@ describe("ayar: ortam temizliği", () => {
     Path_Benzeri: "kalir2",
   };
 
-  it("pcIsOrtami: CLAUDE*/ANTHROPIC* büyük küçük harf duyarsız silinir, dört anahtar EKLENMEZ", async () => {
+  it("pcIsOrtami: CLAUDE*/ANTHROPIC* büyük küçük harf duyarsız silinir, üç anahtar eklenir, ATTACHMENTS EKLENMEZ", async () => {
     const a = await kur(hazir(undefined, kirli));
     const o = a.pcIsOrtami();
     for (const ad of Object.keys(kirli)) {
@@ -135,7 +135,12 @@ describe("ayar: ortam temizliği", () => {
     assert.equal(o["BASKA"], "kalir");
     assert.equal(o["Path_Benzeri"], "kalir2");
     assert.equal(o["LOCALAPPDATA"], LA);
-    for (const ad of Object.keys(DORT)) assert.equal(ad in o, false, ad);
+    const uc = Object.keys(DORT).filter((ad) => ad !== "CLAUDE_CODE_DISABLE_ATTACHMENTS");
+    assert.equal(uc.length, 3);
+    for (const ad of uc) assert.equal(o[ad], "1", ad);
+    assert.equal("CLAUDE_CODE_DISABLE_ATTACHMENTS" in o, false);
+    const kalanClaude = Object.keys(o).filter((k) => /^(claude|anthropic)/i.test(k)).sort();
+    assert.deepEqual(kalanClaude, uc.sort());
   });
 
   it("erenOrtami ve telefonIsOrtami: silinir, sonra tam dört anahtar eklenir", async () => {
