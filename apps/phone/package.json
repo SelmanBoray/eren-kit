@@ -14,8 +14,7 @@
   },
   "workspaces": [
     "protocol",
-    "server",
-    "app"
+    "server"
   ],
   "scripts": {
     "test:protocol": "npm test -w protocol",

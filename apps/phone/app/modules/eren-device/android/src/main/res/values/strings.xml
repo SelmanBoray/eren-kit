@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Metinler kişisel veri içermez. Kullanıcı adı/cihaz adı yok. Asistan adı burada sabit yazılmaz:
+  erişilebilirlik servisinin ve hızlı ayarlar kutucuğunun etiketi uygulama etiketidir (manifestte
+  android:label verilmez), Kotlin
+  metinleri adı çalışma anında uygulama etiketinden okur (AsistanAdi.kt).
+-->
+<resources>
+    <string name="eren_erisim_aciklama">Bu uygulama bu servisle telefonu okur ve kullanır. Servis yalnız bir iş sürerken açılır. Tam yetki kapalıyken her iş telefonda onayınızı ister; açıkken onaysız çalışır. Banka ve hassas uygulamalar, Ayarlar ve parola alanları her zaman yasaktır. Kalıcı bildirimdeki Durdur her işi keser ve tam yetkiyi kapatır.</string>
+    <string name="eren_fgs_aciklama">Kullanicinin kendi PC\'sine Tailscale uzerinden surekli WebSocket baglantisi: telefonu PC\'deki asistan oturumundan yonetme.</string>
+</resources>

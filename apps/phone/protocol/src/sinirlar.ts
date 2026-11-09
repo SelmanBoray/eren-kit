@@ -1,5 +1,17 @@
-/** Kablo sözleşmesinin sürümü. Her mesajın `v` alanı tam olarak bu değerdir. */
+/**
+ * Kablo sözleşmesinin temel sürümü: `/cihaz`, köprü borusu, QR, eşleştirme (`pair_request`,
+ * `pair_result`) ve kimlik imza metni (`eren-auth-v1`) bunu taşır. Kotlin tarafı bu değeri ve
+ * aşağıdaki `SINIRLAR` bloğunu birebir kopyalar (`Sinirlar.kt`, `SozlesmeTest.kt`): değişmez.
+ */
 export const PROTOKOL_SURUMU = 1 as const;
+
+/**
+ * `/sohbet` kanalının sürümü: eşleştirme dışındaki bütün `/sohbet` mesajları bunu taşır.
+ * Hangi türün hangi sürümde olduğu `sohbetSurumu` (sohbet.ts) ve README "Sürümleme"dedir.
+ * 2: dilim 1 (geçmişi sil, servis bilgisi). 3: dilim 2 (çoklu sohbet, `sohbet_id`). 4: dilim 3 (kısayol: `input:"kisayol"`, `baglam`).
+ * `kurulum/kur.ts` bu satırı metin olarak okur: satır başında `export const SOHBET_SURUMU = <n>` kalmalı.
+ */
+export const SOHBET_SURUMU = 4 as const;
 
 /** Karakter sınırları UTF-16 birimi, adet sınırları öğe sayısıdır. */
 export const SINIRLAR = {
@@ -68,6 +80,21 @@ export const SINIRLAR = {
   PROJE_ADET: 512,
   OTURUM_ADET: 256,
   DEVIR_OZETI: 32_000,
+} as const;
+
+/**
+ * Yalnız `/sohbet` (`SOHBET_SURUMU`) alanlarının sınırları. `SINIRLAR`'a eklenmez: Kotlin o bloğun
+ * anahtar kümesini birebir sınar, bu sınırlar Kotlin'e hiç ulaşmaz.
+ */
+export const SOHBET_SINIRLARI = {
+  /** `server_status.servis.surum`: `surum.json` `sha`'sı, kurulumdaki sürüm adı deseniyle aynı. */
+  SERVIS_SURUMU: 64,
+  /** Sohbet adı (v3): tek satır, UTF-16 birimi. Telefonun ad girdisi `maxLength` ile aynı. */
+  SOHBET_ADI: 60,
+  /** Silinmemiş sohbet üst sınırı (v3), `ana` dahil. `server_status.sohbetler` en çok bu kadar öğe. */
+  SOHBET_ADET: 8,
+  /** Kısayol bağlamının uygulama adı (v4): 1-80 UTF-16 birimi, kontrol karakteri yok. */
+  BAGLAM_ADI: 80,
 } as const;
 
 /** Tek bir kablo çerçevesinin ayrıştırma öncesi üst sınırı. */

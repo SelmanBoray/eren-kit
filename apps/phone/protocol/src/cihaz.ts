@@ -1,7 +1,8 @@
 import { z } from "zod";
+import { HataKoduV1 } from "./hatalar.ts";
 import { SINIRLAR } from "./sinirlar.ts";
-import { AuthChallenge, AuthResponse, ErrorMesaji } from "./sohbet.ts";
 import {
+  Imza,
   IzinModu,
   Jeton,
   mesaj,
@@ -230,6 +231,21 @@ export const UygulamaBilgisi = z.strictObject({
 });
 export type UygulamaBilgisi = z.infer<typeof UygulamaBilgisi>;
 
+// Kimlik ve hata: `/cihaz` v1'dir (`PROTOKOL_SURUMU`), `/sohbet`'in `SOHBET_SURUMU` karşılıklarından ayrı.
+// Alanlar `/sohbet`'tekilerle aynıdır; yalnız `v` ve `error.code` kümesi farklıdır.
+
+export const CihazAuthResponse = mesaj("auth_response", { signature: Imza });
+export const CihazAuthChallenge = mesaj("auth_challenge", {
+  server_nonce: Nonce,
+  /** Bilgisayarın `kimlikImzaMetni({ rol: "pc", kanal: "cihaz", ... })` imzası. */
+  server_signature: Imza,
+});
+/** Kod kümesi v1'dir: Kotlin `HataKodu` (IcSozlesme.kt) bilinmeyen kodu reddeder. */
+export const CihazErrorMesaji = mesaj("error", {
+  code: HataKoduV1,
+  detail: z.string().max(SINIRLAR.HATA_DETAYI).optional(),
+});
+
 // Yukarı: telefon -> bilgisayar
 
 export const CihazHello = mesaj("hello", { device_id: OpakId, client_nonce: Nonce });
@@ -260,7 +276,7 @@ export const NotifyAck = mesaj("notify_ack", { notify_id: OpakId });
 
 export const CihazYukari = z.discriminatedUnion("type", [
   CihazHello,
-  AuthResponse,
+  CihazAuthResponse,
   CmdResult,
   GrantIssued,
   GrantRevoked,
@@ -309,11 +325,11 @@ export const GrantRevoke = mesaj("grant_revoke", {
 });
 
 export const CihazAsagi = z.discriminatedUnion("type", [
-  AuthChallenge,
+  CihazAuthChallenge,
   CihazWelcome,
   Cmd,
   Notify,
   GrantRevoke,
-  ErrorMesaji,
+  CihazErrorMesaji,
 ]);
 export type CihazAsagi = z.infer<typeof CihazAsagi>;

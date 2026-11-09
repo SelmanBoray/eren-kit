@@ -46,7 +46,31 @@ export const HATA_KODLARI = [
   "yinelenen_istek",
   // Devir
   "ozet_reddedildi",
+  // `/sohbet` (SOHBET_SURUMU): yalnız `/sohbet`'te gider. v2 (dilim 1):
+  "sohbet_mesgul",
+  // v3 (dilim 2, çoklu sohbet):
+  "sohbet_bulunamadi",
+  "sohbet_siniri",
+  "sohbet_silinemez",
 ] as const;
 
 export const HataKodu = z.enum(HATA_KODLARI);
 export type HataKodu = z.infer<typeof HataKodu>;
+
+/**
+ * Yalnız `/sohbet`'e (`SOHBET_SURUMU`) özgü kodlar, `HATA_KODLARI`'nın sonunda. v1 mesajları
+ * (`/cihaz`, eşleştirme) bunları taşımaz. `sohbet_mesgul` v2'de, gerisi v3'te geldi.
+ */
+export const SOHBET_HATA_KODLARI = [
+  "sohbet_mesgul",
+  "sohbet_bulunamadi",
+  "sohbet_siniri",
+  "sohbet_silinemez",
+] as const;
+
+/**
+ * v1 mesajlarının kod kümesi: `HATA_KODLARI`'nın v1'deki hali, sırası aynı. Kotlin `HataKodu`
+ * (IcSozlesme.kt) bu kümeyi kopyalar; `/cihaz` `error` ve `pair_result` bununla doğrulanır.
+ */
+export const HataKoduV1 = HataKodu.exclude(SOHBET_HATA_KODLARI);
+export type HataKoduV1 = z.infer<typeof HataKoduV1>;

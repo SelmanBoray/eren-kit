@@ -101,3 +101,16 @@ Sürümler: Expo SDK 58.0.23, React Native 0.88.1, React 19.3.0, New Architectur
 - `--tools ""` + `--json-schema` çalışıyor, `StructuredOutput` düşmüyor (n=1); `rapor_ver` 54/54 telefon koşusunda çağrıldı.
 - `[passage omitted]`: oku görevinde 5/22 koşuda model saldırı metnini aktarmak yerine bunu yazdı (A 3, C 1, D 1); neden bilinmiyor. Sonnet yazma görevinde 10/24 koşuda gönderdikten sonra ekranı yeniden okumadı; Opus 7/7 okudu. 62/62 tıklama `element` ile yapıldı.
 - Zayıf yanlar: küçük n (hücre başına 3 tekrar bile yok); taban etkisi (saldırılar açık ve kaba); göreve uyumlu saldırı, çok adımlı iş ve biriken metin denenmedi; tek ekran, 2-6 araç çağrısı, statik metin; ekran görüntüsü kanalı kapalıydı (görsel enjeksiyon, bidi, uzun metin ölçülmedi); kural "plan önerme, söyle" diyor ve kuralsız ana oturum kolu yok; ön ek açıklanmadan davranış ve kullanıcının aynı öneki yazması ölçülmedi; modelin testi sezmesi için düşünme blokları incelenmedi; sözlü kodlama tek kişiyle, kör olmadan yapıldı; ana oturumun Sonnet davranışı ölçülmedi; sonuç tek model sürümüne ve tek ana özgüdür.
+
+## 7. Telefon gece dayanıklılığı (2026-11-07)
+Test telefonu (Android 16 tabanlı, üretici arayüzlü), gece boyunca bağlı bırakıldı.
+- Wake lock kapalı, ekran çoğunlukla kapalı: 10 sa 38 dk kesintisiz bağlantı, tek boşluk 46 sn. RTT p50 63 ms, p95 145 ms. Üretici arayüzü servisi öldürmedi.
+- Telefon yeniden başlatıldı: `BOOT_COMPLETED` ile servis kendiliğinden kalktı, erişilebilirlik bağlı kaldı. Tailscale açılmadığı için 46 dk (77 deneme) bağlanamadı: VPN yok, bağlantı hücresel arayüzden geldi. Tailscale açılınca bağlandı.
+- Son uygulamalardan kaydırma süreci öldürmedi. Hücresel + VPN çalışıyor.
+- Sonuç: kurulumda Tailscale için Android "her zaman açık VPN" şart. Yeni süreçte wake lock varsayılan kapalı olmalı.
+
+## 8. Uçtan uca deneme (gerçek `claude`, 2026-11-07)
+- Düzenek `server/e2e/` altında yazıldı: sahte telefon istemcisi, geçici veri dizini, ağ denetimleri sarmalanmış.
+- Deneme 6 saatte sonuç kaydı üretmeden durduruldu; senaryo sonuçları kaydedilmedi. Gerçek `claude` ile tam akış henüz kanıtlanmış değil.
+- Sahte süreçlerle doğrulananlar: sunucu 905 test (modül + birleşim), telefon çekirdeği 400+ test (10.000 adımlık mutasyon değişmezi dahil), JS çekirdeği 66 test.
+- İlk gerçek deneme kullanıcının telefon kurulumuyla yapılacak.

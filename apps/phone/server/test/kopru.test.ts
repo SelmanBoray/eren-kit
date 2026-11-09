@@ -1,0 +1,430 @@
+import assert from "node:assert/strict";
+import { afterEach, describe, it } from "node:test";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import {
+  EREN_ARACLARI,
+  KOPRU_BORU_ADI,
+  KOPRU_FIILLERI,
+  OpakId,
+  ROL_FIILLERI,
+  SORU_ARACLARI,
+  TELEFON_ARACLARI,
+} from "@eren/protocol";
+import type { KopruRolu } from "@eren/protocol";
+import type { BoruBaglantisi } from "../src/sozlesme.ts";
+import { sahteGunluk, sahteRastgele } from "./sahte.ts";
+// VARSAYIM: üretim `kopru.ts` testlenebilir giriş olarak `kopruCalistir` dışa aktarır. Gerçek ad
+// ya da imza farklıysa yalnız aşağıdaki `kur` değişir (şef bağlar).
+import { kopruCalistir } from "../src/kopru.ts";
+
+const JETON = "j".repeat(43);
+
+// --- Sahte servis tarafı (köprü boruya istemci olarak bağlanır) --------------------------------
+
+interface Baglanti {
+  b: BoruBaglantisi & { tetikleKapanis(): void };
+  gelen: Array<Record<string, unknown>>;
+  kapandi: boolean;
+}
+
+type Davranis = (istek: Record<string, unknown>, bag: Baglanti, servis: SahteServis) => void;
+
+class SahteServis {
+  baglantilar: Baglanti[] = [];
+  /** `baglan` çağrı sayısı, reddedilenler dahil. */
+  baglanDenemesi = 0;
+  reddedilecek = 0;
+  davranis: Davranis = () => {};
+  /** Hello'ya `kopru_ret` ile cevap verilecekse kodu. */
+  ret: string | null = null;
+
+  get son(): Baglanti {
+    const b = this.baglantilar.at(-1);
+    assert.ok(b, "bağlantı yok");
+    return b;
+  }
+
+  istekler(fiil?: string): Array<Record<string, unknown>> {
+    return this.baglantilar
+      .flatMap((b) => b.gelen)
+      .filter((m) => m["type"] === "istek" && (fiil === undefined || m["fiil"] === fiil));
+  }
+
+  tumGelenler(): Array<Record<string, unknown>> {
+    return this.baglantilar.flatMap((b) => b.gelen);
+  }
+
+  baglan = async (ad: string): Promise<BoruBaglantisi> => {
+    this.baglanDenemesi += 1;
+    assert.equal(ad, KOPRU_BORU_ADI);
+    if (this.reddedilecek > 0) {
+      this.reddedilecek -= 1;
+      throw new Error("boru yok");
+    }
+    const satirlar: Array<(s: string) => void> = [];
+    const kapanislar: Array<() => void> = [];
+    const bag: Baglanti = {
+      gelen: [],
+      kapandi: false,
+      b: {
+        satirYaz: (s) => {
+          if (bag.kapandi) return;
+          assert.ok(!s.includes("\n"), "çerçeve tek satır olmalı");
+          const m = JSON.parse(s) as Record<string, unknown>;
+          bag.gelen.push(m);
+          queueMicrotask(() => this.isle(m, bag));
+        },
+        kapat: () => bag.b.tetikleKapanis(),
+        satirDinle: (f) => void satirlar.push(f),
+        kapanisDinle: (f) => void kapanislar.push(f),
+        tetikleKapanis: () => {
+          if (bag.kapandi) return;
+          bag.kapandi = true;
+          for (const f of kapanislar) f();
+        },
+      },
+    };
+    (bag as unknown as { yolla: (s: string) => void }).yolla = (s) => {
+      if (!bag.kapandi) for (const f of satirlar) f(s);
+    };
+    this.baglantilar.push(bag);
+    return bag.b;
+  };
+
+  yolla(bag: Baglanti, m: Record<string, unknown>): void {
+    (bag as unknown as { yolla: (s: string) => void }).yolla(JSON.stringify({ v: 1, ...m }) + "\n");
+  }
+
+  yanit(bag: Baglanti, istek_id: unknown, govde: Record<string, unknown>): void {
+    this.yolla(bag, { type: "yanit", istek_id, ...govde });
+  }
+
+  kopar(): void {
+    this.son.b.tetikleKapanis();
+  }
+
+  private isle(m: Record<string, unknown>, bag: Baglanti): void {
+    if (m["type"] === "kopru_hello") {
+      if (this.ret) this.yolla(bag, { type: "kopru_ret", code: this.ret });
+      else this.yolla(bag, { type: "kopru_welcome", rol: m["rol"] });
+      return;
+    }
+    this.davranis(m, bag, this);
+  }
+}
+
+async function bekleKosul(f: () => boolean, ad = "koşul"): Promise<void> {
+  for (let i = 0; i < 400; i += 1) {
+    if (f()) return;
+    await new Promise((r) => setImmediate(r));
+  }
+  assert.fail(`${ad} gerçekleşmedi`);
+}
+
+// --- Düzenek -----------------------------------------------------------------------------------
+
+interface Duzenek {
+  servis: SahteServis;
+  istemci: Client;
+  bekleme: number[];
+  kapat(): Promise<void>;
+}
+
+const acik: Duzenek[] = [];
+afterEach(async () => {
+  for (const d of acik.splice(0)) await d.kapat();
+});
+
+async function kur(rol: KopruRolu, ayarla?: (s: SahteServis) => void): Promise<Duzenek> {
+  const servis = new SahteServis();
+  ayarla?.(servis);
+  const [mcpKopru, mcpIstemci] = InMemoryTransport.createLinkedPair();
+  const bekleme: number[] = [];
+  const calisan = await kopruCalistir(
+    { rol, jeton: JETON, boruAdi: KOPRU_BORU_ADI },
+    {
+      transport: mcpKopru,
+      baglan: servis.baglan,
+      rastgele: sahteRastgele(),
+      gunluk: sahteGunluk(),
+      // Gerçek bekleme yok: süreler kaydedilir, hemen çözülür.
+      bekle: async (ms: number) => {
+        bekleme.push(ms);
+      },
+    },
+  );
+  const istemci = new Client({ name: "sahte-model", version: "0.0.0" }, { capabilities: {} });
+  await istemci.connect(mcpIstemci);
+  const d: Duzenek = {
+    servis,
+    istemci,
+    bekleme,
+    kapat: async () => {
+      await istemci.close().catch(() => {});
+      await calisan.kapat();
+    },
+  };
+  acik.push(d);
+  return d;
+}
+
+function metin(sonuc: unknown): string {
+  const icerik = (sonuc as { content: Array<{ type: string; text?: string }> }).content;
+  return icerik.map((c) => c.text ?? "").join("\n");
+}
+
+function hataMi(sonuc: unknown): boolean {
+  return (sonuc as { isError?: boolean }).isError === true;
+}
+
+const TELEFON_OK = { ok: true, foreground: null };
+
+// --- Testler -----------------------------------------------------------------------------------
+
+describe("kopru: araç listesi", () => {
+  const beklenen: Record<KopruRolu, string[]> = {
+    eren: Object.keys(EREN_ARACLARI),
+    soru: Object.keys(SORU_ARACLARI),
+    telefon: Object.keys(TELEFON_ARACLARI),
+  };
+
+  for (const rol of ["eren", "soru", "telefon"] as const) {
+    it(`${rol} rolü yalnız kendi araçlarını yayınlar`, async () => {
+      const d = await kur(rol);
+      const { tools } = await d.istemci.listTools();
+      assert.deepEqual(tools.map((t) => t.name).sort(), [...beklenen[rol]].sort());
+      for (const t of tools) assert.equal(t.inputSchema.type, "object");
+    });
+
+    it(`${rol} rolü hello'yu ayarın rolü ve jetonuyla yollar`, async () => {
+      const d = await kur(rol);
+      await bekleKosul(() => d.servis.baglantilar.length > 0 && d.servis.son.gelen.length > 0);
+      const hello = d.servis.baglantilar[0]!.gelen[0]!;
+      assert.equal(hello["type"], "kopru_hello");
+      assert.equal(hello["rol"], rol);
+      assert.equal(hello["jeton"], JETON);
+    });
+  }
+
+  it("soru rolünde soru_id modele açılmaz, girdi şemasında yoktur", async () => {
+    const d = await kur("soru");
+    const { tools } = await d.istemci.listTools();
+    const props = Object.keys((tools[0]!.inputSchema.properties ?? {}) as object);
+    assert.ok(!props.includes("soru_id"));
+  });
+
+  it("hiçbir rolde kullanıcı mesajı fiili yoktur", async () => {
+    const hepsi = new Set<string>();
+    for (const rol of ["eren", "soru", "telefon"] as const) {
+      const d = await kur(rol);
+      const { tools } = await d.istemci.listTools();
+      for (const t of tools) {
+        hepsi.add(t.name);
+        assert.ok(
+          (ROL_FIILLERI[rol] as readonly string[]).includes(t.name),
+          `${rol}: ${t.name} rolün fiili değil`,
+        );
+        assert.ok(KOPRU_FIILLERI.includes(t.name as never));
+        assert.doesNotMatch(t.name, /mesaj|sohbet|message|chat|kullanici_mesaj|send/i);
+      }
+    }
+    assert.ok(hepsi.size > 0);
+  });
+
+  it("boruya giden her istek rolün izinli fiilidir", async () => {
+    const d = await kur("telefon", (s) => {
+      s.davranis = (m, bag, sv) => sv.yanit(bag, m["istek_id"], { ok: true, sonuc: TELEFON_OK });
+    });
+    await d.istemci.callTool({ name: "foreground", arguments: {} });
+    const fiiller = d.servis.istekler().map((m) => m["fiil"] as string);
+    assert.deepEqual(fiiller, ["foreground"]);
+    for (const f of fiiller) assert.ok((ROL_FIILLERI.telefon as readonly string[]).includes(f));
+  });
+});
+
+describe("kopru: çağrı ve sonuç", () => {
+  it("eren aracı boru isteğine döner, sonuç JSON metni olur", async () => {
+    const sonuc = { telefon_bagli: false, uygulamalar: [] };
+    const d = await kur("eren", (s) => {
+      s.davranis = (m, bag, sv) => sv.yanit(bag, m["istek_id"], { ok: true, sonuc });
+    });
+    const r = await d.istemci.callTool({ name: "uygulamalar", arguments: {} });
+    assert.ok(!hataMi(r));
+    assert.deepEqual(JSON.parse(metin(r)), sonuc);
+    const [istek] = d.servis.istekler("uygulamalar");
+    assert.ok(OpakId.safeParse(istek!["istek_id"]).success);
+    assert.deepEqual(istek!["girdi"], {});
+  });
+
+  it("boru hatası isError:true ve 'hata: <code>' olur, detail modele gitmez", async () => {
+    const d = await kur("eren", (s) => {
+      s.davranis = (m, bag, sv) =>
+        sv.yanit(bag, m["istek_id"], { ok: false, code: "ic_hata", detail: "GIZLI-AYRINTI-42" });
+    });
+    const r = await d.istemci.callTool({ name: "projeler", arguments: {} });
+    assert.ok(hataMi(r));
+    assert.equal(metin(r).trim(), "hata: ic_hata");
+    assert.ok(!JSON.stringify(r).includes("GIZLI-AYRINTI-42"));
+  });
+
+  it("rol_fiil_izinsiz de aynı biçimde hata olur", async () => {
+    const d = await kur("eren", (s) => {
+      s.davranis = (m, bag, sv) =>
+        sv.yanit(bag, m["istek_id"], { ok: false, code: "rol_fiil_izinsiz", detail: "ic-ayrinti" });
+    });
+    const r = await d.istemci.callTool({ name: "oturumlar", arguments: {} });
+    assert.ok(hataMi(r));
+    assert.equal(metin(r).trim(), "hata: rol_fiil_izinsiz");
+    assert.ok(!JSON.stringify(r).includes("ic-ayrinti"));
+  });
+});
+
+describe("kopru: iptal", () => {
+  it("MCP notifications/cancelled boruya iptal{istek_id} olarak gider", async () => {
+    // Yanıt hiç gelmez: çağrı askıda kalır.
+    const d = await kur("eren");
+    const ac = new AbortController();
+    const cagri = d.istemci
+      .callTool({ name: "oturumlar", arguments: {} }, undefined, { signal: ac.signal })
+      .catch((e: unknown) => e);
+    await bekleKosul(() => d.servis.istekler("oturumlar").length === 1, "istek");
+    const istekId = d.servis.istekler("oturumlar")[0]!["istek_id"];
+    ac.abort();
+    await cagri;
+    await bekleKosul(() => d.servis.tumGelenler().some((m) => m["type"] === "iptal"), "iptal");
+    const iptaller = d.servis.tumGelenler().filter((m) => m["type"] === "iptal");
+    assert.equal(iptaller.length, 1);
+    assert.equal(iptaller[0]!["istek_id"], istekId);
+    assert.equal(iptaller[0]!["v"], 1);
+  });
+});
+
+describe("kopru: soru", () => {
+  const SORU = { soru: "Hangisi?", secenekler: ["a", "b"] };
+
+  it("soru_id köprüde üretilir ve boru isteğinde taşınır", async () => {
+    const d = await kur("soru", (s) => {
+      s.davranis = (m, bag, sv) =>
+        sv.yanit(bag, m["istek_id"], { ok: true, sonuc: { durum: "cevaplandi", cevap: "a" } });
+    });
+    const r = await d.istemci.callTool({ name: "kullaniciya_sor", arguments: SORU });
+    assert.ok(!hataMi(r));
+    assert.deepEqual(JSON.parse(metin(r)), { durum: "cevaplandi", cevap: "a" });
+    const [istek] = d.servis.istekler("kullaniciya_sor");
+    const girdi = istek!["girdi"] as Record<string, unknown>;
+    assert.ok(OpakId.safeParse(girdi["soru_id"]).success);
+    assert.equal(girdi["soru"], SORU.soru);
+  });
+
+  it("MCP çağrısı zaman aşımına düşmez: araç çağrısı beklerken servis yanıtı geç gelir", async () => {
+    let tut: (() => void) | null = null;
+    const d = await kur("soru", (s) => {
+      s.davranis = (m, bag, sv) => {
+        tut = () =>
+          sv.yanit(bag, m["istek_id"], { ok: true, sonuc: { durum: "zaman_asimi" } });
+      };
+    });
+    const cagri = d.istemci.callTool({ name: "kullaniciya_sor", arguments: SORU });
+    await bekleKosul(() => tut !== null, "istek");
+    (tut as unknown as () => void)();
+    const r = await cagri;
+    assert.deepEqual(JSON.parse(metin(r)), { durum: "zaman_asimi" });
+  });
+
+  it("boru koparsa yeniden bağlanıp soru_bekle{soru_id} yollar, soru_bulunamadi'da aynı soru_id ile yeniden sorar", async () => {
+    const d = await kur("soru", (s) => {
+      s.davranis = (m, bag, sv) => {
+        if (m["fiil"] === "soru_bekle") {
+          sv.yanit(bag, m["istek_id"], { ok: false, code: "soru_bulunamadi" });
+        } else if (m["fiil"] === "kullaniciya_sor" && sv.baglantilar.length >= 2) {
+          sv.yanit(bag, m["istek_id"], { ok: true, sonuc: { durum: "cevaplandi", cevap: "b" } });
+        }
+        // İlk bağlantıda kullaniciya_sor yanıtsız kalır.
+      };
+    });
+    const cagri = d.istemci.callTool({ name: "kullaniciya_sor", arguments: SORU });
+    await bekleKosul(() => d.servis.istekler("kullaniciya_sor").length === 1, "ilk soru");
+    const ilkId = (d.servis.istekler("kullaniciya_sor")[0]!["girdi"] as Record<string, unknown>)[
+      "soru_id"
+    ];
+
+    d.servis.kopar();
+    const r = await cagri;
+
+    assert.ok(!hataMi(r));
+    assert.deepEqual(JSON.parse(metin(r)), { durum: "cevaplandi", cevap: "b" });
+    assert.equal(d.servis.baglantilar.length, 2);
+    // İkinci bağlantı yeniden el sıkışır, sonra beklemeyi sürdürür.
+    const ikinci = d.servis.baglantilar[1]!.gelen;
+    assert.equal(ikinci[0]!["type"], "kopru_hello");
+    assert.equal(ikinci[0]!["jeton"], JETON);
+    const bekle = ikinci.find((m) => m["fiil"] === "soru_bekle");
+    assert.ok(bekle, "soru_bekle gitmedi");
+    assert.deepEqual(bekle["girdi"], { soru_id: ilkId });
+    const yeniden = ikinci.find((m) => m["fiil"] === "kullaniciya_sor");
+    assert.ok(yeniden, "kullaniciya_sor yeniden gitmedi");
+    assert.equal((yeniden["girdi"] as Record<string, unknown>)["soru_id"], ilkId);
+    assert.equal((yeniden["girdi"] as Record<string, unknown>)["soru"], SORU.soru);
+  });
+
+  it("yeniden bağlanınca soru_bekle cevap getirirse soru tekrar sorulmaz", async () => {
+    const d = await kur("soru", (s) => {
+      s.davranis = (m, bag, sv) => {
+        if (m["fiil"] === "soru_bekle") {
+          sv.yanit(bag, m["istek_id"], { ok: true, sonuc: { durum: "cevaplandi", cevap: "a" } });
+        }
+      };
+    });
+    const cagri = d.istemci.callTool({ name: "kullaniciya_sor", arguments: SORU });
+    await bekleKosul(() => d.servis.istekler("kullaniciya_sor").length === 1, "ilk soru");
+    d.servis.kopar();
+    const r = await cagri;
+    assert.deepEqual(JSON.parse(metin(r)), { durum: "cevaplandi", cevap: "a" });
+    assert.equal(d.servis.istekler("kullaniciya_sor").length, 1);
+    assert.equal(d.servis.istekler("soru_bekle").length, 1);
+  });
+});
+
+describe("kopru: telefon yeniden denenmez", () => {
+  for (const code of ["telefon_bagli_degil", "belirsiz"] as const) {
+    it(`${code}: isError, 'hata: ${code}', tek istek çerçevesi`, async () => {
+      const d = await kur("telefon", (s) => {
+        s.davranis = (m, bag, sv) =>
+          sv.yanit(bag, m["istek_id"], { ok: false, code, detail: "ayrinti-sizmamali" });
+      });
+      const r = await d.istemci.callTool({ name: "click", arguments: { x: 1, y: 2 } });
+      assert.ok(hataMi(r));
+      assert.equal(metin(r).trim(), `hata: ${code}`);
+      assert.ok(!JSON.stringify(r).includes("ayrinti-sizmamali"));
+      // Biraz zaman tanı: gizli bir yeniden deneme olsaydı ortaya çıkardı.
+      for (let i = 0; i < 20; i += 1) await new Promise((r2) => setImmediate(r2));
+      assert.equal(d.servis.istekler().length, 1);
+      assert.equal(d.servis.istekler("click").length, 1);
+    });
+  }
+
+  it("istek gittikten sonra boru koparsa araç hata döner, yeniden bağlanınca ikinci istek gitmez", async () => {
+    const d = await kur("telefon"); // yanıt yok
+    const cagri = d.istemci.callTool({ name: "click", arguments: { x: 1, y: 2 } });
+    await bekleKosul(() => d.servis.istekler("click").length === 1, "istek");
+    d.servis.kopar();
+    const r = await cagri;
+    assert.ok(hataMi(r));
+    assert.equal(metin(r).trim(), "hata: belirsiz");
+    await bekleKosul(() => d.servis.baglantilar.length === 2, "yeniden bağlanma");
+    for (let i = 0; i < 20; i += 1) await new Promise((r2) => setImmediate(r2));
+    assert.equal(d.servis.istekler("click").length, 1);
+    assert.equal(d.servis.istekler().length, 1);
+  });
+});
+
+describe("kopru: yeniden bağlanma aralığı", () => {
+  it("1, 2, 4... 30 sn üst sınırla artar", async () => {
+    const d = await kur("eren", (s) => {
+      s.reddedilecek = 7;
+    });
+    await bekleKosul(() => d.servis.baglantilar.length === 1, "bağlantı");
+    assert.deepEqual(d.bekleme.slice(0, 7), [1000, 2000, 4000, 8000, 16000, 30000, 30000]);
+  });
+});

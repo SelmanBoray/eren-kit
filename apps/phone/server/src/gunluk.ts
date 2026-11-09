@@ -25,7 +25,7 @@ const ZORUNLU_ANAHTARLAR: ReadonlySet<string> = new Set(["ts_ms", "seviye", "mod
 
 /** Büyük küçük harf duyarsız; Türkçe `İ`/`ı` farkı da aynı anahtara iner. */
 const anahtarNormalle = (k: string): string =>
-  k.toLowerCase().replace(/̇/g, "").replace(/ı/g, "i");
+  k.toLowerCase().replace(/̇/g, "").replace(/ı/g, "i").replace(/ö/g, "o").replace(/ü/g, "u").replace(/ş/g, "s").replace(/ç/g, "c").replace(/ğ/g, "g");
 
 /** İlk 500 UTF-16 birimi (vekil çifti bölünmez) + `...[kirpildi N]`. */
 const metinKirp = (s: string): string => {

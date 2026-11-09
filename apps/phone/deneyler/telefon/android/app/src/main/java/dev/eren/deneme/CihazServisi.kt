@@ -54,7 +54,7 @@ class CihazServisi : Service() {
         startForeground(1, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
         true
     } catch (e: Exception) {
-        // HyperOS ya da Android engellerse süreç ölmesin, neden status'ta okunsun.
+        // Üretici ROM'u ya da Android engellerse süreç ölmesin, neden status'ta okunsun.
         Olcum.olay("start_foreground_hata", "${e.javaClass.simpleName}: ${e.message}")
         false
     }

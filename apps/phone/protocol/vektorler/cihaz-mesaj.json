@@ -1,0 +1,1051 @@
+{
+ "surum": 1,
+ "asagi": [
+  {
+   "ad": "auth_challenge geçerli",
+   "ham": "{\"v\":1,\"type\":\"auth_challenge\",\"server_nonce\":\"WllYV1ZVVFNSUVBPTk1MS0pJSEdGRURDQkEwMTIzNA==\",\"server_signature\":\"MEUCIQDabc123+/defGHIjklMNOpqrSTUvwxYZ0123==\"}",
+   "gecerli": true,
+   "tur": "auth_challenge"
+  },
+  {
+   "ad": "welcome geçerli",
+   "ham": "{\"v\":1,\"type\":\"welcome\",\"server_time_ms\":1790000000000}",
+   "gecerli": true,
+   "tur": "welcome"
+  },
+  {
+   "ad": "welcome negatif zaman",
+   "ham": "{\"v\":1,\"type\":\"welcome\",\"server_time_ms\":-1}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "welcome fazladan alan",
+   "ham": "{\"v\":1,\"type\":\"welcome\",\"server_time_ms\":1,\"ekstra\":true}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd foreground",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"foreground\",\"args\":{}}",
+   "gecerli": true,
+   "tur": "cmd"
+  },
+  {
+   "ad": "cmd elements sorgusuz",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"elements\",\"args\":{}}",
+   "gecerli": true,
+   "tur": "cmd"
+  },
+  {
+   "ad": "cmd elements sorgulu (Türkçe)",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"elements\",\"args\":{\"query\":\"gönder\"}}",
+   "gecerli": true,
+   "tur": "cmd"
+  },
+  {
+   "ad": "cmd screenshot",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"screenshot\",\"args\":{}}",
+   "gecerli": true,
+   "tur": "cmd"
+  },
+  {
+   "ad": "cmd zoom",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"zoom\",\"args\":{\"x0\":0,\"y0\":100,\"x1\":360,\"y1\":400}}",
+   "gecerli": true,
+   "tur": "cmd"
+  },
+  {
+   "ad": "cmd zoom boş bölge x1==x0",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"zoom\",\"args\":{\"x0\":10,\"y0\":100,\"x1\":10,\"y1\":400}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd click element",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"click\",\"args\":{\"element\":12}}",
+   "gecerli": true,
+   "tur": "cmd"
+  },
+  {
+   "ad": "cmd click x,y çift tık uzun basış",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"click\",\"args\":{\"x\":500,\"y\":900,\"clicks\":2,\"long_press\":true}}",
+   "gecerli": true,
+   "tur": "cmd"
+  },
+  {
+   "ad": "cmd click hem element hem x,y",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"click\",\"args\":{\"element\":1,\"x\":5,\"y\":5}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd click yalnız x",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"click\",\"args\":{\"x\":5}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd click args boş",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"click\",\"args\":{}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd click clicks=3",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"click\",\"args\":{\"element\":1,\"clicks\":3}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd type_text",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"type_text\",\"args\":{\"text\":\"Geliyorum\"}}",
+   "gecerli": true,
+   "tur": "cmd"
+  },
+  {
+   "ad": "cmd type_text boş metin",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"type_text\",\"args\":{\"text\":\"\"}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd type_text 4000 karakter (sınır)",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"type_text\",\"args\":{\"text\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}}",
+   "gecerli": true,
+   "tur": "cmd"
+  },
+  {
+   "ad": "cmd type_text 4001 karakter (aşırı uzun)",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"type_text\",\"args\":{\"text\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd key back",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"key\",\"args\":{\"keys\":\"back\"}}",
+   "gecerli": true,
+   "tur": "cmd"
+  },
+  {
+   "ad": "cmd key dpad_center tekrarlı",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"key\",\"args\":{\"keys\":\"dpad_center\",\"repeat\":10}}",
+   "gecerli": true,
+   "tur": "cmd"
+  },
+  {
+   "ad": "cmd key listede olmayan tuş",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"key\",\"args\":{\"keys\":\"power\"}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd key repeat=11",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"key\",\"args\":{\"keys\":\"back\",\"repeat\":11}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd scroll yönlü",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"scroll\",\"args\":{\"direction\":\"down\",\"amount\":3}}",
+   "gecerli": true,
+   "tur": "cmd"
+  },
+  {
+   "ad": "cmd scroll konumlu",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"scroll\",\"args\":{\"direction\":\"left\",\"x\":100,\"y\":200}}",
+   "gecerli": true,
+   "tur": "cmd"
+  },
+  {
+   "ad": "cmd scroll yalnız y",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"scroll\",\"args\":{\"direction\":\"up\",\"y\":200}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd drag",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"drag\",\"args\":{\"x0\":10,\"y0\":900,\"x1\":10,\"y1\":200}}",
+   "gecerli": true,
+   "tur": "cmd"
+  },
+  {
+   "ad": "cmd wait ondalık",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"wait\",\"args\":{\"seconds\":1.5}}",
+   "gecerli": true,
+   "tur": "cmd"
+  },
+  {
+   "ad": "cmd wait 30 sınır",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"wait\",\"args\":{\"seconds\":30}}",
+   "gecerli": true,
+   "tur": "cmd"
+  },
+  {
+   "ad": "cmd wait sıfır",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"wait\",\"args\":{\"seconds\":0}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd wait 30.5",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"wait\",\"args\":{\"seconds\":30.5}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd open_app geçerli paket",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"open_app\",\"args\":{\"package\":\"com.example.mesaj\"}}",
+   "gecerli": true,
+   "tur": "cmd"
+  },
+  {
+   "ad": "cmd open_app https URL",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"open_app\",\"args\":{\"package\":\"https://example.com/\"}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd open_app intent metni",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"open_app\",\"args\":{\"package\":\"intent:#Intent;action=android.intent.action.VIEW;end\"}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd open_app noktasız paket",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"open_app\",\"args\":{\"package\":\"mesaj\"}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd shell bilinmeyen komut",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"shell\",\"args\":{\"komut\":\"ls\"}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd open_url bilinmeyen komut",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"open_url\",\"args\":{\"url\":\"https://example.com/\"}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd install bilinmeyen komut",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"install\",\"args\":{\"package\":\"com.example.mesaj\"}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd open_app args içinde fazladan url",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"open_app\",\"args\":{\"package\":\"com.example.mesaj\",\"url\":\"https://example.com/\"}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd foreground args içinde fazladan alan",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"foreground\",\"args\":{\"url\":\"https://example.com/\"}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd zarfında fazladan alan",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"foreground\",\"args\":{},\"ekstra\":1}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd args yok",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1,\"name\":\"foreground\"}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd args null",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"foreground\",\"args\":null}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd args dizi",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"foreground\",\"args\":[]}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd koordinat 20000 (sınır)",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"drag\",\"args\":{\"x0\":0,\"y0\":0,\"x1\":20000,\"y1\":20000}}",
+   "gecerli": true,
+   "tur": "cmd"
+  },
+  {
+   "ad": "cmd koordinat 20001",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"drag\",\"args\":{\"x0\":0,\"y0\":0,\"x1\":20001,\"y1\":0}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd koordinat negatif",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"drag\",\"args\":{\"x0\":-1,\"y0\":0,\"x1\":5,\"y1\":0}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd koordinat ondalık 12.5",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"click\",\"args\":{\"x\":12.5,\"y\":3}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd koordinat 1e400 (JSON.parse Infinity verir)",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"click\",\"args\":{\"x\":1e400,\"y\":3}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd koordinat -0 (JSON.parse -0 verir; Zod kabul eder)",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"click\",\"args\":{\"x\":-0,\"y\":3}}",
+   "gecerli": true,
+   "tur": "cmd"
+  },
+  {
+   "ad": "cmd koordinat 1e2 üstel gösterim",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"click\",\"args\":{\"x\":1e2,\"y\":3}}",
+   "gecerli": true,
+   "tur": "cmd"
+  },
+  {
+   "ad": "cmd koordinat güvenli olmayan büyük tam sayı",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"click\",\"args\":{\"x\":9007199254740993,\"y\":3}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd koordinat metin olarak",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"click\",\"args\":{\"x\":\"5\",\"y\":\"3\"}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd deadline_ms ondalık",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1.5,\"name\":\"foreground\",\"args\":{}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd deadline_ms 1e400",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1e400,\"name\":\"foreground\",\"args\":{}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd deadline_ms -0",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":-0,\"name\":\"foreground\",\"args\":{}}",
+   "gecerli": true,
+   "tur": "cmd"
+  },
+  {
+   "ad": "cmd token kısa",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"kisa\",\"deadline_ms\":1790000030000,\"name\":\"foreground\",\"args\":{}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd cmd_id geçersiz karakter",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c 1/../x\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"foreground\",\"args\":{}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd cmd_id 65 karakter",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"foreground\",\"args\":{}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd type_text eşsiz vekil (lone surrogate) \\ud800 (Zod kabul eder; Kotlin kararını bu işarete uydurmalı)",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"type_text\",\"args\":{\"text\":\"a\\ud800b\"}}",
+   "gecerli": true,
+   "tur": "cmd"
+  },
+  {
+   "ad": "cmd elements sorgu eşsiz vekil \\udc00 (Zod kabul eder; Kotlin kararını bu işarete uydurmalı)",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"elements\",\"args\":{\"query\":\"\\udc00\"}}",
+   "gecerli": true,
+   "tur": "cmd"
+  },
+  {
+   "ad": "cmd elements sorgu 201 karakter",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"elements\",\"args\":{\"query\":\"qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq\"}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd yinelenen name anahtarı (JSON.parse sonuncuyu alır; Kotlin çekirdeği reddedecek)",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"foreground\",\"name\":\"screenshot\",\"args\":{}}",
+   "gecerli": true,
+   "tur": "cmd"
+  },
+  {
+   "ad": "cmd args içinde yinelenen anahtar (JSON.parse sonuncuyu alır; Kotlin çekirdeği reddedecek)",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"click\",\"args\":{\"x\":1,\"x\":2,\"y\":3}}",
+   "gecerli": true,
+   "tur": "cmd"
+  },
+  {
+   "ad": "yinelenen v anahtarı (JSON.parse sonuncuyu alır; Kotlin çekirdeği reddedecek)",
+   "ham": "{\"v\":2,\"v\":1,\"type\":\"welcome\",\"server_time_ms\":1}",
+   "gecerli": true,
+   "tur": "welcome"
+  },
+  {
+   "ad": "grant_revoke tek izin",
+   "ham": "{\"v\":1,\"type\":\"grant_revoke\",\"grant_id\":\"g1\",\"neden\":\"kullanici_durdurdu\"}",
+   "gecerli": true,
+   "tur": "grant_revoke"
+  },
+  {
+   "ad": "grant_revoke hepsi (null)",
+   "ham": "{\"v\":1,\"type\":\"grant_revoke\",\"grant_id\":null,\"neden\":\"limit_kilit\"}",
+   "gecerli": true,
+   "tur": "grant_revoke"
+  },
+  {
+   "ad": "grant_revoke grant_id yok",
+   "ham": "{\"v\":1,\"type\":\"grant_revoke\",\"neden\":\"limit_kilit\"}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "grant_revoke bilinmeyen neden",
+   "ham": "{\"v\":1,\"type\":\"grant_revoke\",\"grant_id\":null,\"neden\":\"canim_istedi\"}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "notify geçerli",
+   "ham": "{\"v\":1,\"type\":\"notify\",\"notify_id\":\"n1\",\"tur\":\"soru\",\"baslik\":\"Soru var\",\"metin\":\"İş 7 cevap bekliyor.\"}",
+   "gecerli": true,
+   "tur": "notify"
+  },
+  {
+   "ad": "notify metin 501 karakter (aşırı uzun)",
+   "ham": "{\"v\":1,\"type\":\"notify\",\"notify_id\":\"n1\",\"tur\":\"sistem\",\"baslik\":\"b\",\"metin\":\"mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm\"}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "notify başlık 120 karakter (sınır)",
+   "ham": "{\"v\":1,\"type\":\"notify\",\"notify_id\":\"n1\",\"tur\":\"plan\",\"baslik\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"metin\":\"m\"}",
+   "gecerli": true,
+   "tur": "notify"
+  },
+  {
+   "ad": "notify bilinmeyen tür",
+   "ham": "{\"v\":1,\"type\":\"notify\",\"notify_id\":\"n1\",\"tur\":\"reklam\",\"baslik\":\"b\",\"metin\":\"m\"}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "error geçerli",
+   "ham": "{\"v\":1,\"type\":\"error\",\"code\":\"imza_gecersiz\"}",
+   "gecerli": true,
+   "tur": "error"
+  },
+  {
+   "ad": "error ayrıntılı",
+   "ham": "{\"v\":1,\"type\":\"error\",\"code\":\"yetkisiz\",\"detail\":\"sıra bozuk\"}",
+   "gecerli": true,
+   "tur": "error"
+  },
+  {
+   "ad": "error bilinmeyen kod",
+   "ham": "{\"v\":1,\"type\":\"error\",\"code\":\"kediler_kacti\"}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "yanlış v=2",
+   "ham": "{\"v\":2,\"type\":\"welcome\",\"server_time_ms\":1}",
+   "gecerli": false,
+   "kod": "protokol_uyumsuz"
+  },
+  {
+   "ad": "v metin '1'",
+   "ham": "{\"v\":\"1\",\"type\":\"welcome\",\"server_time_ms\":1}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "v yok",
+   "ham": "{\"type\":\"welcome\",\"server_time_ms\":1}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "bilinmeyen type",
+   "ham": "{\"v\":1,\"type\":\"reboot\"}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "type yok",
+   "ham": "{\"v\":1}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "aşağı yönde grant_issued",
+   "ham": "{\"v\":1,\"type\":\"grant_issued\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"plan_id\":\"plan-2\",\"plan_hash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"mod\":\"oku\",\"uygulamalar\":[\"com.example.mesaj\"],\"kalan_ms\":3600000,\"butce\":200}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "aşağı yönde hello",
+   "ham": "{\"v\":1,\"type\":\"hello\",\"device_id\":\"tel-1\",\"client_nonce\":\"QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVowMTIzNA==\"}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "aşağı yönde cmd_result",
+   "ham": "{\"v\":1,\"type\":\"cmd_result\",\"cmd_id\":\"c1\",\"ok\":true,\"foreground\":{\"baslik\":\"Mesajlar\",\"paket\":\"com.example.mesaj\"}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "aşağı yönde device_state",
+   "ham": "{\"v\":1,\"type\":\"device_state\",\"a11y\":true,\"adb_enabled\":false,\"kilitli\":false}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "JSON değil",
+   "ham": "{bozuk",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "boş metin",
+   "ham": "",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "JSON dizi",
+   "ham": "[]",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "JSON null",
+   "ham": "null",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "sondaki virgül",
+   "ham": "{\"v\":1,\"type\":\"welcome\",\"server_time_ms\":1,}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  }
+ ],
+ "yukari": [
+  {
+   "ad": "hello geçerli",
+   "ham": "{\"v\":1,\"type\":\"hello\",\"device_id\":\"tel-1\",\"client_nonce\":\"QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVowMTIzNA==\"}",
+   "gecerli": true,
+   "tur": "hello"
+  },
+  {
+   "ad": "hello nonce base64 değil",
+   "ham": "{\"v\":1,\"type\":\"hello\",\"device_id\":\"tel-1\",\"client_nonce\":\"!!!!!!!!!!!!!!!!!!!!!!!!!!!!\"}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "hello nonce kısa",
+   "ham": "{\"v\":1,\"type\":\"hello\",\"device_id\":\"tel-1\",\"client_nonce\":\"QUJD\"}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "hello device_id boş",
+   "ham": "{\"v\":1,\"type\":\"hello\",\"device_id\":\"\",\"client_nonce\":\"QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVowMTIzNA==\"}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "auth_response geçerli",
+   "ham": "{\"v\":1,\"type\":\"auth_response\",\"signature\":\"MEUCIQDabc123+/defGHIjklMNOpqrSTUvwxYZ0123==\"}",
+   "gecerli": true,
+   "tur": "auth_response"
+  },
+  {
+   "ad": "auth_response imza base64 değil",
+   "ham": "{\"v\":1,\"type\":\"auth_response\",\"signature\":\"imza değil\"}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd_result başarılı foreground",
+   "ham": "{\"v\":1,\"type\":\"cmd_result\",\"cmd_id\":\"c1\",\"ok\":true,\"foreground\":{\"baslik\":\"Mesajlar\",\"paket\":\"com.example.mesaj\"}}",
+   "gecerli": true,
+   "tur": "cmd_result"
+  },
+  {
+   "ad": "cmd_result başarılı foreground null",
+   "ham": "{\"v\":1,\"type\":\"cmd_result\",\"cmd_id\":\"c1\",\"ok\":true,\"foreground\":null}",
+   "gecerli": true,
+   "tur": "cmd_result"
+  },
+  {
+   "ad": "cmd_result foreground alanı yok",
+   "ham": "{\"v\":1,\"type\":\"cmd_result\",\"cmd_id\":\"c1\",\"ok\":true}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd_result denied hassas_uygulama",
+   "ham": "{\"v\":1,\"type\":\"cmd_result\",\"cmd_id\":\"c1\",\"ok\":false,\"foreground\":{\"baslik\":\"\",\"paket\":\"com.example.banka\"},\"denied\":\"hassas_uygulama\"}",
+   "gecerli": true,
+   "tur": "cmd_result"
+  },
+  {
+   "ad": "cmd_result denied deadline_gecti",
+   "ham": "{\"v\":1,\"type\":\"cmd_result\",\"cmd_id\":\"c1\",\"ok\":false,\"foreground\":null,\"denied\":\"deadline_gecti\"}",
+   "gecerli": true,
+   "tur": "cmd_result"
+  },
+  {
+   "ad": "cmd_result denied url_intent_yasak",
+   "ham": "{\"v\":1,\"type\":\"cmd_result\",\"cmd_id\":\"c1\",\"ok\":false,\"foreground\":{\"baslik\":\"Mesajlar\",\"paket\":\"com.example.mesaj\"},\"denied\":\"url_intent_yasak\"}",
+   "gecerli": true,
+   "tur": "cmd_result"
+  },
+  {
+   "ad": "cmd_result denied bilinmeyen neden",
+   "ham": "{\"v\":1,\"type\":\"cmd_result\",\"cmd_id\":\"c1\",\"ok\":false,\"foreground\":{\"baslik\":\"Mesajlar\",\"paket\":\"com.example.mesaj\"},\"denied\":\"canim_istemedi\"}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd_result hata element_bulunamadi",
+   "ham": "{\"v\":1,\"type\":\"cmd_result\",\"cmd_id\":\"c1\",\"ok\":false,\"foreground\":{\"baslik\":\"Mesajlar\",\"paket\":\"com.example.mesaj\"},\"hata\":\"element_bulunamadi\"}",
+   "gecerli": true,
+   "tur": "cmd_result"
+  },
+  {
+   "ad": "cmd_result hata zaman_asimi",
+   "ham": "{\"v\":1,\"type\":\"cmd_result\",\"cmd_id\":\"c1\",\"ok\":false,\"foreground\":{\"baslik\":\"Mesajlar\",\"paket\":\"com.example.mesaj\"},\"hata\":\"zaman_asimi\"}",
+   "gecerli": true,
+   "tur": "cmd_result"
+  },
+  {
+   "ad": "cmd_result ok=false ama denied ve hata ikisi de var",
+   "ham": "{\"v\":1,\"type\":\"cmd_result\",\"cmd_id\":\"c1\",\"ok\":false,\"foreground\":{\"baslik\":\"Mesajlar\",\"paket\":\"com.example.mesaj\"},\"denied\":\"mesgul\",\"hata\":\"eylem_basarisiz\"}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd_result ok=false denied da hata da yok",
+   "ham": "{\"v\":1,\"type\":\"cmd_result\",\"cmd_id\":\"c1\",\"ok\":false,\"foreground\":{\"baslik\":\"Mesajlar\",\"paket\":\"com.example.mesaj\"}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd_result ok=true ile denied",
+   "ham": "{\"v\":1,\"type\":\"cmd_result\",\"cmd_id\":\"c1\",\"ok\":true,\"foreground\":{\"baslik\":\"Mesajlar\",\"paket\":\"com.example.mesaj\"},\"denied\":\"mesgul\"}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd_result ok=false ile payload",
+   "ham": "{\"v\":1,\"type\":\"cmd_result\",\"cmd_id\":\"c1\",\"ok\":false,\"foreground\":{\"baslik\":\"Mesajlar\",\"paket\":\"com.example.mesaj\"},\"hata\":\"ekran_alinamadi\",\"payload\":{\"kind\":\"elements\",\"truncated\":false,\"elements\":[]}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd_result elements",
+   "ham": "{\"v\":1,\"type\":\"cmd_result\",\"cmd_id\":\"c1\",\"ok\":true,\"foreground\":{\"baslik\":\"Mesajlar\",\"paket\":\"com.example.mesaj\"},\"payload\":{\"kind\":\"elements\",\"truncated\":false,\"elements\":[{\"id\":1,\"rol\":\"button\",\"ad\":\"Gönder\",\"x\":980,\"y\":2210},{\"id\":2,\"rol\":\"edit\",\"ad\":\"Mesaj\",\"deger\":\"Merhaba\",\"x\":500,\"y\":2210}]}}",
+   "gecerli": true,
+   "tur": "cmd_result"
+  },
+  {
+   "ad": "cmd_result elements parola alanı ve disabled",
+   "ham": "{\"v\":1,\"type\":\"cmd_result\",\"cmd_id\":\"c1\",\"ok\":true,\"foreground\":{\"baslik\":\"Mesajlar\",\"paket\":\"com.example.mesaj\"},\"payload\":{\"kind\":\"elements\",\"truncated\":true,\"elements\":[{\"id\":0,\"rol\":\"edit\",\"ad\":\"Parola\",\"x\":1,\"y\":2,\"password\":true,\"disabled\":true}]}}",
+   "gecerli": true,
+   "tur": "cmd_result"
+  },
+  {
+   "ad": "cmd_result elements boş liste",
+   "ham": "{\"v\":1,\"type\":\"cmd_result\",\"cmd_id\":\"c1\",\"ok\":true,\"foreground\":{\"baslik\":\"Mesajlar\",\"paket\":\"com.example.mesaj\"},\"payload\":{\"kind\":\"elements\",\"truncated\":false,\"elements\":[]}}",
+   "gecerli": true,
+   "tur": "cmd_result"
+  },
+  {
+   "ad": "cmd_result element rol geçersiz karakter",
+   "ham": "{\"v\":1,\"type\":\"cmd_result\",\"cmd_id\":\"c1\",\"ok\":true,\"foreground\":{\"baslik\":\"Mesajlar\",\"paket\":\"com.example.mesaj\"},\"payload\":{\"kind\":\"elements\",\"truncated\":false,\"elements\":[{\"id\":1,\"rol\":\"bu ton\",\"ad\":\"a\",\"x\":1,\"y\":2}]}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd_result element id negatif",
+   "ham": "{\"v\":1,\"type\":\"cmd_result\",\"cmd_id\":\"c1\",\"ok\":true,\"foreground\":{\"baslik\":\"Mesajlar\",\"paket\":\"com.example.mesaj\"},\"payload\":{\"kind\":\"elements\",\"truncated\":false,\"elements\":[{\"id\":-1,\"rol\":\"button\",\"ad\":\"a\",\"x\":1,\"y\":2}]}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd_result element ad 2000 (sınır)",
+   "ham": "{\"v\":1,\"type\":\"cmd_result\",\"cmd_id\":\"c1\",\"ok\":true,\"foreground\":{\"baslik\":\"Mesajlar\",\"paket\":\"com.example.mesaj\"},\"payload\":{\"kind\":\"elements\",\"truncated\":false,\"elements\":[{\"id\":1,\"rol\":\"text\",\"ad\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"x\":1,\"y\":2}]}}",
+   "gecerli": true,
+   "tur": "cmd_result"
+  },
+  {
+   "ad": "cmd_result element ad 2001 (aşırı uzun)",
+   "ham": "{\"v\":1,\"type\":\"cmd_result\",\"cmd_id\":\"c1\",\"ok\":true,\"foreground\":{\"baslik\":\"Mesajlar\",\"paket\":\"com.example.mesaj\"},\"payload\":{\"kind\":\"elements\",\"truncated\":false,\"elements\":[{\"id\":1,\"rol\":\"text\",\"ad\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"x\":1,\"y\":2}]}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd_result element koordinat 12.5",
+   "ham": "{\"v\":1,\"type\":\"cmd_result\",\"cmd_id\":\"c1\",\"ok\":true,\"foreground\":{\"baslik\":\"Mesajlar\",\"paket\":\"com.example.mesaj\"},\"payload\":{\"kind\":\"elements\",\"truncated\":false,\"elements\":[{\"id\":1,\"rol\":\"text\",\"ad\":\"a\",\"x\":12.5,\"y\":2}]}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd_result element koordinat -0 (JSON.parse -0 verir; Zod kabul eder)",
+   "ham": "{\"v\":1,\"type\":\"cmd_result\",\"cmd_id\":\"c1\",\"ok\":true,\"foreground\":null,\"payload\":{\"kind\":\"elements\",\"truncated\":false,\"elements\":[{\"id\":1,\"rol\":\"text\",\"ad\":\"a\",\"x\":-0,\"y\":2}]}}",
+   "gecerli": true,
+   "tur": "cmd_result"
+  },
+  {
+   "ad": "cmd_result element koordinat 1e400",
+   "ham": "{\"v\":1,\"type\":\"cmd_result\",\"cmd_id\":\"c1\",\"ok\":true,\"foreground\":null,\"payload\":{\"kind\":\"elements\",\"truncated\":false,\"elements\":[{\"id\":1,\"rol\":\"text\",\"ad\":\"a\",\"x\":1e400,\"y\":2}]}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd_result element ad eşsiz vekil \\ud800 (Zod kabul eder; Kotlin kararını bu işarete uydurmalı)",
+   "ham": "{\"v\":1,\"type\":\"cmd_result\",\"cmd_id\":\"c1\",\"ok\":true,\"foreground\":null,\"payload\":{\"kind\":\"elements\",\"truncated\":false,\"elements\":[{\"id\":1,\"rol\":\"text\",\"ad\":\"a\\ud800\",\"x\":1,\"y\":2}]}}",
+   "gecerli": true,
+   "tur": "cmd_result"
+  },
+  {
+   "ad": "cmd_result element fazladan alan url",
+   "ham": "{\"v\":1,\"type\":\"cmd_result\",\"cmd_id\":\"c1\",\"ok\":true,\"foreground\":{\"baslik\":\"Mesajlar\",\"paket\":\"com.example.mesaj\"},\"payload\":{\"kind\":\"elements\",\"truncated\":false,\"elements\":[{\"id\":1,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2,\"url\":\"https://example.com/\"}]}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd_result 501 eleman",
+   "ham": "{\"v\":1,\"type\":\"cmd_result\",\"cmd_id\":\"c1\",\"ok\":true,\"foreground\":{\"baslik\":\"Mesajlar\",\"paket\":\"com.example.mesaj\"},\"payload\":{\"kind\":\"elements\",\"truncated\":true,\"elements\":[{\"id\":0,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":1,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":2,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":3,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":4,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":5,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":6,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":7,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":8,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":9,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":10,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":11,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":12,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":13,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":14,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":15,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":16,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":17,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":18,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":19,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":20,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":21,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":22,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":23,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":24,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":25,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":26,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":27,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":28,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":29,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":30,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":31,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":32,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":33,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":34,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":35,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":36,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":37,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":38,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":39,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":40,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":41,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":42,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":43,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":44,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":45,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":46,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":47,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":48,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":49,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":50,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":51,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":52,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":53,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":54,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":55,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":56,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":57,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":58,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":59,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":60,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":61,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":62,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":63,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":64,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":65,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":66,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":67,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":68,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":69,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":70,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":71,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":72,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":73,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":74,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":75,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":76,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":77,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":78,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":79,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":80,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":81,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":82,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":83,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":84,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":85,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":86,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":87,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":88,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":89,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":90,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":91,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":92,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":93,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":94,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":95,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":96,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":97,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":98,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":99,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":100,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":101,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":102,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":103,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":104,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":105,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":106,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":107,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":108,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":109,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":110,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":111,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":112,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":113,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":114,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":115,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":116,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":117,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":118,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":119,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":120,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":121,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":122,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":123,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":124,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":125,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":126,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":127,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":128,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":129,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":130,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":131,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":132,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":133,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":134,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":135,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":136,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":137,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":138,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":139,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":140,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":141,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":142,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":143,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":144,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":145,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":146,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":147,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":148,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":149,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":150,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":151,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":152,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":153,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":154,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":155,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":156,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":157,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":158,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":159,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":160,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":161,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":162,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":163,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":164,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":165,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":166,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":167,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":168,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":169,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":170,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":171,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":172,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":173,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":174,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":175,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":176,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":177,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":178,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":179,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":180,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":181,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":182,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":183,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":184,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":185,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":186,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":187,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":188,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":189,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":190,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":191,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":192,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":193,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":194,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":195,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":196,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":197,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":198,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":199,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":200,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":201,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":202,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":203,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":204,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":205,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":206,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":207,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":208,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":209,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":210,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":211,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":212,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":213,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":214,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":215,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":216,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":217,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":218,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":219,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":220,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":221,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":222,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":223,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":224,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":225,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":226,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":227,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":228,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":229,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":230,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":231,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":232,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":233,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":234,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":235,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":236,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":237,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":238,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":239,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":240,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":241,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":242,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":243,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":244,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":245,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":246,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":247,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":248,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":249,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":250,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":251,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":252,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":253,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":254,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":255,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":256,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":257,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":258,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":259,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":260,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":261,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":262,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":263,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":264,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":265,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":266,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":267,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":268,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":269,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":270,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":271,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":272,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":273,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":274,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":275,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":276,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":277,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":278,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":279,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":280,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":281,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":282,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":283,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":284,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":285,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":286,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":287,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":288,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":289,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":290,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":291,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":292,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":293,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":294,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":295,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":296,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":297,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":298,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":299,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":300,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":301,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":302,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":303,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":304,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":305,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":306,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":307,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":308,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":309,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":310,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":311,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":312,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":313,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":314,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":315,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":316,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":317,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":318,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":319,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":320,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":321,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":322,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":323,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":324,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":325,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":326,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":327,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":328,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":329,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":330,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":331,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":332,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":333,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":334,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":335,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":336,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":337,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":338,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":339,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":340,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":341,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":342,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":343,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":344,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":345,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":346,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":347,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":348,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":349,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":350,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":351,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":352,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":353,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":354,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":355,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":356,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":357,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":358,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":359,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":360,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":361,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":362,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":363,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":364,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":365,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":366,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":367,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":368,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":369,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":370,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":371,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":372,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":373,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":374,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":375,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":376,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":377,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":378,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":379,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":380,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":381,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":382,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":383,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":384,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":385,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":386,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":387,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":388,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":389,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":390,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":391,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":392,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":393,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":394,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":395,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":396,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":397,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":398,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":399,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":400,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":401,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":402,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":403,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":404,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":405,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":406,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":407,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":408,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":409,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":410,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":411,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":412,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":413,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":414,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":415,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":416,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":417,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":418,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":419,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":420,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":421,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":422,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":423,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":424,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":425,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":426,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":427,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":428,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":429,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":430,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":431,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":432,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":433,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":434,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":435,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":436,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":437,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":438,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":439,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":440,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":441,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":442,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":443,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":444,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":445,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":446,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":447,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":448,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":449,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":450,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":451,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":452,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":453,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":454,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":455,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":456,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":457,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":458,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":459,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":460,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":461,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":462,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":463,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":464,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":465,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":466,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":467,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":468,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":469,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":470,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":471,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":472,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":473,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":474,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":475,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":476,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":477,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":478,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":479,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":480,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":481,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":482,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":483,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":484,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":485,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":486,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":487,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":488,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":489,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":490,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":491,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":492,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":493,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":494,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":495,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":496,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":497,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":498,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":499,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2},{\"id\":500,\"rol\":\"text\",\"ad\":\"a\",\"x\":1,\"y\":2}]}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd_result resim jpeg",
+   "ham": "{\"v\":1,\"type\":\"cmd_result\",\"cmd_id\":\"c1\",\"ok\":true,\"foreground\":{\"baslik\":\"Mesajlar\",\"paket\":\"com.example.mesaj\"},\"payload\":{\"kind\":\"image\",\"mime\":\"image/jpeg\",\"image_base64\":\"QUJD\",\"width\":720,\"height\":1600,\"scale\":1.5}}",
+   "gecerli": true,
+   "tur": "cmd_result"
+  },
+  {
+   "ad": "cmd_result resim png dolgulu base64",
+   "ham": "{\"v\":1,\"type\":\"cmd_result\",\"cmd_id\":\"c1\",\"ok\":true,\"foreground\":{\"baslik\":\"Mesajlar\",\"paket\":\"com.example.mesaj\"},\"payload\":{\"kind\":\"image\",\"mime\":\"image/png\",\"image_base64\":\"QUI=\",\"width\":1,\"height\":1,\"scale\":1}}",
+   "gecerli": true,
+   "tur": "cmd_result"
+  },
+  {
+   "ad": "cmd_result resim mime gif",
+   "ham": "{\"v\":1,\"type\":\"cmd_result\",\"cmd_id\":\"c1\",\"ok\":true,\"foreground\":{\"baslik\":\"Mesajlar\",\"paket\":\"com.example.mesaj\"},\"payload\":{\"kind\":\"image\",\"mime\":\"image/gif\",\"image_base64\":\"QUJD\",\"width\":1,\"height\":1,\"scale\":1}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd_result resim base64 değil",
+   "ham": "{\"v\":1,\"type\":\"cmd_result\",\"cmd_id\":\"c1\",\"ok\":true,\"foreground\":{\"baslik\":\"Mesajlar\",\"paket\":\"com.example.mesaj\"},\"payload\":{\"kind\":\"image\",\"mime\":\"image/png\",\"image_base64\":\"QU JD\",\"width\":1,\"height\":1,\"scale\":1}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd_result resim scale 0",
+   "ham": "{\"v\":1,\"type\":\"cmd_result\",\"cmd_id\":\"c1\",\"ok\":true,\"foreground\":{\"baslik\":\"Mesajlar\",\"paket\":\"com.example.mesaj\"},\"payload\":{\"kind\":\"image\",\"mime\":\"image/png\",\"image_base64\":\"QUJD\",\"width\":1,\"height\":1,\"scale\":0}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd_result resim scale 1e400",
+   "ham": "{\"v\":1,\"type\":\"cmd_result\",\"cmd_id\":\"c1\",\"ok\":true,\"foreground\":null,\"payload\":{\"kind\":\"image\",\"mime\":\"image/png\",\"image_base64\":\"QUJD\",\"width\":1,\"height\":1,\"scale\":1e400}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd_result resim width ondalık",
+   "ham": "{\"v\":1,\"type\":\"cmd_result\",\"cmd_id\":\"c1\",\"ok\":true,\"foreground\":{\"baslik\":\"Mesajlar\",\"paket\":\"com.example.mesaj\"},\"payload\":{\"kind\":\"image\",\"mime\":\"image/png\",\"image_base64\":\"QUJD\",\"width\":12.5,\"height\":1,\"scale\":1}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd_result payload bilinmeyen kind",
+   "ham": "{\"v\":1,\"type\":\"cmd_result\",\"cmd_id\":\"c1\",\"ok\":true,\"foreground\":{\"baslik\":\"Mesajlar\",\"paket\":\"com.example.mesaj\"},\"payload\":{\"kind\":\"video\"}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd_result foreground başlık 256 (sınır)",
+   "ham": "{\"v\":1,\"type\":\"cmd_result\",\"cmd_id\":\"c1\",\"ok\":true,\"foreground\":{\"baslik\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"paket\":\"com.example.mesaj\"}}",
+   "gecerli": true,
+   "tur": "cmd_result"
+  },
+  {
+   "ad": "cmd_result foreground başlık 257 (aşırı uzun)",
+   "ham": "{\"v\":1,\"type\":\"cmd_result\",\"cmd_id\":\"c1\",\"ok\":true,\"foreground\":{\"baslik\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"paket\":\"com.example.mesaj\"}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd_result foreground paket geçersiz (URL)",
+   "ham": "{\"v\":1,\"type\":\"cmd_result\",\"cmd_id\":\"c1\",\"ok\":true,\"foreground\":{\"baslik\":\"x\",\"paket\":\"https://example.com/\"}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "cmd_result foreground başlıkta eşsiz vekil \\udc00 (Zod kabul eder; Kotlin kararını bu işarete uydurmalı)",
+   "ham": "{\"v\":1,\"type\":\"cmd_result\",\"cmd_id\":\"c1\",\"ok\":true,\"foreground\":{\"baslik\":\"\\udc00\",\"paket\":\"com.example.mesaj\"}}",
+   "gecerli": true,
+   "tur": "cmd_result"
+  },
+  {
+   "ad": "cmd_result yinelenen ok anahtarı (JSON.parse sonuncuyu alır; Kotlin çekirdeği reddedecek)",
+   "ham": "{\"v\":1,\"type\":\"cmd_result\",\"cmd_id\":\"c1\",\"ok\":false,\"ok\":true,\"foreground\":null}",
+   "gecerli": true,
+   "tur": "cmd_result"
+  },
+  {
+   "ad": "cmd_result yinelenen denied anahtarı (JSON.parse sonuncuyu alır; Kotlin çekirdeği reddedecek)",
+   "ham": "{\"v\":1,\"type\":\"cmd_result\",\"cmd_id\":\"c1\",\"ok\":false,\"foreground\":null,\"denied\":\"mesgul\",\"denied\":\"izin_yok\"}",
+   "gecerli": true,
+   "tur": "cmd_result"
+  },
+  {
+   "ad": "grant_issued geçerli",
+   "ham": "{\"v\":1,\"type\":\"grant_issued\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"plan_id\":\"plan-2\",\"plan_hash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"mod\":\"oku\",\"uygulamalar\":[\"com.example.mesaj\"],\"kalan_ms\":3600000,\"butce\":200}",
+   "gecerli": true,
+   "tur": "grant_issued"
+  },
+  {
+   "ad": "grant_issued yazma modu iki uygulama",
+   "ham": "{\"v\":1,\"type\":\"grant_issued\",\"grant_id\":\"g2\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"plan_id\":\"plan-3\",\"plan_hash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"mod\":\"yaz\",\"uygulamalar\":[\"com.example.mesaj\",\"com.example.not\"],\"kalan_ms\":1,\"butce\":1}",
+   "gecerli": true,
+   "tur": "grant_issued"
+  },
+  {
+   "ad": "grant_issued bilinmeyen mod",
+   "ham": "{\"v\":1,\"type\":\"grant_issued\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"plan_id\":\"plan-2\",\"plan_hash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"mod\":\"root\",\"uygulamalar\":[\"com.example.mesaj\"],\"kalan_ms\":3600000,\"butce\":200}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "grant_issued plan_hash büyük harf",
+   "ham": "{\"v\":1,\"type\":\"grant_issued\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"plan_id\":\"plan-2\",\"plan_hash\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"mod\":\"oku\",\"uygulamalar\":[\"com.example.mesaj\"],\"kalan_ms\":3600000,\"butce\":200}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "grant_issued uygulamalar boş",
+   "ham": "{\"v\":1,\"type\":\"grant_issued\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"plan_id\":\"plan-2\",\"plan_hash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"mod\":\"oku\",\"uygulamalar\":[],\"kalan_ms\":3600000,\"butce\":200}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "grant_issued 17 uygulama",
+   "ham": "{\"v\":1,\"type\":\"grant_issued\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"plan_id\":\"plan-2\",\"plan_hash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"mod\":\"oku\",\"uygulamalar\":[\"com.example.a0\",\"com.example.a1\",\"com.example.a2\",\"com.example.a3\",\"com.example.a4\",\"com.example.a5\",\"com.example.a6\",\"com.example.a7\",\"com.example.a8\",\"com.example.a9\",\"com.example.a10\",\"com.example.a11\",\"com.example.a12\",\"com.example.a13\",\"com.example.a14\",\"com.example.a15\",\"com.example.a16\"],\"kalan_ms\":3600000,\"butce\":200}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "grant_issued kalan_ms 0",
+   "ham": "{\"v\":1,\"type\":\"grant_issued\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"plan_id\":\"plan-2\",\"plan_hash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"mod\":\"oku\",\"uygulamalar\":[\"com.example.mesaj\"],\"kalan_ms\":0,\"butce\":200}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "grant_issued butce ondalık",
+   "ham": "{\"v\":1,\"type\":\"grant_issued\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"plan_id\":\"plan-2\",\"plan_hash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"mod\":\"oku\",\"uygulamalar\":[\"com.example.mesaj\"],\"kalan_ms\":3600000,\"butce\":1.5}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "grant_issued uygulama URL",
+   "ham": "{\"v\":1,\"type\":\"grant_issued\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"plan_id\":\"plan-2\",\"plan_hash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"mod\":\"oku\",\"uygulamalar\":[\"https://example.com/\"],\"kalan_ms\":3600000,\"butce\":200}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "grant_issued token kısa",
+   "ham": "{\"v\":1,\"type\":\"grant_issued\",\"grant_id\":\"g1\",\"token\":\"kisa\",\"plan_id\":\"plan-2\",\"plan_hash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"mod\":\"oku\",\"uygulamalar\":[\"com.example.mesaj\"],\"kalan_ms\":3600000,\"butce\":200}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "grant_revoked geçerli",
+   "ham": "{\"v\":1,\"type\":\"grant_revoked\",\"grant_id\":\"g1\",\"neden\":\"kullanici_durdurdu\"}",
+   "gecerli": true,
+   "tur": "grant_revoked"
+  },
+  {
+   "ad": "grant_revoked erisilebilirlik_kapandi",
+   "ham": "{\"v\":1,\"type\":\"grant_revoked\",\"grant_id\":\"g1\",\"neden\":\"erisilebilirlik_kapandi\"}",
+   "gecerli": true,
+   "tur": "grant_revoked"
+  },
+  {
+   "ad": "grant_revoked grant_id null (yukarı yönde geçersiz)",
+   "ham": "{\"v\":1,\"type\":\"grant_revoked\",\"grant_id\":null,\"neden\":\"is_bitti\"}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "grant_revoked bilinmeyen neden",
+   "ham": "{\"v\":1,\"type\":\"grant_revoked\",\"grant_id\":\"g1\",\"neden\":\"sebepsiz\"}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "device_state geçerli",
+   "ham": "{\"v\":1,\"type\":\"device_state\",\"a11y\":true,\"adb_enabled\":false,\"kilitli\":false}",
+   "gecerli": true,
+   "tur": "device_state"
+  },
+  {
+   "ad": "device_state alan eksik",
+   "ham": "{\"v\":1,\"type\":\"device_state\",\"a11y\":true,\"adb_enabled\":false}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "device_state mantıksal yerine sayı",
+   "ham": "{\"v\":1,\"type\":\"device_state\",\"a11y\":1,\"adb_enabled\":0,\"kilitli\":0}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "app_list geçerli",
+   "ham": "{\"v\":1,\"type\":\"app_list\",\"uygulamalar\":[{\"paket\":\"com.example.mesaj\",\"ad\":\"Mesajlar\",\"durum\":\"acik\"}]}",
+   "gecerli": true,
+   "tur": "app_list"
+  },
+  {
+   "ad": "app_list boş liste",
+   "ham": "{\"v\":1,\"type\":\"app_list\",\"uygulamalar\":[]}",
+   "gecerli": true,
+   "tur": "app_list"
+  },
+  {
+   "ad": "app_list dört durum",
+   "ham": "{\"v\":1,\"type\":\"app_list\",\"uygulamalar\":[{\"paket\":\"com.example.a\",\"ad\":\"A\",\"durum\":\"acik\"},{\"paket\":\"com.example.b\",\"ad\":\"B\",\"durum\":\"hassas\"},{\"paket\":\"com.example.c\",\"ad\":\"C\",\"durum\":\"yeni\"},{\"paket\":\"com.example.d\",\"ad\":\"D\",\"durum\":\"degismez\"}]}",
+   "gecerli": true,
+   "tur": "app_list"
+  },
+  {
+   "ad": "app_list bilinmeyen durum",
+   "ham": "{\"v\":1,\"type\":\"app_list\",\"uygulamalar\":[{\"paket\":\"com.example.a\",\"ad\":\"A\",\"durum\":\"gizli\"}]}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "app_list ad 120 (sınır)",
+   "ham": "{\"v\":1,\"type\":\"app_list\",\"uygulamalar\":[{\"paket\":\"com.example.a\",\"ad\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"durum\":\"acik\"}]}",
+   "gecerli": true,
+   "tur": "app_list"
+  },
+  {
+   "ad": "app_list ad 121 (aşırı uzun)",
+   "ham": "{\"v\":1,\"type\":\"app_list\",\"uygulamalar\":[{\"paket\":\"com.example.a\",\"ad\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"durum\":\"acik\"}]}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "app_list ad eşsiz vekil \\ud800 (Zod kabul eder; Kotlin kararını bu işarete uydurmalı)",
+   "ham": "{\"v\":1,\"type\":\"app_list\",\"uygulamalar\":[{\"paket\":\"com.example.a\",\"ad\":\"A\\ud800\",\"durum\":\"acik\"}]}",
+   "gecerli": true,
+   "tur": "app_list"
+  },
+  {
+   "ad": "app_list paket geçersiz (intent metni)",
+   "ham": "{\"v\":1,\"type\":\"app_list\",\"uygulamalar\":[{\"paket\":\"intent:#Intent;end\",\"ad\":\"A\",\"durum\":\"acik\"}]}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "app_list uygulama fazladan alan url",
+   "ham": "{\"v\":1,\"type\":\"app_list\",\"uygulamalar\":[{\"paket\":\"com.example.a\",\"ad\":\"A\",\"durum\":\"acik\",\"url\":\"https://example.com/\"}]}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "notify_ack geçerli",
+   "ham": "{\"v\":1,\"type\":\"notify_ack\",\"notify_id\":\"n1\"}",
+   "gecerli": true,
+   "tur": "notify_ack"
+  },
+  {
+   "ad": "notify_ack notify_id boş",
+   "ham": "{\"v\":1,\"type\":\"notify_ack\",\"notify_id\":\"\"}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "yukarı yönde cmd",
+   "ham": "{\"v\":1,\"type\":\"cmd\",\"cmd_id\":\"c1\",\"grant_id\":\"g1\",\"token\":\"abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG\",\"deadline_ms\":1790000030000,\"name\":\"foreground\",\"args\":{}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "yukarı yönde welcome",
+   "ham": "{\"v\":1,\"type\":\"welcome\",\"server_time_ms\":1}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "yukarı yönde notify",
+   "ham": "{\"v\":1,\"type\":\"notify\",\"notify_id\":\"n1\",\"tur\":\"soru\",\"baslik\":\"b\",\"metin\":\"m\"}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "yukarı yönde grant_revoke",
+   "ham": "{\"v\":1,\"type\":\"grant_revoke\",\"grant_id\":null,\"neden\":\"limit_kilit\"}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "yukarı yönde auth_challenge",
+   "ham": "{\"v\":1,\"type\":\"auth_challenge\",\"server_nonce\":\"WllYV1ZVVFNSUVBPTk1MS0pJSEdGRURDQkEwMTIzNA==\",\"server_signature\":\"MEUCIQDabc123+/defGHIjklMNOpqrSTUvwxYZ0123==\"}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "yukarı yönde error",
+   "ham": "{\"v\":1,\"type\":\"error\",\"code\":\"imza_gecersiz\"}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "yanlış v=2",
+   "ham": "{\"v\":2,\"type\":\"device_state\",\"a11y\":true,\"adb_enabled\":false,\"kilitli\":false}",
+   "gecerli": false,
+   "kod": "protokol_uyumsuz"
+  },
+  {
+   "ad": "bilinmeyen type",
+   "ham": "{\"v\":1,\"type\":\"shutdown\"}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "JSON değil",
+   "ham": "{bozuk",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  }
+ ]
+}

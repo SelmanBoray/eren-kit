@@ -1,6 +1,6 @@
 # `/cihaz` sözleşmesi
 
-Telefondaki Kotlin ön plan servisi ile bilgisayar servisi arasındaki kanal. JavaScript bu kanalı görmez. Kotlin bu paketi kullanmaz, JSON'u kendi işler; kaynak gerçek `src/cihaz.ts` şemalarıdır ve bu belgenin bütün JSON örnekleri test sırasında o şemalardan geçirilir.
+Telefondaki Kotlin ön plan servisi ile bilgisayar servisi arasındaki kanal. Dilim 3'te (tam yetki, kısayol) bu kablo ve `vektorler/` değişmedi; değişiklikler `/sohbet` v4'te ve telefonun içindedir. JavaScript bu kanalı görmez. Kotlin bu paketi kullanmaz, JSON'u kendi işler; kaynak gerçek `src/cihaz.ts` şemalarıdır ve bu belgenin bütün JSON örnekleri test sırasında o şemalardan geçirilir.
 
 ## Bağlantı
 
@@ -61,7 +61,7 @@ Hata mesajı, örneğin:
 {"v":1,"type":"error","code":"imza_gecersiz"}
 ```
 
-`error.code` listesi `src/hatalar.ts`. Bu kanalda beklenenler: `protokol_uyumsuz`, `gecersiz_mesaj`, `mesaj_cok_buyuk`, `yetkisiz`, `imza_gecersiz`, `ip_uyusmuyor`, `cihaz_bilinmiyor`, `kanal_desteklenmiyor` (iPad `/cihaz`'a bağlanamaz).
+`error.code` listesi `src/hatalar.ts`. Bu kanalda beklenenler: `protokol_uyumsuz`, `gecersiz_mesaj`, `mesaj_cok_buyuk`, `yetkisiz`, `imza_gecersiz`, `ip_uyusmuyor`, `cihaz_bilinmiyor`, `zaman_asimi` (süre dolunca gateway yollar), `kanal_desteklenmiyor` (iPad `/cihaz`'a bağlanamaz).
 
 ## Saat
 
@@ -251,7 +251,7 @@ Kapalı listedir. Listede olmayan değer şemadan geçmez.
 
 ## İzinler
 
-İzin telefonda, Kotlin'in `FLAG_SECURE` onay ekranında üretilir ve orada saklanır. Onay ekranı planı JavaScript'ten alır, `plan_hash` değerini kendisi yeniden hesaplar (README, "plan_hash"), uygulama adlarını PackageManager'dan gösterir. Yazma izni biyometri ister.
+İzin telefonda, Kotlin'in `FLAG_SECURE` onay ekranında üretilir ve orada saklanır. Onay ekranı planı JavaScript'ten alır, `plan_hash` değerini kendisi yeniden hesaplar (README, "plan_hash"), uygulama adlarını PackageManager'dan gösterir. Yazma izni biyometri ister. Tam yetki açıksa (telefondaki ayrı bir bayrak) izin onay ekranı olmadan, aynı doğrulamalarla otomatik de üretilebilir. İznin kaynağı (`ONAY` ya da `OTO`) yalnız telefondaki denetim günlüğünde yazılıdır; `grant_issued` ve başka hiçbir çerçeve onu taşımaz.
 
 `grant_issued`, telefondan: yeni izin ve her `welcome` sonrası aktif izinlerin tekrarı. `kalan_ms` kalan süre, `butce` kalan eylem hakkı.
 
@@ -273,7 +273,7 @@ Kapalı listedir. Listede olmayan değer şemadan geçmez.
 
 ## Durum, uygulama listesi, bildirim
 
-`device_state`, telefondan: bağlanınca ve her değişimde. `a11y` erişilebilirlik servisi açık mı, `adb_enabled` USB hata ayıklama açık mı, `kilitli` telefon kilitli mi.
+`device_state`, telefondan: bağlanınca ve her değişimde. `a11y` erişilebilirlik servisi şu an bağlı mı (servis yalnız izin varken açıldığından izin yokken normalde false; bu kapalı bir arıza değil), `adb_enabled` USB hata ayıklama açık mı, `kilitli` telefon kilitli mi.
 
 ```json
 {"v":1,"type":"device_state","a11y":true,"adb_enabled":false,"kilitli":false}

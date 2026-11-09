@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { CMD_ARG_SEMALARI, CmdSonucu, UygulamaBilgisi } from "./cihaz.ts";
-import { PlanTaslagi } from "./plan.ts";
+import { PlanOnerGirdi } from "./plan.ts";
 import { IsRaporu } from "./rapor.ts";
 import { SINIRLAR } from "./sinirlar.ts";
 import { IsBitisDurumu, IsId, IsTuru, OpakId, PlanHash } from "./temel.ts";
@@ -84,9 +84,12 @@ export const DevirOzetiGirdi = z.strictObject({
 });
 export const DevirOzetiCikti = z.strictObject({ kabul: z.boolean() });
 
-/** `plan_oner` iş başlatmaz, yalnız onay kartını doğurur. */
+/**
+ * `plan_oner` iş başlatmaz, yalnız onay kartını doğurur. Girdisi `PlanOnerGirdi`: plan alanları
+ * (`PlanTaslagi`) + plana girmeyen isteğe bağlı `profil`.
+ */
 export const EREN_ARACLARI = {
-  plan_oner: { girdi: PlanTaslagi, cikti: PlanOnerCikti },
+  plan_oner: { girdi: PlanOnerGirdi, cikti: PlanOnerCikti },
   oturumlar: { girdi: OturumlarGirdi, cikti: OturumlarCikti },
   rapor_oku: { girdi: RaporOkuGirdi, cikti: RaporOkuCikti },
   projeler: { girdi: ProjelerGirdi, cikti: ProjelerCikti },

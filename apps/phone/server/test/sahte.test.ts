@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { ANA_SOHBET_ID, type SohbetId } from "@eren/protocol";
+import type { SurecKapisi } from "../src/sozlesme.ts";
+import * as sahteler from "./sahte.ts";
 import { sahteDunya, sahteRastgele, sahteZaman } from "./sahte.ts";
 
 test("saat elle ilerler, zamanlayıcılar vade sırasıyla tetiklenir", () => {
@@ -278,4 +281,84 @@ test("dünya: her port sahte, DisDunya olarak atanabilir ve tohumlar ayrı düny
   assert.equal(a.dunya.saat.simdiMs(), 1_700_000_001_000);
   assert.equal(b.dunya.saat.simdiMs(), 1_700_000_000_000);
   assert.equal(a.zaman.cagrilar.say("simdiMs"), 2);
+});
+
+// ---------------------------------------------------------------------------------------------
+// Dilim 2: DosyaPortu.dosyaSil sahtesi ve sahteKapi (SurecKapisi sahtesi)
+// ---------------------------------------------------------------------------------------------
+
+const SOHBET_B = "sohbet-b" as SohbetId;
+/** Defter satırı `SohbetSecimi` ya da düz kimlik olabilir; ikisini de kimliğe indirir. */
+const kimlik = (x: unknown): unknown => (typeof x === "object" && x !== null ? (x as { sohbet_id?: unknown }).sohbet_id : x);
+
+test("dosyaSil: dosyayı siler, olmayan yol sessiz, çağrı defterine yazar, hata enjekte edilir", async () => {
+  const { dosya } = sahteDunya();
+  await dosya.atomikYaz("C:/m/eren-1.json", "{}");
+  assert.equal(await dosya.oku("C:/m/eren-1.json"), "{}");
+  await dosya.dosyaSil("C:/m/eren-1.json");
+  assert.equal(await dosya.oku("C:/m/eren-1.json"), null);
+  assert.equal(dosya.icerik("C:/m/eren-1.json"), null);
+  await dosya.dosyaSil("C:/m/yok.json");
+  await dosya.dosyaSil("C:/m/eren-1.json");
+  assert.equal(dosya.cagrilar.say("dosyaSil"), 3);
+  assert.deepEqual(dosya.cagrilar.son("dosyaSil")?.args, ["C:/m/eren-1.json"]);
+  dosya.yaz("C:/m/baska.json", "x");
+  dosya.hataVer("dosyaSil", new Error("kilitli"));
+  await assert.rejects(dosya.dosyaSil("C:/m/baska.json"), /kilitli/);
+  assert.equal(dosya.icerik("C:/m/baska.json"), "x");
+  await dosya.dosyaSil("C:/m/baska.json");
+  assert.equal(dosya.icerik("C:/m/baska.json"), null);
+});
+
+test("dosyaSil: eşzamanlı sil(yol) test yardımcısı port yöntemi değildir ve çağrı yazmaz", async () => {
+  const { dosya } = sahteDunya();
+  dosya.yaz("C:/m/a.json", "1");
+  dosya.sil("C:/m/a.json");
+  assert.equal(dosya.icerik("C:/m/a.json"), null);
+  assert.equal(dosya.cagrilar.say("dosyaSil"), 0);
+  assert.equal(typeof dosya.dosyaSil, "function");
+  assert.notEqual(dosya.dosyaSil as unknown, dosya.sil as unknown);
+});
+
+test("sahteKapi: varsayılan her isteğe true, yinelenen istek aynı sohbete yuva tutar, defterler dolar", () => {
+  const kapi: SurecKapisi & Record<string, any> = sahteler.sahteKapi();
+  assert.equal(kapi.yuvaIste({ sohbet_id: ANA_SOHBET_ID }), true);
+  assert.equal(kapi.yuvaIste({ sohbet_id: ANA_SOHBET_ID }), true);
+  assert.equal(kapi.yuvaIste({ sohbet_id: SOHBET_B }), true);
+  assert.equal(kapi.devirSerbestMi(), true);
+  assert.deepEqual(kapi.istekler.map(kimlik), [ANA_SOHBET_ID, ANA_SOHBET_ID, SOHBET_B]);
+  assert.deepEqual([...kapi.yuvadakiler()].map(kimlik).sort(), [ANA_SOHBET_ID, SOHBET_B].sort());
+  kapi.yuvaBirak({ sohbet_id: ANA_SOHBET_ID });
+  kapi.yuvaBirak({ sohbet_id: ANA_SOHBET_ID });
+  assert.deepEqual(kapi.birakmalar.map(kimlik), [ANA_SOHBET_ID, ANA_SOHBET_ID]);
+  assert.deepEqual([...kapi.yuvadakiler()].map(kimlik), [SOHBET_B]);
+});
+
+test("sahteKapi: izin(false) reddeder ve yuva ayırmaz, izin(true) geri açar; devirIzni ayrı ayarlanır", () => {
+  const kapi: SurecKapisi & Record<string, any> = sahteler.sahteKapi();
+  kapi.izin(false);
+  assert.equal(kapi.yuvaIste({ sohbet_id: ANA_SOHBET_ID }), false);
+  assert.equal(kapi.devirSerbestMi(), true);
+  assert.deepEqual([...kapi.yuvadakiler()], []);
+  assert.equal(kapi.istekler.length, 1);
+  kapi.izin(true);
+  assert.equal(kapi.yuvaIste({ sohbet_id: ANA_SOHBET_ID }), true);
+  assert.deepEqual([...kapi.yuvadakiler()].map(kimlik), [ANA_SOHBET_ID]);
+  kapi.devirIzni(false);
+  assert.equal(kapi.devirSerbestMi(), false);
+  assert.equal(kapi.yuvaIste({ sohbet_id: SOHBET_B }), true);
+  kapi.devirIzni(true);
+  assert.equal(kapi.devirSerbestMi(), true);
+});
+
+test("sahteKapi: yuva tutmayan sohbetin bırakması etkisiz; her çağrı yeni bağımsız kapı verir", () => {
+  const a: SurecKapisi & Record<string, any> = sahteler.sahteKapi();
+  const b: SurecKapisi & Record<string, any> = sahteler.sahteKapi();
+  a.yuvaBirak({ sohbet_id: SOHBET_B });
+  assert.deepEqual([...a.yuvadakiler()], []);
+  assert.equal(a.birakmalar.length, 1);
+  a.izin(false);
+  assert.equal(b.yuvaIste({ sohbet_id: SOHBET_B }), true);
+  assert.equal(b.istekler.length, 1);
+  assert.equal(a.istekler.length, 0);
 });
