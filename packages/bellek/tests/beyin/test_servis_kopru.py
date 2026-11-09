@@ -12,11 +12,13 @@ import sys
 import threading
 import time
 import urllib.error
+from pathlib import Path
 import urllib.request
 
 import pytest
 
 from bellek.beyin import db
+from tests._surec import YENI_OTURUM, agaci_oldur
 
 SRC = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
@@ -68,8 +70,7 @@ def _temizle():
     yield
     for p in _surecler:
         # venv başlatıcısı + asıl python: tüm süreç ağacını kesin kapat
-        subprocess.run(["taskkill", "/T", "/F", "/PID", str(p.pid)],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        agaci_oldur(p)
         try:
             p.wait(timeout=5)
         except subprocess.TimeoutExpired:
@@ -88,7 +89,7 @@ def _baslat(ortam, *args, stdin=False):
         [sys.executable, "-m", "bellek.beyin", *args],
         env=ortam["env"],
         stdin=subprocess.PIPE if stdin else subprocess.DEVNULL,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, **YENI_OTURUM,
     )
     _surecler.append(p)
     return p
@@ -139,7 +140,19 @@ def servis_baslat(ortam):
         except Exception:
             pass
         time.sleep(0.2)
-    raise AssertionError("servis 10 sn'de hazır olmadı")
+    # Teşhis: neden açılmadığı CI günlüğünde görünsün (süreç çıktısı + servis günlüğü).
+    agaci_oldur(p)
+    try:
+        out, err = p.communicate(timeout=5)
+    except Exception:
+        out, err = b"", b""
+    try:
+        gunluk = Path(ortam["env"]["BELLEK_BEYIN_LOG"]).read_text(encoding="utf-8", errors="replace")[-2000:]
+    except OSError:
+        gunluk = "(günlük yok)"
+    raise AssertionError("servis 10 sn'de hazır olmadı"
+                         f"\nstdout: {out.decode('utf-8', 'replace')[-1500:]}"
+                         f"\nstderr: {err.decode('utf-8', 'replace')[-1500:]}\ngünlük: {gunluk}")
 
 
 class Kopru:

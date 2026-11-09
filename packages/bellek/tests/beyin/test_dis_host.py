@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 
 from bellek.beyin import db
+from tests._surec import YENI_OTURUM, agaci_oldur
 
 SRC = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 DIS_HOST = "desktop-test.example.ts.net"
@@ -92,7 +93,7 @@ class Servis:
         self.proc = subprocess.Popen(
             [sys.executable, "-m", "bellek.beyin", "servis", "--port", str(self.port)],
             env=self.env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE)
+            stderr=subprocess.PIPE, **YENI_OTURUM)
         son = time.time() + 15
         while time.time() < son:
             if self.proc.poll() is not None:
@@ -117,8 +118,7 @@ class Servis:
         p = self.proc
         if p is None:
             return
-        subprocess.run(["taskkill", "/T", "/F", "/PID", str(p.pid)],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        agaci_oldur(p)
         try:
             p.wait(timeout=5)
         except subprocess.TimeoutExpired:

@@ -1,7 +1,7 @@
 // Beyin arayüzü — giriş modülü: yaşam döngüsü, modüllerin bağlanması ve "canlılık".
 // Export yok. Metinler yalnız textContent ile basılır (HTML enjeksiyonu yasak).
 
-import { belirtecVar, graf as grafGetir, yoklamaBaslat } from './api.js';
+import { belirtecKaydet, belirtecSil, belirtecVar, graf as grafGetir, yoklamaBaslat } from './api.js';
 
 // ---------------------------------------------------------------- yardımcılar
 
@@ -84,9 +84,29 @@ function korumali(fn) {
 
 // ---------------------------------------------------------------- giriş / yetkisiz
 
+/** Giriş ekranındaki "anahtarı yapıştır" alanı (ör. telefonda ana ekran uygulaması). */
+function yapistirmaBagla() {
+  const girdi = $('giris-anahtar');
+  const dugme = $('giris-bagla');
+  const uyari = $('giris-anahtar-uyari');
+  if (!girdi || !dugme || dugme.dataset.bagli) return;
+  dugme.dataset.bagli = '1';
+  const dene = () => {
+    if (belirtecKaydet(girdi.value)) {
+      girdi.value = '';
+      location.reload();
+    } else if (uyari) {
+      uyari.hidden = false;
+    }
+  };
+  dugme.addEventListener('click', dene);
+  girdi.addEventListener('keydown', (e) => { if (e.key === 'Enter') dene(); });
+}
+
 function girisGoster(yetkisiz) {
   const el = $('giris');
   if (!el) return;
+  yapistirmaBagla();
   if (yetkisiz) {
     let not = el.querySelector('.giris-not');
     if (!not) {
@@ -109,6 +129,7 @@ function hepsiniDurdur() {
 }
 
 window.addEventListener('beyin:yetkisiz', () => {
+  belirtecSil();
   hepsiniDurdur();
   durum.yaz('Yetki geçersiz — bağlantı durdu.');
   girisGoster(true);

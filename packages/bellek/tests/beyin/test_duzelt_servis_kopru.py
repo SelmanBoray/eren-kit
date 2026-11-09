@@ -23,6 +23,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pytest
 
 from bellek.beyin import db
+from tests._surec import YENI_OTURUM, agaci_oldur
 
 SRC = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
@@ -79,8 +80,7 @@ def _temizle():
     yield
     for p in _surecler:
         # venv başlatıcısı + asıl python: tüm süreç ağacını kesin kapat
-        subprocess.run(["taskkill", "/T", "/F", "/PID", str(p.pid)],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        agaci_oldur(p)
         try:
             p.wait(timeout=5)
         except subprocess.TimeoutExpired:
@@ -99,7 +99,7 @@ def _baslat(ortam, *args, stdin=False):
         [sys.executable, "-m", "bellek.beyin", *args],
         env=ortam["env"],
         stdin=subprocess.PIPE if stdin else subprocess.DEVNULL,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, **YENI_OTURUM,
     )
     _surecler.append(p)
     return p

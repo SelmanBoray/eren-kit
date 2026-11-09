@@ -36,7 +36,8 @@ Karar sırası:
 Ortam değişkenleri: ``BELLEK_KAPI`` ("kapali": her şeye izin),
 ``BELLEK_KAPI_ESIK`` (bayt, varsayılan 16384), ``BELLEK_KAPI_HEDEFLI`` (satır,
 varsayılan 80), ``BELLEK_KAPI_TAVAN`` (bayt, varsayılan 5000000),
-``BELLEK_KAPI_STATE`` (durum klasörü; varsayılan ``%LOCALAPPDATA%\\Bellek\\kapi``).
+``BELLEK_KAPI_STATE`` (durum klasörü; varsayılan platform veri kökünde ``kapi``: Windows ``%LOCALAPPDATA%\\Bellek\\kapi``,
+macOS ``~/Library/Application Support/Bellek/kapi``).
 Geçersiz sayı varsayılana döner.
 
 Durum: ``<state>/oturumlar/<oturum>/<ajan>/<anahtar>.harita`` (harita verildi
@@ -96,9 +97,9 @@ def state_dir(env: Mapping[str, str] | None = None) -> str:
     ozel = env.get("BELLEK_KAPI_STATE")
     if ozel:
         return ozel
-    yerel = env.get("LOCALAPPDATA") or os.path.join(
-        os.path.expanduser("~"), "AppData", "Local")
-    return os.path.join(yerel, "Bellek", "kapi")
+    from bellek.platform_dirs import data_dir  # Windows: %LOCALAPPDATA%\Bellek; macOS: Application Support
+
+    return os.path.join(str(data_dir(env)), "kapi")
 
 
 def _now_iso() -> str:

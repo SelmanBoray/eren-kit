@@ -61,8 +61,8 @@ def test_varsayilanlar(tmp_path, monkeypatch):
     assert cfg.server_host == "127.0.0.1"
     assert cfg.server_port == 47321
     assert len(cfg.projects) == 0
-    if WIN:
-        assert same(cfg.state_dir, tmp_path / "local" / "Bellek")
+    # state_dir verilmedi: platform varsayılanı; LOCALAPPDATA tanımlıysa her platformda o kazanır.
+    assert same(cfg.state_dir, tmp_path / "local" / "Bellek")
 
 
 def test_acik_degerler(tmp_path):

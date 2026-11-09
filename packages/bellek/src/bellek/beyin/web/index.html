@@ -7,6 +7,12 @@
 <meta name="theme-color" content="#1d1813">
 <meta name="referrer" content="no-referrer">
 <title>Beyin · {{ASISTAN_ADI}}</title>
+<link rel="manifest" href="/static/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/static/ikon-180.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Beyin">
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3CradialGradient id='g' cx='50%25' cy='70%25' r='70%25'%3E%3Cstop offset='0' stop-color='%23efe6d6'/%3E%3Cstop offset='.55' stop-color='%23a9c79b'/%3E%3Cstop offset='1' stop-color='%236f8a62'/%3E%3C/radialGradient%3E%3C/defs%3E%3Cpath d='M12.5 16.5c0 5-1 8.5-2.5 11.5h12c-1.5-3-2.5-6.5-2.5-11.5z' fill='%23cdb08a'/%3E%3Cpath d='M2.5 17.5C2.5 9 9 4 16 4s13.5 5 13.5 13.5c-5 1.6-22 1.6-27 0z' fill='url(%23g)'/%3E%3Ccircle cx='11' cy='10' r='1.6' fill='%23efe6d6' fill-opacity='.75'/%3E%3Ccircle cx='19.5' cy='8.5' r='1.1' fill='%23efe6d6' fill-opacity='.65'/%3E%3Ccircle cx='24' cy='13' r='1.3' fill='%23efe6d6' fill-opacity='.55'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="/static/stil.css">
 <link rel="stylesheet" href="/static/panel_dugum.css">
@@ -111,6 +117,16 @@
     <p class="giris-yonerge">Arayüzü açmak için terminalde <code class="komut">python -m bellek.beyin ac</code> çalıştır.</p>
     <p class="giris-not soluk">Komut, beyin servisi açıksa bu sayfayı anahtarıyla birlikte tarayıcında açar.
       Servis kapalıysa komut seni uyarır; önce servisi başlat, sonra komutu yeniden çalıştır.</p>
+    <div class="giris-yapistir">
+      <label for="giris-anahtar" class="giris-not">Telefondan ya da ana ekran uygulamasından mı açıyorsun?
+        <code class="komut">beyin ac --yazdir</code> adresini ya da anahtarı buraya yapıştır.</label>
+      <div class="giris-yapistir-satir">
+        <input id="giris-anahtar" type="password" autocomplete="off" autocapitalize="off"
+               spellcheck="false" inputmode="url" placeholder="http://…/#t=… ya da anahtar">
+        <button id="giris-bagla" type="button">Bağlan</button>
+      </div>
+      <p id="giris-anahtar-uyari" class="giris-not" role="alert" hidden>Bu bir anahtar ya da anahtarlı adres değil.</p>
+    </div>
   </div>
 </div>
 

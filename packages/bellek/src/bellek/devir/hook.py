@@ -75,8 +75,9 @@ def state_dir(env: Mapping[str, str] | None = None) -> Path:
     ozel = env.get("BELLEK_DEVIR_STATE")
     if ozel:
         return Path(ozel)
-    yerel = env.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
-    return Path(yerel) / "Bellek" / "devir"
+    from bellek.platform_dirs import data_dir
+
+    return data_dir(env) / "devir"
 
 
 def log_error(mesaj: str, env: Mapping[str, str] | None = None) -> None:

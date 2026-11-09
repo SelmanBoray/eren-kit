@@ -17,7 +17,8 @@ from pathlib import Path, PureWindowsPath
 from types import MappingProxyType
 from typing import Any
 
-DEFAULT_STATE_DIR = "%LOCALAPPDATA%/Bellek"
+from bellek.platform_dirs import data_dir
+
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 47321
 CONFIG_NAME = "bellek.toml"
@@ -186,8 +187,11 @@ def load_config(path: Path | None = None) -> Config:
     bellek = _expect_table(data["bellek"], "[bellek]")
     _check_keys(bellek, _BELLEK_KEYS, "[bellek]")
     vault = _vault_from(data, base)
-    state_raw = _expect_str(bellek.get("state_dir", DEFAULT_STATE_DIR), "[bellek].state_dir")
-    state_dir = _resolve_path(state_raw, base, "[bellek].state_dir")
+    if "state_dir" in bellek:
+        state_raw = _expect_str(bellek["state_dir"], "[bellek].state_dir")
+        state_dir = _resolve_path(state_raw, base, "[bellek].state_dir")
+    else:
+        state_dir = data_dir()  # platform varsayılanı (Windows: %LOCALAPPDATA%/Bellek)
 
     server = _expect_table(data.get("server", {}), "[server]")
     _check_keys(server, _SERVER_KEYS, "[server]")

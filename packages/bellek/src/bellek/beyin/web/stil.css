@@ -227,9 +227,9 @@ pre {
 #ust-cubuk {
   position: fixed;
   z-index: 20;
-  top: var(--bosluk);
-  left: var(--bosluk);
-  right: var(--bosluk);
+  top: calc(var(--bosluk) + env(safe-area-inset-top, 0px));
+  left: calc(var(--bosluk) + env(safe-area-inset-left, 0px));
+  right: calc(var(--bosluk) + env(safe-area-inset-right, 0px));
   min-height: var(--ust-yukseklik);
   display: grid;
   grid-template-columns: 1fr auto 1fr;
@@ -372,7 +372,7 @@ pre {
 #gelen-panel {
   position: fixed;
   z-index: 30;
-  top: calc(var(--bosluk) * 2 + var(--ust-yukseklik));
+  top: calc(var(--bosluk) * 2 + var(--ust-yukseklik) + env(safe-area-inset-top, 0px));
   bottom: calc(var(--bosluk) * 2 + var(--serit-yukseklik));
   display: flex;
   flex-direction: column;
@@ -389,14 +389,14 @@ pre {
 }
 
 #dugum-panel {
-  right: var(--bosluk);
-  width: min(var(--panel-genislik), calc(100vw - var(--bosluk) * 2));
+  right: calc(var(--bosluk) + env(safe-area-inset-right, 0px));
+  width: min(var(--panel-genislik), calc(100vw - var(--bosluk) * 2 - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)));
   border-radius: 26px 14px 22px 30px / 20px 26px 14px 24px;
 }
 
 #gelen-panel {
-  left: var(--bosluk);
-  width: min(var(--gelen-genislik), calc(100vw - var(--bosluk) * 2));
+  left: calc(var(--bosluk) + env(safe-area-inset-left, 0px));
+  width: min(var(--gelen-genislik), calc(100vw - var(--bosluk) * 2 - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)));
   border-radius: 14px 28px 30px 18px / 24px 18px 26px 14px;
   /* Spor paneli: kenar toz pembesi */
   border-color: rgb(var(--spor-rgb) / 0.24);
@@ -423,8 +423,8 @@ body:has(#zaman-serit:empty) #gelen-panel {
 #zaman-serit {
   position: fixed;
   z-index: 10;
-  left: var(--bosluk);
-  right: var(--bosluk);
+  left: calc(var(--bosluk) + env(safe-area-inset-left, 0px));
+  right: calc(var(--bosluk) + env(safe-area-inset-right, 0px));
   bottom: var(--bosluk);
   min-height: var(--serit-yukseklik);
   display: flex;
@@ -464,9 +464,9 @@ body:has(#zaman-serit:empty) #gelen-panel {
 #durum {
   position: fixed;
   z-index: 15;
-  left: calc(var(--bosluk) + 6px);
+  left: calc(var(--bosluk) + 6px + env(safe-area-inset-left, 0px));
   bottom: calc(var(--bosluk) * 2 + var(--serit-yukseklik) + 2px);
-  max-width: calc(100vw - 48px);
+  max-width: calc(100vw - 48px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
   padding: 2px 8px;
   border-radius: 999px;
   background: rgb(var(--zemin-rgb) / 0.6);
@@ -661,6 +661,45 @@ body:has(#zaman-serit:empty) #durum {
   line-height: 1.6;
   text-wrap: pretty;
 }
+
+/* Anahtarı yapıştırma (telefon / ana ekran uygulaması) */
+.giris-yapistir {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--kenar-cizgi);
+}
+.giris-yapistir .komut { white-space: normal; }
+.giris-yapistir-satir {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+.giris-yapistir input {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--kenar-cizgi-guclu);
+  border-radius: 10px;
+  background: rgb(var(--zemin-rgb) / 0.6);
+  color: var(--metin);
+  font: inherit;
+  font-size: 1rem; /* iOS: 16px altı odaklanınca sayfayı yakınlaştırır */
+}
+.giris-yapistir input:focus-visible,
+.giris-yapistir button:focus-visible {
+  outline: 2px solid var(--isik);
+  outline-offset: 2px;
+}
+.giris-yapistir button {
+  padding: 10px 16px;
+  border: 1px solid rgb(var(--isik-rgb) / 0.55);
+  border-radius: 10px;
+  background: var(--isik-hale-guclu);
+  color: var(--metin);
+  font: inherit;
+  cursor: pointer;
+}
+#giris-anahtar-uyari { color: var(--tehlike); }
 
 .komut {
   display: inline-block;

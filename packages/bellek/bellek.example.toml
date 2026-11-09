@@ -11,7 +11,9 @@
 # ve yerel durum klasörü (indeks, günlük vb.).
 [bellek]
 vault = "vault"
-state_dir = "%LOCALAPPDATA%/Bellek"
+# state_dir verilmezse platform varsayılanı: Windows %LOCALAPPDATA%/Bellek,
+# macOS ~/Library/Application Support/Bellek, Linux ~/.local/share/Bellek.
+# state_dir = "~/Bellek-durum"
 
 # Yerel servis: yalnızca bu makineden erişilir.
 [server]
