@@ -1,6 +1,9 @@
+import { useEffect } from "react";
 import type { ReactNode } from "react";
 import { ScrollView, Text, View } from "react-native";
+import type { TuketimIkilisi, TuketimToplami } from "@eren/protocol";
 import type { Cekirdek } from "../cekirdek/index.ts";
+import { maliyetMetni, tokenKisalt, toplamToken } from "./tuketimMetni.ts";
 import { ASISTAN_ADI } from "../platform/asistanAdi.ts";
 import { BolumAdi, Dugme, Serit } from "./Bilesenler.tsx";
 import { useCekirdekDurumu } from "./baglam.ts";
@@ -55,14 +58,15 @@ function Ayrac(): ReactNode {
 }
 
 /** Ad solda, değer sağda; altında ayraç. `dikkat` değeri uyarı renginde gösterir. */
-function Satir(p: { ad: string; deger: string; dikkat?: boolean }): ReactNode {
+function Satir(p: { ad: string; deger: string; dikkat?: boolean; alt?: string }): ReactNode {
   return (
     <View>
       <View
         style={{
           minHeight: olcu.dokunma,
           paddingHorizontal: bosluk[4],
-          paddingVertical: bosluk[2],
+          paddingTop: bosluk[2],
+          paddingBottom: p.alt === undefined ? bosluk[2] : 0,
           flexDirection: "row",
           alignItems: "center",
           justifyContent: "space-between",
@@ -74,9 +78,38 @@ function Satir(p: { ad: string; deger: string; dikkat?: boolean }): ReactNode {
           {p.deger}
         </Text>
       </View>
+      {p.alt !== undefined && (
+        <View style={{ paddingHorizontal: bosluk[4], paddingBottom: bosluk[2] }}>
+          <Text style={[yazi.kucuk, { color: renk.metinIkincil }]} selectable>
+            {p.alt}
+          </Text>
+        </View>
+      )}
       <Ayrac />
     </View>
   );
+}
+
+/** Bir tüketim toplamının değeri: maliyet varsa "≈ $X · Y token", yoksa "Y token". */
+function tuketimDegeri(t: TuketimToplami): string {
+  return tuketimDegeriHam(maliyetMetni(t.maliyet_usd), toplamToken(t));
+}
+
+function tuketimDegeriHam(maliyet: string | null, token: number): string {
+  const y = `${tokenKisalt(token)} token`;
+  return maliyet === null ? y : `${maliyet} · ${y}`;
+}
+
+function tuketimAlt(t: TuketimToplami): string {
+  return `girdi ${tokenKisalt(t.girdi)} · önbellek yazma ${tokenKisalt(t.cache_yazma)} · önbellek okuma ${tokenKisalt(t.cache_okuma)} · çıktı ${tokenKisalt(t.cikti)}`;
+}
+
+/** Sohbet + iş toplamı (maliyet, en az birinde varsa toplanır). */
+function ikiliToplam(i: TuketimIkilisi): string {
+  const a = i.sohbet.maliyet_usd;
+  const b = i.is.maliyet_usd;
+  const maliyet = a === undefined && b === undefined ? undefined : (a ?? 0) + (b ?? 0);
+  return tuketimDegeriHam(maliyetMetni(maliyet), toplamToken(i.sohbet) + toplamToken(i.is));
 }
 
 /** Satırların altındaki yatay boşluklu not ya da şerit. */
@@ -96,6 +129,13 @@ export function DurumEkrani(p: { cekirdek: Cekirdek; tanilamaAc?: () => void }):
   const kapaliVar = sohbetler.some((x) => x.eren === "kapali");
   const siradaVar = sohbetler.some((x) => x.eren === "sirada");
   const limitYuksek = (bes !== undefined && bes >= LIMIT_ESIGI) || (hafta !== undefined && hafta >= LIMIT_ESIGI);
+  const cekirdek = p.cekirdek;
+  // Ekran açılınca (bağlanınca) bir kez; dönüş değeri yok sayılır.
+  useEffect(() => {
+    void cekirdek.tuketimIste();
+  }, [cekirdek]);
+  const tk = d.tuketim;
+  const rapor = tk.durum === "yok" ? null : tk.rapor;
   return (
     <ScrollView style={{ flex: 1, backgroundColor: renk.zemin }} contentContainerStyle={{ paddingBottom: bosluk[6] }}>
       <Bolum ad="Bağlantı">
@@ -137,6 +177,48 @@ export function DurumEkrani(p: { cekirdek: Cekirdek; tanilamaAc?: () => void }):
             )}
           </>
         )}
+      </Bolum>
+
+      <Bolum ad="Tüketim">
+        {rapor === null ? (
+          <View style={{ paddingHorizontal: bosluk[4] }}>
+            <Text style={[yazi.kucuk, { color: renk.metinSonuk }]}>
+              {tk.durum === "yok" ? "Henüz ölçüm yok." : tk.durum === "bekleniyor" ? "Yükleniyor…" : "Tüketim alınamadı."}
+            </Text>
+          </View>
+        ) : (
+          <>
+            {tk.durum === "hata" && (
+              <AltNot>
+                <Serit tur="uyari" metin="Güncellenemedi; son bilinen değerler." />
+              </AltNot>
+            )}
+            <Ayrac />
+            <Satir ad="Bugün · sohbet" deger={tuketimDegeri(rapor.bugun.sohbet)} alt={tuketimAlt(rapor.bugun.sohbet)} />
+            <Satir ad="Bugün · iş" deger={tuketimDegeri(rapor.bugun.is)} alt={tuketimAlt(rapor.bugun.is)} />
+            <Satir ad="Son 7 gün · sohbet" deger={tuketimDegeri(rapor.son_7_gun.sohbet)} alt={tuketimAlt(rapor.son_7_gun.sohbet)} />
+            <Satir ad="Son 7 gün · iş" deger={tuketimDegeri(rapor.son_7_gun.is)} alt={tuketimAlt(rapor.son_7_gun.is)} />
+            {(rapor.sohbetler.length > 0 || rapor.silinmis_sohbetler !== undefined) && (
+              <>
+                <View style={{ paddingTop: bosluk[4], paddingBottom: bosluk[2], paddingHorizontal: bosluk[4] }}>
+                  <BolumAdi metin="Sohbet başına" />
+                </View>
+                <Ayrac />
+                {rapor.sohbetler.map((x) => (
+                  <Satir key={x.sohbet_id} ad={adlar.get(x.sohbet_id) ?? x.sohbet_id} deger={ikiliToplam(x.toplam)} />
+                ))}
+                {rapor.silinmis_sohbetler !== undefined && (
+                  <Satir ad="Silinmiş sohbetler" deger={ikiliToplam(rapor.silinmis_sohbetler)} />
+                )}
+              </>
+            )}
+          </>
+        )}
+        <AltNot>
+          <Text style={[yazi.kucuk, { color: renk.metinIkincil }]}>
+            Maliyet, Claude Code'un liste fiyatıyla hesapladığı yaklaşık değerdir; abonelikte ayrıca ödenmez, karşılaştırma içindir.
+          </Text>
+        </AltNot>
       </Bolum>
 
       {s !== null && (

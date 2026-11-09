@@ -8,6 +8,7 @@ import type {
   LimitPenceresi,
   McpSunucuDurumu,
   MesajKullanimi,
+  ModelKullanimi,
   SatirAyirici,
   TurSonucuSinifi,
 } from "./sozlesme.ts";
@@ -69,6 +70,43 @@ const pencerelerOku = (d: unknown): Record<string, number> => {
     if (sayiMi(pencere) && pencere > 0) cikti[model] = pencere;
   }
   return cikti;
+};
+
+/** Tüketim sayısı: her zaman 0..MAX_SAFE_INTEGER tam sayı. Kesir aşağı yuvarlanır; bozuk, negatif, sonsuz ya da güvenli aralığı aşan 0. */
+const tuketimSayisi = (d: unknown): number => {
+  if (!sayiMi(d) || d < 0) return 0;
+  const t = Math.floor(d);
+  return t <= Number.MAX_SAFE_INTEGER ? t : 0;
+};
+
+/** `model_usage_since_last_result`: alan yoksa/nesne değilse `null`, `{}` ise `[]`. Nesne olmayan model satırı atlanır. */
+const modelKullanimlariOku = (d: unknown): ModelKullanimi[] | null => {
+  if (!nesneMi(d)) return null;
+  const cikti: ModelKullanimi[] = [];
+  for (const [model, k] of Object.entries(d)) {
+    if (!nesneMi(k)) continue;
+    const maliyet = k["costUSD"];
+    cikti.push({
+      model,
+      girdi: tuketimSayisi(k["inputTokens"]),
+      cache_yazma: tuketimSayisi(k["cacheCreationInputTokens"]),
+      cache_okuma: tuketimSayisi(k["cacheReadInputTokens"]),
+      cikti: tuketimSayisi(k["outputTokens"]),
+      maliyet_usd: sayiMi(maliyet) && maliyet >= 0 ? maliyet : null,
+    });
+  }
+  return cikti;
+};
+
+/** `usage` (yalnız ana döngü): nesne değilse `null`. */
+const anaKullanimOku = (d: unknown): Omit<ModelKullanimi, "model" | "maliyet_usd"> | null => {
+  if (!nesneMi(d)) return null;
+  return {
+    girdi: tuketimSayisi(d["input_tokens"]),
+    cache_yazma: tuketimSayisi(d["cache_creation_input_tokens"]),
+    cache_okuma: tuketimSayisi(d["cache_read_input_tokens"]),
+    cikti: tuketimSayisi(d["output_tokens"]),
+  };
 };
 
 const olayaCevir = (o: Nesne): AkisOlayi => {
@@ -134,6 +172,8 @@ const olayaCevir = (o: Nesne): AkisOlayi => {
         metin: metinOku(o["result"]) ?? "",
         structured_output: o["structured_output"],
         pencereler: pencerelerOku(o["modelUsage"]),
+        model_kullanimlari: modelKullanimlariOku(o["model_usage_since_last_result"]),
+        ana_kullanim: anaKullanimOku(o["usage"]),
       };
     }
     case "control_response": {

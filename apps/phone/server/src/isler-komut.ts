@@ -97,18 +97,58 @@ export const HAFIF_PC_MODELI = "sonnet";
  *   auto memory yeniden kapanır (`memory_paths` yok, kanarya hayır). Başka anahtar taşımaz.
  * `--safe-mode` seçilmedi: `--mcp-config` sunucusunu da düşürüyor (`mcp_servers: []`), `computer-use-windows` gelmezdi.
  * `--bare` seçilmedi: OAuth okumaz, yalnız `ANTHROPIC_API_KEY`.
+ * `--settings` burada değil: tek değer olsun diye `pcArgv` `PC_ORTAK_AYARI` ile `HAFIF_AYARI`'nı birleştirir.
  */
-const HAFIF_EKLERI: readonly string[] = [
-  "--setting-sources",
-  "",
-  "--disable-slash-commands",
-  "--settings",
-  JSON.stringify({ autoMemoryEnabled: false }),
+const HAFIF_EKLERI: readonly string[] = ["--setting-sources", "", "--disable-slash-commands"];
+
+/** Hafif profilin `--settings` payı; `PC_ORTAK_AYARI` ile tek nesnede birleşir. */
+const HAFIF_AYARI: Readonly<Record<string, unknown>> = { autoMemoryEnabled: false };
+
+/**
+ * İki PC profilinde `--disallowedTools` ile çıkarılan 20 yerleşik araç: `-p` iş oturumunda işe yaramazlar.
+ * Bayrak yalnız çağrıyı engellemez, tanımı da bağlamdan çıkarır ve alt agent'a geçer. Ölçüm (2026-11-09,
+ * tam profil, boş cwd): yalnız bu liste ilk isteği 44.059 → 39.094 indirir (gönderilen araç 18 → 14);
+ * `PC_ORTAK_AYARI` ve `ayar.ts` üç ortam anahtarıyla birlikte 44.059 → 33.444 (−%24), alt agent
+ * 25.056 → 18.140 (−%28); SessionStart hook ek bağlamı korunur.
+ * `CLAUDE_CODE_DISABLE_ATTACHMENTS` anahtarı bilerek yok: skill ve ertelenmiş araç listesini de keser.
+ */
+export const PC_YASAK_ARACLAR: readonly string[] = [
+  "Workflow",
+  "ScheduleWakeup",
+  "ReportFindings",
+  "Artifact",
+  "ArtifactComments",
+  "ArtifactData",
+  "SendFeedback",
+  "AskUserQuestion",
+  "CronCreate",
+  "CronDelete",
+  "CronList",
+  "RemoteTrigger",
+  "PushNotification",
+  "DesignSync",
+  "EnterWorktree",
+  "ExitWorktree",
+  "ListAgents",
+  "EnterPlanMode",
+  "ExitPlanMode",
+  "NotebookEdit",
 ];
 
 /**
- * PC iş oturumunun `argv`'si. `tam`: MODULLER.md "Komut, PC profili", değişmeden; `--model` yalnız
- * `pcIsModeli` doluysa. `hafif`: aynı komut + `HAFIF_EKLERI` + `--model sonnet`.
+ * İki PC profilinin ortak `--settings` payı: claude.ai'den senkronlanan skill'ler listeden çıkar (yerel ve
+ * eklenti skill'leri kalır). Ölçüm (2026-11-09): skill listesi 26.261 → 9.146 karakter (44 skill), alt agent'ta da.
+ */
+const PC_ORTAK_AYARI: Readonly<Record<string, unknown>> = { syncClaudeAiSkills: false };
+
+/** Profilin tek `--settings` değeri: ortak pay + hafifte `HAFIF_AYARI`. */
+export const pcAyarlari = (profil: IsProfili): string =>
+  JSON.stringify(profil === "hafif" ? { ...HAFIF_AYARI, ...PC_ORTAK_AYARI } : PC_ORTAK_AYARI);
+
+/**
+ * PC iş oturumunun `argv`'si. `tam`: MODULLER.md "Komut, PC profili" + `--disallowedTools` + `--settings`;
+ * `--model` yalnız `pcIsModeli` doluysa. `hafif`: aynı komut, `--mcp-config`'ten sonra `HAFIF_EKLERI`,
+ * `--settings` iki profilin birleşimi, `--model sonnet`.
  */
 export const pcArgv = (g: KomutGirdisi, profil: IsProfili, pcIsModeli: string | null): readonly string[] => {
   const hafif = profil === "hafif";
@@ -129,6 +169,10 @@ export const pcArgv = (g: KomutGirdisi, profil: IsProfili, pcIsModeli: string | 
     "--mcp-config",
     g.mcpYol,
     ...(hafif ? HAFIF_EKLERI : []),
+    "--disallowedTools",
+    PC_YASAK_ARACLAR.join(","),
+    "--settings",
+    pcAyarlari(profil),
     ...(model === null ? [] : ["--model", model]),
   ];
 };

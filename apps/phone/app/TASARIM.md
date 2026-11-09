@@ -122,6 +122,7 @@ Expo modülü `ErenDeviceModule.kt` (`ErenDevice.types.ts` yüzeyini gerçekler)
 `planHash` tutmazsa kart gizlenir), `depo/dosyaDepo.ts` (`DepoPortu`, expo-file-system, geçici dosya +
 taşıma), `cihaz/erenDevice.ts` (yerel modülü içe aktaran tek dosya; iPad'de `desteklenmiyor`),
 `ekranlar/` (Sohbet, PlanKarti, SoruKarti, RaporKarti düz metin otomatik bağlantısız, Durum, Kurulum).
+RaporKarti altında tek satır iş tüketimi gösterir; ayrıntı "Tüketim" bölümünde.
 Her JS modülü yalnız `cekirdek/sozlesme.ts`'ten tip, `@eren/protocol`'den değer alır; kendi fabrika
 tipini kendi dosyasında bildirir. `[karar]`
 
@@ -479,6 +480,7 @@ yazılamazsa olay yine uygulanır, sonraki `yukle` kırpmayı yineler. `[protoco
   "Bu sohbet artık yok."; `kurulamadi` ise hata şeridi "Sohbet PC'de oluşturulamadı." + "Seçenekler".
 - **Durum ekranı:** küresel satırlar (kilit, aktif iş, RAM, limit) + "Sohbetler" bölümü: her sohbet için ad ve
   ana oturum durumu (`Uyuyor`, `Sırada` dahil); `kapali`/`sirada` dikkat renginde.
+  Asistan/limit bölümünden sonra "Tüketim" bölümü gelir (bkz. "Tüketim" bölümü).
 
 ### Dilim 2 iş listesi
 
@@ -930,3 +932,49 @@ Değişmezler "Köprü API ve yapısal sınırlar" tablosunda (1, 5 ve 6 Dilim 3
 (`grantIssued` kaynağı kabloya taşımaz). Cihazsız doğrulanamayanlar (Doğrulama ayrımı geçerli):
 `ErisimAnahtari` ile servisin gerçekten açılıp kapanması, üretici arayüzlerinde kutucuk ve `startActivityAndCollapse`,
 `UsageStats` ön plan tespiti, biyometri.
+
+## Tüketim: token tüketimi gösterimi
+
+Telefon, PC servisinden token tüketim raporunu ister ve Durum ekranı ile iş rapor kartında gösterir. Dilim 2'deki
+"değişmeyenler" listesinde geçen `RaporKartiEkrani.tsx` bu özellikle değişti: kartın altına tek satır tüketim
+eklendi (aşağıda).
+
+### Çekirdek (`app/src/cekirdek/`)
+
+- **`sozlesme.ts`:** `TuketimRaporu` (`usage_report`'tan `v`, `type`, `istek_id` çıkarılmış gövde), `TuketimDurumu`
+  (`yok` | `bekleniyor` | `hazir` | `hata`; `bekleniyor`/`hata`'da eldeki son rapor da taşınır, `hazir` ayrıca
+  `alindiMs` taşır), `CekirdekDurumu.tuketim`, `Cekirdek.tuketimIste()`.
+- **`tuketim.ts` (yeni):** istek-yanıt durum makinesi (`tuketimKur`). Tek bekleyen istek (`tuketim-N`); zaman aşımı
+  15 sn (`TUKETIM_ZAMAN_ASIMI_MS`) sonra `hata`; son rapor 10 sn (`TUKETIM_TAZE_MS`) içindeyse `iste()` yeni istek
+  yollamaz; `iste(zorla)` tazelik kuralını atlar ama bekleyen varken yine yollamaz. `rapor` yalnız bekleyen
+  `istek_id` ile eşleşeni kabul eder. `koptu()` bekleyeni düşürür (zamanlayıcı iptal, `hata` temizlenir); eldeki
+  rapor `hazir` kalır. Ağdan okunan değer yok, kalıcı depo yok (yalnız bellek).
+- **`baglanti.ts`:** `sorguGonder(UsageRequest)` yalnız `bagli` aşamada gönderir; `client_msg_id` yok, ack yok,
+  outbox'a girmez, yazma hatasında bağlantı normal biçimde kapanır ve `false` döner.
+- **`index.ts`:** kimlik tamamlanınca bir `tuketim.iste()`; canlı `job_finished` (`seq > canliEsikSeq`) 3 sn
+  (`IS_BITTI_TUKETIM_MS`) sonra zorlamalı tek istek planlar (arada biten işler aynı isteğe birleşir); `usage_report`
+  modüle gider; bağlantı kopunca `tuketim.koptu()` ve iş-bitti zamanlayıcısı iptal edilir. Ekran `tuketimIste()`
+  ile (zorlamasız) ister.
+
+### Ekranlar (`app/src/ekranlar/`)
+
+- **`tuketimMetni.ts` (yeni, saf):** `tokenKisalt`, `maliyetMetni`, `toplamToken` (girdi + cache yazma + cache okuma
+  + çıktı), `isTuketimi(rapor, is_id)`. `Intl` kullanılmaz (Hermes), ondalık ayırıcı virgül.
+- **`DurumEkrani.tsx`:** ekran açılınca bir `tuketimIste()`. "Tüketim" bölümü: Bugün / Son 7 gün x sohbet / iş
+  satırları (değer + dört sayaçlı alt satır), "Sohbet başına" (sohbet + iş toplamı; adı bilinmeyen `sohbet_id`
+  ham yazılır) ve varsa "Silinmiş sohbetler"; hata durumunda eldeki rapor üstünde uyarı şeridi "Güncellenemedi; son
+  bilinen değerler."; rapor yokken tek metin: `yok` "Henüz ölçüm yok.", `bekleniyor` "Yükleniyor…", `hata`
+  "Tüketim alınamadı."; en altta nominal maliyet notu (liste fiyatı, abonelikte ayrıca ödenmez).
+- **`RaporKartiEkrani.tsx` / `Balonlar.tsx` / `SohbetEkrani.tsx`:** kartın altında tek küçük satır "Tüketim: ≈ $0,11 ·
+  1,2 Mn token" (maliyet yoksa yalnız token). `SohbetEkrani` eldeki raporu `Balonlar` üzerinden `tuketim` prop'u
+  olarak geçirir; kart çekirdeğe abone olmaz. İşin raporda kaydı yoksa satır görünmez.
+
+### Metin biçimi
+
+`tokenKisalt`: 850 -> "850", 12.345 -> "12,3 bin", 1.240.000 -> "1,24 Mn" (yuvarlama üst birime taşarsa üst birim).
+`maliyetMetni`: yok -> `null`; 0 -> "$0"; 0 < x < 0,01 -> "< $0,01"; aksi "≈ $2,34".
+
+### Bilinen eksikler / cihazda bakılacaklar
+
+Gerçek cihazda henüz görülmedi: uzun değerlerde satır sarması, dört sayaçlı alt satırın dar ekranda kırılması,
+büyük yazı boyutu.

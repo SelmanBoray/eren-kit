@@ -213,6 +213,8 @@ test("result: alanlar okunur, subtype yansımaz", () => {
     metin: "Bitti.",
     structured_output: { a: 1 },
     pencereler: { "claude-opus-ornek": 1000000, "claude-sonnet-ornek": 200000 },
+    model_kullanimlari: null,
+    ana_kullanim: { girdi: 10, cache_yazma: 0, cache_okuma: 0, cikti: 0 },
   });
   assert.equal("subtype" in (o as object), false);
 });
@@ -541,4 +543,212 @@ test("fabrika her çağrıda bağımsız ayırıcı verir", () => {
   a.ayir(kodla("yarım"));
   const r = b.ayir(kodla("tam\n"));
   assert.deepEqual(r.satirlar, ["tam"]);
+});
+
+// --- tüketim alanları --------------------------------------------------------------------------
+
+test("result: model_usage_since_last_result birden çok modelle model başına ModelKullanimi", () => {
+  const o = sonucOlayi({
+    model_usage_since_last_result: {
+      "model-a": {
+        inputTokens: 11,
+        outputTokens: 22,
+        cacheReadInputTokens: 3300,
+        cacheCreationInputTokens: 440,
+        costUSD: 0.125,
+        contextWindow: 1000000,
+      },
+      "model-b": {
+        inputTokens: 5,
+        outputTokens: 6,
+        cacheReadInputTokens: 70,
+        cacheCreationInputTokens: 8,
+        costUSD: 0.0025,
+      },
+    },
+  });
+  assert.ok(o.model_kullanimlari !== null);
+  assert.equal(o.model_kullanimlari.length, 2);
+  const a = o.model_kullanimlari.find((m) => m.model === "model-a");
+  const b = o.model_kullanimlari.find((m) => m.model === "model-b");
+  assert.deepEqual(a, {
+    model: "model-a",
+    girdi: 11,
+    cache_yazma: 440,
+    cache_okuma: 3300,
+    cikti: 22,
+    maliyet_usd: 0.125,
+  });
+  assert.deepEqual(b, {
+    model: "model-b",
+    girdi: 5,
+    cache_yazma: 8,
+    cache_okuma: 70,
+    cikti: 6,
+    maliyet_usd: 0.0025,
+  });
+});
+
+test("result: model_usage_since_last_result yoksa model_kullanimlari null", () => {
+  const o = sonucOlayi({});
+  assert.equal(o.model_kullanimlari, null);
+});
+
+test("result: model_usage_since_last_result {} ise model_kullanimlari boş dizi", () => {
+  const o = sonucOlayi({ model_usage_since_last_result: {} });
+  assert.deepEqual(o.model_kullanimlari, []);
+});
+
+test("result: usage ana_kullanim olur, output_tokens cikti'ya gider", () => {
+  const o = sonucOlayi({
+    usage: {
+      input_tokens: 4,
+      cache_creation_input_tokens: 16,
+      cache_read_input_tokens: 1700,
+      output_tokens: 9,
+    },
+  });
+  assert.deepEqual(o.ana_kullanim, { girdi: 4, cache_yazma: 16, cache_okuma: 1700, cikti: 9 });
+});
+
+test("result: usage yoksa ana_kullanim null", () => {
+  assert.equal(sonucOlayi({}).ana_kullanim, null);
+});
+
+test("result: ana_kullanim ve model_kullanimlari birbirinden bağımsız", () => {
+  const yalnizUsage = sonucOlayi({ usage: { input_tokens: 1, output_tokens: 2 } });
+  assert.equal(yalnizUsage.model_kullanimlari, null);
+  assert.notEqual(yalnizUsage.ana_kullanim, null);
+  const yalnizFark = sonucOlayi({
+    model_usage_since_last_result: { m: { inputTokens: 1, costUSD: 0.5 } },
+  });
+  assert.equal(yalnizFark.ana_kullanim, null);
+  assert.notEqual(yalnizFark.model_kullanimlari, null);
+});
+
+test("result: costUSD eksikse maliyet_usd null", () => {
+  const o = sonucOlayi({
+    model_usage_since_last_result: {
+      m: { inputTokens: 3, outputTokens: 4, cacheReadInputTokens: 5, cacheCreationInputTokens: 6 },
+    },
+  });
+  assert.ok(o.model_kullanimlari !== null);
+  const m = o.model_kullanimlari.find((x) => x.model === "m");
+  assert.ok(m !== undefined);
+  assert.equal(m.maliyet_usd, null);
+  assert.equal(m.girdi, 3);
+  assert.equal(m.cikti, 4);
+});
+
+test("result: bozuk tüketim alt alanları çözücüyü atmaz", () => {
+  const bozuklar: unknown[] = [
+    { model_usage_since_last_result: "x" },
+    { model_usage_since_last_result: [1, 2] },
+    { model_usage_since_last_result: null },
+    { model_usage_since_last_result: { m: null } },
+    { model_usage_since_last_result: { m: "metin" } },
+    { model_usage_since_last_result: { m: { inputTokens: "5", outputTokens: "6", costUSD: "ucuz" } } },
+    { model_usage_since_last_result: { m: { inputTokens: -5, outputTokens: -1, costUSD: -0.5 } } },
+    { model_usage_since_last_result: { m: { inputTokens: null, cacheReadInputTokens: {} } } },
+    { model_usage_since_last_result: { m: {} } },
+    { usage: "çok" },
+    { usage: null },
+    { usage: [] },
+    { usage: { input_tokens: "6", output_tokens: -3 } },
+    { usage: { input_tokens: null, cache_read_input_tokens: {} } },
+    { usage: {} },
+  ];
+  for (const b of bozuklar) {
+    const s = JSON.stringify({ type: "result", is_error: false, ...(b as object) });
+    let o: AkisOlayi | null = null;
+    assert.doesNotThrow(() => {
+      o = akis.satirCoz(s);
+    }, s);
+    assert.ok(o !== null && (o as AkisOlayi).tur === "result", s);
+  }
+});
+
+test("result: bozuk costUSD (dize) ve eksik costUSD maliyet_usd null verir", () => {
+  const o = sonucOlayi({
+    model_usage_since_last_result: {
+      dize: { inputTokens: 1, costUSD: "0.5" },
+      yok: { inputTokens: 1 },
+    },
+  });
+  assert.ok(o.model_kullanimlari !== null);
+  for (const m of o.model_kullanimlari) assert.equal(m.maliyet_usd, null, m.model);
+});
+
+// --- tüketim sayaçları: 0 ≤ n ≤ MAX_SAFE_INTEGER tam sayı ---------------------------------------
+
+const MAX = Number.MAX_SAFE_INTEGER;
+// [girdi değeri, beklenen]
+const SAYAC_DURUMLARI: [string, unknown, number][] = [
+  ["kesirli 1.5", 1.5, 1],
+  ["kesirli 0.9", 0.9, 0],
+  ["MAX_SAFE_INTEGER", MAX, MAX],
+  ["2^53", 2 ** 53, 0],
+  ["1e300", 1e300, 0],
+  ["dize", "5", 0],
+  ["negatif", -3, 0],
+  ["negatif kesirli", -0.5, 0],
+  ["eksik", undefined, 0],
+  ["null", null, 0],
+];
+
+test("result: model_usage_since_last_result sayaçları güvenli tam sayıya indirgenir", () => {
+  for (const [ad, v, beklenen] of SAYAC_DURUMLARI) {
+    const alan = (k: string) => (v === undefined ? {} : { [k]: v });
+    const o = sonucOlayi({
+      model_usage_since_last_result: {
+        m: {
+          ...alan("inputTokens"),
+          ...alan("cacheCreationInputTokens"),
+          ...alan("cacheReadInputTokens"),
+          ...alan("outputTokens"),
+          costUSD: 0.5,
+        },
+      },
+    });
+    assert.ok(o.model_kullanimlari !== null, ad);
+    assert.deepEqual(
+      o.model_kullanimlari,
+      [{ model: "m", girdi: beklenen, cache_yazma: beklenen, cache_okuma: beklenen, cikti: beklenen, maliyet_usd: 0.5 }],
+      ad,
+    );
+  }
+});
+
+test("result: usage sayaçları güvenli tam sayıya indirgenir", () => {
+  for (const [ad, v, beklenen] of SAYAC_DURUMLARI) {
+    const alan = (k: string) => (v === undefined ? {} : { [k]: v });
+    const o = sonucOlayi({
+      usage: {
+        ...alan("input_tokens"),
+        ...alan("cache_creation_input_tokens"),
+        ...alan("cache_read_input_tokens"),
+        ...alan("output_tokens"),
+      },
+    });
+    assert.deepEqual(
+      o.ana_kullanim,
+      { girdi: beklenen, cache_yazma: beklenen, cache_okuma: beklenen, cikti: beklenen },
+      ad,
+    );
+  }
+});
+
+test("result: NaN ve sonsuz sayaç 0 sayılır (JSON'da null/dize olarak gelir)", () => {
+  // JSON.stringify NaN/Infinity'yi null yapar; ham metinle de dene
+  const ham = '{"type":"result","is_error":false,"usage":{"input_tokens":1e999,"output_tokens":-1e999,"cache_read_input_tokens":"NaN"}}';
+  const o = akis.satirCoz(ham);
+  assert.ok(o?.tur === "result");
+  assert.deepEqual(o.ana_kullanim, { girdi: 0, cache_yazma: 0, cache_okuma: 0, cikti: 0 });
+});
+
+test("result: sayaçlar karışık değerlerde alan alan bağımsız indirgenir", () => {
+  const o = sonucOlayi({
+    usage: { input_tokens: 7.9, cache_creation_input_tokens: -1, cache_read_input_tokens: 2 ** 53, output_tokens: 3 },
+  });
+  assert.deepEqual(o.ana_kullanim, { girdi: 7, cache_yazma: 0, cache_okuma: 0, cikti: 3 });
 });

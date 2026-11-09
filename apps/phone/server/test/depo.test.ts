@@ -1890,15 +1890,15 @@ describe("depo: kirli okumalar", () => {
 // ---------------------------------------------------------------------------------------------
 
 describe("depo: şema (ek göç)", () => {
-  it("yeni dosya: user_version 1, sema_ek ek_surum 3, semaBilgisi aynı", () => {
+  it("yeni dosya: user_version 1, sema_ek ek_surum 4, semaBilgisi aynı", () => {
     const yol = yeniYol();
     const { depo } = kur(yol);
-    assert.deepEqual(depo.semaBilgisi(), { user_version: 1, ek_surum: 3 });
+    assert.deepEqual(depo.semaBilgisi(), { user_version: 1, ek_surum: 4 });
     depo.kapat();
     hamAc(yol, (h) => {
       assert.equal((h.prepare("PRAGMA user_version").get() as { user_version: number }).user_version, 1);
       const satir = h.prepare("SELECT deger FROM sema_ek WHERE anahtar='ek_surum'").get() as { deger: number };
-      assert.equal(satir.deger, 3);
+      assert.equal(satir.deger, 4);
       const tablo = (h.prepare("PRAGMA table_list").all() as Array<{ name: string; strict: number }>).find(
         (t) => t.name === "sema_ek",
       );
@@ -1913,7 +1913,7 @@ describe("depo: şema (ek göç)", () => {
     a.depo.kapat();
     for (let i = 0; i < 2; i++) {
       const b = kur(yol);
-      assert.deepEqual(b.depo.semaBilgisi(), { user_version: 1, ek_surum: 3 });
+      assert.deepEqual(b.depo.semaBilgisi(), { user_version: 1, ek_surum: 4 });
       assert.equal(b.depo.planGetir("p1")?.profil, "hafif");
       b.depo.kapat();
     }
@@ -1925,7 +1925,7 @@ describe("depo: şema (ek göç)", () => {
     const a = kur(yol).depo;
     const b = kur(yol, undefined).depo;
     assert.deepEqual(a.semaBilgisi(), b.semaBilgisi());
-    assert.equal(b.semaBilgisi().ek_surum, 3);
+    assert.equal(b.semaBilgisi().ek_surum, 4);
     assert.equal(say(yol, "sohbetler"), 1);
   });
 
@@ -1937,12 +1937,12 @@ describe("depo: şema (ek göç)", () => {
       h.prepare(ESKI_PLAN_INSERT_PROFILSIZ).run(plan.plan_id, JSON.stringify(plan), planHash(plan), "bekliyor", null, 1000);
     });
     const b = kur(yol);
-    assert.deepEqual(b.depo.semaBilgisi(), { user_version: 1, ek_surum: 3 });
+    assert.deepEqual(b.depo.semaBilgisi(), { user_version: 1, ek_surum: 4 });
     assert.equal(b.depo.planGetir("eski")?.profil, "tam", "eski satır varsayılan tam okunur");
     assert.equal(b.depo.planGetir("eski")?.sohbet_id, ANA_SOHBET_ID, "eski satır ana okunur");
     b.depo.kapat();
     const c = kur(yol);
-    assert.deepEqual(c.depo.semaBilgisi(), { user_version: 1, ek_surum: 3 });
+    assert.deepEqual(c.depo.semaBilgisi(), { user_version: 1, ek_surum: 4 });
     assert.equal(say(yol, "sema_ek"), 1);
   });
 
@@ -2719,10 +2719,10 @@ describe("depo: walDaralt", () => {
 });
 
 describe("depo: ek göç 2 ve ana oturum kayıtları", () => {
-  it("eren_oturumlari tablosu var ve STRICT; ek_surum 3", () => {
+  it("eren_oturumlari tablosu var ve STRICT; ek_surum 4", () => {
     const yol = yeniYol();
     const { depo } = kur(yol);
-    assert.equal(depo.semaBilgisi().ek_surum, 3);
+    assert.equal(depo.semaBilgisi().ek_surum, 4);
     depo.kapat();
     hamAc(yol, (h) => {
       const t = (h.prepare("PRAGMA table_list").all() as Array<{ name: string; strict: number }>).find(
@@ -2740,7 +2740,7 @@ describe("depo: ek göç 2 ve ana oturum kayıtları", () => {
     a.depo.kapat();
     for (let i = 0; i < 2; i++) {
       const b = kur(yol);
-      assert.equal(b.depo.semaBilgisi().ek_surum, 3);
+      assert.equal(b.depo.semaBilgisi().ek_surum, 4);
       assert.deepEqual(b.depo.kayitliOturumlar(ANA), ["s-1"]);
       b.depo.kapat();
     }
@@ -2750,7 +2750,7 @@ describe("depo: ek göç 2 ve ana oturum kayıtları", () => {
     const yol = yeniYol();
     eskiSemaKur(yol, 1);
     const b = kur(yol);
-    assert.deepEqual(b.depo.semaBilgisi(), { user_version: 1, ek_surum: 3 });
+    assert.deepEqual(b.depo.semaBilgisi(), { user_version: 1, ek_surum: 4 });
     b.depo.oturumKaydet("x", 1, ANA);
     assert.deepEqual(b.depo.kayitliOturumlar(ANA), ["x"]);
   });
@@ -2838,12 +2838,12 @@ describe("depo: ek göç 3 (dilim 2)", () => {
     });
   });
 
-  it("ek sürüm 2'deki dilim 1 dosyası: göç bir kez, user_version 1, ek_surum 3, bütün eski satırlar ana", () => {
+  it("ek sürüm 2'deki dilim 1 dosyası: göç bir kez, user_version 1, ek_surum 4, bütün eski satırlar ana", () => {
     const yol = yeniYol();
     eskiSemaKur(yol, 2);
     const v = hamAc(yol, (h) => eskiVeriYaz(h, { ek: "", nesilTaban: 1, profil: true, oturum: true }));
     const { depo } = kur(yol);
-    assert.deepEqual(depo.semaBilgisi(), { user_version: 1, ek_surum: 3 });
+    assert.deepEqual(depo.semaBilgisi(), { user_version: 1, ek_surum: 4 });
 
     // sohbetler: tek ana satırı, olayların en küçük/en büyük ts_ms'i
     const anaKayit: SohbetKaydi = {
@@ -2964,7 +2964,7 @@ describe("depo: ek göç 3 (dilim 2)", () => {
     eskiSemaKur(yol, 0);
     const v = hamAc(yol, (h) => eskiVeriYaz(h, { ek: "", nesilTaban: 1, profil: false, oturum: false }));
     const { depo } = kur(yol);
-    assert.deepEqual(depo.semaBilgisi(), { user_version: 1, ek_surum: 3 });
+    assert.deepEqual(depo.semaBilgisi(), { user_version: 1, ek_surum: 4 });
     const p = depo.planGetir(v.plan_id);
     assert.equal(p?.profil, "tam");
     assert.equal(p?.sohbet_id, ANA_SOHBET_ID);
@@ -2983,7 +2983,7 @@ describe("depo: ek göç 3 (dilim 2)", () => {
     a.depo.kapat();
     for (let i = 0; i < 2; i++) {
       const b = kur(yol);
-      assert.deepEqual(b.depo.semaBilgisi(), { user_version: 1, ek_surum: 3 });
+      assert.deepEqual(b.depo.semaBilgisi(), { user_version: 1, ek_surum: 4 });
       assert.deepEqual(b.depo.sohbetGetir(ANA), {
         sohbet_id: ANA_SOHBET_ID,
         ad: "Ana sohbet",
@@ -3069,7 +3069,7 @@ describe("depo: ek göç 3 (dilim 2)", () => {
     });
 
     const b = kur(yol);
-    assert.deepEqual(b.depo.semaBilgisi(), { user_version: 1, ek_surum: 3 });
+    assert.deepEqual(b.depo.semaBilgisi(), { user_version: 1, ek_surum: 4 });
     // eski kodun yazdıkları ana'nın
     assert.equal(b.depo.turGetir(v.turKapali)?.sohbet_id, ANA_SOHBET_ID);
     assert.deepEqual(
@@ -3182,7 +3182,7 @@ describe("depo: ana sohbetin ilk adı asistan adından", () => {
     const yol = yeniYol();
     eskiSemaKur(yol, 2);
     const depo = adlaKur(yol, "Örnek Asistan");
-    assert.deepEqual(depo.semaBilgisi(), { user_version: 1, ek_surum: 3 });
+    assert.deepEqual(depo.semaBilgisi(), { user_version: 1, ek_surum: 4 });
     assert.equal(depo.sohbetGetir(ANA)?.ad, "Örnek Asistan");
   });
 

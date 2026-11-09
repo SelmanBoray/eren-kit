@@ -278,9 +278,9 @@ describe("kopru: çağrı ve sonuç", () => {
       assert.ok(!hataMi(r));
       const t = metin(r);
       assert.ok(t.startsWith("uygulamalar: telefon_bagli=evet toplam=3 gosterilen=3\n"), t);
-      assert.ok(t.includes("\ncom.whatsapp WhatsApp"));
-      assert.ok(t.includes("\ncom.ziraat.ziraatmobil [kapalı:hassas] Ziraat Mobil"));
-      assert.ok(t.includes("\ncom.android.settings [kapalı:degismez] Ayarlar"));
+      assert.ok(t.includes('\ncom.whatsapp "WhatsApp"'));
+      assert.ok(t.includes('\ncom.ziraat.ziraatmobil [kapalı:hassas] "Ziraat Mobil"'));
+      assert.ok(t.includes('\ncom.android.settings [kapalı:degismez] "Ayarlar"'));
       const [istek] = d.servis.istekler("uygulamalar");
       assert.deepEqual(istek!["girdi"], {});
     });

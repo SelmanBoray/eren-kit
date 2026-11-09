@@ -19,6 +19,18 @@ import { islerKur } from "../src/isler.ts";
 import { veriyoluKur } from "../src/veriyolu.ts";
 import { sahteDunya } from "./sahte.ts";
 
+/** PC iş komutunun yasak araç listesi; ölçülen deney komutundan (B8) aynen. */
+const PC_YASAK_ARACLAR =
+  "Workflow,ScheduleWakeup,ReportFindings,Artifact,ArtifactComments,ArtifactData,SendFeedback,AskUserQuestion," +
+  "CronCreate,CronDelete,CronList,RemoteTrigger,PushNotification,DesignSync,EnterWorktree,ExitWorktree," +
+  "ListAgents,EnterPlanMode,ExitPlanMode,NotebookEdit";
+/** PC iş ortamına eklenen kapatma anahtarları; `CLAUDE_CODE_DISABLE_ATTACHMENTS` bilerek yok. */
+const PC_ORTAM_ANAHTARLARI = [
+  "CLAUDE_CODE_DISABLE_AUTO_MEMORY",
+  "CLAUDE_CODE_DISABLE_ADVISOR_TOOL",
+  "CLAUDE_CODE_DISABLE_FILE_MENTIONS",
+];
+
 // ---------------------------------------------------------------------------------------------
 // Ortak düzen
 // ---------------------------------------------------------------------------------------------
@@ -371,7 +383,8 @@ describe("isler: PC profili komutu", () => {
     assert.equal(bas.istek.ortam["ORNEK_DEGISKEN"], "1");
     assert.equal(bas.istek.ortam["CLAUDE_CODE_ORNEK"], undefined);
     assert.equal(bas.istek.ortam["Anthropic_Y"], undefined);
-    assert.equal(bas.istek.ortam["CLAUDE_CODE_DISABLE_AUTO_MEMORY"], undefined);
+    for (const k of PC_ORTAM_ANAHTARLARI) assert.equal(bas.istek.ortam[k], "1", k);
+    assert.equal(bas.istek.ortam["CLAUDE_CODE_DISABLE_ATTACHMENTS"], undefined);
 
     const argv = bas.istek.argv;
     const gorev = argv[1]!;
@@ -390,6 +403,10 @@ describe("isler: PC profili komutu", () => {
       "--strict-mcp-config",
       "--mcp-config",
       yol.mcp,
+      "--disallowedTools",
+      PC_YASAK_ARACLAR,
+      "--settings",
+      '{"syncClaudeAiSkills":false}',
     ]);
     assert.match(kayit.session_id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     gorevDogrula(gorev, plan);
@@ -416,7 +433,7 @@ describe("isler: PC profili komutu", () => {
     const id = await h.baslat(pcPlan());
     const argv = h.d.surec.sonAyrik().istek.argv;
     assert.deepEqual(argv.slice(-2), ["--model", "sonnet"]);
-    assert.equal(argv.at(-3), h.yollar(id).mcp);
+    assert.equal(argv[argv.indexOf("--mcp-config") + 1], h.yollar(id).mcp);
     const mcp = JSON.parse(h.d.dosya.icerik(h.yollar(id).mcp)!) as { mcpServers: Record<string, unknown> };
     assert.deepEqual(Object.keys(mcp.mcpServers).sort(), ["computer-use-windows"]);
   });
@@ -710,6 +727,10 @@ describe("isler: Dilim 1 iş profili (K5)", () => {
       "--strict-mcp-config",
       "--mcp-config",
       yol.mcp,
+      "--disallowedTools",
+      PC_YASAK_ARACLAR,
+      "--settings",
+      '{"syncClaudeAiSkills":false}',
     ]);
     assert.ok(!ayarlariKapatir(argv));
     assert.ok(!argv.includes("--model"));
@@ -733,15 +754,40 @@ describe("isler: Dilim 1 iş profili (K5)", () => {
     assert.equal(argv[argv.indexOf("--json-schema") + 1], isRaporuJsonSemasi());
     assert.equal(argv[0], "-p");
     gorevDogrula(argv[1]!, pcPlan());
+    assert.equal(argv.filter((a) => a === "--disallowedTools").length, 1);
+    assert.equal(argv[argv.indexOf("--disallowedTools") + 1], PC_YASAK_ARACLAR);
   });
 
-  it("hafif komut tam komutun üst kümesidir: tam argv'nin (model hariç) öğeleri sırayla var, ek bayrak var", async () => {
+  it("hafif profil: tek --settings değeri geçerli JSON, autoMemoryEnabled:false ve syncClaudeAiSkills:false taşır", async () => {
+    const h = await kur();
+    await h.baslat(pcPlan(), "hafif");
+    const argv = argvOf(h);
+    assert.equal(argv.filter((a) => a === "--settings").length, 1, "tek --settings");
+    const ayar = JSON.parse(argv[argv.indexOf("--settings") + 1]!) as unknown;
+    assert.deepEqual(ayar, { autoMemoryEnabled: false, syncClaudeAiSkills: false });
+  });
+
+  it("tam profil: tek --settings, yalnız syncClaudeAiSkills:false; autoMemoryEnabled yok", async () => {
+    const h = await kur();
+    await h.baslat(pcPlan(), "tam");
+    const argv = argvOf(h);
+    assert.equal(argv.filter((a) => a === "--settings").length, 1);
+    assert.deepEqual(JSON.parse(argv[argv.indexOf("--settings") + 1]!), { syncClaudeAiSkills: false });
+  });
+
+  it("hafif komut tam komutun üst kümesidir: tam argv'nin (model ve --settings değeri hariç) öğeleri sırayla var, ek bayrak var; hafif ayar tam ayarı kapsar", async () => {
     const tam = await kur();
     await tam.baslat(pcPlan(1), "tam");
     const hafif = await kur();
     await hafif.baslat(pcPlan(1), "hafif");
-    const t = argvOf(tam).filter((a, i, l) => a !== "--model" && l[i - 1] !== "--model");
-    const hf = argvOf(hafif);
+    const ayarDegeri = (l: string[]) => JSON.parse(l[l.indexOf("--settings") + 1]!) as Record<string, unknown>;
+    const ayarT = ayarDegeri(argvOf(tam));
+    const ayarH = ayarDegeri(argvOf(hafif));
+    for (const [k, v] of Object.entries(ayarT)) assert.deepEqual(ayarH[k], v, `hafif ayarda ${k} yok`);
+    const t = argvOf(tam).filter(
+      (a, i, l) => a !== "--model" && l[i - 1] !== "--model" && l[i - 1] !== "--settings",
+    );
+    const hf = argvOf(hafif).filter((_, i, l) => l[i - 1] !== "--settings");
     let i = 0;
     for (const a of hf) {
       if (i < t.length && a === t[i]) i++;

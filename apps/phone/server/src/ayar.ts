@@ -56,10 +56,21 @@ const ASISTAN_ADI_ORTAMI = "EREN_KIT_ASSISTANT_NAME";
 const VARSAYILAN_ASISTAN_ADI = "Claude";
 const ASISTAN_ADI_SINIRI = 40;
 
-const KAPATMA_ANAHTARLARI: Readonly<Record<string, string>> = {
+/**
+ * PC iş ortamının (tam ve hafif) kapatma anahtarları. Ölçüm (2026-11-09, boş cwd, tam profil): `isler-komut.ts`
+ * yasak araç listesi ve `syncClaudeAiSkills:false` ile birlikte ilk istek 44.059 → 33.444, alt agent
+ * 25.056 → 18.140; SessionStart hook ek bağlamı bayt bayt korundu.
+ * `CLAUDE_CODE_DISABLE_ATTACHMENTS` bilerek yok: skill ve ertelenmiş araç listesini de keser.
+ */
+const PC_IS_KAPATMA_ANAHTARLARI: Readonly<Record<string, string>> = {
   CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
   CLAUDE_CODE_DISABLE_ADVISOR_TOOL: "1",
   CLAUDE_CODE_DISABLE_FILE_MENTIONS: "1",
+};
+
+/** Ana sohbet ve telefon işi: PC anahtarları + `ATTACHMENTS` (bu oturumlar skill/hook kullanmaz). */
+const KAPATMA_ANAHTARLARI: Readonly<Record<string, string>> = {
+  ...PC_IS_KAPATMA_ANAHTARLARI,
   CLAUDE_CODE_DISABLE_ATTACHMENTS: "1",
 };
 
@@ -346,7 +357,7 @@ export const ayarKur: AyarFabrikasi = async (b: AyarBagimliliklari): Promise<Aya
     },
     erenOrtami: kapatmali,
     telefonIsOrtami: kapatmali,
-    pcIsOrtami: () => claudeSil(ortamKopyasi),
+    pcIsOrtami: () => ({ ...claudeSil(ortamKopyasi), ...PC_IS_KAPATMA_ANAHTARLARI }),
     async kimlikEki(): Promise<string> {
       return (await b.dosya.oku(yollar.kimlikEki)) ?? "";
     },

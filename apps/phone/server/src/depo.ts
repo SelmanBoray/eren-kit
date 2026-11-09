@@ -6,14 +6,18 @@ import { DatabaseSync } from "node:sqlite";
 import type { SQLInputValue, StatementSync } from "node:sqlite";
 import {
   ANA_SOHBET_ID,
+  IsId,
   IsProfili,
   Olay,
   Plan,
+  Sayac,
   SILINMEZ_OLAY_TURLERI,
+  SOHBET_SINIRLARI,
   SohbetAdi,
   SohbetId,
   VARSAYILAN_IS_PROFILI,
 } from "@eren/protocol";
+import type { TuketimIkilisi, TuketimToplami } from "@eren/protocol";
 import { anaSohbetAdiUret } from "./ana-sohbet-adi.ts";
 import type {
   AckGovdesi,
@@ -42,6 +46,8 @@ import type {
   SohbetSilmeSonucu,
   SoruDurumu,
   SoruKaydi,
+  TuketimKaydi,
+  TuketimOzeti,
   TurBitisi,
   TurKaydi,
 } from "./sozlesme.ts";
@@ -249,6 +255,32 @@ const ekGocler = (anaAdi: string): readonly string[] => [
   CREATE INDEX IF NOT EXISTS nesiller_sohbet ON nesiller (sohbet_id, nesil);
   CREATE INDEX IF NOT EXISTS eren_kuyrugu_sohbet ON eren_kuyrugu (sohbet_id, id);
   `,
+  // 4: tüketim (sonuç başına model başına bir satır; yalnız sayı ve kimlik, içerik yok). Yalnız yeni
+  // tablo ve dizinleri: var olan hiçbir tabloya dokunmaz, eski kod tabloyu görmez. `IF NOT EXISTS`:
+  // sayacı geri kalmış bir dosyada yeniden uygulanabilir. Otomatik silme yok; `gecmisiTemizle` ve
+  // `sohbetiSil` bu tabloya dokunmaz.
+  `
+  CREATE TABLE IF NOT EXISTS tuketim (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts_ms INTEGER NOT NULL,
+    kaynak TEXT NOT NULL,
+    sohbet_id TEXT NOT NULL,
+    is_id INTEGER,
+    turn_id TEXT,
+    nesil INTEGER,
+    rol TEXT,
+    model TEXT NOT NULL,
+    girdi INTEGER NOT NULL,
+    cache_yazma INTEGER NOT NULL,
+    cache_okuma INTEGER NOT NULL,
+    cikti INTEGER NOT NULL,
+    maliyet_usd REAL,
+    olcum TEXT NOT NULL
+  ) STRICT;
+  CREATE INDEX IF NOT EXISTS tuketim_zaman ON tuketim (ts_ms);
+  CREATE INDEX IF NOT EXISTS tuketim_sohbet ON tuketim (sohbet_id, ts_ms);
+  CREATE INDEX IF NOT EXISTS tuketim_is ON tuketim (is_id) WHERE is_id IS NOT NULL;
+  `,
 ];
 
 /** Mezar taşının olay türü. Silinmeyenler listesi ayrıca `SILINMEZ_OLAY_TURLERI`'nden okunur. */
@@ -442,6 +474,106 @@ const sohbetSatiri = (r: Satir): SohbetKaydi => ({
   son_etkinlik_ms: sayi(r.son_etkinlik_ms),
   silinme_ms: sayiVeyaNull(r.silinme_ms),
 });
+
+// --- Tüketim (ek göç 4) ---
+
+const TUKETIM_ROLLERI: ReadonlySet<unknown> = new Set(["normal", "devir_istek", "devir_ilk", null]);
+const TUKETIM_OLCUMLERI: ReadonlySet<unknown> = new Set(["model_farki", "ana_usage"]);
+/** `TuketimToplami.maliyet_usd` üst sınırı (protokol şeması). */
+const MALIYET_UST = 1e7;
+
+/**
+ * Yazmadan önce denetim: özetin protokol şemasından geçmesi için gereken her şey (sayaçlar, `is_id` ile
+ * `kaynak` eşleşmesi). `turn_id`/`nesil`'in yalnız `sohbet`'te dolu olması burada zorlanmaz: özeti
+ * etkilemez, atmak ise `islem` içindeki çağıranın (iş: `out_ofset`) işlemini geri alırdı.
+ */
+const tuketimDenetle = (k: TuketimKaydi): void => {
+  const hata = (alan: string): never => {
+    throw new Error(`depo: geçersiz tüketim alanı (${alan})`);
+  };
+  if (!Sayac.safeParse(k.ts_ms).success) hata("ts_ms");
+  if (k.kaynak !== "sohbet" && k.kaynak !== "is") hata("kaynak");
+  if (!SohbetId.safeParse(k.sohbet_id).success) hata("sohbet_id");
+  if (k.kaynak === "is" ? !IsId.safeParse(k.is_id).success : k.is_id !== null) hata("is_id");
+  if (k.turn_id !== null && typeof k.turn_id !== "string") hata("turn_id");
+  if (k.nesil !== null && !Number.isSafeInteger(k.nesil)) hata("nesil");
+  if (!TUKETIM_ROLLERI.has(k.rol)) hata("rol");
+  if (typeof k.model !== "string") hata("model");
+  for (const alan of ["girdi", "cache_yazma", "cache_okuma", "cikti"] as const) {
+    if (!Sayac.safeParse(k[alan]).success) hata(alan);
+  }
+  if (k.maliyet_usd !== null && !(Number.isFinite(k.maliyet_usd) && k.maliyet_usd >= 0)) hata("maliyet_usd");
+  if (!TUKETIM_OLCUMLERI.has(k.olcum)) hata("olcum");
+};
+
+/**
+ * Bir sonucun kimliği: `tuketimKayitlari` bir sonucun bütün satırlarına aynı bağlamı (`ts_ms` dahil)
+ * verir, tabloda sonuç kimliği yoktur. `sonuc_adet` bu sütunlara göre gruplanmış sonuç sayısıdır
+ * (`GROUP BY` NULL'ları eşit sayar). Varsayım: aynı bağlamda iki sonuç aynı milisaniyede işlenmez.
+ */
+const SONUC_ANAHTARI = "ts_ms, kaynak, sohbet_id, is_id, turn_id, nesil, rol";
+
+/**
+ * Önce sonuç başına, sonra `dis` sütunlarına göre toplar. `maliyetli`: maliyeti bilinen satır sayısı
+ * (`maliyet_usd` yalnız > 0 ise yazılır). `kosul` sabit SQL'dir, değerler parametreyle girer.
+ */
+const tuketimToplamSql = (dis: string, kosul: string, son = ""): string => `
+  SELECT ${dis}, SUM(girdi) AS girdi, SUM(cache_yazma) AS cache_yazma, SUM(cache_okuma) AS cache_okuma,
+         SUM(cikti) AS cikti, COUNT(*) AS sonuc_adet, SUM(maliyet) AS maliyet, SUM(maliyetli) AS maliyetli
+  FROM (
+    SELECT ${SONUC_ANAHTARI}, SUM(girdi) AS girdi, SUM(cache_yazma) AS cache_yazma,
+           SUM(cache_okuma) AS cache_okuma, SUM(cikti) AS cikti, SUM(maliyet_usd) AS maliyet,
+           COUNT(maliyet_usd) AS maliyetli
+    FROM tuketim WHERE ${kosul} GROUP BY ${SONUC_ANAHTARI}
+  )
+  GROUP BY ${dis} ${son}`;
+
+/** Toplama ara durumu: satırlar (ya da gruplar) üst üste eklenir, `tuketimToplami` kapatır. */
+interface TuketimBirikimi {
+  girdi: number;
+  cache_yazma: number;
+  cache_okuma: number;
+  cikti: number;
+  sonuc_adet: number;
+  maliyet: number;
+  maliyetli: number;
+}
+const bosBirikim = (): TuketimBirikimi => ({
+  girdi: 0,
+  cache_yazma: 0,
+  cache_okuma: 0,
+  cikti: 0,
+  sonuc_adet: 0,
+  maliyet: 0,
+  maliyetli: 0,
+});
+const birikimeEkle = (a: TuketimBirikimi, r: Satir): void => {
+  a.girdi += sayi(r.girdi ?? 0);
+  a.cache_yazma += sayi(r.cache_yazma ?? 0);
+  a.cache_okuma += sayi(r.cache_okuma ?? 0);
+  a.cikti += sayi(r.cikti ?? 0);
+  a.sonuc_adet += sayi(r.sonuc_adet ?? 0);
+  a.maliyet += sayi(r.maliyet ?? 0);
+  a.maliyetli += sayi(r.maliyetli ?? 0);
+};
+const tuketimToplami = (a: TuketimBirikimi): TuketimToplami => {
+  const t: TuketimToplami = {
+    girdi: a.girdi,
+    cache_yazma: a.cache_yazma,
+    cache_okuma: a.cache_okuma,
+    cikti: a.cikti,
+    sonuc_adet: a.sonuc_adet,
+  };
+  if (a.maliyetli > 0) t.maliyet_usd = Math.min(MALIYET_UST, Math.max(0, a.maliyet));
+  return t;
+};
+/** `kaynak` sütunlu satırlardan ikili. */
+const tuketimIkilisi = (satirlar: readonly Satir[]): TuketimIkilisi => {
+  const sohbet = bosBirikim();
+  const is = bosBirikim();
+  for (const r of satirlar) birikimeEkle(String(r.kaynak) === "is" ? is : sohbet, r);
+  return { sohbet: tuketimToplami(sohbet), is: tuketimToplami(is) };
+};
 
 /** Kapsamı sütunlara açar; kullanılmayan sütun `null` kalır. `sohbet_id` yalnız `eren`'de dolu. */
 const kapsamSutunlari = (k: JetonKapsami) => ({
@@ -1245,6 +1377,88 @@ export const depoKur: DepoFabrikasi = (b) => {
           return { silindi, ...sayilar };
         }),
       );
+    },
+
+    // --- Tüketim: `tuketim` tablosu (ek göç 4). Yalnız sayı ve kimlik; silme yok. ---
+
+    tuketimEkle(kayitlar) {
+      if (kayitlar.length === 0) return;
+      for (const k of kayitlar) tuketimDenetle(k); // hiçbir şey yazılmadan atar
+      islem(() => {
+        for (const k of kayitlar) {
+          calistir(
+            `INSERT INTO tuketim (ts_ms, kaynak, sohbet_id, is_id, turn_id, nesil, rol, model, girdi, cache_yazma,
+               cache_okuma, cikti, maliyet_usd, olcum) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            k.ts_ms,
+            k.kaynak,
+            k.sohbet_id,
+            k.is_id,
+            k.turn_id,
+            k.nesil,
+            k.rol,
+            k.model,
+            k.girdi,
+            k.cache_yazma,
+            k.cache_okuma,
+            k.cikti,
+            k.maliyet_usd,
+            k.olcum,
+          );
+        }
+      });
+    },
+    tuketimOzeti({ gunBaslangicMs, yediGunBaslangicMs, isAdet }): TuketimOzeti {
+      // İşlemsiz okuma (öteki okuyucular gibi): `islem` yazma kilidi (`BEGIN IMMEDIATE`) alırdı. Bu süreç
+      // eşzamanlıdır; `tuketim`'e yazan tek süreç odur, sorgular arasında satır eklenmez.
+      const pencere = (baslangic: number): TuketimIkilisi =>
+        tuketimIkilisi(hepsi(tuketimToplamSql("kaynak", "ts_ms >= ?"), baslangic));
+
+      // Sohbet başına tüm zaman. "Silinmiş": `sohbetler.silinme_ms` dolu (sohbetiSil'in modeli);
+      // `sohbetler`'de satırı olmayan kimlik de silinmemiş listeye giremez, oraya sayılır. Böylece
+      // liste + silinmiş = tüm zaman toplamı.
+      const sohbetSatirlari = new Map<string, Satir[]>();
+      for (const r of hepsi(tuketimToplamSql("sohbet_id, kaynak", "1"))) {
+        const id = String(r.sohbet_id);
+        const l = sohbetSatirlari.get(id);
+        if (l === undefined) sohbetSatirlari.set(id, [r]);
+        else l.push(r);
+      }
+      const sohbetler: TuketimOzeti["sohbetler"] = [];
+      for (const s of depo.sohbetListesi(false)) {
+        const satirlar = sohbetSatirlari.get(s.sohbet_id);
+        if (satirlar === undefined) continue;
+        sohbetSatirlari.delete(s.sohbet_id);
+        if (sohbetler.length >= SOHBET_SINIRLARI.SOHBET_ADET) {
+          // Olmamalı (`sohbet_siniri`); şema sınırı aşılmasın. Pencere toplamlarında kalır.
+          b.gunluk.uyari("depo", "tuketim_sohbet_siniri", { sohbet_id: s.sohbet_id });
+          continue;
+        }
+        sohbetler.push({ sohbet_id: s.sohbet_id, toplam: tuketimIkilisi(satirlar) });
+      }
+      const silinmisSatirlar = [...sohbetSatirlari.values()].flat();
+
+      // En yeni işler: `is_id` artan sayaçtır; silinmiş sohbetin işleri de listede (yalnız kimlik).
+      const sinir = Math.max(0, Math.min(Math.trunc(isAdet) || 0, SOHBET_SINIRLARI.TUKETIM_IS_ADET));
+      const isler: TuketimOzeti["isler"] =
+        sinir === 0
+          ? []
+          : hepsi(
+              tuketimToplamSql("is_id", "kaynak = 'is' AND is_id IS NOT NULL", "ORDER BY is_id DESC LIMIT ?"),
+              sinir,
+            ).map((r) => {
+              const a = bosBirikim();
+              birikimeEkle(a, r);
+              return { is_id: sayi(r.is_id), toplam: tuketimToplami(a) };
+            });
+
+      const ozet: TuketimOzeti = {
+        bugun: pencere(gunBaslangicMs),
+        son_7_gun: pencere(yediGunBaslangicMs),
+        sohbetler,
+        isler,
+      };
+      if (silinmisSatirlar.length > 0) ozet.silinmis_sohbetler = tuketimIkilisi(silinmisSatirlar);
+      return ozet;
     },
   };
   return depo;

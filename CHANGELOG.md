@@ -51,6 +51,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - The plan card shows the job state (Starting, Started, Running, Done, ...) and shows approve/reject buttons only while a decision is pending.
   - Phone guard: when the active root and the focus are the same allowed package, a last window event from SystemUI no longer counts as a foreground change (on HyperOS the event fired when a notification bubble closed and every read was refused). The strict rule for a change during a screenshot is unchanged. Foreground refusals log only package names and window types to logcat under `ErenKapi`.
   - The service log has a new `komut_sonucu` event (command id, name, result, reason code; no content).
+  - Token usage: the service records token usage per result and model (numbers and ids only, no content; clearing or deleting a chat keeps it), and the phone shows it in a Usage section on the Status screen (today, last 7 days, per chat and per job) and as one line on each job report card (`usage_request`/`usage_report`).
+  - Smaller sessions: the main chat opens with eight built-in tools only (`--tools`); PC job sessions drop 20 unused built-in tools and claude.ai-synced skills (measured first request 44,059 → 33,444 tokens); the `uygulamalar` tool returns compact text instead of the full JSON list.
 
 ## [0.1.0] - 2026-11-09
 

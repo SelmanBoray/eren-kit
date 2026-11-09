@@ -526,6 +526,8 @@ describe("komut ve ortam", () => {
       "--include-partial-messages",
       "--replay-user-messages",
       "--dangerously-skip-permissions",
+      "--tools",
+      "PowerShell,Read,Edit,Write,Glob,Grep,WebFetch,WebSearch",
       "--strict-mcp-config",
       "--mcp-config",
       mcpYolu(1),
@@ -535,7 +537,7 @@ describe("komut ve ortam", () => {
     ]);
     assert.deepEqual(argv.slice(ai + 2), ["--model", "opus", "--session-id", oturumKimligi(s)]);
     assert.equal(argv.includes("--resume"), false);
-    assert.equal(argv.includes("--tools"), false);
+    assert.equal(argv.filter((a) => a === "--tools").length, 1);
     assert.equal(argv.includes("--allowedTools"), false);
     assert.equal(argv.includes("--permission-prompts"), false);
 
@@ -552,14 +554,15 @@ describe("komut ve ortam", () => {
     assert.equal(h.konusma.nesil(), 1);
   });
 
-  it("argv: computerUse dolu ya da boş: --tools ve --permission-prompts yok, skip-permissions var", async () => {
+  it("argv: computerUse dolu ya da boş: --tools tam sekiz araç, --allowedTools ve --permission-prompts yok, skip-permissions var", async () => {
     for (const cu of [null, CU_SUNUCU]) {
       const h = kur({ computerUse: cu });
       await basla(h);
       await bosalt();
       const argv = h.d.surec.sonBorulu().istek.argv;
       assert.equal(argv.includes("--dangerously-skip-permissions"), true);
-      for (const y of ["--tools", "--allowedTools", "--permission-prompts"]) assert.equal(argv.includes(y), false, y);
+      assert.equal(argv[argv.indexOf("--tools") + 1], "PowerShell,Read,Edit,Write,Glob,Grep,WebFetch,WebSearch");
+      for (const y of ["--allowedTools", "--permission-prompts"]) assert.equal(argv.includes(y), false, y);
     }
   });
 

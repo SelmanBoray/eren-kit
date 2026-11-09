@@ -42,13 +42,14 @@ Tek bağımlılık `zod`, sürüm kilitli. Geçişli bağımlılığı yoktur, J
 | 2 | 1 | `chat_clear` ↑, `chat_cleared` olayı, `server_status.servis`, `sohbet_mesgul` |
 | 3 | 2 (çoklu sohbet) | `chat_create`, `chat_rename`, `chat_delete` ↑; `chat_created`, `chat_renamed`, `chat_deleted` olayları; zorunlu `sohbet_id`: `user_message`, `interrupt`, `chat_clear` ↑, `assistant_delta`, `stream_snapshot` ↓; olay zarfına isteğe bağlı `sohbet_id`; `server_status.eren` yerine `server_status.sohbetler`; `sohbet_bulunamadi`, `sohbet_siniri`, `sohbet_silinemez` |
 | 4 | 3 (kısayol) | `GIRDI_YOLLARI`'na `kisayol`; `user_message` ↑ ve `user_echo` olayında isteğe bağlı `baglam{paket, ad}` (yalnız `input:"kisayol"` iken) |
-| 5 | 0.5.0 (sade plan) | `Plan`, `PlanTaslagi` ve `PlanOnerGirdi` içinden `kesin_yapilacaklar` ve `kesin_yapilmayacaklar` kalktı (katı şema: bu anahtarları taşıyan plan geçersiz); `plan_hash` kanonik metni değişti (vektör yeniden üretildi); `PLAN_MADDE*` sabitleri kalktı |
+| 5 | 0.5.0 (sade plan) | `Plan`, `PlanTaslagi` ve `PlanOnerGirdi` içinden `kesin_yapilacaklar` ve `kesin_yapilmayacaklar` kalktı (katı şema: bu anahtarları taşıyan plan geçersiz); `plan_hash` kanonik metni değişti (vektör yeniden üretildi); `PLAN_MADDE*` sabitleri kalktı; tüketim: `usage_request` ↑, `usage_report` ↓ (sürüm artırmadan geliştirildi, ilk yayımlandığı sürüm 5) |
 
 | Kanal | Mesaj | `v` | Kotlin |
 |---|---|---|---|
 | `/sohbet` | `pair_request` ↑, `pair_result` ↓ | 1 | Kurar / `v == 1` ve alan kümesiyle doğrular |
 | QR | `EslestirmeQr` | 1 | `v == 1` ile doğrular |
 | `/sohbet` | `hello`, `auth_response`, `user_message`, `interrupt`, `plan_decision`, `question_answer`, `job_cancel`, `chat_clear`, `chat_create`, `chat_rename`, `chat_delete` ↑; `auth_challenge`, `welcome`, `ack`, `assistant_delta`, `stream_snapshot`, `event`, `server_status`, `error` ↓ | 5 | Görmez: çerçeveyi JS kurar ve çözer, Kotlin yalnız `client_nonce` ve imza verir |
+| `/sohbet` | `usage_request{istek_id}` ↑; `usage_report{istek_id, olcum_ms, gun_baslangic_ms, bugun, son_7_gun, sohbetler[{sohbet_id, toplam}], silinmis_sohbetler?, isler[{is_id, toplam}]}` ↓ | `SOHBET_SURUMU` | Görmez (JS). `bugun`, `son_7_gun`, `silinmis_sohbetler`, `toplam` (sohbetler): `TuketimIkilisi{sohbet, is}`; `isler[].toplam`: `TuketimToplami{girdi, cache_yazma, cache_okuma, cikti, sonuc_adet, maliyet_usd?}`. `sohbetler` en çok `SOHBET_ADET`, tekil; `isler` en çok `TUKETIM_IS_ADET` (50), `is_id` kesin azalan |
 | `/cihaz` | hepsi | 1 | Hepsini `v == 1` ile çözer |
 | Boru | hepsi | 1 | Yok |
 | İmza metni | `eren-auth-v1` | 1 | `KimlikMetni.kt` aynı metni kurar |
@@ -74,7 +75,7 @@ Kural, kanal başına: mesaj, alan, kapalı liste öğesi eklemek ya da sınır�
 1. Eşleşme yoksa: `pair_request` → `pair_result`. QR içeriği `EslestirmeQr`.
 2. `hello{last_seq}` → `auth_challenge` → `auth_response` → `welcome{head_seq}`. Sonra eksik `event`ler sırayla, varsa `stream_snapshot`, `server_status`.
 3. `event.event` kalıcı olaydır, tek artan `seq` taşır; `seq` ve telafi bütün sohbetler için küreseldir (tek bağlantı, tek outbox, tek `last_seq`). Telafide her canlı tur için (sohbet başına en çok bir) bir `stream_snapshot{sohbet_id, turn_id, text}` gelir. `assistant_delta` ve `server_status` kalıcı değildir. `server_status.sohbetler` silinmemiş her sohbetin ana oturum durumudur (aşağıda "Çoklu sohbet"); `kilitli`, `aktif_is`, RAM alanları, `servis`, `limit` küreseldir. `server_status.servis{surum, baslangic_ms}` her zaman vardır: `surum` çalışan sürümün `surum.json` `sha`'sı, geliştirme kopyasından çalışıyorsa `null`; `baslangic_ms` servis sürecinin başladığı an. `server_status.limit?` isteğe bağlıdır: `bes_saat?`, `haftalik?` (doluluk, 0-1) ve `bes_saat_sifirlanma_ms?`, `haftalik_sifirlanma_ms?` (sıfırlanma, epoch ms); alan yoksa istemci bilinmiyor sayar.
-4. Kimlik sonrası her yukarı mesaj `client_msg_id` taşır ve `ack` alır. `ack.ok: false` ise `code` vardır, yeniden yollanmaz. Aynı kimlik yeniden gelirse servis aynı `ack`'i döner, ikinci kez işlemez.
+4. Kimlik sonrası her yukarı mesaj `client_msg_id` taşır ve `ack` alır. `ack.ok: false` ise `code` vardır, yeniden yollanmaz. Aynı kimlik yeniden gelirse servis aynı `ack`'i döner, ikinci kez işlemez. İstisna: `usage_request` `client_msg_id` taşımaz, `ack` almaz, kalıcı kuyruğa (outbox) girmez; yanıtı `usage_report` ile `istek_id` üzerinden eşleşir.
 
 `interrupt{sohbet_id, turn_id?}` yalnız o sohbetin ana oturumunu keser. `turn_id` verilirse yalnız o tur kesilir; tur bittiyse ya da o sohbetin değilse `tur_gecersiz` döner.
 

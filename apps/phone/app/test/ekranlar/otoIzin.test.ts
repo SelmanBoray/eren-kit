@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { SOHBET_SURUMU } from "@eren/protocol";
 import type { Plan } from "@eren/protocol";
 import {
   kartAnahtari,
@@ -69,7 +70,7 @@ const kart = (
 
 const karar = (plan_id: string): BekleyenOge => ({
   client_msg_id: `k-${plan_id}`,
-  mesaj: { v: 4, type: "plan_decision", client_msg_id: `k-${plan_id}`, plan_id, plan_hash: `h-${plan_id}`, karar: "onay" },
+  mesaj: { v: SOHBET_SURUMU, type: "plan_decision", client_msg_id: `k-${plan_id}`, plan_id, plan_hash: `h-${plan_id}`, karar: "onay" },
   durum: "yollandi",
 } as unknown as BekleyenOge);
 
@@ -230,6 +231,7 @@ class SahteCekirdek {
       sohbetler: sohbetler.map(ozet),
       secili: "ana" as SohbetId,
       calisanIsler: [],
+      tuketim: { durum: "yok" },
     };
   }
 

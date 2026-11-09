@@ -15,6 +15,7 @@ import type {
   KesilenTur,
   Sohbet,
   SistemNotu as SistemOgesi,
+  TuketimRaporu,
 } from "../cekirdek/index.ts";
 import type { ErenCihaz } from "../cihaz/erenDevice.ts";
 import { ASISTAN_ADI } from "../platform/asistanAdi.ts";
@@ -24,6 +25,7 @@ import { PlanKartiEkrani } from "./PlanKartiEkrani.tsx";
 import { RaporKartiEkrani } from "./RaporKartiEkrani.tsx";
 import { SoruKartiEkrani } from "./SoruKartiEkrani.tsx";
 import { bosluk, cizgi, olcu, renk, sure, yaricap, yazi } from "./tema.ts";
+import { isTuketimi } from "./tuketimMetni.ts";
 import type { RenkAdi } from "./tema.ts";
 
 // ---------------------------------------------------------------- Ortak
@@ -493,13 +495,41 @@ export function Yukleniyor(): ReactNode {
 
 // ---------------------------------------------------------------- Zaman çizelgesi öğesi
 
-/** Bir `GorunumOgesi`'ni türüne göre çizer. `onIsler`: süren iş satırına dokununca. */
-export const ZamanCizelgesiOgesi = memo(function ZamanCizelgesiOgesi(p: {
+export type ZamanCizelgesiOgesiProps = {
   oge: GorunumOgesi;
   sohbet: Sohbet;
   cihaz: ErenCihaz;
   onIsler: () => void;
-}): ReactNode {
+  /** İsteğe bağlı: eldeki tüketim raporu; rapor kartı kendi işinin satırını buradan alır. */
+  tuketimRaporu?: TuketimRaporu | null;
+};
+
+/**
+ * `memo` karşılaştırması için: rapor nesnesi her güncellemede yeni kurulur, bu yüzden yalnız rapor
+ * kartı öğesinde ve yalnız o işin tüketim DEĞERLERİNE bakılır; başka öğelerde rapor yok sayılır.
+ */
+export function tuketimPropEsit(
+  a: { oge: GorunumOgesi; tuketimRaporu?: TuketimRaporu | null },
+  b: { oge: GorunumOgesi; tuketimRaporu?: TuketimRaporu | null },
+): boolean {
+  if (a.oge.tur !== "rapor") return true;
+  if (a.tuketimRaporu === b.tuketimRaporu) return true;
+  const x = isTuketimi(a.tuketimRaporu ?? null, a.oge.is_id);
+  const y = isTuketimi(b.tuketimRaporu ?? null, a.oge.is_id);
+  if (x === y) return true;
+  if (x === null || y === null) return false;
+  return (
+    x.girdi === y.girdi &&
+    x.cache_yazma === y.cache_yazma &&
+    x.cache_okuma === y.cache_okuma &&
+    x.cikti === y.cikti &&
+    x.sonuc_adet === y.sonuc_adet &&
+    x.maliyet_usd === y.maliyet_usd
+  );
+}
+
+/** Bir `GorunumOgesi`'ni türüne göre çizer. `onIsler`: süren iş satırına dokununca. */
+export const ZamanCizelgesiOgesi = memo(function ZamanCizelgesiOgesi(p: ZamanCizelgesiOgesiProps): ReactNode {
   const o = p.oge;
   switch (o.tur) {
     case "kullanici":
@@ -515,7 +545,7 @@ export const ZamanCizelgesiOgesi = memo(function ZamanCizelgesiOgesi(p: {
     case "is":
       return <IsSatiri oge={o} basinca={o.durum === "suruyor" ? p.onIsler : undefined} />;
     case "rapor":
-      return <RaporKartiEkrani kart={o} />;
+      return <RaporKartiEkrani kart={o} tuketim={isTuketimi(p.tuketimRaporu ?? null, o.is_id)} />;
     case "soru":
       return <SoruKartiEkrani kart={o} sohbet={p.sohbet} />;
     case "devir":
@@ -525,4 +555,15 @@ export const ZamanCizelgesiOgesi = memo(function ZamanCizelgesiOgesi(p: {
     case "gecmis_silindi":
       return <GecmisSilindiNotu />;
   }
-});
+}, ogePropEsit);
+
+/** `ZamanCizelgesiOgesi`/`OgeSatiri` için ortak `memo` karşılaştırması (rapor yalnız değerce, yalnız rapor kartında). */
+export function ogePropEsit(a: ZamanCizelgesiOgesiProps, b: ZamanCizelgesiOgesiProps): boolean {
+  return (
+    a.oge === b.oge &&
+    a.sohbet === b.sohbet &&
+    a.cihaz === b.cihaz &&
+    a.onIsler === b.onIsler &&
+    tuketimPropEsit(a, b)
+  );
+}

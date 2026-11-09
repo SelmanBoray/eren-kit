@@ -58,6 +58,7 @@ import type {
   SohbetId,
   SoruBoruGirdi,
   SoruBekleGirdi,
+  UsageReport,
   UserMessage,
   UygulamalarCikti,
 } from "@eren/protocol";
@@ -672,6 +673,20 @@ export interface MesajKullanimi {
   cache_read_input_tokens: number;
 }
 
+/**
+ * Tüketim. Bir `result`'ta bir modelin sayıları. `model_usage_since_last_result.<m>`'den: önceki
+ * `result`'tan bu yana FARK (`costUSD` dahil), birikimli `modelUsage`/`total_cost_usd` değil.
+ * `maliyet_usd` `null`: bilinmiyor.
+ */
+export interface ModelKullanimi {
+  model: string;
+  girdi: number;
+  cache_yazma: number;
+  cache_okuma: number;
+  cikti: number;
+  maliyet_usd: number | null;
+}
+
 export type AkisOlayi =
   | {
       tur: "init";
@@ -697,6 +712,13 @@ export type AkisOlayi =
       structured_output: unknown;
       /** `modelUsage.<m>.contextWindow`, model başına. */
       pencereler: Readonly<Record<string, number>>;
+      /**
+       * Tüketim. `model_usage_since_last_result`, model başına fark (alt agent dahil). Alan yoksa
+       * `null`, `{}` ise `[]` (toplu yayında ilkinden sonraki sonuçlar).
+       */
+      model_kullanimlari: readonly ModelKullanimi[] | null;
+      /** Tüketim. `usage` (`output_tokens` dahil; yalnız ana döngü). Yoksa `null`. */
+      ana_kullanim: Omit<ModelKullanimi, "model" | "maliyet_usd"> | null;
     }
   | { tur: "control_response"; request_id: string; basarili: boolean }
   | { tur: "diger"; type: string };
@@ -946,6 +968,44 @@ export interface SohbetKaydi {
   silinme_ms: number | null;
 }
 
+/** Tüketim. Satırın kaynağı: sohbet turu (`konusma.ts`) ya da iş (`isler.ts`). */
+export type TuketimKaynagi = "sohbet" | "is";
+/** `model_farki`: `ModelKullanimi` farkından; `ana_usage`: fark alanı yokken `usage` yedeği. */
+export type TuketimOlcumu = "model_farki" | "ana_usage";
+
+/**
+ * Tüketim. `tuketim` tablosunun satırı (ek göç 4), `id` hariç: sonuç başına model başına bir satır.
+ * Yalnız sayı ve kimlik, içerik yok: `gecmisiTemizle`/`sohbetiSil` dokunmaz.
+ */
+export interface TuketimKaydi {
+  /** Servisin satırı işlediği an. */
+  ts_ms: number;
+  kaynak: TuketimKaynagi;
+  sohbet_id: SohbetId;
+  /** Yalnız `kaynak: "is"`. */
+  is_id: IsNo | null;
+  /** Yalnız `kaynak: "sohbet"`; tursuz sonuçta (arka plan bildirimi) `null`. */
+  turn_id: string | null;
+  /** Yalnız `kaynak: "sohbet"`. */
+  nesil: number | null;
+  rol: "normal" | "devir_istek" | "devir_ilk" | null;
+  /** `"bilinmiyor"` olabilir. */
+  model: string;
+  girdi: number;
+  cache_yazma: number;
+  cache_okuma: number;
+  cikti: number;
+  /** `null`: bilinmiyor. */
+  maliyet_usd: number | null;
+  olcum: TuketimOlcumu;
+}
+
+/** Tüketim. `usage_report`'un servis tarafı: zarf ve istek alanları `gateway`'indir. */
+export type TuketimOzeti = Omit<
+  z.infer<typeof UsageReport>,
+  "v" | "type" | "istek_id" | "olcum_ms" | "gun_baslangic_ms"
+>;
+
 /**
  * Dilim 1. `user_version` (`depo.ts` `SURUM`) 1'de kalır ve yalnız geriye uyumsuz göçte artar.
  * Geriye uyumlu (yalnız ekleme) göçler `sema_ek` tablosunda `anahtar='ek_surum'` ile sayılır.
@@ -1129,6 +1189,14 @@ export interface Depo {
    * kayıtları transkript silinince `temizlik` siler). Hata atarsa işlem geri alınır.
    */
   sohbetiSil(sohbet: SohbetSecimi, ms: number): SohbetSilmeSonucu;
+
+  // Tüketim: `tuketim` tablosu (ek göç 4). Uygulama: depo.ts. Yazan: isler.ts, konusma.ts; okuyan:
+  // gateway.ts (`usage_request`).
+
+  /** Tek işlem; boş liste sessiz. `islem` içinden çağrılabilir (iş: `out_ofset` ile aynı işlemde). */
+  tuketimEkle(kayitlar: readonly TuketimKaydi[]): void;
+  /** Bugün, son 7 gün (bugün dahil), sohbet başına ve son `isAdet` iş toplamı. */
+  tuketimOzeti(g: { gunBaslangicMs: number; yediGunBaslangicMs: number; isAdet: number }): TuketimOzeti;
 }
 
 export interface DepoBagimliliklari {

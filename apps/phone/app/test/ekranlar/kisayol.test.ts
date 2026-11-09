@@ -121,6 +121,7 @@ class SahteCekirdek {
       sohbetler,
       secili: "ana" as SohbetId,
       calisanIsler: [],
+      tuketim: { durum: "yok" },
     };
   }
 

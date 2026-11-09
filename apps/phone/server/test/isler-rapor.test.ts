@@ -35,6 +35,8 @@ const resultOlayi = (
   metin: "",
   structured_output: undefined,
   pencereler: {},
+  model_kullanimlari: null,
+  ana_kullanim: null,
   ...kismi,
 });
 

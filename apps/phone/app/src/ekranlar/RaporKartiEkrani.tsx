@@ -1,9 +1,11 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
 import { View } from "react-native";
+import type { TuketimToplami } from "@eren/protocol";
 import type { RaporKarti } from "../cekirdek/index.ts";
 import { BolumAdi, Dugme, Duz, DurumEtiketi, KartKabi, Serit } from "./Bilesenler.tsx";
 import { bosluk } from "./tema.ts";
+import { maliyetMetni, tokenKisalt, toplamToken } from "./tuketimMetni.ts";
 import type { RenkAdi } from "./tema.ts";
 
 const DURUM: Record<RaporKarti["durum"], { metin: string; renk: RenkAdi }> = {
@@ -48,9 +50,18 @@ function Liste(p: { baslik: string; maddeler: readonly string[]; kod?: boolean }
   );
 }
 
-export function RaporKartiEkrani(p: { kart: RaporKarti }): ReactNode {
+/** "Tüketim: ≈ $0,11 · 1,2 Mn token" (maliyet yoksa yalnız token); tüketim yoksa `null`. */
+function tuketimSatiri(t: TuketimToplami | null | undefined): string | null {
+  if (t === undefined || t === null) return null;
+  const maliyet = maliyetMetni(t.maliyet_usd);
+  const token = `${tokenKisalt(toplamToken(t))} token`;
+  return `Tüketim: ${maliyet !== null ? `${maliyet} · ` : ""}${token}`;
+}
+
+export function RaporKartiEkrani(p: { kart: RaporKarti; tuketim?: TuketimToplami | null }): ReactNode {
   const { kart } = p;
   const d = DURUM[kart.durum];
+  const tuketimMetni = tuketimSatiri(p.tuketim);
   return (
     <KartKabi>
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: bosluk[2] }}>
@@ -76,6 +87,7 @@ export function RaporKartiEkrani(p: { kart: RaporKarti }): ReactNode {
           <Liste baslik="Açık noktalar" maddeler={kart.rapor.acik_noktalar} />
         </View>
       )}
+      {tuketimMetni !== null && <Duz metin={tuketimMetni} boyut="kucuk" renk="metinIkincil" />}
     </KartKabi>
   );
 }

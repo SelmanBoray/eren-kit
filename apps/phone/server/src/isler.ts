@@ -43,8 +43,10 @@ import type {
   Sonuc,
   SurecKaydi,
   SurecKimligi,
+  TuketimKaydi,
   UzlastirmaOzeti,
 } from "./sozlesme.ts";
+import { tuketimKayitlari } from "./tuketim.ts";
 
 type SistemNotu = Extract<OlayGirdisi, { type: "system_notice" }>;
 
@@ -84,7 +86,16 @@ const pidAnahtari = (k: SurecKimligi): string => `${k.pid}:${k.olusturmaMs}`;
 const baslatmaPenceresinde = (baslatmaMs: number, olusturmaMs: number): boolean =>
   olusturmaMs >= baslatmaMs - KIMLIK_PAYI_MS && olusturmaMs <= baslatmaMs + BASLATMA_PAYI_MS;
 
-type KimlikAramasi = "bulundu" | "yok" | "belirsiz";
+/** `partiIsle`: tüketim yazımı attı; işlem geri alınıp tüketimsiz yeniden yazılır. */
+class TuketimYazilamadi extends Error {
+  readonly neden: unknown;
+  constructor(neden: unknown) {
+    super("tuketim_yazilamadi");
+    this.neden = neden;
+  }
+}
+
+type KimlikAramasi ="bulundu" | "yok" | "belirsiz";
 
 const mbTamSayi = (d: number): number => (Number.isFinite(d) ? Math.max(0, Math.floor(d)) : 0);
 
@@ -120,6 +131,13 @@ interface AktifIs {
   baslama: Promise<void>;
   durdurmaSozu: Promise<void> | null;
   initDenetlendi: boolean;
+  /**
+   * Tüketim: bu servis ömründe görülen init modeli; kalıcı değil. Yeniden başlayınca init ofsetin
+   * gerisinde kalır, `null` olur (`ana_usage` satırı "bilinmiyor" der; `model_farki` modeli kendi taşır).
+   */
+  initModeli: string | null;
+  /** Tüketim: bu işe verilen en büyük `ts_ms` (bellekte); sonraki sonuç bundan büyük olur. */
+  sonTuketimMs: number;
   telefonKoprusuz: boolean;
   zorunlu: IsBitisDurumu | null;
   okumaHatasi: number;
@@ -213,6 +231,8 @@ export const islerKur: IslerFabrikasi = ({
     baslama: Promise.resolve(),
     durdurmaSozu: null,
     initDenetlendi: false,
+    initModeli: null,
+    sonTuketimMs: 0,
     telefonKoprusuz: false,
     // Başlatma anı da yoksa süreç hiç başlatılmamıştır: `[karar]` yarım, kilit durumundan bağımsız.
     zorunlu: k.pid === null && k.olusturma_ms === null ? "yarim" : null,
@@ -561,31 +581,71 @@ export const islerKur: IslerFabrikasi = ({
     const yeniResultlar: IsSonResult[] = [];
     let init: Extract<AkisOlayi, { tur: "init" }> | null = null;
     let limit: Extract<AkisOlayi, { tur: "rate_limit" }> | null = null;
+    const tuketim: TuketimKaydi[] = [];
+    const islemeMs = saat.simdiMs();
     for (const satir of satirlar) {
       const o = akis.satirCoz(satir);
       if (o === null) continue;
-      if (o.tur === "init") init ??= o;
+      if (o.tur === "init") {
+        init ??= o;
+        if (o.model !== null) a.initModeli = o.model;
+      }
       // Gelen result öncekini ezer, ama geçerli rapor raporsuz sonrakine yenilmez (`sonResultSec`).
-      else if (o.tur === "result") yeniResultlar.push(sonResultOzeti(o));
-      else if (o.tur === "rate_limit") limit = o;
+      else if (o.tur === "result") {
+        yeniResultlar.push(sonResultOzeti(o));
+        // Depo bir sonucu ts_ms ve kimliklerle tanır: her sonuç (partiler arasında da) ayrı sayılsın diye
+        // işin ts_ms'i kesin artar, en az şimdiki an.
+        const ts_ms = Math.max(islemeMs, a.sonTuketimMs + 1);
+        a.sonTuketimMs = ts_ms;
+        tuketim.push(
+          ...tuketimKayitlari(o, {
+            ts_ms,
+            kaynak: "is",
+            sohbet_id: a.sohbet_id,
+            is_id: a.is_id,
+            turn_id: null,
+            nesil: null,
+            rol: null,
+            model: a.initModeli,
+          }),
+        );
+      } else if (o.tur === "rate_limit") limit = o;
     }
     const eksikKopruler = init !== null && !a.initDenetlendi ? kopruleriDenetle(a, init.mcp_servers) : [];
     const ofset = a.ofset + tuketilen;
-    depo.islem(() => {
-      const mevcut = depo.isGetir(a.is_id);
-      const calisiyor = init !== null && mevcut?.durum === "baslatiliyor";
-      let sonResult: IsSonResult | null = null;
-      if (yeniResultlar.length > 0) {
-        sonResult = mevcut?.son_result ?? null;
-        for (const y of yeniResultlar) sonResult = sonResultSec(sonResult, y);
-      }
-      depo.isGuncelle(a.is_id, {
-        out_ofset: ofset,
-        ...(sonResult === null ? {} : { son_result: sonResult }),
-        ...(calisiyor ? { durum: "calisiyor" as const } : {}),
+    const yaz = (tuketimle: boolean): void =>
+      depo.islem(() => {
+        const mevcut = depo.isGetir(a.is_id);
+        const calisiyor = init !== null && mevcut?.durum === "baslatiliyor";
+        let sonResult: IsSonResult | null = null;
+        if (yeniResultlar.length > 0) {
+          sonResult = mevcut?.son_result ?? null;
+          for (const y of yeniResultlar) sonResult = sonResultSec(sonResult, y);
+        }
+        depo.isGuncelle(a.is_id, {
+          out_ofset: ofset,
+          ...(sonResult === null ? {} : { son_result: sonResult }),
+          ...(calisiyor ? { durum: "calisiyor" as const } : {}),
+        });
+        // Ofsetle aynı işlemde: ya ikisi birden yazılır ya hiçbiri; tam bir kez.
+        if (tuketimle) {
+          try {
+            depo.tuketimEkle(tuketim);
+          } catch (e) {
+            throw new TuketimYazilamadi(e);
+          }
+        }
+        for (const ad of eksikKopruler) notEkle(a.sohbet_id, "uyari", "diger", `İş ${a.is_id}: ${ad} bağlı değil.`);
       });
-      for (const ad of eksikKopruler) notEkle(a.sohbet_id, "uyari", "diger", `İş ${a.is_id}: ${ad} bağlı değil.`);
-    });
+    try {
+      yaz(true);
+    } catch (e) {
+      if (!(e instanceof TuketimYazilamadi)) throw e;
+      // Yan kayıt asıl işi bozmasın: iç içe `islem` kayıt noktası açmaz, yarım satır kalabilir; bu yüzden
+      // bütün işlem geri alınır ve tüketimsiz yeniden yazılır. Ofset ilerler, o parti yeniden sayılmaz.
+      gunluk.uyari("isler", "tuketim_yazilamadi", { is_id: a.is_id, hata_turu: hataTuru(e.neden) });
+      yaz(false);
+    }
     a.ofset = ofset;
     if (eksikKopruler.length > 0) {
       gunluk.uyari("isler", "kopru_bagli_degil", { is_id: a.is_id, adet: eksikKopruler.length });

@@ -229,7 +229,7 @@ export const ChatRename = sohbetMesaj("chat_rename", {
 export const ChatDelete = sohbetMesaj("chat_delete", { client_msg_id: OpakId, sohbet_id: SohbetId });
 
 /**
- * Tüketim isteği (v4'e eklenen tür). Telefon yollar; `client_msg_id` yok, `ack` almaz, outbox'a girmez.
+ * Tüketim isteği: telefon token tüketimini ister. `client_msg_id` taşımaz, `ack` almaz, outbox'a girmez.
  * Yanıt `usage_report`, `istek_id` ile eşleşir.
  */
 export const UsageRequest = sohbetMesaj("usage_request", { istek_id: OpakId });
@@ -538,7 +538,7 @@ export const TuketimIkilisi = z.strictObject({
 export type TuketimIkilisi = z.infer<typeof TuketimIkilisi>;
 
 /**
- * Tüketim raporu (v4'e eklenen tür). `sohbetler`: silinmemiş, satırı olan sohbetlerin tüm zaman toplamı
+ * Tüketim raporu: `usage_request`'in yanıtı (`istek_id` ile eşleşir). `sohbetler`: silinmemiş, satırı olan sohbetlerin tüm zaman toplamı
  * (işleri ayrık dahil); kimlikler tekil. `isler`: en çok `TUKETIM_IS_ADET` öğe, `is_id` kesin azalan
  * (tekilliği de içerir).
  */

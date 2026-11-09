@@ -903,7 +903,8 @@ describe("birleşim: ana akış", () => {
     assert.ok(isSurec.istek.argv[isSurec.istek.argv.indexOf("-p") + 1]!.includes(K.plan), "görev metni argümanda yok");
     assert.equal(isSurec.istek.outYol, ayar.isYollari(is_id).out);
     assert.equal(isSurec.istek.ortam["CLAUDE_CODE_ORNEK"], undefined, "PC ortamında CLAUDE* kaldı");
-    assert.equal(isSurec.istek.ortam["CLAUDE_CODE_DISABLE_FILE_MENTIONS"], undefined, "PC ortamına kapatma anahtarı girdi");
+    assert.equal(isSurec.istek.ortam["CLAUDE_CODE_DISABLE_FILE_MENTIONS"], "1", "PC ortamında üç kapatma anahtarından biri yok");
+    assert.equal(isSurec.istek.ortam["CLAUDE_CODE_DISABLE_ATTACHMENTS"], undefined, "PC ortamına ATTACHMENTS girdi");
     assert.equal(eren.istek.ortam["CLAUDE_CODE_ORNEK"], undefined, "ana oturum ortamında CLAUDE* kaldı");
     assert.equal(eren.istek.ortam["CLAUDE_CODE_DISABLE_FILE_MENTIONS"], "1");
 
