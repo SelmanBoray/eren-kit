@@ -66,6 +66,9 @@ object HassasUygulamalar {
         "com.x8bit.bitwarden",
         "com.agilebits.onepassword",
         "com.lastpass.lpandroid",
+        "proton.android.pass",
+        "com.callpod.android_apps.keeper",
+        "io.enpass.app",
         // Hesap güvenliği: uzaktan silme yetkisi, sunucu kimlik bilgileri
         "com.google.android.apps.adm",
         "com.server.auditor.ssh.client",
@@ -82,7 +85,7 @@ object HassasUygulamalar {
         "kucoin", "bitget", "kraken", "bitpanda", "gateio", "icrypex", "exodusmovement",
         "borsa", "yatirim", "menkul", "etoro", "trading212", "webull", "robinhood",
         "authenticator", "authy", "freeotp", "duosecurity", "com.okta.",
-        "bitwarden", "onepassword", "lastpass", "samsungpass", "keepass", "dashlane",
+        "bitwarden", "onepassword", "lastpass", "samsungpass", "keepass", "dashlane", "enpass", "nordpass", "proton.android.pass", "callpod", "keepersecurity",
         "termius",
         "edevlet",
     )
@@ -95,7 +98,7 @@ object HassasUygulamalar {
         "kripto", "crypto.com", "bitcoin", "binance", "btcturk", "paribu", "coinbase", "gate.io",
         "borsa", "yatirim", "menkul", "araci kurum", "trading 212", "interactive brokers", "ledger live",
         "authenticator", "authy", "2fa", "duo mobile", "okta verify", "freeotp",
-        "password manager", "parola yonetic", "sifre yonetic", "samsung pass",
+        "password manager", "parola yonetic", "sifre yonetic", "samsung pass", "proton pass", "enpass", "nordpass",
         "e-devlet", "edevlet",
     )
 
@@ -107,7 +110,7 @@ object HassasUygulamalar {
         "param", "payfix", "juzdan",
         "crypto", "kucoin", "bitget", "bitpanda", "icrypex",
         "etoro", "webull", "ibkr", "robinhood",
-        "bitwarden", "1password", "lastpass", "keepass", "keepassdx", "dashlane",
+        "bitwarden", "1password", "lastpass", "keepass", "keepassdx", "dashlane", "enpass", "nordpass",
         "termius",
     )
 

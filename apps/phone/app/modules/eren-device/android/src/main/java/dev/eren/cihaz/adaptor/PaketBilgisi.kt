@@ -1,6 +1,7 @@
 package dev.eren.cihaz.adaptor
 
 import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -11,7 +12,6 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.os.Process
 import android.provider.Settings
-import android.view.inputmethod.InputMethodManager
 import dev.eren.cihaz.cekirdek.KuruluUygulama
 import dev.eren.cihaz.cekirdek.KullaniciKarari
 import dev.eren.cihaz.cekirdek.ListeGirdisi
@@ -136,8 +136,8 @@ class PaketBilgisi(context: Context) : PaketKapisi {
     /**
      * Intent çözümüyle değişmezler.
      * - Ayarlar, paket kurucu, izin denetleyicisi: yalnız sistem uygulaması olan çözümler.
-     * - Ana ekran (ACTION_MAIN + CATEGORY_HOME) çözen her paket ve etkin giriş yöntemlerinin
-     *   (klavye) paketleri: sistem şartı YOK. Değişmez yapmak yalnız kısıtlar, kötüye kullanılamaz;
+     * - Ana ekran (ACTION_MAIN + CATEGORY_HOME) çözen her paket ve varsayılan klavyenin
+     *   paketi: sistem şartı YOK. Değişmez yapmak yalnız kısıtlar, kötüye kullanılamaz;
      *   kullanıcının kurduğu bir başlatıcı ya da klavye de değişmez olur (kabul edildi).
      */
     private fun degismezleriCoz(): Set<String> {
@@ -171,11 +171,12 @@ class PaketBilgisi(context: Context) : PaketKapisi {
             }
         } catch (_: Exception) {
         }
-        // Klavye: etkin giriş yöntemleri.
+        // Klavye: yalnız varsayılan giriş yöntemi ("paket/sınıf"). Okunamazsa ya da boşsa eklenmez.
         try {
-            ctx.getSystemService(InputMethodManager::class.java)?.enabledInputMethodList?.forEach {
-                sonuc.add(it.packageName)
-            }
+            Settings.Secure.getString(ctx.contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)
+                ?.let { ComponentName.unflattenFromString(it)?.packageName }
+                ?.takeIf { it.isNotEmpty() }
+                ?.let { sonuc.add(it) }
         } catch (_: Exception) {
         }
         return sonuc

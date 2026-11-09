@@ -115,6 +115,30 @@ class HassasUygulamalarTest {
         for ((p, ad) in genisSiradanlar) assertFalse(HassasUygulamalar.otomatikHassasMi(p, ad), "$p / $ad")
     }
 
+    private val parolaYoneticileri = listOf(
+        "proton.android.pass" to "Proton Pass",
+        "com.callpod.android_apps.keeper" to "Keeper",
+        "io.enpass.app" to "Enpass",
+        "com.ornek.f" to "NordPass",
+    )
+
+    private val parolaYoneticisiBenzerleri = listOf(
+        "com.ornek.g" to "Zookeeper",
+        "com.ornek.h" to "Bookkeeper Pro",
+        "com.ornek.i" to "Boarding Pass",
+        "com.ornek.j" to "Passport Photo",
+    )
+
+    @Test
+    fun parolaYoneticileriHassasYakalanir() {
+        for ((p, ad) in parolaYoneticileri) assertTrue(HassasUygulamalar.otomatikHassasMi(p, ad), "$p / $ad")
+    }
+
+    @Test
+    fun parolaYoneticisineBenzeyenSiradanUygulamalarHassasDegil() {
+        for ((p, ad) in parolaYoneticisiBenzerleri) assertFalse(HassasUygulamalar.otomatikHassasMi(p, ad), "$p / $ad")
+    }
+
     @Test
     fun bilinenKumeBosDegilVeHepsiHassas() {
         assertTrue(HassasUygulamalar.BILINEN.isNotEmpty())
