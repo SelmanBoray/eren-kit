@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/SelmanBoray/eren-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/SelmanBoray/eren-kit/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](pyproject.toml)
 [![Platform: Windows 10 | 11](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D6.svg)](#sınırlamalar)
 
 **Windows'ta terminal tabanlı yapay zekâ ajanları için bilgisayar kullanımı.** Claude Code'un ya da
@@ -113,7 +113,7 @@ Bu bölümün geri kalanı, yerel kopya olmadan sunucuyu doğrudan GitHub'dan uv
 ### Gereksinimler
 
 - Windows 10 veya 11
-- [uv](https://docs.astral.sh/uv/). Python 3.10+ yüklü değilse uv sizin için indirebilir.
+- [uv](https://docs.astral.sh/uv/). Python 3.11+ yüklü değilse uv sizin için indirebilir.
 - Git; uv bu depoyu GitHub'dan çekmek için kullanır
 - Bir MCP istemcisi. Birincil hedef Claude Code'dur; stdio MCP sunucusu çalıştıran her istemci
   (Codex CLI, Gemini CLI, Cursor, …) çalışabilir. `screenshot` ve `zoom`, görüntü kabul eden bir

@@ -7,13 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Minimum supported Python is now 3.11 (Pillow 13 requires Python 3.11+).
+
 ## [0.1.0] - Unreleased
 
 ### Added
 
 - Initial release: an MCP server (stdio transport) that gives terminal coding agents
   (Claude Code, Codex CLI, Gemini CLI, and others) computer use on Windows 10/11.
-  Requires Python 3.10+.
+  Requires Python 3.11+.
 - Twelve tools, grouped by purpose:
   - Seeing: `screenshot`, `zoom`, `elements`, `windows`.
   - Acting with the mouse: `click` (left/right/middle, multi-click, modifier keys), `scroll`,

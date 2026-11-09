@@ -4,7 +4,7 @@ Thanks for helping. This is a small MCP server that gives terminal coding agents
 
 By contributing you agree that your work is released under the project's [MIT license](LICENSE).
 
-## Dev setup (Windows 10/11, Python 3.10+)
+## Dev setup (Windows 10/11, Python 3.11+)
 
 ```powershell
 git clone https://github.com/SelmanBoray/eren-kit.git
@@ -26,7 +26,7 @@ Run everything through the venv's Python, for example `.venv\Scripts\python -m p
 
 - `pytest` runs the unit tests only. They never move your mouse, send keystrokes or open windows. Read-only screen capture and read-only UI Automation queries are allowed.
 - `pytest -m integration` opens a small WinForms test window ("CUW Test Form") and takes over the mouse and keyboard for a few seconds. **Do not touch the PC while it runs.** Integration tests may send input to that window only.
-- Ruff settings (line length 100, Python 3.10 target) live in `pyproject.toml`.
+- Ruff settings (line length 100, Python 3.11 target) live in `pyproject.toml`.
 
 New behavior needs a unit test. Put anything that needs real input into an `integration` test.
 

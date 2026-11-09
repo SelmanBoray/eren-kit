@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/SelmanBoray/eren-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/SelmanBoray/eren-kit/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](pyproject.toml)
 [![Platform: Windows 10 | 11](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D6.svg)](#limitations)
 
 **Computer use for terminal AI agents on Windows.** This is an MCP server that lets Claude Code, or any
@@ -111,7 +111,7 @@ The rest of this section installs the server straight from GitHub with uv, with 
 ### Requirements
 
 - Windows 10 or 11
-- [uv](https://docs.astral.sh/uv/). If you don't have Python 3.10+, uv can download it for you.
+- [uv](https://docs.astral.sh/uv/). If you don't have Python 3.11+, uv can download it for you.
 - Git, which uv uses to fetch this repository from GitHub
 - An MCP client. Claude Code is the primary target; any client that runs stdio MCP servers
   (Codex CLI, Gemini CLI, Cursor, …) can work. `screenshot` and `zoom` need a model that accepts
