@@ -11,6 +11,7 @@ import queue
 import re
 import secrets
 import socket
+import socketserver
 import sqlite3
 import sys
 import tempfile
@@ -1011,7 +1012,13 @@ class _Sunucu(ThreadingHTTPServer):
         if sys.platform == "win32":
             # Aynı porta ikinci sürecin bağlanmasını engelle (port gaspı / çift servis).
             self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
-        super().server_bind()
+        # HTTPServer.server_bind, server_name için socket.getfqdn(host) çağırır: ters DNS sorgusu.
+        # macOS'ta (ör. GitHub runner) bu 127.0.0.1 için dakikalarca takılabilir ve servis açılmaz.
+        # Servis yalnız yerel adrese bağlanır; ad olarak adresin kendisi yeterlidir.
+        socketserver.TCPServer.server_bind(self)
+        host, port = self.server_address[:2]
+        self.server_name = host
+        self.server_port = port
 
 
 class Sunucu:
