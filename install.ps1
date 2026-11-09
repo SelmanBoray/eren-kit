@@ -1,0 +1,477 @@
+﻿<#
+.SYNOPSIS
+    eren-kit kurulum betiği: Claude Code araç takımını tek komutla kurar ya da kaldırır.
+.DESCRIPTION
+    Ayrıntılı kullanım için: .\install.ps1 -Help
+#>
+[CmdletBinding()]
+param(
+    [Parameter(Position = 0)]
+    [string[]]$Components = @('beyin', 'devir', 'orkestra', 'computer-use'),
+    [string]$AssistantName,
+    [string]$ClaudeHome = (Join-Path $HOME '.claude'),
+    [switch]$DryRun,
+    [switch]$Uninstall,
+    [switch]$SkipMcp,
+    [switch]$NoService,
+    [switch]$ReplaceExisting,
+    [switch]$Help,
+    # Test anahtarları (yardımda gösterilmez):
+    # -SkipEnv: kullanıcı ortam değişkenine yazmaz.
+    # -SkipRepoSetup: repo içinde ya da sistemde değişiklik yapan adımları (venv/pip, bellek.toml,
+    #   npm ci, beyin servis görevi) atlar.
+    [Parameter(DontShow)][switch]$SkipEnv,
+    [Parameter(DontShow)][switch]$SkipRepoSetup
+)
+
+Set-StrictMode -Version 2.0
+$ErrorActionPreference = 'Stop'
+
+$AllComponents = @('beyin', 'devir', 'orkestra', 'computer-use', 'phone')
+
+function Show-Usage {
+    $text = @'
+eren-kit kurulum betiği
+
+Kullanım:
+  .\install.ps1 [-Components <liste>] [-AssistantName <ad>] [-ClaudeHome <klasör>]
+                [-DryRun] [-Uninstall] [-SkipMcp] [-NoService] [-ReplaceExisting] [-Help]
+
+Bileşenler (varsayılan: beyin, devir, orkestra, computer-use):
+  beyin          Yerel ikinci beyin (bellek), "beyin" MCP sunucusu ve arka plan servisi
+  devir          Oturum devri hook'ları ve devir skill'i (beyin ile aynı venv)
+  orkestra       Opus Orkestra skill'i ve SessionStart hook'ları
+  computer-use   Windows computer use MCP sunucusu
+  phone          Telefon uygulaması (deneysel; yalnız açıkça istenirse kurulur)
+
+Parametreler:
+  -Components     Bileşen listesi, virgülle:  -Components beyin,devir
+  -AssistantName  Asistan adı; EREN_KIT_ASSISTANT_NAME kullanıcı ortam değişkenine yazılır
+                  (verilmezse var olan değer korunur, yoksa "Claude")
+  -ClaudeHome     Claude Code ayar klasörü (varsayılan: %USERPROFILE%\.claude)
+  -DryRun         Hiçbir şeyi değiştirmez, yapılacakları listeler
+  -Uninstall      Seçili bileşenlerin MCP kaydını, hook'larını, kopyalanan skill'lerini ve
+                  beyin servis görevini kaldırır; venv'leri ve kullanıcı verisini silmez
+  -SkipMcp        "claude mcp add/remove" adımlarını atlar
+  -NoService      beyin servisinin zamanlanmış görevini kurmaz/kaldırmaz (servisi elle yönetirsin)
+  -ReplaceExisting  Aynı hook betiklerinin repo dışındaki eski kopyalarının (ör. başka klasördeki
+                  bellek\devir\hook.py, ~\.claude\hooks\opus-orkestra-sessionstart.py) settings.json
+                  kayıtlarını kaldırır (yedekli). Verilmezse bunlar kalır ve hook'lar iki kez çalışır.
+  -Help           Bu yardımı gösterir
+
+Örnekler:
+  .\install.ps1
+  .\install.ps1 -DryRun
+  .\install.ps1 -Components beyin,devir -AssistantName Ada
+  .\install.ps1 -Components phone
+  .\install.ps1 -Uninstall -Components orkestra
+
+Gerekenler: Python 3.11+ (bellek için 3.12+), Claude Code CLI ("claude"), phone için Node 24+.
+Yürütme ilkesi engellerse:  powershell -ExecutionPolicy Bypass -File .\install.ps1
+Yedekler <ClaudeHome>\backups\eren-kit\<zaman> altına alınır. MCP kayıtları "claude" CLI'nin
+kendi kullanıcı yapılandırmasına yazılır (-ClaudeHome'dan bağımsızdır).
+
+Beyin servisi: beyin MCP'si yazmaları yerel servise (python -m bellek.beyin servis) bırakır;
+servis kapalıyken yazmalar kuyrukta bekler. Kurulum, kullanıcı düzeyinde (yönetici gerekmez)
+"eren-kit-beyin-servis" adlı bir Görev Zamanlayıcı görevi kaydeder: her oturum açılışında
+pythonw ile sessizce başlar, kurulumdan hemen sonra da başlatılır. Tekrar kurulumda görev
+güncellenip yeniden başlatılır; "-Uninstall -Components beyin" görevi durdurup kaldırır;
+-NoService bu adımı atlar.
+'@
+    Write-Host $text
+}
+
+if ($Help) {
+    Show-Usage
+    exit 0
+}
+
+try { [Console]::OutputEncoding = New-Object Text.UTF8Encoding($false) } catch { $null = $_ }
+
+# ---------------------------------------------------------------- argümanlar
+
+$selected = @()
+foreach ($c in $Components) {
+    foreach ($part in ("$c" -split ',')) {
+        $k = $part.Trim().ToLowerInvariant()
+        if (-not $k) { continue }
+        if ($AllComponents -notcontains $k) {
+            Write-Host ("Bilinmeyen bileşen: '{0}'. Geçerli olanlar: {1}" -f $k, ($AllComponents -join ', ')) -ForegroundColor Red
+            Write-Host 'Yardım için: .\install.ps1 -Help'
+            exit 2
+        }
+        if ($selected -notcontains $k) { $selected += $k }
+    }
+}
+if ($selected.Count -eq 0) {
+    Write-Host 'Hiç bileşen seçilmedi. Yardım için: .\install.ps1 -Help' -ForegroundColor Red
+    exit 2
+}
+$selected = @($AllComponents | Where-Object { $selected -contains $_ })   # kurulum sırası sabit
+
+if ($PSBoundParameters.ContainsKey('AssistantName')) {
+    $AssistantName = "$AssistantName".Trim()
+    if (-not $AssistantName) {
+        Write-Host '-AssistantName boş olamaz.' -ForegroundColor Red
+        exit 2
+    }
+}
+if (-not $ClaudeHome) {
+    Write-Host '-ClaudeHome boş olamaz.' -ForegroundColor Red
+    exit 2
+}
+$ClaudeHome = [IO.Path]::GetFullPath($ClaudeHome)
+
+# ---------------------------------------------------------------- hazırlık
+
+$RepoRoot = $PSScriptRoot
+Import-Module (Join-Path $RepoRoot 'scripts\installer\ErenKit.Installer.psm1') -Force -DisableNameChecking
+
+$stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+Set-InstallerOption -DryRun ([bool]$DryRun) -BackupDir (Join-Path $ClaudeHome ('backups\eren-kit\' + $stamp))
+
+$P = @{
+    Bellek         = Join-Path $RepoRoot 'packages\bellek'
+    ComputerUse    = Join-Path $RepoRoot 'packages\computer-use-windows'
+    Orkestra       = Join-Path $RepoRoot 'packages\opus-orkestra'
+    Phone          = Join-Path $RepoRoot 'apps\phone'
+    SettingsHelper = Join-Path $RepoRoot 'scripts\installer\settings_hooks.py'
+}
+$P.BellekPy = Join-Path $P.Bellek '.venv\Scripts\python.exe'
+$P.CuwExe = Join-Path $P.ComputerUse '.venv\Scripts\computer-use-windows.exe'
+$P.DevirHook = Join-Path $P.Bellek 'src\bellek\devir\hook.py'
+$P.DevirSkill = Join-Path $P.Bellek 'skills\devir'
+$P.OrkHook = Join-Path $P.Orkestra 'hooks\opus-orkestra-sessionstart.py'
+$P.OrkSkill = Join-Path $P.Orkestra 'skill'
+
+$mode = 'Kurulum'
+if ($Uninstall) { $mode = 'Kaldırma' }
+if ($DryRun) { $mode += ' (DryRun: hiçbir şey değiştirilmeyecek)' }
+
+Write-Host ''
+Write-Host 'eren-kit' -ForegroundColor Cyan -NoNewline
+Write-Host (' - {0}' -f $mode)
+Write-StepLine info ('Repo:        {0}' -f $RepoRoot)
+Write-StepLine info ('Claude Home: {0}' -f $ClaudeHome)
+Write-StepLine info ('Bileşenler:  {0}' -f ($selected -join ', '))
+
+# ---------------------------------------------------------------- önkoşullar
+
+Write-Title 'Önkoşullar'
+$needPython = @($selected | Where-Object { $_ -ne 'phone' }).Count -gt 0
+$pythonBest = Find-Python ([version]'3.11')
+if ($needPython) {
+    if ($pythonBest) {
+        Write-StepLine ok ('Python {0} ({1})' -f $pythonBest.Version, $pythonBest.Display)
+    } else {
+        $found = @(Get-PythonCandidate)
+        if ($found.Count -gt 0) {
+            Write-StepLine fail ('Python çok eski: {0}' -f (($found | ForEach-Object { '{0} ({1})' -f $_.Version, $_.Display }) -join ', '))
+        } else {
+            Write-StepLine fail 'Python bulunamadı (py ya da python).'
+        }
+        Write-StepLine info (Get-PythonInstallHint ([version]'3.11'))
+    }
+}
+
+$claudeExe = Find-Application 'claude'
+Set-McpContext -ClaudeExe $claudeExe -HelperPath (Join-Path $RepoRoot 'scripts\installer\mcp_config.py')
+$needMcp = (@($selected | Where-Object { $_ -eq 'beyin' -or $_ -eq 'computer-use' }).Count -gt 0) -and -not $SkipMcp
+if ($SkipMcp) {
+    Write-StepLine skip 'claude CLI denetlenmedi (-SkipMcp)'
+} elseif ($claudeExe) {
+    Write-StepLine ok ('claude CLI ({0})' -f $claudeExe)
+} elseif ($needMcp) {
+    Write-StepLine warn 'claude CLI bulunamadı: MCP kayıt adımları atlanacak.'
+    Write-StepLine info "Kur: irm https://claude.ai/install.ps1 | iex   (ayrıntı: https://docs.claude.com/en/docs/claude-code/setup)"
+}
+
+$nodeOk = $false
+$npmExe = $null
+if ($selected -contains 'phone' -and -not $Uninstall) {
+    $nodeExe = Find-Application 'node'
+    $npmExe = Find-Application 'npm'
+    $nodeVer = $null
+    if ($nodeExe) {
+        $r = Invoke-Native $nodeExe @('--version')
+        $m = [regex]::Match(($r.Output -join ' '), 'v(\d+)\.(\d+)\.(\d+)')
+        if ($m.Success) { $nodeVer = [version]('{0}.{1}.{2}' -f $m.Groups[1].Value, $m.Groups[2].Value, $m.Groups[3].Value) }
+    }
+    if ($nodeVer -and $nodeVer.Major -ge 24 -and $npmExe) {
+        $nodeOk = $true
+        Write-StepLine ok ('Node {0}, npm ({1})' -f $nodeVer, $npmExe)
+    } else {
+        if (-not $nodeVer) { Write-StepLine fail 'Node bulunamadı.' }
+        elseif ($nodeVer.Major -lt 24) { Write-StepLine fail ('Node {0} çok eski, 24+ gerekli.' -f $nodeVer) }
+        else { Write-StepLine fail 'npm bulunamadı.' }
+        Write-StepLine info 'Kur: winget install OpenJS.NodeJS.LTS  (ya da https://nodejs.org ; Node 24+), sonra yeni bir terminal aç.'
+    }
+}
+
+# Hook'lar PATH'teki "python" komutuyla çalışır.
+function Test-HookPython {
+    $exe = Find-Application 'python'
+    if ($exe) {
+        $r = Invoke-Native $exe @('-c', 'import sys; print(sys.version_info[0])')
+        if ($r.ExitCode -eq 0 -and ($r.Output -join '') -match '3') {
+            return New-StepResult ok ('hook''lar için "python" PATH''te ({0})' -f $exe)
+        }
+    }
+    return New-StepResult warn 'hook''lar "python" komutunu çağırır ama PATH''te çalışan bir python yok; Python kurulumunda "Add python.exe to PATH" seçeneğini aç.'
+}
+
+function Get-McpSkipReason {
+    if ($SkipMcp) { return 'skip' }
+    if (-not $claudeExe) { return 'nocli' }
+    return $null
+}
+
+function Invoke-McpRegister {
+    param([string]$Name, [string[]]$ServerCommand)
+    $why = Get-McpSkipReason
+    $manual = 'claude mcp add {0} -s user -- {1}' -f $Name, (($ServerCommand | ForEach-Object {
+                if ($_ -match '\s|\\') { '"' + $_ + '"' } else { $_ } }) -join ' ')
+    if ($why -eq 'skip') { return New-StepResult skip 'MCP kaydı atlandı (-SkipMcp)' }
+    if ($why -eq 'nocli') { return New-StepResult warn ('claude CLI yok, MCP kaydı atlandı. Sonra elle: {0}' -f $manual) }
+    return Register-McpServer -Name $Name -ServerCommand $ServerCommand -RepoRoot $RepoRoot
+}
+
+function Invoke-McpUnregister {
+    param([string]$Name)
+    $why = Get-McpSkipReason
+    if ($why -eq 'skip') { return New-StepResult skip 'MCP kaldırma atlandı (-SkipMcp)' }
+    if ($why -eq 'nocli') { return New-StepResult warn ('claude CLI yok; MCP kaydı kaldırılamadı. Sonra elle: claude mcp remove {0} -s user' -f $Name) }
+    return Unregister-McpServer -Name $Name -RepoRoot $RepoRoot
+}
+
+function Invoke-Venv {
+    param([string]$Dir, [string]$Label)
+    if ($SkipRepoSetup) { return New-StepResult skip ('venv/pip atlandı (-SkipRepoSetup): {0}' -f $Label) }
+    return Install-PackageVenv -PackageDir $Dir -Label $Label
+}
+
+function Test-SourceFile {
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { throw ('repoda beklenen dosya yok: {0}' -f $Path) }
+}
+
+function Invoke-Hooks {
+    param([string]$Key, [string]$Script)
+    # Kaldırma repo dosyasına ihtiyaç duymaz (kayıtlar yol kalıbından tanınır).
+    if (-not $Uninstall) { Test-SourceFile $Script }
+    return Invoke-SettingsHook -Component $Key -RepoRoot $RepoRoot -ClaudeHome $ClaudeHome -HelperPath $P.SettingsHelper -Uninstall:$Uninstall -ReplaceExisting:$ReplaceExisting
+}
+
+# Beyin arka plan servisi: kullanıcı düzeyinde, oturum açılışında başlayan zamanlanmış görev.
+$ServiceTaskName = 'eren-kit-beyin-servis'
+$script:ServiceNote = $null
+function Invoke-BeyinService {
+    if ($NoService) { return New-StepResult skip 'servis görevi atlandı (-NoService)' }
+    if ($SkipRepoSetup) { return New-StepResult skip 'servis görevi atlandı (-SkipRepoSetup)' }
+    if ($Uninstall) {
+        $r = Uninstall-ServiceTask -Name $ServiceTaskName
+        if ($r.Status -eq 'ok') {
+            $script:ServiceNote = ('Beyin servisi: "{0}" görevi durduruldu ve kaldırıldı.' -f $ServiceTaskName)
+        }
+        return $r
+    }
+    $r = Install-ServiceTask -Name $ServiceTaskName -PythonW (Join-Path $P.Bellek '.venv\Scripts\pythonw.exe') `
+        -Arguments '-m bellek.beyin servis' -WorkingDirectory $P.Bellek `
+        -Description 'eren-kit: beyin yerel servisi (beyin MCP yazmalarını işler). Kaldırmak: install.ps1 -Uninstall -Components beyin' `
+        -ConflictPattern 'bellek\.beyin\s+servis'
+    if ($r.Status -eq 'ok' -or $r.Status -eq 'warn') {
+        $script:ServiceNote = ('Beyin servisi: "{0}" görevi her oturum açılışında başlar ve şimdi başlatıldı. Kaldırmak: .\install.ps1 -Uninstall -Components beyin' -f $ServiceTaskName)
+    } elseif ($r.Status -eq 'dry') {
+        $script:ServiceNote = ('Beyin servisi: "{0}" görevi kaydedilecek (her oturum açılışında başlar). Atlamak için -NoService.' -f $ServiceTaskName)
+    }
+    return $r
+}
+
+# ---------------------------------------------------------------- adım tanımları
+
+$S = @{}
+if (-not $Uninstall) {
+    $S['beyin'] = @(
+        @{ Name = 'venv'; Run = { Invoke-Venv $P.Bellek 'packages\bellek' } },
+        @{ Name = 'bellek.toml'; Run = {
+                $cfg = Join-Path $P.Bellek 'bellek.toml'
+                $ex = Join-Path $P.Bellek 'bellek.example.toml'
+                if (Test-Path -LiteralPath $cfg) { return New-StepResult ok 'bellek.toml var, korunuyor' }
+                Test-SourceFile $ex
+                if ($SkipRepoSetup) { return New-StepResult skip 'bellek.toml kopyalama atlandı (-SkipRepoSetup)' }
+                if ($DryRun) { return New-StepResult dry 'bellek.example.toml -> bellek.toml kopyalanır' }
+                Copy-Item -LiteralPath $ex -Destination $cfg
+                New-StepResult ok ('bellek.toml oluşturuldu: {0} (vault yolunu kendine göre düzenle)' -f $cfg)
+            }
+        },
+        @{ Name = 'doğrulama'; Run = {
+                if ($DryRun -or $SkipRepoSetup) { return New-StepResult skip 'import denetimi atlandı' }
+                $r = Invoke-Native $P.BellekPy @('-c', 'import bellek.beyin')
+                if ($r.ExitCode -ne 0) { throw ("bellek.beyin içe aktarılamadı:{0}{1}" -f [Environment]::NewLine, (Format-OutputTail $r.Output)) }
+                New-StepResult ok 'bellek.beyin içe aktarılıyor'
+            }
+        },
+        @{ Name = 'servis'; Run = { Invoke-BeyinService } },
+        @{ Name = 'MCP'; Run = { Invoke-McpRegister 'beyin' @($P.BellekPy, '-m', 'bellek.beyin', 'mcp') } }
+    )
+    $S['devir'] = @(
+        @{ Name = 'venv'; Run = { Invoke-Venv $P.Bellek 'packages\bellek' } },
+        @{ Name = 'python'; Run = { Test-HookPython } },
+        @{ Name = 'hook'; Run = { Invoke-Hooks 'devir' $P.DevirHook } },
+        @{ Name = 'skill'; Run = { Install-Skill -Component 'devir' -Name 'devir' -SourceDir $P.DevirSkill -ClaudeHome $ClaudeHome } }
+    )
+    $S['orkestra'] = @(
+        @{ Name = 'python'; Run = { Test-HookPython } },
+        @{ Name = 'skill'; Run = { Install-Skill -Component 'orkestra' -Name 'opus-orkestra' -SourceDir $P.OrkSkill -ClaudeHome $ClaudeHome -Files @('SKILL.md') } },
+        @{ Name = 'hook'; Run = { Invoke-Hooks 'orkestra' $P.OrkHook } }
+    )
+    $S['computer-use'] = @(
+        @{ Name = 'venv'; Run = { Invoke-Venv $P.ComputerUse 'packages\computer-use-windows' } },
+        @{ Name = 'MCP'; Run = { Invoke-McpRegister 'computer-use-windows' @($P.CuwExe) } }
+    )
+    $S['phone'] = @(
+        @{ Name = 'Node'; Run = {
+                if (-not $nodeOk) { throw 'Node 24+ ve npm gerekli (yukarıdaki önkoşullara bak)' }
+                New-StepResult ok 'Node 24+ hazır'
+            }
+        },
+        @{ Name = 'npm ci'; Run = {
+                Test-SourceFile (Join-Path $P.Phone 'package.json')
+                Test-SourceFile (Join-Path $P.Phone 'package-lock.json')
+                if ($SkipRepoSetup) { return New-StepResult skip 'npm ci atlandı (-SkipRepoSetup)' }
+                if ($DryRun) { return New-StepResult dry 'apps\phone içinde npm ci çalıştırılır' }
+                Write-StepLine info 'npm ci (apps\phone) çalışıyor...'
+                Push-Location -LiteralPath $P.Phone
+                try { $r = Invoke-Native $npmExe @('ci', '--no-audit', '--no-fund') } finally { Pop-Location }
+                if ($r.ExitCode -ne 0) { throw ("npm ci başarısız (çıkış {0}):{1}{2}" -f $r.ExitCode, [Environment]::NewLine, (Format-OutputTail $r.Output)) }
+                New-StepResult ok 'bağımlılıklar kuruldu (apps\phone)'
+            }
+        },
+        @{ Name = 'uyarı'; Run = { New-StepResult warn 'phone deneyseldir; herhangi bir kayıt yapılmaz, elle başlatılır.' } }
+    )
+} else {
+    $S['beyin'] = @(
+        @{ Name = 'MCP'; Run = { Invoke-McpUnregister 'beyin' } },
+        @{ Name = 'servis'; Run = { Invoke-BeyinService } }
+    )
+    $S['devir'] = @(
+        @{ Name = 'hook'; Run = { Invoke-Hooks 'devir' $P.DevirHook } },
+        @{ Name = 'skill'; Run = { Uninstall-Skill -Name 'devir' -SourceDir $P.DevirSkill -ClaudeHome $ClaudeHome } }
+    )
+    $S['orkestra'] = @(
+        @{ Name = 'hook'; Run = { Invoke-Hooks 'orkestra' $P.OrkHook } },
+        @{ Name = 'skill'; Run = { Uninstall-Skill -Name 'opus-orkestra' -SourceDir $P.OrkSkill -ClaudeHome $ClaudeHome -Files @('SKILL.md') } }
+    )
+    $S['computer-use'] = @(@{ Name = 'MCP'; Run = { Invoke-McpUnregister 'computer-use-windows' } })
+    $S['phone'] = @(@{ Name = 'kayıt'; Run = { New-StepResult skip 'phone için kaldırılacak kayıt yok (node_modules silinmez)' } })
+}
+
+$Titles = @{
+    'beyin'        = 'Beyin (bellek + MCP)'
+    'devir'        = 'Devir (hook + skill)'
+    'orkestra'     = 'Opus Orkestra (skill + hook)'
+    'computer-use' = 'Computer use (MCP)'
+    'phone'        = 'Phone (deneysel)'
+}
+
+# ---------------------------------------------------------------- çalıştırıcı
+
+$rank = @{ skip = 0; ok = 1; dry = 2; warn = 3; fail = 4 }
+$results = New-Object System.Collections.Generic.List[object]
+
+function Invoke-Component {
+    param([string]$Key, [string]$Title, [object[]]$Steps)
+    Write-Title ('[{0}] {1}' -f $Key, $Title)
+    $status = 'skip'
+    $note = ''
+    foreach ($s in $Steps) {
+        try {
+            $out = @(& $s.Run)
+            $r = @($out | Where-Object { $_ -is [psobject] -and $_.PSObject.Properties['IsStepResult'] }) | Select-Object -Last 1
+            if (-not $r) { $r = New-StepResult ok $s.Name }
+            Write-StepLine $r.Status $r.Message
+            if ($rank[$r.Status] -gt $rank[$status]) {
+                $status = $r.Status
+                if ($r.Status -eq 'warn') { $note = $r.Message }
+            }
+        } catch {
+            $msg = $_.Exception.Message
+            Write-StepLine fail ('"{0}" adımında hata: {1}' -f $s.Name, $msg)
+            $status = 'fail'
+            $note = ('"{0}" adımı başarısız' -f $s.Name)
+            break
+        }
+    }
+    $results.Add([pscustomobject]@{ Component = $Key; Status = $status; Note = $note })
+}
+
+# ---------------------------------------------------------------- asistan adı
+
+if (-not $Uninstall) {
+    Write-Title 'Asistan adı'
+    $envName = 'EREN_KIT_ASSISTANT_NAME'
+    try {
+        if ($SkipEnv) {
+            Write-StepLine skip ('{0} yazımı atlandı (-SkipEnv)' -f $envName)
+        } else {
+            $current = [Environment]::GetEnvironmentVariable($envName, 'User')
+            $target = $AssistantName
+            if (-not $target) { $target = $current }
+            if (-not $target) { $target = 'Claude' }
+            if ($current -ceq $target) {
+                Write-StepLine ok ('{0} = "{1}" (zaten ayarlı)' -f $envName, $target)
+            } elseif ($DryRun) {
+                Write-StepLine dry ('{0} = "{1}" kullanıcı ortam değişkenine yazılır' -f $envName, $target)
+            } else {
+                [Environment]::SetEnvironmentVariable($envName, $target, 'User')
+                Set-Item -Path ('Env:' + $envName) -Value $target
+                Write-StepLine ok ('{0} = "{1}" yazıldı' -f $envName, $target)
+            }
+        }
+    } catch {
+        Write-StepLine fail ('ortam değişkeni yazılamadı: {0}' -f $_.Exception.Message)
+        $results.Add([pscustomobject]@{ Component = 'asistan-adı'; Status = 'fail'; Note = 'ortam değişkeni yazılamadı' })
+    }
+}
+
+foreach ($k in $selected) {
+    Invoke-Component -Key $k -Title $Titles[$k] -Steps $S[$k]
+}
+
+# ---------------------------------------------------------------- özet
+
+Write-Title 'Özet'
+foreach ($r in $results) {
+    $sym = Get-StatusSymbol $r.Status
+    Write-Host ('  {0} ' -f $sym[0]) -ForegroundColor $sym[1] -NoNewline
+    $label = $r.Component.PadRight(13)
+    switch ($r.Status) {
+        'ok'   { $txt = 'tamam' }
+        'dry'  { $txt = 'yapılacaklar listelendi' }
+        'warn' { $txt = 'uyarıyla tamamlandı: ' + $r.Note }
+        'fail' { $txt = 'HATA: ' + $r.Note }
+        default { $txt = 'yapılacak bir şey yok' }
+    }
+    Write-Host ('{0} {1}' -f $label, $txt)
+}
+
+if ($script:ServiceNote) { Write-StepLine info $script:ServiceNote }
+$bk = Get-InstallerBackupDir
+if ($bk) { Write-StepLine info ('Yedekler: {0}' -f $bk) }
+
+$failed = @($results | Where-Object { $_.Status -eq 'fail' }).Count
+Write-Host ''
+if ($DryRun) {
+    Write-Host 'DryRun: hiçbir şey değiştirilmedi.' -ForegroundColor Magenta
+} elseif ($failed -gt 0) {
+    Write-Host ('{0} bileşende hata var; ayrıntı yukarıda. Düzeltip betiği yeniden çalıştırabilirsin (tekrar çalıştırmak güvenli).' -f $failed) -ForegroundColor Red
+}
+if (-not $DryRun) {
+    Write-Host "Değişikliklerin etkili olması için Claude Code'u yeniden başlat." -ForegroundColor Cyan
+}
+if ($selected -contains 'phone' -and -not $Uninstall) {
+    Write-Host 'Not: phone bileşeni deneyseldir.' -ForegroundColor Yellow
+}
+
+if ($failed -gt 0) { exit 1 }
+exit 0
