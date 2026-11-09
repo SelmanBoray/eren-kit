@@ -43,6 +43,14 @@ import {
   yenidenBasladiMetni,
 } from "./konusma-metin.ts";
 
+/**
+ * Ana sohbet sürecinin `--tools` listesi: sistem isteminin gerektirdiği en küçük yerleşik araç kümesi
+ * (PC'de komut, dosya okuma/yazma, arama, web). Varsayılan 33 yerleşik araç tanımı (yalnız Workflow 22.389 karakter)
+ * her istekte modele gider; liste ilk istek girdisini 29.298 → 14.365 token'a indirir (gerçek `claude`, 2026-11-09).
+ * MCP araçları (`mcp__eren__*`, computer-use) bu listeden bağımsızdır ve görünmeye devam eder.
+ */
+const ANA_SOHBET_ARACLARI = "PowerShell,Read,Edit,Write,Glob,Grep,WebFetch,WebSearch";
+
 const SENTETIK_BIRLESME = 8;
 /** Pencere bilinmiyorsa. Bilinirken eşik `akis.devirEsigi`'nden gelir. */
 const VARSAYILAN_ESIK = 200000;
@@ -517,8 +525,10 @@ export const konusmaKur: KonusmaFabrikasi = ({
     "--verbose",
     "--include-partial-messages",
     "--replay-user-messages",
-    // Ana oturum normal bir oturum gibi tüm yerleşik araçlarla çalışır `[karar 2026-11-07]`; sınır istemde ve telefondaki Kotlin kapısındadır.
+    // İzin istemi çıkmaz `[karar 2026-11-07]`; sınır istemde ve telefondaki Kotlin kapısındadır. Yerleşik araçlar `ANA_SOHBET_ARACLARI` ile kısıtlıdır.
     "--dangerously-skip-permissions",
+    "--tools",
+    ANA_SOHBET_ARACLARI,
     "--strict-mcp-config",
     "--mcp-config",
     mcpYolu,
