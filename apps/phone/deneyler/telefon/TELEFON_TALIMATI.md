@@ -2,7 +2,7 @@
 
 Bu adımlar, Android telefonda yan yüklenen deneme uygulamasının önünde engel olup olmadığını ölçmek içindir. Bir adım takılırsa aşmaya çalışma: ekranda yazanı aynen not et, sonra birlikte bakılır. Menü adları üretici arayüzüne ve Android sürümüne göre farklı olabilir; farklıysa onu da not et. Testler bitene kadar banka, e-devlet, parola yöneticisi gibi hassas uygulamaları açma. Uygulamadaki parola kutusuna gerçek parola yazma.
 
-Deneme uygulaması telefonda "Eren Deneme" adıyla görünür (paket adı `dev.eren.deneme`; bu bir kod tanımlayıcısıdır). Aşağıdaki adımlarda "deneme uygulaması" bu uygulamadır.
+Deneme uygulaması telefonda "eren-kit deneme" adıyla görünür (paket adı `dev.eren.deneme`; bu bir kod tanımlayıcısıdır). Aşağıdaki adımlarda "deneme uygulaması" bu uygulamadır.
 
 **0. Hazırlık.** Telefon ile PC aynı özel ağda olmalı (örneğin Tailscale kullanıyorsan açık ve bağlı olsun). PC tarafında test sunucusu çalışıyor olmalı (bkz. `README.md`); sunucunun adresi `PC_ADRESI_BURAYA` yer tutucusunun yerine geçer.
 → Bağlı değilse ya da bağlanmıyorsa: "ağ bağlı değil" diye not et.

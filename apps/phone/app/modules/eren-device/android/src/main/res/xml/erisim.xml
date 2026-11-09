@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Erişilebilirlik yapılandırması. typeWindowStateChanged: AnlikDurum.sonOlayPaketi için son olay.
+  canTakeScreenshot (API 30+): screenshot/zoom. flagRetrieveInteractiveWindows: görünen pencereler
+  (perde/heads-up/klavye/balon/PiP izin dışı pencere denetimi). flagReportViewIds: Dugum.kaynakId.
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeWindowStateChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagDefault|flagRetrieveInteractiveWindows|flagReportViewIds|flagIncludeNotImportantViews"
+    android:canPerformGestures="true"
+    android:canRetrieveWindowContent="true"
+    android:canTakeScreenshot="true"
+    android:description="@string/eren_erisim_aciklama"
+    android:notificationTimeout="200" />

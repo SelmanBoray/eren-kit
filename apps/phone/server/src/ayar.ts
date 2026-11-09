@@ -4,10 +4,11 @@
  * başlangıçta `AyarHatasi` ile durur; hata metinleri yalnız alan adı taşır, değer taşımaz
  * (Telegram jetonu hiçbir hata metnine girmez).
  */
-import { posix, win32 } from "node:path";
+import win32 from "node:path/win32";
 import { fileURLToPath } from "node:url";
 import { ProjelerCikti } from "@eren/protocol";
-import type { McpProfili } from "@eren/protocol";
+import type { McpProfili, ServisBilgisi } from "@eren/protocol";
+import { ortamDegeri, veriKokuCoz, VERI_KOKU_ORTAMI } from "./veri-koku.ts";
 import type {
   Ayar,
   AyarFabrikasi,
@@ -46,18 +47,14 @@ const VARSAYILAN_WS_PORT = 47821;
 const VARSAYILAN_EREN_MODELI = "opus";
 const VARSAYILAN_TELEFON_IS_MODELI = "opus";
 const VARSAYILAN_RAM_DUSUK_MB = 2048;
+const VARSAYILAN_EREN_CANLI_AZAMI = 2;
+const VARSAYILAN_EREN_BOSTA_KAPAT_DK = 30;
 /** Ad verilmediyse güvenlik metninde kullanılan genel sözcük: kişisel değil, güvenliği gevşetmez. */
 const VARSAYILAN_KULLANICI_ADI = "kullanıcı";
 /** Kullanıcıya görünen ve persona metinlerine giren asistan adı; kodda sabit kişilik yok. */
 const ASISTAN_ADI_ORTAMI = "EREN_KIT_ASSISTANT_NAME";
 const VARSAYILAN_ASISTAN_ADI = "Claude";
 const ASISTAN_ADI_SINIRI = 40;
-/**
- * Veri kökünü belirler; yoksa Windows `%LOCALAPPDATA%\eren-kit`, macOS
- * `~/Library/Application Support/eren-kit`, diğer POSIX `$XDG_DATA_HOME/eren-kit`
- * (`~/.local/share/eren-kit`). Eski kurulumdan geçiş bu değişkenle yapılır.
- */
-const VERI_KOKU_ORTAMI = "EREN_KIT_DATA_DIR";
 
 const KAPATMA_ANAHTARLARI: Readonly<Record<string, string>> = {
   CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
@@ -74,6 +71,9 @@ const IZINLI_ANAHTARLAR = new Set([
   "pc_is_modeli",
   "telefon_is_modeli",
   "ram_dusuk_mb",
+  "eren_canli_azami",
+  "eren_bosta_kapat_dk",
+  "tam_yetki",
   "telegram",
   "computer_use",
   "rea",
@@ -83,14 +83,6 @@ const nesneMi = (x: unknown): x is Record<string, unknown> =>
   typeof x === "object" && x !== null && !Array.isArray(x);
 
 const bosMetinDegil = (x: unknown): x is string => typeof x === "string" && x.trim() !== "";
-
-function ortamDegeri(ortam: Ortam, ad: string): string | undefined {
-  const hedef = ad.toUpperCase();
-  for (const [k, v] of Object.entries(ortam)) {
-    if (k.toUpperCase() === hedef && typeof v === "string" && v !== "") return v;
-  }
-  return undefined;
-}
 
 /**
  * Gösterilecek asistan adı; packages/bellek `asistan.py` ile aynı kural: yazdırılamaz karakterler
@@ -132,12 +124,19 @@ function modelAlani(o: Record<string, unknown>, ad: string): string | undefined 
   return v;
 }
 
-function tamSayiAlani(o: Record<string, unknown>, ad: string, en: number, çok: number): number | undefined {
+function tamSayiAlani(o: Record<string, unknown>, ad: string, en: number, enCok: number): number | undefined {
   const v = o[ad];
   if (v === undefined) return undefined;
-  if (typeof v !== "number" || !Number.isInteger(v) || v < en || v > çok) {
-    throw new AyarHatasi(`ayar.local.json: ${ad} ${en}-${çok} arasında tam sayı olmalı`);
+  if (typeof v !== "number" || !Number.isInteger(v) || v < en || v > enCok) {
+    throw new AyarHatasi(`ayar.local.json: ${ad} ${en}-${enCok} arasında tam sayı olmalı`);
   }
+  return v;
+}
+
+function mantikAlani(o: Record<string, unknown>, ad: string): boolean | undefined {
+  const v = o[ad];
+  if (v === undefined) return undefined;
+  if (typeof v !== "boolean") throw new AyarHatasi(`ayar.local.json: ${ad} true ya da false olmalı`);
   return v;
 }
 
@@ -205,9 +204,7 @@ async function claudeExeBul(
   dosya: DosyaPortu,
   ortam: Ortam,
   belirtilen: string | undefined,
-  platform: NodeJS.Platform,
 ): Promise<string> {
-  if (platform !== "win32") return claudeBulPosix(dosya, ortam, belirtilen);
   const exeMi = (y: string): boolean => y.toLowerCase().endsWith(".exe");
   if (belirtilen !== undefined) {
     if (!exeMi(belirtilen)) throw new AyarHatasi("claude_exe .exe olmak zorunda (.cmd/.bat verilemez)");
@@ -231,127 +228,110 @@ async function claudeExeBul(
   throw new AyarHatasi("claude.exe bulunamadı (claude_exe, PATH ve npm yolu denendi)");
 }
 
-/** POSIX'te (macOS/Linux) `claude`: verilen mutlak yol, PATH, sonra bilinen kurulum yerleri. */
-async function claudeBulPosix(dosya: DosyaPortu, ortam: Ortam, belirtilen: string | undefined): Promise<string> {
-  if (belirtilen !== undefined) {
-    if (!posix.isAbsolute(belirtilen)) throw new AyarHatasi("claude_exe mutlak yol olmalı");
-    if ((await dosya.boyut(belirtilen)) === null) throw new AyarHatasi("claude_exe dosyası yok");
-    return belirtilen;
+/** kur.ts `SHA_DESENI` ile aynı: kurulumdaki sürüm adı. */
+const SURUM_DESENI = /^[0-9A-Za-z][0-9A-Za-z-]{0,63}$/;
+
+/** `<sürüm>/server/src/ayar.ts` -> `<sürüm>/surum.json`. Yok, bozuk ya da desene uymuyorsa `null`. */
+async function surumOku(dosya: DosyaPortu): Promise<string | null> {
+  try {
+    const yol = win32.normalize(fileURLToPath(new URL("../../surum.json", import.meta.url)));
+    const ham = await dosya.oku(yol);
+    if (ham === null) return null;
+    const j: unknown = JSON.parse(ham.replace(/^﻿/, ""));
+    if (!nesneMi(j)) return null;
+    const sha = j["sha"];
+    return typeof sha === "string" && SURUM_DESENI.test(sha) ? sha : null;
+  } catch {
+    return null;
   }
-  const adaylar: string[] = [];
-  const path = ortamDegeri(ortam, "PATH");
-  if (path !== undefined) {
-    for (const d of path.split(":")) if (d !== "" && posix.isAbsolute(d)) adaylar.push(posix.join(d, "claude"));
-  }
-  const ev = ortamDegeri(ortam, "HOME");
-  if (ev !== undefined && posix.isAbsolute(ev)) {
-    adaylar.push(posix.join(ev, ".local", "bin", "claude"), posix.join(ev, ".claude", "local", "claude"));
-  }
-  adaylar.push("/opt/homebrew/bin/claude", "/usr/local/bin/claude");
-  for (const aday of adaylar) if ((await dosya.boyut(aday)) !== null) return aday;
-  throw new AyarHatasi("claude bulunamadı (claude_exe, PATH ve bilinen kurulum yerleri denendi)");
 }
 
-function posixYollar(ortam: Ortam, platform: NodeJS.Platform): ErenYollari {
-  const ev = ortamDegeri(ortam, "HOME");
-  if (ev === undefined || !posix.isAbsolute(ev)) throw new AyarHatasi("HOME tanımlı ve mutlak yol olmalı");
-  let taban: string;
-  if (platform === "darwin") {
-    taban = posix.join(ev, "Library", "Application Support");
-  } else {
-    const xdg = ortamDegeri(ortam, "XDG_DATA_HOME");
-    taban = xdg !== undefined && posix.isAbsolute(xdg) ? xdg : posix.join(ev, ".local", "share");
-  }
-  const ozelKok = ortamDegeri(ortam, VERI_KOKU_ORTAMI);
-  if (ozelKok !== undefined && !posix.isAbsolute(ozelKok)) {
-    throw new AyarHatasi(`${VERI_KOKU_ORTAMI} mutlak yol olmalı`);
-  }
-  const kok = ozelKok !== undefined ? posix.normalize(ozelKok) : posix.join(taban, "eren-kit");
-  return {
-    kok,
-    vt: posix.join(kok, "eren.db"),
-    log: posix.join(kok, "logs", "servis.log"),
-    islerDizini: posix.join(kok, "isler"),
-    erenCwd: posix.join(kok, "eren-cwd"),
-    erenMcp: posix.join(kok, "eren-mcp.json"),
-    anahtar: posix.join(kok, "sunucu-anahtar.pem"),
-    kimlikEki: posix.join(kok, "kimlik.local.md"),
-    projeler: posix.join(kok, "projeler.json"),
-    yerelAyar: posix.join(kok, "ayar.local.json"),
-    limitKilit: posix.join(taban, "ClaudeLimitKilit", "kilit.json"),
-  };
-}
-
-export function yollariUret(ortam: Ortam, platform: NodeJS.Platform = process.platform): ErenYollari {
-  if (platform !== "win32") return posixYollar(ortam, platform);
+export function yollariUret(ortam: Ortam): ErenYollari {
   const la = ortamDegeri(ortam, "LOCALAPPDATA");
   if (la === undefined || !win32.isAbsolute(la)) {
     throw new AyarHatasi("LOCALAPPDATA tanımlı ve mutlak yol olmalı");
   }
-  const ozelKok = ortamDegeri(ortam, VERI_KOKU_ORTAMI);
-  if (ozelKok !== undefined && !win32.isAbsolute(ozelKok)) {
-    throw new AyarHatasi(`${VERI_KOKU_ORTAMI} mutlak yol olmalı`);
+  const up = ortamDegeri(ortam, "USERPROFILE");
+  if (up === undefined || !win32.isAbsolute(up)) {
+    throw new AyarHatasi("USERPROFILE tanımlı ve mutlak yol olmalı");
   }
-  const kok = ozelKok !== undefined ? win32.normalize(ozelKok) : win32.join(la, "eren-kit");
+  // Kök kuralı tek yerde (`veri-koku.ts`): bekçi günlüğü ve e2e de aynısını kullanır.
+  const veriKoku = veriKokuCoz(ortam);
+  if (!veriKoku.ok) {
+    throw new AyarHatasi(
+      veriKoku.hata === "ozel_kok_goreli" ? `${VERI_KOKU_ORTAMI} mutlak yol olmalı` : "LOCALAPPDATA tanımlı ve mutlak yol olmalı",
+    );
+  }
+  const kok = veriKoku.kok;
   return {
     kok,
     vt: win32.join(kok, "eren.db"),
     log: win32.join(kok, "logs", "servis.log"),
     islerDizini: win32.join(kok, "isler"),
     erenCwd: win32.join(kok, "eren-cwd"),
-    erenMcp: win32.join(kok, "eren-mcp.json"),
+    erenMcpDizini: win32.join(kok, "eren-mcp"),
     anahtar: win32.join(kok, "sunucu-anahtar.pem"),
     kimlikEki: win32.join(kok, "kimlik.local.md"),
     projeler: win32.join(kok, "projeler.json"),
     yerelAyar: win32.join(kok, "ayar.local.json"),
     limitKilit: win32.join(la, "ClaudeLimitKilit", "kilit.json"),
+    claudeProjeleri: win32.join(up, ".claude", "projects"),
   };
 }
 
 export const ayarKur: AyarFabrikasi = async (b: AyarBagimliliklari): Promise<Ayar> => {
-  const platform = b.platform ?? process.platform;
-  const yol = platform === "win32" ? win32 : posix;
-  const yollar = yollariUret(b.ortam, platform);
+  const yollar = yollariUret(b.ortam);
   const yerel = await yerelAyarOku(b.dosya, yollar.yerelAyar);
 
   const kullaniciAdi = metinAlani(yerel, "kullanici_adi") ?? VARSAYILAN_KULLANICI_ADI;
   const asistanAdi = asistanAdiUret(ortamDegeri(b.ortam, ASISTAN_ADI_ORTAMI));
   const wsPort = tamSayiAlani(yerel, "ws_port", 1, 65535) ?? VARSAYILAN_WS_PORT;
   const ramDusukMb = tamSayiAlani(yerel, "ram_dusuk_mb", 0, 10_000_000) ?? VARSAYILAN_RAM_DUSUK_MB;
+  const erenCanliAzami = tamSayiAlani(yerel, "eren_canli_azami", 1, 4) ?? VARSAYILAN_EREN_CANLI_AZAMI;
+  const erenBostaKapatDk = tamSayiAlani(yerel, "eren_bosta_kapat_dk", 1, 1440) ?? VARSAYILAN_EREN_BOSTA_KAPAT_DK;
   const erenModeli = modelAlani(yerel, "eren_modeli") ?? VARSAYILAN_EREN_MODELI;
   const pcIsModeli = modelAlani(yerel, "pc_is_modeli") ?? null;
   const telefonIsModeli = modelAlani(yerel, "telefon_is_modeli") ?? VARSAYILAN_TELEFON_IS_MODELI;
+  const tamYetki = mantikAlani(yerel, "tam_yetki") ?? true;
   const computerUse = mcpTanimi(yerel, "computer_use");
   const rea = mcpTanimi(yerel, "rea");
   const telegram = telegramTanimi(yerel);
-  const claudeExe = await claudeExeBul(b.dosya, b.ortam, metinAlani(yerel, "claude_exe"), platform);
+  const claudeExe = await claudeExeBul(b.dosya, b.ortam, metinAlani(yerel, "claude_exe"));
 
   if (!bosMetinDegil(b.execPath)) throw new AyarHatasi("execPath boş olamaz");
 
   const ortamKopyasi: Ortam = { ...b.ortam };
-  const kopruBetigi = yol.normalize(fileURLToPath(new URL("./kopru.ts", import.meta.url)));
+  const kopruBetigi = win32.normalize(fileURLToPath(new URL("./kopru.ts", import.meta.url)));
   const sureler: Sureler = { ...VARSAYILAN_SURELER };
+  const servis: ServisBilgisi = Object.freeze({ surum: await surumOku(b.dosya), baslangic_ms: b.baslangicMs });
 
   const kapatmali = (): Ortam => ({ ...claudeSil(ortamKopyasi), ...KAPATMA_ANAHTARLARI });
 
   return {
     yollar,
+    servis,
     isYollari(is_id: IsNo): IsYollari {
       if (!Number.isSafeInteger(is_id) || is_id < 1) throw new AyarHatasi("is_id pozitif tam sayı olmalı");
-      const dizin = yol.join(yollar.islerDizini, String(is_id));
+      const dizin = win32.join(yollar.islerDizini, String(is_id));
       return {
         dizin,
-        gorev: yol.join(dizin, "gorev.txt"),
-        mcp: yol.join(dizin, "mcp.json"),
-        out: yol.join(dizin, "out.jsonl"),
-        err: yol.join(dizin, "err.txt"),
-        bosCwd: yol.join(dizin, "cwd"),
+        gorev: win32.join(dizin, "gorev.txt"),
+        mcp: win32.join(dizin, "mcp.json"),
+        out: win32.join(dizin, "out.jsonl"),
+        err: win32.join(dizin, "err.txt"),
+        bosCwd: win32.join(dizin, "cwd"),
       };
     },
     claudeExe,
     nodeExe: b.execPath,
     kopruBetigi,
+    erenMcpYolu(nesil: number): string {
+      if (!Number.isSafeInteger(nesil) || nesil < 1) throw new AyarHatasi("nesil pozitif tam sayı olmalı");
+      return win32.join(yollar.erenMcpDizini, `${nesil}.json`);
+    },
     erenModeli,
+    erenCanliAzami,
+    erenBostaKapatMs: erenBostaKapatDk * 60000,
     pcIsModeli,
     telefonIsModeli,
     wsPort,
@@ -359,6 +339,7 @@ export const ayarKur: AyarFabrikasi = async (b: AyarBagimliliklari): Promise<Aya
     sureler: Object.freeze(sureler),
     kullaniciAdi,
     asistanAdi,
+    tamYetki,
     computerUse,
     mcpProfilSunucusu(profil: McpProfili): McpSunucuTanimi | null {
       return profil === "rea" ? rea : null;

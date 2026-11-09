@@ -11,6 +11,7 @@ import {
   KopruYukari,
   PROTOKOL_SURUMU,
   ROL_FIILLERI,
+  SOHBET_SURUMU,
   SohbetYukari,
 } from "../src/index.ts";
 import { JETON, PLAN_PC, RAPOR } from "./ornekler.ts";
@@ -139,12 +140,15 @@ test("hiçbir fiil girdisi kullanıcı mesajı alanı taşımaz", () => {
 });
 
 test("/sohbet'in insan mesajı boruya girmez, boru mesajı /sohbet'e girmez", () => {
-  const mesaj = { v, type: "user_message", client_msg_id: "m", input: "yazi", text: "evet" };
+  // `/sohbet` `SOHBET_SURUMU`, boru v1: tür, sürümden bağımsız olarak da reddedilir.
+  const mesaj = { v: SOHBET_SURUMU, type: "user_message", client_msg_id: "m", sohbet_id: "ana", input: "yazi", text: "evet" };
   assert.equal(SohbetYukari.safeParse(mesaj).success, true);
   assert.equal(KopruYukari.safeParse(mesaj).success, false);
+  assert.equal(KopruYukari.safeParse({ ...mesaj, v }).success, false);
   const istek = { v, type: "istek", istek_id: "i1", fiil: "oturumlar", girdi: {} };
   assert.equal(KopruYukari.safeParse(istek).success, true);
   assert.equal(SohbetYukari.safeParse(istek).success, false);
+  assert.equal(SohbetYukari.safeParse({ ...istek, v: SOHBET_SURUMU }).success, false);
 });
 
 test("istek zarfı origin ya da sentetik işareti taşıyamaz", () => {

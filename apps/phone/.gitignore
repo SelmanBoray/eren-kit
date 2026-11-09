@@ -63,3 +63,7 @@ runtime/
 *.sqlite
 *.sqlite3
 *.db
+
+# Gradle agent çıktı dizinleri
+build-*/
+.gradle-*/

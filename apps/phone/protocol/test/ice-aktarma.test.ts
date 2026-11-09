@@ -16,7 +16,7 @@ import {
   type KopruRolu,
   Plan,
   planHash,
-  PROTOKOL_SURUMU,
+  SOHBET_SURUMU,
   type SohbetAsagi,
   sohbetYukariCoz,
   type SohbetYukari,
@@ -37,15 +37,17 @@ test("paket adıyla içe aktarılır, şema hem değer hem tiptir", () => {
 });
 
 test("tipler servis ve uygulama tarafında aynı şekilde kullanılır", () => {
+  // `/sohbet` iş mesajları `SOHBET_SURUMU` taşır.
   const yukari: SohbetYukari = {
-    v: PROTOKOL_SURUMU,
+    v: SOHBET_SURUMU,
     type: "user_message",
     client_msg_id: "m1",
+    sohbet_id: "ana",
     input: "yazi",
     text: "Merhaba",
   };
   const asagi: SohbetAsagi = {
-    v: PROTOKOL_SURUMU,
+    v: SOHBET_SURUMU,
     type: "ack",
     client_msg_id: "m1",
     ok: true,

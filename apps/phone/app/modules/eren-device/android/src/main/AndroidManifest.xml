@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  eren-device adaptör katmanı. Bileşenler app manifestine BİRLEŞTİRİLİR; ad çakışmasın diye tam
+  nitelikli sınıf adları (app paketi dev.eren.app, modül paketi dev.eren.cihaz.adaptor farklıdır).
+  İzinler (TASARIM §Doğrulama): INTERNET, FOREGROUND_SERVICE, FOREGROUND_SERVICE_SPECIAL_USE,
+  POST_NOTIFICATIONS, RECEIVE_BOOT_COMPLETED, QUERY_ALL_PACKAGES, USE_BIOMETRIC. SYSTEM_ALERT_WINDOW
+  YOK; WAKE_LOCK YOK (wake lock varsayılan kapalı); CAMERA YOK (QR'ı Play kod tarayıcı okur).
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+    <!-- Erişilebilirlik servisini uygulamanın kendi açıp kapatması (Settings.Secure yazımı). Korumalı
+         izin; kurulumda bir kez adb ile verilir: pm grant <paket> android.permission.WRITE_SECURE_SETTINGS -->
+    <uses-permission
+        android:name="android.permission.WRITE_SECURE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
+    <!-- Kısayol için ön plandaki uygulamayı UsageStatsManager ile okuma. Korumalı izin; kurulumda
+         bir kez adb ile verilir: appops set <paket> GET_USAGE_STATS allow -->
+    <uses-permission
+        android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions" />
+
+    <!--
+      allowBackup=false: jetonsuz izin kimlikleri ve denetim günlüğü yedeklenmemeli (niyet burada).
+      DİKKAT (son adım): app manifesti (yüksek öncelik) şu an allowBackup=true üretiyor. Kitaplık
+      (düşük öncelik) bunu birleştirmede ZORLAYAMAZ; gerçek düzeltme app.json'a
+      expo.android.allowBackup=false eklemektir (raporlandı). O eklenmeden assembleRelease çakışır.
+      networkSecurityConfig: yalnız Tailscale ws:// için cleartext (bkz. res/xml/ag_guvenligi.xml).
+    -->
+    <application
+        android:allowBackup="false"
+        android:networkSecurityConfig="@xml/ag_guvenligi">
+
+        <!-- Ön plan servisi: Expo/React bağlamından bağımsız düz Service; specialUse alt türü. -->
+        <service
+            android:name="dev.eren.cihaz.adaptor.CihazServisi"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:stopWithTask="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="@string/eren_fgs_aciklama" />
+        </service>
+
+        <!--
+          Erişilebilirlik servisi: sistem bağlar; exported zorunlu + BIND izni. android:label bilerek
+          yok: sistem uygulama etiketini gösterir (asistan adı derleme anında oradan gelir).
+        -->
+        <service
+            android:name="dev.eren.cihaz.adaptor.ErisimServisi"
+            android:exported="true"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/erisim" />
+        </service>
+
+        <!--
+          Hızlı ayarlar kutucuğu: sistem bağlar; exported zorunlu + BIND_QUICK_SETTINGS_TILE. android:label
+          bilerek yok: sistem uygulama etiketini gösterir; kutucuk etiketi çalışma anında asistanAdi().
+        -->
+        <service
+            android:name="dev.eren.cihaz.adaptor.KisayolKutucugu"
+            android:exported="true"
+            android:icon="@drawable/ic_eren_kutucuk"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
+        <!-- Açılışta RN olmadan servisi kaldırır. Korumalı yayın; exported gerekmez. -->
+        <receiver
+            android:name="dev.eren.cihaz.adaptor.AcilisAlici"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Kalıcı bildirimdeki "Durdur"; yalnız uygulama içinden PendingIntent. -->
+        <receiver
+            android:name="dev.eren.cihaz.adaptor.DurdurAlici"
+            android:exported="false" />
+
+        <!-- Aktiviteler yalnız modül içinden açılır (startActivityForResult); exported=false. -->
+        <activity
+            android:name="dev.eren.cihaz.adaptor.OnayActivity"
+            android:exported="false"
+            android:excludeFromRecents="true" />
+        <!-- Tam yetki açma ekranı (biyometri); OnayActivity ile aynı ayarlar. -->
+        <activity
+            android:name="dev.eren.cihaz.adaptor.TamYetkiActivity"
+            android:exported="false"
+            android:excludeFromRecents="true" />
+        <!-- Kısayol: saydam, görevsiz (taskAffinity boş), standart başlatma modu.
+             noHistory bilerek YOK: etkinlik dikte için RecognizerIntent açıyor; tanıyıcı opak pencereyle
+             gelirse noHistory etkinliği onStop'ta kapatır ve dikte sonucu (onActivityResult) kaybolur.
+             Kart açıkken ekrandan ayrılmayı etkinlik zaten kendisi iptal ediyor.
+             configChanges: döndürmede yeniden yaratılıp dikteyi bozmasın. -->
+        <activity
+            android:name="dev.eren.cihaz.adaptor.KisayolActivity"
+            android:exported="false"
+            android:theme="@style/Eren.Saydam"
+            android:taskAffinity=""
+            android:excludeFromRecents="true"
+            android:configChanges="orientation|screenSize|keyboardHidden" />
+        <activity
+            android:name="dev.eren.cihaz.adaptor.EslestirmeActivity"
+            android:exported="false"
+            android:excludeFromRecents="true" />
+        <activity
+            android:name="dev.eren.cihaz.adaptor.UygulamaListesiActivity"
+            android:exported="false" />
+        <activity
+            android:name="dev.eren.cihaz.adaptor.DenetimActivity"
+            android:exported="false" />
+        <activity
+            android:name="dev.eren.cihaz.adaptor.TanilamaActivity"
+            android:exported="false" />
+    </application>
+</manifest>

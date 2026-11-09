@@ -1,0 +1,7 @@
+{
+  "platforms": ["android"],
+  "android": {
+    "name": "eren-device",
+    "modules": ["dev.eren.cihaz.adaptor.ErenDeviceModule"]
+  }
+}

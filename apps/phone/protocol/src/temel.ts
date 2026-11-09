@@ -1,15 +1,23 @@
 import { z } from "zod";
 import { iyiBicimliMi } from "./kanonik.ts";
-import { PROTOKOL_SURUMU, SINIRLAR } from "./sinirlar.ts";
+import { PROTOKOL_SURUMU, SINIRLAR, SOHBET_SURUMU } from "./sinirlar.ts";
 
 // Node ve Hermes aynı doğrulama yolundan geçsin, çalışma anında kod üretilmesin.
 z.config({ jitless: true });
 
 export const Surum = z.literal(PROTOKOL_SURUMU);
+export const SohbetSurum = z.literal(SOHBET_SURUMU);
 
-/** Bilinmeyen alan politikası tek yerde: her mesaj bu kurucudan geçer ve fazla alanı reddeder. */
+/**
+ * Bilinmeyen alan politikası tek yerde: her mesaj bu iki kurucudan birinden geçer ve fazla alanı
+ * reddeder. `mesaj`: v1 (`/cihaz`, boru, eşleştirme). `sohbetMesaj`: `/sohbet` (`SOHBET_SURUMU`).
+ */
 export function mesaj<T extends string, S extends z.ZodRawShape>(type: T, alanlar: S) {
   return z.strictObject({ v: Surum, type: z.literal(type), ...alanlar });
+}
+
+export function sohbetMesaj<T extends string, S extends z.ZodRawShape>(type: T, alanlar: S) {
+  return z.strictObject({ v: SohbetSurum, type: z.literal(type), ...alanlar });
 }
 
 export const OpakId = z
@@ -113,7 +121,8 @@ export type Kanal = "sohbet" | "cihaz";
 /**
  * Karşılıklı sınamada imzalanan metin. Alanlar satır sonu içeremez, bu yüzden birleştirme tek
  * anlamlıdır. Rol ve kanal metne girdiği için imza başka yöne ya da başka kanala taşınamaz.
- * İmzalanan baytlar bu metnin UTF-8 halidir.
+ * İmzalanan baytlar bu metnin UTF-8 halidir. Önek iki kanalda da `PROTOKOL_SURUMU`'dur
+ * (`eren-auth-v1`), `/sohbet` `SOHBET_SURUMU`'nda da: Kotlin `KimlikMetni.kt` aynı metni kurar.
  */
 export function kimlikImzaMetni(girdi: {
   rol: ImzaRolu;

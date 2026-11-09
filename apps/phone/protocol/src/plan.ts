@@ -8,6 +8,24 @@ export const MCP_PROFILLERI = ["rea"] as const;
 export const McpProfili = z.enum(MCP_PROFILLERI);
 export type McpProfili = z.infer<typeof McpProfili>;
 
+/**
+ * PC iş oturumunun profili. Güvenlik sınırı değildir (iki profil de PC'de tam yetkili), maliyet ve
+ * hız seçimidir. Plan nesnesine, `plan_hash`'e ve telefona giden plana GİRMEZ: yalnız `plan_oner`
+ * girdisinde (`PlanOnerGirdi`) ve `job_started` olayında durur. Telefon planında yok sayılır.
+ */
+export const IS_PROFILLERI = ["hafif", "tam"] as const;
+export const IsProfili = z.enum(IS_PROFILLERI);
+export type IsProfili = z.infer<typeof IsProfili>;
+export const VARSAYILAN_IS_PROFILI: IsProfili = "tam";
+
+/** `plan_oner` girdisindeki `profil` alanının modele giden açıklaması (JSON Schema `description`). */
+export const IS_PROFILI_ACIKLAMASI =
+  "Yalnız pc planında; telefon planında yok sayılır. Verilmezse tam. " +
+  "hafif: dosya oluşturma ya da taşıma, sistem bilgisi, kısa komutlar, tek adımlı iş; " +
+  "kullanıcı ayarları, hook'lar ve eklentiler yüklenmez, model sonnet. " +
+  "tam: kod yazma ya da düzenleme, çok adımlı iş, araştırma, kullanıcının ayarlarını ve " +
+  "orkestrasını gerektiren her iş. Emin değilsen tam.";
+
 export const TelefonIzinIstegi = z
   .strictObject({
     uygulamalar: z.array(PaketAdi).min(1).max(SINIRLAR.PLAN_UYGULAMA_ADET),
@@ -104,18 +122,31 @@ export const Plan = z
   .superRefine(turKurallari);
 export type Plan = z.infer<typeof Plan>;
 
+const TASLAK_ALANLARI = {
+  ...PLAN_ALANLARI,
+  /** Planın dayandığı işler. Servis kendi kaydıyla birleştirir, kirli olanları etiketler. */
+  dayandigi_isler: z.array(IsId).max(SINIRLAR.KIRLI_KAYNAK_ADET).optional(),
+};
+
 /**
- * `plan_oner` girdisi: planın ana oturumun yazdığı kısmı. `plan_id` ve `kirli_kaynak` servisindir;
- * kandırılmış bir ana oturum kirli etiketini düşüremesin diye girdide yer almaz.
+ * Planın ana oturumun yazdığı kısmı. `plan_id` ve `kirli_kaynak` servisindir; kandırılmış bir ana
+ * oturum kirli etiketini düşüremesin diye girdide yer almaz. Plan buradan kurulur (`dayandigi_isler`
+ * çıkarılarak); bu yüzden plana girmeyen `profil` burada YOKTUR, `PlanOnerGirdi`'dedir.
  */
-export const PlanTaslagi = z
+export const PlanTaslagi = z.strictObject(TASLAK_ALANLARI).superRefine(turKurallari);
+export type PlanTaslagi = z.infer<typeof PlanTaslagi>;
+
+/**
+ * `plan_oner` MCP girdisi: `PlanTaslagi` + plan dışı `profil`. Servis `profil`'i taslaktan ayırıp
+ * planla birlikte saklar; plana, `plan_hash`'e ve `plan_proposed`'a koymaz.
+ */
+export const PlanOnerGirdi = z
   .strictObject({
-    ...PLAN_ALANLARI,
-    /** Planın dayandığı işler. Servis kendi kaydıyla birleştirir, kirli olanları etiketler. */
-    dayandigi_isler: z.array(IsId).max(SINIRLAR.KIRLI_KAYNAK_ADET).optional(),
+    ...TASLAK_ALANLARI,
+    profil: IsProfili.optional().describe(IS_PROFILI_ACIKLAMASI),
   })
   .superRefine(turKurallari);
-export type PlanTaslagi = z.infer<typeof PlanTaslagi>;
+export type PlanOnerGirdi = z.infer<typeof PlanOnerGirdi>;
 
 /**
  * Kanonik JSON'un UTF-8 baytları üzerinden SHA-256. Geçersiz planı atar: onaylanabilecek her

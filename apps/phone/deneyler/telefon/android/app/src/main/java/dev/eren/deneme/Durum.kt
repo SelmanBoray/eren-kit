@@ -55,8 +55,8 @@ object Durum {
         return t.joinToString("+").ifEmpty { "diger" }
     }
 
-    private fun miuiAutostartOp(c: Context): Any {
-        // Xiaomi'ye özel gizli op; okunamazsa "okunamadi" döner, varsayım yapılmaz.
+    private fun ureticiAutostartOp(c: Context): Any {
+        // Üreticiye özel gizli op; okunamazsa "okunamadi" döner, varsayım yapılmaz.
         return try {
             val aom = c.getSystemService(AppOpsManager::class.java)
             val m = AppOpsManager::class.java.getMethod(
@@ -142,7 +142,7 @@ object Durum {
                     .put("arka_plan_kisitli", am.isBackgroundRestricted)
                     .put("standby_bucket", us.appStandbyBucket)
                     .put("veri_kisiti", cm.restrictBackgroundStatus)
-                    .put("miui_autostart_op", miuiAutostartOp(c))
+                    .put("uretici_autostart_op", ureticiAutostartOp(c))
             )
             .put("ag", agKisa(cm))
             .put("kurulum", kurulum)

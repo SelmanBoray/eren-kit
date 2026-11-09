@@ -1,0 +1,41 @@
+// eren-device yerel Expo modülü: Android adaptör katmanı (dev.eren.cihaz.adaptor).
+// Saf Kotlin çekirdek (dev.eren.cihaz.cekirdek) kaynakları sourceSets ile doğrudan bu modüle
+// derlenir; ayrı `cekirdek/` JVM projesi yalnız çekirdeğin kendi JUnit testleri içindir.
+// allWarningsAsErrors AÇILMAZ: adaptör Android/okhttp/androidx/play-services uyarıları üretebilir
+// (çekirdek kendi projesinde allWarningsAsErrors=true ile ayrıca derlenir; sözleşme orada korunur).
+
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'dev.eren.cihaz'
+version = '0.1.0'
+
+android {
+  namespace 'dev.eren.cihaz.adaptor'
+
+  defaultConfig {
+    // TASARIM.md / kararlar: minSdk 30 (telefonda yalnız release APK). Uygulama (app) tarafının da
+    // 30 olması gerekir; app minSdk app.json/gradle.properties'te, bu dosyanın dışında (raporlandı).
+    minSdk = 30
+  }
+
+  sourceSets {
+    main {
+      // Çekirdek saf Kotlin, android import'u yok; aynı 2.2 Kotlin çizgisiyle derlenir.
+      java.srcDirs += file("$projectDir/../cekirdek/src/main/kotlin")
+    }
+  }
+}
+
+dependencies {
+  // Baglanti: /cihaz ve /sohbet WebSocket (pingInterval OkHttp düzeyinde; protokolde ping mesajı yok).
+  implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+  // OnayActivity: yazma izni ve serbest_metin için BIOMETRIC_STRONG|DEVICE_CREDENTIAL.
+  implementation 'androidx.biometric:biometric:1.1.0'
+  // EslestirmeActivity: QR'ı Google kod tarayıcı okur (uygulama CAMERA izni tutmaz).
+  implementation 'com.google.android.gms:play-services-code-scanner:16.1.0'
+  // Bildirimler/CihazServisi: NotificationCompat, ServiceCompat.startForeground.
+  implementation 'androidx.core:core:1.17.0'
+}

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Cleartext yalnız gerekli olduğu için açık: telefonun tek ağ çıkışı, Tailscale "her zaman açık VPN"
+  üzerinden PC eşine kurulan tek ws:// WebSocket soketidir (INTERNET izni yalnız bunun için).
+  Hedef, cihaza özel dinamik bir Tailscale CGNAT adresidir (kişisel veri); sabit alan adı/IP ile
+  daraltılamaz, bu yüzden kapsam uygulama geneli base-config'tir. VPN dışı trafik işletim sistemince
+  engellenir. TLS'li ws(s):// gerekmez: güven sınırı telefon kapısıdır, taşıma Tailscale'in WireGuard'ı.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

@@ -11,6 +11,7 @@
  *   d.surec.baslatmalar;                          // her başlatma: { tur, istek } (komut, argüman, ortam burada)
  *   d.surec.oldurmalar;                           // taskkill kayıtları: { tur: "agac" | "tek", pid }
  *   d.dosya.cagrilar.say("atomikYaz");            // her sahte `cagrilar` ile ne çağrıldığını sorgulatır
+ *   d.transkript.sonrakiSonuc({ silinen: 2, bulunamayan: 0, silinemeyen: 1, reddedilen: 0 }); d.transkript.silinenIstekler;
  * Hata vermek için: d.surec.sonrakiBaslatmaHatasi(new Error("x")), d.dosya.hataVer("oku", err), d.http.hataVer(err).
  */
 import type {
@@ -37,10 +38,14 @@ import type {
   RastgelePortu,
   SaatPortu,
   SistemPortu,
+  SohbetSecimi,
   SurecKaydi,
+  SurecKapisi,
   SurecKimligi,
   SurecPortu,
   TekilKilitPortu,
+  TranskriptPortu,
+  TranskriptSilmeSonucu,
   WsBaglantisi,
   WsSunucuIstegi,
   WsSunucuPortu,
@@ -215,7 +220,7 @@ export function sahteRastgele(tohum = 12345): SahteRastgele {
 // Dosya: bellek içi
 // ---------------------------------------------------------------------------------------------
 
-export type DosyaIslemi = "oku" | "atomikYaz" | "aralikOku" | "boyut" | "dizinOlustur" | "dizinVarMi";
+export type DosyaIslemi = "oku" | "atomikYaz" | "aralikOku" | "boyut" | "dizinOlustur" | "dizinVarMi" | "dosyaSil";
 
 export interface SahteDosya extends DosyaPortu {
   cagrilar: CagriDefteri;
@@ -223,6 +228,7 @@ export interface SahteDosya extends DosyaPortu {
   yaz(yol: string, icerik: string): void;
   /** Testten dosyanın sonuna ekler (örn. `out.jsonl` büyümesi). */
   ekle(yol: string, icerik: string): void;
+  /** Testten dosya siler (portu çağırmaz, kaydetmez). Port yöntemi `dosyaSil`dır; ad çakışmasın diye bu ayrı kalır. */
   sil(yol: string): void;
   /** Yoksa `null`. */
   icerik(yol: string): string | null;
@@ -280,6 +286,10 @@ export function sahteDosya(): SahteDosya {
       for (const k of dizinler) if (k.startsWith(d + "/")) return true;
       for (const k of dosyalar.keys()) if (k.startsWith(d + "/")) return true;
       return false;
+    },
+    dosyaSil: async (yol) => {
+      kontrol("dosyaSil", yol);
+      dosyalar.delete(yolDuzelt(yol));
     },
     yaz: (yol, icerik) => void dosyalar.set(yolDuzelt(yol), icerik),
     ekle: (yol, icerik) => {
@@ -936,6 +946,129 @@ export function sahteBoru(): SahteBoru {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Transkript silme (Dilim 1)
+// ---------------------------------------------------------------------------------------------
+
+const UUID_BICIMI = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export type TranskriptSonucu = TranskriptSilmeSonucu | ((oturum: string) => Partial<TranskriptSilmeSonucu>);
+
+export interface SahteTranskript extends TranskriptPortu {
+  cagrilar: CagriDefteri;
+  /** Her `sil` çağrısının aldığı oturum listesi (UUID olmayanlar dahil, çağrıldığı gibi). */
+  silinenIstekler: Array<readonly string[]>;
+  /** UUID olarak kabul edilip "silinen" sayılan oturumlar (tüm çağrılar, sırayla). */
+  silinenOturumlar: string[];
+  /** Sıradaki `sil` için sonuç (bir kez, aynen döner) ya da işlev. İşlev UUID'li her oturum için kısmi sayı döner. */
+  sonrakiSonuc(s: TranskriptSonucu): void;
+  /** Sıradaki `sil` çağrısını (portun "hiç atmaz" sözüne rağmen) hatayla düşürmek için. */
+  sonrakiHata(hata: Error): void;
+  /** Kuyruk boşken UUID'li her oturumun sonucu. Varsayılan: `{ silinen: 1 }`. */
+  varsayilan: Partial<TranskriptSilmeSonucu>;
+}
+
+export function sahteTranskript(): SahteTranskript {
+  const cagrilar = new CagriDefteri();
+  const kuyruk: TranskriptSonucu[] = [];
+  const hatalar: Error[] = [];
+  const t: SahteTranskript = {
+    cagrilar,
+    silinenIstekler: [],
+    silinenOturumlar: [],
+    varsayilan: { silinen: 1 },
+    sonrakiSonuc: (s) => void kuyruk.push(s),
+    sonrakiHata: (h) => void hatalar.push(h),
+    sil: async (oturumlar) => {
+      cagrilar.ekle("sil", oturumlar);
+      t.silinenIstekler.push([...oturumlar]);
+      const h = hatalar.shift();
+      if (h) throw h;
+      const c = kuyruk.shift();
+      const sonuc: TranskriptSilmeSonucu = { silinen: 0, bulunamayan: 0, silinemeyen: 0, reddedilen: 0 };
+      if (c !== undefined && typeof c !== "function") {
+        const gecerli = oturumlar.filter((o) => UUID_BICIMI.test(o));
+        t.silinenOturumlar.push(...gecerli);
+        return { ...c };
+      }
+      for (const o of oturumlar) {
+        if (!UUID_BICIMI.test(o)) {
+          sonuc.reddedilen++;
+          continue;
+        }
+        const k = { silinen: 0, bulunamayan: 0, silinemeyen: 0, ...(c ? c(o) : t.varsayilan) };
+        sonuc.silinen += k.silinen;
+        sonuc.bulunamayan += k.bulunamayan;
+        sonuc.silinemeyen += k.silinemeyen;
+        if (k.silinen > 0) t.silinenOturumlar.push(o);
+      }
+      return sonuc;
+    },
+  };
+  return t;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Süreç kapısı (Dilim 2)
+// ---------------------------------------------------------------------------------------------
+
+type KapiSohbeti = SohbetSecimi["sohbet_id"];
+
+export interface SahteKapi extends SurecKapisi {
+  cagrilar: CagriDefteri;
+  /** Her `yuvaIste` çağrısının sohbeti (yinelenenler dahil), sırayla. */
+  istekler: KapiSohbeti[];
+  /** Her `yuvaBirak` çağrısının sohbeti (tutmayanlar dahil), sırayla. */
+  birakmalar: KapiSohbeti[];
+  /** `devirSerbestMi` çağrı sayısı. */
+  devirSorulari: number;
+  /** Yeni yuva isteklerine verilecek cevap. Varsayılan `true`. Zaten tutulan yuva etkilenmez. */
+  izin(izinli: boolean): void;
+  /** `devirSerbestMi` cevabı. Varsayılan `true`. */
+  devirIzni(izinli: boolean): void;
+  /** Şu an yuva tutan sohbetler (ayrılma sırasıyla). */
+  yuvadakiler(): KapiSohbeti[];
+}
+
+export function sahteKapi(): SahteKapi {
+  const cagrilar = new CagriDefteri();
+  const tutulan = new Set<KapiSohbeti>();
+  let izinli = true;
+  let devirli = true;
+  const k: SahteKapi = {
+    cagrilar,
+    istekler: [],
+    birakmalar: [],
+    devirSorulari: 0,
+    izin: (b) => {
+      izinli = b;
+    },
+    devirIzni: (b) => {
+      devirli = b;
+    },
+    yuvadakiler: () => [...tutulan],
+    yuvaIste: (sohbet) => {
+      cagrilar.ekle("yuvaIste", sohbet.sohbet_id);
+      k.istekler.push(sohbet.sohbet_id);
+      if (tutulan.has(sohbet.sohbet_id)) return true;
+      if (!izinli) return false;
+      tutulan.add(sohbet.sohbet_id);
+      return true;
+    },
+    devirSerbestMi: () => {
+      cagrilar.ekle("devirSerbestMi");
+      k.devirSorulari++;
+      return devirli;
+    },
+    yuvaBirak: (sohbet) => {
+      cagrilar.ekle("yuvaBirak", sohbet.sohbet_id);
+      k.birakmalar.push(sohbet.sohbet_id);
+      tutulan.delete(sohbet.sohbet_id);
+    },
+  };
+  return k;
+}
+
+// ---------------------------------------------------------------------------------------------
 // Hepsi bir arada
 // ---------------------------------------------------------------------------------------------
 
@@ -962,6 +1095,7 @@ export interface SahteDunya {
   http: SahteHttp;
   anahtar: SahteAnahtar;
   tekilKilit: SahteTekilKilit;
+  transkript: SahteTranskript;
   gunluk: SahteGunluk;
 }
 
@@ -977,6 +1111,7 @@ export function sahteDunya(sec: SahteDunyaSecenekleri = {}): SahteDunya {
   const http = sahteHttp();
   const anahtar = sahteAnahtar(sec.acikAnahtar);
   const tekilKilit = sahteTekilKilit();
+  const transkript = sahteTranskript();
   const gunluk = sahteGunluk();
   return {
     dunya: {
@@ -992,6 +1127,7 @@ export function sahteDunya(sec: SahteDunyaSecenekleri = {}): SahteDunya {
       http,
       anahtar,
       tekilKilit,
+      transkript,
     },
     zaman,
     saat: zaman.saat,
@@ -1006,6 +1142,7 @@ export function sahteDunya(sec: SahteDunyaSecenekleri = {}): SahteDunya {
     http,
     anahtar,
     tekilKilit,
+    transkript,
     gunluk,
   };
 }

@@ -83,7 +83,10 @@ jobs:
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: apps/phone/package-lock.json
+          # kök (protocol + server + kurulum) ve app/ ayrı kilit dosyalarıyla kurulur
+          cache-dependency-path: |
+            apps/phone/package-lock.json
+            apps/phone/app/package-lock.json
       - name: Install
         run: npm ci
       - name: Typecheck (protocol)
@@ -92,8 +95,46 @@ jobs:
         run: npm run test:protocol
       - name: Typecheck (server)
         run: npm run typecheck -w server
+      # dis-dunya.test.ts de dahil; CI'da canlı servis olmadığı için tekil boru çakışması yok
       - name: Test (server)
         run: npm test -w server
+      - name: Install (app)
+        working-directory: apps/phone/app
+        run: npm ci
+      - name: Typecheck (app)
+        working-directory: apps/phone/app
+        run: |
+          npx tsc --noEmit -p tsconfig.json
+          npx tsc --noEmit -p tsconfig.test.json
+      - name: Test (app)
+        working-directory: apps/phone/app
+        run: node --test "test/**/*.test.ts"
+      - name: Typecheck (kurulum)
+        run: npx tsc --noEmit -p kurulum/tsconfig.json
+      - name: Test (kurulum)
+        run: node --disable-warning=ExperimentalWarning --test "kurulum/test/**/*.test.ts"
+
+  # Saf JVM (Android eklentisi yok): ayrı iş, Node/npm gerekmez, linux runner'da Gradle
+  # önbelleği ve JDK kurulumu daha hızlı. Testler yalnız repo içi dosyaları (protocol/) okur.
+  phone-cekirdek:
+    name: phone-cekirdek
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/phone/app/modules/eren-device/cekirdek
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+      # git yürütme biti kaybolmuş olabilir (Windows'ta eklenen dosya); her durumda güvenli
+      - name: Make gradlew executable
+        run: chmod +x gradlew
+      - name: Test
+        run: ./gradlew test --no-daemon --console=plain
 
   # ---------------------------------------------------------------- macOS
   bellek-macos:
@@ -141,26 +182,4 @@ jobs:
       - name: Test
         run: python -m pytest -q scripts/installer/tests
       - name: Dry run (no changes)
-        run: ./install.sh --dry-run --skip-mcp --claude-home "$RUNNER_TEMP/claude" --components beyin,devir,orkestra,computer-use
-
-  phone-macos:
-    name: phone (macOS)
-    runs-on: macos-latest
-    defaults:
-      run:
-        working-directory: apps/phone
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: apps/phone/package-lock.json
-      - name: Install
-        run: npm ci
-      - name: Test (protocol)
-        run: npm run test:protocol
-      - name: Typecheck (server)
-        run: npm run typecheck -w server
-      - name: Test (server)
-        run: npm test -w server
+        run: ./install.sh --dry-run --skip-mcp --claude-home "$RUNNER_TEMP/claude" --components beyin,devir,kapi,orkestra,computer-use
