@@ -70,6 +70,51 @@ class HassasUygulamalarTest {
         assertTrue(HassasUygulamalar.otomatikHassasMi("COM.BINANCE.DEV", ""))
     }
 
+    private val genisHassaslar = listOf(
+        "com.kubi.kucoin" to "KuCoin",
+        "com.x8bit.bitwarden" to "Bitwarden",
+        "com.agilebits.onepassword" to "1Password",
+        "com.lastpass.lpandroid" to "LastPass",
+        "com.beemdevelopment.aegis" to "Aegis",
+        "org.fedorahosted.freeotp" to "FreeOTP",
+        "com.duosecurity.duomobile" to "Duo Mobile",
+        "com.etoro.openbook" to "eToro",
+        "com.ledger.live" to "Ledger Live",
+        "app.phantom" to "Phantom",
+        "com.google.android.apps.adm" to "Find Hub",
+        "com.server.auditor.ssh.client" to "Termius",
+        "org.dayup.stocks" to "Webull",
+        "com.ornek.a" to "Crypto Wallet",
+        "com.ornek.b" to "Kripto Borsası",
+        "com.ornek.c" to "Parola Yöneticisi",
+        "com.ornek.d" to "Password Manager",
+        "com.ornek.e" to "Cüzdan",
+    )
+
+    private val genisSiradanlar = listOf(
+        "com.microsoft.office.outlook" to "Outlook",
+        "com.google.android.gm" to "Gmail",
+        "com.valvesoftware.android.steam.community" to "Steam",
+        "com.candywriter.bitlife" to "BitLife",
+        "com.fut.market.alert" to "FUT Market Alert",
+        "com.sofascore.results" to "Sofascore",
+        "com.kokteyl.mackolik" to "Mackolik",
+        "com.chess" to "Chess",
+        "com.ttterbagames.businesssimulator" to "Business Empire",
+        "com.miui.notes" to "Notlar",
+        "com.spotify.music" to "Spotify",
+    )
+
+    @Test
+    fun genisletilmisKapsamHassasUygulamalarYakalanir() {
+        for ((p, ad) in genisHassaslar) assertTrue(HassasUygulamalar.otomatikHassasMi(p, ad), "$p / $ad")
+    }
+
+    @Test
+    fun genisletilmisKapsamSiradanUygulamalarHassasDegil() {
+        for ((p, ad) in genisSiradanlar) assertFalse(HassasUygulamalar.otomatikHassasMi(p, ad), "$p / $ad")
+    }
+
     @Test
     fun bilinenKumeBosDegilVeHepsiHassas() {
         assertTrue(HassasUygulamalar.BILINEN.isNotEmpty())

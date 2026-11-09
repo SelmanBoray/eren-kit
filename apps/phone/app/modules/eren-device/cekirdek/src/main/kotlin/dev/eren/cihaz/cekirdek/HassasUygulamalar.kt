@@ -1,10 +1,13 @@
 package dev.eren.cihaz.cekirdek
 
+import java.text.Normalizer
+
 /**
  * Kullanıcı kararı olmayan bir uygulamanın kendiliğinden `HASSAS` başlayıp başlamayacağı.
  *
  * Kapsam: bankalar (katılım bankaları dahil), e-para ve ödeme cüzdanları, kripto borsaları ve cüzdanları,
- * aracı kurum ve borsa uygulamaları, iki adımlı doğrulama (2FA) uygulamaları ve e-Devlet.
+ * aracı kurum ve borsa uygulamaları, iki adımlı doğrulama (2FA) uygulamaları, e-Devlet,
+ * parola ve kimlik yöneticileri ve hesap güvenliği (uzaktan silme, sunucu kimlik bilgisi tutan SSH istemcisi).
  * `BILINEN` yalnız paket adından emin olunanlardır; geri kalanı ipuçlarına bırakılır.
  * İpuçları yanlış pozitife karşı seçildi: "bank" bilet uygulaması gibi bir yan ürünü de yakalayabilir
  * (kabul edilebilir), ama "wall" ya da "pay" gibi "wallpaper"/"display" yakalayacak kısa parçalar yok.
@@ -44,12 +47,28 @@ object HassasUygulamalar {
         "co.mona.android",
         "io.metamask",
         "com.wallet.crypto.trustapp",
+        "com.kubi.kucoin",
+        "com.ledger.live",
+        "app.phantom",
         // Aracı kurum ve borsa
         "com.getmidas.app",
+        "com.etoro.openbook",
+        "org.dayup.stocks",
         // İki adımlı doğrulama
         "com.google.android.apps.authenticator2",
         "com.azure.authenticator",
         "com.authy.authy",
+        "com.beemdevelopment.aegis",
+        "org.fedorahosted.freeotp",
+        "com.duosecurity.duomobile",
+        "com.okta.android.auth",
+        // Parola ve kimlik yöneticileri
+        "com.x8bit.bitwarden",
+        "com.agilebits.onepassword",
+        "com.lastpass.lpandroid",
+        // Hesap güvenliği: uzaktan silme yetkisi, sunucu kimlik bilgileri
+        "com.google.android.apps.adm",
+        "com.server.auditor.ssh.client",
         // e-Devlet
         "tr.gov.turkiye.edevlet.kapisi",
     )
@@ -58,10 +77,13 @@ object HassasUygulamalar {
     private val PAKET_IPUCLARI: List<String> = listOf(
         "bank", "katilim", "cepsube", "mobilsube",
         "garanti", "ziraat", "vakif", "kuveyt", "albaraka", "turkiyefinans", "yapikredi", "hsbc", "qnb",
-        "wallet", "papara", "paycell", "tosla", "ininal",
-        "kripto", "bitcoin", "binance", "btcturk", "paribu", "coinbase",
-        "borsa", "yatirim", "menkul",
-        "authenticator", "authy",
+        "wallet", "papara", "paycell", "tosla", "ininal", "bkmexpress", "payfix", "juzdan",
+        "kripto", "crypto", "bitcoin", "binance", "btcturk", "paribu", "coinbase",
+        "kucoin", "bitget", "kraken", "bitpanda", "gateio", "icrypex", "exodusmovement",
+        "borsa", "yatirim", "menkul", "etoro", "trading212", "webull", "robinhood",
+        "authenticator", "authy", "freeotp", "duosecurity", "com.okta.",
+        "bitwarden", "onepassword", "lastpass", "samsungpass", "keepass", "dashlane",
+        "termius",
         "edevlet",
     )
 
@@ -69,11 +91,24 @@ object HassasUygulamalar {
     private val AD_IPUCLARI: List<String> = listOf(
         "bank", "katilim", "mobil sube", "cep sube", "subesi",
         "garanti", "ziraat", "vakif", "kuveyt", "albaraka", "turkiye finans", "yapi kredi", "hsbc", "qnb",
-        "wallet", "cuzdan", "papara", "paycell", "tosla", "ininal",
-        "kripto", "crypto.com", "bitcoin", "binance", "btcturk", "paribu", "coinbase",
-        "borsa", "yatirim", "menkul",
-        "authenticator", "authy", "2fa",
+        "wallet", "cuzdan", "papara", "paycell", "tosla", "ininal", "bkm express",
+        "kripto", "crypto.com", "bitcoin", "binance", "btcturk", "paribu", "coinbase", "gate.io",
+        "borsa", "yatirim", "menkul", "araci kurum", "trading 212", "interactive brokers", "ledger live",
+        "authenticator", "authy", "2fa", "duo mobile", "okta verify", "freeotp",
+        "password manager", "parola yonetic", "sifre yonetic", "samsung pass",
         "e-devlet", "edevlet",
+    )
+
+    /**
+     * Sadeleştirilmiş görünen adın tam kelimeleriyle karşılaştırılır; alt dizgi olarak aranırsa
+     * yanlış pozitif verecek kısa ya da genel adlar burada ("param", "crypto" gibi).
+     */
+    private val AD_KELIMELERI: Set<String> = setOf(
+        "param", "payfix", "juzdan",
+        "crypto", "kucoin", "bitget", "bitpanda", "icrypex",
+        "etoro", "webull", "ibkr", "robinhood",
+        "bitwarden", "1password", "lastpass", "keepass", "keepassdx", "dashlane",
+        "termius",
     )
 
     fun otomatikHassasMi(paket: String, ad: String): Boolean {
@@ -81,13 +116,18 @@ object HassasUygulamalar {
         val p = sadelestir(paket)
         if (PAKET_IPUCLARI.any { it in p }) return true
         val a = sadelestir(ad)
-        return AD_IPUCLARI.any { it in a }
+        if (AD_IPUCLARI.any { it in a }) return true
+        return a.split(KELIME_AYIRICI).any { it in AD_KELIMELERI }
     }
 
-    /** Dile bağlı olmayan küçültme: Türkçe I/İ/ı önce elle `i` olur, sonra kalan Türkçe harfler katlanır. */
+    /**
+     * Dile bağlı olmayan küçültme: önce NFC'ye normalleştirilir (NFD "u + U+0308" gibi yazımlar tek harf olur),
+     * Türkçe I/İ/ı elle `i` olur, sonra kalan Türkçe harfler katlanır.
+     */
     private fun sadelestir(metin: String): String {
-        val sb = StringBuilder(metin.length)
-        for (c in metin) {
+        val nfc = Normalizer.normalize(metin, Normalizer.Form.NFC)
+        val sb = StringBuilder(nfc.length)
+        for (c in nfc) {
             when (c) {
                 'I', 'İ', 'ı' -> sb.append('i')
                 '̇' -> Unit
@@ -105,4 +145,5 @@ object HassasUygulamalar {
     }
 
     private val BOSLUK = Regex("\\s+")
+    private val KELIME_AYIRICI = Regex("[^a-z0-9]+")
 }

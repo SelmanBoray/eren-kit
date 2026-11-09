@@ -20,16 +20,21 @@ private class ListeGoruntusu(kendiPaketi: String, girdi: ListeGirdisi) {
     private val kararlar: Map<String, KullaniciKarari> = girdi.kararlar.toMap()
     private val kurulu: List<KuruluUygulama> = girdi.kurulu.toList()
 
-    /** Kararı olmayan (ya da açık kararının imzası değişmiş) kurulu uygulamanın varsayılanı; görüntüyle bir kez hesaplanır. */
+    /**
+     * Kararı olmayan (ya da açık kararının imzası değişmiş) kurulu uygulamanın varsayılanı; görüntüyle bir kez
+     * hesaplanır. Banka ve benzeri ile başlatıcısı olmayan sistem iç paketleri hassas başlar.
+     */
     private val varsayilan: Map<String, UygulamaDurumu> = girdi.kurulu.associate {
-        it.paket to if (HassasUygulamalar.otomatikHassasMi(it.paket, it.ad)) UygulamaDurumu.HASSAS else UygulamaDurumu.ACIK
+        val hassas = HassasUygulamalar.otomatikHassasMi(it.paket, it.ad) || it.sistemIci
+        it.paket to if (hassas) UygulamaDurumu.HASSAS else UygulamaDurumu.ACIK
     }
 
     fun durum(paket: String): UygulamaDurumu {
         // 1. Değişmez her kararın önündedir.
         if (paket in degismez) return UygulamaDurumu.DEGISMEZ
-        // 2. Kurulu değil: imza bilgisi yok, kapı reddeder.
-        val imza = imzalar[paket] ?: return UygulamaDurumu.YENI
+        // 2. Kurulu değil ya da imza okunamadı (boş özet): güvenilir imza yok, kapı reddeder.
+        val imza = imzalar[paket]
+        if (imza.isNullOrEmpty()) return UygulamaDurumu.YENI
         val karar = kararlar[paket]
         // 3. Kullanıcının HASSAS kararı imza değişse de geçerli: daha kısıtlayıcı olan güvenlidir.
         if (karar?.durum == UygulamaDurumu.HASSAS) return UygulamaDurumu.HASSAS
