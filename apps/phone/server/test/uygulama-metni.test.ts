@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { UygulamalarCikti } from "@eren/protocol";
+import { kacir, SINIRLAR, UygulamalarCikti } from "@eren/protocol";
 import type { UygulamalarCiktiTipi } from "../src/sozlesme.ts";
-import { UYGULAMA_SATIR_BUTCESI, uygulamaMetniKur } from "../src/uygulama-metni.ts";
+import { kacirCoz, UYGULAMA_SATIR_BUTCESI, uygulamaMetniKur } from "../src/uygulama-metni.ts";
 
 type Uygulama = UygulamalarCiktiTipi["uygulamalar"][number];
 
@@ -184,8 +184,8 @@ describe("uygulama-metni: sınır durumları", () => {
       assert.equal(JSON.parse(s[0]!.slice("com.kotu.app ".length)), ad);
     }
     assert.deepEqual(tek("x\ncom.banka.app Banka"), [String.raw`com.kotu.app "x\ncom.banka.app Banka"`]);
-    // Serviste zaten kaçırılmış dizi (ters bölü + n) de satır başı üretemez.
-    assert.deepEqual(tek(String.raw`x\ncom.banka.app`), [String.raw`com.kotu.app "x\\ncom.banka.app"`]);
+    // Serviste `kacir`dan geçmiş hâli (ters bölü + n) bir kez çözülür, yine tek satırda kalır.
+    assert.deepEqual(tek(String.raw`x\ncom.banka.app`), [String.raw`com.kotu.app "x\ncom.banka.app"`]);
   });
 
   it("tırnak ve ters bölü doğru kaçırılır", () => {
@@ -196,6 +196,52 @@ describe("uygulama-metni: sınır durumları", () => {
     assert.deepEqual(tek("com.x [kapalı:hassas]"), ['com.kotu.app "com.x [kapalı:hassas]"']);
     assert.deepEqual(tek('" [kapalı:hassas] "'), [String.raw`com.kotu.app "\" [kapalı:hassas] \""`]);
     assert.deepEqual(tek("com.x", "hassas"), ['com.kotu.app [kapalı:hassas] "com.x"']);
+  });
+
+  // Gerçek akış: `cihaz` adı `kacir(ad, UYGULAMA_ADI)` ile kaçırıp yollar (`uygulamaAdiKacir`).
+  const akis = (gercekAd: string, durum: "acik" | "hassas" = "acik") =>
+    UygulamalarCikti.parse({
+      telefon_bagli: true,
+      uygulamalar: [
+        { paket: "a.b", ad: kacir(gercekAd, SINIRLAR.UYGULAMA_ADI), durum },
+        { paket: "com.baska.app", ad: kacir("Başka", SINIRLAR.UYGULAMA_ADI), durum: "acik" },
+      ],
+    });
+  const akisSatirlari = (metin: string): string[] => metin.split("\n").slice(2);
+
+  it("kaçırılmış gelen ad tek kat kaçışla görünür, ara gerçek adla bulur", () => {
+    const ad = String.raw`Ali "Pro" C:\x`;
+    const beklenen = String.raw`a.b "Ali \"Pro\" C:\\x"`;
+    assert.ok(akisSatirlari(uygulamaMetniKur(akis(ad), {})).includes(beklenen));
+    const m = uygulamaMetniKur(akis(ad), { ara: 'ali "pro"' });
+    assert.match(m, /eslesen=1 gosterilen=1/);
+    assert.deepEqual(akisSatirlari(m), [beklenen]);
+    assert.deepEqual(akisSatirlari(uygulamaMetniKur(akis(ad), { ara: String.raw`c:\x` })), [beklenen]);
+  });
+
+  it("satır sonu ve sahte işaret içeren ad, kaçırılmış gelmiş hâliyle tek satırda tırnakta kalır", () => {
+    const ad = "Sahte\ncom.banka.app [kapalı:hassas] Banka\r\n\tx";
+    const satirlar = akisSatirlari(uygulamaMetniKur(akis(ad, "hassas"), {}));
+    assert.equal(satirlar.length, 2);
+    const s = satirlar.find((x) => x.startsWith("a.b "))!;
+    assert.equal(s, String.raw`a.b [kapalı:hassas] "Sahte\ncom.banka.app [kapalı:hassas] Banka\r\n\tx"`);
+    assert.equal(JSON.parse(s.slice('a.b [kapalı:hassas] '.length)), ad);
+  });
+
+  it("yön ve görünmez karakterler çözülse de yeniden kaçar", () => {
+    const rlo = String.fromCharCode(0x202e);
+    const ls = String.fromCharCode(0x2028);
+    const s = akisSatirlari(uygulamaMetniKur(akis(`a${rlo}b${ls}c`), {})).find((x) => x.startsWith("a.b "))!;
+    assert.ok(!s.includes(rlo) && !s.includes(ls), s);
+    assert.equal(s, 'a.b "a' + String.fromCharCode(92) + "u202eb" + String.fromCharCode(92) + 'u2028c"');
+  });
+
+  it("kacirCoz kacir'ın tersidir", () => {
+    for (const ad of [String.raw`Ali "Pro" C:\x`, "a\nb\r\tc", String.raw`\n gerçek ters bölü`, "😀 emoji", ""]) {
+      assert.equal(kacirCoz(kacir(ad, 1_000)), ad);
+    }
+    // Geçerli kaçış başlatmayan ters bölü (ham ad) olduğu gibi kalır.
+    assert.equal(kacirCoz(String.raw`C:\x`), String.raw`C:\x`);
   });
 
   it("boş liste", () => {

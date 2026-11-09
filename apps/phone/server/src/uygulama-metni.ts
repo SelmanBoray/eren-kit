@@ -1,3 +1,4 @@
+import { kacir } from "@eren/protocol";
 import { z } from "zod";
 import type { UygulamalarCiktiTipi } from "./sozlesme.ts";
 
@@ -29,18 +30,38 @@ function sade(s: string): string {
     .replaceAll("ı", "i");
 }
 
+const KACIS = /\\(?:u([0-9a-fA-F]{4})|(["\\nrt]))/g;
+const TEK_KACIS: Readonly<Record<string, string>> = { '"': '"', "\\": "\\", n: "\n", r: "\r", t: "\t" };
+
 /**
- * Ad güvenilmezdir: `cihaz`daki `kacir`a ek olarak burada da JSON dize kaçışıyla tırnağa alınır
- * (satır sonu, sekme, `"`, `\`, denetim karakteri; U+2028/2029 da). Ad satırı bölemez, kendi başına
- * satır başı gibi görünemez.
+ * `kacir`ın tersi. `cihaz` adı `kacir`dan geçirip yollar; her ters bölü bir kaçış başlattığı için
+ * çözüm tek anlamlıdır. Geçerli kaçış başlatmayan ters bölü (ham gelmiş ad) olduğu gibi kalır.
+ * Kırpma işareti `…` düz karakter olarak kalır.
  */
-function adYaz(ad: string): string {
-  return JSON.stringify(ad).replace(/[\u2028\u2029]/g, (c) => `\\u${c.charCodeAt(0).toString(16)}`);
+export function kacirCoz(metin: string): string {
+  return metin.replace(KACIS, (_tum, hex: string | undefined, tek: string | undefined) =>
+    hex !== undefined ? String.fromCharCode(Number.parseInt(hex, 16)) : (TEK_KACIS[tek ?? ""] ?? ""),
+  );
 }
 
-function satir(u: Uygulama): string {
-  const ad = adYaz(u.ad);
-  return u.durum === "acik" ? `${u.paket} ${ad}` : `${u.paket} [kapalı:${u.durum}] ${ad}`;
+/**
+ * Ad güvenilmezdir. Gerçek ad (`kacirCoz`) bir kez `kacir` ile kaçırılıp tırnağa alınır: `"`, `\`,
+ * satır sonu, sekme, denetim, yön ve satır ayırıcı karakterleri kaçar. Ad köprüye ham gelse de
+ * satırı bölemez, tırnaktan çıkamaz, satır başı ya da `[kapalı:...]` işareti gibi görünemez.
+ */
+function adYaz(gercekAd: string): string {
+  return `"${kacir(gercekAd, gercekAd.length)}"`;
+}
+
+interface Kayit {
+  u: Uygulama;
+  /** Kaçırılmamış ad. */
+  ad: string;
+}
+
+function satir({ u, ad }: Kayit): string {
+  const a = adYaz(ad);
+  return u.durum === "acik" ? `${u.paket} ${a}` : `${u.paket} [kapalı:${u.durum}] ${a}`;
 }
 
 export function uygulamaMetniKur(cikti: UygulamalarCiktiTipi, girdi: UygulamalarAracGirdi): string {
@@ -49,18 +70,20 @@ export function uygulamaMetniKur(cikti: UygulamalarCiktiTipi, girdi: Uygulamalar
     .map(sade)
     .map((t) => t.trim())
     .filter((t) => t.length > 0);
-  const eslesen = cikti.uygulamalar.filter((u) => {
-    if (terimler.length === 0) return true;
-    const p = sade(u.paket);
-    const a = sade(u.ad);
-    return terimler.some((t) => p.includes(t) || a.includes(t));
-  });
+  const eslesen = cikti.uygulamalar
+    .map((u): Kayit => ({ u, ad: kacirCoz(u.ad) }))
+    .filter(({ u, ad }) => {
+      if (terimler.length === 0) return true;
+      const p = sade(u.paket);
+      const a = sade(ad);
+      return terimler.some((t) => p.includes(t) || a.includes(t));
+    });
   // Açıklar önce: sınır kesince kullanıcının iş verebileceği uygulamalar kalsın.
   const sirali = eslesen.toSorted(
     (x, y) =>
-      Number(x.durum !== "acik") - Number(y.durum !== "acik") ||
+      Number(x.u.durum !== "acik") - Number(y.u.durum !== "acik") ||
       x.ad.localeCompare(y.ad, "tr") ||
-      x.paket.localeCompare(y.paket),
+      x.u.paket.localeCompare(y.u.paket),
   );
   const satirlar: string[] = [];
   let boy = 0;
