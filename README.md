@@ -194,6 +194,9 @@ installer: `--components`, `--claude-home`, `--skip-mcp`, `--no-service`, `--rep
 | Assistant name | user environment variable | `env` block of `settings.json` and the service plist |
 | Computer use | `computer-use-windows` MCP | Claude Code's [built-in computer use](https://code.claude.com/docs/en/computer-use): in a session run `/mcp`, pick `computer-use`, **Enable** (Pro/Max, interactive sessions) |
 
+<p align="center"><img src="docs/assets/beyin-macos.jpg" alt="The brain web UI on macOS with sample data: a knowledge graph of projects, preferences, tools and people around one root, with a project's details open in the side panel" width="100%"></p>
+<p align="center"><sub>The brain web UI on macOS (sample data).</sub></p>
+
 **iPhone and iPad.** The brain's web UI works in mobile Safari and can be added to the home screen
 as an app (it ships a web manifest and icon). Expose it to your own devices only, over your tailnet:
 
@@ -209,7 +212,6 @@ the sign-in screen; it is remembered for that app only. In a normal browser tab 
 only for the session. Nothing is opened to the internet: no funnel, and the service still binds to
 `127.0.0.1`.
 
-<p align="center"><img src="docs/assets/ios-beyin.png" alt="The brain web UI in Safari on an iPhone simulator" width="260"></p>
 
 ## 🛠️ `install.ps1` reference
 

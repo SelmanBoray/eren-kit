@@ -194,6 +194,9 @@ aynıdır: `--components`, `--claude-home`, `--skip-mcp`, `--no-service`, `--rep
 | Asistan adı | kullanıcı ortam değişkeni | `settings.json` içindeki `env` alanı ve servis plist'i |
 | Computer use | `computer-use-windows` MCP | Claude Code'un [yerleşik computer use'u](https://code.claude.com/docs/en/computer-use): oturumda `/mcp` → `computer-use` → **Enable** (Pro/Max, etkileşimli oturum) |
 
+<p align="center"><img src="docs/assets/beyin-macos.jpg" alt="macOS'ta örnek veriyle beyin web arayüzü: tek bir kök etrafında projeler, tercihler, araçlar ve kişiler; yan panelde bir projenin ayrıntısı açık" width="100%"></p>
+<p align="center"><sub>macOS'ta beyin web arayüzü (örnek veri).</sub></p>
+
 **iPhone ve iPad.** Beynin web arayüzü mobil Safari'de çalışır ve ana ekrana uygulama olarak
 eklenebilir (web manifesti ve ikonu vardır). Yalnızca kendi cihazlarına, tailnet üzerinden aç:
 
@@ -209,7 +212,6 @@ yapıştır, yalnızca o uygulama için hatırlanır. Normal tarayıcı sekmesin
 oturum boyunca tutulur. İnternete hiçbir şey açılmaz: funnel yok, servis yine yalnızca `127.0.0.1`
 üzerinde dinler.
 
-<p align="center"><img src="docs/assets/ios-beyin.png" alt="iPhone simülatöründe Safari'de beyin web arayüzü" width="260"></p>
 
 ## 🛠️ `install.ps1` başvurusu
 
