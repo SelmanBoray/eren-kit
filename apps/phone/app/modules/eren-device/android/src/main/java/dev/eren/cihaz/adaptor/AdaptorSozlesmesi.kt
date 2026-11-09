@@ -73,7 +73,8 @@ import dev.eren.cihaz.cekirdek.SaatPortu
  *       `TamYetki.kapat` her yerden serbesttir.
  *   (5) `Settings.Secure.put*` yalnız `ErisimAnahtari.kt`'de (erişilebilirlik servisini açıp kapatmak).
  *   (6) `KisayolDeposu.koy(`'un tek çağıranı `KisayolActivity.kt`'dir: kısayol mesajı yalnız
- *       kullanıcının o ekranda söyleyip göndermesiyle doğar.
+ *       kullanıcının o ekranda sesle söylemesiyle doğar (0.4.3'ten beri onay sorulmaz: boş olmayan
+ *       dikte hemen konur; iptal ya da boş dikte hiçbir şey koymaz).
  * =================================================================================================
  */
 
@@ -271,7 +272,11 @@ interface DenetimKapisi {
  *
  * KisayolErisimServisi : android.accessibilityservice.AccessibilityService
  *   Yeteneksiz tetik servisi: ses tuşu erişilebilirlik kısayoluna bağlıdır (iki ses tuşunu basılı
- *   tutmak). Sistem onu bağlayınca `KisayolActivity`'yi açar ve `disableSelf` çağırır. Olay işlemez,
+ *   tutmak). Sistem onu bağlayınca cihaz kilitli DEĞİLSE `KisayolActivity`'yi açar; kilitliyse açmaz
+ *   (kilit `KeyguardManager.isKeyguardLocked` ile okunur, `KeyguardManager` alınamazsa kilitli sayılır).
+ *   Her yolda `disableSelf` çağırır. Koruma ayara değil buraya konmuştur: ölçümde
+ *   `accessibility_shortcut_on_lock_screen`=0 iken de kısayol kilitliyken tetiklendi. Kilit ekranında
+ *   sistemin kısa kısayol geri bildirimi (titreşim/ses) servis kodundan engellenemez. Olay işlemez,
  *   ekran içeriği okumaz, eylem yapmaz; `ErisimServisi` ile ilgisi yoktur.
  *
  * EkranOkuyucu  (EkranPortu, A11yBagi gerçekler)
@@ -311,7 +316,8 @@ interface DenetimKapisi {
  *   çağrılırsa kendini aktarır), sonuç ana iplikte tam bir kez. Sıra: `TamYetki.acik` (değilse
  *   `tam_yetki_kapali`) → plan `Sema.planCoz` ile sıkı çözülür, özet `PlanHash.planHash` ile yeniden
  *   hesaplanıp karşılaştırılır, tur telefon değilse `gecersiz` → çekirdek yoksa `cekirdek_yok` →
- *   plandaki her paket listede `acik` olmalı (`YENI` → `uygulama_listede_degil`; hassas/
+ *   plandaki her paket listede `acik` olmalı (`YENI`, yani kurulu olmayan paket →
+ *   `uygulama_listede_degil`; hassas/
  *   değişmez → `hassas`) → `ErisimAnahtari.ac`, `ACIK` değilse `erisim_acilamadi` →
  *   `izinler.ekle(OnayliIzin(..., kaynak = OTO))` (süre/bütçe/mod OnayActivity'nin önceden seçili
  *   varsayılanlarıyla; biyometri yok) → `Adaptor.oturumGuncelle?.izinEklendi(izin)` → ön plan plandaki
@@ -327,7 +333,7 @@ interface DenetimKapisi {
  *   (UsageStatsManager, son 60 sn'deki en son ACTIVITY_RESUMED; kendi paketimiz, systemui ve varsayılan
  *   başlatıcı hariç; en son olay başlatıcı ya da kendi paketimizse `null`: bayat ön plan gönderilmez;
  *   yetki yoksa `null`), `koy(ctx, metin, paket?): String` (DEĞİŞMEZ 6: tek çağıran
- *   `KisayolActivity`; paket hassas/değişmez ya da durumu bilinmiyorsa paket ve ad `null`; ad
+ *   `KisayolActivity`; paket hassas/değişmez ya da çekirdek yok/durum okunamıyorsa paket ve ad `null`; ad
  *   PackageManager etiketinden, en çok 80, kontrol karakterleri ayıklanmış; yeni mesaj eskisini siler;
  *   `Adaptor.olaylar?.kisayolGeldi(id)`), `al(): KisayolMesaji?`, `tuket(id)` (yalnız id eşleşirse).
  *
@@ -354,12 +360,14 @@ interface DenetimKapisi {
  *   (`"acildi"` | `"iptal"`); RESULT_CANCELED ya da extra yoksa köprü `iptal` sayar.
  *
  * KisayolActivity : android.app.Activity
- *   Saydam tema `@style/Eren.Saydam`, `taskAffinity=""`, excludeFromRecents, noHistory; kutucuk ve
- *   bildirimden açılır (köprüden değil). Açılır açılmaz `KisayolDeposu.onPlan`; sonra RecognizerIntent
- *   (tr-TR; RECORD_AUDIO yok; köprüdeki `dikte()` ile aynı yol). Metin gelince küçük kart (metin +
- *   "Bağlam: <ad>" + 3 sn geri sayım + İptal + Gönder); süre dolunca ya da Gönder'de `KisayolDeposu.koy`
- *   (DEĞİŞMEZ 6: tek çağıran burası); JS ayakta değilse (`Adaptor.olaylar == null`) uygulamanın
- *   başlatıcı etkinliğini başlatır; sonra kapanır. Dikte iptalse sessizce kapanır.
+ *   Saydam tema `@style/Eren.Saydam`, `taskAffinity=""`, excludeFromRecents; manifestte noHistory
+ *   BİLEREK YOK (tanıyıcı opak gelirse sonuç kaybolur). Kutucuk, bildirim ve ses tuşu kısayolundan
+ *   (`KisayolErisimServisi`) açılır (köprüden değil). Açılır açılmaz `KisayolDeposu.onPlan`; sonra
+ *   RecognizerIntent (tr-TR; RECORD_AUDIO yok; köprüdeki `dikte()` ile aynı yol). Kart, geri sayım,
+ *   Gönder/İptal düğmesi YOKTUR: boş olmayan metin gelince onay sormadan hemen `KisayolDeposu.koy`
+ *   (DEĞİŞMEZ 6: tek çağıran burası; yanlış tanınan dikte de gider); kısa Toast ("<asistanAdi()>
+ *   oturumuna gönderildi · <bağlam adı>"); JS ayakta değilse (`Adaptor.olaylar == null`) uygulamanın
+ *   başlatıcı etkinliğini başlatır; sonra kapanır. Dikte iptal ya da boşsa hiçbir şey göndermeden kapanır.
  *
  * EslestirmeActivity : android.app.Activity
  *   FLAG_SECURE. QR'ı Google kod tarayıcı okur (CAMERA izni yok) ya da elle kod girişi. `EslestirmeQr`
@@ -368,7 +376,10 @@ interface DenetimKapisi {
  *   biyometri. Result `EslestirSonucu{sonuc, kod?}`.
  *
  * UygulamaListesiActivity : android.app.Activity
- *   Uygulamalar ekranı: izin verilecekler `acik`, banka/parola `hassas`. `KullaniciKarari` (durum +
+ *   Uygulamalar ekranı, iki durumlu: Açık / Kapalı (`acik`/`hassas`); değişmezler "Kilitli" ve
+ *   düğmesizdir. Varsayılan açıktır; banka/para/kimlik uygulamaları `HassasUygulamalar` ile otomatik
+ *   kapalı başlar (notla gösterilir). "Açık" biyometri ya da ekran kilidi ister, "Kapalı" istemez; ikisi
+ *   de imza özetini karar anında alır. "Yeni" ve kararı silme seçeneği yoktur. `KullaniciKarari` (durum +
  *   o anki imza özeti) deposunu yazar; `cekirdek.listeler.guncelle` + `oturumGuncelle.uygulamalarDegisti`.
  *
  * DenetimActivity : android.app.Activity

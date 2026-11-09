@@ -185,8 +185,9 @@ object ErisimAnahtari {
      * Ses tuşu kısayolunu `KisayolErisimServisi`'ne bağlar. DİKKAT: kullanıcının önceki kısayol hedefi
      * (`accessibility_shortcut_target_service`) varsa ÜZERİNE YAZILIR. İki ayar yazılır:
      * hedef servis ve `accessibility_shortcut_dialog_shown`=1 (ilk kullanımda sistem onay penceresi
-     * çıkmasın). Kilit ekranı anahtarı (`accessibility_shortcut_on_lock_screen`) yazılmaz: onay
-     * penceresi görülmüş sayıldığı için sistem varsayılanı zaten kilit ekranında da çalıştırır.
+     * çıkmasın). Kilit ekranı anahtarı (`accessibility_shortcut_on_lock_screen`) yazılmaz. Bu anahtar
+     * kilitli korumayı sağlamaz: ölçümde (2026-11-09) 0 iken de kısayol kilitliyken tetiklendi. Kilitliyken
+     * açmama koruması `KisayolErisimServisi`'ndedir (`KeyguardManager.isKeyguardLocked`).
      * `ENABLED_ACCESSIBILITY_SERVICES`'a dokunmaz; kısayol servisini sistem açıp kapatır.
      * Herhangi bir iplikten çağrılabilir (iki küçük ayar yazımı). Anahtar adları `Settings.Secure`'ın
      * gizli (@hide) alanlarıdır (AOSP `Settings.java`), bu yüzden dizge olarak yazılır.

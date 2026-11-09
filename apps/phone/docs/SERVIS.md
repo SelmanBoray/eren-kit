@@ -79,10 +79,10 @@ Yeni kabuk gereklidir: açık bir kabuk kalıcı ortama sonradan yazılan değer
 
 Görev adı değişirse eski adla kayıtlı görev, o adı veren değişkenle `gorev-kaydet.ts --sil` ile kaldırılıp yenisi kaydedilir. Görev Zamanlayıcı'nın yeni kalıcı ortamı oturumu kapatıp açmadan görüp görmediği ölçülmedi; çalışan bekçi ve servisin sonradan değişen kalıcı değeri görüp görmediği de ölçülmedi.
 
-**Eski kurulum korumaları.** Önceki sürümler veriyi `%LOCALAPPDATA%\Eren` altına yazıyor, görevi `Eren` adıyla kaydediyordu. Değişken verilmeden yeni sürümle kurulursa ikinci bir görev (iki servis) ya da ikinci bir veri kökü (bölünmüş veri) doğardı; bu yüzden `kur.ts` (`--geri-al` dahil) ve `gorev-kaydet.ts` (kaydederken), hiçbir şeye dokunmadan önce şunları denetler:
+**Eski kurulum korumaları.** Önceki sürümler veriyi `%LOCALAPPDATA%\Eren` altına yazıyor, görevi `Eren` adıyla kaydediyordu. Değişken verilmeden yeni sürümle kurulursa ikinci bir görev (iki servis) ya da ikinci bir veri kökü (bölünmüş veri) doğardı; bu yüzden `kur.ts` (`--geri-al` dahil), `gorev-kaydet.ts` (kaydederken), `eren dur` ve `eren baslat`, hiçbir şeye dokunmadan önce şunları denetler:
 
 1. Eski `Eren` görevi kayıtlıysa ve etkin görev adı başkaysa kurulum durur. Bayrakla geçilemez: ya görev adı eskiye bağlanır ya da eski görev önce silinir.
-2. `%LOCALAPPDATA%\Eren` altında `uygulama` ya da `eren.db` varsa ve etkin veri kökü başkaysa kurulum durur. Yeni kökle bilerek kurmak için `--eski-koku-yoksay` verilir (`kur.ts`, `kur.ts --geri-al` ve `gorev-kaydet.ts` ile).
+2. `%LOCALAPPDATA%\Eren` altında `uygulama` ya da `eren.db` varsa ve etkin veri kökü başkaysa kurulum durur. Yeni kökle bilerek kurmak için `--eski-koku-yoksay` verilir (`kur.ts`, `kur.ts --geri-al`, `gorev-kaydet.ts`, `eren dur` ve `eren baslat` ile).
 
 Hata iletisi, mevcut kurulumu sürdürmek için kalıcı kullanıcı ortamına `EREN_KIT_PHONE_TASK_NAME=Eren` ve `EREN_KIT_DATA_DIR=<eski kök>` yazılıp yeni kabuk açılmasını söyler.
 
@@ -96,7 +96,7 @@ Hata iletisi, mevcut kurulumu sürdürmek için kalıcı kullanıcı ortamına `
 
 Değişkenler hiç verilmezse yeni bir kurulum gibi davranılır: `%LOCALAPPDATA%\eren-kit` kökü, `eren-kit-telefon` görevi, `Claude` adı.
 
-**Durum.** `kur.ts --durum` (salt okunur) veri kökünü, uygulama kökünü ve eski kurulumla olası çakışmaları (`UYARI:`), güncel ve önceki sürümü, kurulu sürümleri ve geçmişi gösterir; kabuk ile kalıcı ortamı karşılaştırmaz. `eren durum` veri kökünü, görev adı ve durumunu ve aynı çakışma uyarılarını da gösterir (ayrıntı: "`eren` komutu").
+**Durum.** `kur.ts --durum` (salt okunur) veri kökünü, uygulama kökünü ve eski kurulumla olası çakışmaları (`UYARI:`), güncel ve önceki sürümü, kurulu sürümleri ve geçmişi gösterir; kabuk ile kalıcı ortamı karşılaştırmaz. `eren durum` veri kökünü, bekçinin çalıştığı veri kökünü (bildiriyorsa), görev adı ve durumunu ve aynı çakışma uyarılarını da gösterir (ayrıntı: "`eren` komutu").
 
 Veritabanı şeması ve boru adları (`eren-servis-tekil`, `eren-bekci`) bu seçimlerden bağımsızdır; iki düzen arasında geçiş için veri kopyalanması gerekir ve bu belge otomatik taşıma anlatmaz.
 
@@ -126,17 +126,18 @@ node --disable-warning=ExperimentalWarning kurulum/kur.ts --durum
 
 `kur.ts` (seçeneksiz) sırayla şunları yapar; biri düşerse durur, `guncel` değişmez ve çıkış kodu sıfırdan farklıdır:
 
-1. `git status --porcelain` boş değilse durur. `--kirli` ile geçilir; sürüm adı `<sha>-k<zaman>` olur, aynı sha'nın temiz kopyasını gölgelemez.
+1. `git status --porcelain -- .` boş değilse durur; denetim yalnız `apps/phone` ağacına bakar, toplu depodaki başka paketlerin değişikliği sayılmaz. `--kirli` ile geçilir; sürüm adı `<sha>-k<zaman>` olur, aynı sha'nın temiz kopyasını gölgelemez.
 2. Test kapısı: `npm run typecheck -w server`, server testleri (`dis-dunya.test.ts` hariç: canlı servisle aynı tekil boruyu kullanır), `dis-dunya.test.ts`'ten yalnız transkript testleri (`--test-name-pattern=transkript`; tekil boruyu kullanan gruplar koşmaz), `npm test -w protocol`, kurulum tip denetimi (`kurulum/tsconfig.json`), kurulum testleri. `--testsiz` kapıyı atlar. `--yalniz-test` yalnız kapıyı çalıştırır, kurmaz.
-3. Sürümü `surumler\<sürüm>`'e kopyalar. Testten sonra çalışma ağacı değiştiyse (temiz kurulumda) kopyayı silip durur.
+3. Sürümü `surumler\<sürüm>`'e kopyalar. Testten sonra `apps/phone` ağacı değiştiyse (temiz kurulumda: ağaç kimliği `HEAD:./` ya da `status -- .` farklıysa) kopyayı silip durur; depoya giren ve bu ağacı değiştirmeyen ilgisiz commit durdurmaz.
 4. Duman testi: yeni sürümde `server/src` altındaki tüm modülleri yeni dizinden içe aktarır. Dört giriş dosyası (`ana.ts`, `kopru.ts`, `eslestir.ts`, `bekci-ana.ts`) `if (import.meta.main)` korumalıysa onlar da girer; korumasız olan olursa yalnız dış paketleri yüklenir ve bu yazdırılır. `@eren/protocol`'ün sürümün kendi `protocol`'üne çözüldüğünü denetler.
 5. `guncel`'i yeni sürüme çevirir, `gecmis.json`'a ekler. Görev kapalıysa (Disabled) `guncel` değişmeden durur ve önce `eren baslat` denir (`--geri-al` için de aynı). Bundan önce (ve en başta da) bekçisiz çalışan servis denetlenir: bekçi borusu yok ama `\\.\pipe\eren-servis-tekil` açıksa elle başlatılmış bir servis vardır; `kur.ts` `guncel`'i değiştirmeden durur. Önce o servis `/T`'siz durdurulmalıdır (`/T` `detached` iş oturumlarını da öldürür).
 6. Servisi yeniler. Bekçi çalışıyor ve görev kayıtlıysa bekçiye `kapan` der, bekçi borusu kaybolana ve bekçi süreci gerçekten bitene kadar bekler (en çok 60 sn), `schtasks /run /tn <görev adı>` ile yeni bekçiyi başlatır; böylece bekçinin kendisi de yeni sürümden gelir. Boru 10 sn içinde gelmezse (ya da `/run` sıfır dışı dönerse) (`IgnoreNew` eski görev örneği bitmeden isteği yutabilir) `/run` en çok 2 kez yinelenir. Bekçi çalışıyor ama görev kayıtlı değilse yalnız `yenile` gönderir (bekçi eski sürümde kalır; uyarı yazar). Bekçi yoksa ve görev kayıtlıysa görevi çalıştırır.
-7. En çok 60 sn `durum` yoklar. Başarı: ana çalışıyor, `surum` yeni sürümle aynı, ana tetikten sonra başlamış ve en az 5 sn ayakta.
-8. Adım 6-7 düşerse ve önceki sürüm varsa otomatik geri alma yapar: `guncel` önceki sürüme döner ve servis bir kez daha yenilenir (eski bekçi hiç kapanmadıysa yeniden başlatılmaz). Düşen sürümün geçmiş kaydı geri çekilir, yani "önceki sürüm" bozuk sürümü göstermez; otomatik geri almadan sonra `--geri-al` önerilmez (zaten geri alınmıştır). Geri alınan sürüm de ayakta kalmazsa durum söylenip durulur, döngü yoktur. Geri alınan sürümün `/sohbet` protokolü (`protocol/src/sinirlar.ts` içindeki `SOHBET_SURUMU`, dosya metin olarak okunur) şimdikinden eskiyse tek satır uyarı yazılır (aşağıdaki "Geri alma ve telefon" sınırı); geri alma engellenmez. Her başarısızlıkta çıkış kodu sıfırdan farklıdır ve temizlik atlanır.
-9. Eski sürümleri temizler: en yeni 3 sürüm, `guncel` ve önceki korunur.
+7. En çok 60 sn `durum` yoklar. Başarı: ana çalışıyor, `surum` yeni sürümle aynı, ana tetikten sonra başlamış, en az 5 sn ayakta ve servis beklenen veri kökünde çalışıyor; kurulum bu kök doğrulanmadan başarı bildirmez. Kanıt bekçinin `durum` cevabındaki `veri_koku`'dur. Bunu bildirmeyen eski bekçide (geri alınan sürüm ya da görevsiz yenileme) kanıt, beklenen kökteki `logs\servis.log`'da (dönmüşse `servis.1.log`) ana pid'inin `basladi` kaydıdır; kayıt yoksa 60 sn sonunda "doğrulanamadı" hatası verilir. `veri_koku` beklenenden farklıysa hemen düşer.
+8. Servis yanlış veri kökündeyse (adım 7) yeniden başlatmak çözmez, çünkü önceki sürüm de aynı ortamla aynı köke açılırdı. Önceki sürüm varsa `guncel` ona geri alınır (yoksa `guncel` yeni sürümde kalır), servis durdurulur (önce görev kapatılır, sonra bekçiye `kapan`), servis yeniden başlatılmaz; yanlış kökte oluşmuş olabilecek `eren.db` ve `sunucu-anahtar.pem`'e dokunulmaz. Ortam düzeltilince (oturumu kapatıp açın) `eren baslat` çalıştırılır, `eren durum` ile veri kökü denetlenir, sonra kurulum yinelenir. `--geri-al` da aynı durumda `guncel`'i geri almaz, yalnız servisi durdurur.
+9. Adım 6-7 başka bir sebeple düşerse ve önceki sürüm varsa otomatik geri alma yapar: `guncel` önceki sürüme döner ve servis bir kez daha yenilenir (eski bekçi hiç kapanmadıysa yeniden başlatılmaz). Düşen sürümün geçmiş kaydı geri çekilir, yani "önceki sürüm" bozuk sürümü göstermez; otomatik geri almadan sonra `--geri-al` önerilmez (zaten geri alınmıştır). Geri alınan sürüm de ayakta kalmazsa durum söylenip durulur, döngü yoktur. Geri alınan sürümün `/sohbet` protokolü (`protocol/src/sinirlar.ts` içindeki `SOHBET_SURUMU`, dosya metin olarak okunur) şimdikinden eskiyse tek satır uyarı yazılır (aşağıdaki "Geri alma ve telefon" sınırı); geri alma engellenmez. Her başarısızlıkta çıkış kodu sıfırdan farklıdır ve temizlik atlanır.
+10. Eski sürümleri temizler: en yeni 3 sürüm, `guncel` ve önceki korunur.
 
-`--geri-al` `gecmis.json`'daki, güncelden farklı son sürüme döner, bekçisiz servis denetimini yapar ve 6-7. adımları yineler; düşerse kendiliğinden yeniden geri almaz; protokollü sürümden eskisine dönülüyorsa aynı uyarıyı verir. Önceki sürüm yoksa hata verir. `--durum` salt okunurdur: güncel ve önceki sürüm, kurulu sürümler, geçmişin son 10 kaydı, görev, servis tekil kilidi (açık/kapalı) ve bekçi durumu; bekçisiz servis varsa uyarır.
+`--geri-al` `gecmis.json`'daki, güncelden farklı son sürüme döner, bekçisiz servis denetimini yapar ve 6-7. adımları (veri kökü doğrulaması dahil) yineler; düşerse kendiliğinden yeniden geri almaz; protokollü sürümden eskisine dönülüyorsa aynı uyarıyı verir. Önceki sürüm yoksa hata verir. `--durum` salt okunurdur: güncel ve önceki sürüm, kurulu sürümler, geçmişin son 10 kaydı, görev, servis tekil kilidi (açık/kapalı) ve bekçi durumu; bekçisiz servis varsa uyarır.
 
 ## `eren` komutu
 
@@ -144,11 +145,13 @@ node --disable-warning=ExperimentalWarning kurulum/kur.ts --durum
 
 | Komut | Ne yapar |
 |---|---|
-| `eren durum` | Görev kayıtlı mı ve durumu, bekçi (pid, durum), ana (pid, çalışma süresi), yeniden başlatma sayısı, son çıkış kodu (taze bekçide "yok"), çalışan ve güncel sürüm, 47821 portunun dinlenmesi, `servis.log` ve `bekci.log` son 5 olay. |
+| `eren durum` | Görev kayıtlı mı ve durumu, bekçi (pid, durum, bildirdiği veri kökü; bu kabuğun veri kökünden farklıysa `UYARI:`), ana (pid, çalışma süresi), yeniden başlatma sayısı, son çıkış kodu (taze bekçide "yok"), çalışan ve güncel sürüm, 47821 portunun dinlenmesi, `servis.log` ve `bekci.log` son 5 olay. |
 | `eren yeniden-baslat` | Bekçiye `yenile` der: ana nazikçe kapanır, `guncel`'den hemen yeniden başlar, geri çekilme sıfırlanır. Bekçi kendisi yeniden başlamaz. |
 | `eren dur` | Görev kayıtlıysa önce kapatır (`schtasks /change /tn <görev adı> /disable`), sonra bekçiye `kapan` der ve bekçi süreci bitene kadar en çok 60 sn bekler. Görev kapalı olduğu için 5 dakikalık tetik servisi geri getirmez. Görev kayıtlı değilse doğrudan `kapan` gönderir. |
 | `eren baslat` | Görevi açar (`/enable`), `schtasks /run /tn <görev adı>` çalıştırır, bekçi borusunu 10 sn içinde doğrular; gelmezse en çok 3 deneme yapar. Bekçi zaten çalışıyorsa yalnız görevi açar. `eren dur` sonrası servisi kaldırmanın yolu budur. |
 | `eren log [n] [--bekci]` | `servis.log` ya da `bekci.log`'un son n (varsayılan 20) olayı; yalnız saat, seviye, modül, olay. |
+
+`eren dur` ve `eren baslat` de eski kurulum korumasına ("Eski kurulum korumaları") tabidir: koruma bir sorun bulursa hiçbir şeye dokunmadan durur ("eren dur durdu, hiçbir şey değişmedi") ve sıfırdan farklı kodla çıkar. Eski veri kökü doluyken bilerek sürdürmek için ikisi de `--eski-koku-yoksay` alır (başka seçenek "Bilinmeyen seçenek" hatasıdır). Servis yanlış veri kökünde bulunduğu için kurulum görevi kapattıysa servis `eren baslat` ile, ortam düzeltildikten sonra açılır.
 
 Bekçi çalışmıyorsa `yeniden-baslat` ve `dur` "Bekçi çalışmıyor" der (`dur` görevi yine de kapatmış olur); `eren baslat` ile kaldırılır. `eren durum` kapalı görevi "görev kapalı" diye belirtir.
 

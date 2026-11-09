@@ -21,6 +21,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `matcher` and per-handler `if` filters, and `-ReplaceExisting` also removes out-of-repo copies of
   the gate hook.
 
+### Changed
+
+- `apps/phone` 0.4.3 (2026-11-09):
+  - The voice shortcut now sends the dictated message without asking for confirmation.
+  - The voice shortcut does not run while the device is locked.
+  - In the shortcut prompt, the assistant no longer asks clarifying questions; it acts on the most reasonable reading.
+  - App permissions are on by default. Banking, money and identity apps start off automatically, and the Apps screen is now a simple On/Off switch.
+
 ## [0.1.0] - 2026-11-09
 
 ### Added
