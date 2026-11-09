@@ -33,6 +33,7 @@ import { outboxKur } from "./outbox.ts";
 import { secimDeposuKur } from "./secim.ts";
 import { adHazirla, otomatikAd, ozetleriKur, sohbetDefteriKur } from "./sohbetler.ts";
 import { telafiKur } from "./telafi.ts";
+import { tuketimKur } from "./tuketim.ts";
 import type {
   AckCercevesi,
   BekleyenOge,
@@ -56,6 +57,7 @@ import type {
   SohbetYasamOlayi,
   SohbetYonetimMesaji,
   SunucuDurumu,
+  TuketimDurumu,
 } from "./sozlesme.ts";
 
 // Ekran yüzeyi: tipler sözleşmededir, ekranlar onları buradan alır.
@@ -92,6 +94,8 @@ export type {
   SohbetSilSonucu,
   SonMesaj,
   SunucuDurumu,
+  TuketimDurumu,
+  TuketimRaporu,
 } from "./sozlesme.ts";
 export type { ServisBilgisi, SohbetAdi, SohbetErenDurumu, SohbetId } from "@eren/protocol";
 export type { BaglantiHatasi, YerelBaglantiHatasi } from "./baglanti.ts";
@@ -114,6 +118,9 @@ export { adHazirla } from "./sohbetler.ts";
 
 // Toplu telafide görünüm her olayda değil, bu kadar olayda bir ve sıra boşalınca yenilenir.
 const TOPLU_BILDIRIM = 64;
+
+// Canlı `job_finished`'tan bu kadar sonra tüketim istenir; aradaki olaylar tek isteğe birleşir.
+const IS_BITTI_TUKETIM_MS = 3_000;
 
 /**
  * `gecmisiSil` ve `sil`: bu sürede `ack` gelmezse `zaman_asimi` döner ve bağlantı yenilenir (yol
@@ -242,6 +249,13 @@ export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat }, secen
   let okunduSurum = 0;
   // Yerel sıfırlamadan sonra ilk `welcome.head_seq` taban olur.
   let tabanBekleniyor = false;
+  // Son `welcome.head_seq`: bundan büyük `seq`'li olaylar canlıdır, küçük-eşitler telafide yeniden
+  // gelenlerdir. İlk `welcome`'a dek hiçbir olay canlı sayılmaz.
+  let canliEsikSeq = Number.POSITIVE_INFINITY;
+  // Canlı `job_finished` sonrası bekleyen tek tüketim isteği.
+  let isBittiTuketim: IptalEt | null = null;
+  // Modülün son bildirdiği durum: nesne kimliği yalnız değişince yenilenir (`sigEsit` önbelleği).
+  let tuketimDurumu: TuketimDurumu = { durum: "yok" };
   const secimDeposu = secimDeposuKur({ depo });
 
   // Kendi önbellekleri: girdiler aynıysa aynı sonuç (nesne kimliği korunur).
@@ -526,6 +540,8 @@ export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat }, secen
     depo,
     uygulandi: (o) => {
       ertelenmis(() => uygula(o, true));
+      // Yalnız `welcome.head_seq`'ten sonraki (canlı) bitişler: telafide yeniden gelenler değil.
+      if (o.type === "job_finished" && o.seq > canliEsikSeq) isBittiTuketimPlanla();
       if (++toplu >= TOPLU_BILDIRIM) {
         toplu = 0;
         bildir();
@@ -652,11 +668,15 @@ export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat }, secen
         bildir();
         return;
       }
+      case "usage_report":
+        tuketim.rapor(c);
+        return;
     }
   };
 
   const kimlikTamam = (w: WelcomeCercevesi): void => {
     hata = null;
+    canliEsikSeq = w.head_seq;
     if (telafi.welcome(w.head_seq) === "geride") {
       // Bilgisayarın geçmişi telefondakinin gerisinde (veritabanı yenilenmiş): yeni olaylar eski
       // `seq`'leri yeniden kullanır ve atılırdı. Yerel geçmiş silinir, baştan çekilir.
@@ -673,6 +693,7 @@ export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat }, secen
     }
     outbox.kimlikTamam((m) => baglanti.gonder(m));
     bildir();
+    tuketim.iste();
   };
 
   const baglanti = baglantiKur({
@@ -696,10 +717,39 @@ export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat }, secen
         for (const o of ornekler.values()) o.akis.koptu();
         telafi.koptu();
         sunucu = null;
+        isBittiTuketimIptal();
+        tuketim.koptu();
         bildir();
       },
     },
   });
+
+  // Tüketim raporu: istek bellekte, outbox'a ve kalıcı kuyruğa girmez (`sorguGonder` doğrudan yollar).
+  const tuketim = tuketimKur({
+    saat,
+    gonder: (m) => baglanti.sorguGonder(m),
+    bildir: () => {
+      tuketimDurumu = tuketim.durum();
+      bildir();
+    },
+  });
+  tuketimDurumu = tuketim.durum();
+
+  const isBittiTuketimIptal = (): void => {
+    if (isBittiTuketim === null) return;
+    const iptal = isBittiTuketim;
+    isBittiTuketim = null;
+    iptal();
+  };
+
+  const isBittiTuketimPlanla = (): void => {
+    if (isBittiTuketim !== null) return;
+    isBittiTuketim = saat.sonra(IS_BITTI_TUKETIM_MS, () => {
+      isBittiTuketim = null;
+      // Zorla: art arda biten işlerde ikinci işin tüketimi tazelik kuralına takılmasın.
+      tuketim.iste(true);
+    });
+  };
 
   const durum = (): CekirdekDurumu => {
     if (!kirli && onbellek !== null) return onbellek;
@@ -714,6 +764,7 @@ export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat }, secen
       sohbetler: listeAl().liste,
       secili,
       calisanIsler: calisanIslerAl(),
+      tuketim: tuketimDurumu,
     };
     if (onbellek !== null && sigEsit(onbellek, yeni)) return onbellek;
     onbellek = yeni;
@@ -1042,6 +1093,8 @@ export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat }, secen
     },
 
     simdiBaglan: () => baglanti.simdiBaglan(),
+
+    tuketimIste: () => tuketim.iste(),
 
     durum,
 

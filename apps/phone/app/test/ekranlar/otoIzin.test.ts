@@ -234,6 +234,7 @@ class SahteCekirdek {
       sohbetler: sohbetler.map(ozet),
       secili: "ana" as SohbetId,
       calisanIsler: [],
+      tuketim: { durum: "yok" },
     };
   }
 

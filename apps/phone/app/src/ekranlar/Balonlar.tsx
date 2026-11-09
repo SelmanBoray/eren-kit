@@ -15,6 +15,7 @@ import type {
   KesilenTur,
   Sohbet,
   SistemNotu as SistemOgesi,
+  TuketimRaporu,
 } from "../cekirdek/index.ts";
 import type { ErenCihaz } from "../cihaz/erenDevice.ts";
 import { ASISTAN_ADI } from "../platform/asistanAdi.ts";
@@ -24,6 +25,7 @@ import { PlanKartiEkrani } from "./PlanKartiEkrani.tsx";
 import { RaporKartiEkrani } from "./RaporKartiEkrani.tsx";
 import { SoruKartiEkrani } from "./SoruKartiEkrani.tsx";
 import { bosluk, cizgi, olcu, renk, sure, yaricap, yazi } from "./tema.ts";
+import { isTuketimi } from "./tuketimMetni.ts";
 import type { RenkAdi } from "./tema.ts";
 
 // ---------------------------------------------------------------- Ortak
@@ -499,6 +501,8 @@ export const ZamanCizelgesiOgesi = memo(function ZamanCizelgesiOgesi(p: {
   sohbet: Sohbet;
   cihaz: ErenCihaz;
   onIsler: () => void;
+  /** İsteğe bağlı: eldeki tüketim raporu; rapor kartı kendi işinin satırını buradan alır. */
+  tuketimRaporu?: TuketimRaporu | null;
 }): ReactNode {
   const o = p.oge;
   switch (o.tur) {
@@ -515,7 +519,7 @@ export const ZamanCizelgesiOgesi = memo(function ZamanCizelgesiOgesi(p: {
     case "is":
       return <IsSatiri oge={o} basinca={o.durum === "suruyor" ? p.onIsler : undefined} />;
     case "rapor":
-      return <RaporKartiEkrani kart={o} />;
+      return <RaporKartiEkrani kart={o} tuketim={isTuketimi(p.tuketimRaporu ?? null, o.is_id)} />;
     case "soru":
       return <SoruKartiEkrani kart={o} sohbet={p.sohbet} />;
     case "devir":

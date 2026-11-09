@@ -680,8 +680,12 @@ describe("çekirdek: yüzey", () => {
     assert.deepEqual(await yok.sil(), { ok: false, kod: "sohbet_bulunamadi" });
     assert.equal(k.c.sec("s-yok-1"), false);
     assert.equal(k.c.durum().secili, "ana");
-    // Hiçbir şey yollanmadı.
-    assert.deepEqual(isTurleri(k.ws.son()), []);
+    // Kasıtlı tüketim isteği dışında hiçbir şey yollanmadı (bağlanınca tam bir kez, client_msg_id'siz).
+    assert.deepEqual(isTurleri(k.ws.son()), ["usage_request"]);
+    const [ur] = turdekiler(k.ws.son(), "usage_request");
+    assert.equal(ur?.["v"], v);
+    assert.equal(typeof ur?.["istek_id"], "string");
+    assert.equal("client_msg_id" in (ur ?? {}), false);
   });
 
   it("abone hemen bir kez çağrılır; dinleyici hatası ötekileri durdurmaz; durum değişmedikçe aynı nesne", async () => {
@@ -904,8 +908,8 @@ describe("çekirdek: sohbetAc", () => {
     await bosalt();
     const b = k.ws.son();
     await elSikis(b, 0);
-    assert.deepEqual(isTurleri(b), ["chat_create", "user_message", "chat_rename", "user_message"]);
-    const [cc, um, cr] = b.giden().slice(-4);
+    assert.deepEqual(isTurleri(b), ["chat_create", "user_message", "chat_rename", "user_message", "usage_request"]);
+    const [cc, um, cr] = b.giden().slice(-5, -1);
     assert.deepEqual(
       [cc?.["v"], cc?.["sohbet_id"], cc?.["ad"]],
       [v, id, "Yeni sohbet"],
@@ -928,7 +932,7 @@ describe("çekirdek: sohbetAc", () => {
     const m = await s.mesajYolla("Selam", "yazi");
     assert.ok(m.ok);
     await bosalt();
-    assert.deepEqual(isTurleri(b), ["chat_create", "user_message", "chat_rename"]);
+    assert.deepEqual(isTurleri(b), ["usage_request", "chat_create", "user_message", "chat_rename"]);
     const [cc, , cr] = b.giden().slice(-3);
 
     // Bundan sonraki her bildirimde sohbet listede, seçili ve adı "Selam".
@@ -1032,7 +1036,7 @@ describe("çekirdek: sohbetAc", () => {
     const iptal = yeni.c.abone((d) => gorulen.push(d));
     const b2 = yeni.ws.son();
     await elSikis(b2, 2);
-    assert.deepEqual(isTurleri(b2), ["chat_create", "user_message"]);
+    assert.deepEqual(isTurleri(b2), ["chat_create", "user_message", "usage_request"]);
     assert.equal(turdekiler(b2, "chat_create")[0]?.["client_msg_id"], cc);
     b2.gel(ack(cc, true, { seq: 1 }));
     b2.gel(olayCercevesi(sohbetAcildiOlayi(1, id, "Deneme")));
@@ -1081,7 +1085,7 @@ describe("çekirdek: sohbetAc", () => {
     await yeni.c.baslat();
     await bosalt();
     await elSikis(yeni.ws.son(), 1);
-    assert.deepEqual(isTurleri(yeni.ws.son()), ["user_message"]);
+    assert.deepEqual(isTurleri(yeni.ws.son()), ["user_message", "usage_request"]);
     assert.equal((k.depo.kv.get(OUTBOX_ANAHTARI) ?? "").includes("chat_create"), false);
   });
 
@@ -1675,7 +1679,7 @@ describe("çekirdek: kısayol mesajı (Dilim 3)", () => {
     await bosalt();
     const b = k.ws.son();
     await elSikis(b, 0);
-    assert.deepEqual(isTurleri(b), ["chat_create", "user_message"]);
+    assert.deepEqual(isTurleri(b), ["chat_create", "user_message", "usage_request"]);
     const um = turdekiler(b, "user_message")[0];
     assert.deepEqual([um?.["sohbet_id"], um?.["input"], um?.["baglam"]], [ac.sohbet_id, "kisayol", BAGLAM]);
   });

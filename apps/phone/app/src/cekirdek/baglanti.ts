@@ -40,7 +40,10 @@ export type YerelBaglantiHatasi =
   /** Kimlik bitmeden bağlantı kapandı ya da açılamadı. */
   | "baglanti_kapandi";
 
-export type BaglantiHatasi = YerelBaglantiHatasi | HataKodu;
+/** `usage_request` çerçevesi (protokol paketi bu tipi ayrıca dışa açmaz). */
+export type UsageRequest = Extract<SohbetYukari, { type: "usage_request" }>;
+
+export type BaglantiHatasi =YerelBaglantiHatasi | HataKodu;
 
 export type WelcomeCercevesi = Extract<GelenCerceve, { type: "welcome" }>;
 /** Kimlik sonrası dinleyiciye geçen çerçeveler; `error` `hata` ile gelir. */
@@ -81,6 +84,11 @@ export interface Baglanti {
   kopar(sonraki: SonrakiDeneme): void;
   /** Yalnız kimlik bitmişken ve yalnız iş mesajı; yollanamazsa `false`. */
   gonder(m: SohbetYukari): boolean;
+  /**
+   * Token tüketim sorgusu: `client_msg_id`'siz, `ack`siz, kuyruksuz. Yalnız `bagli` iken yazılır;
+   * değilse hiçbir şey yapılmaz ve `false` döner. Yeniden denenmez.
+   */
+  sorguGonder(m: UsageRequest): boolean;
   durum(): BaglantiDurumu;
   /** Bekleyen yeniden denemenin zamanı (`saat.simdiMs` cinsinden) ya da `null`. */
   sonrakiDenemeMs(): number | null;
@@ -353,6 +361,18 @@ export const baglantiKur: BaglantiFabrikasi = ({ ws, kimlik, saat, sonSeq, dinle
     gonder: (m) => {
       const d = deneme;
       if (d === null || d.asama !== "bagli" || d.b === null || !IS_TURLERI.has(m.type)) return false;
+      try {
+        d.b.gonder(JSON.stringify(m));
+        return true;
+      } catch {
+        bitir(d, null, "normal");
+        return false;
+      }
+    },
+
+    sorguGonder: (m) => {
+      const d = deneme;
+      if (d === null || d.asama !== "bagli" || d.b === null || m.type !== "usage_request") return false;
       try {
         d.b.gonder(JSON.stringify(m));
         return true;

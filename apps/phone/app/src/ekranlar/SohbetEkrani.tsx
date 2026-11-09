@@ -23,6 +23,7 @@ import type {
   SohbetDurumu,
   SohbetHatasi,
   SohbetId,
+  TuketimRaporu,
 } from "../cekirdek/index.ts";
 import type { ErenCihaz } from "../cihaz/erenDevice.ts";
 import { AltaInDugmesi, useAltaIn } from "./AltaIn.tsx";
@@ -167,6 +168,7 @@ const OgeSatiri = memo(function OgeSatiri(p: {
   sohbet: Sohbet;
   cihaz: ErenCihaz;
   onIsler: () => void;
+  tuketimRaporu: TuketimRaporu | null;
 }): ReactNode {
   return (
     <View style={{ paddingTop: p.ust }}>
@@ -175,7 +177,7 @@ const OgeSatiri = memo(function OgeSatiri(p: {
           <ZamanAyraci ms={p.ayrac} />
         </View>
       )}
-      <ZamanCizelgesiOgesi oge={p.oge} sohbet={p.sohbet} cihaz={p.cihaz} onIsler={p.onIsler} />
+      <ZamanCizelgesiOgesi oge={p.oge} sohbet={p.sohbet} cihaz={p.cihaz} onIsler={p.onIsler} tuketimRaporu={p.tuketimRaporu} />
     </View>
   );
 });
@@ -252,6 +254,8 @@ export function SohbetEkrani(p: SohbetEkraniProps): ReactNode {
 function SohbetEkraniIc(p: SohbetEkraniProps): ReactNode {
   const { cekirdek, sohbet, cihaz, onCekmece, onSecenekler, onKurulum } = p;
   const cd = useCekirdekDurumu(cekirdek);
+  // Rapor kartlarındaki "Tüketim" satırı için eldeki rapor; kartlar çekirdeğe kendileri abone olmaz.
+  const tuketimRaporu: TuketimRaporu | null = cd.tuketim.durum === "yok" ? null : cd.tuketim.rapor;
   const d = useSohbetDurumu(sohbet);
   const ozet = d.ozet;
   const ogeler = d.ogeler;
@@ -564,9 +568,19 @@ function SohbetEkraniIc(p: SohbetEkraniProps): ReactNode {
       const o = index > 0 ? ogeler[index - 1] : undefined;
       const ayrac = o !== undefined && item.ts_ms - o.ts_ms > esik.zamanAyraciDk * 60_000 ? item.ts_ms : null;
       const ust = o === undefined ? 0 : ayrac !== null ? bosluk[3] : araBosluk(tarafi(o), tarafi(item));
-      return <OgeSatiri oge={item} ust={ust} ayrac={ayrac} sohbet={sohbet} cihaz={cihaz} onIsler={isleriAc} />;
+      return (
+        <OgeSatiri
+          oge={item}
+          ust={ust}
+          ayrac={ayrac}
+          sohbet={sohbet}
+          cihaz={cihaz}
+          onIsler={isleriAc}
+          tuketimRaporu={tuketimRaporu}
+        />
+      );
     },
-    [ogeler, sohbet, cihaz, isleriAc],
+    [ogeler, sohbet, cihaz, isleriAc, tuketimRaporu],
   );
 
   // Liste sonu: süren tur, henüz olayı gelmemiş yukarı mesajlar, gönderilemeyenler.

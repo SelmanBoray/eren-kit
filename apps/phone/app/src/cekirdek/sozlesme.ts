@@ -24,6 +24,7 @@ import type {
   SohbetErenDurumu,
   SohbetId,
   SohbetYukari,
+  UsageReport,
 } from "@eren/protocol";
 import type { BaglantiHatasi } from "./baglanti.ts";
 import type { GorunumOgesi, IsKarti } from "./olaylar.ts";
@@ -521,6 +522,20 @@ export interface CalisanIs {
   is: IsKarti;
 }
 
+/** Tüketim raporu: `usage_report` çerçevesi, `v`/`type`/`istek_id` olmadan (`istek_id` yalnız eşleşme içindir). */
+export type TuketimRaporu = Omit<UsageReport, "v" | "type" | "istek_id">;
+
+/**
+ * Tüketim raporunun ekran durumu. `yok`: hiç istenmedi. `bekleniyor`: istek yolda (`rapor` önceki
+ * rapor, yoksa `null`). `hazir`: rapor geldi, `alindiMs` `saat.simdiMs` cinsinden. `hata`: zaman
+ * aşımı (15 sn); `rapor` önceki rapor, yoksa `null`.
+ */
+export type TuketimDurumu =
+  | { durum: "yok" }
+  | { durum: "bekleniyor"; rapor: TuketimRaporu | null }
+  | { durum: "hazir"; rapor: TuketimRaporu; alindiMs: number }
+  | { durum: "hata"; rapor: TuketimRaporu | null };
+
 export interface CekirdekDurumu extends BaglantiOzeti {
   /** `baslat`'ın yüklemesi bitti. Öncesinde liste yalnız `ana`'dır. */
   yuklendi: boolean;
@@ -530,6 +545,8 @@ export interface CekirdekDurumu extends BaglantiOzeti {
   secili: SohbetId;
   /** Bütün sohbetlerdeki `suruyor` iş kartları, `seq` sırasıyla. */
   calisanIsler: readonly CalisanIs[];
+  /** Token tüketim raporu (BaglantiOzeti'nde değil: sohbet durumlarına yayılmaz). */
+  tuketim: TuketimDurumu;
 }
 
 /**
@@ -707,6 +724,11 @@ export interface Cekirdek {
   sohbetAc(ad?: string): Promise<SohbetAcSonucu>;
   /** Seçili sohbeti değiştirir ve kalıcı yazar. Kimlik listede yoksa `false`, hiçbir şey değişmez. */
   sec(sohbet_id: SohbetId): boolean;
+  /**
+   * `usage_request` yollar ve `tuketim`'i `bekleniyor` yapar. Bağlı değilse, bekleyen istek varsa ya
+   * da son rapor 10 sn'den yeniyse hiçbir şey yollamaz ve `false` döner.
+   */
+  tuketimIste(): boolean;
 }
 
 /** Port olmayan kurulum seçenekleri. */
