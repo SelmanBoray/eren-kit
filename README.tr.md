@@ -110,7 +110,8 @@ tur bittiğinde devir notlarını yazar. Beyin veritabanının tek bir yazıcıs
 | --- | --- | --- |
 | Windows 10 veya 11 | her şey | macOS ve Linux henüz desteklenmiyor |
 | PowerShell | kurulum betiği | PowerShell 7 önerilir; Windows PowerShell 5.1 de çalışır |
-| Python 3.12+ | Bellek & Beyin, Devir | computer-use-windows için 3.10+, kurulum betiği için 3.11+ yeterli. **"Add python.exe to PATH"** kutusunu işaretleyin: hook'lar `python` komutunu çağırır |
+| Python 3.12+ | Bellek & Beyin, Devir | computer-use-windows ve kurulum betiği için 3.11+ yeterli |
+| `PATH` üzerinde `python`, 3.11+ | Devir ve Opus Orkestra hook'ları | Hook'lar doğrudan `python` komutunu çağırır ve kurulum betiği sürümünü denetler. Python'u kurarken **"Add python.exe to PATH"** kutusunu işaretleyin |
 | [Claude Code CLI](https://docs.claude.com/en/docs/claude-code/setup) (`claude`) | MCP kaydı | Yoksa kurulum betiği MCP adımlarını atlar ve elle yapılacak komutu yazdırır |
 | Node 24+ ve npm | yalnızca Telefon uygulaması | Varsayılan kurulum için gerekmez |
 
@@ -175,7 +176,7 @@ Kurulum betiğini yeniden çalıştırmak güvenlidir: değişeni günceller, ge
 | --- | --- |
 | `-Components` | Virgülle ayrılmış bileşen listesi, ör. `-Components beyin,devir`. Geçerli değerler: `beyin`, `devir`, `orkestra`, `computer-use`, `phone`. Varsayılan: `beyin, devir, orkestra, computer-use` |
 | `-AssistantName` | Asistan adı; `EREN_KIT_ASSISTANT_NAME` kullanıcı ortam değişkenine yazılır. Verilmezse mevcut değer korunur, o da yoksa `"Claude"` kullanılır |
-| `-ClaudeHome` | Claude Code ayar klasörü. Varsayılan: `%USERPROFILE%\.claude` |
+| `-ClaudeHome` | Claude Code ayar klasörü. Varsayılan: `CLAUDE_CONFIG_DIR` ortam değişkeni tanımlıysa o, değilse `%USERPROFILE%\.claude` |
 | `-DryRun` | Hiçbir şeyi değiştirmez; yapılacakları listeler |
 | `-Uninstall` | Seçilen bileşenlerin MCP kayıtlarını, hook'larını, kopyalanan skill'lerini ve beyin servisi görevini kaldırır. Venv'leri ve kullanıcı verisini **silmez** |
 | `-SkipMcp` | `claude mcp add/remove` adımlarını atlar |
@@ -186,8 +187,8 @@ Kurulum betiğini yeniden çalıştırmak güvenlidir: değişeni günceller, ge
 | Bileşen | Kurulum betiği ne yapar |
 | --- | --- |
 | `beyin` | `packages\bellek\.venv` oluşturur ve `pip install -e` çalıştırır; yoksa `bellek.example.toml` dosyasını `bellek.toml` olarak kopyalar; `bellek.beyin` modülünün içe aktarılabildiğini denetler; `beyin` MCP sunucusunu kaydeder (kullanıcı kapsamı); beyin servisi görevini kaydedip başlatır (aşağıya bakın) |
-| `devir` | Aynı venv'i kullanır; `python` komutunun `PATH` üzerinde olduğunu denetler; devir hook'unu `SessionStart`, `UserPromptSubmit` ve `Stop` olaylarına ekler; skill'i `<ClaudeHome>\skills\devir` klasörüne kopyalar |
-| `orkestra` | `python` komutunun `PATH` üzerinde olduğunu denetler; `SKILL.md` dosyasını `<ClaudeHome>\skills\opus-orkestra` klasörüne kopyalar; dört `SessionStart` hook komutu ekler |
+| `devir` | Aynı venv'i kullanır; `PATH` üzerindeki `python` komutunun 3.11+ olduğunu denetler; devir hook'unu `SessionStart`, `UserPromptSubmit` ve `Stop` olaylarına ekler; skill'i `<ClaudeHome>\skills\devir` klasörüne kopyalar |
+| `orkestra` | `PATH` üzerindeki `python` komutunun 3.11+ olduğunu denetler; `SKILL.md` dosyasını `<ClaudeHome>\skills\opus-orkestra` klasörüne kopyalar; dört `SessionStart` hook komutu ekler |
 | `computer-use` | `packages\computer-use-windows\.venv` oluşturur ve `pip install -e` çalıştırır; `computer-use-windows` MCP sunucusunu kaydeder (kullanıcı kapsamı) |
 | `phone` | Node 24+ ve npm olup olmadığına bakar; `apps\phone` içinde `npm ci` çalıştırır. Hiçbir şey kaydedilmez; elle başlatılır |
 
@@ -418,6 +419,7 @@ Klonlamadan, `uvx` ile de çalıştırılabilir; bkz.
 
 | Değişken | Kullanan | Varsayılan | Anlamı |
 | --- | --- | --- | --- |
+| `CLAUDE_CONFIG_DIR` | kurulum betiği | `%USERPROFILE%\.claude` | Claude Code'un ayar klasörü; kurulum betiği `-ClaudeHome` için varsayılan olarak bunu kullanır |
 | `EREN_KIT_ASSISTANT_NAME` | beyin web arayüzü, telefon uygulaması | `Claude` | Asistanın görünen adı. `-AssistantName` ile ayarlanır. Claude Code içinde Claude'u yeniden adlandırmaz |
 | `BELLEK_CONFIG` | Bellek & Beyin, Devir | `packages\bellek\bellek.toml` | Yapılandırma dosyasının yolu |
 | `BELLEK_BEYIN_DB` | Bellek & Beyin | `%LOCALAPPDATA%\Bellek\beyin.db` | Beyin veritabanı |
@@ -479,7 +481,7 @@ eren-kit/
 │   ├── opus-orkestra/             # orchestration rule
 │   │   ├── skill/SKILL.md         #   the rules (Turkish)
 │   │   └── hooks/                 #   SessionStart hook
-│   └── computer-use-windows/      # Windows computer-use MCP server (Python 3.10+)
+│   └── computer-use-windows/      # Windows computer-use MCP server (Python 3.11+)
 ├── apps/
 │   └── phone/                     # experimental phone app (Node 24+, TypeScript)
 ├── docs/assets/                   # banner and diagrams

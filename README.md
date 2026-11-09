@@ -110,7 +110,8 @@ experimental.
 | --- | --- | --- |
 | Windows 10 or 11 | everything | macOS and Linux are not supported yet |
 | PowerShell | the installer | PowerShell 7 recommended; Windows PowerShell 5.1 also works |
-| Python 3.12+ | Memory & Brain, Handoff | computer-use-windows needs 3.10+, the installer needs 3.11+. Tick **"Add python.exe to PATH"**: hooks call `python` |
+| Python 3.12+ | Memory & Brain, Handoff | computer-use-windows and the installer need 3.11+ |
+| `python` on `PATH`, 3.11+ | Handoff and Opus Orkestra hooks | The hooks call plain `python`, and the installer checks its version. Tick **"Add python.exe to PATH"** when installing Python |
 | [Claude Code CLI](https://docs.claude.com/en/docs/claude-code/setup) (`claude`) | MCP registration | Without it the installer skips MCP steps and prints the manual command |
 | Node 24+ and npm | Phone app only | Not needed for the default install |
 
@@ -175,7 +176,7 @@ Running the installer again is safe: it updates what changed and leaves the rest
 | --- | --- |
 | `-Components` | Comma-separated component list, e.g. `-Components beyin,devir`. Valid: `beyin`, `devir`, `orkestra`, `computer-use`, `phone`. Default: `beyin, devir, orkestra, computer-use` |
 | `-AssistantName` | Assistant name, written to the `EREN_KIT_ASSISTANT_NAME` user environment variable. If omitted, an existing value is kept; otherwise `"Claude"` |
-| `-ClaudeHome` | Claude Code settings folder. Default: `%USERPROFILE%\.claude` |
+| `-ClaudeHome` | Claude Code settings folder. Default: the `CLAUDE_CONFIG_DIR` environment variable if set, otherwise `%USERPROFILE%\.claude` |
 | `-DryRun` | Changes nothing; lists what would be done |
 | `-Uninstall` | Removes the selected components' MCP registrations, hooks, copied skills and the brain service task. Does **not** delete venvs or user data |
 | `-SkipMcp` | Skips the `claude mcp add/remove` steps |
@@ -186,8 +187,8 @@ Running the installer again is safe: it updates what changed and leaves the rest
 | Component | What the installer does |
 | --- | --- |
 | `beyin` | Creates `packages\bellek\.venv` and runs `pip install -e`; copies `bellek.example.toml` to `bellek.toml` if missing; checks that `bellek.beyin` imports; registers the `beyin` MCP server (user scope); registers and starts the brain service task (see below) |
-| `devir` | Uses the same venv; checks that `python` is on `PATH`; adds the handoff hook to `SessionStart`, `UserPromptSubmit` and `Stop`; copies the skill to `<ClaudeHome>\skills\devir` |
-| `orkestra` | Checks that `python` is on `PATH`; copies `SKILL.md` to `<ClaudeHome>\skills\opus-orkestra`; adds four `SessionStart` hook commands |
+| `devir` | Uses the same venv; checks that `python` on `PATH` is 3.11+; adds the handoff hook to `SessionStart`, `UserPromptSubmit` and `Stop`; copies the skill to `<ClaudeHome>\skills\devir` |
+| `orkestra` | Checks that `python` on `PATH` is 3.11+; copies `SKILL.md` to `<ClaudeHome>\skills\opus-orkestra`; adds four `SessionStart` hook commands |
 | `computer-use` | Creates `packages\computer-use-windows\.venv` and runs `pip install -e`; registers the `computer-use-windows` MCP server (user scope) |
 | `phone` | Checks for Node 24+ and npm; runs `npm ci` in `apps\phone`. Nothing is registered; it is started by hand |
 
@@ -419,6 +420,7 @@ It can also run without cloning, through `uvx`; see
 
 | Variable | Used by | Default | Meaning |
 | --- | --- | --- | --- |
+| `CLAUDE_CONFIG_DIR` | installer | `%USERPROFILE%\.claude` | Claude Code's settings folder; the installer uses it as the default for `-ClaudeHome` |
 | `EREN_KIT_ASSISTANT_NAME` | brain web UI, phone app | `Claude` | Display name of the assistant. Set by `-AssistantName`. It does not rename Claude inside Claude Code |
 | `BELLEK_CONFIG` | Memory & Brain, Handoff | `packages\bellek\bellek.toml` | Path of the config file |
 | `BELLEK_BEYIN_DB` | Memory & Brain | `%LOCALAPPDATA%\Bellek\beyin.db` | Brain database |
@@ -480,7 +482,7 @@ eren-kit/
 │   ├── opus-orkestra/             # orchestration rule
 │   │   ├── skill/SKILL.md         #   the rules (Turkish)
 │   │   └── hooks/                 #   SessionStart hook
-│   └── computer-use-windows/      # Windows computer-use MCP server (Python 3.10+)
+│   └── computer-use-windows/      # Windows computer-use MCP server (Python 3.11+)
 ├── apps/
 │   └── phone/                     # experimental phone app (Node 24+, TypeScript)
 ├── docs/assets/                   # banner and diagrams
