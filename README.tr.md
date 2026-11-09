@@ -373,12 +373,24 @@ Ayrıntılar, seçenekler ve token maliyet tabloları:
 > Bu çalışma henüz devam ediyor ve **kullanıma hazır değil**. Arayüzler, protokol ve güvenlik modeli
 > değişebilir. Test sunucusunda kimlik doğrulama yoktur: onu asla güvenmediğiniz bir ağa açmayın.
 
-Amaç: telefonunuzdan PC'nizdeki ana Claude oturumuyla konuşmak. Ana oturum işi kendisi yapmaz; her
+Telefonunuzdan PC'nizdeki ana Claude Code oturumuyla konuşun. Ana oturum işi kendisi yapmaz; her
 görev için yeni bir Claude Code oturumu açar, onaylamanız için bir plan gösterir ve sonucu geri
-bildirir. Dizin şu an ortak protokolü, testleriyle birlikte PC servisi tasarımını ve bağımsız bir
-ölçüm deneyini içerir.
+bildirir. Her sohbetin kendi ana oturumu vardır; bir görev oturumu kısıtlı bir araç kümesiyle (ekran
+okuma, dokunma, yazma) Android cihazı da yönetebilir. Dizin ortak protokolü, PC servisini, Expo /
+React Native Android uygulamasını ve Kotlin `eren-device` modülünü, kurulum betiklerini
+(`kurulum/kur.ts`), belgeleri ve bağımsız bir ölçüm deneyini içerir. Hâlâ deneyseldir.
 
-Ayrıntılar (Türkçe, İngilizce özetle): [apps/phone/README.md](apps/phone/README.md).
+Yapılandırma ortam değişkenleriyledir (tam liste
+[telefon README'sinde](apps/phone/README.md)):
+
+| Değişken | Varsayılan | Anlamı |
+| --- | --- | --- |
+| `EREN_KIT_ASSISTANT_NAME` | `Claude` | PC servisinde ve derleme anında uygulamada görünen asistan adı. Verilmezse uygulamanın başlatıcı adı `eren-kit` olur |
+| `EREN_KIT_DATA_DIR` | `%LOCALAPPDATA%\eren-kit` | Veri kökü; mutlak yol olmalı. Servis, bekçi ve kurulum aynı kuralı uygular |
+| `EREN_KIT_PHONE_TASK_NAME` | `eren-kit-telefon` | Kurulumun kaydettiği zamanlanmış görevin adı |
+
+Ayrıntılar (Türkçe, İngilizce özetle): [apps/phone/README.md](apps/phone/README.md). Servis işletimi
+(kurulum, güncelleme, zamanlanmış görev): [apps/phone/docs/SERVIS.md](apps/phone/docs/SERVIS.md).
 
 ### Elle kurulum
 
@@ -443,12 +455,15 @@ Klonlamadan, `uvx` ile de çalıştırılabilir; bkz.
 | --- | --- | --- | --- |
 | `CLAUDE_CONFIG_DIR` | kurulum betiği | `%USERPROFILE%\.claude` | Claude Code'un ayar klasörü; kurulum betiği `-ClaudeHome` için varsayılan olarak bunu kullanır |
 | `EREN_KIT_ASSISTANT_NAME` | beyin web arayüzü, telefon uygulaması | `Claude` | Asistanın görünen adı. `-AssistantName` ile ayarlanır. Claude Code içinde Claude'u yeniden adlandırmaz |
+| `EREN_KIT_DATA_DIR` | telefon uygulaması | `%LOCALAPPDATA%\eren-kit` | Telefon servisinin veri kökü (mutlak yol) |
+| `EREN_KIT_PHONE_TASK_NAME` | telefon uygulaması | `eren-kit-telefon` | Telefon kurulumunun kaydettiği zamanlanmış görevin adı |
 | `BELLEK_CONFIG` | Bellek & Beyin, Devir | `packages\bellek\bellek.toml` | Yapılandırma dosyasının yolu |
 | `BELLEK_BEYIN_DB` | Bellek & Beyin | `%LOCALAPPDATA%\Bellek\beyin.db` | Beyin veritabanı |
 | `BELLEK_BEYIN_PORT` | Bellek & Beyin | `47321` | Yerel beyin servisinin bağlantı noktası |
 | `BELLEK_BEYIN_IZINLI_HOST` | Bellek & Beyin | boş | Servisin kabul ettiği ek `Host` değerleri (virgülle ayrılmış); başka bir cihazdan erişim için |
 | `BELLEK_DEVIR_DIR` | Devir | `<vault>\devir` | Devir notlarının kök klasörü |
 | `BELLEK_DEVIR_UYARI` | Devir | `durdur` | Uyarı kipi: `durdur` (durdur), `uyar` (uyar), `kapali` (kapalı) |
+| `BELLEK_KAPI` | Önce harita belge kapısı | boş (açık) | `kapali` yapılırsa kapı hiçbir okumayı reddetmez |
 | `OPUS_ORKESTRA_SKILL` | Opus Orkestra | `~\.claude\skills\opus-orkestra\SKILL.md` | Hook'un enjekte ettiği kural dosyasının yolu |
 | `CUW_MAX_SIZE`, `CUW_BLOCK`, `CUW_FAILSAFE`, … | computer-use-windows | paket README'sine bakın | Görüntü boyutu, uygulama engelleme listesi, acil durdurma ve daha fazlası ([tam tablo](packages/computer-use-windows/README.tr.md#yapılandırma)) |
 
@@ -463,7 +478,6 @@ betiği onu `packages\bellek\bellek.toml` olarak kopyalar, bu dosya git tarafın
 ```toml
 [bellek]
 vault = "vault"                        # your notes folder; handoff notes go to vault/devir
-| `BELLEK_KAPI` | Önce harita belge kapısı | boş (açık) | `kapali` yapılırsa kapı hiçbir okumayı reddetmez |
 state_dir = "%LOCALAPPDATA%/Bellek"    # indexes and logs, kept out of the vault
 
 [server]
@@ -506,7 +520,7 @@ eren-kit/
 │   │   └── hooks/                 #   SessionStart hook
 │   └── computer-use-windows/      # Windows computer-use MCP server (Python 3.11+)
 ├── apps/
-│   └── phone/                     # experimental phone app (Node 24+, TypeScript)
+│   └── phone/                     # experimental phone app (Node 24+, TypeScript; Expo app, PC service, install scripts)
 ├── docs/assets/                   # banner and diagrams
 └── .github/workflows/ci.yml       # tests on windows-latest
 ```
@@ -516,7 +530,7 @@ eren-kit/
 Eksik olanların dürüst listesi, sıralama gözetmeksizin:
 
 - [ ] **İngilizce Opus Orkestra kuralları** (şu an yalnızca Türkçe).
-- [ ] **Kullanılabilir bir telefon uygulaması:** istemci uygulaması, kimlik doğrulama ve eşleştirme henüz yapılmadı.
+- [ ] **Kullanılabilir bir telefon uygulaması:** uygulama artık var, ancak kimlik doğrulama ve eşleştirme hâlâ tasarım aşamasında.
 - [ ] **macOS ve Linux desteği.** Bugün her şey Windows'u varsayar; computer-use-windows tasarım
       gereği yalnızca Windows içindir.
 - [ ] **Tüm takım için `uvx` ile tek satırlık kurulum** (bugün yalnızca computer-use-windows `uvx`

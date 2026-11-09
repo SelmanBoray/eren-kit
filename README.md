@@ -378,12 +378,25 @@ Details, options and token-cost tables:
 > This is a work in progress and **not ready for use**. Interfaces, protocol and security model may
 > change. The test server has no authentication: never expose it to a network you do not trust.
 
-The goal: talk from your phone to the main Claude session on your PC. The main session does not do
-the work itself; it opens a fresh Claude Code session for each task, shows you a plan to approve,
-and reports the result back. The directory currently holds the shared protocol, the PC service
-design with tests, and a standalone measurement experiment.
+Talk from your phone to the main Claude Code session on your PC. The main session does not do the
+work itself; it opens a fresh Claude Code session for each task, shows you a plan to approve, and
+reports the result back. Each chat has its own main session, and a task session can manage an
+Android device through a restricted tool set (read the screen, tap, type). The directory holds the
+shared protocol, the PC service, the Expo / React Native Android app with its Kotlin `eren-device`
+module, the install scripts (`kurulum/kur.ts`), the docs and a standalone measurement experiment.
+It is still experimental.
 
-Details (Turkish, with an English summary): [apps/phone/README.md](apps/phone/README.md).
+Configuration is through environment variables (full list in the
+[phone README](apps/phone/README.md)):
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `EREN_KIT_ASSISTANT_NAME` | `Claude` | Assistant display name on the PC service and, at build time, in the app. If unset, the app launcher name is `eren-kit` |
+| `EREN_KIT_DATA_DIR` | `%LOCALAPPDATA%\eren-kit` | Data root; must be an absolute path. The service, watchdog and installer all follow the same rule |
+| `EREN_KIT_PHONE_TASK_NAME` | `eren-kit-telefon` | Name of the scheduled task the installer registers |
+
+Details (Turkish, with an English summary): [apps/phone/README.md](apps/phone/README.md). Running
+the service (install, update, scheduled task): [apps/phone/docs/SERVIS.md](apps/phone/docs/SERVIS.md).
 
 ### Manual installation
 
@@ -445,12 +458,15 @@ It can also run without cloning, through `uvx`; see
 | --- | --- | --- | --- |
 | `CLAUDE_CONFIG_DIR` | installer | `%USERPROFILE%\.claude` | Claude Code's settings folder; the installer uses it as the default for `-ClaudeHome` |
 | `EREN_KIT_ASSISTANT_NAME` | brain web UI, phone app | `Claude` | Display name of the assistant. Set by `-AssistantName`. It does not rename Claude inside Claude Code |
+| `EREN_KIT_DATA_DIR` | phone app | `%LOCALAPPDATA%\eren-kit` | Data root of the phone service (absolute path) |
+| `EREN_KIT_PHONE_TASK_NAME` | phone app | `eren-kit-telefon` | Scheduled task name registered by the phone installer |
 | `BELLEK_CONFIG` | Memory & Brain, Handoff | `packages\bellek\bellek.toml` | Path of the config file |
 | `BELLEK_BEYIN_DB` | Memory & Brain | `%LOCALAPPDATA%\Bellek\beyin.db` | Brain database |
 | `BELLEK_BEYIN_PORT` | Memory & Brain | `47321` | Port of the local brain service |
 | `BELLEK_BEYIN_IZINLI_HOST` | Memory & Brain | empty | Extra `Host` values the service accepts (comma-separated), for access from another device |
 | `BELLEK_DEVIR_DIR` | Handoff | `<vault>\devir` | Root folder of handoff notes |
 | `BELLEK_DEVIR_UYARI` | Handoff | `durdur` | Warning mode: `durdur` (stop), `uyar` (warn), `kapali` (off) |
+| `BELLEK_KAPI` | Doc gate | empty (on) | Set to `kapali` to switch the doc gate off |
 | `OPUS_ORKESTRA_SKILL` | Opus Orkestra | `~\.claude\skills\opus-orkestra\SKILL.md` | Path of the rule file the hook injects |
 | `CUW_MAX_SIZE`, `CUW_BLOCK`, `CUW_FAILSAFE`, … | computer-use-windows | see package README | Image size, app blocklist, failsafe and more ([full table](packages/computer-use-windows/README.md#configuration)) |
 
@@ -466,7 +482,6 @@ installer copies it to `packages\bellek\bellek.toml`, which is git-ignored. The 
 [bellek]
 vault = "vault"                        # your notes folder; handoff notes go to vault/devir
 state_dir = "%LOCALAPPDATA%/Bellek"    # indexes and logs, kept out of the vault
-| `BELLEK_KAPI` | Doc gate | empty (on) | Set to `kapali` to switch the doc gate off |
 
 [server]
 host = "127.0.0.1"                     # local only
@@ -508,7 +523,7 @@ eren-kit/
 │   │   └── hooks/                 #   SessionStart hook
 │   └── computer-use-windows/      # Windows computer-use MCP server (Python 3.11+)
 ├── apps/
-│   └── phone/                     # experimental phone app (Node 24+, TypeScript)
+│   └── phone/                     # experimental phone app (Node 24+, TypeScript; Expo app, PC service, install scripts)
 ├── docs/assets/                   # banner and diagrams
 └── .github/workflows/ci.yml       # tests on windows-latest
 ```
@@ -518,7 +533,7 @@ eren-kit/
 Honest list of what is missing, in no particular order:
 
 - [ ] **English Opus Orkestra rules** (currently Turkish only).
-- [ ] **A usable phone app:** the client app, authentication and pairing are not done yet.
+- [ ] **A usable phone app:** the app now exists, but authentication and pairing are still being designed.
 - [ ] **macOS and Linux support.** Today everything assumes Windows; computer-use-windows is
       Windows-only by design.
 - [ ] **One-line install with `uvx`** for the whole kit (today only computer-use-windows can run
