@@ -39,12 +39,12 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         " using screenshot x,y for clicks. Needs a prior screenshot."
     ),
     "elements": (
-        "A window's UI Automation elements as text, far cheaper than a screenshot: use it to"
-        ' find and verify things. query: case-insensitive name/role substring ("save",'
+        "A window's UI Automation elements as text, far cheaper than a screenshot: find and"
+        ' verify with it. query: case-insensitive name/role substring ("save",'
         ' "button"). window: handle from windows; omitted = foreground. Lines:'
-        ' [id] role "name" = "value" (disabled) @x,y (center in screenshot px, if shown).'
-        " Act with click(element=id); ids last until the next elements call. Capped: narrow with"
-        " query. Few/none (games, canvases)? Screenshot."
+        ' [id] role "name" = "value" (disabled) @x,y (center, screenshot px, if shown).'
+        " Act with click(element=id); ids go stale on the next call or if the window moved."
+        " Capped/incomplete: use query. Few/none (games, canvases)? Screenshot."
     ),
     "windows": (
         "List visible top-level windows, foreground first, one per line:"
@@ -57,29 +57,32 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Bring a window to the foreground, restoring it if minimized. window: handle from"
         " windows. Do this before type_text/key and before clicking elements of a background"
         " window: your own terminal is usually in front, and keyboard input into terminals is"
-        " refused. Returns one line with the new foreground window."
+        " refused. A window that is not responding is refused: wait, then retry. Returns one line"
+        " with the new foreground window."
     ),
     "click": (
         "Click a point or an element. Give either x and y (pixels in the last screenshot) or"
         " element (id from the last elements call; clicks its center), not both. The target must"
-        " be visible on top. button: left|right|middle. clicks: 1-3 (2 = double-click)."
-        " modifiers: keys held during the click, any of ctrl, alt, shift, win. Returns one line"
-        " with the foreground window, no image; verify with elements rather than a screenshot."
+        " be visible on top; a stale id is refused (call elements again). button:"
+        " left|right|middle (right/middle refused on terminals: they paste). clicks: 1-3."
+        " modifiers: held keys, any of ctrl, alt, shift, win. Returns one line with the"
+        " foreground window; verify with elements."
     ),
     "type_text": (
         "Type text into the focused control of the foreground window (Unicode, any keyboard"
         ' layout; "\\n" = Enter, "\\t" = Tab). Focus the window and click the field first.'
         " Refused when a terminal is in front. Never type passwords or other secrets: password"
-        " fields are refused; ask the user to enter them. Use key for shortcuts. Returns one"
-        " line with the foreground window."
+        " fields are refused; ask the user to enter them. Re-checked after each Tab/Enter: if"
+        " refused there, the error says how many characters were typed. Use key for shortcuts."
+        " Returns one line."
     ),
     "key": (
         "Press keys or shortcuts in the foreground window. keys: chords separated by spaces,"
-        ' keys in a chord joined by + (e.g. "ctrl+s", "alt+f4", "tab tab enter"). Names: a-z,'
-        " 0-9, f1-f24, enter, esc, tab, space, backspace, delete, home, end, pageup, pagedown,"
-        " up, down, left, right, ctrl, alt, shift, win, comma, period, minus, slash..."
-        " repeat: 1-100. Refused when a terminal is in front: focus the target first."
-        " Returns one line."
+        ' keys in a chord joined by + ("ctrl+s", "tab tab enter"). Names: a-z, 0-9, f1-f24,'
+        " enter, esc, tab, space, backspace, delete, home, end, up, down, left, right, ctrl,"
+        " alt, shift, win, comma, period... repeat: 1-100; max 200 presses per call."
+        " Terminals refuse it: focus the target first. Password fields: only navigation keys"
+        " and shortcuts. Returns one line."
     ),
     "scroll": (
         "Scroll the mouse wheel over a point. direction: up|down|left|right. amount: wheel"
@@ -89,8 +92,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "drag": (
         "Press the left mouse button at x0,y0, move to x1,y1 and release (sliders, selections,"
-        " moving items). Coordinates are pixels in the last screenshot. Returns one line with"
-        " the foreground window."
+        " moving items). Coordinates are pixels in the last screenshot. Refused when either end"
+        " is on a terminal. Returns one line with the foreground window."
     ),
     "move": (
         "Move the mouse to x,y (pixels in the last screenshot) without clicking, e.g. to reveal"

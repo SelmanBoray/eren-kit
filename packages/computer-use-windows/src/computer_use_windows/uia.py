@@ -28,13 +28,14 @@ import threading
 import time
 import types
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 log = logging.getLogger(__name__)
 
 __all__ = [
     "Element",
+    "ElementList",
     "WindowInfo",
     "ancestor_pids",
     "focus_window",
@@ -43,6 +44,7 @@ __all__ = [
     "list_elements",
     "list_windows",
     "window_at",
+    "window_family",
 ]
 
 
@@ -64,6 +66,10 @@ class WindowInfo:
     foreground: bool
     minimized: bool
     class_name: str  # Win32 window class of the top-level window
+    # Other windows this one stands for, which safety checks must look at too: its root owner
+    # when that is a different window (list_windows, window_at, window_family), and for
+    # window_at also the child window under the point when it belongs to another process.
+    related: tuple[WindowInfo, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -79,10 +85,25 @@ class Element:
     bottom: int
     enabled: bool
     value: str | None
+    # Root window (GA_ROOT) the element was found in: the listed window or one of its popups
+    # (menus, dropdowns). 0 = unknown.
+    window: int = 0
 
     @property
     def center(self) -> tuple[int, int]:
         return ((self.left + self.right) // 2, (self.top + self.bottom) // 2)
+
+
+class ElementList(list[Element]):
+    """The result of list_elements: a plain list of elements plus how the scan ended.
+
+    ``incomplete``: why the scan stopped before the whole window was seen ("time budget",
+    "timeout", "size cap", "error"), or "" when it saw everything it looked for. ``total``: how
+    many elements matched before ``limit`` was applied.
+    """
+
+    incomplete: str = ""
+    total: int = 0
 
 
 # --------------------------------------------------------------------------- constants
@@ -96,6 +117,11 @@ _MAX_CANDIDATES = 2_000  # hard cap on collected (listable) elements
 _NAME_MAX = 100
 _VALUE_MAX = 80
 _CHROMIUM_WAKE_S = 0.35  # Chromium builds its web tree lazily after the first UIA query
+# Win32 label texts (WM_GETTEXT) are read inside the time budget: each read waits at most this
+# long, all reads of one listing together at most _LABEL_BUDGET_S, and after one read that
+# timed out (a busy app) no more are tried.
+_LABEL_TIMEOUT_MS = 100
+_LABEL_BUDGET_S = 0.25
 
 # UIA control type ids 50000.. → role names (control type name without "Control", lowercase).
 _ROLE_NAMES: dict[int, str] = {
@@ -203,6 +229,11 @@ _GA_ROOT = 2
 _GA_ROOTOWNER = 3
 _GW_OWNER = 4
 _SW_RESTORE = 9
+_HWND_TOP = 0
+_SWP_NOSIZE = 0x0001
+_SWP_NOMOVE = 0x0002
+_SWP_ASYNCWINDOWPOS = 0x4000
+_RESTORE_WAIT_S = 0.5  # how long focus waits for an asynchronous restore of a minimized window
 _DWMWA_EXTENDED_FRAME_BOUNDS = 9
 _DWMWA_CLOAKED = 14
 _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
@@ -304,8 +335,15 @@ class _Win32:
         self.IsIconic = fn(u, "IsIconic", w.BOOL, H)
         self.GetForegroundWindow = fn(u, "GetForegroundWindow", H)
         self.SetForegroundWindow = fn(u, "SetForegroundWindow", w.BOOL, H)
-        self.BringWindowToTop = fn(u, "BringWindowToTop", w.BOOL, H)
-        self.ShowWindow = fn(u, "ShowWindow", w.BOOL, H, ctypes.c_int)
+        # Only calls that never wait for the target window's thread are used on windows of other
+        # processes: a hung app would otherwise block the server (ShowWindow, BringWindowToTop
+        # and SendMessage all wait for it).
+        self.ShowWindowAsync = fn(u, "ShowWindowAsync", w.BOOL, H, ctypes.c_int)
+        self.SetWindowPos = fn(
+            u, "SetWindowPos", w.BOOL, H, H, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+            ctypes.c_int, w.UINT,
+        )  # fmt: skip
+        self.IsHungAppWindow = fn(u, "IsHungAppWindow", w.BOOL, H)
         self.GetWindowRect = fn(u, "GetWindowRect", w.BOOL, H, ctypes.POINTER(w.RECT))
         self.GetAncestor = fn(u, "GetAncestor", H, H, w.UINT)
         self.GetWindow = fn(u, "GetWindow", H, H, w.UINT)
@@ -417,15 +455,21 @@ class _Win32:
         self.GetClassNameW(hwnd, buf, 256)
         return buf.value
 
-    def control_text(self, hwnd: int) -> str:
-        """Text of a (possibly foreign) control via WM_GETTEXT; never blocks on a hung app."""
+    def control_text(self, hwnd: int, timeout_ms: int = _LABEL_TIMEOUT_MS) -> str:
+        """Text of a (possibly foreign) control via WM_GETTEXT; waits at most ``timeout_ms``."""
         buf = ctypes.create_unicode_buffer(1024)
         result = ctypes.c_size_t(0)
         ok = self.SendMessageTimeoutW(
-            hwnd, _WM_GETTEXT, 1024, ctypes.addressof(buf), _SMTO_ABORTIFHUNG, 100,
-            ctypes.byref(result),
+            hwnd, _WM_GETTEXT, 1024, ctypes.addressof(buf), _SMTO_ABORTIFHUNG,
+            max(1, int(timeout_ms)), ctypes.byref(result),
         )  # fmt: skip
         return buf.value if ok else ""
+
+    def is_hung(self, hwnd: int) -> bool:
+        try:
+            return bool(self.IsHungAppWindow(hwnd))
+        except Exception:  # never fatal: the asynchronous calls below do not wait anyway
+            return False
 
     def pid_tid(self, hwnd: int) -> tuple[int, int]:
         pid = self.w.DWORD(0)
@@ -602,8 +646,28 @@ def _listable(api: _Win32, hwnd: int) -> bool:
     return bool(api.IsIconic(hwnd)) or _nonempty(api.window_rect(hwnd))
 
 
+def _with_related(api: _Win32, info: WindowInfo, others: list[int], fg: int) -> WindowInfo:
+    """``info`` with the windows in ``others`` (deduplicated, not ``info`` itself) as related."""
+    seen = {info.handle}
+    related: list[WindowInfo] = []
+    for h in others:
+        if h and h not in seen:
+            seen.add(h)
+            related.append(_window_info(api, h, fg))
+    if not related:
+        return info
+    return replace(info, related=tuple(related))
+
+
+def _root_owner(api: _Win32, hwnd: int) -> int:
+    return int(api.GetAncestor(hwnd, _GA_ROOTOWNER) or 0)
+
+
 def list_windows() -> list[WindowInfo]:
-    """Visible, titled top-level windows in z-order, the foreground window first."""
+    """Visible, titled top-level windows in z-order, the foreground window first.
+
+    An owned window (a dialog, a tool window) carries its root owner in ``related``.
+    """
     api = _win()
     fg = api.foreground()
     handles = [h for h in api.enum_windows() if _listable(api, h)]
@@ -612,7 +676,9 @@ def list_windows() -> list[WindowInfo]:
         handles.insert(0, fg)
     elif fg and api.IsWindowVisible(fg) and api.title(fg).strip():
         handles.insert(0, fg)  # e.g. shell flyouts that EnumWindows does not report
-    return [_window_info(api, h, fg) for h in handles]
+    return [
+        _with_related(api, _window_info(api, h, fg), [_root_owner(api, h)], fg) for h in handles
+    ]
 
 
 def foreground_window() -> WindowInfo | None:
@@ -622,13 +688,43 @@ def foreground_window() -> WindowInfo | None:
 
 
 def window_at(x: int, y: int) -> WindowInfo | None:
-    """Top-level (root owner) window under a screen point, or None."""
+    """Top-level window under a screen point (its root, GA_ROOT), or None.
+
+    ``related`` holds the root owner when it is another window (the main window of a dialog or
+    popup) and the child window under the point when it belongs to another process (an embedded
+    window), so safety checks can look at every process that owns the point.
+    """
     api = _win()
-    hwnd = api.WindowFromPoint(api.w.POINT(int(x), int(y))) or 0
+    hwnd = int(api.WindowFromPoint(api.w.POINT(int(x), int(y))) or 0)
     if not hwnd:
         return None
-    root = api.GetAncestor(hwnd, _GA_ROOTOWNER) or hwnd
-    return _window_info(api, root, api.foreground())
+    fg = api.foreground()
+    root = int(api.GetAncestor(hwnd, _GA_ROOT) or hwnd)
+    info = _window_info(api, root, fg)
+    others = [_root_owner(api, hwnd)]
+    if hwnd != root and api.pid_tid(hwnd)[0] not in (info.pid, api.pid_tid(root)[0]):
+        others.append(hwnd)
+    return _with_related(api, info, others, fg)
+
+
+def window_family(handle: int) -> list[WindowInfo]:
+    """The window ``handle`` (any window, also a child or an unlisted one), its root window and
+    its root owner: every window whose process a ``focus`` of this handle would bring forward.
+
+    Raises ValueError for an invalid handle.
+    """
+    api = _win()
+    hwnd = _check_handle(handle)
+    if not api.IsWindow(hwnd):
+        raise ValueError(f"No window with handle {hwnd}; call windows to list current windows.")
+    fg = api.foreground()
+    family: list[WindowInfo] = []
+    seen: set[int] = set()
+    for h in (hwnd, int(api.GetAncestor(hwnd, _GA_ROOT) or 0), _root_owner(api, hwnd)):
+        if h and h not in seen:
+            seen.add(h)
+            family.append(_window_info(api, h, fg))
+    return family
 
 
 def _in_foreground(api: _Win32, root: int) -> int:
@@ -648,8 +744,20 @@ def _wait_foreground(api: _Win32, root: int, timeout: float) -> int:
         time.sleep(0.02)
 
 
+def _hung_error(root: int, title: str) -> RuntimeError:
+    return RuntimeError(
+        f'Window {root} ("{title}") is not responding, so it was not focused. Wait a few seconds '
+        "and retry; if it stays unresponsive, ask the user."
+    )
+
+
 def focus_window(handle: int) -> WindowInfo:
-    """Restore (if minimized) and bring a window to the foreground despite the foreground lock."""
+    """Restore (if minimized) and bring a window to the foreground despite the foreground lock.
+
+    Never waits for the target's thread: a window that is not responding is refused up front,
+    and restore/raise requests are posted asynchronously, so an app that hangs meanwhile cannot
+    block the caller.
+    """
     api = _win()
     hwnd = _check_handle(handle)
     if not api.IsWindow(hwnd):
@@ -660,8 +768,15 @@ def focus_window(handle: int) -> WindowInfo:
         raise RuntimeError(
             f'Window {root} ("{title}") is hidden and cannot be focused; pick another window.'
         )
+    if api.is_hung(root):
+        raise _hung_error(root, title)
     if api.IsIconic(root):
-        api.ShowWindow(root, _SW_RESTORE)
+        api.ShowWindowAsync(root, _SW_RESTORE)
+        deadline = time.monotonic() + _RESTORE_WAIT_S
+        while api.IsIconic(root) and time.monotonic() < deadline:
+            time.sleep(0.02)
+        if api.IsIconic(root) and api.is_hung(root):
+            raise _hung_error(root, title)
 
     fg = _in_foreground(api, root)
     if not fg:
@@ -677,13 +792,20 @@ def focus_window(handle: int) -> WindowInfo:
         fg = _wait_foreground(api, root, 0.25)
         log.debug("focus %s: empty input + SetForegroundWindow -> %s", root, bool(fg))
     if not fg:
-        # Last resort: share input state with the foreground and target threads.
+        # Last resort: share input state with the foreground and target threads (never with a
+        # hung one: attaching to it would stall this thread's input processing too).
+        if api.is_hung(root):
+            raise _hung_error(root, title)
         me = api.GetCurrentThreadId()
         old_fg = api.foreground()
-        threads = {api.pid_tid(old_fg)[1] if old_fg else 0, api.pid_tid(root)[1]}
+        threads = {api.pid_tid(root)[1]}
+        if old_fg and not api.is_hung(old_fg):
+            threads.add(api.pid_tid(old_fg)[1])
         attached = [t for t in threads if t and t != me and api.AttachThreadInput(me, t, True)]
         try:
-            api.BringWindowToTop(root)
+            # BringWindowToTop, but posted to the window's thread instead of waiting for it.
+            flags = _SWP_NOMOVE | _SWP_NOSIZE | _SWP_ASYNCWINDOWPOS
+            api.SetWindowPos(root, _HWND_TOP, 0, 0, 0, 0, flags)
             api.SetForegroundWindow(root)
         finally:
             for t in attached:
@@ -866,6 +988,7 @@ class _Candidate:
     value: str | None
     cells: list[str] = field(default_factory=list)  # folded cell texts of a list item
     redundant: bool = False  # a descendant control repeats this item; list that one instead
+    window: int = 0  # root window the element was found in
 
     def final_value(self) -> str | None:
         if not self.cells:
@@ -881,7 +1004,33 @@ class _WalkState:
     nodes: int = 0
     calls: int = 0
     doc_children: int = 0
-    stopped: str = ""
+    stopped: str = ""  # why the walk ended early: "time budget", "timeout", "size cap"
+    failed: bool = False  # a window could not be read at all (UI Automation error)
+    label_s: float = 0.0  # time spent reading Win32 label texts
+    labels_off: bool = False  # a label read timed out: the app is busy, read no more
+
+
+def _label_text(api: _Win32, hwnd: int, state: _WalkState | None) -> str:
+    """WM_GETTEXT of a Win32 label, within the listing's time budget (see _LABEL_TIMEOUT_MS)."""
+    if state is None:
+        return api.control_text(hwnd)
+    if state.labels_off:
+        return ""
+    started = time.monotonic()
+    timeout_ms = min(
+        _LABEL_TIMEOUT_MS,
+        int((state.deadline - started) * 1000),
+        int((_LABEL_BUDGET_S - state.label_s) * 1000),
+    )
+    if timeout_ms <= 0:
+        state.labels_off = True
+        return ""
+    text = api.control_text(hwnd, timeout_ms)
+    spent = time.monotonic() - started
+    state.label_s += spent
+    if not text and spent * 1000 >= timeout_ms * 0.8:
+        state.labels_off = True  # timed out (or as good as): the app is not answering quickly
+    return text
 
 
 def _cached(el: Any, prop: int) -> Any:
@@ -891,7 +1040,9 @@ def _cached(el: Any, prop: int) -> Any:
         return None
 
 
-def _element_value(api: _Win32, el: Any, role: str, name: str) -> str | None:
+def _element_value(
+    api: _Win32, el: Any, role: str, name: str, state: _WalkState | None = None
+) -> str | None:
     if role in _ROLES_VALUE and _cached(el, _P_IS_VALUE_AVAILABLE):
         value = _cached(el, _P_VALUE)
         if isinstance(value, str):
@@ -916,7 +1067,7 @@ def _element_value(api: _Win32, el: Any, role: str, name: str) -> str | None:
         # Win32/WinForms labels with an accessible name: their visible text is the value.
         hwnd = _cached(el, _P_NATIVE_HWND)
         if isinstance(hwnd, int) and hwnd:
-            text = _clean(api.control_text(hwnd), _VALUE_MAX)
+            text = _clean(_label_text(api, hwnd, state), _VALUE_MAX)
             if text and text != name:
                 return text
     return None
@@ -935,7 +1086,12 @@ def _squash(name: str) -> str:
 
 
 def _make_candidate(
-    api: _Win32, el: Any, role: str, rect: Rect, enclosing: _Candidate | None
+    api: _Win32,
+    el: Any,
+    role: str,
+    rect: Rect,
+    enclosing: _Candidate | None,
+    state: _WalkState | None = None,
 ) -> _Candidate | None:
     if role not in _ROLES_LISTABLE:
         return None
@@ -944,7 +1100,7 @@ def _make_candidate(
         if not name or (enclosing and _squash(name) in _squash(enclosing.name)):
             return None
     password = bool(el.CachedIsPassword)
-    value = None if password else _element_value(api, el, role, name)
+    value = None if password else _element_value(api, el, role, name, state)
     if not name and (role in _ROLES_IF_NAMED or role in _ROLES_ALWAYS):
         name = _fallback_name(role, el.CachedHelpText, el.CachedAutomationId)
     if role in _ROLES_IF_NAMED and not name and not value:
@@ -957,11 +1113,17 @@ def _walk(ctx: _Context, api: _Win32, hwnd: int, state: _WalkState, out: list[_C
     win_clip = _intersect(api.frame_rect(hwnd), api.virtual_screen())
     if not _nonempty(win_clip):
         return
+    win_root = int(api.GetAncestor(hwnd, _GA_ROOT) or hwnd)
     ctx.set_timeout(int((state.deadline - time.monotonic()) * 1000) + 100)
     try:
         root = ctx.automation.ElementFromHandleBuildCache(hwnd, ctx.request)
     except Exception as exc:
-        state.stopped = "timeout" if _is_timeout(exc) else "error"
+        # A timeout ends the listing (the budget is spent); another error only skips this window
+        # (e.g. a popup that closed meanwhile), but the listing is reported as incomplete.
+        if _is_timeout(exc):
+            state.stopped = "timeout"
+        else:
+            state.failed = True
         log.debug("ElementFromHandle(%s) failed: %s", hwnd, exc)
         return
     state.calls += 1
@@ -1017,8 +1179,9 @@ def _walk(ctx: _Context, api: _Win32, hwnd: int, state: _WalkState, out: list[_C
                 child_owner = None
                 if visible and not offscreen:
                     skip = parent_role == "combobox" and role in ("edit", "button")
-                    cand = None if skip else _make_candidate(api, el, role, rect, enclosing)
+                    cand = None if skip else _make_candidate(api, el, role, rect, enclosing, state)
                     if cand is not None:
+                        cand.window = win_root
                         shown = _intersect(rect, clip)
                         cand.rect = shown if _nonempty(shown) else _intersect(rect, win_clip)
                         out.append(cand)
@@ -1085,8 +1248,12 @@ def _resolve_target(api: _Win32, handle: int | None) -> int:
 
 def list_elements(
     handle: int | None = None, query: str | None = None, limit: int = 80
-) -> list[Element]:
-    """On-screen elements of a window worth acting on or reading, top-to-bottom, ids 1..n."""
+) -> ElementList:
+    """On-screen elements of a window worth acting on or reading, top-to-bottom, ids 1..n.
+
+    The result says whether the scan was cut short (``incomplete``) and how many elements
+    matched before ``limit`` (``total``).
+    """
     if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
         raise ValueError(f"limit must be a positive integer, got {limit!r}.")
     api = _win()
@@ -1116,7 +1283,9 @@ def list_elements(
             _chromium_woken.add(hwnd)
             time.sleep(_CHROMIUM_WAKE_S)
             found.clear()
-            state = _WalkState(deadline=state.deadline)
+            state = _WalkState(
+                deadline=state.deadline, label_s=state.label_s, labels_off=state.labels_off
+            )
             for target in roots:
                 if state.stopped:
                     break
@@ -1130,12 +1299,13 @@ def list_elements(
     if needle is not None:
         items = [c for c in items if needle in c.name.casefold() or needle in c.role]
     items.sort(key=lambda c: (c.rect[1], c.rect[0], c.rect[3], c.rect[2]))
+    incomplete = state.stopped or ("error" if state.failed else "")
     log.debug(
-        "list_elements(%s): %d listable of %d nodes, %d calls, %.0f ms%s",
+        "list_elements(%s): %d listable of %d nodes, %d calls, %.0f ms (labels %.0f ms)%s",
         hwnd, len(items), state.nodes, state.calls, (time.monotonic() - started) * 1000,
-        f", stopped: {state.stopped}" if state.stopped else "",
+        state.label_s * 1000, f", incomplete: {incomplete}" if incomplete else "",
     )  # fmt: skip
-    return [
+    result = ElementList(
         Element(
             id=i,
             role=c.role,
@@ -1146,35 +1316,56 @@ def list_elements(
             bottom=c.rect[3],
             enabled=c.enabled,
             value=c.final_value(),
+            window=c.window,
         )
         for i, c in enumerate(items[:limit], start=1)
-    ]
+    )
+    result.incomplete = incomplete
+    result.total = len(items)
+    return result
 
 
-def _win32_focus_is_password(api: _Win32) -> bool:
-    """ES_PASSWORD on the focused Win32 edit control of the foreground thread."""
+def _win32_focus_is_password(api: _Win32) -> bool | None:
+    """The focused Win32 edit control of the foreground thread, if there is one.
+
+    True: an edit control with ES_PASSWORD. False: an edit control without it (definitely not a
+    password field). None: no focused window, or one that is not an edit control (browsers,
+    WPF, UWP, ...), so UI Automation has to decide.
+    """
     info = api.GUITHREADINFO()
     info.cbSize = ctypes.sizeof(info)
     if not api.GetGUIThreadInfo(0, ctypes.byref(info)) or not info.hwndFocus:
-        return False
+        return None
     hwnd = info.hwndFocus
-    return "edit" in api.class_name(hwnd).lower() and bool(api.style(hwnd) & _ES_PASSWORD)
+    if "edit" not in api.class_name(hwnd).lower():
+        return None
+    return bool(api.style(hwnd) & _ES_PASSWORD)
 
 
-def focused_element_is_password() -> bool:
-    """True if the element with keyboard focus is a password field; False if unknown."""
+def focused_element_is_password() -> bool | None:
+    """Whether the element with keyboard focus is a password field: True, False, or None.
+
+    None means "could not be determined" (UI Automation timed out or failed, or reported no
+    focused element) and must be treated as a refusal by callers that type: the check fails
+    closed. A plain Win32 edit control is known not to be a password field even when UI
+    Automation does not answer.
+    """
     if sys.platform != "win32":
         return False
+    win32: bool | None = None
     try:
-        if _win32_focus_is_password(_win()):
-            return True
+        win32 = _win32_focus_is_password(_win())
     except Exception:
         log.debug("Win32 password check failed", exc_info=True)
+    if win32:
+        return True
     try:
         ctx = _context()
         ctx.set_timeout(_CALL_TIMEOUT_MS)
         element = ctx.automation.GetFocusedElement()
-        return bool(element and element.CurrentIsPassword)
+        if not element:
+            return win32
+        return bool(element.CurrentIsPassword)
     except Exception:
         log.debug("UIA password check failed", exc_info=True)
-        return False
+        return win32

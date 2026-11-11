@@ -15,11 +15,14 @@ from dataclasses import dataclass
 _TRUE = frozenset({"1", "true", "yes", "on"})
 _FALSE = frozenset({"0", "false", "no", "off"})
 _FORMATS = ("png", "jpeg")
+# Largest long edge any Claude model accepts without downsizing the image (Claude 4.7+: 2576 px).
+# A larger image would be shrunk by the API and clicks would land off target.
+MAX_SIZE_LIMIT = 2576
 
 
 @dataclass(frozen=True)
 class Config:
-    max_size: int = 1280  # long-edge cap for screenshot/zoom images, px; valid 256..4096
+    max_size: int = 1280  # long-edge cap for screenshot/zoom images, px; valid 256..2576
     max_image_tokens: int = 1568  # visual-token cap per image; valid 100..4784
     image_format: str = "png"  # "png" | "jpeg"
     jpeg_quality: int = 80  # 1..95
@@ -97,7 +100,9 @@ def _build_parser() -> argparse.ArgumentParser:
         allow_abbrev=False,
     )
     parser.add_argument("--version", action=_VersionAction)
-    parser.add_argument("--max-size", metavar="N", help="long-edge cap for images, 256..4096")
+    parser.add_argument(
+        "--max-size", metavar="N", help=f"long-edge cap for images, 256..{MAX_SIZE_LIMIT}"
+    )
     parser.add_argument("--max-image-tokens", metavar="N", help="image token cap, 100..4784")
     parser.add_argument("--format", dest="image_format", metavar="FMT", help="png or jpeg")
     parser.add_argument("--jpeg-quality", metavar="N", help="JPEG quality, 1..95")
@@ -141,7 +146,7 @@ def load_config(argv: list[str] | None = None, env: Mapping[str, str] | None = N
     max_elements = defaults.max_elements
 
     if (p := pick(args.max_size, "CUW_MAX_SIZE")) is not None:
-        max_size = _parse_int(p[0], p[1], 256, 4096)
+        max_size = _parse_int(p[0], p[1], 256, MAX_SIZE_LIMIT)
     if (p := pick(args.max_image_tokens, "CUW_MAX_IMAGE_TOKENS")) is not None:
         max_image_tokens = _parse_int(p[0], p[1], 100, 4784)
     if (p := pick(args.image_format, "CUW_FORMAT")) is not None:

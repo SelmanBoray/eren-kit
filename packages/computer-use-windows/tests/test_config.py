@@ -159,18 +159,18 @@ def test_env_block_used_when_no_cli_block() -> None:
 # --- validation: ranges -----------------------------------------------------------------
 
 
-@pytest.mark.parametrize("value", ["255", "4097", "0", "-5"])
+@pytest.mark.parametrize("value", ["255", "2577", "4096", "4097", "0", "-5"])
 def test_cli_max_size_out_of_range(value: str) -> None:
     with pytest.raises(ValueError):
         load(["--max-size", value])
 
 
-@pytest.mark.parametrize("value", ["256", "4096"])
+@pytest.mark.parametrize("value", ["256", "2576"])
 def test_max_size_boundaries_ok(value: str) -> None:
     assert load(["--max-size", value]).max_size == int(value)
 
 
-@pytest.mark.parametrize("value", ["255", "4097"])
+@pytest.mark.parametrize("value", ["255", "2577", "4096", "4097"])
 def test_env_max_size_out_of_range(value: str) -> None:
     with pytest.raises(ValueError):
         load(env={"CUW_MAX_SIZE": value})

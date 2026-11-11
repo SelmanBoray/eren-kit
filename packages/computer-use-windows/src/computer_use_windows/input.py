@@ -24,6 +24,13 @@ Design notes (for reviewers)
   inserted ``SendInput`` batch releases what was inserted before the error is raised.
 * Building INPUT records (the pure ``_*_input`` / ``_*_events`` helpers) is separate from sending
   (``_send``), so the records can be inspected without injecting anything.
+* Interruption: inside ``with interrupt_check(fn):`` the multi-step actions (wheel notches, drag
+  steps, chords and repeats of ``press_keys``, batches of ``type_text``) call ``fn`` between
+  steps. An exception from ``fn`` stops the action there; anything held down is released first.
+  The server uses this to re-check the failsafe during long input.
+* ``plan_keys`` and ``type_text_segments`` split a key spec / a text into the steps a caller can
+  send one by one with its own safety checks in between (the server re-checks the keyboard target
+  after every chord and after every Tab/Enter of a text).
 """
 
 from __future__ import annotations
@@ -43,14 +50,21 @@ from typing import Any
 
 __all__ = [
     "KEY_NAMES",
+    "MAX_KEY_EVENTS",
+    "chord_types_text",
     "click",
     "cursor_position",
     "drag",
+    "focus_settle_after_chord",
+    "focus_settle_after_text",
+    "interrupt_check",
     "move",
     "parse_keys",
+    "plan_keys",
     "press_keys",
     "scroll",
     "type_text",
+    "type_text_segments",
 ]
 
 log = logging.getLogger(__name__)
@@ -74,6 +88,22 @@ DRAG_MAX_STEPS = 50
 DRAG_STEP_DELAY = 0.01
 DRAG_DROP_HOLD = 0.1  # hover at the destination before releasing (drop targets need a moment)
 RELEASE_RETRY_DELAY = 0.05
+# Wait after a key that may move the keyboard focus, before the next safety check reads the focus.
+# The target processes injected input asynchronously: a responsive Win32 app moves the focus
+# within one message-loop turn (< 1 frame, ~16 ms), but Chromium/Electron forward the key to a
+# renderer process and update the accessibility tree UI Automation reads a few frames later
+# (~2-3 frames). Tab only moves focus inside the window: 50 ms. Enter, Esc, F-keys and
+# ctrl/alt/win shortcuts may close a dialog or open a window: 100 ms. Not measured on a real
+# desktop; a focus change that takes longer (a page load after Enter) is not covered.
+FOCUS_SETTLE_TAB = 0.05
+FOCUS_SETTLE = 0.1
+
+# Most key presses (chords x repeat) in one press_keys call. 200 covers any single chord at the
+# repeat limit (100) and a two-chord pattern repeated 100 times ("shift+tab space"), which is
+# more than menus, lists and forms need. A plain chord takes ~32 ms (~6.5 s for 200); a chord
+# that may move the focus waits FOCUS_SETTLE before the next check (at most ~20 s for 200). The
+# failsafe is checked before every press, so even that stays stoppable. Text belongs in type_text.
+MAX_KEY_EVENTS = 200
 
 # --- Win32 constants --------------------------------------------------------------------------
 _INPUT_MOUSE = 0
@@ -266,6 +296,33 @@ _BUTTON_FLAGS: dict[str, tuple[int, int]] = {
 
 _LOCK = threading.RLock()  # one input action at a time, even from several worker threads
 
+# Per-thread interruption check, see interrupt_check(). Called between the steps of an action with
+# the cursor position this module expects (it just put the pointer there), or None for keys.
+InterruptCheck = Callable[[tuple[int, int] | None], None]
+_interrupt = threading.local()
+
+
+@contextmanager
+def interrupt_check(check: InterruptCheck | None) -> Iterator[None]:
+    """Make multi-step actions in this thread call ``check(expected_cursor)`` between steps.
+
+    ``expected_cursor`` is where this module last put the pointer (wheel notches, drag steps) or
+    None (keys, text). An exception raised by ``check`` stops the action: held keys and buttons
+    are released, then the exception propagates. ``None`` disables checking inside the block.
+    """
+    previous = getattr(_interrupt, "check", None)
+    _interrupt.check = check
+    try:
+        yield
+    finally:
+        _interrupt.check = previous
+
+
+def _checkpoint(expected: tuple[int, int] | None = None) -> None:
+    check: InterruptCheck | None = getattr(_interrupt, "check", None)
+    if check is not None:
+        check(expected)
+
 
 # --- Validation (pure) ------------------------------------------------------------------------
 def _as_int(name: str, value: Any) -> int:
@@ -363,6 +420,117 @@ def parse_keys(spec: str) -> list[list[int]]:
             )
         chords.append(modifiers + other_vks)
     return chords
+
+
+def plan_keys(spec: str, repeat: int = 1) -> list[tuple[str, list[int]]]:
+    """Validate a key spec and expand it into the key presses to send, one ``(chord, vks)`` each.
+
+    ``chord`` is the chord's own text (a valid spec for ``press_keys``), ``vks`` its parsed
+    virtual-key codes; the list holds the chords of ``spec`` ``repeat`` times in order. Raises
+    ``ValueError`` (before anything is sent) for a bad spec, a repeat outside 1..100, or more than
+    ``MAX_KEY_EVENTS`` presses.
+    """
+    repeat = _int_in_range("repeat", repeat, 1, 100)
+    chords = parse_keys(spec)
+    total = len(chords) * repeat
+    if total > MAX_KEY_EVENTS:
+        raise ValueError(
+            f"{len(chords)} chord(s) x repeat {repeat} = {total} key presses; one key call "
+            f"allows at most {MAX_KEY_EVENTS}. Split it into several key calls, or use type_text "
+            "for text."
+        )
+    texts = spec.split()
+    return [
+        (text, list(chord))
+        for _ in range(repeat)
+        for text, chord in zip(texts, chords, strict=True)
+    ]
+
+
+# Keys that type a character (letters, digits, space and the VK_OEM punctuation keys).
+_TEXT_VKS: frozenset[int] = frozenset(
+    {0x20, *range(0x30, 0x3A), *range(0x41, 0x5B), *range(0xBA, 0xC1), *range(0xDB, 0xDF)}
+)
+# Keys that edit or move inside a field and do not move the keyboard focus elsewhere.
+_IN_FIELD_VKS: frozenset[int] = frozenset(
+    {0x08, 0x2E, 0x2D, 0x24, 0x23, 0x21, 0x22, 0x25, 0x26, 0x27, 0x28, 0x14}
+)
+_CTRL_VKS = frozenset({_VK_CONTROL, 0xA2, 0xA3})
+_ALT_VKS = frozenset({_VK_MENU, 0xA4, 0xA5})
+_WIN_VKS = frozenset({_VK_LWIN, 0x5C})
+
+
+def chord_types_text(chord: Sequence[int]) -> bool:
+    """True if the chord types a character: a letter/digit/space/punctuation key, alone or with
+    shift. ctrl+alt (+shift) counts too: Windows treats it as AltGr, which types characters such
+    as ``@`` or ``{`` on many layouts. Win, or ctrl or alt alone, makes it a shortcut."""
+    held = set(chord)
+    keys = [vk for vk in chord if vk not in _MODIFIER_VKS]
+    if not keys or keys[0] not in _TEXT_VKS or held & _WIN_VKS:
+        return False
+    return bool(held & _CTRL_VKS) == bool(held & _ALT_VKS)
+
+
+def focus_settle_after_chord(chord: Sequence[int]) -> float:
+    """Seconds to wait after ``chord`` before reading the keyboard focus again (0: none needed).
+
+    Tab moves the focus inside the window; Enter, Esc, F-keys, the menu key and ctrl/alt/win
+    shortcuts may close a dialog or open a window. Typing a character or editing/moving inside a
+    field (arrows, home/end, page keys, backspace, delete) keeps the focus where it is.
+    """
+    held = set(chord)
+    keys = [vk for vk in chord if vk not in _MODIFIER_VKS]
+    if not keys:
+        return 0.0  # a lone modifier
+    if held & (_CTRL_VKS | _ALT_VKS | _WIN_VKS) and not chord_types_text(chord):
+        return FOCUS_SETTLE
+    if keys[0] == _VK_TAB:
+        return FOCUS_SETTLE_TAB
+    if keys[0] in _TEXT_VKS or keys[0] in _IN_FIELD_VKS:
+        return 0.0
+    return FOCUS_SETTLE
+
+
+def focus_settle_after_text(piece: str) -> float:
+    """Seconds to wait after typing ``piece`` before reading the keyboard focus again (0: none).
+
+    Only a piece ending in Tab or Enter (see ``type_text_segments``) may have moved the focus.
+    """
+    if piece.endswith("\t"):
+        return FOCUS_SETTLE_TAB
+    if piece.endswith(("\r", "\n")):
+        return FOCUS_SETTLE
+    return 0.0
+
+
+def type_text_segments(text: str) -> list[str]:
+    """Validate ``text`` like ``type_text`` and split it into pieces to type one by one.
+
+    A piece ends right after every Enter (``\\n``, ``\\r\\n``, ``\\r``) or Tab, because those can
+    move the keyboard focus, and after ``TYPE_BATCH_CHARS`` characters, so a long text has regular
+    points where it can be stopped. Each piece is one ``type_text`` batch; joined, the pieces give
+    ``text`` back. ``\\r\\n`` and surrogate pairs are never split. Raises ``ValueError`` like
+    ``type_text``.
+    """
+    _type_text_batches(text)  # validation only
+    pieces: list[str] = []
+    start = chars = 0
+    i, length = 0, len(text)
+    while i < length:
+        ch = text[i]
+        ends = ch in "\r\n\t"
+        if ch == "\r" and i + 1 < length and text[i + 1] == "\n":
+            i += 1
+        elif 0xD800 <= ord(ch) <= 0xDBFF and i + 1 < length:
+            i += 1  # validated above: a high surrogate here is followed by its low half
+        i += 1
+        chars += 1
+        if ends or chars >= TYPE_BATCH_CHARS:
+            pieces.append(text[start:i])
+            start, chars = i, 0
+    if start < length:
+        pieces.append(text[start:])
+    return pieces
 
 
 # --- INPUT builders (pure: no Windows calls) --------------------------------------------------
@@ -849,6 +1017,7 @@ def scroll(x: int, y: int, direction: str, amount: int = 3) -> None:
         for i in range(amount):
             if i:
                 time.sleep(SCROLL_INTERVAL)
+                _checkpoint((x, y))
             _send([_wheel_input(direction)])
 
 
@@ -868,32 +1037,36 @@ def drag(x0: int, y0: int, x1: int, y1: int, button: str = "left") -> None:
         up = [_button_input(button, up=True, swapped=swapped)]
         _move_to(x0, y0)
         time.sleep(MOVE_SETTLE)
-        with _held(down, up):
+        with _held(down, up):  # an interruption below still releases the button
             time.sleep(DRAG_PRESS_HOLD)
+            last = (x0, y0)
             for px, py in path[:-1]:
+                _checkpoint(last)
                 _send([_move_input(px, py, vrect, nocoalesce=True)])
+                last = (px, py)
                 time.sleep(DRAG_STEP_DELAY)
+            _checkpoint(last)
             _move_to(x1, y1)
             time.sleep(DRAG_DROP_HOLD)
 
 
 def press_keys(spec: str, repeat: int = 1) -> None:
-    """Press the chords of ``spec`` (see ``parse_keys``) ``repeat`` times (1..100)."""
-    repeat = _int_in_range("repeat", repeat, 1, 100)
-    chords = parse_keys(spec)
+    """Press the chords of ``spec`` (see ``parse_keys``) ``repeat`` times (1..100).
+
+    At most ``MAX_KEY_EVENTS`` presses in total; see ``plan_keys``.
+    """
+    steps = plan_keys(spec, repeat)
     _require_windows()
     with _LOCK:
         scan_of = _live_scan_of()
-        first = True
-        for _ in range(repeat):
-            for chord in chords:
-                if not first:
-                    time.sleep(KEY_GAP)
-                first = False
-                downs, ups = _chord_events(chord)
-                _fill_scan_codes(downs + ups, scan_of)
-                with _held(downs, ups):
-                    time.sleep(KEY_HOLD)
+        for i, (_, chord) in enumerate(steps):
+            if i:
+                time.sleep(KEY_GAP)
+                _checkpoint()
+            downs, ups = _chord_events(chord)
+            _fill_scan_codes(downs + ups, scan_of)
+            with _held(downs, ups):
+                time.sleep(KEY_HOLD)
 
 
 def type_text(text: str) -> None:
@@ -909,5 +1082,6 @@ def type_text(text: str) -> None:
         for i, batch in enumerate(batches):
             if i:
                 time.sleep(TYPE_BATCH_PAUSE)
+                _checkpoint()
             _fill_scan_codes(batch, scan_of)
             _send(batch)

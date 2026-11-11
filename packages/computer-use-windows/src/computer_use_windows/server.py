@@ -3,7 +3,8 @@
 Threading: every tool body runs in an anyio worker thread, one at a time (a lock), so the event
 loop never blocks (a 10 s ``wait`` or a 2 s UIA walk does not stall the protocol) and actions never
 interleave. uia.py initializes COM per calling thread and screen.py opens mss per call, so it does
-not matter which worker thread runs a call.
+not matter which worker thread runs a call. ``focus`` is additionally bounded in time
+(``_FOCUS_TIMEOUT``), so a window that stops responding cannot hold the lock.
 
 Errors: SafetyError / ValueError / RuntimeError from the sibling modules propagate unchanged;
 FastMCP turns them into tool errors carrying their message (no traceback). Anything else is logged
@@ -20,6 +21,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import TypeVar
 
 from anyio import to_thread
@@ -42,6 +44,22 @@ _SETTLE_SECONDS = 0.05
 # the server" (guards against a pixel of drift); farther away means the user moved it meanwhile.
 _SETTLE_TOLERANCE = 2
 _WAIT_MAX_SECONDS = 10.0
+# The password check could not tell (UI Automation timed out or failed): a busy target often
+# answers a moment later, so it is asked once more after this pause before typing is refused.
+# Worst case for a refusal: two UIA calls of at most 1 s each plus this pause.
+_PASSWORD_RETRY_DELAY = 0.1
+# focus gives up after this long. uia.focus_window refuses hung windows and only uses calls that
+# do not wait for the target; this bound also covers a window that hangs in the middle of it, so
+# a hung app can never hold the server's lock (and with it every later tool call).
+_FOCUS_TIMEOUT = 2.0
+
+# Why an elements scan stopped early (uia.ElementList.incomplete), as told to the agent.
+_INCOMPLETE_REASONS = {
+    "time budget": "the time limit was reached",
+    "timeout": "the app did not answer in time",
+    "size cap": "the window has too many elements",
+    "error": "UI Automation could not read part of the window",
+}
 
 _NO_SCREENSHOT = (
     "No screenshot yet: x,y are pixels in the last screenshot. Call screenshot first, "
@@ -65,6 +83,65 @@ def _describe(window: uia.WindowInfo | None) -> str:
     return f'foreground: "{_one_line(window.title)}" ({window.process or "?"})'
 
 
+def _handle(window: uia.WindowInfo | None) -> int | None:
+    return window.handle if window is not None else None
+
+
+def _rect(window: uia.WindowInfo) -> tuple[int, int, int, int]:
+    return (window.left, window.top, window.right, window.bottom)
+
+
+def _family(window: uia.WindowInfo | None) -> list[uia.WindowInfo]:
+    """A window and the related windows it stands for (root owner, embedded child)."""
+    if window is None:
+        return []
+    return [window, *getattr(window, "related", ())]
+
+
+class _CallTimeout(Exception):
+    """A call run by _run_with_timeout did not finish in time."""
+
+
+def _run_with_timeout(fn: Callable[..., _T], args: tuple[object, ...], seconds: float) -> _T:
+    """Run ``fn(*args)`` in a daemon thread; raise _CallTimeout if it is not done in time.
+
+    The thread is abandoned on timeout (Python cannot stop it); it holds no lock of the server.
+    """
+    outcome: dict[str, object] = {}
+
+    def run() -> None:
+        try:
+            outcome["value"] = fn(*args)
+        except BaseException as exc:  # handed to the caller
+            outcome["error"] = exc
+
+    worker = threading.Thread(target=run, name="computer-use-windows-call", daemon=True)
+    worker.start()
+    worker.join(seconds)
+    if worker.is_alive():
+        raise _CallTimeout
+    if "error" in outcome:
+        raise outcome["error"]  # type: ignore[misc]
+    return outcome["value"]  # type: ignore[return-value]
+
+
+@dataclass(frozen=True)
+class _Listing:
+    """The window the last elements call listed, to detect element ids that went stale."""
+
+    handle: int
+    rect: tuple[int, int, int, int] | None  # None: not in the window list, so not tracked
+
+
+def _partial(exc: Exception, done: str) -> Exception:
+    """The error for input stopped part-way: says how much was already sent, keeps the reason."""
+    if isinstance(exc, safety.SafetyError):
+        return safety.SafetyError(f"{done}; the rest was not sent. {exc}")
+    if isinstance(exc, (ValueError, RuntimeError)):
+        return RuntimeError(f"{done}; the rest was not sent. {exc}")
+    return RuntimeError(f"{done}; the rest was not sent. {type(exc).__name__}: {exc}")
+
+
 class _Session:
     """Server state and the synchronous body of every tool (run in a worker thread)."""
 
@@ -72,6 +149,7 @@ class _Session:
         self.cfg = cfg
         self.cmap: screen.CoordMap | None = None  # last screenshot's mapping
         self.by_id: dict[int, uia.Element] = {}  # last elements call, by id
+        self.listing: _Listing | None = None  # the window that call listed
         self.last_set: tuple[int, int] | None = None  # last cursor position the server set
 
     # ------------------------------------------------------------------ helpers
@@ -94,7 +172,10 @@ class _Session:
             raise ValueError(_NO_SCREENSHOT)
         return self.cmap.to_screen(x, y)
 
-    def _target(self, x: int | None, y: int | None, element: int | None) -> tuple[int, int]:
+    def _target(
+        self, x: int | None, y: int | None, element: int | None
+    ) -> tuple[tuple[int, int], uia.Element | None]:
+        """The screen point to act on, and the element it came from (None for x,y)."""
         if element is not None:
             if x is not None or y is not None:
                 raise ValueError("Give either x and y, or element, not both.")
@@ -104,35 +185,142 @@ class _Session:
                     f"Unknown element id {element}: ids come from the last elements call. "
                     "Call elements again."
                 )
-            return found.center
+            return found.center, found
         if x is None or y is None:
             raise ValueError(
                 "Give both x and y (pixels in the last screenshot), or element "
                 "(an id from elements)."
             )
-        return self._to_screen(x, y)
+        return self._to_screen(x, y), None
 
-    def _check_failsafe(self) -> None:
+    def _check_element_fresh(self, element: uia.Element, here: uia.WindowInfo | None) -> None:
+        """Refuse an element id whose window closed, moved or was covered since it was listed.
+
+        ``here``: the window now under the element's center (``uia.window_at``). Changes inside
+        a window that keep its rectangle (scrolling, a re-laid-out page) are not detected.
+        """
+
+        def stale(reason: str) -> ValueError:
+            return ValueError(
+                f"Element {element.id} is stale: {reason}, so nothing was clicked. The element "
+                "list is out of date; call elements again."
+            )
+
+        listing = self.listing
+        if listing is not None and listing.rect is not None:
+            now = next((w for w in uia.list_windows() if w.handle == listing.handle), None)
+            if now is None:
+                raise stale("its window was closed or hidden since it was listed")
+            if now.minimized:
+                raise stale("its window was minimized since it was listed")
+            if _rect(now) != listing.rect:
+                raise stale("its window was moved or resized since it was listed")
+        expected = element.window or (listing.handle if listing is not None else 0)
+        if expected and (here is None or here.handle != expected):
+            raise stale(
+                "another window is on top of it now (if its window is in the background, focus "
+                "it first)"
+            )
+
+    def _check_pointer(
+        self,
+        *points: tuple[int, int],
+        paste_action: str = "",
+        element: uia.Element | None = None,
+    ) -> None:
+        """Safety for mouse actions: failsafe, then the window under every target point.
+
+        Every process owning the point (root window, root owner, embedded child) is checked
+        against the blocklist. ``paste_action`` (e.g. "A right click"): the action can insert
+        text, so terminals and the agent's own host are refused too, with the keyboard guard's
+        terminal test. ``element``: the first point is that element's center; its id must still
+        be fresh.
+        """
+        self._check_failsafe()
+        for i, (px, py) in enumerate(points):
+            window = uia.window_at(px, py)
+            if element is not None and i == 0:
+                self._check_element_fresh(element, window)
+            family = _family(window)
+            for w in family:
+                safety.check_blocked(w.process, self.cfg.blocked_processes)
+            if paste_action and family:
+                own = uia.ancestor_pids()
+                for w in family:
+                    safety.check_pointer_target(
+                        w.process,
+                        paste_action,
+                        self.cfg.allow_terminal_input,
+                        window_class=w.class_name,
+                        is_own_host=w.pid in own,
+                    )
+
+    def _corners(self) -> list[tuple[int, int]] | None:
+        """Failsafe corners of all monitors, or None when the failsafe is off.
+
+        Multi-step actions read them once and reuse them for every re-check.
+        """
+        if not self.cfg.failsafe:
+            return None
+        monitors = screen.list_monitors()
+        return safety.monitor_corners([(m.left, m.top, m.width, m.height) for m in monitors])
+
+    def _check_failsafe(
+        self,
+        corners: list[tuple[int, int]] | None = None,
+        exempt: tuple[int, int] | None = None,
+    ) -> None:
+        """Refuse when the user parked the cursor in a screen corner.
+
+        A corner the agent itself put the cursor on is exempt only while the cursor has not been
+        seen anywhere else since (``safety.failsafe_exemption``). ``exempt``: the point where an
+        action in progress (scroll, drag) just put the pointer.
+        """
         if not self.cfg.failsafe:
             return
-        monitors = screen.list_monitors()
-        corners = safety.monitor_corners([(m.left, m.top, m.width, m.height) for m in monitors])
-        safety.check_failsafe(inp.cursor_position(), corners, self.last_set, enabled=True)
+        if corners is None:
+            corners = self._corners() or []
+        cursor = inp.cursor_position()
+        self.last_set = safety.failsafe_exemption(cursor, self.last_set)
+        allowed = exempt if exempt is not None else self.last_set
+        safety.check_failsafe(cursor, corners, allowed, enabled=True)
 
-    def _check_pointer(self, *points: tuple[int, int]) -> None:
-        """Safety for mouse actions: failsafe, then the window under every target point."""
-        self._check_failsafe()
-        for px, py in points:
-            window = uia.window_at(px, py)
-            safety.check_blocked(window.process if window else None, self.cfg.blocked_processes)
+    def _failsafe_interrupt(self) -> inp.InterruptCheck | None:
+        """The check ``inp`` runs between the steps of a scroll or drag (failsafe only)."""
+        corners = self._corners()
+        if corners is None:
+            return None
 
-    def _check_keyboard(self, typing: bool) -> None:
+        def check(expected: tuple[int, int] | None) -> None:
+            self._check_failsafe(corners, exempt=expected)
+
+        return check
+
+    def _password_state(self) -> bool | None:
+        """Is the focused element a password field? None: still unknown after one retry."""
+        for attempt in range(2):
+            if attempt:
+                time.sleep(_PASSWORD_RETRY_DELAY)
+            try:
+                state = uia.focused_element_is_password()
+            except Exception:  # an unexpected failure is "unknown" too: fail closed
+                log.debug("password check raised", exc_info=True)
+                state = None
+            if state is not None:
+                return bool(state)
+        return None
+
+    def _check_keyboard(
+        self, typing: bool, corners: list[tuple[int, int]] | None = None
+    ) -> uia.WindowInfo | None:
         """Safety for keyboard actions: failsafe, blocklist, terminal, password (typing only).
 
         The keyboard target is the foreground window: refused when it is a terminal (process or
-        window class) or the agent's own host (its pid is one of our parent processes).
+        window class) or the agent's own host (its pid is one of our parent processes). Typing is
+        also refused when the focused element is a password field or that cannot be determined.
+        Returns the foreground window that passed.
         """
-        self._check_failsafe()
+        self._check_failsafe(corners)
         window = uia.foreground_window()
         process = window.process if window else None
         safety.check_blocked(process, self.cfg.blocked_processes)
@@ -143,7 +331,44 @@ class _Session:
             is_own_host=window is not None and window.pid in uia.ancestor_pids(),
         )
         if typing:
-            safety.check_password_field(uia.focused_element_is_password())
+            safety.check_password_field(self._password_state())
+        return window
+
+    def _recheck_typing(
+        self,
+        typed_piece: str,
+        window: uia.WindowInfo | None,
+        corners: list[tuple[int, int]] | None,
+    ) -> uia.WindowInfo | None:
+        """Checks between two pieces of a type_text call (see ``inp.type_text_segments``).
+
+        After Tab/Enter the focus may have moved: wait for it to settle, then run every keyboard
+        check again. After a plain piece only the failsafe and the foreground window are checked
+        (cheap). Either way the text stops when the foreground window changed: Enter may have
+        closed a dialog or launched a program (a console from the Run box), and the rest of the
+        text was meant for the window that was checked.
+        """
+        # Whether to re-check depends only on the key typed, never on a delay setting: with a
+        # settle time of 0 the full check still runs, just without waiting first.
+        focus_may_move = typed_piece.endswith(("\t", "\r", "\n"))
+        if focus_may_move:
+            time.sleep(inp.focus_settle_after_text(typed_piece))
+        else:
+            time.sleep(inp.TYPE_BATCH_PAUSE)
+        if focus_may_move:
+            current = self._check_keyboard(typing=True, corners=corners)
+        else:
+            self._check_failsafe(corners)
+            current = uia.foreground_window()
+            if _handle(current) != _handle(window):
+                current = self._check_keyboard(typing=True, corners=corners)  # specific refusal
+        if _handle(current) != _handle(window):
+            raise safety.SafetyError(
+                f"The foreground window changed while typing (now {_describe(current)}), so the "
+                "rest of the text was not typed into it. Check the screen, then type the rest "
+                "with a new type_text call if it is still wanted."
+            )
+        return current
 
     def _moved_to(self, point: tuple[int, int]) -> None:
         """Remember where the server put the cursor (failsafe ignores that position)."""
@@ -199,12 +424,23 @@ class _Session:
 
     def elements(self, query: str | None, window: int | None) -> str:
         limit = self.cfg.max_elements
+        listed = uia.list_windows()
         if window is None:
             info = uia.foreground_window()
         else:
-            info = next((w for w in uia.list_windows() if w.handle == window), None)
-        found = uia.list_elements(window, query or None, limit)
+            info = next((w for w in listed if w.handle == window), None)
+        # The foreground window is passed by handle, so the listing and the stale-id check below
+        # refer to the same window even if the foreground changes meanwhile.
+        target = window if window is not None else (info.handle if info else None)
+        # One more than the cap: tells "exactly the cap" apart from "more than the cap".
+        result = uia.list_elements(target, query or None, limit + 1)
+        found = list(result)[:limit]
+        more = len(result) > limit
+        incomplete = getattr(result, "incomplete", "")
         self.by_id = {e.id: e for e in found}
+        handle = target if target is not None else 0
+        snapshot = next((w for w in listed if w.handle == handle), None)
+        self.listing = _Listing(handle, _rect(snapshot) if snapshot else None) if handle else None
 
         title = _one_line(info.title) if info else "?"
         process = (info.process or "?") if info else "?"
@@ -221,9 +457,16 @@ class _Session:
                 if point is not None:
                     line += f" @{point[0]},{point[1]}"
             lines.append(line)
-        if not found:  # Electron apps, canvases, games: nothing exposed through UIA
+        if incomplete:
+            reason = _INCOMPLETE_REASONS.get(incomplete, incomplete)
+            lines.append(
+                f"… incomplete: the scan stopped early ({reason}), so elements may be missing. "
+                "Narrow it with query or a smaller window (e.g. a dialog's handle), or use "
+                "screenshot."
+            )
+        elif not found:  # Electron apps, canvases, games: nothing exposed through UIA
             lines.append("no accessible elements; use screenshot")
-        elif len(found) >= limit:
+        if more:
             lines.append(f"… truncated at {limit}; use query to narrow")
         return "\n".join(lines)
 
@@ -241,10 +484,28 @@ class _Session:
     # ------------------------------------------------------------------ action tools
 
     def focus(self, window: int) -> str:
+        """Bring a window forward; refused for blocked apps, bounded in time for hung ones.
+
+        The blocklist is checked against the window, its root window and its root owner, also
+        for a handle that is not in the window list (a child or an owned window): focusing it
+        brings its root forward.
+        """
         self._check_failsafe()
-        target = next((w for w in uia.list_windows() if w.handle == window), None)
-        safety.check_blocked(target.process if target else None, self.cfg.blocked_processes)
-        info = uia.focus_window(window)
+        blocked = self.cfg.blocked_processes
+        if blocked:
+            target = next((w for w in uia.list_windows() if w.handle == window), None)
+            family = _family(target) if target is not None else uia.window_family(window)
+            for w in family:
+                safety.check_blocked(w.process, blocked)
+        try:
+            info = _run_with_timeout(uia.focus_window, (window,), _FOCUS_TIMEOUT)
+        except _CallTimeout:
+            log.warning("focus %s did not finish within %.1f s", window, _FOCUS_TIMEOUT)
+            raise RuntimeError(
+                f"focus did not finish within {_FOCUS_TIMEOUT:g} s: the window is probably not "
+                "responding. Wait a few seconds and check with windows; if it stays "
+                "unresponsive, ask the user."
+            ) from None
         log.info("focus %s", window)
         return f"ok | {_describe(info)}"
 
@@ -257,8 +518,12 @@ class _Session:
         clicks: int,
         modifiers: list[str] | None,
     ) -> str:
-        sx, sy = self._target(x, y, element)
-        self._check_pointer((sx, sy))
+        (sx, sy), found = self._target(x, y, element)
+        name = button.strip().lower() if isinstance(button, str) else button
+        # Right/middle clicks paste in many terminals; an unknown button is checked as well
+        # (fail closed) and then rejected by inp.click.
+        paste = "" if name == "left" else f"A {name} click"
+        self._check_pointer((sx, sy), paste_action=paste, element=found)
         mods = modifiers if modifiers is not None else ()
         inp.click(sx, sy, button=button, count=clicks, modifiers=mods)
         self._moved_to((sx, sy))
@@ -266,14 +531,48 @@ class _Session:
         return self._ok()
 
     def type_text(self, text: str) -> str:
-        self._check_keyboard(typing=True)
-        inp.type_text(text)
-        log.info("type_text (%d chars)", len(text))
+        """Type ``text`` piece by piece, re-checking where the keyboard target may have changed.
+
+        Pieces end after every Tab/Enter and every ``inp.TYPE_BATCH_CHARS`` characters; text
+        without Tab/Enter that fits in one piece is a single ``inp.type_text`` call, as before.
+        """
+        pieces = inp.type_text_segments(text)  # validates before any check or input
+        corners = self._corners()
+        window = self._check_keyboard(typing=True, corners=corners)
+        typed = 0
+        for i, piece in enumerate(pieces):
+            try:
+                if i:
+                    window = self._recheck_typing(pieces[i - 1], window, corners)
+                inp.type_text(piece)
+            except Exception as exc:
+                if not typed:
+                    raise
+                done = f"Stopped after typing {typed} of {len(text)} characters"
+                raise _partial(exc, done) from exc
+            typed += len(piece)
+        log.info("type_text (%d chars, %d pieces)", len(text), len(pieces))
         return self._ok()
 
     def key(self, keys: str, repeat: int) -> str:
-        self._check_keyboard(typing=False)
-        inp.press_keys(keys, repeat=repeat)
+        """Press the chords one at a time, re-checking the keyboard target before each one.
+
+        A chord can move the focus (tab, enter, shortcuts) or open a window, so every press is
+        checked against the then-current foreground window; chords that type a character are also
+        refused in a password field.
+        """
+        steps = inp.plan_keys(keys, repeat)  # validates (incl. MAX_KEY_EVENTS) before any input
+        corners = self._corners()
+        for i, (chord, vks) in enumerate(steps):
+            try:
+                if i:
+                    time.sleep(max(inp.KEY_GAP, inp.focus_settle_after_chord(steps[i - 1][1])))
+                self._check_keyboard(typing=inp.chord_types_text(vks), corners=corners)
+                inp.press_keys(chord, repeat=1)
+            except Exception as exc:
+                if not i:
+                    raise
+                raise _partial(exc, f"Stopped after {i} of {len(steps)} key presses") from exc
         log.info("key %r x%s", keys, repeat)
         return self._ok()
 
@@ -288,7 +587,11 @@ class _Session:
             cx, cy = inp.cursor_position()
             point = (int(cx), int(cy))
         self._check_pointer(point)
-        inp.scroll(point[0], point[1], direction, amount=amount)
+        try:
+            with inp.interrupt_check(self._failsafe_interrupt()):
+                inp.scroll(point[0], point[1], direction, amount=amount)
+        except safety.SafetyError as exc:
+            raise safety.SafetyError(f"Scrolling was stopped part-way. {exc}") from exc
         self._moved_to(point)
         log.info("scroll %s %s at %s,%s", direction, amount, *point)
         return self._ok()
@@ -296,8 +599,16 @@ class _Session:
     def drag(self, x0: int, y0: int, x1: int, y1: int) -> str:
         start = self._to_screen(x0, y0)
         end = self._to_screen(x1, y1)
-        self._check_pointer(start, end)
-        inp.drag(start[0], start[1], end[0], end[1])
+        # A drag can carry selected text or files into the drop window, or select and drag text
+        # out of a terminal: both ends are refused on terminals and on the agent's own host.
+        self._check_pointer(start, end, paste_action="A drag")
+        try:
+            with inp.interrupt_check(self._failsafe_interrupt()):
+                inp.drag(start[0], start[1], end[0], end[1])
+        except safety.SafetyError as exc:
+            raise safety.SafetyError(
+                f"The drag was stopped part-way and the mouse button was released. {exc}"
+            ) from exc
         self._moved_to(end)
         log.info("drag %s,%s -> %s,%s", *start, *end)
         return self._ok()

@@ -78,6 +78,20 @@ def check_failsafe(
             )
 
 
+def failsafe_exemption(
+    cursor: tuple[int, int], last_set: tuple[int, int] | None
+) -> tuple[int, int] | None:
+    """The agent-set cursor position that stays exempt from the failsafe after seeing ``cursor``.
+
+    The exemption only covers a cursor that never left the point where the agent put it. Once the
+    cursor is seen anywhere else, the exemption ends for good (``None``): if the user later moves
+    the cursor into that same corner, the failsafe triggers.
+    """
+    if last_set is None or tuple(cursor) != tuple(last_set):
+        return None
+    return (int(last_set[0]), int(last_set[1]))
+
+
 def check_blocked(process: str | None, blocked: Sequence[str]) -> None:
     """Raise if ``process`` is on the user's blocklist (case and ``.exe`` insensitive)."""
     if not process or not process.strip():
@@ -91,6 +105,16 @@ def check_blocked(process: str | None, blocked: Sequence[str]) -> None:
                 f"{process} is blocked by the user's configuration. "
                 "Ask the user to do this step themselves."
             )
+
+
+def is_terminal(process: str | None, window_class: str = "") -> bool:
+    """Whether a window is a terminal, by window class or process name.
+
+    The one terminal test of the server: the keyboard guard and the pointer guard both use it.
+    """
+    return window_class in TERMINAL_WINDOW_CLASSES or (
+        bool(process) and _norm(process or "") in _TERMINAL_NORMALIZED
+    )
 
 
 def check_keyboard_target(
@@ -107,10 +131,7 @@ def check_keyboard_target(
             "The foreground window is the terminal or editor running you, so keyboard input "
             "is refused. Bring the target app to the front first with `windows`/`focus`."
         )
-    is_terminal = window_class in TERMINAL_WINDOW_CLASSES or (
-        bool(process) and _norm(process or "") in _TERMINAL_NORMALIZED
-    )
-    if is_terminal:
+    if is_terminal(process, window_class):
         name = process or window_class
         raise SafetyError(
             f"The foreground window is a terminal ({name}), so keyboard input is refused. "
@@ -119,8 +140,48 @@ def check_keyboard_target(
         )
 
 
-def check_password_field(is_password: bool) -> None:
-    """Raise if the focused element is a password field."""
+def check_pointer_target(
+    process: str | None,
+    action: str,
+    allow_terminal_input: bool = False,
+    window_class: str = "",
+    is_own_host: bool = False,
+) -> None:
+    """Raise if a pointer action that can insert text would hit a terminal or the agent's host.
+
+    Right and middle clicks paste the clipboard in many terminals (Windows Terminal, console
+    QuickEdit, mintty, most Unix-style terminals) and a drag can drop text, so these count as
+    keyboard input there. Left clicks, scrolling and moving are not checked here. ``action``
+    names the refused action in the message, e.g. "A right click".
+    """
+    if allow_terminal_input:
+        return
+    if is_own_host:
+        raise SafetyError(
+            f"{action} on the terminal or editor running you is refused: it can paste or drop "
+            "text into it. Check the target point, or bring the target app to the front with "
+            "`windows`/`focus`."
+        )
+    if is_terminal(process, window_class):
+        name = process or window_class
+        raise SafetyError(
+            f"{action} on a terminal ({name}) is refused: it can paste or drop text there, which "
+            "counts as keyboard input. Use your shell tool for terminal work."
+        )
+
+
+def check_password_field(is_password: bool | None) -> None:
+    """Raise if the focused element is a password field, or if that could not be determined.
+
+    ``None`` means the check could not tell (UI Automation timed out or failed): typing is
+    refused then too, so the guard fails closed instead of silently letting text through.
+    """
+    if is_password is None:
+        raise SafetyError(
+            "Could not verify that the focused element is not a password field (UI Automation "
+            "did not answer; the app may be busy), so typing is refused. Wait a moment and "
+            "retry; if it keeps failing, ask the user to type this themselves."
+        )
     if is_password:
         raise SafetyError(
             "Refusing to type into a password field. Ask the user to type it themselves."

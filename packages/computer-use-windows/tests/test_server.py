@@ -1012,7 +1012,16 @@ def test_key_sends_spec_and_repeat(desk: FakeDesktop) -> None:
     with connect() as client:
         reply = client.call("key", keys="ctrl+s", repeat=2)
     assert_ok_line(reply)
-    assert desk.inputs == [("press_keys", {"spec": "ctrl+s", "repeat": 2})]
+    # The server may press the chords one call at a time (it re-checks safety between them), so
+    # compare the chord sequence that reached press_keys, not the number of calls.
+    assert [name for name, _ in desk.inputs] == ["press_keys"] * len(desk.inputs)
+    pressed = [
+        chord
+        for _, args in desk.inputs
+        for _ in range(args["repeat"])
+        for chord in args["spec"].split()
+    ]
+    assert pressed == ["ctrl+s", "ctrl+s"]
 
 
 def test_focus_focuses_the_window(desk: FakeDesktop) -> None:
@@ -1231,12 +1240,17 @@ def test_type_text_into_password_field_is_refused(desk: FakeDesktop) -> None:
     assert desk.raised() == ["check_password_field"]
 
 
-def test_key_into_password_field_is_allowed(desk: FakeDesktop) -> None:
+@pytest.mark.parametrize("keys", ["tab", "enter", "ctrl+a", "backspace"])
+def test_navigation_and_shortcut_keys_into_password_field_are_allowed(
+    desk: FakeDesktop, keys: str
+) -> None:
+    # Only navigation/editing keys and ctrl/alt/win shortcuts stay free in a password field;
+    # printable chords are refused there (see test_klavye_guvenlik.py).
     desk.password_focused = True
     with connect() as client:
-        reply = client.call("key", keys="tab")
+        reply = client.call("key", keys=keys)
     assert_ok_line(reply)
-    assert desk.inputs == [("press_keys", {"spec": "tab", "repeat": 1})]
+    assert desk.inputs == [("press_keys", {"spec": keys, "repeat": 1})]
 
 
 def test_type_text_runs_checks_in_contract_order(desk: FakeDesktop) -> None:

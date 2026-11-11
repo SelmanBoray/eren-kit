@@ -269,3 +269,199 @@ def test_type_text_empty() -> None:
 def test_drag_bad_button(pos: tuple[int, int]) -> None:
     with pytest.raises(ValueError):
         inp.drag(pos[0], pos[1], pos[0], pos[1], button="bogus")
+
+
+# ------------------------------------------- pure helpers (no Windows API calls)
+
+
+def _decode_batches(batches: list[list[inp._Input]]) -> str:
+    """Rebuild the typed text from key-down events (Enter -> newline, Tab -> tab)."""
+    units: list[int] = []
+    out: list[str] = []
+
+    def flush() -> None:
+        if units:
+            raw = b"".join(u.to_bytes(2, "little") for u in units)
+            out.append(raw.decode("utf-16-le"))
+            units.clear()
+
+    for batch in batches:
+        for event in batch:
+            assert event.type == inp._INPUT_KEYBOARD
+            ki = event.u.ki
+            if ki.dwFlags & inp._KEYEVENTF_KEYUP:
+                continue
+            if ki.dwFlags & inp._KEYEVENTF_UNICODE:
+                units.append(ki.wScan)
+            else:
+                flush()
+                out.append({inp._VK_RETURN: "\n", inp._VK_TAB: "\t"}[ki.wVk])
+    flush()
+    return "".join(out)
+
+
+def test_type_text_batches_turkish_roundtrip() -> None:
+    text = "ğüşıöçİĞÜŞÖÇ"
+    assert _decode_batches(inp._type_text_batches(text)) == text
+
+
+def test_type_text_batches_astral_no_loss() -> None:
+    text = "a😀b"
+    assert _decode_batches(inp._type_text_batches(text)) == text
+
+
+def test_type_text_batches_surrogate_pair_stays_in_one_batch() -> None:
+    # The emoji lands exactly on the batch boundary.
+    text = "x" * (inp.TYPE_BATCH_CHARS - 1) + "😀" + "y"
+    batches = inp._type_text_batches(text)
+    assert _decode_batches(batches) == text
+    for batch in batches:
+        downs = [
+            e.u.ki.wScan
+            for e in batch
+            if e.u.ki.dwFlags & inp._KEYEVENTF_UNICODE and not e.u.ki.dwFlags & inp._KEYEVENTF_KEYUP
+        ]
+        for idx, unit in enumerate(downs):
+            if 0xD800 <= unit <= 0xDBFF:
+                assert idx + 1 < len(downs)
+                assert 0xDC00 <= downs[idx + 1] <= 0xDFFF
+
+
+def test_type_text_batches_crlf_is_single_enter() -> None:
+    batches = inp._type_text_batches("a\r\nb")
+    events = [e for batch in batches for e in batch]
+    enters_down = [
+        e
+        for e in events
+        if e.u.ki.wVk == inp._VK_RETURN and not e.u.ki.dwFlags & inp._KEYEVENTF_KEYUP
+    ]
+    assert len(enters_down) == 1
+    assert _decode_batches(batches) == "a\nb"
+
+
+@pytest.mark.parametrize(
+    ("text", "vk", "expected"),
+    [
+        ("a\nb", 0x0D, "a\nb"),
+        ("a\rb", 0x0D, "a\nb"),
+        ("a\tb", 0x09, "a\tb"),
+    ],
+)
+def test_type_text_batches_enter_and_tab_end_a_batch(text: str, vk: int, expected: str) -> None:
+    batches = inp._type_text_batches(text)
+    assert len(batches) == 2
+    # First batch: "a" (down, up) then the key (down, up); the last event is the key's up.
+    assert len(batches[0]) == 4
+    assert batches[0][-1].u.ki.wVk == vk
+    assert batches[0][-2].u.ki.wVk == vk
+    assert _decode_batches(batches) == expected
+
+
+def test_type_text_batches_only_newline() -> None:
+    batches = inp._type_text_batches("\n")
+    assert len(batches) == 1
+    assert _decode_batches(batches) == "\n"
+
+
+def test_type_text_batches_empty_is_rejected() -> None:
+    # Pinned: empty text is an error, not an empty batch list.
+    with pytest.raises(ValueError):
+        inp._type_text_batches("")
+
+
+def test_type_text_batches_long_plain_text_respects_limit() -> None:
+    text = "ab" * (inp.TYPE_BATCH_CHARS * 3 // 2 + 7)
+    batches = inp._type_text_batches(text)
+    assert len(batches) > 1
+    for batch in batches:
+        assert len(batch) <= 2 * inp.TYPE_BATCH_CHARS  # key down + key up per character
+    assert _decode_batches(batches) == text
+
+
+_VRECTS = [(-1920, 0, 3840, 1080), (-1280, -200, 3200, 1224), (0, 0, 1920, 1080)]
+
+
+@pytest.mark.parametrize("vrect", _VRECTS)
+def test_normalize_denormalize_roundtrip(vrect: tuple[int, int, int, int]) -> None:
+    left, top, width, height = vrect
+    xs = [left, left + 1, left + width // 3, left + width // 2, left + width - 1]
+    ys = [top, top + 1, top + height // 3, top + height // 2, top + height - 1]
+    for x in xs:
+        for y in ys:
+            nx, ny = inp._normalize(x, y, vrect)
+            rx, ry = inp._denormalize(nx, ny, vrect)
+            assert abs(rx - x) <= 1
+            assert abs(ry - y) <= 1
+
+
+@pytest.mark.parametrize("vrect", _VRECTS)
+def test_normalize_corners_map_to_extremes(vrect: tuple[int, int, int, int]) -> None:
+    left, top, width, height = vrect
+    assert inp._normalize(left, top, vrect) == (0, 0)
+    nx, ny = inp._normalize(left + width - 1, top + height - 1, vrect)
+    assert 0 <= nx <= 65535
+    assert 0 <= ny <= 65535
+    assert nx > 65535 - 65536 // width - 1
+    assert ny > 65535 - 65536 // height - 1
+    # Out-of-range pixels are clamped to 0..65535.
+    assert inp._normalize(left - 500, top - 500, vrect) == (0, 0)
+    assert inp._normalize(left + width + 500, top + height + 500, vrect) == (65535, 65535)
+
+
+def test_release_events_empty() -> None:
+    assert inp._release_events_for([]) == []
+
+
+def _key_state(event: inp._Input) -> tuple[int, bool]:
+    return event.u.ki.wVk, bool(event.u.ki.dwFlags & inp._KEYEVENTF_KEYUP)
+
+
+def test_release_events_each_held_key_once_in_reverse_order() -> None:
+    ctrl, shift, a = 0xA2, 0xA0, 0x41
+    events = [inp._key_input(vk, up=False) for vk in (ctrl, shift, a)]
+    released = inp._release_events_for(events)
+    assert [_key_state(e) for e in released] == [(a, True), (shift, True), (ctrl, True)]
+
+
+def test_release_events_skips_already_released_and_dedups() -> None:
+    events = [
+        inp._key_input(0x41, up=False),
+        inp._key_input(0x41, up=True),
+        inp._key_input(0x42, up=False),
+        inp._key_input(0x42, up=False),
+    ]
+    assert [_key_state(e) for e in inp._release_events_for(events)] == [(0x42, True)]
+
+
+def test_release_events_mouse_button() -> None:
+    events = [inp._button_input("left", up=False), inp._key_input(0x11, up=False)]
+    released = inp._release_events_for(events)
+    assert len(released) == 2
+    assert released[0].type == inp._INPUT_KEYBOARD
+    assert released[1].type == inp._INPUT_MOUSE
+    assert released[1].u.mi.dwFlags == inp._BUTTON_FLAGS["left"][1]
+    after_up = inp._release_events_for([*events, inp._button_input("left", up=True)])
+    assert len(after_up) == 1
+    assert after_up[0].type == inp._INPUT_KEYBOARD
+
+
+def test_drag_path_ends_at_destination_and_stays_in_rect() -> None:
+    x0, y0, x1, y1 = 100, 400, 700, 50
+    path = inp._drag_path(x0, y0, x1, y1)
+    assert path[-1] == (x1, y1)
+    for px, py in path:
+        assert min(x0, x1) <= px <= max(x0, x1)
+        assert min(y0, y1) <= py <= max(y0, y1)
+
+
+def test_drag_path_step_count_bounds() -> None:
+    assert len(inp._drag_path(0, 0, 1, 0)) == inp.DRAG_MIN_STEPS
+    assert len(inp._drag_path(0, 0, 100000, 0)) == inp.DRAG_MAX_STEPS
+    distance = inp.DRAG_STEP_PX * (inp.DRAG_MIN_STEPS + 4)
+    assert len(inp._drag_path(0, 0, distance, 0)) == inp.DRAG_MIN_STEPS + 4
+
+
+def test_drag_path_same_start_and_end() -> None:
+    path = inp._drag_path(5, 7, 5, 7)
+    assert len(path) == inp.DRAG_MIN_STEPS
+    assert set(path) == {(5, 7)}
