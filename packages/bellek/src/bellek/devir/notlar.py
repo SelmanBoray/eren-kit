@@ -357,29 +357,47 @@ def _not_zamani(tarih: datetime | None, yol: Path) -> datetime | None:
         return None
 
 
+def _junction_mi(yol: Path) -> bool:
+    """Windows junction mi (os.path.isjunction 3.12+; hata olursa suphe: True)."""
+    try:
+        return bool(getattr(os.path, "isjunction", lambda _p: False)(yol))
+    except Exception:  # noqa: BLE001
+        return True
+
+
 def oto_notlari_buda(kok: Path, simdi: datetime | None = None) -> int:
     """kok/oto/ altinda yasi OTO_BUDAMA_GUN'u asan otomatik notlari siler; silinen sayisi.
 
-    Yas, dizin_metni'nin OTO_MAX_GUN suzgeciyle ayni kaynaktan gelir (on bilgideki tarih,
-    yoksa mtime). Yalniz oto/ klasorunun dogrudan icindeki .md dosyalarina bakar; zengin
-    notlara, alt klasorlere ve gecici (.ile baslayan) dosyalara dokunmaz. On bilgisi
-    tur'u otomatik disinda bir sey diyen dosya silinmez. Asla istisna firlatmaz.
+    Silme geri alinamaz; supheli her dosya kalir. Bir dosya ancak hepsi saglanirsa silinir:
+    oto/'nun dogrudan icinde, baglanti olmayan duz .md dosyasi; on bilgisi okuma penceresi
+    icinde acilip kapanmis; ``tur: otomatik`` acikca yazili; adi oto_not_yaz'in urettigi
+    ``<guvenli oturum adi>.md``; ``tarih`` alani cozulebiliyor ve OTO_BUDAMA_GUN'den eski.
+    Yas yalniz on bilgideki tarihten gelir (dizin_metni de onu kullanir); dizin_metni'nin
+    mtime yedegi burada bilerek yok: kopyalanmis/eslenmis dosyada mtime yanlis yas verir.
+    kok ya da kok/oto bir baglanti/junction ise hicbir sey silinmez. Asla istisna firlatmaz.
     """
     silinen = 0
     try:
         simdi = simdi or datetime.now(timezone.utc)
         esik = timedelta(days=OTO_BUDAMA_GUN)
-        with os.scandir(Path(kok) / "oto") as it:
+        klasor = Path(kok) / "oto"
+        for p in (Path(kok), klasor):
+            if os.path.islink(p) or _junction_mi(p):
+                return 0
+        with os.scandir(klasor) as it:
             girdiler = [e for e in it if e.name.endswith(".md")
                         and not e.name.startswith(".")]
         for e in girdiler:
             try:
-                if not e.is_file(follow_symlinks=False):
+                if e.is_symlink() or not e.is_file(follow_symlinks=False):
                     continue
-                a = _on_bilgi_oku(Path(e.path)) or {}
-                if (a.get("tur") or "otomatik") != "otomatik":
+                a = _on_bilgi_oku(Path(e.path))
+                if a is None or a.get("tur") != "otomatik":
                     continue
-                t = _not_zamani(_tarih_coz(a.get("tarih", "")), Path(e.path))
+                oturum = a.get("oturum", "")
+                if not oturum or e.name != f"{_guvenli_ad(oturum)}.md":
+                    continue
+                t = _tarih_coz(a.get("tarih", ""))
                 if t is None or simdi - _uyumlu(t, simdi) <= esik:
                     continue
                 os.unlink(e.path)

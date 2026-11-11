@@ -99,6 +99,99 @@ def test_karisik_uc_eski_iki_yeni(tmp_path):
     assert kalan == sorted(y.name for y in yeniler)
 
 
+# ---------- budama: yanlış dosya silinmemeli (regresyon) ----------
+
+def _bugun():
+    return datetime.now(timezone.utc)
+
+
+def _yaslandir(yol: Path, gun=60):
+    t = (_bugun() - timedelta(days=gun)).timestamp()
+    os.utime(yol, (t, t))
+
+
+def _eski_gercek_oto(kok: Path, oturum="gercek", gun=60) -> Path:
+    yol = oto_not_yaz(kok, _ozet(oturum=oturum, son_zaman=(_bugun() - timedelta(days=gun)).isoformat()))
+    _yaslandir(yol, gun)
+    return yol
+
+
+def _eski_ham(kok: Path, ad: str, metin: str) -> Path:
+    oto = kok / "oto"
+    oto.mkdir(parents=True, exist_ok=True)
+    yol = oto / ad
+    yol.write_text(metin, encoding="utf-8")
+    _yaslandir(yol)
+    return yol
+
+
+def test_onbilgisiz_eski_md_silinmez(tmp_path):
+    y = _eski_ham(tmp_path, "onbilgisiz.md", "sadece metin\nfrontmatter yok\n")
+    notlar.oto_notlari_buda(tmp_path, simdi=_bugun())
+    assert y.exists()
+
+
+def test_onbilgisi_okuma_penceresini_asan_eski_md_silinmez(tmp_path):
+    y = _eski_ham(tmp_path, "uzun.md",
+                  "---\ntur: devir\noturum: u\nkonu: " + "x" * 2100 + "\n---\ngovde\n")
+    notlar.oto_notlari_buda(tmp_path, simdi=_bugun())
+    assert y.exists()
+
+
+def test_kapanmayan_onbilgili_eski_md_silinmez(tmp_path):
+    y = _eski_ham(tmp_path, "kapanmayan.md", "---\ntur: devir\noturum: k\nkonu: x\ngovde\n")
+    notlar.oto_notlari_buda(tmp_path, simdi=_bugun())
+    assert y.exists()
+
+
+def test_turu_olmayan_eski_md_silinmez(tmp_path):
+    y = _eski_ham(tmp_path, "turyok.md", "---\noturum: t\nkonu: x\nproje: p\n---\ngovde\n")
+    notlar.oto_notlari_buda(tmp_path, simdi=_bugun())
+    assert y.exists()
+
+
+def test_saglam_eski_otomatik_not_silinir_digerleri_sayilmaz(tmp_path):
+    gercek = _eski_gercek_oto(tmp_path)
+    diger = _eski_ham(tmp_path, "onbilgisiz.md", "metin\n")
+    assert notlar.oto_notlari_buda(tmp_path, simdi=_bugun()) == 1
+    assert not gercek.exists()
+    assert diger.exists()
+
+
+def _oto_baglantisi(kok: Path, hedef: Path):
+    kok.mkdir(parents=True, exist_ok=True)
+    baglanti = kok / "oto"
+    try:
+        os.symlink(hedef, baglanti, target_is_directory=True)
+        return
+    except (OSError, NotImplementedError, AttributeError):
+        pass
+    try:
+        import _winapi
+        _winapi.CreateJunction(str(hedef), str(baglanti))
+    except (ImportError, AttributeError, OSError) as e:
+        pytest.skip(f"dizin bağlantısı oluşturulamadı: {e}")
+
+
+def test_oto_dizin_baglantisiysa_hicbir_sey_silinmez(tmp_path):
+    hedef = tmp_path / "hedef"
+    hedef.mkdir()
+    ham = _eski_ham(tmp_path, "x.md", "metin\n")  # kök/oto altında; hedefe taşı
+    ham2 = hedef / "onbilgisiz.md"
+    ham2.write_text("metin\n", encoding="utf-8")
+    _yaslandir(ham2)
+    ham.unlink()
+    (tmp_path / "oto").rmdir()
+    gercek = _eski_gercek_oto(hedef.parent / "gecici", "g")  # sağlam otomatik not üret
+    hedefe = hedef / gercek.name
+    hedefe.write_bytes(gercek.read_bytes())
+    _yaslandir(hedefe)
+    kok = tmp_path / "kok"
+    _oto_baglantisi(kok, hedef)
+    assert notlar.oto_notlari_buda(kok, simdi=_bugun()) == 0
+    assert ham2.exists() and hedefe.exists()
+
+
 # ---------- oto_not_yaz ----------
 
 def test_ayni_icerik_yeniden_yazilmaz(tmp_path):

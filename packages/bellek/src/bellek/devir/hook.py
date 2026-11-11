@@ -2,7 +2,7 @@
 
 Çağrılış (payload stdin'den)::
 
-    python -I "<paket>/src/bellek/devir/hook.py" || true
+    python -I -S "<paket>/src/bellek/devir/hook.py" || true
 
 (<paket>: bu paketin mutlak yolu, düz bölüyle yazılmış; kurulum betiği doldurur.)
 
