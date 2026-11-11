@@ -13,7 +13,7 @@ import {
   sohbetAnahtari,
 } from "@eren/protocol";
 import type { Olay, Plan, SohbetId } from "@eren/protocol";
-import { depoKur } from "../src/depo.ts";
+import { depoAc, depoKur } from "../src/depo.ts";
 import type {
   CihazKaydi,
   Depo,
@@ -1737,6 +1737,239 @@ describe("depo: cihazlar ve eşleştirme", () => {
 });
 
 // ---------------------------------------------------------------------------------------------
+// Eşleşme yönetimi: eslesmeler, cihazKaldir (ek göç 5, `cihaz_iptalleri`)
+// ---------------------------------------------------------------------------------------------
+
+describe("depo: eşleşme kaldırma (ek göç 5)", () => {
+  const ACIK = "QUNJSy1BTkFIVEFSLUdJWkxJ"; // ayırt edilebilir sahte açık anahtar
+  const IP = "100.64.0.42";
+  const cihaz = (id: string, ek: Partial<CihazKaydi> = {}): CihazKaydi => ({
+    device_id: id,
+    public_key: ACIK,
+    tailscale_ip: IP,
+    platform: "android",
+    etiket: "deneme",
+    eslesme_ms: 777,
+    ...ek,
+  });
+  const yonetimli = (yol = ":memory:") => {
+    const zaman = sahteZaman();
+    const depo = depoAc({ yol, saat: zaman.saat, gunluk: sahteGunluk() });
+    acilanlar.push(depo);
+    return { depo, zaman };
+  };
+  /** `cihazlar` ve `cihaz_iptalleri` dışındaki her tablonun satır sayısı. */
+  const tabloSayilari = (yol: string): Record<string, number> =>
+    hamAc(yol, (h) => {
+      const adlar = (
+        h.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all() as Array<{
+          name: string;
+        }>
+      )
+        .map((r) => r.name)
+        .filter((a) => a !== "cihazlar" && a !== "cihaz_iptalleri")
+        .sort();
+      return Object.fromEntries(
+        adlar.map((a) => [a, (h.prepare(`SELECT COUNT(*) AS n FROM ${a}`).get() as { n: number }).n]),
+      );
+    });
+
+  it("eslesmeler: yalnız kimlik, platform, etiket ve zamanlar; açık anahtar ve IP sızmaz", () => {
+    const { depo } = yonetimli();
+    assert.deepEqual(depo.eslesmeler(), []);
+    depo.cihazEkle(cihaz("d2", { eslesme_ms: 900, platform: "ipad", etiket: null }));
+    depo.cihazEkle(cihaz("d1"));
+    depo.cihazKaldir("d2");
+    const liste = depo.eslesmeler();
+    assert.deepEqual(liste, [
+      { device_id: "d1", platform: "android", etiket: "deneme", eslesme_ms: 777, iptal_ms: null },
+      { device_id: "d2", platform: "ipad", etiket: null, eslesme_ms: 900, iptal_ms: liste[1]!.iptal_ms },
+    ]);
+    assert.equal(typeof liste[1]!.iptal_ms, "number");
+    for (const e of liste) assert.deepEqual(Object.keys(e).sort(), ["device_id", "eslesme_ms", "etiket", "iptal_ms", "platform"]);
+    const metin = JSON.stringify(liste);
+    assert.ok(!metin.includes(ACIK), "açık anahtar listede");
+    assert.ok(!metin.includes(IP), "IP listede");
+  });
+
+  it("kaldırma: cihazGetir null, cihazlar'dan düşer; kimlik bilgisi satırı dosyadan silinir, iz cihaz_iptalleri'nde", () => {
+    const yol = yeniYol();
+    const { depo, zaman } = yonetimli(yol);
+    depo.cihazEkle(cihaz("d1"));
+    depo.cihazEkle(cihaz("d2"));
+    zaman.ilerlet(5000);
+    const s = depo.cihazKaldir("d1");
+    assert.deepEqual(s, { sonuc: "kaldirildi", iptal_ms: zaman.simdi() });
+    assert.equal(depo.cihazGetir("d1"), null);
+    assert.deepEqual(
+      depo.cihazlar().map((c) => c.device_id),
+      ["d2"],
+    );
+    assert.equal(depo.cihazGetir("d2")?.public_key, ACIK, "öteki cihaz etkilenmez");
+    hamAc(yol, (h) => {
+      assert.equal(h.prepare("SELECT 1 FROM cihazlar WHERE device_id = 'd1'").get(), undefined, "kimlik bilgili satır kalmamalı");
+      const iz = h.prepare("SELECT * FROM cihaz_iptalleri WHERE device_id = 'd1'").get() as Record<string, unknown>;
+      assert.deepEqual(Object.keys(iz).sort(), ["device_id", "eslesme_ms", "etiket", "iptal_ms", "platform"]);
+      assert.equal(iz.iptal_ms, zaman.simdi());
+    });
+  });
+
+  it("idempotent: ikinci kaldırma zaten_kaldirilmis, ilk zaman korunur, başka satır yazılmaz", () => {
+    const { depo, zaman } = yonetimli();
+    depo.cihazEkle(cihaz("d1"));
+    const ilk = depo.cihazKaldir("d1");
+    assert.equal(ilk.sonuc, "kaldirildi");
+    zaman.ilerlet(60_000);
+    const ikinci = depo.cihazKaldir("d1");
+    assert.deepEqual(ikinci, { sonuc: "zaten_kaldirilmis", iptal_ms: (ilk as { iptal_ms: number }).iptal_ms });
+    assert.equal(depo.eslesmeler().length, 1);
+    assert.equal(depo.cihazGetir("d1"), null);
+  });
+
+  it("bilinmeyen kimlik bulunamadi, hiçbir şey yazılmaz", () => {
+    const { depo } = yonetimli();
+    depo.cihazEkle(cihaz("d1"));
+    assert.deepEqual(depo.cihazKaldir("yok"), { sonuc: "bulunamadi" });
+    assert.deepEqual(depo.cihazKaldir(""), { sonuc: "bulunamadi" });
+    assert.equal(depo.eslesmeler().length, 1);
+    assert.equal(depo.cihazGetir("d1")?.device_id, "d1");
+  });
+
+  it("kaldırılan kimlik dirilmez: aynı kimlikle cihazEkle atar; yeni kimlikle eşleşme çalışır", () => {
+    const { depo } = yonetimli();
+    depo.cihazEkle(cihaz("d1"));
+    depo.cihazKaldir("d1");
+    assert.throws(() => depo.cihazEkle(cihaz("d1")), /kaldırılmış cihaz/);
+    assert.equal(depo.cihazGetir("d1"), null);
+    // Aynı telefon (aynı anahtar) yeni kodla yeniden eşleşir: yeni kimlik.
+    depo.cihazEkle(cihaz("d1-yeni"));
+    assert.equal(depo.cihazGetir("d1-yeni")?.public_key, ACIK);
+    assert.equal(depo.cihazGetir("d1"), null);
+    assert.deepEqual(
+      depo.eslesmeler().map((e) => [e.device_id, e.iptal_ms === null]),
+      [
+        ["d1-yeni", true],
+        ["d1", false],
+      ],
+    );
+  });
+
+  it("savunma: iptal kaydı olan kimliğin cihazlar satırı (elle ya da eski kodla yazılmış) kabul edilmez ve kaldırmada silinir", () => {
+    const yol = yeniYol();
+    const { depo } = yonetimli(yol);
+    depo.cihazEkle(cihaz("d1"));
+    depo.cihazKaldir("d1");
+    // Eski kod `cihaz_iptalleri`'ni bilmez; aynı kimliği kendi INSERT'iyle yazmış olsun.
+    hamAc(yol, (h) => h.prepare(ESKI_INSERT.cihazlar).run("d1", ACIK, IP, "android", null, 1));
+    assert.equal(depo.cihazGetir("d1"), null);
+    assert.deepEqual(depo.cihazlar(), []);
+    assert.equal(depo.cihazKaldir("d1").sonuc, "zaten_kaldirilmis");
+    assert.equal(say(yol, "cihazlar"), 0);
+  });
+
+  it("geçmiş veri durur: kaldırma yalnız cihazlar satırını siler (ack, olay, iş, tüketim, sohbet aynı)", () => {
+    const yol = yeniYol();
+    const { depo } = yonetimli(yol);
+    depo.cihazEkle(cihaz("d1"));
+    const o = depo.olayEkle(kullaniciOlayi(1));
+    depo.ackYaz("d1", "m1", { ok: true, seq: o.seq });
+    const is_id = isOlustur(depo, "p1");
+    depo.tuketimEkle([
+      {
+        ts_ms: 1,
+        kaynak: "sohbet",
+        sohbet_id: ANA_SOHBET_ID,
+        is_id: null,
+        turn_id: null,
+        nesil: null,
+        rol: null,
+        model: "m",
+        girdi: 1,
+        cache_yazma: 0,
+        cache_okuma: 0,
+        cikti: 1,
+        maliyet_usd: null,
+        olcum: "ana_usage",
+      },
+    ]);
+    const once = tabloSayilari(yol);
+    assert.equal(depo.cihazKaldir("d1").sonuc, "kaldirildi");
+    assert.deepEqual(tabloSayilari(yol), once);
+    assert.deepEqual(depo.ackBul("d1", "m1"), { ok: true, seq: o.seq });
+    assert.deepEqual(depo.olaylariGetir(0, 10), [o]);
+    assert.equal(depo.isGetir(is_id)?.plan_id, "p1");
+    assert.equal(once["tuketim"], 1);
+  });
+
+  it("ayrı süreç (ikinci bağlantı) kaldırır, servis bağlantısı bir sonraki okumada görür; kapat-aç sonrası kalıcı", () => {
+    const yol = yeniYol();
+    const servis = kur(yol).depo;
+    servis.cihazEkle(cihaz("d1"));
+    assert.equal(servis.cihazGetir("d1")?.device_id, "d1");
+    const komut = yonetimli(yol).depo;
+    assert.equal(komut.cihazKaldir("d1").sonuc, "kaldirildi");
+    komut.kapat();
+    assert.equal(servis.cihazGetir("d1"), null, "servis bağlantısı kaldırmayı hemen görmeli");
+    servis.kapat();
+    const yeniden = kur(yol).depo;
+    assert.equal(yeniden.cihazGetir("d1"), null);
+    assert.deepEqual(yeniden.cihazlar(), []);
+  });
+
+  it("göç: dilim 1 (ek sürüm 2) ve ek sürüm 4 dosyası açılır, tablo kurulur, eski cihaz geçerli kalır ve kaldırılabilir", () => {
+    for (const kaynak of ["dilim1", "ek4"] as const) {
+      const yol = yeniYol();
+      let device_id: string;
+      if (kaynak === "dilim1") {
+        eskiSemaKur(yol, 2);
+        device_id = hamAc(yol, (h) => eskiVeriYaz(h, { ek: "-g", nesilTaban: 1, profil: true, oturum: true }).device_id);
+      } else {
+        const a = kur(yol).depo;
+        a.cihazEkle(cihaz("d-ek4"));
+        a.kapat();
+        hamAc(yol, (h) => {
+          h.exec("DROP TABLE cihaz_iptalleri");
+          h.exec("UPDATE sema_ek SET deger = 4 WHERE anahtar = 'ek_surum'");
+        });
+        device_id = "d-ek4";
+      }
+      const cihazOnce = say(yol, "cihazlar");
+      const { depo } = yonetimli(yol);
+      assert.deepEqual(depo.semaBilgisi(), { user_version: 1, ek_surum: 5 }, kaynak);
+      assert.equal(say(yol, "cihazlar"), cihazOnce, `${kaynak}: göç cihaz silmez`);
+      assert.equal(depo.cihazGetir(device_id)?.device_id, device_id, `${kaynak}: eski cihaz geçerli`);
+      const tablo = hamAc(yol, (h) =>
+        (h.prepare("PRAGMA table_list").all() as Array<{ name: string; strict: number }>).find((t) => t.name === "cihaz_iptalleri"),
+      );
+      assert.equal(tablo?.strict, 1, kaynak);
+      assert.equal(depo.cihazKaldir(device_id).sonuc, "kaldirildi", kaynak);
+      assert.equal(depo.cihazGetir(device_id), null, kaynak);
+      depo.kapat();
+      // İkinci açılış göçü yinelemez, kaldırma durur.
+      const b = yonetimli(yol).depo;
+      assert.deepEqual(b.semaBilgisi(), { user_version: 1, ek_surum: 5 });
+      assert.equal(b.cihazKaldir(device_id).sonuc, "zaten_kaldirilmis");
+    }
+  });
+
+  it("geri alma: eski kodun okuması kaldırılan cihazı bulmaz (yetki dirilmez); eski INSERT yeni şemada geçer", () => {
+    const yol = yeniYol();
+    const { depo } = yonetimli(yol);
+    depo.cihazEkle(cihaz("d1"));
+    depo.cihazKaldir("d1");
+    depo.kapat();
+    hamAc(yol, (h) => {
+      // Eski kodun `cihazGetir`'i: süzgeçsiz `SELECT * FROM cihazlar WHERE device_id = ?`.
+      assert.equal(h.prepare("SELECT * FROM cihazlar WHERE device_id = ?").get("d1"), undefined);
+      h.prepare(ESKI_INSERT.cihazlar).run("d-eski", ACIK, IP, "android", null, 1);
+    });
+    const b = yonetimli(yol).depo;
+    assert.equal(b.cihazGetir("d-eski")?.device_id, "d-eski");
+    assert.equal(b.cihazGetir("d1"), null);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
 // kopru_jetonlari
 // ---------------------------------------------------------------------------------------------
 
@@ -1890,15 +2123,15 @@ describe("depo: kirli okumalar", () => {
 // ---------------------------------------------------------------------------------------------
 
 describe("depo: şema (ek göç)", () => {
-  it("yeni dosya: user_version 1, sema_ek ek_surum 4, semaBilgisi aynı", () => {
+  it("yeni dosya: user_version 1, sema_ek ek_surum 5, semaBilgisi aynı", () => {
     const yol = yeniYol();
     const { depo } = kur(yol);
-    assert.deepEqual(depo.semaBilgisi(), { user_version: 1, ek_surum: 4 });
+    assert.deepEqual(depo.semaBilgisi(), { user_version: 1, ek_surum: 5 });
     depo.kapat();
     hamAc(yol, (h) => {
       assert.equal((h.prepare("PRAGMA user_version").get() as { user_version: number }).user_version, 1);
       const satir = h.prepare("SELECT deger FROM sema_ek WHERE anahtar='ek_surum'").get() as { deger: number };
-      assert.equal(satir.deger, 4);
+      assert.equal(satir.deger, 5);
       const tablo = (h.prepare("PRAGMA table_list").all() as Array<{ name: string; strict: number }>).find(
         (t) => t.name === "sema_ek",
       );
@@ -1913,7 +2146,7 @@ describe("depo: şema (ek göç)", () => {
     a.depo.kapat();
     for (let i = 0; i < 2; i++) {
       const b = kur(yol);
-      assert.deepEqual(b.depo.semaBilgisi(), { user_version: 1, ek_surum: 4 });
+      assert.deepEqual(b.depo.semaBilgisi(), { user_version: 1, ek_surum: 5 });
       assert.equal(b.depo.planGetir("p1")?.profil, "hafif");
       b.depo.kapat();
     }
@@ -1925,7 +2158,7 @@ describe("depo: şema (ek göç)", () => {
     const a = kur(yol).depo;
     const b = kur(yol, undefined).depo;
     assert.deepEqual(a.semaBilgisi(), b.semaBilgisi());
-    assert.equal(b.semaBilgisi().ek_surum, 4);
+    assert.equal(b.semaBilgisi().ek_surum, 5);
     assert.equal(say(yol, "sohbetler"), 1);
   });
 
@@ -1937,12 +2170,12 @@ describe("depo: şema (ek göç)", () => {
       h.prepare(ESKI_PLAN_INSERT_PROFILSIZ).run(plan.plan_id, JSON.stringify(plan), planHash(plan), "bekliyor", null, 1000);
     });
     const b = kur(yol);
-    assert.deepEqual(b.depo.semaBilgisi(), { user_version: 1, ek_surum: 4 });
+    assert.deepEqual(b.depo.semaBilgisi(), { user_version: 1, ek_surum: 5 });
     assert.equal(b.depo.planGetir("eski")?.profil, "tam", "eski satır varsayılan tam okunur");
     assert.equal(b.depo.planGetir("eski")?.sohbet_id, ANA_SOHBET_ID, "eski satır ana okunur");
     b.depo.kapat();
     const c = kur(yol);
-    assert.deepEqual(c.depo.semaBilgisi(), { user_version: 1, ek_surum: 4 });
+    assert.deepEqual(c.depo.semaBilgisi(), { user_version: 1, ek_surum: 5 });
     assert.equal(say(yol, "sema_ek"), 1);
   });
 
@@ -2719,10 +2952,10 @@ describe("depo: walDaralt", () => {
 });
 
 describe("depo: ek göç 2 ve ana oturum kayıtları", () => {
-  it("eren_oturumlari tablosu var ve STRICT; ek_surum 4", () => {
+  it("eren_oturumlari tablosu var ve STRICT; ek_surum 5", () => {
     const yol = yeniYol();
     const { depo } = kur(yol);
-    assert.equal(depo.semaBilgisi().ek_surum, 4);
+    assert.equal(depo.semaBilgisi().ek_surum, 5);
     depo.kapat();
     hamAc(yol, (h) => {
       const t = (h.prepare("PRAGMA table_list").all() as Array<{ name: string; strict: number }>).find(
@@ -2740,7 +2973,7 @@ describe("depo: ek göç 2 ve ana oturum kayıtları", () => {
     a.depo.kapat();
     for (let i = 0; i < 2; i++) {
       const b = kur(yol);
-      assert.equal(b.depo.semaBilgisi().ek_surum, 4);
+      assert.equal(b.depo.semaBilgisi().ek_surum, 5);
       assert.deepEqual(b.depo.kayitliOturumlar(ANA), ["s-1"]);
       b.depo.kapat();
     }
@@ -2750,7 +2983,7 @@ describe("depo: ek göç 2 ve ana oturum kayıtları", () => {
     const yol = yeniYol();
     eskiSemaKur(yol, 1);
     const b = kur(yol);
-    assert.deepEqual(b.depo.semaBilgisi(), { user_version: 1, ek_surum: 4 });
+    assert.deepEqual(b.depo.semaBilgisi(), { user_version: 1, ek_surum: 5 });
     b.depo.oturumKaydet("x", 1, ANA);
     assert.deepEqual(b.depo.kayitliOturumlar(ANA), ["x"]);
   });
@@ -2838,12 +3071,12 @@ describe("depo: ek göç 3 (dilim 2)", () => {
     });
   });
 
-  it("ek sürüm 2'deki dilim 1 dosyası: göç bir kez, user_version 1, ek_surum 4, bütün eski satırlar ana", () => {
+  it("ek sürüm 2'deki dilim 1 dosyası: göç bir kez, user_version 1, ek_surum 5, bütün eski satırlar ana", () => {
     const yol = yeniYol();
     eskiSemaKur(yol, 2);
     const v = hamAc(yol, (h) => eskiVeriYaz(h, { ek: "", nesilTaban: 1, profil: true, oturum: true }));
     const { depo } = kur(yol);
-    assert.deepEqual(depo.semaBilgisi(), { user_version: 1, ek_surum: 4 });
+    assert.deepEqual(depo.semaBilgisi(), { user_version: 1, ek_surum: 5 });
 
     // sohbetler: tek ana satırı, olayların en küçük/en büyük ts_ms'i
     const anaKayit: SohbetKaydi = {
@@ -2964,7 +3197,7 @@ describe("depo: ek göç 3 (dilim 2)", () => {
     eskiSemaKur(yol, 0);
     const v = hamAc(yol, (h) => eskiVeriYaz(h, { ek: "", nesilTaban: 1, profil: false, oturum: false }));
     const { depo } = kur(yol);
-    assert.deepEqual(depo.semaBilgisi(), { user_version: 1, ek_surum: 4 });
+    assert.deepEqual(depo.semaBilgisi(), { user_version: 1, ek_surum: 5 });
     const p = depo.planGetir(v.plan_id);
     assert.equal(p?.profil, "tam");
     assert.equal(p?.sohbet_id, ANA_SOHBET_ID);
@@ -2983,7 +3216,7 @@ describe("depo: ek göç 3 (dilim 2)", () => {
     a.depo.kapat();
     for (let i = 0; i < 2; i++) {
       const b = kur(yol);
-      assert.deepEqual(b.depo.semaBilgisi(), { user_version: 1, ek_surum: 4 });
+      assert.deepEqual(b.depo.semaBilgisi(), { user_version: 1, ek_surum: 5 });
       assert.deepEqual(b.depo.sohbetGetir(ANA), {
         sohbet_id: ANA_SOHBET_ID,
         ad: "Ana sohbet",
@@ -3069,7 +3302,7 @@ describe("depo: ek göç 3 (dilim 2)", () => {
     });
 
     const b = kur(yol);
-    assert.deepEqual(b.depo.semaBilgisi(), { user_version: 1, ek_surum: 4 });
+    assert.deepEqual(b.depo.semaBilgisi(), { user_version: 1, ek_surum: 5 });
     // eski kodun yazdıkları ana'nın
     assert.equal(b.depo.turGetir(v.turKapali)?.sohbet_id, ANA_SOHBET_ID);
     assert.deepEqual(
@@ -3182,7 +3415,7 @@ describe("depo: ana sohbetin ilk adı asistan adından", () => {
     const yol = yeniYol();
     eskiSemaKur(yol, 2);
     const depo = adlaKur(yol, "Örnek Asistan");
-    assert.deepEqual(depo.semaBilgisi(), { user_version: 1, ek_surum: 4 });
+    assert.deepEqual(depo.semaBilgisi(), { user_version: 1, ek_surum: 5 });
     assert.equal(depo.sohbetGetir(ANA)?.ad, "Örnek Asistan");
   });
 

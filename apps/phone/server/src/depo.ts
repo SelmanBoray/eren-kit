@@ -23,6 +23,7 @@ import type {
   AckGovdesi,
   CihazKaydi,
   Depo,
+  DepoBagimliliklari,
   DepoFabrikasi,
   ErenKuyrukKaynagi,
   ErenKuyrukSatiri,
@@ -280,6 +281,20 @@ const ekGocler = (anaAdi: string): readonly string[] => [
   CREATE INDEX IF NOT EXISTS tuketim_zaman ON tuketim (ts_ms);
   CREATE INDEX IF NOT EXISTS tuketim_sohbet ON tuketim (sohbet_id, ts_ms);
   CREATE INDEX IF NOT EXISTS tuketim_is ON tuketim (is_id) WHERE is_id IS NOT NULL;
+  `,
+  // 5: eşleşmesi kaldırılan cihazlar (`cihazKaldir`). Yalnız yeni tablo: var olan hiçbir satıra ve
+  // sütuna dokunmaz, göçün kendisi veri silmez (geri dönüş: tabloyu düşürmek). Kaldırma, kimlik bilgisi
+  // (açık anahtar, IP) taşıyan `cihazlar` satırını SİLER ve kimliği buraya taşır: eski kod (geri alma)
+  // tabloyu görmez ama satır olmadığı için kaldırılan cihazı yine tanımaz, yetki dirilmez. Açık anahtar
+  // ve IP buraya yazılmaz. `IF NOT EXISTS`: sayacı geri kalmış bir dosyada yeniden uygulanabilir.
+  `
+  CREATE TABLE IF NOT EXISTS cihaz_iptalleri (
+    device_id TEXT PRIMARY KEY,
+    platform TEXT NOT NULL,
+    etiket TEXT,
+    eslesme_ms INTEGER NOT NULL,
+    iptal_ms INTEGER NOT NULL
+  ) STRICT;
   `,
 ];
 
@@ -585,7 +600,42 @@ const kapsamSutunlari = (k: JetonKapsami) => ({
   plan_hash: k.rol === "telefon" ? k.plan_hash : null,
 });
 
-export const depoKur: DepoFabrikasi = (b) => {
+// --- Eşleşme yönetimi (ek göç 5). Sözleşmedeki `Depo`'da yok: yalnız yerel komut (`eslestir.ts`)
+// `depoAc` ile kullanır; servis `depoKur` (`Depo`) görür ve kaldırmayı `cihazGetir` üzerinden duyar. ---
+
+/** Eşleşme listesinin satırı. Sır niteliğindeki alan (açık anahtar, IP) bilerek yoktur. */
+export interface EslesmeOzeti {
+  device_id: string;
+  platform: CihazKaydi["platform"];
+  etiket: string | null;
+  eslesme_ms: number;
+  /** `null`: eşleşme etkin. */
+  iptal_ms: number | null;
+}
+
+export type CihazKaldirmaSonucu =
+  | { sonuc: "kaldirildi"; iptal_ms: number }
+  | { sonuc: "zaten_kaldirilmis"; iptal_ms: number }
+  | { sonuc: "bulunamadi" };
+
+export interface CihazYonetimi {
+  /** Etkin ve kaldırılmış eşleşmeler, eşleşme sırasıyla. */
+  eslesmeler(): EslesmeOzeti[];
+  /**
+   * Tek işlem: kimlik bilgili `cihazlar` satırı silinir, kimlik `cihaz_iptalleri`'ne taşınır. Bundan
+   * sonra `cihazGetir`/`cihazlar` o kimliği hiç döndürmez. İdempotent; bilinmeyen kimlik `bulunamadi`.
+   */
+  cihazKaldir(device_id: string): CihazKaldirmaSonucu;
+}
+
+export type CihazYonetimliDepo = Depo & CihazYonetimi;
+
+/** Kaldırılmış kimlik süzgeci: `cihazlar` satırı ancak iptal kaydı yoksa geçerlidir (savunma). */
+const IPTAL_EDILMEMIS = "NOT EXISTS (SELECT 1 FROM cihaz_iptalleri i WHERE i.device_id = cihazlar.device_id)";
+
+export const depoKur: DepoFabrikasi = (b) => depoAc(b);
+
+export const depoAc = (b: DepoBagimliliklari): CihazYonetimliDepo => {
   const EK_GOCLER = ekGocler(anaSohbetAdiUret(b.anaSohbetAdi));
   const db = new DatabaseSync(b.yol);
   const hazirlar = new Map<string, StatementSync>();
@@ -785,7 +835,7 @@ export const depoKur: DepoFabrikasi = (b) => {
     return { silinen_olay, bosaltilan_tur, silinen_kuyruk };
   };
 
-  const depo: Depo = {
+  const depo: CihazYonetimliDepo = {
     islem,
     kapat() {
       if (kapali) return;
@@ -1109,6 +1159,10 @@ export const depoKur: DepoFabrikasi = (b) => {
     },
 
     cihazEkle(k) {
+      // Kaldırılmış kimlik dirilmez: yeniden eşleşme hep yeni `device_id` ile olur.
+      if (bir("SELECT 1 AS var FROM cihaz_iptalleri WHERE device_id = ?", k.device_id) !== null) {
+        throw new Error("depo: kaldırılmış cihaz kimliği yeniden eklenemez");
+      }
       calistir(
         `INSERT INTO cihazlar (device_id, public_key, tailscale_ip, platform, etiket, eslesme_ms)
          VALUES (?, ?, ?, ?, ?, ?)
@@ -1124,11 +1178,52 @@ export const depoKur: DepoFabrikasi = (b) => {
       );
     },
     cihazGetir(device_id) {
-      const r = bir("SELECT * FROM cihazlar WHERE device_id = ?", device_id);
+      // Bütün kimlik denetimleri (gateway `hello`, `auth_response`, kimlik sonrası çerçeve ve yoklama)
+      // buradan okur: iptal süzgeci tek yerde.
+      const r = bir(`SELECT * FROM cihazlar WHERE device_id = ? AND ${IPTAL_EDILMEMIS}`, device_id);
       return r === null ? null : cihazSatiri(r);
     },
     cihazlar() {
-      return hepsi("SELECT * FROM cihazlar ORDER BY eslesme_ms, rowid").map(cihazSatiri);
+      return hepsi(`SELECT * FROM cihazlar WHERE ${IPTAL_EDILMEMIS} ORDER BY eslesme_ms, rowid`).map(cihazSatiri);
+    },
+    eslesmeler() {
+      return hepsi(
+        `SELECT device_id, platform, etiket, eslesme_ms, NULL AS iptal_ms, 0 AS grup FROM cihazlar
+           WHERE ${IPTAL_EDILMEMIS}
+         UNION ALL
+         SELECT device_id, platform, etiket, eslesme_ms, iptal_ms, 1 AS grup FROM cihaz_iptalleri
+         ORDER BY grup, eslesme_ms, device_id`,
+      ).map((r) => ({
+        device_id: String(r.device_id),
+        platform: String(r.platform) as CihazKaydi["platform"],
+        etiket: metinVeyaNull(r.etiket),
+        eslesme_ms: sayi(r.eslesme_ms),
+        iptal_ms: sayiVeyaNull(r.iptal_ms),
+      }));
+    },
+    cihazKaldir(device_id) {
+      return islem((): CihazKaldirmaSonucu => {
+        const onceki = bir("SELECT iptal_ms FROM cihaz_iptalleri WHERE device_id = ?", device_id);
+        if (onceki !== null) {
+          // Savunma: iki tabloda birden kalmış satır (elle ya da eski kodla yazılmış) burada da silinir.
+          calistir("DELETE FROM cihazlar WHERE device_id = ?", device_id);
+          return { sonuc: "zaten_kaldirilmis", iptal_ms: sayi(onceki.iptal_ms) };
+        }
+        const r = bir("SELECT platform, etiket, eslesme_ms FROM cihazlar WHERE device_id = ?", device_id);
+        if (r === null) return { sonuc: "bulunamadi" };
+        const iptal_ms = b.saat.simdiMs();
+        calistir(
+          "INSERT INTO cihaz_iptalleri (device_id, platform, etiket, eslesme_ms, iptal_ms) VALUES (?, ?, ?, ?, ?)",
+          device_id,
+          String(r.platform),
+          metinVeyaNull(r.etiket),
+          sayi(r.eslesme_ms),
+          iptal_ms,
+        );
+        // `secure_delete` açık: açık anahtar ve IP dosyada da sıfırlanır.
+        calistir("DELETE FROM cihazlar WHERE device_id = ?", device_id);
+        return { sonuc: "kaldirildi", iptal_ms };
+      });
     },
 
     eslestirmeYaz(k) {

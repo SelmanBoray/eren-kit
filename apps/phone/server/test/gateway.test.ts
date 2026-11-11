@@ -7,7 +7,10 @@ import {
   verify as imzaDogrula,
 } from "node:crypto";
 import type { KeyObject } from "node:crypto";
-import { afterEach, describe, it } from "node:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { after, afterEach, describe, it } from "node:test";
 import {
   AZAMI_CERCEVE,
   SOHBET_SURUMU,
@@ -18,7 +21,8 @@ import {
   utf8Bayt,
 } from "@eren/protocol";
 import type { ImzaRolu, Kanal, ServisBilgisi } from "@eren/protocol";
-import { depoKur } from "../src/depo.ts";
+import { depoAc, depoKur } from "../src/depo.ts";
+import type { CihazYonetimi } from "../src/depo.ts";
 import { gatewayKur } from "../src/gateway.ts";
 import type {
   AktifTur,
@@ -213,11 +217,13 @@ interface Durum {
   temizlikSonuc: { ok: true; deger: TemizlikSonucu } | { ok: false; code: TemizlikHatasi };
 }
 
-function kur(sec: { sarmala?: (d: Depo) => Depo; tailscale?: string | null; servis?: ServisBilgisi } = {}) {
+function kur(
+  sec: { sarmala?: (d: Depo) => Depo; tailscale?: string | null; servis?: ServisBilgisi; yol?: string } = {},
+) {
   const zaman = sahteZaman(BASLANGIC);
   const gunluk = sahteGunluk();
   const veriyolu = veriyoluKur({ gunluk });
-  const depoGercek = depoKur({ yol: ":memory:", saat: zaman.saat, veriyolu, gunluk });
+  const depoGercek = depoKur({ yol: sec.yol ?? ":memory:", saat: zaman.saat, veriyolu, gunluk });
   acilacaklar.push(() => depoGercek.kapat());
   const depo = sec.sarmala ? sec.sarmala(depoGercek) : depoGercek;
   const ws = sahteWs();
@@ -2366,5 +2372,216 @@ describe("gateway: Dilim 3b, v4 ve kısayol bağlamı", () => {
     const log = JSON.stringify(o.gunluk.girdiler);
     assert.ok(!log.includes("GIZLIADABC"));
     assert.ok(!log.includes("com.gizli.paketabc"));
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Eşleşme kaldırma: kaldırılan cihazın kimlik bilgisi hiçbir yolda kabul edilmez
+// ---------------------------------------------------------------------------------------------
+
+describe("gateway: eşleşme kaldırma", () => {
+  const vtKoku = mkdtempSync(join(tmpdir(), "eren-gateway-iptal-"));
+  after(() => rmSync(vtKoku, { recursive: true, force: true }));
+  let vtSayac = 0;
+
+  /** Servisin deposu `Depo`'dur; kaldırma yerel komutun (`depoAc`) işidir. Aynı nesne, iki görünüm. */
+  const kaldir = (o: Ortam, device_id: string): string =>
+    (o.depoGercek as unknown as CihazYonetimi).cihazKaldir(device_id).sonuc;
+
+  /** Gelen her kimlik sonrası mesaj türünden bir tane: kaldırmadan sonra hiçbiri işlenmemeli. */
+  const isMesajlari = (): Msg[] => [
+    kullaniciMesaji("u1"),
+    { v: SOHBET_SURUMU, type: "interrupt", sohbet_id: "ana", client_msg_id: "i1" },
+    { v: SOHBET_SURUMU, type: "plan_decision", client_msg_id: "p1", plan_id: "plan-1", plan_hash: "a".repeat(64), karar: "onay" },
+    { v: SOHBET_SURUMU, type: "question_answer", client_msg_id: "q1", soru_id: "s1", cevap: "evet" },
+    { v: SOHBET_SURUMU, type: "job_cancel", client_msg_id: "j1", is_id: 3 },
+    { v: SOHBET_SURUMU, type: "chat_clear", client_msg_id: "c1", sohbet_id: "ana" },
+    { v: SOHBET_SURUMU, type: "chat_create", client_msg_id: "c2", sohbet_id: "yeni-1", ad: "Yeni" },
+    { v: SOHBET_SURUMU, type: "chat_rename", client_msg_id: "c3", sohbet_id: "ana", ad: "Ad" },
+    { v: SOHBET_SURUMU, type: "chat_delete", client_msg_id: "c4", sohbet_id: "yeni-1" },
+    { v: SOHBET_SURUMU, type: "usage_request", istek_id: "t1" },
+  ];
+
+  const hicIslenmedi = (o: Ortam, tur: string): void => {
+    assert.equal(o.insanMesajlari.length, 0, `${tur}: insanMesajiAl`);
+    assert.equal(o.kesmeler.length, 0, `${tur}: kes`);
+    assert.equal(o.planKararlari.length, 0, `${tur}: planlar.karar`);
+    assert.equal(o.soruCevaplari.length, 0, `${tur}: soruCevapla`);
+    assert.equal(o.durdurmalar.length, 0, `${tur}: isler.durdur`);
+    assert.equal(o.temizlikCagrilari.length + o.silinenSohbetler.length, 0, `${tur}: temizlik`);
+    assert.equal(o.olustur.length + o.adlandir.length, 0, `${tur}: sohbetler`);
+  };
+
+  /** `cihazGetir` istenince atan depo (diğer her şey gerçek). */
+  const atanDepo = (at: () => boolean) => (depo: Depo): Depo =>
+    new Proxy(depo, {
+      get(hedef, ad) {
+        if (ad === "cihazGetir" && at()) {
+          return () => {
+            throw new Error("vt_mesgul");
+          };
+        }
+        const v = (hedef as unknown as Record<string | symbol, unknown>)[ad];
+        return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(hedef) : v;
+      },
+    });
+
+  for (const yol of ["/sohbet", "/cihaz"] as const) {
+    it(`${yol}: kaldırmadan sonra hello cihaz_bilinmiyor, sunucu imzası bile gitmez (helloAl)`, async () => {
+      const o = await hazir();
+      assert.equal(kaldir(o, "tel-1"), "kaldirildi");
+      const ist = o.bagla(yol);
+      await elSik(ist);
+      reddedildi(ist, "cihaz_bilinmiyor");
+      assert.equal(ist.tur("auth_challenge").length, 0);
+      assert.equal(o.baglananlar.length, 0);
+    });
+
+    it(`${yol}: hello ile auth_response arasında kaldırılırsa geçerli imza da cihaz_bilinmiyor (yanitAl)`, async () => {
+      const o = await hazir();
+      const ist = o.bagla(yol);
+      const ch = await elSik(ist, {
+        imzaNonce: (n) => {
+          // `auth_challenge` alındı; yanıt imzalanıp yollanmadan önce PC'de kaldırma.
+          assert.equal(kaldir(o, "tel-1"), "kaldirildi");
+          return n;
+        },
+      });
+      assert.ok(ch, "challenge gelmeliydi (kaldırma ondan sonra)");
+      reddedildi(ist, "cihaz_bilinmiyor");
+      assert.equal(o.baglananlar.length, 0, "cihaz.baglandi çağrılmamalı");
+    });
+
+    it(`${yol}: açık bağlantı yoklamayla en geç 2 sn'de kapanır (error{cihaz_bilinmiyor}, 1008); öteki cihaz etkilenmez`, async () => {
+      const o = await hazir();
+      const ist = await o.giris(yol);
+      const oteki = await o.giris(yol, IP2, { device_id: "tel-2", anahtar: TEL2.private });
+      o.zaman.ilerlet(10_000);
+      await bosalt();
+      assert.equal(ist.kapali, false, "kaldırma öncesi yoklama kapatmamalı");
+      assert.equal(kaldir(o, "tel-1"), "kaldirildi");
+      o.zaman.ilerlet(2_000);
+      await bosalt();
+      assert.equal(ist.hataKodu, "cihaz_bilinmiyor");
+      assert.deepEqual(ist.c.kapanis, { kod: 1008, neden: "cihaz_bilinmiyor" });
+      assert.equal(oteki.kapali, false, "tel-2 açık kalmalı");
+      assert.ok(o.gunluk.bul("yetki_kalkti").some((g) => g.alanlar?.["device_id"] === "tel-1"));
+    });
+  }
+
+  it("/sohbet: kimlik sonrası her mesaj türü kaldırmadan sonra yoklamayı beklemeden reddedilir, hiçbiri işlenmez", async () => {
+    for (const m of isMesajlari()) {
+      const o = await hazir();
+      const ist = await o.giris();
+      const once = ist.c.gonderilenler.length;
+      assert.equal(kaldir(o, "tel-1"), "kaldirildi");
+      await ist.gonder(m); // saat ilerlemedi: yoklama çalışmadı
+      assert.equal(ist.hataKodu, "cihaz_bilinmiyor", m.type as string);
+      assert.deepEqual(ist.c.kapanis, { kod: 1008, neden: "cihaz_bilinmiyor" }, m.type as string);
+      assert.deepEqual(
+        ist.kare.slice(once).map((k) => k.type),
+        ["error"],
+        `${m.type}: yalnız hata gitmeli (ack ya da usage_report yok)`,
+      );
+      hicIslenmedi(o, m.type as string);
+      if (typeof m.client_msg_id === "string") {
+        assert.equal(o.depo.ackBul("tel-1", m.client_msg_id), null, `${m.type}: ack yazılmamalı`);
+      }
+    }
+  });
+
+  it("/cihaz: kapanış cihaz modülüne devredilmiş bağlantıyı kapatır (kapanış dinleyicisi tetiklenir)", async () => {
+    const o = await hazir();
+    const ist = await o.giris("/cihaz");
+    assert.equal(o.baglananlar.length, 1);
+    let kapandi = false;
+    o.baglananlar[0]!.baglanti.kapanisDinle(() => {
+      kapandi = true;
+    });
+    kaldir(o, "tel-1");
+    o.zaman.ilerlet(2_000);
+    await bosalt();
+    assert.equal(kapandi, true);
+    assert.ok(ist.kapali);
+  });
+
+  it("ayrı süreç (ikinci depo bağlantısı, aynı dosya) kaldırır: servis yeni bağlantıyı reddeder, açık olanları kapatır", async () => {
+    const yol = join(vtKoku, `vt-${++vtSayac}.db`);
+    const o = kur({ yol });
+    o.cihazEkle("tel-1", TEL1, IP1);
+    await o.baslat();
+    const sohbet = await o.giris("/sohbet");
+    const cihaz = await o.giris("/cihaz");
+    const komut = depoAc({ yol, saat: sahteZaman().saat, gunluk: sahteGunluk() });
+    try {
+      assert.equal(komut.cihazKaldir("tel-1").sonuc, "kaldirildi");
+    } finally {
+      komut.kapat();
+    }
+    const yeni = o.bagla("/sohbet");
+    await elSik(yeni);
+    reddedildi(yeni, "cihaz_bilinmiyor");
+    o.zaman.ilerlet(2_000);
+    await bosalt();
+    assert.equal(sohbet.hataKodu, "cihaz_bilinmiyor");
+    assert.equal(cihaz.hataKodu, "cihaz_bilinmiyor");
+    assert.ok(sohbet.kapali && cihaz.kapali);
+  });
+
+  it("yeniden eşleştirme: yeni kimlik iki kanalda çalışır, eski kimlik (aynı anahtarla) dirilmez", async () => {
+    const o = await hazir();
+    kaldir(o, "tel-1");
+    o.eslestirmeKur();
+    const p = o.bagla("/sohbet", IP1);
+    await p.gonder({ v: 1, type: "pair_request", kod: KOD, public_key: TEL1.acik, platform: "android", etiket: "deneme" });
+    const pr = p.tur("pair_result")[0];
+    assert.ok(pr?.ok, JSON.stringify(p.kare));
+    assert.notEqual(pr.device_id, "tel-1");
+    for (const yol of ["/sohbet", "/cihaz"] as const) {
+      const yeni = o.bagla(yol, IP1);
+      await elSik(yeni, { device_id: pr.device_id });
+      assert.equal(yeni.tur("welcome").length, 1, `${yol}: yeni kimlik`);
+      const eski = o.bagla(yol, IP1);
+      await elSik(eski, { device_id: "tel-1" });
+      reddedildi(eski, "cihaz_bilinmiyor");
+    }
+  });
+
+  it("kaldırılmamış cihazın bağlantısı yoklamayla kapanmaz; kapat sonrası yoklama durur", async () => {
+    const o = await hazir();
+    const ist = await o.giris();
+    o.zaman.ilerlet(60_000);
+    await bosalt();
+    assert.equal(ist.kapali, false);
+    assert.equal(o.gunluk.bul("yetki_kalkti").length, 0);
+    assert.equal(o.zaman.bekleyenSayisi(), 1, "açıkken yalnız yoklama zamanlayıcısı");
+    await o.gw.kapat();
+    assert.equal(o.zaman.bekleyenSayisi(), 0, "kapat yoklamayı iptal eder");
+  });
+
+  it("yoklamada depo hatası bağlantıyı kapatmaz, günlüğe yazar; sonraki tur kaldırmayı görür", async () => {
+    let at = false;
+    const o = await hazir({ sarmala: atanDepo(() => at) });
+    const ist = await o.giris();
+    at = true;
+    o.zaman.ilerlet(2_000);
+    await bosalt();
+    assert.equal(ist.kapali, false);
+    assert.ok(o.gunluk.bul("yetki_yoklama_hatasi").length >= 1);
+    at = false;
+    kaldir(o, "tel-1");
+    o.zaman.ilerlet(2_000);
+    await bosalt();
+    assert.equal(ist.hataKodu, "cihaz_bilinmiyor");
+  });
+
+  it("kimlik sonrası çerçevede depo hatası: bağlantı kapanır (fail-closed), mesaj işlenmez", async () => {
+    let at = false;
+    const o = await hazir({ sarmala: atanDepo(() => at) });
+    const ist = await o.giris();
+    at = true;
+    await ist.gonder(kullaniciMesaji("u1"));
+    assert.ok(ist.kapali);
+    assert.equal(o.insanMesajlari.length, 0);
   });
 });

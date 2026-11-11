@@ -56,6 +56,11 @@ const EL_SIKISMA_MS = 10_000;
 const ADRES_DENEME_MS = 30_000;
 const AZAMI_YANLIS_KOD = 5;
 const TELAFI_PARTISI = 200;
+/**
+ * Eşleşmesi kaldırılan cihazın açık bağlantıları bu aralıkla yoklanır ve kapatılır. Kaldırma ayrı
+ * süreçtir (`eslestir --kaldir`), servise ayrı kanal yok: ortak SQLite yeterli (eşleştirme gibi).
+ */
+const YETKI_YOKLAMA_MS = 2_000;
 const IC_HATA_ACK: AckGovdesi = { ok: false, code: "ic_hata" };
 const BULUNAMADI_ACK: AckGovdesi = { ok: false, code: "sohbet_bulunamadi" };
 
@@ -85,11 +90,19 @@ type Asama =
   | { ad: "devredildi" }
   | { ad: "kapali" };
 
+/** Kimliği biten bağlantının dayanağı: kayıt silinir ya da anahtarı değişirse yetki kalkar. */
+interface Kimlik {
+  readonly device_id: string;
+  readonly public_key: string;
+}
+
 interface Baglanti {
   readonly b: WsBaglantisi;
   readonly kanal: Kanal;
   asama: Asama;
   sureIptal: IptalEt | null;
+  /** `auth_response` doğrulanınca dolar (`/sohbet` ve devredilen `/cihaz`); yoklama buna bakar. */
+  kimlik: Kimlik | null;
 }
 
 const tailscaleAdresiMi = (adres: string): boolean => EslestirmeQr.shape.host.safeParse(adres).success;
@@ -156,6 +169,7 @@ export const gatewayKur: GatewayFabrikasi = ({
   let deneniyor = false;
   let denemeIptal: IptalEt | null = null;
   let sonDoluluk: LimitDolulugu | null = null;
+  let yoklamaIptal: IptalEt | null = null;
 
   // Hata iletisi güvenilmez değer taşıyabilir: yalnız türü yazılır.
   const hataYaz = (olay: string, e: unknown): void => {
@@ -194,6 +208,29 @@ export const gatewayKur: GatewayFabrikasi = ({
   // Tailscale dışı adres de reddedilir: kayda geçen IP sonraki kimlik denetiminin dayanağıdır.
   const uzakIzinli = (ip: string): boolean =>
     tailscaleAdresiMi(ip) && ip !== dinlenenAdres && ip !== sistem.tailscaleAdresi();
+
+  // Eşleşme hâlâ geçerli mi: kayıt var (iptal süzgeci `depo.cihazGetir`'de) ve anahtar aynı. Kimlik
+  // anında okunan kayıt yetmez; kaldırma servisin dışından (ayrı süreç) gelir.
+  const yetkiSuruyor = (k: Kimlik): boolean => depo.cihazGetir(k.device_id)?.public_key === k.public_key;
+
+  // Kaldırılan cihazın açık bağlantıları: `/sohbet` (kimlik sonrası) ve `cihaz`'a devredilmiş `/cihaz`.
+  // Kapanış mevcut kodla: `error{cihaz_bilinmiyor}` + 1008. Depo hatasında bağlantı bu turda kapanmaz,
+  // sonraki tur yeniden dener (gelen her `/sohbet` çerçevesi ayrıca denetlenir, hata orada kapatır).
+  const yetkiYokla = (): void => {
+    for (const g of [...baglantilar]) {
+      if (g.kimlik === null || g.asama.ad === "kapali") continue;
+      let suruyor: boolean;
+      try {
+        suruyor = yetkiSuruyor(g.kimlik);
+      } catch (e) {
+        hataYaz("yetki_yoklama_hatasi", e);
+        continue;
+      }
+      if (suruyor) continue;
+      gunluk.uyari("gateway", "yetki_kalkti", { kanal: g.kanal, device_id: g.kimlik.device_id });
+      reddet(g, "cihaz_bilinmiyor");
+    }
+  };
 
   // ------------------------------------------------------------------------------------------
   // server_status
@@ -337,9 +374,13 @@ export const gatewayKur: GatewayFabrikasi = ({
     });
     if (!anahtar.dogrula(a.cihaz.public_key, metin, signature)) return reddet(g, "imza_gecersiz");
     if (g.b.uzakIp !== a.cihaz.tailscale_ip) return reddet(g, "ip_uyusmuyor");
+    // `hello` ile `auth_response` arasında (en çok 10 sn) eşleşme kaldırılmış olabilir: kayıt yeniden okunur.
+    const kimlik: Kimlik = { device_id: a.cihaz.device_id, public_key: a.cihaz.public_key };
+    if (!yetkiSuruyor(kimlik)) return reddet(g, "cihaz_bilinmiyor");
 
     g.sureIptal?.();
     g.sureIptal = null;
+    g.kimlik = kimlik;
     const device_id = a.cihaz.device_id;
     gunluk.bilgi("gateway", "kimlik_tamam", { kanal: g.kanal, device_id });
 
@@ -594,6 +635,8 @@ export const gatewayKur: GatewayFabrikasi = ({
         if (m.type === "auth_response") return yanitAl(g, asama, m.signature);
         return reddet(g, "yetkisiz");
       case "sohbette":
+        // Kimlik sonrası her çerçeve: kaldırılan cihazın oturumu yoklamayı beklemeden ilk çerçevede kapanır.
+        if (g.kimlik === null || !yetkiSuruyor(g.kimlik)) return reddet(g, "cihaz_bilinmiyor");
         switch (m.type) {
           case "user_message":
           case "interrupt":
@@ -626,6 +669,7 @@ export const gatewayKur: GatewayFabrikasi = ({
       kanal: b.yol === "/sohbet" ? "sohbet" : "cihaz",
       asama: { ad: "hello_bekliyor" },
       sureIptal: null,
+      kimlik: null,
     };
     baglantilar.add(g);
     g.sureIptal = zamanlayici.sonra(EL_SIKISMA_MS, () => reddet(g, "zaman_asimi"));
@@ -689,6 +733,7 @@ export const gatewayKur: GatewayFabrikasi = ({
           sonDoluluk = doluluk;
         }),
       );
+      yoklamaIptal = zamanlayici.herAralik(YETKI_YOKLAMA_MS, yetkiYokla);
       await dinlemeyiDene();
       if (calisiyor && sunucu === null) {
         gunluk.uyari("gateway", "dinlemiyor", { yeniden_deneme_ms: ADRES_DENEME_MS });
@@ -699,6 +744,8 @@ export const gatewayKur: GatewayFabrikasi = ({
       calisiyor = false;
       denemeIptal?.();
       denemeIptal = null;
+      yoklamaIptal?.();
+      yoklamaIptal = null;
       for (const iptal of veriyoluIptalleri.splice(0)) iptal();
       for (const g of [...baglantilar]) baglantiKapat(g, 1001, "kapaniyor");
       const eski = sunucu;

@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { after, describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
 import { EslestirmeQr, sha256Hex, SINIRLAR, utf8Bayt } from "@eren/protocol";
 import { createHash, generateKeyPairSync } from "node:crypto";
-import { depoKur } from "../src/depo.ts";
-import { eslestirmeBaslat, parmakIzi } from "../src/eslestir.ts";
+import { depoAc, depoKur } from "../src/depo.ts";
+import { argumanCoz, cihazKaldirKomutu, eslestirmeBaslat, listeMetni, parmakIzi } from "../src/eslestir.ts";
 import type { Depo, EslestirmeBagimliliklari } from "../src/sozlesme.ts";
 import { sahteAnahtar, sahteGunluk, sahteRastgele, sahteSistem, sahteZaman } from "./sahte.ts";
 
@@ -174,5 +179,148 @@ describe("eslestir: adres reddi", () => {
     sistem.tailscale = "192.168.0.2";
     assert.equal(eslestirmeBaslat(b).ok, false);
     assert.deepEqual(depo.eslestirmeOku(), onceki);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Eşleşme yönetimi: --liste, --kaldir
+// ---------------------------------------------------------------------------------------------
+
+describe("eslestir: argümanlar", () => {
+  it("argümansız kod, --liste, --kaldir <kimlik>, yardım", () => {
+    assert.deepEqual(argumanCoz([]), { tur: "kod" });
+    assert.deepEqual(argumanCoz(["--liste"]), { tur: "liste" });
+    assert.deepEqual(argumanCoz(["--kaldir", "cihazX"]), { tur: "kaldir", device_id: "cihazX" });
+    for (const y of ["-h", "--help", "--yardim"]) assert.deepEqual(argumanCoz([y]), { tur: "yardim" });
+  });
+
+  it("eksik, fazla ya da bilinmeyen argüman hata (komut 2 ile çıkar)", () => {
+    for (const argv of [["--kaldir"], ["--kaldir", ""], ["--kaldir", "  "], ["--kaldir", "--liste"], ["--kaldir", "a", "b"], ["--liste", "x"], ["--sil", "a"], ["kaldir"]]) {
+      assert.equal(argumanCoz(argv).tur, "hata", JSON.stringify(argv));
+    }
+  });
+
+  it("bilinmeyen seçenek iletisinde kontrol karakteri kaçırılır", () => {
+    const s = argumanCoz(["--x\u001b[2J"]);
+    assert.equal(s.tur, "hata");
+    if (s.tur === "hata") assert.ok(!s.ileti.includes("\u001b"));
+  });
+});
+
+describe("eslestir: --liste ve --kaldir (gerçek depo)", () => {
+  const ACIK = "QUNJSy1BTkFIVEFSLUdJWkxJ";
+  const IP = "100.64.0.42";
+  const zaman = (ms: number): string => `T${ms}`;
+  const depoKurY = () => depoAc({ yol: ":memory:", saat: sahteZaman(1000).saat, gunluk: sahteGunluk() });
+  const ekle = (d: ReturnType<typeof depoKurY>, id: string, etiket: string | null, ms: number): void =>
+    d.cihazEkle({ device_id: id, public_key: ACIK, tailscale_ip: IP, platform: "android", etiket, eslesme_ms: ms });
+
+  it("liste: kimlik, platform, etiket, eşleşme ve kaldırma zamanı; açık anahtar ve IP yazılmaz", () => {
+    const d = depoKurY();
+    try {
+      ekle(d, "cihaz-a", "Telefon", 10);
+      ekle(d, "cihaz-b", null, 20);
+      d.cihazKaldir("cihaz-b");
+      const metin = listeMetni(d.eslesmeler(), zaman);
+      assert.equal(
+        metin,
+        [
+          "Eşleşmiş cihazlar (1):",
+          '  cihaz-a  android  "Telefon"  eşleşme T10',
+          "Kaldırılmış (1; yetkisi yok, geçmişi durur):",
+          "  cihaz-b  android  -  eşleşme T20  kaldırıldı T1000",
+          "",
+        ].join("\n"),
+      );
+      assert.ok(!metin.includes(ACIK) && !metin.includes(IP));
+      assert.equal(listeMetni([], zaman), "Eşleşmiş cihazlar (0):\n  (yok)\n");
+    } finally {
+      d.kapat();
+    }
+  });
+
+  it("liste: telefonun yolladığı etiket terminali bozamaz (ESC, satır sonu, yön karakteri kaçırılır, kırpılır)", () => {
+    const d = depoKurY();
+    try {
+      ekle(d, "cihaz-k", "a\u001b[2J\nSAHTE SATIR‮" + "x".repeat(200), 1);
+      const metin = listeMetni(d.eslesmeler(), zaman);
+      assert.ok(!/[\u0000-\u0008\u000b-\u001f\u007f-\u009f‪-‮⁦-⁩]/.test(metin), JSON.stringify(metin));
+      assert.equal(metin.split("\n").length, 3, "etiket yeni satır açmamalı");
+      assert.ok(!metin.includes("x".repeat(100)), "etiket kırpılmalı");
+    } finally {
+      d.kapat();
+    }
+  });
+
+  it("kaldır: 0 ve bilgi; ikinci kez 0 (idempotent); bilinmeyen kimlik 1 ve stderr", () => {
+    const d = depoKurY();
+    try {
+      ekle(d, "cihaz-a", null, 10);
+      const ilk = cihazKaldirKomutu(d, "cihaz-a", zaman);
+      assert.equal(ilk.kod, 0);
+      assert.match(ilk.cikti, /^Eşleşme kaldırıldı: cihaz-a\n/);
+      assert.equal(ilk.hata, "");
+      assert.equal(d.cihazGetir("cihaz-a"), null);
+
+      const ikinci = cihazKaldirKomutu(d, "cihaz-a", zaman);
+      assert.deepEqual(ikinci, { kod: 0, cikti: "Eşleşme zaten kaldırılmış: cihaz-a (T1000)\n", hata: "" });
+
+      const yok = cihazKaldirKomutu(d, "yok\u001b[2J", zaman);
+      assert.equal(yok.kod, 1);
+      assert.equal(yok.cikti, "");
+      assert.match(yok.hata, /^Cihaz bulunamadı: /);
+      assert.ok(!yok.hata.includes("\u001b"), "verilen kimlik kaçırılmalı");
+    } finally {
+      d.kapat();
+    }
+  });
+});
+
+describe("eslestir: komut satırı (ayrı süreç, geçici veri kökü)", () => {
+  const KOMUT = fileURLToPath(new URL("../src/eslestir.ts", import.meta.url));
+  const kok = mkdtempSync(join(tmpdir(), "eren-eslestir-komut-"));
+  after(() => rmSync(kok, { recursive: true, force: true }));
+  const calistir = (...argv: string[]) => {
+    const r = spawnSync(process.execPath, ["--disable-warning=ExperimentalWarning", KOMUT, ...argv], {
+      env: { ...process.env, EREN_KIT_DATA_DIR: kok },
+      encoding: "utf8",
+      timeout: 60_000,
+    });
+    return { kod: r.status, cikti: r.stdout, hata: r.stderr };
+  };
+
+  it("--liste, --kaldir (0, idempotent 0, bilinmeyen 1), hatalı argüman 2; kaldırma kalıcı", () => {
+    // Veri kökünü ve şemayı komutun kendisi kurar; cihazı servisin yazacağı gibi doğrudan depoya yaz.
+    assert.equal(calistir("--liste").kod, 0);
+    const d = depoAc({ yol: join(kok, "eren.db"), saat: sahteZaman().saat, gunluk: sahteGunluk() });
+    try {
+      d.cihazEkle({ device_id: "cihaz-s", public_key: "QUNJSw==", tailscale_ip: "100.64.0.7", platform: "android", etiket: "T", eslesme_ms: 1 });
+    } finally {
+      d.kapat();
+    }
+    const liste = calistir("--liste");
+    assert.equal(liste.kod, 0);
+    assert.match(liste.cikti, /Eşleşmiş cihazlar \(1\):\n {2}cihaz-s {2}android/);
+    assert.ok(!liste.cikti.includes("QUNJSw==") && !liste.cikti.includes("100.64.0.7"));
+
+    const k1 = calistir("--kaldir", "cihaz-s");
+    assert.equal(k1.kod, 0, k1.hata);
+    const k2 = calistir("--kaldir", "cihaz-s");
+    assert.equal(k2.kod, 0);
+    assert.match(k2.cikti, /zaten kaldırılmış/);
+    const k3 = calistir("--kaldir", "cihaz-yok");
+    assert.equal(k3.kod, 1);
+    assert.match(k3.hata, /Cihaz bulunamadı: cihaz-yok/);
+    assert.equal(calistir("--kaldir").kod, 2);
+    assert.equal(calistir("--bilinmeyen").kod, 2);
+
+    const sonra = calistir("--liste");
+    assert.match(sonra.cikti, /Eşleşmiş cihazlar \(0\):[\s\S]*Kaldırılmış \(1;[\s\S]*cihaz-s/);
+    const e = depoAc({ yol: join(kok, "eren.db"), saat: sahteZaman().saat, gunluk: sahteGunluk() });
+    try {
+      assert.equal(e.cihazGetir("cihaz-s"), null);
+    } finally {
+      e.kapat();
+    }
   });
 });
