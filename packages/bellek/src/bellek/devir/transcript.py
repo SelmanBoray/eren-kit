@@ -72,12 +72,16 @@ class _Isaretler:
     döngüde satır başına tek ``in`` taraması yapılır.
     """
 
-    __slots__ = ("asistan", "kullanici", "basliklar", "duzenleme", "sikistirma")
+    __slots__ = ("asistan", "kullanici", "basliklar", "duzenleme", "sikistirma",
+                 "blok0")
 
     def __init__(self, ayrac: str) -> None:
         def isaret(anahtar: str, deger: str) -> bytes:
             return f'"{anahtar}"{ayrac}"{deger}"'.encode()
         self.asistan = isaret("type", "assistant")
+        # Değeri 0 olan apiBlockIndex; ardından "," ya da "}" gelebilir (JSON
+        # tamsayısı 0'dan sonra rakam alamaz), bu yüzden sonu açık bırakılır.
+        self.blok0 = f'"apiBlockIndex"{ayrac}0'.encode()
         self.kullanici = isaret("type", "user")
         # sıkıştırma sınırı: system/compact_boundary ya da özet user satırı
         self.sikistirma = (isaret("subtype", "compact_boundary"),
@@ -92,7 +96,12 @@ class _Isaretler:
 _SIKISIK = _Isaretler(":")
 _BOSLUKLU = _Isaretler(": ")
 _ISARET_ARAC_SONUCU = b'"toolUseResult"'
+# İstek sayımı: sıcak yolda dosya biçimine göre ``_Isaretler.blok0`` düz bayt
+# sayımıyla, biçim tutmayan parçada (alan var ama işaret yok) regex ile.
+# ``_ISARET_BLOK0`` eski adıyla korunur (sıkışık, alan ortada biçimi).
 _ISARET_BLOK0 = b'"apiBlockIndex":0,'
+_ANAHTAR_BLOK = b'"apiBlockIndex"'
+_BLOK0_DESEN = re.compile(rb'"apiBlockIndex"[ \t]*:[ \t]*0(?![0-9.eE])')
 
 
 def _isaret_sec(f) -> _Isaretler:
@@ -211,73 +220,94 @@ def _tc_degistir(m: re.Match) -> str:
 
 
 _HARF = "a-zçğıöşü"
-_MASKE_KALIPLARI: list[tuple[re.Pattern[str], object]] = [
-    # IBAN: ülke kodu + 2 sağlama + 11-30 alfasayısal, 4'lü gruplar boşluklu
-    # ya da bitişik (önce: içindeki rakamlar kart/TC kuralına takılmasın).
-    # Büyük harf zorunlu: küçük harfli hex dizileri aday bile olmaz.
-    (re.compile(r"(?<![A-Za-z0-9])[A-Z]{2}\d{2}(?:[ \-]?[A-Z0-9]{4}){2,7}"
-                r"(?:[ \-]?[A-Z0-9]{1,4})?(?![A-Za-z0-9])"), _iban_degistir),
-    # PIN/CVV/CVC/kart şifresi/... kodu + en çok 3 ara sözcük + 3-6 rakam:
-    # "Kart PIN 4821", "PIN kodum 4821", "CVV'si 123", "güvenlik kodu (CVV)
-    # 123", "kartın şifresi 4821". Ara sözcükler rakam içermez; Türkçe ekler
-    # kapalı listeden ("pinned", "spin" gibi İngilizce sözcükler eşleşmez).
-    (re.compile(
-        rf"(?i)(?<![{_HARF}0-9])("
-        rf"(?:pin|cvv2?|cvc2?|kart[{_HARF}]*\s+(?:şifre|sifre|parola)[{_HARF}]*"
-        rf"|(?:şifre|sifre|güvenlik|guvenlik|onay|doğrulama|dogrulama|sms)\s+kod[{_HARF}]*)"
-        rf"(?:'?(?:si|sı|su|sü|im|ım|um|üm|in|ın|un|ün|i|ı|u|ü|m|n|e|a|de|da|le|la|ni|nı))?)"
-        rf"(?![{_HARF}])"
-        rf"((?:[\s:=()\[\]\-–]*[^\s\d:=()\[\]]{{1,24}}?[)\]]?){{0,3}}?[\s:=()\[\]\-–]*)"
-        rf"(?<![0-9])\d{{3,6}}(?![\d.,/:\-]\d|\d)"),
-     r"\1\2" + _GIZLI),
-    # Anahtar sözcüklü TC kimlik no: sağlama aranmaz (bağlam açık).
-    (re.compile(
-        rf"(?i)(?<![{_HARF}0-9])(t\.?\s?c\.?(?:\s?kimlik)?(?:\s?no)?|tckn|"
-        rf"kimlik\s?(?:no|numarası|numaram)?)(\s*[:=]?\s*)\d{{11}}(?!\d)"),
-     r"\1\2" + _GIZLI),
-    # Kart numarası: 13-19 hane, boşluk/tire ayraçlı; Luhn ile doğrulanır.
-    (re.compile(r"(?<![\d\-])\d(?:[ \-]?\d){12,18}(?![\d])"), _kart_degistir),
-    # Anahtar sözcüksüz 11 haneli sayı: yalnız TC algoritmasından geçerse.
-    (re.compile(r"(?<![\d.,\-])[1-9]\d{10}(?![\d])"), _tc_degistir),
-    # URL'deki kullanıcı:parola -> scheme://kullanici:[gizli]@
-    (re.compile(r"(?i)\b([a-z][a-z0-9+.\-]*://[^\s:/@]+:)[^\s@/]+@"),
-     r"\1" + _GIZLI + "@"),
-    # JWT (base64url '{"' = eyJ), kısa olanlar da
-    (re.compile(r"\beyJ[A-Za-z0-9_\-]{8,}(?:\.[A-Za-z0-9_\-]*){0,2}"), _GIZLI),
-    # anahtar=deger / anahtar: deger -> anahtar korunur, değer gizlenir.
-    # Önde harf/rakam olmamalı ama "_" olabilir: DB_PASSWORD=, GITHUB_TOKEN=,
-    # MY_SECRET=, AWS_SECRET_ACCESS_KEY=. Türkçe ekli biçimler: şifrem:,
-    # parolası=. "key" yalnız "_KEY"/"-key" son eki olarak sayılır.
-    (re.compile(
-        r"(?i)(?<![a-z0-9çğıöşü])"
-        r"((?:password|passwd|pwd|passphrase|pass|secret|token|"
-        r"api[_-]?key|access[_-]?key|private[_-]?key|(?<=[_\-])key)"
-        r"|(?:parola|şifre|sifre)(?:m|n|si|sı|miz|mız|niz|nız)?)"
-        r"(\s*[:=]\s*)(\"[^\"]*\"|'[^']*'|\S+)"),
-     r"\1\2" + _GIZLI),
-    # boşlukla ayrılan parola: "password is hunter2", "parolam 1234".
-    # Yanlış pozitifi önlemek için değer en az 4 karakter olmalı ve rakam ya
-    # da simge içermeli ("şifre 2 aşamalı" dokunulmaz).
-    (re.compile(
-        r"(?i)(?<![a-z0-9çğıöşü])"
-        r"((?:password|passwd|passphrase)(?:\s+(?:is|was))?"
-        r"|(?:parola|şifre|sifre)(?:m|n|si|sı|miz|mız|niz|nız)?"
-        r"(?:\s+(?:şu|şudur))?)"
-        r"(\s+)(?=[^\s,;]*[0-9!@#$%^&*?_+\-])[^\s,;]{4,}"),
-     r"\1\2" + _GIZLI),
-    (re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/\-]{16,}=*"), "Bearer " + _GIZLI),
-    (re.compile(r"\bsk-[A-Za-z0-9_\-]{16,}"), _GIZLI),
-    (re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}"), _GIZLI),
-    (re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}"), _GIZLI),
-    (re.compile(r"\bAIza[0-9A-Za-z_\-]{30,}"), _GIZLI),
-    (re.compile(r"\bxox[bap]-[A-Za-z0-9\-]{10,}"), _GIZLI),
-    (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), _GIZLI),
-    # 32+ karakterlik kesintisiz hex/base64 benzeri dizi; en az bir rakam
-    # içermeli (uzun snake_case adları ve sözcükleri korumak için). "/"
-    # karakter sınıfında yok: dosya yolları maskelenmesin.
-    (re.compile(r"(?<![A-Za-z0-9+_\-])(?=[A-Za-z_\-+]*[0-9])"
-                r"[A-Za-z0-9+_\-]{32,}={0,2}(?![A-Za-z0-9+_\-])"), _GIZLI),
-]
+_MASKE_ONBELLEK: list[tuple[re.Pattern[str], object]] | None = None
+
+
+def _maske_derle() -> list[tuple[re.Pattern[str], object]]:
+    """Maske kalıplarını derler; içe aktarmada değil ilk kullanımda çağrılır
+    (UserPromptSubmit yolu maske kullanmaz, derleme maliyeti ona yüklenmez).
+    """
+    return [
+        # IBAN: ülke kodu + 2 sağlama + 11-30 alfasayısal, 4'lü gruplar boşluklu
+        # ya da bitişik (önce: içindeki rakamlar kart/TC kuralına takılmasın).
+        # Büyük harf zorunlu: küçük harfli hex dizileri aday bile olmaz.
+        (re.compile(r"(?<![A-Za-z0-9])[A-Z]{2}\d{2}(?:[ \-]?[A-Z0-9]{4}){2,7}"
+                    r"(?:[ \-]?[A-Z0-9]{1,4})?(?![A-Za-z0-9])"), _iban_degistir),
+        # PIN/CVV/CVC/kart şifresi/... kodu + en çok 3 ara sözcük + 3-6 rakam:
+        # "Kart PIN 4821", "PIN kodum 4821", "CVV'si 123", "güvenlik kodu (CVV)
+        # 123", "kartın şifresi 4821". Ara sözcükler rakam içermez; Türkçe ekler
+        # kapalı listeden ("pinned", "spin" gibi İngilizce sözcükler eşleşmez).
+        (re.compile(
+            rf"(?i)(?<![{_HARF}0-9])("
+            rf"(?:pin|cvv2?|cvc2?|kart[{_HARF}]*\s+(?:şifre|sifre|parola)[{_HARF}]*"
+            rf"|(?:şifre|sifre|güvenlik|guvenlik|onay|doğrulama|dogrulama|sms)\s+kod[{_HARF}]*)"
+            rf"(?:'?(?:si|sı|su|sü|im|ım|um|üm|in|ın|un|ün|i|ı|u|ü|m|n|e|a|de|da|le|la|ni|nı))?)"
+            rf"(?![{_HARF}])"
+            rf"((?:[\s:=()\[\]\-–]*[^\s\d:=()\[\]]{{1,24}}?[)\]]?){{0,3}}?[\s:=()\[\]\-–]*)"
+            rf"(?<![0-9])\d{{3,6}}(?![\d.,/:\-]\d|\d)"),
+         r"\1\2" + _GIZLI),
+        # Anahtar sözcüklü TC kimlik no: sağlama aranmaz (bağlam açık).
+        (re.compile(
+            rf"(?i)(?<![{_HARF}0-9])(t\.?\s?c\.?(?:\s?kimlik)?(?:\s?no)?|tckn|"
+            rf"kimlik\s?(?:no|numarası|numaram)?)(\s*[:=]?\s*)\d{{11}}(?!\d)"),
+         r"\1\2" + _GIZLI),
+        # Kart numarası: 13-19 hane, boşluk/tire ayraçlı; Luhn ile doğrulanır.
+        (re.compile(r"(?<![\d\-])\d(?:[ \-]?\d){12,18}(?![\d])"), _kart_degistir),
+        # Anahtar sözcüksüz 11 haneli sayı: yalnız TC algoritmasından geçerse.
+        (re.compile(r"(?<![\d.,\-])[1-9]\d{10}(?![\d])"), _tc_degistir),
+        # URL'deki kullanıcı:parola -> scheme://kullanici:[gizli]@
+        (re.compile(r"(?i)\b([a-z][a-z0-9+.\-]*://[^\s:/@]+:)[^\s@/]+@"),
+         r"\1" + _GIZLI + "@"),
+        # JWT (base64url '{"' = eyJ), kısa olanlar da
+        (re.compile(r"\beyJ[A-Za-z0-9_\-]{8,}(?:\.[A-Za-z0-9_\-]*){0,2}"), _GIZLI),
+        # anahtar=deger / anahtar: deger -> anahtar korunur, değer gizlenir.
+        # Önde harf/rakam olmamalı ama "_" olabilir: DB_PASSWORD=, GITHUB_TOKEN=,
+        # MY_SECRET=, AWS_SECRET_ACCESS_KEY=. Türkçe ekli biçimler: şifrem:,
+        # parolası=. "key" yalnız "_KEY"/"-key" son eki olarak sayılır.
+        (re.compile(
+            r"(?i)(?<![a-z0-9çğıöşü])"
+            r"((?:password|passwd|pwd|passphrase|pass|secret|token|"
+            r"api[_-]?key|access[_-]?key|private[_-]?key|(?<=[_\-])key)"
+            r"|(?:parola|şifre|sifre)(?:m|n|si|sı|miz|mız|niz|nız)?)"
+            r"(\s*[:=]\s*)(\"[^\"]*\"|'[^']*'|\S+)"),
+         r"\1\2" + _GIZLI),
+        # boşlukla ayrılan parola: "password is hunter2", "parolam 1234".
+        # Yanlış pozitifi önlemek için değer en az 4 karakter olmalı ve rakam ya
+        # da simge içermeli ("şifre 2 aşamalı" dokunulmaz).
+        (re.compile(
+            r"(?i)(?<![a-z0-9çğıöşü])"
+            r"((?:password|passwd|passphrase)(?:\s+(?:is|was))?"
+            r"|(?:parola|şifre|sifre)(?:m|n|si|sı|miz|mız|niz|nız)?"
+            r"(?:\s+(?:şu|şudur))?)"
+            r"(\s+)(?=[^\s,;]*[0-9!@#$%^&*?_+\-])[^\s,;]{4,}"),
+         r"\1\2" + _GIZLI),
+        (re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/\-]{16,}=*"), "Bearer " + _GIZLI),
+        (re.compile(r"\bsk-[A-Za-z0-9_\-]{16,}"), _GIZLI),
+        (re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}"), _GIZLI),
+        (re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}"), _GIZLI),
+        (re.compile(r"\bAIza[0-9A-Za-z_\-]{30,}"), _GIZLI),
+        (re.compile(r"\bxox[bap]-[A-Za-z0-9\-]{10,}"), _GIZLI),
+        (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), _GIZLI),
+        # 32+ karakterlik kesintisiz hex/base64 benzeri dizi; en az bir rakam
+        # içermeli (uzun snake_case adları ve sözcükleri korumak için). "/"
+        # karakter sınıfında yok: dosya yolları maskelenmesin.
+        (re.compile(r"(?<![A-Za-z0-9+_\-])(?=[A-Za-z_\-+]*[0-9])"
+                    r"[A-Za-z0-9+_\-]{32,}={0,2}(?![A-Za-z0-9+_\-])"), _GIZLI),
+    ]
+
+
+def _maske_kaliplari() -> list[tuple[re.Pattern[str], object]]:
+    global _MASKE_ONBELLEK
+    if _MASKE_ONBELLEK is None:
+        _MASKE_ONBELLEK = _maske_derle()
+    return _MASKE_ONBELLEK
+
+
+def __getattr__(ad: str):
+    """``_MASKE_KALIPLARI`` eski modül düzeyi adı tembel olarak verilir."""
+    if ad == "_MASKE_KALIPLARI":
+        return _maske_kaliplari()
+    raise AttributeError(f"module {__name__!r} has no attribute {ad!r}")
 
 
 def maskele(metin: str) -> str:
@@ -285,7 +315,7 @@ def maskele(metin: str) -> str:
     try:
         if not metin:
             return metin if isinstance(metin, str) else ""
-        for kalip, yerine in _MASKE_KALIPLARI:
+        for kalip, yerine in _maske_kaliplari():
             metin = kalip.sub(yerine, metin)
         return metin
     except Exception:
@@ -463,22 +493,42 @@ def _duzenlenen_yollar(o: dict) -> list[str]:
     return yollar
 
 
-def _istek_sayisi(f, boyut: int, isr: _Isaretler) -> int:
-    """``"apiBlockIndex":0,`` işaretini tüm dosyada parça parça sayar.
+def _blok0_say(veri: bytes, isaret: bytes, bas: int = 0,
+               son: int | None = None) -> int:
+    """``veri[bas:son]`` içinde değeri 0 olan ``"apiBlockIndex"`` alanları.
 
-    Her API yanıtının ilk blok satırı bu işareti bir kez taşır; JSON metni
-    içinde geçen kopyalar kaçışlı (``\\"``) olduğundan eşleşmez. Gerçek
-    kayıtlarda tekil (message.id, requestId) sayısıyla %0-2 farkla örtüşür
-    (fark: ``apiBlockIndex`` taşımayan yapay/hata satırları). İşaret hiç
-    yoksa (eski sürüm ya da elle üretilmiş kayıt) ve dosya 64 MB'tan
-    küçükse assistant satırları çözülüp (message.id, requestId) çiftleri
-    tam olarak tekilleştirilir; daha büyükse 0 döner.
+    Önce dosya biçiminin işaretiyle (``_Isaretler.blok0``) düz bayt sayımı;
+    hiç yoksa ama alan geçiyorsa (biçim seçimi tutmamış) regex sayar. İki yol
+    aynı JSON için aynı sayıyı verir. Dilim kopyalanmaz.
+    """
+    if son is None:
+        son = len(veri)
+    sayi = veri.count(isaret, bas, son)
+    if sayi or veri.find(_ANAHTAR_BLOK, bas, son) == -1:
+        return sayi
+    return sum(1 for _ in _BLOK0_DESEN.finditer(veri, bas, son))
+
+
+def _istek_sayisi(f, boyut: int, isr: _Isaretler) -> int:
+    """Değeri 0 olan ``"apiBlockIndex"`` alanlarını tüm dosyada parça parça sayar.
+
+    Her API yanıtının ilk blok satırı bu alanı bir kez taşır; JSON metni
+    içinde geçen kopyalar kaçışlı (``\\"``) olduğundan eşleşmez. Sıkışık
+    (``"apiBlockIndex":0,``), boşluklu (``"apiBlockIndex": 0,``) ve alanın
+    nesnede son olduğu (``...0}``) biçimler aynı sayılır. Parçalar satır
+    sonunda bölünür; eşleşme iki parçaya bölünemez, iki kez sayılamaz.
+    Gerçek kayıtlarda tekil (message.id, requestId) sayısıyla %0-2 farkla
+    örtüşür (fark: ``apiBlockIndex`` taşımayan yapay/hata satırları).
 
     Sayım 0,12 sn'yi aşarsa (soğuk disk önbelleği, çok büyük dosya) okunan
     kısımdaki yoğunluk dosya boyuna oranlanarak tahmin döner.
+
+    İşaret hiç yoksa (eski sürüm ya da elle üretilmiş kayıt) ve dosya 64
+    MB'tan küçükse assistant satırları çözülüp (message.id, requestId)
+    çiftleri tekilleştirilir; daha büyükse 0 döner. Bu yedek yol da kendi
+    0,12 sn'lik bütçesiyle sınırlıdır; aşılırsa okunan kısmın yoğunluğundan
+    oranlanır.
     """
-    isaret = _ISARET_BLOK0
-    ortu = len(isaret) - 1
     sayi = 0
     okunan = 0
     onceki = b""
@@ -487,12 +537,20 @@ def _istek_sayisi(f, boyut: int, isr: _Isaretler) -> int:
     while True:
         parca = f.read(_SAYIM_BLOK)
         if not parca:
+            if onceki:
+                sayi += _blok0_say(onceki, isr.blok0)
             break
         okunan += len(parca)
-        veri = onceki + parca
-        sayi += veri.count(isaret)
-        # örtüşme bölgesinde tam eşleşme kalmasın diye kuyrukta işaret yok
-        onceki = veri[-ortu:] if len(veri) >= ortu else veri
+        ilk = parca.find(b"\n")
+        if ilk == -1:
+            onceki += parca  # satır sonu yok: tek satır sürüyor
+        else:
+            # önceki parçadan süren satır + bu parçanın tam satırları;
+            # yarım kalan son satır bir sonraki tura taşınır.
+            sayi += _blok0_say(onceki + parca[:ilk + 1], isr.blok0)
+            son = parca.rfind(b"\n") + 1
+            sayi += _blok0_say(parca, isr.blok0, ilk + 1, son)
+            onceki = parca[son:]
         if okunan < boyut and time.perf_counter() - baslangic > _SAYIM_SURE:
             return round(sayi * boyut / okunan) if sayi else 0
     if sayi:
@@ -500,8 +558,13 @@ def _istek_sayisi(f, boyut: int, isr: _Isaretler) -> int:
     if boyut > 64 * 1024 * 1024:
         return 0
     ciftler: set[tuple] = set()
+    okunan = 0
+    baslangic = time.perf_counter()
     f.seek(0)
     for satir in f:
+        okunan += len(satir)
+        if okunan < boyut and time.perf_counter() - baslangic > _SAYIM_SURE:
+            return round(len(ciftler) * boyut / okunan)
         if isr.asistan not in satir:
             continue
         o = _coz(satir)
@@ -587,13 +650,20 @@ def oturum_ozeti(transcript_path: str | Path) -> dict:
     erken durur. ``cwd`` ve ``oturum`` kaydın en son satırlarından alınır.
 
     ``istek_sayisi``: tekil (message.id, requestId) assistant mesajı sayısının
-    yaklaşığıdır; tüm dosyada ``"apiBlockIndex":0,`` işareti 8 MB'lık
-    parçalarla sayılır, JSON çözülmez; sayım 0,12 sn'yi aşarsa
-    okunan kısmın yoğunluğundan oranlanır (bkz. ``_istek_sayisi``).
+    yaklaşığıdır; tüm dosyada değeri 0 olan ``"apiBlockIndex"`` alanı
+    (sıkışık ya da boşluklu biçim) 8 MB'lık parçalarla sayılır, JSON
+    çözülmez; sayım 0,12 sn'yi aşarsa okunan kısmın yoğunluğundan oranlanır
+    (bkz. ``_istek_sayisi``).
 
-    Son 12 MB içinde 15'ten az düzenleme varsa geriye okuma yalnız düzenleme
-    aracı çağrılarına bakarak sürer (ayrıştırma yok, bayt araması), en çok
-    0,10 sn; bu sürede dosyanın başına varılmazsa ``duzenlenen`` eksik kalır.
+    Son 12 MB içinde (1. evre) 15'ten az düzenleme varsa geriye okuma yalnız
+    düzenleme aracı çağrılarına bakarak sürer (2. evre: bayt araması, yalnız
+    eşleşen satır çözülür). 2. evre en çok 0,10 sn sürer; bu bütçe 2. evreye
+    girildiği andan sayılır, 1. evrenin süresinden etkilenmez. Bu sürede
+    dosyanın başına varılmazsa ``duzenlenen`` eksik kalır.
+
+    1. evrede kimlik alanları (``oturum``, ``cwd``) dolduktan sonra bir satır
+    yalnız henüz boş bir alanı doldurabilecek bayt işaretini taşıyorsa
+    çözülür; sonuç, her satırı çözmekle aynıdır.
 
     Son assistant satırından sonra sıkıştırma sınırı varsa (bkz.
     ``_sikistirma_siniri_mi``) ``son_baglam`` None olur; ``son_model`` ve
@@ -622,7 +692,7 @@ def oturum_ozeti(transcript_path: str | Path) -> dict:
             duzenlenen: list[str] = []  # en yeni önce
             gorulen: set[str] = set()
 
-            baslangic = time.perf_counter()
+            evre2_baslangic = None  # 2. evrenin süre bütçesi girişte başlar
             okunan = 0
             for satir in _geri_satirlar(f, boyut, boyut):
                 okunan += len(satir) + 1
@@ -635,7 +705,10 @@ def oturum_ozeti(transcript_path: str | Path) -> dict:
                 if okunan > _SON_BUTCE:
                     # 2. evre: yalnız düzenleme aracı çağrıları aranır,
                     # süre sınırıyla (bkz. docstring).
-                    if time.perf_counter() - baslangic > _DUZENLEME_SURE:
+                    simdi = time.perf_counter()
+                    if evre2_baslangic is None:
+                        evre2_baslangic = simdi
+                    elif simdi - evre2_baslangic > _DUZENLEME_SURE:
                         break
                     if (isr.asistan not in satir
                             or isr.duzenleme.search(satir) is None):
@@ -654,12 +727,37 @@ def oturum_ozeti(transcript_path: str | Path) -> dict:
                     sikisti = True  # son assistant satırından sonra sıkıştırma
                 kullanici = (not asistan and isr.kullanici in satir
                              and _ISARET_ARAC_SONUCU not in satir)
-                baslik_satiri = (not asistan and not kullanici
-                                 and len(satir) < 64 * 1024
-                                 and any(t in satir for t in isr.basliklar))
-                if not (asistan or kullanici or baslik_satiri):
-                    if sonuc["oturum"] is not None or len(satir) > 4096:
+                if sonuc["oturum"] is not None and sonuc["cwd"] is not None:
+                    # Kimlik alanları dolu: satır yalnız henüz boş bir alanı
+                    # doldurabiliyorsa çözülür. Her koşul, çözülse sonucu
+                    # değiştirebilecek satırın zorunlu taşıdığı bayt işaretidir
+                    # (bkz. aşağıdaki tür dalları); işaret yoksa çözüm etkisizdir.
+                    # ai/summary başlığı, özel başlık bulunduktan sonra çıktıya
+                    # giremez. Sonuç, her satırı çözen yolla aynıdır.
+                    if not (
+                        (asistan and (istek is None
+                                      or (len(duzenlenen) < _EN_COK_DUZENLENEN
+                                          and isr.duzenleme.search(satir) is not None)))
+                        or (son_istem_ham is None
+                            and (kullanici or isr.kullanici in satir))
+                        or (ozel is None and (
+                            isr.basliklar[0] in satir
+                            or (ai is None and (
+                                isr.basliklar[1] in satir
+                                or (ozet is None and isr.basliklar[2] in satir)))))
+                    ):
                         continue
+                    if not (asistan or kullanici
+                            or (len(satir) < 64 * 1024
+                                and any(t in satir for t in isr.basliklar))):
+                        continue  # başlık satırı da değil: çözülmezdi
+                else:
+                    baslik_satiri = (not asistan and not kullanici
+                                     and len(satir) < 64 * 1024
+                                     and any(t in satir for t in isr.basliklar))
+                    if not (asistan or kullanici or baslik_satiri):
+                        if sonuc["oturum"] is not None or len(satir) > 4096:
+                            continue
                 o = _coz(satir)
                 if o is None:
                     continue
