@@ -11,6 +11,7 @@ import copy
 import hashlib
 import importlib.util
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -420,3 +421,98 @@ def test_no_network_servis_atlandi(doktor, tmp_path, capsys):
     run_main(doktor, home, json_out=True)
     c = check(json.loads(capsys.readouterr().out), "servis:beyin")
     assert c["status"] == "ok" and "atlandı" in c["detail"], c
+
+
+# --- 16. hook:python: settings.json'daki Python dışı program çalıştırılmaz ---------------------
+# Ağ açık (network=True) senaryolar sahte depo kullanır: .venv ve apps/phone yok, MCP kaydı yok;
+# böylece doktor ne bellek doktoru ne servis isteği ne de başka bir program başlatır.
+
+MARKER = "isaret.txt"
+WRAP_TARGETS = ("bizim", "eski", "ilgisiz")
+
+
+def make_wrapper(d: Path) -> Path:
+    """Çalıştırılınca yanına işaret dosyası yazan küçük betik (Windows'ta .cmd, diğerlerinde .sh)."""
+    d.mkdir(parents=True, exist_ok=True)
+    if sys.platform == "win32":
+        w = d / "w.cmd"
+        w.write_text(f'@echo off\r\necho calisti> "%~dp0{MARKER}"\r\n', encoding="ascii")
+    else:
+        w = d / "w.sh"
+        w.write_text(f'#!/bin/sh\necho calisti > "$(dirname "$0")/{MARKER}"\n', encoding="ascii")
+        w.chmod(0o755)
+    return w
+
+
+def devir_settings(repo: Path, python: str, target: str = "bizim") -> dict:
+    """Devir kaydı; yorumlayıcı yerine verilen program. target: bizim/eski/ilgisiz betik yolu."""
+    data = {"hooks": {}}
+    for ev, g in component_groups_py(repo, python).items():
+        if target != "bizim":
+            other = ("C:/Bellek/src/bellek/devir/hook.py" if target == "eski"
+                     else str(repo).replace("\\", "/") + "/baska/betik.py")
+            for h in g["hooks"]:
+                h["command"] = h["command"].replace(repo_str(repo) + specs(repo)["devir"]["tail"], other)
+        data["hooks"].setdefault(ev, []).append(g)
+    return data
+
+
+def component_groups_py(repo: Path, python: str, key: str = "devir") -> dict:
+    s = sh.hook_specs(repo_str(repo), python)[key]
+    m = s.get("matchers", {})
+    return {ev: group(h, m.get(ev)) for ev, h in s["events"].items()}
+
+
+def _wrapper_case(tmp_path: Path, target: str):
+    repo = fake_repo(tmp_path / "depo")
+    wrap = make_wrapper(tmp_path / "wrap")
+    home = tmp_path / "claude"
+    data = devir_settings(repo, f'"{wrap}"', target)
+    cmd = data["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+    assert cmd.startswith(f'"{wrap}" '), cmd
+    write_settings(home, data)
+    return repo, wrap, home
+
+
+@pytest.mark.parametrize("target", WRAP_TARGETS)
+def test_hook_python_sarmalayici_calistirilmaz(doktor, tmp_path, target):
+    repo, wrap, home = _wrapper_case(tmp_path, target)
+    before = snapshot(tmp_path)
+    res = doktor.run_checks(home, repo, network=True)
+    assert not (wrap.parent / MARKER).exists(), "doktor settings.json'daki Python dışı programı çalıştırdı"
+    assert snapshot(tmp_path) == before
+    assert_well_formed(res)
+    c = check(res, "hook:python")
+    # settings_hooks tanıması daraldıysa sarmalayıcılı kayıt "bizim" sayılmaz: ok + "kurulu değil" de kabul.
+    assert c["status"] == "warn" or (c["status"] == "ok" and c["detail"].startswith("kurulu değil")), c
+    print(f"hook:python[{target}] -> {c['status']}: {c['detail']}")
+
+
+@pytest.mark.parametrize("target", WRAP_TARGETS)
+def test_hook_python_ag_kapali_atlandi(doktor, tmp_path, capsys, target):
+    repo, wrap, home = _wrapper_case(tmp_path, target)
+    before = snapshot(tmp_path)
+    res = doktor.run_checks(home, repo, network=False)
+    rc = doktor.main(["--json", "--no-network", "--claude-home", str(home), "--repo", str(repo)])
+    out = capsys.readouterr().out
+    assert not (wrap.parent / MARKER).exists()
+    assert snapshot(tmp_path) == before
+    for r in (res, json.loads(out)):
+        c = check(r, "hook:python")
+        assert c["status"] == "ok" and "atlandı" in c["detail"], c
+    assert rc in (0, 1, 2)
+
+
+def test_hook_python_gercek_yorumlayici_ok(doktor, tmp_path):
+    repo = fake_repo(tmp_path / "depo")
+    home = tmp_path / "claude"
+    exe = sys.executable
+    write_settings(home, devir_settings(repo, f'"{exe}"'))
+    assert check(doktor.run_checks(home, repo, network=False), "hook:devir")["status"] == "ok"
+    before = snapshot(tmp_path)
+    res = doktor.run_checks(home, repo, network=True)
+    assert snapshot(tmp_path) == before
+    c = check(res, "hook:python")
+    assert c["status"] == "ok", c
+    assert not c["detail"].startswith("kurulu değil"), c
+    assert ".".join(map(str, sys.version_info[:2])) in c["detail"], c

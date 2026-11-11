@@ -4,9 +4,13 @@
 
 --claude-home  Claude Code'un kullanıcı dizini (varsayılan: CLAUDE_CONFIG_DIR, yoksa ~/.claude).
 --repo         eren-kit deposu (varsayılan: bu betiğin bulunduğu depo).
---no-network   Canlı sistem sorguları yapılmaz: servis sağlık isteği (/api/saglik), servis görevi
-               (Görev Zamanlayıcı / launchd) ve "bellek doktor" alt süreci atlanır. Yalnız dosya
-               denetimleri kalır; sonuç makineden bağımsızdır.
+--no-network   Canlı sistem sorgusu ve kullanıcı dosyalarından gelen dış süreç yok: servis sağlık
+               isteği (/api/saglik), servis görevi (Görev Zamanlayıcı / launchd), "bellek doktor"
+               alt süreci ve hook yorumlayıcısının sürüm yoklaması atlanır. Yalnız dosya denetimleri
+               kalır (telefon:node yalnız sabit adlı "node"u çalıştırır).
+Güvenlik: settings.json / .claude.json'dan okunan bir program yalnız adı açıkça bir Python
+yorumlayıcısıysa (python, python3, pythonX.Y, py; .exe dahil) ve --no-network verilmemişse
+çalıştırılır; diğerleri çalıştırılmaz. Her alt süreç çağrısının zaman aşımı vardır.
 --json         stdout'a yalnız {"status", "checks": [{"name", "status", "detail"}]} yazılır (ASCII).
 
 Çıkış kodu: 0 hepsi ok, 1 en az bir warn (error yok), 2 en az bir error.
@@ -272,8 +276,12 @@ class _SettingsUnreadable(Exception):
 
 def _script_token(cmd: str, key: str, tail: str) -> str | None:
     """Komuttaki betik yolu (bizim ya da eski konum); "-m modül" biçiminde None."""
+    # Her parça tek başına "python <parça>" komutu gibi sınanır: tanıma kuralı (bizim / eski
+    # konum) settings_hooks'ta kalır, burada kopyalanmaz.
     for t in _tokens(cmd):
-        h = {"command": t}
+        if '"' in t:
+            continue
+        h = {"command": f'python "{t}"'}
         if sh.is_ours(h, tail) or sh.is_legacy(h, key, tail):
             return t
     return None
@@ -386,7 +394,19 @@ def check_hook(ctx: Ctx, key: str) -> Check:
     return Check(name, OK, f"{events}: birer grup; betik: {where}{extra}")
 
 
+# Kullanıcı dosyasından (settings.json, .claude.json) okunan bir program YALNIZ adı açıkça bir
+# Python yorumlayıcısıysa çalıştırılır (sürüm sormak için). Başka her şey çalıştırılmaz:
+# aksi halde doktor, settings.json'a yazılmış herhangi bir programı çalıştırabilirdi.
+_PYTHON_NAME = re.compile(r"^(?:python(?:\d+(?:\.\d+)?)?|py)(?:\.exe)?$", re.IGNORECASE)
+
+
+def _is_python_name(path_or_name: str) -> bool:
+    return bool(_PYTHON_NAME.match(Path(path_or_name.replace("\\", "/")).name))
+
+
 def _python_version(exe: str) -> tuple[tuple[int, ...] | None, str]:
+    if not _is_python_name(exe):  # savunma: çağıranlar zaten denetler
+        return None, "yorumlayıcı tanınmadı, çalıştırılmadı"
     try:
         r = _run([exe, "-I", "-c", "import sys;print('.'.join(map(str,sys.version_info[:3])))"], PROBE_TIMEOUT)
     except subprocess.TimeoutExpired:
@@ -405,6 +425,8 @@ def check_hook_python(ctx: Ctx) -> Check:
         return Check(name, ERROR, f"settings_hooks.py yüklenemedi; denetlenemedi ({_SH_ERROR})")
     if ctx.settings()[2]:
         return Check(name, WARN, "settings.json okunamadığı için denetlenemedi (bkz. settings)")
+    if not ctx.network:
+        return Check(name, OK, "atlandı (--no-network: settings.json'daki programlar çalıştırılmaz)")
     specs = sh.hook_specs(str(ctx.repo).replace("\\", "/"))
     interps: dict[str, list[str]] = {}
     for key in HOOK_KEYS:
@@ -421,6 +443,10 @@ def check_hook_python(ctx: Ctx) -> Check:
     want = ".".join(map(str, HOOK_PYTHON_MIN))
     for tok, keys in interps.items():
         who = ", ".join(keys)
+        if not _is_python_name(tok):
+            issues.append((WARN, f"'{tok}' bir Python yorumlayıcısı olarak tanınmadı ({who}); "
+                                 "çalıştırılmadı, sürüm denetlenemedi"))
+            continue
         exe = _which(tok)
         if exe is None:
             issues.append((WARN, f"'{tok}' bulunamadı ({who}); hook'lar sessizce çalışmaz. "
@@ -635,10 +661,12 @@ def _bellek_python(ctx: Ctx) -> tuple[str | None, dict]:
     entry = ctx.mcp_entry("beyin")
     if isinstance(entry, dict) and isinstance(entry.get("command"), str):
         args = [str(a) for a in entry.get("args") or []]
-        if args[:2] == ["-m", "bellek.beyin"]:
+        # .claude.json'dan gelen komut yalnız adı Python yorumlayıcısıysa kullanılır;
+        # değilse deponun kendi venv'ine düşülür.
+        if args[:2] == ["-m", "bellek.beyin"] and _is_python_name(entry["command"]):
             exe = _which(entry["command"])
             env = entry.get("env") if isinstance(entry.get("env"), dict) else {}
-            if exe:
+            if exe and _is_python_name(exe):
                 return exe, {str(k): str(v) for k, v in env.items()}
     venv = ctx.repo / "packages" / "bellek" / ".venv"
     exe = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
