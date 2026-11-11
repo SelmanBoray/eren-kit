@@ -1,8 +1,17 @@
-"""Beyin grafını dışa aktarma: markdown ağacı ve JSONL dökümü."""
+"""Beyin grafını dışa aktarma: markdown ağacı ve JSONL dökümü.
+
+Gizlilik etkin değere göre uygulanır (DESIGN §16.2): düğümün kendi işareti ile
+birincil ata zincirinin en kısıtlayıcısı. Kural tek yerde, `sorgu._EtkinGizlilik`
+içindedir; burada yeniden yazılmaz. Okuma yolu yazmaz (kök oluşturulmaz).
+"""
 
 from __future__ import annotations
 
 import json
+
+from . import db, sorgu
+
+_NORMAL, _OZEL, _SIR = "normal", "ozel", "sir_icerir"
 
 
 def _satirlar(con, sql, args=()):
@@ -16,11 +25,12 @@ def _tek_satir(m):
 
 
 def markdown_agac(con, ozel_dahil=True, sir_dahil=False) -> str:
-    from .db import kok_id
-
     dugumler = {d["id"]: d for d in _satirlar(con, "SELECT * FROM dugum")}
     kenarlar = _satirlar(con, "SELECT * FROM kenar")
-    kok = kok_id(con)
+    kok = db.kok_bul(con)  # okuma yolu: kök yoksa oluşturulmaz
+    if kok not in dugumler:
+        kok = None
+    etkin = sorgu._EtkinGizlilik(con)
 
     cocuklar: dict = {}
     birincil_ebeveyn: dict = {}
@@ -45,9 +55,12 @@ def markdown_agac(con, ozel_dahil=True, sir_dahil=False) -> str:
         return " / ".join(reversed(parcalar))
 
     def ozet_metni(d):
-        if d["gizlilik"] == "sir_icerir" and not sir_dahil:
+        g = etkin(d["id"])
+        # Sır, özelden daha kısıtlayıcıdır: sır içeriği hem sir_dahil hem
+        # ozel_dahil ister (özel bir dalın altındaki sır da özel sayılır).
+        if g == _SIR and not (sir_dahil and ozel_dahil):
             return "[gizli]"
-        if d["gizlilik"] == "ozel" and not ozel_dahil:
+        if g == _OZEL and not ozel_dahil:
             return "[özel]"
         return _tek_satir(d.get("ozet"))
 
@@ -97,7 +110,8 @@ def markdown_agac(con, ozel_dahil=True, sir_dahil=False) -> str:
         elif not k["birincil"]:
             ek_kenarlar.setdefault(k["ebeveyn"], []).append(k)
 
-    yuru(kok, 0)
+    if kok is not None:
+        yuru(kok, 0)
     yetim = [i for i in sorted(dugumler) if i not in goruldu]
     if yetim:
         cikti.append("")
@@ -107,8 +121,9 @@ def markdown_agac(con, ozel_dahil=True, sir_dahil=False) -> str:
                 yuru(i, 0)
 
     dal = sum(1 for i in dugumler if cocuklar.get(i))
+    kok_basligi = dugumler[kok]["baslik"] if kok is not None else db.KOK_BASLIK
     baslik_satiri = [
-        f"# {dugumler[kok]['baslik']} — bilgi haritası",
+        f"# {kok_basligi} — bilgi haritası",
         "",
         f"Toplam {len(dugumler)} düğüm, {dal} dal.",
         "",
@@ -117,7 +132,13 @@ def markdown_agac(con, ozel_dahil=True, sir_dahil=False) -> str:
 
 
 def jsonl_dok(con, yol) -> int:
-    """Deterministik JSONL dökümü (id sırasıyla). Yazılan satır sayısını döner."""
+    """Deterministik JSONL dökümü (id sırasıyla). Yazılan satır sayısını döner.
+
+    Etkin gizliliği sır olan düğümün (kendi işaretli ya da sır atadan kalıtan)
+    özeti, ayrıntısı ve olgu metinleri boşaltılır; `gizlilik` alanı düğümün
+    kendi değeri olarak kalır (geri yüklemede kalıtım yeniden hesaplanır).
+    """
+    etkin = sorgu._EtkinGizlilik(con)
     sirlar = set()
     n = 0
     with open(yol, "w", encoding="utf-8", newline="\n") as f:
@@ -128,7 +149,7 @@ def jsonl_dok(con, yol) -> int:
             n += 1
 
         for d in _satirlar(con, "SELECT * FROM dugum ORDER BY id"):
-            if d.get("gizlilik") == "sir_icerir":
+            if etkin(d["id"]) == _SIR:
                 sirlar.add(d["id"])
                 d["ayrinti"] = None
                 d["ozet"] = None
