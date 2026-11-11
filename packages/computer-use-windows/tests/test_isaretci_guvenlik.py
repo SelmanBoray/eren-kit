@@ -34,6 +34,7 @@ from __future__ import annotations
 import ctypes
 import dataclasses
 import functools
+import os
 import re
 import sys
 import threading
@@ -61,6 +62,10 @@ from computer_use_windows.screen import CoordMap, MonitorInfo
 pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="input.py needs Windows ctypes")
 
 MONITOR = MonitorInfo(index=1, left=0, top=0, width=1920, height=1080, primary=True)
+
+# The real "which processes are the agent's own" function, kept before any fixture patches it:
+# the shell tests run it (over the fake process table) instead of a canned pid set.
+_REAL_ANCESTOR_PIDS = uia.ancestor_pids
 
 _MOUSEEVENTF_MOVE = 0x0001
 _MOUSEEVENTF_LEFTDOWN = 0x0002
@@ -273,6 +278,10 @@ class FakeDesktop:
         self.unresponsive_controls: set[int] = set()  # control hwnds whose WM_GETTEXT hangs
         self.clock = FakeClock()
         self.automation = FakeAutomation(self)
+        # Process table for the real ancestor-chain code: pid -> (parent pid, exe, creation time).
+        # Empty unless a test sets it (see shell_launched_host()).
+        self.processes: dict[int, tuple[int, str, int]] = {}
+        self.shell_window = 0  # GetShellWindow(): the desktop window of the shell (explorer.exe)
         # Recordings.
         self.events: list[tuple[Any, ...]] = []
         self.cursor: tuple[int, int] = (960, 540)
@@ -418,6 +427,16 @@ class _FakeInput(ctypes.Structure):
     _fields_ = [("type", wintypes.DWORD), ("pad", ctypes.c_byte * 40)]
 
 
+class _FakeGuiThreadInfo(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.DWORD),
+        ("flags", wintypes.DWORD),
+        ("hwndActive", wintypes.HWND),
+        ("hwndFocus", wintypes.HWND),
+        ("pad", ctypes.c_byte * 64),
+    ]
+
+
 class FakeWin32(uia._Win32):
     """The fake user32 behind ``uia``: raw entry points only; uia's own helpers run on top."""
 
@@ -427,6 +446,7 @@ class FakeWin32(uia._Win32):
         self.WNDENUMPROC = lambda callback: callback
         self.DwmGetWindowAttribute = None
         self.INPUT = _FakeInput
+        self.GUITHREADINFO = _FakeGuiThreadInfo
 
     def __getattr__(self, name: str) -> Any:
         if name.startswith("__"):
@@ -439,10 +459,22 @@ class FakeWin32(uia._Win32):
         return next((w.process for w in self.desk.wins.values() if w.pid == pid), "")
 
     def snapshot(self) -> dict[int, tuple[int, str]]:
-        return {}
+        return {pid: (parent, exe) for pid, (parent, exe, _) in self.desk.processes.items()}
 
     def creation_time(self, pid: int) -> int | None:
-        return None
+        entry = self.desk.processes.get(int(pid))
+        return entry[2] if entry else None
+
+    # ---- the Windows shell -------------------------------------------------------------------
+    def GetShellWindow(self) -> int:  # noqa: N802
+        return self.desk.shell_window
+
+    def GetDesktopWindow(self) -> int:  # noqa: N802
+        return 65552
+
+    def FindWindowW(self, cls: Any, title: Any) -> int:  # noqa: N802
+        wanted = str(cls or "")
+        return next((w.handle for w in self.desk.wins.values() if w.class_name == wanted), 0)
 
     def system_directory(self) -> str:
         return r"C:\Windows\System32"
@@ -1264,15 +1296,27 @@ def _resize_window(desk: FakeDesktop) -> None:
     win.rect = (left, top, right - 200, bottom - 150)  # Save's old center: still Notepad
 
 
+def _minimize_window(desk: FakeDesktop) -> None:
+    desk.wins[NOTEPAD.handle].minimized = True
+
+
 def _cover_point(desk: FakeDesktop) -> None:
+    # A window of ANOTHER process (pid 4010, not Notepad's 4001) now sits on the target point.
     desk.add(Win(1010, "New message", "olk.exe", 4010, (400, 250, 800, 450), "Toast"))
+
+
+def _cover_point_with_foreign_dropdown(desk: FakeDesktop) -> None:
+    # Even a dropdown-shaped window counts when it belongs to another process.
+    desk.add(Win(1014, "", "olk.exe", 4010, (400, 250, 800, 450), "ComboLBox"))
 
 
 CHANGES = [
     pytest.param(_close, id="window-closed"),
+    pytest.param(_minimize_window, id="window-minimized"),
     pytest.param(_move_window, id="window-moved"),
     pytest.param(_resize_window, id="window-resized"),
-    pytest.param(_cover_point, id="other-window-on-top"),
+    pytest.param(_cover_point, id="other-process-window-on-top"),
+    pytest.param(_cover_point_with_foreign_dropdown, id="other-process-dropdown-on-top"),
 ]
 
 
@@ -1315,6 +1359,49 @@ def test_click_element_after_unrelated_window_changes_still_clicks(desk: FakeDes
         reply = client.call("click", element=save)
     assert_ok(reply)
     assert desk.cursor == SAVE_CENTER
+
+
+SAME_PROCESS_POPUPS = [
+    pytest.param("ComboLBox", id="combobox-dropdown"),
+    pytest.param("#32768", id="menu"),
+    pytest.param("tooltips_class32", id="tooltip"),
+]
+
+
+@pytest.mark.parametrize("popup_class", SAME_PROCESS_POPUPS)
+def test_click_element_under_popup_of_the_same_process_still_clicks(
+    desk: FakeDesktop, popup_class: str
+) -> None:
+    # Classic dropdown lists, menus and tooltips are separate unowned top-level windows of the
+    # app's own process: one at the element's point does not make the id stale.
+    notepad_tree(desk)
+    with connect() as client:
+        listing = client.call("elements")
+        save = _element_id(listing, "button", "Save")
+        desk.add(Win(1012, "", NOTEPAD.process, NOTEPAD.pid, (400, 250, 800, 450), popup_class))
+        reply = client.call("click", element=save)
+    assert_ok(reply)
+    assert desk.cursor == SAVE_CENTER
+    assert desk.pressed(_MOUSEEVENTF_LEFTDOWN) and desk.pressed(_MOUSEEVENTF_LEFTUP)
+
+
+def test_right_click_element_under_same_process_popup_of_a_terminal_is_refused(
+    desk: FakeDesktop,
+) -> None:
+    # The terminal rule is independent of the stale-id rule: a same-process popup over a
+    # terminal's element does not make a right click there acceptable.
+    tab_rect = (1150, 10, 1250, 40)
+    desk.trees[TERMINAL.handle] = FakeElement(
+        desk, "window", TERMINAL.title, TERMINAL.rect,
+        [FakeElement(desk, "button", "Tab 1", tab_rect)],
+    )  # fmt: skip
+    with connect() as client:
+        listing = client.call("elements", window=TERMINAL.handle)
+        tab = _element_id(listing, "button", "Tab 1")
+        desk.add(Win(1013, "", TERMINAL.process, TERMINAL.pid, (1140, 0, 1300, 100), "ComboLBox"))
+        reply = client.call("click", element=tab, button="right")
+    assert_refused(reply, TERMINAL_ROOTS)
+    assert desk.events == []
 
 
 # ============================================================================================
@@ -1458,3 +1545,98 @@ def test_max_size_above_2576_is_invalid_from_cli(value: str) -> None:
 def test_max_size_above_2576_is_invalid_from_env(value: str) -> None:
     with pytest.raises(ValueError, match="CUW_MAX_SIZE"):
         load_config([], {"CUW_MAX_SIZE": value})
+
+
+# ============================================================================================
+# The Windows shell is not the agent's own window
+# ============================================================================================
+
+EXPLORER_PID = 4050
+SHELL_DESKTOP = Win(6001, "Program Manager", "explorer.exe", EXPLORER_PID, (0, 0, 1920, 1080),
+                    "Progman")  # fmt: skip
+SHELL_TASKBAR = Win(6002, "", "explorer.exe", EXPLORER_PID, (0, 1040, 1920, 1080),
+                    "Shell_TrayWnd")  # fmt: skip
+FILE_EXPLORER = Win(6003, "Downloads - File Explorer", "explorer.exe", EXPLORER_PID,
+                    (200, 200, 600, 500), "CabinetWClass")  # fmt: skip
+SHELL_POINTS = [
+    pytest.param(FILE_EXPLORER.handle, (400, 350), id="file-explorer"),
+    pytest.param(SHELL_DESKTOP.handle, (1050, 50), id="desktop"),
+    pytest.param(SHELL_TASKBAR.handle, (50, 1060), id="taskbar"),
+]
+
+
+def shell_launched_host(desk: FakeDesktop, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The agent runs in an editor that was started from Explorer.
+
+    Process chain: this server -> node.exe (the agent) -> code.exe (EDITOR, the host) ->
+    explorer.exe (the shell, owner of the desktop window). The real ancestor-chain code runs over
+    this fake process table and the fake GetShellWindow, instead of a canned pid set.
+    """
+    desk.processes = {
+        os.getpid(): (7001, "python.exe", 400),
+        7001: (EDITOR.pid, "node.exe", 300),
+        EDITOR.pid: (EXPLORER_PID, "code.exe", 200),
+        EXPLORER_PID: (900, "explorer.exe", 100),  # 900 (userinit) already exited
+    }
+    desk.add(dataclasses.replace(SHELL_DESKTOP), top=False)
+    desk.add(dataclasses.replace(SHELL_TASKBAR))
+    desk.add(dataclasses.replace(FILE_EXPLORER))
+    desk.shell_window = SHELL_DESKTOP.handle
+    monkeypatch.setattr(uia, "ancestor_pids", _REAL_ANCESTOR_PIDS)
+    monkeypatch.setattr(uia, "_ancestor_pids", None, raising=False)
+
+
+@pytest.mark.parametrize(("handle", "point"), SHELL_POINTS)
+def test_right_click_on_shell_window_is_not_refused_as_own_window(
+    desk: FakeDesktop, monkeypatch: pytest.MonkeyPatch, handle: int, point: tuple[int, int]
+) -> None:
+    shell_launched_host(desk, monkeypatch)
+    assert desk.window_from_point(*point) == handle  # the scenario: the shell is under the point
+    reply = _click(desk, point, "right")
+    assert_ok(reply)
+    assert desk.pressed(_MOUSEEVENTF_RIGHTDOWN) and desk.pressed(_MOUSEEVENTF_RIGHTUP)
+
+
+def test_drag_on_file_explorer_is_not_refused_as_own_window(
+    desk: FakeDesktop, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    shell_launched_host(desk, monkeypatch)
+    reply = _drag((300, 300), (500, 450))
+    assert_ok(reply)
+    assert desk.pressed(_MOUSEEVENTF_LEFTDOWN) and desk.pressed(_MOUSEEVENTF_LEFTUP)
+
+
+def test_right_click_on_the_real_host_is_still_refused_when_launched_from_shell(
+    desk: FakeDesktop, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    shell_launched_host(desk, monkeypatch)
+    reply = _click(desk, EDITOR.center, "right")
+    assert_refused(reply, OWN_WINDOW_ROOTS)
+    assert desk.events == []
+
+
+def _typed(desk: FakeDesktop) -> str:
+    units = [e[1] for e in desk.events if e[0] == "char" and not e[2]]
+    return b"".join(u.to_bytes(2, "little") for u in units).decode("utf-16-le")
+
+
+def test_type_text_into_file_explorer_is_not_refused_as_own_window(
+    desk: FakeDesktop, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    shell_launched_host(desk, monkeypatch)
+    desk.foreground = FILE_EXPLORER.handle
+    with connect() as client:
+        reply = client.call("type_text", text="abc")
+    assert_ok(reply)
+    assert _typed(desk) == "abc"
+
+
+def test_type_text_into_the_real_host_is_still_refused_when_launched_from_shell(
+    desk: FakeDesktop, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    shell_launched_host(desk, monkeypatch)
+    desk.foreground = EDITOR.handle
+    with connect() as client:
+        reply = client.call("type_text", text="abc")
+    assert_refused(reply, OWN_WINDOW_ROOTS)
+    assert desk.events == []

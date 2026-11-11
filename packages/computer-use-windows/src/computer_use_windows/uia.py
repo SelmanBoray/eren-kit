@@ -334,6 +334,7 @@ class _Win32:
         self.IsWindowVisible = fn(u, "IsWindowVisible", w.BOOL, H)
         self.IsIconic = fn(u, "IsIconic", w.BOOL, H)
         self.GetForegroundWindow = fn(u, "GetForegroundWindow", H)
+        self.GetShellWindow = fn(u, "GetShellWindow", H)
         self.SetForegroundWindow = fn(u, "SetForegroundWindow", w.BOOL, H)
         # Only calls that never wait for the target window's thread are used on windows of other
         # processes: a hung app would otherwise block the server (ShowWindow, BringWindowToTop
@@ -820,12 +821,25 @@ def focus_window(handle: int) -> WindowInfo:
     return _window_info(api, fg, fg)
 
 
+# Processes that start programs without hosting them: never "the agent's own host" even when
+# they are in its parent chain. explorer.exe also covers a separate folder-window process.
+# Terminals, shells (cmd, powershell, bash) and editors stay in the chain.
+_LAUNCHER_PROCESSES = frozenset(
+    {
+        "explorer.exe", "svchost.exe", "services.exe", "wininit.exe", "winlogon.exe",
+        "userinit.exe", "sihost.exe", "runtimebroker.exe", "taskhostw.exe", "dllhost.exe",
+        "smss.exe", "csrss.exe", "lsass.exe", "startmenuexperiencehost.exe",
+        "shellexperiencehost.exe", "searchhost.exe",
+    }
+)  # fmt: skip
+
 _ancestor_lock = threading.Lock()
 _ancestor_pids: frozenset[int] | None = None
 
 
 def ancestor_pids() -> frozenset[int]:
-    """PIDs of this process's parent chain (excluding itself); computed once and cached."""
+    """PIDs of this process's parent chain (excluding itself and launchers such as the Windows
+    shell); computed once and cached."""
     global _ancestor_pids
     if _ancestor_pids is not None:
         return _ancestor_pids
@@ -833,6 +847,16 @@ def ancestor_pids() -> frozenset[int]:
         if _ancestor_pids is None:
             _ancestor_pids = _compute_ancestor_pids()
     return _ancestor_pids
+
+
+def _shell_pid(api: _Win32) -> int:
+    """PID of the process that owns the Windows shell (desktop) window, 0 if unknown."""
+    try:
+        shell = api.GetShellWindow() or 0
+        return api.pid_tid(shell)[0] if shell else 0
+    except Exception:  # best effort
+        log.debug("GetShellWindow failed", exc_info=True)
+        return 0
 
 
 def _compute_ancestor_pids() -> frozenset[int]:
@@ -844,6 +868,18 @@ def _compute_ancestor_pids() -> frozenset[int]:
     except Exception:  # best effort, never fatal
         log.debug("process snapshot failed", exc_info=True)
         return frozenset()
+    chain = _ancestor_chain(api, table)
+    # Launchers are not the agent's host: the Windows shell (Explorer: desktop, taskbar, File
+    # Explorer windows) and system/session processes that start programs. Counting them would
+    # make their windows "the agent's own" and refuse ordinary input there.
+    shell = _shell_pid(api)
+    return frozenset(
+        p for p in chain if p != shell and table.get(p, (0, ""))[1] not in _LAUNCHER_PROCESSES
+    )
+
+
+def _ancestor_chain(api: _Win32, table: dict[int, tuple[int, str]]) -> list[int]:
+    """This process's parents, nearest first, stopping where a PID was reused."""
     me = os.getpid()
     chain: list[int] = []
     child, child_time = me, api.creation_time(me)
@@ -858,7 +894,7 @@ def _compute_ancestor_pids() -> frozenset[int]:
         chain.append(parent)
         seen.add(parent)
         child, child_time = parent, parent_time
-    return frozenset(chain)
+    return chain
 
 
 # --------------------------------------------------------------------------- COM / UI Automation

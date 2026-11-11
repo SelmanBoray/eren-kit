@@ -521,6 +521,21 @@ def assert_error(reply: Reply, *needles: str) -> str:
     return text
 
 
+def merged_text_inputs(desk: FakeDesktop) -> list[tuple[str, dict[str, Any]]]:
+    """``desk.inputs`` with consecutive type_text calls joined into one.
+
+    The server may type a text in several pieces (it re-checks safety between them); what
+    matters is the text that reached the keyboard, not how many calls carried it.
+    """
+    merged: list[tuple[str, dict[str, Any]]] = []
+    for name, args in desk.inputs:
+        if name == "type_text" and merged and merged[-1][0] == "type_text":
+            merged[-1] = ("type_text", {"text": merged[-1][1]["text"] + args["text"]})
+        else:
+            merged.append((name, dict(args)))
+    return merged
+
+
 def shot_line(index: int, count: int, width: int, height: int, window: WindowInfo) -> str:
     """The contract's screenshot line for a 1920 px wide monitor captured at width x height."""
     scale = 1920 / width
@@ -1005,7 +1020,7 @@ def test_type_text_sends_text(desk: FakeDesktop) -> None:
     with connect() as client:
         reply = client.call("type_text", text="Merhaba dünya ğüşıöçİ")
     assert_ok_line(reply)
-    assert desk.inputs == [("type_text", {"text": "Merhaba dünya ğüşıöçİ"})]
+    assert merged_text_inputs(desk) == [("type_text", {"text": "Merhaba dünya ğüşıöçİ"})]
 
 
 def test_key_sends_spec_and_repeat(desk: FakeDesktop) -> None:
@@ -1205,7 +1220,7 @@ def test_keyboard_input_into_ordinary_windows_is_allowed(
     with connect() as client:
         reply = client.call(tool, **args)
     assert_ok_line(reply)
-    assert len(desk.inputs) == 1
+    assert len(merged_text_inputs(desk)) == 1
 
 
 @pytest.mark.parametrize(("tool", "args"), KEYBOARD_ACTIONS)
@@ -1219,7 +1234,7 @@ def test_keyboard_input_into_terminal_allowed_by_config(
     with connect(Config(allow_terminal_input=True)) as client:
         reply = client.call(tool, **args)
     assert_ok_line(reply)
-    assert len(desk.inputs) == 1
+    assert len(merged_text_inputs(desk)) == 1
 
 
 def test_pointer_actions_allowed_while_terminal_is_foreground(desk: FakeDesktop) -> None:

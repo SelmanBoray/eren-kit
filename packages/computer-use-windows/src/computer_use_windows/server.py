@@ -52,6 +52,10 @@ _PASSWORD_RETRY_DELAY = 0.1
 # do not wait for the target; this bound also covers a window that hangs in the middle of it, so
 # a hung app can never hold the server's lock (and with it every later tool call).
 _FOCUS_TIMEOUT = 2.0
+# No foreground window (an activation in progress): asked again this many times, this far apart,
+# before keyboard input is refused (worst case ~150 ms).
+_FOREGROUND_RETRIES = 3
+_FOREGROUND_RETRY_DELAY = 0.05
 
 # Why an elements scan stopped early (uia.ElementList.incomplete), as told to the agent.
 _INCOMPLETE_REASONS = {
@@ -131,6 +135,7 @@ class _Listing:
 
     handle: int
     rect: tuple[int, int, int, int] | None  # None: not in the window list, so not tracked
+    pid: int = 0  # its process; 0 = unknown
 
 
 def _partial(exc: Exception, done: str) -> Exception:
@@ -215,8 +220,14 @@ class _Session:
                 raise stale("its window was minimized since it was listed")
             if _rect(now) != listing.rect:
                 raise stale("its window was moved or resized since it was listed")
+        # The window now at the point must be the element's window, or another window of the
+        # same process: popups that are separate top-level windows (a Win32 combo box list,
+        # menus, tooltips, desktop icons) belong there. Only another process's window on top
+        # makes the id stale (a dialog of the same app over the element is not detected).
         expected = element.window or (listing.handle if listing is not None else 0)
-        if expected and (here is None or here.handle != expected):
+        pid = listing.pid if listing is not None else 0
+        same_process = here is not None and pid != 0 and here.pid == pid
+        if expected and (here is None or (here.handle != expected and not same_process)):
             raise stale(
                 "another window is on top of it now (if its window is in the background, focus "
                 "it first)"
@@ -312,7 +323,7 @@ class _Session:
 
     def _check_keyboard(
         self, typing: bool, corners: list[tuple[int, int]] | None = None
-    ) -> uia.WindowInfo | None:
+    ) -> uia.WindowInfo:
         """Safety for keyboard actions: failsafe, blocklist, terminal, password (typing only).
 
         The keyboard target is the foreground window: refused when it is a terminal (process or
@@ -321,47 +332,60 @@ class _Session:
         Returns the foreground window that passed.
         """
         self._check_failsafe(corners)
-        window = uia.foreground_window()
-        process = window.process if window else None
+        window = self._keyboard_target()
+        process = window.process
         safety.check_blocked(process, self.cfg.blocked_processes)
         safety.check_keyboard_target(
             process,
             self.cfg.allow_terminal_input,
-            window_class=window.class_name if window else "",
-            is_own_host=window is not None and window.pid in uia.ancestor_pids(),
+            window_class=window.class_name,
+            is_own_host=window.pid in uia.ancestor_pids(),
         )
         if typing:
             safety.check_password_field(self._password_state())
         return window
+
+    def _keyboard_target(self) -> uia.WindowInfo:
+        """The foreground window keyboard input would go to; refuses when there is none.
+
+        During an activation change (alt+tab, a dialog closing after Enter) Windows briefly has
+        no foreground window, and keys sent then go to whichever window is activated next, which
+        no check has seen. So it is asked again a few times (at most ~_FOREGROUND_RETRIES x
+        _FOREGROUND_RETRY_DELAY) and the input is refused if it stays unknown.
+        """
+        for attempt in range(_FOREGROUND_RETRIES + 1):
+            if attempt:
+                time.sleep(_FOREGROUND_RETRY_DELAY)
+            window = uia.foreground_window()
+            if window is not None:
+                return window
+        raise safety.SafetyError(
+            "There is no foreground window right now (Windows is switching windows), so keyboard "
+            "input was refused: it would go to a window nobody checked. Wait a moment, check "
+            "with windows, focus the target and retry."
+        )
 
     def _recheck_typing(
         self,
         typed_piece: str,
         window: uia.WindowInfo | None,
         corners: list[tuple[int, int]] | None,
+        first: bool = False,
     ) -> uia.WindowInfo | None:
         """Checks between two pieces of a type_text call (see ``inp.type_text_segments``).
 
-        After Tab/Enter the focus may have moved: wait for it to settle, then run every keyboard
-        check again. After a plain piece only the failsafe and the foreground window are checked
-        (cheap). Either way the text stops when the foreground window changed: Enter may have
-        closed a dialog or launched a program (a console from the Run box), and the rest of the
-        text was meant for the window that was checked.
+        Every keyboard check runs again at every piece boundary, the password field included:
+        the focus can move without Tab/Enter (a letter working as a mnemonic, Space on a button,
+        auto-advancing code fields, scripts). Cost: one UI Automation query per piece, i.e. per
+        Tab/Enter, after the short first piece and per ``inp.TYPE_BATCH_CHARS`` characters.
+        After Tab/Enter and after the first piece the check waits for the focus to settle first.
+        The text also stops when the foreground window changed: Enter may have closed a dialog
+        or launched a program (a console from the Run box), and the rest of the text was meant
+        for the window that was checked.
         """
-        # Whether to re-check depends only on the key typed, never on a delay setting: with a
-        # settle time of 0 the full check still runs, just without waiting first.
-        focus_may_move = typed_piece.endswith(("\t", "\r", "\n"))
-        if focus_may_move:
-            time.sleep(inp.focus_settle_after_text(typed_piece))
-        else:
-            time.sleep(inp.TYPE_BATCH_PAUSE)
-        if focus_may_move:
-            current = self._check_keyboard(typing=True, corners=corners)
-        else:
-            self._check_failsafe(corners)
-            current = uia.foreground_window()
-            if _handle(current) != _handle(window):
-                current = self._check_keyboard(typing=True, corners=corners)  # specific refusal
+        settle = inp.focus_settle_after_text(typed_piece, first=first)
+        time.sleep(settle if settle > 0 else inp.TYPE_BATCH_PAUSE)
+        current = self._check_keyboard(typing=True, corners=corners)
         if _handle(current) != _handle(window):
             raise safety.SafetyError(
                 f"The foreground window changed while typing (now {_describe(current)}), so the "
@@ -440,7 +464,12 @@ class _Session:
         self.by_id = {e.id: e for e in found}
         handle = target if target is not None else 0
         snapshot = next((w for w in listed if w.handle == handle), None)
-        self.listing = _Listing(handle, _rect(snapshot) if snapshot else None) if handle else None
+        known = snapshot or (info if info is not None and info.handle == handle else None)
+        self.listing = (
+            _Listing(handle, _rect(snapshot) if snapshot else None, known.pid if known else 0)
+            if handle
+            else None
+        )
 
         title = _one_line(info.title) if info else "?"
         process = (info.process or "?") if info else "?"
@@ -543,7 +572,7 @@ class _Session:
         for i, piece in enumerate(pieces):
             try:
                 if i:
-                    window = self._recheck_typing(pieces[i - 1], window, corners)
+                    window = self._recheck_typing(pieces[i - 1], window, corners, first=i == 1)
                 inp.type_text(piece)
             except Exception as exc:
                 if not typed:
@@ -559,7 +588,10 @@ class _Session:
 
         A chord can move the focus (tab, enter, shortcuts) or open a window, so every press is
         checked against the then-current foreground window; chords that type a character are also
-        refused in a password field.
+        refused in a password field. Unlike type_text, a change of the foreground window between
+        chords is not an error by itself: switching windows is a normal use of key ("alt+tab
+        enter"), and the next chord is fully checked against the new window before it is sent
+        (no foreground window at all is refused).
         """
         steps = inp.plan_keys(keys, repeat)  # validates (incl. MAX_KEY_EVENTS) before any input
         corners = self._corners()

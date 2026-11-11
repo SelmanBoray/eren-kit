@@ -79,6 +79,11 @@ MODIFIER_SETTLE = 0.02  # modifiers down -> click, and last click -> modifiers u
 KEY_HOLD = 0.012  # chord held down
 KEY_GAP = 0.02  # between chords and repeats
 TYPE_BATCH_CHARS = 50  # characters per SendInput call in type_text (Enter/Tab also end a batch)
+# The first piece of a type_text call is this short. A focus change caused by the text itself
+# most often happens on its first character (a letter that works as an Alt-less mnemonic or a
+# Space while a dialog button has the focus); the safety checks run after every piece, so at most
+# this many characters can land in a field the checks would have refused.
+TYPE_FIRST_PIECE_CHARS = 1
 TYPE_BATCH_PAUSE = 0.01
 SCROLL_INTERVAL = 0.015  # between wheel notches
 DRAG_PRESS_HOLD = 0.05  # button down -> first move
@@ -491,15 +496,16 @@ def focus_settle_after_chord(chord: Sequence[int]) -> float:
     return FOCUS_SETTLE
 
 
-def focus_settle_after_text(piece: str) -> float:
+def focus_settle_after_text(piece: str, first: bool = False) -> float:
     """Seconds to wait after typing ``piece`` before reading the keyboard focus again (0: none).
 
-    Only a piece ending in Tab or Enter (see ``type_text_segments``) may have moved the focus.
+    A piece ending in Tab or Enter (see ``type_text_segments``) is likely to have moved the
+    focus, and so is the short first piece (``first``: a mnemonic letter, Space on a button).
     """
-    if piece.endswith("\t"):
-        return FOCUS_SETTLE_TAB
     if piece.endswith(("\r", "\n")):
         return FOCUS_SETTLE
+    if piece.endswith("\t") or first:
+        return FOCUS_SETTLE_TAB
     return 0.0
 
 
@@ -507,10 +513,11 @@ def type_text_segments(text: str) -> list[str]:
     """Validate ``text`` like ``type_text`` and split it into pieces to type one by one.
 
     A piece ends right after every Enter (``\\n``, ``\\r\\n``, ``\\r``) or Tab, because those can
-    move the keyboard focus, and after ``TYPE_BATCH_CHARS`` characters, so a long text has regular
-    points where it can be stopped. Each piece is one ``type_text`` batch; joined, the pieces give
-    ``text`` back. ``\\r\\n`` and surrogate pairs are never split. Raises ``ValueError`` like
-    ``type_text``.
+    move the keyboard focus, after the first ``TYPE_FIRST_PIECE_CHARS`` characters (the text's
+    own first key may move it too) and then after every ``TYPE_BATCH_CHARS`` characters, so the
+    safety checks run again at regular points of a long text. Each piece is one ``type_text``
+    batch; joined, the pieces give ``text`` back. ``\\r\\n`` and surrogate pairs are never split.
+    Raises ``ValueError`` like ``type_text``.
     """
     _type_text_batches(text)  # validation only
     pieces: list[str] = []
@@ -525,7 +532,8 @@ def type_text_segments(text: str) -> list[str]:
             i += 1  # validated above: a high surrogate here is followed by its low half
         i += 1
         chars += 1
-        if ends or chars >= TYPE_BATCH_CHARS:
+        cap = TYPE_BATCH_CHARS if pieces else TYPE_FIRST_PIECE_CHARS
+        if ends or chars >= cap:
             pieces.append(text[start:i])
             start, chars = i, 0
     if start < length:

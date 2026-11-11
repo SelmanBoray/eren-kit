@@ -31,6 +31,7 @@ import dataclasses
 import functools
 import re
 import sys
+import time
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from datetime import timedelta
@@ -125,7 +126,9 @@ class FakeDesktop:
 
     def __init__(self) -> None:
         self.windows: list[WindowInfo] = [NOTEPAD, KEEPASS, TERMINAL]
-        self.foreground = NOTEPAD.handle
+        self.foreground: int | None = NOTEPAD.handle  # None: no foreground window can be read
+        self.foreground_misses = 0  # the next N foreground queries return None
+        self.char_sends: list[int] = []  # characters (key-downs) per SendInput call that had any
         self.cursor: tuple[int, int] = (960, 540)
         self.password = False  # the focused element is a password field
         self.uia_failures: list[BaseException] = []  # raised by the next focused-element queries
@@ -158,12 +161,16 @@ class FakeDesktop:
 
     def send_input(self, count: int, array: Any, size: int) -> int:
         kinds: set[str] = set()
+        chars = 0
         for i in range(int(count)):
             record = self.apply(array[i])
             self.events.append(record)
             kinds.add(record[0])
+            chars += record[0] == "char" and not record[2]
             if self.on_event is not None:
                 self.on_event(record)
+        if chars:
+            self.char_sends.append(chars)
         self.sends += 1
         if self.on_send is not None:
             self.on_send(kinds)
@@ -211,6 +218,9 @@ class FakeDesktop:
         return [dataclasses.replace(w, foreground=w.handle == self.foreground) for w in ordered]
 
     def foreground_window(self) -> WindowInfo | None:
+        if self.foreground_misses > 0:
+            self.foreground_misses -= 1
+            return None
         return next((w for w in self.list_windows() if w.foreground), None)
 
     def window_at(self, x: int, y: int) -> WindowInfo | None:
@@ -462,12 +472,14 @@ def test_type_text_with_tab_and_enter_types_everything_when_target_stays_safe(
     assert desk.uia_queries >= 4
 
 
-def test_type_text_without_tab_or_enter_is_checked_once(desk: FakeDesktop) -> None:
+def test_type_text_without_tab_or_enter_types_everything(desk: FakeDesktop) -> None:
+    # The password check may run again at every piece boundary (contract addendum), so the
+    # number of checks is not fixed here; only that the text arrives whole.
     text = "Merhaba dünya ğüşıöçİ 😀"
     reply = call("type_text", text=text)
     assert_ok(reply)
     assert desk.typed() == text
-    assert desk.uia_queries == 1
+    assert desk.uia_queries >= 1
 
 
 # --------------------------------------------------------------------------------------------
@@ -554,9 +566,9 @@ def test_type_text_retries_undetectable_password_state_once(
     desk: FakeDesktop, failure: Callable[[], BaseException]
 ) -> None:
     desk.uia_failures = [failure()]
-    reply = call("type_text", text="abc")
+    reply = call("type_text", text="a")  # one character: one piece, so one check (+ one retry)
     assert_ok(reply)
-    assert desk.typed() == "abc"
+    assert desk.typed() == "a"
     assert desk.uia_queries == 2
 
 
@@ -755,3 +767,133 @@ def test_failsafe_still_ignores_the_agents_corner_while_the_cursor_stays_there(
         reply = client.call("key", keys="right")
     assert_ok(reply)
     assert desk.key_downs() == [VK_RIGHT]
+
+
+# --------------------------------------------------------------------------------------------
+# g. type_text re-checks the password field at EVERY piece boundary, not only after Tab/Enter
+# --------------------------------------------------------------------------------------------
+
+LONG_TEXT = "p" + "S3cretPassw0rd!" * 6  # 91 characters, no Tab/Enter
+LONGER_TEXT = "p" + "S3cretPassw0rd!" * 12  # 181 characters: the piece holding char 60 is not last
+
+
+def after_chars(count: int, action: Callable[[], None]) -> Callable[[Event], None]:
+    """Hook: run ``action`` once, right after the ``count``-th character reached the keyboard."""
+    seen = 0
+
+    def hook(event: Event) -> None:
+        nonlocal seen
+        if event[0] == "char" and not event[2]:
+            seen += 1
+            if seen == count:
+                action()
+
+    return hook
+
+
+def test_type_text_stops_when_focus_moves_into_password_field_after_first_char(
+    desk: FakeDesktop,
+) -> None:
+    assert len(LONG_TEXT) == 91
+    desk.on_event = after_chars(1, lambda: setattr(desk, "password", True))
+    reply = call("type_text", text=LONG_TEXT)
+    assert_error(reply, "password")
+    typed = desk.typed()
+    assert LONG_TEXT.startswith(typed)
+    assert 1 <= len(typed) <= inp.TYPE_BATCH_CHARS
+    assert len(typed) < len(LONG_TEXT)
+    assert len(typed) in numbers_in(reply.text), reply.text
+
+
+@pytest.mark.parametrize("text", [LONG_TEXT, LONGER_TEXT], ids=["91", "181"])
+def test_type_text_stops_at_the_first_piece_boundary_after_focus_moves(
+    desk: FakeDesktop, text: str
+) -> None:
+    desk.on_event = after_chars(60, lambda: setattr(desk, "password", True))
+    reply = call("type_text", text=text)
+    # The SendInput call that carried character 60 ends its piece; nothing may follow it.
+    sent, piece = 0, 0
+    while sent < 60:
+        sent += desk.char_sends[piece]
+        piece += 1
+    assert len(desk.char_sends) == piece, desk.char_sends
+    typed = desk.typed()
+    assert typed == text[:sent]
+    if sent < len(text):
+        assert_error(reply, "password")
+        assert sent in numbers_in(reply.text), reply.text
+    if text is LONGER_TEXT:
+        assert sent < len(text)
+
+
+def test_type_text_without_focus_change_types_all_pieces(desk: FakeDesktop) -> None:
+    reply = call("type_text", text=LONG_TEXT)
+    assert_ok(reply)
+    assert desk.typed() == LONG_TEXT
+
+
+@pytest.mark.parametrize("failure", UIA_FAILURES)
+def test_type_text_stops_when_password_state_becomes_undetectable_at_a_piece_boundary(
+    desk: FakeDesktop, failure: Callable[[], BaseException]
+) -> None:
+    def fail_from_now_on() -> None:
+        desk.uia_failures = [failure() for _ in range(10)]
+
+    desk.on_event = after_chars(1, fail_from_now_on)
+    reply = call("type_text", text=LONG_TEXT)
+    assert_error(reply)
+    typed = desk.typed()
+    assert 1 <= len(typed) <= inp.TYPE_BATCH_CHARS
+    assert len(typed) < len(LONG_TEXT)
+
+
+# --------------------------------------------------------------------------------------------
+# h. no keyboard input while the foreground window cannot be read
+# --------------------------------------------------------------------------------------------
+
+
+@pytest.fixture
+def slept(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """Fake sleep: retries must not wait in real time."""
+    calls: list[float] = []
+    monkeypatch.setattr(time, "sleep", calls.append)
+    return calls
+
+
+KEYBOARD_CALLS = [
+    pytest.param("key", {"keys": "a b c"}, id="key"),
+    pytest.param("type_text", {"text": "abc"}, id="type_text"),
+]
+
+
+@pytest.mark.parametrize(("tool", "args"), KEYBOARD_CALLS)
+def test_keyboard_input_refused_while_foreground_window_is_unknown(
+    desk: FakeDesktop, slept: list[float], tool: str, args: dict[str, Any]
+) -> None:
+    desk.foreground = None
+    reply = call(tool, **args)
+    assert_error(reply)
+    assert desk.events == []
+
+
+@pytest.mark.parametrize(("tool", "args"), KEYBOARD_CALLS)
+def test_keyboard_input_retries_an_unknown_foreground_window(
+    desk: FakeDesktop, slept: list[float], tool: str, args: dict[str, Any]
+) -> None:
+    desk.foreground_misses = 1
+    reply = call(tool, **args)
+    assert_ok(reply)
+    if tool == "type_text":
+        assert desk.typed() == "abc"
+    else:
+        assert desk.key_downs() == [VK_A, VK_A + 1, VK_A + 2]
+
+
+def test_key_stops_when_foreground_window_becomes_unknown_between_chords(
+    desk: FakeDesktop, slept: list[float]
+) -> None:
+    desk.on_event = after_key_down(VK_A, lambda: setattr(desk, "foreground", None))
+    reply = call("key", keys="a b c")
+    assert_error(reply)
+    assert desk.key_downs() == [VK_A]
+    assert desk.unreleased() == []

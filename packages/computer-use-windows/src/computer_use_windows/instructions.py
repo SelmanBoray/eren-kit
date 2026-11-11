@@ -72,8 +72,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Type text into the focused control of the foreground window (Unicode, any keyboard"
         ' layout; "\\n" = Enter, "\\t" = Tab). Focus the window and click the field first.'
         " Refused when a terminal is in front. Never type passwords or other secrets: password"
-        " fields are refused; ask the user to enter them. Re-checked after each Tab/Enter: if"
-        " refused there, the error says how many characters were typed. Use key for shortcuts."
+        " fields are refused; ask the user to enter them. Re-checked while typing: if refused"
+        " midway, the error says how many characters were typed. Use key for shortcuts."
         " Returns one line."
     ),
     "key": (
