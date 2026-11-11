@@ -3,7 +3,8 @@
 install.ps1 tarafından çağrılır; elle çalıştırmak da güvenlidir.
 
     python -I settings_hooks.py --settings <yol> --repo <repo> --components devir,orkestra,kapi
-        [--uninstall] [--dry-run] [--replace-legacy] [--backup-dir <klasör>] [--python <komut>]
+        [--uninstall] [--dry-run] [--keep-legacy | --replace-legacy] [--backup-dir <klasör>]
+        [--python <komut>]
 
 --python: hook komutlarındaki yorumlayıcı. Varsayılan "python" (Windows'ta PATH'teki python).
 macOS'ta "python" komutu genelde yoktur; install.sh 3.11+ bir python3'ün yolunu verir.
@@ -13,12 +14,25 @@ ikiye katlanmaz, yerinde güncellenir.
 Kurallar:
 - Var olan ayarlar ve başka hook'lar korunur; yalnız eren-kit'in hook'ları eklenir/güncellenir.
 - Bir hook "bizim" sayılır, komutu repo-göreli betik yolunu içeriyorsa
-  (ör. ".../packages/bellek/src/bellek/devir/hook.py"). Böylece repo taşınmışsa eski
-  kayıt güncellenir, aynı komut iki kez eklenmez.
-- Bir bileşen bir olay için grup düzeyi "matcher" isteyebilir (ör. kapi: PreToolUse + "Read");
-  matcher'sız bileşenlerin grubu yalnız "hooks" alanını taşır.
+  (ör. ".../packages/bellek/src/bellek/devir/hook.py") ya da betiği modül olarak
+  çalıştırıyorsa ("python -m bellek.devir.hook"). Tanıma yazılış biçiminden bağımsızdır:
+  ters/düz bölü, art arda ayraçlar (JSON'da "C:\\\\x\\\\y"), tırnak ve büyük/küçük harf
+  farkı aynı yol sayılır. Böylece repo taşınmışsa eski kayıt güncellenir, aynı komut iki
+  kez eklenmez.
+- Kurulumda bir bileşenin her olayında tek bir grup kalır: o olaydaki bütün eski
+  kayıtlarımız (yinelenen gruplar dahil) çıkarılır, yenisi ilk eşleşmenin yerine konur.
+- Repo dışındaki eski kopyaların kayıtları (ör. "C:/Bellek/src/bellek/kapi/hook.py")
+  varsayılanda yenisiyle değiştirilir (yedek alınarak). --keep-legacy verilirse korunur
+  ve özetteki "legacy" listesinde bildirilir. --replace-legacy eski uyumluluk içindir
+  (artık varsayılanla aynı).
+- Bir bileşen bir olay için grup düzeyi "matcher" isteyebilir (ör. kapi: PreToolUse +
+  "Read", SessionStart + "compact"); matcher'sız bileşenlerin grubu yalnız "hooks" alanını taşır.
+- Kaldırmada (--uninstall) bizim kayıtlarımız bütün olaylardan çıkarılır; eski kopyalara
+  dokunulmaz.
 - Değişiklik yoksa dosyaya dokunulmaz. Değişiklik varsa önce yedek alınır
   (--backup-dir verildiyse ve bu çalıştırmada henüz alınmadıysa).
+- Dosya okunduktan sonra yazılmadan önce başka bir süreç (ör. açık Claude Code) değiştirmişse
+  üzerine yazılmaz: yeniden okunur, değişiklik yeniden uygulanır (sınırlı deneme).
 - Dosya UTF-8 (BOM'suz), 2 boşluk girintili yazılır.
 Çıktı: stdout'a tek satır ASCII JSON özet.
 """
@@ -29,21 +43,39 @@ import argparse
 import copy
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
+import time
 
 DEVIR_TAIL = "/packages/bellek/src/bellek/devir/hook.py"
 ORKESTRA_TAIL = "/packages/opus-orkestra/hooks/opus-orkestra-sessionstart.py"
 KAPI_TAIL = "/packages/bellek/src/bellek/kapi/hook.py"
 
-# Repo dışından kurulmuş olası eski kopyalar: varsayılan olarak yalnız uyarılır;
-# --replace-legacy (install.ps1 -ReplaceExisting) verilirse kayıtları kaldırılır.
+# Betiğin "python -m <modül>" biçimi de bizim kaydımız sayılır (aynı bileşen).
+MODULES = {
+    DEVIR_TAIL: "bellek.devir.hook",
+    KAPI_TAIL: "bellek.kapi.hook",
+}
+
+# Repo dışından kurulmuş olası eski kopyalar (aynı betik, başka konum). Varsayılanda
+# kayıtları yenisiyle değiştirilir; --keep-legacy verilirse yalnız bildirilir.
 LEGACY_HINTS = {
     "devir": "/bellek/devir/hook.py",
     "orkestra": "opus-orkestra-sessionstart.py",
     "kapi": "/bellek/kapi/hook.py",
 }
+
+# Yazım koruması: okuma ile yazma arasında dosya değişirse yeniden deneme sayısı.
+WRITE_ATTEMPTS = 5
+# os.replace hedef dosya başka süreçte açıkken (Windows) geçici PermissionError verebilir.
+REPLACE_TRIES = 8
+REPLACE_DELAY = 0.05  # saniye; her denemede ikiye katlanır (en kötü durumda toplam ~6,4 s)
+
+
+class SettingsChanged(Exception):
+    """settings.json okunduktan sonra başka bir süreç tarafından değiştirildi."""
 
 
 def _quote_exe(python: str) -> str:
@@ -54,11 +86,12 @@ def _quote_exe(python: str) -> str:
 def hook_specs(repo: str, python: str = "python") -> dict:
     """Bileşen -> {"tail", "events": {olay: [handler]}, isteğe bağlı "matchers": {olay: matcher}}."""
     py = _quote_exe(python)
-    devir_cmd = f'{py} -I "{repo}{DEVIR_TAIL}" || true'
+    # -S: site atlanır (devir hook'u yalnız stdlib + kendi paketi; açılış ~15 ms kısalır).
+    devir_cmd = f'{py} -I -S "{repo}{DEVIR_TAIL}" || true'
     ork = f"{repo}{ORKESTRA_TAIL}"
     ork_hooks = []
     for n in range(1, 5):
-        h = {"type": "command", "command": f'{py} -I "{ork}" --parca {n}', "timeout": 15}
+        h = {"type": "command", "command": f'{py} -I "{ork}" --parca {n} || true', "timeout": 15}
         if n == 1:
             h["statusMessage"] = "Opus Orkestra kuralı yükleniyor..."
         ork_hooks.append(h)
@@ -82,8 +115,12 @@ def hook_specs(repo: str, python: str = "python") -> dict:
         },
         "kapi": {
             "tail": KAPI_TAIL,
-            "events": {"PreToolUse": kapi_hooks},
-            "matchers": {"PreToolUse": "Read"},
+            "events": {
+                "PreToolUse": kapi_hooks,
+                # Sıkıştırma sonrası "harita gösterildi" işaretlerini sıfırlar (aynı komut).
+                "SessionStart": [{"type": "command", "command": kapi_cmd, "timeout": 10}],
+            },
+            "matchers": {"PreToolUse": "Read", "SessionStart": "compact"},
         },
     }
 
@@ -95,26 +132,56 @@ def make_group(handlers: list, matcher: str | None) -> dict:
     return group
 
 
+_SEP_RUN = re.compile(r"/{2,}")
+
+
 def norm(s: str) -> str:
-    return s.replace("\\", "/").lower()
+    """Yol karşılaştırması için: ters bölü -> düz bölü, art arda ayraçlar teke, küçük harf."""
+    return _SEP_RUN.sub("/", s.replace("\\", "/")).lower()
+
+
+def _norm_cmd(cmd: str) -> str:
+    """Komut metni için norm(); tırnaklar boşluğa çevrilir (yol sınırı gibi davranır)."""
+    return norm(cmd.replace('"', " ").replace("'", " "))
+
+
+# Yolun bittiğini gösteren karakterler: metin sonu, boşluk, kabuk işleçleri.
+_END = r"(?=$|[\s;|&)<>,])"
+
+
+def _path_in(cmd: str, path: str) -> bool:
+    """path (normalize) komutta tam bir yol parçası olarak geçiyor mu ("hook.pyc" eşleşmez)."""
+    p = norm(path)
+    start = "" if p.startswith("/") else r"(?<![\w.\-])"
+    return re.search(start + re.escape(p) + _END, _norm_cmd(cmd)) is not None
+
+
+def _module_in(cmd: str, module: str) -> bool:
+    """Komut betiği "-m <modül>" biçiminde çalıştırıyor mu."""
+    pat = r"(?:^|\s)-m\s*" + re.escape(module.lower()) + _END
+    return re.search(pat, _norm_cmd(cmd)) is not None
+
+
+def _command(hook) -> str | None:
+    if isinstance(hook, dict) and isinstance(hook.get("command"), str):
+        return hook["command"]
+    return None
 
 
 def is_ours(hook, tail: str) -> bool:
-    return (
-        isinstance(hook, dict)
-        and isinstance(hook.get("command"), str)
-        and norm(tail) in norm(hook["command"])
-    )
+    cmd = _command(hook)
+    if cmd is None:
+        return False
+    if _path_in(cmd, tail):
+        return True
+    mod = MODULES.get(tail)
+    return mod is not None and _module_in(cmd, mod)
 
 
 def is_legacy(hook, key: str, tail: str) -> bool:
-    """Aynı betiğin repo dışındaki eski bir kopyası (ör. D:/eski-kopya/.../devir/hook.py)."""
-    return (
-        isinstance(hook, dict)
-        and isinstance(hook.get("command"), str)
-        and norm(LEGACY_HINTS[key]) in norm(hook["command"])
-        and not is_ours(hook, tail)
-    )
+    """Aynı betiğin repo dışındaki eski bir kopyası (ör. C:/Bellek/src/bellek/kapi/hook.py)."""
+    cmd = _command(hook)
+    return cmd is not None and _path_in(cmd, LEGACY_HINTS[key]) and not is_ours(hook, tail)
 
 
 def strip_event(groups: list, pred):
@@ -165,7 +232,22 @@ def load(path: str):
     return data, True
 
 
-def write_atomic(path: str, data: dict) -> None:
+_ANY = object()
+
+
+def _current_bytes(path: str):
+    """Dosyanın ham baytları; yoksa None. Yazım korumasında karşılaştırılır."""
+    try:
+        with open(path, "rb") as f:
+            return f.read()
+    except FileNotFoundError:
+        return None
+
+
+def write_atomic(path: str, data: dict, expected=_ANY) -> None:
+    """Atomik yazım. expected verilirse (ham bayt; None = dosya yoktu) dosya o haldeyse yazılır,
+    değilse SettingsChanged fırlatılır. Geçici PermissionError'da (Windows'ta dosya başka süreçte
+    açıkken, antivirüs) artan beklemeyle yeniden denenir."""
     # settings.json bir sembolik bağ olabilir (ör. dotfiles deposu): bağı koparmamak için
     # hedef dosyanın kendisi atomik olarak değiştirilir.
     target = os.path.realpath(path)
@@ -175,26 +257,40 @@ def write_atomic(path: str, data: dict) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
             f.write(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
-        os.replace(tmp, target)
+        delay = REPLACE_DELAY
+        for i in range(REPLACE_TRIES):
+            try:
+                if expected is not _ANY and _current_bytes(target) != expected:
+                    raise SettingsChanged(target)
+                os.replace(tmp, target)
+                break
+            except PermissionError as e:
+                if i == REPLACE_TRIES - 1:
+                    raise PermissionError(
+                        f"settings.json yazılamadı ({target}): dosya başka bir süreç tarafından "
+                        f"kullanılıyor ya da erişim yok ({REPLACE_TRIES} deneme): {e}"
+                    ) from e
+                time.sleep(delay)
+                delay *= 2
     except BaseException:
         if os.path.exists(tmp):
             os.remove(tmp)
         raise
 
 
-def run(args) -> dict:
-    repo = args.repo.replace("\\", "/").rstrip("/")
-    specs = hook_specs(repo, args.python)
-    keys = [k.strip() for k in args.components.split(",") if k.strip()]
-    for k in keys:
-        if k not in specs:
-            raise ValueError(f"bilinmeyen hook bileşeni: {k}")
-
-    original, existed = load(args.settings)
+def _apply(original: dict, args, specs: dict, keys: list) -> tuple[dict, dict]:
+    """Bellekteki ayarlara bileşenleri uygular. Doner: (yeni veri, rapor)."""
     data = copy.deepcopy(original)
     hooks = data.get("hooks", {})
     if not isinstance(hooks, dict):
         raise ValueError('"hooks" alanı bir JSON nesnesi değil')
+    replace_legacy = bool(getattr(args, "replace_legacy", False)) or not getattr(args, "keep_legacy", False)
+
+    def set_event(event: str, groups: list) -> None:
+        if groups:
+            hooks[event] = groups
+        else:
+            hooks.pop(event, None)  # olay listesinde yalnız bizimkiler vardı
 
     report = {"components": {}}
     for k in keys:
@@ -202,38 +298,38 @@ def run(args) -> dict:
         tail = spec["tail"]
         matchers = spec.get("matchers", {})
         added = removed_total = legacy_removed = 0
-        if args.replace_legacy and not args.uninstall:
-            # Eski kopyalar her olaydan çıkarılır; bizimki ilgili olayda onların yerine konur.
-            legacy_pos = {}
+        legacy_pos = {}
+        if args.uninstall:
+            # Bizim kayıtlarımız hangi olayda olursa olsun çıkarılır; eski kopyalara dokunulmaz.
             for event in list(hooks.keys()):
                 groups = hooks[event]
                 if not isinstance(groups, list):
                     continue
-                groups, first, n = strip_event(groups, lambda h, k=k, t=tail: is_legacy(h, k, t))
+                groups, _, n = strip_event(groups, lambda h, t=tail: is_ours(h, t))
                 if n:
-                    legacy_removed += n
-                    legacy_pos[event] = first
-                    if groups:
-                        hooks[event] = groups
-                    else:
-                        hooks.pop(event)
+                    removed_total += n
+                    set_event(event, groups)
         else:
-            legacy_pos = {}
-        for event, desired in spec["events"].items():
-            groups = hooks.get(event, [])
-            if not isinstance(groups, list):
-                raise ValueError(f'"hooks.{event}" bir liste değil')
-            groups, first, removed = strip_event(groups, lambda h, t=tail: is_ours(h, t))
-            if first is None:
-                first = legacy_pos.get(event)
-            removed_total += removed
-            if args.uninstall:
-                if removed and not groups:
-                    hooks.pop(event, None)  # olay listesinde yalnız bizimkiler vardı
-                elif event in hooks:
-                    hooks[event] = groups
-            else:
-                pos = len(groups) if first is None else min(first, len(groups))
+            if replace_legacy:
+                # Eski kopyalar her olaydan çıkarılır; bizimki ilgili olayda onların yerine konur.
+                for event in list(hooks.keys()):
+                    groups = hooks[event]
+                    if not isinstance(groups, list):
+                        continue
+                    groups, first, n = strip_event(groups, lambda h, k=k, t=tail: is_legacy(h, k, t))
+                    if n:
+                        legacy_removed += n
+                        legacy_pos[event] = first
+                        set_event(event, groups)
+            for event, desired in spec["events"].items():
+                groups = hooks.get(event, [])
+                if not isinstance(groups, list):
+                    raise ValueError(f'"hooks.{event}" bir liste değil')
+                # Olaydaki bütün kayıtlarımız (yinelenen gruplar dahil) çıkar, tek grup girer.
+                groups, first, removed = strip_event(groups, lambda h, t=tail: is_ours(h, t))
+                removed_total += removed
+                cands = [p for p in (first, legacy_pos.get(event)) if p is not None]
+                pos = min(min(cands), len(groups)) if cands else len(groups)
                 groups.insert(pos, make_group(desired, matchers.get(event)))
                 hooks[event] = groups
                 added += len(desired)
@@ -247,23 +343,66 @@ def run(args) -> dict:
     removed_any = any(c["removed"] or c["legacy_removed"] for c in report["components"].values())
     if hooks:
         data["hooks"] = hooks
-    elif args.uninstall and removed_any:
+    elif removed_any:
         data.pop("hooks", None)  # yalnız bizim hook'larımız vardı
+    return data, report
 
-    changed = data != original
-    report.update(
-        {"settings": args.settings, "existed": existed, "changed": changed, "backup": None,
-         "dry_run": bool(args.dry_run)}
-    )
-    if changed and not args.dry_run:
+
+def _write_backup(dest: str, src: str, raw: bytes) -> None:
+    """Yedek: okunan özgün baytlar (okuma ile kopyalama arasındaki değişiklik yedeğe karışmaz)."""
+    with open(dest, "wb") as f:
+        f.write(raw)
+    try:
+        shutil.copystat(src, dest)
+    except OSError:
+        pass
+
+
+def run(args) -> dict:
+    repo = args.repo.replace("\\", "/").rstrip("/")
+    specs = hook_specs(repo, args.python)
+    keys = [k.strip() for k in args.components.split(",") if k.strip()]
+    for k in keys:
+        if k not in specs:
+            raise ValueError(f"bilinmeyen hook bileşeni: {k}")
+
+    backup_made = False  # bu çağrı yedeği kendisi oluşturduysa yeniden denemede tazelenir
+    for attempt in range(WRITE_ATTEMPTS):
+        # Ham bayt load'dan ÖNCE alınır: ikisi arasında dosya değişirse yazım denetimi
+        # (expected=raw) bunu yakalar ve tur yeniden başlar; değişiklik kaybolmaz.
+        raw = _current_bytes(args.settings)
+        original, existed = load(args.settings)
+        data, report = _apply(original, args, specs, keys)
+        changed = data != original
+        report.update(
+            {"settings": args.settings, "existed": existed, "changed": changed, "backup": None,
+             "dry_run": bool(args.dry_run)}
+        )
+        if not changed or args.dry_run:
+            return report
+        if existed != (raw is not None):  # iki okuma arasında dosya oluştu/silindi
+            time.sleep(0.05 * (attempt + 1))
+            continue
         if existed and args.backup_dir:
             os.makedirs(args.backup_dir, exist_ok=True)
             dest = os.path.join(args.backup_dir, "settings.json")
-            if not os.path.exists(dest):  # bu çalıştırmanın ilk (özgün) hali korunur
-                shutil.copy2(args.settings, dest)
+            if backup_made or not os.path.exists(dest):  # bu çalıştırmanın ilk (özgün) hali korunur
+                _write_backup(dest, args.settings, raw)
+                backup_made = True
             report["backup"] = dest
-        write_atomic(args.settings, data)
-    return report
+        try:
+            write_atomic(args.settings, data, expected=raw)
+        except SettingsChanged:
+            time.sleep(0.05 * (attempt + 1))
+            continue
+        if attempt:
+            report["retries"] = attempt
+        return report
+    raise RuntimeError(
+        f"settings.json okunduktan sonra başka bir süreç tarafından değiştirildi; "
+        f"{WRITE_ATTEMPTS} denemede tutarlı yazılamadı. Dosyayı açık tutan programı "
+        f"(ör. Claude Code ayar ekranı) kapatıp yeniden deneyin."
+    )
 
 
 def main(argv=None) -> int:
@@ -273,8 +412,11 @@ def main(argv=None) -> int:
     p.add_argument("--components", required=True)
     p.add_argument("--uninstall", action="store_true")
     p.add_argument("--dry-run", action="store_true")
-    p.add_argument("--replace-legacy", action="store_true",
-                   help="aynı betiğin repo dışındaki eski kopyalarının hook kayıtlarını kaldır")
+    legacy = p.add_mutually_exclusive_group()
+    legacy.add_argument("--keep-legacy", action="store_true",
+                        help="aynı betiğin repo dışındaki eski kopyalarının hook kayıtlarını koru (yalnız bildir)")
+    legacy.add_argument("--replace-legacy", action="store_true",
+                        help="eski kopyaların kayıtlarını yenisiyle değiştir (varsayılan; uyumluluk için)")
     p.add_argument("--backup-dir")
     p.add_argument("--python", default="python",
                    help='hook komutlarındaki yorumlayıcı (varsayılan "python")')
