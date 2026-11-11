@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # eren-kit macOS kurulumu: Python 3.11+ bulur ve scripts/installer/install_macos.py'yi çalıştırır.
 #   ./install.sh --dry-run            # ne değişeceğini göster, hiçbir şeyi değiştirme
-#   ./install.sh --assistant-name Ada # varsayılan bileşenleri kur (beyin, devir, orkestra)
+#   ./install.sh --assistant-name Ada # varsayılan bileşenleri kur (beyin, devir, kapi, orkestra)
+#   ./install.sh --doctor             # yalnız kurulum doktoru (salt okunur; --json ile JSON)
 #   ./install.sh --help
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -15,7 +16,8 @@ for c in python3 python3.14 python3.13 python3.12 python3.11 /opt/homebrew/bin/p
   # pyenv/asdf shim'i hook'lara yazılırsa sürüm her projenin .python-version'ına göre değişir:
   # gerçek yorumlayıcı yolu kullanılır.
   case "$p" in */shims/*) hook_py=$("$p" -c 'import sys; print(sys.executable)') ;; esac
-  exec "$p" -I scripts/installer/install_macos.py --hook-python "$hook_py" "$@"
+  # -B: depoda __pycache__ bırakılmaz (--dry-run hiçbir şeyi değiştirmez).
+  exec "$p" -I -B scripts/installer/install_macos.py --hook-python "$hook_py" "$@"
 done
 echo "Python 3.11+ bulunamadı. Kur: brew install python@3.13  (ya da https://www.python.org/downloads/macos/)" >&2
 exit 1

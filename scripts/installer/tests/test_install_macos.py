@@ -17,6 +17,13 @@ import install_macos as im  # noqa: E402
 import settings_hooks  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def doktor_calismaz(request, monkeypatch):
+    """main() kurulum sonunda gerçek doktoru (canlı sorgularla) çalıştırmasın; test_doktor_* hariç."""
+    if not request.node.name.startswith("test_doktor"):
+        monkeypatch.setattr(im, "post_install_doctor", lambda ctx: None)
+
+
 def _ctx(tmp_path: Path, **kw) -> im.Ctx:
     home = tmp_path / "claude"
     home.mkdir(exist_ok=True)
@@ -33,7 +40,7 @@ def _hooks(settings: Path) -> list[str]:
 
 def test_varsayilan_yorumlayici_windows_ile_ayni():
     spec = settings_hooks.hook_specs("C:/r")
-    assert spec["devir"]["events"]["Stop"][0]["command"] == 'python -I "C:/r/packages/bellek/src/bellek/devir/hook.py" || true'
+    assert spec["devir"]["events"]["Stop"][0]["command"] == 'python -I -S "C:/r/packages/bellek/src/bellek/devir/hook.py" || true'
 
 
 def test_bosluklu_yorumlayici_tirnaklanir():
@@ -358,6 +365,117 @@ def test_main_kapi_hook_yorumlayiciyla_ve_filtreyle_kaydolur(tmp_path, monkeypat
     assert all(h.get("if", "").startswith("Read(") for h in hs)
     assert im.main(args + ["--uninstall"]) == 0
     assert "PreToolUse" not in json.loads((home / "settings.json").read_text(encoding="utf-8")).get("hooks", {})
+
+
+# ---------------------------------------------------------------- eski kopya hook kayıtları
+
+_ESKI_KAPI = 'python -I "C:/Bellek/src/bellek/kapi/hook.py"'
+
+
+def _eski_kopyali_settings(home: Path) -> None:
+    (home / "settings.json").write_text(json.dumps({"hooks": {"PreToolUse": [{"matcher": "Read", "hooks": [
+        {"type": "command", "command": _ESKI_KAPI}]}]}}), encoding="utf-8")
+
+
+def test_eski_kopya_varsayilanda_degistirilir(tmp_path):
+    ctx = _ctx(tmp_path)
+    _eski_kopyali_settings(ctx.claude_home)
+    r = im.settings_hooks_step(ctx, "kapi")
+    assert r.status == "ok" and "eski kopyanın 1 hook kaydı kaldırıldı" in r.message
+    assert _ESKI_KAPI not in _hooks(ctx.settings)
+    assert (ctx.backup_dir / "settings.json").exists()
+
+
+def test_eski_kopya_keep_existing_ile_korunur(tmp_path):
+    ctx = _ctx(tmp_path, keep_existing=True)
+    _eski_kopyali_settings(ctx.claude_home)
+    r = im.settings_hooks_step(ctx, "kapi")
+    assert r.status == "warn" and "--keep-existing olmadan" in r.message
+    assert "--replace-existing" not in r.message
+    assert _ESKI_KAPI in _hooks(ctx.settings)
+
+
+def test_keep_ve_replace_birlikte_verilemez(tmp_path):
+    with pytest.raises(SystemExit):
+        im.parse(["--keep-existing", "--replace-existing"])
+
+
+# ---------------------------------------------------------------- kurulum doktoru
+
+def test_doktor_komutu_claude_home_ve_json_gecer(tmp_path):
+    cmd = im.doctor_command(tmp_path, as_json=True)
+    assert cmd[:3] == [sys.executable, "-I", "-B"] and cmd[3].endswith("doktor.py")
+    assert cmd[4:] == ["--claude-home", str(tmp_path), "--json"]
+    assert "--claude-home" not in im.doctor_command(None)
+
+
+def test_doktor_yalniz_doktoru_calistirir_cikis_kodunu_dondurur(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(im.subprocess, "run",
+                        lambda cmd, **kw: calls.append(cmd) or im.subprocess.CompletedProcess(cmd, 1))
+    monkeypatch.setattr(im, "build_steps", lambda ctx: pytest.fail("kurulum adımı çalıştı"))
+    assert im.main(["--doctor", "--claude-home", str(tmp_path), "--json"]) == 1
+    assert len(calls) == 1 and calls[0][-3:] == ["--claude-home", str(tmp_path), "--json"]
+    assert not any(tmp_path.iterdir())
+
+
+def test_doktor_dry_run_calistirmaz(tmp_path, monkeypatch):
+    monkeypatch.setattr(im.subprocess, "run", lambda *a, **k: pytest.fail("doktor çalıştı"))
+    assert im.main(["--doctor", "--dry-run", "--claude-home", str(tmp_path)]) == 0
+
+
+def test_doktor_json_tek_basina_reddedilir(tmp_path):
+    assert im.main(["--json", "--claude-home", str(tmp_path)]) == 2
+
+
+@pytest.mark.parametrize("kod", [0, 1, 2, 7])
+def test_doktor_kurulum_sonu_cikis_kodunu_degistirmez(tmp_path, monkeypatch, capsys, kod):
+    monkeypatch.setenv("EREN_KIT_FORCE_MACOS", "1")
+    home = tmp_path / "claude"
+    home.mkdir()
+    seen = []
+
+    def sahte_doktor(cmd, **kw):
+        seen.append(cmd)
+        return im.subprocess.CompletedProcess(cmd, kod, "[uyarı] örnek: ayrıntı\n", "")
+
+    orig_ctx = im.Ctx
+    monkeypatch.setattr(im, "Ctx", lambda *a, **kw: orig_ctx(*a, **{**kw, "run": sahte_doktor}))
+    args = ["--components", "kapi", "--claude-home", str(home), "--skip-mcp", "--no-service",
+            "--skip-repo-setup", "--hook-python", sys.executable]
+    assert im.main(args) == 0
+    assert len(seen) == 1 and seen[0][-2:] == ["--claude-home", str(home.resolve())]
+    out = capsys.readouterr().out
+    assert "Kurulum doktoru" in out and "örnek: ayrıntı" in out
+
+
+def test_doktor_cokerse_kurulum_basarili_biter(tmp_path, monkeypatch):
+    monkeypatch.setenv("EREN_KIT_FORCE_MACOS", "1")
+    home = tmp_path / "claude"
+    home.mkdir()
+
+    def patlayan(cmd, **kw):
+        raise OSError("yok")
+
+    orig_ctx = im.Ctx
+    monkeypatch.setattr(im, "Ctx", lambda *a, **kw: orig_ctx(*a, **{**kw, "run": patlayan}))
+    args = ["--components", "kapi", "--claude-home", str(home), "--skip-mcp", "--no-service",
+            "--skip-repo-setup", "--hook-python", sys.executable]
+    assert im.main(args) == 0
+
+
+def test_doktor_kurulum_dry_run_da_calismaz(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("EREN_KIT_FORCE_MACOS", "1")
+    home = tmp_path / "claude"
+    home.mkdir()
+    orig_ctx = im.Ctx
+    monkeypatch.setattr(im, "Ctx", lambda *a, **kw: orig_ctx(
+        *a, **{**kw, "run": lambda *x, **y: pytest.fail("dry-run komut çalıştırdı")}))
+    args = ["--components", "kapi", "--claude-home", str(home), "--skip-mcp", "--no-service",
+            "--skip-repo-setup", "--hook-python", sys.executable, "--dry-run"]
+    assert im.main(args) == 0
+    assert "doktor çalıştırılır" in capsys.readouterr().out
+    assert list(home.iterdir()) == []
 
 
 @pytest.mark.parametrize("bilesen", ["computer-use"])

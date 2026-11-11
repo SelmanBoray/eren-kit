@@ -1,14 +1,19 @@
 """eren-kit macOS kurulum betiği (install.sh tarafından çağrılır; install.ps1'in macOS karşılığı).
 
     ./install.sh [--components beyin,devir,kapi,orkestra] [--assistant-name AD] [--claude-home KLASÖR]
-                 [--dry-run] [--uninstall] [--skip-mcp] [--no-service] [--replace-existing]
+                 [--dry-run] [--uninstall] [--skip-mcp] [--no-service] [--keep-existing]
                  [--tailscale-host HOST] [--help]
+    ./install.sh --doctor [--json] [--claude-home KLASÖR]   # yalnız kurulum doktoru (salt okunur)
 
 Kurallar install.ps1 ile aynıdır:
 - settings.json birleştirilir (settings_hooks.py), üzerine yazılmaz; değişen her dosya önce
   <ClaudeHome>/backups/eren-kit/<zaman>/ altına yedeklenir.
 - Yeniden çalıştırmak güvenlidir: değişeni günceller, kendi kayıtlarını ikiye katlamaz.
 - Kaldırma yalnız eren-kit'in kurduğunu kaldırır; venv'ler ve kullanıcı verisi silinmez.
+- Aynı hook betiklerinin repo dışındaki eski kopyalarının kayıtları varsayılanda (yedekli)
+  yenisiyle değiştirilir; --keep-existing korur. --replace-existing eski uyumluluk içindir.
+- Gerçek kurulumun sonunda kurulum doktoru (doktor.py) bir kez çalışır; sonucu bilgi içindir,
+  çıkış kodunu değiştirmez. --dry-run'da yalnız komutu yazılır.
 
 macOS farkları:
 - Beyin servisi Görev Zamanlayıcı yerine kullanıcı LaunchAgent'ı olarak çalışır
@@ -107,6 +112,7 @@ class Ctx:
     no_service: bool = False
     skip_repo_setup: bool = False
     replace_existing: bool = False
+    keep_existing: bool = False
     hook_python: str = "python3"
     venv_python: str | None = None
     assistant_name: str | None = None
@@ -293,7 +299,8 @@ def uninstall_skill(ctx: Ctx, name: str, src: Path, files: list[str] | None = No
 def settings_hooks_step(ctx: Ctx, component: str) -> Step:
     ns = argparse.Namespace(
         settings=str(ctx.settings), repo=str(REPO), components=component,
-        uninstall=ctx.uninstall, dry_run=ctx.dry_run, replace_legacy=ctx.replace_existing,
+        uninstall=ctx.uninstall, dry_run=ctx.dry_run,
+        replace_legacy=ctx.replace_existing and not ctx.keep_existing, keep_legacy=ctx.keep_existing,
         backup_dir=str(ctx.backup_dir), python=ctx.hook_python)
     try:
         rep = settings_hooks.run(ns)
@@ -314,8 +321,12 @@ def settings_hooks_step(ctx: Ctx, component: str) -> Step:
         st, msg = "dry", f"{component} hook'ları settings.json'a yazılır ({c['added']})"
     else:
         st, msg = "ok", f"{component} hook'ları kaydedildi ({c['added']}, yorumlayıcı: {ctx.hook_python})"
+    if c.get("legacy_removed"):
+        msg += (f"; repo dışındaki eski kopyanın {c['legacy_removed']} hook kaydı "
+                f"{'kaldırılır (yedek alınarak; korumak için --keep-existing)' if ctx.dry_run else 'kaldırıldı (yedekli)'}")
     if legacy:
-        return Step("warn", msg + f"; repo dışında eski kopya hook'u var: {legacy[0]} (--replace-existing ile kaldır)")
+        return Step("warn", msg + f"; repo dışında eski kopya hook'u da kayıtlı (--keep-existing: dokunulmadı): "
+                                  f"{legacy[0]}; iki kez çalışır, kaldırmak için --keep-existing olmadan yeniden çalıştır")
     return Step(st, msg)
 
 
@@ -687,6 +698,70 @@ def run_component(key: str, steps: list[Callable[[], Step]]) -> tuple[str, str]:
     return status, note
 
 
+# ---------------------------------------------------------------- kurulum doktoru
+
+DOCTOR = HERE / "doktor.py"
+DOCTOR_TIMEOUT = 180
+
+
+def doctor_command(claude_home: Path | str | None, as_json: bool = False) -> list[str] | None:
+    """Doktoru çalıştıran komut; doktor.py yoksa None. -B: depoda __pycache__ bırakmaz."""
+    if not DOCTOR.is_file():
+        return None
+    cmd = [sys.executable, "-I", "-B", str(DOCTOR)]
+    if claude_home:
+        cmd += ["--claude-home", str(claude_home)]
+    if as_json:
+        cmd.append("--json")
+    return cmd
+
+
+def run_doctor_only(claude_home: str | None, as_json: bool, dry_run: bool) -> int:
+    """--doctor: yalnız doktor çalışır; çıktısı olduğu gibi akar, çıkış kodu doktorunkidir."""
+    cmd = doctor_command(claude_home, as_json)
+    if cmd is None:
+        print(f"Kurulum doktoru bulunamadı: {DOCTOR}", file=sys.stderr)
+        return 2
+    if dry_run:
+        print(f"dry-run: kurulum doktoru çalıştırılmadı. Çalıştırılacak komut: {_fmt(cmd)}")
+        return 0
+    try:
+        return subprocess.run(cmd, check=False).returncode
+    except OSError as e:
+        print(f"Kurulum doktoru çalıştırılamadı: {e}", file=sys.stderr)
+        return 2
+
+
+def post_install_doctor(ctx: Ctx) -> None:
+    """Gerçek kurulumun sonunda doktoru bir kez çalıştırır. Yalnız bilgi verir: sonucu kurulumun
+    çıkış kodunu değiştirmez; doktor yoksa ya da çökerse sessizce uyarıp geçer."""
+    title("Kurulum doktoru")
+    cmd = doctor_command(ctx.claude_home)
+    if cmd is None:
+        line("skip", f"doktor bulunamadı: {DOCTOR}")
+        return
+    if ctx.dry_run:
+        line("dry", f"kurulumdan sonra doktor çalıştırılır: {_fmt(cmd)}")
+        return
+    try:
+        r = ctx.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                    timeout=DOCTOR_TIMEOUT)
+    except Exception as e:  # noqa: BLE001 - doktor kurulumu asla düşürmez
+        line("warn", f"doktor çalıştırılamadı ({type(e).__name__}: {e}); kurulumu etkilemez. Elle: ./install.sh --doctor")
+        return
+    for row in ((r.stdout or "") + (r.stderr or "")).splitlines():
+        if row.strip():
+            print(f"    {row}", flush=True)
+    if r.returncode == 0:
+        line("ok", "doktor: her şey yolunda")
+    elif r.returncode == 1:
+        line("warn", "doktor uyarı buldu (yukarıda); kurulum yine de tamamlandı. Yeniden denetim: ./install.sh --doctor")
+    elif r.returncode == 2:
+        line("warn", "doktor hata buldu (yukarıda); kurulum adımları yine de bitti. Yeniden denetim: ./install.sh --doctor")
+    else:
+        line("warn", f"doktor beklenmedik biçimde bitti (çıkış {r.returncode}); kurulumu etkilemez. Elle: ./install.sh --doctor")
+
+
 # ---------------------------------------------------------------- giriş
 
 def parse(argv: list[str] | None) -> argparse.Namespace:
@@ -699,7 +774,16 @@ def parse(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--uninstall", action="store_true")
     p.add_argument("--skip-mcp", action="store_true")
     p.add_argument("--no-service", action="store_true")
-    p.add_argument("--replace-existing", action="store_true")
+    legacy = p.add_mutually_exclusive_group()
+    legacy.add_argument("--keep-existing", action="store_true",
+                        help="aynı hook betiklerinin repo dışındaki eski kopyalarının settings.json kayıtlarını "
+                             "koru (verilmezse yedek alınarak yenisiyle değiştirilir)")
+    legacy.add_argument("--replace-existing", action="store_true",
+                        help="eski uyumluluk: eski kopyaların değiştirilmesi artık varsayılan, etkisi yok")
+    p.add_argument("--doctor", action="store_true",
+                   help="kurulum yapmaz; yalnız kurulum doktorunu (salt okunur) çalıştırır ve onun çıkış "
+                        "koduyla çıkar (0 tamam, 1 uyarı, 2 hata); --claude-home doktora geçirilir")
+    p.add_argument("--json", action="store_true", help="--doctor ile: doktor çıktısını JSON olarak ver")
     p.add_argument("--skip-repo-setup", action="store_true", help=argparse.SUPPRESS)
     p.add_argument("--tailscale-host",
                    help="beyin web arayüzüne iPhone/iPad'den erişim için izinli Host (ör. mac.tailnet.ts.net); "
@@ -710,6 +794,11 @@ def parse(argv: list[str] | None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     a = parse(argv)
+    if a.json and not a.doctor:
+        print("--json yalnız --doctor ile kullanılır.", file=sys.stderr)
+        return 2
+    if a.doctor:  # doktor platformdan bağımsızdır ve salt okunurdur; kurulum yapılmaz
+        return run_doctor_only(a.claude_home, a.json, a.dry_run)
     if sys.platform != "darwin" and not os.environ.get("EREN_KIT_FORCE_MACOS"):
         print("Bu betik macOS içindir. Windows'ta install.ps1 kullan.", file=sys.stderr)
         return 2
@@ -733,7 +822,7 @@ def main(argv: list[str] | None = None) -> int:
     home = a.claude_home or os.environ.get("CLAUDE_CONFIG_DIR") or str(Path.home() / ".claude")
     ctx = Ctx(claude_home=Path(home).expanduser().resolve(), dry_run=a.dry_run, uninstall=a.uninstall,
               skip_mcp=a.skip_mcp, no_service=a.no_service, skip_repo_setup=a.skip_repo_setup,
-              replace_existing=a.replace_existing,
+              replace_existing=a.replace_existing, keep_existing=a.keep_existing,
               assistant_name=a.assistant_name.strip() if a.assistant_name else None,
               tailscale_host=None if a.tailscale_host is None else a.tailscale_host.strip().lower())
 
@@ -797,6 +886,11 @@ def main(argv: list[str] | None = None) -> int:
         line("info", "Claude Code'u yeniden başlat; yeni hook, skill ve MCP'ler oturum açılışında yüklenir.")
         if "beyin" in selected:
             line("info", f"Web arayüzü: {P['bellek'] / '.venv/bin/beyin'} ac")
+    if not a.uninstall:
+        try:
+            post_install_doctor(ctx)
+        except Exception as e:  # noqa: BLE001 - doktor kurulumun sonucunu değiştirmez
+            line("warn", f"doktor çalıştırılamadı ({type(e).__name__}); kurulumu etkilemez")
     return 1 if any(st == "fail" for _, st, _ in results) else 0
 
 

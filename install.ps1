@@ -16,6 +16,9 @@ param(
     [switch]$SkipMcp,
     [switch]$NoService,
     [switch]$ReplaceExisting,
+    [switch]$KeepExisting,
+    [switch]$Doctor,
+    [switch]$Json,
     [switch]$Help,
     # Test anahtarları (yardımda gösterilmez):
     # -SkipEnv: kullanıcı ortam değişkenine yazmaz.
@@ -36,7 +39,8 @@ eren-kit kurulum betiği
 
 Kullanım:
   .\install.ps1 [-Components <liste>] [-AssistantName <ad>] [-ClaudeHome <klasör>]
-                [-DryRun] [-Uninstall] [-SkipMcp] [-NoService] [-ReplaceExisting] [-Help]
+                [-DryRun] [-Uninstall] [-SkipMcp] [-NoService] [-KeepExisting] [-Help]
+  .\install.ps1 -Doctor [-Json] [-ClaudeHome <klasör>]
 
 Bileşenler (varsayılan: beyin, devir, kapi, orkestra, computer-use):
   beyin          Yerel ikinci beyin (bellek), "beyin" MCP sunucusu ve arka plan servisi
@@ -54,13 +58,22 @@ Parametreler:
   -ClaudeHome     Claude Code ayar klasörü (varsayılan: CLAUDE_CONFIG_DIR ortam değişkeni
                   ayarlıysa o klasör, değilse %USERPROFILE%\.claude)
   -DryRun         Hiçbir şeyi değiştirmez, yapılacakları listeler
-  -Uninstall      Seçili bileşenlerin MCP kaydını, hook'larını, kopyalanan skill'lerini ve
-                  beyin servis görevini kaldırır; venv'leri ve kullanıcı verisini silmez
+  -Uninstall      Seçili bileşenlerin MCP kaydını, hook'larını, kopyalanan skill'lerini, beyin
+                  servis görevini ve (phone için) telefon zamanlanmış görevini kaldırır; venv'leri
+                  ve kullanıcı verisini silmez
   -SkipMcp        "claude mcp add/remove" adımlarını atlar
-  -NoService      beyin servisinin zamanlanmış görevini kurmaz/kaldırmaz (servisi elle yönetirsin)
-  -ReplaceExisting  Aynı hook betiklerinin repo dışındaki eski kopyalarının (ör. başka klasördeki
-                  bellek\devir\hook.py, bellek\kapi\hook.py, ~\.claude\hooks\opus-orkestra-sessionstart.py) settings.json
-                  kayıtlarını kaldırır (yedekli). Verilmezse bunlar kalır ve hook'lar iki kez çalışır.
+  -NoService      Zamanlanmış görevlere dokunmaz: beyin servis görevini kurmaz/kaldırmaz, kaldırmada
+                  telefon görevini silmez (servisleri elle yönetirsin)
+  -KeepExisting   Aynı hook betiklerinin repo dışındaki eski kopyalarının (ör. başka klasördeki
+                  bellek\devir\hook.py, bellek\kapi\hook.py, ~\.claude\hooks\opus-orkestra-sessionstart.py)
+                  settings.json kayıtlarını korur. Verilmezse bunlar (yedek alınarak) yenisiyle
+                  değiştirilir; verilirse eskiler kalır ve o hook'lar iki kez çalışır.
+  -ReplaceExisting  Eski uyumluluk anahtarı: eski kopyaların değiştirilmesi artık varsayılan, etkisi yok.
+  -Doctor         Kurulum yapmaz; yalnız kurulum doktorunu (scripts\installer\doktor.py, salt okunur)
+                  çalıştırır ve onun çıkış koduyla çıkar: 0 her şey tamam, 1 uyarı, 2 hata.
+                  -ClaudeHome verilirse doktora geçirilir. Gerçek kurulumun sonunda doktor zaten
+                  bir kez kendiliğinden çalışır (sonucu kurulumun çıkış kodunu değiştirmez).
+  -Json           -Doctor ile: doktor çıktısını JSON olarak verir
   -Help           Bu yardımı gösterir
 
 Örnekler:
@@ -69,6 +82,7 @@ Parametreler:
   .\install.ps1 -Components beyin,devir -AssistantName Ada
   .\install.ps1 -Components phone
   .\install.ps1 -Uninstall -Components orkestra
+  .\install.ps1 -Doctor
 
 Gerekenler: Python 3.11+ (bellek için 3.12+), Claude Code CLI ("claude"), phone için Node 24+.
 Yürütme ilkesi engellerse:  powershell -ExecutionPolicy Bypass -File .\install.ps1
@@ -125,6 +139,14 @@ if (-not $ClaudeHome) {
     exit 2
 }
 $ClaudeHome = [IO.Path]::GetFullPath($ClaudeHome)
+if ($KeepExisting -and $ReplaceExisting) {
+    Write-Host '-KeepExisting ile -ReplaceExisting birlikte verilemez.' -ForegroundColor Red
+    exit 2
+}
+if ($Json -and -not $Doctor) {
+    Write-Host '-Json yalnız -Doctor ile kullanılır.' -ForegroundColor Red
+    exit 2
+}
 
 # ---------------------------------------------------------------- hazırlık
 
@@ -148,6 +170,47 @@ $P.DevirSkill = Join-Path $P.Bellek 'skills\devir'
 $P.KapiHook = Join-Path $P.Bellek 'src\bellek\kapi\hook.py'
 $P.OrkHook = Join-Path $P.Orkestra 'hooks\opus-orkestra-sessionstart.py'
 $P.OrkSkill = Join-Path $P.Orkestra 'skill'
+$P.Doctor = Join-Path $RepoRoot 'scripts\installer\doktor.py'
+
+# ---------------------------------------------------------------- kurulum doktoru
+
+# Doktor (salt okunur) için Python ve argümanlar; Python ya da betik yoksa $null.
+function Get-DoctorCommand {
+    param([switch]$AsJson)
+    if (-not (Test-Path -LiteralPath $P.Doctor)) { return $null }
+    $py = Find-Python ([version]'3.11')
+    if (-not $py) { return $null }
+    # -B: doktor depoda __pycache__ bırakmasın (salt okunur sözü).
+    $a = @($py.Args) + @('-I', '-B', $P.Doctor, '--claude-home', $ClaudeHome)
+    if ($AsJson) { $a += '--json' }
+    return [pscustomobject]@{ Exe = $py.Exe; Args = [string[]]$a }
+}
+
+function Format-DoctorCommand {
+    param($Cmd)
+    return ((@($Cmd.Exe) + $Cmd.Args) | ForEach-Object { if ("$_" -match '\s') { '"' + $_ + '"' } else { "$_" } }) -join ' '
+}
+
+if ($Doctor) {
+    if (-not (Test-Path -LiteralPath $P.Doctor)) {
+        Write-Host ('Kurulum doktoru bulunamadı: {0}' -f $P.Doctor) -ForegroundColor Red
+        exit 2
+    }
+    $dc = Get-DoctorCommand -AsJson:$Json
+    if (-not $dc) {
+        Write-Host (Get-PythonInstallHint ([version]'3.11')) -ForegroundColor Red
+        exit 2
+    }
+    if ($DryRun) {
+        Write-Host ('DryRun: kurulum doktoru çalıştırılmadı. Çalıştırılacak komut: {0}' -f (Format-DoctorCommand $dc)) -ForegroundColor Magenta
+        exit 0
+    }
+    $ErrorActionPreference = 'Continue'
+    & $dc.Exe @($dc.Args)
+    $code = $LASTEXITCODE
+    if ($null -eq $code) { $code = 2 }
+    exit $code
+}
 
 $mode = 'Kurulum'
 if ($Uninstall) { $mode = 'Kaldırma' }
@@ -277,7 +340,7 @@ function Invoke-Hooks {
     param([string]$Key, [string]$Script)
     # Kaldırma repo dosyasına ihtiyaç duymaz (kayıtlar yol kalıbından tanınır).
     if (-not $Uninstall) { Test-SourceFile $Script }
-    return Invoke-SettingsHook -Component $Key -RepoRoot $RepoRoot -ClaudeHome $ClaudeHome -HelperPath $P.SettingsHelper -Uninstall:$Uninstall -ReplaceExisting:$ReplaceExisting
+    return Invoke-SettingsHook -Component $Key -RepoRoot $RepoRoot -ClaudeHome $ClaudeHome -HelperPath $P.SettingsHelper -Uninstall:$Uninstall -KeepExisting:$KeepExisting
 }
 
 # Beyin arka plan servisi: kullanıcı düzeyinde, oturum açılışında başlayan zamanlanmış görev.
@@ -304,6 +367,37 @@ function Invoke-BeyinService {
     }
     return $r
 }
+
+# Telefon servisinin zamanlanmış görevi kurulumda install.ps1 ile değil elle (apps\phone\kurulum\kur.ts)
+# kaydedilir; kaldırmada telefonun kendi silme yolu (gorev-kaydet.ts --sil) kullanılır.
+function Invoke-PhoneTaskRemoval {
+    $name = "$env:EREN_KIT_PHONE_TASK_NAME".Trim()
+    if (-not $name) { $name = 'eren-kit-telefon' }
+    $tsFile = Join-Path $P.Phone 'kurulum\gorev-kaydet.ts'
+    $manualNode = ('cd apps\phone; node --disable-warning=ExperimentalWarning kurulum/gorev-kaydet.ts --sil')
+    $manual = ('{0}   (ya da: schtasks /delete /tn "{1}" /f)' -f $manualNode, $name)
+    if ($NoService) { return New-StepResult skip ('telefon görevi silinmedi (-NoService). Elle: {0}' -f $manual) }
+    if ($SkipRepoSetup) { return New-StepResult skip 'telefon görevi atlandı (-SkipRepoSetup)' }
+    $schtasks = Find-Application 'schtasks'
+    if (-not $schtasks) { return New-StepResult warn ('schtasks bulunamadı; telefon görevi denetlenemedi. Elle: {0}' -f $manual) }
+    $q = Invoke-Native $schtasks @('/query', '/tn', $name)
+    if ($q.ExitCode -ne 0) { return New-StepResult skip ('telefon görevi kayıtlı değil: {0} (node_modules silinmez)' -f $name) }
+    if ($DryRun) {
+        return New-StepResult dry ('telefon görevi "{0}" silinir (gorev-kaydet.ts --sil; node_modules silinmez)' -f $name)
+    }
+    $nodeExe = Find-Application 'node'
+    if (-not $nodeExe -or -not (Test-Path -LiteralPath $tsFile)) {
+        return New-StepResult warn ('telefon görevi "{0}" kayıtlı ama Node ya da gorev-kaydet.ts yok; silinmedi. Elle: {1}' -f $name, $manual)
+    }
+    Push-Location -LiteralPath $P.Phone
+    try { $r = Invoke-Native $nodeExe @('--disable-warning=ExperimentalWarning', 'kurulum/gorev-kaydet.ts', '--sil') } finally { Pop-Location }
+    if ($r.ExitCode -ne 0) {
+        throw ("telefon görevi silinemedi (çıkış {0}):{1}{2}{1}      Elle: {3}" -f $r.ExitCode, [Environment]::NewLine, (Format-OutputTail $r.Output), $manual)
+    }
+    $script:PhoneNote = 'Telefon: zamanlanmış görev silindi; o an çalışan servis oturum kapanana dek sürebilir (durdurmak için kur.ts kurulumunun "eren dur" komutu). Veri ve node_modules silinmedi.'
+    return New-StepResult ok ('telefon görevi silindi: {0} (node_modules silinmez)' -f $name)
+}
+$script:PhoneNote = $null
 
 # ---------------------------------------------------------------- adım tanımları
 
@@ -399,7 +493,7 @@ if (-not $Uninstall) {
         @{ Name = 'skill'; Run = { Uninstall-Skill -Name 'opus-orkestra' -SourceDir $P.OrkSkill -ClaudeHome $ClaudeHome -Files @('SKILL.md') } }
     )
     $S['computer-use'] = @(@{ Name = 'MCP'; Run = { Invoke-McpUnregister 'computer-use-windows' } })
-    $S['phone'] = @(@{ Name = 'kayıt'; Run = { New-StepResult skip 'phone için kaldırılacak kayıt yok (node_modules silinmez)' } })
+    $S['phone'] = @(@{ Name = 'görev'; Run = { Invoke-PhoneTaskRemoval } })
 }
 
 $Titles = @{
@@ -493,8 +587,39 @@ foreach ($r in $results) {
 }
 
 if ($script:ServiceNote) { Write-StepLine info $script:ServiceNote }
+if ($script:PhoneNote) { Write-StepLine info $script:PhoneNote }
 $bk = Get-InstallerBackupDir
 if ($bk) { Write-StepLine info ('Yedekler: {0}' -f $bk) }
+
+# Gerçek kurulumun sonunda doktor bir kez çalışır. Sonucu yalnız bilgi içindir: kurulumun çıkış
+# kodunu değiştirmez; doktor yoksa ya da çökerse kurulum yine de olduğu gibi biter.
+if (-not $Uninstall) {
+    Write-Title 'Kurulum doktoru'
+    try {
+        $dc = $null
+        if ($DryRun) {
+            $dc = Get-DoctorCommand
+            if ($dc) { Write-StepLine dry ('kurulumdan sonra doktor çalıştırılır: {0}' -f (Format-DoctorCommand $dc)) }
+            else { Write-StepLine skip 'doktor çalıştırılamaz (doktor.py ya da Python 3.11+ yok)' }
+        } else {
+            $dc = Get-DoctorCommand
+            if (-not $dc) {
+                Write-StepLine skip ('doktor çalıştırılamadı (doktor.py ya da Python 3.11+ yok): {0}' -f $P.Doctor)
+            } else {
+                $dr = Invoke-Native $dc.Exe $dc.Args
+                foreach ($l in @($dr.Output)) { if ("$l".Trim()) { Write-Host ('    ' + $l) } }
+                switch ($dr.ExitCode) {
+                    0 { Write-StepLine ok 'doktor: her şey yolunda' }
+                    1 { Write-StepLine warn 'doktor uyarı buldu (yukarıda); kurulum yine de tamamlandı. Yeniden denetim: .\install.ps1 -Doctor' }
+                    2 { Write-StepLine warn 'doktor hata buldu (yukarıda); kurulum adımları yine de bitti. Yeniden denetim: .\install.ps1 -Doctor' }
+                    default { Write-StepLine warn ('doktor beklenmedik biçimde bitti (çıkış {0}); kurulumu etkilemez. Elle: .\install.ps1 -Doctor' -f $dr.ExitCode) }
+                }
+            }
+        }
+    } catch {
+        Write-StepLine warn ('doktor çalıştırılamadı: {0} (kurulumu etkilemez)' -f $_.Exception.Message)
+    }
+}
 
 $failed = @($results | Where-Object { $_.Status -eq 'fail' }).Count
 Write-Host ''

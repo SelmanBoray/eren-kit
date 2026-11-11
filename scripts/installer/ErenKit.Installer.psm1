@@ -356,7 +356,9 @@ function Backup-AndRemoveDirectory {
 
 function Invoke-SettingsHook {
     param([string]$Component, [string]$RepoRoot, [string]$ClaudeHome, [switch]$Uninstall, [string]$HelperPath,
-        [switch]$ReplaceExisting)
+        [switch]$ReplaceExisting, [switch]$KeepExisting)
+    # Repo dışındaki eski kopyaların kayıtları varsayılanda (yedekli) değiştirilir;
+    # -KeepExisting korur. -ReplaceExisting eski uyumluluk içindir (varsayılanla aynı).
     $py = Find-Python ([version]'3.8')
     if (-not $py) { throw (Get-PythonInstallHint ([version]'3.11')) }
     $settings = Join-Path $ClaudeHome 'settings.json'
@@ -364,7 +366,8 @@ function Invoke-SettingsHook {
         '--backup-dir', $script:BackupDir)
     if ($Uninstall) { $a += '--uninstall' }
     if ($script:DryRun) { $a += '--dry-run' }
-    if ($ReplaceExisting -and -not $Uninstall) { $a += '--replace-legacy' }
+    if ($KeepExisting -and -not $Uninstall) { $a += '--keep-legacy' }
+    elseif ($ReplaceExisting -and -not $Uninstall) { $a += '--replace-legacy' }
     $r = Invoke-Native $py.Exe $a
     $json = @($r.Output | Where-Object { $_ -match '^\s*\{' } | Select-Object -Last 1)
     if ($json.Count -eq 0) { throw ("settings.json yardımcısı yanıt vermedi:{0}{1}" -f [Environment]::NewLine, (Format-OutputTail $r.Output)) }
@@ -394,16 +397,16 @@ function Invoke-SettingsHook {
         }
     }
     if (-not $Uninstall -and $c.legacy_removed -gt 0) {
-        if ($script:DryRun) { $res.Message += ('; repo dışındaki eski kopyanın {0} hook kaydı kaldırılır (-ReplaceExisting)' -f $c.legacy_removed) }
+        if ($script:DryRun) { $res.Message += ('; repo dışındaki eski kopyanın {0} hook kaydı kaldırılır (yedek alınarak; korumak için -KeepExisting)' -f $c.legacy_removed) }
         else { $res.Message += ('; repo dışındaki eski kopyanın {0} hook kaydı kaldırıldı (yedekli)' -f $c.legacy_removed) }
     }
     if ($legacy.Count -gt 0 -and -not $Uninstall) {
         foreach ($l in $legacy) {
-            Write-StepLine warn ('aynı betiğin repo dışındaki eski kopyası da kayıtlı (dokunulmadı): {0}' -f $l)
+            Write-StepLine warn ('aynı betiğin repo dışındaki eski kopyası da kayıtlı (-KeepExisting: dokunulmadı): {0}' -f $l)
         }
         if ($res.Status -eq 'ok' -or $res.Status -eq 'dry') {
             $res.Status = 'warn'
-            $res.Message += ('; eski kopyanın {0} hook kaydı da duruyor: bu hook''lar iki kez çalışacak; kaldırmak için -ReplaceExisting kullan' -f $legacy.Count)
+            $res.Message += ('; eski kopyanın {0} hook kaydı da duruyor: bu hook''lar iki kez çalışacak; kaldırmak için -KeepExisting olmadan yeniden çalıştır' -f $legacy.Count)
         }
     }
     return $res
