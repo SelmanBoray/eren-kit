@@ -1,0 +1,21 @@
+# Gizlilik kapısı izin listesi (scripts/gizlilik_tara.py okur).
+# Biçim: GLOB | KURAL | DÜZENLİ_İFADE  (KURAL ve DÜZENLİ_İFADE isteğe bağlı).
+# DÜZENLİ_İFADE bulgunun maskelenmemiş eşleşme metninde aranır.
+# Kural: her satır olabildiğince dar (tek dosya + tek kural + tam değer) ve
+# üstünde tek satırlık gerekçe. Gerçek kişisel veri ya da sır buraya EKLENMEZ:
+# düzeltilir. Kişisel adlar burada değil, CI'daki GIZLILIK_YASAK secret'ındadır.
+
+# Beyin yazma testi: sır maskesini sınayan sahte Anthropic anahtarı (alfabe dizisi).
+packages/bellek/tests/beyin/test_yaz.py | belirtec | ^sk\-ant\-api03\-abcdefghijklmnopqrstuvwxyz123456$
+
+# Beyin düzeltme testi: aynı sahte Anthropic anahtarı.
+packages/bellek/tests/beyin/test_duzelt.py | belirtec | ^sk\-ant\-api03\-abcdefghijklmnopqrstuvwxyz123456$
+
+# Devir transcript testi: maskelenmesi beklenen sahte Slack bot belirteci (ardışık rakamlar).
+packages/bellek/tests/devir/test_transcript.py | belirtec | ^xoxb\-1234567890\-0987654321\-$
+
+# Değerlendirme sorgu testi: "Değerlendirici" kurgusal bir kullanıcı adı (yer tutucu yol).
+packages/bellek/tests/test_eval_queries.py | kisisel_yol | Users\\\\Değerlendirici$
+
+# Markdown güvenlik testi: kötü niyetli bağlantıdaki kurgusal kullanıcı bilgisi (evil.com).
+apps/phone/app/test/ekranlar/markdown.test.ts | eposta | ^(user|pw)@evil\.com$
