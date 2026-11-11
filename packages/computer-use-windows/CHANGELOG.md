@@ -7,9 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- `type_text` re-checks the password-field / terminal / blocked-app rules after its first
+  character, after every Tab/Enter and every 50 characters, and stops when the foreground window
+  changes.
+- `key` refuses character-producing chords while a password field has the focus and checks before
+  every chord.
+- An undeterminable password state (UI Automation timeout) now refuses typing instead of allowing it.
+- The emergency stop is checked throughout long input.
+- Right/middle clicks and drags onto a terminal or the agent's own window are refused.
+- Blocked-app checks look at the root and root-owner window, also for handles that are not in the
+  window list.
+- Keyboard input is refused while there is no foreground window.
+
 ### Changed
 
 - Minimum supported Python is now 3.11 (Pillow 13 requires Python 3.11+).
+- `key` is limited to 200 key presses per call.
+- `--max-size` upper limit is 2576 (was 4096).
+- `elements` reports an incomplete scan.
+- Launchers such as Explorer no longer count as the agent's own window.
+
+### Fixed
+
+- `focus` no longer blocks the server on a window that is not responding.
+- `click(element=…)` no longer clicks a stale position after the window closed, moved or was
+  covered by another app.
+- Exactly `limit` elements are no longer reported as truncated.
+- Reading labels from an unresponsive app no longer exceeds the scan time budget.
 
 ## [0.1.0] - Unreleased
 

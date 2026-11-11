@@ -187,8 +187,9 @@ git clone https://github.com/SelmanBoray/eren-kit.git && cd eren-kit
 ```
 
 Needs Python 3.12+ (`brew install python@3.13`) and the Claude Code CLI. Flags mirror the Windows
-installer: `--components`, `--claude-home`, `--skip-mcp`, `--no-service`, `--replace-existing`, plus
-`--tailscale-host` (see below).
+installer: `--components`, `--claude-home`, `--skip-mcp`, `--no-service`, `--keep-existing`
+(`--replace-existing` is still accepted but no longer needed), `--doctor` and `--json` (see
+[Installation doctor](#installation-doctor)), plus `--tailscale-host` (see below).
 
 | | Windows | macOS |
 | --- | --- | --- |
@@ -221,7 +222,8 @@ only for the session. Nothing is opened to the internet: no funnel, and the serv
 
 ```text
 .\install.ps1 [-Components <list>] [-AssistantName <name>] [-ClaudeHome <folder>]
-              [-DryRun] [-Uninstall] [-SkipMcp] [-NoService] [-ReplaceExisting] [-Help]
+              [-DryRun] [-Uninstall] [-SkipMcp] [-NoService] [-KeepExisting] [-Help]
+.\install.ps1 -Doctor [-Json] [-ClaudeHome <folder>]
 ```
 
 | Parameter | Description |
@@ -232,15 +234,18 @@ only for the session. Nothing is opened to the internet: no funnel, and the serv
 | `-DryRun` | Changes nothing; lists what would be done |
 | `-Uninstall` | Removes the selected components' MCP registrations, hooks, copied skills and the brain service task. Does **not** delete venvs or user data |
 | `-SkipMcp` | Skips the `claude mcp add/remove` steps |
-| `-NoService` | Does not install (or remove) the brain service's scheduled task; you manage the service yourself |
-| `-ReplaceExisting` | Removes `settings.json` entries for older copies of the same hook scripts outside the repository (e.g. a `bellek\devir\hook.py` in another folder, `~\.claude\hooks\opus-orkestra-sessionstart.py`, or an older doc gate registration), with a backup. Without it they stay and the hooks run twice |
+| `-NoService` | Does not install (or remove) the scheduled tasks: neither the brain service task nor, for the `phone` component, its task (on uninstall the phone task is not deleted); you manage the services yourself |
+| `-KeepExisting` | Keeps `settings.json` entries for older copies of the same hook scripts outside the repository (e.g. a `bellek\devir\hook.py` in another folder, `~\.claude\hooks\opus-orkestra-sessionstart.py`, or an older doc gate registration). By default these are replaced by the new registration, after a backup; with this switch the old ones stay and those hooks run twice. Cannot be combined with `-ReplaceExisting` |
+| `-ReplaceExisting` | Kept for compatibility: replacing old copies is now the default, so this switch is no longer needed |
+| `-Doctor` | Installs nothing; runs only the [installation doctor](#installation-doctor) and exits with its exit code. `-ClaudeHome` is passed on to it |
+| `-Json` | With `-Doctor`: prints the doctor's result as JSON |
 | `-Help` | Shows the built-in help (in Turkish) |
 
 | Component | What the installer does |
 | --- | --- |
 | `beyin` | Creates `packages\bellek\.venv` and runs `pip install -e`; copies `bellek.example.toml` to `bellek.toml` if missing; checks that `bellek.beyin` imports; registers the `beyin` MCP server (user scope); registers and starts the brain service task (see below) |
 | `devir` | Uses the same venv; checks that `python` on `PATH` is 3.11+; adds the handoff hook to `SessionStart`, `UserPromptSubmit` and `Stop`; copies the skill to `<ClaudeHome>\skills\devir` |
-| `kapi` | Checks that `python` on `PATH` is 3.11+; adds the doc gate hook to `PreToolUse` for Markdown reads. No venv, no skill |
+| `kapi` | Checks that `python` on `PATH` is 3.11+; adds the doc gate hook to `PreToolUse` for Markdown reads and to `SessionStart` (`compact` matcher). No venv, no skill |
 | `orkestra` | Checks that `python` on `PATH` is 3.11+; copies `SKILL.md` to `<ClaudeHome>\skills\opus-orkestra`; adds four `SessionStart` hook commands |
 | `computer-use` | Creates `packages\computer-use-windows\.venv` and runs `pip install -e`; registers the `computer-use-windows` MCP server (user scope) |
 | `phone` | Checks for Node 24+ and npm; runs `npm ci` in `apps\phone`. Nothing is registered; it is started by hand |
@@ -271,17 +276,20 @@ How it treats your existing setup:
 ### Migrating from a manual setup
 
 If you set up any of these pieces by hand before (for example the handoff hook from another
-folder, or the Opus Orkestra hook under `~\.claude\hooks`), the installer adds its own entries and
-warns that the old copies are still registered, so those hooks would run twice. To switch over:
+folder, or the Opus Orkestra hook under `~\.claude\hooks`), the switch-over happens by itself: the
+installer replaces the old registrations of the same component with its own, after backing up
+`settings.json`. Re-running never doubles the hooks.
 
 ```powershell
-.\install.ps1 -DryRun -ReplaceExisting      # see which old entries would be replaced
-.\install.ps1 -ReplaceExisting              # remove them (settings.json is backed up first)
+.\install.ps1 -DryRun                       # see what would change first
+.\install.ps1                               # install; old registrations are replaced (backed up first)
+.\install.ps1 -KeepExisting                 # deliberately keep the old registrations (those hooks run twice)
 ```
 
-`-ReplaceExisting` only touches hook entries in `settings.json`; it does not delete the old script
-files. An existing `beyin` or `computer-use-windows` MCP registration is replaced (with a backup)
-even without this switch, as described above; `-DryRun` shows it first.
+The replacement only touches hook entries in `settings.json`; it does not delete the old script
+files. `-ReplaceExisting` is still accepted but no longer needed. An existing `beyin` or
+`computer-use-windows` MCP registration is replaced (with a backup) as described above; `-DryRun`
+shows it first.
 
 ### Uninstall
 
@@ -290,11 +298,22 @@ even without this switch, as described above; `-DryRun` shows it first.
 .\install.ps1 -Uninstall -Components orkestra    # just one
 ```
 
-This removes hooks, copied skills, the brain service task, and the MCP registrations that point
+This removes hooks, copied skills, the brain service task (removing the `phone` component also
+deletes its `eren-kit-telefon` scheduled task), and the MCP registrations that point
 into this repository (a `beyin` or `computer-use-windows` registration pointing elsewhere is left
 alone, with a warning). It keeps the venvs, `bellek.toml`, your
 brain database, your notes and the `EREN_KIT_ASSISTANT_NAME` variable; delete those by hand if you
 want them gone.
+
+### Installation doctor
+
+`python scripts/installer/doktor.py` (or `.\install.ps1 -Doctor`, `./install.sh --doctor`) checks,
+read-only, that the installed components are wired into Claude Code correctly: hook registrations
+(duplicates, stale locations, missing events, script path), whether the installed skill copies
+match the repo, MCP registrations, and the brain service and its task. `--json` gives machine
+output, `--no-network` skips live system queries and external processes. Exit code: 0 no problems,
+1 warnings, 2 errors. A component that is not installed is not an error. The installer runs it once
+at the end of a real install.
 
 ## 📦 Components
 
@@ -321,8 +340,22 @@ inbox for suggestions without a clear place, and a change history, all in one SQ
 # from the repository root
 packages\bellek\.venv\Scripts\beyin ac         # open the web UI (needs the service running)
 packages\bellek\.venv\Scripts\beyin ara "project deadlines"
-packages\bellek\.venv\Scripts\bellek doktor    # health check of the install
+packages\bellek\.venv\Scripts\bellek doktor    # health check of the install (also checks the brain database)
 ```
+
+Backup and restore (run from the same venv; the commands are `python -m bellek.beyin ...`):
+
+```powershell
+python -m bellek.beyin yedekle [--dizin D] [--sakla N]   # back up the brain database
+python -m bellek.beyin yedekler                          # list backups
+python -m bellek.beyin geri-yukle <backup> [--evet]      # restore (asks first unless --evet)
+python -m bellek.beyin ice-al --uzerine-yaz              # re-import the seed, overwriting corrected nodes
+```
+
+A backup is an online-consistent copy made with SQLite's backup API; the newest 14 are kept. Restore
+only runs while the service is stopped, and the old database is set aside, not deleted. Local
+backups are not encrypted. A plain re-import (`ice-al`) keeps nodes you corrected after seeding;
+`--uzerine-yaz` overwrites them too.
 
 If you installed with `-NoService` or by hand, start the service yourself and leave that terminal
 open (or set up your own autostart):
@@ -352,6 +385,8 @@ thread.
   large contexts (it adds no text to the context).
 - **`/devir` skill:** writes a rich handoff note on request, and helps the next session read it.
 - **Fail-open:** on any error the hook prints nothing and never blocks the session.
+- **Housekeeping:** automatic notes older than 28 days are deleted at `SessionStart`. A prompt that
+  starts with `/devir` is not caught by the whitespace guard.
 
 Notes live under `BELLEK_DEVIR_DIR`, or by default in the `devir` folder inside your `vault`
 (automatic notes in `devir\oto\`).
@@ -378,6 +413,8 @@ the map first.
   `Read(//**/*.markdown)`), so no process starts for other reads.
 - **Off switch:** set the environment variable `BELLEK_KAPI=kapali`, or remove it with
   `.\install.ps1 -Uninstall -Components kapi`.
+- **After compaction:** the map is shown again after a context compaction (compact); the installer
+  also registers the gate on `SessionStart` with the `compact` matcher.
 - **Measurement log:** `%LOCALAPPDATA%\Bellek\kapi\kapi.jsonl`.
 
 ### Opus Orkestra
@@ -411,6 +448,9 @@ it to the agent in your terminal, built around two rules: **terminal first** and
 - **Guard rails.** It refuses to type into password fields and terminals, supports an app
   blocklist (`--block`), and has a failsafe: **move the mouse into a screen corner to stop it.**
 - **Local only:** no network access, no telemetry.
+- **Safety checks:** typing re-checks the password-field / terminal / blocked-app rules after every
+  Tab or Enter and stops when the foreground window changes; right and middle clicks on a terminal
+  are refused; `click(element=…)` is refused when the listed window moved or closed.
 
 Example prompts:
 
@@ -432,7 +472,9 @@ reports the result back. Each chat has its own main session, and a task session 
 Android device through a restricted tool set (read the screen, tap, type). The directory holds the
 shared protocol, the PC service, the Expo / React Native Android app with its Kotlin `eren-device`
 module, the install scripts (`kurulum/kur.ts`), the docs and a standalone measurement experiment.
-It is still experimental.
+It is still experimental. Paired devices can be listed and unpaired on the PC
+(`node --disable-warning=ExperimentalWarning src/eslestir.ts --liste` / `--kaldir <id>` in
+`apps/phone/server`), and the server pings every connection and drops dead ones within 60 s.
 
 Configuration is through environment variables (full list in the
 [phone README](apps/phone/README.md)):
@@ -552,6 +594,10 @@ You can also add read-only note sources (`[[source]]`) and map folders to projec
   every action. Don't use the PC while it works, close sensitive windows, and type passwords
   yourself.
 - **Hooks are fail-open.** A broken hook prints nothing and never blocks your session.
+- **A privacy scanner guards the repo.** `python scripts/gizlilik_tara.py` scans tracked files for
+  personal paths, e-mail addresses, token-shaped strings and large binaries (allow list in
+  `.github/gizlilik-izinli.txt`; extra forbidden words via the `GIZLILIK_YASAK` environment
+  variable).
 - **Reporting a vulnerability:** see [SECURITY.md](SECURITY.md).
 
 ## 🗂️ Repository layout
@@ -559,7 +605,10 @@ You can also add read-only note sources (`[[source]]`) and map folders to projec
 ```text
 eren-kit/
 ├── install.ps1                    # one-command installer (run with -Help)
-├── scripts/installer/             # installer module and settings.json hook merger
+├── scripts/
+│   ├── installer/                 # installer module and settings.json hook merger
+│   │   └── doktor.py              #   installation doctor (read-only)
+│   └── gizlilik_tara.py           # privacy scanner for tracked files
 ├── packages/
 │   ├── bellek/                    # Memory & Brain + Handoff (Python 3.12+)
 │   │   ├── src/bellek/            #   core, beyin (brain), devir (handoff)

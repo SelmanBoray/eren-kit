@@ -114,7 +114,7 @@ tur bittiğinde devir notlarını yazar. Beyin veritabanının tek bir yazıcıs
 | Windows 10 veya 11 | her şey | macOS'ta `install.sh` kullanın, bkz. [macOS ve iOS](#-macos-ve-ios). Linux henüz desteklenmiyor |
 | PowerShell | kurulum betiği | PowerShell 7 önerilir; Windows PowerShell 5.1 de çalışır |
 | Python 3.12+ | Bellek & Beyin, Devir | computer-use-windows ve kurulum betiği için 3.11+ yeterli |
-| `PATH` üzerinde `python`, 3.11+ | Devir ve Opus Orkestra hook'ları | Hook'lar doğrudan `python` komutunu çağırır ve kurulum betiği sürümünü denetler. Python'u kurarken **"Add python.exe to PATH"** kutusunu işaretleyin |
+| `PATH` üzerinde `python`, 3.11+ | Devir, kapı (`kapi`) ve Opus Orkestra hook'ları | Hook'lar doğrudan `python` komutunu çağırır ve kurulum betiği sürümünü denetler. Python'u kurarken **"Add python.exe to PATH"** kutusunu işaretleyin |
 | [Claude Code CLI](https://docs.claude.com/en/docs/claude-code/setup) (`claude`) | MCP kaydı | Yoksa kurulum betiği MCP adımlarını atlar ve elle yapılacak komutu yazdırır |
 | Node 24+ ve npm | yalnızca Telefon uygulaması | Varsayılan kurulum için gerekmez |
 
@@ -124,8 +124,8 @@ tur bittiğinde devir notlarını yazar. Beyin veritabanının tek bir yazıcıs
 git clone https://github.com/SelmanBoray/eren-kit.git
 cd eren-kit
 
-.\install.ps1 -DryRun                    # optional: list what would change, change nothing
-.\install.ps1 -AssistantName "Ada"       # install the default components
+.\install.ps1 -DryRun                    # isteğe bağlı: neyin değişeceğini listeler, hiçbir şeyi değiştirmez
+.\install.ps1 -AssistantName "Ada"       # varsayılan bileşenleri kurar
 ```
 
 Çalıştırma politikası betiği engellerse:
@@ -140,7 +140,7 @@ Ardından:
 2. **MCP sunucularını kontrol edin:**
 
    ```powershell
-   claude mcp list        # should list "beyin" and "computer-use-windows"
+   claude mcp list        # "beyin" ve "computer-use-windows" listelenmeli
    ```
 
 3. **Beynin web arayüzünü açın** (isteğe bağlı). Beyin servisi zaten arka planda çalışıyor:
@@ -160,13 +160,23 @@ Varsayılan küme `beyin, devir, kapi, orkestra, computer-use` bileşenleridir. 
 siz isterseniz kurulur.
 
 ```powershell
-.\install.ps1 -Components beyin,devir          # memory + handoff only
-.\install.ps1 -Components orkestra             # just the orchestration rule
-.\install.ps1 -Components computer-use         # just the Windows computer-use server
-.\install.ps1 -Components phone                # experimental phone app dependencies (npm ci)
+.\install.ps1 -Components beyin,devir          # yalnızca bellek + devir
+.\install.ps1 -Components kapi                 # yalnızca önce harita belge kapısı
+.\install.ps1 -Components orkestra             # yalnızca orkestrasyon kuralı
+.\install.ps1 -Components computer-use         # yalnızca Windows computer-use sunucusu
+.\install.ps1 -Components phone                # deneysel telefon uygulaması bağımlılıkları (npm ci)
 ```
 
 Kurulum betiğini yeniden çalıştırmak güvenlidir: değişeni günceller, geri kalanına dokunmaz.
+
+### Kurulum doktoru
+
+`python scripts/installer/doktor.py` (ya da `.\install.ps1 -Doctor`, `./install.sh --doctor`) kurulu
+bileşenlerin Claude Code'a doğru bağlandığını salt okunur denetler: hook kayıtları (yineleme, eski
+konum, eksik olay, betik yolu), kurulu skill kopyalarının depodakiyle aynı olup olmadığı, MCP
+kayıtları, beyin servisi ve görevi. `--json` makine çıktısı verir, `--no-network` canlı sistem
+sorgularını ve dış süreçleri atlar. Çıkış kodu: 0 sorun yok, 1 uyarı, 2 hata. Kurulmamış bileşen hata
+sayılmaz. Kurulum, gerçek bir kurulumun sonunda doktoru bir kez çalıştırır.
 
 ## 🍎 macOS ve iOS
 
@@ -186,7 +196,8 @@ git clone https://github.com/SelmanBoray/eren-kit.git && cd eren-kit
 ```
 
 Python 3.12+ (`brew install python@3.13`) ve Claude Code CLI gerekir. Seçenekler Windows betiğiyle
-aynıdır: `--components`, `--claude-home`, `--skip-mcp`, `--no-service`, `--replace-existing`; ayrıca
+aynıdır: `--components`, `--claude-home`, `--skip-mcp`, `--no-service`, `--keep-existing`, `--doctor`,
+`--json` (`--replace-existing` uyumluluk için hâlâ kabul edilir ama gerekmez); ayrıca
 `--tailscale-host` (aşağıda).
 
 | | Windows | macOS |
@@ -220,7 +231,8 @@ oturum boyunca tutulur. İnternete hiçbir şey açılmaz: funnel yok, servis yi
 
 ```text
 .\install.ps1 [-Components <list>] [-AssistantName <name>] [-ClaudeHome <folder>]
-              [-DryRun] [-Uninstall] [-SkipMcp] [-NoService] [-ReplaceExisting] [-Help]
+              [-DryRun] [-Uninstall] [-SkipMcp] [-NoService] [-KeepExisting] [-Help]
+.\install.ps1 -Doctor [-Json] [-ClaudeHome <folder>]
 ```
 
 | Parametre | Açıklama |
@@ -229,10 +241,13 @@ oturum boyunca tutulur. İnternete hiçbir şey açılmaz: funnel yok, servis yi
 | `-AssistantName` | Asistan adı; `EREN_KIT_ASSISTANT_NAME` kullanıcı ortam değişkenine yazılır. Verilmezse mevcut değer korunur, o da yoksa `"Claude"` kullanılır |
 | `-ClaudeHome` | Claude Code ayar klasörü. Varsayılan: `CLAUDE_CONFIG_DIR` ortam değişkeni tanımlıysa o, değilse `%USERPROFILE%\.claude` |
 | `-DryRun` | Hiçbir şeyi değiştirmez; yapılacakları listeler |
-| `-Uninstall` | Seçilen bileşenlerin MCP kayıtlarını, hook'larını, kopyalanan skill'lerini ve beyin servisi görevini kaldırır. Venv'leri ve kullanıcı verisini **silmez** |
+| `-Uninstall` | Seçilen bileşenlerin MCP kayıtlarını, hook'larını, kopyalanan skill'lerini, beyin servisi görevini ve (`phone` için) `eren-kit-telefon` zamanlanmış görevini kaldırır. Venv'leri ve kullanıcı verisini **silmez** |
 | `-SkipMcp` | `claude mcp add/remove` adımlarını atlar |
-| `-NoService` | Beyin servisinin zamanlanmış görevini kurmaz (veya kaldırmaz); servisi kendiniz yönetirsiniz |
-| `-ReplaceExisting` | `settings.json` içinde, depo dışındaki aynı hook betiklerinin eski kopyalarına ait girdileri (ör. başka bir klasördeki `bellek\devir\hook.py` ya da `bellek\kapi\hook.py`, `~\.claude\hooks\opus-orkestra-sessionstart.py`) yedek alarak kaldırır. Bu anahtar olmadan eskiler kalır ve hook'lar iki kez çalışır |
+| `-NoService` | Zamanlanmış görevlere dokunmaz: beyin servisinin görevini kurmaz (veya kaldırmaz), kaldırmada telefon bileşeninin görevini de silmez; servisleri kendiniz yönetirsiniz |
+| `-KeepExisting` | `settings.json` içinde, depo dışındaki aynı hook betiklerinin eski kopyalarına ait girdileri (ör. başka bir klasördeki `bellek\devir\hook.py` ya da `bellek\kapi\hook.py`, `~\.claude\hooks\opus-orkestra-sessionstart.py`) bilerek korur. Verilmezse bunlar varsayılanda yedek alınarak yenisiyle değiştirilir; verilirse eskiler kalır ve o hook'lar iki kez çalışır |
+| `-ReplaceExisting` | Uyumluluk anahtarı: eski kopyaların değiştirilmesi artık varsayılandır; bu anahtar hâlâ kabul edilir ama gerekmez. `-KeepExisting` ile birlikte verilemez |
+| `-Doctor` | Kurulum yapmaz; yalnızca [kurulum doktorunu](#kurulum-doktoru) çalıştırır ve onun çıkış koduyla çıkar |
+| `-Json` | `-Doctor` ile birlikte kullanılır: doktor çıktısını JSON olarak verir |
 | `-Help` | Yerleşik yardımı gösterir (Türkçe) |
 
 | Bileşen | Kurulum betiği ne yapar |
@@ -270,17 +285,21 @@ Mevcut kurulumunuza nasıl davrandığı:
 ### Elle kurulumdan geçiş
 
 Bu parçalardan herhangi birini daha önce elle kurduysanız (örneğin başka bir klasördeki devir hook'unu
-ya da `~\.claude\hooks` altındaki Opus Orkestra hook'unu), kurulum betiği kendi girdilerini ekler ve
-eski kopyaların hâlâ kayıtlı olduğunu, dolayısıyla bu hook'ların iki kez çalışacağını söyler. Geçiş için:
+ya da `~\.claude\hooks` altındaki Opus Orkestra hook'unu), geçiş kendiliğinden olur: kurulum betiği
+aynı bileşenin eski konumdaki hook kaydını yedek alarak yenisiyle değiştirir. Ne değişeceğini önceden
+görmek için `-DryRun` kullanın; eskileri bilerek korumak isterseniz `-KeepExisting` verin (o zaman o
+hook'lar iki kez çalışır):
 
 ```powershell
-.\install.ps1 -DryRun -ReplaceExisting      # see which old entries would be replaced
-.\install.ps1 -ReplaceExisting              # remove them (settings.json is backed up first)
+.\install.ps1 -DryRun                       # hangi eski kayıtların değişeceğini göster
+.\install.ps1                               # eski kayıtları değiştir (settings.json önce yedeklenir)
+.\install.ps1 -KeepExisting                 # eski kayıtları bilerek koru
 ```
 
-`-ReplaceExisting` yalnızca `settings.json` içindeki hook girdilerine dokunur; eski betik dosyalarını
-silmez. Mevcut bir `beyin` ya da `computer-use-windows` MCP kaydı, yukarıda anlatıldığı gibi bu
-anahtar olmadan da (yedek alınarak) değiştirilir; `-DryRun` bunu önceden gösterir.
+Bu işlem yalnızca `settings.json` içindeki hook girdilerine dokunur; eski betik dosyalarını silmez.
+`-ReplaceExisting` hâlâ kabul edilir ama artık gerekmez. Mevcut bir `beyin` ya da
+`computer-use-windows` MCP kaydı da yukarıda anlatıldığı gibi (yedek alınarak) değiştirilir;
+`-DryRun` bunu önceden gösterir.
 
 ### Kaldırma
 
@@ -290,7 +309,7 @@ anahtar olmadan da (yedek alınarak) değiştirilir; `-DryRun` bunu önceden gö
 ```
 
 Bu işlem hook'ları, kopyalanan skill'leri, beyin servisi görevini ve bu depoyu gösteren MCP
-kayıtlarını kaldırır (başka yeri gösteren bir `beyin` ya da `computer-use-windows` kaydı uyarıyla
+kayıtlarını kaldırır; telefon bileşenini kaldırmak `eren-kit-telefon` zamanlanmış görevini de siler (başka yeri gösteren bir `beyin` ya da `computer-use-windows` kaydı uyarıyla
 birlikte yerinde bırakılır). Venv'leri, `bellek.toml` dosyasını, beyin veritabanınızı, notlarınızı ve
 `EREN_KIT_ASSISTANT_NAME` değişkenini korur; kalmasını istemiyorsanız bunları elle silin.
 
@@ -318,10 +337,26 @@ hepsi tek bir SQLite dosyasında.
 
 ```powershell
 # from the repository root
-packages\bellek\.venv\Scripts\beyin ac         # open the web UI (needs the service running)
-packages\bellek\.venv\Scripts\beyin ara "project deadlines"
-packages\bellek\.venv\Scripts\bellek doktor    # health check of the install
+packages\bellek\.venv\Scripts\beyin ac         # web arayüzünü açar (servis çalışıyor olmalı)
+packages\bellek\.venv\Scripts\beyin ara "proje teslim tarihleri"
+packages\bellek\.venv\Scripts\bellek doktor    # kurulumun sağlık denetimi (beyin veritabanını da denetler)
 ```
+
+Beyin yedekleri ve yeniden içe alım (`python -m bellek.beyin ...`):
+
+```powershell
+python -m bellek.beyin yedekle [--dizin D] [--sakla N]   # SQLite çevrimiçi yedeği alır
+python -m bellek.beyin yedekler                          # yedekleri listeler
+python -m bellek.beyin geri-yukle <yedek> [--evet]       # yedekten geri yükler
+python -m bellek.beyin ice-al --uzerine-yaz              # yeniden içe alım; tohum kazanır
+```
+
+- **Yedek:** SQLite çevrimiçi yedeği kullanılır; en yeni 14 yedek saklanır (`--sakla` ile değişir).
+  Yerel yedekler şifresizdir.
+- **Geri yükleme** yalnızca servis kapalıyken çalışır; eski veritabanı silinmez, kenara alınır.
+- **`ice-al`:** yeniden içe alım, tohumdan sonra kullanıcının düzelttiği düğümleri korur; `--uzerine-yaz`
+  ile bu korumadan vazgeçilir ve tohum kazanır.
+- **`bellek doktor`** artık beyin veritabanını da denetler.
 
 `-NoService` ile ya da elle kurduysanız servisi kendiniz başlatın ve o terminali açık bırakın
 (veya kendi otomatik başlatmanızı kurun):
@@ -349,6 +384,8 @@ Uzun oturumlar pahalıdır. Devir, konunun ipini kaybetmeden yeni, kısa bir otu
   bağlamlar konusunda uyarır (bağlama metin eklemez).
 - **`/devir` skill'i:** istek üzerine zengin bir devir notu yazar ve bir sonraki oturumun onu okumasına yardım eder.
 - **Hata durumunda sessiz (fail-open):** herhangi bir hatada hook hiçbir şey yazdırmaz ve oturumu asla engellemez.
+- **Temizlik:** 28 günden eski otomatik notlar `SessionStart` sırasında silinir.
+- **`/devir` boşluk engeline takılmaz:** `/devir` ile başlayan istem hook'un boşluk engeline takılmadan geçer.
 
 Notlar `BELLEK_DEVIR_DIR` altında tutulur; varsayılan olarak `vault` klasörünüzün içindeki `devir`
 klasörüdür (otomatik notlar `devir\oto\` içinde).
@@ -373,6 +410,8 @@ başlık haritasını (her başlığın satır aralığı ve boyutu) döndürür
 - **Ucuz:** hook `if` filtresiyle (`Read(//**/*.md)`, `Read(//**/*.markdown)`) kayıtlıdır; diğer
   okumalarda süreç başlatılmaz.
 - **Hata durumunda sessiz (fail-open):** herhangi bir hatada okuma olduğu gibi geçer.
+- **Sıkıştırmadan sonra:** bağlam sıkıştırmasından (compact) sonra harita yeniden gösterilir; bunun için
+  kurulum kapıyı `SessionStart` olayına `compact` eşleştiricisiyle de kaydeder.
 - **Kapatma:** `BELLEK_KAPI=kapali` ortam değişkeni ya da `.\install.ps1 -Uninstall -Components kapi`.
 - **Ölçüm günlüğü:** `%LOCALAPPDATA%\Bellek\kapi\kapi.jsonl`.
 
@@ -406,6 +445,9 @@ terminalinizdeki agent'a getirir; iki kural üzerine kuruludur: **önce terminal
 - **Koruma önlemleri.** Parola alanlarına ve terminallere yazmayı reddeder, uygulama engelleme
   listesini (`--block`) destekler ve bir acil durdurma düzeneği vardır: **durdurmak için fareyi bir ekran köşesine götürün.**
 - **Yalnızca yerel:** ağ erişimi yok, telemetri yok.
+- **Güvenlik özeti:** yazma, her Tab ya da Enter'dan sonra parola alanı / terminal / engelli uygulama
+  kurallarını yeniden denetler ve ön pencere değişince durur; terminale sağ ve orta tık reddedilir;
+  listelenen pencere taşındıysa ya da kapandıysa `click(element=…)` reddedilir.
 
 Örnek istemler:
 
@@ -437,6 +479,11 @@ Yapılandırma ortam değişkenleriyledir (tam liste
 | `EREN_KIT_DATA_DIR` | `%LOCALAPPDATA%\eren-kit` | Veri kökü; mutlak yol olmalı. Servis, bekçi ve kurulum aynı kuralı uygular |
 | `EREN_KIT_PHONE_TASK_NAME` | `eren-kit-telefon` | Kurulumun kaydettiği zamanlanmış görevin adı |
 
+Eşleşmiş cihazlar PC'de listelenip eşleşmeleri kaldırılabilir (`apps/phone` dizininde
+`node --disable-warning=ExperimentalWarning server/src/eslestir.ts --liste` ve
+`... eslestir.ts --kaldir <kimlik>`; ayrıntı [GUVENLIK.md](apps/phone/docs/GUVENLIK.md)'de). Sunucu her
+bağlantıya ping atar ve yanıt vermeyen (ölü) bağlantıyı en geç 60 saniyede kapatır.
+
 Ayrıntılar (Türkçe, İngilizce özetle): [apps/phone/README.md](apps/phone/README.md). Servis işletimi
 (kurulum, güncelleme, zamanlanmış görev): [apps/phone/docs/SERVIS.md](apps/phone/docs/SERVIS.md).
 
@@ -453,10 +500,10 @@ Aşağıdaki komutlar deponun kök dizininde olduğunuzu varsayar.
 cd packages\bellek
 py -3.12 -m venv .venv
 .venv\Scripts\python -m pip install -e .
-Copy-Item bellek.example.toml bellek.toml        # then edit the paths
+Copy-Item bellek.example.toml bellek.toml        # sonra yolları düzenleyin
 .venv\Scripts\bellek doktor
 claude mcp add beyin -s user -- "$PWD\.venv\Scripts\python.exe" -m bellek.beyin mcp
-.venv\Scripts\beyin servis                       # brain service; keep this terminal open
+.venv\Scripts\beyin servis                       # beyin servisi; bu terminali açık bırakın
 ```
 
 Kurulum betiği olmadan zamanlanmış görev de olmaz; yazmaların uygulanmasını ve web arayüzünün
@@ -471,7 +518,7 @@ ekleyin (`<repo>` yerine deponun yolunu yazın; `|| true`, hata veren bir hook'u
 engellemesini önler):
 
 ```text
-python -I "<repo>/packages/bellek/src/bellek/devir/hook.py" || true
+python -I -S "<repo>/packages/bellek/src/bellek/devir/hook.py" || true
 ```
 
 **Opus Orkestra**
@@ -547,6 +594,9 @@ eşleyebilirsiniz (`[projects]`); şablon ikisini de açıklar.
 - **computer-use-windows gerçek farenizi ve klavyenizi kontrol eder.** Parola alanlarına ya da
   terminallere yazmaz, uygulama engelleme listesine uyar ve fareyi bir ekran köşesine götürmek her
   eylemi durdurur. O çalışırken PC'yi kullanmayın, hassas pencereleri kapatın ve parolaları kendiniz yazın.
+- **Gizlilik taraması.** `python scripts/gizlilik_tara.py` izlenen dosyalarda kişisel yol, e-posta
+  adresi, belirteç biçimli dizi ve büyük ikili dosya arar. İzin listesi
+  `.github/gizlilik-izinli.txt`; ek yasak sözcükler `GIZLILIK_YASAK` ortam değişkeniyle verilir.
 - **Hook'lar hata durumunda sessizdir (fail-open).** Bozuk bir hook hiçbir şey yazdırmaz ve
   oturumunuzu asla engellemez.
 - **Güvenlik açığı bildirimi:** bkz. [SECURITY.md](SECURITY.md).
@@ -555,8 +605,10 @@ eşleyebilirsiniz (`[projects]`); şablon ikisini de açıklar.
 
 ```text
 eren-kit/
-├── install.ps1                    # one-command installer (run with -Help)
-├── scripts/installer/             # installer module and settings.json hook merger
+├── install.ps1                    # tek komutlu kurulum betiği (-Help ile çalıştırın)
+├── scripts/
+│   ├── gizlilik_tara.py           #   gizlilik tarayıcısı (kişisel yol, e-posta, belirteç)
+│   └── installer/                 #   kurulum modülü, settings.json hook birleştirici, doktor.py
 ├── packages/
 │   ├── bellek/                    # Memory & Brain + Handoff (Python 3.12+)
 │   │   ├── src/bellek/            #   core, beyin (brain), devir (handoff)

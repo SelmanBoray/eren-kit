@@ -20,7 +20,7 @@ cd packages/bellek
 python -m pip install -e ".[dev]"
 python -m pytest
 
-# computer-use-windows (Python >= 3.10)
+# computer-use-windows (Python >= 3.11)
 cd packages/computer-use-windows
 python -m pip install -e ".[dev]"
 ruff check .
@@ -39,7 +39,33 @@ npm run test:protocol
 npm run typecheck:protocol
 npm test -w server
 npm run typecheck -w server
+cd app
+node --test "test/**/*.test.ts"
+cd ..
+node --disable-warning=ExperimentalWarning --test "kurulum/test/**/*.test.ts"
+
+# phone Kotlin core
+cd apps/phone/app/modules/eren-device/cekirdek
+./gradlew test
+
+# installer scripts (repository root; the four tests in test_install_macos.py pass only on macOS)
+python -m pytest -q scripts/installer/tests
+
+# privacy scanner (repository root)
+python -m pytest -q scripts/tests
+python scripts/gizlilik_tara.py
 ```
+
+The phone server tests include one that fails while the live phone service is
+running (named pipe clash). On a machine with the service running, add
+`--test-skip-pattern="ikinci süreçte false"` to `npm test -w server`.
+
+Run `python scripts/gizlilik_tara.py` before opening a pull request. If it
+reports a finding, fix it or add a narrow, justified line to
+`.github/gizlilik-izinli.txt`.
+
+After changes to the installer scripts, a quick check is
+`python scripts/installer/doktor.py --claude-home <temporary directory> --no-network`.
 
 ## Commits
 

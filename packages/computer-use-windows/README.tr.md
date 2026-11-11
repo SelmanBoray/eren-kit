@@ -248,14 +248,14 @@ bir id'dir. Ajan hiç ekran görüntüsü almadan `x,y` verirse, önce bir ekran
 |---|---|---|
 | `screenshot` | `monitor?` | Bir monitörün görüntüsünü alır ve boyut sınırına göre küçültür. Görüntüyle birlikte tek satır döndürür: monitör, boyut, ölçek, tahmini token, ön plandaki pencere. |
 | `zoom` | `x0, y0, x1, y1` | Son ekran görüntüsünün bir bölgesini yerel çözünürlükte yeniden yakalar; küçük yazılar içindir. Koordinatlar ekran görüntüsü uzayında kalır. |
-| `elements` | `query?, window?` | Ön plandaki ya da verilen pencerenin UI Automation öğelerini metin olarak listeler: id, rol, ad, değer, merkez. Parola değerlerini asla göstermez. |
+| `elements` | `query?, window?` | Ön plandaki ya da verilen pencerenin UI Automation öğelerini metin olarak listeler: id, rol, ad, değer, merkez. Parola değerlerini asla göstermez. Tarama yarıda kesildiyse listenin eksik olduğunu bildirir. |
 | `windows` | yok | Görünür üst düzey pencereleri listeler: handle, süreç, başlık, `[foreground]`/`[minimized]`. |
-| `focus` | `window` | Bir pencere simge durumundaysa handle ile geri yükler ve öne getirir. |
-| `click` | `x, y` veya `element`; `button, clicks, modifiers?` | Sol, sağ veya orta tıklama, 1–3 tıklama; isteğe bağlı olarak `ctrl`/`alt`/`shift`/`win` basılı tutularak. |
-| `type_text` | `text` | Klavye düzeninden bağımsız Unicode metin yazar (`\n` = Enter, `\t` = Tab). |
-| `key` | `keys, repeat` | Tuşlara ve kısayollara basar: `ctrl+s`, `alt+f4`, `tab tab enter`. 1–100 kez tekrarlar. |
+| `focus` | `window` | Bir pencere simge durumundaysa handle ile geri yükler ve öne getirir. Yanıt vermeyen pencere reddedilir. |
+| `click` | `x, y` veya `element`; `button, clicks, modifiers?` | Sol, sağ veya orta tıklama, 1–3 tıklama; isteğe bağlı olarak `ctrl`/`alt`/`shift`/`win` basılı tutularak. Terminal ya da ajanın kendi penceresi üzerinde sağ ve orta tık reddedilir (yapıştırma yapar). |
+| `type_text` | `text` | Klavye düzeninden bağımsız Unicode metin yazar (`\n` = Enter, `\t` = Tab). Hedefi (parola alanı, terminal, engelli uygulama) ilk karakterden sonra, her Tab/Enter'dan sonra ve her 50 karakterde yeniden denetler; ön pencere değişirse durur ve hata kaç karakterin yazıldığını söyler. |
+| `key` | `keys, repeat` | Tuşlara ve kısayollara basar: `ctrl+s`, `alt+f4`, `tab tab enter`. 1–100 kez tekrarlar; çağrı başına en çok 200 tuş basışı. Odak parola alanındayken yalnız gezinme tuşları ve kısayollar çalışır; karakter üreten akortlar reddedilir. |
 | `scroll` | `direction, amount, x?, y?` | Tekerleği yukarı, aşağı, sola veya sağa 1–50 adım çevirir; bir noktada ya da imleçte. |
-| `drag` | `x0, y0, x1, y1` | Sol düğmeyi basılı tutarak bir noktadan diğerine sürükler (kaydırıcılar, seçimler, öğe taşıma). |
+| `drag` | `x0, y0, x1, y1` | Sol düğmeyi basılı tutarak bir noktadan diğerine sürükler (kaydırıcılar, seçimler, öğe taşıma). Uçlardan biri terminal ya da ajanın kendi penceresi üzerindeyse reddedilir. |
 | `move` | `x, y` | İşaretçiyi tıklamadan taşır; üzerine gelince açılan menüler ve araç ipuçları için. |
 | `wait` | `seconds` | Arayüzün oturması için en fazla 10 sn bekler. |
 
@@ -309,7 +309,7 @@ hatayla reddedilir.
 
 | Flag | Environment variable | Default | Meaning |
 |---|---|---|---|
-| `--max-size N` | `CUW_MAX_SIZE` | `1280` | `screenshot` ve `zoom` görüntüleri için uzun kenar sınırı, 256–4096 px. Sunucu asla büyütmez. |
+| `--max-size N` | `CUW_MAX_SIZE` | `1280` | `screenshot` ve `zoom` görüntüleri için uzun kenar sınırı, 256–2576 px (API'nin uzun kenar sınırı). Sunucu asla büyütmez. |
 | `--max-image-tokens N` | `CUW_MAX_IMAGE_TOKENS` | `1568` | `screenshot`/`zoom` görüntüsü başına token bütçesi, 100–4784. Görüntüler sığana kadar küçültülür; böylece API onları yeniden boyutlandırmaz ([Token maliyeti](#token-maliyeti) bölümüne bakın). |
 | `--format png\|jpeg` | `CUW_FORMAT` | `png` | Görüntü biçimi |
 | `--jpeg-quality N` | `CUW_JPEG_QUALITY` | `80` | JPEG kalitesi, 1–95 |
@@ -317,7 +317,7 @@ hatayla reddedilir.
 | `--max-elements N` | `CUW_MAX_ELEMENTS` | `80` | `elements`'in döndürdüğü en fazla satır, 1–500 |
 | `--block NAME` | `CUW_BLOCK` | none | Ajanın girdi göndermemesi gereken süreçler. Bayrak tekrarlanabilir ve virgülle de kabul eder (`--block keepass.exe,1password`); değişken virgülle ayrılmış bir liste alır. Eşleşmede büyük/küçük harf yok sayılır ve `.exe` isteğe bağlıdır. |
 | `--no-failsafe` | `CUW_FAILSAFE` | on | Ekran köşesi failsafe'ini kapatır. `0`/`false`/`no`/`off` kapatır. |
-| `--allow-terminal-input` | `CUW_ALLOW_TERMINAL_INPUT` | off | Bir terminal önde olduğunda `type_text`/`key` kullanımına izin verir. `1`/`true`/`yes`/`on` etkinleştirir. |
+| `--allow-terminal-input` | `CUW_ALLOW_TERMINAL_INPUT` | off | Bir terminal önde olduğunda `type_text`/`key` kullanımına izin verir; terminalde sağ/orta tık ve sürüklemeye de izin verir. `1`/`true`/`yes`/`on` etkinleştirir. |
 | `--version` | | | Sürümü yazdırıp çıkar |
 
 ## Güvenlik ve gizlilik
@@ -328,17 +328,25 @@ hatayla reddedilir.
   stdio üzerinden MCP istemcinize gider. İstemciniz bunları, oturumunuzun geri kalanı gibi model
   sağlayıcınıza gönderir.
 - **Parola alanları.** Odaktaki öğe kendini parola alanı olarak bildirdiğinde (UI Automation
-  `IsPassword`) `type_text` reddedilir. `elements` bir parola alanının değerini asla göstermez.
+  `IsPassword`) `type_text` reddedilir; `key` ile karakter üreten akortlar da reddedilir (gezinme
+  tuşları ve kısayollar çalışır). Parola denetimi yapılamazsa (UI Automation yanıt vermezse) bir
+  yeniden denemeden sonra yazma reddedilir. `elements` bir parola alanının değerini asla göstermez.
   Ajana, parolayı sizin yazmanızı istemesi söylenir.
 - **Terminaller.** Terminal pencerelerine ve ajanın içinde çalıştığı terminale veya editöre klavye
   girdisi reddedilir ([“Önce terminal” nasıl işler](#önce-terminal-nasıl-işler) bölümüne bakın).
+  Denetim, nokta/odak altındaki pencerenin kök ve kök-sahip penceresine (ve başka sürece ait gömülü
+  alt pencereye) bakar. Explorer gibi başlatıcılar ajanın barındırıcısı sayılmaz.
+- **Ön plan penceresi yokken** klavye girdisi reddedilir.
 - **Engelleme listesi.** `--block keepass.exe`, o uygulamaya girdiyi reddeder. İşaretçi eylemlerinde
   sunucu hedef noktanın altındaki pencereye, `type_text`/`key` için ön plandaki pencereye, `focus`
-  için hedef pencereye bakar. Ajana, bu adımı sizin yapmanızı istemesi söylenir.
+  için hedef pencereye bakar; bu denetim de nokta/odak altındaki pencerenin kök ve kök-sahip
+  penceresine (ve başka sürece ait gömülü alt pencereye) bakar. Explorer gibi başlatıcılar ajanın
+  barındırıcısı sayılmaz. Ajana, bu adımı sizin yapmanızı istemesi söylenir.
 - **Failsafe.** Farenizi herhangi bir monitörün herhangi bir köşesine götürün. Bundan sonra her eylem
   reddedilir ve ajana durup size sorması söylenir. Fareyi köşeden uzaklaştırdığınızda eylemler yeniden
   çalışır. Ajan fareyi köşeden kendi başına çıkaramaz, çünkü `move` da reddedilir. Ajanın işaretçiyi
-  götürdüğü bir köşe sayılmaz.
+  götürdüğü bir köşe sayılmaz; bu muafiyet imleç başka yerde görülene kadar sürer. Denetim uzun
+  girdi boyunca da yapılır: yazma partileri, akortlar, kaydırma ve sürükleme adımları arasında.
 
 **Sizi neye karşı koruyamaz:**
 
@@ -379,7 +387,16 @@ tıklayan ya da yazan her şey için onay istemini korumaktır:
 - **`elements` uygulamaya bağlıdır.** Standart Windows denetimleri iyi tanımlanır. Özel çizilmiş
   arayüzler ve canvas'lar az sayıda öğe sunabilir ya da hiç sunmayabilir; bu durumda ajan
   `screenshot`'a döner. Çok büyük ağaçlarda (tarayıcılar, Gezgin) `elements` yaklaşık 2 saniye sonra
-  durur ve bulduklarını döndürür; daraltmak için `query` kullanın.
+  durur ve bulduklarını döndürür; daraltmak için `query` kullanın. Tarama kesilirse liste eksik
+  olduğu bildirilir.
+- **Öğe id'leri** pencereleri kapandıysa, küçültüldüyse, taşındıysa ya da yeniden boyutlandıysa veya
+  noktayı başka bir uygulamanın penceresi örtüyorsa reddedilir; aynı uygulamanın açılır pencereleri
+  sorun değildir. Pencere içinde kaydırma pencere dikdörtgenini değiştirmez ve fark edilmez;
+  kaydırdıktan sonra `elements`'i yeniden çağırın.
+- **Odak değişimi denetimi sınırlıdır.** Tab/Enter'dan sonraki kısa bekleme süresinden geç
+  gerçekleşen odak değişimi yakalanmaz (ör. yavaş yüklenen iki adımlı giriş sayfası). Parola alanına
+  ctrl+v / shift+insert ile yapıştırma engellenmez.
+- **Çok satırlı yazma daha yavaştır** (Enter başına yaklaşık 0,1 sn).
 - **Parola tespiti**, uygulamanın alanı parola alanı olarak işaretlemesine dayanır. Bunu bildirmeyen
   bir alan tespit edilmez.
 - **Terminal koruması her terminali tanıyamaz.** Ajanın kendi ana ortamını, konsol pencerelerini ve

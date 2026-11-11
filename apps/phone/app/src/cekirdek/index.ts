@@ -130,8 +130,9 @@ const IS_BITTI_TUKETIM_MS = 3_000;
 export const GECMIS_SIL_SURESI_MS = 20_000;
 
 /**
- * Bağlantı bekçisi: sessizce ölmüş yol (PC uyudu, elektrik gitti; soket düzgün kapanmadı). Servis ping
- * atmaz; telefon da boşta hiçbir şey yollamaz ve zamanlayıcı kurmaz. Bekçi yalnız bu bağlantıda
+ * Bağlantı bekçisi: sessizce ölmüş yol (PC uyudu, elektrik gitti; soket düzgün kapanmadı). Servis WebSocket
+ * düzeyinde ping atar (30 sn); bu çerçeveler JS tarafına ulaşmadığı için uygulama canlılığı kendi
+ * bekçisiyle izlenir. Telefon boşta hiçbir şey yollamaz ve zamanlayıcı kurmaz. Bekçi yalnız bu bağlantıda
  * yollanmış, `ack`'i henüz gelmemiş iş mesajı varken kuruludur; gelen her çerçeve canlılık kanıtıdır.
  * - `YANIT_MS`: `ack`'i hemen dönen (kısa) bir mesaj beklenirken bu kadar hiç çerçeve gelmezse yol
  *   ölüdür: bağlantı kapatılır, yeniden bağlanma döngüsü başlar, mesaj yeniden bağlanınca outbox

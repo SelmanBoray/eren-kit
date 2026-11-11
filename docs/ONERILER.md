@@ -1,6 +1,6 @@
 # eren-kit — öneriler
 
-Durum: öneri listesi, 2026-11-09. Hiçbiri henüz uygulanmadı; her biri ayrı PR olarak ele alınabilir.
+Durum: öneri listesi, 2026-11-09. Bazı maddeler 2026-11-12'de uygulandı (8 kısmen, 9 ve 12 yerel olarak; özet tabloda ve ilgili bölümlerde işaretli); kalanı henüz uygulanmadı. Her biri ayrı PR olarak ele alınabilir.
 
 Kaynaklar:
 - `packages/bellek/DESIGN.md` içinde açık kalan aşamalar (M2–M7).
@@ -16,27 +16,27 @@ Etiketler:
 
 ## Özet tablo
 
-| # | Öneri | Alan | Etki | Maliyet |
-| --- | --- | --- | --- | --- |
-| 1 | Otomatik hatırlama hook'u (sıkı kapılı, bütçeli) | bellek | yüksek | M |
-| 2 | Hibrit arama: FTS5 + vektör → RRF, sqlite-vec | bellek | yüksek | M |
-| 3 | Token/maliyet ölçümü: oturum dökümünden rapor | orkestra, devir | yüksek | S |
-| 4 | Sahiplik haritasını hook ile zorlamak | orkestra | yüksek | M |
-| 5 | Kod dosyaları için "önce harita" (sembol haritası) | kapi | yüksek | M |
-| 6 | Defter → beyin konsolidasyonu (gece işi) | bellek, orkestra | orta | M |
-| 7 | Yerel model şeridi (Ollama / MLX) | orkestra, bellek | orta | M |
-| 8 | `eren doktor`: tek komutla sağlık denetimi | kurulum | orta | S |
-| 9 | Gizlilik kapısı CI'da (kişisel yol/ad taraması) | repo | orta | S |
-| 10 | Çift görüşe dış modeller (Codex, Gemini) | orkestra | orta | S |
-| 11 | Bağımlılık-hash'li semantik önbellek | bellek | orta | M |
-| 12 | Beyin yedekleme ve geri yükleme | bellek | orta | S |
-| 13 | Proje kapsamlı hafıza (cwd → proje sinyali) | bellek | orta | S |
-| 14 | `.erenignore` / `.gitignore` duyarlı indeksleme | bellek | düşük | S |
-| 15 | Linux desteği (systemd user unit) | kurulum | düşük | S |
-| 16 | Telefon: iOS/iPad sohbet istemcisi + macOS sunucu | phone | orta | L |
-| 17 | Beyin web arayüzünden düzenleme | bellek | düşük | M |
-| 18 | Uzaktan erişim bileşeni (Tailscale/LAN köprüsü) | kurulum | düşük | S |
-| 19 | Sürüm ve dağıtım hijyeni | repo | düşük | S |
+| # | Öneri | Alan | Etki | Maliyet | Durum |
+| --- | --- | --- | --- | --- | --- |
+| 1 | Otomatik hatırlama hook'u (sıkı kapılı, bütçeli) | bellek | yüksek | M | açık |
+| 2 | Hibrit arama: FTS5 + vektör → RRF, sqlite-vec | bellek | yüksek | M | açık |
+| 3 | Token/maliyet ölçümü: oturum dökümünden rapor | orkestra, devir | yüksek | S | açık |
+| 4 | Sahiplik haritasını hook ile zorlamak | orkestra | yüksek | M | açık |
+| 5 | Kod dosyaları için "önce harita" (sembol haritası) | kapi | yüksek | M | açık |
+| 6 | Defter → beyin konsolidasyonu (gece işi) | bellek, orkestra | orta | M | açık |
+| 7 | Yerel model şeridi (Ollama / MLX) | orkestra, bellek | orta | M | açık |
+| 8 | `eren doktor`: tek komutla sağlık denetimi | kurulum | orta | S | kısmen yapıldı (2026-11-12) |
+| 9 | Gizlilik kapısı CI'da (kişisel yol/ad taraması) | repo | orta | S | yapıldı (2026-11-12) |
+| 10 | Çift görüşe dış modeller (Codex, Gemini) | orkestra | orta | S | açık |
+| 11 | Bağımlılık-hash'li semantik önbellek | bellek | orta | M | açık |
+| 12 | Beyin yedekleme ve geri yükleme | bellek | orta | S | yapıldı, yerel (2026-11-12) |
+| 13 | Proje kapsamlı hafıza (cwd → proje sinyali) | bellek | orta | S | açık |
+| 14 | `.erenignore` / `.gitignore` duyarlı indeksleme | bellek | düşük | S | açık |
+| 15 | Linux desteği (systemd user unit) | kurulum | düşük | S | açık |
+| 16 | Telefon: iOS/iPad sohbet istemcisi + macOS sunucu | phone | orta | L | açık |
+| 17 | Beyin web arayüzünden düzenleme | bellek | düşük | M | açık |
+| 18 | Uzaktan erişim bileşeni (Tailscale/LAN köprüsü) | kurulum | düşük | S | açık |
+| 19 | Sürüm ve dağıtım hijyeni | repo | düşük | S | açık |
 
 ---
 
@@ -73,6 +73,8 @@ AURA Desktop'ta ölçülmüş yaklaşım:
 
 ## 4. Sahiplik haritasını hook ile zorlamak
 
+**Not (2026-11-12):** Uygulanmadı. Hook girdisinde alt agent'ı ayırt eden `agent_id` alanının gerçek payload'da bulunduğu depoda doğrulanmış değil (kapı testlerindeki payload elle yazılmış); ayrıca yalnız Edit/Write'ı denetlemek Bash üzerinden yazmayı yakalamaz.
+
 - **Sorun:** Opus Orkestra'nın iki kuralı yalnızca modelin uymasına dayanıyor: "şef kod yazmaz" ve "agent kendi alanı dışına yazmaz".
 - **Öneri:**
   - Şef dağıtımdan önce sahiplik haritasını `.git/orkestra/sahiplik.json` dosyasına yazar.
@@ -81,6 +83,8 @@ AURA Desktop'ta ölçülmüş yaklaşım:
 - **⚠ doğrula:** hook girdisinde çağrının ana oturumdan mı alt agent'tan mı geldiğini ayırt eden bir alan olup olmadığı (`agent_id` benzeri) Claude Code belgelerinden teyit edilmeli. Yoksa ayrım `transcript_path` üzerinden yapılabilir.
 
 ## 5. Kod dosyaları için "önce harita"
+
+**Not (2026-11-12):** Uygulanmadı. Ön koşul doğrulanmalı: ilk Read reddedildikten sonra Edit'in hedefli (offset/limit) okumayla çalışıp çalışmadığı gerçek oturumda denenmeli; aksi halde kod kapısı düzenleme akışını bozar.
 
 - **Fikir:** kapı şu an yalnızca büyük Markdown dosyalarına harita döndürüyor. Aynı fikir büyük kaynak dosyalara uygulanır.
 - **Öneri:**
@@ -109,6 +113,8 @@ AURA Desktop'ta ölçülmüş yaklaşım:
 
 ## 8. `eren doktor`
 
+**Durum (2026-11-12):** Kısmen yapıldı: kurulum doktoru `scripts/installer/doktor.py` (`install.ps1 -Doctor`, `install.sh --doctor`) hook kayıtlarını, skill kopyalarını, MCP kayıtlarını, servisi ve görevi denetler; `bellek doktor` artık beyin veritabanını ve hook günlüklerini de denetler. "eren doktor" adında tek bir üst komut yok.
+
 Tek komut tüm bileşenlerin durumunu denetler ve `--json` çıktısı verir (AURA'daki `doctor --json` gibi):
 - hook'lar `settings.json`'da ve dosyaları var mı;
 - hook yorumlayıcısının sürümü;
@@ -120,6 +126,8 @@ Tek komut tüm bileşenlerin durumunu denetler ve `--json` çıktısı verir (AU
 Kurulum betikleri sonunda bunu çalıştırır.
 
 ## 9. Gizlilik kapısı CI'da
+
+**Durum (2026-11-12):** Yapıldı: `scripts/gizlilik_tara.py`, izin listesi `.github/gizlilik-izinli.txt`, ek sözcükler `GIZLILIK_YASAK`.
 
 AURA Desktop'taki `soul_check` gibi:
 - Bir CI adımı depoda kişisel mutlak yol, kullanıcı adı, e-posta, token biçimli dizi ve büyük ikili dosya arar.
@@ -142,9 +150,11 @@ AURA Desktop'taki `soul_check` gibi:
 
 ## 12. Beyin yedekleme ve geri yükleme
 
+**Durum (2026-11-12):** Yapıldı (yerel): `python -m bellek.beyin yedekle | yedekler | geri-yukle`. Günlük yedek görevi ve şifreli uzak yedek açık.
+
 - `beyin yedekle`: `disa-aktar --bicim jsonl` ve SQLite `.backup` ile, zaman damgalı.
 - Kurulumda isteğe bağlı günlük yedek görevi açılabilir.
-- Geri yükleme için `ice-al` zaten idempotent.
+- Yedek veritabanı düzeyindedir (`python -m bellek.beyin yedekle`, SQLite `backup()`). JSONL dökümü yedek değildir: yalnız aktif olguları içerir; geçmiş, kaynak, gelen kutusu ve sır gövdeleri dökümde yoktur, döküm `ice-al` biçiminde de değildir. Geri yükleme `geri-yukle` iledir, `ice-al` ile değil. Günlük yedek görevi ve şifreli uzak yedek açık.
 - Uzak yedek (DESIGN §16.5) şifreli olmalı.
 
 ## 13. Proje kapsamlı hafıza (DESIGN §8.5)

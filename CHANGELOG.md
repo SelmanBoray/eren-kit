@@ -29,6 +29,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Installer: new `kapi` component (in the default set). `settings_hooks.py` now supports group-level
   `matcher` and per-handler `if` filters, and `-ReplaceExisting` also removes out-of-repo copies of
   the gate hook.
+- `bellek`: brain backup commands `python -m bellek.beyin yedekle [--dizin D] [--sakla N]`,
+  `yedekler` and `geri-yukle <yedek> [--evet]`. Backups are online-consistent copies made with SQLite
+  `backup()`; the newest 14 are kept. Restore only runs while the service is stopped, and the old
+  database is moved aside, not deleted. Local backups are not encrypted.
+- `bellek`: `bellek doktor` gains brain checks: `beyin_db` (integrity, schema version), `beyin_fts`
+  (full-text index consistency), `beyin_yetim` (nodes without a parent), `beyin_gelen` (pending
+  suggestions older than 14 days), `beyin_kuyruk` (offline queue entries older than 24 hours) and
+  `hook_gunluk` (hook errors in the last 7 days). The database is opened read-only and leaves no
+  side files.
+- `bellek`: `ice-al --uzerine-yaz` flag (with the protection behavior described under Fixed).
+- Installer: install doctor `scripts/installer/doktor.py` (`.\install.ps1 -Doctor [-Json]`,
+  `./install.sh --doctor [--json]`). It checks, read-only, hook registrations (duplicates, old
+  location, missing events, script path), whether skill copies match the repo, MCP registrations,
+  the brain service and its task. `--no-network` starts no external process and makes no network
+  request; exit code 0/1/2. It also runs once at the end of a real install.
+- Installer: `-KeepExisting` / `--keep-existing` to deliberately keep an old hook registration.
+- Repo: privacy scanner `scripts/gizlilik_tara.py`: looks in tracked files for personal paths,
+  e-mail addresses, token-like strings and large binary files. The allow list is
+  `.github/gizlilik-izinli.txt`; extra forbidden words come from the `GIZLILIK_YASAK` environment
+  variable.
+- `apps/phone` (server): list and remove paired devices: `eslestir --liste`,
+  `eslestir --kaldir <kimlik>`. A removed device's credentials are rejected on every connection
+  path, its open connections close within 2 seconds, and past data is kept.
+- `apps/phone` (server): a WebSocket ping every 30 seconds on each connection; a connection that
+  does not answer is closed within 60 seconds at the latest.
+- `apps/phone` (app): connection watchdog: when a send has no reply yet and the line is silent for
+  20 seconds, the connection is dropped and re-established.
 
 ### Changed
 
@@ -53,6 +80,77 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - The service log has a new `komut_sonucu` event (command id, name, result, reason code; no content).
   - Token usage: the service records token usage per result and model (numbers and ids only, no content; clearing or deleting a chat keeps it), and the phone shows it in a Usage section on the Status screen (today, last 7 days, per chat and per job) and as one line on each job report card (`usage_request`/`usage_report`).
   - Smaller sessions: the main chat opens with eight built-in tools only (`--tools`); PC job sessions drop 20 unused built-in tools and claude.ai-synced skills (measured first request 44,059 → 33,444 tokens); the `uygulamalar` tool returns compact text instead of the full JSON list.
+- Installer: a hook registration of the same component at an old location is now replaced by the new
+  one by default (after a backup); `-ReplaceExisting` is still accepted for compatibility but is no
+  longer needed. The handoff hook runs with `python -I -S`. The gate hook is also registered on
+  `SessionStart` with the `compact` matcher. Orchestra hook commands end with `|| true`.
+- `bellek`: the brain service serves static files with a content `ETag` and
+  `Cache-Control: no-cache`; a matching `If-None-Match` gets a 304 (first load 356 KB, later loads
+  download no body).
+- `bellek` (handoff): faster session transcript scan (Stop path on a 20 MB transcript about 92 ms to
+  56 ms; spaced JSON format 168 ms to 55 ms); faster hook start (the handoff directory lookup is
+  cached); automatic notes older than 28 days are deleted at `SessionStart`; a note is not rewritten
+  when its content is unchanged.
+- `apps/phone` (server): polling of running jobs no longer grows with the job count (5 concurrent
+  jobs: 156 external process queries per minute to 6); jobs started in this lifetime are noticed as
+  finished through the exit event.
+- `apps/phone` (app): in a bulk catch-up `last_seq` is written once, not per event; the unread count
+  no longer scans the whole history.
+- `computer-use-windows`: `key` allows at most 200 presses per call; the `--max-size` upper bound is
+  2576 (the API's long-edge limit); `elements` reports when its scan was cut short.
+- `bellek` tests are isolated from user data through a shared `tests/conftest.py`.
+
+### Fixed
+
+- `bellek`: when the brain service rejected a request with a body early, it closed the connection
+  without reading the body; on Windows the client saw a connection error instead of the response
+  (the flaky `WinError 10053` in CI). It now sends the response and reads the remaining bytes, bounded
+  (2 s / 4 MB). The body of a GET with a body is no longer parsed as the next request.
+- Installer: the gate hook was registered twice in `settings.json` (the old-location entry was not
+  removed and a new one was added next to it; entries with doubled backslashes and `-m` form were
+  never recognized). Hook recognition now parses the command, and duplicate groups collapse to one.
+  The write no longer overwrites an intervening change and retries on a locked file on Windows.
+- Installer: removing the phone component did not delete the scheduled task; `install.sh --dry-run`
+  left `__pycache__` in the repo.
+- `bellek`: re-running `ice-al` overwrote nodes the user had edited later with the seed value; a node
+  changed by a non-seed source is now kept and reported in the `korunan` list. The import starts with
+  `BEGIN IMMEDIATE` (fixes the whole import being rolled back during concurrent writes).
+- `bellek`: the secret node title lookup failed with an ASCII-folded query ("sifre kasasi" did not
+  match "Şifre kasası"); `gez` and the export tried to create a root in a database without one; the
+  fact date was shown by UTC day.
+- `bellek` (handoff): on a large transcript the second scan phase never ran when the first phase took
+  long; request counting in spaced JSON format fell back to a full parse with no time limit; a user
+  typing `/devir` hit the whitespace guard.
+- `bellek` (gate): the map was not shown again after context compaction (compact); when the
+  measurement log was rotated, two concurrent processes could overwrite the history.
+- `bellek` (web): in the inbox, the title of a suggestion with a hidden parent could not be corrected
+  and approved; the title limit did not match the server (200 vs 120); a retried decision gave an
+  "already decided" error; the confirmation cancelled itself after 5 seconds; focus was not moved
+  inside when the panel opened.
+- `computer-use-windows`: `focus` on an unresponsive (hung) window locked up the server;
+  `click(element=...)` clicked the wrong place after the window moved or closed; "truncated" was
+  reported by mistake when there were exactly `limit` elements.
+- `apps/phone` (server): child processes were orphaned when starting a job failed; a device command
+  sent to a closed socket waited until the end of the final delivery timeout.
+- `apps/phone` (app): a plan decision flipped back to "waiting for approval" in the window between
+  its reply and its event; an event appended after a half-written log line was corrupted.
+
+### Security
+
+- `bellek`: the brain export (Markdown and JSONL) ignored privacy inherited from a parent node:
+  summaries and facts of nodes under a secret or private branch appeared in the dump. For deep chains
+  (more than 64 levels) the privacy computation now fails closed.
+- `bellek`: `ice-al` checks text fields in the seed for secrets (the same check as the normal write
+  path); error records carry no content excerpts.
+- `computer-use-windows`: `type_text` refreshes the password field, terminal and blocked-app checks
+  after every Tab/Enter and stops when the foreground window changes; `key` rejects chords that
+  produce characters in a password field; typing is refused when the password check cannot be made;
+  the emergency stop holds during long input; right/middle click and drag on a terminal are
+  rejected; the blocked-app check looks at the root and root-owner window.
+- `apps/phone` (server): device removal (above) makes it possible to revoke the access of a lost or
+  stolen phone.
+- Installer: the install doctor runs a program it reads from `settings.json` only when its name is
+  explicitly a Python interpreter.
 
 ## [0.1.0] - 2026-11-09
 

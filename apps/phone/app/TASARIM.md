@@ -109,14 +109,15 @@ sınıflandırma `protocol/vektorler/cihaz-mesaj.json`, hash `plan-hash.json`. S
 
 **Android adaptörü (`android/src/main/java/dev/eren/cihaz/`):** `CihazServisi` (specialUse ön plan,
 kalıcı bildirim + Durdur, izin aktifken sayaç), `Baglanti` (OkHttp WS, `pingInterval` OkHttp düzeyinde,
-protokolde ping mesajı yok), `ErisimServisi`+`EkranOkuyucu`+`Eylemci` (`EkranPortu`/`EylemPortu`
+protokolde ping mesajı yok; servis her bağlantıya 30 sn'de bir WebSocket ping atar, bu çerçeve düzeyindedir:
+uygulama mesajı değildir ve JS tarafında görünmez), `ErisimServisi`+`EkranOkuyucu`+`Eylemci` (`EkranPortu`/`EylemPortu`
 gerçeklemesi), `PaketBilgisi` (imza özeti, `PACKAGE_ADDED`), `AnahtarDeposu` (Keystore P-256,
 `AnahtarPortu`), `DenetimDosyasi` (`DenetimPortu`), `AcilisAlici`, `DurdurAlici`, aktiviteler
 `OnayActivity`/`EslestirmeActivity`/`UygulamaListesiActivity`/`DenetimActivity`/`TanilamaActivity`,
 Expo modülü `ErenDeviceModule.kt` (`ErenDevice.types.ts` yüzeyini gerçekler). `[karar]`
 
 **JS modülleri (`app/src/`):** `cekirdek/baglanti.ts` (hello/auth/welcome, geri çekilme 1→30 sn),
-`cekirdek/telafi.ts` (önce olay diske, sonra `last_seq`; `seq <= last_seq` atılır), `cekirdek/outbox.ts`
+`cekirdek/telafi.ts` (önce olay günlüğe, `last_seq` olay başına yazılmaz: bkz. "Telafi"; `seq <= last_seq` atılır), `cekirdek/outbox.ts`
 (`client_msg_id` kalıcı sayaçtan; kimlikten sonra sırayla; `ack` siler; `ok:false` yeniden yollanmaz),
 `cekirdek/akis.ts` (snapshot + offset'li delta), `cekirdek/olaylar.ts` (olaydan görünüm modeli;
 `planHash` tutmazsa kart gizlenir), `depo/dosyaDepo.ts` (`DepoPortu`, expo-file-system, geçici dosya +
@@ -268,7 +269,9 @@ ayrı bir konuşmasıdır (ayrı bağlam, ayrı süreç zinciri); kişilik fark�
 Ayrı platform portu eklenmez: seçim kaydı yeni bir `DepoPortu` anahtarıdır (`sohbet_secimi`).
 `depo/dosyaDepo.ts`, `platform/*`, `cihaz/erenDevice.ts` ve bütün Kotlin (`modules/eren-device/**`)
 değişmez: `/cihaz`, eşleştirme (`pair_*` v1), `HataKoduV1` (32 kod) ve `/sohbet` el sıkışma imzası Dilim 2'de
-aynıdır. `[protocol]`
+aynıdır. `[protocol]` Not (`depo/dosyaDepo.ts`, yalnız davranış düzeltmesi): `ekle`, dosya yeni satırla bitmiyorsa
+(yarım kalmış kayıt) yeni kaydı satır başından başlatır; süreç başına dosyanın satır sonuyla bitip bitmediği
+bellekte tutulur, bilinmiyorsa son bayt bir kez okunur.
 
 ### Olay yönlendirme (`index`)
 
@@ -320,6 +323,9 @@ aynıdır. `[protocol]`
 - **Taban:** seçim kaydı hiç yoksa (ilk Dilim 2 açılışı) `taban_seq = telafi.sonSeq()` (yüklemeden sonra):
   eski geçmiş okunmamış görünmez. Yerel sıfırlamadan (`welcome` "geride") sonra ilk `welcome.head_seq`
   taban olur ve `okundu` boşalır. Silinen sohbetin `okundu` girdisi kalkar.
+- **Sayım ve önbellek:** okunmamış sayısı sondan geriye sayılır ve `okunduSeq`'te durur; bir görünüm dizisinden
+  türetilen sonuçlar dizinin kimliğine bağlı önbellekte tutulur. Ön koşul: görünüm dizisi `seq` sırasındadır ve
+  yerinde değiştirilmez.
 - Rozet açık (seçili) sohbette gösterilmez; başka sohbette okunmamış varsa üst çubuktaki menü simgesinde
   nokta. `[tasarim 6.1, 6.12]`
 
@@ -400,6 +406,25 @@ Arayüz değişmez. Günlük kırpmasında bir satırın kalma kuralı (`kalirMi
 birlikte kırpar ve kırpılmış listeyi döner. Canlı `chat_deleted` (ve canlı mezar taşı) olay günlüğe
 eklenip `last_seq` ilerledikten sonra günlüğü kırpar (`satirlariYaz`); `last_seq` değişmez; kırpma
 yazılamazsa olay yine uygulanır, sonraki `yukle` kırpmayı yineler. `[protocol]`
+
+**`last_seq` yazımı:** değer artık olay başına yazılmaz; iki yerde yazılır: (a) açılıştaki kırpma günlükteki en
+büyük `seq`'i düşürecekse kırpmadan ÖNCE, (b) olay sırası boşalınca bir kez. Açılışta değer
+`max(günlükteki en büyük seq, dosya)` olarak hesaplanır; dosyaya yazılan değer her zaman önceden günlüğe
+eklenmiş bir `seq`'tir.
+
+### Bağlantı bekçisi ve karar teslimi (`index`)
+
+**Bağlantı bekçisi:** cevabı gelmemiş bir gönderim varken kurulur, yoksa zamanlayıcı çalışmaz. Kısa gönderimlerde
+(`user_message`, `interrupt`, `question_answer`, `chat_create`, `chat_rename`) 20 sn boyunca hiç çerçeve gelmezse
+bağlantı koparılır ve yeniden bağlanılır; mesaj aynı `client_msg_id` ile yeniden gider. Geç cevaplı gönderimlerde
+(`plan_decision`, `job_cancel`) 10 sn sessizlikte bir `usage_request` yoklaması gider, 10 sn daha çerçeve gelmezse
+koparılır. Silme istekleri kendi 20 sn'lik sürelerini korur (`GECMIS_SIL_SURESI_MS`). Sabitler `BEKCI_SURELERI`'nde
+(`YANIT_MS` 20 sn, `YOKLAMA_MS` 10 sn).
+
+**Karar teslimi:** `plan_decision`, `question_answer`, `job_cancel` için kararın `ack ok`'u geldiğinde kart hâlâ
+bekliyorsa karar `bekleyenler`'de `teslim_edildi` olarak durur; aynı karar yeniden gönderilmek istenirse
+`zaten_yollandi` döner. Kayıt, kart sonuçlanınca, silinince, yerel sıfırlamada ya da `ack` anına kadar alınmış
+olaylar uygulandığı hâlde kart hâlâ bekliyorsa düşer.
 
 ### Mezar taşı ve silinen sohbet (`index`)
 
@@ -527,7 +552,8 @@ agent'ı raporlar), `ekranlar/PlanKartiEkrani.tsx`, `SoruKartiEkrani.tsx`, `Rapo
 tutamacı aynı yöntemleri taşır), `Diyalog.tsx`, `AltSayfa.tsx`, `AltaIn.tsx`, `Bilesenler.tsx`, `Ikonlar.tsx`,
 `Markdown*`, `markdown.ts`, `tema.ts`, `depo/dosyaDepo.ts`, `platform/*`, `cihaz/erenDevice.ts`,
 `modules/eren-device/**` (**Kotlin değişmez**: `/cihaz` ve eşleştirme v1, `HataKoduV1` aynı; `SozlesmeTest`
-`HATA_KODLARI`'nı okumaz), `package*.json`.
+`HATA_KODLARI`'nı okumaz), `package*.json`. (`depo/dosyaDepo.ts` notu: `ekle`, dosya yeni satırla bitmiyorsa
+yeni kaydı satır başından başlatır; bitiş bilgisi süreç başına bellekte tutulur, bilinmiyorsa son bayt bir kez okunur.)
 
 #### O1 `app/test/cekirdek/sahte.ts` (ortak, önce)
 

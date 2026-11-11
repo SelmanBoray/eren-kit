@@ -244,14 +244,14 @@ one first, or to use element ids.
 |---|---|---|
 | `screenshot` | `monitor?` | Captures a monitor, downscaled to the size cap. Returns the image plus one line: monitor, size, scale, token estimate, foreground window. |
 | `zoom` | `x0, y0, x1, y1` | Captures a region of the last screenshot fresh at native resolution, for small text. Coordinates stay in screenshot space. |
-| `elements` | `query?, window?` | Lists the UI Automation elements of the foreground or a given window as text: id, role, name, value, center. Never shows password values. |
+| `elements` | `query?, window?` | Lists the UI Automation elements of the foreground or a given window as text: id, role, name, value, center. Never shows password values. Says when the scan was cut short and the list is incomplete. |
 | `windows` | none | Lists visible top-level windows: handle, process, title, `[foreground]`/`[minimized]`. |
-| `focus` | `window` | Restores a window by handle if minimized and brings it to the front. |
-| `click` | `x, y` or `element`; `button, clicks, modifiers?` | Left, right or middle click, 1–3 clicks, optionally holding `ctrl`/`alt`/`shift`/`win`. |
-| `type_text` | `text` | Types Unicode text, independent of the keyboard layout (`\n` = Enter, `\t` = Tab). |
-| `key` | `keys, repeat` | Presses keys and shortcuts: `ctrl+s`, `alt+f4`, `tab tab enter`. Repeats 1–100 times. |
+| `focus` | `window` | Restores a window by handle if minimized and brings it to the front. A window that is not responding is refused. |
+| `click` | `x, y` or `element`; `button, clicks, modifiers?` | Left, right or middle click, 1–3 clicks, optionally holding `ctrl`/`alt`/`shift`/`win`. Right and middle clicks on a terminal or on the agent's own window are refused (they paste). |
+| `type_text` | `text` | Types Unicode text, independent of the keyboard layout (`\n` = Enter, `\t` = Tab). Re-checks the target (password field, terminal, blocked app) after its first character, after every Tab/Enter and every 50 characters, and stops if the foreground window changes; the error says how many characters were typed. |
+| `key` | `keys, repeat` | Presses keys and shortcuts: `ctrl+s`, `alt+f4`, `tab tab enter`. Repeats 1–100 times. At most 200 key presses per call. While a password field has the focus only navigation keys and shortcuts work; chords that type a character are refused. |
 | `scroll` | `direction, amount, x?, y?` | Turns the wheel up, down, left or right by 1–50 notches, at a point or at the cursor. |
-| `drag` | `x0, y0, x1, y1` | Holds the left button down from one point to another (sliders, selections, moving items). |
+| `drag` | `x0, y0, x1, y1` | Holds the left button down from one point to another (sliders, selections, moving items). Refused when either end is on a terminal or the agent's own window. |
 | `move` | `x, y` | Moves the pointer without clicking, for hover menus and tooltips. |
 | `wait` | `seconds` | Pauses up to 10 s so the UI can settle. |
 
@@ -301,7 +301,7 @@ Invalid values are rejected with an error that names the flag or variable.
 
 | Flag | Environment variable | Default | Meaning |
 |---|---|---|---|
-| `--max-size N` | `CUW_MAX_SIZE` | `1280` | Long-edge cap for `screenshot` and `zoom` images, 256–4096 px. The server never upscales. |
+| `--max-size N` | `CUW_MAX_SIZE` | `1280` | Long-edge cap for `screenshot` and `zoom` images, 256–2576 px (the API's long-edge limit). The server never upscales. |
 | `--max-image-tokens N` | `CUW_MAX_IMAGE_TOKENS` | `1568` | Token budget per `screenshot`/`zoom` image, 100–4784. Images are shrunk until they fit, so the API never resizes them (see [Token cost](#token-cost)). |
 | `--format png\|jpeg` | `CUW_FORMAT` | `png` | Image format |
 | `--jpeg-quality N` | `CUW_JPEG_QUALITY` | `80` | JPEG quality, 1–95 |
@@ -309,7 +309,7 @@ Invalid values are rejected with an error that names the flag or variable.
 | `--max-elements N` | `CUW_MAX_ELEMENTS` | `80` | Maximum lines returned by `elements`, 1–500 |
 | `--block NAME` | `CUW_BLOCK` | none | Processes the agent must not send input to. The flag can repeat and also accepts commas (`--block keepass.exe,1password`); the variable takes a comma-separated list. Matching ignores case, and `.exe` is optional. |
 | `--no-failsafe` | `CUW_FAILSAFE` | on | Turns off the screen-corner failsafe. `0`/`false`/`no`/`off` disables it. |
-| `--allow-terminal-input` | `CUW_ALLOW_TERMINAL_INPUT` | off | Allows `type_text`/`key` while a terminal is in front. `1`/`true`/`yes`/`on` enables it. |
+| `--allow-terminal-input` | `CUW_ALLOW_TERMINAL_INPUT` | off | Allows `type_text`/`key` while a terminal is in front, and right/middle clicks and drags onto a terminal or the agent's own window. `1`/`true`/`yes`/`on` enables it. |
 | `--version` | | | Prints the version and exits |
 
 ## Safety and privacy
@@ -321,16 +321,23 @@ Invalid values are rejected with an error that names the flag or variable.
   rest of your session.
 - **Password fields.** `type_text` is refused when the focused element reports itself as a password
   field (UI Automation `IsPassword`). `elements` never shows a password field's value. The agent is
-  told to ask you to type it yourself.
+  told to ask you to type it yourself. `key` chords that type a character are refused too. If the
+  password state can't be determined (UI Automation does not answer), typing is refused after one
+  retry ("Could not verify").
 - **Terminals.** Keyboard input is refused into terminal windows and into the terminal or editor
-  the agent runs in (see [How "terminal first" works](#how-terminal-first-works)).
+  the agent runs in (see [How "terminal first" works](#how-terminal-first-works)). The check looks
+  at the root and root-owner window of the window under the point or in focus, and at an embedded
+  child window of another process. Launchers such as Explorer are not counted as the agent's host.
+  Keyboard input is refused while there is no foreground window.
 - **Blocklist.** `--block keepass.exe` refuses input to that app. For pointer actions the server
   checks the window under the target point, for `type_text`/`key` the foreground window, and for
-  `focus` the target window. The agent is told to ask you to do that step yourself.
+  `focus` the target window. Each check covers the root and root-owner window and an embedded
+  child window of another process. The agent is told to ask you to do that step yourself.
 - **Failsafe.** Move your mouse into any corner of any monitor. Every action is then refused, and the
   agent is told to stop and ask you. Actions work again once you move the mouse away. The agent can't
   move the mouse out of the corner itself, because `move` is refused too. A corner the agent moved
-  the pointer to doesn't count.
+  the pointer to doesn't count, until the pointer is seen somewhere else. The failsafe is also
+  checked during long input: between typing batches, key chords, and scroll and drag steps.
 
 **What it can't protect you from:**
 
@@ -374,14 +381,21 @@ anything that clicks or types:
   few elements or none, and then the agent falls back to `screenshot`. This happens with
   custom-drawn UIs, canvases and some Electron apps (for example Discord, and sometimes the Claude
   desktop app). See [Troubleshooting](#troubleshooting) for a tip. On very large trees, `elements`
-  stops after about 2 seconds and returns what it found, so use `query` to narrow it.
+  stops after about 2 seconds and returns what it found and says the list is incomplete, so use `query` to narrow it.
 - **Password detection** relies on the app marking the field as a password field. A field that
   doesn't report this won't be detected.
 - **The terminal guard can't recognize every terminal.** It catches the agent's own host, console
   windows and the listed terminal apps. A terminal embedded in some other app is not detected, for
   example the integrated terminal of an editor the agent does not run in.
 - **Coordinates go stale.** Coordinates refer to the last screenshot, and element ids to the last
-  `elements` call. If the screen changes, the agent should look again.
+  `elements` call. If the screen changes, the agent should look again. Element ids are refused when
+  their window closed, was minimized, moved or resized, or when a window of another app covers the
+  point; popups of the same app are fine. Scrolling inside a window does not change its rectangle
+  and is not detected, so call `elements` again after scrolling.
+- **Typing checks have gaps.** A focus change that happens later than the short settle wait after
+  Tab/Enter is not caught (for example a slow two-step sign-in page). Pasting with ctrl+v or
+  shift+insert into a password field is not blocked. Multi-line typing is slower (about 0.1 s per
+  Enter).
 
 ## Troubleshooting
 

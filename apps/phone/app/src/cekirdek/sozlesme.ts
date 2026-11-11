@@ -552,7 +552,8 @@ export interface CekirdekDurumu extends BaglantiOzeti {
 
 /**
  * `kuyrukta`: diskte, henüz bu bağlantıda yollanmadı. `yollandi`: `ack` bekliyor.
- * `teslim_edildi`: `ack` geldi, `user_echo` olayı henüz gelmedi (yalnız `user_message`).
+ * `teslim_edildi`: `ack` geldi, `user_echo` olayı henüz gelmedi (`user_message`); karar gönderimleri
+ * (`plan_decision`, `question_answer`, `job_cancel`) için de kullanılır: `ack ok` geldi, kart hâlâ bekliyor.
  */
 export type BekleyenDurumu = "kuyrukta" | "yollandi" | "teslim_edildi";
 

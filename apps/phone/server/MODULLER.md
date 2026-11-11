@@ -39,7 +39,7 @@ Kararlar sabittir (K1-K5, şef 2026-11-08). Kablo `protocol/README.md` "Sürüml
 
 ### Şema kuralı (K2)
 
-**`user_version` yalnız geriye uyumsuz göçte artar; ek göçler `sema_ek`'te.** `depo.ts` `SURUM` 1'de kalır. Yalnız ekleme yapan (geriye uyumlu) göçler `sema_ek(anahtar TEXT PRIMARY KEY, deger INTEGER NOT NULL) STRICT` tablosunda `anahtar='ek_surum'` ile sayılır; ek göç listesi ileri yönlüdür, her biri kendi işleminde uygulanır, sayaç aynı işlemde artar. Eski kod yeni şemalı veritabanını açabilmelidir: `user_version` değişmediği için açılış atmaz, eski kodun 13 `INSERT`'inin hepsi sütun adı yazar (`depo.ts` 436, 479, 490, 518, 542, 566, 610, 630, 658, 681, 704, 724, 756; 2026-11-08 doğrulandı), yeni sütunlar varsayılanlı olduğundan eski `INSERT` geçer. Ek göçler: ek sürüm 1 = `ALTER TABLE planlar ADD COLUMN profil TEXT NOT NULL DEFAULT 'tam'`; ek sürüm 2 = `eren_oturumlari` tablosu (ana oturumun Claude oturum kimlikleri) ve `events(type)` dizini (`events_tur`). Açılışta ayrıca `PRAGMA secure_delete=ON`.
+**`user_version` yalnız geriye uyumsuz göçte artar; ek göçler `sema_ek`'te.** `depo.ts` `SURUM` 1'de kalır. Yalnız ekleme yapan (geriye uyumlu) göçler `sema_ek(anahtar TEXT PRIMARY KEY, deger INTEGER NOT NULL) STRICT` tablosunda `anahtar='ek_surum'` ile sayılır; ek göç listesi ileri yönlüdür, her biri kendi işleminde uygulanır, sayaç aynı işlemde artar. Eski kod yeni şemalı veritabanını açabilmelidir: `user_version` değişmediği için açılış atmaz, eski kodun 13 `INSERT`'inin hepsi sütun adı yazar (`depo.ts` 436, 479, 490, 518, 542, 566, 610, 630, 658, 681, 704, 724, 756; 2026-11-08 doğrulandı), yeni sütunlar varsayılanlı olduğundan eski `INSERT` geçer. Ek göçler: ek sürüm 1 = `ALTER TABLE planlar ADD COLUMN profil TEXT NOT NULL DEFAULT 'tam'`; ek sürüm 2 = `eren_oturumlari` tablosu (ana oturumun Claude oturum kimlikleri) ve `events(type)` dizini (`events_tur`). Ek sürüm 5 = `cihaz_iptalleri` tablosu (var olan satırlara dokunmaz). Açılışta ayrıca `PRAGMA secure_delete=ON`.
 
 ### Geçmişi sil, sırayla (K3)
 
@@ -634,7 +634,7 @@ Karar (2026-11-09): asistan kullanıcının kendi asistanıdır; her adımda ona
 - **Dosya:** `src/cihaz.ts`, `test/cihaz.test.ts`. **Bağımlılık:** `Ayar(sureler), SaatPortu, ZamanlayiciPortu, RastgelePortu, Veriyolu, Depo(olayEkle), Gunluk`.
 - **Sorumluluk:** kimliği doğrulanmış `/cihaz` bağlantısı: komut, izin kaydı, uygulama listesi, cihaz durumu, bildirim. Alan sözleşmesi `protocol/CIHAZ.md`.
 - **Değişmezler:**
-  - **Komutlar kuyruklanmaz.** Kopuksa hemen `telefon_bagli_degil`. Gönderildikten sonra bağlantı koparsa `belirsiz`. **Hiçbir yolla yeniden denenmez.** `[karar]`
+  - **Komutlar kuyruklanmaz.** Kopuksa hemen `telefon_bagli_degil`. Gönderildikten sonra bağlantı koparsa `belirsiz`. Soket kapalıysa (`gonder` `false`) komut `telefon_bagli_degil` ile hemen sonuçlanır; gönderim atarsa `belirsiz`. **Hiçbir yolla yeniden denenmez.** `[karar]`
   - `deadline_ms = saat + komutPayiMs` (`wait` ise `+ seconds*1000`). Sonuç `deadline_ms + 2000`'e kadar gelmezse `belirsiz`. Geç gelen sonuç atılır. Sinyal iptali aynı: bekleyen silinir, sonuç atılır, kesilmiş eylem geri alınmaz.
   - Kapının reddi hata değildir: `cmd_result{ok:false,denied}` `ok:true` ile `CmdSonucu` olarak döner, model `denied:` satırını görür.
   - `ok` eylemin sonucunu kanıtlamaz (parola alanında `ok:true`, uzunluk 0). Servis `ok`'tan başarı çıkarmaz. `[telefon]`
@@ -696,7 +696,7 @@ Karar (2026-11-09): asistan kullanıcının kendi asistanıdır; her adımda ona
 - `out.jsonl` `isYoklamaMs` arayla `out_ofset`'ten okunur, `SatirAyirici` ile; ofset her parti sonrası yazılır, yarım satır dahil değil.
 - `init.mcp_servers`'ta `eren-telefon` `status=="connected"` mi bakılır (yalnız telefon işi): `-p` yavaş MCP'yi beklemez. Yoksa `system_notice{uyari}`, öldür, `hata`. PC işi köprü beklemez (0.5.0: `eren-soru` kalktı). `[is-oturumu, Sonuç]`
 - Kullanıcı hook'u denetimi PC profili için isteğe bağlıdır, `hook_response.output`'ta aranır, işareti repo dışındadır.
-- **Bitiş süreç çıkışıdır,** `result` değil: `result` iki kez gelebilir, süreç sonra da çalışır (çıkış 2,7-14 sn sonra). `cikisDinle` yalnız erken uyanmadır; kesin ölçüt `surecVarMi`. Çıkıştan sonra dosya sonuna kadar okunur. `[is-oturumu, Sonuç]`
+- **Bitiş süreç çıkışıdır,** `result` değil: `result` iki kez gelebilir, süreç sonra da çalışır (çıkış 2,7-14 sn sonra). Bu ömürde başlatılan işe periyodik süreç sorgusu yapılmaz; çıkış olayında `surecVarMi` sorulur. Güvenlik ağı `torunYoklamaMs` görüntüsüdür. Sahiplenilen işler `isYoklamaMs` turunda tek paylaşılan `anlikGoruntu` ile yargılanır (PID + oluşma anı). Çıkıştan sonra dosya sonuna kadar okunur. `[is-oturumu, Sonuç]`
 - **Rapor son geçerli `result`'tur:** ilk `result` eksik olabilir, ama geçerli raporu düz metinli sonraki `result` ezmez. `sonResultSec(onceki, yeni)` (`isler-rapor.ts`): önceki `structured_output` `IsRaporu`'na uyuyor ve yenisininki uymuyorsa önceki korunur, aksi halde yeni gelen öncekini ezer. Partiler arası da geçerlidir (depodaki `son_result` üzerinden). Arka plan agent bildirimi iş oturumunu bir tur daha döndürüp `structured_output`'suz `result` yazdırabilir. Önceki korunduğunda sonraki `result`'ın `[limit-kilit]` öneki bayrak olarak taşınır: rapor korunur, durum `limit_durdu`. `[is-oturumu §5; canlı hata 2026-11-09, iş 8-9; gözden geçirme 2026-11-09]`
 - **`rc`'ye güvenilmez:** port çıkış kodu vermez. `[is-oturumu §4]`
 - Masaüstü kopuksa (`masaustuDurumu()=="kopuk"`) PC işi başlarken `system_notice{uyari,kod:"diger"}`: `computer-use-windows` pencere listesini okur, `screenshot` hata verir ve hata metni yanıltıcıdır. `[masaustu §4]`
@@ -724,7 +724,7 @@ Bitişte tek işlemde: `isler` güncelle, `job_finished{durum,kirli,rapor?}`, be
 
 **Öldürme** `[is-oturumu, Sonuç + §4]`:
 - `agaciOldur(kök)`, sonra `anlikGoruntu`: kayıtlı `is_pidleri`'nden sağ kalan (PID + oluşma anı tutan) tek tek `tekOldur`, tekrar sayılır; hâlâ varsa `system_notice{uyari}`. Ölü köke `/T` çalışmaz, yetim ancak kayıtla ölür.
-- Torun kaydı: aktif işler için `torunYoklamaMs` arayla `anlikGoruntu`, `ppid` zinciri kökten yürünür, yeniler `is_pidleri`'ne. PID çakışmasına karşı kimlik her yerde PID + oluşma anı. `[masaustu, emin olmadıklarım 5]`
+- Torun kaydı: aktif işler için `torunYoklamaMs` arayla `anlikGoruntu`, `ppid` zinciri kökten yürünür, yeniler `is_pidleri`'ne. PID çakışmasına karşı kimlik her yerde PID + oluşma anı. Aynı görüntü kaçan çıkış olayını da yakalar. `[masaustu, emin olmadıklarım 5]`
 - Doğal çıkışta süpürme **yapılmaz**: serbest iş bilerek arka plan süreci bırakmış olabilir. Süpürme yalnız `durdur`, limit ve kilitli çıkışta. `[bu-belge]`
 - `durdur` tekrarında `zaten_bitmis`. `izin_gitti{neden:"kullanici_durdurdu"}` -> o planın işi `durdur(...,"izin_durduruldu")`: kullanıcı telefondan `Durdur`'a bastı. Diğer nedenlerde oturum `denied` alır, kendi biter. `[bu-belge]`
 
@@ -944,6 +944,7 @@ Rapor gövdesi, soru metni, soru cevabı, plan metni, uygulama adı sentetiğe g
   - Sıra sabit: `hello` -> `auth_challenge` (`server_nonce` 32 rastgele bayt, `server_signature = imzala(kimlikImzaMetni({rol:"pc",kanal,...}))`) -> `auth_response` -> `welcome`. 10 sn süre. Sıra bozulursa `error{yetkisiz}` + kapat.
   - Doğrulama: cihaz kayıtlı değilse `cihaz_bilinmiyor`; imza `kimlikImzaMetni({rol:"telefon",kanal,...})` üzerinden, tutmazsa `imza_gecersiz`; `uzakIp != cihaz.tailscale_ip` ise `ip_uyusmuyor`. iPad `/cihaz`'a `kanal_desteklenmiyor`.
   - **Bilgisayarın kendi Tailscale adresinden gelen eşleştirme ve kimlik reddedilir** (`ip_uyusmuyor`): serbest bir yerel oturumun kendini telefon diye eşleştirmesinin en kısa yolu kapanır. Tam sınır değildir (kalan açık 1). `[bu-belge]`
+  - `auth_response`'ta ve kimlik sonrası her `/sohbet` çerçevesinde `cihazGetir` taze okunur; 2 sn'lik yoklama kaldırılan cihazı `cihaz_bilinmiyor` ile kapatır.
   - Paylaşılan sır yok: PC yalnız açık anahtar tutar. `[karar]`
 - **Eşleştirme:** yalnız `/sohbet`, kimlikten önce. `eslestirmeOku` yoksa ya da süresi geçtiyse `eslestirme_kapali`. Kod `sha256Hex(utf8Bayt(kod))` ile `sabitZamanEsit`; yanlışsa `eslestirme_kodu_gecersiz`, 5 yanlışta kayıt silinir. Doğruysa kayıt silinir (tek kullanımlık), `device_id` üretilir, `uzakIp` kaydedilir, `pair_result`. `[karar]`
 - **Mesajlar:** kimlik öncesi `user_message` ya da başka iş mesajı işlenmez, kapanır. `client_msg_id` önce `ackBul`: varsa aynı `ack`, ikinci kez işlenmez; yeni `ack` `ackYaz` ile saklanır (`izin_bekleniyor` dahil). `[protocol]`
@@ -979,11 +980,12 @@ Rapor gövdesi, soru metni, soru cevabı, plan metni, uygulama adı sentetiğe g
   - `boruluBaslat`: `spawn(exe,argv,{cwd,env,windowsHide:true,stdio:"pipe"})`, `detached` yok, `shell` yok. Stdin `error` dinleyicisi şart. Satır ayırma tampon sınırı 32 MiB.
   - `ayrikBaslat`: `{detached:true,windowsHide:true,stdio:["ignore",outFd,errFd]}`, `fs.openSync(...,"a")`, `unref()`, sonra fd'ler kapatılır.
   - `aracCalistir`: `{windowsHide:true}`, `detached` **yok**: `detached` `gh` terminal penceresi tetikliyor.
-  - `agaciOldur`: `taskkill.exe /T /F /PID`; `tekOldur`: `/F /PID`. Çıkış kodu okunmaz (başarıda 128, 0 kalmış ölçüldü).
+  - `agaciOldur`: `taskkill.exe /T /F /PID`; `tekOldur`: `/F /PID`. Çıkış kodu okunmaz (başarıda 128, 0 kalmış ölçüldü). Oluşma anı okunamazsa önce `taskkill /T /F`, sonra kök öldürülür (MCP alt süreçleri yetim kalmaz).
   - `anlikGoruntu` ve oluşma anı: `Win32_Process` (`ProcessId, ParentProcessId, Name, CreationDate`), `windowsHide`. `surecVarMi` oluşma anını ±1000 ms toleransla karşılaştırır. Pencere açmadığı masaüstü oturumunda doğrulanır.
   - `masaustuDurumu`: geçerli oturumun `Active`/`Disc` durumu; okunamazsa `bilinmiyor`.
   - `tailscaleAdresi`: `os.networkInterfaces`, yalnız adında `tailscale` geçen arayüzün (büyük küçük harf duyarsız) IPv4, iç olmayan, 100.64.0.0/10 adresi; başka arayüzdeki CGNAT adresi sayılmaz. `[bu-belge]`
   - `ws.dinle`: `WebSocketServer({host,port,maxPayload,perMessageDeflate:false})`, yol dışı bağlantı reddedilir, ikili çerçevede kapat. `uzakIp` yalnız `socket.remoteAddress`, başlık okunmaz.
+  - `ws.dinle`: her bağlantıya 30 sn'de bir WebSocket ping; bir aralık boyunca pong ya da mesaj gelmezse `terminate` (en geç 60 sn), zamanlayıcı `unref`, kapanışta ve sunucu durunca bırakılır. `gonder` soket açık değilse ya da `send` atarsa `false` döner.
   - `boru.dinle`: `net` adlandırılmış boru, `\n` çerçeve, `azamiSatir` aşılırsa kapat.
   - `tekilKilit.al`: `\\.\pipe\eren-servis-tekil` üzerinde `net.createServer().listen`. `EADDRINUSE` -> `false`. Süreç normal çıkınca ve `taskkill /F` ile ölünce serbest kaldığı denendi; bayat dosya sorunu yoktur. `[bu-belge]`
   - `anahtar`: `yollar.anahtar`'da PEM, yoksa üretilir (`P-256`). `createSign("SHA256")`, DER; `dogrula` geçersiz anahtarda `false`, atmaz. `timingSafeEqual`.
@@ -1064,7 +1066,7 @@ Rapor gövdesi, soru metni, soru cevabı, plan metni, uygulama adı sentetiğe g
 
 - **Dosya:** `src/eslestir.ts`, `test/eslestir.test.ts`. **Bağımlılık:** `depo`, `dis-dunya`, `ayar`.
 - **Sorumluluk:** yerel `eren eslestir` komutu. Saf `eslestirmeBaslat: EslestirmeBaslatici` + ince komut satırı.
-- **Değişmezler** `[karar]`: Kod 8 karakter `[A-Z0-9]` (`SINIRLAR.ESLESTIRME_KODU_MIN`-`MAX` içinde), güvenli üreteçten. Depoya yalnız `sha256Hex(utf8Bayt(kod))`, `son_ms = şimdi + 5 dk`. Tek kullanımlık; yeni komut eskisini ezer. `EslestirmeQr` şemasından geçer: adres 100.64/10 değilse hata. Servise ayrı kanal yok, ortak SQLite yeterli (iki süreçli yazım denendi). Telegram'a gitmez. Terminal kodu yalnız yerelde gösterir, günlüğe yazmaz.
+- **Değişmezler** `[karar]`: Kod 8 karakter `[A-Z0-9]` (`SINIRLAR.ESLESTIRME_KODU_MIN`-`MAX` içinde), güvenli üreteçten. Depoya yalnız `sha256Hex(utf8Bayt(kod))`, `son_ms = şimdi + 5 dk`. Tek kullanımlık; yeni komut eskisini ezer. `EslestirmeQr` şemasından geçer: adres 100.64/10 değilse hata. Servise ayrı kanal yok, ortak SQLite yeterli (iki süreçli yazım denendi). Telegram'a gitmez. Terminal kodu yalnız yerelde gösterir, günlüğe yazmaz. `--liste` / `--kaldir <kimlik>`: kaldırma cihaz satırını `cihaz_iptalleri` tablosuna taşır (ek göç 5); çıkış kodu: kaldırıldı 0, zaten kaldırılmış 0, bilinmeyen kimlik 1, hatalı argüman 2.
 - **Açık:** QR'ı terminalde çizmek ek bağımlılık ister; seçilene kadar komut JSON ve kısa kodu yazar.
 - **Bitti:** süre, adres reddi, özet yazımı, düz kodun depoda olmaması.
 - **Dilim 1:** `ayarKur`'a `baslangicMs` verir (kullanmaz; ayrı süreçtir, `Date.now()` serbest). QR (`EslestirmeQr`) `v: PROTOKOL_SURUMU` kalır: Kotlin `v == 1` denetler.
