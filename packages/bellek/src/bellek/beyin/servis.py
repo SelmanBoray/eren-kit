@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import errno
+import hashlib
 import hmac
 import html
 import importlib
@@ -30,6 +31,10 @@ VARSAYILAN_PORT = 47321
 WEB_KOK = Path(__file__).resolve().parent / "web"
 MAX_GOVDE = 1024 * 1024  # 1 MB
 SOKET_ZAMAN_ASIMI = 10.0
+# Bağlantı kapanırken istemcinin hâlâ gönderdiği (okunmamış) baytlar en çok bu kadar süre ve
+# bayt boyunca okunup atılır; sonra soket kapatılır (bkz. Isleyici.finish).
+BOSALTMA_SURESI = 2.0
+BOSALTMA_SINIRI = 4 * MAX_GOVDE
 KUYRUK_ARALIK = 60.0
 ISTEK_ID_SINIRI = 10_000
 YAZ_ALANLARI = ("metin", "dugum_id", "ebeveyn", "baslik", "gizlilik", "kaynak")
@@ -658,6 +663,58 @@ BOS_SAYFA = (
     "<body><h1>Beyin</h1>"
     "<p>Arayüz henüz yok. API: <a href='/api/saglik'>/api/saglik</a></p></body>"
 )
+_BOS_SAYFA_HAM = BOS_SAYFA.encode("utf-8")
+
+
+# Statik dosya önbelleği: yol -> (imza, asistan adı ya da None, gövde, ETag). İmza (mtime_ns,
+# boyut, inode); dosya değişince (yerinde yazma ya da yeniden adlandırarak değiştirme) imza
+# değişir ve dosya yeniden okunur. Böylece her istekte yalnız stat yapılır, okuma + özet yalnız
+# değişimde. web/ klasörü küçük ve sabittir; yine de sınır aşılırsa önbellek boşaltılır.
+_STATIK_ONBELLEK: dict[str, tuple] = {}
+_STATIK_ONBELLEK_SINIRI = 256
+_statik_kilit = threading.Lock()
+_ETAG_OGESI = re.compile(r'(?:W/)?"([^"]*)"')
+
+
+def _etag(govde: bytes) -> str:
+    """İçeriğe bağlı güçlü ETag (SHA-256'nın ilk 128 biti)."""
+    return '"' + hashlib.sha256(govde).hexdigest()[:32] + '"'
+
+
+_BOS_SAYFA_ETAG = _etag(_BOS_SAYFA_HAM)
+
+
+def _statik_icerik(hedef: Path, sayfa: bool) -> tuple[bytes, str]:
+    """(gövde, ETag). sayfa=True: index.html, asistan adı yer tutucusu doldurulmuş olarak."""
+    st = hedef.stat()
+    imza = (st.st_mtime_ns, st.st_size, st.st_ino)
+    ad = _asistan_adi() if sayfa else None
+    anahtar = str(hedef)
+    with _statik_kilit:
+        kayit = _STATIK_ONBELLEK.get(anahtar)
+    if kayit is not None and kayit[0] == imza and kayit[1] == ad:
+        return kayit[2], kayit[3]
+    ham = hedef.read_bytes()
+    govde = _sayfa_doldur(ham) if sayfa else ham
+    etag = _etag(govde)
+    with _statik_kilit:
+        if len(_STATIK_ONBELLEK) >= _STATIK_ONBELLEK_SINIRI:
+            _STATIK_ONBELLEK.clear()
+        _STATIK_ONBELLEK[anahtar] = (imza, ad, govde, etag)
+    return govde, etag
+
+
+def _etag_eslesir(basliklar: list[str], etag: str) -> bool:
+    """If-None-Match (RFC 9110 §13.1.2): '*' ya da virgüllü listede zayıf karşılaştırmayla eşleşme."""
+    if not basliklar:
+        return False
+    beklenen = etag.strip('"')
+    for b in basliklar:
+        if b.strip() == "*":
+            return True
+        if any(o == beklenen for o in _ETAG_OGESI.findall(b)):
+            return True
+    return False
 
 
 def _statik_yol_guvenli(rel: str) -> bool:
@@ -691,14 +748,56 @@ def _yapilandir(durum: Durum, belirtec: str, sunucu_ref: list, arayuz_belirtec: 
         def log_message(self, *a, **k):  # sessiz (başlıklar, dolayısıyla belirteçler, günlüğe girmez)
             pass
 
+        def finish(self):
+            """Nazik kapanış (lingering close). Erken reddedilen bir isteğin gövdesi (ya da
+            send_error yollarında isteğin kalanı) okunmadan soket kapatılırsa işletim sistemi
+            FIN yerine RST gönderir; Windows istemcisi tamponundaki yanıtı atıp bağlantı hatası
+            görür. Önce yanıt boşaltılır ve yazma yönü kapatılır (FIN), sonra istemcinin
+            gönderdikleri sınırlı süre/bayt boyunca okunup işlenmeden atılır."""
+            try:
+                super().finish()
+            finally:
+                self._kalan_bosalt()
+
+        def _kalan_bosalt(self) -> None:
+            s = self.connection
+            try:
+                s.shutdown(socket.SHUT_WR)
+            except OSError:
+                return
+            son = time.monotonic() + BOSALTMA_SURESI
+            okunan = 0
+            try:
+                while okunan < BOSALTMA_SINIRI:
+                    kalan = son - time.monotonic()
+                    if kalan <= 0:
+                        break
+                    s.settimeout(kalan)
+                    parca = s.recv(65536)
+                    if not parca:
+                        break
+                    okunan += len(parca)
+            except OSError:  # zaman aşımı ya da istemci bağlantıyı kesti
+                pass
+
+        def _govde_bildirildi(self) -> bool:
+            """İstek bir gövde bildiriyor mu (Content-Length > 0, geçersiz ya da yinelenmiş
+            Content-Length, ya da Transfer-Encoding)?"""
+            if self.headers.get("Transfer-Encoding") is not None:
+                return True
+            uzunluklar = self.headers.get_all("Content-Length") or []
+            return len(uzunluklar) > 1 or any(u.strip() != "0" for u in uzunluklar)
+
         def _yol(self) -> str:
             return urlsplit(self.path).path
 
-        def _gonder(self, kod, govde: bytes, tur: str):
+        def _gonder(self, kod, govde: bytes, tur: str, etag: str | None = None):
+            """etag verilirse (yalnız statik dosyalar) yanıt saklanabilir ama her kullanımda
+            doğrulanır (no-cache + ETag); verilmezse no-store (API ve hata yanıtları)."""
             self.send_response(kod)
             self.send_header("Content-Type", tur)
             self.send_header("Content-Length", str(len(govde)))
-            self.send_header("Cache-Control", "no-store")
+            self._onbellek_basliklari(etag)
             for ad, deger in GUVENLIK_BASLIKLARI:
                 self.send_header(ad, deger)
             if self.close_connection:
@@ -706,6 +805,26 @@ def _yapilandir(durum: Durum, belirtec: str, sunucu_ref: list, arayuz_belirtec: 
             self.end_headers()
             if self.command != "HEAD":
                 self.wfile.write(govde)
+
+        def _onbellek_basliklari(self, etag: str | None) -> None:
+            if etag is None:
+                self.send_header("Cache-Control", "no-store")
+            else:
+                self.send_header("Cache-Control", "no-cache")
+                self.send_header("ETag", etag)
+
+        def _statik_gonder(self, govde: bytes, tur: str, etag: str) -> None:
+            """Statik yanıt: If-None-Match geçerli ETag'le eşleşirse gövdesiz 304, yoksa 200.
+            Yalnız güvenlik denetimlerinden (_denetle) ve yol doğrulamasından sonra çağrılır."""
+            if not _etag_eslesir(self.headers.get_all("If-None-Match") or [], etag):
+                return self._gonder(200, govde, tur, etag)
+            self.send_response(304)
+            self._onbellek_basliklari(etag)
+            for ad, deger in GUVENLIK_BASLIKLARI:
+                self.send_header(ad, deger)
+            if self.close_connection:
+                self.send_header("Connection", "close")
+            self.end_headers()
 
         def send_error(self, code, message=None, explain=None):
             """http.server'ın kendi hata yanıtları (bozuk istek satırı, tanımsız yöntem) da
@@ -735,6 +854,12 @@ def _yapilandir(durum: Durum, belirtec: str, sunucu_ref: list, arayuz_belirtec: 
             self._json(kod, {"hata": str(mesaj)[:300]})
 
         def _govde_json(self) -> dict:
+            # Parçalı (chunked) gövde okunmaz; Content-Length ile birlikte gelirse gövdenin sınırı
+            # belirsizdir (istek kaçakçılığı). Yinelenmiş Content-Length de aynı nedenle reddedilir.
+            if self.headers.get("Transfer-Encoding") is not None:
+                raise GecersizIstek("Transfer-Encoding desteklenmez; Content-Length kullanın")
+            if len(self.headers.get_all("Content-Length") or []) > 1:
+                raise GecersizIstek("Content-Length geçersiz")
             try:
                 n = int(self.headers.get("Content-Length") or 0)
             except ValueError:
@@ -808,6 +933,10 @@ def _yapilandir(durum: Durum, belirtec: str, sunucu_ref: list, arayuz_belirtec: 
 
         def _sar(self, fn, post: bool):
             self._govde_okundu = False
+            if not post and self._govde_bildirildi():
+                # GET/HEAD gövdesi okunmaz: aynı bağlantıda kalırsa baytları sonraki istek gibi
+                # ayrıştırılırdı. Yanıttan sonra bağlantı kapanır, kalan baytlar finish'te atılır.
+                self.close_connection = True
             try:
                 if self.path.startswith("//"):
                     raise GecersizIstek("geçersiz yol")
@@ -965,17 +1094,21 @@ def _yapilandir(durum: Durum, belirtec: str, sunucu_ref: list, arayuz_belirtec: 
                 return self._hata(403, "yasak")
             if not hedef.is_file():
                 if yol == "/":
-                    return self._gonder(200, BOS_SAYFA.encode("utf-8"), "text/html; charset=utf-8")
+                    return self._statik_gonder(_BOS_SAYFA_HAM, "text/html; charset=utf-8",
+                                               _BOS_SAYFA_ETAG)
                 return self._hata(404, "bulunamadı")
             tur = STATIK_TURLER.get(hedef.suffix.lower())
             if tur is None:
                 tur = mimetypes.guess_type(hedef.name)[0] or "application/octet-stream"
                 if tur.startswith("text/") or tur in ("application/javascript", "application/json"):
                     tur += "; charset=utf-8"
-            ham = hedef.read_bytes()
-            if hedef == kok / "index.html":
-                ham = _sayfa_doldur(ham)
-            self._gonder(200, ham, tur)
+            # index.html yalnız süreç geneli asistan adını gömer (belirteç/oturum içeriği yok;
+            # belirteç istemcide URL parçasından okunur): diğer statik dosyalarla aynı kural.
+            try:
+                govde, etag = _statik_icerik(hedef, hedef == kok / "index.html")
+            except FileNotFoundError:  # is_file ile okuma arasında silindi
+                return self._hata(404, "bulunamadı")
+            self._statik_gonder(govde, tur, etag)
 
         def _post(self):
             yol = self._yol()
