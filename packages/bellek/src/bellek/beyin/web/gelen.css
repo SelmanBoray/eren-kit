@@ -22,6 +22,8 @@
   backdrop-filter: blur(10px); color: var(--metin); font-family: var(--yazi); z-index: 20;
 }
 #gelen-panel[hidden] { display: none; }
+/* Açılınca odak panele taşınır (tabindex=-1); fareyle açışta çerçeve çizilmez. */
+#gelen-panel:focus:not(:focus-visible) { outline: none; }
 #gelen-panel .gelen-ust {
   display: flex; align-items: flex-start; justify-content: space-between; gap: 8px;
   padding: 14px 14px 10px; border-bottom: 1px solid var(--kenar-cizgi);

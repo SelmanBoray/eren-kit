@@ -8,8 +8,12 @@ const TUR_ADI = {
   celiski: 'Çelişki',
   tasima: 'Taşıma',
 };
-const ONAY_SURESI_MS = 5000;
+// "Emin misin?" kendiliğinden kapanmaz (zaman sınırı yok); yalnız açıldıktan hemen sonraki
+// dokunuş/Enter yok sayılır: Bağla/Sil'e yanlışlıkla çift dokunma onaya dönüşmesin.
+const ONAY_KILIT_MS = 400;
 const DAGILMA_MS = 700;
+// Sunucudaki başlık sınırı (yaz.BASLIK_SINIRI = db.BASLIK_SINIR = 120, kod noktası).
+export const BASLIK_SINIRI = 120;
 
 const zamanBicim = new Intl.DateTimeFormat('tr-TR', { dateStyle: 'medium', timeStyle: 'short' });
 
@@ -24,6 +28,44 @@ function zamanMetni(z) {
   const d = new Date(z);
   return Number.isNaN(d.getTime()) ? '' : zamanBicim.format(d);
 }
+
+/**
+ * Düzeltme formundan /api/ui/gelen/karar `duzeltme` alanını kurar. Sunucu yalnız tam
+ * {ebeveyn, baslik} kabul eder (ikisi de boş olmayan metin); boş bırakılan alan önerinin
+ * değeriyle doldurulur, o da yoksa (ör. gizli ebeveyn) eksik alan bildirilir.
+ * @returns {{duzeltme: null|{ebeveyn:string, baslik:string}} | {eksik: 'ebeveyn'|'baslik'|'baslik_uzun'}}
+ */
+export function duzeltmeKur(oge, baslikGirdi, ustGirdi) {
+  const metin = (v) => (v == null ? '' : String(v).trim());
+  const b = metin(baslikGirdi);
+  const u = metin(ustGirdi);
+  if (!b && !u) return { duzeltme: null };
+  const ebeveyn = u || metin(oge && oge.ebeveyn);
+  const baslik = b || metin(oge && oge.baslik);
+  if (!ebeveyn) return { eksik: 'ebeveyn' };
+  if (!baslik) return { eksik: 'baslik' };
+  if ([...baslik].length > BASLIK_SINIRI) return { eksik: 'baslik_uzun' };
+  return { duzeltme: { ebeveyn, baslik } };
+}
+
+/**
+ * Karar isteği "zaten karara bağlanmış (kabul|red)" 400'üyle döndüyse (ör. zaman aşımından
+ * sonra yeniden deneme: ilk istek aslında işlenmiş) mevcut kararı ve bizimkiyle aynı olup
+ * olmadığını döndürür; başka her hatada null.
+ * @returns {{mevcut: string, ayni: boolean} | null}
+ */
+export function zatenKararli(h, karar) {
+  if (!h || h.kod !== 400 || typeof h.message !== 'string') return null;
+  const m = /zaten karara bağlanmış \(([^)]+)\)/.exec(h.message);
+  if (!m) return null;
+  return { mevcut: m[1], ayni: m[1] === karar };
+}
+
+const EKSIK_METNI = {
+  ebeveyn: 'Başlığı düzeltirken üst yolu da yazmalısın (önerilen yer görünmüyor).',
+  baslik: 'Üst yolu düzeltirken başlığı da yazmalısın.',
+  baslik_uzun: `Başlık en çok ${BASLIK_SINIRI} karakter olabilir.`,
+};
 
 function hataMetni(h) {
   if (h instanceof ApiHatasi) {
@@ -43,6 +85,7 @@ export function gelenKur(dugme, panel, { onKarar, onGit } = {}) {
   // ---- Panel iskeleti ----
   panel.setAttribute('role', 'dialog');
   panel.setAttribute('aria-label', 'Sporlar: ağa bağlanmayı bekleyen öneriler');
+  panel.tabIndex = -1; // açılınca odak panele taşınır (sekme sırasına girmez)
   panel.textContent = '';
 
   const ust = el('div', 'gelen-ust');
@@ -70,7 +113,6 @@ export function gelenKur(dugme, panel, { onKarar, onGit } = {}) {
     const kart = el('article', 'kart spor-kart');
     kart.dataset.id = oge.id;
     let mesgul = false;
-    let onayZamanlayici = null;
 
     const ustSatir = el('div', 'spor-ust');
     ustSatir.append(el('span', 'cip spor-cip', TUR_ADI[oge.tur] || 'Öneri'));
@@ -124,7 +166,10 @@ export function gelenKur(dugme, panel, { onKarar, onGit } = {}) {
           const y = await gelen(oge.id);
           const acik = (y.gelen || []).find((x) => x.id === oge.id);
           if (!acik) throw new ApiHatasi('Spor bulunamadı', 404);
-          kart.replaceWith(kartKur(acik));
+          const yeni = kartKur(acik);
+          kart.replaceWith(yeni);
+          const ilk = yeni.querySelector('button');
+          if (ilk) ilk.focus();
         } catch (h) {
           mesgul = false;
           ac.disabled = false;
@@ -146,7 +191,7 @@ export function gelenKur(dugme, panel, { onKarar, onGit } = {}) {
       e1.append(el('span', 'soluk', 'Başlık'));
       duzBaslik = el('input');
       duzBaslik.type = 'text';
-      duzBaslik.maxLength = 200;
+      duzBaslik.maxLength = BASLIK_SINIRI;
       duzBaslik.placeholder = oge.baslik || '';
       e1.append(duzBaslik);
       const e2 = el('label', 'spor-alan');
@@ -163,12 +208,47 @@ export function gelenKur(dugme, panel, { onKarar, onGit } = {}) {
     const eylem = el('div', 'spor-eylem');
     kart.append(hataSatiri, eylem);
 
-    function onayiIptal() {
-      if (onayZamanlayici) { clearTimeout(onayZamanlayici); onayZamanlayici = null; }
+    // Düzeltme formunu denetler; eksikse formu açar, uyarır, eksik alana odaklanır.
+    function duzeltmeAl() {
+      if (!duzBaslik) return { duzeltme: null };
+      const s = duzeltmeKur(oge, duzBaslik.value, duzUst.value);
+      if (s.eksik) {
+        if (duzForm.hidden) {
+          duzForm.hidden = false;
+          normalGoster();
+        }
+        hataGoster(EKSIK_METNI[s.eksik]);
+        (s.eksik === 'ebeveyn' ? duzUst : duzBaslik).focus();
+      }
+      return s;
     }
 
-    function normalGoster() {
-      onayiIptal();
+    // Karar sonuçlandı (ya da öğe zaten karara bağlı): kart dağılır, odak komşu karta geçer.
+    function kartiKaldir(animasyon) {
+      const a = document.activeElement;
+      const odakIcerde = kart.contains(a) || !a || a === document.body;
+      const komsu = kart.nextElementSibling || kart.previousElementSibling;
+      let bitti = false;
+      const kaldir = () => {
+        if (bitti) return;
+        bitti = true;
+        kart.remove();
+        if (!liste.querySelector('.spor-kart')) durumGoster('Şu an bekleyen spor yok. Ağ sakin.');
+        if (odakIcerde && !panel.hidden) {
+          const hedef = komsu && komsu.isConnected && komsu.querySelector('.spor-eylem button');
+          (hedef || panel).focus();
+        }
+      };
+      if (animasyon) {
+        kart.classList.add('dagil');
+        kart.addEventListener('animationend', kaldir, { once: true });
+        setTimeout(kaldir, DAGILMA_MS);
+      } else {
+        kaldir();
+      }
+    }
+
+    function normalGoster(odak) {
       eylem.textContent = '';
       const bagla = el('button', 'dugme spor-bagla', 'Bağla');
       bagla.type = 'button';
@@ -190,53 +270,72 @@ export function gelenKur(dugme, panel, { onKarar, onGit } = {}) {
         eylem.append(duz);
       }
       eylem.append(sil);
+      if (odak === 'kabul') bagla.focus();
+      else if (odak === 'red') sil.focus();
     }
 
     function onayGoster(karar) {
-      onayiIptal();
+      if (mesgul) return;
       hataGoster('');
+      if (karar === 'kabul' && duzeltmeAl().eksik) return;
       eylem.textContent = '';
       const soru = el('span', 'spor-onay-soru', 'Emin misin?');
       const evet = el('button', karar === 'red' ? 'dugme tehlike' : 'dugme', 'Evet');
       evet.type = 'button';
       const vazgec = el('button', 'dugme ikincil', 'Vazgeç');
       vazgec.type = 'button';
-      evet.addEventListener('click', () => gonder(karar));
-      vazgec.addEventListener('click', normalGoster);
+      const acilis = Date.now();
+      evet.addEventListener('click', () => {
+        if (Date.now() - acilis < ONAY_KILIT_MS) return; // çift dokunmanın ikincisi
+        gonder(karar);
+      });
+      vazgec.addEventListener('click', () => normalGoster(karar));
       eylem.append(soru, evet, vazgec);
       evet.focus();
-      onayZamanlayici = setTimeout(normalGoster, ONAY_SURESI_MS);
     }
 
     async function gonder(karar) {
       if (mesgul) return;
-      onayiIptal();
+      let duzeltme = null;
+      if (karar === 'kabul') {
+        const s = duzeltmeAl();
+        if (s.eksik) return;
+        duzeltme = s.duzeltme;
+      }
       mesgul = true;
       for (const b of eylem.querySelectorAll('button')) b.disabled = true;
-      let duzeltme = null;
-      if (karar === 'kabul' && duzBaslik) {
-        const b = duzBaslik.value.trim();
-        const u = duzUst.value.trim();
-        if (b || u) duzeltme = { ebeveyn: u || oge.ebeveyn || '', baslik: b || oge.baslik || '' };
-      }
       try {
         const yanit = await gelenKarar(oge.id, karar, duzeltme);
-        kart.classList.add('dagil');
-        let bitti = false;
-        const kaldir = () => {
-          if (bitti) return;
-          bitti = true;
-          kart.remove();
-          if (!liste.querySelector('.spor-kart')) durumGoster('Şu an bekleyen spor yok. Ağ sakin.');
-        };
-        kart.addEventListener('animationend', kaldir, { once: true });
-        setTimeout(kaldir, DAGILMA_MS);
-        api.sayiAyarla(yanit.gelen_bekleyen);
+        kartiKaldir(true);
+        if (yanit && Number.isFinite(yanit.gelen_bekleyen)) api.sayiAyarla(yanit.gelen_bekleyen);
         if (onKarar) onKarar({ id: oge.id, karar, yanit });
       } catch (h) {
+        const zaten = zatenKararli(h, karar);
+        if (zaten && zaten.ayni) {
+          // Yanıtı kaybolan önceki istek işlenmiş: başarı say. Sayı yoklamayla düzelir.
+          kartiKaldir(true);
+          if (onKarar) onKarar({ id: oge.id, karar, yanit: null });
+          return;
+        }
+        if (zaten) {
+          // Başka bir yerden farklı karar verilmiş: öğe artık bekleyen değil.
+          let m = 'Bu spor zaten karara bağlanmış (' + zaten.mevcut + '); kararın uygulanmadı.';
+          if (zaten.mevcut === 'red') m = 'Bu spor zaten silinmiş; bağlama kararın uygulanmadı.';
+          else if (zaten.mevcut === 'kabul') m = 'Bu spor zaten ağa bağlanmış; silme kararın uygulanmadı.';
+          hataGoster(m);
+          eylem.textContent = '';
+          const tamam = el('button', 'dugme ikincil', 'Listeden kaldır');
+          tamam.type = 'button';
+          tamam.addEventListener('click', () => kartiKaldir(false));
+          eylem.append(tamam);
+          tamam.focus();
+          return;
+        }
         mesgul = false;
-        hataGoster(hataMetni(h));
-        normalGoster();
+        hataGoster(h instanceof ApiHatasi && h.kod === 0
+          ? 'Yanıt alınamadı; karar işlenmiş olabilir. Yeniden denersen karar ikinci kez uygulanmaz.'
+          : hataMetni(h));
+        normalGoster(karar);
       }
     }
 
@@ -270,10 +369,14 @@ export function gelenKur(dugme, panel, { onKarar, onGit } = {}) {
     panel.hidden = false;
     dugme.setAttribute('aria-expanded', 'true');
     yenile();
+    try { panel.focus({ preventScroll: true }); } catch (_) { panel.focus(); }
   }
   function kapat() {
+    const a = document.activeElement;
+    const odakIcerde = panel.contains(a) || !a || a === document.body;
     panel.hidden = true;
     dugme.setAttribute('aria-expanded', 'false');
+    if (odakIcerde) dugme.focus();
   }
 
   dugme.setAttribute('aria-haspopup', 'dialog');
@@ -292,6 +395,10 @@ export function gelenKur(dugme, panel, { onKarar, onGit } = {}) {
   }, true);
   dugme.addEventListener('animationend', () => dugme.classList.remove('nabiz'));
 
+  // Erişilebilir ad görünen etiketle başlar (WCAG 2.5.3): "Sporlar, 3 bekleyen".
+  const etiketEl = dugme.querySelector('.gelen-etiket');
+  const gorunenAd = ((etiketEl && etiketEl.textContent) || '').trim() || 'Sporlar';
+
   // ---- Sayı ----
   function sayiAyarla(n) {
     const say = Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
@@ -299,7 +406,7 @@ export function gelenKur(dugme, panel, { onKarar, onGit } = {}) {
       rozet.textContent = say > 0 ? String(say) : '';
       rozet.hidden = say === 0;
     }
-    dugme.setAttribute('aria-label', say + ' bekleyen spor');
+    dugme.setAttribute('aria-label', gorunenAd + ', ' + (say > 0 ? say + ' bekleyen' : 'bekleyen yok'));
     if (say > sonSayi) {
       dugme.classList.remove('nabiz');
       void dugme.offsetWidth;
