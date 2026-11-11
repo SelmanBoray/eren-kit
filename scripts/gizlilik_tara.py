@@ -129,10 +129,11 @@ _YER_TUTUCU_ADLAR = frozenset({
 })
 
 _WIN_YOL = re.compile(
-    r"(?i)(?<![A-Za-z0-9])[a-z]:(?:\\{1,2}|/)users(?:\\{1,2}|/)"
+    r"(?i)(?<![A-Za-z0-9])[a-z]:(?:\\+|/)users(?:\\+|/)"
     r"(?P<gizli>[^\\/\s\"'`<>|:*?,;()\[\]]+)")
 _UNIX_YOL = re.compile(
-    r"(?<![A-Za-z0-9_.~\-:/\\])/(?:Users|home)/"
+    # "file:///Users/..." yakalanır; "https://site/home/..." (önde harf) yakalanmaz.
+    r"(?:(?<=file://)|(?<![A-Za-z0-9_.~\-:/\\]))/(?:Users|home)/"
     r"(?P<gizli>[^\\/\s\"'`<>|:*?,;()\[\]]+)")
 
 _EPOSTA = re.compile(
@@ -162,7 +163,9 @@ _BELIRTEC_BICIMLERI: tuple[re.Pattern[str], ...] = (
 )
 # anahtar = "değer" / "anahtar": "değer" / anahtar: 'değer' (8+ karakter).
 _BELIRTEC_ATAMA = re.compile(
-    r"(?i)(?<![A-Za-z0-9])(?:[A-Za-z0-9]+_)*"
+    # Önek ("GITHUB_TOKEN") desene katılmaz: "_" harf/rakam olmadığı için anahtar
+    # sözcük zaten eşleşir; "(?:\w+_)*" öneki uzun satırda karesel geri izleme yapıyordu.
+    r"(?i)(?<![A-Za-z0-9])"
     r"(?:password|passwd|parola|şifre|sifre|secret|token|api[_\-]?key)"
     r"[\"']?\s*(?::=|=|:)\s*[rbu]?(?P<tirnak>[\"'])"
     r"(?P<gizli>[^\"'\s]{8,})(?P=tirnak)")

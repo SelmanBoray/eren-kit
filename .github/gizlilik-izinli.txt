@@ -11,6 +11,9 @@ packages/bellek/tests/beyin/test_yaz.py | belirtec | ^sk\-ant\-api03\-abcdefghij
 # Beyin düzeltme testi: aynı sahte Anthropic anahtarı.
 packages/bellek/tests/beyin/test_duzelt.py | belirtec | ^sk\-ant\-api03\-abcdefghijklmnopqrstuvwxyz123456$
 
+# İçe alma koruma testi: yazma/düzeltme testleriyle aynı sahte Anthropic anahtarı.
+packages/bellek/tests/beyin/test_ice_al_koruma.py | belirtec | ^sk\-ant\-api03\-abcdefghijklmnopqrstuvwxyz123456$
+
 # Devir transcript testi: maskelenmesi beklenen sahte Slack bot belirteci (ardışık rakamlar).
 packages/bellek/tests/devir/test_transcript.py | belirtec | ^xoxb\-1234567890\-0987654321\-$
 

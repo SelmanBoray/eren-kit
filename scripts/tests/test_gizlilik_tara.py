@@ -286,3 +286,44 @@ def test_git_deposu_degil_cikis_2(tmp_path):
 # 18
 def test_kendi_kendini_tarama():
     assert tara(KOK_DIZIN, ["scripts/tests/test_gizlilik_tara.py"]) == []
+
+
+# --- regresyon: dogrusal sure ---
+@pytest.mark.parametrize("tekrar,sinir", [(20000, 2.0), (200000, 10.0)])
+def test_uzun_satir_dogrusal_sure(tmp_path, tekrar, sinir):
+    import time
+
+    yaz(tmp_path, "u.txt", "a_" * tekrar + "\n")
+    t0 = time.perf_counter()
+    tara(tmp_path, ["u.txt"])
+    assert time.perf_counter() - t0 < sinir
+
+
+def test_uzun_satir_sonundaki_atama_bulunur(tmp_path):
+    atama = "pass" + "word" + " = " + '"' + "Zq8xLm2PvR4t" + '"'
+    yaz(tmp_path, "u.txt", "a_" * 20000 + " " + atama + "\n")
+    assert "belirtec" in kurallar(tara(tmp_path, ["u.txt"]))
+
+
+# --- regresyon: kisisel_yol kacaklari ---
+def test_file_url_mac_yolu_bulunur(tmp_path):
+    yaz(tmp_path, "a.txt", "file://" + "/Us" + "ers/" + "ayse" + "/proje\n")
+    assert kurallar(tara(tmp_path, ["a.txt"])) == ["kisisel_yol"]
+
+
+def test_dort_ters_bolulu_windows_yolu_bulunur(tmp_path):
+    ayrac = "\\\\\\\\"
+    yol = "C:" + ayrac + "Us" + "ers" + ayrac + "ayse" + ayrac + "proje"
+    assert yol.count("\\") == 12
+    yaz(tmp_path, "a.txt", yol + "\n")
+    assert kurallar(tara(tmp_path, ["a.txt"])) == ["kisisel_yol"]
+
+
+def test_url_yolu_kisisel_yol_degil(tmp_path):
+    yaz(tmp_path, "a.txt", "https://site.exam" + "ple/" + "ho" + "me/" + "ayse" + "/x\n")
+    assert "kisisel_yol" not in kurallar(tara(tmp_path, ["a.txt"]))
+
+
+def test_file_url_yer_tutucu_kisisel_yol_degil(tmp_path):
+    yaz(tmp_path, "a.txt", "file://" + "/Us" + "ers/" + "kullanici" + "/proje\n")
+    assert tara(tmp_path, ["a.txt"]) == []
