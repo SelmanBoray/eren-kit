@@ -18,6 +18,7 @@
 import {
   ANA_SOHBET_ID,
   SOHBET_SINIRLARI,
+  SOHBET_SURUMU,
   SOHBET_YASAM_OLAYLARI,
   VARSAYILAN_SOHBET_ADI,
   sohbetAnahtari,
@@ -128,6 +129,24 @@ const IS_BITTI_TUKETIM_MS = 3_000;
  */
 export const GECMIS_SIL_SURESI_MS = 20_000;
 
+/**
+ * Bağlantı bekçisi: sessizce ölmüş yol (PC uyudu, elektrik gitti; soket düzgün kapanmadı). Servis ping
+ * atmaz; telefon da boşta hiçbir şey yollamaz ve zamanlayıcı kurmaz. Bekçi yalnız bu bağlantıda
+ * yollanmış, `ack`'i henüz gelmemiş iş mesajı varken kuruludur; gelen her çerçeve canlılık kanıtıdır.
+ * - `YANIT_MS`: `ack`'i hemen dönen (kısa) bir mesaj beklenirken bu kadar hiç çerçeve gelmezse yol
+ *   ölüdür: bağlantı kapatılır, yeniden bağlanma döngüsü başlar, mesaj yeniden bağlanınca outbox
+ *   kurallarıyla yeniden yollanır (servis aynı `client_msg_id`'ye kayıtlı `ack`'i döner, çift iş olmaz).
+ * - `YOKLAMA_MS`: yalnız `ack`'i iş başlayınca ya da bitince gelen (`GEC_YANITLI_TURLER`) mesajlar
+ *   beklenirken bu kadar sessizlikte tek bir `usage_request` yoklaması yollanır (servis onu hemen
+ *   yanıtlar; yanıt `tuketim`'in bekleyen isteği değildir, yok sayılır). Ardından bu kadar daha hiç
+ *   çerçeve gelmezse yol ölüdür. Toplam yine `YANIT_MS`.
+ * Geçici silmelerin (`chat_clear`, `chat_delete`) kendi süresi vardır (`GECMIS_SIL_SURESI_MS`).
+ */
+export const BEKCI_SURELERI = { YANIT_MS: 20_000, YOKLAMA_MS: 10_000 } as const;
+
+/** `ack`'i iş başladıktan (`plan_decision`) ya da durduktan (`job_cancel`) sonra gelen türler. */
+const GEC_YANITLI_TURLER: ReadonlySet<string> = new Set<IsMesaji["type"]>(["plan_decision", "job_cancel"]);
+
 /** Bir sohbetin görünüm örnekleri: yalnız o sohbetin olaylarını görür. */
 interface Ornek {
   readonly olaylar: Olaylar;
@@ -145,6 +164,20 @@ type SilmeGovdesi = Extract<GidenGovde, { type: GeciciIsTuru }>;
 interface KurulumTeslimi {
   readonly mesaj: KurulumMesaji;
   readonly seq: number;
+}
+
+type KararMesaji = Extract<IsMesaji, { type: "plan_decision" | "question_answer" | "job_cancel" }>;
+
+/**
+ * `ack ok` almış, kartı (plan, soru, iş) henüz sonuçlanmamış karar. Servis kararın olayını `ack`'ten
+ * önce yazar ve yollar (`gateway.ts`); telefon olayı önce diske yazıp sonra uygular. Arada kart
+ * yeniden "bekliyor" görünmesin, aynı karar ikinci kez yollanmasın diye kayıt `bekleyenler`'de
+ * `teslim_edildi` olarak durur. Kart sonuçlanınca, kart kalkınca ya da `ack` anına dek alınmış
+ * olaylar (`esikSeq`) uygulanıp kart hâlâ bekliyorsa (olay gelmeyecek) düşer: takılı kalmaz.
+ */
+interface KararTeslimi {
+  readonly mesaj: KararMesaji;
+  readonly esikSeq: number;
 }
 
 interface SilmeIstegi {
@@ -233,6 +266,17 @@ export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat }, secen
 
   // `ack` gelmiş, `user_echo`'su henüz uygulanmamış kullanıcı mesajları (bütün sohbetler).
   const kullaniciTeslimleri = new Map<string, KullaniciMesaji>();
+  // `ack ok` almış, kartı henüz sonuçlanmamış kararlar (bütün sohbetler).
+  const kararTeslimleri = new Map<string, KararTeslimi>();
+  // Gelen olay çerçevelerinin en büyük `seq`'i (kalıcı olmasını beklemeden): karar teslimlerinin eşiği.
+  let alinanSeq = 0;
+  // Bağlantı bekçisi (`BEKCI_SURELERI`): yalnız `ack` beklenirken kurulu.
+  let bekci: IptalEt | null = null;
+  // Son canlılık kanıtı: gelen son çerçeve ya da bekçinin kurulduğu an.
+  let sonKanitMs = 0;
+  // Yanıtı (ya da başka bir çerçeve) beklenen yoklamanın yollandığı an.
+  let yoklamaMs: number | null = null;
+  let yoklamaSayac = 0;
   let kurulumTeslimleri: readonly KurulumTeslimi[] = [];
   let teslimDizisi: readonly SohbetYonetimMesaji[] = BOS_TESLIMLER;
   // Sohbet başına son mezar taşının `sinir_seq`'i: bu `seq`'e kadarki yankılar silinmiştir.
@@ -448,7 +492,93 @@ export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat }, secen
     }
   };
 
-  const outbox = outboxKur({ depo, saat, degisti: bildir });
+  // --- Bağlantı bekçisi (`BEKCI_SURELERI`) ---------------------------------------------------------
+
+  const bekciDurdur = (): void => {
+    yoklamaMs = null;
+    if (bekci === null) return;
+    const iptal = bekci;
+    bekci = null;
+    iptal();
+  };
+
+  /** Bu bağlantıda yollanmış, `ack`'i gelmemiş mesajlar: kısa olan var mı, geç yanıtlı olan var mı. */
+  const yanitBekleyenler = (): { kisa: boolean; gec: boolean } => {
+    let kisa = false;
+    let gec = false;
+    for (const g of outbox.ogeler()) {
+      if (!g.yollandi || geciciMi(g.mesaj)) continue;
+      if (GEC_YANITLI_TURLER.has(g.mesaj.type)) gec = true;
+      else kisa = true;
+    }
+    return { kisa, gec };
+  };
+
+  const bekciKur = (kisa: boolean): void => {
+    const simdi = saat.simdiMs();
+    const son = kisa
+      ? sonKanitMs + BEKCI_SURELERI.YANIT_MS
+      : (yoklamaMs ?? sonKanitMs) + BEKCI_SURELERI.YOKLAMA_MS;
+    bekci = saat.sonra(Math.max(1, son - simdi), bekciCalis);
+  };
+
+  // Süre doldu: arada çerçeve geldiyse kalan süreyle yeniden kurulur (çerçeve başına zamanlayıcı yok).
+  const bekciCalis = (): void => {
+    bekci = null;
+    const { kisa, gec } = yanitBekleyenler();
+    if (!kisa && !gec) {
+      yoklamaMs = null;
+      return;
+    }
+    const simdi = saat.simdiMs();
+    if (kisa) {
+      if (simdi - sonKanitMs >= BEKCI_SURELERI.YANIT_MS) {
+        bekciDurdur();
+        baglanti.kopar("normal");
+        return;
+      }
+    } else if (yoklamaMs !== null) {
+      if (simdi - yoklamaMs >= BEKCI_SURELERI.YOKLAMA_MS) {
+        bekciDurdur();
+        baglanti.kopar("normal");
+        return;
+      }
+    } else if (simdi - sonKanitMs >= BEKCI_SURELERI.YOKLAMA_MS) {
+      yoklamaMs = simdi;
+      yoklamaSayac++;
+      // Yollanamazsa (bağlı değil) bir sonraki çalışmada kopar: zararsız.
+      baglanti.sorguGonder({ v: SOHBET_SURUMU, type: "usage_request", istek_id: `yoklama-${yoklamaSayac}` });
+    }
+    bekciKur(kisa);
+  };
+
+  /** Outbox her değiştiğinde: `ack` beklenen mesaj yoksa bekçi durur, varsa (kurulu değilse) kurulur. */
+  const bekciDenetle = (): void => {
+    const { kisa, gec } = yanitBekleyenler();
+    if (!kisa && !gec) {
+      bekciDurdur();
+      return;
+    }
+    if (bekci !== null) return;
+    sonKanitMs = saat.simdiMs();
+    yoklamaMs = null;
+    bekciKur(kisa);
+  };
+
+  /** Gelen her çerçeve: yol canlı. */
+  const canlilikKaniti = (): void => {
+    sonKanitMs = saat.simdiMs();
+    yoklamaMs = null;
+  };
+
+  const outbox = outboxKur({
+    depo,
+    saat,
+    degisti: () => {
+      bekciDenetle();
+      bildir();
+    },
+  });
 
   /**
    * `ack ok` almış `chat_create`'in outbox'ta tutulan disk kopyasını bırakır: olayı telafi günlüğüne
@@ -540,6 +670,7 @@ export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat }, secen
     depo,
     uygulandi: (o) => {
       ertelenmis(() => uygula(o, true));
+      kararTeslimleriniDenetle();
       // Yalnız `welcome.head_seq`'ten sonraki (canlı) bitişler: telafide yeniden gelenler değil.
       if (o.type === "job_finished" && o.seq > canliEsikSeq) isBittiTuketimPlanla();
       if (++toplu >= TOPLU_BILDIRIM) {
@@ -564,6 +695,8 @@ export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat }, secen
     ornekler.clear();
     defter.sifirla();
     kullaniciTeslimleri.clear();
+    kararTeslimleri.clear();
+    alinanSeq = 0;
     // Bellekten düşen teslimlerin disk kopyası da gider: sonraki açılışta sohbet geri gelmesin.
     const tutulan = new Set(kurulumTeslimleri.map((t) => t.mesaj.client_msg_id));
     if (tutulan.size > 0) kurulumBirak((m) => tutulan.has(m.client_msg_id));
@@ -595,6 +728,60 @@ export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat }, secen
     const sinir = sinirlar.get(sohbet_id);
     if (seq !== null && sinir !== undefined && seq <= sinir) return;
     kullaniciTeslimleri.set(m.client_msg_id, m);
+  };
+
+  /** Kararın kartı (hangi sohbette olursa olsun) hâlâ karar bekliyor mu; kart yoksa `false`. */
+  const kararKartiBekliyorMu = (m: KararMesaji): boolean => {
+    for (const o of ornekler.values()) {
+      switch (m.type) {
+        case "plan_decision": {
+          const k = o.olaylar.plan(m.plan_id);
+          if (k !== null) return k.durum === "bekliyor";
+          break;
+        }
+        case "question_answer": {
+          const k = o.olaylar.soru(m.soru_id);
+          if (k !== null) return k.durum === "bekliyor";
+          break;
+        }
+        case "job_cancel": {
+          const k = o.olaylar.is(m.is_id);
+          if (k !== null) return k.durum === "suruyor";
+          break;
+        }
+      }
+    }
+    return false;
+  };
+
+  /** Teslim, `ack` anına dek alınmış olaylar uygulanmadıkça ve kart beklerken sürer. */
+  const kararTeslimiSurerMi = (t: KararTeslimi): boolean =>
+    telafi.sonSeq() < t.esikSeq && kararKartiBekliyorMu(t.mesaj);
+
+  /** Her uygulanan olaydan sonra: kartı sonuçlanan ya da olayı gelmeyecek teslimler düşer. */
+  const kararTeslimleriniDenetle = (): void => {
+    if (kararTeslimleri.size === 0) return;
+    for (const [client_msg_id, t] of kararTeslimleri) {
+      if (!kararTeslimiSurerMi(t)) kararTeslimleri.delete(client_msg_id);
+    }
+  };
+
+  /**
+   * Karar `ack ok`: servis olayı `ack`'ten önce yolladı. Olay henüz uygulanmadıysa (kart bekliyor,
+   * `telafi` sırasında) teslime girer; uygulandıysa ya da hiç alınmadıysa girmez.
+   */
+  const kararTeslimiAl = (m: KararMesaji): void => {
+    const t: KararTeslimi = { mesaj: m, esikSeq: alinanSeq };
+    if (kararTeslimiSurerMi(t)) kararTeslimleri.set(m.client_msg_id, t);
+  };
+
+  /** Aynı karta ait karar kuyrukta ya da teslimde (`ack` almış, olayı uygulanmamış). */
+  const kararYoldaMi = (uyar: (m: IsMesaji) => boolean): boolean => {
+    if (kuyruktaMi(uyar)) return true;
+    for (const t of kararTeslimleri.values()) {
+      if (uyar(t.mesaj)) return true;
+    }
+    return false;
   };
 
   /**
@@ -641,14 +828,21 @@ export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat }, secen
       case "user_message":
         if (s.ok) kullaniciTeslimiAl(m, s.seq);
         return;
+      case "plan_decision":
+      case "question_answer":
+      case "job_cancel":
+        if (s.ok) kararTeslimiAl(m);
+        return;
       default:
         return;
     }
   };
 
   const cerceveAl = (c: KimlikliCerceve): void => {
+    canlilikKaniti();
     switch (c.type) {
       case "event":
+        if (c.event.seq > alinanSeq) alinanSeq = c.event.seq;
         telafi.olay(c.event);
         return;
       case "ack":
@@ -710,6 +904,7 @@ export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat }, secen
       kimlikTamam,
       cerceve: cerceveAl,
       koptu: () => {
+        bekciDurdur();
         // Geçici silme istekleri kuyruktan hatalara düştü: yeniden yollanmaz, sonucu belirsizdir.
         outbox.koptu();
         silmeHatalariniKapat();
@@ -818,7 +1013,7 @@ export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat }, secen
     });
     const istek: SilmeIstegi = { coz, sure: () => undefined };
     silmeIstegi = istek;
-    // Ping yok: sessizce ölmüş yolda kopma hiç algılanmazdı, söz ve ekran sonsuza dek beklerdi.
+    // Ping yok ve bekçi geçici silmeleri izlemez: sessizce ölmüş yolda söz ve ekran sonsuza dek beklerdi.
     istek.sure = saat.sonra(GECMIS_SIL_SURESI_MS, () => {
       if (silmeIstegi !== istek) return;
       silmeBitir({ ok: false, kod: "zaman_asimi" });
@@ -836,6 +1031,10 @@ export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat }, secen
     const sonuc: BekleyenOge[] = [];
     for (const [client_msg_id, mesaj] of kullaniciTeslimleri) {
       if (sohbetAnahtari(mesaj) === sohbet_id) sonuc.push({ client_msg_id, mesaj, durum: "teslim_edildi" });
+    }
+    // `ack`'i gelmiş, kartı henüz sonuçlanmamış kararlar: kart arada yeniden "bekliyor" görünmesin.
+    for (const [client_msg_id, t] of kararTeslimleri) {
+      if (mesajSohbeti(t.mesaj) === sohbet_id) sonuc.push({ client_msg_id, mesaj: t.mesaj, durum: "teslim_edildi" });
     }
     for (const g of outbox.ogeler()) {
       if (!bekleyenMi(g.mesaj) || mesajSohbeti(g.mesaj) !== sohbet_id) continue;
@@ -932,7 +1131,7 @@ export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat }, secen
         const kart = ornekler.get(sohbet_id)?.olaylar.plan(plan_id) ?? null;
         if (kart === null || kart.plan_hash !== plan_hash) return { ok: false, neden: "plan_yok" };
         if (kart.durum !== "bekliyor") return { ok: false, neden: "plan_sonuclandi" };
-        if (kuyruktaMi((m) => m.type === "plan_decision" && m.plan_id === plan_id)) {
+        if (kararYoldaMi((m) => m.type === "plan_decision" && m.plan_id === plan_id)) {
           return { ok: false, neden: "zaten_yollandi" };
         }
         return yolla({ type: "plan_decision", plan_id, plan_hash, karar });
@@ -944,7 +1143,7 @@ export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat }, secen
         const kart = ornekler.get(sohbet_id)?.olaylar.soru(soru_id) ?? null;
         if (kart === null) return { ok: false, neden: "soru_yok" };
         if (kart.durum !== "bekliyor") return { ok: false, neden: "soru_sonuclandi" };
-        if (kuyruktaMi((m) => m.type === "question_answer" && m.soru_id === soru_id)) {
+        if (kararYoldaMi((m) => m.type === "question_answer" && m.soru_id === soru_id)) {
           return { ok: false, neden: "zaten_yollandi" };
         }
         return yolla({ type: "question_answer", soru_id, cevap });
@@ -956,7 +1155,7 @@ export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat }, secen
         const kart = ornekler.get(sohbet_id)?.olaylar.is(is_id) ?? null;
         if (kart === null) return { ok: false, neden: "is_yok" };
         if (kart.durum !== "suruyor") return { ok: false, neden: "is_bitti" };
-        if (kuyruktaMi((m) => m.type === "job_cancel" && m.is_id === is_id)) {
+        if (kararYoldaMi((m) => m.type === "job_cancel" && m.is_id === is_id)) {
           return { ok: false, neden: "zaten_yollandi" };
         }
         return yolla({ type: "job_cancel", is_id });
@@ -1089,6 +1288,7 @@ export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat }, secen
 
     kapat: () => {
       baglanti.durdur();
+      bekciDurdur();
       bildir();
     },
 

@@ -1,7 +1,15 @@
 /**
- * Kalıcı olay telafisi. Her olay önce kalıcı günlüğe eklenir, sonra `last_seq` yazılır, ancak
- * sonra uygulanır; `seq <= last_seq` atılır. `hello{last_seq}` bu değerle gider, `welcome{head_seq}`
- * sonrası eksikler sırayla gelir. TASARIM.md "JS modülleri"; protocol README `/sohbet` 2-3.
+ * Kalıcı olay telafisi. Her olay önce kalıcı günlüğe eklenir, ancak sonra uygulanır; `seq <= last_seq`
+ * atılır. `last_seq` = günlüğe eklenmiş en büyük `seq`; `hello{last_seq}` bu değerle gider,
+ * `welcome{head_seq}` sonrası eksikler sırayla gelir. TASARIM.md "JS modülleri"; protocol README
+ * `/sohbet` 2-3.
+ *
+ * `last_seq` dosyası olay başına yazılmaz: yüklemede günlüğün en büyük `seq`'i zaten hesaplanır.
+ * Dosyanın tek gerçek işi, kırpmanın günlükten düşürdüğü en büyük `seq`'i saklamaktır (yoksa sunucu
+ * kırpılmış olayı yeniden yollar ve olay ikinci kez uygulanır). Bu yüzden dosya yalnız (1) kırpma en
+ * büyük `seq`'i düşürecekse kırpmadan ÖNCE, (2) sıra boşalınca (toplu telafi başına bir kez) yazılır.
+ * Yazılan değer hep önceden günlüğe eklenmiş bir `seq`'tir; yüklemede günlükle `max` alınır, eski
+ * kurulumda kalan dosya da aynı anlamdadır.
  *
  * Mezar taşı (`chat_cleared`): olay her zamanki gibi eklenir ve `last_seq` ilerler, sonra günlük
  * yalnız `seq > sinir_seq` olan satırlarla atomik yeniden yazılır (`satirlariYaz`); mezar taşı kalır,
@@ -48,7 +56,7 @@ export interface Telafi {
 
 export interface TelafiBagimliliklari {
   depo: DepoPortu;
-  /** Olay günlükte ve `last_seq` ilerledi; `seq` sırasıyla, her olay için bir kez. */
+  /** Olay günlükte (kalıcı) ve `sonSeq()` ilerledi; `seq` sırasıyla, her olay için bir kez. */
   uygulandi(o: KaliciOlay): void;
   /** Sırada bekleyen olay kalmadı ve en az biri uygulandı. */
   bosaldi(): void;
@@ -123,11 +131,28 @@ export const telafiKur: TelafiFabrikasi = ({ depo, uygulandi, bosaldi, yazilamad
   let bozuk = false;
   let bekleyen = 0;
   let uygulanan = 0;
+  // Diskteki `last_seq`'in bilinen değeri; yalnız gereksiz yazımı önler.
+  let kayitliSeq = 0;
   let zincir: Promise<void> = Promise.resolve();
+
+  // `s` günlüğe önceden eklenmiş olmalı. Diskte zaten `>= s` varsa yazmaz. Yazılamazsa `false`.
+  const seqYaz = async (s: number): Promise<boolean> => {
+    if (s <= kayitliSeq) return true;
+    try {
+      await depo.yaz(TELAFI_ANAHTARLARI.sonSeq, String(s));
+      kayitliSeq = s;
+      return true;
+    } catch {
+      return false;
+    }
+  };
 
   // Canlı mezar taşı ya da `chat_deleted`: günlük o anki haliyle kırpılır. Okunamaz ya da yazılamazsa
   // (atomik) günlük olduğu gibi kalır; olay yine uygulanır, bir sonraki `yukle` aynı kırpmayı yapar.
-  const kirp = async (k: Kirpma, n: number): Promise<void> => {
+  // Tetikleyen `o` günlüğün en büyük `seq`'idir ve bugünkü kurallarda kalır; kalmasaydı önce `last_seq`
+  // yazılır, yazılamazsa günlük kırpılmaz.
+  const kirp = async (o: KaliciOlay, k: Kirpma, n: number): Promise<void> => {
+    if (!kalirMi(o, k) && !(await seqYaz(o.seq))) return;
     try {
       const satirlar = await depo.satirlar(TELAFI_ANAHTARLARI.olaylar);
       if (n !== nesil) return;
@@ -153,16 +178,11 @@ export const telafiKur: TelafiFabrikasi = ({ depo, uygulandi, bosaldi, yazilamad
       return;
     }
     if (n !== nesil) return;
-    try {
-      await depo.yaz(TELAFI_ANAHTARLARI.sonSeq, String(o.seq));
-    } catch {
-      // Olay günlükte: yüklemede günlüğün en büyük `seq`'i de hesaba katılır.
-    }
-    if (n !== nesil) return;
+    // Olay günlükte: `last_seq` burada yazılmaz, yüklemede günlüğün en büyük `seq`'i hesaba katılır.
     sonSeq = o.seq;
     const k = canliKirpma(o);
     if (k !== null) {
-      await kirp(k, n);
+      await kirp(o, k, n);
       if (n !== nesil) return;
     }
     uygulanan++;
@@ -200,14 +220,23 @@ export const telafiKur: TelafiFabrikasi = ({ depo, uygulandi, bosaldi, yazilamad
         }
       }
       liste.sort((a, b) => a.seq - b.seq);
+      const kayitli = Number(await depo.oku(TELAFI_ANAHTARLARI.sonSeq));
+      kayitliSeq = seqMi(kayitli) ? kayitli : 0;
       // Kırpma `last_seq`'e dokunmaz; yine de en büyük `seq` kırpmadan önce alınır.
       const enBuyuk = liste.length > 0 ? liste[liste.length - 1]!.seq : 0;
       if (mezarlar.size > 0 || silinenler.size > 0) {
         const k: Kirpma = { mezarlar, silinenler };
         liste = liste.filter((o) => kalirMi(o, k));
         const kalan = satirlar.filter((_, i) => kalirMi(hamlar[i], k));
-        // Arada `sifirla` geldiyse silinen günlük yeniden yazılmasın.
-        if (kalan.length !== satirlar.length && n === nesil) {
+        const kalanEnBuyuk = liste.length > 0 ? liste[liste.length - 1]!.seq : 0;
+        // Arada `sifirla` geldiyse silinen günlük yeniden yazılmasın. Kırpma en büyük `seq`'i
+        // düşürecekse o önce `last_seq`'e yazılır; yazılamazsa günlük kırpılmaz (liste yine kırpılmış).
+        if (
+          kalan.length !== satirlar.length &&
+          n === nesil &&
+          (kalanEnBuyuk >= enBuyuk || (await seqYaz(enBuyuk))) &&
+          n === nesil
+        ) {
           try {
             await depo.satirlariYaz(TELAFI_ANAHTARLARI.olaylar, kalan);
           } catch {
@@ -215,8 +244,7 @@ export const telafiKur: TelafiFabrikasi = ({ depo, uygulandi, bosaldi, yazilamad
           }
         }
       }
-      const kayitli = Number(await depo.oku(TELAFI_ANAHTARLARI.sonSeq));
-      sonSeq = Math.max(enBuyuk, seqMi(kayitli) ? kayitli : 0);
+      sonSeq = Math.max(enBuyuk, kayitliSeq);
       siradaki = sonSeq;
       return liste;
     },
@@ -244,6 +272,8 @@ export const telafiKur: TelafiFabrikasi = ({ depo, uygulandi, bosaldi, yazilamad
           bekleyen--;
           if (bekleyen === 0 && uygulanan > 0) {
             uygulanan = 0;
+            // Toplu telafi başına tek `last_seq` yazımı; doğruluk için gerekmez (bkz. dosya başı).
+            await seqYaz(sonSeq);
             bosaldi();
           }
         }
@@ -260,9 +290,11 @@ export const telafiKur: TelafiFabrikasi = ({ depo, uygulandi, bosaldi, yazilamad
       siradaki = 0;
       hedef = null;
       uygulanan = 0;
+      kayitliSeq = 0;
       return sirayaKoy(async () => {
         try {
           await depo.sil(TELAFI_ANAHTARLARI.olaylar);
+          // Eski kurulumda ya da kırpma/boşalma sonrası duran dosya da silinir.
           await depo.sil(TELAFI_ANAHTARLARI.sonSeq);
         } catch (e) {
           bozuk = true;

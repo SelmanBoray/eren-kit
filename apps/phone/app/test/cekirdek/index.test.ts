@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { Plan, planHash } from "@eren/protocol";
-import { cekirdekKur, GECMIS_SIL_SURESI_MS } from "../../src/cekirdek/index.ts";
+import { BEKCI_SURELERI, cekirdekKur, GECMIS_SIL_SURESI_MS } from "../../src/cekirdek/index.ts";
 import type { CekirdekDurumu, SohbetDurumu, SohbetOzeti } from "../../src/cekirdek/index.ts";
 import { OUTBOX_ANAHTARI } from "../../src/cekirdek/outbox.ts";
 import { SECIM_ANAHTARI } from "../../src/cekirdek/secim.ts";
@@ -1705,5 +1705,461 @@ describe("çekirdek: kısayol mesajı (Dilim 3)", () => {
     assert.deepEqual(k.s.durum().bekleyenler.map((x) => x.client_msg_id), ["abc-3"]);
     const [um] = turdekiler(k.ws.son(), "user_message");
     assert.deepEqual([um?.["v"], um?.["client_msg_id"], um?.["input"], um?.["text"]], [v, "abc-3", "dikte", "eski"]);
+  });
+});
+
+// =============================================================================================
+// Bağlantı bekçisi (sessiz kopuş) ve karar teslimi
+// =============================================================================================
+
+const { YANIT_MS, YOKLAMA_MS } = BEKCI_SURELERI;
+
+/** Telafi günlüğüne olay ekleme kapı açılana dek bekler: `ack` ile olayın uygulanması arası pencere. */
+class KapiliDepo extends SahteDepo {
+  kapi: { bekle: Promise<void>; ac: () => void } | null = null;
+  kapiKapat(): void {
+    let ac: () => void = () => undefined;
+    const bekle = new Promise<void>((r) => {
+      ac = r;
+    });
+    this.kapi = { bekle, ac };
+  }
+  kapiAc(): void {
+    const k = this.kapi;
+    this.kapi = null;
+    k?.ac();
+  }
+  override ekle(anahtar: string, satir: string): Promise<void> {
+    const k = this.kapi;
+    if (k === null || anahtar !== TELAFI_ANAHTARLARI.olaylar) return super.ekle(anahtar, satir);
+    return k.bekle.then(() => super.ekle(anahtar, satir));
+  }
+}
+
+const planOnerisi = (seq: number, plan_id: string) => {
+  const plan = Plan.parse(ornekPlan(plan_id));
+  return { seq, ts_ms: 1000 + seq, type: "plan_proposed", plan, plan_hash: planHash(plan) };
+};
+const planSonuclandi = (seq: number, plan_id: string, plan_hash: string) => ({
+  seq,
+  ts_ms: 1000 + seq,
+  type: "plan_resolved",
+  plan_id,
+  plan_hash,
+  sonuc: "onaylandi",
+});
+const soruSoruldu = (seq: number, soru_id: string, is_id: number) => ({
+  seq,
+  ts_ms: 1000 + seq,
+  type: "question_asked",
+  soru_id,
+  is_id,
+  soru: "Hangisi?",
+});
+const soruSonuclandi = (seq: number, soru_id: string, is_id: number) => ({
+  seq,
+  ts_ms: 1000 + seq,
+  type: "question_resolved",
+  soru_id,
+  is_id,
+  sonuc: "cevaplandi",
+});
+const isBitti = (seq: number, is_id: number) => ({
+  seq,
+  ts_ms: 1000 + seq,
+  type: "job_finished",
+  is_id,
+  durum: "iptal",
+  kirli: false,
+});
+
+const sifirTuketim = { girdi: 0, cache_yazma: 0, cache_okuma: 0, cikti: 0, sonuc_adet: 0 };
+const tuketimRaporu = (istek_id: string) => ({
+  v,
+  type: "usage_report",
+  istek_id,
+  olcum_ms: 5,
+  gun_baslangic_ms: 0,
+  bugun: { sohbet: sifirTuketim, is: sifirTuketim },
+  son_7_gun: { sohbet: sifirTuketim, is: sifirTuketim },
+  sohbetler: [],
+  isler: [],
+});
+
+const yoklamalar = (c: Giden): string[] =>
+  turdekiler(c, "usage_request")
+    .map((m) => String(m["istek_id"]))
+    .filter((id) => id.startsWith("yoklama-"));
+
+const bekleyenOzeti = (d: SohbetDurumu): [string, string][] => d.bekleyenler.map((x) => [x.mesaj.type, x.durum]);
+
+/** Plan kartını `ana`'da kurar; kartın özeti döner. */
+const planKartiKur = async (k: Kurulum, seq: number, plan_id: string): Promise<string> => {
+  k.ws.son().gel(olayCercevesi(planOnerisi(seq, plan_id)));
+  await bosalt();
+  const kart = k.s.durum().ogeler.find((o) => o.tur === "plan" && o.plan_id === plan_id);
+  assert.ok(kart !== undefined && kart.tur === "plan");
+  return kart.plan_hash;
+};
+
+const planDurumu = (k: Kurulum, plan_id: string): string | undefined => {
+  const kart = k.s.durum().ogeler.find((o) => o.tur === "plan" && o.plan_id === plan_id);
+  return kart?.tur === "plan" ? kart.durum : undefined;
+};
+
+describe("çekirdek: bağlantı bekçisi (sessiz kopuş)", () => {
+  it("(a) ack'i gelmeyen kısa mesaj: 20 sn sessizlikte bağlantı kapanır, yeniden bağlanınca aynı kimlikle bir kez gider", async () => {
+    const k = kur();
+    await baslat(k);
+    const b = k.ws.son();
+    const a = await k.s.mesajYolla("merhaba", "yazi");
+    assert.ok(a.ok);
+    await bosalt();
+    assert.deepEqual(bekleyenOzeti(k.s.durum()), [["user_message", "yollandi"]]);
+
+    k.saat.ilerlet(YANIT_MS - 1);
+    await bosalt();
+    assert.equal(b.kapatildi, false);
+    assert.equal(k.c.durum().baglanti, "bagli");
+
+    k.saat.ilerlet(1);
+    await bosalt();
+    assert.equal(b.kapatildi, true);
+    assert.equal(k.c.durum().baglanti, "kapali");
+    assert.notEqual(k.c.durum().sonrakiDenemeMs, null);
+    // Mesaj kaybolmaz: kuyrukta bağlantıyı bekler.
+    assert.deepEqual(bekleyenOzeti(k.s.durum()), [["user_message", "kuyrukta"]]);
+
+    k.saat.ilerlet(1_000);
+    await bosalt();
+    const d = k.ws.son();
+    assert.notEqual(d, b);
+    await elSikis(d, 0);
+    // Aynı `client_msg_id`: servis kayıtlı `ack`'i döner, iş ikinci kez yapılmaz.
+    assert.deepEqual(
+      turdekiler(d, "user_message").map((m) => m["client_msg_id"]),
+      [a.client_msg_id],
+    );
+    assert.equal(turdekiler(b, "user_message").length, 1);
+    d.gel(ack(a.client_msg_id, true, { seq: 1 }));
+    await bosalt();
+    assert.deepEqual(bekleyenOzeti(k.s.durum()), [["user_message", "teslim_edildi"]]);
+    d.gel(olayCercevesi(yankiOlayi(1, a.client_msg_id, "merhaba")));
+    await bosalt();
+    assert.deepEqual(k.s.durum().bekleyenler, []);
+    // Yanıtlanan mesajdan sonra bekçi yok: zaman geçse de bağlantı kalır.
+    k.saat.ilerlet(10 * YANIT_MS);
+    await bosalt();
+    assert.equal(d.kapatildi, false);
+  });
+
+  it("araya gelen her çerçeve canlılık kanıtıdır: süre son çerçeveden sayılır", async () => {
+    const k = kur();
+    await baslat(k);
+    const b = k.ws.son();
+    const a = await k.s.mesajYolla("merhaba", "yazi");
+    assert.ok(a.ok);
+    await bosalt();
+    k.saat.ilerlet(15_000);
+    b.gel(sunucuDurumu());
+    await bosalt();
+    k.saat.ilerlet(YANIT_MS - 1);
+    await bosalt();
+    assert.equal(b.kapatildi, false);
+    k.saat.ilerlet(1);
+    await bosalt();
+    assert.equal(b.kapatildi, true);
+  });
+
+  it("(b) plan_decision ve job_cancel'ın geç ack'i kopuş sayılmaz: sessizlikte yoklama yollanır, yanıtı gelince bağlantı kalır", async () => {
+    const k = kur();
+    await baslat(k);
+    const b = k.ws.son();
+    const hash = await planKartiKur(k, 1, "p1");
+    b.gel(olayCercevesi(isBasladiOlayi(2, 7)));
+    await bosalt();
+    const karar = await k.s.planKarari("p1", hash, "onay");
+    const iptal = await k.s.isIptal(7);
+    assert.ok(karar.ok && iptal.ok);
+    await bosalt();
+    assert.deepEqual(isTurleri(b).filter((t) => t === "plan_decision" || t === "job_cancel"), ["plan_decision", "job_cancel"]);
+
+    // Bir dakika boyunca iş başlamadı/durmadı: her sessiz `YOKLAMA_MS`'te bir yoklama, yanıtı gelir.
+    for (let i = 1; i <= 6; i++) {
+      k.saat.ilerlet(YOKLAMA_MS - 1);
+      await bosalt();
+      assert.equal(yoklamalar(b).length, i - 1);
+      k.saat.ilerlet(1);
+      await bosalt();
+      assert.equal(b.kapatildi, false);
+      assert.deepEqual(yoklamalar(b), Array.from({ length: i }, (_, j) => `yoklama-${j + 1}`));
+      b.gel(tuketimRaporu(`yoklama-${i}`));
+      await bosalt();
+    }
+    assert.equal(k.c.durum().baglanti, "bagli");
+    // Yoklama yanıtı tüketim isteğinin yanıtı sayılmaz.
+    assert.notEqual(k.c.durum().tuketim.durum, "hazir");
+    // Kararlar yeniden yollanmadı.
+    assert.equal(turdekiler(b, "plan_decision").length, 1);
+    assert.equal(turdekiler(b, "job_cancel").length, 1);
+
+    b.gel(olayCercevesi(planSonuclandi(3, "p1", hash)));
+    b.gel(ack(karar.client_msg_id));
+    b.gel(olayCercevesi(isBitti(4, 7)));
+    b.gel(ack(iptal.client_msg_id));
+    await bosalt();
+    assert.deepEqual(k.s.durum().bekleyenler, []);
+    // Yanıt beklenmiyor: yoklama da bekçi de yok.
+    const sayi = yoklamalar(b).length;
+    k.saat.ilerlet(10 * YANIT_MS);
+    await bosalt();
+    assert.equal(yoklamalar(b).length, sayi);
+    assert.equal(b.kapatildi, false);
+  });
+
+  it("geç yanıtlı karar beklenirken yoklama da yanıtsız kalırsa bağlantı kapanır (toplam 20 sn); karar yeniden aynı kimlikle gider", async () => {
+    const k = kur();
+    await baslat(k);
+    const b = k.ws.son();
+    const hash = await planKartiKur(k, 1, "p1");
+    const karar = await k.s.planKarari("p1", hash, "onay");
+    assert.ok(karar.ok);
+    await bosalt();
+    k.saat.ilerlet(YOKLAMA_MS);
+    await bosalt();
+    assert.deepEqual(yoklamalar(b), ["yoklama-1"]);
+    k.saat.ilerlet(YOKLAMA_MS - 1);
+    await bosalt();
+    assert.equal(b.kapatildi, false);
+    k.saat.ilerlet(1);
+    await bosalt();
+    assert.equal(b.kapatildi, true);
+    assert.equal(k.c.durum().baglanti, "kapali");
+    assert.deepEqual(bekleyenOzeti(k.s.durum()), [["plan_decision", "kuyrukta"]]);
+
+    k.saat.ilerlet(1_000);
+    await bosalt();
+    const d = k.ws.son();
+    await elSikis(d, 1);
+    assert.deepEqual(
+      turdekiler(d, "plan_decision").map((m) => m["client_msg_id"]),
+      [karar.client_msg_id],
+    );
+  });
+
+  it("(c) bekçi boşta zamanlayıcı bırakmaz; ack, kopma, yeniden bağlanma ve kapat onu temizler", async () => {
+    const k = kur();
+    await baslat(k);
+    const b = k.ws.son();
+    // Boşta: yalnız tüketim isteğinin süresi.
+    const bosta = k.saat.bekleyenler();
+    assert.equal(bosta.includes(YANIT_MS), false);
+
+    const a = await k.s.mesajYolla("bir", "yazi");
+    assert.ok(a.ok);
+    await bosalt();
+    assert.deepEqual(k.saat.bekleyenler().filter((x) => x === YANIT_MS).length, 1);
+    // İkinci mesaj ikinci zamanlayıcı kurmaz.
+    const a2 = await k.s.mesajYolla("iki", "yazi");
+    assert.ok(a2.ok);
+    await bosalt();
+    assert.equal(k.saat.bekleyenler().length, bosta.length + 1);
+    b.gel(ack(a.client_msg_id, true, { seq: 1 }));
+    b.gel(ack(a2.client_msg_id, true, { seq: 2 }));
+    await bosalt();
+    assert.deepEqual(k.saat.bekleyenler(), bosta);
+
+    // Kopma: yalnız yeniden bağlanma beklemesi kalır (tüketim süresi de iptal).
+    const a3 = await k.s.mesajYolla("üç", "yazi");
+    assert.ok(a3.ok);
+    await bosalt();
+    assert.equal(k.saat.bekleyenler().length, bosta.length + 1);
+    b.kopsun();
+    await bosalt();
+    assert.deepEqual(k.saat.bekleyenler(), [1_000]);
+
+    // Yeniden bağlanınca yeniden yollanan mesaj için tek bekçi.
+    k.saat.ilerlet(1_000);
+    await bosalt();
+    await elSikis(k.ws.son(), 2);
+    assert.equal(turdekiler(k.ws.son(), "user_message").length, 1);
+    assert.equal(k.saat.bekleyenler().filter((x) => x === YANIT_MS).length, 1);
+
+    // Durdurma: hiçbir zamanlayıcı kalmaz.
+    k.c.kapat();
+    await bosalt();
+    assert.deepEqual(k.saat.bekleyenler(), []);
+  });
+});
+
+describe("çekirdek: karar teslimi (ack ile olay arası)", () => {
+  it("(d) karar ack'i ile olayın uygulanması arasında kart 'bekliyor'a dönmez, ikinci karar zaten_yollandi", async () => {
+    const depo = new KapiliDepo();
+    const k = kur(depo);
+    await baslat(k);
+    const b = k.ws.son();
+    const hash = await planKartiKur(k, 1, "p1");
+    b.gel(olayCercevesi(isBasladiOlayi(2, 7)));
+    b.gel(olayCercevesi(soruSoruldu(3, "q1", 7)));
+    await bosalt();
+    const r1 = await k.s.planKarari("p1", hash, "onay");
+    const r2 = await k.s.soruCevapla("q1", "evet");
+    const r3 = await k.s.isIptal(7);
+    assert.ok(r1.ok && r2.ok && r3.ok);
+    await bosalt();
+    assert.deepEqual(bekleyenOzeti(k.s.durum()), [
+      ["plan_decision", "yollandi"],
+      ["question_answer", "yollandi"],
+      ["job_cancel", "yollandi"],
+    ]);
+
+    // Servis olayı `ack`'ten önce yollar; telefon olayı önce diske yazar (burada yazım bekletiliyor).
+    depo.kapiKapat();
+    b.gel(olayCercevesi(planSonuclandi(4, "p1", hash)));
+    b.gel(ack(r1.client_msg_id));
+    b.gel(olayCercevesi(soruSonuclandi(5, "q1", 7)));
+    b.gel(ack(r2.client_msg_id));
+    b.gel(olayCercevesi(isBitti(6, 7)));
+    b.gel(ack(r3.client_msg_id));
+    await bosalt();
+
+    // Pencere: kartlar henüz sonuçlanmadı, kararlar teslimde görünür (ekran "Başlatılıyor" der).
+    assert.equal(planDurumu(k, "p1"), "bekliyor");
+    assert.deepEqual(bekleyenOzeti(k.s.durum()), [
+      ["plan_decision", "teslim_edildi"],
+      ["question_answer", "teslim_edildi"],
+      ["job_cancel", "teslim_edildi"],
+    ]);
+    const plan = k.s.durum().bekleyenler[0]?.mesaj;
+    assert.ok(plan !== undefined && plan.type === "plan_decision" && plan.karar === "onay");
+    // İkinci dokunuş kabloya çıkmaz.
+    assert.deepEqual(await k.s.planKarari("p1", hash, "onay"), { ok: false, neden: "zaten_yollandi" });
+    assert.deepEqual(await k.s.planKarari("p1", hash, "ret"), { ok: false, neden: "zaten_yollandi" });
+    assert.deepEqual(await k.s.soruCevapla("q1", "hayır"), { ok: false, neden: "zaten_yollandi" });
+    assert.deepEqual(await k.s.isIptal(7), { ok: false, neden: "zaten_yollandi" });
+    await bosalt();
+    assert.equal(turdekiler(b, "plan_decision").length, 1);
+    assert.equal(turdekiler(b, "question_answer").length, 1);
+    assert.equal(turdekiler(b, "job_cancel").length, 1);
+    assert.deepEqual(k.s.durum().hatalar, []);
+
+    depo.kapiAc();
+    await bosalt();
+    assert.equal(planDurumu(k, "p1"), "onaylandi");
+    assert.deepEqual(k.s.durum().bekleyenler, []);
+    assert.deepEqual(await k.s.planKarari("p1", hash, "onay"), { ok: false, neden: "plan_sonuclandi" });
+    assert.deepEqual(await k.s.soruCevapla("q1", "evet"), { ok: false, neden: "soru_sonuclandi" });
+    assert.deepEqual(await k.s.isIptal(7), { ok: false, neden: "is_bitti" });
+  });
+
+  it("olayı ack'ten önce uygulanmış karar teslime girmez", async () => {
+    const k = kur();
+    await baslat(k);
+    const b = k.ws.son();
+    const hash = await planKartiKur(k, 1, "p1");
+    const r = await k.s.planKarari("p1", hash, "onay");
+    assert.ok(r.ok);
+    await bosalt();
+    b.gel(olayCercevesi(planSonuclandi(2, "p1", hash)));
+    await bosalt();
+    b.gel(ack(r.client_msg_id));
+    await bosalt();
+    assert.equal(planDurumu(k, "p1"), "onaylandi");
+    assert.deepEqual(k.s.durum().bekleyenler, []);
+  });
+
+  it("(e) olay uygulanamadan bağlantı koparsa teslim sürer; yeniden bağlanınca telafiyle gelen olayla gerçek duruma oturur", async () => {
+    const k = kur();
+    await baslat(k);
+    const b = k.ws.son();
+    const hash = await planKartiKur(k, 1, "p1");
+    const r = await k.s.planKarari("p1", hash, "onay");
+    assert.ok(r.ok);
+    await bosalt();
+
+    k.depo.hata.ekle = true;
+    b.gel(olayCercevesi(planSonuclandi(2, "p1", hash)));
+    b.gel(ack(r.client_msg_id));
+    await bosalt();
+    // Olay günlüğe yazılamadı: bağlantı kapandı, kart sonuçlanmadı ama karar teslimde kalır.
+    assert.equal(b.kapatildi, true);
+    assert.equal(planDurumu(k, "p1"), "bekliyor");
+    assert.deepEqual(bekleyenOzeti(k.s.durum()), [["plan_decision", "teslim_edildi"]]);
+    assert.deepEqual(await k.s.planKarari("p1", hash, "onay"), { ok: false, neden: "zaten_yollandi" });
+
+    k.depo.hata.ekle = false;
+    k.saat.ilerlet(30_000);
+    await bosalt();
+    const d = k.ws.son();
+    assert.notEqual(d, b);
+    await elSikis(d, 2);
+    d.gel(olayCercevesi(planSonuclandi(2, "p1", hash)));
+    await bosalt();
+    assert.equal(planDurumu(k, "p1"), "onaylandi");
+    assert.deepEqual(k.s.durum().bekleyenler, []);
+    assert.equal(turdekiler(d, "plan_decision").length, 0);
+  });
+
+  it("(e) olayı hiç gelmeyen karar takılı kalmaz: telafi ack anındaki olaylara ulaşınca kart yeniden karar ister", async () => {
+    const k = kur();
+    await baslat(k);
+    const b = k.ws.son();
+    const hash = await planKartiKur(k, 1, "p1");
+    const r = await k.s.planKarari("p1", hash, "onay");
+    assert.ok(r.ok);
+    await bosalt();
+
+    // `ack`'ten önce alınan olay kartın sonucu değil; yazılamadan bağlantı kopar.
+    k.depo.hata.ekle = true;
+    b.gel(olayCercevesi(sistemNotu(2, "uyari")));
+    b.gel(ack(r.client_msg_id));
+    await bosalt();
+    assert.equal(b.kapatildi, true);
+    assert.deepEqual(bekleyenOzeti(k.s.durum()), [["plan_decision", "teslim_edildi"]]);
+
+    k.depo.hata.ekle = false;
+    k.saat.ilerlet(30_000);
+    await bosalt();
+    const d = k.ws.son();
+    await elSikis(d, 2);
+    d.gel(olayCercevesi(sistemNotu(2, "uyari")));
+    await bosalt();
+    assert.equal(planDurumu(k, "p1"), "bekliyor");
+    assert.deepEqual(k.s.durum().bekleyenler, []);
+    // Kart gerçek durumunda: karar yeniden verilebilir.
+    const yeni = await k.s.planKarari("p1", hash, "onay");
+    assert.ok(yeni.ok);
+  });
+
+  it("yerel sıfırlama karar teslimlerini boşaltır", async () => {
+    const depo = new KapiliDepo();
+    const k = kur(depo);
+    await baslat(k);
+    const b = k.ws.son();
+    const hash = await planKartiKur(k, 1, "p1");
+    const r = await k.s.planKarari("p1", hash, "onay");
+    assert.ok(r.ok);
+    await bosalt();
+    depo.kapiKapat();
+    b.gel(olayCercevesi(planSonuclandi(2, "p1", hash)));
+    b.gel(ack(r.client_msg_id));
+    await bosalt();
+    assert.deepEqual(bekleyenOzeti(k.s.durum()), [["plan_decision", "teslim_edildi"]]);
+    // Olay hâlâ yazılmayı beklerken bağlantı kopar; bilgisayarın geçmişi geride: yerel geçmiş silinir.
+    b.kopsun();
+    await bosalt();
+    k.saat.ilerlet(1_000);
+    await bosalt();
+    const d = k.ws.son();
+    d.acildi();
+    await bosalt();
+    d.gel(challenge());
+    await bosalt();
+    d.gel(welcome(0));
+    assert.deepEqual(k.s.durum().ogeler, []);
+    assert.deepEqual(k.s.durum().bekleyenler, []);
+    depo.kapiAc();
+    await bosalt();
+    assert.deepEqual(k.s.durum().bekleyenler, []);
   });
 });

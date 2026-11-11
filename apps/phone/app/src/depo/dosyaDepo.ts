@@ -1,4 +1,4 @@
-import { Directory, File, Paths } from "expo-file-system";
+import { Directory, File, FileMode, Paths } from "expo-file-system";
 import type { DepoPortu } from "../cekirdek/sozlesme.ts";
 
 // Anahtar dosya adına güvenli çevrilir (yol ayracı, nokta, büyük/küçük harf duyarsızlığı yok).
@@ -11,10 +11,27 @@ const dosyaAdi = (anahtar: string): string =>
 export const kurtarmaKarari = (anaVar: boolean, tmpVar: boolean, isaretVar: boolean): "ana" | "kurtar" | "yok" =>
   anaVar ? "ana" : tmpVar && isaretVar ? "kurtar" : "yok";
 
+// Dosya yeni satırla mı bitiyor (boşsa evet)? Yalnız son bayt okunur; dosyanın tamamı okunmaz.
+const satirSonuylaBitiyor = (f: File): boolean => {
+  const tutamac = f.open(FileMode.ReadOnly);
+  try {
+    const boyut = tutamac.size ?? 0;
+    if (boyut === 0) return true;
+    tutamac.offset = boyut - 1;
+    const son = tutamac.readBytesSync(1);
+    return son.length === 1 && son[0] === 0x0a;
+  } finally {
+    tutamac.close();
+  }
+};
+
 export const dosyaDepoKur = (klasorAdi = "eren-depo"): DepoPortu => {
   const klasor = new Directory(Paths.document, klasorAdi);
   // Aynı anahtara yazımlar sırayla yürür; biri bozulursa ötekini bozmaz.
   const sira = new Map<string, Promise<unknown>>();
+  // Bu süreçte yeni satırla bittiği bilinen dosyalar. Dosyaya yalnız bu depo yazar; bilinmeyen durumda
+  // (açılıştan sonraki ilk `ekle`, başarısız yazım, kurtarma) son bayt bir kez denetlenir.
+  const satirBasinda = new Set<string>();
 
   const hazirla = (): void => {
     if (!klasor.exists) klasor.create({ intermediates: true });
@@ -35,6 +52,7 @@ export const dosyaDepoKur = (klasorAdi = "eren-depo"): DepoPortu => {
   // Geçici dosyayı tam yaz, işaret koy, taşı, işareti sil. Ölüm hangi adımda olursa olsun veri kurtarılır.
   const atomikYaz = async (anahtar: string, icerik: string): Promise<void> => {
     hazirla();
+    satirBasinda.delete(anahtar);
     const isaret = dosya(anahtar, ".tamam");
     const gecici = dosya(anahtar, ".tmp");
     if (isaret.exists) isaret.delete();
@@ -42,6 +60,7 @@ export const dosyaDepoKur = (klasorAdi = "eren-depo"): DepoPortu => {
     await gecici.write(icerik);
     isaret.create({ overwrite: true });
     await gecici.move(dosya(anahtar), { overwrite: true });
+    if (icerik === "" || icerik.endsWith("\n")) satirBasinda.add(anahtar);
     if (isaret.exists) isaret.delete();
   };
 
@@ -50,7 +69,10 @@ export const dosyaDepoKur = (klasorAdi = "eren-depo"): DepoPortu => {
     const gecici = dosya(anahtar, ".tmp");
     const isaret = dosya(anahtar, ".tamam");
     const karar = kurtarmaKarari(ana.exists, gecici.exists, isaret.exists);
-    if (karar === "kurtar") await gecici.move(ana, { overwrite: true });
+    if (karar === "kurtar") {
+      satirBasinda.delete(anahtar);
+      await gecici.move(ana, { overwrite: true });
+    }
     if (karar !== "yok" && isaret.exists) isaret.delete();
   };
 
@@ -74,8 +96,21 @@ export const dosyaDepoKur = (klasorAdi = "eren-depo"): DepoPortu => {
         hazirla();
         await kurtar(anahtar);
         const f = dosya(anahtar);
+        // Önceki yazım yarıda kaldıysa dosya yeni satırla bitmez: yeni kayıt yarım satıra yapışmasın diye
+        // önce satır kapatılır. Yarım satır tek başına bozuk bir satır olarak kalır (okuyan onu atar).
+        // Denetim yapılamazsa da satır kapatılır: en kötü durumda okumada atılan boş bir satır oluşur.
+        let onEk = "";
         if (!f.exists) f.create();
-        await f.write(`${satir}\n`, { append: true });
+        else if (!satirBasinda.has(anahtar)) {
+          try {
+            if (!satirSonuylaBitiyor(f)) onEk = "\n";
+          } catch {
+            onEk = "\n";
+          }
+        }
+        satirBasinda.delete(anahtar);
+        await f.write(`${onEk}${satir}\n`, { append: true });
+        satirBasinda.add(anahtar);
       }),
 
     // Günlüğü verilen satırlarla atomik değiştirir (atomikYaz: tmp + tamam işareti + move + okumada kurtarma).
@@ -92,6 +127,7 @@ export const dosyaDepoKur = (klasorAdi = "eren-depo"): DepoPortu => {
 
     sil: (anahtar) =>
       sirala(anahtar, async () => {
+        satirBasinda.delete(anahtar);
         const f = dosya(anahtar);
         if (f.exists) f.delete();
         for (const ek of [".tmp", ".tamam"]) {

@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { Olay } from "@eren/protocol";
-import type { GorunumOgesi } from "../../src/cekirdek/olaylar.ts";
+import { Olay, planHash } from "@eren/protocol";
+import { olaylarKur } from "../../src/cekirdek/olaylar.ts";
+import type { GorunumOgesi, Olaylar } from "../../src/cekirdek/olaylar.ts";
 import {
   adHazirla,
   erenKaynakli,
@@ -13,6 +14,7 @@ import type {
   AkisDurumu,
   GidenHatasi,
   IsMesaji,
+  KaliciOlay,
   OutboxOgesi,
   OzetGirdisi,
   SohbetGorunumu,
@@ -24,6 +26,7 @@ import {
   adDegistiOlayi,
   chatCreate,
   chatRename,
+  ornekPlan,
   sohbetAcildiOlayi,
   sohbetSilindiOlayi,
 } from "./sahte.ts";
@@ -698,5 +701,254 @@ describe("sohbetler: otomatikAd", () => {
 
   it("Yeni sohbet ile başlayan başka metin null değildir", () => {
     assert.equal(otomatikAd("Yeni sohbet açalım"), "Yeni sohbet açalım");
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Okunmamış sayımı: tam taramayla eşdeğerlik ve iş miktarı
+// ---------------------------------------------------------------------------------------------
+
+/** Sabit tohumlu üreteç (mulberry32): her koşu aynı diziler. */
+const uretecKur = (tohum: number) => {
+  let s = tohum >>> 0;
+  const sayi = (): number => {
+    s = (s + 0x6d2b79f5) >>> 0;
+    let t = s;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const tam = (n: number): number => Math.floor(sayi() * n);
+  const sec = <T>(a: readonly T[]): T => a[tam(a.length)]!;
+  return { sayi, tam, sec };
+};
+
+/** Başvuru: bugünkü tam tarama, türler bağımsız olarak yeniden yazılmış (üretim kodunu çağırmaz). */
+const ERENIN_TURLERI = new Set(["asistan", "plan", "plan_gizlendi", "soru", "rapor", "tur_kesildi", "devir"]);
+const referans = (ogeler: readonly GorunumOgesi[], okunduSeq: number) => {
+  let okunmamis = 0;
+  let calisanIs = 0;
+  for (const o of ogeler) {
+    const eren = ERENIN_TURLERI.has(o.tur) || (o.tur === "sistem" && o.seviye !== "bilgi");
+    if (o.seq > okunduSeq && eren) okunmamis++;
+    if (o.tur === "is" && o.durum === "suruyor") calisanIs++;
+  }
+  let sonMesaj: { kim: string; metin: string } | null = null;
+  for (let i = ogeler.length - 1; i >= 0 && sonMesaj === null; i--) {
+    const o = ogeler[i]!;
+    if (o.tur === "kullanici" || o.tur === "asistan") sonMesaj = { kim: o.tur, metin: o.metin };
+  }
+  return { okunmamis, calisanIs, sonMesaj };
+};
+
+const PLAN_IDLERI = ["p0", "p1", "p2", "p3"];
+const GECERLI_HASH = new Map(PLAN_IDLERI.map((id) => [id, planHash(ornekPlan(id) as never)]));
+
+/** Rastgele kalıcı içerik olayı (yaşam döngüsü dışı); `seq` verilir. */
+const rastgeleOlay = (r: ReturnType<typeof uretecKur>, seq: number, sohbet_id: string): KaliciOlay => {
+  const ortak = { seq, ts_ms: 1000 + seq, sohbet_id };
+  const plan_id = r.sec(PLAN_IDLERI);
+  const is_id = r.tam(5);
+  const soru_id = `q${r.tam(4)}`;
+  const govdeler: (() => Record<string, unknown>)[] = [
+    () => ({ type: "user_echo", client_msg_id: `m${seq}`, input: "yazi", text: `k${seq}` }),
+    () => ({ type: "assistant_message", turn_id: `t${seq}`, text: `a${seq}` }),
+    () => ({ type: "assistant_message", turn_id: `t${seq}`, text: `a${seq}` }),
+    () => ({ type: "turn_aborted", turn_id: `t${seq}`, neden: "kullanici" }),
+    () => ({
+      type: "plan_proposed",
+      plan: ornekPlan(plan_id),
+      plan_hash: r.sayi() < 0.7 ? GECERLI_HASH.get(plan_id) : "b".repeat(64),
+    }),
+    () => ({ type: "plan_resolved", plan_id, plan_hash: GECERLI_HASH.get(plan_id), sonuc: r.sec(["onaylandi", "reddedildi"]) }),
+    () => ({ type: "job_started", is_id, plan_id, plan_hash: GECERLI_HASH.get(plan_id), baslik: "b", tur: "pc" }),
+    () => ({ type: "job_started", is_id, plan_id, plan_hash: GECERLI_HASH.get(plan_id), baslik: "b", tur: "pc" }),
+    () => ({ type: "job_finished", is_id, durum: r.sec(["tamam", "hata", "iptal"]), kirli: false }),
+    () => ({ type: "question_asked", soru_id, is_id, soru: "?" }),
+    () => ({ type: "question_resolved", soru_id, sonuc: "cevaplandi", cevap: "e" }),
+    () => ({ type: "eren_handover", nesil: 1, ozet_kabul: true }),
+    () => ({ type: "system_notice", seviye: r.sec(["bilgi", "uyari", "hata"]), kod: "x", metin: "m" }),
+    () => ({ type: "chat_cleared", sinir_seq: r.tam(seq) }),
+  ];
+  return { ...ortak, ...r.sec(govdeler)() } as unknown as KaliciOlay;
+};
+
+describe("sohbetler: okunmamış sayımı tam taramayla eşdeğer (rastgele diziler)", () => {
+  it("300 sabit tohumlu dizi: okundu ileri/geri, silme, sıfırlama, yinelenen ve sırasız olay", () => {
+    const SOHBETLER = ["ana", "s-1", "s-2", "s-3"];
+    let karsilastirma = 0;
+    let okunmamisToplam = 0;
+    for (let tohum = 1; tohum <= 300; tohum++) {
+      const r = uretecKur(tohum);
+      const defter = sohbetDefteriKur();
+      const ornekler = new Map<string, Olaylar>();
+      const gecmis: KaliciOlay[] = [];
+      const okundu = new Map<string, number>();
+      let tabanSeq = 0;
+      let seq = 0;
+      const ornekAl = (id: string): Olaylar => {
+        let o = ornekler.get(id);
+        if (o === undefined) ornekler.set(id, (o = olaylarKur()));
+        return o;
+      };
+      const uygula = (o: KaliciOlay): void => {
+        if (o.type === "chat_created" || o.type === "chat_renamed" || o.type === "chat_deleted") {
+          defter.olay(o as SohbetYasamOlayi);
+          return;
+        }
+        ornekAl(o.sohbet_id ?? "ana").ekle(o);
+      };
+      const adim = 20 + r.tam(120);
+      for (let k = 0; k < adim; k++) {
+        const x = r.sayi();
+        const id = r.sec(SOHBETLER);
+        if (x < 0.5) {
+          seq += 1 + (r.sayi() < 0.1 ? r.tam(5) : 0); // ara sıra boşluk
+          const o = rastgeleOlay(r, seq, id);
+          gecmis.push(o);
+          uygula(o);
+        } else if (x < 0.62 && gecmis.length > 0) {
+          // Telafi: yinelenen ya da sırasız (eski seq'li) olay yeniden gelir.
+          uygula(r.sec(gecmis));
+        } else if (x < 0.7) {
+          seq++;
+          const yasamOlayi =
+            r.sayi() < 0.5 ? acildi(seq, id) : r.sayi() < 0.5 ? adDegisti(seq, id, `Ad ${seq}`) : silindi(seq, id);
+          gecmis.push(yasamOlayi as unknown as KaliciOlay);
+          defter.olay(yasamOlayi);
+          if (yasamOlayi.type === "chat_deleted" && id !== "ana") {
+            ornekler.delete(id);
+            okundu.delete(id);
+          }
+        } else if (x < 0.8) {
+          // Okundu işareti: çoğunlukla ileri, bazen geri (taban değişimi, yerel sıfırlama).
+          const eski = okundu.get(id) ?? 0;
+          okundu.set(id, r.sayi() < 0.8 ? Math.max(eski, r.tam(seq + 2)) : r.tam(seq + 2));
+        } else if (x < 0.84) {
+          tabanSeq = r.tam(seq + 2);
+        } else if (x < 0.86) {
+          ornekler.get(id)?.sifirla();
+        }
+        // index her değişimde listeyi yeniden kurar: aradaki önbellek de sınanır.
+        const okunduSeq = (sid: string) => Math.max(tabanSeq, okundu.get(sid) ?? 0);
+        const liste = ozetleriKur({
+          kayitlar: defter.kayitlar(),
+          kuyruk: [],
+          hatalar: [],
+          teslimler: [],
+          sunucu: null,
+          gorunum: (sid) => {
+            const o = ornekler.get(sid);
+            return o === undefined ? null : { ogeler: o.ogeler(), akis: null };
+          },
+          okunduSeq,
+        });
+        for (const ozet of liste) {
+          const ogeler = ornekler.get(ozet.sohbet_id)?.ogeler() ?? [];
+          // Sondan taramanın ön koşulu: görünüm öğeleri seq'e göre kesin artan.
+          for (let i = 1; i < ogeler.length; i++) {
+            assert.ok(ogeler[i - 1]!.seq < ogeler[i]!.seq, `tohum ${tohum}: seq sırası bozuk`);
+          }
+          const b = referans(ogeler, okunduSeq(ozet.sohbet_id));
+          const ad = `tohum ${tohum} adım ${k} ${ozet.sohbet_id}`;
+          assert.equal(ozet.okunmamis, b.okunmamis, ad);
+          assert.equal(ozet.calisanIs, b.calisanIs, ad);
+          assert.deepEqual(ozet.sonMesaj, b.sonMesaj, ad);
+          karsilastirma++;
+          okunmamisToplam += b.okunmamis;
+        }
+      }
+    }
+    // Sınama boş geçmesin: çok sayıda karşılaştırma ve sıfırdan farklı sayımlar oldu.
+    assert.ok(karsilastirma > 10_000, `karşılaştırma ${karsilastirma}`);
+    assert.ok(okunmamisToplam > 1_000, `okunmamış toplamı ${okunmamisToplam}`);
+  });
+});
+
+describe("sohbetler: okunmamış sayımının işi geçmişle büyümez", () => {
+  const BUYUK = 10_000;
+  const buyukGecmis = (): GorunumOgesi[] => {
+    const a: GorunumOgesi[] = [];
+    for (let s = 1; s <= BUYUK; s++) {
+      a.push(s % 3 === 0 ? kullaniciOgesi(s) : s % 97 === 0 ? isOgesi(s, "suruyor") : asistanOgesi(s));
+    }
+    return a;
+  };
+  /** Öğelerin `seq` alanı okumalarını sayan sarmalayıcı (okunmamış sayımı `seq` okur). */
+  const seqSayaci = (ogeler: readonly GorunumOgesi[]) => {
+    const sayac = { seq: 0 };
+    const sarili = ogeler.map(
+      (o) =>
+        new Proxy(o, {
+          get(h, p, a) {
+            if (p === "seq") sayac.seq++;
+            return Reflect.get(h, p, a) as unknown;
+          },
+        }),
+    );
+    return { sarili, sayac };
+  };
+  const kur = (gorunumler: Map<string, readonly GorunumOgesi[]>, okundu: Map<string, number>, kayitlar = kayitlarDefterden()) =>
+    ozetleriKur({
+      kayitlar,
+      kuyruk: [],
+      hatalar: [],
+      teslimler: [],
+      sunucu: null,
+      gorunum: (id) => {
+        const ogeler = gorunumler.get(id);
+        return ogeler === undefined ? null : { ogeler, akis: null };
+      },
+      okunduSeq: (id) => okundu.get(id) ?? 0,
+    });
+
+  it("10 000 öğelik sohbete tek olay: okunmamış için okunan öğe sayısı sınırdan sonrakiler + 1", () => {
+    const gecmis = buyukGecmis();
+    const okundu = new Map([["ana", BUYUK - 6]]);
+    kur(new Map([["ana", gecmis]]), okundu); // önceki hal (önbellek ısınır)
+    const { sarili, sayac } = seqSayaci([...gecmis, asistanOgesi(BUYUK + 1)]);
+    const ana = kur(new Map([["ana", sarili]]), okundu).find((o) => o.sohbet_id === "ana")!;
+    const okunan = sayac.seq;
+    const b = referans(sarili, BUYUK - 6);
+    assert.equal(ana.okunmamis, b.okunmamis);
+    assert.equal(ana.calisanIs, b.calisanIs);
+    assert.ok(ana.okunmamis > 0);
+    // Sınırdan sonraki öğeler (BUYUK-5 .. BUYUK+1: 7 tane, kullanıcınınkiler dahil) + duran 1 okuma.
+    // Tam tarama 10 001 okurdu.
+    assert.ok(okunan <= 7 + 1, `seq okuması ${okunan}`);
+
+    // Okundu işareti sona ilerler: yalnız son öğeye bakılır.
+    sayac.seq = 0;
+    okundu.set("ana", BUYUK + 1);
+    assert.equal(kur(new Map([["ana", sarili]]), okundu)[0]!.okunmamis, 0);
+    assert.ok(sayac.seq <= 1, `seq okuması ${sayac.seq}`);
+
+    // Aynı dizi, aynı sınır: hiç okunmaz.
+    sayac.seq = 0;
+    kur(new Map([["ana", sarili]]), okundu);
+    assert.equal(sayac.seq, 0);
+  });
+
+  it("başka sohbete gelen olayda 10 000 öğelik sohbetin hiçbir öğesine dokunulmaz", () => {
+    let okuma = 0;
+    const buyuk = new Proxy(buyukGecmis(), {
+      get(h, p, a) {
+        if (typeof p === "string" && /^\d+$/.test(p)) okuma++;
+        return Reflect.get(h, p, a) as unknown;
+      },
+    });
+    const kayitlar = kayitlarDefterden(acildi(1, "s-1"));
+    const okundu = new Map([["s-1", BUYUK - 10]]);
+    const gorunumler = new Map<string, readonly GorunumOgesi[]>([["ana", [asistanOgesi(1)]], ["s-1", buyuk]]);
+    const once = kur(gorunumler, okundu, kayitlar).find((o) => o.sohbet_id === "s-1")!;
+    assert.ok(okuma > 0); // ilk görüşte bir kez taranır
+    okuma = 0;
+    for (let s = 2; s <= 1001; s++) {
+      gorunumler.set("ana", [...gorunumler.get("ana")!, asistanOgesi(s)]);
+      const sonra = kur(gorunumler, okundu, kayitlar).find((o) => o.sohbet_id === "s-1")!;
+      assert.equal(sonra.okunmamis, once.okunmamis);
+      assert.equal(sonra.calisanIs, once.calisanIs);
+    }
+    assert.equal(okuma, 0);
   });
 });

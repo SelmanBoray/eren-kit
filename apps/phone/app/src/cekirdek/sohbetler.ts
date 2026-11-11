@@ -145,6 +145,67 @@ function sonMesajBul(ogeler: readonly GorunumOgesi[]): SonMesaj | null {
   return null;
 }
 
+/**
+ * Okunmamış sayımı, sondan geriye: `seq`'i `okunduSeq`'ten büyük olmayan ilk öğede durur. İş,
+ * sohbetin okunmamış öğe sayısıyla (+1) orantılıdır, geçmişin uzunluğuyla değil.
+ *
+ * Ön koşul: öğeler `seq`'e göre artan sıradadır. Güvence `olaylar.ts`'tedir (görünüm dizisinin tek
+ * üreticisi): `ekle` `seq`'i son eklenenden büyük olmayan olayı yok sayar (telafide yinelenen ya da
+ * sırasız gelen olay araya girmez), yeni öğe hep sona eklenir ve olayın `seq`'ini taşır; kart
+ * güncellemesi öğeyi yerinde, `seq`'ini koruyarak değiştirir; `chat_cleared` sırayı koruyarak süzer
+ * ve sona daha büyük `seq`'li notu ekler. Bu sıra sohbetler testinde rastgele dizilerle sınanır.
+ */
+function okunmamisSay(ogeler: readonly GorunumOgesi[], okunduSeq: number): number {
+  let n = 0;
+  for (let i = ogeler.length - 1; i >= 0; i--) {
+    const o = ogeler[i]!;
+    if (o.seq <= okunduSeq) break;
+    if (erenKaynakli(o)) n++;
+  }
+  return n;
+}
+
+/** Bir görünüm dizisinden türetilen alanlar; `okunmamis` son sorulan `okunduSeq` içindir. */
+interface DiziOzeti {
+  calisanIs: number;
+  sonMesaj: SonMesaj | null;
+  /** Son öğenin `ts_ms`'i; dizi boşsa `null`. */
+  sonTsMs: number | null;
+  okunduSeq: number;
+  okunmamis: number;
+}
+
+/**
+ * Dizi kimliğine bağlı önbellek. `olaylar.ogeler()` değişmedikçe aynı diziyi döner ve döndürdüğü
+ * diziyi bir daha değiştirmez (her değişiklikte yeni kopya): olayın ilgilendirmediği sohbetin dizisi
+ * aynı kalır, öğelerine hiç dokunulmaz. Değişen sohbette `calisanIs` için tek geçiş yapılır (iş
+ * kartı yerinde güncellenir, sondan kestirme olmaz); okunmamış yine sondan sayılır.
+ */
+const diziOzetleri = new WeakMap<readonly GorunumOgesi[], DiziOzeti>();
+const BOS_OGELER: readonly GorunumOgesi[] = [];
+
+function diziOzetiAl(ogeler: readonly GorunumOgesi[], okunduSeq: number): DiziOzeti {
+  let oz = diziOzetleri.get(ogeler);
+  if (oz === undefined) {
+    let calisanIs = 0;
+    for (const o of ogeler) {
+      if (o.tur === "is" && o.durum === "suruyor") calisanIs++;
+    }
+    oz = {
+      calisanIs,
+      sonMesaj: sonMesajBul(ogeler),
+      sonTsMs: ogeler[ogeler.length - 1]?.ts_ms ?? null,
+      okunduSeq,
+      okunmamis: okunmamisSay(ogeler, okunduSeq),
+    };
+    diziOzetleri.set(ogeler, oz);
+  } else if (oz.okunduSeq !== okunduSeq) {
+    oz.okunduSeq = okunduSeq;
+    oz.okunmamis = okunmamisSay(ogeler, okunduSeq);
+  }
+  return oz;
+}
+
 export const ozetleriKur: OzetleriKur = (g) => {
   const kayitlar = g.kayitlar;
 
@@ -178,20 +239,13 @@ export const ozetleriKur: OzetleriKur = (g) => {
     kayit: SohbetKaydi | null,
   ): SohbetOzeti => {
     const gorunum = g.gorunum(id);
-    const ogeler = gorunum?.ogeler ?? [];
+    const ogeler = gorunum?.ogeler ?? BOS_OGELER;
     const akis = gorunum?.akis ?? null;
     const eren = sunucu?.find((s) => s.sohbet_id === id)?.eren ?? null;
-    const okunduSeq = g.okunduSeq(id);
-    let okunmamis = 0;
-    let calisanIs = 0;
-    for (const o of ogeler) {
-      if (o.seq > okunduSeq && erenKaynakli(o)) okunmamis++;
-      if (o.tur === "is" && o.durum === "suruyor") calisanIs++;
-    }
+    const { okunmamis, calisanIs, sonMesaj, sonTsMs } = diziOzetiAl(ogeler, g.okunduSeq(id));
     let sonEtkinlikMs: number | null = null;
     if (kayit !== null) {
-      const son = ogeler[ogeler.length - 1];
-      sonEtkinlikMs = son === undefined ? kayit.olusturma_ms : Math.max(kayit.olusturma_ms, son.ts_ms);
+      sonEtkinlikMs = sonTsMs === null ? kayit.olusturma_ms : Math.max(kayit.olusturma_ms, sonTsMs);
     }
     return {
       sohbet_id: id,
@@ -202,7 +256,7 @@ export const ozetleriKur: OzetleriKur = (g) => {
       yaziyor: akis !== null || eren === "tur_suruyor",
       okunmamis,
       calisanIs,
-      sonMesaj: sonMesajBul(ogeler),
+      sonMesaj,
       sonEtkinlikMs,
     };
   };
