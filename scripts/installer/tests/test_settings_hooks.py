@@ -93,17 +93,21 @@ def _cmd(h):
 
 
 def is_kapi(h) -> bool:
+    if h in FOREIGN:
+        return False
     c = _n(_cmd(h))
     return "/bellek/kapi/hook.py" in c or "-m bellek.kapi.hook" in c
 
 
 def is_devir(h) -> bool:
+    if h in FOREIGN:
+        return False
     c = _n(_cmd(h))
     return "/bellek/devir/hook.py" in c or "-m bellek.devir.hook" in c
 
 
 def is_ork(h) -> bool:
-    return "opus-orkestra-sessionstart.py" in _n(_cmd(h))
+    return h not in FOREIGN and "opus-orkestra-sessionstart.py" in _n(_cmd(h))
 
 
 def every_handler(data):
@@ -165,7 +169,15 @@ USER_HOOKS = [
     {"type": "command", "command": "python -m benimpaket.kapi.hook"},
     {"type": "command", "command": 'python -I "C:/baska/devir/hook.py" || true'},
     {"type": "command", "command": "python C:/baska/orkestra/sessionstart.py --parca 1"},
+    # h1: yol, yorumlayıcının çalıştırdığı betik değil -> bize ait değil
+    {"type": "command", "command": 'node "D:/projelerim/bellek/kapi/hook.py" --benim'},
+    {"type": "command", "command": "python my_linter.py --skip /bellek/devir/hook.py"},
+    {"type": "command", "command": 'bash -c "python C:/Bellek/src/bellek/kapi/hook.py"'},
 ]
+NODE_HOOK, LINTER_HOOK, BASH_WRAPPED = USER_HOOKS[5], USER_HOOKS[6], USER_HOOKS[7]
+PRECOMPACT_LEGACY = {"type": "command",
+                     "command": 'python "C:/Bellek/src/bellek/devir/hook.py" --precompact'}
+FOREIGN = USER_HOOKS + [PRECOMPACT_LEGACY]
 
 
 def load_module():
@@ -436,6 +448,12 @@ LEGACY_KAPI_VARIANTS = {
     "tek_tirnak": "python -I -S 'C:/Bellek/src/bellek/kapi/hook.py' || true",
     "modul": "python -m bellek.kapi.hook || true",
     "modul_yalin": "python -m bellek.kapi.hook",
+    "py": 'py -I -S "C:/Bellek/src/bellek/kapi/hook.py" || true',
+    "python3": 'python3 -I -S "C:/Bellek/src/bellek/kapi/hook.py" || true',
+    "python3_12": "python3.12 -I -S C:/Bellek/src/bellek/kapi/hook.py || true",
+    "tam_yol_exe": '"C:/Python312/python.exe" -I -S "C:/Bellek/src/bellek/kapi/hook.py" || true',
+    "tam_yol_exe_ters": '"C:\\Python312\\python.exe" -I -S "C:\\Bellek\\src\\bellek\\kapi\\hook.py" || true',
+    "tam_yol_unix": '/usr/local/bin/python3 -I -S "C:/Bellek/src/bellek/kapi/hook.py" || true',
 }
 if WINDOWS:
     LEGACY_KAPI_VARIANTS["buyuk_harf"] = 'PYTHON -I -S "C:/BELLEK/SRC/BELLEK/KAPI/HOOK.PY" || true'
@@ -571,7 +589,7 @@ def _messy_settings(repo):
         "bilinmeyen_anahtar": {"ic": [1, 2, "üç"]},
         "hooks": {
             "PreToolUse": [
-                {"matcher": "Read", "hooks": [USER_HOOKS[1]] + kapi_pair(LEGACY_CMD)},
+                {"matcher": "Read", "hooks": [USER_HOOKS[1], BASH_WRAPPED] + kapi_pair(LEGACY_CMD)},
                 {"matcher": "Read", "hooks": kapi_pair(
                     'python -I -S "C:\\\\Bellek\\\\src\\\\bellek\\\\kapi\\\\hook.py" || true')},
                 {"matcher": "Read", "hooks": kapi_handlers(repo), "aciklama": "bizim"},
@@ -583,8 +601,10 @@ def _messy_settings(repo):
             ],
             "Stop": [
                 {"hooks": [{"type": "command", "command": "python -m bellek.devir.hook || true"},
-                           USER_HOOKS[3]]},
+                           USER_HOOKS[3], LINTER_HOOK]},
             ],
+            "PostToolUse": [{"matcher": "Edit", "hooks": [NODE_HOOK]}],
+            "PreCompact": [{"hooks": [PRECOMPACT_LEGACY]}],
             "Notification": [{"hooks": [{"type": "command", "command": "echo n", "x-ozel": 1}]}],
         },
     }
@@ -699,3 +719,81 @@ def test_replace_retries_transient_permission_error(settings, repo, monkeypatch,
     assert data["env"] == {"A": "1"}
     assert_single_kapi(data, repo)
     assert sorted(p.name for p in settings.parent.iterdir()) == ["settings.json"]  # geçici dosya kalmadı
+
+
+# ------------------------------------------- sözleşme eki h1/h2: yalnız gerçekten bizimkiler
+
+@pytest.mark.parametrize("hook,event,comp", [
+    (NODE_HOOK, "PostToolUse", "kapi"),
+    (NODE_HOOK, "PreToolUse", "kapi"),
+    (LINTER_HOOK, "Stop", "devir"),
+    (LINTER_HOOK, "PostToolUse", "devir"),
+    (BASH_WRAPPED, "PreToolUse", "kapi"),
+    (BASH_WRAPPED, "SessionStart", "kapi"),
+    (PRECOMPACT_LEGACY, "PreCompact", "devir"),
+], ids=["node_posttooluse", "node_pretooluse", "linter_stop", "linter_posttooluse",
+        "bash_sarmal_pretooluse", "bash_sarmal_sessionstart", "precompact_eski_konum"])
+def test_foreign_or_other_event_entry_untouched(settings, repo, hook, event, comp):
+    group = {"matcher": "Read", "hooks": [hook]} if event == "PreToolUse" else {"hooks": [hook]}
+    write_settings(settings, {"hooks": {event: [group]}})
+    rep = run(settings, repo, comp)
+    data = read_settings(settings)
+    assert group in data["hooks"][event]
+    assert every_handler(data).count(hook) == 1
+    assert rep["components"][comp]["legacy_removed"] == 0
+    (assert_single_kapi if comp == "kapi" else assert_single_devir)(data, repo)
+    # tekrar çalıştırma da dokunmaz
+    run(settings, repo, comp)
+    assert group in read_settings(settings)["hooks"][event]
+
+
+def test_own_event_legacy_replaced_other_event_legacy_kept(settings, repo):
+    kapi_post = {"type": "command", "command": LEGACY_CMD}
+    write_settings(settings, {"hooks": {
+        "Stop": [{"hooks": [{"type": "command", "command": LEGACY_DEVIR_CMD, "timeout": 10}]}],
+        "PreCompact": [{"hooks": [PRECOMPACT_LEGACY]}],
+        "PreToolUse": [{"matcher": "Read", "hooks": kapi_pair(LEGACY_CMD)}],
+        "PostToolUse": [{"matcher": "Read", "hooks": [kapi_post]}],
+    }})
+    rep = run(settings, repo, "devir,kapi")
+    data = read_settings(settings)
+    assert rep["components"]["devir"]["legacy_removed"] == 1
+    assert rep["components"]["kapi"]["legacy_removed"] == 2
+    assert_single_devir(data, repo)
+    assert data["hooks"]["PreCompact"] == [{"hooks": [PRECOMPACT_LEGACY]}]
+    assert data["hooks"]["PostToolUse"] == [{"matcher": "Read", "hooks": [kapi_post]}]
+    assert data["hooks"]["PreToolUse"] == [{"matcher": "Read", "hooks": kapi_handlers(repo)}]
+
+
+def test_own_command_in_foreign_event_not_touched_on_install(settings, repo):
+    other = {"matcher": "Read", "hooks": [{"type": "command", "command": kapi_cmd(repo)}]}
+    write_settings(settings, {"hooks": {"PostToolUse": [other]}})
+    run(settings, repo, "kapi")
+    data = read_settings(settings)
+    assert data["hooks"]["PostToolUse"] == [other]
+
+
+def test_messy_foreign_events_preserved(settings, repo):
+    original = _messy_settings(repo)
+    write_settings(settings, copy.deepcopy(original))
+    run(settings, repo, "devir,orkestra,kapi")
+    data = read_settings(settings)
+    for ev in ("PostToolUse", "PreCompact"):
+        assert data["hooks"][ev] == original["hooks"][ev]
+    assert BASH_WRAPPED in all_handlers(data, "PreToolUse")
+    assert LINTER_HOOK in all_handlers(data, "Stop")
+
+
+def test_uninstall_keeps_node_and_wrapped_hooks(settings, repo):
+    original = {"hooks": {
+        "PostToolUse": [{"matcher": "Edit", "hooks": [NODE_HOOK]}],
+        "PreToolUse": [{"matcher": "Read", "hooks": [NODE_HOOK, BASH_WRAPPED]}],
+        "Stop": [{"hooks": [LINTER_HOOK]}],
+        "PreCompact": [{"hooks": [PRECOMPACT_LEGACY]}],
+    }}
+    write_settings(settings, copy.deepcopy(original))
+    run(settings, repo, "devir,orkestra,kapi", "--uninstall")
+    assert read_settings(settings) == original
+    run(settings, repo, "devir,orkestra,kapi")
+    run(settings, repo, "devir,orkestra,kapi", "--uninstall")
+    assert read_settings(settings) == original

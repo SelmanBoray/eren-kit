@@ -13,18 +13,21 @@ ikiye katlanmaz, yerinde güncellenir.
 
 Kurallar:
 - Var olan ayarlar ve başka hook'lar korunur; yalnız eren-kit'in hook'ları eklenir/güncellenir.
-- Bir hook "bizim" sayılır, komutu repo-göreli betik yolunu içeriyorsa
-  (ör. ".../packages/bellek/src/bellek/devir/hook.py") ya da betiği modül olarak
-  çalıştırıyorsa ("python -m bellek.devir.hook"). Tanıma yazılış biçiminden bağımsızdır:
-  ters/düz bölü, art arda ayraçlar (JSON'da "C:\\\\x\\\\y"), tırnak ve büyük/küçük harf
-  farkı aynı yol sayılır. Böylece repo taşınmışsa eski kayıt güncellenir, aynı komut iki
-  kez eklenmez.
+- Bir hook "bizim" sayılır, komut bir Python yorumlayıcısıyla (python, python3, pythonX.Y,
+  py; yol ve .exe olabilir) başlıyor VE yorumlayıcının çalıştırdığı betik repo-göreli
+  yolla bitiyorsa (ör. ".../packages/bellek/src/bellek/devir/hook.py") ya da "-m" modülü
+  bizimse ("python -m bellek.devir.hook"). Tanıma yazılış biçiminden bağımsızdır: ters/düz
+  bölü, art arda ayraçlar (JSON'da "C:\\\\x\\\\y"), tırnak ve büyük/küçük harf farkı aynı yol
+  sayılır; "|| true" kuyruğu ve -I/-S/-B gibi seçenekler sorun değildir. Yol başka bir
+  programın (node, başka bir .py) argümanıysa ya da emin olunamayan bir biçimse kayıt
+  bizim sayılmaz. Böylece repo taşınmışsa eski kayıt güncellenir, aynı komut iki kez eklenmez.
 - Kurulumda bir bileşenin her olayında tek bir grup kalır: o olaydaki bütün eski
   kayıtlarımız (yinelenen gruplar dahil) çıkarılır, yenisi ilk eşleşmenin yerine konur.
 - Repo dışındaki eski kopyaların kayıtları (ör. "C:/Bellek/src/bellek/kapi/hook.py")
-  varsayılanda yenisiyle değiştirilir (yedek alınarak). --keep-legacy verilirse korunur
-  ve özetteki "legacy" listesinde bildirilir. --replace-legacy eski uyumluluk içindir
-  (artık varsayılanla aynı).
+  bileşenin kendi olaylarında varsayılan olarak yenisiyle değiştirilir (yedek alınarak).
+  --keep-legacy verilirse korunur ve özetteki "legacy" listesinde bildirilir.
+  --replace-legacy eski uyumluluk içindir (artık varsayılanla aynı). Bileşenin kendi
+  olayları dışındaki bizim/eski kopya kayıtlarına dokunulmaz; "other_events" altında bildirilir.
 - Bir bileşen bir olay için grup düzeyi "matcher" isteyebilir (ör. kapi: PreToolUse +
   "Read", SessionStart + "compact"); matcher'sız bileşenlerin grubu yalnız "hooks" alanını taşır.
 - Kaldırmada (--uninstall) bizim kayıtlarımız bütün olaylardan çıkarılır; eski kopyalara
@@ -140,26 +143,108 @@ def norm(s: str) -> str:
     return _SEP_RUN.sub("/", s.replace("\\", "/")).lower()
 
 
-def _norm_cmd(cmd: str) -> str:
-    """Komut metni için norm(); tırnaklar boşluğa çevrilir (yol sınırı gibi davranır)."""
-    return norm(cmd.replace('"', " ").replace("'", " "))
+# ---- Komut tanıma ----------------------------------------------------------------
+# Bir kayıt ancak komut bir Python yorumlayıcısıyla başlıyor VE hook yolu o yorumlayıcının
+# çalıştırdığı betik (seçeneklerden sonraki ilk argüman) ya da "-m" modülü ise tanınır.
+# Yol başka bir programın argümanıysa ya da metnin başka bir yerinde geçiyorsa kayıt bizim
+# değildir. Emin olunamayan biçimler (ortam ataması, ek kabuk komutu, yönlendirme, -c ...)
+# tanınmaz: yineleme bırakmak, kullanıcının hook'unu silmekten iyidir.
+
+_PY_PROG = re.compile(r"^(python(\d+(\.\d+)*)?|py)(\.exe)?$")
+# Değer alan yorumlayıcı seçenekleri (ayrı argüman ya da bitişik: -X utf8 / -Xutf8).
+_PY_OPT_WITH_ARG = set("WX")
+# Değer almayan tek harfli seçenekler (birleşik yazılabilir: -IS).
+_PY_FLAGS = set("bBdEiIOPqRsSuvx")
+_PY_LONG_WITH_ARG = {"--check-hash-based-pycs"}
+# Komut sonunda kabul edilen kuyruklar (bizim yazdığımız biçim "|| true").
+_OK_TAILS = ([], [("op", "||"), ("w", "true")], [("op", "||"), ("w", ":")],
+             [("op", "||"), ("w", "exit"), ("w", "0")])
 
 
-# Yolun bittiğini gösteren karakterler: metin sonu, boşluk, kabuk işleçleri.
-_END = r"(?=$|[\s;|&)<>,])"
+def _tokens(cmd: str):
+    """Basit kabuk ayrıştırması: [("w", kelime) | ("op", işleç)]; tırnaklar kelimeyi gruplar,
+    ters bölü kaçış sayılmaz (Windows yolları). Kapanmamış tırnakta None."""
+    out, cur, have, q = [], [], False, None
+    i, n = 0, len(cmd)
+    while i < n:
+        c = cmd[i]
+        if q:
+            if c == q:
+                q = None
+            else:
+                cur.append(c)
+        elif c in "\"'":
+            q, have = c, True
+        elif c.isspace():
+            if have:
+                out.append(("w", "".join(cur)))
+                cur, have = [], False
+        elif c in "|&;<>()`$":
+            if have:
+                out.append(("w", "".join(cur)))
+                cur, have = [], False
+            if c in "|&" and i + 1 < n and cmd[i + 1] == c:
+                out.append(("op", c * 2))
+                i += 1
+            else:
+                out.append(("op", c))
+        else:
+            cur.append(c)
+            have = True
+        i += 1
+    if q:
+        return None
+    if have:
+        out.append(("w", "".join(cur)))
+    return out
 
 
-def _path_in(cmd: str, path: str) -> bool:
-    """path (normalize) komutta tam bir yol parçası olarak geçiyor mu ("hook.pyc" eşleşmez)."""
-    p = norm(path)
-    start = "" if p.startswith("/") else r"(?<![\w.\-])"
-    return re.search(start + re.escape(p) + _END, _norm_cmd(cmd)) is not None
-
-
-def _module_in(cmd: str, module: str) -> bool:
-    """Komut betiği "-m <modül>" biçiminde çalıştırıyor mu."""
-    pat = r"(?:^|\s)-m\s*" + re.escape(module.lower()) + _END
-    return re.search(pat, _norm_cmd(cmd)) is not None
+def _target(cmd: str):
+    """Python'un çalıştırdığı hedef: ("script", yol) | ("module", ad) | None (tanınmıyor)."""
+    toks = _tokens(cmd)
+    if not toks:
+        return None
+    # Yalnız tek basit komut + kabul edilen kuyruk ("|| true").
+    end = next((i for i, (k, _) in enumerate(toks) if k == "op"), len(toks))
+    rest = [(k, v.lower() if k == "w" else v) for k, v in toks[end:]]
+    if rest not in _OK_TAILS:
+        return None
+    words = [v for _, v in toks[:end]]
+    prog = norm(words[0]).rsplit("/", 1)[-1]
+    if not _PY_PROG.match(prog):
+        return None
+    i = 1
+    while i < len(words):
+        w = words[i]
+        if w in ("-", "--") or not w.startswith("-"):
+            break
+        if w.startswith("--"):
+            if w in _PY_LONG_WITH_ARG:
+                i += 2
+                continue
+            return None  # --version, --help, bilinmeyen uzun seçenek
+        if prog.startswith("py") and not prog.startswith("python") and re.match(r"^-\d", w):
+            i += 1  # py başlatıcısı: -3, -3.12
+            continue
+        j = 1
+        while j < len(w):
+            c = w[j]
+            if c == "m":
+                mod = w[j + 1:] or (words[i + 1] if i + 1 < len(words) else "")
+                return ("module", mod) if mod else None
+            if c == "c":
+                return None
+            if c in _PY_OPT_WITH_ARG:
+                if j + 1 == len(w):
+                    i += 1  # değer sonraki argüman
+                break
+            if c not in _PY_FLAGS:
+                return None
+            j += 1
+        i += 1
+    if i >= len(words) or words[i] in ("-", "--"):
+        return None
+    return ("script", words[i])
 
 
 def _command(hook) -> str | None:
@@ -168,20 +253,30 @@ def _command(hook) -> str | None:
     return None
 
 
+def _script_matches(path: str, tail: str) -> bool:
+    """Betik yolu tail ile bitiyor mu (tail "/" ile başlamıyorsa tam dosya adı sınırında)."""
+    p, t = norm(path), norm(tail)
+    return p.endswith(t) if t.startswith("/") else (p == t or p.endswith("/" + t))
+
+
 def is_ours(hook, tail: str) -> bool:
     cmd = _command(hook)
-    if cmd is None:
+    target = _target(cmd) if cmd is not None else None
+    if target is None:
         return False
-    if _path_in(cmd, tail):
-        return True
+    kind, value = target
+    if kind == "script":
+        return _script_matches(value, tail)
     mod = MODULES.get(tail)
-    return mod is not None and _module_in(cmd, mod)
+    return mod is not None and value.lower() == mod
 
 
 def is_legacy(hook, key: str, tail: str) -> bool:
     """Aynı betiğin repo dışındaki eski bir kopyası (ör. C:/Bellek/src/bellek/kapi/hook.py)."""
     cmd = _command(hook)
-    return cmd is not None and _path_in(cmd, LEGACY_HINTS[key]) and not is_ours(hook, tail)
+    target = _target(cmd) if cmd is not None else None
+    return (target is not None and target[0] == "script"
+            and _script_matches(target[1], LEGACY_HINTS[key]) and not is_ours(hook, tail))
 
 
 def strip_event(groups: list, pred):
@@ -205,17 +300,30 @@ def strip_event(groups: list, pred):
     return out, first, removed
 
 
-def find_legacy(hooks: dict, key: str, tail: str) -> list[str]:
-    found = []
-    for groups in hooks.values():
-        if not isinstance(groups, list):
+def _each_handler(hooks: dict, events=None):
+    """(olay, handler) çiftleri; events verilirse yalnız o olaylar."""
+    for event, groups in hooks.items():
+        if (events is not None and event not in events) or not isinstance(groups, list):
             continue
         for g in groups:
-            if not isinstance(g, dict) or not isinstance(g.get("hooks"), list):
-                continue
-            for h in g["hooks"]:
-                if is_legacy(h, key, tail) and h["command"] not in found:
-                    found.append(h["command"])
+            if isinstance(g, dict) and isinstance(g.get("hooks"), list):
+                for h in g["hooks"]:
+                    yield event, h
+
+
+def find_other_events(hooks: dict, key: str, tail: str, events) -> list[dict]:
+    """Bileşenin kendi olayları DIŞINDA kalan bizim/eski kopya kayıtları: dokunulmaz, bildirilir."""
+    return [{"event": e, "command": h["command"]}
+            for e, h in _each_handler(hooks)
+            if e not in events and (is_ours(h, tail) or is_legacy(h, key, tail))]
+
+
+def find_legacy(hooks: dict, key: str, tail: str, events=None) -> list[str]:
+    """Eski kopya komutları (yinelenmeden); events verilirse yalnız o olaylarda."""
+    found = []
+    for _, h in _each_handler(hooks, events):
+        if is_legacy(h, key, tail) and h["command"] not in found:
+            found.append(h["command"])
     return found
 
 
@@ -311,9 +419,10 @@ def _apply(original: dict, args, specs: dict, keys: list) -> tuple[dict, dict]:
                     set_event(event, groups)
         else:
             if replace_legacy:
-                # Eski kopyalar her olaydan çıkarılır; bizimki ilgili olayda onların yerine konur.
-                for event in list(hooks.keys()):
-                    groups = hooks[event]
+                # Eski kopyalar YALNIZ bileşenin kendi olaylarından çıkarılır; bizimki onların
+                # yerine konur. Başka olaylardaki kayıtlara dokunulmaz (other_events'te bildirilir).
+                for event in spec["events"]:
+                    groups = hooks.get(event)
                     if not isinstance(groups, list):
                         continue
                     groups, first, n = strip_event(groups, lambda h, k=k, t=tail: is_legacy(h, k, t))
@@ -337,7 +446,8 @@ def _apply(original: dict, args, specs: dict, keys: list) -> tuple[dict, dict]:
             "added": added,
             "removed": removed_total,
             "legacy_removed": legacy_removed,
-            "legacy": find_legacy(hooks, k, tail),
+            "legacy": find_legacy(hooks, k, tail, spec["events"]),
+            "other_events": find_other_events(hooks, k, tail, spec["events"]),
         }
 
     removed_any = any(c["removed"] or c["legacy_removed"] for c in report["components"].values())

@@ -43,7 +43,7 @@ class HassasUygulamalarTest {
         "com.linkedin.android" to "LinkedIn",
         "com.google.android.apps.nbu.files" to "Files by Google",
         "io.wallpaperengine.weclient" to "Wallpaper Engine",
-        "com.selman.klavye" to "Klavye",
+        "com.ornek.klavye" to "Klavye",
         "com.github.android" to "GitHub",
         "com.openai.chatgpt" to "ChatGPT",
         "com.anthropic.claude" to "Claude",
