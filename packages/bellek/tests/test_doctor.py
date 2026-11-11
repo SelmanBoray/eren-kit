@@ -18,6 +18,11 @@ from bellek.config import Config, Source
 from bellek.doctor import Check, DoctorReport, run_checks
 
 
+# Beyin ve hook denetimleri: kaynak denetimlerinden ve sqlite_fts5'ten sonra, bu sırayla.
+# Ad ve sıra JSON çıktısının sözleşmesidir; bu yüzden testler tam listeyi sabitler.
+BEYIN_DENETIMLERI = ["beyin_db", "beyin_fts", "beyin_yetim", "beyin_gelen", "beyin_kuyruk", "hook_gunluk"]
+
+
 def make_config(
     root: Path,
     *,
@@ -69,13 +74,16 @@ def test_check_and_report_are_frozen_dataclasses():
 def test_check_names_and_order_with_sources(tmp_path):
     cfg = make_config(tmp_path, sources=("zeta", "alfa", "mid"), existing_sources=("zeta", "alfa", "mid"))
     names = [c.name for c in run_checks(cfg).checks]
-    assert names == ["python", "vault", "state_dir", "source:zeta", "source:alfa", "source:mid", "sqlite_fts5"]
+    assert names == [
+        "python", "vault", "state_dir", "source:zeta", "source:alfa", "source:mid", "sqlite_fts5",
+        *BEYIN_DENETIMLERI,
+    ]
 
 
 def test_check_names_without_sources(tmp_path):
     cfg = make_config(tmp_path, sources=(), existing_sources=())
     names = [c.name for c in run_checks(cfg).checks]
-    assert names == ["python", "vault", "state_dir", "sqlite_fts5"]
+    assert names == ["python", "vault", "state_dir", "sqlite_fts5", *BEYIN_DENETIMLERI]
 
 
 def test_all_ok(tmp_path):
@@ -181,8 +189,9 @@ def test_fts5_unavailable_is_error(tmp_path, monkeypatch):
     assert checks["sqlite_fts5"].status == "error"
     assert checks["sqlite_fts5"].detail.strip()
     assert report.status == "error"
-    # Diğer kontroller etkilenmez ve rapor kesilmez.
-    assert [c.name for c in report.checks][-1] == "sqlite_fts5"
+    # Diğer kontroller etkilenmez ve rapor kesilmez: FTS5 hatasından sonraki denetimler de çalışır.
+    names = [c.name for c in report.checks]
+    assert names[names.index("sqlite_fts5") + 1 :] == BEYIN_DENETIMLERI
     assert checks["vault"].status == "ok"
 
 
@@ -193,7 +202,9 @@ def test_fts5_connect_raising_does_not_break_report(tmp_path, monkeypatch):
     monkeypatch.setattr(sqlite3, "connect", boom)
     report = run_checks(make_config(tmp_path))
     assert by_name(report)["sqlite_fts5"].status == "error"
-    assert len(report.checks) == 6
+    assert [c.name for c in report.checks] == [
+        "python", "vault", "state_dir", "source:a", "source:b", "sqlite_fts5", *BEYIN_DENETIMLERI,
+    ]
 
 
 @pytest.mark.parametrize(
@@ -234,7 +245,42 @@ def test_sablonla_calisirken_config_uyarisi_ilk_sirada(tmp_path):
     cfg = dataclasses.replace(make_config(tmp_path, sources=(), existing_sources=()), template=True)
     report = run_checks(cfg)
     names = [c.name for c in report.checks]
-    assert names == ["config", "python", "vault", "state_dir", "sqlite_fts5"]
+    assert names == ["config", "python", "vault", "state_dir", "sqlite_fts5", *BEYIN_DENETIMLERI]
     assert report.checks[0].status == "warn"
     assert "bellek.toml" in report.checks[0].detail
     assert report.status == "warn"
+
+
+def test_yalitim_varsayilan_yollari_gecici_koke_yonlendirir(tmp_path):
+    """tests/conftest.py güvencesi: hiçbir şey yönlendirmeyen bir testte doktorun okuduğu
+    beyin.db, kuyruk, hook günlükleri ve platform kökü pytest geçici kökündedir; gerçek
+    kullanıcı veri kökünde (oturum başındaki ortamdan çözülen) değildir."""
+    from conftest import OTURUM_BASI_ORTAM
+
+    from bellek import doctor
+    from bellek.beyin import mcp_kopru, servis
+    from bellek.devir import hook as devir_hook
+    from bellek.kapi import hook as kapi_hook
+    from bellek.platform_dirs import data_dir
+
+    gecici_kok = Path(tmp_path).resolve().parent  # pytest basetemp
+    gercek_ortam = {k: v for k, v in OTURUM_BASI_ORTAM.items() if v is not None}
+    gercek_kok = data_dir(gercek_ortam).resolve()
+
+    yollar = {
+        "data_dir": data_dir(),
+        "beyin_db": doctor._beyin_db_path(),
+        "servis_kuyruk": servis._kuyruk_yolu(),
+        "servis_durum": servis._durum_klasoru(),
+        "servis_token": servis._token_yolu(),
+        "servis_log": servis._log_yolu(),
+        "kopru_kuyruk": mcp_kopru._kuyruk_yolu(),
+        "kopru_log": mcp_kopru._log_yolu(),
+        "kapi_state": Path(kapi_hook.state_dir()),
+        "devir_state": Path(devir_hook.state_dir()),
+        **{f"hook_log:{ad}": yol for ad, yol in doctor._hook_log_paths()},
+    }
+    for ad, yol in yollar.items():
+        cozulmus = Path(yol).resolve()
+        assert cozulmus.is_relative_to(gecici_kok), f"{ad} geçici kökte değil: {cozulmus}"
+        assert not cozulmus.is_relative_to(gercek_kok), f"{ad} gerçek veri kökünde: {cozulmus}"

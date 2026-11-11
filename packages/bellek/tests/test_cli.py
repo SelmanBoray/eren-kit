@@ -113,7 +113,11 @@ def test_doctor_json_all_ok(tmp_path, capsys):
     data = json.loads(capsys.readouterr().out)
     assert data["status"] == "ok"
     names = [c["name"] for c in data["checks"]]
-    assert names == ["python", "vault", "state_dir", "source:a", "source:b", "sqlite_fts5"]
+    # Ad ve sıra JSON sözleşmesidir; beyin/hook denetimleri sqlite_fts5'ten sonra gelir.
+    assert names == [
+        "python", "vault", "state_dir", "source:a", "source:b", "sqlite_fts5",
+        "beyin_db", "beyin_fts", "beyin_yetim", "beyin_gelen", "beyin_kuyruk", "hook_gunluk",
+    ]
     assert all(set(c) == {"name", "status", "detail"} for c in data["checks"])
     assert all(c["status"] == "ok" for c in data["checks"])
 
