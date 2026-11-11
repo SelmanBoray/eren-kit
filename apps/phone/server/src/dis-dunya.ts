@@ -372,28 +372,54 @@ const pidSorgula = async (pid: number): Promise<SurecKaydi | null> => {
   return kayitlar.find((k) => k.pid === pid) ?? null;
 };
 
-/** Çocuk bitmediği halde oluşma anı okunamazsa kimlik güvenilmez: çocuk öldürülür, atılır. */
-const kimlikOku = async (cocuk: ChildProcess): Promise<SurecKimligi> => {
-  const pid = cocuk.pid;
-  if (pid === undefined) throw new Error("pid_yok");
-  let son: unknown = null;
-  for (let deneme = 0; deneme < 2; deneme += 1) {
-    try {
-      const k = await pidSorgula(pid);
-      if (k) return { pid, olusturmaMs: k.olusturmaMs };
-    } catch (e) {
-      son = e;
+/** `kimlikOkuyucuKur`'un baktığı çocuk alanları; test sahte nesne verebilsin diye dar. */
+export type KimlikCocugu = Pick<ChildProcess, "pid" | "exitCode" | "signalCode" | "kill">;
+
+export interface KimlikOkumaBaglari {
+  pidSorgula(pid: number): Promise<SurecKaydi | null>;
+  /** `taskkill /T /F /PID`: atmaz, kodu okunmaz. */
+  agaciOldur(pid: number): Promise<void>;
+}
+
+/**
+ * Çocuk bitmediği halde oluşma anı okunamazsa kimlik güvenilmez: süreç ağacı öldürülür, atılır.
+ * Sorgu 2 x `SORGU_ZAMAN_ASIMI_MS` sürebilir; `claude` o arada MCP sunucularını açmış olur. Yalnız kökü
+ * öldürmek onları yetim bırakır ve çağıran iz tutmaz (pid yok). Kök yaşarken `/T` ağacı bulur, ölü köke
+ * çalışmaz: önce ağaç, sonra yedek olarak kök. Dışa açık yalnız test için (sahte sorgu ve öldürücü).
+ */
+export const kimlikOkuyucuKur =
+  (bag: KimlikOkumaBaglari) =>
+  async (cocuk: KimlikCocugu): Promise<SurecKimligi> => {
+    const pid = cocuk.pid;
+    if (pid === undefined) throw new Error("pid_yok");
+    let son: unknown = null;
+    for (let deneme = 0; deneme < 2; deneme += 1) {
+      try {
+        const k = await bag.pidSorgula(pid);
+        if (k) return { pid, olusturmaMs: k.olusturmaMs };
+      } catch (e) {
+        son = e;
+      }
+      if (cocuk.exitCode !== null || cocuk.signalCode !== null) break;
     }
-    if (cocuk.exitCode !== null || cocuk.signalCode !== null) break;
-  }
-  if (cocuk.exitCode !== null || cocuk.signalCode !== null) return { pid, olusturmaMs: Date.now() };
-  try {
-    cocuk.kill();
-  } catch {
-    // yok say
-  }
-  throw son instanceof Error ? son : new Error("olusturma_ani_okunamadi");
-};
+    if (cocuk.exitCode !== null || cocuk.signalCode !== null) return { pid, olusturmaMs: Date.now() };
+    try {
+      await bag.agaciOldur(pid);
+    } catch {
+      // yedek: en azından kök ölsün
+    }
+    try {
+      cocuk.kill();
+    } catch {
+      // yok say
+    }
+    throw son instanceof Error ? son : new Error("olusturma_ani_okunamadi");
+  };
+
+const kimlikOku = kimlikOkuyucuKur({
+  pidSorgula,
+  agaciOldur: (pid) => taskkill(["/T", "/F", "/PID", String(pid)]),
+});
 
 const baslamayiBekle = (cocuk: ChildProcess): Promise<void> =>
   new Promise<void>((coz, reddet) => {
@@ -665,12 +691,116 @@ const wsMetni = (veri: RawData): string => {
   return Buffer.from(veri).toString("utf8");
 };
 
-const wsBaglantisiKur = (ws: WebSocket, yol: WsYolu, uzakIp: string): WsBaglantisi => {
+/**
+ * Yarı açık bağlantı yoklaması (telefon ağ değiştirdi, kapsama dışı: soket düzgün kapanmadı). Her
+ * aralıkta bir WebSocket ping çerçevesi gider; bir tam aralık boyunca ne pong ne mesaj gelen bağlantı
+ * `terminate` edilir ve bugünkü kapanış yolundan temizlenir. Ölü bağlantı en geç iki aralıkta (60 sn)
+ * düşer; pong için bir tam aralık (30 sn) beklenir: mobil ağ gecikmesine geniş pay. Ping uygulama
+ * mesajı değildir, protokol değişmez: telefondaki WebSocket gerçeklemeleri pong'u kendiliğinden döner.
+ * Tampon için ek üst sınır yok: telafi bütün partileri bir kerede yazar, sağlıklı ama yavaş bağlantıda
+ * tampon meşru olarak büyür; sınır yeniden bağlanma döngüsü doğurur. Ölü sokete yazılan en çok iki
+ * aralığın olaylarıdır.
+ */
+export const WS_CANLILIK_ARALIGI_MS = 30_000;
+
+export interface CanlilikIzleyicisi {
+  /** Pong ya da mesaj geldi: bağlantı bu aralıkta canlı. */
+  canliIsaretle(): void;
+  /** Zamanlayıcıyı bırakır. Birden çok çağrı zararsızdır. */
+  durdur(): void;
+}
+
+export interface CanlilikIstegi {
+  aralikMs: number;
+  herAralik: ZamanlayiciPortu["herAralik"];
+  ping: () => void;
+  /** Bir aralık boyunca canlılık kanıtı gelmedi. Çağrılmadan önce zamanlayıcı bırakılır. */
+  sonlandir: () => void;
+}
+
+export const canlilikIzleyicisiKur = (i: CanlilikIstegi): CanlilikIzleyicisi => {
+  let canli = true;
+  let iptal: IptalEt | null = null;
+  const durdur = (): void => {
+    const f = iptal;
+    iptal = null;
+    f?.();
+  };
+  iptal = i.herAralik(i.aralikMs, () => {
+    if (iptal === null) return;
+    if (!canli) {
+      durdur();
+      i.sonlandir();
+      return;
+    }
+    canli = false;
+    i.ping();
+  });
+  return {
+    canliIsaretle: () => {
+      canli = true;
+    },
+    durdur,
+  };
+};
+
+/** Süreç çıkışını tutmayan aralık: canlılık yoklaması servisin kapanmasını bekletmez. */
+const tutmayanAralik: ZamanlayiciPortu["herAralik"] = (ms, f) => {
+  const t = setInterval(f, ms);
+  t.unref();
+  return () => clearInterval(t);
+};
+
+export interface WsCanlilikAyari {
+  aralikMs: number;
+  herAralik: ZamanlayiciPortu["herAralik"];
+}
+
+const VARSAYILAN_CANLILIK: WsCanlilikAyari = { aralikMs: WS_CANLILIK_ARALIGI_MS, herAralik: tutmayanAralik };
+
+/**
+ * Sözleşmedeki `gonder` `void` döner; gerçekleme gönderimin sokete verilip verilmediğini söyler:
+ * soket açık değilse ya da `send` atarsa `false` (çerçeve gitmedi). Eşzamansız yazma hatası burada
+ * görünmez: o bağlantı kapanış olayıyla düşer.
+ */
+export interface GercekWsBaglantisi extends WsBaglantisi {
+  gonder(metin: string): boolean;
+}
+
+const wsBaglantisiKur = (
+  ws: WebSocket,
+  yol: WsYolu,
+  uzakIp: string,
+  canlilik: WsCanlilikAyari,
+  izleyiciler: Set<CanlilikIzleyicisi>,
+): GercekWsBaglantisi => {
   const mesajlar: Array<(metin: string) => void> = [];
   const kapanislar = birKezOlayKur();
+  const izleyici = canlilikIzleyicisiKur({
+    aralikMs: canlilik.aralikMs,
+    herAralik: canlilik.herAralik,
+    ping: () => {
+      try {
+        ws.ping(undefined, undefined, bos);
+      } catch {
+        // açık olmayan soket: kapanış olayı ya da sonraki aralık temizler
+      }
+    },
+    sonlandir: () => {
+      izleyiciler.delete(izleyici);
+      ws.terminate();
+    },
+  });
+  izleyiciler.add(izleyici);
   ws.on("error", bos);
-  ws.on("close", () => kapanislar.tetikle());
+  ws.on("pong", () => izleyici.canliIsaretle());
+  ws.on("close", () => {
+    izleyici.durdur();
+    izleyiciler.delete(izleyici);
+    kapanislar.tetikle();
+  });
   ws.on("message", (veri: RawData, ikili: boolean) => {
+    izleyici.canliIsaretle();
     if (ikili) {
       try {
         ws.close(1003, "ikili_cerceve");
@@ -686,11 +816,13 @@ const wsBaglantisiKur = (ws: WebSocket, yol: WsYolu, uzakIp: string): WsBaglanti
     yol,
     uzakIp,
     gonder: (metin) => {
-      if (ws.readyState !== ws.OPEN) return;
+      if (ws.readyState !== ws.OPEN) return false;
       try {
         ws.send(metin, bos);
+        return true;
       } catch {
         // yazılamayan bağlantı kapanış olayıyla temizlenir
+        return false;
       }
     },
     kapat: (kod, neden) => {
@@ -713,13 +845,15 @@ const yolCoz = (url: string | undefined): WsYolu | null => {
   return WS_YOLLARI.find((y) => y === yol) ?? null;
 };
 
-const wsKur = (): WsSunucuPortu => ({
+/** `canlilik` yalnız testte değişir: sahte zamanlayıcıyla yoklama gerçek zaman beklemeden sürülür. */
+export const wsKur = (canlilik: WsCanlilikAyari = VARSAYILAN_CANLILIK): WsSunucuPortu => ({
   dinle: (istek: WsSunucuIstegi) =>
     new Promise<KapatilabilirSunucu>((coz, reddet) => {
       const http = httpSunucusu((_i, y) => {
         y.writeHead(426, { Connection: "close" });
         y.end();
       });
+      const izleyiciler = new Set<CanlilikIzleyicisi>();
       // `maxPayload` yol başınadır, bu yüzden yol başına bir `WebSocketServer` ve elle yükseltme.
       const sunucular = new Map<WsYolu, WebSocketServer>();
       for (const yol of WS_YOLLARI) {
@@ -729,7 +863,7 @@ const wsKur = (): WsSunucuPortu => ({
           perMessageDeflate: false,
         });
         w.on("connection", (ws, req) => {
-          const b = wsBaglantisiKur(ws, yol, req.socket.remoteAddress ?? "");
+          const b = wsBaglantisiKur(ws, yol, req.socket.remoteAddress ?? "", canlilik, izleyiciler);
           try {
             istek.baglanti(b);
           } catch {
@@ -758,6 +892,9 @@ const wsKur = (): WsSunucuPortu => ({
           kapat: () => {
             if (kapaniyor) return kapaniyor;
             kapaniyor = new Promise<void>((bitti) => {
+              // Kapanış olayını beklemeden: sunucu durunca hiçbir yoklama zamanlayıcısı kalmaz.
+              for (const iz of izleyiciler) iz.durdur();
+              izleyiciler.clear();
               for (const w of sunucular.values()) {
                 for (const istemci of w.clients) istemci.terminate();
                 w.close();

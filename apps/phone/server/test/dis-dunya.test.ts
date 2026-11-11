@@ -12,8 +12,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { WebSocket } from "ws";
-import type { DisDunya, ErenYollari, SurecKimligi } from "../src/sozlesme.ts";
-import { disDunyaKur, dosyaPortuKur } from "../src/dis-dunya.ts";
+import type { DisDunya, ErenYollari, SurecKaydi, SurecKimligi } from "../src/sozlesme.ts";
+import {
+  canlilikIzleyicisiKur,
+  disDunyaKur,
+  dosyaPortuKur,
+  kimlikOkuyucuKur,
+  WS_CANLILIK_ARALIGI_MS,
+  wsKur,
+} from "../src/dis-dunya.ts";
+import type { KimlikCocugu } from "../src/dis-dunya.ts";
+import { sahteZaman } from "./sahte.ts";
 
 const win = process.platform === "win32";
 const uretim = pathToFileURL(join(import.meta.dirname, "..", "src", "dis-dunya.ts")).href;
@@ -156,6 +165,40 @@ describe("dis-dunya", { skip: !win }, () => {
 
       await d.surec.agaciOldur(kimlik.pid);
       assert.ok(await kosulBekle(async () => !(await d.surec.surecVarMi(kimlik))));
+    });
+
+    test("oluşma anı okunamazsa süreç ağacının tamamı ölür (alt süreç yetim kalmaz)", async () => {
+      // Kök, MCP sunucusu gibi bir alt süreç açar; sonra kimlik sorgusu (sahte) hep atar.
+      const alt = yaz("kimlik-alt.mjs", uyuBetik);
+      const kokBetik = yaz(
+        "kimlik-kok.mjs",
+        `import { spawn } from "node:child_process";
+         const a = spawn(process.execPath, [${JSON.stringify(alt)}], { stdio: "ignore", windowsHide: true });
+         process.stdout.write(JSON.stringify({ alt: a.pid }) + "\\n");
+         setInterval(() => {}, 1000);`,
+      );
+      const cocuk = spawn(process.execPath, [kokBetik], { stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
+      baslatilanPidler.add(cocuk.pid!);
+      let cikti = "";
+      cocuk.stdout.on("data", (b: Buffer) => (cikti += b.toString()));
+      assert.ok(await kosulBekle(() => cikti.includes("\n")), "kök alt süreç pid'ini yazmalı");
+      const altPid = (JSON.parse(cikti.split("\n")[0]!) as { alt: number }).alt;
+      baslatilanPidler.add(altPid);
+      const tablo = await d.surec.anlikGoruntu();
+      const kokK = tablo.find((k) => k.pid === cocuk.pid);
+      const altK = tablo.find((k) => k.pid === altPid);
+      assert.ok(kokK && altK, "kök ve alt süreç görüntüde olmalı");
+      assert.equal(altK.ppid, cocuk.pid);
+
+      const oku = kimlikOkuyucuKur({
+        pidSorgula: async () => {
+          throw new Error("powershell_zaman_asimi");
+        },
+        agaciOldur: (pid) => d.surec.agaciOldur(pid),
+      });
+      await assert.rejects(oku(cocuk), /powershell_zaman_asimi/);
+      assert.ok(await kosulBekle(async () => !(await d.surec.surecVarMi(kokK))), "kök ölmeli");
+      assert.ok(await kosulBekle(async () => !(await d.surec.surecVarMi(altK))), "alt süreç de ölmeli");
     });
   });
 
@@ -566,6 +609,90 @@ describe("dis-dunya", { skip: !win }, () => {
   });
 });
 
+// Sahte sorgu ve öldürücüyle: gerçek süreç yok, her platformda koşar.
+describe("kimlikOkuyucuKur (sahte dış dünya)", () => {
+  const KOK = 4242;
+  const kayitTut = () => {
+    const sira: string[] = [];
+    const cocuk: KimlikCocugu & { exitCode: number | null } = {
+      pid: KOK,
+      exitCode: null,
+      signalCode: null,
+      kill: () => {
+        sira.push(`kok:${KOK}`);
+        return true;
+      },
+    };
+    return { sira, cocuk };
+  };
+  const kayit = (olusturmaMs: number): SurecKaydi => ({ pid: KOK, ppid: 1, olusturmaMs, ad: "claude.exe" });
+
+  test("sorgu iki kez atarsa: önce ağaç (taskkill /T), sonra kök öldürülür; asıl hata atılır", async () => {
+    const { sira, cocuk } = kayitTut();
+    let sorgu = 0;
+    const oku = kimlikOkuyucuKur({
+      pidSorgula: async () => {
+        sorgu += 1;
+        throw new Error("powershell_zaman_asimi");
+      },
+      agaciOldur: async (pid) => void sira.push(`agac:${pid}`),
+    });
+    await assert.rejects(oku(cocuk), /powershell_zaman_asimi/);
+    assert.equal(sorgu, 2);
+    assert.deepEqual(sira, [`agac:${KOK}`, `kok:${KOK}`]);
+  });
+
+  test("süreç listede bulunamazsa da ağaç öldürülür", async () => {
+    const { sira, cocuk } = kayitTut();
+    const oku = kimlikOkuyucuKur({ pidSorgula: async () => null, agaciOldur: async (pid) => void sira.push(`agac:${pid}`) });
+    await assert.rejects(oku(cocuk), /olusturma_ani_okunamadi/);
+    assert.deepEqual(sira, [`agac:${KOK}`, `kok:${KOK}`]);
+  });
+
+  test("ağaç öldürücü atsa da kök öldürülür ve sorgu hatası atılır", async () => {
+    const { sira, cocuk } = kayitTut();
+    const oku = kimlikOkuyucuKur({
+      pidSorgula: async () => {
+        throw new Error("powershell_hata");
+      },
+      agaciOldur: async () => {
+        throw new Error("taskkill_yok");
+      },
+    });
+    await assert.rejects(oku(cocuk), /powershell_hata/);
+    assert.deepEqual(sira, [`kok:${KOK}`]);
+  });
+
+  test("ikinci denemede okunursa kimse öldürülmez", async () => {
+    const { sira, cocuk } = kayitTut();
+    let sorgu = 0;
+    const oku = kimlikOkuyucuKur({
+      pidSorgula: async () => {
+        sorgu += 1;
+        if (sorgu === 1) throw new Error("powershell_zaman_asimi");
+        return kayit(1234);
+      },
+      agaciOldur: async (pid) => void sira.push(`agac:${pid}`),
+    });
+    assert.deepEqual(await oku(cocuk), { pid: KOK, olusturmaMs: 1234 });
+    assert.deepEqual(sira, []);
+  });
+
+  test("çocuk sorgu sırasında kendiliğinden çıktıysa öldürülmez, kimlik döner", async () => {
+    const { sira, cocuk } = kayitTut();
+    const oku = kimlikOkuyucuKur({
+      pidSorgula: async () => {
+        cocuk.exitCode = 0;
+        throw new Error("powershell_zaman_asimi");
+      },
+      agaciOldur: async (pid) => void sira.push(`agac:${pid}`),
+    });
+    const k = await oku(cocuk);
+    assert.equal(k.pid, KOK);
+    assert.deepEqual(sira, []);
+  });
+});
+
 describe("transkript.sil", { skip: !win }, () => {
   const U1 = "11111111-2222-4333-8444-555555555555";
   const U2 = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
@@ -748,5 +875,178 @@ describe("dosyaPortuKur", () => {
     await assert.rejects(f.dosyaSil(bag));
     assert.equal(existsSync(join(hedef, "dokunma.txt")), true);
     assert.equal(existsSync(hedef), true);
+  });
+});
+
+describe("ws canlılık yoklaması (sahte zamanlayıcı)", () => {
+  const ARALIK = WS_CANLILIK_ARALIGI_MS;
+
+  const izleyiciKur = () => {
+    const zaman = sahteZaman();
+    const sayac = { ping: 0, sonlandir: 0 };
+    const iz = canlilikIzleyicisiKur({
+      aralikMs: ARALIK,
+      herAralik: zaman.zamanlayici.herAralik,
+      ping: () => void sayac.ping++,
+      sonlandir: () => void sayac.sonlandir++,
+    });
+    return { zaman, sayac, iz };
+  };
+
+  test("aralık 30 sn: ölü bağlantı en geç 60 sn'de düşer", () => {
+    assert.equal(ARALIK, 30_000);
+  });
+
+  test("pong gelmeyen izleyici ikinci aralıkta sonlandırır, önce değil; sonra zamanlayıcı kalmaz", () => {
+    const { zaman, sayac } = izleyiciKur();
+    zaman.ilerlet(ARALIK - 1);
+    assert.deepEqual(sayac, { ping: 0, sonlandir: 0 });
+    zaman.ilerlet(1);
+    assert.deepEqual(sayac, { ping: 1, sonlandir: 0 });
+    zaman.ilerlet(ARALIK - 1);
+    assert.deepEqual(sayac, { ping: 1, sonlandir: 0 }, "pong için bir tam aralık beklenir");
+    zaman.ilerlet(1);
+    assert.deepEqual(sayac, { ping: 1, sonlandir: 1 });
+    assert.equal(zaman.bekleyenSayisi(), 0);
+    zaman.ilerlet(10 * ARALIK);
+    assert.deepEqual(sayac, { ping: 1, sonlandir: 1 }, "sonlandırmadan sonra ping ya da ikinci sonlandırma yok");
+  });
+
+  test("her aralıkta pong (ya da mesaj) gelen izleyici N aralık boyunca sonlandırmaz", () => {
+    const { zaman, sayac, iz } = izleyiciKur();
+    zaman.ilerlet(ARALIK);
+    assert.equal(sayac.ping, 1);
+    for (let i = 0; i < 20; i++) {
+      // pong aralığın son milisaniyesinde gelir: mobil ağ gecikmesine tam aralık pay
+      zaman.ilerlet(ARALIK - 1);
+      iz.canliIsaretle();
+      zaman.ilerlet(1);
+    }
+    assert.deepEqual(sayac, { ping: 21, sonlandir: 0 });
+    assert.equal(zaman.bekleyenSayisi(), 1);
+  });
+
+  test("durdur zamanlayıcıyı bırakır, iki kez çağrılabilir; sonra ping gitmez", () => {
+    const { zaman, sayac, iz } = izleyiciKur();
+    assert.equal(zaman.bekleyenSayisi(), 1);
+    iz.durdur();
+    iz.durdur();
+    assert.equal(zaman.bekleyenSayisi(), 0);
+    zaman.ilerlet(5 * ARALIK);
+    assert.deepEqual(sayac, { ping: 0, sonlandir: 0 });
+  });
+
+  describe("gerçek ws sunucusu", () => {
+    const ac = (port: number, yol: string, secenek: { autoPong?: boolean } = {}) =>
+      new Promise<WebSocket>((coz, red) => {
+        const w = new WebSocket(`ws://127.0.0.1:${port}${yol}`, secenek);
+        w.once("open", () => coz(w));
+        w.once("error", red);
+      });
+    const olay = (w: WebSocket, ad: "ping" | "pong" | "close") => new Promise<void>((coz) => w.once(ad, () => coz()));
+
+    interface Kayit {
+      b: import("../src/sozlesme.ts").WsBaglantisi;
+      kapandi: boolean;
+      metinler: string[];
+    }
+    const kur = async () => {
+      const zaman = sahteZaman();
+      const port = await rastgeleYerelPort();
+      const kayitlar: Kayit[] = [];
+      const sunucu = await wsKur({ aralikMs: ARALIK, herAralik: zaman.zamanlayici.herAralik }).dinle({
+        host: "127.0.0.1",
+        port,
+        azamiCerceve: { "/sohbet": 1024, "/cihaz": 1024 },
+        baglanti: (b) => {
+          const k: Kayit = { b, kapandi: false, metinler: [] };
+          kayitlar.push(k);
+          b.mesajDinle((m) => {
+            k.metinler.push(m);
+            b.gonder("yanki:" + m);
+          });
+          b.kapanisDinle(() => (k.kapandi = true));
+        },
+      });
+      return { zaman, port, kayitlar, sunucu };
+    };
+
+    test("pong dönmeyen istemci iki aralıkta sonlandırılır, kapanış yolu çalışır, zamanlayıcı kalmaz", async () => {
+      const { zaman, port, kayitlar, sunucu } = await kur();
+      try {
+        for (const yol of ["/sohbet", "/cihaz"] as const) {
+          const w = await ac(port, yol, { autoPong: false });
+          assert.ok(await kosulBekle(() => kayitlar.length > 0 && kayitlar.at(-1)!.b.yol === yol));
+          const k = kayitlar.at(-1)!;
+          assert.equal(zaman.bekleyenSayisi(), 1);
+          const ping = olay(w, "ping");
+          zaman.ilerlet(ARALIK);
+          await ping;
+          assert.equal(w.readyState, WebSocket.OPEN);
+          assert.equal(k.kapandi, false);
+          const kapanis = olay(w, "close");
+          zaman.ilerlet(ARALIK);
+          await kapanis;
+          assert.ok(await kosulBekle(() => k.kapandi), "kapanisDinle tetiklenir");
+          assert.equal(zaman.bekleyenSayisi(), 0);
+        }
+      } finally {
+        await sunucu.kapat();
+      }
+    });
+
+    test("pong dönen sessiz istemci N aralık boyunca açık kalır", async () => {
+      const { zaman, port, kayitlar, sunucu } = await kur();
+      try {
+        const w = await ac(port, "/cihaz");
+        assert.ok(await kosulBekle(() => kayitlar.length === 1));
+        for (let i = 0; i < 6; i++) {
+          const ping = olay(w, "ping");
+          zaman.ilerlet(ARALIK);
+          await ping;
+          // İstemci pong'u 'ping' olayından önce yazar. İstemcinin kendi ping'ine gelen pong,
+          // sunucunun o pong'u işlediğini kanıtlar (aynı TCP yolu, sıra korunur).
+          const donus = olay(w, "pong");
+          w.ping();
+          await donus;
+        }
+        assert.equal(w.readyState, WebSocket.OPEN);
+        assert.equal(kayitlar[0]!.kapandi, false);
+        assert.equal(zaman.bekleyenSayisi(), 1);
+        const yanit = new Promise<string>((coz) => w.once("message", (m) => coz(m.toString())));
+        w.send("hala");
+        assert.equal(await yanit, "yanki:hala");
+      } finally {
+        await sunucu.kapat();
+      }
+    });
+
+    test("gonder açık sokette true, kapanmış sokette false döner; kapanan bağlantı ve sunucu zamanlayıcı bırakır", async () => {
+      const { zaman, port, kayitlar, sunucu } = await kur();
+      let kapatildi = false;
+      try {
+        const w1 = await ac(port, "/sohbet");
+        const w2 = await ac(port, "/cihaz");
+        assert.ok(await kosulBekle(() => kayitlar.length === 2));
+        assert.equal(zaman.bekleyenSayisi(), 2);
+        const k1 = kayitlar.find((k) => k.b.yol === "/sohbet")!;
+        const ilk: unknown = k1.b.gonder("merhaba");
+        assert.equal(ilk, true);
+        w1.close();
+        assert.ok(await kosulBekle(() => k1.kapandi));
+        assert.equal(zaman.bekleyenSayisi(), 1, "kapanan bağlantının zamanlayıcısı kalmaz");
+        const sonra: unknown = k1.b.gonder("kimse yok");
+        assert.equal(sonra, false);
+
+        const kapanis = olay(w2, "close");
+        await sunucu.kapat();
+        kapatildi = true;
+        assert.equal(zaman.bekleyenSayisi(), 0, "sunucu durunca zamanlayıcı kalmaz");
+        await kapanis;
+        zaman.ilerlet(10 * ARALIK); // bırakılmış zamanlayıcı tetiklenmez, atmaz
+      } finally {
+        if (!kapatildi) await sunucu.kapat();
+      }
+    });
   });
 });

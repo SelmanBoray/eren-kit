@@ -97,6 +97,29 @@ class TuketimYazilamadi extends Error {
 
 type KimlikAramasi ="bulundu" | "yok" | "belirsiz";
 
+/** Paylaşılan süreç listesi. `no` istek sırasıdır: kimlik kayda geçmeden istenen görüntü o süreci görmeyebilir. */
+interface Goruntu {
+  readonly no: number;
+  readonly kayitlar: readonly SurecKaydi[];
+}
+
+/**
+ * Yoklamada canlılığın nereden okunacağı. `canli_say`: dış sorgu yok (çıkış olayı dinlenen iş ya da görüntü
+ * alınamadı); `goruntu`: turun tek paylaşılan süreç listesi; `sor`: tek süreç sorgusu (çıkış olayı geldi).
+ */
+type CanlilikKaynagi = { readonly tur: "canli_say" } | { readonly tur: "goruntu"; readonly goruntu: Goruntu } | { readonly tur: "sor" };
+
+const CANLI_SAY: CanlilikKaynagi = { tur: "canli_say" };
+const SOR: CanlilikKaynagi = { tur: "sor" };
+const KAYNAK_DERECESI: Readonly<Record<CanlilikKaynagi["tur"], number>> = { canli_say: 0, goruntu: 1, sor: 2 };
+
+/** Kuyruktaki yoklamaya sonradan gelen kaynak: güçlüsü kalır, iki görüntüden yenisi. */
+const kaynakSec = (eski: CanlilikKaynagi | null, yeni: CanlilikKaynagi): CanlilikKaynagi => {
+  if (eski === null) return yeni;
+  if (eski.tur === "goruntu" && yeni.tur === "goruntu") return yeni.goruntu.no > eski.goruntu.no ? yeni : eski;
+  return KAYNAK_DERECESI[yeni.tur] > KAYNAK_DERECESI[eski.tur] ? yeni : eski;
+};
+
 const mbTamSayi = (d: number): number => (Number.isFinite(d) ? Math.max(0, Math.floor(d)) : 0);
 
 const kayittanCikti = (s: SoruKaydi): KullaniciyaSorCikti | null => {
@@ -120,6 +143,16 @@ interface AktifIs {
   readonly kilitteDurur: boolean;
   readonly out: string;
   kimlik: SurecKimligi | null;
+  /** Kimlik kayda geçtiğinde verilmiş son görüntü numarası; ancak bundan sonra istenen görüntü onu yargılar. */
+  kimlikNo: number;
+  /**
+   * Bu servis ömründe başlatıldı, çıkış olayı dinleniyor: periyodik süreç sorgusu yapılmaz, yalnız akış okunur.
+   * Çıkış olayı geldiyse (`cikisGoruldu`) ya da olay hiç gelmezse paylaşılan görüntü yargılar.
+   */
+  cikisDinleniyor: boolean;
+  cikisGoruldu: boolean;
+  /** Kuyruktaki yoklamanın canlılık kaynağı; yoklama başlarken tüketilir. */
+  bekleyenKaynak: CanlilikKaynagi | null;
   /** Süreç başlatıldı ama `pid` kayda geçmedi: başlatma anı. Süreç bununla aranır. */
   beklenenOlusma: number | null;
   belirsizBildirildi: boolean;
@@ -171,6 +204,8 @@ export const islerKur: IslerFabrikasi = ({
   const claudeAdi = win32.basename(ayar.claudeExe).toLowerCase();
   let kapali = false;
   let torunYoklaniyor = false;
+  let goruntuSayaci = 0;
+  let ucustakiGoruntu: Promise<Goruntu> | null = null;
   let ramOkundu = false;
   let ramDurumu: RamOzeti = { bosMb: 0, toplamMb: 0, dusuk: false };
 
@@ -222,6 +257,11 @@ export const islerKur: IslerFabrikasi = ({
     kilitteDurur: k.tur === "telefon" || (profil ?? kayitliProfil(k.plan_id)) === "hafif",
     out: ayar.isYollari(k.is_id).out,
     kimlik: k.pid !== null && k.olusturma_ms !== null ? { pid: k.pid, olusturmaMs: k.olusturma_ms } : null,
+    // Kayıttan gelen süreç bu ömürden önce doğmuştur: her görüntü onu yargılayabilir.
+    kimlikNo: 0,
+    cikisDinleniyor: false,
+    cikisGoruldu: false,
+    bekleyenKaynak: null,
     beklenenOlusma: k.pid === null ? k.olusturma_ms : null,
     belirsizBildirildi: false,
     ofset: k.out_ofset,
@@ -344,9 +384,24 @@ export const islerKur: IslerFabrikasi = ({
 
   // --- Öldürme ve süpürme ------------------------------------------------------------------------
 
-  const torunKaydet = async (liste: readonly AktifIs[]): Promise<void> => {
-    const goruntu = await surec.anlikGoruntu();
-    if (kapali) return;
+  /**
+   * Yoklamaların ortak süreç listesi: uçuştaki istek varsa ona katılınır, aynı anda iki PowerShell açılmaz.
+   * Yalnız yoklama (canlılık, torun kaydı) kullanır; öldürme sonrası sağlama her zaman taze görüntü ister.
+   */
+  const paylasilanGoruntu = (): Promise<Goruntu> => {
+    if (ucustakiGoruntu !== null) return ucustakiGoruntu;
+    goruntuSayaci += 1;
+    const no = goruntuSayaci;
+    const istek = surec.anlikGoruntu().then((kayitlar) => ({ no, kayitlar }));
+    ucustakiGoruntu = istek;
+    const birak = (): void => {
+      if (ucustakiGoruntu === istek) ucustakiGoruntu = null;
+    };
+    istek.then(birak, birak);
+    return istek;
+  };
+
+  const torunKaydet = (liste: readonly AktifIs[], goruntu: readonly SurecKaydi[]): void => {
     const pidle = new Map<number, SurecKaydi>();
     const cocuklar = new Map<number, SurecKaydi[]>();
     for (const s of goruntu) {
@@ -419,12 +474,13 @@ export const islerKur: IslerFabrikasi = ({
    * başlatma penceresinde doğmuş, hiçbir aktif işin kaydında değil. Tek aday başka kayıtsız işin
    * penceresine de düşmüyorsa sahiplenilir. Penceresinde aday yoksa süreç ölüdür. Aksi belirsizdir:
    * ne sahiplenilir ne öldürülür ne de iş bitmiş sayılır; başkasının süreci ölmesin, izinsiz
-   * oturum da kayıtsız kalmasın. Her yoklamada yeniden bakılır.
+   * oturum da kayıtsız kalmasın. Her yoklamada yeniden bakılır. `hazir`: yoklamanın paylaşılan görüntüsü;
+   * verilmezse (öldürme, uzlaştırma) taze görüntü istenir.
    */
-  const kimlikAra = async (a: AktifIs): Promise<KimlikAramasi> => {
+  const kimlikAra = async (a: AktifIs, hazir?: readonly SurecKaydi[]): Promise<KimlikAramasi> => {
     if (a.kimlik !== null) return "bulundu";
     if (a.beklenenOlusma === null) return "yok";
-    const goruntu = await surec.anlikGoruntu();
+    const goruntu = hazir ?? (await surec.anlikGoruntu());
     const beklenen = a.beklenenOlusma;
     if (a.kimlik !== null) return "bulundu";
     if (beklenen === null || a.bitti) return "yok";
@@ -451,6 +507,7 @@ export const islerKur: IslerFabrikasi = ({
     if (fazla.length === 0 && !digerBaslatmalar.some((t) => baslatmaPenceresinde(t, tek.olusturmaMs))) {
       depo.isGuncelle(a.is_id, { pid: tek.pid, olusturma_ms: tek.olusturmaMs });
       a.kimlik = { pid: tek.pid, olusturmaMs: tek.olusturmaMs };
+      a.kimlikNo = goruntuSayaci;
       a.beklenenOlusma = null;
       gunluk.bilgi("isler", "kayitsiz_surec_sahiplenildi", { is_id: a.is_id });
       return "bulundu";
@@ -706,10 +763,36 @@ export const islerKur: IslerFabrikasi = ({
     }
   };
 
-  const yoklamaGovdesi = async (a: AktifIs): Promise<void> => {
+  /**
+   * Görüntü bir an içindir: ölü süreç dirilmez, görüntüde yoksa ölüdür. Kimlik PID + oluşma anıdır
+   * (`surecVarMi` ile aynı pay), yeniden kullanılmış PID işi canlı tutmaz.
+   */
+  const goruntudenCanli = async (a: AktifIs, g: Goruntu): Promise<boolean> => {
+    try {
+      // Kimliği belirsiz süreç canlı sayılır: bitmiş sayılırsa kayıtsız sürer.
+      if (a.kimlik === null) return (await kimlikAra(a, g.kayitlar)) !== "yok";
+    } catch (e) {
+      gunluk.uyari("isler", "surec_sorgu_hatasi", { is_id: a.is_id, hata_turu: hataTuru(e) });
+      return true;
+    }
+    const kimlik = a.kimlik;
+    // Görüntü kimlik kayda geçmeden istendi: süreç onda olmayabilir. Bilinmiyor, canlı sayılır.
+    if (g.no <= a.kimlikNo) return true;
+    return g.kayitlar.some((s) => ayniSurec(s, kimlik));
+  };
+
+  const canlilikBul = async (a: AktifIs, kaynak: CanlilikKaynagi): Promise<boolean> => {
+    if (a.kimlik === null && a.beklenenOlusma === null) return false;
+    if (kaynak.tur === "canli_say") return true;
+    if (kaynak.tur === "sor") return canliMi(a);
+    return goruntudenCanli(a, kaynak.goruntu);
+  };
+
+  const yoklamaGovdesi = async (a: AktifIs, kaynak: CanlilikKaynagi): Promise<void> => {
     if (a.bitti || kapali || a.basliyor) return;
     // Önce canlılık, sonra okuma: ölü süreç artık yazmaz, bu okuma dosyanın sonuna ulaşır.
-    const canli = await canliMi(a);
+    // Görüntü de okumadan önce istenmiştir: görüntüde ölü olan süreç okumadan sonra yazamaz.
+    const canli = await canlilikBul(a, kaynak);
     const okundu = await dosyayiOku(a);
     if (a.bitti || kapali) return;
     if (canli) {
@@ -725,13 +808,18 @@ export const islerKur: IslerFabrikasi = ({
     await bitir(a);
   };
 
-  const yoklaIs = async (a: AktifIs): Promise<void> => {
-    if (a.yoklamaKuyrukta || a.bitti) return;
+  /** Kuyrukta yoklama varsa yenisi açılmaz, kaynağı ona katılır (çıkış olayı ya da görüntü kaybolmasın). */
+  const yoklaIs = async (a: AktifIs, kaynak: CanlilikKaynagi): Promise<void> => {
+    if (a.bitti) return;
+    a.bekleyenKaynak = kaynakSec(a.bekleyenKaynak, kaynak);
+    if (a.yoklamaKuyrukta) return;
     a.yoklamaKuyrukta = true;
     try {
       await sirala(a, async () => {
         a.yoklamaKuyrukta = false;
-        await yoklamaGovdesi(a);
+        const k = a.bekleyenKaynak ?? CANLI_SAY;
+        a.bekleyenKaynak = null;
+        await yoklamaGovdesi(a, k);
       });
     } catch (e) {
       a.yoklamaKuyrukta = false;
@@ -739,11 +827,49 @@ export const islerKur: IslerFabrikasi = ({
     }
   };
 
+  const olayBekleniyor = (a: AktifIs): boolean => a.cikisDinleniyor && !a.cikisGoruldu;
+
+  /**
+   * `isYoklamaMs` turu. Akış her işte okunur. Çıkış olayı dinlenen işe süreç sorulmaz (olay uyandırır,
+   * güvenlik ağı `torunYokla`'dadır). Geri kalanlar (sahiplenilen, kimliği aranan, olayı görülüp hâlâ canlı
+   * görünen) tek paylaşılan görüntüyle yargılanır: tur başına en çok bir dış sorgu, iş sayısından bağımsız.
+   */
+  const yoklamaTuru = async (): Promise<void> => {
+    if (kapali) return;
+    const sorgulanacak: AktifIs[] = [];
+    for (const a of [...aktifler.values()]) {
+      if (a.bitti) continue;
+      const sorguGerek = !olayBekleniyor(a) && !a.basliyor && (a.kimlik !== null || a.beklenenOlusma !== null);
+      if (sorguGerek) sorgulanacak.push(a);
+      else void yoklaIs(a, CANLI_SAY);
+    }
+    if (sorgulanacak.length === 0) return;
+    let kaynak: CanlilikKaynagi;
+    try {
+      kaynak = { tur: "goruntu", goruntu: await paylasilanGoruntu() };
+    } catch (e) {
+      // Bilinmiyor: canlı sayılır, sonraki tur yeniden sorar; akış yine okunur.
+      gunluk.uyari("isler", "surec_sorgu_hatasi", { hata_turu: hataTuru(e) });
+      kaynak = CANLI_SAY;
+    }
+    if (kapali) return;
+    for (const a of sorgulanacak) void yoklaIs(a, kaynak);
+  };
+
+  /**
+   * `torunYoklamaMs` turu: tek görüntüyle torun kaydı ve güvenlik ağı. Çıkış olayı herhangi bir nedenle
+   * kaçsa da her aktif iş bu görüntüyle yargılanır; iş sonsuza dek "çalışıyor" kalmaz.
+   */
   const torunYokla = async (): Promise<void> => {
     if (kapali || torunYoklaniyor || aktifler.size === 0) return;
     torunYoklaniyor = true;
     try {
-      await torunKaydet([...aktifler.values()]);
+      const goruntu = await paylasilanGoruntu();
+      if (kapali) return;
+      const liste = [...aktifler.values()].filter((a) => !a.bitti);
+      // Yoklamalar kuyruğa girer, `torunKaydet`ten sonra koşar: torun kaydı bitişten önce yazılır.
+      for (const a of liste) void yoklaIs(a, { tur: "goruntu", goruntu });
+      torunKaydet(liste, goruntu.kayitlar);
     } catch (e) {
       gunluk.uyari("isler", "torun_kayit_hatasi", { hata_turu: hataTuru(e) });
     } finally {
@@ -839,11 +965,16 @@ export const islerKur: IslerFabrikasi = ({
       depo.isGuncelle(a.is_id, { olusturma_ms: saat.simdiMs() });
       const s = await surec.ayrikBaslat(istek);
       a.kimlik = { pid: s.pid, olusturmaMs: s.olusturmaMs };
+      a.kimlikNo = goruntuSayaci;
       a.zorunlu = null;
       a.basliyor = false;
       depo.isGuncelle(a.is_id, { pid: s.pid, olusturma_ms: s.olusturmaMs });
+      // Bitişi çıkış olayı haber verir, kesin ölçüt yine süreç sorgusudur (`sor`). Olay geldikten sonra
+      // süreç hâlâ görünürse iş paylaşılan görüntüyle yoklanmaya döner.
+      a.cikisDinleniyor = true;
       s.cikisDinle(() => {
-        void yoklaIs(a);
+        a.cikisGoruldu = true;
+        void yoklaIs(a, SOR);
       });
       gunluk.bilgi("isler", "is_basladi", { is_id: a.is_id, tur: a.tur });
       veriyolu.yayinla("is_basladi", { is_id: a.is_id, plan_id: a.plan_id, tur: a.tur, sohbet_id: a.sohbet_id });
@@ -854,7 +985,8 @@ export const islerKur: IslerFabrikasi = ({
       a.basliyor = false;
       a.zorunlu = "hata";
       try {
-        // `ayrikBaslat` attıysa süreç kesin açılmadı (ya da dış dünya öldürdü): başlatma izi silinir,
+        // `ayrikBaslat` attıysa süreç kesin açılmadı ya da dış dünya onu alt süreçleriyle birlikte öldürdü
+        // (kimlik okunamayınca `taskkill /T`, MODULLER.md "dis-dunya"): başlatma izi silinir,
         // yoksa servis ölümüyle bitiş tablosuna düşen iş ile ayırt edilemez ve yeniden onay engellenir.
         if (a.kimlik === null) depo.isGuncelle(a.is_id, { olusturma_ms: null });
         if (a.kimlik !== null) await oldur(a);
@@ -914,7 +1046,7 @@ export const islerKur: IslerFabrikasi = ({
 
   const iptaller: IptalEt[] = [
     zamanlayici.herAralik(ayar.sureler.isYoklamaMs, () => {
-      for (const a of [...aktifler.values()]) void yoklaIs(a);
+      void yoklamaTuru();
     }),
     zamanlayici.herAralik(ayar.sureler.torunYoklamaMs, () => {
       void torunYokla();

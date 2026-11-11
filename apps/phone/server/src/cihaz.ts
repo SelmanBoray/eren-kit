@@ -86,15 +86,24 @@ export const cihazKur: CihazFabrikasi = ({
     }
   };
 
-  const gonder = (b: DogrulanmisCihazBaglantisi, mesaj: unknown): boolean => {
+  /**
+   * `gitmedi`: soket açık değil, çerçeve kesin gitmedi (gerçekleme `false` döner; sözleşmedeki imza
+   * `void` olduğu için değer `unknown` okunur, `false` dışındaki her dönüş gitti sayılır).
+   * `hata`: gönderim attı, çerçevenin akıbeti bilinmez.
+   */
+  const gonderIc = (b: DogrulanmisCihazBaglantisi, mesaj: unknown): "gitti" | "gitmedi" | "hata" => {
     try {
-      b.baglanti.gonder(JSON.stringify(mesaj));
-      return true;
+      const sonuc: unknown = b.baglanti.gonder(JSON.stringify(mesaj));
+      if (sonuc !== false) return "gitti";
+      gunluk.uyari("cihaz", "gonderim_basarisiz", { neden: "soket_kapali" });
+      return "gitmedi";
     } catch {
       gunluk.uyari("cihaz", "gonderim_basarisiz");
-      return false;
+      return "hata";
     }
   };
+
+  const gonder = (b: DogrulanmisCihazBaglantisi, mesaj: unknown): boolean => gonderIc(b, mesaj) === "gitti";
 
   const bekleyeniBitir = (id: string, sonuc: Sonuc<CmdSonucu, KomutHatasi>): void => {
     const b = bekleyenler.get(id);
@@ -345,8 +354,11 @@ export const cihazKur: CihazFabrikasi = ({
           sinyal.removeEventListener("abort", sinyalDinleyici);
         },
       });
-      // Gönderim hatası ya da kopuk bağlantı: çerçeve gitmiş olabilir, yeniden denenmez.
-      if (!gonder(b, aday.data)) bekleyeniBitir(cmd_id, belirsiz);
+      // Soket kapalı: çerçeve gitmedi, telefon bağlı değildir; son teslimi beklemeden döner.
+      // Gönderim hatası: çerçeve gitmiş olabilir, `belirsiz`. İkisinde de yeniden denenmez.
+      const gidis = gonderIc(b, aday.data);
+      if (gidis === "gitmedi") bekleyeniBitir(cmd_id, { ok: false, code: "telefon_bagli_degil" });
+      else if (gidis === "hata") bekleyeniBitir(cmd_id, belirsiz);
       else gunluk.bilgi("cihaz", "komut_gitti", { cmd_id, ad });
     });
   };

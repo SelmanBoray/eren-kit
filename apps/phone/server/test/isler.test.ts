@@ -2817,3 +2817,155 @@ function tohumlaKur(h: H, t: { no: number; pid: number; sohbet: string }): IsNo 
   h.d.dosya.yaz(h.yollar(id).out, t.pid === 7001 ? init : init + sonuc);
   return id;
 }
+
+// ---------------------------------------------------------------------------------------------
+// Yoklama maliyeti: dış süreç sorgusu (gerçekte her biri bir PowerShell + CIM süreci)
+// ---------------------------------------------------------------------------------------------
+
+describe("isler: yoklama maliyeti", () => {
+  const PENCERE_MS = 60_000;
+  /** Gerçek portta her `anlikGoruntu` ve `surecVarMi` ayrı bir PowerShell süreci açar. */
+  const disSorgu = (h: H): number => h.d.surec.cagrilar.say("anlikGoruntu") + h.d.surec.cagrilar.say("surecVarMi");
+  /** Sayaç sıfırlanır, sahte saat `isYoklamaMs` adımlarıyla pencere boyunca ilerler. */
+  const pencereSay = async (h: H): Promise<number> => {
+    await bosalt();
+    h.d.surec.cagrilar.temizle();
+    for (let gecen = 0; gecen < PENCERE_MS; gecen += h.ayar.sureler.isYoklamaMs) await h.yokla(h.ayar.sureler.isYoklamaMs);
+    return disSorgu(h);
+  };
+  const baslatilanlarla = async (adet: number): Promise<{ h: H; idler: IsNo[]; sorgu: number }> => {
+    const h = await kur();
+    const idler: IsNo[] = [];
+    for (let no = 1; no <= adet; no++) idler.push(await h.pcCalistir(no));
+    return { h, idler, sorgu: await pencereSay(h) };
+  };
+  /** Önceki servis ömründen kalan, yaşayan işler: çıkış olayı dinlenemez. */
+  const sahiplenilenlerle = async (adet: number): Promise<{ h: H; idler: IsNo[]; sorgu: number }> => {
+    const h = await kur();
+    const idler: IsNo[] = [];
+    for (let no = 1; no <= adet; no++) {
+      const pid = 7100 + no;
+      idler.push(tohumlaKur(h, { no, pid, sohbet: ANA }));
+      h.d.surec.surecEkle({ pid, ppid: 1, ad: "claude.exe", olusturmaMs: T0 });
+    }
+    assert.deepEqual(await h.isler.uzlastir(), { sahiplenilen: adet, biten: 0 });
+    return { h, idler, sorgu: await pencereSay(h) };
+  };
+
+  it("bu ömürde başlatılan işler: 60 sn'de dış sorgu sayısı iş sayısıyla büyümez (yalnız torun yoklaması)", async (t) => {
+    const sayilar: number[] = [];
+    for (const adet of [1, 3, 5]) {
+      const { h, idler, sorgu } = await baslatilanlarla(adet);
+      t.diagnostic(`baslatilan ${adet} is, ${PENCERE_MS / 1000} sn: ${sorgu} dis sorgu`);
+      sayilar.push(sorgu);
+      for (const id of idler) assert.equal(bitenDurum(h, id), "calisiyor");
+    }
+    assert.equal(new Set(sayilar).size, 1, `sayılar: ${sayilar}`);
+    const h = await kur();
+    assert.ok(sayilar[0]! <= PENCERE_MS / h.ayar.sureler.torunYoklamaMs, `sayılar: ${sayilar}`);
+  });
+
+  it("sahiplenilen işler: yoklama turu başına en çok bir dış sorgu; çıkış bir turda fark edilir", async (t) => {
+    const sayilar: number[] = [];
+    for (const adet of [1, 3, 5]) {
+      const { h, idler, sorgu } = await sahiplenilenlerle(adet);
+      t.diagnostic(`sahiplenilen ${adet} is, ${PENCERE_MS / 1000} sn: ${sorgu} dis sorgu`);
+      sayilar.push(sorgu);
+      for (const id of idler) assert.equal(bitenDurum(h, id), "calisiyor");
+      // Bugünkü gecikme korunur: süreç sessizce ölür, ilk yoklama turunda iş biter.
+      h.d.surec.surecSil(7101);
+      await h.yokla(h.ayar.sureler.isYoklamaMs);
+      assert.equal(bitenDurum(h, idler[0]!), "tamam");
+      for (const id of idler.slice(1)) assert.equal(bitenDurum(h, id), "calisiyor");
+    }
+    assert.equal(new Set(sayilar).size, 1, `sayılar: ${sayilar}`);
+    const h = await kur();
+    assert.ok(sayilar[0]! <= PENCERE_MS / h.ayar.sureler.isYoklamaMs, `sayılar: ${sayilar}`);
+  });
+
+  it("çıkış olayı gelen iş saat ilerlemeden biter: tek süreç sorgusu", async () => {
+    const { h, idler } = await baslatilanlarla(3);
+    const id = idler[1]!;
+    h.outEkle(id, h.resultSatiri(id));
+    h.d.surec.cagrilar.temizle();
+    h.surecOf(id).cik(0);
+    await bosalt();
+    assert.equal(bitenDurum(h, id), "tamam");
+    assert.equal(disSorgu(h), 1);
+    for (const diger of [idler[0]!, idler[2]!]) assert.equal(bitenDurum(h, diger), "calisiyor");
+  });
+
+  it("kaçan çıkış olayı: süreç sessizce ölse de güvenlik ağı torun aralığında işi bitirir", async () => {
+    const h = await kur();
+    const id = await h.pcCalistir();
+    h.outEkle(id, h.resultSatiri(id));
+    // Süreç tablodan düşer, çıkış dinleyicisi çağrılmaz.
+    h.d.surec.surecSil(h.depo.isGetir(id)!.pid!);
+    await h.yokla(h.ayar.sureler.torunYoklamaMs);
+    assert.equal(bitenDurum(h, id), "tamam");
+    assert.deepEqual(h.depo.isGetir(id)!.rapor, RAPOR);
+    assert.equal(h.isler.aktifSayisi(), 0);
+    assert.equal(h.d.surec.oldurmalar.length, 0, "doğal çıkışta süpürme yok");
+  });
+
+  it("güvenlik ağı PID yeniden kullanımına kanmaz: aynı PID'li yeni süreç işi canlı tutmaz", async () => {
+    const h = await kur();
+    const id = await h.pcCalistir();
+    const k = h.depo.isGetir(id)!;
+    h.d.surec.surecSil(k.pid!);
+    h.d.surec.surecEkle({ pid: k.pid!, ppid: 1, ad: "claude.exe", olusturmaMs: k.olusturma_ms! + 600_000 });
+    await h.yokla(h.ayar.sureler.torunYoklamaMs);
+    assert.equal(bitenDurum(h, id), "yarim");
+    assert.equal(h.d.surec.oldurmalar.length, 0);
+  });
+
+  it("görüntü alınamazsa sahiplenilen iş canlı sayılır, akış okunmaya devam eder; görüntü dönünce biter", async () => {
+    const h = await kur();
+    const id = tohumlaKur(h, { no: 1, pid: 7001, sohbet: ANA });
+    h.d.surec.surecEkle({ pid: 7001, ppid: 1, ad: "claude.exe", olusturmaMs: T0 });
+    await h.isler.uzlastir();
+    const asil = h.d.surec.anlikGoruntu;
+    h.d.surec.anlikGoruntu = async () => {
+      throw new Error("powershell_zaman_asimi");
+    };
+    h.d.surec.surecSil(7001);
+    h.outEkle(id, h.resultSatiri(id));
+    await h.yokla(h.ayar.sureler.torunYoklamaMs);
+    assert.equal(bitenDurum(h, id), "calisiyor", "bilinmiyor: canlı sayılır");
+    assert.ok(h.depo.isGetir(id)!.son_result !== null, "akış okundu");
+    h.d.surec.anlikGoruntu = asil;
+    await h.yokla();
+    assert.equal(bitenDurum(h, id), "tamam");
+  });
+
+  it("süreç doğmadan istenen görüntü yeni işi ölü saymaz", async () => {
+    const h = await kur();
+    const ilk = await h.pcCalistir(1);
+    const asil = h.d.surec.anlikGoruntu;
+    let birak: () => void = () => {};
+    let tutuldu = false;
+    h.d.surec.anlikGoruntu = async () => {
+      // Tablo istek anında okunur, cevap bekletilir: o arada başlayan iş görüntüde yoktur.
+      const tablo = asil();
+      if (tutuldu) return tablo;
+      tutuldu = true;
+      await new Promise<void>((r) => {
+        birak = r;
+      });
+      return tablo;
+    };
+    await h.yokla(h.ayar.sureler.torunYoklamaMs - 2000);
+    assert.equal(tutuldu, true, "torun yoklaması görüntü istemeli");
+    const yeni = await h.baslat(pcPlan(2));
+    h.outEkle(yeni, h.initSatiri(yeni));
+    birak();
+    await h.yokla(0);
+    h.d.surec.anlikGoruntu = asil;
+    assert.equal(h.olaylar("job_finished").length, 0, "hiçbir iş bitmiş sayılmadı");
+    assert.equal(h.isler.aktifSayisi(), 2);
+    assert.equal(bitenDurum(h, ilk), "calisiyor");
+    // Sonraki güvenlik ağı turunda yeni iş görüntüdedir ve yaşar.
+    await h.yokla(h.ayar.sureler.torunYoklamaMs);
+    assert.equal(bitenDurum(h, yeni), "calisiyor");
+  });
+});

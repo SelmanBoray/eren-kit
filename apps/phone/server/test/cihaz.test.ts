@@ -434,6 +434,62 @@ describe("cihaz: koparken", () => {
   });
 });
 
+describe("cihaz: soket kapalı (gonder false)", () => {
+  /** Gerçek `wsBaglantisiKur` gibi: açık değilken `false` döner, çerçeve gitmez. */
+  function kapanabilirBaglan(o: Ortam) {
+    const ham = o.ws.baglan("/cihaz");
+    const durum = { acik: true, atar: false };
+    const b = {
+      ...ham,
+      gonder: (m: string): boolean => {
+        if (durum.atar) throw new Error("yazilamadi");
+        if (!durum.acik) return false;
+        ham.gonder(m);
+        return true;
+      },
+    };
+    o.cihaz.baglandi({ baglanti: b, device_id: "tel-1" } as unknown as DogrulanmisCihazBaglantisi);
+    izinVer(ham);
+    return { ham, durum };
+  }
+
+  it("soket kapalıyken komut son teslimi beklemeden telefon_bagli_degil döner, çerçeve ve zamanlayıcı kalmaz", async () => {
+    const o = kur();
+    const { ham, durum } = kapanabilirBaglan(o);
+    assert.equal(o.cihaz.bagliMi(), true, "kapanış olayı henüz gelmedi");
+    durum.acik = false;
+    const t0 = o.zaman.simdi();
+    const s = await o.cihaz.komut(BAGLAM, "foreground", {}, new AbortController().signal);
+    assert.deepEqual(s, { ok: false, code: "telefon_bagli_degil" });
+    assert.equal(o.zaman.simdi(), t0, "saat ilerlemeden sonuçlandı");
+    assert.equal(o.zaman.bekleyenSayisi(), 0);
+    assert.equal(cmdler(ham).length, 0);
+    // Sonradan kapanış gelince ikinci sonuç ya da yeniden deneme yok.
+    ham.istemciKopar();
+    o.zaman.ilerlet(10 * 60_000);
+    await tur();
+    assert.equal(cmdler(ham).length, 0);
+  });
+
+  it("gönderim atarsa eskisi gibi belirsiz döner (çerçeve gitmiş olabilir)", async () => {
+    const o = kur();
+    const { durum } = kapanabilirBaglan(o);
+    durum.atar = true;
+    const s = await o.cihaz.komut(BAGLAM, "foreground", {}, new AbortController().signal);
+    assert.deepEqual(s, { ok: false, code: "belirsiz" });
+    assert.equal(o.zaman.bekleyenSayisi(), 0);
+  });
+
+  it("soket kapalıyken bildir null, izinGeriCek false döner", () => {
+    const o = kur();
+    const { ham, durum } = kapanabilirBaglan(o);
+    durum.acik = false;
+    assert.equal(o.cihaz.bildir({ tur: "sistem", baslik: "b", metin: "m" }), null);
+    assert.equal(o.cihaz.izinGeriCek("g1", "limit_kilit"), false);
+    assert.equal(ham.gonderilenler.length, 0);
+  });
+});
+
 describe("cihaz: sinyal", () => {
   it("bekleyen komut iptal edilince belirsiz döner, geç sonuç atılır", async () => {
     const { o, b } = hazir();
