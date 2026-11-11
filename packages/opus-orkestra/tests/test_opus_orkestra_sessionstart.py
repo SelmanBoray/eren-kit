@@ -246,7 +246,8 @@ class TestTurkish(Base):
     def test_stdout_decodes_utf8(self):
         body = "## Başlık ğüşiöç ĞÜŞİÖÇ\nTürkçe içerik\n"
         p = self.part(self.skill(FM + body), 1)
-        self.assertIn("Türkçe içerik", p.stdout.decode("utf-8") if "Türkçe" in p.stdout.decode("utf-8") else ctx_of(p))
+        p.stdout.decode("utf-8")  # ham stdout hatasiz UTF-8 olmali (strict)
+        self.assertIn("Türkçe içerik", ctx_of(p))
         self.assertIn("## Başlık ğüşiöç ĞÜŞİÖÇ", ctx_of(p))
 
 
@@ -597,7 +598,10 @@ class TestInvariants(Extra):
         body = "".join(t for t, _ in blocks)
         desc = "seed=%d dosya#%d bloklar=%s govde=%d" % (
             self.SEED, idx, [(len(t), h and h[:12]) for t, h in blocks], len(body))
-        path = self.skill(FM + body)
+        # paralel calisirken self.skill'in ortak sayaci yaris yaratir: dosya adi idx'e ozgu
+        path = os.path.join(self._tmp.name, "inv%d.md" % idx)
+        with open(path, "w", encoding="utf-8", newline="") as fh:
+            fh.write(FM + body)
         procs = self.run_all(path)
         ctxs, first_sys = [], ""
         for n, p in enumerate(procs, 1):
@@ -648,9 +652,18 @@ class TestInvariants(Extra):
         rnd = random.Random(self.SEED)
         files = [self.gen(rnd) for _ in range(40)]
         from concurrent.futures import ThreadPoolExecutor
-        # her dosya kendi test-metodu icinde ardisik; paralellik alt surec duzeyinde
-        for idx, blocks in enumerate(files):
-            self.one(idx, blocks)
+        # uretim (yukaridaki rnd) ardisik; yalniz self.one cagrilari 8 is parcacigiyla paralel
+        # (her dosya kendi adli gecici dosyada; her one() ayrica 4 alt surec baslatir)
+        def job(item):
+            idx, blocks = item
+            try:
+                self.one(idx, blocks)
+            except Exception as e:
+                raise AssertionError("dosya#%d basarisiz: %s" % (idx, e)) from e
+
+        with ThreadPoolExecutor(8) as ex:
+            for fut in [ex.submit(job, it) for it in enumerate(files)]:
+                fut.result()
 
 
 class TestRealSkill(Base):
