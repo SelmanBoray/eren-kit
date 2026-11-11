@@ -1,12 +1,27 @@
 """Tohum (JSONL) dosyasini beyin veritabanina aktarir.
 
-Kullanim: ``ice_al(con, jsonl_yol) -> dict``
+Kullanim: ``ice_al(con, jsonl_yol, uzerine_yaz=False) -> dict``
 
-Donen sozluk: dugum_eklendi, dugum_guncellendi, kenar, olgu, atlanan, hatalar.
+Donen sozluk: dugum_eklendi, dugum_guncellendi, kenar, olgu, atlanan, hatalar,
+korunan (her zaman var; list[str]).
 
 * Tek islem: her sey tek transaction'da yazilir, kritik hatada (dosya okunamaz,
   kok satiri bozuk) HICBIR sey yazilmaz; sayaclar 0, hatalar dolu doner.
   Istisna sizdirilmaz (beklenmeyen istisna da "hatalar"a yazilip geri alinir).
+  Islem ``BEGIN IMMEDIATE`` ile acilir: yazma kilidi basta alinir, baska yazar
+  varsa busy_timeout kadar beklenir (ertelenmis BEGIN'de okuma->yazma yukseltmesi
+  WAL'da SQLITE_BUSY_SNAPSHOT verip tum aktarimi geri aldirabiliyordu).
+* Sir: satirin herhangi bir metin alaninda yazma yolunun reddettigi bir sir
+  (``maskele`` deseni) varsa satir butunuyle atlanir; hata kaydi sirri icermez.
+  Istisna: kendi gizliligi ``sir_icerir`` olan satirin govdesi (ozet, ayrinti,
+  olgular) taranmaz (govde indekslenmez, okumada gizlenir); basligi, anahtari ve
+  yol alanlari yine taranir.
+* Koruma: var olan dugumun baslik/ozet/ayrinti/tur/durum/tarih alanlarindan biri
+  en son tohum disi bir kaynakla (yazma/duzeltme yolu; ``gecmis`` kaydindan
+  bulunur) degistirildiyse, ``uzerine_yaz=False`` iken bu alanlara dokunulmaz;
+  tohum farkli bir deger tasiyorsa anahtar ``korunan``a eklenir. Gizlilik yine
+  yalniz siki yone gider; kenarlar ve yeni olgular eskisi gibi islenir.
+  ``uzerine_yaz=True`` iken tohum kazanir.
 * Iki gecis: once dugumler (anahtar ile), sonra kenarlar (birincil alt, ek alt,
   ilgili) tohum satir sirasiyla.
 * Idempotent: var olan anahtar guncellenir, ayni normalize metinli aktif olgu
@@ -25,6 +40,8 @@ import re
 import sqlite3
 import unicodedata
 from pathlib import Path
+
+from bellek.devir.transcript import maskele
 
 from . import db
 
@@ -56,6 +73,38 @@ def _liste(v, ad, hatalar_yerel):
     return v
 
 
+def _metinler(v):
+    """Degerin icindeki tum dizeler (ic ice liste/sozluk dahil)."""
+    if isinstance(v, str):
+        yield v
+    elif isinstance(v, list):
+        for x in v:
+            yield from _metinler(x)
+    elif isinstance(v, dict):
+        for x in v.values():
+            yield from _metinler(x)
+
+
+def _sirli_alanlar(k: dict) -> list[str]:
+    """Yazma yolunun (yaz._check_text) reddedecegi sir iceren alanlarin adlari.
+
+    Satirin KENDI gizliligi ``sir_icerir`` ise govde (ozet, ayrinti, olgular) taranmaz:
+    tasarim (DESIGN §16.2) bu govdeyi bilerek saklar, indekslemez ve okumada gizler.
+    Baslik, anahtar ve yol/kenar alanlari ise indekslenir/gorunur; orada sir yine satiri
+    atlatir. Kalitimla sir sayilan (kendi isareti normal/ozel) satir tam taranir.
+    """
+    muaf = _SIR_GOVDESI if k.get("gizlilik") == "sir_icerir" else ()
+    return [alan if alan in _BILINEN_ALANLAR else "bilinmeyen alan" for alan, v in k.items()
+            if alan not in muaf and any(s and maskele(s) != s for s in _metinler(v))]
+
+
+_SIR_GOVDESI = ("ozet", "ayrinti", "olgular")
+
+
+_BILINEN_ALANLAR = {"anahtar", "baslik", "ozet", "ayrinti", "tur", "durum", "gizlilik", "tarih",
+                    "birincil_ebeveyn", "ek_ebeveynler", "ilgili", "olgular", "kaynaklar"}
+
+
 def _dogrula(no, ham):
     """Bir satiri dogrular. (kayit|None, [hata]) doner."""
     h: list[str] = []
@@ -65,6 +114,14 @@ def _dogrula(no, ham):
         return None, [f"satir {no}: gecersiz JSON ({e})"]
     if not isinstance(k, dict):
         return None, [f"satir {no}: nesne degil"]
+    # Sir denetimi her seyden once: hata iletileri alan degerlerini yansitabilir.
+    sirli = _sirli_alanlar(k)
+    if sirli:
+        a = k.get("anahtar")
+        ad = (f"satır {no} [{a.strip()}]" if isinstance(a, str) and a.strip() and "anahtar" not in sirli
+              else f"satır {no}")
+        return None, [f"{ad}: sır (parola/anahtar/token) içeriyor ({', '.join(sirli)}); "
+                      "sırlar beyne yazılmaz, satır atlandı"]
     anahtar = k.get("anahtar")
     if not isinstance(anahtar, str) or not anahtar.strip():
         return None, [f"satir {no}: anahtar yok"]
@@ -184,11 +241,56 @@ def _kok_satiri_mi(ham) -> bool:
 
 def _sonuc(hatalar=None):
     return {"dugum_eklendi": 0, "dugum_guncellendi": 0, "kenar": 0, "olgu": 0,
-            "atlanan": 0, "hatalar": list(hatalar or [])}
+            "atlanan": 0, "hatalar": list(hatalar or []), "korunan": []}
 
 
-def ice_al(con, jsonl_yol) -> dict:
-    """Tohumu aktarir; ayrintilar modul docstring'inde. Istisna sizdirmaz."""
+# Tohum disi kaynakla degistirilmisse yeniden ice alimda korunan alanlar.
+KORUNAN_ALANLAR = ("baslik", "ozet", "ayrinti", "tur", "durum", "tarih")
+# ice_al'in kendi yazdigi kaynak turleri (dugum kaynak izi: tohum ya da satirin ilk 'kaynaklar' yolu).
+# Dis yazma yolu bu turleri veremez (yaz.DIS_KAYNAK_TURLERI = oturum/elle).
+_TOHUM_KAYNAK_TURLERI = ("tohum", "memory")
+
+
+def _dis_degisiklik_var(con, dugum_id) -> bool:
+    """Dugumun korunan alanlarindan birinin SON degisikligi tohum disi bir kaynaktan mi?
+
+    ``gecmis`` kayitlari sirayla yurunur; her korunan alan icin onu en son degistiren
+    guncellemenin kaynagi tutulur. Kaynagi olmayan (None) ya da tohum/memory disi
+    guncelleme dis degisikliktir. Dugumun ilk eklenmesi (kim eklerse eklesin) sayilmaz;
+    yalniz gizlilik ya da kenar degisikligi korumayi baslatmaz ya da bitirmez.
+    """
+    sahip: dict[str, bool] = {}  # alan -> son degisiklik tohumdan mi
+    satirlar = con.execute(
+        "SELECT g.islem, g.eski_json, g.yeni_json, k.tur FROM gecmis g"
+        " LEFT JOIN kaynak k ON k.id = g.kaynak_id"
+        " WHERE g.tablo = 'dugum' AND g.hedef_id = ? ORDER BY g.id",
+        (dugum_id,),
+    ).fetchall()
+    for islem, eski_j, yeni_j, ktur in satirlar:
+        if islem == "ekle":
+            sahip.clear()
+            continue
+        if islem != "guncelle":
+            continue
+        try:
+            eski, yeni = json.loads(eski_j or "{}"), json.loads(yeni_j or "{}")
+        except ValueError:
+            continue
+        if not isinstance(eski, dict) or not isinstance(yeni, dict):
+            continue
+        tohumdan = ktur in _TOHUM_KAYNAK_TURLERI
+        for alan in KORUNAN_ALANLAR:
+            if eski.get(alan) != yeni.get(alan):
+                sahip[alan] = tohumdan
+    return any(not v for v in sahip.values())
+
+
+def ice_al(con, jsonl_yol, uzerine_yaz: bool = False) -> dict:
+    """Tohumu aktarir; ayrintilar modul docstring'inde. Istisna sizdirmaz.
+
+    ``uzerine_yaz=False`` (varsayilan): tohum disi duzeltilmis dugumlerin alanlari
+    korunur (``korunan``). ``True``: tohum her alani yazar (eski davranis).
+    """
     yol = Path(jsonl_yol)
     try:
         veri = yol.read_bytes()
@@ -296,7 +398,8 @@ def ice_al(con, jsonl_yol) -> dict:
     if con.in_transaction:
         con.commit()
     try:
-        con.execute("BEGIN")
+        # IMMEDIATE: yazma kilidi okumadan once alinir; bekleme busy_timeout ile olur.
+        con.execute("BEGIN IMMEDIATE")
         tohum_id = _kaynak_bul_ya_da_ekle(con, "tohum", f"{yol.resolve()} sha256:{sha}")
         kok_dugum = db.kok_id(con)
         idler: dict[str, int] = {}
@@ -312,8 +415,10 @@ def ice_al(con, jsonl_yol) -> dict:
 
         # Gecis 1: dugumler (satir basina savepoint; kok disinda hata satiri atlatir)
         yazilan: list[str] = []
+        korunan: list[str] = []
         for a in gecerli:
             k = kayitlar[a]
+            korundu = False
             try:
                 with _Sp(con, "sp_dugum"):
                     kids = kaynak_idleri(k["kaynaklar"])
@@ -322,17 +427,22 @@ def ice_al(con, jsonl_yol) -> dict:
                                 tur=k["tur"], durum=k["durum"], gizlilik=k["gizlilik"],
                                 tarih=k["tarih"])
                     if a == kok_a:
-                        nid, eklendi = kok_dugum, False
-                        alan["gizlilik"] = _gizlilik_gevsetme(con, nid, alan["gizlilik"])
-                        db.dugum_guncelle(con, nid, kaynak_id=tohum_id, **alan)
+                        nid, eklendi, kid = kok_dugum, False, tohum_id
                     else:
                         nid = db.anahtardan_id(con, a)
                         eklendi = nid is None
-                        if eklendi:
-                            nid = db.dugum_ekle(con, anahtar=a, kaynak_id=kid, **alan)
-                        else:
-                            alan["gizlilik"] = _gizlilik_gevsetme(con, nid, alan["gizlilik"])
-                            db.dugum_guncelle(con, nid, kaynak_id=kid, **alan)
+                    if eklendi:
+                        nid = db.dugum_ekle(con, anahtar=a, kaynak_id=kid, **alan)
+                    else:
+                        alan["gizlilik"] = _gizlilik_gevsetme(con, nid, alan["gizlilik"])
+                        if not uzerine_yaz and _dis_degisiklik_var(con, nid):
+                            mevcut = con.execute(
+                                "SELECT " + ", ".join(KORUNAN_ALANLAR) + " FROM dugum WHERE id = ?",
+                                (nid,)).fetchall()[0]
+                            korundu = any(mevcut[i] != alan[f] for i, f in enumerate(KORUNAN_ALANLAR))
+                            # yalniz gizlilik (siki yone) yazilir; korunan alanlara dokunulmaz
+                            alan = {"gizlilik": alan["gizlilik"]}
+                        db.dugum_guncelle(con, nid, kaynak_id=kid, **alan)
             except (ValueError, sqlite3.IntegrityError) as ex:
                 if a == kok_a:
                     raise
@@ -340,6 +450,8 @@ def ice_al(con, jsonl_yol) -> dict:
                 atlanan += 1
                 continue
             sonuc["dugum_eklendi" if eklendi else "dugum_guncellendi"] += 1
+            if korundu:
+                korunan.append(a)
             idler[a] = nid
             yazilan.append(a)
         gecerli = yazilan
@@ -420,4 +532,5 @@ def ice_al(con, jsonl_yol) -> dict:
 
     sonuc["atlanan"] = atlanan
     sonuc["hatalar"] = hatalar
+    sonuc["korunan"] = korunan
     return sonuc
