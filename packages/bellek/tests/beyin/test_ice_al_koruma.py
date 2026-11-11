@@ -205,6 +205,93 @@ def test_sirli_satir_var_olan_dugumu_degistirmez(con, tmp_path):
     _sir_izi_yok(_tum_tablolar_metni(con))
 
 
+# ---------------------------------------------------------------- kimlik/yol alanları
+# Sır denetimi yalnız serbest metin alanlarına (başlık, özet, ayrıntı, olgu) uygulanır;
+# anahtar, kaynaklar ve ebeveyn/ilgili başvuruları taranmaz. Aşağıdaki değerler
+# maskele'nin "rakamlı 32+ karakterlik kesintisiz dizi" kalıbına uyar ama sır değildir.
+
+UZUN_YOL = "projeler/C--Users-u-Documents-Projeler2026-site-yedek/memory/not.md"
+UZUN_ANAHTAR = "okul-dersler-2025-guz-donemi-matematik"
+UUID_YOL = "notlar/3f2b8c1e-9a4d-4e7b-b1c2-5d6e7f8a9b0c.md"
+
+
+def test_on_kosul_kimlik_degerleri_maske_kalibina_uyar():
+    """Ön koşul: bu değerler gerçekten maskelenir (testler hatayı yakalar)."""
+    for v in (UZUN_YOL, UZUN_ANAHTAR, UUID_YOL):
+        assert maskele(v) != v, v
+
+
+def test_kaynaklarda_uzun_rakamli_yol_icealinir(con, tmp_path):
+    s = _al(con, _yaz(tmp_path / "t.jsonl", [_t("not-a", "NotA", kaynaklar=[UZUN_YOL])]))
+    assert not s["hatalar"], s["hatalar"]
+    assert _id(con, "not-a") is not None
+
+
+def test_uzun_rakamli_anahtar_ve_cocugu_icealinir(con, tmp_path):
+    satirlar = [_t(UZUN_ANAHTAR, "Matematik", tur="proje"),
+                _t("odev-1", "Ödev 1", ebeveyn=UZUN_ANAHTAR, ilgili=[UZUN_ANAHTAR]),
+                _t("odev-2", "Ödev 2", ek_ebeveynler=[UZUN_ANAHTAR])]
+    s = _al(con, _yaz(tmp_path / "t.jsonl", satirlar))
+    assert not s["hatalar"], s["hatalar"]
+    ebeveyn = _id(con, UZUN_ANAHTAR)
+    assert ebeveyn is not None
+    assert con.execute("SELECT ebeveyn FROM kenar WHERE cocuk=? AND birincil=1",
+                       (_id(con, "odev-1"),)).fetchone()[0] == ebeveyn
+    assert con.execute("SELECT COUNT(*) FROM kenar WHERE ebeveyn=? AND cocuk=? AND tur='alt'",
+                       (ebeveyn, _id(con, "odev-2"))).fetchone()[0] == 1
+
+
+def test_uuid_kaynak_adi_icealinir(con, tmp_path):
+    s = _al(con, _yaz(tmp_path / "t.jsonl", [_t("not-u", "NotU", kaynaklar=[UUID_YOL])]))
+    assert not s["hatalar"], s["hatalar"]
+    assert _id(con, "not-u") is not None
+
+
+def test_kimlik_alanli_satirlar_ikinci_icealimda_guncellenir(con, tmp_path):
+    def tohum(ozet):
+        return [_t(UZUN_ANAHTAR, "Matematik", ozet=ozet, kaynaklar=[UZUN_YOL, UUID_YOL]),
+                _t("odev-1", "Ödev 1", ebeveyn=UZUN_ANAHTAR, ozet=f"{ozet} ödev")]
+
+    _al(con, _yaz(tmp_path / "t1.jsonl", tohum("ilk özet")))
+    s = _al(con, _yaz(tmp_path / "t2.jsonl", tohum("ikinci özet")))
+    assert not s["hatalar"], s["hatalar"]
+    assert _alanlar(con, UZUN_ANAHTAR)["ozet"] == "ikinci özet"
+    assert _alanlar(con, "odev-1")["ozet"] == "ikinci özet ödev"
+    assert s["dugum_guncellendi"] >= 2
+
+
+@pytest.mark.parametrize("sir", [SIR_ANTHROPIC, SIR_ENV])
+@pytest.mark.parametrize("nerede", ["olgu", "ozet"])
+def test_kimlik_alanli_satirda_metin_sirri_yine_atlanir(con, tmp_path, nerede, sir):
+    """Karşı örnek: kimlik alanları muaf, serbest metindeki sır değil."""
+    kw = {"olgular": [f"olgu {sir}"]} if nerede == "olgu" else {"ozet": f"özet {sir}"}
+    satirlar = [_t(UZUN_ANAHTAR, "Matematik", kaynaklar=[UZUN_YOL], **kw),
+                _t("temiz", "Temiz", kaynaklar=[UUID_YOL])]
+    s = _al(con, _yaz(tmp_path / "t.jsonl", satirlar))
+    assert _id(con, UZUN_ANAHTAR) is None
+    assert _id(con, "temiz") is not None
+    assert s["hatalar"]
+    _sir_izi_yok(repr(s))
+    _sir_izi_yok(_tum_tablolar_metni(con))
+
+
+# ---------------------------------------------------------------- hata kaydında alıntı yok
+
+ISARET = "GIZLI-ISARET-41"
+
+
+@pytest.mark.parametrize("gizlilik", ["sir_icerir", "normal"])
+def test_uzun_olgu_hatasi_icerik_alintisi_tasimaz(con, tmp_path, gizlilik):
+    uzun = f"{ISARET} " + "y" * 320
+    satirlar = [_t("uzun-olgu", "UzunOlgu", gizlilik=gizlilik, olgular=[uzun, "kısa olgu"])]
+    s = _al(con, _yaz(tmp_path / "t.jsonl", satirlar))
+    assert s["hatalar"], s
+    metin = "\n".join(str(h) for h in s["hatalar"])
+    assert ISARET not in metin
+    assert ISARET.casefold() not in metin.casefold()
+    assert "yyyyyyyy" not in metin
+
+
 # ---------------------------------------------------------------- korunan anahtarı
 
 def test_korunan_ilk_icealimda_bos_liste(con, tmp_path):

@@ -13,9 +13,10 @@ korunan (her zaman var; list[str]).
   WAL'da SQLITE_BUSY_SNAPSHOT verip tum aktarimi geri aldirabiliyordu).
 * Sir: satirin herhangi bir metin alaninda yazma yolunun reddettigi bir sir
   (``maskele`` deseni) varsa satir butunuyle atlanir; hata kaydi sirri icermez.
-  Istisna: kendi gizliligi ``sir_icerir`` olan satirin govdesi (ozet, ayrinti,
-  olgular) taranmaz (govde indekslenmez, okumada gizlenir); basligi, anahtari ve
-  yol alanlari yine taranir.
+  Taranan alanlar yazma yolununkiyle ayni turdendir: baslik, ozet, ayrinti, olgular
+  (kimlik/yol alanlari -anahtar, kaynaklar, ebeveyn/ilgili- taranmaz). Kendi
+  gizliligi ``sir_icerir`` olan satirda yalniz baslik taranir (govde indekslenmez,
+  okumada gizlenir). Hata iletileri hicbir satir icin icerik alintilamaz.
 * Koruma: var olan dugumun baslik/ozet/ayrinti/tur/durum/tarih alanlarindan biri
   en son tohum disi bir kaynakla (yazma/duzeltme yolu; ``gecmis`` kaydindan
   bulunur) degistirildiyse, ``uzerine_yaz=False`` iken bu alanlara dokunulmaz;
@@ -85,24 +86,31 @@ def _metinler(v):
             yield from _metinler(x)
 
 
+# Yazma yolunun (yaz._check_text / _check_edit) sir denetimi uyguladigi turden alanlar:
+# kullaniciya gosterilen ve indekslenen serbest metin. Kimlik/yol alanlari (anahtar,
+# kaynaklar, ebeveyn/ilgili anahtar basvurulari) taranmaz: maskele'nin uzun-dizi kalibi
+# proje klasoru adli yollari, UUID'li not adlarini ve uzun anahtarlari sir sayiyordu.
+_SIR_TARANAN = ("baslik", "ozet", "ayrinti", "olgular")
+# Satirin KENDI gizliligi sir_icerir ise govde taranmaz (DESIGN §16.2: govde saklanir,
+# indekslenmez, okumada gizlenir); baslik indekslendigi icin yine taranir.
+_SIR_ICERIR_TARANAN = ("baslik",)
+
+
 def _sirli_alanlar(k: dict) -> list[str]:
-    """Yazma yolunun (yaz._check_text) reddedecegi sir iceren alanlarin adlari.
+    """Yazma yolunun reddedecegi sir iceren alanlarin adlari (ayni ``maskele`` denetimi).
 
-    Satirin KENDI gizliligi ``sir_icerir`` ise govde (ozet, ayrinti, olgular) taranmaz:
-    tasarim (DESIGN §16.2) bu govdeyi bilerek saklar, indekslemez ve okumada gizler.
-    Baslik, anahtar ve yol/kenar alanlari ise indekslenir/gorunur; orada sir yine satiri
-    atlatir. Kalitimla sir sayilan (kendi isareti normal/ozel) satir tam taranir.
+    Kalitimla sir sayilan (kendi isareti normal/ozel) satir tam taranir.
     """
-    muaf = _SIR_GOVDESI if k.get("gizlilik") == "sir_icerir" else ()
-    return [alan if alan in _BILINEN_ALANLAR else "bilinmeyen alan" for alan, v in k.items()
-            if alan not in muaf and any(s and maskele(s) != s for s in _metinler(v))]
+    taranan = _SIR_ICERIR_TARANAN if k.get("gizlilik") == "sir_icerir" else _SIR_TARANAN
+    return [alan for alan in taranan
+            if any(s and maskele(s) != s for s in _metinler(k.get(alan)))]
 
 
-_SIR_GOVDESI = ("ozet", "ayrinti", "olgular")
-
-
-_BILINEN_ALANLAR = {"anahtar", "baslik", "ozet", "ayrinti", "tur", "durum", "gizlilik", "tarih",
-                    "birincil_ebeveyn", "ek_ebeveynler", "ilgili", "olgular", "kaynaklar"}
+def _goster(v) -> str:
+    """Hata iletisinde secim alani degeri: yalniz kisa ve sirsiz dizeyse gosterilir."""
+    if isinstance(v, str) and len(v) <= 40 and maskele(v) == v:
+        return repr(v)
+    return "(gösterilmedi)"
 
 
 def _dogrula(no, ham):
@@ -114,12 +122,11 @@ def _dogrula(no, ham):
         return None, [f"satir {no}: gecersiz JSON ({e})"]
     if not isinstance(k, dict):
         return None, [f"satir {no}: nesne degil"]
-    # Sir denetimi her seyden once: hata iletileri alan degerlerini yansitabilir.
+    # Sir denetimi her seyden once (hata iletileri icerik alintilamaz; yine de once ele).
     sirli = _sirli_alanlar(k)
     if sirli:
         a = k.get("anahtar")
-        ad = (f"satır {no} [{a.strip()}]" if isinstance(a, str) and a.strip() and "anahtar" not in sirli
-              else f"satır {no}")
+        ad = f"satır {no} [{a.strip()}]" if isinstance(a, str) and a.strip() else f"satır {no}"
         return None, [f"{ad}: sır (parola/anahtar/token) içeriyor ({', '.join(sirli)}); "
                       "sırlar beyne yazılmaz, satır atlandı"]
     anahtar = k.get("anahtar")
@@ -142,17 +149,17 @@ def _dogrula(no, ham):
         if len(ayrinti) > AYRINTI_MAX:
             h.append(f"ayrinti {len(ayrinti)} > {AYRINTI_MAX}")
     tur = k.get("tur") or "bilgi"
-    if tur not in TURLER:
-        h.append(f"bilinmeyen tur {tur!r}")
+    if not isinstance(tur, str) or tur not in TURLER:
+        h.append(f"bilinmeyen tur {_goster(tur)}")
     gizlilik = k.get("gizlilik") or "normal"
-    if gizlilik not in GIZLILIKLER:
-        h.append(f"bilinmeyen gizlilik {gizlilik!r}")
+    if not isinstance(gizlilik, str) or gizlilik not in GIZLILIKLER:
+        h.append(f"bilinmeyen gizlilik {_goster(gizlilik)}")
     tarih = k.get("tarih")
     if tarih is not None and not (isinstance(tarih, str) and _TARIH.match(tarih)):
-        h.append(f"tarih biçimi YYYY-MM-DD degil: {tarih!r}")
+        h.append(f"tarih biçimi YYYY-MM-DD degil: {_goster(tarih)}")
     durum = k.get("durum") or "aktif"
     if not isinstance(durum, str) or durum not in DURUMLAR:
-        h.append(f"bilinmeyen durum {durum!r}")
+        h.append(f"bilinmeyen durum {_goster(durum)}")
     bp = k.get("birincil_ebeveyn")
     if bp is not None and not isinstance(bp, str):
         h.append("birincil_ebeveyn string|null olmali")
@@ -167,7 +174,8 @@ def _dogrula(no, ham):
         if not o.strip():
             continue
         if len(o) > OLGU_MAX:
-            olgu_hata.append(f"{ad}: olgu {len(o)} > {OLGU_MAX} karakter, atlandi: {o[:40]!r}...")
+            # icerik alintilanmaz (sir_icerir govdesi taranmadigi icin sizabilirdi)
+            olgu_hata.append(f"{ad}: olgu {len(o)} > {OLGU_MAX} karakter, atlandi")
         else:
             olgular.append(o.strip())
     return {

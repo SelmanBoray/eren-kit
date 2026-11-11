@@ -120,3 +120,49 @@ def test_olgu_tarihi_yerel_gunu_gosterir(con):
     assert "Toplantı yapıldı" in metin, metin
     assert yerel in metin, f"yerel gün {yerel} bekleniyordu: {metin}"
     assert utc not in metin, f"UTC günü {utc} görünmemeli: {metin}"
+
+
+# ---------- derin zincirde kalıtılan gizlilik (kapalı başarısızlık) ----------
+
+from bellek.beyin import disa_aktar  # noqa: E402
+
+
+def _zincir(con, ebeveyn, adet, onek):
+    """ebeveyn altında tek zincir kurar; en derin düğümün id'sini döner."""
+    son = ebeveyn
+    with con:
+        for i in range(adet):
+            son = db.dugum_ekle(con, f"Z{onek}{i}", ozet=f"{onek}-{i}", ebeveyn=son)
+    return son
+
+
+@pytest.fixture
+def derin_sir(con):
+    with con:
+        kok = db.kok_id(con)
+        kasa = db.dugum_ekle(con, "Kasa", gizlilik="sir_icerir", ebeveyn=kok)
+    return con, _zincir(con, kasa, 70, "derin-icerik")
+
+
+def test_derin_sir_zinciri_oku_sizmaz(derin_sir):
+    con, en_derin = derin_sir
+    assert "derin-icerik-" not in tum(sorgu.oku(con, en_derin))
+
+
+def test_derin_sir_zinciri_jsonl_dok_sizmaz(derin_sir, tmp_path):
+    con, _ = derin_sir
+    yol = tmp_path / "d.jsonl"
+    disa_aktar.jsonl_dok(con, yol)
+    assert "derin-icerik-" not in yol.read_text(encoding="utf-8")
+
+
+def test_derin_sir_zinciri_markdown_agac_sizmaz(derin_sir):
+    con, _ = derin_sir
+    assert "derin-icerik-" not in disa_aktar.markdown_agac(con, ozel_dahil=True, sir_dahil=False)
+
+
+def test_sir_disi_normal_zincir_acik_kalir(con):
+    with con:
+        kok = db.kok_id(con)
+    en_derin = _zincir(con, kok, 10, "acik-icerik")
+    assert "acik-icerik-9" in tum(sorgu.oku(con, en_derin))

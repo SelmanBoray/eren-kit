@@ -295,6 +295,61 @@ def test_listele_en_yeni_basta_kalip_disini_almaz(kapali_db):
     assert yedek.yedekleri_listele(hedef) == [yeni, eski]
 
 
+# Regresyon: yarım kalmış yer tutucu (kalıba uyan 0 baytlık dosya) hiçbir zaman yedek sayılmaz.
+# Bayat yer tutucunun sonradan silinip silinmediği bilinçli olarak sınanmaz.
+
+YENI_YER_TUTUCU = "beyin-20991231-235959.db"  # en yeni sıralanır
+ESKI_YER_TUTUCU = "beyin-20000101-000000.db"  # en eski sıralanır
+
+
+def gecerli_yedekler(hedef: Path) -> list[Path]:
+    """Hedef dizinde kalıba uyan ve `dogrula`'dan geçen dosyalar (ada göre sıralı)."""
+    sonuc = []
+    for p in sorted(Path(hedef).iterdir()):
+        if not (p.is_file() and AD_KALIBI.match(p.name)):
+            continue
+        try:
+            yedek.dogrula(p)
+        except YedekHatasi:
+            continue
+        sonuc.append(p)
+    return sonuc
+
+
+@pytest.mark.parametrize("ad", [YENI_YER_TUTUCU, ESKI_YER_TUTUCU])
+def test_bos_yer_tutucu_listelenmez(kapali_db, ad):
+    hedef = kapali_db["hedef"]
+    gercek = yedek.yedekle(kapali_db["db"], hedef, simdi=datetime(2026, 7, 1))
+    (hedef / ad).write_bytes(b"")
+    liste = yedek.yedekleri_listele(hedef)
+    assert hedef / ad not in liste
+    assert liste == [gercek]
+
+
+@pytest.mark.parametrize("ad", [YENI_YER_TUTUCU, ESKI_YER_TUTUCU])
+def test_bos_yer_tutucu_sakla_hesabina_girmez(kapali_db, ad):
+    hedef = kapali_db["hedef"]
+    (hedef / ad).write_bytes(b"")
+    bas = datetime(2026, 7, 1, 12, 0, 0)
+    yollar = [
+        yedek.yedekle(kapali_db["db"], hedef, sakla=2, simdi=bas + timedelta(days=i))
+        for i in range(3)
+    ]
+    assert gecerli_yedekler(hedef) == sorted(yollar[-2:])
+    assert yedek.yedekleri_listele(hedef) == list(reversed(yollar[-2:]))
+
+
+def test_geri_yukle_bos_yer_tutucu_reddedilir(kapali_db):
+    kaynak = kapali_db["db"]
+    yer_tutucu = kapali_db["hedef"] / YENI_YER_TUTUCU
+    yer_tutucu.write_bytes(b"")
+    once = dosyalar(kaynak.parent)
+    with pytest.raises(YedekHatasi):
+        yedek.geri_yukle(yer_tutucu, kaynak, servis_calisiyor=KAPALI)
+    assert dosyalar(kaynak.parent) == once
+    assert yer_tutucu.read_bytes() == b""
+
+
 def test_listele_dizin_yoksa_bos(tmp_path):
     assert yedek.yedekleri_listele(tmp_path / "yok") == []
 
@@ -526,37 +581,87 @@ def test_geri_yukle_mevcut_db_yoksa_none_ve_olusur(kapali_db, tmp_path):
         con.close()
 
 
-def test_geri_yukle_yarida_hata_mevcut_db_yerinde_kalir(kapali_db, monkeypatch):
-    """Yerleştirme sırasında dosya kopyalama başarısız olursa eski veritabanı yerinde kalır.
+# --- yarıda hata: dosya taşıma işlemleri sayaçla bozulur ------------------------------
+#
+# Hata, `os.rename`/`os.replace` sarılarak üretilir: yalnız seçilen çağrı OSError fırlatır,
+# önceki ve sonraki çağrılar (kodun kendi geri alma adımları dahil) gerçek işlemi yapar.
 
-    Hata, shutil kopyalama işlevleri bozularak üretilir. Uygulama bunları kullanmıyorsa
-    hata enjekte edilemez ve test atlanır.
-    """
-    kaynak = kapali_db["db"]
-    yol = yedek.yedekle(kaynak, kapali_db["hedef"])
+
+def cokmus_kaynak(ortam) -> tuple[Path, Path]:
+    """Yedek alır, sonra kaynağı 'Yalniz WAL'da' verisi -wal'da bekleyen çökmüş duruma getirir."""
+    kaynak = ortam["db"]
+    kur(kaynak).close()
+    yol = yedek.yedekle(kaynak, ortam["hedef"])
     con = db.baglan(kaynak)
-    ekle(con, "Yeni veri")
+    con.execute("PRAGMA wal_autocheckpoint = 0")
+    ekle(con, "Yalniz WAL'da")
+    anlik = ortam["tmp"] / "anlik"
+    anlik.mkdir()
+    for ek in ("", "-wal", "-shm"):
+        shutil.copyfile(yan(kaynak, ek), anlik / ("beyin.db" + ek))
     con.close()
-    kaynak_ozet = ozet(kaynak)
-    cagrildi = []
+    for ek in ("", "-wal", "-shm"):
+        shutil.copyfile(anlik / ("beyin.db" + ek), yan(kaynak, ek))
+    assert yan(kaynak, "-wal").stat().st_size > 0
+    return kaynak, yol
 
-    def boz(*a, **k):
-        cagrildi.append(a)
-        raise OSError("test: disk dolu")
 
-    for ad in ("copyfile", "copy2", "copy", "copyfileobj"):
-        monkeypatch.setattr(shutil, ad, boz)
+def tasimayi_boz(monkeypatch, bozulacak) -> list:
+    """os.rename/os.replace'i sarar; `bozulacak(sira, kaynak, hedef)` True dönen İLK çağrı bozulur."""
+    gercek = {"rename": os.rename, "replace": os.replace}
+    cagrilar: list = []
+    bozuldu: list = []
 
-    try:
+    def sarici(ad):
+        def islem(src, dst, *a, **k):
+            cagrilar.append((ad, Path(src), Path(dst)))
+            if not bozuldu and bozulacak(len(cagrilar), Path(src), Path(dst)):
+                bozuldu.append(cagrilar[-1])
+                raise OSError(28, "test: disk dolu")
+            return gercek[ad](src, dst, *a, **k)
+        return islem
+
+    monkeypatch.setattr(os, "rename", sarici("rename"))
+    monkeypatch.setattr(os, "replace", sarici("replace"))
+    return bozuldu
+
+
+def yarida_hata_denetle(ortam, monkeypatch, kaynak, yol, bozuldu, once, yedek_ozet):
+    with pytest.raises(Exception) as hata:
         yedek.geri_yukle(yol, kaynak, servis_calisiyor=KAPALI)
-    except Exception:
-        pass
-    else:
-        if not cagrildi:
-            pytest.skip("geri_yukle shutil kopyalaması kullanmıyor; hata enjekte edilemedi")
-        pytest.fail("kopyalama başarısız olduğu halde geri_yukle hata vermedi")
     monkeypatch.undo()
+    assert bozuldu, "hata enjekte edilemedi: hiçbir taşıma çağrısı bozulmadı"
+    assert isinstance(hata.value, YedekHatasi), repr(hata.value)
+    # Kaynak klasörü çağrı öncesiyle bayt bayt aynı: yarım/geçici/kenar dosyası yok.
+    assert dosyalar(kaynak.parent) == once
+    assert ozet(yol) == yedek_ozet
+    con = sqlite3.connect(str(kaynak))
+    try:
+        dugumler = icerik(con)["dugum"]
+    finally:
+        con.close()
+    assert "Yalniz WAL'da" in dugumler and "Okul" in dugumler
+    return hata.value
 
-    assert kaynak.is_file()
-    assert ozet(kaynak) == kaynak_ozet
-    assert "Yeni veri" in oku(kaynak, kapali_db["tmp"])["dugum"]
+
+def test_geri_yukle_kenara_almada_hata_mevcut_db_yerinde_kalir(ortam, monkeypatch):
+    """Ana dosya kenara alındıktan sonra yan dosyanın taşınması başarısız olur (2. taşıma)."""
+    kaynak, yol = cokmus_kaynak(ortam)
+    once = dosyalar(kaynak.parent)
+    yedek_ozet = ozet(yol)
+    bozuldu = tasimayi_boz(monkeypatch, lambda sira, src, dst: sira == 2)
+    yarida_hata_denetle(ortam, monkeypatch, kaynak, yol, bozuldu, once, yedek_ozet)
+    # Bozulan çağrı gerçekten kaynağın bir yan dosyasını kenara almaya çalışıyordu.
+    _, src, _ = bozuldu[0]
+    assert src.parent == kaynak.parent and src.name.startswith(kaynak.name + "-")
+
+
+def test_geri_yukle_yerine_koymada_hata_mevcut_db_yerinde_kalir(ortam, monkeypatch):
+    """Mevcut veritabanı kenara alındıktan sonra yeni içeriği db_yol'a koyan taşıma başarısız olur."""
+    kaynak, yol = cokmus_kaynak(ortam)
+    once = dosyalar(kaynak.parent)
+    yedek_ozet = ozet(yol)
+    # db_yol'a yazan ilk taşıma yerine koymadır (geri alma ancak ondan sonra gelir).
+    bozuldu = tasimayi_boz(monkeypatch, lambda sira, src, dst: dst == kaynak)
+    yarida_hata_denetle(ortam, monkeypatch, kaynak, yol, bozuldu, once, yedek_ozet)
+    assert bozuldu[0][1] != kaynak

@@ -142,24 +142,62 @@ class _EtkinGizlilik:
 
     Çağrı başına bir örnek; ortak atalar önbellekten gelir, böylece ara'da
     her sonuç için zincir yalnız ilk görülen kısma kadar yürünür.
+
+    Kapalı başarısızlık (DESIGN §16.2, arayuz._Etkin ile aynı kural): düğüm ya da
+    birincil atalarından biri bulunamıyorsa, zincir döngüye giriyorsa ya da zincir
+    (düğüm dahil) `_YOL_DERINLIK` düğümden uzunsa sonuç sir_icerir. Önbellek yalnız
+    kesin bilinen sonucu tutar: derinlik sınırında kesilen yürüyüşün ara düğümleri
+    önbelleğe yazılmaz; böylece sonuç çağrı sırasından bağımsızdır.
     """
 
     def __init__(self, con) -> None:
         self.con = con
         self.onbellek: dict[Any, str] = {}
+        # Kesin derinlik (tepe = 0); sir_icerir sonuçlarda gerekmez, tutulmaz.
+        self.derinlik: dict[Any, int] = {}
+
+    def _yaz(self, id, giz: str, derinlik: int | None) -> None:
+        self.onbellek[id] = giz
+        if giz != _SIR and derinlik is not None:
+            self.derinlik[id] = derinlik
+
+    def cocuk(self, cocuk_id, ebeveyn_id, kendi: str) -> str:
+        """Birincil ebeveyni `ebeveyn_id` olan çocuğun etkin gizliliği (gez için).
+
+        Ebeveynin kesin sonucu biliniyorsa zincir yeniden yürünmez.
+        """
+        if cocuk_id in self.onbellek:
+            return self.onbellek[cocuk_id]
+        e_giz = self(ebeveyn_id)
+        if e_giz == _SIR:
+            self._yaz(cocuk_id, _SIR, None)
+            return _SIR
+        e_der = self.derinlik.get(ebeveyn_id)
+        if e_der is None:
+            return self(cocuk_id)
+        if e_der + 2 > _YOL_DERINLIK:  # çocuğun zinciri e_der + 2 düğüm
+            self._yaz(cocuk_id, _SIR, None)
+            return _SIR
+        g = _en_kisitli(_giz(kendi), e_giz)
+        self._yaz(cocuk_id, g, e_der + 1)
+        return g
 
     def __call__(self, id) -> str:
         if id in self.onbellek:
             return self.onbellek[id]
-        zincir: list[tuple[Any, str]] = []
+        zincir: list[tuple[Any, str]] = []  # baştan (id) tepeye
         gorulen: set = set()
         simdiki = id
-        while (
-            simdiki is not None
-            and simdiki not in self.onbellek
-            and simdiki not in gorulen
-            and len(zincir) < _YOL_DERINLIK
-        ):
+        kirik = False  # kesin olarak kırık: bulunamayan düğüm ya da döngü
+        while simdiki is not None and simdiki not in self.onbellek:
+            if simdiki in gorulen:
+                kirik = True
+                break
+            if len(zincir) >= _YOL_DERINLIK:
+                # Zincir sınırdan uzun: yalnız başlangıç düğümü kesin (sır);
+                # ara düğümlerin derinliği bilinmiyor, önbelleğe yazılmaz.
+                self._yaz(id, _SIR, None)
+                return _SIR
             gorulen.add(simdiki)
             r = self.con.execute(
                 "SELECT d.gizlilik, (SELECT k.ebeveyn FROM kenar k WHERE k.cocuk = d.id "
@@ -168,14 +206,33 @@ class _EtkinGizlilik:
                 (simdiki,),
             ).fetchone()
             if r is None:
+                kirik = True
                 break
             zincir.append((simdiki, _giz(r[0])))
             simdiki = r[1]
-        taban = self.onbellek.get(simdiki, _NORMAL)
+
+        if kirik:
+            # Yürünen her düğümün zinciri aynı kırık noktadan geçer: hepsi kesin sır.
+            for d_id, _g in zincir:
+                self._yaz(d_id, _SIR, None)
+            self._yaz(id, _SIR, None)
+            return _SIR
+
+        if simdiki is None:
+            taban, der = _NORMAL, -1  # tepeye ulaşıldı
+        else:
+            taban = self.onbellek[simdiki]
+            der = self.derinlik.get(simdiki)
+            if taban == _SIR or der is None:
+                for d_id, _g in zincir:
+                    self._yaz(d_id, _SIR, None)
+                return _SIR
         for d_id, g in reversed(zincir):
-            taban = _en_kisitli(taban, g)
-            self.onbellek[d_id] = taban
-        return self.onbellek.get(id, _SIR)  # bulunamazsa kapalı başarısızlık
+            der += 1
+            # Zincir (düğüm dahil) der + 1 düğüm; sınırı aşan düğüm ve altı sır.
+            taban = _SIR if der + 1 > _YOL_DERINLIK else _en_kisitli(taban, g)
+            self._yaz(d_id, taban, der)
+        return self.onbellek[id]
 
 
 def _isaret(giz: str) -> str:
@@ -372,8 +429,7 @@ def gez(con, id=None, butce=1500) -> dict:
         if ek:
             c_giz = etkin(s[0])  # kendi birincil zinciri bu düğüm değil
         else:
-            c_giz = _en_kisitli(_giz(s[3]), giz)
-            etkin.onbellek[s[0]] = c_giz
+            c_giz = etkin.cocuk(s[0], r[0], s[3])
         c = {
             "id": s[0],
             "baslik": s[1],

@@ -36,6 +36,7 @@ import os
 import re
 import secrets
 import sqlite3
+import stat
 import sys
 import time
 from datetime import datetime
@@ -53,6 +54,8 @@ _YEDEK_KALIBI = re.compile(r"beyin-(\d{8})-(\d{6})(?:-([1-9][0-9]{0,5}))?\.db")
 _ZORUNLU_TABLOLAR = ("dugum", "kenar", "kaynak", "olgu", "gelen", "gecmis")
 _TASIMA_DENEME = 5  # Windows'ta virüs tarayıcı/dizinleyici dosyayı kısa süre tutabilir
 _TASIMA_ARALIK = 0.2
+# Bu kadar saniyeden eski 0 baytlık yer tutucu, ölmüş bir yedeklemeden kalmıştır (canlıda ms sürer).
+_YER_TUTUCU_BAYAT = 600.0
 _SERVIS_MESAJI = (
     "Beyin servisi çalışıyor; çalışan servisin veritabanı geri yüklenemez. "
     "Önce servisi durdur, sonra yeniden dene."
@@ -226,40 +229,67 @@ def dogrula(yol: Path) -> None:
 # ---------------------------------------------------------------- yedekleme
 
 
-def yedekleri_listele(hedef_dizin: Path) -> list[Path]:
-    """`beyin-YYYYAAGG-SSDDSS[-N].db` kalıbına uyan yedekler, en yeni başta (addaki zamana göre)."""
-    dizin = Path(hedef_dizin)
+def _kalip_dosyalari(dizin: Path) -> list[tuple[tuple[str, str, int], Path, os.stat_result]]:
+    """Kalıba uyan düzenli dosyalar (yer tutucular dahil): (sıralama anahtarı, yol, stat), en yeni başta."""
     try:
-        girdiler = list(dizin.iterdir())
+        girdiler = list(Path(dizin).iterdir())
     except (FileNotFoundError, NotADirectoryError):
         return []
-    bulunan: list[tuple[tuple[str, str, int], Path]] = []
+    bulunan: list[tuple[tuple[str, str, int], Path, os.stat_result]] = []
     for p in girdiler:
         m = _YEDEK_KALIBI.fullmatch(p.name)
         if m is None:
             continue
         try:
-            if not p.is_file():
-                continue
+            st = p.stat()
         except OSError:
             continue
-        bulunan.append(((m.group(1), m.group(2), int(m.group(3) or 1)), p))
+        if not stat.S_ISREG(st.st_mode):
+            continue
+        bulunan.append(((m.group(1), m.group(2), int(m.group(3) or 1)), p, st))
     bulunan.sort(key=lambda x: x[0], reverse=True)
-    return [p for _, p in bulunan]
+    return bulunan
+
+
+def yedekleri_listele(hedef_dizin: Path) -> list[Path]:
+    """`beyin-YYYYAAGG-SSDDSS[-N].db` kalıbına uyan yedekler, en yeni başta (addaki zamana göre).
+
+    0 baytlık dosyalar yedek sayılmaz: bunlar `_yerlestir`'in ad ayırma yer tutucularıdır (ya da
+    yarıda kalmış bir yedeklemenin artığıdır); listelemede görünmez, budama hesabına girmez.
+    Geçerli bir SQLite yedeği hiçbir zaman boş değildir.
+    """
+    return [p for _, p, st in _kalip_dosyalari(hedef_dizin) if st.st_size > 0]
+
+
+def _bayat_yer_tutuculari_sil(dizin: Path) -> None:
+    """Kalıba uyan, 0 baytlık ve `_YER_TUTUCU_BAYAT` saniyeden eski dosyaları siler.
+
+    Bir yer tutucu, canlı bir yedeklemede ad ayrılmasıyla taşıma arasındaki milisaniyeler
+    boyunca vardır; bu kadar eski olanı ancak ölmüş bir süreçten kalmıştır. Eşzamanlı çalışan
+    bir yedeklemenin taze yer tutucusuna dokunulmaz.
+    """
+    simdi = time.time()
+    for _, p, st in _kalip_dosyalari(dizin):
+        if st.st_size == 0 and simdi - st.st_mtime > _YER_TUTUCU_BAYAT:
+            try:
+                p.unlink()
+            except OSError:
+                pass
 
 
 def _yerlestir(gecici: Path, dizin: Path, damga: str) -> Path:
     """Geçici dosyayı var olan hiçbir dosyanın üstüne yazmadan kalıba uyan bir ada taşır.
 
-    Ad önce O_EXCL ile ayrılır (eşzamanlı iki yedekleme aynı adı alamaz), sonra geçici dosya
-    o adın yerine konur. Ek, o saniyedeki en büyük mevcut ekten başlar: budamayla boşalan
-    küçük bir ad yeniden kullanılmaz, böylece yeni yedek aynı saniyedeki her yedekten yeni sıralanır.
+    Ad önce O_EXCL ile 0 baytlık bir yer tutucuyla ayrılır (eşzamanlı iki yedekleme aynı adı
+    alamaz), sonra geçici dosya atomik olarak o adın yerine konur; taşıma başarısız olursa yer
+    tutucu silinir. Yer tutucu hiçbir zaman yedek sayılmaz (bkz. `yedekleri_listele`). Ek, o
+    saniyedeki en büyük mevcut ekten (yer tutucular dahil) başlar: budamayla boşalan küçük bir
+    ad yeniden kullanılmaz, böylece yeni yedek aynı saniyedeki her yedekten yeni sıralanır.
     """
     mevcut_ekler = [0]
-    for p in yedekleri_listele(dizin):
-        m = _YEDEK_KALIBI.fullmatch(p.name)
-        if m is not None and f"{m.group(1)}-{m.group(2)}" == damga:
-            mevcut_ekler.append(int(m.group(3) or 1))
+    for (tarih, saat, ek), _, _ in _kalip_dosyalari(dizin):
+        if f"{tarih}-{saat}" == damga:
+            mevcut_ekler.append(ek)
     for n in range(max(mevcut_ekler) + 1, max(mevcut_ekler) + 1000):
         ad = f"beyin-{damga}.db" if n == 1 else f"beyin-{damga}-{n}.db"
         hedef = dizin / ad
@@ -284,8 +314,10 @@ def _buda(dizin: Path, sakla: int, korunan: list[Path]) -> None:
     """En yeni `sakla` yedek dışındakileri siler; korunanlara (yeni yedek, kaynak) dokunmaz.
 
     Silinemeyen (açık ya da başka bir yedeklemenin o an sildiği) dosya atlanır: yedek zaten
-    alınmıştır, budama bir sonraki çalıştırmada tekrar denenir.
+    alınmıştır, budama bir sonraki çalıştırmada tekrar denenir. Önce ölmüş süreçlerden kalan
+    bayat yer tutucular temizlenir.
     """
+    _bayat_yer_tutuculari_sil(dizin)
     for p in yedekleri_listele(dizin)[sakla:]:
         if any(_ayni_dosya(p, k) for k in korunan):
             continue
