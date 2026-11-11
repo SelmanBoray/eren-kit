@@ -30,10 +30,13 @@ import json
 import os
 import sys
 import time
-import traceback
+from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Mapping
+
+# Hız: hook her istemde, her Stop'ta ve her SessionStart'ta ayrı süreç olarak açılır.
+# traceback yalnız hata yolunda yüklenir; bellek.config yalnız devir klasörü önbelleği
+# (durum klasöründe devir_kok.json) geçersizse yüklenir; typing hiç yüklenmez.
 
 # ---- Ayarlar -----------------------------------------------------------------
 
@@ -102,7 +105,7 @@ def log_error(mesaj: str, env: Mapping[str, str] | None = None) -> None:
         pass
 
 
-def parse_time(deger: Any) -> datetime | None:
+def parse_time(deger: object) -> datetime | None:
     """ISO zaman metnini (Z sonekli olabilir) UTC'li datetime'a çevirir."""
     if not isinstance(deger, str) or not deger.strip():
         return None
@@ -118,7 +121,7 @@ def parse_time(deger: Any) -> datetime | None:
     return t.astimezone(timezone.utc)
 
 
-def _fiyat(tablo: dict[str, float], model: Any, varsayilan: float) -> float:
+def _fiyat(tablo: dict[str, float], model: object, varsayilan: float) -> float:
     if isinstance(model, str):
         m = model.strip().lower()
         for anahtar in sorted(tablo, key=len, reverse=True):
@@ -127,11 +130,11 @@ def _fiyat(tablo: dict[str, float], model: Any, varsayilan: float) -> float:
     return varsayilan
 
 
-def write_price(model: Any) -> float:
+def write_price(model: object) -> float:
     return _fiyat(CACHE_YAZMA_1S, model, VARSAYILAN_YAZMA)
 
 
-def read_price(model: Any) -> float:
+def read_price(model: object) -> float:
     return _fiyat(CACHE_OKUMA, model, VARSAYILAN_OKUMA)
 
 
@@ -188,6 +191,21 @@ def _mode(env: Mapping[str, str]) -> str:
     return m if m in MODLAR else "durdur"
 
 
+def _devir_kok(notlar, env: Mapping[str, str]) -> Path:
+    """Devir klasörü; çözülen yol durum klasöründe önbelleklenir (bellek.config'siz açılış)."""
+    try:
+        onbellek = state_dir(env)
+    except Exception:  # noqa: BLE001 - önbelleksiz devam
+        onbellek = None
+    return notlar.devir_kok(env, onbellek=onbellek)
+
+
+def _devir_istemi_mi(payload: dict) -> bool:
+    """İstem /devir ile mi başlıyor (baştaki boşluklar atılarak)."""
+    istem = payload.get("prompt")
+    return isinstance(istem, str) and istem.lstrip().startswith("/devir")
+
+
 # ---- Olaylar -------------------------------------------------------------------
 
 def handle_session_start(payload: dict, now: datetime,
@@ -198,11 +216,13 @@ def handle_session_start(payload: dict, now: datetime,
     if kaynak in ("startup", "clear", "compact"):
         prune_states(env)
         from bellek.devir import notlar
+        kok = _devir_kok(notlar, env)
+        notlar.oto_notlari_buda(kok, now)
         if notlar.DEVIR_KOK_UYARI:
             # Kırpmada kaybolmasın diye dizinden önce; ayrıca hook.log'a.
             log_error(notlar.DEVIR_KOK_UYARI, env)
             metin += f" Uyarı (Bellek ayarı): {notlar.DEVIR_KOK_UYARI}."
-        dizin = notlar.dizin_metni(notlar.DEVIR_KOK, now, oturum, DIZIN_SINIR)
+        dizin = notlar.dizin_metni(kok, now, oturum, DIZIN_SINIR)
         if dizin:
             metin += (" Devir: kullanıcı önceki bir işe devam etmek isterse "
                       "aşağıdaki dizinden ilgili notu oku; oturumu bırakmadan "
@@ -223,13 +243,14 @@ def handle_stop(payload: dict, now: datetime, env: Mapping[str, str]) -> None:
     if not yol:
         return None
     from bellek.devir import notlar, transcript
+    kok = _devir_kok(notlar, env)
     if notlar.DEVIR_KOK_UYARI:
         log_error(notlar.DEVIR_KOK_UYARI, env)
     ozet = transcript.oturum_ozeti(yol)
     if isinstance(ozet, dict):
         if not ozet.get("oturum") and payload.get("session_id"):
             ozet = {**ozet, "oturum": payload["session_id"]}
-        notlar.oto_not_yaz(notlar.DEVIR_KOK, ozet)
+        notlar.oto_not_yaz(kok, ozet)
     return None
 
 
@@ -255,7 +276,7 @@ def _sure(dakika: int) -> tuple[str, str]:
     return f"{dakika // 1440} gündür", f"{dakika // 1440} gün"
 
 
-def gap_texts(dakika: int, baglam: int, model: Any) -> tuple[str, str]:
+def gap_texts(dakika: int, baglam: int, model: object) -> tuple[str, str]:
     """(engelleme metni, kısa sistem mesajı)."""
     maliyet = _usd(baglam * write_price(model) / 1_000_000)
     sure_uzun, sure_kisa = _sure(dakika)
@@ -275,6 +296,10 @@ def handle_user_prompt(payload: dict, now: datetime,
                        env: Mapping[str, str]) -> dict | None:
     mod = _mode(env)
     if mod == "kapali":
+        return None
+    if _devir_istemi_mi(payload):
+        # Kullanıcı tam da önerilen şeyi yapıyor (devir notu yazıp çıkmak): boşluk
+        # engeli ve "/devir yazın" uyarısı burada yalnız işi engeller.
         return None
     oturum = payload.get("session_id")
     yol = payload.get("transcript_path")
@@ -358,7 +383,13 @@ def main() -> int:
     except BaseException as e:  # noqa: BLE001 — fail-open
         if isinstance(e, KeyboardInterrupt):
             return 0
-        log_error(f"{olay}: {traceback.format_exc()}")
+        try:
+            import traceback  # yalnız hata yolunda (açılış süresi)
+
+            ayrinti = traceback.format_exc()
+        except BaseException:  # noqa: BLE001
+            ayrinti = f"{type(e).__name__}: {e}"
+        log_error(f"{olay}: {ayrinti}")
     return 0
 
 

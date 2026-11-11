@@ -15,13 +15,97 @@ _PAKET_KOK = Path(__file__).resolve().parents[3]
 DEVIR_KOK_UYARI: str | None = None  # son devir_kok cagrisi varsayilana dustuyse nedeni
 
 
-def devir_kok(env=None) -> Path:
+_KOK_ONBELLEK_ADI = "devir_kok.json"
+_KOK_ONBELLEK_SURUM = 1
+
+
+def _ayar_dosyasi() -> tuple[str, Path]:
+    """(BELLEK_CONFIG degeri, okunacak ayar dosyasi): bellek.config'in secimiyle ayni kural.
+
+    Yalniz stat cagrilari; bellek.config'i (tomllib, dataclasses) yuklemez.
+    """
+    ayar_env = os.environ.get("BELLEK_CONFIG") or ""
+    if ayar_env:
+        return ayar_env, Path(ayar_env)
+    varsayilan = _PAKET_KOK / "bellek.toml"
+    if not varsayilan.exists():
+        ornek = _PAKET_KOK / "bellek.example.toml"
+        if ornek.is_file():
+            return "", ornek
+    return "", varsayilan
+
+
+def _damga(yol: Path) -> list[int]:
+    st = os.stat(yol)
+    return [st.st_mtime_ns, st.st_size]
+
+
+def _onbellekten_kok(onbellek: Path) -> Path | None:
+    """Gecerli onbellek kaydi varsa devir kokunu dondurur; yoksa None (asla firlatmaz)."""
+    try:
+        import json
+
+        with open(Path(onbellek) / _KOK_ONBELLEK_ADI, "rb") as f:
+            k = json.loads(f.read().decode("utf-8"))
+        if not isinstance(k, dict) or k.get("surum") != _KOK_ONBELLEK_SURUM:
+            return None
+        ayar_env, yol = _ayar_dosyasi()
+        if (k.get("ayar_env") != ayar_env or k.get("yol") != str(yol)
+                or k.get("damga") != _damga(yol) or not isinstance(k.get("kok"), str)):
+            return None
+        return Path(k["kok"])
+    except Exception:  # noqa: BLE001 - onbellek yoksa/bozuksa normal yol
+        return None
+
+
+def _onbellege_yaz(onbellek: Path, ayar_env: str, yol: Path, damga: list[int],
+                   kok: Path) -> None:
+    """Cozulen yolu onbellege yazar; yalniz ortamdan bagimsiz cozumlerde (asla firlatmaz)."""
+    tmp = None
+    try:
+        import json
+        import tomllib
+
+        from bellek.config import _select_config_path
+
+        # Secim bellek.config ile birebir ayni olmali; goreli yol cwd'ye bagli: onbelleklenmez.
+        if Path(_select_config_path(None)[0]) != yol or not yol.is_absolute():
+            return
+        if _damga(yol) != damga:  # okuma sirasinda degisti
+            return
+        ham = tomllib.loads(yol.read_bytes().decode("utf-8"))["bellek"]["vault"]
+        # Ortam degiskeni ya da ~ iceren vault her surecte yeniden cozulur.
+        if not isinstance(ham, str) or any(c in ham for c in "%$~"):
+            return
+        klasor = Path(onbellek)
+        klasor.mkdir(parents=True, exist_ok=True)
+        hedef = klasor / _KOK_ONBELLEK_ADI
+        tmp = klasor / f".{_KOK_ONBELLEK_ADI}.{os.getpid()}.tmp"
+        tmp.write_text(json.dumps({"surum": _KOK_ONBELLEK_SURUM, "ayar_env": ayar_env,
+                                   "yol": str(yol), "damga": damga, "kok": str(kok)},
+                                  ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, hedef)
+        tmp = None
+    except Exception:  # noqa: BLE001
+        pass
+    finally:
+        try:
+            if tmp is not None and tmp.exists():
+                tmp.unlink()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def devir_kok(env=None, onbellek: Path | None = None) -> Path:
     """Devir notlarinin klasoru.
 
     Sira: BELLEK_DEVIR_DIR > Bellek ayarindaki vault + "/devir" (bellek.toml,
     BELLEK_CONFIG ya da sablon) > paket kokundeki vault/devir. Ayarin vault disindaki
     hatalari (ornegin bozuk bir [[source]]) yolu degistirmez. Vault cozulemezse istisna
     firlatmaz: varsayilan klasoru dondurur, nedeni DEVIR_KOK_UYARI'ya ve stderr'e yazar.
+
+    onbellek: verilirse (hook durum klasoru) cozulen yol orada saklanir; ayar dosyasinin
+    mtime/boyutu ve BELLEK_CONFIG degismedikce sonraki surecler bellek.config'i yuklemez.
     """
     global DEVIR_KOK_UYARI
     DEVIR_KOK_UYARI = None
@@ -29,11 +113,25 @@ def devir_kok(env=None) -> Path:
     ozel = env.get("BELLEK_DEVIR_DIR")
     if ozel:
         return Path(ozel)
+    if onbellek is not None:
+        kayitli = _onbellekten_kok(onbellek)
+        if kayitli is not None:
+            return kayitli
     varsayilan = _PAKET_KOK / "vault" / "devir"
     try:
+        damga = None
+        if onbellek is not None:
+            try:
+                ayar_env, ayar_yol = _ayar_dosyasi()
+                damga = _damga(ayar_yol)
+            except Exception:  # noqa: BLE001
+                damga = None
         from bellek.config import load_vault
 
-        return Path(load_vault()) / "devir"
+        kok = Path(load_vault()) / "devir"
+        if damga is not None:
+            _onbellege_yaz(onbellek, ayar_env, ayar_yol, damga, kok)
+        return kok
     except Exception as e:  # noqa: BLE001 - hook fail-open: varsayilan klasor + gorunur uyari
         DEVIR_KOK_UYARI = (f"devir klasoru ayardan cozulemedi ({type(e).__name__}: {e}); "
                            f"varsayilan kullaniliyor: {varsayilan}")
@@ -50,9 +148,24 @@ def devir_kok(env=None) -> Path:
         return varsayilan
 
 
-DEVIR_KOK: Path = devir_kok()
+def __getattr__(ad: str):
+    """DEVIR_KOK tembel: ice aktarma bellek.config'i yuklemez (hook her turda calisir).
+
+    Ilk erisimde devir_kok() calisir (DEVIR_KOK_UYARI o an ayarlanir) ve sonuc
+    modulde saklanir; importlib.reload sonrasi yeniden hesaplanir.
+    """
+    if ad == "DEVIR_KOK":
+        kok = devir_kok()
+        globals()["DEVIR_KOK"] = kok
+        return kok
+    raise AttributeError(f"module {__name__!r} has no attribute {ad!r}")
+
+
+globals().pop("DEVIR_KOK", None)  # reload ayni sozlugu kullanir: eski degeri birakma
+
 
 OTO_MAX_GUN = 14
+OTO_BUDAMA_GUN = 2 * OTO_MAX_GUN  # otomatik notlar bundan eskiyse diskten silinir
 BITTI_MAX_GUN = 30
 OTO_MAX_KARAKTER = 1500
 ON_BILGI_OKUMA = 2048  # bayt; on bilgi bunun icinde kalir
@@ -125,17 +238,28 @@ def _guvenli_ad(oturum: str) -> str:
 
 
 def oto_not_yaz(kok: Path, ozet: dict) -> Path | None:
-    """Otomatik notu atomik yazar; oturum yoksa ya da hata olursa None."""
+    """Otomatik notu atomik yazar; oturum yoksa ya da hata olursa None.
+
+    Icerik diskteki dosyayla ayniysa yeniden yazmaz (mtime degismez): bulutla eslenen
+    klasorde gereksiz senkronu ve eszamanli okuyan oturumla os.replace cakismasini onler.
+    """
     tmp = None
     try:
         oturum = _tek_satir((ozet or {}).get("oturum"))
         if not oturum:
             return None
         klasor = Path(kok) / "oto"
-        klasor.mkdir(parents=True, exist_ok=True)
         hedef = klasor / f"{_guvenli_ad(oturum)}.md"
+        veri = _oto_icerik(ozet).encode("utf-8")
+        try:
+            with open(hedef, "rb") as f:
+                if f.read(len(veri) + 1) == veri:
+                    return hedef
+        except OSError:
+            pass  # yok ya da okunamadi: yaz
+        klasor.mkdir(parents=True, exist_ok=True)
         tmp = klasor / f".{hedef.name}.{os.getpid()}.tmp"
-        tmp.write_text(_oto_icerik(ozet), encoding="utf-8", newline="\n")
+        tmp.write_bytes(veri)
         os.replace(tmp, hedef)
         return hedef
     except Exception:
@@ -223,6 +347,50 @@ def _uyumlu(t: datetime, simdi: datetime) -> datetime:
     return t
 
 
+def _not_zamani(tarih: datetime | None, yol: Path) -> datetime | None:
+    """Notun yas hesabindaki zamani: on bilgideki tarih, yoksa dosyanin mtime'i."""
+    if tarih is not None:
+        return tarih
+    try:
+        return datetime.fromtimestamp(Path(yol).stat().st_mtime).astimezone()
+    except Exception:
+        return None
+
+
+def oto_notlari_buda(kok: Path, simdi: datetime | None = None) -> int:
+    """kok/oto/ altinda yasi OTO_BUDAMA_GUN'u asan otomatik notlari siler; silinen sayisi.
+
+    Yas, dizin_metni'nin OTO_MAX_GUN suzgeciyle ayni kaynaktan gelir (on bilgideki tarih,
+    yoksa mtime). Yalniz oto/ klasorunun dogrudan icindeki .md dosyalarina bakar; zengin
+    notlara, alt klasorlere ve gecici (.ile baslayan) dosyalara dokunmaz. On bilgisi
+    tur'u otomatik disinda bir sey diyen dosya silinmez. Asla istisna firlatmaz.
+    """
+    silinen = 0
+    try:
+        simdi = simdi or datetime.now(timezone.utc)
+        esik = timedelta(days=OTO_BUDAMA_GUN)
+        with os.scandir(Path(kok) / "oto") as it:
+            girdiler = [e for e in it if e.name.endswith(".md")
+                        and not e.name.startswith(".")]
+        for e in girdiler:
+            try:
+                if not e.is_file(follow_symlinks=False):
+                    continue
+                a = _on_bilgi_oku(Path(e.path)) or {}
+                if (a.get("tur") or "otomatik") != "otomatik":
+                    continue
+                t = _not_zamani(_tarih_coz(a.get("tarih", "")), Path(e.path))
+                if t is None or simdi - _uyumlu(t, simdi) <= esik:
+                    continue
+                os.unlink(e.path)
+                silinen += 1
+            except Exception:  # noqa: BLE001 - silinemeyen dosya atlanir
+                continue
+    except Exception:  # noqa: BLE001 - oto/ yok ya da okunamadi
+        pass
+    return silinen
+
+
 def dizin_metni(kok: Path, simdi: datetime, oturum: str | None = None,
                 sinir: int = 1500) -> str:
     try:
@@ -238,12 +406,9 @@ def dizin_metni(kok: Path, simdi: datetime, oturum: str | None = None,
             oto = n["tur"] == "otomatik"
             if oto and n["oturum"] in zengin_oturumlar:
                 continue
-            t = n["tarih"]
+            t = _not_zamani(n["tarih"], n["yol"])
             if t is None:
-                try:
-                    t = datetime.fromtimestamp(n["yol"].stat().st_mtime).astimezone()
-                except Exception:
-                    continue
+                continue
             t = _uyumlu(t, simdi)
             yas = simdi - t
             if oto and yas > timedelta(days=OTO_MAX_GUN):
