@@ -33,6 +33,12 @@ Karar sırası:
 9. İşaret dosyası O_EXCL ile oluşturulursa → RET + harita ("harita"); başka bir
    paralel istek önce oluşturduysa → izin ("izin"); başka hata → izin.
 
+SessionStart (aynı komut, ``compact`` eşleştiricisiyle kayıtlı): ``source``
+"compact" ise o oturumun ana bağlam işaretleri (``ana/*.harita``) silinir;
+sıkıştırma haritayı bağlamdan düşürdüğü için sonraki ilk tam okuma yeniden
+harita alır. Alt ajan işaretleri, .jsonl dosyaları ve başka oturumlar korunur;
+çıktı her zaman boştur.
+
 Ortam değişkenleri: ``BELLEK_KAPI`` ("kapali": her şeye izin),
 ``BELLEK_KAPI_ESIK`` (bayt, varsayılan 16384), ``BELLEK_KAPI_HEDEFLI`` (satır,
 varsayılan 80), ``BELLEK_KAPI_TAVAN`` (bayt, varsayılan 5000000),
@@ -258,7 +264,11 @@ def _append_line(yol: str, kayit: dict) -> None:
     FILE_APPEND_DATA haklı tutamaçta dosya sistemi her yazımı sona atomik ekler.
     """
     import json
-    veri = (json.dumps(kayit, ensure_ascii=False) + "\n").encode("utf-8")
+    _append_bytes(yol, (json.dumps(kayit, ensure_ascii=False) + "\n").encode("utf-8"))
+
+
+def _append_bytes(yol: str, veri: bytes) -> None:
+    """Baytları tek yazımla sona ekler (bkz. ``_append_line``)."""
     if os.name == "nt":
         import _winapi
         tutamac = _winapi.CreateFile(yol, _FILE_APPEND_DATA, _FILE_SHARE_ALL, 0,
@@ -317,13 +327,39 @@ def _create_marker(yol: str) -> None:
         pass
 
 
+def _rotate_log(yol: str) -> None:
+    """Büyük günlüğü ``.1``'e döndürür; paralel döndürmede ölçüm kaybetmez.
+
+    Yarış: iki süreç dosyayı aynı anda büyük görürse ikincisinin taşıdığı,
+    birincinin döndürmesinden sonra açılmış yeni ve küçük günlük olur; doğrudan
+    ``.1``'e taşısaydı 5 MB'lık geçmişi ezerdi. Bu yüzden önce sürece özel bir
+    ada taşınır (yeniden adlandırma atomik; aynı dosyayı yalnız bir süreç alır),
+    sonra boyut yeniden denetlenir: hâlâ büyükse ``.1`` olur, değilse içeriği
+    güncel günlüğe geri eklenir. Kilit ve bekleme yok.
+    """
+    try:
+        if os.stat(yol).st_size <= GUNLUK_MAX_BAYT:
+            return
+    except Exception:
+        return
+    gecici = f"{yol}.{os.getpid()}.donus"
+    try:
+        os.rename(yol, gecici)
+    except Exception:
+        return  # başka süreç önce taşıdı ya da açık tutuyor: eklemeye devam
+    try:
+        if os.stat(gecici).st_size > GUNLUK_MAX_BAYT:
+            os.replace(gecici, yol + ".1")
+        else:
+            _append_bytes(yol, _read_bytes(gecici))
+            os.remove(gecici)
+    except Exception:
+        pass  # geçici dosya kalır; ölçüm silinmez
+
+
 def _log_decision(durum: str, kayit: dict, env: Mapping[str, str]) -> None:
     yol = os.path.join(durum, "kapi.jsonl")
-    try:
-        if os.stat(yol).st_size > GUNLUK_MAX_BAYT:
-            os.replace(yol, yol + ".1")
-    except Exception:
-        pass  # yoksa ya da taşınamazsa (ör. başka süreç açık tutuyor) eklemeye devam
+    _rotate_log(yol)
     try:
         os.makedirs(durum, exist_ok=True)
         _append_line(yol, kayit)
@@ -451,14 +487,48 @@ def _decide(payload: Mapping[str, Any], env: Mapping[str, str]) -> dict | None:
     return cikti
 
 
+def _on_compact(payload: Mapping[str, Any], env: Mapping[str, str]) -> None:
+    """SessionStart/compact: oturumun ANA bağlamındaki harita işaretlerini siler.
+
+    Sıkıştırma aynı session_id ile sürer ama haritayı modelin bağlamından düşürür;
+    işaret kalsaydı sonraki ilk tam okuma haritasız geçerdi. Alt ajan işaretleri,
+    olay/ölçüm günlükleri (.jsonl) ve başka oturumlar korunur. startup/resume/clear
+    hiçbir şeyi silmez.
+    """
+    if payload.get("source") != "compact":
+        return
+    oturum = payload.get("session_id")
+    if not isinstance(oturum, str) or not oturum:
+        return
+    klasor = os.path.join(state_dir(env), "oturumlar", _safe_name(oturum),
+                          _safe_name(ANA_AJAN))
+    try:
+        it = os.scandir(klasor)
+    except OSError:
+        return
+    with it:
+        for e in it:
+            if e.name.endswith(".harita"):
+                try:
+                    os.remove(e.path)
+                except OSError:
+                    pass
+
+
 def run(payload: Mapping[str, Any],
         env: Mapping[str, str] | None = None) -> dict | None:
-    """Reddederken stdout'a yazılacak çıktı sözlüğünü, izin verirken None döndürür."""
+    """Reddederken stdout'a yazılacak çıktı sözlüğünü, izin verirken None döndürür.
+
+    SessionStart olayında (compact) işaretleri temizler ve her zaman None döndürür.
+    """
     from collections.abc import Mapping
     env = os.environ if env is None else env
     if not isinstance(payload, Mapping):
         return None
     try:
+        if payload.get("hook_event_name") == "SessionStart":
+            _on_compact(payload, env)
+            return None
         return _decide(payload, env)
     except Exception:
         _log_exception(f"karar: {payload.get('tool_name')!r}", env)
@@ -473,7 +543,8 @@ def _may_concern(ham: bytes) -> bool:
     olur (fail-open yönü).
     """
     if b'"Read"' not in ham:
-        return False
+        # SessionStart/compact: harita işaretleri temizlenecek (bkz. _on_compact).
+        return b'"SessionStart"' in ham and b'"compact"' in ham
     kucuk = ham.lower()
     return b".md" in kucuk or b".markdown" in kucuk
 
@@ -492,7 +563,7 @@ def main() -> int:
     except BaseException as e:  # noqa: BLE001 — fail-open
         if isinstance(e, KeyboardInterrupt):
             return 0
-        _log_exception("PreToolUse", None)
+        _log_exception("hook", None)
     return 0
 
 
