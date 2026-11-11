@@ -23,6 +23,7 @@ from __future__ import annotations
 import functools
 import inspect
 import re
+from datetime import datetime
 from typing import Any
 
 from . import db
@@ -83,6 +84,24 @@ def _tr_kucuk(s: str) -> str:
 
 def _tr_anahtar(s: Any) -> tuple:
     return tuple(_SIRA.get(c, 1000 + ord(c)) for c in _tr_kucuk(_tek_satir(s)))
+
+
+def _yerel_gun(deger: Any) -> str:
+    """Zaman damgasının yerel takvim günü (YYYY-AA-GG).
+
+    Saat dilimli damga (db UTC "Z" yazar) sistemin yerel saat dilimine çevrilir;
+    yalnız tarih, saat dilimsiz ya da çözülemeyen değer olduğu gibi ilk 10 karakter.
+    """
+    s = _tek_satir(deger)
+    if not s:
+        return ""
+    try:
+        an = datetime.fromisoformat(s[:-1] + "+00:00" if s.endswith(("Z", "z")) else s)
+    except ValueError:
+        return s[:10]
+    if an.tzinfo is None:
+        return s[:10]
+    return an.astimezone().date().isoformat()
 
 
 def _butce(butce: Any) -> int:
@@ -310,7 +329,8 @@ def gez(con, id=None, butce=1500) -> dict:
     """Bir düğümü ve doğrudan alt dallarını başlık + kısa özetle listeler."""
     butce = _butce(butce)
     if id is None:
-        id = db.kok_id(con)
+        # Okuma yolu: kök yoksa oluşturmaz (kok_id yazar ve yazma kilidini açık bırakır).
+        id = db.kok_bul(con)
         if id is None:
             return _hata("kök düğüm bulunamadı", butce)
     r = _dugum(con, id)
@@ -400,12 +420,12 @@ def _sir_eslesir(sorgu: str, baslik: Any) -> bool:
     Aksi halde arama, gizli gövdenin içeriğini doğrulayan bir kâhine dönüşür
     (ör. "şifre 1234" araması sır düğümünü bulursa gövdede 1234 olduğu sızar).
     """
-    terimler = [
-        t for t in re.findall(r"\w+", _tr_kucuk(sorgu)) if t not in _FTS_ISLEC
-    ]
+    # FTS ile aynı katlama (db.normalize): "sifre kasasi" ile "Şifre kasası" aynı
+    # düğümü aynı biçimde bulur. Yalnız başlığa bakılır; gövde hiç okunmaz.
+    terimler = [t for t in db.normalize(sorgu).split() if t not in _FTS_ISLEC]
     if not terimler:
         return False
-    b = _tr_kucuk(_tek_satir(baslik))
+    b = db.normalize(_tek_satir(baslik))
     return all(t in b for t in terimler)
 
 
@@ -596,7 +616,7 @@ def oku(con, id, butce=2500) -> dict:
         geri.append((baslik, _BASLIK))
         for o in olgular:
             parca = []
-            t = _tek_satir(o["tarih"])[:10]
+            t = _yerel_gun(o["tarih"])
             if t:
                 parca.append(t)
             parca.append(o["kaynak_tur"])
