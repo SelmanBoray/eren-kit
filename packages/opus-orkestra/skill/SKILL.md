@@ -140,6 +140,8 @@ Alt agent bu konuşmayı görmez; elinde yalnızca senin yazdığın brief vard�
 
 **Brief'te kod yoktur.** Brief "ne yapılacak"ı ve sınırı söyler, "nasıl yapılacak"ı söylemez. Kod bloğu, sözde kod, satır satır tarif, "şu değişkeni şöyle değiştir, sonra şu döngüyü ekle" türü adım listesi brief'e girmez. Bunu yazıyorsan kodu kendin yazıyorsun demektir; sadece dolaylı yoldan, ve hem senin bağlamın hem zaman boşa gider. Çözümü agent bulur; o yüzden oradadır. Brief'e girebilecek tek "kod" ortak yüzeydir: başka agent'la birleşen fonksiyon adı, imza, veri şekli, dosya yolu, bir satır örnek çağrı. Bunlar sözleşmedir, uygulama değil. Brief yazarken kendini çözüm tasarlarken yakalarsan dur: ya tasarımı da agent'a bırak (Opus), ya da yalnızca gözlenecek davranışı ve bitti tanımını yaz.
 
+**Opus'a brief açık uçlu yazılır.** Opus'u karar verebildiği için seçiyorsun; brief bu alanı daraltmamalı. Amacı, nedeni, sınırı, sözleşmeyi ve bitti tanımını ver; yaklaşımı, tasarımı ve iç yapıyı ona bırak. Aklındaki çözümü talimat olarak yazma; paylaşmaya değer bir gözlemin varsa onu olgu ya da ipucu olarak ver ve bağlayıcı olmadığını söyle. Brief'te ona açıkça alan tanı: seçenekleri kendisinin tartmasını, senin öngörmediğin daha iyi bir yol görürse onu seçmesini ve seçimini gerekçesiyle raporlamasını iste. Serbestlik yönteme aittir, sınıra değil: sahiplik haritası, sözleşme ve kısıtlar Opus için de sabittir. Sonnet brief'i bunun tersidir: eksiksiz ve tek yönlü.
+
 Her brief şunları içerir:
 
 - **Amaç ve neden:** Ne yapılacak ve bu neye hizmet ediyor. Nedeni bilen agent, öngörmediğin durumlarda doğru kararı verir.
