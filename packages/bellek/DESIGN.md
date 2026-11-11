@@ -154,12 +154,13 @@ bellek/                      (packages/bellek)
 |---|---|---|
 | `bellek --version` | M0 | `bellek <sürüm>` yazar (M0: 0.0.1) |
 | `bellek yollar [--json]` | M0 | Çözülmüş ayar. JSON: `config_path`, `vault`, `state_dir`, `server{host,port}`, `sources[{name,path,exists}]`, `projects{yol: ad}` |
-| `bellek doktor [--json]` | M0 | Sabit sırayla: `python`, `vault`, `state_dir`, her kaynak için `source:<name>`, `sqlite_fts5`. JSON: `status`, `checks[{name,status,detail}]` |
+| `bellek doktor [--json]` | M0 | Sabit sırayla: `python`, `vault`, `state_dir`, her kaynak için `source:<name>`, `sqlite_fts5`, `beyin_db`, `beyin_fts`, `beyin_yetim`, `beyin_gelen`, `beyin_kuyruk`, `hook_gunluk`. JSON: `status`, `checks[{name,status,detail}]` |
 | `bellek sync` | M2 | Vault + kaynakları tarar, indeksi günceller |
 | `bellek ara` | M2 | İndekste arar |
 
 - Doktor durumları `ok` / `warn` / `error`; genel durum en kötüsüdür. `error`: Python < 3.12, vault yok, durum klasörü yazılamıyor,
-  FTS5 yok. `warn`: durum klasörü yok (ilk kullanımda oluşur), kaynak klasörü yok. Doktor yan etkisizdir; çöken kontrol `error` olur, rapor kesilmez.
+  FTS5 yok. `warn`: durum klasörü yok (ilk kullanımda oluşur), kaynak klasörü yok.
+  `error`: beyin.db bozuk ya da şeması yeni, FTS indeksi tutarsız. `warn`: eski şema, yetim düğüm, 14 günden eski gelen önerisi, 24 saatten eski kuyruk, son 7 günde hook hatası. Doktor beyin.db'yi salt okunur açar, yan dosya bırakmaz. Doktor yan etkisizdir; çöken kontrol `error` olur, rapor kesilmez.
 - Çıkış kodları: 0 başarı (doktorda `warn` dahil; komutsuz çağrı yardım yazar); 1 doktor `error`; 2 ayar hatası
   (stderr: `Ayar hatası: …`) ya da kullanım hatası.
 
@@ -512,12 +513,12 @@ Eklenme: 2026-11-08. Arama/enjeksiyon hattından (§8, M5) bağımsız, yalnız 
 
 | Bileşen | Ne yapar |
 |---|---|
-| Stop hook'u | Otomatik not yazar: `<devir klasörü>/oto/<oturum>.md` (atomik, oturum başına tek dosya, ≤1500 karakter). Karar vermez, stdout boş. |
+| Stop hook'u | Otomatik not yazar: `<devir klasörü>/oto/<oturum>.md` (atomik, oturum başına tek dosya, ≤1500 karakter). İçerik değişmediyse dosya yeniden yazılmaz. 28 günden (2×14) eski otomatik notlar SessionStart'ta diskten silinir; zengin notlara dokunulmaz. Karar vermez, stdout boş. |
 | `/devir` skill'i (kaynak: `skills/devir/SKILL.md`; kurulumda `~/.claude/skills/devir/`'e kopyalanır) | Zengin not: `<devir klasörü>/YYYY-MM-DD-HHMM-<slug>.md`. Bölümler: Neredeyiz / Sıradaki adımlar / Açık sorular ve kararlar / İlgili dosyalar ve komutlar; ≈2500 karakter; sır yazılmaz. Aynı oturum için varsa yenisi açılmaz, güncellenir. |
 | SessionStart dizini | Oturum kimliği + son notların dizini `additionalContext` olarak girer (toplam ≤2000 karakter, dizin ≤1500). Zengin notlar önce, sonra otomatikler; her grup yeniden eskiye; `private: true` ve aynı oturumun kendi notu hariç; zengin notu olan oturumun otomatik notu elenir. Otomatik notlar 14 gün, `durum: bitti` notlar 30 gün sonra dizinden düşer. Yalnız `startup`/`clear`/`compact` kaynaklarında. |
 | UserPromptSubmit uyarısı | (a) Boşluk: son assistant mesajından ≥60 dk geçmiş ve bağlam ≥150K ise yeniden yazım maliyeti tahmini verilir. (b) Büyüklük: bağlam ≥300K olunca, sonra her +100K eşiğinde tek seferlik sistem mesajı (cache okuma maliyeti tahmini). Sıkıştırma (compact) sonrası uyarı çıkmaz. **Bağlama metin eklemez**; yalnız `decision: block` ya da `systemMessage`. |
 
-Mod `BELLEK_DEVIR_UYARI`: `durdur` (varsayılan) boşlukta mesajı bir kez engeller, aynı boşlukta tekrar gönderilirse geçer; `uyar` engellemez, yalnız kısa mesaj gösterir; `kapali` hiç uyarmaz. Boşluk bildirimi geldiğinde o boyutun eşik uyarısı ayrıca gelmez. Maliyetler API liste fiyatı karşılığıdır (abonelikte limit harcar); fiyat tablosu `hook.py`'dedir, tanınmayan model varsayılana düşer.
+Mod `BELLEK_DEVIR_UYARI`: `durdur` (varsayılan) boşlukta mesajı bir kez engeller, aynı boşlukta tekrar gönderilirse geçer; `uyar` engellemez, yalnız kısa mesaj gösterir; `kapali` hiç uyarmaz. `/devir` ile başlayan istem hiçbir zaman engellenmez ve uyarı almaz. Boşluk bildirimi geldiğinde o boyutun eşik uyarısı ayrıca gelmez. Maliyetler API liste fiyatı karşılığıdır (abonelikte limit harcar); fiyat tablosu `hook.py`'dedir, tanınmayan model varsayılana düşer.
 
 **Not ön bilgisi alanları** (`---` bloğu, `anahtar: değer`, tek satır; ilk 2 KB okunur):
 
@@ -536,15 +537,15 @@ Mod `BELLEK_DEVIR_UYARI`: `durdur` (varsayılan) boşlukta mesajı bir kez engel
 | Değişken | Varsayılan | Anlam |
 |---|---|---|
 | `BELLEK_DEVIR_DIR` | `<vault>/devir` (`bellek.toml`'daki vault altında) | Not kökü (otomatik notlar `oto/` altında) |
-| `BELLEK_DEVIR_STATE` | `%LOCALAPPDATA%\Bellek\devir` | Oturum başına uyarı durumu (`oturumlar/*.json`, 30 günden eskiler silinir) ve `hook.log` (≈1 MB'a kırpılır) |
+| `BELLEK_DEVIR_STATE` | `%LOCALAPPDATA%\Bellek\devir` | Oturum başına uyarı durumu (`oturumlar/*.json`, 30 günden eskiler silinir) ve `hook.log` (≈1 MB'a kırpılır). `devir_kok.json`: çözülen devir klasörü önbelleği (ayar dosyasının yolu, mtime'ı ve boyutuyla doğrulanır). |
 | `BELLEK_DEVIR_UYARI` | `durdur` | `durdur` / `uyar` / `kapali` |
 
-**Fail-open ve kayıt biçimi.** Her hatada exit 0 ve boş stdout; hata `hook.log`'a yazılır. Hook, settings'te şu biçimde kaydedilir: `python -I "<paket>/src/bellek/devir/hook.py" || true`. `|| true` zorunlu: Python dosyayı bulamazsa exit 2 verir ve Claude Code bunu UserPromptSubmit'te engel sayar, yani istemi kilitler. Transkript okuma sınırlıdır (baştan ≤2 MB, sondan ≤12 MB, son istek için ≤8 MB); dosyanın tamamı belleğe alınmaz.
+**Fail-open ve kayıt biçimi.** Her hatada exit 0 ve boş stdout; hata `hook.log`'a yazılır. Hook, settings'te şu biçimde kaydedilir: `python -I -S "<paket>/src/bellek/devir/hook.py" || true`. `|| true` zorunlu: Python dosyayı bulamazsa exit 2 verir ve Claude Code bunu UserPromptSubmit'te engel sayar, yani istemi kilitler. Transkript okuma sınırlıdır (baştan ≤2 MB, sondan ≤12 MB, son istek için ≤8 MB); dosyanın tamamı belleğe alınmaz. 2. evrenin süre bütçesi 2. evreye girildiği andan sayılır. İstek sayımı dökümün JSON biçiminden (sıkışık ya da boşluklu) bağımsızdır; yedek sayım yolu da süre sınırına tabidir.
 
 **Gizlilik.** Otomatik nota ilk/son istem ≤200 karakter ve `transcript.maskele` ile maskelenmiş girer (API anahtarı önekleri, `parola/token/secret/api_key` değerleri, Bearer, uzun hex/base64 dizileri → `[gizli]`). Buna rağmen otomatik notların **konuları** (oturum başlığı) yeni oturumların bağlamına, dolayısıyla model sağlayıcısına gider; kişisel işler için zengin nota `private: true` konur. Bu §11 süzgecinin yerine geçmez; M2/M5'te vault'a girişte aynı sır süzgeci testleri devir notlarını da kapsar.
 
 **Bilinçli sapmalar.**
-- Hook `clients/` (§3) yerine `src/bellek/devir/` içindedir. Yalnız stdlib kullanır, `python -I` ile çalışır; `-I` PYTHONPATH'i yok saydığından dosya kendi `src` klasörünü `sys.path`'e ekler. Gerekçe: devir, bellekd/arama olmadan tek başına çalışmalı ve her turda çalıştığı için hızlı olmalı.
+- Hook `clients/` (§3) yerine `src/bellek/devir/` içindedir. Yalnız stdlib kullanır, `python -I -S` ile çalışır; `-I` PYTHONPATH'i yok saydığından dosya kendi `src` klasörünü `sys.path`'e ekler. Gerekçe: devir, bellekd/arama olmadan tek başına çalışmalı ve her turda çalıştığı için hızlı olmalı.
 
 **Açık soru.** `<devir klasörü>` notları M2 `bellek sync` indekslemesinde nasıl ele alınacak? Otomatik notlar çok sayıda, kısa ömürlü ve gürültülü. Öneri: indeks dışı bırakmak ya da ayrı bir tür (`devir`) olarak etiketleyip aramada varsayılan kapalı tutmak. Karar zamanı: M2.
 
@@ -562,9 +563,9 @@ Hedefler: kullanıcı hakkındaki her şeyin hiyerarşik bir "beyin haritası"nd
 
 - **Tek gerçek kaynak SQLite.** `%LOCALAPPDATA%\Bellek\beyin.db` (`BELLEK_BEYIN_DB` ile değişir), WAL, `PRAGMA user_version` ile şema sürümü (`SEMA_SURUMU`); eski sürümden göç tek işlemde ve veri silmeden, daha yeni sürüm açılmayı reddeder.
 - **Tablolar:** `dugum` (başlık ≤120, özet ≤200, ayrıntı ≤1500; tür, durum, gizlilik, tarih, sürüm), `kenar` (DAG; tür `alt`/`ilgili`; her düğümün tek birincil `alt` ebeveyni, kısmi tekil indeksle zorlanır), `olgu` (ekleme-yalnız: metin ≤300 ve değişmez, silinmez; `olgu_eskit` ile eskitilir, yerine geçen olguya bağlanır), `kaynak` (tohum/oturum/memory/devir/elle), `ek` (Drive dosya kimliği, sha256; sonraki aşamada kullanılacak), `gelen` (gelen kutusu: yeni_dugum/olgu/celiski/tasima önerileri), `gecmis` (her yazmada eski/yeni JSON; güncellenemez ve silinemez, tetikleyiciyle).
-- **Arama:** FTS5 (`unicode61 remove_diacritics 2` + Türkçe katlama için `bellek_normalize`), BM25 sütun ağırlıkları başlık > özet > olgu > ayrıntı; kısa sorgu kelimelerine önek araması yapılmaz. `sir_icerir` düğümün gövdesi (özet, ayrıntı, olgu) indekslenmez, yalnız başlık.
+- **Arama:** FTS5 (`unicode61 remove_diacritics 2` + Türkçe katlama için `bellek_normalize`), BM25 sütun ağırlıkları başlık > özet > olgu > ayrıntı; kısa sorgu kelimelerine önek araması yapılmaz. `sir_icerir` düğümün gövdesi (özet, ayrıntı, olgu) indekslenmez, yalnız başlık. Sır düğümünün başlığıyla eşleşme de aynı katlamayı (`bellek_normalize`) kullanır. Okuma yolları (gez, dışa aktarım) kök oluşturmaz; kökü olmayan veritabanında "kök düğüm bulunamadı" döner. Olgu tarihi yerel takvim gününe göre gösterilir.
 - **Gizlilik:** `normal` / `ozel` / `sir_icerir`. Etkin gizlilik düğümün ve birincil ata zincirinin en kısıtlayıcısıdır; tanınmayan değer ve bulunamayan düğüm `sir_icerir` sayılır (kapalı başarısızlık). `sir_icerir` düğümde yalnız başlık ve "[gizli içerik]" döner.
-- **Tek yazar servis.** `python -m bellek.beyin servis`, `127.0.0.1:47321` (varsayılan), ThreadingHTTPServer; veritabanını yalnız servis yazar, yazmalar tek yazar iş parçacığında sıraya girer. Her istekte `Host` (varsayılan olarak yalnız `127.0.0.1:<port>` / `localhost:<port>`; `BELLEK_BEYIN_IZINLI_HOST` istisnası için bkz. §16.7 "Telefondan erişim"), `Origin` (varsa reddedilir), `Content-Type` (POST için `application/json`) ve `X-Beyin-Token` belirteci (`/api/saglik` hariç tüm `/api/*`; sabit zamanlı karşılaştırma) denetlenir; bu kurallar `/api/ui/*` dışındaki tüm `/api/*` uçlarında sürer, yani bu uçlar tarayıcıdan çağrılamaz. Görsel arayüz yalnız ayrı `/api/ui/*` ad alanını kullanır (§16.7). Tek servis kilidi dosyası ikinci servisi engeller. Kuyruk dosyası (`beyin_kuyruk.jsonl`) 60 sn'de bir ve açılışta boşaltılır; `istek_id` kalıcı depoda (son 10.000) tekilleştirilir, böylece yeniden işleme çift yazmaz. Uçlardan biri `POST /api/duzelt`'tir (düğüm düzeltme; gövde: `dugum_id`, isteğe bağlı `ozet`, `ayrinti`, `eskit`, `kaynak`; `ozet`/`ayrinti`/`eskit`ten en az biri gerekir); `duzelt` istekleri aynı depoyu paylaşır, anahtarlar `duzelt:` önekiyle ayrılır (aynı `istek_id` `yaz` ile çakışmaz).
+- **Tek yazar servis.** `python -m bellek.beyin servis`, `127.0.0.1:47321` (varsayılan), ThreadingHTTPServer; veritabanını yalnız servis yazar, yazmalar tek yazar iş parçacığında sıraya girer. Her istekte `Host` (varsayılan olarak yalnız `127.0.0.1:<port>` / `localhost:<port>`; `BELLEK_BEYIN_IZINLI_HOST` istisnası için bkz. §16.7 "Telefondan erişim"), `Origin` (varsa reddedilir), `Content-Type` (POST için `application/json`) ve `X-Beyin-Token` belirteci (`/api/saglik` hariç tüm `/api/*`; sabit zamanlı karşılaştırma) denetlenir; bu kurallar `/api/ui/*` dışındaki tüm `/api/*` uçlarında sürer, yani bu uçlar tarayıcıdan çağrılamaz. Görsel arayüz yalnız ayrı `/api/ui/*` ad alanını kullanır (§16.7). Tek servis kilidi dosyası ikinci servisi engeller. Kuyruk dosyası (`beyin_kuyruk.jsonl`) 60 sn'de bir ve açılışta boşaltılır; `istek_id` kalıcı depoda (son 10.000) tekilleştirilir, böylece yeniden işleme çift yazmaz. Erken reddedilen ya da gövdesi okunmayan isteklerde bağlantı nazikçe kapanır: yanıt gönderilip yazma yönü kapatılır, istemcinin kalan baytları en çok 2 sn / 4 MB okunup işlenmeden atılır (aksi halde RST yanıtı yutar). Gövde bildiren GET/HEAD yanıtından sonra bağlantı kapanır; POST'ta `Transfer-Encoding` ve yinelenmiş `Content-Length` 400 alır. Uçlardan biri `POST /api/duzelt`'tir (düğüm düzeltme; gövde: `dugum_id`, isteğe bağlı `ozet`, `ayrinti`, `eskit`, `kaynak`; `ozet`/`ayrinti`/`eskit`ten en az biri gerekir); `duzelt` istekleri aynı depoyu paylaşır, anahtarlar `duzelt:` önekiyle ayrılır (aynı `istek_id` `yaz` ile çakışmaz).
 - **MCP köprüsü.** Kullanıcı kapsamlı stdio MCP sunucusu (`python -m bellek.beyin mcp`, yalnız stdlib). 6 araç: `beyin_gez`, `beyin_ara`, `beyin_oku`, `beyin_yaz`, `beyin_duzelt`, `beyin_gelen`. Dönüşler bütçelidir (çıktı tavanı 8000 karakter, `beyin_gelen` ≈1500). Servis kapalıyken okuma salt-okunur veritabanından (yanıt "servis kapalı; salt-okunur yedekten" önekiyle), yazma sır denetiminden geçip kuyruk dosyasına gider. `beyin_duzelt` (`ozet`, `ayrinti`, `eskit`) kuyruğa alınmaz: servis kapalıysa düzeltme yapılmaz; zaman aşımında sonuç "belirsiz" diye bildirilir (aynı `istek_id` ile bir kez yeniden denenir, kullanıcıya `beyin_oku` ile kontrol önerilir).
 - **Yazma kuralları** (`yaz.py`): metin ≤300 karakter; sır içeren metin/başlık/ebeveyn reddedilir (`bellek.devir.transcript.maskele` ile aynı desenler); `sir_icerir` dala yazılmaz; `dugum_id` verilmişse ona olgu eklenir (aynısı varsa `zaten_var`); `baslik`+`ebeveyn` ile yeni düğüm açılabilir; **kökün altına yeni üst dal gelen kutusuna gider** (kullanıcı onaylar); `Özel` altına açılan düğüm `ozel` olur; dışarıdan gelen kaynak türü yalnız `oturum` ya da `elle` olabilir (`tohum`/`memory` dışarıdan verilemez); karar verilemeyen yazma gelen kutusuna düşer. **`duzelt`:** var olan düğümün `ozet` (≤200) ve `ayrinti` (≤1500) alanını tam metin olarak değiştirir; `ayrinti=""` ayrıntıyı temizler. `eskit` ile bir olguyu da eskitir: verilen metin düğümün aktif olgularıyla eşleştirilir (kırpma ve iç boşluk teklenir, harf duyarlı); birden çok aktif eşleşme ya da hiç eşleşme olmaması isteği reddeder, olgu zaten eskimişse "değişmedi" döner. Eskitme `olgu_eskit` iledir, olgu satırı silinmez; özet/ayrıntı değişikliğiyle aynı işlemde yürür, herhangi bir ret olursa hiçbir şey yazılmaz. Değişiklik `gecmis`e eski ve yeni değerle yazılır. Olgular ekleme-yalnız kalır: olgu metni değişmez, yalnız durumu `eskidi` olur. Sır denetimi, `sir_icerir` reddi ve kaynak türü zorlaması `yaz` ile aynıdır. Talimat, oturumdaki modele bu yazma kuralını söyler.
 
@@ -576,11 +577,14 @@ Sabit önek yalnız araç adları (araç şemaları tool search ile gerektiğind
 
 Mevcut hafıza notlarından çıkarım agent'larıyla aday düğümler üretilip birleştirilebilir ve `python -m bellek.beyin ice-al <jsonl>` ile içe alınır (tek işlem, idempotent: var olan anahtar güncellenir, aynı olgu eklenmez). Tohum dosyası repo dışında tutulur (ör. `%LOCALAPPDATA%\Bellek\tohum\`); kişisel veri git'e girmez.
 
+Kendi gizliliği `sir_icerir` olmayan bir tohum satırında yazma yolunun reddedeceği bir sır varsa satır bütünüyle atlanır ve hatalara sırsız bir kayıt düşer. `sir_icerir` satırın gövdesi (özet, ayrıntı, olgu) taranmaz; başlığında, anahtarında ya da yol alanlarında sır varsa o satır da atlanır. Tohumla alındıktan sonra tohum dışı bir kaynakla (yazma/düzeltme) değiştirilmiş düğümün başlık, özet, ayrıntı, tür, durum ve tarih alanları yeniden içe alımda korunur ve anahtarı `korunan` listesinde döner; `--uzerine-yaz` ile tohum kazanır. İçe alım `BEGIN IMMEDIATE` ile tek işlemde yazar.
+
 ### 16.5 Sonraki aşamalar (henüz yok)
 
 | Konu | Not |
 |---|---|
-| Drive ekleri | rclone, `drive.file` kapsamı, şifreli yedek; `ek` tablosu hazır |
+| Drive ekleri | rclone, `drive.file` kapsamı, şifreli yedek; `ek` tablosu hazır. Yerel yedeğin artık var olduğunu §16.6'da gör. Yerel yedekler şifresizdir (sır gövdeleri dahil); makine dışına çıkan her yedek önce şifrelenir. |
+| Günlük yedek görevi ve şifreli uzak yedek | Açık; yerel `yedekle` komutu var (§16.6) |
 | Arka plan çıkarımı | Oturum kayıtlarından; yalnız gelen kutusuna yazar |
 | Mobil istemci | Beyin MCP'sinin kısıtlı bir MCP profiline eklenmesi |
 | Değerlendirme | M1 sorgu setinin düğümlere eşlenmesi (§10) |
@@ -588,9 +592,10 @@ Mevcut hafıza notlarından çıkarım agent'larıyla aday düğümler üretilip
 
 ### 16.6 Bilinçli sapmalar
 
-- Markdown/Obsidian kasası yerine SQLite gerçek kaynaktır (§5'in tersi). Okunabilir döküm: `disa-aktar --bicim md` (ağaç, `--ozelsiz` ile özel özetler gizlenir; sır gövdesi varsayılan olarak yazılmaz) ve deterministik `--bicim jsonl` (sıralı, `sort_keys`; yalnız aktif olgular).
+- Markdown/Obsidian kasası yerine SQLite gerçek kaynaktır (§5'in tersi). Okunabilir döküm: `disa-aktar --bicim md` (ağaç, `--ozelsiz` ile özel özetler gizlenir; sır gövdesi varsayılan olarak yazılmaz) ve deterministik `--bicim jsonl` (sıralı, `sort_keys`; yalnız aktif olgular). Dışa aktarım da etkin gizliliği (§16.2) kullanır: sır ya da özel bir dalın altındaki düğümler, kaç seviye altta olursa olsun, kendi işaretleri varmış gibi kırpılır; markdown'da sır gövdesi `sir_dahil` ile birlikte `ozel_dahil` da ister.
+- Yedekleme: `yedekle`, `yedekler`, `geri-yukle`: SQLite `backup()` ile çevrimiçi ve tutarlı tam kopya alır; dosyalar yerel `beyin_yedek` klasöründedir, en yeni 14'ü kalır. Geri yükleme yalnız servis kapalıyken yapılır; eski veritabanı silinmez, `-eski-<zaman>` adıyla kenara alınır. JSONL dökümü yedek değildir (yalnız aktif olgular; geçmiş, kaynak ve gelen kutusu yok).
 - Kod tanımlayıcıları Türkçedir (CLAUDE.md'deki İngilizce kuralından sapma); gerekçe §12 sapma kaydında.
-- CLI: `ice-al`, `disa-aktar`, `servis`, `mcp`, `ara`, `gez`, `oku`, `ac`.
+- CLI: `ice-al`, `disa-aktar`, `servis`, `mcp`, `ara`, `gez`, `oku`, `ac`, `yedekle`, `yedekler`, `geri-yukle`.
 
 ### 16.7 Görsel arayüz ("Biyolüminesan Mantar Ağı")
 
@@ -606,9 +611,11 @@ Eklendiği tarih: 2026-11-08. Beyin grafını toprak altı bir mantar ve miselyu
 - `sahne.js`: canvas çizimi, kamera, seçim ve fare etkileşimi.
 - `panel_dugum.js`: düğüm ayrıntı paneli.
 - `arama.js`: arama kutusu ve vurgulama.
-- `gelen.js`: gelen kutusu paneli ve kabul/red.
+- `gelen.js`: gelen kutusu paneli ve kabul/red. Onay ("Emin misin?") kendiliğinden zaman aşımına uğramaz. Kullanıcının verdiği kararla aynı sonuca zaten bağlanmış öğe başarı sayılır ve listeden düşer; farklı karara bağlanmışsa bu açıkça söylenir. Panel açılınca odak panele geçer, kapanınca açan düğmeye döner.
 - `zaman.js`: zaman şeridi.
 - `app.js`: hepsini bağlar.
+
+Statik dosyalar (index dahil; sayfa yalnız süreç geneli asistan adını gömer, belirteç taşımaz) içerikten türetilen güçlü `ETag` ve `Cache-Control: no-cache` ile sunulur; eşleşen `If-None-Match` güvenlik denetimlerinden sonra gövdesiz 304 alır. Sunucu dosyayı mtime+boyut+inode ile doğrulanan bellek içi önbellekte tutar. `/api/*` ve hata yanıtları `no-store` kalır.
 
 **Güvenlik modeli.**
 - Ayrı `/api/ui/*` ad alanı, ayrı arayüz belirteci (`beyin_arayuz_token`; `BELLEK_BEYIN_ARAYUZ_TOKEN_DOSYA`) ve `X-Beyin-Arayuz` başlığı. Ana belirteç `/api/ui/*`'da, arayüz belirteci diğer `/api/*`'da geçmez.
@@ -665,7 +672,7 @@ Kullanıcının isteği (2026-11-09): "ilk adımı geçmeden sonraki adımı gö
 ### 17.2 Davranış
 Hook: PreToolUse, matcher `Read`; komut `python -I -S "<depo kökü>/packages/bellek/src/bellek/kapi/hook.py" || true`, timeout 10 (`|| true` gerekçesi §15 ile aynı).
 
-Kayıt: hook'u elle değil kurulum betiği kaydeder. `install.ps1` bileşeni `kapi` varsayılan kurulumdadır; `scripts/installer/settings_hooks.py` PreToolUse grubunu matcher `Read` ile ve iki handler olarak yazar: `if` filtreleri `Read(//**/*.md)` ve `Read(//**/*.markdown)`. Claude Code belgesine göre eşleşmeyen `if` süreç başlatmaz; bu yüzden `.md` dışı okumalarda Python hiç çalışmaz. `-ReplaceExisting` depo dışındaki eski kapı kayıtlarını kaldırır.
+Kayıt: hook'u elle değil kurulum betiği kaydeder. `install.ps1` bileşeni `kapi` varsayılan kurulumdadır; `scripts/installer/settings_hooks.py` PreToolUse grubunu matcher `Read` ile ve iki handler olarak yazar: `if` filtreleri `Read(//**/*.md)` ve `Read(//**/*.markdown)`. Claude Code belgesine göre eşleşmeyen `if` süreç başlatmaz; bu yüzden `.md` dışı okumalarda Python hiç çalışmaz. `-ReplaceExisting` depo dışındaki eski kapı kayıtlarını kaldırır. Kurulum kapıyı PreToolUse'a ek olarak SessionStart olayına `compact` eşleştiricisiyle de kaydeder. Aynı bileşenin eski konumdaki hook kaydı varsayılanda yedek alınarak yenisiyle değiştirilir (`--keep-legacy` korur).
 
 Karar sırası:
 1. `BELLEK_KAPI=kapali` → izin.
@@ -680,6 +687,8 @@ Karar sırası:
 
 Ajan = hook girdisindeki `agent_id`; yoksa ana oturum. Böylece her alt agent kendi haritasını görür.
 
+Bağlam sıkıştırması (SessionStart, source=compact) aynı oturum kimliğiyle sürer ama haritayı bağlamdan düşürür; kapı hook'u bu olayda o oturumun ana bağlamına ait harita işaretlerini siler, böylece sıkıştırmadan sonraki ilk tam okuma yeniden harita alır. Alt ajan işaretleri ve ölçüm günlükleri korunur.
+
 Harita (`bellek.kapi.harita`):
 - ATX başlıklar (`#`..`######`); çitli kod blokları ve YAML ön bilgisi yok sayılır.
 - Satır numaraları Read'in numaralarıyla birebir aynıdır (ajan `offset`/`limit`'i doğrudan haritadan verebilir).
@@ -689,7 +698,7 @@ Harita (`bellek.kapi.harita`):
 ### 17.3 Durum ve ölçüm
 Kök `%LOCALAPPDATA%\Bellek\kapi` (`BELLEK_KAPI_STATE`); vault'a ya da bulut senkron klasörüne konmaz (§4).
 - `oturumlar/<oturum>/<ajan>/<anahtar>.jsonl`: dokunuş kayıtları; 7 günden eski oturum klasörleri temizlenir.
-- `kapi.jsonl`: ölçüm günlüğü. Alanlar: karar ∈ {`harita`, `izin`, `hedefli`, `az_baslik`, `cok_uzun`, `cok_buyuk`}, istenen aralık, tekrar bayrağı. `yol` normcase edilir. 5 MB'ı aşınca `kapi.jsonl.1`'e döner.
+- `kapi.jsonl`: ölçüm günlüğü. Alanlar: karar ∈ {`harita`, `izin`, `hedefli`, `az_baslik`, `cok_uzun`, `cok_buyuk`}, istenen aralık, tekrar bayrağı. `yol` normcase edilir. 5 MB'ı aşınca `kapi.jsonl.1`'e döner. Ölçüm günlüğü döndürülürken dosya önce sürece özel bir ada taşınır; eşzamanlı iki süreç aynı geçmişi ezmez.
 - `hook.log`: hata kaydı (≈1 MB'a kırpılır).
 
 Fail-open: her hatada çıkış 0 ve boş stdout; oturumu asla bozmaz.
