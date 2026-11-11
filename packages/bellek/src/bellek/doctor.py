@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import builtins
 import json
 import re
 import sqlite3
@@ -228,8 +229,11 @@ def _check_beyin_db(path: Path) -> Check:
             version = _schema_version(con)
             problems = _integrity_problems(con, full)
             if problems and immutable:
+                # Eşzamanlı yazıcıya karşı bir kez daha doğrula. Kilitli `mode=ro` yalnız şu an
+                # `-wal` zaten varsa (yazıcı açıldı) kullanılır; yoksa yan dosya oluşturacağı için
+                # yine immutable okunur.
                 con.close()
-                con = _connect_ro(path, False)  # eşzamanlı checkpoint'e karşı kilitli yeniden doğrula
+                con = _connect_ro(path, _can_open_immutable(path))
                 version = _schema_version(con)
                 problems = _integrity_problems(con, full)
             nodes = con.execute("SELECT count(*) FROM dugum").fetchone()[0] if _has_table(con, "dugum") else 0
@@ -465,17 +469,53 @@ def _hook_log_paths() -> list[tuple[str, Path]]:
     ]
 
 
+_EXC_SUFFIXES = ("Error", "Exception", "Warning", "Interrupt", "Exit")
+
+
+def _is_exception_name(name: str) -> bool:
+    if not name.isidentifier():
+        return False
+    if name.endswith(_EXC_SUFFIXES):
+        return True
+    builtin = getattr(builtins, name, None)
+    return isinstance(builtin, type) and issubclass(builtin, BaseException)
+
+
+def _exception_type(first: str, rest: list[str]) -> str:
+    """Son traceback bloğunun `Tür: ileti` satırından yalnız tür adı; tanınmazsa "".
+
+    Yalnız son `Traceback` başlığından sonra gelen girintili çerçeve satırlarını izleyen ilk
+    girintisiz satıra bakılır (iletinin sonraki satırları hiç okunmaz). Ad noktalıysa son
+    bileşen alınır ve istisna adı gibi görünmüyorsa reddedilir.
+    """
+    lines = [first.split(_TRACEBACK_HEAD, 1)[1]] if _TRACEBACK_HEAD in first else []
+    start = -1
+    for i, line in enumerate(rest):
+        if line.startswith(_TRACEBACK_HEAD):
+            start = i
+    if start >= 0:
+        lines = rest[start + 1 :]
+    elif _TRACEBACK_HEAD in first:
+        lines = rest
+    else:
+        return ""
+    for line in lines:
+        if not line.strip() or line[:1].isspace():
+            continue  # çerçeve satırları ("  File ...", kaynak satırı, ^^^ işaretleri)
+        m = _EXC_LINE.match(line)
+        if not m:
+            return ""
+        name = m.group(1).rsplit(".", 1)[-1]
+        return name if _is_exception_name(name) else ""
+    return ""
+
+
 def _summarize_entry(first: str, rest: list[str]) -> str:
     """Tek satırlık, yol ve serbest metin sızdırmayan özet: bağlam + istisna türü."""
     context = first.split(_TRACEBACK_HEAD, 1)[0].strip().rstrip(":").strip()
-    exc_type = ""
     if _TRACEBACK_HEAD in first or any(ln.startswith(_TRACEBACK_HEAD) for ln in rest):
-        for line in reversed(rest):
-            m = _EXC_LINE.match(line)
-            if m and not line.startswith(("Traceback", "During handling", "The above exception")):
-                exc_type = m.group(1).rsplit(".", 1)[-1]
-                break
-        summary = f"{context}: {exc_type}" if context and exc_type else (context or exc_type or "istisna")
+        exc_type = _exception_type(first, rest) or "hata"
+        summary = f"{context}: {exc_type}" if context else exc_type
     else:
         # Düz iletide yalnız baştaki sabit kısım: parantez/iki nokta sonrası değişken ayrıntı taşır.
         summary = re.split(r"[(:;]", context, maxsplit=1)[0].strip()

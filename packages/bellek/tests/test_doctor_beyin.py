@@ -206,3 +206,86 @@ def test_genel_durum_en_az_warn(ortam, senaryo):
         gunluk_yaz(kapi, hata_satiri(datetime.now(timezone.utc)))
     report = run_checks(cfg)
     assert _SIRA[report.status] >= _SIRA["warn"]
+
+
+# ---- regresyon: yan dosya bırakmama ve günlük ayrıntısında sızıntı yok ----------
+
+
+def klasor_listesi(klasor: Path) -> list[str]:
+    return sorted(p.name for p in klasor.iterdir())
+
+
+def temiz_kapat(yol: Path) -> None:
+    """Tüm bağlantılar kapalı; -wal/-shm kalmasın."""
+    con = sqlite3.connect(str(yol))
+    try:
+        con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        con.commit()
+    finally:
+        con.close()
+    for ek in ("-wal", "-shm"):
+        Path(str(yol) + ek).unlink(missing_ok=True)
+
+
+def test_saglikli_db_yan_dosya_birakmaz(ortam):
+    cfg, db_yolu, _kapi, _devir = ortam
+    saglikli_db(db_yolu)
+    temiz_kapat(db_yolu)
+    onceki = klasor_listesi(db_yolu.parent)
+    assert not any(n.endswith(("-wal", "-shm")) for n in onceki)
+    report = run_checks(cfg)
+    denetim(report, "beyin_db")
+    assert klasor_listesi(db_yolu.parent) == onceki
+
+
+def test_bozuk_ama_basligi_saglam_db_yan_dosya_birakmaz(ortam):
+    cfg, db_yolu, _kapi, _devir = ortam
+    saglikli_db(db_yolu)
+    temiz_kapat(db_yolu)
+    con = sqlite3.connect(str(db_yolu))
+    try:
+        sayfa = con.execute("PRAGMA page_size").fetchone()[0]
+    finally:
+        con.close()
+    veri = bytearray(db_yolu.read_bytes())
+    assert len(veri) >= 3 * sayfa, "bozulacak sayfa yok"
+    veri[sayfa : 3 * sayfa] = bytes((i * 131 + 7) % 256 for i in range(2 * sayfa))
+    db_yolu.write_bytes(bytes(veri))
+    assert db_yolu.read_bytes()[:16] == b"SQLite format 3\x00"
+    onceki = klasor_listesi(db_yolu.parent)
+    report = run_checks(cfg)  # istisna fırlatmamalı
+    assert klasor_listesi(db_yolu.parent) == onceki
+    durumlar = (denetim(report, "beyin_db").status, denetim(report, "beyin_fts").status)
+    assert "error" in durumlar, f"bozulma yakalanmadı: {durumlar}"
+
+
+def _traceback_kaydi(son_iletisi: str, ek_satirlar: tuple[str, ...] = ()) -> str:
+    govde = (
+        "hook: Traceback (most recent call last):\n"
+        '  File "hook.py", line 1, in main\n'
+        "    calistir()\n"
+        f"ValueError: {son_iletisi}\n" + "".join(s + "\n" for s in ek_satirlar)
+    )
+    return hata_satiri(datetime.now(timezone.utc), govde.rstrip())
+
+
+def test_hook_gunlugu_ayrintisi_serbest_metin_sizdirmaz(ortam):
+    cfg, _db, kapi, _devir = ortam
+    gunluk_yaz(
+        kapi,
+        _traceback_kaydi("istem metni burada SIZINTI-ISARETI-1", ("SIZINTI-ISARETI-2",)),
+    )
+    c = denetim(run_checks(cfg), "hook_gunluk")
+    assert c.status == "warn"
+    for yasak in ("SIZINTI-ISARETI-1", "SIZINTI-ISARETI-2", "istem metni"):
+        assert yasak not in c.detail
+
+
+def test_hook_gunlugu_ayrintisi_kisisel_yol_sizdirmaz(ortam):
+    cfg, _db, kapi, _devir = ortam
+    ters = chr(92)
+    yol = "C:" + ters + "Users" + ters + "ayse" + ters + "gizli"
+    gunluk_yaz(kapi, _traceback_kaydi(f"dosya acilamadi: {yol}"))
+    c = denetim(run_checks(cfg), "hook_gunluk")
+    assert c.status == "warn"
+    assert "ayse" not in c.detail

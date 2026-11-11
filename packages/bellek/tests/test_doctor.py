@@ -261,7 +261,10 @@ def test_yalitim_varsayilan_yollari_gecici_koke_yonlendirir(tmp_path):
     from bellek.beyin import mcp_kopru, servis
     from bellek.devir import hook as devir_hook
     from bellek.kapi import hook as kapi_hook
+    from bellek.devir import notlar as devir_notlar
     from bellek.platform_dirs import data_dir
+
+    from bellek import config as config_module
 
     gecici_kok = Path(tmp_path).resolve().parent  # pytest basetemp
     gercek_ortam = {k: v for k, v in OTURUM_BASI_ORTAM.items() if v is not None}
@@ -279,8 +282,44 @@ def test_yalitim_varsayilan_yollari_gecici_koke_yonlendirir(tmp_path):
         "kapi_state": Path(kapi_hook.state_dir()),
         "devir_state": Path(devir_hook.state_dir()),
         **{f"hook_log:{ad}": yol for ad, yol in doctor._hook_log_paths()},
+        "ayar": config_module.default_config_path(),
+        "vault": config_module.load_vault(),
+        "devir_kok": devir_notlar.devir_kok(),
     }
     for ad, yol in yollar.items():
         cozulmus = Path(yol).resolve()
         assert cozulmus.is_relative_to(gecici_kok), f"{ad} geçici kökte değil: {cozulmus}"
         assert not cozulmus.is_relative_to(gercek_kok), f"{ad} gerçek veri kökünde: {cozulmus}"
+
+
+def test_yalitim_paket_kokunde_gercek_ayar_olsa_da_vaulta_dusmez(tmp_path, monkeypatch):
+    """Canlı kurulum benzetimi: paket kökünde gerçek vault'u gösteren bir bellek.toml var.
+    Yönlendirme yapmayan bir testte ayar, vault ve devir klasörü o vault'a çözülmez."""
+    from bellek import config as config_module
+    from bellek.devir import notlar as devir_notlar
+
+    gercek_vault = tmp_path / "gercek_vault"
+    paket = tmp_path / "paket"
+    paket.mkdir()
+    (paket / "bellek.toml").write_text(f'[bellek]\nvault = "{gercek_vault.as_posix()}"\n', encoding="utf-8")
+    monkeypatch.setattr(config_module, "_package_root", lambda: paket)
+    monkeypatch.setattr(devir_notlar, "_PAKET_KOK", paket)
+
+    gecici_kok = Path(tmp_path).resolve().parent  # pytest basetemp
+    yollar = {
+        "ayar": config_module.default_config_path(),
+        "vault": config_module.load_vault(),
+        "config.vault": config_module.load_config().vault,
+        "devir_kok": devir_notlar.devir_kok(),
+    }
+    for ad, yol in yollar.items():
+        cozulmus = Path(yol).resolve()
+        assert not cozulmus.is_relative_to(gercek_vault.resolve()), f"{ad} gerçek vault'ta: {cozulmus}"
+        assert not cozulmus.is_relative_to(paket.resolve()), f"{ad} paket kökündeki ayara düştü: {cozulmus}"
+        assert cozulmus.is_relative_to(gecici_kok), f"{ad} geçici kökte değil: {cozulmus}"
+
+    # Kontrol: yalıtım kaldırılınca benzetim gerçekten "gerçek vault"a çözülür (test boş geçmiyor).
+    with monkeypatch.context() as m:
+        m.delenv("BELLEK_CONFIG", raising=False)
+        m.delenv("BELLEK_DEVIR_DIR", raising=False)
+        assert Path(devir_notlar.devir_kok()).resolve() == (gercek_vault / "devir").resolve()
