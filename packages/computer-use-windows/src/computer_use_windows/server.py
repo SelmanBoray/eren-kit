@@ -212,22 +212,29 @@ class _Session:
             )
 
         listing = self.listing
+        listed = uia.list_windows()
         if listing is not None and listing.rect is not None:
-            now = next((w for w in uia.list_windows() if w.handle == listing.handle), None)
+            now = next((w for w in listed if w.handle == listing.handle), None)
             if now is None:
                 raise stale("its window was closed or hidden since it was listed")
             if now.minimized:
                 raise stale("its window was minimized since it was listed")
             if _rect(now) != listing.rect:
                 raise stale("its window was moved or resized since it was listed")
-        # The window now at the point must be the element's window, or another window of the
-        # same process: popups that are separate top-level windows (a Win32 combo box list,
-        # menus, tooltips, desktop icons) belong there. Only another process's window on top
-        # makes the id stale (a dialog of the same app over the element is not detected).
+        # The window now at the point must be the element's window, or a helper popup of the
+        # same process: a top-level window that the window list does not show (a Win32 combo
+        # box list, a menu, a tooltip, an untitled or tool window, the desktop's WorkerW). A
+        # listed main window on top is stale even from the same process (two Explorer, browser
+        # or Word windows share one process).
         expected = element.window or (listing.handle if listing is not None else 0)
         pid = listing.pid if listing is not None else 0
-        same_process = here is not None and pid != 0 and here.pid == pid
-        if expected and (here is None or (here.handle != expected and not same_process)):
+        helper_popup = (
+            here is not None
+            and pid != 0
+            and here.pid == pid
+            and here.handle not in {w.handle for w in listed}
+        )
+        if expected and (here is None or (here.handle != expected and not helper_popup)):
             raise stale(
                 "another window is on top of it now (if its window is in the background, focus "
                 "it first)"
@@ -379,17 +386,21 @@ class _Session:
         auto-advancing code fields, scripts). Cost: one UI Automation query per piece, i.e. per
         Tab/Enter, after the short first piece and per ``inp.TYPE_BATCH_CHARS`` characters.
         After Tab/Enter and after the first piece the check waits for the focus to settle first.
-        The text also stops when the foreground window changed: Enter may have closed a dialog
-        or launched a program (a console from the Run box), and the rest of the text was meant
-        for the window that was checked.
+        A different foreground window does not stop the text by itself: the rest goes on if the
+        new window passes every check. Only after Enter does a change stop it (see below).
         """
         settle = inp.focus_settle_after_text(typed_piece, first=first)
         time.sleep(settle if settle > 0 else inp.TYPE_BATCH_PAUSE)
         current = self._check_keyboard(typing=True, corners=corners)
-        if _handle(current) != _handle(window):
+        # A new foreground window that passed every check above may take the rest (the Start
+        # menu hands typing over to Search, a suggestion box opens). Except right after Enter:
+        # it may have launched a program whose window is not up yet (Win+R "cmd" Enter); what
+        # is in front now is not where the rest would end up, so the text stops there.
+        if typed_piece.endswith(("\r", "\n")) and _handle(current) != _handle(window):
             raise safety.SafetyError(
-                f"The foreground window changed while typing (now {_describe(current)}), so the "
-                "rest of the text was not typed into it. Check the screen, then type the rest "
+                f"The foreground window changed after Enter (now {_describe(current)}), so the "
+                "rest of the text was not typed: Enter may have started a program whose window "
+                "is not up yet. Check the screen, then type the rest "
                 "with a new type_text call if it is still wanted."
             )
         return current

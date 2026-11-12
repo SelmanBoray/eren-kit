@@ -88,6 +88,12 @@ TERMINAL = WindowInfo(
     class_name="CASCADIA_HOSTING_WINDOW_CLASS",
 )  # fmt: skip
 
+SEARCH = WindowInfo(  # an ordinary app of another process (e.g. Start -> Search on Windows 11)
+    handle=1008, title="Search", process="searchhost.exe", pid=4008,
+    left=600, top=200, right=1300, bottom=900, foreground=False, minimized=False,
+    class_name="Windows.UI.Core.CoreWindow",
+)  # fmt: skip
+
 Event = tuple[Any, ...]
 
 # Delays of the real input module, zeroed so that long calls stay fast (a missing name is fine).
@@ -125,10 +131,11 @@ class FakeDesktop:
     """The fake world behind user32 and UI Automation, plus a recording of all injected input."""
 
     def __init__(self) -> None:
-        self.windows: list[WindowInfo] = [NOTEPAD, KEEPASS, TERMINAL]
+        self.windows: list[WindowInfo] = [NOTEPAD, KEEPASS, TERMINAL, SEARCH]
         self.foreground: int | None = NOTEPAD.handle  # None: no foreground window can be read
         self.foreground_misses = 0  # the next N foreground queries return None
         self.char_sends: list[int] = []  # characters (key-downs) per SendInput call that had any
+        self.send_texts: list[str] = []  # typed text (incl. Tab/Enter) per SendInput call with any
         self.cursor: tuple[int, int] = (960, 540)
         self.password = False  # the focused element is a password field
         self.uia_failures: list[BaseException] = []  # raised by the next focused-element queries
@@ -162,15 +169,20 @@ class FakeDesktop:
     def send_input(self, count: int, array: Any, size: int) -> int:
         kinds: set[str] = set()
         chars = 0
+        batch: list[Event] = []
         for i in range(int(count)):
             record = self.apply(array[i])
             self.events.append(record)
+            batch.append(record)
             kinds.add(record[0])
             chars += record[0] == "char" and not record[2]
             if self.on_event is not None:
                 self.on_event(record)
         if chars:
             self.char_sends.append(chars)
+        text = self.typed(batch)
+        if text:
+            self.send_texts.append(text)
         self.sends += 1
         if self.on_send is not None:
             self.on_send(kinds)
@@ -233,10 +245,10 @@ class FakeDesktop:
         return b"\x89PNG\r\n\x1a\n", CoordMap(monitor=MONITOR, image_width=1920, image_height=1080)
 
     # ---- observations ------------------------------------------------------------------------
-    def typed(self) -> str:
+    def typed(self, events: list[Event] | None = None) -> str:
         """Text that reached the keyboard: unicode characters, Tab as \\t and Enter as \\n."""
         units: list[int] = []
-        for kind, code, *rest in self.events:
+        for kind, code, *rest in self.events if events is None else events:
             if kind == "char" and not rest[0]:
                 units.append(code)
             elif kind == "key" and not rest[0] and code in (VK_TAB, VK_RETURN):
@@ -887,6 +899,58 @@ def test_keyboard_input_retries_an_unknown_foreground_window(
         assert desk.typed() == "abc"
     else:
         assert desk.key_downs() == [VK_A, VK_A + 1, VK_A + 2]
+
+
+def _switch_after_first_char(desk: FakeDesktop, handle: int, password: bool = False) -> None:
+    def switch() -> None:
+        desk.foreground = handle
+        desk.password = password
+
+    desk.on_event = after_chars(1, switch)
+
+
+def test_type_text_continues_when_foreground_changes_to_an_allowed_window(
+    desk: FakeDesktop,
+) -> None:
+    _switch_after_first_char(desk, SEARCH.handle)
+    reply = call("type_text", text="notepad\n")
+    assert_ok(reply)
+    assert desk.typed() == "notepad\n"
+
+
+@pytest.mark.parametrize(
+    ("handle", "password", "config", "needle"),
+    [
+        pytest.param(TERMINAL.handle, False, None, "terminal", id="terminal"),
+        pytest.param(
+            KEEPASS.handle, False, Config(blocked_processes=("keepass.exe",)), "keepass",
+            id="blocked",
+        ),
+        pytest.param(SEARCH.handle, True, None, "password", id="password-field"),
+    ],
+)  # fmt: skip
+def test_type_text_stops_when_foreground_changes_to_a_refused_target(
+    desk: FakeDesktop, handle: int, password: bool, config: Config | None, needle: str
+) -> None:
+    _switch_after_first_char(desk, handle, password)
+    text = "notepad\n"
+    reply = call("type_text", config, text=text)
+    assert_error(reply, needle)
+    assert len(desk.send_texts) == 1, desk.send_texts  # only the first piece got through
+    typed = desk.typed()
+    assert typed == desk.send_texts[0] and len(typed) < len(text)
+    assert text.startswith(typed)
+    assert len(typed) in numbers_in(reply.text), reply.text
+
+
+def test_long_type_text_continues_when_foreground_changes_to_an_allowed_window(
+    desk: FakeDesktop,
+) -> None:
+    text = ("abcdefghij" * 12)[:120]
+    desk.on_event = after_chars(60, lambda: setattr(desk, "foreground", SEARCH.handle))
+    reply = call("type_text", text=text)
+    assert_ok(reply)
+    assert desk.typed() == text
 
 
 def test_key_stops_when_foreground_window_becomes_unknown_between_chords(

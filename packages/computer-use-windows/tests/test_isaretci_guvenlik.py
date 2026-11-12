@@ -1640,3 +1640,119 @@ def test_type_text_into_the_real_host_is_still_refused_when_launched_from_shell(
         reply = client.call("type_text", text="abc")
     assert_refused(reply, OWN_WINDOW_ROOTS)
     assert desk.events == []
+
+
+# ============================================================================================
+# d (revised). Same-process exception covers only unlisted helper popups, not main windows
+# ============================================================================================
+
+
+def _listed_handles(client: Client) -> set[int]:
+    reply = client.call("windows")
+    assert not reply.is_error, reply.text
+    return {int(m) for m in re.findall(r"^(\d+) \|", reply.text, flags=re.MULTILINE)}
+
+
+def _app_with_element(
+    desk: FakeDesktop, win: Win, name: str, rect: tuple[int, int, int, int]
+) -> None:
+    desk.add(win)
+    desk.foreground = win.handle
+    desk.trees[win.handle] = FakeElement(
+        desk, "window", win.title, win.rect, [FakeElement(desk, "button", name, rect)]
+    )
+
+
+EXPLORER_A = Win(8001, "Downloads - File Explorer", "explorer.exe", 500, (150, 150, 700, 600),
+                 "CabinetWClass")  # fmt: skip
+EXPLORER_B = Win(8002, "Documents - File Explorer", "explorer.exe", 500, (180, 180, 650, 550),
+                 "CabinetWClass")  # fmt: skip
+BROWSER_A = Win(8011, "Inbox - Google Chrome", "chrome.exe", 510, (150, 150, 700, 600),
+                "Chrome_WidgetWin_1")  # fmt: skip
+BROWSER_B = Win(8012, "News - Google Chrome", "chrome.exe", 510, (180, 180, 650, 550),
+                "Chrome_WidgetWin_1")  # fmt: skip
+ITEM_RECT = (200, 200, 300, 230)  # center (250, 215): inside A and inside B
+
+
+@pytest.mark.parametrize("clicks", [1, 2])
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        pytest.param(EXPLORER_A, EXPLORER_B, id="two-file-explorers"),
+        pytest.param(BROWSER_A, BROWSER_B, id="two-browser-windows"),
+    ],
+)
+def test_click_element_under_listed_main_window_of_same_process_is_stale(
+    desk: FakeDesktop, monkeypatch: pytest.MonkeyPatch, first: Win, second: Win, clicks: int
+) -> None:
+    install_fake_clock(monkeypatch, desk)  # Chromium's wake-up pause costs no real time
+    _app_with_element(desk, dataclasses.replace(first), "report.pdf", ITEM_RECT)
+    with connect() as client:
+        listing = client.call("elements")
+        item = _element_id(listing, "button", "report.pdf")
+        desk.add(dataclasses.replace(second))  # same pid, titled, a main window on the point
+        desk.foreground = second.handle
+        listed = _listed_handles(client)
+        reply = client.call("click", element=item, clicks=clicks)
+    assert {first.handle, second.handle} <= listed  # both are main windows in the list
+    assert first.pid == second.pid
+    assert reply.is_error, f"expected a refusal, got: {reply.text!r}"
+    assert "elements" in reply.text.lower(), reply.text
+    assert mentions(reply.text, STALE_ROOTS), reply.text
+    assert desk.events == []
+
+
+@pytest.mark.parametrize("popup_class", SAME_PROCESS_POPUPS)
+def test_same_process_helper_popups_are_not_in_the_window_list(
+    desk: FakeDesktop, popup_class: str
+) -> None:
+    # Guards the premise of test_click_element_under_popup_of_the_same_process_still_clicks.
+    desk.add(Win(1012, "", NOTEPAD.process, NOTEPAD.pid, (400, 250, 800, 450), popup_class))
+    with connect() as client:
+        listed = _listed_handles(client)
+    assert 1012 not in listed
+    assert NOTEPAD.handle in listed
+
+
+RECYCLE_BIN_RECT = (20, 20, 90, 90)  # center (55, 55)
+
+
+def _desktop_with_icon(desk: FakeDesktop) -> None:
+    desk.add(dataclasses.replace(SHELL_DESKTOP), top=False)
+    desk.trees[SHELL_DESKTOP.handle] = FakeElement(
+        desk, "window", SHELL_DESKTOP.title, SHELL_DESKTOP.rect,
+        [FakeElement(desk, "button", "Recycle Bin", RECYCLE_BIN_RECT)],
+    )  # fmt: skip
+
+
+def test_click_desktop_icon_under_unlisted_shell_helper_window_still_clicks(
+    desk: FakeDesktop,
+) -> None:
+    _desktop_with_icon(desk)
+    with connect() as client:
+        listing = client.call("elements", window=SHELL_DESKTOP.handle)
+        icon = _element_id(listing, "button", "Recycle Bin")
+        # An untitled top-level window of the shell process (the WorkerW / DefView host).
+        desk.add(Win(6010, "", "explorer.exe", EXPLORER_PID, (0, 0, 120, 120), "WorkerW"))
+        listed = _listed_handles(client)
+        reply = client.call("click", element=icon, clicks=2)
+    assert 6010 not in listed
+    assert_ok(reply)
+    assert desk.cursor == (55, 55)
+    assert desk.pressed(_MOUSEEVENTF_LEFTDOWN)
+
+
+def test_click_desktop_icon_under_listed_file_explorer_is_stale(desk: FakeDesktop) -> None:
+    _desktop_with_icon(desk)
+    with connect() as client:
+        listing = client.call("elements", window=SHELL_DESKTOP.handle)
+        icon = _element_id(listing, "button", "Recycle Bin")
+        desk.add(Win(6011, "This PC - File Explorer", "explorer.exe", EXPLORER_PID,
+                     (0, 0, 400, 300), "CabinetWClass"))  # fmt: skip
+        listed = _listed_handles(client)
+        reply = client.call("click", element=icon, clicks=2)
+    assert 6011 in listed
+    assert reply.is_error, f"expected a refusal, got: {reply.text!r}"
+    assert "elements" in reply.text.lower(), reply.text
+    assert mentions(reply.text, STALE_ROOTS), reply.text
+    assert desk.events == []
