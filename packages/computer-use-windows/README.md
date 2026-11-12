@@ -248,7 +248,7 @@ one first, or to use element ids.
 | `windows` | none | Lists visible top-level windows: handle, process, title, `[foreground]`/`[minimized]`. |
 | `focus` | `window` | Restores a window by handle if minimized and brings it to the front. A window that is not responding is refused. |
 | `click` | `x, y` or `element`; `button, clicks, modifiers?` | Left, right or middle click, 1–3 clicks, optionally holding `ctrl`/`alt`/`shift`/`win`. Right and middle clicks on a terminal or on the agent's own window are refused (they paste). |
-| `type_text` | `text` | Types Unicode text, independent of the keyboard layout (`\n` = Enter, `\t` = Tab). Re-checks the target (password field, terminal, blocked app) after its first character, after every Tab/Enter and every 50 characters, and stops if the foreground window changes; the error says how many characters were typed. |
+| `type_text` | `text` | Types Unicode text, independent of the keyboard layout (`\n` = Enter, `\t` = Tab). Re-checks the target (password field, terminal, blocked app) after its first character, after every Tab/Enter and every 50 characters. If the foreground window changes while typing, the new window is checked like the first one and typing continues if it passes; after an Enter, a change stops the text. The error says how many characters were typed. |
 | `key` | `keys, repeat` | Presses keys and shortcuts: `ctrl+s`, `alt+f4`, `tab tab enter`. Repeats 1–100 times. At most 200 key presses per call. While a password field has the focus only navigation keys and shortcuts work; chords that type a character are refused. |
 | `scroll` | `direction, amount, x?, y?` | Turns the wheel up, down, left or right by 1–50 notches, at a point or at the cursor. |
 | `drag` | `x0, y0, x1, y1` | Holds the left button down from one point to another (sliders, selections, moving items). Refused when either end is on a terminal or the agent's own window. |
@@ -328,7 +328,10 @@ Invalid values are rejected with an error that names the flag or variable.
   the agent runs in (see [How "terminal first" works](#how-terminal-first-works)). The check looks
   at the root and root-owner window of the window under the point or in focus, and at an embedded
   child window of another process. Launchers such as Explorer are not counted as the agent's host.
-  Keyboard input is refused while there is no foreground window.
+  Keyboard input is refused while there is no foreground window. If the foreground window changes
+  while typing, the new window is checked like the first one (terminal, blocked app, the agent's
+  own host, password field) and typing continues if it passes. After an Enter, a change stops the
+  text, because Enter may have started a program whose window is not up yet.
 - **Blocklist.** `--block keepass.exe` refuses input to that app. For pointer actions the server
   checks the window under the target point, for `type_text`/`key` the foreground window, and for
   `focus` the target window. Each check covers the root and root-owner window and an embedded
@@ -389,13 +392,15 @@ anything that clicks or types:
   example the integrated terminal of an editor the agent does not run in.
 - **Coordinates go stale.** Coordinates refer to the last screenshot, and element ids to the last
   `elements` call. If the screen changes, the agent should look again. Element ids are refused when
-  their window closed, was minimized, moved or resized, or when a window of another app covers the
-  point; popups of the same app are fine. Scrolling inside a window does not change its rectangle
+  their window closed, was minimized, moved or resized, or when another main window covers the
+  point (a window of another app, or a second listed window of the same app). A menu, a drop-down
+  list or a tooltip of the same app over the element is fine. Scrolling inside a window does not change its rectangle
   and is not detected, so call `elements` again after scrolling.
 - **Typing checks have gaps.** A focus change that happens later than the short settle wait after
   Tab/Enter is not caught (for example a slow two-step sign-in page). Pasting with ctrl+v or
   shift+insert into a password field is not blocked. Multi-line typing is slower (about 0.1 s per
-  Enter).
+  Enter). If UI Automation does not answer after the first character, only that character is typed
+  and the rest is refused.
 
 ## Troubleshooting
 

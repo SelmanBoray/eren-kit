@@ -10,8 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 
 - `type_text` re-checks the password-field / terminal / blocked-app rules after its first
-  character, after every Tab/Enter and every 50 characters, and stops when the foreground window
-  changes.
+  character, after every Tab/Enter and every 50 characters, and re-checks the new window when the
+  foreground window changes (stopping after an Enter).
 - `key` refuses character-producing chords while a password field has the focus and checks before
   every chord.
 - An undeterminable password state (UI Automation timeout) now refuses typing instead of allowing it.
@@ -33,7 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `focus` no longer blocks the server on a window that is not responding.
 - `click(element=…)` no longer clicks a stale position after the window closed, moved or was
-  covered by another app.
+  covered by another main window.
 - Exactly `limit` elements are no longer reported as truncated.
 - Reading labels from an unresponsive app no longer exceeds the scan time budget.
 

@@ -517,14 +517,30 @@ Copy `packages\bellek\skills\devir` to `~\.claude\skills\devir`, then add this c
 with the repository path; `|| true` keeps a failing hook from blocking the session):
 
 ```text
-python -I "<repo>/packages/bellek/src/bellek/devir/hook.py" || true
+python -I -S "<repo>/packages/bellek/src/bellek/devir/hook.py" || true
 ```
 
 **Opus Orkestra**
 
 Copy `packages\opus-orkestra\skill\SKILL.md` to `~\.claude\skills\opus-orkestra\SKILL.md` and add
 the four `SessionStart` commands shown in
-[packages/opus-orkestra/README.md](packages/opus-orkestra/README.md#install).
+[packages/opus-orkestra/README.md](packages/opus-orkestra/README.md#install). The installer writes
+them in this form (`n` = 1 to 4, `|| true` at the end):
+
+```text
+python -I "<repo>/packages/opus-orkestra/hooks/opus-orkestra-sessionstart.py" --parca <n> || true
+```
+
+**Doc gate**
+
+Add this command twice in `~\.claude\settings.json`: under `PreToolUse` in a group with the matcher
+`Read` (with the handler filters `"if": "Read(//**/*.md)"` and `"if": "Read(//**/*.markdown)"`), and
+under `SessionStart` in a group with the matcher `compact` (so the map is shown again after a
+compaction):
+
+```text
+python -I -S "<repo>/packages/bellek/src/bellek/kapi/hook.py" || true
+```
 
 **computer-use-windows**
 
@@ -597,7 +613,8 @@ You can also add read-only note sources (`[[source]]`) and map folders to projec
 - **A privacy scanner guards the repo.** `python scripts/gizlilik_tara.py` scans tracked files for
   personal paths, e-mail addresses, token-shaped strings and large binaries (allow list in
   `.github/gizlilik-izinli.txt`; extra forbidden words via the `GIZLILIK_YASAK` environment
-  variable).
+  variable). It also runs in CI (the `gizlilik` job in `.github/workflows/ci.yml`): a finding fails
+  the job; either fix it or add a narrow, justified line to `.github/gizlilik-izinli.txt`.
 - **Reporting a vulnerability:** see [SECURITY.md](SECURITY.md).
 
 ## 🗂️ Repository layout

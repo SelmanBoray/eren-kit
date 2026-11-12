@@ -252,7 +252,7 @@ bir id'dir. Ajan hiç ekran görüntüsü almadan `x,y` verirse, önce bir ekran
 | `windows` | yok | Görünür üst düzey pencereleri listeler: handle, süreç, başlık, `[foreground]`/`[minimized]`. |
 | `focus` | `window` | Bir pencere simge durumundaysa handle ile geri yükler ve öne getirir. Yanıt vermeyen pencere reddedilir. |
 | `click` | `x, y` veya `element`; `button, clicks, modifiers?` | Sol, sağ veya orta tıklama, 1–3 tıklama; isteğe bağlı olarak `ctrl`/`alt`/`shift`/`win` basılı tutularak. Terminal ya da ajanın kendi penceresi üzerinde sağ ve orta tık reddedilir (yapıştırma yapar). |
-| `type_text` | `text` | Klavye düzeninden bağımsız Unicode metin yazar (`\n` = Enter, `\t` = Tab). Hedefi (parola alanı, terminal, engelli uygulama) ilk karakterden sonra, her Tab/Enter'dan sonra ve her 50 karakterde yeniden denetler; ön pencere değişirse durur ve hata kaç karakterin yazıldığını söyler. |
+| `type_text` | `text` | Klavye düzeninden bağımsız Unicode metin yazar (`\n` = Enter, `\t` = Tab). Hedefi (parola alanı, terminal, engelli uygulama) ilk karakterden sonra, her Tab/Enter'dan sonra ve her 50 karakterde yeniden denetler. Yazma sırasında ön pencere değişirse yeni pencere ilk pencere gibi denetlenir ve geçerse yazma sürer; Enter'dan sonraki değişimde metin durur. Hata kaç karakterin yazıldığını söyler. |
 | `key` | `keys, repeat` | Tuşlara ve kısayollara basar: `ctrl+s`, `alt+f4`, `tab tab enter`. 1–100 kez tekrarlar; çağrı başına en çok 200 tuş basışı. Odak parola alanındayken yalnız gezinme tuşları ve kısayollar çalışır; karakter üreten akortlar reddedilir. |
 | `scroll` | `direction, amount, x?, y?` | Tekerleği yukarı, aşağı, sola veya sağa 1–50 adım çevirir; bir noktada ya da imleçte. |
 | `drag` | `x0, y0, x1, y1` | Sol düğmeyi basılı tutarak bir noktadan diğerine sürükler (kaydırıcılar, seçimler, öğe taşıma). Uçlardan biri terminal ya da ajanın kendi penceresi üzerindeyse reddedilir. |
@@ -336,6 +336,9 @@ hatayla reddedilir.
   girdisi reddedilir ([“Önce terminal” nasıl işler](#önce-terminal-nasıl-işler) bölümüne bakın).
   Denetim, nokta/odak altındaki pencerenin kök ve kök-sahip penceresine (ve başka sürece ait gömülü
   alt pencereye) bakar. Explorer gibi başlatıcılar ajanın barındırıcısı sayılmaz.
+  Yazma sırasında ön pencere değişirse yeni pencere ilk pencere gibi denetlenir (terminal, engelli
+  uygulama, ajanın kendi barındırıcısı, parola alanı) ve geçerse yazma sürer. Enter'dan sonraki
+  değişimde metin durur, çünkü Enter penceresi henüz açılmamış bir programı başlatmış olabilir.
 - **Ön plan penceresi yokken** klavye girdisi reddedilir.
 - **Engelleme listesi.** `--block keepass.exe`, o uygulamaya girdiyi reddeder. İşaretçi eylemlerinde
   sunucu hedef noktanın altındaki pencereye, `type_text`/`key` için ön plandaki pencereye, `focus`
@@ -390,12 +393,14 @@ tıklayan ya da yazan her şey için onay istemini korumaktır:
   durur ve bulduklarını döndürür; daraltmak için `query` kullanın. Tarama kesilirse liste eksik
   olduğu bildirilir.
 - **Öğe id'leri** pencereleri kapandıysa, küçültüldüyse, taşındıysa ya da yeniden boyutlandıysa veya
-  noktayı başka bir uygulamanın penceresi örtüyorsa reddedilir; aynı uygulamanın açılır pencereleri
-  sorun değildir. Pencere içinde kaydırma pencere dikdörtgenini değiştirmez ve fark edilmez;
+  noktayı başka bir ana pencere örtüyorsa (başka bir uygulamanın penceresi ya da aynı uygulamanın
+  listelenen ikinci penceresi) reddedilir. Aynı uygulamanın menüsü, açılır listesi ya da ipucu
+  öğenin üstündeyse sorun değildir. Pencere içinde kaydırma pencere dikdörtgenini değiştirmez ve fark edilmez;
   kaydırdıktan sonra `elements`'i yeniden çağırın.
 - **Odak değişimi denetimi sınırlıdır.** Tab/Enter'dan sonraki kısa bekleme süresinden geç
   gerçekleşen odak değişimi yakalanmaz (ör. yavaş yüklenen iki adımlı giriş sayfası). Parola alanına
   ctrl+v / shift+insert ile yapıştırma engellenmez.
+- UI Automation ilk karakterden sonra yanıt vermezse yalnız o karakter yazılır, kalanı reddedilir.
 - **Çok satırlı yazma daha yavaştır** (Enter başına yaklaşık 0,1 sn).
 - **Parola tespiti**, uygulamanın alanı parola alanı olarak işaretlemesine dayanır. Bunu bildirmeyen
   bir alan tespit edilmez.

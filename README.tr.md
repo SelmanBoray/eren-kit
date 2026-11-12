@@ -521,12 +521,22 @@ engellemesini önler):
 python -I -S "<repo>/packages/bellek/src/bellek/devir/hook.py" || true
 ```
 
+**Önce harita belge kapısı**
+
+Aynı komutu `~\.claude\settings.json` içinde iki kayıt olarak ekleyin: `PreToolUse` olayına `Read`
+eşleştiricisiyle (`if` filtreleri `Read(//**/*.md)` ve `Read(//**/*.markdown)`, bir kayıt her biri için)
+ve `SessionStart` olayına `compact` eşleştiricisiyle (`if` filtresiz):
+
+```text
+python -I -S "<repo>/packages/bellek/src/bellek/kapi/hook.py" || true
+```
+
 **Opus Orkestra**
 
 `packages\opus-orkestra\skill\SKILL.md` dosyasını `~\.claude\skills\opus-orkestra\SKILL.md` olarak
 kopyalayın ve
 [packages/opus-orkestra/README.md](packages/opus-orkestra/README.md#install) içinde gösterilen dört
-`SessionStart` komutunu ekleyin.
+`SessionStart` komutunu ekleyin (kurulum betiği her komutun sonuna `|| true` ekler; siz de ekleyin).
 
 **computer-use-windows**
 
@@ -597,6 +607,8 @@ eşleyebilirsiniz (`[projects]`); şablon ikisini de açıklar.
 - **Gizlilik taraması.** `python scripts/gizlilik_tara.py` izlenen dosyalarda kişisel yol, e-posta
   adresi, belirteç biçimli dizi ve büyük ikili dosya arar. İzin listesi
   `.github/gizlilik-izinli.txt`; ek yasak sözcükler `GIZLILIK_YASAK` ortam değişkeniyle verilir.
+  Tarayıcı CI'da (`gizlilik` işi) çalışır; bir bulgu işi kırmızıya çevirir, bu durumda bulgu ya
+  düzeltilir ya da `.github/gizlilik-izinli.txt` dosyasına dar ve gerekçeli bir satır eklenir.
 - **Hook'lar hata durumunda sessizdir (fail-open).** Bozuk bir hook hiçbir şey yazdırmaz ve
   oturumunuzu asla engellemez.
 - **Güvenlik açığı bildirimi:** bkz. [SECURITY.md](SECURITY.md).
