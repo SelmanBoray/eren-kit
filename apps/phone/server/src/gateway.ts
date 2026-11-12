@@ -103,6 +103,52 @@ interface Baglanti {
   sureIptal: IptalEt | null;
   /** `auth_response` doğrulanınca dolar (`/sohbet` ve devredilen `/cihaz`); yoklama buna bakar. */
   kimlik: Kimlik | null;
+  /** `/cihaz` devrinde `cihaz`'a verilen görünümü öldürür (`devirGorunumu`); devirden önce `null`. */
+  devirOldur: (() => void) | null;
+}
+
+/**
+ * `cihaz`'a devredilen `/cihaz` bağlantısının görünümü. Kim kapatırsa kapatsın (gateway yoklaması,
+ * `cihaz` modülünün kendisi, servis kapanışı) görünüm o anda ölür: kapanış dinleyicileri hemen
+ * tetiklenir, gelen çerçeveler süzülür, gönderim `false` döner. Gerekçe: `ws` `close` olayını karşı uç
+ * kapanış el sıkışmasını yanıtlayınca ya da `closeTimeout` (30 sn) dolunca yayar ve CLOSING'de
+ * `message` yaymayı sürdürür; yanıt vermeyen istemci bu arada çerçeve işletemesin. Alttaki soketin
+ * `close` olayı da görünümü öldürür (normal kopuş).
+ */
+function devirGorunumu(b: WsBaglantisi): { gorunum: WsBaglantisi; oldur: () => void } {
+  let olu = false;
+  const kapanislar: Array<() => void> = [];
+  const oldur = (): void => {
+    if (olu) return;
+    olu = true;
+    for (const f of kapanislar.splice(0)) {
+      try {
+        f();
+      } catch {
+        // Bir dinleyicinin hatası ötekileri durdurmaz.
+      }
+    }
+  };
+  b.kapanisDinle(oldur);
+  const gorunum: WsBaglantisi = {
+    yol: b.yol,
+    uzakIp: b.uzakIp,
+    // Gerçekleme `gonder`'in dönüşünü (soket kapalıysa `false`) olduğu gibi geçirir; `cihaz` ona bakar.
+    gonder: (metin) => (olu ? false : (b.gonder(metin) as unknown as boolean)),
+    kapat: (kod, neden) => {
+      oldur();
+      b.kapat(kod, neden);
+    },
+    mesajDinle: (f) =>
+      b.mesajDinle((metin) => {
+        if (!olu) f(metin);
+      }),
+    kapanisDinle: (f) => {
+      if (olu) f();
+      else kapanislar.push(f);
+    },
+  };
+  return { gorunum, oldur };
 }
 
 const tailscaleAdresiMi = (adres: string): boolean => EslestirmeQr.shape.host.safeParse(adres).success;
@@ -184,6 +230,8 @@ export const gatewayKur: GatewayFabrikasi = ({
   const cihazYolla = (b: WsBaglantisi, m: CihazAsagi): void => b.gonder(JSON.stringify(m));
 
   const birak = (g: Baglanti): void => {
+    // Devredilmiş `/cihaz`: `cihaz` modülü bağlantıyı kapanış olayını beklemeden bırakır.
+    g.devirOldur?.();
     if (g.asama.ad === "sohbette") sohbetBaglantilari.delete(g.asama.sohbet);
     g.asama = { ad: "kapali" };
     g.sureIptal?.();
@@ -386,8 +434,10 @@ export const gatewayKur: GatewayFabrikasi = ({
 
     if (g.kanal === "cihaz") {
       g.asama = { ad: "devredildi" };
+      const { gorunum, oldur } = devirGorunumu(g.b);
+      g.devirOldur = oldur;
       cihazYolla(g.b, { v: PROTOKOL_SURUMU, type: "welcome", server_time_ms: saat.simdiMs() });
-      cihaz.baglandi({ baglanti: g.b, device_id } as DogrulanmisCihazBaglantisi);
+      cihaz.baglandi({ baglanti: gorunum, device_id } as DogrulanmisCihazBaglantisi);
       return;
     }
     const sohbet: SohbetBaglantisi = { b: g.b, device_id, sonSeq: 0, olayAcik: false, akisAcik: false };
@@ -670,6 +720,7 @@ export const gatewayKur: GatewayFabrikasi = ({
       asama: { ad: "hello_bekliyor" },
       sureIptal: null,
       kimlik: null,
+      devirOldur: null,
     };
     baglantilar.add(g);
     g.sureIptal = zamanlayici.sonra(EL_SIKISMA_MS, () => reddet(g, "zaman_asimi"));

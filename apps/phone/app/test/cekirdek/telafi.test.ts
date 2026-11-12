@@ -342,6 +342,90 @@ describe("telafi", () => {
       assert.equal(d3.kv.has(S), false);
     });
 
+    /** `askiya` açıkken `yaz`/`oku` çağrısı `birak()` gelene dek bekler (sonra gerçekten yapılır). */
+    class AskiliDepo extends SahteDepo {
+      askiya: "yaz" | "oku" | null = null;
+      private bekleyenIs: (() => void) | null = null;
+      askidaMi(): boolean {
+        return this.bekleyenIs !== null;
+      }
+      birak(): void {
+        const is = this.bekleyenIs;
+        this.bekleyenIs = null;
+        is?.();
+      }
+      private ask<T>(is: () => Promise<T>): Promise<T> {
+        this.askiya = null;
+        return new Promise<T>((coz, red) => {
+          this.bekleyenIs = () => {
+            is().then(coz, red);
+          };
+        });
+      }
+      override yaz(anahtar: string, deger: string): Promise<void> {
+        if (this.askiya === "yaz") return this.ask(() => super.yaz(anahtar, deger));
+        return super.yaz(anahtar, deger);
+      }
+      override oku(anahtar: string): Promise<string | null> {
+        if (this.askiya === "oku") return this.ask(() => super.oku(anahtar));
+        return super.oku(anahtar);
+      }
+    }
+
+    it("yarış: boşalma yazımı askıdayken sifirla -> eski değer sıfırlama sonrasını etkilemez, çift uygulama yok", async () => {
+      const depo = new AskiliDepo();
+      const { t, sayac } = kur(depo);
+      depo.askiya = "yaz";
+      for (const s of [1, 2, 3, 4, 5]) t.olay(olay(yankiOlayi(s)));
+      await bosalt();
+      assert.ok(depo.askidaMi(), "boşalma yazımı askıda");
+      const s = t.sifirla();
+      depo.birak(); // eski yazım ("5") sıfırlamadan sonra tamamlanır
+      await s;
+      assert.equal(depo.kv.has(S), false, "silme eski yazımdan sonra");
+      // Eski partinin bosaldi'si sıfırlamadan sonra bildirilmez.
+      assert.equal(sayac().bosaldi, 0);
+
+      // Yeni geçmiş: seq <= 5 olan kırpan olay (silinmiş sohbete sonradan gelen olay dahil).
+      const yeniler = [sohbetSilindiOlayi(1, "s-1"), yankiOlayi(2, "m2", "a", "s-1")];
+      for (const o of yeniler) t.olay(olay(o));
+      await t.bosalt();
+      // Bellekteki değer bayat kalsaydı ("5 zaten yazılı") bu yazım atlanırdı.
+      assert.equal(depo.kv.get(S), "2");
+
+      // Yeniden açılış: 2 kırpılır ama istenen değer 2 kalır; 2 yeniden gelince uygulanmaz.
+      const ikinci = kur(kopya(depo));
+      assert.deepEqual((await ikinci.t.yukle()).map((o) => o.seq), [1]);
+      assert.equal(ikinci.t.sonSeq(), 2);
+      const ucuncu = kur(kopya(ikinci.depo));
+      await ucuncu.t.yukle();
+      assert.equal(ucuncu.t.sonSeq(), 2);
+      ucuncu.t.olay(olay(yankiOlayi(2, "m2", "a", "s-1")));
+      ucuncu.t.olay(olay(yankiOlayi(3)));
+      await ucuncu.t.bosalt();
+      assert.deepEqual(ucuncu.uygulanan, [3]);
+    });
+
+    it("yarış: yukle askıdayken sifirla -> eski geçmiş sonSeq'e ve listeye girmez", async () => {
+      const depo = new AskiliDepo();
+      depo.gunlukler.set(G, [1, 2, 3].map((s) => j(yankiOlayi(s))));
+      depo.kv.set(S, "3");
+      const { t, uygulanan } = kur(depo);
+      depo.askiya = "oku";
+      const y = t.yukle();
+      await bosalt();
+      assert.ok(depo.askidaMi(), "last_seq okuması askıda");
+      const s = t.sifirla();
+      depo.birak();
+      assert.deepEqual(await y, []);
+      await s;
+      assert.equal(t.sonSeq(), 0);
+      t.olay(olay(yankiOlayi(1)));
+      await t.bosalt();
+      assert.deepEqual(uygulanan, [1]);
+      assert.equal(depo.kv.get(S), "1");
+    });
+
     it("bozuk/yarım son satır atlanır; o olay yeniden gelince bir kez uygulanır", async () => {
       const depo = new SahteDepo();
       depo.gunlukler.set(G, [j(yankiOlayi(1)), j(yankiOlayi(2)), '{"seq":3,"type":"user_e']);

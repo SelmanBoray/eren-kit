@@ -1100,3 +1100,120 @@ describe("cihaz: gerçek günlükle hata kodu", () => {
     assert.equal(b.kapanis?.neden, satir.code);
   });
 });
+
+// ---------------------------------------------------------------------------------------------
+// Sunucunun kendi kapattığı bağlantı: kapanış olayını beklemeden ölür
+// ---------------------------------------------------------------------------------------------
+
+/** Kapanış el sıkışmasını yanıtlamayan istemci: `kapat` sonrası `close` yok, çerçeveler yayılmayı sürdürür. */
+function inatci() {
+  const mesajlar: Array<(m: string) => void> = [];
+  const kapanislar: Array<() => void> = [];
+  const gonderilenler: string[] = [];
+  let kapanis: { kod: number; neden: string } | null = null;
+  const baglanti = {
+    yol: "/cihaz" as const,
+    uzakIp: "100.64.0.20",
+    gonder: (m: string): boolean => {
+      if (kapanis !== null) return false;
+      gonderilenler.push(m);
+      return true;
+    },
+    kapat: (kod: number, neden: string): void => {
+      if (kapanis === null) kapanis = { kod, neden };
+    },
+    mesajDinle: (f: (m: string) => void): void => void mesajlar.push(f),
+    kapanisDinle: (f: () => void): void => void kapanislar.push(f),
+  };
+  return {
+    baglanti,
+    gonderilenler,
+    kapanis: () => kapanis,
+    mesaj: (m: Record<string, unknown> | string): void => {
+      const ham = typeof m === "string" ? m : JSON.stringify({ v: PROTOKOL_SURUMU, ...m });
+      for (const f of [...mesajlar]) f(ham);
+    },
+    kapanisYay: (): void => {
+      for (const f of [...kapanislar]) f();
+    },
+  };
+}
+
+describe("cihaz: kendi kapattığı bağlantı (yanıtsız kapanış el sıkışması)", () => {
+  const izinMesaji = (grant_id: string) => ({
+    type: "grant_issued",
+    grant_id,
+    token: JETON,
+    plan_id: BAGLAM.plan_id,
+    plan_hash: HASH,
+    mod: "oku",
+    uygulamalar: ["com.example.mesaj"],
+    kalan_ms: 3_600_000,
+    butce: 200,
+  });
+
+  for (const [ad, tetik, neden] of [
+    ["geçersiz çerçeve", "{bozuk", "gecersiz_mesaj"],
+    ["el sıkışma tekrarı", { type: "hello", device_id: "tel-1", client_nonce: "x".repeat(44) }, "yetkisiz"],
+  ] as const) {
+    it(`${ad}: bağlantı hemen bırakılır, bekleyen komut hemen belirsiz, sonraki çerçeveler işlenmez`, async () => {
+      const o = kur();
+      const c = inatci();
+      const kopma = olayTopla(o.veriyolu, "cihaz_baglantisi");
+      o.cihaz.baglandi({ baglanti: c.baglanti, device_id: "tel-1" } as unknown as DogrulanmisCihazBaglantisi);
+      c.mesaj(izinMesaji("g1"));
+      const p = o.cihaz.komut(BAGLAM, "foreground", {}, new AbortController().signal);
+      await tur();
+      const cmd = c.gonderilenler.map((m) => JSON.parse(m) as Record<string, unknown>).find((m) => m.type === "cmd");
+      assert.ok(cmd);
+
+      c.mesaj(tetik);
+      assert.equal(c.kapanis()?.neden, neden);
+      assert.equal(o.cihaz.bagliMi(), false, "close olayı beklenmeden bırakılmalı");
+      assert.deepEqual(await p, { ok: false, code: "belirsiz" });
+      assert.deepEqual(kopma, [{ bagli: true }, { bagli: false }]);
+
+      const izinler = olayTopla(o.veriyolu, "izin_geldi");
+      c.mesaj(izinMesaji("g2"));
+      c.mesaj({ type: "app_list", uygulamalar: [{ paket: "com.example.x", ad: "X", durum: "acik" }] });
+      c.mesaj({ type: "device_state", a11y: true, adb_enabled: true, kilitli: false });
+      o.zaman.ilerlet(30_000);
+      await tur();
+      assert.deepEqual(izinler, []);
+      assert.deepEqual(o.cihaz.uygulamalar().uygulamalar, []);
+      assert.deepEqual(o.yazilanOlaylar, []);
+      assert.deepEqual(await o.cihaz.komut(BAGLAM, "foreground", {}, new AbortController().signal), {
+        ok: false,
+        code: "telefon_bagli_degil",
+      });
+      c.kapanisYay(); // geç gelen kapanış ikinci kopma yayını üretmez
+      assert.deepEqual(kopma, [{ bagli: true }, { bagli: false }]);
+    });
+  }
+
+  it("servis kapanışı: inatçı bağlantının sonraki çerçeveleri işlenmez", () => {
+    const o = kur();
+    const c = inatci();
+    o.cihaz.baglandi({ baglanti: c.baglanti, device_id: "tel-1" } as unknown as DogrulanmisCihazBaglantisi);
+    o.cihaz.kapat();
+    assert.equal(c.kapanis()?.kod, 1001);
+    const izinler = olayTopla(o.veriyolu, "izin_geldi");
+    c.mesaj(izinMesaji("g1"));
+    assert.deepEqual(izinler, []);
+  });
+
+  it("normal kopuş (kapanış olayı) eskisi gibi: bir kez kopma yayını, yeniden bağlanınca çalışır", async () => {
+    const o = kur();
+    const kopma = olayTopla(o.veriyolu, "cihaz_baglantisi");
+    const b = baglan(o);
+    b.istemciKopar();
+    assert.equal(o.cihaz.bagliMi(), false);
+    const b2 = baglan(o);
+    izinVer(b2);
+    const p = o.cihaz.komut(BAGLAM, "foreground", {}, new AbortController().signal);
+    await tur();
+    sonucYolla(b2, cmdler(b2)[0]!.cmd_id);
+    assert.equal((await p).ok, true);
+    assert.deepEqual(kopma, [{ bagli: true }, { bagli: false }, { bagli: true }]);
+  });
+});

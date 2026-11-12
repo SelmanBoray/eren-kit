@@ -136,11 +136,14 @@ export const telafiKur: TelafiFabrikasi = ({ depo, uygulandi, bosaldi, yazilamad
   let zincir: Promise<void> = Promise.resolve();
 
   // `s` günlüğe önceden eklenmiş olmalı. Diskte zaten `>= s` varsa yazmaz. Yazılamazsa `false`.
+  // `depo.yaz` eşzamanlı çağrılır: arada gelen `sifirla`'nın silmesi depoda bu yazımdan sonra sıralanır.
+  // Yazım beklenirken `sifirla` geldiyse bellekteki değer eski nesle aittir, güncellenmez.
   const seqYaz = async (s: number): Promise<boolean> => {
     if (s <= kayitliSeq) return true;
+    const n = nesil;
     try {
       await depo.yaz(TELAFI_ANAHTARLARI.sonSeq, String(s));
-      kayitliSeq = s;
+      if (n === nesil) kayitliSeq = s;
       return true;
     } catch {
       return false;
@@ -221,6 +224,8 @@ export const telafiKur: TelafiFabrikasi = ({ depo, uygulandi, bosaldi, yazilamad
       }
       liste.sort((a, b) => a.seq - b.seq);
       const kayitli = Number(await depo.oku(TELAFI_ANAHTARLARI.sonSeq));
+      // Arada `sifirla` geldiyse okunan her şey silinmiş geçmişe aittir: durum değişmez, liste boş.
+      if (n !== nesil) return [];
       kayitliSeq = seqMi(kayitli) ? kayitli : 0;
       // Kırpma `last_seq`'e dokunmaz; yine de en büyük `seq` kırpmadan önce alınır.
       const enBuyuk = liste.length > 0 ? liste[liste.length - 1]!.seq : 0;
@@ -244,6 +249,7 @@ export const telafiKur: TelafiFabrikasi = ({ depo, uygulandi, bosaldi, yazilamad
           }
         }
       }
+      if (n !== nesil) return [];
       sonSeq = Math.max(enBuyuk, kayitliSeq);
       siradaki = sonSeq;
       return liste;
@@ -273,8 +279,10 @@ export const telafiKur: TelafiFabrikasi = ({ depo, uygulandi, bosaldi, yazilamad
           if (bekleyen === 0 && uygulanan > 0) {
             uygulanan = 0;
             // Toplu telafi başına tek `last_seq` yazımı; doğruluk için gerekmez (bkz. dosya başı).
+            const n2 = nesil;
             await seqYaz(sonSeq);
-            bosaldi();
+            // Yazım beklenirken `sifirla` geldiyse boşalan parti silinmiş geçmişe aitti.
+            if (n2 === nesil) bosaldi();
           }
         }
       }).catch(() => undefined);

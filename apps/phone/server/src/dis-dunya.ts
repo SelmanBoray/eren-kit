@@ -693,8 +693,11 @@ const wsMetni = (veri: RawData): string => {
 
 /**
  * Yarı açık bağlantı yoklaması (telefon ağ değiştirdi, kapsama dışı: soket düzgün kapanmadı). Her
- * aralıkta bir WebSocket ping çerçevesi gider; bir tam aralık boyunca ne pong ne mesaj gelen bağlantı
- * `terminate` edilir ve bugünkü kapanış yolundan temizlenir. Ölü bağlantı en geç iki aralıkta (60 sn)
+ * aralıkta bir WebSocket ping çerçevesi gider; bir tam aralık boyunca karşı uçtan HİÇ bayt gelmeyen
+ * bağlantı `terminate` edilir ve bugünkü kapanış yolundan temizlenir. Kanıt alttaki TCP soketinin
+ * `bytesRead` sayacıdır (Node `net.Socket`'in kamuya açık alanı; `ws`'nin iç alanı değil): yarım
+ * yüklenen büyük çerçeve de sayılır. Telefon tek bir büyük çerçeve (ör. 8 MB ekran görüntüsü) yüklerken
+ * pong o çerçevenin arkasında bekler; yükleme sürdükçe bağlantı canlıdır. Ölü bağlantı en geç iki aralıkta (60 sn)
  * düşer; pong için bir tam aralık (30 sn) beklenir: mobil ağ gecikmesine geniş pay. Ping uygulama
  * mesajı değildir, protokol değişmez: telefondaki WebSocket gerçeklemeleri pong'u kendiliğinden döner.
  * Tampon için ek üst sınır yok: telafi bütün partileri bir kerede yazar, sağlıklı ama yavaş bağlantıda
@@ -704,7 +707,7 @@ const wsMetni = (veri: RawData): string => {
 export const WS_CANLILIK_ARALIGI_MS = 30_000;
 
 export interface CanlilikIzleyicisi {
-  /** Pong ya da mesaj geldi: bağlantı bu aralıkta canlı. */
+  /** Pong ya da mesaj geldi: bağlantı bu aralıkta canlı (bayt sayacına ek, ucuz kanıt). */
   canliIsaretle(): void;
   /** Zamanlayıcıyı bırakır. Birden çok çağrı zararsızdır. */
   durdur(): void;
@@ -714,12 +717,15 @@ export interface CanlilikIstegi {
   aralikMs: number;
   herAralik: ZamanlayiciPortu["herAralik"];
   ping: () => void;
+  /** Karşı uçtan bugüne okunan toplam bayt. Her tikte bir önceki tikten büyükse bağlantı canlıdır. */
+  okunanBayt: () => number;
   /** Bir aralık boyunca canlılık kanıtı gelmedi. Çağrılmadan önce zamanlayıcı bırakılır. */
   sonlandir: () => void;
 }
 
 export const canlilikIzleyicisiKur = (i: CanlilikIstegi): CanlilikIzleyicisi => {
   let canli = true;
+  let sonBayt = i.okunanBayt();
   let iptal: IptalEt | null = null;
   const durdur = (): void => {
     const f = iptal;
@@ -728,6 +734,12 @@ export const canlilikIzleyicisiKur = (i: CanlilikIstegi): CanlilikIzleyicisi => 
   };
   iptal = i.herAralik(i.aralikMs, () => {
     if (iptal === null) return;
+    const bayt = i.okunanBayt();
+    if (bayt !== sonBayt) {
+      // Kısmi çerçeve verisi dahil herhangi bir bayt: karşı uç bu aralıkta yaşıyordu.
+      sonBayt = bayt;
+      canli = true;
+    }
     if (!canli) {
       durdur();
       i.sonlandir();
@@ -770,15 +782,19 @@ export interface GercekWsBaglantisi extends WsBaglantisi {
 const wsBaglantisiKur = (
   ws: WebSocket,
   yol: WsYolu,
-  uzakIp: string,
+  soket: Socket,
   canlilik: WsCanlilikAyari,
   izleyiciler: Set<CanlilikIzleyicisi>,
 ): GercekWsBaglantisi => {
   const mesajlar: Array<(metin: string) => void> = [];
   const kapanislar = birKezOlayKur();
+  const uzakIp = soket.remoteAddress ?? "";
   const izleyici = canlilikIzleyicisiKur({
     aralikMs: canlilik.aralikMs,
     herAralik: canlilik.herAralik,
+    // Yükseltilen istek soketi (`req.socket`) `ws`'nin okuduğu sokettir; yalnız sayaç okunur,
+    // dinleyici eklenmez, akışa dokunulmaz.
+    okunanBayt: () => soket.bytesRead,
     ping: () => {
       try {
         ws.ping(undefined, undefined, bos);
@@ -863,7 +879,7 @@ export const wsKur = (canlilik: WsCanlilikAyari = VARSAYILAN_CANLILIK): WsSunucu
           perMessageDeflate: false,
         });
         w.on("connection", (ws, req) => {
-          const b = wsBaglantisiKur(ws, yol, req.socket.remoteAddress ?? "", canlilik, izleyiciler);
+          const b = wsBaglantisiKur(ws, yol, req.socket, canlilik, izleyiciler);
           try {
             istek.baglanti(b);
           } catch {

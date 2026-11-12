@@ -643,7 +643,7 @@ Karar (2026-11-09): asistan kullanıcının kendi asistanıdır; her adımda ona
   - İzin üreten mesaj bilgisayarda yoktur: `grant_revoke` yalnız kapatır. `[karar]`
   - Tepkiler: `kilit_degisti{aktif}` -> `izinGeriCek(null,"limit_kilit")`, kilit aktifken gelen `grant_issued` da hemen geri çekilir. `is_bitti{tur:"telefon"}` -> o izin `is_bitti` ya da `is_iptal`. `grant_revoked` -> bellekten sil, `izin_gitti`.
   - **Biten ve geri çekilen izinler:** biten telefon planlarının (`is_bitti` nedeniyle) ve bağlantı kopukken geri çekilen izinlerin (`grant_id` -> neden) sınırlı listesi tutulur (her biri 1000, en eski düşer). Telefon bunları yeniden yollarsa izin saklanmaz, `izin_geldi` yayınlanmaz, özgün nedenle `grant_revoke` gider. `[bu-belge]`
-  - Tek bağlantı: yeni `baglandi` eskiyi kapatır, eskideki bekleyenler `belirsiz`.
+  - Tek bağlantı: yeni `baglandi` eskiyi kapatır, eskideki bekleyenler `belirsiz`. Modül kendi kapattığı bağlantıyı da hemen ölü sayar; kapanışta telefona gitmiş komutlar `belirsiz`, gitmemiş ve yeni komutlar `telefon_bagli_degil` ile sonuçlanır.
   - `uygulamalar()`: `ad` `kacir(ad, SINIRLAR.UYGULAMA_ADI)`. Uygulama kendi adını seçer. `[protocol]`
   - `device_state.adb_enabled` yanlıştan doğruya geçince `system_notice{seviye:"uyari",kod:"diger"}`. Oturumlara ADB aracı verilmez. `[karar]`
   - Ekran görüntüsü en az 1 sn aralık ister, siyah görüntü `FLAG_SECURE` işaretidir: telefon tarafının işidir, servis süzmez. `[telefon]`
@@ -944,7 +944,7 @@ Rapor gövdesi, soru metni, soru cevabı, plan metni, uygulama adı sentetiğe g
   - Sıra sabit: `hello` -> `auth_challenge` (`server_nonce` 32 rastgele bayt, `server_signature = imzala(kimlikImzaMetni({rol:"pc",kanal,...}))`) -> `auth_response` -> `welcome`. 10 sn süre. Sıra bozulursa `error{yetkisiz}` + kapat.
   - Doğrulama: cihaz kayıtlı değilse `cihaz_bilinmiyor`; imza `kimlikImzaMetni({rol:"telefon",kanal,...})` üzerinden, tutmazsa `imza_gecersiz`; `uzakIp != cihaz.tailscale_ip` ise `ip_uyusmuyor`. iPad `/cihaz`'a `kanal_desteklenmiyor`.
   - **Bilgisayarın kendi Tailscale adresinden gelen eşleştirme ve kimlik reddedilir** (`ip_uyusmuyor`): serbest bir yerel oturumun kendini telefon diye eşleştirmesinin en kısa yolu kapanır. Tam sınır değildir (kalan açık 1). `[bu-belge]`
-  - `auth_response`'ta ve kimlik sonrası her `/sohbet` çerçevesinde `cihazGetir` taze okunur; 2 sn'lik yoklama kaldırılan cihazı `cihaz_bilinmiyor` ile kapatır.
+  - `auth_response`'ta ve kimlik sonrası her `/sohbet` çerçevesinde `cihazGetir` taze okunur; 2 sn'lik yoklama kaldırılan cihazı `cihaz_bilinmiyor` ile kapatır. `cihaz` modülüne soketin kendisi değil, kapatıldığı anda ölen bir sarmalayıcısı (`devirGorunumu`) devredilir: kim kapatırsa kapatsın `close` olayı beklenmeden `cihaz`'ın kapanış dinleyicisi çalışır, sonraki çerçeveler süzülür, gönderim `false` döner.
   - Paylaşılan sır yok: PC yalnız açık anahtar tutar. `[karar]`
 - **Eşleştirme:** yalnız `/sohbet`, kimlikten önce. `eslestirmeOku` yoksa ya da süresi geçtiyse `eslestirme_kapali`. Kod `sha256Hex(utf8Bayt(kod))` ile `sabitZamanEsit`; yanlışsa `eslestirme_kodu_gecersiz`, 5 yanlışta kayıt silinir. Doğruysa kayıt silinir (tek kullanımlık), `device_id` üretilir, `uzakIp` kaydedilir, `pair_result`. `[karar]`
 - **Mesajlar:** kimlik öncesi `user_message` ya da başka iş mesajı işlenmez, kapanır. `client_msg_id` önce `ackBul`: varsa aynı `ack`, ikinci kez işlenmez; yeni `ack` `ackYaz` ile saklanır (`izin_bekleniyor` dahil). `[protocol]`
@@ -985,7 +985,7 @@ Rapor gövdesi, soru metni, soru cevabı, plan metni, uygulama adı sentetiğe g
   - `masaustuDurumu`: geçerli oturumun `Active`/`Disc` durumu; okunamazsa `bilinmiyor`.
   - `tailscaleAdresi`: `os.networkInterfaces`, yalnız adında `tailscale` geçen arayüzün (büyük küçük harf duyarsız) IPv4, iç olmayan, 100.64.0.0/10 adresi; başka arayüzdeki CGNAT adresi sayılmaz. `[bu-belge]`
   - `ws.dinle`: `WebSocketServer({host,port,maxPayload,perMessageDeflate:false})`, yol dışı bağlantı reddedilir, ikili çerçevede kapat. `uzakIp` yalnız `socket.remoteAddress`, başlık okunmaz.
-  - `ws.dinle`: her bağlantıya 30 sn'de bir WebSocket ping; bir aralık boyunca pong ya da mesaj gelmezse `terminate` (en geç 60 sn), zamanlayıcı `unref`, kapanışta ve sunucu durunca bırakılır. `gonder` soket açık değilse ya da `send` atarsa `false` döner.
+  - `ws.dinle`: her bağlantıya 30 sn'de bir WebSocket ping; bir tam aralık boyunca karşı uçtan hiç veri gelmezse (`req.socket.bytesRead` artmazsa; kısmi çerçeve verisi dahil) `terminate` (en geç 60 sn), zamanlayıcı `unref`, kapanışta ve sunucu durunca bırakılır. `gonder` soket açık değilse ya da `send` atarsa `false` döner.
   - `boru.dinle`: `net` adlandırılmış boru, `\n` çerçeve, `azamiSatir` aşılırsa kapat.
   - `tekilKilit.al`: `\\.\pipe\eren-servis-tekil` üzerinde `net.createServer().listen`. `EADDRINUSE` -> `false`. Süreç normal çıkınca ve `taskkill /F` ile ölünce serbest kaldığı denendi; bayat dosya sorunu yoktur. `[bu-belge]`
   - `anahtar`: `yollar.anahtar`'da PEM, yoksa üretilir (`P-256`). `createSign("SHA256")`, DER; `dogrula` geçersiz anahtarda `false`, atmaz. `timingSafeEqual`.

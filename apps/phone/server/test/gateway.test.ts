@@ -15,6 +15,7 @@ import {
   AZAMI_CERCEVE,
   SOHBET_SURUMU,
   cihazAsagiCoz,
+  cihazYukariCoz,
   kimlikImzaMetni,
   sha256Hex,
   sohbetAsagiCoz,
@@ -23,11 +24,14 @@ import {
 import type { ImzaRolu, Kanal, ServisBilgisi } from "@eren/protocol";
 import { depoAc, depoKur } from "../src/depo.ts";
 import type { CihazYonetimi } from "../src/depo.ts";
+import { cihazKur } from "../src/cihaz.ts";
 import { gatewayKur } from "../src/gateway.ts";
 import type {
   AktifTur,
   AnahtarPortu,
+  CihazYoneticisi,
   Depo,
+  DogrulanmisCihazBaglantisi,
   ErenDurumu,
   GatewayBagimliliklari,
   SohbetAktifTuru,
@@ -218,7 +222,14 @@ interface Durum {
 }
 
 function kur(
-  sec: { sarmala?: (d: Depo) => Depo; tailscale?: string | null; servis?: ServisBilgisi; yol?: string } = {},
+  sec: {
+    sarmala?: (d: Depo) => Depo;
+    tailscale?: string | null;
+    servis?: ServisBilgisi;
+    yol?: string;
+    /** Sahte yerine gerçek `cihazKur` (devir ve kapanış uçtan uca). */
+    gercekCihaz?: boolean;
+  } = {},
 ) {
   const zaman = sahteZaman(BASLANGIC);
   const gunluk = sahteGunluk();
@@ -261,6 +272,17 @@ function kur(
   const durdurmalar: Array<[number, string]> = [];
   const baglananlar: Msg[] = [];
   const cihazGelen: string[] = [];
+  const cihazGercek: CihazYoneticisi | null = sec.gercekCihaz
+    ? cihazKur({
+        ayar: { sureler: { komutPayiMs: 15_000 } as GatewayBagimliliklari["ayar"]["sureler"] },
+        saat: zaman.saat,
+        zamanlayici: zaman.zamanlayici,
+        rastgele,
+        veriyolu,
+        depo: depoGercek,
+        gunluk,
+      } as unknown as Parameters<typeof cihazKur>[0])
+    : null;
 
   const b = {
     ayar: {
@@ -371,6 +393,7 @@ function kur(
       baglandi: (x: Msg) => {
         baglananlar.push(x);
         x.baglanti.mesajDinle((m: string) => cihazGelen.push(m));
+        cihazGercek?.baglandi(x as unknown as DogrulanmisCihazBaglantisi);
       },
     },
     kilit: { durum: () => d.kilit },
@@ -408,6 +431,7 @@ function kur(
     durdurmalar,
     baglananlar,
     cihazGelen,
+    cihazGercek,
     temizlikCagrilari,
     async baslat(): Promise<void> {
       const p = gw.baslat();
@@ -595,9 +619,17 @@ describe("gateway: el sıkışma, başarılı yol", () => {
     assert.equal(w[0]!.head_seq, undefined);
     assert.equal(o.baglananlar.length, 1);
     assert.equal(o.baglananlar[0]!.device_id, "tel-1");
-    assert.equal(o.baglananlar[0]!.baglanti, ist.c);
+    // `cihaz`'a alttaki soketin görünümü gider (kapanınca hemen ölen sarmalayıcı): aynı yol ve adres,
+    // gönderim sokete, soketin çerçeveleri `cihaz`'a.
+    const devir = o.baglananlar[0]!.baglanti;
+    assert.equal(devir.yol, ist.c.yol);
+    assert.equal(devir.uzakIp, ist.c.uzakIp);
     assert.equal(ist.tur("event").length, 0);
     assert.equal(ist.tur("server_status").length, 0);
+    devir.gonder("devir-deneme");
+    assert.equal(ist.c.gonderilenler.at(-1), "devir-deneme");
+    ist.c.mesajGonder("telefondan");
+    assert.deepEqual(o.cihazGelen, ["telefondan"]);
   });
 });
 
@@ -2583,5 +2615,207 @@ describe("gateway: eşleşme kaldırma", () => {
     await ist.gonder(kullaniciMesaji("u1"));
     assert.ok(ist.kapali);
     assert.equal(o.insanMesajlari.length, 0);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Eşleşme kaldırma, `/cihaz`: kapanış el sıkışmasını yanıtlamayan istemci (gerçek `cihaz` modülüyle)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Kapanış el sıkışmasını yanıtlamayan istemci (`ws` CLOSING): `kapat` çağrılır ama `close` olayı hiç
+ * gelmez ve gelen çerçeveler yayılmayı sürdürür. Gönderim, gerçeklemedeki gibi soket açık değilken
+ * `false` döner.
+ */
+function inatciBaglanti(yol: WsYolu, uzakIp: string) {
+  const mesajlar: Array<(m: string) => void> = [];
+  const kapanislar: Array<() => void> = [];
+  const gonderilenler: string[] = [];
+  let kapanis: { kod: number; neden: string } | null = null;
+  return {
+    yol,
+    uzakIp,
+    gonderilenler,
+    get kapanis() {
+      return kapanis;
+    },
+    gonder: (m: string): boolean => {
+      if (kapanis !== null) return false;
+      gonderilenler.push(m);
+      return true;
+    },
+    kapat: (kod: number, neden: string): void => {
+      if (kapanis === null) kapanis = { kod, neden };
+    },
+    mesajDinle: (f: (m: string) => void): void => void mesajlar.push(f),
+    kapanisDinle: (f: () => void): void => void kapanislar.push(f),
+    /** CLOSING'de de yayılır. */
+    mesajGonder: (m: string): void => {
+      for (const f of [...mesajlar]) f(m);
+    },
+    /** Karşı uç sonunda yanıtladı ya da `closeTimeout` doldu. */
+    kapanisYay: (): void => {
+      for (const f of [...kapanislar]) f();
+    },
+    istemciKopar: (): void => {},
+  };
+}
+
+describe("gateway + cihaz: eşleşme kaldırma, yanıt vermeyen /cihaz istemcisi", () => {
+  const kaldir = (o: Ortam, device_id: string): string =>
+    (o.depoGercek as unknown as CihazYonetimi).cihazKaldir(device_id).sonuc;
+  const cihazMesaji = (m: Msg): string => JSON.stringify({ v: 1, ...m });
+  const HASH = "b".repeat(64);
+  const izin = (grant_id: string): string =>
+    cihazMesaji({
+      type: "grant_issued",
+      grant_id,
+      token: "abcdefghijklmnopqrstuvwxyz012345_-ABCDEFG",
+      plan_id: "plan-k",
+      plan_hash: HASH,
+      mod: "oku",
+      uygulamalar: ["com.example.mesaj"],
+      kalan_ms: 3_600_000,
+      butce: 200,
+    });
+  const BAGLAM = { rol: "telefon", is_id: 7, plan_id: "plan-k", plan_hash: HASH } as const;
+
+  /** Gerçek `cihaz` modülü, inatçı `/cihaz` bağlantısı, kimlik bitmiş, izin verilmiş. */
+  async function inatciHazir() {
+    const o = await hazir({ gercekCihaz: true });
+    const cihaz = o.cihazGercek!;
+    const c = inatciBaglanti("/cihaz", IP1);
+    o.ws.istek()!.baglanti(c as unknown as SahteWsBaglantisi);
+    const ist = new Ist(c as unknown as SahteWsBaglantisi);
+    await elSik(ist);
+    assert.equal(ist.tur("welcome").length, 1);
+    assert.equal(cihaz.bagliMi(), true);
+    await ist.gonder(izin("g1"));
+    assert.ok(cihaz.izinBul("plan-k", HASH), "izin işlenmeliydi");
+    return { o, cihaz, c, ist };
+  }
+
+  it("kaldırma: yoklama anında cihaz modülü bağlantıyı bırakır, bekleyen komut hemen sonuçlanır, yeni komut gitmez", async () => {
+    const { o, cihaz, c } = await inatciHazir();
+    const kopma: unknown[] = [];
+    o.veriyolu.dinle("cihaz_baglantisi", (v) => void kopma.push(v));
+    const bekleyen = cihaz.komut(BAGLAM, "foreground", {}, new AbortController().signal);
+    await bosalt();
+    assert.equal(c.gonderilenler.filter((m) => m.includes('"cmd"')).length, 1, "komut telefona gitmeli");
+    let sonuc: unknown = null;
+    void bekleyen.then((s) => {
+      sonuc = s;
+    });
+
+    kaldir(o, "tel-1");
+    o.zaman.ilerlet(2_000); // yoklama; komutun son teslimi (15 sn + 2 sn) çok uzakta
+    await bosalt();
+    assert.deepEqual(c.kapanis, { kod: 1008, neden: "cihaz_bilinmiyor" });
+    assert.equal(cihaz.bagliMi(), false, "close olayı gelmeden bırakılmalı");
+    assert.deepEqual(kopma, [{ bagli: false }]);
+    assert.deepEqual(sonuc, { ok: false, code: "belirsiz" }, "gitmiş komut son teslimi beklemeden sonuçlanmalı");
+
+    const giden = c.gonderilenler.length;
+    assert.deepEqual(await cihaz.komut(BAGLAM, "foreground", {}, new AbortController().signal), {
+      ok: false,
+      code: "telefon_bagli_degil",
+    });
+    assert.equal(cihaz.bildir({ tur: "sistem", baslik: "b", metin: "m" }), null);
+    assert.equal(c.gonderilenler.length, giden, "kaldırılan cihaza çerçeve gitmemeli");
+  });
+
+  it("kaldırmadan sonra inatçı istemcinin hiçbir çerçevesi işlenmez (her mesaj türü), 30 sn sonra kapanış gelse de", async () => {
+    const { o, cihaz, c } = await inatciHazir();
+    const notify_id = cihaz.bildir({ tur: "sistem", baslik: "b", metin: "m" });
+    assert.ok(notify_id);
+    const bekleyen = cihaz.komut(BAGLAM, "foreground", {}, new AbortController().signal);
+    await bosalt();
+    const cmd = JSON.parse(c.gonderilenler.find((m) => m.includes('"cmd"'))!) as Msg;
+    void bekleyen;
+
+    kaldir(o, "tel-1");
+    o.zaman.ilerlet(2_000);
+    await bosalt();
+    assert.equal(cihaz.bagliMi(), false);
+
+    const olayOnce = o.depo.basSeq();
+    const yayinlar: string[] = [];
+    for (const ad of ["izin_geldi", "izin_gitti", "cihaz_baglantisi"] as const) o.veriyolu.dinle(ad, () => void yayinlar.push(ad));
+    const gunlukOnce = o.gunluk.girdiler.length;
+    const cerceveler: Array<[string, string]> = [
+      ["grant_issued", izin("g2")],
+      ["grant_revoked", cihazMesaji({ type: "grant_revoked", grant_id: "g1", neden: "kullanici_durdurdu" })],
+      ["cmd_result", cihazMesaji({ type: "cmd_result", cmd_id: cmd.cmd_id, ok: true, foreground: { baslik: "Mesajlar", paket: "com.example.mesaj" } })],
+      ["device_state", cihazMesaji({ type: "device_state", a11y: true, adb_enabled: true, kilitli: false })],
+      ["app_list", cihazMesaji({ type: "app_list", uygulamalar: [{ paket: "com.example.x", ad: "X", durum: "acik" }] })],
+      ["notify_ack", cihazMesaji({ type: "notify_ack", notify_id })],
+      ["hello", cihazMesaji({ type: "hello", device_id: "tel-1", client_nonce: ISTEMCI_NONCE })],
+      ["bozuk", "{bozuk"],
+    ];
+    // Geçerli çerçeveler gerçekten şemadan geçer: süzülen şey bozukluk değil, kaldırmadır.
+    for (const [tur, ham] of cerceveler) {
+      if (tur !== "hello" && tur !== "bozuk") assert.ok(cihazYukariCoz(ham).ok, tur);
+    }
+    for (let tekrar = 0; tekrar < 3; tekrar++) {
+      for (const [, ham] of cerceveler) c.mesajGonder(ham);
+      o.zaman.ilerlet(10_000); // kapanış olayı 30 sn boyunca gelmiyor
+      await bosalt();
+    }
+    assert.deepEqual(yayinlar, [], "izin_geldi/izin_gitti/cihaz_baglantisi yayınlanmamalı");
+    assert.equal(o.depo.basSeq(), olayOnce, "device_state ADB olayı yazılmamalı");
+    assert.deepEqual(cihaz.uygulamalar(), { telefon_bagli: false, uygulamalar: [] }, "app_list işlenmemeli");
+    assert.equal(cihaz.bildirimOnaylandiMi(notify_id), false, "notify_ack işlenmemeli");
+    const yeniGunluk = o.gunluk.girdiler.slice(gunlukOnce).filter((g) => g.modul === "cihaz");
+    assert.deepEqual(yeniGunluk, [], `cihaz modülü çerçeve işlememeli: ${JSON.stringify(yeniGunluk)}`);
+    assert.equal(cihaz.izinBul("plan-k", HASH)?.grant_id, "g1", "g2 kabul edilmemeli, g1 geri çekilmemeli");
+
+    // Karşı uç sonunda kapanırsa (ya da `closeTimeout`) ikinci bir kopma yayını olmaz.
+    c.kapanisYay();
+    assert.deepEqual(yayinlar, []);
+  });
+
+  it("yeni bağlantı eskisinin yerini alınca eski inatçı bağlantının çerçeveleri işlenmez", async () => {
+    const { o, cihaz, c } = await inatciHazir();
+    const yeni = await o.giris("/cihaz");
+    assert.equal(cihaz.bagliMi(), true);
+    assert.deepEqual(c.kapanis, { kod: 1008, neden: "yeni_baglanti" });
+    const izinler: unknown[] = [];
+    o.veriyolu.dinle("izin_geldi", (v) => void izinler.push(v));
+    c.mesajGonder(izin("g-eski"));
+    assert.deepEqual(izinler, []);
+    // Yeni bağlantı çalışır.
+    yeni.c.mesajGonder(izin("g-yeni"));
+    assert.equal(izinler.length, 1);
+    assert.equal(cihaz.bagliMi(), true);
+  });
+
+  it("normal kopuş ve yeniden bağlanma bozulmaz; yeniden bağlanan cihaza komut gider", async () => {
+    const o = await hazir({ gercekCihaz: true });
+    const cihaz = o.cihazGercek!;
+    const ilk = await o.giris("/cihaz");
+    assert.equal(cihaz.bagliMi(), true);
+    ilk.c.istemciKopar();
+    assert.equal(cihaz.bagliMi(), false);
+    const ikinci = await o.giris("/cihaz");
+    assert.equal(cihaz.bagliMi(), true);
+    ikinci.c.mesajGonder(izin("g1"));
+    const p = cihaz.komut(BAGLAM, "foreground", {}, new AbortController().signal);
+    await bosalt();
+    const cmd = ikinci.c.gonderilenler.map((m) => JSON.parse(m) as Msg).find((m) => m.type === "cmd");
+    assert.ok(cmd, "komut yeni bağlantıya gitmeli");
+    ikinci.c.mesajGonder(cihazMesaji({ type: "cmd_result", cmd_id: cmd.cmd_id, ok: true, foreground: { baslik: "Mesajlar", paket: "com.example.mesaj" } }));
+    const s = await p;
+    assert.equal(s.ok, true);
+    // Kaldırılmamış cihaz yoklamayla düşmez.
+    o.zaman.ilerlet(20_000);
+    await bosalt();
+    assert.equal(cihaz.bagliMi(), true);
+  });
+
+  it("servis kapanışı (gateway.kapat) cihaz modülünü de hemen bırakır", async () => {
+    const { o, cihaz, c } = await inatciHazir();
+    await o.gw.kapat();
+    assert.deepEqual(c.kapanis, { kod: 1001, neden: "kapaniyor" });
+    assert.equal(cihaz.bagliMi(), false);
   });
 });

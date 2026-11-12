@@ -119,6 +119,30 @@ export const cihazKur: CihazFabrikasi = ({
     }
   };
 
+  /** Aktif bağlantıyı bırakır: bekleyenler `belirsiz`, kopukluk yayınlanır. Aktif değilse bir şey yapmaz. */
+  const aktifiBirak = (b: DogrulanmisCihazBaglantisi): void => {
+    if (aktif !== b) return;
+    aktif = null;
+    baglantininBekleyenleriniBelirsizYap(b);
+    veriyolu.yayinla("cihaz_baglantisi", { bagli: false });
+    gunluk.bilgi("cihaz", "baglanti_koptu");
+  };
+
+  // Bu modülün kendi kapattığı bağlantılar. `ws` kapanış olayını ancak karşı uç kapanış el sıkışmasını
+  // yanıtlayınca ya da `closeTimeout` (30 sn) dolunca yayar; CLOSING'de `message` yayılmaya devam eder.
+  // Bu yüzden sunucunun kapattığı bağlantı kapanış olayını beklemeden ölü sayılır: çerçevesi işlenmez,
+  // aktifse hemen bırakılır.
+  const oluler = new WeakSet<DogrulanmisCihazBaglantisi>();
+  const sonlandir = (b: DogrulanmisCihazBaglantisi, kod: number, neden: string): void => {
+    oluler.add(b);
+    aktifiBirak(b);
+    try {
+      b.baglanti.kapat(kod, neden);
+    } catch {
+      // Zaten kapalı olabilir.
+    }
+  };
+
   const izniKaldir = (g: BellekIzni, neden: GrantNedeni): void => {
     izinler.delete(g.grant_id);
     veriyolu.yayinla("izin_gitti", { grant_id: g.grant_id, plan_id: g.plan_id, neden });
@@ -229,12 +253,12 @@ export const cihazKur: CihazFabrikasi = ({
   };
 
   const mesajIsle = (b: DogrulanmisCihazBaglantisi, ham: string): void => {
-    if (b !== aktif || kapali) return;
+    if (b !== aktif || kapali || oluler.has(b)) return;
     const c = cihazYukariCoz(ham);
     if (!c.ok) {
       gunluk.uyari("cihaz", "gecersiz_cerceve", { code: c.kod, yollar: c.yollar.join(",") });
       gonder(b, { v: PROTOKOL_SURUMU, type: "error", code: c.kod });
-      b.baglanti.kapat(KAPAT_KODU, c.kod);
+      sonlandir(b, KAPAT_KODU, c.kod);
       return;
     }
     const m = c.mesaj;
@@ -260,27 +284,23 @@ export const cihazKur: CihazFabrikasi = ({
       default:
         // El sıkışma bitti: hello/auth_response tekrarı protokol ihlalidir.
         gonder(b, { v: PROTOKOL_SURUMU, type: "error", code: "yetkisiz" });
-        b.baglanti.kapat(KAPAT_KODU, "yetkisiz");
+        sonlandir(b, KAPAT_KODU, "yetkisiz");
     }
   };
 
   const baglandi = (b: DogrulanmisCihazBaglantisi): void => {
     if (kapali) {
-      b.baglanti.kapat(KAPAT_KODU, "kapali");
+      sonlandir(b, KAPAT_KODU, "kapali");
       return;
     }
     const eski = aktif;
-    // Önce yenisi atanır: eskinin kapanış dinleyicisi etkisiz kalır.
+    // Önce yenisi atanır: eskinin kapanış dinleyicisi ve çerçeveleri etkisiz kalır.
     aktif = b;
     // Telefon aktif izinleri welcome sonrası yeniden yollar; eski jetonlar yaşamaz.
     izinler.clear();
     if (eski !== null) {
       baglantininBekleyenleriniBelirsizYap(eski);
-      try {
-        eski.baglanti.kapat(KAPAT_KODU, "yeni_baglanti");
-      } catch {
-        // Zaten kapalı olabilir.
-      }
+      sonlandir(eski, KAPAT_KODU, "yeni_baglanti");
     }
     b.baglanti.mesajDinle((ham) => {
       try {
@@ -289,12 +309,11 @@ export const cihazKur: CihazFabrikasi = ({
         gunluk.hata("cihaz", "mesaj_islenemedi");
       }
     });
+    // Kapanışı başka biri başlatmış olabilir (gateway: eşleşme kaldırıldı); gateway devrettiği bağlantıda
+    // kapanış dinleyicisini kapatma çağrısı anında tetikler, `ws`'nin `close` olayını beklemez.
     b.baglanti.kapanisDinle(() => {
-      if (aktif !== b) return;
-      aktif = null;
-      baglantininBekleyenleriniBelirsizYap(b);
-      veriyolu.yayinla("cihaz_baglantisi", { bagli: false });
-      gunluk.bilgi("cihaz", "baglanti_koptu");
+      oluler.add(b);
+      aktifiBirak(b);
     });
     veriyolu.yayinla("cihaz_baglantisi", { bagli: true });
     gunluk.bilgi("cihaz", "baglandi", { device_id: b.device_id });
@@ -420,6 +439,7 @@ export const cihazKur: CihazFabrikasi = ({
       const b = aktif;
       aktif = null;
       if (b !== null) {
+        oluler.add(b);
         baglantininBekleyenleriniBelirsizYap(b);
         try {
           b.baglanti.kapat(1001, "servis_kapaniyor");

@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { createServer, connect } from "node:net";
 import { createServer as httpSunucu } from "node:http";
-import { createPublicKey, createVerify, generateKeyPairSync, sign } from "node:crypto";
+import { createPublicKey, createVerify, generateKeyPairSync, randomBytes, sign } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -884,14 +884,31 @@ describe("ws canlılık yoklaması (sahte zamanlayıcı)", () => {
   const izleyiciKur = () => {
     const zaman = sahteZaman();
     const sayac = { ping: 0, sonlandir: 0 };
+    const okunan = { bayt: 100 };
     const iz = canlilikIzleyicisiKur({
       aralikMs: ARALIK,
       herAralik: zaman.zamanlayici.herAralik,
       ping: () => void sayac.ping++,
+      okunanBayt: () => okunan.bayt,
       sonlandir: () => void sayac.sonlandir++,
     });
-    return { zaman, sayac, iz };
+    return { zaman, sayac, iz, okunan };
   };
+
+  test("pong ve mesaj gelmese de aralıkta okunan her bayt canlılıktır; bayt durunca en geç iki aralıkta düşer", () => {
+    const { zaman, sayac, okunan } = izleyiciKur();
+    for (let i = 0; i < 10; i++) {
+      zaman.ilerlet(ARALIK - 1);
+      okunan.bayt += 1; // büyük çerçevenin bir parçası: tamamlanmış mesaj ya da pong yok
+      zaman.ilerlet(1);
+    }
+    assert.deepEqual(sayac, { ping: 10, sonlandir: 0 });
+    zaman.ilerlet(ARALIK - 1);
+    assert.equal(sayac.sonlandir, 0);
+    zaman.ilerlet(1);
+    assert.equal(sayac.sonlandir, 1, "tam bir aralık hiç bayt yok: sonlandırılır");
+    assert.equal(zaman.bekleyenSayisi(), 0);
+  });
 
   test("aralık 30 sn: ölü bağlantı en geç 60 sn'de düşer", () => {
     assert.equal(ARALIK, 30_000);
@@ -950,14 +967,14 @@ describe("ws canlılık yoklaması (sahte zamanlayıcı)", () => {
       kapandi: boolean;
       metinler: string[];
     }
-    const kur = async () => {
+    const kur = async (azami = 1024) => {
       const zaman = sahteZaman();
       const port = await rastgeleYerelPort();
       const kayitlar: Kayit[] = [];
       const sunucu = await wsKur({ aralikMs: ARALIK, herAralik: zaman.zamanlayici.herAralik }).dinle({
         host: "127.0.0.1",
         port,
-        azamiCerceve: { "/sohbet": 1024, "/cihaz": 1024 },
+        azamiCerceve: { "/sohbet": azami, "/cihaz": azami },
         baglanti: (b) => {
           const k: Kayit = { b, kapandi: false, metinler: [] };
           kayitlar.push(k);
@@ -990,6 +1007,71 @@ describe("ws canlılık yoklaması (sahte zamanlayıcı)", () => {
           assert.ok(await kosulBekle(() => k.kapandi), "kapanisDinle tetiklenir");
           assert.equal(zaman.bekleyenSayisi(), 0);
         }
+      } finally {
+        await sunucu.kapat();
+      }
+    });
+
+    /** Elle el sıkışan ham TCP istemcisi: tek bir çerçeveyi parça parça yazabilmek için. */
+    const hamIstemci = async (port: number, yol: string) => {
+      const s = connect(port, "127.0.0.1");
+      s.on("error", () => {});
+      await new Promise<void>((coz) => s.once("connect", () => coz()));
+      let gelen = Buffer.alloc(0);
+      let kapandi = false;
+      s.on("data", (p: Buffer) => (gelen = Buffer.concat([gelen, p])));
+      s.on("close", () => (kapandi = true));
+      s.write(
+        `GET ${yol} HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n` +
+          `Sec-WebSocket-Key: ${randomBytes(16).toString("base64")}\r\nSec-WebSocket-Version: 13\r\n\r\n`,
+      );
+      assert.ok(await kosulBekle(() => gelen.includes("\r\n\r\n")));
+      assert.match(gelen.toString("latin1"), /^HTTP\/1\.1 101 /);
+      return { s, kapandi: () => kapandi };
+    };
+
+    /** Maskeli tek metin çerçevesi (FIN, opcode 1), yük 126-65535 bayt. */
+    const metinCercevesi = (metin: string): Buffer => {
+      const yuk = Buffer.from(metin, "utf8");
+      const maske = randomBytes(4);
+      const bas = Buffer.from([0x81, 0x80 | 126, yuk.length >> 8, yuk.length & 0xff]);
+      const maskeli = Buffer.alloc(yuk.length);
+      for (let i = 0; i < yuk.length; i++) maskeli[i] = yuk[i]! ^ maske[i % 4]!;
+      return Buffer.concat([bas, maske, maskeli]);
+    };
+
+    test("aralıktan uzun süren, parça parça gelen tek büyük çerçeve koparılmaz ve sonunda işlenir", async () => {
+      const { zaman, port, kayitlar, sunucu } = await kur(64 * 1024);
+      try {
+        const { s, kapandi } = await hamIstemci(port, "/cihaz");
+        assert.ok(await kosulBekle(() => kayitlar.length === 1));
+        const k = kayitlar[0]!;
+        const cerceve = metinCercevesi("e".repeat(40_000));
+        const parcalar = 6;
+        const boy = Math.ceil(cerceve.length / parcalar);
+        // Her aralıkta yalnız bir parça gelir: o aralıkta ne pong ne tamamlanmış mesaj var.
+        // Sunucu soketinin parçayı okuduğunu gözlemleyecek açık bir olay yok; yerel döngüde
+        // teslim için kısa bir G/Ç beklemesi yapılır (saat sahte, kararı tik verir).
+        for (let i = 0; i < parcalar - 1; i++) {
+          s.write(cerceve.subarray(i * boy, (i + 1) * boy));
+          await bekle(50);
+          zaman.ilerlet(ARALIK);
+          assert.equal(kapandi(), false, `${i + 1}. aralıkta koparılmadı`);
+          assert.equal(k.kapandi, false);
+          assert.equal(k.metinler.length, 0, "çerçeve henüz tamamlanmadı");
+        }
+        s.write(cerceve.subarray((parcalar - 1) * boy));
+        assert.ok(await kosulBekle(() => k.metinler.length === 1), "son parçayla mesaj işlenir");
+        assert.equal(k.metinler[0]!.length, 40_000);
+        assert.equal(kapandi(), false);
+        assert.equal(k.kapandi, false);
+        assert.equal(zaman.bekleyenSayisi(), 1);
+
+        // Sonra hiç bayt gelmezse (ham istemci pong da dönmez) iki aralık içinde düşer.
+        zaman.ilerlet(ARALIK);
+        zaman.ilerlet(ARALIK);
+        assert.ok(await kosulBekle(() => k.kapandi && kapandi()), "sessiz bağlantı sonlandırılır");
+        assert.equal(zaman.bekleyenSayisi(), 0);
       } finally {
         await sunucu.kapat();
       }
