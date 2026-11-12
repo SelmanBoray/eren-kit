@@ -16,6 +16,7 @@ jobs:
   bellek:
     name: bellek
     runs-on: windows-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: packages/bellek
@@ -24,14 +25,39 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: packages/bellek/pyproject.toml
       - name: Install
         run: python -m pip install -e ".[dev]"
       - name: Test
         run: python -m pytest -q
 
+  # kapı ve devir hook'ları kullanıcının sistem Python'uyla çalışır (3.12 ve 3.14 uyumlu olmalı);
+  # tam paket 3.12'de (yukarıda) koşar, burada yalnız hook testleri 3.14'te.
+  bellek-hooks-py314:
+    name: bellek hook'ları (Python 3.14)
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: packages/bellek
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          allow-prereleases: true
+          cache: pip
+          cache-dependency-path: packages/bellek/pyproject.toml
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Test (kapi + devir)
+        run: python -m pytest -q tests/kapi tests/devir
+
   opus-orkestra:
     name: opus-orkestra
     runs-on: windows-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: packages/opus-orkestra
@@ -48,6 +74,7 @@ jobs:
   computer-use-windows:
     name: computer-use-windows (Python ${{ matrix.python-version }})
     runs-on: windows-latest
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -61,6 +88,8 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           allow-prereleases: true
+          cache: pip
+          cache-dependency-path: packages/computer-use-windows/pyproject.toml
       - name: Install
         run: python -m pip install -e ".[dev]"
       - name: Lint
@@ -74,6 +103,7 @@ jobs:
   phone:
     name: phone
     runs-on: windows-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: apps/phone
@@ -136,10 +166,81 @@ jobs:
       - name: Test
         run: ./gradlew test --no-daemon --console=plain
 
+  # Gizlilik kapısı: izlenen dosyalarda kişisel yol / e-posta / belirteç / büyük ikili arar
+  # (çıkış 1 = bulgu, 2 = hata; ikisi de işi kırar). GIZLILIK_YASAK secret'ı tanımlı değilse ya da
+  # fork PR'ında boş gelirse yasak sözcük kuralı çalışmaz, diğer kurallar yine çalışır.
+  gizlilik:
+    name: gizlilik
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Tara
+        env:
+          GIZLILIK_YASAK: ${{ secrets.GIZLILIK_YASAK }}
+        run: python -B scripts/gizlilik_tara.py
+      - name: Install
+        run: python -m pip install pytest
+      - name: Test (tarayıcı)
+        run: python -m pytest -q scripts/tests
+
+  # ---------------------------------------------------------------- Windows kurulum
+  installer-windows:
+    name: install.ps1 (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: python -m pip install pytest
+      # test_install_macos.py'deki bu 4 test macOS'a özgü (os.getuid, POSIX yol ayracı, Homebrew
+      # yolu) ve Windows'ta düşer; burada seçiciyle dışarıda bırakılır. macOS işi klasörün
+      # tamamını koşar.
+      - name: Test
+        run: >-
+          python -m pytest -q scripts/installer/tests
+          --deselect scripts/installer/tests/test_install_macos.py::test_plist_icerigi
+          --deselect scripts/installer/tests/test_install_macos.py::test_servis_kurulum_launchctl_cagrilari
+          --deselect scripts/installer/tests/test_install_macos.py::test_mcp_sahiplik_ve_esitlik
+          --deselect scripts/installer/tests/test_install_macos.py::test_main_kapi_hook_yorumlayiciyla_ve_filtreyle_kaydolur
+      # PowerShell 7 (pwsh) ve Windows PowerShell 5.1 (powershell) altında: -DryRun ve -Doctor
+      # çıkış 0, verilen claude-home boş kalır, depoda dosya oluşmaz/değişmez. Boş claude-home'da
+      # doktorun servis/ağ denetimleri "kurulu değil" döner; yine de --no-network ile ayrıca koşulur.
+      - name: Dry run ve doktor (no changes)
+        shell: pwsh
+        run: |
+          $baslangic = [DateTime]::UtcNow
+          $durum = (git status --porcelain) -join "`n"
+          foreach ($ps in 'pwsh', 'powershell') {
+            $kok = Join-Path $env:RUNNER_TEMP "claude-$ps"
+            New-Item -ItemType Directory -Path $kok -Force | Out-Null
+            & $ps -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -DryRun -SkipMcp -NoService -SkipEnv -ClaudeHome $kok
+            if ($LASTEXITCODE -ne 0) { throw "${ps}: install.ps1 -DryRun çıkış $LASTEXITCODE" }
+            $kalan = @(Get-ChildItem -LiteralPath $kok -Force -Recurse)
+            if ($kalan.Count -gt 0) { $kalan | ForEach-Object FullName; throw "${ps}: -DryRun claude-home'da dosya oluşturdu" }
+            & $ps -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Doctor -ClaudeHome $kok
+            if ($LASTEXITCODE -ne 0) { throw "${ps}: install.ps1 -Doctor çıkış $LASTEXITCODE (boş claude-home'da 0 beklenir)" }
+            $kalan = @(Get-ChildItem -LiteralPath $kok -Force -Recurse)
+            if ($kalan.Count -gt 0) { $kalan | ForEach-Object FullName; throw "${ps}: -Doctor claude-home'da dosya oluşturdu" }
+          }
+          python -I -B scripts/installer/doktor.py --no-network --claude-home (Join-Path $env:RUNNER_TEMP 'claude-pwsh')
+          if ($LASTEXITCODE -ne 0) { throw "doktor.py --no-network çıkış $LASTEXITCODE" }
+          if (((git status --porcelain) -join "`n") -ne $durum) { git status --porcelain; throw 'dry-run/doktor sonrası git status değişti' }
+          $yeni = @(Get-ChildItem -Recurse -Force -File | Where-Object { $_.FullName -notmatch '[\\/]\.git[\\/]' -and $_.LastWriteTimeUtc -ge $baslangic })
+          if ($yeni.Count -gt 0) { $yeni | ForEach-Object FullName; throw 'dry-run/doktor depoda dosya bıraktı ya da değiştirdi (__pycache__ vb.)' }
+          Write-Host 'dry-run ve doktor: çıkış 0, claude-home boş, depo değişmedi'
+
   # ---------------------------------------------------------------- macOS
   bellek-macos:
     name: bellek (macOS)
     runs-on: macos-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: packages/bellek
@@ -148,6 +249,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: packages/bellek/pyproject.toml
       - name: Install
         run: python -m pip install -e ".[dev]"
       - name: Test
@@ -156,6 +259,7 @@ jobs:
   opus-orkestra-macos:
     name: opus-orkestra (macOS)
     runs-on: macos-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: packages/opus-orkestra
@@ -172,6 +276,7 @@ jobs:
   installer-macos:
     name: install.sh (macOS)
     runs-on: macos-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -181,5 +286,27 @@ jobs:
         run: python -m pip install pytest
       - name: Test
         run: python -m pytest -q scripts/installer/tests
+      # --dry-run hiçbir şey değiştirmemeli: claude-home oluşmaz, git status temiz kalır ve
+      # depoda (yok sayılan __pycache__ dahil) yeni ya da değişmiş dosya olmaz.
       - name: Dry run (no changes)
-        run: ./install.sh --dry-run --skip-mcp --claude-home "$RUNNER_TEMP/claude" --components beyin,devir,kapi,orkestra,computer-use
+        run: |
+          isaret="$RUNNER_TEMP/dry-run-baslangic"
+          touch "$isaret"
+          ./install.sh --dry-run --skip-mcp --claude-home "$RUNNER_TEMP/claude" --components beyin,devir,kapi,orkestra,computer-use
+          if [ -e "$RUNNER_TEMP/claude" ]; then
+            echo "::error::--dry-run claude-home'u oluşturdu: $RUNNER_TEMP/claude"
+            ls -laR "$RUNNER_TEMP/claude"
+            exit 1
+          fi
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error::--dry-run sonrası git status temiz değil"
+            git status --porcelain
+            exit 1
+          fi
+          yeni="$(find . -path ./.git -prune -o -newer "$isaret" -print)"
+          if [ -n "$yeni" ]; then
+            echo "::error::--dry-run depoda dosya bıraktı ya da değiştirdi (__pycache__ vb.):"
+            echo "$yeni"
+            exit 1
+          fi
+          echo "dry-run: claude-home oluşmadı, depo değişmedi"
