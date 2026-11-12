@@ -177,20 +177,26 @@ async function komutCalistir(argv: readonly string[]): Promise<number> {
     return 2;
   }
 
-  const { ayarKur } = await import("./ayar.ts");
+  const { ayarKur, asistanAdiUret, yollariUret } = await import("./ayar.ts");
   const { depoAc } = await import("./depo.ts");
   const { gunlukKur } = await import("./gunluk.ts");
   const { disDunyaKur, dosyaPortuKur } = await import("./dis-dunya.ts");
+  const { ortamDegeri } = await import("./veri-koku.ts");
 
-  const ayar = await ayarKur({
-    dosya: dosyaPortuKur(),
-    ortam: { ...(process.env as Record<string, string>) },
-    execPath: process.execPath,
-    baslangicMs: Date.now(),
-  });
-  const dis = await disDunyaKur({ yollar: ayar.yollar });
+  const ortam = { ...(process.env as Record<string, string>) };
+  // Eşleşme yönetimi (`--liste`, `--kaldir`) yalnız veri kökünü ister. `ayarKur` servisin ön koşullarını
+  // da doğrular (`claude.exe` bulunamazsa atar): kaybolan telefonun yetkisini geri almak `claude`'un
+  // kurulu olmasına bağlı olmamalı. Kök ve asistan adı aynı kuraldan (`yollariUret`, `asistanAdiUret`;
+  // `EREN_KIT_ASSISTANT_NAME` = ayar.ts `ASISTAN_ADI_ORTAMI`). Kod üretmek (`wsPort`) tam ayarı ister.
+  const yonetim = komut.tur === "liste" || komut.tur === "kaldir";
+  const ayar = yonetim
+    ? null
+    : await ayarKur({ dosya: dosyaPortuKur(), ortam, execPath: process.execPath, baslangicMs: Date.now() });
+  const yollar = ayar?.yollar ?? yollariUret(ortam);
+  const anaSohbetAdi = ayar?.asistanAdi ?? asistanAdiUret(ortamDegeri(ortam, "EREN_KIT_ASSISTANT_NAME"));
+  const dis = await disDunyaKur({ yollar });
   const gunluk = gunlukKur({ kayit: dis.kayit, saat: dis.saat, azamiBayt: 5 * 1024 * 1024, azamiDosya: 3 });
-  const depo = depoAc({ yol: ayar.yollar.vt, saat: dis.saat, gunluk, anaSohbetAdi: ayar.asistanAdi });
+  const depo = depoAc({ yol: yollar.vt, saat: dis.saat, gunluk, anaSohbetAdi });
   try {
     if (komut.tur === "liste") {
       process.stdout.write(listeMetni(depo.eslesmeler()));
@@ -203,6 +209,7 @@ async function komutCalistir(argv: readonly string[]): Promise<number> {
       process.stderr.write(s.hata);
       return s.kod;
     }
+    if (ayar === null) return 1; // yukarıdaki iki dal döndü; tip daraltması
     const s = eslestirmeBaslat({
       depo,
       anahtar: dis.anahtar,
@@ -230,8 +237,9 @@ if (import.meta.main) {
     (kod) => {
       process.exitCode = kod;
     },
-    () => {
-      process.stderr.write("eslestir: beklenmeyen hata\n");
+    (e: unknown) => {
+      // Neden görünsün (ör. ayar ya da veri kökü hatası); yığın izi yazılmaz.
+      process.stderr.write(`eslestir: ${e instanceof Error && e.message !== "" ? e.message : "beklenmeyen hata"}\n`);
       process.exitCode = 1;
     },
   );

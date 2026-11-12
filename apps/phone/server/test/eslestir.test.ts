@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { after, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { EslestirmeQr, sha256Hex, SINIRLAR, utf8Bayt } from "@eren/protocol";
@@ -276,22 +276,51 @@ describe("eslestir: --liste ve --kaldir (gerçek depo)", () => {
   });
 });
 
-describe("eslestir: komut satırı (ayrı süreç, geçici veri kökü)", () => {
+describe("eslestir: komut satırı (ayrı süreç, temiz ortam)", () => {
   const KOMUT = fileURLToPath(new URL("../src/eslestir.ts", import.meta.url));
-  const kok = mkdtempSync(join(tmpdir(), "eren-eslestir-komut-"));
-  after(() => rmSync(kok, { recursive: true, force: true }));
+  const gecici = mkdtempSync(join(tmpdir(), "eren-eslestir-komut-"));
+  after(() => rmSync(gecici, { recursive: true, force: true }));
+  const kok = join(gecici, "veri");
+  const profil = join(gecici, "profil");
+  const yerel = join(profil, "AppData", "Local");
+  const dolasan = join(profil, "AppData", "Roaming");
+  mkdirSync(yerel, { recursive: true });
+  mkdirSync(dolasan, { recursive: true });
+
+  /**
+   * Temiz makine (CI) benzetimi: bu makineye özgü hiçbir değişken alt sürece geçmez. Profil klasörleri
+   * boş geçici klasöre, PATH yalnız node ve System32'ye iner (`claude`, Tailscale, npm global yok);
+   * veri kökü yalnız `EREN_KIT_DATA_DIR` ile verilir.
+   */
+  const temizOrtam = (): Record<string, string> => {
+    const env: Record<string, string> = {};
+    for (const ad of ["SystemRoot", "windir", "ComSpec", "PATHEXT", "TEMP", "TMP", "OS"]) {
+      const v = process.env[ad];
+      if (v !== undefined) env[ad] = v;
+    }
+    const sistem = process.env["SystemRoot"] ?? "C:\Windows";
+    env["PATH"] = [dirname(process.execPath), join(sistem, "System32")].join(";");
+    Object.assign(env, { USERPROFILE: profil, HOME: profil, LOCALAPPDATA: yerel, APPDATA: dolasan, EREN_KIT_DATA_DIR: kok });
+    return env;
+  };
+
   const calistir = (...argv: string[]) => {
     const r = spawnSync(process.execPath, ["--disable-warning=ExperimentalWarning", KOMUT, ...argv], {
-      env: { ...process.env, EREN_KIT_DATA_DIR: kok },
+      env: temizOrtam(),
       encoding: "utf8",
       timeout: 60_000,
     });
-    return { kod: r.status, cikti: r.stdout, hata: r.stderr };
+    const tani = `eslestir ${argv.join(" ")} -> çıkış ${String(r.status)}${r.error ? ` (${r.error.message})` : ""}\nstdout: ${r.stdout}\nstderr: ${r.stderr}`;
+    return { kod: r.status, cikti: r.stdout, hata: r.stderr, tani };
   };
 
   it("--liste, --kaldir (0, idempotent 0, bilinmeyen 1), hatalı argüman 2; kaldırma kalıcı", () => {
-    // Veri kökünü ve şemayı komutun kendisi kurar; cihazı servisin yazacağı gibi doğrudan depoya yaz.
-    assert.equal(calistir("--liste").kod, 0);
+    // Boş veri kökü: veri kökünü ve şemayı komutun kendisi kurar.
+    const ilk = calistir("--liste");
+    assert.equal(ilk.kod, 0, ilk.tani);
+    assert.ok(existsSync(join(kok, "eren.db")), `veri kökü EREN_KIT_DATA_DIR'den alınmalı\n${ilk.tani}`);
+    assert.ok(!existsSync(join(yerel, "eren-kit")), "varsayılan köke (LOCALAPPDATA) yazılmamalı");
+    // Cihazı servisin yazacağı gibi doğrudan depoya yaz.
     const d = depoAc({ yol: join(kok, "eren.db"), saat: sahteZaman().saat, gunluk: sahteGunluk() });
     try {
       d.cihazEkle({ device_id: "cihaz-s", public_key: "QUNJSw==", tailscale_ip: "100.64.0.7", platform: "android", etiket: "T", eslesme_ms: 1 });
@@ -299,28 +328,39 @@ describe("eslestir: komut satırı (ayrı süreç, geçici veri kökü)", () => 
       d.kapat();
     }
     const liste = calistir("--liste");
-    assert.equal(liste.kod, 0);
-    assert.match(liste.cikti, /Eşleşmiş cihazlar \(1\):\n {2}cihaz-s {2}android/);
-    assert.ok(!liste.cikti.includes("QUNJSw==") && !liste.cikti.includes("100.64.0.7"));
+    assert.equal(liste.kod, 0, liste.tani);
+    assert.match(liste.cikti, /Eşleşmiş cihazlar \(1\):\n {2}cihaz-s {2}android/, liste.tani);
+    assert.ok(!liste.cikti.includes("QUNJSw==") && !liste.cikti.includes("100.64.0.7"), liste.tani);
 
     const k1 = calistir("--kaldir", "cihaz-s");
-    assert.equal(k1.kod, 0, k1.hata);
+    assert.equal(k1.kod, 0, k1.tani);
     const k2 = calistir("--kaldir", "cihaz-s");
-    assert.equal(k2.kod, 0);
-    assert.match(k2.cikti, /zaten kaldırılmış/);
+    assert.equal(k2.kod, 0, k2.tani);
+    assert.match(k2.cikti, /zaten kaldırılmış/, k2.tani);
     const k3 = calistir("--kaldir", "cihaz-yok");
-    assert.equal(k3.kod, 1);
-    assert.match(k3.hata, /Cihaz bulunamadı: cihaz-yok/);
-    assert.equal(calistir("--kaldir").kod, 2);
-    assert.equal(calistir("--bilinmeyen").kod, 2);
+    assert.equal(k3.kod, 1, k3.tani);
+    assert.match(k3.hata, /Cihaz bulunamadı: cihaz-yok/, k3.tani);
+    const k4 = calistir("--kaldir");
+    assert.equal(k4.kod, 2, k4.tani);
+    const k5 = calistir("--bilinmeyen");
+    assert.equal(k5.kod, 2, k5.tani);
 
     const sonra = calistir("--liste");
-    assert.match(sonra.cikti, /Eşleşmiş cihazlar \(0\):[\s\S]*Kaldırılmış \(1;[\s\S]*cihaz-s/);
+    assert.match(sonra.cikti, /Eşleşmiş cihazlar \(0\):[\s\S]*Kaldırılmış \(1;[\s\S]*cihaz-s/, sonra.tani);
     const e = depoAc({ yol: join(kok, "eren.db"), saat: sahteZaman().saat, gunluk: sahteGunluk() });
     try {
       assert.equal(e.cihazGetir("cihaz-s"), null);
     } finally {
       e.kapat();
     }
+  });
+
+  it("beklenmeyen hata nedeni stderr'e yazılır (kod üretmek tam ayar ister; claude yokken neden görünür)", () => {
+    const r = calistir();
+    assert.equal(r.kod, 1, r.tani);
+    // Bu ortamda `claude` yok: ayar hatası. (PATH'teki node dizininde `claude` bulunan bir makinede ayar geçer,
+    // Tailscale yokluğu döner.) İkisinde de neden yazılır.
+    assert.match(r.hata, /^(eslestir: claude\.exe bulunamadı|Eşleştirme başlatılamadı: )/, r.tani);
+    assert.ok(!r.hata.includes("beklenmeyen hata"), r.tani);
   });
 });
