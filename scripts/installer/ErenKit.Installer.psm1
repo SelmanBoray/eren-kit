@@ -409,6 +409,19 @@ function Invoke-SettingsHook {
             $res.Message += ('; eski kopyanın {0} hook kaydı da duruyor: bu hook''lar iki kez çalışacak; kaldırmak için -KeepExisting olmadan yeniden çalıştır' -f $legacy.Count)
         }
     }
+    # Bileşenin kendi olayları dışındaki bizim/eski kopya kayıtları: dokunulmaz, yalnız bildirilir.
+    # Alan eski settings_hooks.py sürümünde yoktur; o zaman hiçbir şey yazılmaz.
+    $other = @()
+    if (-not $Uninstall -and $c -and $c.PSObject.Properties['other_events']) {
+        $other = @($c.other_events | Where-Object { $null -ne $_ })
+    }
+    if ($other.Count -gt 0) {
+        foreach ($o2 in $other) {
+            Write-StepLine warn ('{0} olayında beklenmeyen kayıt: {1}' -f $o2.event, $o2.command)
+        }
+        if ($res.Status -eq 'ok' -or $res.Status -eq 'dry') { $res.Status = 'warn' }
+        $res.Message += ('; {0} kayıt bileşenin olayları dışında duruyor: kurulum bu kayda dokunmadı; gerekmiyorsa settings.json''dan elle kaldırın' -f $other.Count)
+    }
     return $res
 }
 

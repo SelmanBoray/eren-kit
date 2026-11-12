@@ -147,8 +147,11 @@ def norm(s: str) -> str:
 # Bir kayıt ancak komut bir Python yorumlayıcısıyla başlıyor VE hook yolu o yorumlayıcının
 # çalıştırdığı betik (seçeneklerden sonraki ilk argüman) ya da "-m" modülü ise tanınır.
 # Yol başka bir programın argümanıysa ya da metnin başka bir yerinde geçiyorsa kayıt bizim
-# değildir. Emin olunamayan biçimler (ortam ataması, ek kabuk komutu, yönlendirme, -c ...)
-# tanınmaz: yineleme bırakmak, kullanıcının hook'unu silmekten iyidir.
+# değildir. Tanımayı bozmayanlar: baştaki AD=değer atamaları, çıktı yönlendirmeleri
+# (2>/dev/null, >/dev/null, 2>&1, 2>nul), yoldaki genişletilmemiş değişkenler ($HOME,
+# ${HOME}, ~, %USERPROFILE%) ve "|| true" kuyruğu. Emin olunamayan biçimler (;, &&, boru,
+# girdi yönlendirmesi, $(...), -c, bash -c/cmd /c sarmalayıcıları) tanınmaz: yineleme
+# bırakmak, kullanıcının hook'unu silmekten iyidir.
 
 _PY_PROG = re.compile(r"^(python(\d+(\.\d+)*)?|py)(\.exe)?$")
 # Değer alan yorumlayıcı seçenekleri (ayrı argüman ya da bitişik: -X utf8 / -Xutf8).
@@ -161,11 +164,22 @@ _OK_TAILS = ([], [("op", "||"), ("w", "true")], [("op", "||"), ("w", ":")],
              [("op", "||"), ("w", "exit"), ("w", "0")])
 
 
+_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+
 def _tokens(cmd: str):
-    """Basit kabuk ayrıştırması: [("w", kelime) | ("op", işleç)]; tırnaklar kelimeyi gruplar,
-    ters bölü kaçış sayılmaz (Windows yolları). Kapanmamış tırnakta None."""
+    """Basit kabuk ayrıştırması: [("w", kelime) | ("op", işleç) | ("out", çıktı yönlendirmesi)].
+    Tırnaklar kelimeyi gruplar; ters bölü kaçış sayılmaz (Windows yolları); "$" sıradan
+    karakterdir (yoldaki $HOME/${HOME}), "$(" ise işleçtir. Kapanmamış tırnakta None."""
     out, cur, have, q = [], [], False, None
     i, n = 0, len(cmd)
+
+    def flush():
+        nonlocal cur, have
+        if have:
+            out.append(("w", "".join(cur)))
+        cur, have = [], False
+
     while i < n:
         c = cmd[i]
         if q:
@@ -176,16 +190,31 @@ def _tokens(cmd: str):
         elif c in "\"'":
             q, have = c, True
         elif c.isspace():
-            if have:
-                out.append(("w", "".join(cur)))
+            flush()
+        elif c == ">":
+            # [n]> / [n]>> çıktı yönlendirmesi; bitişik rakam dosya tanımlayıcısıdır (2>).
+            word = "".join(cur)
+            fd = word if have and word.isdigit() else ""
+            if fd:
                 cur, have = [], False
-        elif c in "|&;<>()`$":
-            if have:
-                out.append(("w", "".join(cur)))
-                cur, have = [], False
+            else:
+                flush()
+            op = ">"
+            if i + 1 < n and cmd[i + 1] == ">":
+                op, i = ">>", i + 1
+            out.append(("out", fd + op))
+        elif c == "$" and i + 1 < n and cmd[i + 1] == "(":
+            flush()
+            out.append(("op", "$("))
+            i += 1
+        elif c in "|&;<()`":
+            flush()
             if c in "|&" and i + 1 < n and cmd[i + 1] == c:
                 out.append(("op", c * 2))
                 i += 1
+            elif c == "&" and out and out[-1][0] == "out" and not have:
+                # 2>&1: "&" yönlendirmenin hedefidir, işleç değil.
+                cur, have = ["&"], True
             else:
                 out.append(("op", c))
         else:
@@ -194,9 +223,28 @@ def _tokens(cmd: str):
         i += 1
     if q:
         return None
-    if have:
-        out.append(("w", "".join(cur)))
+    flush()
     return out
+
+
+def _simple_words(toks: list):
+    """İlk basit komutun kelimeleri (çıktı yönlendirmeleri ayıklanmış); kuyruk güvenli değilse None."""
+    end = next((i for i, (k, _) in enumerate(toks) if k == "op"), len(toks))
+    rest = [(k, v.lower() if k == "w" else v) for k, v in toks[end:]]
+    if rest not in _OK_TAILS:
+        return None
+    words, i, head = [], 0, toks[:end]
+    while i < len(head):
+        kind, v = head[i]
+        if kind == "out":
+            # Hedef: sonraki kelime (dosya ya da &1); yoksa (">" sonda) tanınmaz.
+            if i + 1 >= len(head) or head[i + 1][0] != "w":
+                return None
+            i += 2
+            continue
+        words.append(v)
+        i += 1
+    return words
 
 
 def _target(cmd: str):
@@ -205,11 +253,13 @@ def _target(cmd: str):
     if not toks:
         return None
     # Yalnız tek basit komut + kabul edilen kuyruk ("|| true").
-    end = next((i for i, (k, _) in enumerate(toks) if k == "op"), len(toks))
-    rest = [(k, v.lower() if k == "w" else v) for k, v in toks[end:]]
-    if rest not in _OK_TAILS:
+    words = _simple_words(toks)
+    if words is None:
         return None
-    words = [v for _, v in toks[:end]]
+    while words and _ASSIGN.match(words[0]):
+        words = words[1:]  # baştaki AD=değer ortam atamaları
+    if not words:
+        return None
     prog = norm(words[0]).rsplit("/", 1)[-1]
     if not _PY_PROG.match(prog):
         return None

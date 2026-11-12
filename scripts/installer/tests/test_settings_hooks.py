@@ -454,6 +454,9 @@ LEGACY_KAPI_VARIANTS = {
     "tam_yol_exe": '"C:/Python312/python.exe" -I -S "C:/Bellek/src/bellek/kapi/hook.py" || true',
     "tam_yol_exe_ters": '"C:\\Python312\\python.exe" -I -S "C:\\Bellek\\src\\bellek\\kapi\\hook.py" || true',
     "tam_yol_unix": '/usr/local/bin/python3 -I -S "C:/Bellek/src/bellek/kapi/hook.py" || true',
+    "stderr_null": 'python -I -S "C:/Bellek/src/bellek/kapi/hook.py" 2>/dev/null || true',
+    "ortam_atamasi": 'PYTHONIOENCODING=utf-8 python -I -S "C:/Bellek/src/bellek/kapi/hook.py" || true',
+    "home_degiskeni": "python3 -I -S $HOME/Bellek/src/bellek/kapi/hook.py || true",
 }
 if WINDOWS:
     LEGACY_KAPI_VARIANTS["buyuk_harf"] = 'PYTHON -I -S "C:/BELLEK/SRC/BELLEK/KAPI/HOOK.PY" || true'
@@ -525,6 +528,9 @@ LEGACY_DEVIR_VARIANTS = {
     "ters_bolu": 'python -I "C:\\Bellek\\src\\bellek\\devir\\hook.py" || true',
     "cift_ters_bolu": 'python -I "C:\\\\Bellek\\\\src\\\\bellek\\\\devir\\\\hook.py" || true',
     "modul": "python -m bellek.devir.hook || true",
+    "stderr_null": 'python -I -S "C:/Bellek/src/bellek/devir/hook.py" 2>/dev/null || true',
+    "ortam_atamasi": 'PYTHONIOENCODING=utf-8 python -I -S "C:/Bellek/src/bellek/devir/hook.py" || true',
+    "home_degiskeni": "python3 -I -S $HOME/Bellek/src/bellek/devir/hook.py || true",
 }
 if WINDOWS:
     LEGACY_DEVIR_VARIANTS["buyuk_harf"] = 'python -I "C:/BELLEK/SRC/BELLEK/DEVIR/HOOK.PY" || true'
@@ -796,4 +802,100 @@ def test_uninstall_keeps_node_and_wrapped_hooks(settings, repo):
     assert read_settings(settings) == original
     run(settings, repo, "devir,orkestra,kapi")
     run(settings, repo, "devir,orkestra,kapi", "--uninstall")
+    assert read_settings(settings) == original
+
+
+# ------------------- sözleşme eki: kabuk süsleri tanımayı bozmaz / bağlanmış komutlar bizim değil
+
+# {p}: repodaki betiğin tam yolu; {t}: repo-göreli kuyruk (repo adı "eren-kit" ile biter).
+DECORATED = {
+    "stderr_null": 'python -I -S "{p}" 2>/dev/null || true',
+    "ortam_atamasi": 'PYTHONIOENCODING=utf-8 python -I -S "{p}" || true',
+    "home_python3": "python3 -I -S $HOME/eren-kit/{t} || true",
+    "stderr_stdout": 'python -I -S "{p}" 2>&1 || true',
+    "devnull_ikisi": 'python -I -S "{p}" >/dev/null 2>&1 || true',
+    "stderr_nul": 'python -I -S "{p}" 2>nul || true',
+    "iki_ortam_atamasi": 'PYTHONIOENCODING=utf-8 PYTHONUTF8=1 python -I -S "{p}" || true',
+    "home_suslu": 'python -I -S "${{HOME}}/eren-kit/{t}" || true',
+    "tilde": "python -I -S ~/eren-kit/{t} || true",
+    "userprofile": 'python -I -S "%USERPROFILE%\\eren-kit\\{tw}" || true',
+}
+
+
+def _decorate(template, repo, tail):
+    return template.format(p=f"{Path(repo).as_posix()}/{tail}", t=tail, tw=tail.replace("/", "\\"))
+
+
+@pytest.mark.parametrize("name", list(DECORATED))
+def test_kapi_decorated_own_command_collapses(settings, repo, name):
+    cmd = _decorate(DECORATED[name], repo, KAPI_TAIL)
+    write_settings(settings, {"hooks": {"PreToolUse": [{"matcher": "Read", "hooks": kapi_pair(cmd)}]}})
+    run(settings, repo, "kapi")
+    data = read_settings(settings)
+    assert all(h.get("command") != cmd for h in every_handler(data)), name
+    assert data["hooks"]["PreToolUse"] == [{"matcher": "Read", "hooks": kapi_handlers(repo)}]
+    assert_single_kapi(data, repo)
+
+
+@pytest.mark.parametrize("name", list(DECORATED))
+def test_devir_decorated_own_command_collapses(settings, repo, name):
+    cmd = _decorate(DECORATED[name], repo, DEVIR_TAIL)
+    write_settings(settings, {"hooks": {e: [{"hooks": [{"type": "command", "command": cmd, "timeout": t}]}]
+                                        for e, t in DEVIR_EVENTS.items()}})
+    run(settings, repo, "devir")
+    data = read_settings(settings)
+    assert all(h.get("command") != cmd for h in every_handler(data)), name
+    assert_single_devir(data, repo)
+
+
+CHAINED = {
+    "noktali_virgul": 'python -I "{p}" ; rm -rf x',
+    "ve_ve": 'python -I "{p}" && echo ok',
+    "boru": 'python -I "{p}" | tee log',
+    "dash_c": 'python -c "import x" {p}',
+}
+
+
+@pytest.mark.parametrize("name", list(CHAINED))
+def test_kapi_chained_command_not_ours(settings, repo, name):
+    cmd = _decorate(CHAINED[name], repo, KAPI_TAIL)
+    foreign = {"matcher": "Read", "hooks": [{"type": "command", "command": cmd}]}
+    write_settings(settings, {"hooks": {"PreToolUse": [foreign]}})
+    run(settings, repo, "kapi")
+    pre = read_settings(settings)["hooks"]["PreToolUse"]
+    assert foreign in pre
+    assert sorted(map(json.dumps, pre)) == sorted(
+        map(json.dumps, [foreign, {"matcher": "Read", "hooks": kapi_handlers(repo)}]))
+    first = settings.read_bytes()
+    run(settings, repo, "kapi")
+    assert settings.read_bytes() == first
+
+
+@pytest.mark.parametrize("name", list(CHAINED))
+def test_devir_chained_command_not_ours(settings, repo, name):
+    cmd = _decorate(CHAINED[name], repo, DEVIR_TAIL)
+    foreign = {"hooks": [{"type": "command", "command": cmd}]}
+    write_settings(settings, {"hooks": {"Stop": [foreign]}})
+    run(settings, repo, "devir")
+    stop = read_settings(settings)["hooks"]["Stop"]
+    assert foreign in stop and len(stop) == 2
+    ours = [g for g in stop if g != foreign][0]["hooks"]
+    assert len(ours) == 1 and _n(f"{Path(repo).as_posix()}/{DEVIR_TAIL}") in _n(ours[0]["command"])
+
+
+@pytest.mark.parametrize("cmd", ["|| true", "", "X=1"], ids=["yalniz_or_true", "bos", "yalniz_atama"])
+@pytest.mark.parametrize("comp", ["kapi", "devir", "orkestra"])
+def test_degenerate_commands_do_not_crash(settings, repo, cmd, comp):
+    odd = {"type": "command", "command": cmd}
+    original = {"hooks": {
+        "PreToolUse": [{"matcher": "Read", "hooks": [odd]}],
+        "SessionStart": [{"hooks": [odd]}],
+        "Stop": [{"hooks": [odd]}],
+    }}
+    write_settings(settings, copy.deepcopy(original))
+    run(settings, repo, comp)
+    data = read_settings(settings)
+    for ev, groups in original["hooks"].items():
+        assert groups[0] in data["hooks"][ev], ev
+    run(settings, repo, comp, "--uninstall")
     assert read_settings(settings) == original

@@ -400,6 +400,44 @@ def test_keep_ve_replace_birlikte_verilemez(tmp_path):
         im.parse(["--keep-existing", "--replace-existing"])
 
 
+# ---------------------------------------------------------------- other_events (başka olaydaki kayıtlar)
+
+def _sahte_rapor(monkeypatch, comp: dict) -> None:
+    base = {"added": 3, "removed": 0, "legacy_removed": 0, "legacy": []}
+    monkeypatch.setattr(im.settings_hooks, "run", lambda ns: {
+        "changed": True, "existed": True, "backup": None, "components": {"devir": {**base, **comp}}})
+
+
+@pytest.mark.parametrize("dry", [False, True])
+def test_other_events_doluysa_uyari_yazilir(tmp_path, monkeypatch, capsys, dry):
+    _sahte_rapor(monkeypatch, {"other_events": [
+        {"event": "PreToolUse", "command": 'python -I "C:/Bellek/src/bellek/devir/hook.py"'}]})
+    r = im.settings_hooks_step(_ctx(tmp_path, dry_run=dry), "devir")
+    out = capsys.readouterr().out
+    assert r.status == "warn"
+    assert "kurulum bu kayda dokunmadı" in r.message and "elle kaldırın" in r.message
+    assert "PreToolUse olayında" in out and "C:/Bellek/src/bellek/devir/hook.py" in out
+
+
+@pytest.mark.parametrize("comp", [{"other_events": []}, {}], ids=["bos", "eksik"])
+def test_other_events_bos_ya_da_eksikse_sessiz(tmp_path, monkeypatch, capsys, comp):
+    _sahte_rapor(monkeypatch, comp)
+    r = im.settings_hooks_step(_ctx(tmp_path), "devir")
+    assert r.status == "ok" and "dokunmadı" not in r.message
+    assert "olayında" not in capsys.readouterr().out
+
+
+def test_other_events_gercek_raporla_uyarir_ve_dokunmaz(tmp_path, capsys):
+    ctx = _ctx(tmp_path)
+    eski = 'python -I "C:/Bellek/src/bellek/devir/hook.py"'
+    ctx.settings.write_text(json.dumps({"hooks": {"PreToolUse": [{"hooks": [
+        {"type": "command", "command": eski}]}]}}), encoding="utf-8")
+    r = im.settings_hooks_step(ctx, "devir")
+    assert r.status == "warn" and "dokunmadı" in r.message
+    assert "PreToolUse olayında" in capsys.readouterr().out
+    assert eski in _hooks(ctx.settings)
+
+
 # ---------------------------------------------------------------- kurulum doktoru
 
 def test_doktor_komutu_claude_home_ve_json_gecer(tmp_path):

@@ -104,7 +104,14 @@ def _norm(s: str) -> str:
     return re.sub(r"/{2,}", "/", s.replace("\\", "/")).lower()
 
 
+_HOME_VAR = re.compile(r"^(?:\$HOME|\$\{HOME\})(?=[/\\]|$)")
+
+
 def _expand(token: str) -> Path:
+    # Hook'lar kabukta (Windows'ta Git Bash) çalışır; orada $HOME kullanıcı dizinidir. Windows
+    # ortamında HOME tanımlı değilse expandvars onu açamaz: kullanıcı dizinine çevrilir.
+    if _HOME_VAR.match(token) and not os.environ.get("HOME"):
+        token = _HOME_VAR.sub(lambda _: str(Path.home()).replace("\\", "/"), token)
     return Path(os.path.expandvars(os.path.expanduser(token)))
 
 
@@ -287,8 +294,13 @@ def _script_token(cmd: str, key: str, tail: str) -> str | None:
     return None
 
 
+_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+
 def _interpreter_token(cmd: str, key: str, tail: str) -> str | None:
     toks = _tokens(cmd)
+    while toks and _ASSIGN.match(toks[0]):  # baştaki ortam atamaları (FOO=1 python ...)
+        toks = toks[1:]
     if not toks:
         return None
     script = _script_token(cmd, key, tail)
@@ -316,6 +328,19 @@ def check_settings(ctx: Ctx) -> Check:
     return Check("settings", OK, f"geçerli JSON, {len(hooks)} olayda hook kaydı: {path}")
 
 
+MANUAL_HINT = ("Bileşenin kaydetmediği olaydaki kayda kurulum dokunmaz; gerekmiyorsa settings.json'dan "
+               "elle kaldırın.")
+_FAIL_SILENT = re.compile(r"\|\|\s*(?:true|:|exit\s+0)\s*$", re.IGNORECASE)
+
+
+def _script_missing(tok: str | None) -> bool:
+    """Betik yolu mutlak ve dosya yok mu (-m biçimi ve göreli yol: bilinmiyor -> False)."""
+    if tok is None:
+        return False
+    p = _expand(tok)
+    return p.is_absolute() and not p.is_file()
+
+
 def _m(matcher) -> str:
     return "" if matcher in (None, "", "*") else str(matcher)
 
@@ -334,38 +359,55 @@ def check_hook(ctx: Ctx, key: str) -> Check:
     spec = sh.hook_specs(str(ctx.repo).replace("\\", "/"))[key]
     tail, expected = spec["tail"], spec["events"]
     matchers = spec.get("matchers", {})
-    issues: list[tuple[str, str]] = []
+    # (durum, metin, öneri türü): "fix" = kurulum düzeltir; "manual" = kurulum dokunmaz, elle.
+    issues: list[tuple[str, str, str | None]] = []
 
-    legacy = [r for r in recs if r["kind"] == "legacy"]
-    ours = [r for r in recs if r["kind"] == "ours"]
+    # Bileşenin KENDİ kaydetmediği olaylardaki kayıtlar (bizim ya da eski konum): kurulum
+    # (settings_hooks) yalnız bileşenin kendi olaylarına dokunur, bunları silmez; "kurulumu
+    # yeniden çalıştırın" demek kullanıcıyı döngüye sokar. Betik dosyası yoksa ve komut hatayı
+    # yutmuyorsa ("|| true" yok) hook her tetiklendiğinde hata verir: error; aksi halde warn.
+    other = [r for r in recs if r["event"] not in expected]
+    for event in dict.fromkeys(r["event"] for r in other):
+        ev = [r for r in other if r["event"] == event]
+        toks = list(dict.fromkeys(_script_token(r["command"], key, tail) or r["command"] for r in ev))
+        dead = [r for r in ev if _script_missing(_script_token(r["command"], key, tail))]
+        loud = [r for r in dead if not _FAIL_SILENT.search(r["command"])]
+        what = "eski konumdan" if all(r["kind"] == "legacy" for r in ev) else "bileşenin kaydetmediği olayda"
+        text = f"{event}: {what} {len(ev)} kayıt ({', '.join(toks)})"
+        if loud:
+            text += "; betik dosyası yok, hook her tetiklendiğinde hata verir"
+        elif dead:
+            text += "; betik dosyası yok, hook hiçbir şey yapmaz"
+        issues.append((ERROR if loud else WARN, text, "manual"))
+
+    own = [r for r in recs if r["event"] in expected]
+    legacy = [r for r in own if r["kind"] == "legacy"]
+    ours = [r for r in own if r["kind"] == "ours"]
     for event in dict.fromkeys(r["event"] for r in legacy):
         ev = [r for r in legacy if r["event"] == event]
         scripts = sorted({_script_token(r["command"], key, tail) or r["command"] for r in ev})
-        issues.append((ERROR, f"{event}: eski konumdan {len(ev)} kayıt ({', '.join(scripts)})"))
+        issues.append((ERROR, f"{event}: eski konumdan {len(ev)} kayıt ({', '.join(scripts)})", "fix"))
 
     for event in dict.fromkeys(r["event"] for r in ours):
         ev = [r for r in ours if r["event"] == event]
         groups = sorted({r["group"] for r in ev})
-        if event not in expected:
-            issues.append((WARN, f"{event}: beklenmeyen olayda {len(ev)} kayıt"))
-            continue
         want = len(expected[event])
         if len(groups) > 1:
-            issues.append((ERROR, f"{event}: {len(groups)} grupta kayıt (beklenen 1 grup)"))
+            issues.append((ERROR, f"{event}: {len(groups)} grupta kayıt (beklenen 1 grup)", "fix"))
             continue
         if len(ev) > want:
-            issues.append((ERROR, f"{event}: {len(ev)} kayıt (beklenen {want})"))
+            issues.append((ERROR, f"{event}: {len(ev)} kayıt (beklenen {want})", "fix"))
         elif len(ev) < want:
-            issues.append((WARN, f"{event}: {len(ev)} kayıt, eksik (beklenen {want})"))
+            issues.append((WARN, f"{event}: {len(ev)} kayıt, eksik (beklenen {want})", "fix"))
         if _m(ev[0]["matcher"]) != _m(matchers.get(event)):
             issues.append((WARN, f"{event}: eşleştirici '{_m(ev[0]['matcher']) or '(yok)'}' "
-                                 f"(beklenen '{_m(matchers.get(event)) or '(yok)'}')"))
+                                 f"(beklenen '{_m(matchers.get(event)) or '(yok)'}')", "fix"))
     if ours:
         present = {r["event"] for r in ours}
         for event in expected:
             if event not in present:
                 m = _m(matchers.get(event))
-                issues.append((WARN, f"{event}{f' ({m})' if m else ''} kaydı eksik"))
+                issues.append((WARN, f"{event}{f' ({m})' if m else ''} kaydı eksik", "fix"))
 
     scripts: dict[str, str] = {}
     module_form = False
@@ -378,16 +420,21 @@ def check_hook(ctx: Ctx, key: str) -> Check:
     for tok in scripts.values():
         p = _expand(tok)
         if not p.is_absolute():
-            issues.append((WARN, f"betik yolu göreli, denetlenemedi: {tok}"))
+            issues.append((WARN, f"betik yolu göreli, denetlenemedi: {tok}", "fix"))
         elif not p.is_file():
-            issues.append((ERROR, f"betik dosyası yok: {tok}"))
+            issues.append((ERROR, f"betik dosyası yok: {tok}", "fix"))
         elif not _under(p, ctx.repo):
-            issues.append((WARN, f"kayıt başka bir depo kopyasını gösteriyor: {p} (--repo: {ctx.repo})"))
+            issues.append((WARN, f"kayıt başka bir depo kopyasını gösteriyor: {p} (--repo: {ctx.repo})", "fix"))
 
     if issues:
-        status = _worst(s for s, _ in issues)
+        status = _worst(s for s, _, _ in issues)
         issues.sort(key=lambda i: -_SEV[i[0]])
-        return Check(name, status, "; ".join(t for _, t in issues) + ". " + FIX_HINT)
+        detail = "; ".join(t for _, t, _ in issues) + "."
+        if any(k == "fix" for _, _, k in issues):
+            detail += " " + FIX_HINT
+        if any(k == "manual" for _, _, k in issues):
+            detail += " " + MANUAL_HINT
+        return Check(name, status, detail)
     events = ", ".join(e for e in expected)
     where = ", ".join(scripts.values()) or "-"
     extra = " (modül biçimi: -m)" if module_form else ""

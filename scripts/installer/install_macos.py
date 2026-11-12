@@ -325,8 +325,18 @@ def settings_hooks_step(ctx: Ctx, component: str) -> Step:
         msg += (f"; repo dışındaki eski kopyanın {c['legacy_removed']} hook kaydı "
                 f"{'kaldırılır (yedek alınarak; korumak için --keep-existing)' if ctx.dry_run else 'kaldırıldı (yedekli)'}")
     if legacy:
-        return Step("warn", msg + f"; repo dışında eski kopya hook'u da kayıtlı (--keep-existing: dokunulmadı): "
-                                  f"{legacy[0]}; iki kez çalışır, kaldırmak için --keep-existing olmadan yeniden çalıştır")
+        st = "warn"
+        msg += (f"; repo dışında eski kopya hook'u da kayıtlı (--keep-existing: dokunulmadı): "
+                f"{legacy[0]}; iki kez çalışır, kaldırmak için --keep-existing olmadan yeniden çalıştır")
+    # Bileşenin kendi olayları dışındaki bizim/eski kopya kayıtları: dokunulmaz, yalnız bildirilir.
+    # Alan eski settings_hooks.py sürümünde yoktur; o zaman hiçbir şey yazılmaz.
+    other = [o for o in (c.get("other_events") or []) if isinstance(o, dict)]
+    if other:
+        for o in other:
+            line("warn", f"{o.get('event')} olayında beklenmeyen kayıt: {o.get('command')}")
+        st = "warn"
+        msg += (f"; {len(other)} kayıt bileşenin olayları dışında duruyor: kurulum bu kayda dokunmadı; "
+                f"gerekmiyorsa settings.json'dan elle kaldırın")
     return Step(st, msg)
 
 

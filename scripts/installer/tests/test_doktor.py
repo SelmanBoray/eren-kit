@@ -516,3 +516,83 @@ def test_hook_python_gercek_yorumlayici_ok(doktor, tmp_path):
     assert c["status"] == "ok", c
     assert not c["detail"].startswith("kurulu değil"), c
     assert ".".join(map(str, sys.version_info[:2])) in c["detail"], c
+
+
+# --- 17. eski konum / bizim kayıt: bileşenin kendi olayında mı, başka olayda mı ------------------
+
+LEGACY_DEVIR_STOP = 'python -I "C:/Bellek/src/bellek/devir/hook.py" || true'
+
+
+def _devir_plus(tmp_path: Path, extra: dict) -> tuple[Path, dict]:
+    """Doğru devir kurulumu + {olay: [komut, ...]} ek kayıtlar."""
+    home = tmp_path / "claude"
+    data = build_settings(REAL_REPO, ("devir",))
+    for ev, cmds in extra.items():
+        data["hooks"].setdefault(ev, []).append(
+            {"hooks": [{"type": "command", "command": c, "timeout": 10} for c in cmds]})
+    write_settings(home, data)
+    return home, data
+
+
+def _run_ro(doktor, tmp_path: Path, home: Path) -> tuple[dict, int]:
+    before = snapshot(tmp_path)
+    res = run(doktor, home)
+    rc = run_main(doktor, home)
+    assert snapshot(tmp_path) == before
+    assert_well_formed(res)
+    return res, rc
+
+
+def test_kendi_olayinda_eski_konum_error(doktor, tmp_path):
+    home, _ = _devir_plus(tmp_path, {"Stop": [LEGACY_DEVIR_STOP]})
+    res, rc = _run_ro(doktor, tmp_path, home)
+    c = check(res, "hook:devir")
+    assert c["status"] == "error", c
+    assert "kurulum" in c["detail"].lower(), c
+    assert rc == 2
+
+
+def _legacy_script(tmp_path: Path, exists: bool) -> str:
+    p = tmp_path / "Bellek" / "src" / "bellek" / "devir" / "hook.py"
+    if exists:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("# eski kopya\n", encoding="utf-8")
+    return p.as_posix()
+
+
+@pytest.mark.parametrize(
+    "exists, swallow, want",
+    [(True, True, "warn"), (False, False, "error"), (False, True, "warn")],
+    ids=["B-betik-var", "C-betik-yok-true-yok", "D-betik-yok-true-var"],
+)
+def test_baska_olayda_eski_konum(doktor, tmp_path, exists, swallow, want):
+    script = _legacy_script(tmp_path, exists)
+    cmd = f'python -I "{script}"' + (" || true" if swallow else "")
+    home, data = _devir_plus(tmp_path, {"PreCompact": [cmd]})
+    # Ön koşul: settings_hooks bu kaydı devir'in eski kopyası olarak tanır (yolun sonuna bakar).
+    h = data["hooks"]["PreCompact"][-1]["hooks"][0]
+    assert sh.is_legacy(h, "devir", specs(REAL_REPO)["devir"]["tail"]), h
+    res, rc = _run_ro(doktor, tmp_path, home)
+    c = check(res, "hook:devir")
+    d = c["detail"].lower()
+    assert c["status"] == want, c
+    assert "precompact" in d, c
+    assert "elle" in d, c
+    assert "yeniden çalıştır" not in d, c
+    assert res["status"] == want
+    assert rc == RANK[want]
+
+
+def test_tanima_ortam_atamasi_ve_yonlendirme(doktor, tmp_path):
+    home = tmp_path / "claude"
+    data = build_settings(REAL_REPO, ("devir",))
+    path = f"{repo_str(REAL_REPO)}{specs(REAL_REPO)['devir']['tail']}"
+    for groups in data["hooks"].values():
+        for g in groups:
+            for h in g["hooks"]:
+                h["command"] = f'BELLEK_X=1 python -I "{path}" 2>/dev/null || true'
+    write_settings(home, data)
+    res, _ = _run_ro(doktor, tmp_path, home)
+    c = check(res, "hook:devir")
+    assert c["status"] == "ok", c
+    assert not c["detail"].startswith("kurulu değil"), c
