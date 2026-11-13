@@ -111,6 +111,64 @@ class DefterTest(unittest.TestCase):
         self.assertIn("kart: 1", self.run_d("durum")[1])
         self.assertIn("sürüm 2", self.run_d("oku", "a.py")[1])
 
+    def test_ozet_karti_ve_kavramlar_temizlikten_sonra_okunur(self):
+        # Kullanıcının yeniden ürettiği akış: kart + özet kartı, sonra temizle --tut 1.
+        self.run_d("yaz", "--dosya", "a.py", "--ozet", "topla modülü", "--kavram", "Sepet: ürün listesi")
+        self.assertEqual(self.run_d("yaz", "--tur", "ozet", "--ozet", "PROJE ÖZETİ: toplama aracı")[0], 0)
+        self.assertEqual(self.run_d("temizle", "--tut", "1")[0], 0)
+        out = self.run_d("oku")[1]
+        self.assertIn("PROJE ÖZETİ: toplama aracı", out)
+        self.assertNotIn("defter boş", out)
+        tek = self.run_d("oku", "a.py")[1]
+        self.assertIn("topla modülü", tek)
+        self.assertNotIn("kayıt yok", tek)
+        self.assertIn("`defter oku`", tek)  # yol verilince özetin varlığı tek satırla bildirilir
+        self.assertNotIn("PROJE ÖZETİ", tek)
+        self.assertIn("- Sepet: ürün listesi", self.run_d("kavram")[1])
+
+    def test_ozetle_temizle_akisi_bilgi_kaybetmez(self):
+        self.yaz_dosya("b.py", "KUPON = 'X'\n")
+        self.run_d("yaz", "--dosya", "a.py", "--ozet", "a sürüm 1", "--kavram", "Sepet: eski tanım")
+        self.run_d("yaz", "--dosya", "b.py", "--ozet", "b modülü kuponları tutar", "--kavram", "Kupon: indirim kodu")
+        self.run_d("yaz", "--dosya", "a.py", "--ozet", "a sürüm 2", "--kavram", "Sepet: yeni tanım")
+        self.run_d("yaz", "--dosya", "a.py", "--ozet", "a sürüm 3")
+        girdi = self.run_d("ozetle", "--eski", "1")[1]
+        self.assertIn("a sürüm 1", girdi)
+        self.assertNotIn("a sürüm 3", girdi)
+        self.run_d("yaz", "--tur", "ozet", "--ozet", "ÖZET-1: a ve b modülleri")
+        rc, out, _ = self.run_d("temizle", "--tut", "1")
+        self.assertEqual(rc, 0)
+        self.assertIn("1 kart silindi", out)  # yalnız tamamen eskimiş "a sürüm 1" kartı gider
+        self.assertIn("ÖZET-1: a ve b modülleri", self.run_d("oku")[1])
+        b = self.run_d("oku", "b.py")[1]
+        self.assertIn("b modülü kuponları tutar", b)
+        self.assertIn("DEĞİŞMEDİ", b)
+        self.assertIn("a sürüm 3", self.run_d("oku", "a.py")[1])
+        kv = self.run_d("kavram")[1]
+        self.assertIn("- Kupon: indirim kodu", kv)
+        self.assertIn("- Sepet: yeni tanım", kv)
+        self.assertNotIn("eski tanım", kv)
+        # İkinci tur: önceki özet sıkıştırma girdisine girer, yeni özet onun yerini alır.
+        self.run_d("yaz", "--dosya", "a.py", "--ozet", "a sürüm 4")
+        self.assertIn("ÖZET-1: a ve b modülleri", self.run_d("ozetle", "--eski", "1")[1])
+        self.run_d("yaz", "--tur", "ozet", "--ozet", "ÖZET-2: hepsi")
+        self.run_d("temizle", "--tut", "1")
+        out = self.run_d("oku")[1]
+        self.assertIn("ÖZET-2: hepsi", out)
+        self.assertNotIn("ÖZET-1", out)
+
+    def test_budanmis_eski_icerik_acikca_bildirilir(self):
+        self.yaz_dosya("c.py", "x = 1\n")  # commit edilmemiş: blob yalnız defterin yazdığı nesnede
+        self.run_d("yaz", "--dosya", "c.py", "--ozet", "c ayarı")
+        self.yaz_dosya("c.py", "x = 2\n")
+        git(self.d, "gc", "-q", "--prune=now")
+        rc, out, _ = self.run_d("oku", "c.py")
+        self.assertEqual(rc, 0)
+        self.assertNotIn("DEĞİŞTİ (0 satır fark)", out)
+        self.assertIn("git'te artık yok", out)
+        self.assertIn("dosyayı oku", out)
+        self.assertNotIn("DEĞİŞMEDİ", out)
+
 
 if __name__ == "__main__":
     unittest.main()

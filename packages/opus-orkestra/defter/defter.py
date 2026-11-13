@@ -10,12 +10,16 @@ Depo: `<git-common-dir>/orkestra/defter.jsonl` — depoya girmez, worktree'ler a
 
 Komutlar:
   defter yaz --dosya YOL [--dosya YOL ...] --ozet METİN [--kavram "ad: açıklama" ...] [--gorev METİN]
-  defter oku [YOL ...] [--sinir SATIR]     özet + kayıttan beri fark (yol verilmezse tümü)
+  defter oku [YOL ...] [--sinir SATIR]     özet + kayıttan beri fark (yol verilmezse defter özeti
+                                            ve tüm dosyalar)
   defter kavram                             kayıtlı kavramlar (her adın en son tanımı)
   defter durum                              kart sayısı, boyut, en eski/yeni kayıt
-  defter ozetle [--eski N] [--yerel MODEL]  DENEYSEL: eski kartları sıkıştırma girdisi üretir;
-                                            --yerel ile `ollama run MODEL` özetler ve özet kartı yazar
-  defter temizle --tut N                    yalnız son N kartı tutar
+  defter ozetle [--eski N] [--yerel MODEL]  DENEYSEL: eski kartları (ve önceki defter özetini)
+                                            sıkıştırma girdisi yapar; --yerel ile `ollama run MODEL`
+                                            özetler ve özet kartı yazar
+  defter temizle --tut N                    son N kartı (özet kartları sayılmaz) ve en son özet kartını
+                                            tutar; bir dosyanın ya da kavramın en son kaydını taşıyan
+                                            kart da silinmez, yani `oku`/`kavram` çıktısı bilgi kaybetmez
 """
 
 from __future__ import annotations
@@ -44,6 +48,12 @@ def _git(*args: str, cwd: str | None = None, check: bool = True) -> str:
     if check and p.returncode != 0:
         raise DefterHatasi(f"git {' '.join(args[:2])} başarısız: {p.stderr.strip()[:200]}")
     return p.stdout
+
+
+def _git_rc(*args: str, cwd: str | None = None) -> tuple[int, str]:
+    p = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, encoding="utf-8",
+                       errors="replace")
+    return p.returncode, p.stdout
 
 
 def kok() -> str:
@@ -139,13 +149,29 @@ def son_kartlar_dosya_icin(ks: list[dict]) -> dict[str, tuple[dict, str]]:
     return son
 
 
+def son_ozet_karti(ks: list[dict]) -> dict | None:
+    """En son yazılmış, metni boş olmayan özet kartı (önceki özetleri kapsadığı varsayılır)."""
+    for kart in reversed(ks):
+        if kart.get("tur") == "ozet" and (kart.get("ozet") or "").strip():
+            return kart
+    return None
+
+
 def k_oku(a) -> int:
     k = kok()
     ks = kartlar(defter_yolu(k))
     son = son_kartlar_dosya_icin(ks)
+    ozet_karti = son_ozet_karti(ks)
     istenen = [goreli(k, y) for y in a.yollar] if a.yollar else sorted(son)
+    if ozet_karti is not None:
+        if a.yollar:
+            print(f"(defterde sıkıştırılmış proje özeti var, {ozet_karti['zaman']}: bağlam gerekirse "
+                  "yol vermeden `defter oku` çalıştır)\n")
+        else:
+            print(f"## defter özeti  ({ozet_karti['zaman']})\n{ozet_karti['ozet'].strip()}\n")
     if not istenen:
-        print("defter boş: dosyaları gerektiği kadar oku, işin sonunda `defter yaz` ile özetle.")
+        if ozet_karti is None:
+            print("defter boş: dosyaları gerektiği kadar oku, işin sonunda `defter yaz` ile özetle.")
         return 0
     kalan = a.sinir
     for rel in istenen:
@@ -162,8 +188,17 @@ def k_oku(a) -> int:
         if yeni == eski:
             print("durum: kayıttan beri DEĞİŞMEDİ — özet güncel, dosyayı yeniden okumaya gerek yok.\n")
             continue
-        fark = _git("diff", "--no-color", "-U2", eski, yeni, cwd=k, check=False).splitlines()
-        fark = [s for s in fark if not s.startswith(("diff --git", "index "))]
+        if _git_rc("cat-file", "-e", f"{eski}^{{blob}}", cwd=k)[0] != 0:
+            print("durum: kayıttan beri DEĞİŞTİ, ama kayıttaki eski içerik git'te artık yok (büyük olasılıkla "
+                  "`git gc` budadı); fark üretilemiyor ve özet eskimiş olabilir — dosyayı oku (gerekirse "
+                  "satır aralığıyla), sonra `defter yaz` ile yeniden kaydet.\n")
+            continue
+        rc, ham = _git_rc("diff", "--no-color", "-U2", eski, yeni, cwd=k)
+        fark = [s for s in ham.splitlines() if not s.startswith(("diff --git", "index "))]
+        if rc != 0 or not fark:
+            print("durum: kayıttan beri DEĞİŞTİ, ama fark alınamadı (git diff başarısız); "
+                  "dosyayı oku, sonra `defter yaz` ile yeniden kaydet.\n")
+            continue
         print(f"durum: kayıttan beri DEĞİŞTİ ({len(fark)} satır fark):")
         if kalan <= 0:
             print("[fark sınırı doldu; bu dosya için `defter oku " + rel + "` ayrıca çalıştır]\n")
@@ -218,12 +253,18 @@ def k_ozetle(a) -> int:
     agent'a verir ve dönen özeti `defter yaz --tur ozet --ozet ...` ile kaydettirir.
     --yerel MODEL: `ollama` kuruluysa özet yerel modelle üretilir (API token harcanmaz)."""
     k = kok()
-    ks = [x for x in kartlar(defter_yolu(k)) if x.get("tur") != "ozet"]
+    tum = kartlar(defter_yolu(k))
+    ks = [x for x in tum if x.get("tur") != "ozet"]
     eski = ks[: max(0, len(ks) - a.eski)] if a.eski else ks
     if not eski:
         print("sıkıştırılacak eski kart yok")
         return 0
     girdi = _sikistirma_girdisi(eski)
+    onceki = son_ozet_karti(tum)
+    if onceki is not None:
+        # temizle yalnız en son özet kartını tutar; önceki özet yeni özete girmezse kaybolur.
+        girdi = (f"Önceki defter özeti ({onceki['zaman']}), yeni özet bunu da kapsamalı:\n"
+                 f"{onceki['ozet'].strip()}\n\nKartlar:\n{girdi}")
     istem = ("Aşağıdaki proje defteri kartlarını, kod okumadan sonraki bir mühendisin işine yarayacak "
              f"şekilde en fazla {OZET_SINIR} karakterlik tek bir özete sıkıştır: modüllerin görevi, kritik "
              "arayüzler, alınan kararlar ve kavramlar. Tekrar ve geçmiş anlatısı yok.\n\n" + girdi)
@@ -244,19 +285,46 @@ def k_ozetle(a) -> int:
     return 0
 
 
+def korunacak_kartlar(ks: list[dict], tut: int) -> tuple[set[int], int]:
+    """temizle'nin tutacağı kart indeksleri ve yalnız güncel kayıt taşıdığı için tutulan eski kart sayısı.
+
+    Tutulan: son `tut` kart (özet kartları sayılmaz; `ozetle --eski N` ile aynı sayım), en son özet
+    kartı, ve bir dosyanın ya da bir kavram adının en son kaydını taşıyan her kart. Sıra korunduğu
+    için "son kayıt kazanır" kuralı değişmez; `oku` ve `kavram` çıktısı temizlikten etkilenmez.
+    Silinen yalnız tamamen eskimiş geçmiştir; onu özet kartı taşır."""
+    kart_idx = [i for i, x in enumerate(ks) if x.get("tur") != "ozet"]
+    son_n = set(kart_idx[-tut:] if tut else [])
+    korunan = set(son_n)
+    ozet_idx = [i for i, x in enumerate(ks) if x.get("tur") == "ozet" and (x.get("ozet") or "").strip()]
+    if ozet_idx:
+        korunan.add(ozet_idx[-1])
+    son_dosya: dict[str, int] = {}
+    son_kavram: dict[str, int] = {}
+    for i, x in enumerate(ks):
+        for d in x.get("dosyalar") or []:
+            son_dosya[d["yol"]] = i
+        for kv in x.get("kavramlar") or []:
+            son_kavram[kv["ad"]] = i
+    guncel = set(son_dosya.values()) | set(son_kavram.values())
+    korunan |= guncel
+    return korunan, len(guncel - son_n - set(ozet_idx[-1:]))
+
+
 def k_temizle(a) -> int:
     k = kok()
     yol = defter_yolu(k)
     ks = kartlar(yol)
     if a.tut < 0:
         raise DefterHatasi("--tut negatif olamaz")
-    tut = ks[-a.tut:] if a.tut else []
+    korunan, tasinan = korunacak_kartlar(ks, a.tut)
+    tut = [x for i, x in enumerate(ks) if i in korunan]
     tmp = yol + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         for kart in tut:
             f.write(json.dumps(kart, ensure_ascii=False) + "\n")
     os.replace(tmp, yol)
-    print(f"defter: {len(ks) - len(tut)} kart silindi, {len(tut)} kaldı")
+    ek = f" ({tasinan} eski kart bir dosyanın/kavramın en son kaydını taşıdığı için tutuldu)" if tasinan else ""
+    print(f"defter: {len(ks) - len(tut)} kart silindi, {len(tut)} kaldı{ek}")
     return 0
 
 
