@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { ScrollView, Text, View } from "react-native";
+import { Platform, ScrollView, Text, View } from "react-native";
 import type { AyarHedefi, CihazDurumu } from "../../modules/eren-device/src/ErenDevice.types.ts";
 import type { Cekirdek } from "../cekirdek/index.ts";
 import type { ErenCihaz } from "../cihaz/erenDevice.ts";
 import { ASISTAN_ADI } from "../platform/asistanAdi.ts";
 import { BolumAdi, Dugme, DurumEtiketi, Serit } from "./Bilesenler.tsx";
+import { modulYokMetni } from "./modulYok.ts";
 import { bosluk, cizgi, olcu, renk, yazi } from "./tema.ts";
 
 const AYARLAR: { hedef: AyarHedefi; ad: string; tamam: (d: CihazDurumu) => boolean }[] = [
@@ -144,7 +145,7 @@ export function KurulumEkrani(p: { cihaz: ErenCihaz; cekirdek: Cekirdek }): Reac
     >
       {!cihaz.desteklenir && (
         <View style={{ ...yatay, paddingTop: bosluk[4] }}>
-          <Serit tur="uyari" metin="Bu cihazda yerel modül yok (iPad ya da geliştirme). Kurulum adımları çalışmaz." />
+          <Serit tur="uyari" metin={modulYokMetni(Platform.OS)} />
         </View>
       )}
 
@@ -164,6 +165,8 @@ export function KurulumEkrani(p: { cihaz: ErenCihaz; cekirdek: Cekirdek }): Reac
         </View>
       </Bolum>
 
+      {cihaz.desteklenir && (
+      <>
       <Bolum ad="Tam yetki">
         <View style={{ height: cizgi.ince, backgroundColor: renk.kenar }} />
         <Satir
@@ -294,6 +297,8 @@ export function KurulumEkrani(p: { cihaz: ErenCihaz; cekirdek: Cekirdek }): Reac
           <Dugme yazi="Durumu yenile" tur="ikincil" basinca={() => void yenile()} />
         </View>
       </Bolum>
+      </>
+      )}
     </ScrollView>
   );
 }
