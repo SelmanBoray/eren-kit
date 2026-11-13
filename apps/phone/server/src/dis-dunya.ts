@@ -32,6 +32,7 @@ import type { Server as NetSunucusu, Socket } from "node:net";
 import { freemem, networkInterfaces, totalmem } from "node:os";
 import { dirname, win32 } from "node:path";
 import { StringDecoder } from "node:string_decoder";
+import { SOHBET_YETENEK_PARAMETRESI } from "@eren/protocol";
 import { WebSocketServer } from "ws";
 import type { RawData, WebSocket } from "ws";
 import type {
@@ -782,6 +783,7 @@ export interface GercekWsBaglantisi extends WsBaglantisi {
 const wsBaglantisiKur = (
   ws: WebSocket,
   yol: WsYolu,
+  yetenekler: ReadonlySet<string>,
   soket: Socket,
   canlilik: WsCanlilikAyari,
   izleyiciler: Set<CanlilikIzleyicisi>,
@@ -831,6 +833,7 @@ const wsBaglantisiKur = (
   return {
     yol,
     uzakIp,
+    yetenekler,
     gonder: (metin) => {
       if (ws.readyState !== ws.OPEN) return false;
       try {
@@ -861,6 +864,40 @@ const yolCoz = (url: string | undefined): WsYolu | null => {
   return WS_YOLLARI.find((y) => y === yol) ?? null;
 };
 
+/** Yetenek değerinden okunan en çok uzunluk ve jeton adedi: fazlası sessizce atılır, bağlantı düşmez. */
+const AZAMI_YETENEK_METNI = 256;
+const AZAMI_YETENEK_ADEDI = 16;
+/** Bu biçime uymayan jeton yok sayılır. Protokolün jetonları (`etkinlik1`) uyar. */
+const YETENEK_JETONU = /^[a-z0-9_-]{1,32}$/;
+const BOS_YETENEKLER: ReadonlySet<string> = new Set();
+
+/**
+ * Adres sorgusundaki `yetenek` parametresi (protokol `SOHBET_YETENEK_PARAMETRESI`): virgülle ayrılmış
+ * jeton listesi; parametre birden çok kez gelirse hepsi okunur. Yoksa, boşsa ya da bozuksa boş küme,
+ * hiçbir durumda atmaz. Bilinmeyen jeton kümede kalır: anlamını gateway verir, burada iş kuralı yok.
+ */
+export const yetenekleriCoz = (url: string | undefined): ReadonlySet<string> => {
+  const metin = url ?? "";
+  const soru = metin.indexOf("?");
+  if (soru < 0) return BOS_YETENEKLER;
+  const yetenekler = new Set<string>();
+  // `URLSearchParams` bozuk yüzde kodlamasında atmaz (WHATWG: geçersiz dizi olduğu gibi kalır).
+  for (const ham of new URLSearchParams(metin.slice(soru + 1)).getAll(SOHBET_YETENEK_PARAMETRESI)) {
+    let deger = ham;
+    if (deger.length > AZAMI_YETENEK_METNI) {
+      // Kırpmada son parça yarım jeton olabilir (`etkinlik10` → `etkinlik1`): son virgülden sonrası atılır.
+      const son = deger.lastIndexOf(",", AZAMI_YETENEK_METNI);
+      deger = son < 0 ? "" : deger.slice(0, son);
+    }
+    for (const parca of deger.split(",")) {
+      if (yetenekler.size >= AZAMI_YETENEK_ADEDI) return yetenekler;
+      const jeton = parca.trim();
+      if (YETENEK_JETONU.test(jeton)) yetenekler.add(jeton);
+    }
+  }
+  return yetenekler;
+};
+
 /** `canlilik` yalnız testte değişir: sahte zamanlayıcıyla yoklama gerçek zaman beklemeden sürülür. */
 export const wsKur = (canlilik: WsCanlilikAyari = VARSAYILAN_CANLILIK): WsSunucuPortu => ({
   dinle: (istek: WsSunucuIstegi) =>
@@ -879,7 +916,9 @@ export const wsKur = (canlilik: WsCanlilikAyari = VARSAYILAN_CANLILIK): WsSunucu
           perMessageDeflate: false,
         });
         w.on("connection", (ws, req) => {
-          const b = wsBaglantisiKur(ws, yol, req.socket, canlilik, izleyiciler);
+          // Yetenek yalnız `/sohbet`'te okunur; kimlikten önce okunur ama anlamı kimlik sonrası gönderimdedir.
+          const yetenekler = yol === "/sohbet" ? yetenekleriCoz(req.url) : BOS_YETENEKLER;
+          const b = wsBaglantisiKur(ws, yol, yetenekler, req.socket, canlilik, izleyiciler);
           try {
             istek.baglanti(b);
           } catch {

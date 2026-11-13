@@ -18,6 +18,7 @@ import { sohbetlerKur } from "../src/sohbetler.ts";
 import { veriyoluKur } from "../src/veriyolu.ts";
 import type {
   AkisYardimcilari,
+  AktifTur,
   Ayar,
   Depo,
   ErenKopruBaglami,
@@ -108,7 +109,7 @@ interface SahteOrnek extends Konusma {
   bostaZorla: number | null | undefined;
   nesilDegeri: number;
   insanTuruDegeri: string | null;
-  aktifTurDegeri: { turn_id: string; text: string } | null;
+  aktifTurDegeri: AktifTur | null;
   devirCagrilari: Array<{ ozet: string; nesil: number }>;
   /** Kapı cevapları, sırayla. */
   cevaplar: boolean[];
@@ -701,8 +702,21 @@ describe("sohbetler: durumlar ve yönlendirme", () => {
     const h = kur();
     await hazir(h, "sB", "sC");
     assert.deepEqual(h.y.aktifTurlar(), []);
-    h.o("sB").aktifTurDegeri = { turn_id: "t-b", text: "yarım" };
-    assert.deepEqual([...h.y.aktifTurlar()], [{ sohbet_id: "sB", turn_id: "t-b", text: "yarım" }]);
+    h.o("sB").aktifTurDegeri = { turn_id: "t-b", text: "yarım", etkinlik: null };
+    assert.deepEqual([...h.y.aktifTurlar()], [{ sohbet_id: "sB", turn_id: "t-b", text: "yarım", etkinlik: null }]);
+  });
+
+  it("aktifTurlar: örneğin canlı etkinliği (kategori ve başlangıç) korunur", async () => {
+    const h = kur();
+    await hazir(h, "sB", "sC");
+    const etkinlik = { etkinlik: "komut", baslangic_ms: 12_345, kaynak_msg_id: "msg-b" } as const;
+    h.o("sB").aktifTurDegeri = { turn_id: "t-b", text: "", etkinlik };
+    h.o("sC").aktifTurDegeri = { turn_id: "t-c", text: "yarım", etkinlik: null };
+    const l = [...h.y.aktifTurlar()].sort((a, b) => a.sohbet_id.localeCompare(b.sohbet_id));
+    assert.deepEqual(l, [
+      { sohbet_id: "sB", turn_id: "t-b", text: "", etkinlik: { etkinlik: "komut", baslangic_ms: 12_345, kaynak_msg_id: "msg-b" } },
+      { sohbet_id: "sC", turn_id: "t-c", text: "yarım", etkinlik: null },
+    ]);
   });
 
   it("nesil / insanTuru / devirOzetiAl doğru örneğe gider; örnek yoksa 0 / null / {kabul:false}", async () => {

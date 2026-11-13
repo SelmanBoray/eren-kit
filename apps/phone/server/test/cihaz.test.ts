@@ -1114,6 +1114,7 @@ function inatci() {
   const baglanti = {
     yol: "/cihaz" as const,
     uzakIp: "100.64.0.20",
+    yetenekler: new Set<string>(),
     gonder: (m: string): boolean => {
       if (kapanis !== null) return false;
       gonderilenler.push(m);

@@ -42,6 +42,7 @@ const argDegeri = (argv: readonly string[], bayrak: string): string | null => {
 const baglantiSar = (b: WsBaglantisi): WsBaglantisi => ({
   yol: b.yol,
   uzakIp: SAHTE_TELEFON_IP,
+  yetenekler: b.yetenekler,
   gonder: (m) => b.gonder(m),
   kapat: (k, n) => b.kapat(k, n),
   mesajDinle: (f) => b.mesajDinle(f),

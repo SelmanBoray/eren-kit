@@ -6,6 +6,7 @@
  */
 import type { z } from "zod";
 import type {
+  AkisEtkinligi,
   ChatClear,
   ChatCreate,
   ChatDelete,
@@ -273,6 +274,8 @@ export type WsYolu = "/sohbet" | "/cihaz";
 export interface WsBaglantisi {
   readonly yol: WsYolu;
   readonly uzakIp: string;
+  /** Canlı etkinlik. Bağlantının adres sorgusunda bildirdiği yetenek jetonları; bildirmediyse boş küme. */
+  readonly yetenekler: ReadonlySet<string>;
   gonder(metin: string): void;
   kapat(kod: number, neden: string): void;
   mesajDinle(f: (metin: string) => void): void;
@@ -596,6 +599,23 @@ export interface ServisOlaylari {
   olay_yazildi: { olay: Olay };
   /** Kalıcı değil. Yalnız `konusma` yayınlar, tamponlanmış. Dilim 2: `assistant_delta.sohbet_id` buradan. */
   tur_delta: { sohbet_id: SohbetId; turn_id: string; offset: number; text: string };
+  /**
+   * Canlı etkinlik. Kalıcı değil. Yalnız `konusma` yayınlar: turun o anki etkinliği değişti.
+   * `baslangic_ms`: etkinliğin servis saatiyle (`SaatPortu`) başladığı an. `kaynak_msg_id`: bu turu başlatan
+   * insan mesajının `client_msg_id`'si; tur insan mesajıyla başlamadıysa `null`.
+   */
+  tur_etkinligi: {
+    sohbet_id: SohbetId;
+    turn_id: string;
+    etkinlik: AkisEtkinligi;
+    baslangic_ms: number;
+    kaynak_msg_id: string | null;
+  };
+  /**
+   * Canlı etkinlik. Kalıcı değil. Yalnız `konusma` yayınlar: etkinliği tutulan (görünür) tur hangi yoldan
+   * kapanırsa kapansın tam bir kez. Görünmeyen turda yayınlanmaz.
+   */
+  tur_etkinligi_bitti: { sohbet_id: SohbetId; turn_id: string };
   tur_basladi: { sohbet_id: SohbetId; turn_id: string };
   tur_bitti: { sohbet_id: SohbetId; turn_id: string };
   /** Dilim 2: sohbet başına; `durum` altı değerli. `gateway` her yayında bütün `server_status`'u yeniden kurar. */
@@ -698,7 +718,22 @@ export type AkisOlayi =
     }
   | { tur: "hook_response"; cikti: string }
   /** Aynı `message_id` birden çok satırda gelebilir: toplanmaz, sonuncu alınır. */
-  | { tur: "assistant"; message_id: string; model: string | null; kullanim: MesajKullanimi | null }
+  | {
+      tur: "assistant";
+      message_id: string;
+      model: string | null;
+      kullanim: MesajKullanimi | null;
+      /** Canlı etkinlik. O asistan satırındaki `tool_use` blokları; yoksa boş dizi. */
+      araclar: readonly { id: string; ad: string }[];
+    }
+  /** Canlı etkinlik. Yeni bir model çağrısı başladı (`stream_event`/`message_start`). */
+  | { tur: "model_basladi" }
+  /**
+   * Canlı etkinlik. `content_block_start`. `arac_id` ve `arac_adi` yalnız `blok === "arac"` iken dolu.
+   */
+  | { tur: "blok_basladi"; blok: "dusunme" | "metin" | "arac"; arac_id?: string; arac_adi?: string }
+  /** Canlı etkinlik. `tool_result` blokları taşıyan `user` satırı: bu araç çağrıları bitti. */
+  | { tur: "arac_sonucu"; arac_idler: readonly string[] }
   | { tur: "metin_parcasi"; text: string }
   | { tur: "rate_limit"; besSaat: LimitPenceresi | null; yediGun: LimitPenceresi | null }
   | {
@@ -1590,6 +1625,11 @@ export interface AktifTur {
   turn_id: string;
   /** Telefonda görünmüş metin. */
   text: string;
+  /**
+   * Canlı etkinlik. Turun o anki etkinliği, servis saatiyle başladığı an ve turu başlatan insan mesajının
+   * `client_msg_id`'si (insan mesajıyla başlamadıysa `null`); henüz yoksa `null`.
+   */
+  etkinlik: { etkinlik: AkisEtkinligi; baslangic_ms: number; kaynak_msg_id: string | null } | null;
 }
 
 /** Dilim 2. Telafide her canlı tur için bir `stream_snapshot{sohbet_id, turn_id, text}`. */

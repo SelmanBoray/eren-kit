@@ -27,6 +27,7 @@ import type {
   YeniSayfaSonucu,
 } from "./sozlesme.ts";
 import type { DevirIsi } from "./konusma-metin.ts";
+import { etkinlikBaslangici, etkinlikGecisi, type EtkinlikDurumu } from "./etkinlik.ts";
 import { tuketimKayitlari } from "./tuketim.ts";
 import {
   DEVIR_ISTEGI,
@@ -78,6 +79,8 @@ interface Tur {
   readonly kaynak: TurKaynagi;
   readonly gorunur: boolean;
   readonly rol: TurRolu;
+  /** Turu başlatan insan mesajının `client_msg_id`'si (yalnız bellekte); insan turu değilse ya da bilinmiyorsa `null`. */
+  readonly kaynak_msg_id: string | null;
   /** Turun şu ana kadarki metni; `ASISTAN_METNI`'ni aşmaz. */
   metin: string;
   /** `metin`'in telefona gitmiş kısmının uzunluğu: sonraki `offset`. */
@@ -86,6 +89,11 @@ interface Tur {
   tamponZamani: IptalEt | null;
   /** Telefonun gördüğü son parçadan sonra yeni parça gelmese de kısmi metni yazan tek atımlık zamanlayıcı. */
   kismiZamani: IptalEt | null;
+  /**
+   * Canlı etkinlik: yalnız görünür turda (görünmeyende `null`). Yalnız bellekte, turla birlikte yok olur;
+   * veritabanına, olay günlüğüne ve servis günlüğüne yazılmaz.
+   */
+  etkinlik: EtkinlikDurumu | null;
 }
 
 interface Calisan {
@@ -226,6 +234,11 @@ export const konusmaKur: KonusmaFabrikasi = ({
   let baslatmaSuruyor = false;
   let etkin: Calisan | null = null;
   let devir: Devir | null = null;
+  /**
+   * Canlı etkinlik: insan kuyruk satırı kimliği → mesajın `client_msg_id`'si. Yalnız bellekte (kuyruk tablosunda
+   * sütunu yok); satır tura dönüşünce ya da kuyruk boş görülünce silinir. Önceki servis ömründen kalan satırda yok.
+   */
+  const kuyrukMesajlari = new Map<number, string>();
   let nesilNo = depo.sonNesil(sohbet)?.nesil ?? 0;
   // Yuva (dilim 2, `SurecKapisi`): sohbet başına tek birim; süreç, aday ve başlatma kalmayınca bırakılır.
   let yuvaTutuyor = false;
@@ -453,6 +466,42 @@ export const konusmaKur: KonusmaFabrikasi = ({
     }
   };
 
+  // ---- canlı etkinlik ----
+
+  /** Yalnız kategori ve başlangıç gider: araç adı, girdisi, çıktısı yayına girmez. */
+  const etkinlikYayinla = (tur: Tur): void => {
+    const e = tur.etkinlik;
+    if (e === null) return;
+    veriyolu.yayinla("tur_etkinligi", {
+      sohbet_id,
+      turn_id: tur.turn_id,
+      etkinlik: e.etkinlik,
+      baslangic_ms: e.baslangic_ms,
+      kaynak_msg_id: tur.kaynak_msg_id,
+    });
+  };
+
+  /** Etkinliği tutulan turun tek bitiş yayını: durum silinir, ikinci çağrı ve görünmeyen tur bir şey yapmaz. */
+  const etkinlikBitir = (tur: Tur): void => {
+    if (tur.etkinlik === null) return;
+    tur.etkinlik = null;
+    veriyolu.yayinla("tur_etkinligi_bitti", { sohbet_id, turn_id: tur.turn_id });
+  };
+
+  /** Açık tur süreçten ayrılır: bütün kapanış yollarının ortak noktası (`c.tur = null` yalnız burada). */
+  const turuAyir = (c: Calisan, tur: Tur): void => {
+    c.tur = null;
+    etkinlikBitir(tur);
+  };
+
+  /** Akış olayını turun etkinliğine uygular; görünen değer değiştiyse yayınlar. Görünmeyen turda bir şey yapmaz. */
+  const etkinlikIlerlet = (tur: Tur, olay: AkisOlayi): void => {
+    if (tur.etkinlik === null) return;
+    const g = etkinlikGecisi(tur.etkinlik, olay, saat.simdiMs());
+    tur.etkinlik = g.durum;
+    if (g.degisti) etkinlikYayinla(tur);
+  };
+
   const parcaEkle = (tur: Tur, text: string): void => {
     const eklenen = kirp(text, SINIRLAR.ASISTAN_METNI - tur.metin.length);
     if (eklenen === "") return;
@@ -623,7 +672,13 @@ export const konusmaKur: KonusmaFabrikasi = ({
   const turuYaz = (
     c: Calisan,
     satir: string,
-    g: { kaynak: TurKaynagi; gorunur: boolean; rol: TurRolu; idler: readonly number[] },
+    g: {
+      kaynak: TurKaynagi;
+      gorunur: boolean;
+      rol: TurRolu;
+      idler: readonly number[];
+      kaynak_msg_id?: string | null;
+    },
   ): boolean => {
     if (!c.surec.satirYaz(satir)) return false;
     const turn_id = rastgele.opakId("tur");
@@ -642,18 +697,25 @@ export const konusmaKur: KonusmaFabrikasi = ({
       });
       if (g.idler.length > 0) depo.kuyruktanSil(g.idler);
     });
-    c.tur = {
+    for (const id of g.idler) kuyrukMesajlari.delete(id);
+    const tur: Tur = {
       turn_id,
       kaynak: g.kaynak,
       gorunur: g.gorunur,
       rol: g.rol,
+      kaynak_msg_id: g.kaynak_msg_id ?? null,
       metin: "",
       gonderilen: 0,
       sonKismiMs: Number.NEGATIVE_INFINITY,
       tamponZamani: null,
       kismiZamani: null,
+      etkinlik: g.gorunur ? etkinlikBaslangici(simdi) : null,
     };
-    if (g.gorunur) veriyolu.yayinla("tur_basladi", { sohbet_id, turn_id });
+    c.tur = tur;
+    if (g.gorunur) {
+      veriyolu.yayinla("tur_basladi", { sohbet_id, turn_id });
+      etkinlikYayinla(tur);
+    }
     durumYenile();
     return true;
   };
@@ -681,9 +743,19 @@ export const konusmaKur: KonusmaFabrikasi = ({
         });
       } else {
         const bas = depo.kuyrukBasi(sohbet);
-        if (bas === null) return;
+        if (bas === null) {
+          // Kuyruk boş: kalan eşlemeler silinmiş (temizlenmiş) satırlarındır.
+          kuyrukMesajlari.clear();
+          return;
+        }
         // Kaynak kuyruk satırından gelir; `insanSatiriKur` insan dışı satırda atar, tur açılmaz.
-        yazildi = turuYaz(c, insanSatiriKur(bas), { kaynak: bas.kaynak, gorunur: true, rol: "normal", idler: [bas.id] });
+        yazildi = turuYaz(c, insanSatiriKur(bas), {
+          kaynak: bas.kaynak,
+          gorunur: true,
+          rol: "normal",
+          idler: [bas.id],
+          kaynak_msg_id: kuyrukMesajlari.get(bas.id) ?? null,
+        });
       }
     }
     if (!yazildi) boruKirildi(c);
@@ -703,7 +775,7 @@ export const konusmaKur: KonusmaFabrikasi = ({
     tamponZamaniIptal(tur);
     if (tur.gorunur) tamponGonder(tur, "hepsi");
     kismiZamaniIptal(tur);
-    c.tur = null;
+    turuAyir(c, tur);
     const ms = saat.simdiMs();
     depo.islem(() => {
       if (tur.gorunur && neden !== null) {
@@ -719,7 +791,7 @@ export const konusmaKur: KonusmaFabrikasi = ({
     tamponZamaniIptal(tur);
     tamponGonder(tur, "hepsi");
     kismiZamaniIptal(tur);
-    c.tur = null;
+    turuAyir(c, tur);
     const ms = saat.simdiMs();
     depo.islem(() => {
       if (sinif === "tamam") {
@@ -823,7 +895,7 @@ export const konusmaKur: KonusmaFabrikasi = ({
     }
     // Eski neslin numarası ayrı tutulur: araya başka sohbetin nesli girmiş olabilir (`nesil - 1` değil).
     kopru.jetonlariIptalEt(kapsam(d.eskiNesil));
-    aday.tur = null;
+    turuAyir(aday, tur);
     devir = null;
     etkin = aday;
     nesilNo = aday.nesil;
@@ -1046,7 +1118,7 @@ export const konusmaKur: KonusmaFabrikasi = ({
       else devirBasarili(d, c, tur);
       return;
     }
-    c.tur = null;
+    turuAyir(c, tur);
     depo.turBitir(tur.turn_id, BITISLER[sinif], "", saat.simdiMs());
     const d = devir;
     if (d !== null && d.eski === c && d.asama === "ozet") {
@@ -1062,6 +1134,8 @@ export const konusmaKur: KonusmaFabrikasi = ({
     if (c.bilincli || c.bitti || kapandi) return;
     const olay = akis.satirCoz(satir);
     if (olay === null) return;
+    // Önce etkinlik: `result` turu kapatıp sıradakini açabilir, olay yeni tura uygulanmamalı.
+    if (c.tur !== null) etkinlikIlerlet(c.tur, olay);
     switch (olay.tur) {
       case "init":
         c.initGoruldu = true;
@@ -1738,7 +1812,15 @@ export const konusmaKur: KonusmaFabrikasi = ({
       if (tur === null || !tur.gorunur) return null;
       tamponZamaniIptal(tur);
       tamponGonder(tur, "hepsi");
-      return { turn_id: tur.turn_id, text: tur.metin.slice(0, tur.gonderilen) };
+      const e = tur.etkinlik;
+      return {
+        turn_id: tur.turn_id,
+        text: tur.metin.slice(0, tur.gonderilen),
+        etkinlik:
+          e === null
+            ? null
+            : { etkinlik: e.etkinlik, baslangic_ms: e.baslangic_ms, kaynak_msg_id: tur.kaynak_msg_id },
+      };
     },
 
     nesil: () => nesilNo,
@@ -1756,7 +1838,7 @@ export const konusmaKur: KonusmaFabrikasi = ({
       if (mesaj.sohbet_id !== sohbet_id) throw new Error("konusma: mesaj bu sohbetin değil");
       if (sonlandirildi) throw new Error("konusma: sohbet sonlandırıldı");
       const ms = saat.simdiMs();
-      const seq = depo.islem(() => {
+      const { seq, kuyrukId } = depo.islem(() => {
         const olay = depo.olayEkle({
           type: "user_echo",
           sohbet_id,
@@ -1766,10 +1848,13 @@ export const konusmaKur: KonusmaFabrikasi = ({
           ...(mesaj.baglam !== undefined && { baglam: mesaj.baglam }),
         });
         // Olay öneksiz (telefonun gördüğü), kuyruk satırı ana oturuma gidecek metin (kısayolda önekli).
-        depo.kuyrugaEkle("insan", erenMetniKur(mesaj), ms, sohbet);
+        const id = depo.kuyrugaEkle("insan", erenMetniKur(mesaj), ms, sohbet);
         depo.sohbetEtkinlikYaz(sohbet, ms);
-        return olay.seq;
+        return { seq: olay.seq, kuyrukId: id };
       });
+      // Canlı etkinlik: bu satırdan açılacak tur mesajın kimliğini taşır. Yazma bittikten sonra (geri alınan
+      // işlemin kimliği yeniden kullanılabilir; `set` eskisini ezer).
+      kuyrukMesajlari.set(kuyrukId, mesaj.client_msg_id);
       // Mesaj kaydedildi: akıştaki hata kabulü geri almaz. Süreç yoksa yuva istenir (uyuyor/sirada).
       guvenli("pompa", pompala);
       if (etkin === null) guvenli("uyandir", uyandir);
@@ -1909,6 +1994,8 @@ export const konusmaKur: KonusmaFabrikasi = ({
           kismiZamaniIptal(tur);
           depo.turKismiYaz(tur.turn_id, tur.metin);
         }
+        // Kayıt açık kalsa da canlı etkinlik bu ömürle biter (tam bir kez).
+        if (tur !== null) etkinlikBitir(tur);
         if (!c.bitti) {
           c.surec.stdinKapat();
           bekleyen.push(surec.agaciOldur(c.surec.pid).catch((e: unknown) => hataYaz("surec_oldurme", e)));

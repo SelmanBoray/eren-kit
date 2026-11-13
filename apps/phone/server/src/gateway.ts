@@ -12,6 +12,7 @@ import {
   sha256Hex,
   SOHBET_SINIRLARI,
   SOHBET_SURUMU,
+  SOHBET_YETENEKLERI,
   sohbetYukariCoz,
   utf8Bayt,
 } from "@eren/protocol";
@@ -27,6 +28,7 @@ import type {
 } from "@eren/protocol";
 import type {
   AckGovdesi,
+  AktifTur,
   ChatClearMesaji,
   ChatCreateMesaji,
   ChatDeleteMesaji,
@@ -45,6 +47,7 @@ import type {
   QuestionAnswerMesaji,
   ServerStatusMesaji,
   ServisOlaylari,
+  SohbetAktifTuru,
   SohbetIslemSonucu,
   Sonuc,
   UserMessageMesaji,
@@ -80,6 +83,11 @@ interface SohbetBaglantisi {
   olayAcik: boolean;
   /** Telafi bitmeden delta ve durum gitmez: snapshot'ın üstüne oturmayan delta metni bozar. */
   akisAcik: boolean;
+  /**
+   * Canlı etkinlik. Bağlantı adres sorgusunda `etkinlik1` yeteneğini bildirdi: `assistant_activity` yalnız
+   * buna gider. Bildirmeyen (eski APK) çerçeveyi çözemez ve bağlantıyı düşürür; ona hiç gönderilmez.
+   */
+  readonly etkinlikIster: boolean;
 }
 
 type Asama =
@@ -133,6 +141,7 @@ function devirGorunumu(b: WsBaglantisi): { gorunum: WsBaglantisi; oldur: () => v
   const gorunum: WsBaglantisi = {
     yol: b.yol,
     uzakIp: b.uzakIp,
+    yetenekler: b.yetenekler,
     // Gerçekleme `gonder`'in dönüşünü (soket kapalıysa `false`) olduğu gibi geçirir; `cihaz` ona bakar.
     gonder: (metin) => (olu ? false : (b.gonder(metin) as unknown as boolean)),
     kapat: (kod, neden) => {
@@ -169,6 +178,9 @@ const islemAck = (s: Sonuc<SohbetIslemSonucu>): AckGovdesi => {
 };
 
 const tamSayi = (n: number): number => Math.max(0, Math.trunc(n));
+
+/** `assistant_activity.gecen_ms` üst sınırı (protokol: 24 saat). */
+const AZAMI_GECEN_MS = 86_400_000;
 const oran = (yuzde: number): number => Math.min(1, Math.max(0, yuzde / 100));
 
 function limitKur(d: LimitDolulugu | null): ServerStatusMesaji["limit"] {
@@ -355,6 +367,50 @@ export const gatewayKur: GatewayFabrikasi = ({
     }
   };
 
+  // Servis saatiyle (`saat`) geçen süre: tamsayı, [0, 24 saat]. Saat geri giderse 0; sayı değilse 0.
+  const gecenMs = (baslangic_ms: number): number => {
+    const fark = Math.trunc(saat.simdiMs() - baslangic_ms);
+    return Number.isFinite(fark) ? Math.min(AZAMI_GECEN_MS, Math.max(0, fark)) : 0;
+  };
+
+  // Araç adı, girdisi, çıktısı yoktur: çerçeve yalnız kapalı listeden bir `etkinlik`, süre ve turu
+  // başlatan insan mesajının kimliğini taşır. Kaynak yoksa (`null`) alan hiç konmaz; şema `null`'ı reddeder.
+  const etkinlikKur = (
+    sohbet_id: SohbetAktifTuru["sohbet_id"],
+    turn_id: string,
+    e: NonNullable<AktifTur["etkinlik"]>,
+  ): SohbetAsagi => ({
+    v: SOHBET_SURUMU,
+    type: "assistant_activity",
+    sohbet_id,
+    turn_id,
+    etkinlik: e.etkinlik,
+    gecen_ms: gecenMs(e.baslangic_ms),
+    ...(e.kaynak_msg_id !== null && { kaynak_msg_id: e.kaynak_msg_id }),
+  });
+
+  // Ölçüt `canliDelta` ile aynı (kimliği bitmiş, akışı açık), ek olarak yeteneği bildirmiş bağlantı.
+  const canliEtkinlik = (e: ServisOlaylari["tur_etkinligi"]): void => {
+    let metin: string | null = null;
+    for (const s of sohbetBaglantilari) {
+      if (!s.akisAcik || !s.etkinlikIster) continue;
+      metin ??= JSON.stringify(etkinlikKur(e.sohbet_id, e.turn_id, e));
+      s.b.gonder(metin);
+    }
+  };
+
+  // Görünür tur kapandı: `canliEtkinlik` ile aynı ölçüt. Yalnız canlı; telafide gönderilmez (snapshot'ı
+  // olmayan tur zaten bitmiştir, etkinliği de telafide gitmez).
+  const canliEtkinlikBitti = (e: ServisOlaylari["tur_etkinligi_bitti"]): void => {
+    const m: SohbetAsagi = { v: SOHBET_SURUMU, type: "assistant_activity_end", sohbet_id: e.sohbet_id, turn_id: e.turn_id };
+    let metin: string | null = null;
+    for (const s of sohbetBaglantilari) {
+      if (!s.akisAcik || !s.etkinlikIster) continue;
+      metin ??= JSON.stringify(m);
+      s.b.gonder(metin);
+    }
+  };
+
   const telafiYap = (s: SohbetBaglantisi, last_seq: number): void => {
     const head_seq = depo.basSeq();
     sohbetYolla(s.b, { v: SOHBET_SURUMU, type: "welcome", head_seq, server_time_ms: saat.simdiMs() });
@@ -371,6 +427,10 @@ export const gatewayKur: GatewayFabrikasi = ({
         turn_id: tur.turn_id,
         text: tur.text,
       });
+      // Canlı etkinlik: snapshot'ın hemen ardından, süre gönderim anında. Yeteneksiz bağlantı almaz.
+      if (s.etkinlikIster && tur.etkinlik) {
+        sohbetYolla(s.b, etkinlikKur(tur.sohbet_id, tur.turn_id, tur.etkinlik));
+      }
     }
     s.akisAcik = true;
     sohbetYolla(s.b, durumKur());
@@ -440,7 +500,14 @@ export const gatewayKur: GatewayFabrikasi = ({
       cihaz.baglandi({ baglanti: gorunum, device_id } as DogrulanmisCihazBaglantisi);
       return;
     }
-    const sohbet: SohbetBaglantisi = { b: g.b, device_id, sonSeq: 0, olayAcik: false, akisAcik: false };
+    const sohbet: SohbetBaglantisi = {
+      b: g.b,
+      device_id,
+      sonSeq: 0,
+      olayAcik: false,
+      akisAcik: false,
+      etkinlikIster: g.b.yetenekler.has(SOHBET_YETENEKLERI.ETKINLIK),
+    };
     g.asama = { ad: "sohbette", sohbet };
     sohbetBaglantilari.add(sohbet);
     telafiYap(sohbet, a.last_seq);
@@ -775,6 +842,8 @@ export const gatewayKur: GatewayFabrikasi = ({
       veriyoluIptalleri.push(
         veriyolu.dinle("olay_yazildi", ({ olay }) => canliOlay(olay)),
         veriyolu.dinle("tur_delta", canliDelta),
+        veriyolu.dinle("tur_etkinligi", canliEtkinlik),
+        veriyolu.dinle("tur_etkinligi_bitti", canliEtkinlikBitti),
         veriyolu.dinle("eren_durumu", durumYay),
         veriyolu.dinle("kilit_degisti", durumYay),
         veriyolu.dinle("is_sayisi_degisti", durumYay),

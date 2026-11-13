@@ -85,6 +85,7 @@ test("assistant: message_id, model ve kullanım", () => {
     message_id: "msg_ornek_1",
     model: "claude-opus-ornek",
     kullanim: { input_tokens: 6, cache_creation_input_tokens: 1200, cache_read_input_tokens: 500 },
+    araclar: [],
   });
 });
 
@@ -113,7 +114,7 @@ test("assistant: aynı message_id tekrarı toplanmaz, her satır kendi değerini
 
 test("assistant: usage yoksa kullanim null, model yoksa null", () => {
   const o = coz({ type: "assistant", message: { id: "msg_x" } });
-  assert.deepEqual(o, { tur: "assistant", message_id: "msg_x", model: null, kullanim: null });
+  assert.deepEqual(o, { tur: "assistant", message_id: "msg_x", model: null, kullanim: null, araclar: [] });
 });
 
 test("metin_parcasi: text_delta okunur", () => {
@@ -142,8 +143,270 @@ test("stream_event: text_delta olmayan delta metin parçası değildir", () => {
     event: { type: "content_block_delta", delta: { type: "input_json_delta", partial_json: "{" } },
   });
   assert.equal(o?.tur, "diger");
-  const m = coz({ type: "stream_event", parent_tool_use_id: null, event: { type: "message_start" } });
+  // Canlı etkinlikten beri message_start `model_basladi` olur (aşağıdaki bölüm).
+  const m = coz({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_stop", index: 0 } });
   assert.equal(m?.tur, "diger");
+});
+
+// --- canlı etkinlik sinyalleri (gerçek kayıtlardan kısaltılmış satırlar) -----------------------
+
+const akisSatiri = (event: unknown, ebeveyn: string | null = null) => ({
+  type: "stream_event",
+  event,
+  session_id: "1db8fd8d-69d3-4aeb-ae2d-9459b63062e7",
+  parent_tool_use_id: ebeveyn,
+  uuid: "fa7c5eb1-e291-44cb-ab5c-f4173d58edff",
+  api_message_id: "msg_011Cgzpvr61mZFkEbgV1CHgz",
+});
+
+const ARAC_BLOK_BASLANGICI = {
+  type: "content_block_start",
+  index: 0,
+  content_block: {
+    type: "tool_use",
+    id: "toolu_01HfhizYLz29JmFEKqkFTKUE",
+    name: "Glob",
+    input: {},
+    caller: { type: "direct" },
+  },
+};
+
+const ARAC_ASISTAN_SATIRI = {
+  type: "assistant",
+  message: {
+    model: "claude-opus-5-5",
+    id: "msg_011Cgzpvr61mZFkEbgV1CHgz",
+    type: "message",
+    role: "assistant",
+    content: [
+      {
+        type: "tool_use",
+        id: "toolu_01HfhizYLz29JmFEKqkFTKUE",
+        name: "Glob",
+        input: { pattern: "*.md", path: "C:\\eren-kit\\docs" },
+        caller: { type: "direct" },
+      },
+    ],
+    stop_reason: null,
+    usage: { input_tokens: 2, cache_creation_input_tokens: 10, cache_read_input_tokens: 8000, output_tokens: 60 },
+  },
+  parent_tool_use_id: null,
+  session_id: "1db8fd8d-69d3-4aeb-ae2d-9459b63062e7",
+  wire_tool_inputs: { toolu_01HfhizYLz29JmFEKqkFTKUE: { pattern: "*.md" } },
+};
+
+const ARAC_SONUCU_SATIRI = {
+  type: "user",
+  message: {
+    role: "user",
+    content: [
+      { tool_use_id: "toolu_01HfhizYLz29JmFEKqkFTKUE", type: "tool_result", content: "C:\\eren-kit\\docs\\ONERILER.md" },
+    ],
+  },
+  parent_tool_use_id: null,
+  session_id: "1db8fd8d-69d3-4aeb-ae2d-9459b63062e7",
+  tool_use_result: { filenames: ["C:\\eren-kit\\docs\\ONERILER.md"], numFiles: 1 },
+};
+
+test("model_basladi: message_start", () => {
+  const o = coz({
+    ...akisSatiri({
+      type: "message_start",
+      message: { model: "claude-opus-5-5", id: "msg_011CgzpsUUf69BvBnKWyiG2t", type: "message", role: "assistant", content: [] },
+    }),
+    ttft_ms: 627,
+    thinking_display: "updates",
+  });
+  assert.deepEqual(o, { tur: "model_basladi" });
+});
+
+test("blok_basladi: thinking ve redacted_thinking -> dusunme", () => {
+  const dusunme = coz({
+    ...akisSatiri({ type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "", signature: "" } }),
+    thinking_display: "updates",
+  });
+  assert.deepEqual(dusunme, { tur: "blok_basladi", blok: "dusunme" });
+  // redacted_thinking kayıtlarda görülmedi; API biçimine göre yazıldı.
+  const gizli = coz(akisSatiri({ type: "content_block_start", index: 0, content_block: { type: "redacted_thinking", data: "x" } }));
+  assert.deepEqual(gizli, { tur: "blok_basladi", blok: "dusunme" });
+});
+
+test("blok_basladi: text -> metin", () => {
+  const o = coz(akisSatiri({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }));
+  assert.deepEqual(o, { tur: "blok_basladi", blok: "metin" });
+});
+
+test("blok_basladi: tool_use -> arac, id ve ad taşınır", () => {
+  const o = coz(akisSatiri(ARAC_BLOK_BASLANGICI));
+  assert.deepEqual(o, {
+    tur: "blok_basladi",
+    blok: "arac",
+    arac_id: "toolu_01HfhizYLz29JmFEKqkFTKUE",
+    arac_adi: "Glob",
+  });
+});
+
+test("blok_basladi: metin/düşünme bloğunda araç alanları yok", () => {
+  const o = coz(akisSatiri({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }));
+  assert.ok(o !== null);
+  assert.equal("arac_id" in o, false);
+  assert.equal("arac_adi" in o, false);
+});
+
+test("blok_basladi: tanınmayan ya da bozuk blok olay üretmez (diger)", () => {
+  const bozuklar: unknown[] = [
+    { type: "content_block_start", index: 0, content_block: { type: "gelecekteki_blok" } },
+    { type: "content_block_start", index: 0 },
+    { type: "content_block_start", index: 0, content_block: "text" },
+    { type: "content_block_start", index: 0, content_block: null },
+    { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: 5, name: "Glob" } },
+    { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "toolu_x", name: null } },
+    { type: "content_block_start", index: 0, content_block: { type: "tool_use" } },
+  ];
+  for (const b of bozuklar) {
+    let o: AkisOlayi | null = null;
+    assert.doesNotThrow(() => {
+      o = coz(akisSatiri(b));
+    }, JSON.stringify(b));
+    assert.deepEqual(o, { tur: "diger", type: "stream_event" }, JSON.stringify(b));
+  }
+});
+
+test("assistant: tool_use blokları araclar olur", () => {
+  const o = coz(ARAC_ASISTAN_SATIRI);
+  assert.ok(o?.tur === "assistant");
+  assert.deepEqual(o.araclar, [{ id: "toolu_01HfhizYLz29JmFEKqkFTKUE", ad: "Glob" }]);
+  assert.equal(o.message_id, "msg_011Cgzpvr61mZFkEbgV1CHgz");
+  assert.deepEqual(o.kullanim, { input_tokens: 2, cache_creation_input_tokens: 10, cache_read_input_tokens: 8000 });
+});
+
+test("assistant: birden çok tool_use sırayla, diğer bloklar ve bozuk araçlar atlanır", () => {
+  const o = coz({
+    type: "assistant",
+    parent_tool_use_id: null,
+    message: {
+      id: "msg_c",
+      content: [
+        { type: "thinking", thinking: "", signature: "s" },
+        { type: "text", text: "bakıyorum" },
+        { type: "tool_use", id: "toolu_a", name: "Read", input: {} },
+        { type: "tool_use", id: 7, name: "Bash" },
+        { type: "tool_use", id: "toolu_b" },
+        null,
+        "tool_use",
+        { type: "tool_use", id: "toolu_c", name: "mcp__beyin__beyin_ara", input: {} },
+      ],
+    },
+  });
+  assert.ok(o?.tur === "assistant");
+  assert.deepEqual(o.araclar, [
+    { id: "toolu_a", ad: "Read" },
+    { id: "toolu_c", ad: "mcp__beyin__beyin_ara" },
+  ]);
+});
+
+test("assistant: content dizi değilse araclar boş", () => {
+  for (const content of [undefined, null, "metin", 5, { type: "tool_use", id: "t", name: "n" }]) {
+    const o = coz({ type: "assistant", message: { id: "m", content } });
+    assert.ok(o?.tur === "assistant", JSON.stringify(content));
+    assert.deepEqual(o.araclar, [], JSON.stringify(content));
+  }
+});
+
+test("arac_sonucu: tool_result taşıyan user satırı", () => {
+  assert.deepEqual(coz(ARAC_SONUCU_SATIRI), {
+    tur: "arac_sonucu",
+    arac_idler: ["toolu_01HfhizYLz29JmFEKqkFTKUE"],
+  });
+});
+
+test("arac_sonucu: satırdaki tüm tool_use_id değerleri, metin blokları ve bozuk id atlanır", () => {
+  const o = coz({
+    type: "user",
+    parent_tool_use_id: null,
+    message: {
+      role: "user",
+      content: [
+        { tool_use_id: "toolu_a", type: "tool_result", content: "a" },
+        { type: "text", text: "not" },
+        { tool_use_id: 9, type: "tool_result", content: "bozuk" },
+        { type: "tool_result", content: "id yok" },
+        { tool_use_id: "toolu_b", type: "tool_result", is_error: true, content: [{ type: "text", text: "hata" }] },
+      ],
+    },
+  });
+  assert.deepEqual(o, { tur: "arac_sonucu", arac_idler: ["toolu_a", "toolu_b"] });
+});
+
+test("arac_sonucu: araç sonucu taşımayan user satırı ve yeniden oynatma yankısı diger", () => {
+  const durumlar: unknown[] = [
+    { type: "user", parent_tool_use_id: null, message: { role: "user", content: "merhaba" } },
+    { type: "user", parent_tool_use_id: null, message: { role: "user", content: [{ type: "text", text: "merhaba" }] } },
+    { type: "user", isReplay: true, parent_tool_use_id: null, message: { role: "user", content: "merhaba 1" } },
+    { ...ARAC_SONUCU_SATIRI, isReplay: true },
+    { type: "user", message: "x" },
+    { type: "user" },
+    { type: "user", message: { content: [null, 5, { type: "tool_result", tool_use_id: null }] } },
+  ];
+  for (const d of durumlar) {
+    let o: AkisOlayi | null = null;
+    assert.doesNotThrow(() => {
+      o = coz(d);
+    }, JSON.stringify(d));
+    assert.deepEqual(o, { tur: "diger", type: "user" }, JSON.stringify(d));
+  }
+});
+
+test("parent_tool_use_id dolu satırlar canlı etkinlik üretmez", () => {
+  const ebeveyn = "toolu_01ALTAJAN";
+  for (const event of [
+    { type: "message_start", message: { id: "msg_alt" } },
+    { type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } },
+    { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+    ARAC_BLOK_BASLANGICI,
+  ]) {
+    assert.deepEqual(coz(akisSatiri(event, ebeveyn)), { tur: "diger", type: "stream_event" }, JSON.stringify(event));
+  }
+  assert.deepEqual(coz({ ...ARAC_SONUCU_SATIRI, parent_tool_use_id: ebeveyn }), { tur: "diger", type: "user" });
+  // assistant olayı eskisi gibi üretilir (kullanım dahil) ama alt ajanın araçları taşınmaz.
+  const a = coz({ ...ARAC_ASISTAN_SATIRI, parent_tool_use_id: ebeveyn });
+  assert.ok(a?.tur === "assistant");
+  assert.deepEqual(a.araclar, []);
+  assert.notEqual(a.kullanim, null);
+});
+
+test("gerçek araçlı tur sırası: olay dizisi", () => {
+  const satirlar = [
+    akisSatiri({ type: "message_start", message: { id: "msg_1" } }),
+    akisSatiri(ARAC_BLOK_BASLANGICI),
+    akisSatiri({ type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: "" } }),
+    ARAC_ASISTAN_SATIRI,
+    akisSatiri({ type: "content_block_stop", index: 0 }),
+    akisSatiri({ type: "message_delta", delta: { stop_reason: "tool_use" } }),
+    akisSatiri({ type: "message_stop" }),
+    ARAC_SONUCU_SATIRI,
+    akisSatiri({ type: "message_start", message: { id: "msg_2" } }),
+    akisSatiri({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }),
+    akisSatiri({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Bir dosya var." } }),
+    { type: "result", subtype: "success", is_error: false, result: "Bir dosya var." },
+  ];
+  assert.deepEqual(
+    satirlar.map((s) => coz(s)?.tur ?? null),
+    [
+      "model_basladi",
+      "blok_basladi",
+      "diger",
+      "assistant",
+      "diger",
+      "diger",
+      "diger",
+      "arac_sonucu",
+      "model_basladi",
+      "blok_basladi",
+      "metin_parcasi",
+      "result",
+    ],
+  );
 });
 
 test("rate_limit: utilization yüzdeye, resetsAt saniyeden ms'ye", () => {

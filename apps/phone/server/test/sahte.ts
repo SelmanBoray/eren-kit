@@ -781,8 +781,11 @@ export interface SahteWs extends WsSunucuPortu {
   /** Son `dinle` isteği (host, port, azamiCerceve). */
   istek(): WsSunucuIstegi | null;
   readonly kapatildi: boolean;
-  /** Yeni bağlantı açar ve sunucunun `baglanti` işleyicisini çağırır. */
-  baglan(yol: WsYolu, uzakIp?: string): SahteWsBaglantisi;
+  /**
+   * Yeni bağlantı açar ve sunucunun `baglanti` işleyicisini çağırır. `yetenekler`: adres sorgusunda
+   * bildirilmiş jetonlar (gerçekte `dis-dunya` ayrıştırır); verilmezse boş küme (eski istemci).
+   */
+  baglan(yol: WsYolu, uzakIp?: string, yetenekler?: Iterable<string>): SahteWsBaglantisi;
   /** Sıradaki `dinle` atar (bir kez). */
   sonrakiDinlemeHatasi(hata: Error): void;
 }
@@ -817,7 +820,7 @@ export function sahteWs(): SahteWs {
         },
       };
     },
-    baglan: (yol, uzakIp = "100.64.0.20") => {
+    baglan: (yol, uzakIp = "100.64.0.20", yetenekler = []) => {
       if (!istek) throw new Error("sahte ws: dinle çağrılmadı");
       const mesajlar: Array<(m: string) => void> = [];
       const kapanislar: Array<() => void> = [];
@@ -829,6 +832,7 @@ export function sahteWs(): SahteWs {
       const b: SahteWsBaglantisi = {
         yol,
         uzakIp,
+        yetenekler: new Set(yetenekler),
         gonderilenler,
         get kapanis() {
           return kapanis;

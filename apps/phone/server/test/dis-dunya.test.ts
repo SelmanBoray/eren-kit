@@ -20,6 +20,7 @@ import {
   kimlikOkuyucuKur,
   WS_CANLILIK_ARALIGI_MS,
   wsKur,
+  yetenekleriCoz,
 } from "../src/dis-dunya.ts";
 import type { KimlikCocugu } from "../src/dis-dunya.ts";
 import { sahteZaman } from "./sahte.ts";
@@ -373,6 +374,45 @@ describe("dis-dunya", { skip: !win }, () => {
           s.once("error", red);
         }),
       );
+    });
+
+    test("yetenek sorgusu: /sohbet'te okunur, yol eşleşmesini bozmaz; /cihaz'da ve sorgusuzda boş küme", async () => {
+      const port = await rastgeleYerelPort();
+      const gelenler: { yol: string; yetenekler: string[] }[] = [];
+      const sunucu = await d.ws.dinle({
+        host: "127.0.0.1",
+        port,
+        azamiCerceve: { "/sohbet": 1024, "/cihaz": 1024 },
+        baglanti: (b) => {
+          gelenler.push({ yol: b.yol, yetenekler: [...b.yetenekler].sort() });
+        },
+      });
+      try {
+        await assert.rejects(ac(port, "/baska?yetenek=etkinlik1"));
+        const acik: WebSocket[] = [];
+        for (const yol of [
+          "/sohbet?yetenek=etkinlik1",
+          "/sohbet",
+          "/sohbet?yetenek=",
+          "/sohbet?a=1&yetenek=baska,etkinlik1&b=2",
+          `/sohbet?yetenek=${"x".repeat(5000)}`,
+          "/cihaz?yetenek=etkinlik1",
+        ]) {
+          acik.push(await ac(port, yol));
+          assert.ok(await kosulBekle(() => gelenler.length === acik.length), yol);
+        }
+        assert.deepEqual(gelenler, [
+          { yol: "/sohbet", yetenekler: ["etkinlik1"] },
+          { yol: "/sohbet", yetenekler: [] },
+          { yol: "/sohbet", yetenekler: [] },
+          { yol: "/sohbet", yetenekler: ["baska", "etkinlik1"] },
+          { yol: "/sohbet", yetenekler: [] },
+          { yol: "/cihaz", yetenekler: [] },
+        ]);
+        for (const w of acik) w.close();
+      } finally {
+        await sunucu.kapat();
+      }
     });
 
     test("başlık uzakIp'yi etkilemez", async () => {
@@ -875,6 +915,54 @@ describe("dosyaPortuKur", () => {
     await assert.rejects(f.dosyaSil(bag));
     assert.equal(existsSync(join(hedef, "dokunma.txt")), true);
     assert.equal(existsSync(hedef), true);
+  });
+});
+
+describe("yetenekleriCoz (adres sorgusu, port açmaz)", () => {
+  const coz = (url: string | undefined): string[] => [...yetenekleriCoz(url)].sort();
+
+  test("parametre yok, sorgu yok, url yok, değer boş: boş küme", () => {
+    assert.deepEqual(coz(undefined), []);
+    assert.deepEqual(coz(""), []);
+    assert.deepEqual(coz("/sohbet"), []);
+    assert.deepEqual(coz("/sohbet?"), []);
+    assert.deepEqual(coz("/sohbet?baska=etkinlik1"), []);
+    assert.deepEqual(coz("/sohbet?yetenek"), []);
+    assert.deepEqual(coz("/sohbet?yetenek="), []);
+    assert.deepEqual(coz("/sohbet?yetenek=,,,"), []);
+  });
+
+  test("tek, çoklu ve yinelenen jeton; başka parametrelerle; parametre birden çok kez", () => {
+    assert.deepEqual(coz("/sohbet?yetenek=etkinlik1"), ["etkinlik1"]);
+    assert.deepEqual(coz("/sohbet?yetenek=etkinlik1,baska2"), ["baska2", "etkinlik1"]);
+    assert.deepEqual(coz("/sohbet?yetenek=etkinlik1,etkinlik1"), ["etkinlik1"]);
+    assert.deepEqual(coz("/sohbet?a=1&yetenek=etkinlik1&b=2"), ["etkinlik1"]);
+    assert.deepEqual(coz("/sohbet?yetenek=a1&yetenek=etkinlik1"), ["a1", "etkinlik1"]);
+    assert.deepEqual(coz("/sohbet?yetenek=etkinlik1%2Cbaska"), ["baska", "etkinlik1"], "kodlanmış virgül");
+    assert.deepEqual(coz("/sohbet?yetenek=%20etkinlik1%20"), ["etkinlik1"], "kenar boşluğu");
+  });
+
+  test("bilinmeyen jeton kümede kalır (anlamını gateway verir); biçimsiz jeton atılır", () => {
+    assert.deepEqual(coz("/sohbet?yetenek=gelecek9"), ["gelecek9"]);
+    assert.deepEqual(coz("/sohbet?yetenek=ETKINLIK1,etk%C4%B1nlik1,a%20b,<x>"), []);
+    assert.deepEqual(coz(`/sohbet?yetenek=${"a".repeat(33)},etkinlik1`), ["etkinlik1"], "33 karakterlik jeton atılır");
+  });
+
+  test("bozuk biçim atmaz: geçersiz yüzde kodlaması, yalnız ayraçlar", () => {
+    assert.doesNotThrow(() => yetenekleriCoz("/sohbet?yetenek=%E0%A4%A,%ZZ,etkinlik1"));
+    assert.deepEqual(coz("/sohbet?yetenek=%E0%A4%A,%ZZ,etkinlik1"), ["etkinlik1"]);
+    assert.deepEqual(coz("/sohbet?&&=&yetenek=etkinlik1&="), ["etkinlik1"]);
+  });
+
+  test("aşırı uzun değer kırpılır, bağlantı düşmez: yarım kalan son jeton sayılmaz, adet 16 ile sınırlı", () => {
+    // 256. karakterde `etkinlik10` kesilip `etkinlik1`e dönüşmez.
+    const dolgu = "a".repeat(246) + ",";
+    assert.equal(dolgu.length, 247);
+    assert.deepEqual(coz(`/sohbet?yetenek=${dolgu}etkinlik10`), []);
+    assert.deepEqual(coz(`/sohbet?yetenek=${"x".repeat(10_000)}`), []);
+    const cok = Array.from({ length: 40 }, (_, i) => `j${i}`).join(",");
+    assert.equal(yetenekleriCoz(`/sohbet?yetenek=${cok}`).size, 16);
+    assert.deepEqual(coz(`/sohbet?yetenek=etkinlik1,${"x".repeat(300)}`), ["etkinlik1"]);
   });
 });
 

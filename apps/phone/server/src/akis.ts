@@ -109,6 +109,62 @@ const anaKullanimOku = (d: unknown): Omit<ModelKullanimi, "model" | "maliyet_usd
   };
 };
 
+/** Alt ajan satırı (`parent_tool_use_id` dolu): canlı etkinlik üretmez. */
+const altAjanMi = (o: Nesne): boolean => {
+  const ebeveyn = o["parent_tool_use_id"];
+  return ebeveyn !== null && ebeveyn !== undefined;
+};
+
+/** `message.content` içindeki `tool_use` blokları; `id`/`name` dizge değilse o blok atlanır. */
+const araclarOku = (icerik: unknown): { id: string; ad: string }[] => {
+  if (!Array.isArray(icerik)) return [];
+  const cikti: { id: string; ad: string }[] = [];
+  for (const blok of icerik) {
+    if (!nesneMi(blok) || blok["type"] !== "tool_use") continue;
+    const id = metinOku(blok["id"]);
+    const ad = metinOku(blok["name"]);
+    if (id === null || ad === null) continue;
+    cikti.push({ id, ad });
+  }
+  return cikti;
+};
+
+/** `event.content_block` -> `blok_basladi`; tanınmayan ya da bozuk blok `null`. */
+const blokBasladi = (olay: Nesne): AkisOlayi | null => {
+  const blok = altNesne(olay, "content_block");
+  if (!blok) return null;
+  switch (blok["type"]) {
+    case "thinking":
+    case "redacted_thinking":
+      return { tur: "blok_basladi", blok: "dusunme" };
+    case "text":
+      return { tur: "blok_basladi", blok: "metin" };
+    case "tool_use": {
+      const id = metinOku(blok["id"]);
+      const ad = metinOku(blok["name"]);
+      if (id === null || ad === null) return null;
+      return { tur: "blok_basladi", blok: "arac", arac_id: id, arac_adi: ad };
+    }
+    default:
+      return null;
+  }
+};
+
+/** `tool_result` taşıyan `user` satırı -> `arac_sonucu`; yeniden oynatma, alt ajan ve düz metin `null`. */
+const aracSonucu = (o: Nesne): AkisOlayi | null => {
+  if (o["isReplay"] === true || altAjanMi(o)) return null;
+  const mesaj = altNesne(o, "message");
+  const icerik = mesaj ? mesaj["content"] : null;
+  if (!Array.isArray(icerik)) return null;
+  const idler: string[] = [];
+  for (const blok of icerik) {
+    if (!nesneMi(blok) || blok["type"] !== "tool_result") continue;
+    const id = metinOku(blok["tool_use_id"]);
+    if (id !== null) idler.push(id);
+  }
+  return idler.length > 0 ? { tur: "arac_sonucu", arac_idler: idler } : null;
+};
+
 const olayaCevir = (o: Nesne): AkisOlayi => {
   const type = metinOku(o["type"]) ?? "";
   switch (type) {
@@ -139,16 +195,23 @@ const olayaCevir = (o: Nesne): AkisOlayi => {
         message_id: mesaj ? (metinOku(mesaj["id"]) ?? "") : "",
         model: mesaj ? metinOku(mesaj["model"]) : null,
         kullanim: mesaj ? kullanimOku(mesaj["usage"]) : null,
+        // Alt ajanın araçları ana konuşmanın etkinliği değildir.
+        araclar: mesaj && !altAjanMi(o) ? araclarOku(mesaj["content"]) : [],
       };
     }
+    case "user":
+      return aracSonucu(o) ?? { tur: "diger", type };
     case "stream_event": {
       // Alt ajanın akışı ana konuşma metni değildir.
-      const ebeveyn = o["parent_tool_use_id"];
-      if (ebeveyn !== null && ebeveyn !== undefined) return { tur: "diger", type };
+      if (altAjanMi(o)) return { tur: "diger", type };
       const olay = altNesne(o, "event");
       const delta = olay ? altNesne(olay, "delta") : null;
       if (delta && delta["type"] === "text_delta" && typeof delta["text"] === "string") {
         return { tur: "metin_parcasi", text: delta["text"] };
+      }
+      if (olay && olay["type"] === "message_start") return { tur: "model_basladi" };
+      if (olay && olay["type"] === "content_block_start") {
+        return blokBasladi(olay) ?? { tur: "diger", type };
       }
       return { tur: "diger", type };
     }

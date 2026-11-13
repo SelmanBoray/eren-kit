@@ -703,7 +703,7 @@ export const sohbetlerKur: SohbetlerFabrikasi = (b) => {
         try {
           const t = k.aktifTur();
           if (t !== null)
-            sonuc.push({ sohbet_id: id, turn_id: t.turn_id, text: t.text });
+            sonuc.push({ sohbet_id: id, turn_id: t.turn_id, text: t.text, etkinlik: t.etkinlik });
         } catch (e) {
           yaz("uyari", "aktif_tur_okunamadi", {
             sohbet_id: id,

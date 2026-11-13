@@ -172,6 +172,8 @@ interface ElSikma {
   /** Verilirse imza yerine bu gider. */
   imza?: string;
   imzaNonce?: (sunucuNonce: string) => string;
+  /** Bağlantının adres sorgusunda bildirdiği yetenekler (`giris`); verilmezse yok (eski APK). */
+  yetenekler?: readonly string[];
 }
 
 async function elSik(ist: Ist, s: ElSikma = {}): Promise<Msg | null> {
@@ -450,12 +452,12 @@ function kur(
         eslesme_ms: BASLANGIC,
       });
     },
-    bagla(yol: WsYolu, ip = IP1): Ist {
-      return new Ist(ws.baglan(yol, ip));
+    bagla(yol: WsYolu, ip = IP1, yetenekler?: readonly string[]): Ist {
+      return new Ist(ws.baglan(yol, ip, yetenekler));
     },
     /** Eşleşmiş cihazla tam el sıkışma, `welcome` beklenir. */
     async giris(yol: WsYolu = "/sohbet", ip = IP1, s: ElSikma = {}): Promise<Ist> {
-      const ist = new Ist(ws.baglan(yol, ip));
+      const ist = new Ist(ws.baglan(yol, ip, s.yetenekler));
       await elSik(ist, s);
       assert.equal(ist.hataKodu, undefined, "giriş hata verdi");
       assert.equal(ist.tur("welcome").length, 1, "welcome gelmedi");
@@ -1296,7 +1298,7 @@ describe("gateway: akış (snapshot + delta)", () => {
   it("aktif tur varsa event'lerden sonra, server_status'tan önce stream_snapshot gider", async () => {
     const o = await hazir();
     o.depoGercek.olayEkle({ type: "user_echo", sohbet_id: "ana", client_msg_id: "e0", input: "yazi", text: "x" });
-    o.d.tur = { turn_id: "tur-1", text: "merhaba" };
+    o.d.tur = { turn_id: "tur-1", text: "merhaba", etkinlik: null };
     const ist = await o.giris();
     assert.deepEqual(ist.turler, ["auth_challenge", "welcome", "event", "stream_snapshot", "server_status"]);
     const s = ist.tur("stream_snapshot")[0]!;
@@ -1312,10 +1314,10 @@ describe("gateway: akış (snapshot + delta)", () => {
 
   it("delta, snapshot'ın bittiği offset'ten devam eder: istemci metni tutarlı kurulur", async () => {
     const o = await hazir();
-    o.d.tur = { turn_id: "tur-1", text: "merhaba" };
+    o.d.tur = { turn_id: "tur-1", text: "merhaba", etkinlik: null };
     const a = await o.giris("/sohbet", IP1);
     const yaz = (offset: number, text: string): void => {
-      o.d.tur = { turn_id: "tur-1", text: o.d.tur!.text + text };
+      o.d.tur = { turn_id: "tur-1", text: o.d.tur!.text + text, etkinlik: null };
       o.veriyolu.yayinla("tur_delta", { sohbet_id: "ana", turn_id: "tur-1", offset, text });
     };
     yaz(7, " dunya");
@@ -1345,7 +1347,7 @@ describe("gateway: akış (snapshot + delta)", () => {
 
   it("kimliği bitmemiş ve /cihaz bağlantılarına delta gitmez", async () => {
     const o = await hazir();
-    o.d.tur = { turn_id: "tur-1", text: "a" };
+    o.d.tur = { turn_id: "tur-1", text: "a", etkinlik: null };
     const yarim = o.bagla("/sohbet");
     await yarim.gonder({ v: SOHBET_SURUMU, type: "hello", device_id: "tel-1", last_seq: 0, client_nonce: ISTEMCI_NONCE });
     const cihaz = await o.giris("/cihaz");
@@ -1357,7 +1359,7 @@ describe("gateway: akış (snapshot + delta)", () => {
 
   it("delta kalıcı değildir: kopukken atılır, yeni bağlantı onu geri oynatmaz, depoya yazılmaz", async () => {
     const o = await hazir();
-    o.d.tur = { turn_id: "tur-1", text: "ab" };
+    o.d.tur = { turn_id: "tur-1", text: "ab", etkinlik: null };
     const seqOnce = o.depo.basSeq();
     o.veriyolu.yayinla("tur_delta", { sohbet_id: "ana", turn_id: "tur-1", offset: 0, text: "ab" });
     const ist = await o.giris();
@@ -1368,7 +1370,7 @@ describe("gateway: akış (snapshot + delta)", () => {
 
   it("telafi sırasında gelen delta snapshot'tan önce gitmez", async () => {
     const o = await hazir();
-    o.d.tur = { turn_id: "tur-1", text: "abc" };
+    o.d.tur = { turn_id: "tur-1", text: "abc", etkinlik: null };
     const asil = o.d;
     // aktifTur çağrısı sırasında (snapshot kurulurken) bir delta yayınlanır.
     let bir = false;
@@ -1379,13 +1381,219 @@ describe("gateway: akış (snapshot + delta)", () => {
           bir = true;
           o.veriyolu.yayinla("tur_delta", { sohbet_id: "ana", turn_id: "tur-1", offset: 3, text: "d" });
         }
-        return { turn_id: "tur-1", text: "abc" };
+        return { turn_id: "tur-1", text: "abc", etkinlik: null };
       },
     });
     assert.equal(asil, sarili);
     const ist = await o.giris();
     const sira = ist.turler.filter((t) => t === "stream_snapshot" || t === "assistant_delta");
     assert.notEqual(sira[0], "assistant_delta", `delta snapshot'tan önce gitti: ${sira.join(",")}`);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Canlı etkinlik: `assistant_activity` yalnız `yetenek=etkinlik1` bildiren bağlantıya
+// ---------------------------------------------------------------------------------------------
+
+describe("gateway: canlı etkinlik (assistant_activity, yetenek etkinlik1)", () => {
+  const YETENEKLI = ["etkinlik1"] as const;
+  const etkinlikYay = (
+    o: Ortam,
+    e: Partial<{ sohbet_id: string; turn_id: string; etkinlik: string; baslangic_ms: number; kaynak_msg_id: string | null }> = {},
+  ) =>
+    o.veriyolu.yayinla("tur_etkinligi", {
+      sohbet_id: "ana",
+      turn_id: "tur-1",
+      etkinlik: "komut",
+      baslangic_ms: BASLANGIC - 1500,
+      kaynak_msg_id: null,
+      ...e,
+    } as never);
+  const bittiYay = (o: Ortam, sohbet_id = "ana", turn_id = "tur-1") =>
+    o.veriyolu.yayinla("tur_etkinligi_bitti", { sohbet_id, turn_id } as never);
+  const yeteneksizGiris = (o: Ortam): Promise<Ist> =>
+    o.giris("/sohbet", IP2, { device_id: "tel-2", anahtar: TEL2.private });
+
+  it("yan yana: yeteneksiz bağlantı assistant_activity almaz, geri kalan çerçeveleri yeteneklininkiyle bayt bayt aynı", async () => {
+    const o = await hazir();
+    o.depoGercek.olayEkle({ type: "user_echo", sohbet_id: "ana", client_msg_id: "e0", input: "yazi", text: "x" });
+    o.d.tur = { turn_id: "tur-1", text: "ab", etkinlik: { etkinlik: "dusunuyor", baslangic_ms: BASLANGIC - 700, kaynak_msg_id: "m-ses" } };
+    const yeni = await o.giris("/sohbet", IP1, { yetenekler: [...YETENEKLI] });
+    const eski = await yeteneksizGiris(o);
+    o.veriyolu.yayinla("tur_delta", { sohbet_id: "ana", turn_id: "tur-1", offset: 2, text: "c" });
+    etkinlikYay(o);
+    o.veriyolu.yayinla("tur_delta", { sohbet_id: "ana", turn_id: "tur-1", offset: 3, text: "d" });
+    bittiYay(o);
+    o.veriyolu.yayinla("eren_durumu", { sohbet_id: "ana", durum: "hazir" } as never);
+
+    assert.deepEqual(yeni.turler, [
+      "auth_challenge",
+      "welcome",
+      "event",
+      "stream_snapshot",
+      "assistant_activity",
+      "server_status",
+      "assistant_delta",
+      "assistant_activity",
+      "assistant_delta",
+      "assistant_activity_end",
+      "server_status",
+    ]);
+    assert.equal(yeni.tur("assistant_activity")[0]!.kaynak_msg_id, "m-ses", "telafide kaynak dolu");
+    assert.ok(!("kaynak_msg_id" in yeni.hamTur("assistant_activity")[1]!), "canlıda kaynak null: alan yok");
+    assert.deepEqual(eski.turler, [
+      "auth_challenge",
+      "welcome",
+      "event",
+      "stream_snapshot",
+      "server_status",
+      "assistant_delta",
+      "assistant_delta",
+      "server_status",
+    ]);
+    assert.ok(!eski.ham.includes("assistant_activity"));
+    assert.ok(!eski.ham.includes("etkinlik"));
+    // `auth_challenge` nonce ve imza taşır, bağlantıya özgüdür; geri kalan ham metin birebir aynı.
+    const ayikla = (ist: Ist): string[] =>
+      ist.c.gonderilenler.filter((m) => {
+        const t = (JSON.parse(m) as Msg).type;
+        return t !== "auth_challenge" && t !== "assistant_activity" && t !== "assistant_activity_end";
+      });
+    assert.deepEqual(ayikla(eski), ayikla(yeni));
+  });
+
+  it("yeteneksiz bağlantının telafisi, tur etkinliği dolu olsa da değişmez", async () => {
+    const o = await hazir();
+    o.depoGercek.olayEkle({ type: "user_echo", sohbet_id: "ana", client_msg_id: "e0", input: "yazi", text: "x" });
+    o.d.tur = { turn_id: "tur-1", text: "merhaba", etkinlik: { etkinlik: "web", baslangic_ms: BASLANGIC, kaynak_msg_id: null } };
+    const ist = await o.giris();
+    assert.deepEqual(ist.turler, ["auth_challenge", "welcome", "event", "stream_snapshot", "server_status"]);
+    etkinlikYay(o);
+    assert.equal(ist.tur("assistant_activity").length, 0);
+  });
+
+  it("telafi: stream_snapshot'ın hemen ardından etkinlik; gecen_ms gönderim anında sahte saatle", async () => {
+    const o = await hazir();
+    o.d.tur = { turn_id: "tur-ana", text: "ana metni", etkinlik: { etkinlik: "dosya_okuma", baslangic_ms: BASLANGIC - 1500, kaynak_msg_id: "m1" } };
+    o.d.digerTurlar = [
+      { sohbet_id: "is", turn_id: "tur-is", text: "is metni", etkinlik: null },
+      { sohbet_id: "ev", turn_id: "tur-ev", text: "ev metni", etkinlik: { etkinlik: "yaziyor", baslangic_ms: BASLANGIC + 500, kaynak_msg_id: null } },
+    ];
+    o.zaman.ilerlet(2_000);
+    const ist = await o.giris("/sohbet", IP1, { yetenekler: [...YETENEKLI] });
+    assert.deepEqual(ist.turler, [
+      "auth_challenge",
+      "welcome",
+      "stream_snapshot",
+      "assistant_activity",
+      "stream_snapshot",
+      "stream_snapshot",
+      "assistant_activity",
+      "server_status",
+    ]);
+    assert.deepEqual(ist.hamTur("assistant_activity"), [
+      { v: SOHBET_SURUMU, type: "assistant_activity", sohbet_id: "ana", turn_id: "tur-ana", etkinlik: "dosya_okuma", gecen_ms: 3_500, kaynak_msg_id: "m1" },
+      { v: SOHBET_SURUMU, type: "assistant_activity", sohbet_id: "ev", turn_id: "tur-ev", etkinlik: "yaziyor", gecen_ms: 1_500 },
+    ]);
+  });
+
+  it("canlı: yalnız kimliği bitmiş, akışı açık ve yetenekli bağlantıya; alanlar tam, gecen_ms = şimdi - başlangıç", async () => {
+    const o = await hazir();
+    const yeni = await o.giris("/sohbet", IP1, { yetenekler: ["baska", ...YETENEKLI] });
+    const eski = await yeteneksizGiris(o);
+    // Kimliği bitmemiş yetenekli bağlantılar: yalnız `hello` göndermiş ve hiç göndermemiş.
+    const yarim = o.bagla("/sohbet", IP1, [...YETENEKLI]);
+    await yarim.gonder({ v: SOHBET_SURUMU, type: "hello", device_id: "tel-1", last_seq: 0, client_nonce: ISTEMCI_NONCE });
+    const sessiz = o.bagla("/sohbet", IP1, [...YETENEKLI]);
+    // `/cihaz` sahte bağlantısına yetenek verilse de `/sohbet` akışına girmez.
+    const cihaz = new Ist(o.ws.baglan("/cihaz", IP1, [...YETENEKLI]));
+    await elSik(cihaz);
+    const cihazOnce = cihaz.c.gonderilenler.length;
+
+    o.zaman.ilerlet(1_000);
+    etkinlikYay(o, { sohbet_id: "ana", turn_id: "tur-9", etkinlik: "komut", baslangic_ms: BASLANGIC + 250 });
+    etkinlikYay(o, { sohbet_id: "is", turn_id: "tur-8", etkinlik: "web", baslangic_ms: BASLANGIC, kaynak_msg_id: "m-42" });
+    bittiYay(o, "ana", "tur-9");
+
+    assert.deepEqual(yeni.hamKareler.slice(-3), [
+      { v: SOHBET_SURUMU, type: "assistant_activity", sohbet_id: "ana", turn_id: "tur-9", etkinlik: "komut", gecen_ms: 750 },
+      { v: SOHBET_SURUMU, type: "assistant_activity", sohbet_id: "is", turn_id: "tur-8", etkinlik: "web", gecen_ms: 1_000, kaynak_msg_id: "m-42" },
+      { v: SOHBET_SURUMU, type: "assistant_activity_end", sohbet_id: "ana", turn_id: "tur-9" },
+    ]);
+    assert.equal(yeni.kare.slice(-3).length, 3, "şemadan geçer");
+    assert.equal(eski.tur("assistant_activity").length, 0);
+    assert.equal(eski.tur("assistant_activity_end").length, 0);
+    assert.ok(!yarim.ham.includes("assistant_activity"));
+    assert.equal(sessiz.c.gonderilenler.length, 0);
+    assert.equal(cihaz.c.gonderilenler.length, cihazOnce);
+  });
+
+  it("bilinmeyen ya da benzer jeton yetenek sayılmaz", async () => {
+    const o = await hazir();
+    const ist = await o.giris("/sohbet", IP1, { yetenekler: ["etkinlik2", "Etkinlik1", "etkinlik", "baska"] });
+    etkinlikYay(o);
+    assert.equal(ist.tur("assistant_activity").length, 0);
+  });
+
+  it("gecen_ms sıkıştırılır: saat geride kalırsa 0, 24 saati aşarsa 86_400_000, kesirli değer tamsayı", async () => {
+    const o = await hazir();
+    const ist = await o.giris("/sohbet", IP1, { yetenekler: [...YETENEKLI] });
+    etkinlikYay(o, { baslangic_ms: BASLANGIC + 60_000 });
+    etkinlikYay(o, { baslangic_ms: BASLANGIC - 86_400_001 });
+    etkinlikYay(o, { baslangic_ms: BASLANGIC - 10 * 86_400_000 });
+    etkinlikYay(o, { baslangic_ms: BASLANGIC - 1234.75 });
+    etkinlikYay(o, { baslangic_ms: Number.NaN });
+    assert.deepEqual(
+      ist.tur("assistant_activity").map((m) => m.gecen_ms),
+      [0, 86_400_000, 86_400_000, 1234, 0],
+    );
+  });
+
+  it("telafi sırasında yayınlanan etkinlik snapshot'tan önce gitmez", async () => {
+    const o = await hazir();
+    let bir = false;
+    Object.defineProperty(o.d, "tur", {
+      get() {
+        if (!bir) {
+          bir = true;
+          etkinlikYay(o, { etkinlik: "plan" });
+        }
+        return { turn_id: "tur-1", text: "abc", etkinlik: { etkinlik: "plan", baslangic_ms: BASLANGIC, kaynak_msg_id: null } };
+      },
+    });
+    const ist = await o.giris("/sohbet", IP1, { yetenekler: [...YETENEKLI] });
+    const sira = ist.turler.filter((t) => t === "stream_snapshot" || t === "assistant_activity");
+    assert.deepEqual(sira, ["stream_snapshot", "assistant_activity"]);
+  });
+
+  it("assistant_activity_end yalnız canlı: sonra bağlanan yetenekli telafide almaz; yeteneksiz hiç almaz", async () => {
+    const o = await hazir();
+    const once = await o.giris("/sohbet", IP1, { yetenekler: [...YETENEKLI] });
+    const eski = await yeteneksizGiris(o);
+    const eskiOnce = [...eski.c.gonderilenler];
+    bittiYay(o, "ana", "tur-3");
+    assert.deepEqual(once.hamTur("assistant_activity_end"), [
+      { v: SOHBET_SURUMU, type: "assistant_activity_end", sohbet_id: "ana", turn_id: "tur-3" },
+    ]);
+    assert.equal(once.tur("assistant_activity_end").length, 1, "şemadan geçer");
+    assert.deepEqual(eski.c.gonderilenler, eskiOnce, "yeteneksizin ham çerçeveleri değişmez");
+    const sonra = await o.giris("/sohbet", IP1, { yetenekler: [...YETENEKLI] });
+    assert.ok(!sonra.ham.includes("assistant_activity_end"));
+  });
+
+  it("assistant_activity_end kimliği bitmemiş ya da /cihaz bağlantısına gitmez", async () => {
+    const o = await hazir();
+    const yarim = o.bagla("/sohbet", IP1, [...YETENEKLI]);
+    await yarim.gonder({ v: SOHBET_SURUMU, type: "hello", device_id: "tel-1", last_seq: 0, client_nonce: ISTEMCI_NONCE });
+    const sessiz = o.bagla("/sohbet", IP1, [...YETENEKLI]);
+    const cihaz = new Ist(o.ws.baglan("/cihaz", IP1, [...YETENEKLI]));
+    await elSik(cihaz);
+    const yarimOnce = yarim.c.gonderilenler.length;
+    const cihazOnce = cihaz.c.gonderilenler.length;
+    bittiYay(o);
+    assert.equal(yarim.c.gonderilenler.length, yarimOnce);
+    assert.equal(sessiz.c.gonderilenler.length, 0);
+    assert.equal(cihaz.c.gonderilenler.length, cihazOnce);
   });
 });
 
@@ -1586,7 +1794,7 @@ describe("gateway: Dilim 1, çerçeve sürümü", () => {
   it("/sohbet'e giden her çerçeve türü SOHBET_SURUMU: auth_challenge, welcome, event, stream_snapshot, server_status, ack, assistant_delta", async () => {
     const o = await hazir();
     o.depoGercek.olayEkle({ type: "user_echo", sohbet_id: "ana", client_msg_id: "e0", input: "yazi", text: "x" });
-    o.d.tur = { turn_id: "tur-1", text: "ab" };
+    o.d.tur = { turn_id: "tur-1", text: "ab", etkinlik: null };
     const ist = await o.giris();
     await ist.gonder(kullaniciMesaji("m1"));
     o.veriyolu.yayinla("tur_delta", { sohbet_id: "ana", turn_id: "tur-1", offset: 2, text: "c" });
@@ -2234,7 +2442,7 @@ describe("gateway: Dilim 2, server_status.sohbetler ve akış", () => {
 
   it("assistant_delta ve stream_snapshot sohbet_id taşır (ham JSON dahil)", async () => {
     const o = await hazir();
-    o.d.digerTurlar = [{ sohbet_id: "is", turn_id: "tur-is", text: "is metni" }];
+    o.d.digerTurlar = [{ sohbet_id: "is", turn_id: "tur-is", text: "is metni", etkinlik: null }];
     const ist = await o.giris();
     o.veriyolu.yayinla("tur_delta", { sohbet_id: "is", turn_id: "tur-is", offset: 8, text: "!" });
     const d = ist.hamTur("assistant_delta");
@@ -2249,10 +2457,10 @@ describe("gateway: Dilim 2, server_status.sohbetler ve akış", () => {
   it("telafide her canlı tur için bir snapshot: olaylardan sonra, server_status'tan önce", async () => {
     const o = await hazir();
     o.depoGercek.olayEkle({ type: "user_echo", sohbet_id: "ana", client_msg_id: "e0", input: "yazi", text: "x" });
-    o.d.tur = { turn_id: "tur-ana", text: "ana metni" };
+    o.d.tur = { turn_id: "tur-ana", text: "ana metni", etkinlik: null };
     o.d.digerTurlar = [
-      { sohbet_id: "is", turn_id: "tur-is", text: "is metni" },
-      { sohbet_id: "ev", turn_id: "tur-ev", text: "ev metni" },
+      { sohbet_id: "is", turn_id: "tur-is", text: "is metni", etkinlik: null },
+      { sohbet_id: "ev", turn_id: "tur-ev", text: "ev metni", etkinlik: null },
     ];
     const ist = await o.giris();
     assert.deepEqual(ist.turler, [
@@ -2635,6 +2843,7 @@ function inatciBaglanti(yol: WsYolu, uzakIp: string) {
   return {
     yol,
     uzakIp,
+    yetenekler: new Set<string>(),
     gonderilenler,
     get kapanis() {
       return kapanis;

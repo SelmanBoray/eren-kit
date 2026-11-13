@@ -3956,3 +3956,322 @@ describe("Dilim 3b: kısayol mesajı ve tam yetki", () => {
     assert.notEqual(al(acik), al(kapali), "tam yetki istemi değiştirmeli");
   });
 });
+
+// ---------------------------------------------------------------------------------------------
+// Canlı etkinlik (`tur_etkinligi`)
+// ---------------------------------------------------------------------------------------------
+
+describe("canlı etkinlik", () => {
+  type Etkinlik = ServisOlaylari["tur_etkinligi"];
+  /**
+   * Bu örneğin `tur_etkinligi` ve `tur_etkinligi_bitti` yayınları, (sıra için) `tur_basladi`/`tur_bitti`;
+   * `kur`'un `olaylar`'ı değişmez.
+   */
+  const dinle = (h: Duzen): { etkinlikler: Etkinlik[]; bitenler: string[]; sira: string[] } => {
+    const etkinlikler: Etkinlik[] = [];
+    const bitenler: string[] = [];
+    const sira: string[] = [];
+    h.veriyolu.dinle("tur_etkinligi", (v) => {
+      if (v.sohbet_id !== h.sohbet_id) return;
+      etkinlikler.push(v);
+      sira.push(`tur_etkinligi:${v.etkinlik}`);
+    });
+    h.veriyolu.dinle("tur_etkinligi_bitti", (v) => {
+      if (v.sohbet_id !== h.sohbet_id) return;
+      bitenler.push(v.turn_id);
+      sira.push("tur_etkinligi_bitti");
+    });
+    for (const ad of ["tur_basladi", "tur_bitti"] as const) {
+      h.veriyolu.dinle(ad, (v) => {
+        if (v.sohbet_id === h.sohbet_id) sira.push(ad);
+      });
+    }
+    return { etkinlikler, bitenler, sira };
+  };
+  /** Görünür bir insan turu açar (`client_msg_id` `msg<n>`); turn_id döner. */
+  const turAc = async (h: Duzen, n: number): Promise<string> => {
+    insan(h, n);
+    await bosalt();
+    return h.konusma.aktifTur()!.turn_id;
+  };
+
+  // Gerçek akış satırlarının biçimi (ölçüm kaydı `ham-11.jsonl`); araç girdisi ve çıktısı yayına girmemeli.
+  const akisSatiri = (event: Record<string, unknown>, ek: Record<string, unknown> = {}): string =>
+    satir({ type: "stream_event", event, session_id: "ornek", parent_tool_use_id: null, ...ek });
+  const modelBasladi = (id: string): string =>
+    akisSatiri({ type: "message_start", message: { model: MODEL, id, type: "message", role: "assistant", content: [] } });
+  const blokBasladi = (content_block: Record<string, unknown>): string =>
+    akisSatiri({ type: "content_block_start", index: 0, content_block });
+  const aracBasladi = (id: string, name: string): string => blokBasladi({ type: "tool_use", id, name, input: {} });
+  const aracliAsistan = (mesajId: string, id: string, name: string): string =>
+    satir({
+      type: "assistant",
+      parent_tool_use_id: null,
+      message: {
+        id: mesajId,
+        model: MODEL,
+        role: "assistant",
+        content: [{ type: "tool_use", id, name, input: { command: "GIZLI-GIRDI" } }],
+        usage: { input_tokens: 2, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, output_tokens: 5 },
+      },
+    });
+  const aracSonucu = (id: string): string =>
+    satir({
+      type: "user",
+      parent_tool_use_id: null,
+      session_id: "ornek",
+      message: { role: "user", content: [{ tool_use_id: id, type: "tool_result", content: "GIZLI-CIKTI" }] },
+    });
+
+  it("görünür tur yazılınca tur_basladi'dan hemen sonra dusunuyor yayınlanır; aktifTur etkinliği taşır", async () => {
+    const h = kur();
+    await ac(h);
+    const y = dinle(h);
+    h.d.zaman.ilerlet(1234);
+    const t0 = h.d.zaman.simdi();
+    insan(h, 1);
+    await bosalt();
+    const tur = h.konusma.aktifTur()!;
+    assert.deepEqual(y.etkinlikler, [
+      { sohbet_id: ANA, turn_id: tur.turn_id, etkinlik: "dusunuyor", baslangic_ms: t0, kaynak_msg_id: "msg1" },
+    ]);
+    assert.deepEqual(y.sira, ["tur_basladi", "tur_etkinligi:dusunuyor"]);
+    assert.deepEqual(tur.etkinlik, { etkinlik: "dusunuyor", baslangic_ms: t0, kaynak_msg_id: "msg1" });
+  });
+
+  it("araç başlangıcı / sonucu / metin: doğru dizi, aynı değer yinelenince yayın yok; bitişte ayrı olay yok", async () => {
+    const h = kur();
+    const s = await ac(h);
+    const y = dinle(h);
+    const t0 = h.d.zaman.simdi();
+    insan(h, 1);
+    await bosalt();
+    const turId = h.konusma.aktifTur()!.turn_id;
+    // Aynı değer: yeni model çağrısı ve düşünme bloğu "dusunuyor"u yinelemez.
+    s.stdoutSatiriGonder(modelBasladi("msg_1"));
+    s.stdoutSatiriGonder(blokBasladi({ type: "thinking", thinking: "" }));
+    assert.equal(y.etkinlikler.length, 1);
+    h.d.zaman.ilerlet(100);
+    s.stdoutSatiriGonder(aracBasladi("toolu_1", "PowerShell"));
+    // Aynı araç `assistant` satırıyla yeniden gelir: değişmez, yayın yok.
+    h.d.zaman.ilerlet(10);
+    s.stdoutSatiriGonder(aracliAsistan("msg_1", "toolu_1", "PowerShell"));
+    assert.equal(y.etkinlikler.length, 2);
+    assert.deepEqual(h.konusma.aktifTur()!.etkinlik, { etkinlik: "komut", baslangic_ms: t0 + 100, kaynak_msg_id: "msg1" });
+    h.d.zaman.ilerlet(90);
+    s.stdoutSatiriGonder(aracSonucu("toolu_1"));
+    h.d.zaman.ilerlet(100);
+    s.stdoutSatiriGonder(modelBasladi("msg_2"));
+    s.stdoutSatiriGonder(blokBasladi({ type: "text", text: "" }));
+    s.stdoutSatiriGonder(parca("Mer"));
+    s.stdoutSatiriGonder(parca("haba "));
+    assert.deepEqual(
+      y.etkinlikler.map((e) => [e.etkinlik, e.baslangic_ms]),
+      [
+        ["dusunuyor", t0],
+        ["komut", t0 + 100],
+        ["dusunuyor", t0 + 200],
+        ["yaziyor", t0 + 300],
+      ],
+    );
+    assert.ok(y.etkinlikler.every((e) => e.turn_id === turId && e.sohbet_id === ANA && e.kaynak_msg_id === "msg1"));
+    assert.deepEqual(h.konusma.aktifTur()!.etkinlik, { etkinlik: "yaziyor", baslangic_ms: t0 + 300, kaynak_msg_id: "msg1" });
+    assert.deepEqual(y.bitenler, []);
+    s.stdoutSatiriGonder(sonuc({ result: "Merhaba" }));
+    await bosalt();
+    assert.equal(y.etkinlikler.length, 4, "bitişte yeni tur_etkinligi yok");
+    assert.deepEqual(y.bitenler, [turId], "olaylı normal bitiş: tam bir tur_etkinligi_bitti");
+    assert.deepEqual(y.sira.slice(-2), ["tur_etkinligi_bitti", "tur_bitti"]);
+    assert.equal(h.konusma.aktifTur(), null);
+    // Mevcut akış bozulmadı: metin `tur_delta` ile gitti.
+    assert.equal(
+      h.olaylar
+        .filter((o) => o.ad === "tur_delta")
+        .map((o) => (o.veri as ServisOlaylari["tur_delta"]).text)
+        .join(""),
+      "Merhaba ",
+    );
+    // Yayına, olay günlüğüne ve servis günlüğüne araç adı, girdisi, çıktısı ya da etkinlik girmez.
+    const yayin = JSON.stringify(y.etkinlikler);
+    for (const yasak of ["PowerShell", "GIZLI", "toolu_1"]) assert.equal(yayin.includes(yasak), false, yasak);
+    const kalici = JSON.stringify([h.depo.olaylariGetir(0, 10_000), h.d.gunluk.girdiler]);
+    for (const yasak of ["GIZLI", "tur_etkinligi", "kaynak_msg_id", '"komut"', '"dusunuyor"', '"yaziyor"']) {
+      assert.equal(kalici.includes(yasak), false, yasak);
+    }
+  });
+
+  it("sonraki tur sıfırdan başlar: önceki turun etkinliği taşınmaz", async () => {
+    const h = kur();
+    const s = await ac(h);
+    const y = dinle(h);
+    await turYap(h, s, 1, aracBasladi("toolu_a", "Read"), parca("bitti "), sonuc());
+    assert.equal(h.konusma.aktifTur(), null);
+    assert.deepEqual(
+      y.etkinlikler.map((e) => e.etkinlik),
+      ["dusunuyor", "dosya_okuma", "yaziyor"],
+    );
+    h.d.zaman.ilerlet(5000);
+    const t1 = h.d.zaman.simdi();
+    insan(h, 2);
+    await bosalt();
+    const ikinciTur = h.konusma.aktifTur()!;
+    assert.notEqual(ikinciTur.turn_id, y.etkinlikler[0]!.turn_id);
+    assert.deepEqual(ikinciTur.etkinlik, { etkinlik: "dusunuyor", baslangic_ms: t1, kaynak_msg_id: "msg2" });
+    assert.deepEqual(y.etkinlikler.at(-1), {
+      sohbet_id: ANA,
+      turn_id: ikinciTur.turn_id,
+      etkinlik: "dusunuyor",
+      baslangic_ms: t1,
+      kaynak_msg_id: "msg2",
+    });
+    assert.deepEqual(y.bitenler, [y.etkinlikler[0]!.turn_id], "yalnız ilk tur bitti");
+  });
+
+  it("görünmeyen (devir) turda durum tutulmaz, tur_etkinligi yayınlanmaz", async () => {
+    const h = kur();
+    const s = await ac(h);
+    const y = dinle(h);
+    await devirIste(h, s);
+    // Yalnız görünür ilk turun başlangıcı.
+    assert.deepEqual(
+      y.etkinlikler.map((e) => e.etkinlik),
+      ["dusunuyor"],
+    );
+    assert.ok(h.depo.acikTurlar(h.sec).some((t) => t.kaynak === "devir" && t.gorunur === false));
+    s.stdoutSatiriGonder(modelBasladi("msg_d"));
+    s.stdoutSatiriGonder(aracBasladi("toolu_d", "PowerShell"));
+    s.stdoutSatiriGonder(aracSonucu("toolu_d"));
+    s.stdoutSatiriGonder(blokBasladi({ type: "text", text: "" }));
+    s.stdoutSatiriGonder(parca("özet "));
+    assert.equal(h.konusma.aktifTur(), null);
+    await devirTuru(s);
+    assert.equal(y.etkinlikler.length, 1, "görünmeyen turda yayın yok");
+    assert.deepEqual(y.bitenler, [y.etkinlikler[0]!.turn_id], "yalnız görünür ilk turun bitişi");
+  });
+
+  it("süreç ölünce etkinlik turla birlikte gider; eski tur için yeni yayın yok", async () => {
+    const h = kur();
+    const s = await ac(h);
+    const y = dinle(h);
+    insan(h, 1);
+    await bosalt();
+    const turId = h.konusma.aktifTur()!.turn_id;
+    s.stdoutSatiriGonder(aracBasladi("toolu_x", "Bash"));
+    assert.equal(h.konusma.aktifTur()!.etkinlik?.etkinlik, "komut");
+    s.cik(1);
+    await bosalt();
+    assert.equal(h.konusma.aktifTur(), null);
+    const once = y.etkinlikler.filter((e) => e.turn_id === turId).length;
+    assert.equal(once, 2);
+    assert.deepEqual(y.bitenler, [turId], "süreç ölümü: tam bir tur_etkinligi_bitti");
+    s.stdoutSatiriGonder(aracSonucu("toolu_x"));
+    await bosalt();
+    assert.equal(y.etkinlikler.filter((e) => e.turn_id === turId).length, once);
+    assert.deepEqual(y.bitenler, [turId]);
+    // Yeniden başlatma: kurtarma notu turu sentetiktir, `kaynak_msg_id` `null`.
+    h.d.zaman.ilerlet(30_000);
+    await bosalt();
+    const s2 = h.d.surec.sonBorulu();
+    assert.notEqual(s2, s);
+    s2.stdoutSatiriGonder(initSatiri(s2));
+    await bosalt();
+    const not = h.konusma.aktifTur()!;
+    assert.notEqual(not.turn_id, turId);
+    assert.equal(not.etkinlik?.kaynak_msg_id, null);
+    assert.equal(y.etkinlikler.at(-1)!.turn_id, not.turn_id);
+    assert.equal(y.etkinlikler.at(-1)!.kaynak_msg_id, null);
+  });
+
+  it("sentetik (servis) turunda kaynak_msg_id null; sonraki insan turunda o mesajın client_msg_id'si", async () => {
+    const h = kur();
+    const s = await ac(h);
+    const y = dinle(h);
+    isBittiYay(h, 7);
+    await bosalt();
+    const sentetik = h.konusma.aktifTur()!;
+    assert.equal(h.konusma.insanTuru(), null, "sentetik tur");
+    assert.deepEqual(sentetik.etkinlik, { etkinlik: "dusunuyor", baslangic_ms: h.d.zaman.simdi(), kaynak_msg_id: null });
+    assert.equal(y.etkinlikler[0]!.kaynak_msg_id, null);
+    // Sentetik tur sürerken gelen insan mesajı kuyrukta bekler, sonra kendi turunu açar.
+    insan(h, 5);
+    await bosalt();
+    s.stdoutSatiriGonder(sonuc());
+    await bosalt();
+    const insanTuru = h.konusma.aktifTur()!;
+    assert.notEqual(insanTuru.turn_id, sentetik.turn_id);
+    assert.equal(h.konusma.insanTuru(), insanTuru.turn_id);
+    assert.equal(insanTuru.etkinlik?.kaynak_msg_id, "msg5");
+    assert.deepEqual(
+      y.etkinlikler.map((e) => [e.turn_id, e.kaynak_msg_id]),
+      [
+        [sentetik.turn_id, null],
+        [insanTuru.turn_id, "msg5"],
+      ],
+    );
+    assert.deepEqual(y.bitenler, [sentetik.turn_id]);
+  });
+
+  it("olaysız boş bitiş (sonuç ve metin boş): olay yazılmasa da tam bir tur_etkinligi_bitti", async () => {
+    const h = kur();
+    const s = await ac(h);
+    const y = dinle(h);
+    const turId = await turAc(h, 1);
+    s.stdoutSatiriGonder(aracBasladi("toolu_b", "Read"));
+    s.stdoutSatiriGonder(aracSonucu("toolu_b"));
+    s.stdoutSatiriGonder(sonuc({ result: "" }));
+    await bosalt();
+    assert.equal(olayTur(h, "assistant_message").length, 0, "olay yazılmadı");
+    assert.equal(olayTur(h, "turn_aborted").length, 0);
+    assert.deepEqual(y.bitenler, [turId]);
+    assert.equal(h.konusma.aktifTur(), null);
+  });
+
+  it("kesme: kesildi sonucuyla tam bir tur_etkinligi_bitti", async () => {
+    const h = kur();
+    const s = await ac(h);
+    const y = dinle(h);
+    const turId = await turAc(h, 1);
+    s.stdoutSatiriGonder(aracBasladi("toolu_k", "PowerShell"));
+    assert.equal(h.konusma.kes(turId).ok, true);
+    assert.deepEqual(y.bitenler, [], "kesme isteği turu kapatmaz; sonuç kapatır");
+    s.stdoutSatiriGonder(sonuc({ terminal_reason: "aborted_tools", result: "" }));
+    await bosalt();
+    assert.equal((olayTur(h, "turn_aborted")[0] as Extract<Olay, { type: "turn_aborted" }>).neden, "kullanici_kesti");
+    assert.deepEqual(y.bitenler, [turId]);
+  });
+
+  it("sohbet temizleme (yeniSayfa) süren turu kapatırken tam bir tur_etkinligi_bitti", async () => {
+    const h = kur();
+    await ac(h);
+    const y = dinle(h);
+    const turId = await turAc(h, 1);
+    mezarYaz(h);
+    const p = h.konusma.yeniSayfa();
+    assert.deepEqual(y.bitenler, [turId], "çağrı anında");
+    await sayfaBitir(h, p);
+    assert.deepEqual(y.bitenler, [turId], "yalnız bir kez");
+    assert.equal(h.konusma.aktifTur(), null);
+  });
+
+  it("sonlandırma (sohbet silme) süren turu kapatırken tam bir tur_etkinligi_bitti", async () => {
+    const h = kur();
+    await ac(h);
+    const y = dinle(h);
+    const turId = await turAc(h, 1);
+    const p = h.konusma.sonlandir();
+    assert.deepEqual(y.bitenler, [turId], "çağrı anında");
+    await sozBekle(h, p);
+    assert.deepEqual(y.bitenler, [turId], "yalnız bir kez");
+  });
+
+  it("servis kapanışı (kapat): kayıt açık kalsa da tam bir tur_etkinligi_bitti", async () => {
+    const h = kur();
+    await ac(h);
+    const y = dinle(h);
+    const turId = await turAc(h, 1);
+    await h.konusma.kapat();
+    await bosalt();
+    assert.deepEqual(y.bitenler, [turId]);
+    assert.equal(h.depo.turGetir(turId)?.bitis, null, "kayıt açık kalır (kurtarma kapatır)");
+  });
+});
