@@ -391,18 +391,23 @@ class TestRobustness(Base):
 
     def test_stdin_open_never_written_no_hang(self):
         path = self.skill(FM + "## A\nx\n")
+        # stdout/stderr gecici dosyaya gider, boruya degil: okunmayan boru Windows'ta 4096 baytta
+        # dolar; cikti bundan uzunsa betik stdin yuzunden degil yazarken takilir (yanlis alarm).
+        out, err = tempfile.TemporaryFile(), tempfile.TemporaryFile()
         proc = subprocess.Popen([sys.executable, SCRIPT, "--skill", path], stdin=subprocess.PIPE,
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                stdout=out, stderr=err)
         try:
             try:
                 rc = proc.wait(timeout=15)
             except subprocess.TimeoutExpired:
                 self.fail("stdin acik ama bos iken betik takildi")
             self.assertEqual(rc, 0)
+            out.seek(0)
+            self.assertTrue(out.read().strip())
         finally:
             if proc.poll() is None:
                 proc.kill()
-            for s in (proc.stdin, proc.stdout, proc.stderr):
+            for s in (proc.stdin, out, err):
                 try:
                     s.close()
                 except Exception:

@@ -6,7 +6,8 @@ A working rule for Claude Code: the lead model never writes code itself, it spli
 
 - **The lead's context stays on the big picture.** Reading files, writing code and running tests happen in sub-agents, so the main conversation keeps the plan, the decisions and the user's intent.
 - **Parallelism.** Independent pieces of work run as separate agents at the same time, each with one narrow job.
-- **Model choice per task.** Simple, well-bounded work goes to Sonnet; complex or ambiguous work goes to Opus.
+- **Model choice per task, in three tiers.** Very easy, mechanical work goes to Sonnet; medium, well-bounded work goes to Opus; hard work (design, diagnosis, cross-component changes) goes to Mythos. The Agent tool has no `mythos` value, so the lead reaches Mythos by leaving `model` unset on purpose: the sub-agent then inherits the lead's model. This needs a lead session that runs Mythos; otherwise the top tier is Opus.
+- **Open-ended briefs for Mythos and Opus.** They get the goal, the facts, file ownership and a done-definition, never the method. Sonnet briefs are complete and one-way.
 - **A reviewer with fresh context.** A separate agent reviews the result without having seen how it was produced, so it is not anchored on the author's assumptions.
 - **Two independent views.** For risky or uncertain calls, a second agent looks at the same question separately.
 
@@ -15,13 +16,13 @@ The full rules (limits between agents, flow, brief writing, communication with t
 ## Context economy (core mode, ledger)
 
 By default the hook no longer injects the whole rule book into every session. It injects a short
-**core rule** ([`skill/CEKIRDEK.md`](skill/CEKIRDEK.md), ~3.2 KB instead of ~33 KB, about 90% less
+**core rule** ([`skill/CEKIRDEK.md`](skill/CEKIRDEK.md), ~3.6 KB instead of ~33 KB, about 90% less
 fixed context per session). The full rules are read section by section when a code task actually
 starts. Set `OPUS_ORKESTRA_MOD=tam` (or pass `--mod tam`) to get the old full injection back.
 
 | | Before | Core mode |
 | --- | --- | --- |
-| Context injected at every session start | ~32.8 KB (3 parts) | ~3.2 KB (1 part) |
+| Context injected at every session start | ~32.8 KB (3 parts) | ~3.6 KB (1 part) |
 | Full rules | always in context | read when a code task starts, by section |
 
 **Read diffs, write diffs, remember.** [`defter/defter.py`](defter/defter.py) is a per-repo context
@@ -130,6 +131,6 @@ The rules are currently written in Turkish. An English version is on the roadmap
 
 ## Türkçe özet
 
-Opus Orkestra, Claude Code için bir çalışma kuralıdır: şef model kod yazmaz, işi çok sayıda dar kapsamlı alt agent'a dağıtır ve sonucu kendisi doğrular. Amaç; ana bağlamı büyük resme ayırmak, paralel çalışmak, basit işe Sonnet karmaşık işe Opus seçmek, taze bağlamlı bir gözden geçirici ve çift görüş kullanmaktır.
+Opus Orkestra, Claude Code için bir çalışma kuralıdır: şef model kod yazmaz, işi çok sayıda dar kapsamlı alt agent'a dağıtır ve sonucu kendisi doğrular. Amaç; ana bağlamı büyük resme ayırmak, paralel çalışmak, modeli üç kademede seçmek (çok kolay işe Sonnet, orta işe Opus, zor işe Mythos), taze bağlamlı bir gözden geçirici ve çift görüş kullanmaktır. Agent aracında `mythos` değeri olmadığı için Mythos, `model` bilerek boş bırakılıp şefin modeli devralınarak verilir; şef Mythos değilse en üst kademe Opus'tur. Mythos'a ve Opus'a brief açık uçlu yazılır (amaç, olgular, dosya sahipliği, bitti tanımı; yöntem değil), Sonnet brief'i eksiksiz ve tek yönlüdür.
 
 Kurallar `skill/SKILL.md` içinde, SessionStart hook'u ise bunları her oturum başında bağlama enjekte eder. Hook çıktısı 10.000 karakteri aşarsa modele yalnız ilk 2.000 karakter gittiği için metin `## ` başlıklarından 4 parçaya bölünür ve 4 ayrı hook komutuyla verilir. Kurulum için kökten `.\install.ps1 -Components orkestra`; kaldırmak için `-Uninstall`. `SKILL.md` arama sırası: `--skill`, `OPUS_ORKESTRA_SKILL`, `~/.claude/skills/opus-orkestra/SKILL.md`, `../skill/SKILL.md`. Test: `python -m pytest packages/opus-orkestra/tests`. Kurallar şimdilik Türkçe; İngilizce sürüm yol haritasında.
