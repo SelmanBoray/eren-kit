@@ -455,6 +455,60 @@ export const StreamSnapshot = sohbetMesaj("stream_snapshot", {
   /** Turun şu ana kadarki metni. Sonraki `assistant_delta.offset` bu metnin üzerine oturur. */
   text: z.string().max(SINIRLAR.ASISTAN_METNI),
 });
+
+/**
+ * Asistanın o anki etkinliği (`assistant_activity.etkinlik`). Kapalı liste: yeni değer eklemek yeni bir
+ * yetenek jetonu gerektirir (`SOHBET_YETENEKLERI`), çünkü jetonu olmayan telefon bilinmeyen değeri reddeder.
+ */
+export const AKIS_ETKINLIKLERI = [
+  "dusunuyor",
+  "yaziyor",
+  "komut",
+  "dosya_okuma",
+  "dosya_yazma",
+  "web",
+  "plan",
+  "is_bilgisi",
+  "ekran",
+  "arac",
+] as const;
+export const AkisEtkinligi = z.enum(AKIS_ETKINLIKLERI);
+export type AkisEtkinligi = z.infer<typeof AkisEtkinligi>;
+
+/**
+ * `/sohbet` WebSocket adresindeki yetenek sorgusu: `?yetenek=etkinlik1`. Değer virgülle ayrılmış jeton
+ * listesidir. Sürüm artmaz: jetonu istemeyen bağlantıya ilgili çerçeve hiç gönderilmez.
+ */
+export const SOHBET_YETENEK_PARAMETRESI = "yetenek";
+export const SOHBET_YETENEKLERI = { ETKINLIK: "etkinlik1" } as const;
+
+/**
+ * Tur sürerken asistanın ne yaptığı (kalıcı değil). Yalnız `yetenek=etkinlik1` isteyen bağlantıya gider.
+ * `gecen_ms`: etkinliğin başlangıcından beri geçen süre (en çok 24 saat).
+ */
+export const AssistantActivity = sohbetMesaj("assistant_activity", {
+  sohbet_id: SohbetId,
+  turn_id: OpakId,
+  etkinlik: AkisEtkinligi,
+  gecen_ms: z.number().int().min(0).max(86_400_000),
+  /**
+   * Bu turu başlatan insan mesajının `client_msg_id`'si (`user_message`/`user_echo` ile aynı şema).
+   * Tur insan mesajıyla başlamadıysa (servis/sentetik tur) alan hiç yoktur; `null` geçersizdir.
+   */
+  kaynak_msg_id: OpakId.optional(),
+});
+export type AssistantActivity = z.infer<typeof AssistantActivity>;
+
+/**
+ * Görünür bir tur hangi nedenle olursa olsun kapandı (etkinlik göstergesi kapanır). `AssistantActivity`
+ * ile aynı yetenek jetonuna (`etkinlik1`) bağlıdır, yalnız canlı gönderilir, telafide yeniden oynatılmaz.
+ * Aynı turun bitiş olayına (`assistant_message` / `turn_aborted`) göre sırası garanti edilmez.
+ */
+export const AssistantActivityEnd = sohbetMesaj("assistant_activity_end", {
+  sohbet_id: SohbetId,
+  turn_id: OpakId,
+});
+export type AssistantActivityEnd = z.infer<typeof AssistantActivityEnd>;
 export const EventMesaji = sohbetMesaj("event", { event: Olay });
 
 /** Kurulumdaki sürüm adı: kısa `sha` ya da `--kirli` kurulumda `<sha>-k<zaman>` (kur.ts `SHA_DESENI`). */
@@ -569,6 +623,8 @@ export const SohbetAsagi = z.discriminatedUnion("type", [
   Ack,
   AssistantDelta,
   StreamSnapshot,
+  AssistantActivity,
+  AssistantActivityEnd,
   EventMesaji,
   ServerStatus,
   ErrorMesaji,

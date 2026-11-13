@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { readFileSync } from "node:fs";
 import {
+  AKIS_ETKINLIKLERI,
   ANA_SOHBET_ADI,
   ANA_SOHBET_ID,
   EslestirmeQr,
@@ -17,6 +18,8 @@ import {
   SOHBET_SURUMU,
   SOHBET_V1_TURLERI,
   SOHBET_YASAM_OLAYLARI,
+  SOHBET_YETENEK_PARAMETRESI,
+  SOHBET_YETENEKLERI,
   sohbetAnahtari,
   SohbetAdi,
   SohbetAsagi,
@@ -330,6 +333,33 @@ const ASAGI: Record<string, Ornek> = {
       ["metin yok", { v, type: "stream_snapshot", sohbet_id: s, turn_id: "t1" }],
     ],
   },
+  assistant_activity: {
+    gecerli: [
+      { v, type: "assistant_activity", sohbet_id: "ana", turn_id: "tur_x", etkinlik: "komut", gecen_ms: 0 },
+      { v, type: "assistant_activity", sohbet_id: "ana", turn_id: "tur_x", etkinlik: "dusunuyor", gecen_ms: 0, kaynak_msg_id: "m_1" },
+      ...AKIS_ETKINLIKLERI.map((etkinlik) => ({ v, type: "assistant_activity", sohbet_id: s, turn_id: "t1", etkinlik, gecen_ms: 86_400_000 })),
+    ],
+    gecersiz: [
+      ["bilinmeyen etkinlik", { v, type: "assistant_activity", sohbet_id: s, turn_id: "t1", etkinlik: "uyuyor", gecen_ms: 1 }],
+      ["negatif gecen_ms", { v, type: "assistant_activity", sohbet_id: s, turn_id: "t1", etkinlik: "web", gecen_ms: -1 }],
+      ["üst sınırı aşan gecen_ms", { v, type: "assistant_activity", sohbet_id: s, turn_id: "t1", etkinlik: "web", gecen_ms: 86_400_001 }],
+      ["kesirli gecen_ms", { v, type: "assistant_activity", sohbet_id: s, turn_id: "t1", etkinlik: "web", gecen_ms: 1.5 }],
+      ["sohbet_id yok", { v, type: "assistant_activity", turn_id: "t1", etkinlik: "web", gecen_ms: 1 }],
+      ["turn_id yok", { v, type: "assistant_activity", sohbet_id: s, etkinlik: "web", gecen_ms: 1 }],
+      ["gecen_ms yok", { v, type: "assistant_activity", sohbet_id: s, turn_id: "t1", etkinlik: "web" }],
+      ["kaynak_msg_id null", { v, type: "assistant_activity", sohbet_id: s, turn_id: "t1", etkinlik: "web", gecen_ms: 1, kaynak_msg_id: null }],
+      ["kaynak_msg_id şemaya uymaz", { v, type: "assistant_activity", sohbet_id: s, turn_id: "t1", etkinlik: "web", gecen_ms: 1, kaynak_msg_id: "bir iki" }],
+      ["kaynak_msg_id boş", { v, type: "assistant_activity", sohbet_id: s, turn_id: "t1", etkinlik: "web", gecen_ms: 1, kaynak_msg_id: "" }],
+    ],
+  },
+  assistant_activity_end: {
+    gecerli: [{ v, type: "assistant_activity_end", sohbet_id: "ana", turn_id: "tur_x" }],
+    gecersiz: [
+      ["sohbet_id yok", { v, type: "assistant_activity_end", turn_id: "t1" }],
+      ["turn_id yok", { v, type: "assistant_activity_end", sohbet_id: s }],
+      ["geçersiz turn_id", { v, type: "assistant_activity_end", sohbet_id: s, turn_id: "t 1" }],
+    ],
+  },
   server_status: {
     gecerli: [
       durum,
@@ -404,9 +434,17 @@ test("kararlar listesindeki adların hepsi vardır", () => {
   ]) {
     assert.ok(YUKARI[ad], ad);
   }
-  for (const ad of ["auth_challenge", "welcome", "assistant_delta", "stream_snapshot", "server_status"]) {
+  for (const ad of ["auth_challenge", "welcome", "assistant_delta", "stream_snapshot", "assistant_activity", "assistant_activity_end", "server_status"]) {
     assert.ok(ASAGI[ad], ad);
   }
+});
+
+test("etkinlik yeteneği: sürüm artmaz, sabitler ve yukarı yönde çerçeve yok", () => {
+  assert.equal(SOHBET_SURUMU, 5);
+  assert.equal(SOHBET_YETENEK_PARAMETRESI, "yetenek");
+  assert.deepEqual(SOHBET_YETENEKLERI, { ETKINLIK: "etkinlik1" });
+  assert.equal(SohbetYukari.safeParse({ v, type: "assistant_activity", sohbet_id: s, turn_id: "t1", etkinlik: "web", gecen_ms: 1 }).success, false);
+  assert.equal(SohbetYukari.safeParse({ v, type: "assistant_activity_end", sohbet_id: s, turn_id: "t1" }).success, false);
 });
 
 test("olay zarfı seq ve ts_ms ister", () => {
