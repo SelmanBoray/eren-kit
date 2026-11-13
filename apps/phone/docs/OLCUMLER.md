@@ -116,3 +116,11 @@ Test telefonu (Android 16 tabanlı, üretici arayüzlü), gece boyunca bağlı b
 - Deneme 6 saatte sonuç kaydı üretmeden durduruldu; senaryo sonuçları kaydedilmedi. Gerçek `claude` ile tam akış henüz kanıtlanmış değil.
 - Sahte süreçlerle doğrulananlar: sunucu 905 test (modül + birleşim), telefon çekirdeği 400+ test (10.000 adımlık mutasyon değişmezi dahil), JS çekirdeği 66 test.
 - İlk gerçek deneme kullanıcının telefon kurulumuyla yapılacak.
+
+## 9. Canlı veride gecikme (2026-11-13)
+- Mesaj → cevabın bitişi: ortanca 13,4 sn, p90 171 sn (canlı veri).
+- Servis mesajı Claude'a en çok 1,2 sn'de iletiyor.
+- Temiz koşulda model 0,7-0,9 sn'de yazmaya başlıyor; efor düzeyi fark yaratmıyor.
+- Tipik tur iki model çağrısıdır: düşünme + araç, sonra metin.
+- 100 sn'yi aşan turlarda sürenin %58-94'ü araç çalışması; çoğu PowerShell.
+- Ölçülmeyenler: telefona teslim süresi (o yönde onay ya da zaman kaydı yok); telefonda ilk harfin göründüğü an (transkript bloğu bitince yazıyor).
