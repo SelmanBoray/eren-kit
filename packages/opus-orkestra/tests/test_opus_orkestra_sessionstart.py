@@ -748,10 +748,20 @@ class TestSkillResolution(Base):
         self.assertIn("ENVMARK", c)
         self.assertNotIn("HOMEMARK", c)
 
+    def same_as_package(self):
+        """Depodaki SKILL.md'nin CRLF + BOM'lu kopyasi: icerikce ayni sayilir (bayat degil)."""
+        with open(REAL_SKILL, "rb") as f:
+            veri = f.read().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+        return "﻿" + veri.decode("utf-8")
+
     def test_home_beats_package(self):
-        home = self.fake_home("## H\nHOMEMARK\n")
-        c = ctx_of(self.run_env([], home=home))
-        self.assertIn("HOMEMARK", c)
+        # icerik ayniyken kurulu kopya secilir (gosterilen yol ~ ile); farkliysa bkz. TestBayatKurulum
+        home = self.fake_home(self.same_as_package())
+        p = self.run_env([], home=home)
+        c = ctx_of(p)
+        self.assertIn("~/.claude/skills/opus-orkestra/SKILL.md", c)
+        self.assertNotIn(os.path.normpath(REAL_SKILL).replace(os.sep, "/"), c)
+        self.assertNotIn("bayat", sysmsg_of(p))
 
     def test_package_relative_fallback(self):
         home = self.fake_home(None)
@@ -761,13 +771,13 @@ class TestSkillResolution(Base):
         self.assertIn(first_heading, c)
 
     def test_missing_env_falls_through(self):
-        home = self.fake_home("## H\nHOMEMARK\n")
+        home = self.fake_home(self.same_as_package())
         c = ctx_of(self.run_env([], env_skill=os.path.join(self._tmp.name, "yok.md"), home=home))
-        self.assertIn("HOMEMARK", c)
+        self.assertIn("~/.claude/skills/opus-orkestra/SKILL.md", c)
 
 
     def test_default_install_shows_tilde_path(self):
-        home = self.fake_home("## H\nHOMEMARK\n")
+        home = self.fake_home(self.same_as_package())
         c = ctx_of(self.run_env([], home=home))
         self.assertIn("~/.claude/skills/opus-orkestra/SKILL.md", c)
 
@@ -833,3 +843,121 @@ class CekirdekMod(unittest.TestCase):
         p = subprocess.run([sys.executable, SCRIPT, "--skill", REAL_SKILL], capture_output=True,
                            timeout=TIMEOUT, env=env)
         self.assertTrue(LABEL_RE.match(ctx_of(p).split("\n", 1)[0]))
+
+
+class TestBayatKurulum(Base):
+    """Kurulu ~/.claude kopyasi betigin yanindaki ../skill/SKILL.md'den farkliysa sessiz gecilmez.
+    Ev dizini her testte gecici dizin (HOME/USERPROFILE); gercek ~/.claude'a dokunulmaz."""
+
+    fake_home = TestSkillResolution.fake_home
+    same_as_package = TestSkillResolution.same_as_package
+
+    STALE = "## H\r\nHOMEMARK eski kural\r\n"  # depodakinden farkli icerik
+    PKG = os.path.normpath(REAL_SKILL).replace(os.sep, "/")
+    TILDE = "~/.claude/skills/opus-orkestra/SKILL.md"
+
+    def run_mod(self, args, mod, home, env_skill=None, script=SCRIPT):
+        env = dict(os.environ)
+        for k in ("OPUS_ORKESTRA_SKILL", "OPUS_ORKESTRA_MOD", "OPUS_ORKESTRA_CEKIRDEK"):
+            env.pop(k, None)
+        if mod is not None:
+            env["OPUS_ORKESTRA_MOD"] = mod
+        if env_skill is not None:
+            env["OPUS_ORKESTRA_SKILL"] = env_skill
+        env["HOME"] = home
+        env["USERPROFILE"] = home
+        p = subprocess.run([sys.executable, script] + args, input=b"{}", capture_output=True,
+                           timeout=TIMEOUT, env=env)
+        self.assertEqual(p.returncode, 0, p.stderr.decode("utf-8", "replace"))
+        return p
+
+    def all_parts(self, mod, home, **kw):
+        return [self.run_mod(["--parca", str(n)], mod, home, **kw) for n in range(1, 5)]
+
+    def assertNoStaleWarning(self, procs):
+        for p in procs:
+            if p.stdout.strip():
+                self.assertNotIn("bayat", sysmsg_of(p))
+                self.assertNotIn("bayat", ctx_of(p))
+
+    def test_farkli_cekirdek_guncel_yolu_gosterir_ve_uyarir(self):
+        home = self.fake_home(self.STALE)
+        procs = self.all_parts(None, home)
+        c, s = ctx_of(procs[0]), sysmsg_of(procs[0])
+        self.assertIn(self.PKG, c)  # model guncel (depo) kopyaya yonlenir
+        self.assertNotIn(self.TILDE + " dosyasını oku", c)
+        self.assertIn("bayat", c)
+        self.assertIn("Skill", c)  # Skill araciyla bayat kopyayi yuklememesi soylenir
+        self.assertLessEqual(len(c), LIMIT)
+        self.assertIn("bayat", s)
+        self.assertIn(self.TILDE, s)
+        self.assertRegex(s, r"install\.(ps1|sh)")
+        self.assertNotIn("—", c[c.index("bayat") - 60:] + s)  # hook'un ekledigi metinde uzun tire yok
+        for p in procs[1:]:  # uyari bir kez: 2-4 bos
+            self.assertEqual(p.stdout.strip(), b"")
+
+    def test_farkli_tam_mod_guncel_icerik_uyari_bir_kez(self):
+        home = self.fake_home(self.STALE)
+        procs = self.all_parts("tam", home)
+        ctxs = [ctx_of(p) for p in procs if p.stdout.strip()]
+        joined = "".join(ctxs)
+        self.assertNotIn("HOMEMARK", joined)
+        with open(REAL_SKILL, "r", encoding="utf-8") as f:
+            headings = HEAD_RE.findall(f.read())
+        self.assertEqual(HEAD_RE.findall(joined), headings)
+        self.assertIn(self.PKG, ctxs[0])
+        self.assertIn("bayat", sysmsg_of(procs[0]))
+        for p in procs[1:]:
+            if p.stdout.strip():
+                self.assertNotIn("bayat", sysmsg_of(p))
+        for c in ctxs:
+            self.assertNotIn("UYARI", c)  # sinir sozlesmesi bozulmaz
+            self.assertLessEqual(len(c), LIMIT)
+
+    def test_yalniz_satir_sonu_ve_bom_farki_sayilmaz(self):
+        home = self.fake_home(self.same_as_package())
+        for mod in (None, "tam"):
+            procs = self.all_parts(mod, home)
+            self.assertNoStaleWarning(procs)
+            self.assertIn(self.TILDE, ctx_of(procs[0]))
+
+    def test_depo_kopyasi_yoksa_bugunku_davranis(self):
+        # ~/.claude/hooks altina kopyalanmis hook: yaninda ../skill/SKILL.md yok
+        hooks = os.path.join(self._tmp.name, "kopya", "hooks")
+        os.makedirs(hooks)
+        script = os.path.join(hooks, "opus-orkestra-sessionstart.py")
+        with open(SCRIPT, "rb") as src, open(script, "wb") as dst:
+            dst.write(src.read())
+        home = self.fake_home(self.STALE)
+        for mod in (None, "tam"):
+            procs = self.all_parts(mod, home, script=script)
+            self.assertNoStaleWarning(procs)
+            c = ctx_of(procs[0])
+            self.assertIn("HOMEMARK", c)  # cekirdek yok -> tam moda duser, kurulu kopya kullanilir
+            self.assertIn(self.TILDE, c)
+
+    def test_acik_skill_secimine_karisilmaz(self):
+        home = self.fake_home(self.STALE)
+        a = self.skill("## A\nARGMARK\n")
+        for mod in (None, "tam"):
+            p = self.run_mod(["--skill", a, "--parca", "1"], mod, home)
+            self.assertNoStaleWarning([p])
+        kurulu = os.path.join(home, ".claude", "skills", "opus-orkestra", "SKILL.md")
+        p = self.run_mod(["--skill", kurulu], "tam", home)
+        self.assertIn("HOMEMARK", ctx_of(p))  # bayat kopya acikca secildiyse o kullanilir
+        self.assertNoStaleWarning([p])
+
+    def test_ortam_degiskeni_secimine_karisilmaz(self):
+        home = self.fake_home(self.STALE)
+        e = self.skill("## E\nENVMARK\n")
+        procs = self.all_parts("tam", home, env_skill=e)
+        self.assertIn("ENVMARK", ctx_of(procs[0]))
+        self.assertNoStaleWarning(procs)
+
+    def test_kurulu_kopya_okunamazsa_cokmez(self):
+        # SKILL.md bir dizin: isfile False -> depo kopyasi, uyari yok
+        home = os.path.join(self._tmp.name, "home")
+        os.makedirs(os.path.join(home, ".claude", "skills", "opus-orkestra", "SKILL.md"))
+        procs = self.all_parts("tam", home)
+        self.assertIn(self.PKG, ctx_of(procs[0]))
+        self.assertNoStaleWarning(procs)

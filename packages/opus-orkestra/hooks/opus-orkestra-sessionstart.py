@@ -3,6 +3,9 @@
 SKILL.md bulma sirasi: --skill <yol> -> OPUS_ORKESTRA_SKILL ortam degiskeni ->
 ~/.claude/skills/opus-orkestra/SKILL.md -> bu betige gore ../skill/SKILL.md
 (--skill oldugu gibi kullanilir; digerlerinde ilk var olan dosya secilir).
+Istisna: kurulu kopya ile betigin yanindaki ../skill/SKILL.md ikisi de varsa ve icerikleri
+(satir sonu ve BOM farki sayilmadan) farkliysa kurulu kopya bayat sayilir: betigin yanindaki
+kopya (cekirdekle ayni surum) kullanilir ve 1. parcada kullaniciya yenileme komutu bildirilir.
 
 Kullanim: python opus-orkestra-sessionstart.py [--parca <n>] [--skill <yol>] [--mod cekirdek|tam]
 
@@ -26,6 +29,7 @@ SINIR_KARAKTER = 9500
 AZAMI_PARCA = 4
 
 SKILL_YOLU_GOSTERIM = "~/.claude/skills/opus-orkestra/SKILL.md"
+BAYAT_KURULUM = None  # depodakinden farkli oldugu icin atlanan kurulu SKILL.md yolu
 
 
 def gosterim_yolu(yol):
@@ -130,20 +134,75 @@ def parca_metni(n, parcalar, uyari_metni):
     return etiket(n, m) + (uyari_metni if n == 1 else "") + parcalar[n - 1]
 
 
+def normal_icerik(yol):
+    """Karsilastirma icin bayt icerik: BOM atilir, CRLF/CR -> LF. Okunamazsa None."""
+    try:
+        with open(yol, "rb") as f:
+            veri = f.read()
+    except OSError:
+        return None
+    if veri.startswith(b"\xef\xbb\xbf"):
+        veri = veri[3:]
+    return veri.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+
+
+def kurulum_bayat_mi(kurulum, paket):
+    """Ikisi de okunur ve normallestirilmis icerikleri farkliysa True; supheli her durumda False."""
+    try:
+        if os.path.samefile(kurulum, paket):
+            return False
+    except OSError:
+        return False
+    a, b = normal_icerik(kurulum), normal_icerik(paket)
+    return a is not None and b is not None and a != b
+
+
 def varsayilan_skill():
     """--skill verilmediyse: ortam degiskeni -> ~/.claude kurulumu -> betige gore ../skill/SKILL.md.
-    Ilk var olan dosya secilir; hicbiri yoksa kurulum yolu doner (hata mesaji icin)."""
+    Ilk var olan dosya secilir; hicbiri yoksa kurulum yolu doner (hata mesaji icin).
+    Kurulu kopya betigin yanindakinden farkliysa bayattir: yanindaki secilir, BAYAT_KURULUM isaretlenir."""
+    global BAYAT_KURULUM
     kurulum = os.path.join(os.path.expanduser("~"), ".claude", "skills", "opus-orkestra", "SKILL.md")
     paket = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "skill", "SKILL.md")
-    adaylar = []
     env = os.environ.get("OPUS_ORKESTRA_SKILL")
-    if env:
-        adaylar.append(env)
-    adaylar += [kurulum, paket]
-    for yol in adaylar:
-        if os.path.isfile(yol):
-            return yol
+    if env and os.path.isfile(env):
+        return env  # kullanicinin bilincli secimi: karsilastirma yapilmaz
+    if os.path.isfile(kurulum):
+        if os.path.isfile(paket) and kurulum_bayat_mi(kurulum, paket):
+            BAYAT_KURULUM = kurulum
+            return paket
+        return kurulum
+    if os.path.isfile(paket):
+        return paket
     return kurulum
+
+
+def yenileme_komutu():
+    """Kurulu skill kopyasini yenileyen komut (depo koku betige gore ../../..)."""
+    kok = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".."))
+    if os.name == "nt" and os.path.isfile(os.path.join(kok, "install.ps1")):
+        return '& "%s" -Components orkestra' % os.path.join(kok, "install.ps1").replace(os.sep, "/")
+    if os.name != "nt" and os.path.isfile(os.path.join(kok, "install.sh")):
+        return '"%s" --components orkestra' % os.path.join(kok, "install.sh").replace(os.sep, "/")
+    return "kurulumu (install.ps1 / install.sh) orkestra bileşeniyle yeniden çalıştır"
+
+
+def bayat_mesaji():
+    """Kullaniciya (systemMessage) gidecek tek satir; bayat kopya yoksa ''."""
+    if not BAYAT_KURULUM:
+        return ""
+    return (" UYARI: kurulu kopya " + gosterim_yolu(BAYAT_KURULUM) + " depodakinden farklı (bayat); "
+            "hook depodaki güncel kopyayı kullandı. Yenilemek için: " + yenileme_komutu())
+
+
+def bayat_notu():
+    """Modelin baglamina (cekirdek modda) eklenecek not; bayat kopya yoksa ''."""
+    if not BAYAT_KURULUM:
+        return ""
+    return ("\nNot: kurulu kopya " + gosterim_yolu(BAYAT_KURULUM) + " bayat (depodakinden farklı). "
+            "Tam kurallar için yalnız " + SKILL_YOLU_GOSTERIM + " dosyasını oku; Skill aracıyla opus-orkestra "
+            "yükleme (bayat kopyayı yükler). Kullanıcıya bunu bir kez kısaca söyle; yenileme komutu: `"
+            + yenileme_komutu() + "`.\n")
 
 
 def cekirdek_yolu():
@@ -236,11 +295,15 @@ def main():
                 return 0  # cekirdek tek parcadir; 2-4. hook komutlari bos gecer
             metin = cekirdek.replace("~/.claude/skills/opus-orkestra/SKILL.md", SKILL_YOLU_GOSTERIM)
             metin += "\n`defter` command here: `" + defter_komutu() + "` (run inside the git repo).\n"
-            if len(metin) > SINIR_KARAKTER:
-                metin = metin[:SINIR_KARAKTER - 200] + "\n\n[Çekirdek kesildi; tamamı için " + SKILL_YOLU_GOSTERIM + " oku.]"
+            notu = bayat_notu()
+            if len(metin) + len(notu) > SINIR_KARAKTER:
+                metin = (metin[:SINIR_KARAKTER - 200 - len(notu)] + "\n\n[Çekirdek kesildi; tamamı için "
+                         + SKILL_YOLU_GOSTERIM + " oku.]")
+            metin += notu
             yaz({
                 "hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": metin},
-                "systemMessage": "Opus Orkestra çekirdek kuralı yüklendi (tam kurallar: " + SKILL_YOLU_GOSTERIM + ").",
+                "systemMessage": "Opus Orkestra çekirdek kuralı yüklendi (tam kurallar: " + SKILL_YOLU_GOSTERIM + ")."
+                                 + bayat_mesaji(),
                 "suppressOutput": True,
             })
             return 0
@@ -261,6 +324,8 @@ def main():
                  "kurallar tam değil (parça %d/%d)." % (n, len(parcalar)))
     else:
         mesaj = "Opus Orkestra kuralı yüklendi (parça %d/%d)." % (n, len(parcalar))
+    if n == 1:
+        mesaj += bayat_mesaji()  # tam modda baglam zaten guncel kopyadan; yalniz kullaniciya, bir kez
     yaz({
         "hookSpecificOutput": {
             "hookEventName": "SessionStart",
