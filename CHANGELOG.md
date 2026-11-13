@@ -59,6 +59,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- `opus-orkestra`: new "Agent ömrü" rule. A fresh agent per phase with a short handoff note instead of
+  keeping one agent alive with `SendMessage` (at most two follow-ups, small fixes only); no `name` on
+  agents, because with `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` a named agent becomes a teammate whose
+  progress messages wake the main session; agents send no progress messages, one final report only.
+  Measured in a real session: one agent kept alive over 18 messages grew to 439k tokens of context and
+  36M cache-read tokens (~86% of all subagent cache reads).
 - `bellek`: one per-platform data directory (`bellek.platform_dirs.data_dir`): Windows
   `%LOCALAPPDATA%\Bellek` (unchanged), macOS `~/Library/Application Support/Bellek`, Linux
   `$XDG_DATA_HOME/Bellek`. `state_dir` now defaults to it; the template no longer hard-codes
