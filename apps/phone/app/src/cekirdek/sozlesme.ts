@@ -27,7 +27,10 @@ import type {
   UsageReport,
 } from "@eren/protocol";
 import type { BaglantiHatasi } from "./baglanti.ts";
+import type { EtkinlikDurumu } from "./etkinlik.ts";
 import type { GorunumOgesi, IsKarti } from "./olaylar.ts";
+
+export type { EtkinlikDurumu } from "./etkinlik.ts";
 
 // ---------------------------------------------------------------------------------------------
 // Ortak yardımcılar
@@ -123,6 +126,20 @@ export interface DepoPortu {
    * anahtarın `ekle`'leriyle sıralıdır. Mezar taşı (`chat_cleared`) olay günlüğünü kırparken kullanılır.
    */
   satirlariYaz(anahtar: string, satirlar: readonly string[]): Promise<void>;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Ses portu: cihazın metin seslendirmesi. Gerçeği `app/src/cihaz/erenDevice.ts` (`sesPortu()`),
+// sarmalayıcısı `seslendirici.ts`. İsteğe bağlıdır: verilmezse çekirdek hiçbir şey okumaz.
+// ---------------------------------------------------------------------------------------------
+
+export interface SesPortu {
+  /** Metni okumaya başlar; okunamadıysa false. Asla reddetmez. */
+  seslendir(metin: string): Promise<boolean>;
+  /** Süren okumayı keser. Asla reddetmez. */
+  durdur(): Promise<void>;
+  /** Okuma başlayınca true, bitince/kesilince false. Kapatıcı döner. */
+  durumDinle(f: (konusuyor: boolean) => void): () => void;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -497,6 +514,11 @@ export interface CekirdekPortlari {
   kimlik: KimlikPortu;
   depo: DepoPortu;
   saat: SaatPortu;
+  /**
+   * Verilirse bu çalışmada sesle (`dikte`, `kisayol`) gönderilen mesajın cevabı tamamlanınca bir kez
+   * okunur (`sesliYanit.ts`); herhangi bir yolla yeni mesaj gönderilince süren okuma kesilir.
+   */
+  ses?: SesPortu;
 }
 
 /** Son `server_status`, `v`/`type` olmadan. Dilim 2: `eren` yok, `sohbetler` var. Bağlantı yokken `null`. */
@@ -548,6 +570,11 @@ export interface CekirdekDurumu extends BaglantiOzeti {
   calisanIsler: readonly CalisanIs[];
   /** Token tüketim raporu (BaglantiOzeti'nde değil: sohbet durumlarına yayılmaz). */
   tuketim: TuketimDurumu;
+  /**
+   * Sesli yanıt okunuyor (ses portunun `durumDinle` bildirimi); `sustur()` keser. Gerçek çekirdek
+   * her zaman yazar (port yoksa `false`); isteğe bağlılık yalnız elle kurulan durum nesneleri içindir.
+   */
+  seslendiriyor?: boolean;
 }
 
 /**
@@ -573,6 +600,11 @@ export interface SohbetDurumu extends BaglantiOzeti {
   ogeler: readonly GorunumOgesi[];
   /** Bu sohbetin süren turu; `ogeler`'in sonunda gösterilir. */
   akis: AkisDurumu | null;
+  /**
+   * Asistanın bu sohbette o anki etkinliği (`assistant_activity`); turu bitiren olayla, kopukta ve
+   * sıfırlamada `null`. Servis bu çerçeveyi yollamıyorsa hep `null`.
+   */
+  etkinlik: EtkinlikDurumu | null;
   /** Bu sohbetin henüz olayı gelmemiş yukarı mesajları, yollanış sırasıyla. */
   bekleyenler: readonly BekleyenOge[];
   /**
@@ -731,6 +763,8 @@ export interface Cekirdek {
    * da son rapor 10 sn'den yeniyse hiçbir şey yollamaz ve `false` döner.
    */
   tuketimIste(): boolean;
+  /** Süren (ya da başlamak üzere olan) sesli okumayı keser. Ses portu yoksa hiçbir şey yapmaz. */
+  sustur(): void;
 }
 
 /** Port olmayan kurulum seçenekleri. */

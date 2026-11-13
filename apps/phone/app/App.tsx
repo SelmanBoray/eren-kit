@@ -36,7 +36,7 @@ export default function App() {
   const cekirdek = useMemo(
     () =>
       cekirdekKur(
-        { ws: wsPortuKur(), kimlik: cihaz.kimlikPortu(), depo: dosyaDepoKur(), saat: saatKur() },
+        { ws: wsPortuKur(), kimlik: cihaz.kimlikPortu(), depo: dosyaDepoKur(), saat: saatKur(), ses: cihaz.sesPortu() },
         { asistanAdi: ASISTAN_ADI },
       ),
     [cihaz],

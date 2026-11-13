@@ -68,8 +68,9 @@ class KisayolActivity : Activity() {
     // Dikte
     // ---------------------------------------------------------------------------------------------
 
-    /** Köprüdeki `dikte()` ile aynı ayarlar. */
+    /** Köprüdeki `dikte()` ile aynı ayarlar; tanıyıcıdan önce süren seslendirme kesilir. */
     private fun dikteBaslat() {
+        Seslendirici.etkiniDurdur()
         val niyet = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
             .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             .putExtra(RecognizerIntent.EXTRA_LANGUAGE, "tr-TR")

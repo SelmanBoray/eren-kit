@@ -5,8 +5,18 @@
  * 1 sn'den 30 sn'ye ikiye katlanarak yeniden dener, `welcome` geri çekilmeyi sıfırlar.
  * TASARIM.md "JS modülleri"; protocol README `/sohbet` 2.
  */
-import { EslestirmeQr, SOHBET_SURUMU, sohbetAsagiCoz, SohbetYukari } from "@eren/protocol";
+import { EslestirmeQr, SOHBET_SURUMU, SOHBET_YETENEK_PARAMETRESI, SOHBET_YETENEKLERI, sohbetAsagiCoz, SohbetYukari } from "@eren/protocol";
 import type { HataKodu } from "@eren/protocol";
+
+/** İstenen yetenek jetonları (virgülle ayrılmış liste olarak sorguya gider). */
+const ISTENEN_YETENEKLER: readonly string[] = [SOHBET_YETENEKLERI.ETKINLIK];
+
+/** `ws://host:port/sohbet?yetenek=...`; adreste sorgu varsa `&` ile eklenir. */
+const sohbetAdresi = (host: string | number, port: string | number): string => {
+  const taban = `ws://${host}:${port}/sohbet`;
+  const ayirac = taban.includes("?") ? "&" : "?";
+  return `${taban}${ayirac}${SOHBET_YETENEK_PARAMETRESI}=${ISTENEN_YETENEKLER.join(",")}`;
+};
 import type {
   BaglantiDurumu,
   GelenCerceve,
@@ -300,7 +310,7 @@ export const baglantiKur: BaglantiFabrikasi = ({ ws, kimlik, saat, sonSeq, dinle
     d.asama = "aciliyor";
     let b: WsBaglantisi;
     try {
-      b = ws.ac(`ws://${host.data}:${port.data}/sohbet`, dinleyiciKur(d));
+      b = ws.ac(sohbetAdresi(host.data, port.data), dinleyiciKur(d));
     } catch {
       return bitir(d, "baglanti_kapandi", "normal");
     }

@@ -12,6 +12,10 @@
  * JS izin üretmez ve `/cihaz`'ı görmez: telefon planında onay ekranı `izinIste(kart.plan_json,
  * kart.plan_hash)` ile köprüden açılır; burada yalnız `plan_decision` yollanır.
  *
+ * Sesli yanıt (ses portu verildiyse): sesle gönderilen mesajın cevabı okunur. Karar `sesliYanit.ts`
+ * (servisin `assistant_activity.kaynak_msg_id` ile bildirdiği tur-mesaj bağı), okuma `seslendirici.ts`;
+ * `CekirdekDurumu.seslendiriyor`, `sustur()`.
+ *
  * Davranış: TASARIM.md "Dilim 2: çoklu sohbet" (Olay yönlendirme, Sohbet listesi 6, Okunmamış,
  * Seçili sohbet, Mezar taşı ve silinen sohbet, Yönetim işlemleri) ve Ç6. İmzalar: sozlesme.ts.
  */
@@ -28,10 +32,16 @@ import { akisKur } from "./akis.ts";
 import type { Akis } from "./akis.ts";
 import { baglantiKur } from "./baglanti.ts";
 import type { KimlikliCerceve, WelcomeCercevesi } from "./baglanti.ts";
+import { etkinlikKur } from "./etkinlik.ts";
+import type { Etkinlik } from "./etkinlik.ts";
 import { olaylarKur } from "./olaylar.ts";
 import type { GorunumOgesi, IsKarti, Olaylar } from "./olaylar.ts";
 import { outboxKur } from "./outbox.ts";
 import { secimDeposuKur } from "./secim.ts";
+import { seslendiriciKur } from "./seslendirici.ts";
+import type { Seslendirici } from "./seslendirici.ts";
+import { sesliYanitKur } from "./sesliYanit.ts";
+import type { SesliYanit } from "./sesliYanit.ts";
 import { adHazirla, otomatikAd, ozetleriKur, sohbetDefteriKur } from "./sohbetler.ts";
 import { telafiKur } from "./telafi.ts";
 import { tuketimKur } from "./tuketim.ts";
@@ -74,6 +84,7 @@ export type {
   CekirdekDurumu,
   CekirdekPortlari,
   CekirdekSecenekleri,
+  EtkinlikDurumu,
   GecmisSilHatasi,
   GecmisSilSonucu,
   GecmisSilindiNotu,
@@ -85,6 +96,7 @@ export type {
   IsMesaji,
   MesajBaglami,
   PlanKarari,
+  SesPortu,
   Sohbet,
   SohbetAcSonucu,
   SohbetDurumu,
@@ -152,6 +164,7 @@ const GEC_YANITLI_TURLER: ReadonlySet<string> = new Set<IsMesaji["type"]>(["plan
 interface Ornek {
   readonly olaylar: Olaylar;
   readonly akis: Akis;
+  readonly etkinlik: Etkinlik;
 }
 
 type KullaniciMesaji = Extract<IsMesaji, { type: "user_message" }>;
@@ -247,7 +260,7 @@ const ozetEsit = (a: SohbetOzeti, b: SohbetOzeti): boolean => {
   return x === y || (x !== null && y !== null && x.kim === y.kim && x.metin === y.metin);
 };
 
-export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat }, secenekler = {}) => {
+export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat, ses }, secenekler = {}) => {
   const dinleyiciler = new Set<(durum: CekirdekDurumu) => void>();
   let onbellek: CekirdekDurumu | null = null;
   let kirli = true;
@@ -327,7 +340,7 @@ export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat }, secen
   const ornekAl = (sohbet_id: SohbetId): Ornek => {
     let o = ornekler.get(sohbet_id);
     if (o === undefined) {
-      o = { olaylar: olaylarKur(), akis: akisKur() };
+      o = { olaylar: olaylarKur(), akis: akisKur(), etkinlik: etkinlikKur() };
       ornekler.set(sohbet_id, o);
     }
     return o;
@@ -663,6 +676,7 @@ export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat }, secen
     const ornek = ornekAl(sohbet_id);
     ornek.olaylar.ekle(o);
     ornek.akis.olay(o);
+    ornek.etkinlik.olay(o);
     if (o.type === "user_echo") kullaniciTeslimleri.delete(o.client_msg_id);
     if (o.type === "chat_cleared") mezarTasiUygula(o, sohbet_id, kapanacak);
   };
@@ -698,6 +712,8 @@ export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat }, secen
     kullaniciTeslimleri.clear();
     kararTeslimleri.clear();
     alinanSeq = 0;
+    // Geçmiş baştan çekilir, `seq`'ler yeniden başlar: eski sesli kayıtlar eşleşmesin, okunan yinelenmesin.
+    sesli?.yanit.sifirla();
     // Bellekten düşen teslimlerin disk kopyası da gider: sonraki açılışta sohbet geri gelmesin.
     const tutulan = new Set(kurulumTeslimleri.map((t) => t.mesaj.client_msg_id));
     if (tutulan.size > 0) kurulumBirak((m) => tutulan.has(m.client_msg_id));
@@ -828,6 +844,8 @@ export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat }, secen
         return;
       case "user_message":
         if (s.ok) kullaniciTeslimiAl(m, s.seq);
+        // Reddedilen mesajın yankısı gelmez: sesli kaydı beklemesin.
+        else sesli?.yanit.unut(m.client_msg_id);
         return;
       case "plan_decision":
       case "question_answer":
@@ -844,6 +862,11 @@ export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat }, secen
     switch (c.type) {
       case "event":
         if (c.event.seq > alinanSeq) alinanSeq = c.event.seq;
+        // Sesli yanıt olay gelince karar verir (diske yazımı beklemez); uygulanmış olay girmez.
+        if (sesli !== null && c.event.seq > telafi.sonSeq()) {
+          const metin = sesli.yanit.olay(c.event);
+          if (metin !== null) sesli.okuyucu.oku(metin);
+        }
         telafi.olay(c.event);
         return;
       case "ack":
@@ -855,6 +878,30 @@ export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat }, secen
         const sohbet_id = sohbetAnahtari(c);
         if (defter.silindiMi(sohbet_id)) return;
         if (ornekAl(sohbet_id).akis.cerceve(c)) bildir();
+        return;
+      }
+      case "assistant_activity": {
+        // Kalıcı değil: diske yazılmaz, `seq`'e dokunmaz. Eski servis hiç yollamaz.
+        // Tur-mesaj bağı sohbet denetiminden önce: `turn_id` küresel, bağ yalnız bu cihazın sesli
+        // mesajında işe yarar (yabancı kaynak `sesliYanit`'te hiç eşleşmez); sesli cevap kaçmasın.
+        if (c.kaynak_msg_id !== undefined) sesli?.yanit.turKaynagi(c.turn_id, c.kaynak_msg_id);
+        const sohbet_id = sohbetAnahtari(c);
+        if (defter.silindiMi(sohbet_id)) return;
+        const e = ornekAl(sohbet_id).etkinlik;
+        const once = e.durum();
+        e.cerceve(c, saat.simdiMs());
+        if (e.durum() !== once) bildir();
+        return;
+      }
+      case "assistant_activity_end": {
+        // Görünür tur kapandı (bitiş olayından önce de sonra da gelebilir). Kalıcı değil: diske
+        // yazılmaz, `seq`'e ve sesli yanıta dokunmaz. Eski servis hiç yollamaz.
+        const sohbet_id = sohbetAnahtari(c);
+        if (defter.silindiMi(sohbet_id)) return;
+        const e = ornekAl(sohbet_id).etkinlik;
+        const once = e.durum();
+        e.bitti(c.turn_id);
+        if (e.durum() !== once) bildir();
         return;
       }
       case "server_status": {
@@ -910,7 +957,10 @@ export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat }, secen
         outbox.koptu();
         silmeHatalariniKapat();
         silmeBitir({ ok: false, kod: "baglanti_koptu" });
-        for (const o of ornekler.values()) o.akis.koptu();
+        for (const o of ornekler.values()) {
+          o.akis.koptu();
+          o.etkinlik.koptu();
+        }
         telafi.koptu();
         sunucu = null;
         isBittiTuketimIptal();
@@ -930,6 +980,10 @@ export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat }, secen
     },
   });
   tuketimDurumu = tuketim.durum();
+
+  // Sesli yanıt: yalnız ses portu verildiyse. Karar `sesliYanit.ts`'te (saf), okuma `seslendirici.ts`'te.
+  const sesli: { readonly yanit: SesliYanit; readonly okuyucu: Seslendirici } | null =
+    ses === undefined ? null : { yanit: sesliYanitKur(), okuyucu: seslendiriciKur({ ses, degisti: () => bildir() }) };
 
   const isBittiTuketimIptal = (): void => {
     if (isBittiTuketim === null) return;
@@ -961,6 +1015,7 @@ export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat }, secen
       secili,
       calisanIsler: calisanIslerAl(),
       tuketim: tuketimDurumu,
+      seslendiriyor: sesli?.okuyucu.konusuyor() ?? false,
     };
     if (onbellek !== null && sigEsit(onbellek, yeni)) return onbellek;
     onbellek = yeni;
@@ -1071,6 +1126,7 @@ export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat }, secen
         ozet: ozetBul(sohbet_id),
         ogeler: ornek?.olaylar.ogeler() ?? BOS_OGELER,
         akis: ornek?.akis.durum() ?? null,
+        etkinlik: ornek?.etkinlik.durum() ?? null,
         bekleyenler,
         hatalar,
       };
@@ -1112,6 +1168,11 @@ export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat }, secen
           text: metin,
           ...(baglam !== undefined ? { baglam: { paket: baglam.paket, ad: baglam.ad } } : {}),
         });
+        if (s.ok && sesli !== null) {
+          // Herhangi bir yolla yeni mesaj süren okumayı keser; sesle gönderilenin cevabı okunacak.
+          sesli.okuyucu.durdur();
+          if (input === "dikte" || input === "kisayol") sesli.yanit.sesliGonderildi(s.client_msg_id);
+        }
         // Arada kullanıcı adlandırdıysa onun adı kalır.
         if (s.ok && otomatik && ozetBul(sohbet_id)?.ad === VARSAYILAN_SOHBET_ADI) {
           const ad = otomatikAd(metin);
@@ -1290,12 +1351,17 @@ export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat }, secen
     kapat: () => {
       baglanti.durdur();
       bekciDurdur();
+      sesli?.okuyucu.durdur();
       bildir();
     },
 
     simdiBaglan: () => baglanti.simdiBaglan(),
 
     tuketimIste: () => tuketim.iste(),
+
+    sustur: () => {
+      sesli?.okuyucu.durdur();
+    },
 
     durum,
 

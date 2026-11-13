@@ -59,12 +59,15 @@ class ErenDeviceModule : Module(), AdaptorOlaylari {
     private val oturumlar = ConcurrentHashMap<String, SohbetOturumu>()
     private val bekleyenler = HashMap<Int, (Int, Intent?) -> Unit>()
     private val ana = Handler(Looper.getMainLooper())
+    private val sesKilidi = Any()
+    private var seslendiriciOrnegi: Seslendirici? = null
+    private var sesKapandi = false
     private val arkaIp = lazy { HandlerThread("eren-modul").apply { start() } }
     private val arka: Handler by lazy { Handler(arkaIp.value.looper) }
 
     override fun definition() = ModuleDefinition {
         Name("ErenDevice")
-        Events("durumDegisti", "izinlerDegisti", "bildirimAcildi", "kisayolGeldi")
+        Events("durumDegisti", "izinlerDegisti", "bildirimAcildi", "kisayolGeldi", "seslendirmeDurumu")
 
         OnCreate {
             Adaptor.olaylar = this@ErenDeviceModule
@@ -74,6 +77,7 @@ class ErenDeviceModule : Module(), AdaptorOlaylari {
         OnActivityEntersForeground { arkadaGuvenli { servisiAyaktaTut() } }
         OnDestroy {
             if (Adaptor.olaylar === this@ErenDeviceModule) Adaptor.olaylar = null
+            seslendiriciyiKapat()
             tumBekleyenleriBitir()
             if (arkaIp.isInitialized()) arkaIp.value.quitSafely()
         }
@@ -223,6 +227,8 @@ class ErenDeviceModule : Module(), AdaptorOlaylari {
         }
 
         AsyncFunction("dikte") { promise: Promise ->
+            // Tanıyıcı açılmadan süren okuma kesilir: asistan kendi sesini dinlemesin.
+            mevcutSeslendirici()?.durdur(null)
             val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
                 .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                 .putExtra(RecognizerIntent.EXTRA_LANGUAGE, "tr-TR")
@@ -241,6 +247,25 @@ class ErenDeviceModule : Module(), AdaptorOlaylari {
             }
             if (!aktiviteBaslat(ISTEK_DIKTE, intent, sonuc)) {
                 promise.resolve(mapOf<String, Any?>("iptal" to true))
+            }
+        }
+
+        // Okumanın bitmesi beklenmez; motor yok/dil yok/boş metin/başlatılamadı → false (reddetmez).
+        AsyncFunction("seslendir") { metin: String, dil: String, promise: Promise ->
+            val s = seslendirici()
+            if (s == null) {
+                promise.resolve(false)
+            } else {
+                s.seslendir(metin, dil) { kabul -> promise.resolve(kabul) }
+            }
+        }
+
+        AsyncFunction("seslendirmeyiDurdur") { promise: Promise ->
+            val s = mevcutSeslendirici()
+            if (s == null) {
+                promise.resolve(null)
+            } else {
+                s.durdur { promise.resolve(null) }
             }
         }
 
@@ -349,6 +374,44 @@ class ErenDeviceModule : Module(), AdaptorOlaylari {
     override fun kisayolGeldi(id: String) {
         try {
             sendEvent("kisayolGeldi", mapOf<String, Any?>("id" to id))
+        } catch (_: Exception) {
+        }
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Seslendirme: modül başına tek `Seslendirici`, ilk `seslendir`'de kurulur, yıkımda kapanır.
+    // ---------------------------------------------------------------------------------------------
+
+    private fun seslendirici(): Seslendirici? = synchronized(sesKilidi) {
+        if (sesKapandi) return@synchronized null
+        seslendiriciOrnegi ?: baglam()?.let { ctx ->
+            try {
+                Seslendirici(ctx) { konusuyor -> seslendirmeDurumu(konusuyor) }
+            } catch (_: Exception) {
+                null
+            }
+        }?.also { seslendiriciOrnegi = it }
+    }
+
+    /** Kurulmadıysa kurmaz (durdurmak için motor bağlamaya gerek yok). */
+    private fun mevcutSeslendirici(): Seslendirici? = synchronized(sesKilidi) { seslendiriciOrnegi }
+
+    private fun seslendiriciyiKapat() {
+        val s = synchronized(sesKilidi) {
+            sesKapandi = true
+            val o = seslendiriciOrnegi
+            seslendiriciOrnegi = null
+            o
+        }
+        try {
+            s?.kapat()
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun seslendirmeDurumu(konusuyor: Boolean) {
+        try {
+            sendEvent("seslendirmeDurumu", mapOf<String, Any?>("konusuyor" to konusuyor))
         } catch (_: Exception) {
         }
     }

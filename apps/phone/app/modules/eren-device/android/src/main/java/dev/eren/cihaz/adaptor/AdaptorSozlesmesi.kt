@@ -422,7 +422,14 @@ interface DenetimKapisi {
  *     kisayolKutucuguEkle() → StatusBarManager.requestAddTileService(KisayolKutucugu) (API 33+;
  *                         altı "desteklenmiyor") → "eklendi" | "zaten" | "reddedildi" | "desteklenmiyor"
  *     sesKisayoluKur()  → ErisimAnahtari.sesKisayoluKur → "kuruldu" | "yetki_yok" | "hata" (bağlam yoksa hata)
+ *     seslendir(m,dil)  → Seslendirici.seslendir → true (kabul; bitmesi beklenmez) | false (reddetmez)
+ *     seslendirmeyiDurdur() → Seslendirici.durdur (okuma yoksa sessizce döner)
  *   Olaylar: durumDegisti/izinlerDegisti/bildirimAcildi{tur}/kisayolGeldi{id} → `AdaptorOlaylari` ile
- *   `sendEvent`. `Adaptor.olaylar = this` (modül yıkımında null). Bu modülde cmd/cmd_result/token/ham
+ *   `sendEvent`; seslendirmeDurumu{konusuyor} → `Seslendirici`'nin geri çağrısıyla `sendEvent`.
+ *
+ * Seslendirici  (sınıf; modül başına bir örnek, companion `etkiniDurdur()`)
+ *   Yerleşik TextToSpeech; metni `SesParcalari.bol` ile platform sınırına göre böler, ses odağını
+ *   (MAY_DUCK) okuma boyunca tutar. Okuma başına tam bir true + tam bir false. Köprü `dikte` ve
+ *   `KisayolActivity` tanıyıcıyı açmadan önce okumayı keser. Modül yıkımında `kapat` (motor shutdown). `Adaptor.olaylar = this` (modül yıkımında null). Bu modülde cmd/cmd_result/token/ham
  *   çerçeve YOK.
  */

@@ -45,7 +45,15 @@ import { UstCubuk } from "./UstCubuk.tsx";
 import type { UstCubukProps } from "./UstCubuk.tsx";
 import { ASISTAN_ADI } from "../platform/asistanAdi.ts";
 import { useCekirdekDurumu, useSohbetDurumu } from "./baglam.ts";
-import { altBaslikHesapla, hatHesapla, kaliciHataVar } from "./baglantiDurumu.ts";
+import {
+  altBaslikHesapla,
+  etkinlikEtiketiHesapla,
+  etkinlikSayaciGerekli,
+  gorunenEtkinlik,
+  hatHesapla,
+  kaliciHataVar,
+} from "./baglantiDurumu.ts";
+import type { SohbetAltBaslikGirdisi } from "./baglantiDurumu.ts";
 import { bosluk, cizgi, esik, olcu, renk, stil, sure, yaricap, yazi } from "./tema.ts";
 
 // ---------------------------------------------------------------- Üst çubuk durumu (6.1-6.3)
@@ -123,6 +131,23 @@ function useGecikmeli(kosul: boolean, ms: number): boolean {
     return () => clearTimeout(t);
   }, [kosul, ms]);
   return kosul && gecti;
+}
+
+/**
+ * Etkinlik süresi için saniyelik saat. `anahtar` `null` iken zamanlayıcı yoktur (dönen değer
+ * kullanılmamalı); değişince saat hemen tazelenir ve sayaç yeniden kurulur. Ekran kapanınca
+ * (bileşen sökülünce) durur. Kaynak `Date.now()`: çekirdeğin saat portu (`platform/saat.ts`
+ * `saatKur().simdiMs`) da budur, `baslangic_ms` bu saatle yazılır.
+ */
+function useSaniyeSaati(anahtar: string | null): number {
+  const [simdi, setSimdi] = useState(() => Date.now());
+  useEffect(() => {
+    if (anahtar === null) return;
+    setSimdi(Date.now());
+    const t = setInterval(() => setSimdi(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [anahtar]);
+  return simdi;
 }
 
 // ---------------------------------------------------------------- Zaman çizelgesi düzeni (6.4, 6.10)
@@ -407,6 +432,22 @@ function SohbetEkraniIc(p: SohbetEkraniProps): ReactNode {
     if (onPlanda && altta && okunmamis > 0) sohbet.okundu();
   }, [onPlanda, altta, okunmamis, sohbet]);
 
+  // ------------------------------------------------ Etkinlik (tur sürerken asistan ne yapıyor)
+
+  // Karar `baglantiDurumu.ts`'te. Sayaç yalnız süreli bir etkinlik gösterilirken ve uygulama ön
+  // plandayken çalışır; tur bitince (etkinlik `null`) ya da ekran kapanınca durur.
+  const etkinlikGirdisi: SohbetAltBaslikGirdisi = { akis: d.akis, eren: ozet?.eren ?? null, etkinlik: d.etkinlik };
+  const gorunen = gorunenEtkinlik(etkinlikGirdisi);
+  const sayacAnahtari =
+    onPlanda && gorunen !== null && etkinlikSayaciGerekli(etkinlikGirdisi)
+      ? `${gorunen.turn_id}|${gorunen.etkinlik}|${gorunen.baslangic_ms}`
+      : null;
+  const simdi = useSaniyeSaati(sayacAnahtari);
+  const sohbetGirdisi: SohbetAltBaslikGirdisi = { ...etkinlikGirdisi, simdiMs: simdi };
+  const etkinlikEtiketi = etkinlikEtiketiHesapla(sohbetGirdisi, ASISTAN_ADI);
+  // Süren tur: akışınki; akış yokken (henüz metin gelmedi) gösterilen etkinliğinki.
+  const surenTur = d.akis?.turn_id ?? gorunen?.turn_id ?? null;
+
   // ------------------------------------------------ İşler (6.15; bütün sohbetlerin işleri)
 
   const calisanIsler = cd.calisanIsler;
@@ -473,6 +514,8 @@ function SohbetEkraniIc(p: SohbetEkraniProps): ReactNode {
     if (dikteSuruyor.current) return;
     dikteSuruyor.current = true;
     try {
+      // Sürüyorsa sesli okuma, tanıyıcı açılmadan kesilir (yerel tarafın kesmesine ek güvence).
+      cekirdek.sustur();
       const r = await cihaz.dikte();
       if (!r.ok) {
         setNot(hataNotu(r.neden === "desteklenmiyor" ? "Bu cihazda dikte yok." : "Dikte açılamadı."));
@@ -496,8 +539,8 @@ function SohbetEkraniIc(p: SohbetEkraniProps): ReactNode {
   // `kes()` yalnız kuyruğa yazımı bildirir, `ack`'i beklemez.
   const kesiliyor =
     kesme !== null &&
-    d.akis !== null &&
-    kesme.tur === d.akis.turn_id &&
+    surenTur !== null &&
+    kesme.tur === surenTur &&
     d.baglanti === "bagli" &&
     !(kesme.id !== null && d.hatalar.some((h) => h.client_msg_id === kesme.id));
 
@@ -506,10 +549,11 @@ function SohbetEkraniIc(p: SohbetEkraniProps): ReactNode {
   }, [d.baglanti]);
 
   const turuKes = (): void => {
-    const tur = d.akis?.turn_id ?? null;
+    const tur = surenTur;
     if (tur === null || kesiliyor) return;
     setKesme({ tur, id: null });
-    sohbet.kes().then(
+    // Akış varken çekirdek turu akıştan alır; yokken (yalnız etkinlik) tur açıkça verilir.
+    sohbet.kes(d.akis === null ? tur : undefined).then(
       (s) => {
         if (s.ok) {
           setKesme((k) => (k !== null && k.tur === tur ? { tur, id: s.client_msg_id } : k));
@@ -598,8 +642,12 @@ function SohbetEkraniIc(p: SohbetEkraniProps): ReactNode {
     );
     sonTaraf = taraf;
   };
-  if (d.akis !== null) {
-    ekle("akis", "asistan", <AkisBalonu metin={d.akis.metin} kesiliyor={kesiliyor} onKes={turuKes} />);
+  // Akış yokken de (tur başladı, henüz metin gelmedi) gösterilecek bir etkinlik varsa metinsiz akış
+  // balonu çizilir: noktalar + "Düşünüyor" / "Komut çalıştırıyor · 8 sn" + "Turu kes".
+  if (d.akis !== null || gorunen !== null) {
+    ekle("akis", "asistan", (
+      <AkisBalonu metin={d.akis?.metin ?? ""} kesiliyor={kesiliyor} onKes={turuKes} etkinlik={etkinlikEtiketi} />
+    ));
   }
   for (const b of d.bekleyenler) {
     if (b.mesaj.type === "user_message") {
@@ -631,6 +679,7 @@ function SohbetEkraniIc(p: SohbetEkraniProps): ReactNode {
   const icerikYok =
     ogeler.every((o) => o.tur === "gecmis_silindi") &&
     d.akis === null &&
+    gorunen === null &&
     d.bekleyenler.length === 0 &&
     d.hatalar.length === 0;
   const aciliyor = ogeler.length === 0 && d.baglanti === "kapali" && d.sonrakiDenemeMs === null && d.hata === null;
@@ -666,7 +715,7 @@ function SohbetEkraniIc(p: SohbetEkraniProps): ReactNode {
     <View style={stil.ekran}>
       <UstCubuk
         baslik={baslik}
-        altBaslik={altBaslikHesapla(d, { akis: d.akis, eren: ozet?.eren ?? null }, ASISTAN_ADI)}
+        altBaslik={altBaslikHesapla(d, sohbetGirdisi, ASISTAN_ADI)}
         sol={{ simge: "menu", etiket: "Sohbetler", basinca: onCekmece, nokta: baskaOkunmamis }}
         isSayisi={isSayisi}
         onIsler={isleriAc}
@@ -721,6 +770,29 @@ function SohbetEkraniIc(p: SohbetEkraniProps): ReactNode {
         >
           {not.metin}
         </Text>
+      )}
+
+      {/* Sesli okuma sürerken giriş çubuğunun üstünde tek satır; okuma çekirdek geneli, sohbete bağlı değil. */}
+      {cd.seslendiriyor === true && (
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            paddingLeft: bosluk[4],
+            paddingRight: bosluk[2],
+            gap: bosluk[2],
+          }}
+        >
+          <Text numberOfLines={1} style={[yazi.kucuk, { flex: 1, color: renk.metinIkincil }]}>
+            Sesli okunuyor
+          </Text>
+          <Dugme
+            tur="metin"
+            yazi="Sustur"
+            accessibilityLabel="Sesli okumayı sustur"
+            basinca={() => cekirdek.sustur()}
+          />
+        </View>
       )}
 
       <View

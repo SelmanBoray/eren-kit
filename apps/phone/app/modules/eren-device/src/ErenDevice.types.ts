@@ -120,6 +120,8 @@ export interface ErenDeviceOlaylari {
   izinlerDegisti: IzinKaydiGorunumu[];
   bildirimAcildi: { tur: BildirimTuru };
   kisayolGeldi: { id: string };
+  /** Seslendirme başlayınca `konusuyor: true`, bitince ya da kesilince `false`. */
+  seslendirmeDurumu: { konusuyor: boolean };
 }
 
 /**
@@ -166,6 +168,10 @@ export interface ErenDeviceModulu {
    * verilmemiş; `hata`: kurulamadı ya da bağlam yok.
    */
   sesKisayoluKur(): Promise<"kuruldu" | "yetki_yok" | "hata">;
+  /** Metni verilen dilde (ör. `tr-TR`) okumaya başlar; okunamadıysa `false`. */
+  seslendir(metin: string, dil: string): Promise<boolean>;
+  /** Süren seslendirmeyi keser. */
+  seslendirmeyiDurdur(): Promise<void>;
   addListener<E extends keyof ErenDeviceOlaylari>(
     olay: E,
     dinleyici: (veri: ErenDeviceOlaylari[E]) => void,

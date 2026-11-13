@@ -13,7 +13,7 @@ import type {
   KisayolMesaji,
   OtoIzinSonucu,
 } from "../../modules/eren-device/src/ErenDevice.types.ts";
-import type { KimlikPortu } from "../cekirdek/sozlesme.ts";
+import type { KimlikPortu, SesPortu } from "../cekirdek/sozlesme.ts";
 
 export type Desteklenmiyor = { desteklenmiyor: true };
 export type Sonuc<T> = { ok: true; deger: T } | { ok: false; neden: "desteklenmiyor" | "hata" };
@@ -40,6 +40,8 @@ export interface ErenCihaz {
   kisayolGeldiDinle(f: (veri: { id: string }) => void): () => void;
   /** Sohbet çekirdeğinin kimlik portu; modül yoksa eşleşme `null` döner. */
   kimlikPortu(): KimlikPortu;
+  /** Sohbet çekirdeğinin ses portu (cevabı sesli okur); modül yoksa hiçbir çağrı patlamaz. */
+  sesPortu(): SesPortu;
 }
 
 type Modul = ErenDeviceModulu;
@@ -104,6 +106,35 @@ export const erenCihazKur = (): ErenCihaz => {
         return () => {};
       }
     },
+    sesPortu: () => ({
+      seslendir: async (metin) => {
+        if (m === null) return false;
+        try {
+          return (await m.seslendir(metin, "tr-TR")) === true;
+        } catch {
+          return false;
+        }
+      },
+      durdur: async () => {
+        if (m === null) return;
+        try {
+          await m.seslendirmeyiDurdur();
+        } catch {
+          // Sessizce dön: durdurma asla reddetmez.
+        }
+      },
+      durumDinle: (f) => {
+        if (m === null) return () => {};
+        try {
+          const ab = m.addListener("seslendirmeDurumu", (v) => f(v.konusuyor === true)) as unknown;
+          if (typeof ab === "function") return ab as () => void;
+          const kapat = (ab as { remove?: () => void } | null)?.remove;
+          return typeof kapat === "function" ? () => (ab as { remove: () => void }).remove() : () => {};
+        } catch {
+          return () => {};
+        }
+      },
+    }),
     kimlikPortu: () => ({
       eslesme: async () => {
         if (m === null) return null;

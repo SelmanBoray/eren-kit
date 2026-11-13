@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import { baglantiKur, GERI_CEKILME } from "../../src/cekirdek/baglanti.ts";
 import type { Baglanti, BaglantiHatasi, KimlikliCerceve } from "../../src/cekirdek/baglanti.ts";
 import type { BaglantiDurumu } from "../../src/cekirdek/sozlesme.ts";
-import { SOHBET_SURUMU } from "@eren/protocol";
+import { SOHBET_SURUMU, SOHBET_YETENEK_PARAMETRESI, SOHBET_YETENEKLERI } from "@eren/protocol";
 import { ack, bosalt, challenge, chatClear, chatCreate, chatDelete, chatRename, delta, elSikis, IMZA, NONCE, OTURUM, SahteKimlik, SahteSaat, SahteWs, v, welcome, yankiOlayi, olayCercevesi } from "./sahte.ts";
 
 const kur = (sonSeq = 0) => {
@@ -49,7 +49,7 @@ describe("baglanti: kimlik", () => {
     b.baslat();
     await bosalt();
     const c = ws.son();
-    assert.equal(c.url, "ws://100.64.0.1:8443/sohbet");
+    assert.equal(c.url, "ws://100.64.0.1:8443/sohbet?yetenek=etkinlik1");
     c.acildi();
     await bosalt();
     assert.deepEqual(c.giden(), [
@@ -154,8 +154,19 @@ describe("baglanti: kimlik", () => {
       k.kimlik.eslesmeDegeri = { device_id: "cihaz-1", host, port: 1 };
       k.b.baslat();
       await bosalt();
-      assert.equal(k.ws.son().url, `ws://${host}:1/sohbet`);
+      assert.equal(k.ws.son().url, `ws://${host}:1/sohbet?yetenek=etkinlik1`);
     }
+  });
+
+  it("adres yetenek sorgusunu taşır", async () => {
+    const { ws, b } = kur();
+    b.baslat();
+    await bosalt();
+    const u = new URL(ws.son().url);
+    assert.equal(u.protocol, "ws:");
+    assert.equal(u.pathname, "/sohbet");
+    assert.equal(u.searchParams.get(SOHBET_YETENEK_PARAMETRESI), SOHBET_YETENEKLERI.ETKINLIK);
+    assert.equal(u.search, "?yetenek=etkinlik1");
   });
 
   it("eşleşme yoksa bağlanılmaz", async () => {

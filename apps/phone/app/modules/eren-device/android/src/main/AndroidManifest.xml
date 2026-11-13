@@ -27,6 +27,14 @@
         android:name="android.permission.PACKAGE_USAGE_STATS"
         tools:ignore="ProtectedPermissions" />
 
+    <!-- Seslendirici (TextToSpeech): Android 11+ paket görünürlüğünde motor servisine bağlanmak için.
+         QUERY_ALL_PACKAGES zaten görünürlük verir; bu sorgu o izin kalkarsa da TTS'in çalışması için. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
+
     <!--
       allowBackup=false: jetonsuz izin kimlikleri ve denetim günlüğü yedeklenmemeli (niyet burada).
       DİKKAT (son adım): app manifesti (yüksek öncelik) şu an allowBackup=true üretiyor. Kitaplık

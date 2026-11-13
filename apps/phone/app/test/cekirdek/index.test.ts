@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { Plan, planHash } from "@eren/protocol";
 import { BEKCI_SURELERI, cekirdekKur, GECMIS_SIL_SURESI_MS } from "../../src/cekirdek/index.ts";
-import type { CekirdekDurumu, SohbetDurumu, SohbetOzeti } from "../../src/cekirdek/index.ts";
+import type { CekirdekDurumu, SesPortu, SohbetDurumu, SohbetOzeti } from "../../src/cekirdek/index.ts";
 import { OUTBOX_ANAHTARI } from "../../src/cekirdek/outbox.ts";
 import { SECIM_ANAHTARI } from "../../src/cekirdek/secim.ts";
 import { TELAFI_ANAHTARLARI } from "../../src/cekirdek/telafi.ts";
@@ -2161,5 +2161,333 @@ describe("çekirdek: karar teslimi (ack ile olay arası)", () => {
     depo.kapiAc();
     await bosalt();
     assert.deepEqual(k.s.durum().bekleyenler, []);
+  });
+});
+
+// =============================================================================================
+// Asistanın etkinliği (`assistant_activity`)
+// =============================================================================================
+
+describe("çekirdek: asistan etkinliği", () => {
+  const etkinlikCercevesi = (
+    turn_id: string,
+    etkinlik: string,
+    gecen_ms: number,
+    sohbet_id = "ana",
+    kaynak_msg_id?: string,
+  ) => ({
+    v,
+    type: "assistant_activity",
+    sohbet_id,
+    turn_id,
+    etkinlik,
+    gecen_ms,
+    ...(kaynak_msg_id === undefined ? {} : { kaynak_msg_id }),
+  });
+
+  /** Görünür tur kapandı (`assistant_activity_end`); kalıcı değil, telafide oynatılmaz. */
+  const bitisCercevesi = (turn_id: string, sohbet_id = "ana") => ({
+    v,
+    type: "assistant_activity_end",
+    sohbet_id,
+    turn_id,
+  });
+
+  const iptalOlayi = (seq: number, turn_id: string, sohbet_id?: string) => ({
+    seq,
+    ts_ms: 1000 + seq,
+    type: "turn_aborted",
+    ...(sohbet_id === undefined ? {} : { sohbet_id }),
+    turn_id,
+    neden: "kullanici_kesti",
+  });
+
+  it("servis yollamazsa etkinlik hep null", async () => {
+    const k = kur();
+    await baslat(k);
+    const b = k.ws.son();
+    assert.equal(k.s.durum().etkinlik, null);
+    b.gel(snapshot("t1", "Merhaba"));
+    b.gel(olayCercevesi(asistanOlayi(1, "t1", "Merhaba")));
+    await bosalt();
+    assert.equal(k.s.durum().etkinlik, null);
+  });
+
+  it("bilinen sohbete gelen çerçeve etkinliği doldurur, aboneyi haberdar eder; baslangic_ms telefonun saatiyle", async () => {
+    const k = kur();
+    await baslat(k);
+    const b = k.ws.son();
+    const gorulen: SohbetDurumu[] = [];
+    const birak = k.s.abone((d) => gorulen.push(d));
+    const once = gorulen.length;
+    b.gel(etkinlikCercevesi("t1", "dusunuyor", 0));
+    assert.deepEqual(k.s.durum().etkinlik, { turn_id: "t1", etkinlik: "dusunuyor", baslangic_ms: k.saat.simdi });
+    assert.ok(gorulen.length > once, "abone haberdar edilmeli");
+    assert.deepEqual(gorulen.at(-1)?.etkinlik, k.s.durum().etkinlik);
+
+    k.saat.ilerlet(5_000);
+    b.gel(etkinlikCercevesi("t1", "komut", 1_500));
+    assert.deepEqual(k.s.durum().etkinlik, {
+      turn_id: "t1",
+      etkinlik: "komut",
+      baslangic_ms: k.saat.simdi - 1_500,
+    });
+    // Akış durumu etkinlikten bağımsızdır.
+    assert.equal(k.s.durum().akis, null);
+    birak();
+  });
+
+  it("etkinlik yalnız kendi sohbetinde görünür", async () => {
+    const k = kur();
+    await baslat(k);
+    const b = k.ws.son();
+    b.gel(olayCercevesi(sohbetAcildiOlayi(1, "s-x-1", "İkinci")));
+    await bosalt();
+    const iki = k.c.sohbet("s-x-1");
+    b.gel(etkinlikCercevesi("t9", "web", 0, "s-x-1"));
+    assert.equal(iki.durum().etkinlik?.etkinlik, "web");
+    assert.equal(k.s.durum().etkinlik, null);
+  });
+
+  it("aynı turun assistant_message'ı etkinliği siler; bitmiş turun gecikmiş çerçevesi geri getirmez", async () => {
+    const k = kur();
+    await baslat(k);
+    const b = k.ws.son();
+    b.gel(etkinlikCercevesi("t1", "yaziyor", 0));
+    b.gel(olayCercevesi(asistanOlayi(1, "t1", "Bitti.")));
+    await bosalt();
+    assert.equal(k.s.durum().etkinlik, null);
+    b.gel(etkinlikCercevesi("t1", "komut", 0));
+    assert.equal(k.s.durum().etkinlik, null);
+    // Yeni tur yeniden doldurur.
+    b.gel(etkinlikCercevesi("t2", "dosya_okuma", 0));
+    assert.equal(k.s.durum().etkinlik?.turn_id, "t2");
+  });
+
+  it("aynı turun turn_aborted'ı etkinliği siler; başka turun bitişi silmez", async () => {
+    const k = kur();
+    await baslat(k);
+    const b = k.ws.son();
+    b.gel(etkinlikCercevesi("t2", "arac", 0));
+    b.gel(olayCercevesi(iptalOlayi(1, "t1")));
+    await bosalt();
+    assert.equal(k.s.durum().etkinlik?.turn_id, "t2");
+    b.gel(olayCercevesi(iptalOlayi(2, "t2")));
+    await bosalt();
+    assert.equal(k.s.durum().etkinlik, null);
+    b.gel(etkinlikCercevesi("t2", "arac", 0));
+    assert.equal(k.s.durum().etkinlik, null);
+  });
+
+  it("bağlantı kopunca etkinlik null olur", async () => {
+    const k = kur();
+    await baslat(k);
+    const b = k.ws.son();
+    b.gel(etkinlikCercevesi("t1", "dusunuyor", 0));
+    assert.notEqual(k.s.durum().etkinlik, null);
+    b.kopsun();
+    assert.equal(k.s.durum().etkinlik, null);
+  });
+
+  it("yerel sıfırlamada etkinlik null olur; yeni geçmişte yeniden dolar", async () => {
+    const k = kur();
+    await baslat(k);
+    const b = k.ws.son();
+    b.gel(olayCercevesi(yankiOlayi(1, "a")));
+    await bosalt();
+    b.gel(etkinlikCercevesi("t1", "dusunuyor", 0));
+    assert.notEqual(k.s.durum().etkinlik, null);
+    // Bilgisayarın geçmişi geride: yerel sıfırlama.
+    b.kopsun();
+    k.saat.ilerlet(1000);
+    await bosalt();
+    await elSikis(k.ws.son(), 0);
+    await bosalt();
+    assert.deepEqual(k.s.durum().ogeler, []);
+    assert.equal(k.s.durum().etkinlik, null);
+    // Sıfırlama bağlantıyı yeniler; yeni geçmişte etkinlik yeniden dolar.
+    k.saat.ilerlet(60_000);
+    await bosalt();
+    const yeni = k.ws.son();
+    assert.notEqual(yeni, b);
+    await elSikis(yeni, 0);
+    yeni.gel(etkinlikCercevesi("t5", "plan", 0));
+    assert.equal(k.s.durum().etkinlik?.turn_id, "t5");
+  });
+
+  it("silinmiş sohbete gelen çerçeve yok sayılır", async () => {
+    const k = kur();
+    await baslat(k);
+    const b = k.ws.son();
+    b.gel(olayCercevesi(sohbetAcildiOlayi(1, "s-b-1", "B")));
+    b.gel(olayCercevesi(sohbetSilindiOlayi(2, "s-b-1")));
+    await bosalt();
+    const B = k.c.sohbet("s-b-1");
+    assert.doesNotThrow(() => b.gel(etkinlikCercevesi("t9", "komut", 0, "s-b-1")));
+    await bosalt();
+    assert.equal(B.durum().etkinlik, null);
+    assert.deepEqual(kimlikler(k), ["ana"]);
+    assert.equal(k.c.durum().hata, null);
+  });
+
+  it("bilinmeyen sohbete gelen çerçeve hata üretmez, listeyi değiştirmez", async () => {
+    const k = kur();
+    await baslat(k);
+    const b = k.ws.son();
+    const listeOnce = kimlikler(k);
+    assert.doesNotThrow(() => b.gel(etkinlikCercevesi("t9", "komut", 0, "s-yok-1")));
+    await bosalt();
+    assert.deepEqual(kimlikler(k), listeOnce);
+    assert.equal(k.s.durum().etkinlik, null);
+    assert.equal(k.c.durum().hata, null);
+  });
+
+  it("diske yazılmaz, telafi sayacını etkilemez", async () => {
+    const k = kur();
+    await baslat(k);
+    const b = k.ws.son();
+    b.gel(olayCercevesi(yankiOlayi(1, "a")));
+    await bosalt();
+    const islemOnce = k.depo.islemler.length;
+    const kvOnce = JSON.stringify([...k.depo.kv]);
+    const gunlukOnce = JSON.stringify([...k.depo.gunlukler]);
+    b.gel(etkinlikCercevesi("t1", "dusunuyor", 0));
+    b.gel(etkinlikCercevesi("t1", "komut", 10));
+    await bosalt();
+    assert.equal(k.depo.islemler.length, islemOnce);
+    assert.equal(JSON.stringify([...k.depo.kv]), kvOnce);
+    assert.equal(JSON.stringify([...k.depo.gunlukler]), gunlukOnce);
+    // Sonraki olay `seq` 2 ile sorunsuz uygulanır (sayaç kaymadı).
+    b.gel(olayCercevesi(asistanOlayi(2, "t1", "Cevap")));
+    await bosalt();
+    assert.deepEqual(k.s.durum().ogeler.map((g) => g.seq), [1, 2]);
+  });
+
+  it("assistant_activity_end etkinliği null yapar ve aboneyi haberdar eder", async () => {
+    const k = kur();
+    await baslat(k);
+    const b = k.ws.son();
+    b.gel(etkinlikCercevesi("t1", "dusunuyor", 0));
+    assert.notEqual(k.s.durum().etkinlik, null);
+    const gorulen: SohbetDurumu[] = [];
+    const birak = k.s.abone((d) => gorulen.push(d));
+    const once = gorulen.length;
+    b.gel(bitisCercevesi("t1"));
+    await bosalt();
+    assert.equal(k.s.durum().etkinlik, null);
+    assert.ok(gorulen.length > once, "abone haberdar edilmeli");
+    assert.equal(gorulen.at(-1)?.etkinlik, null);
+    birak();
+  });
+
+  it("başka turun bitiş çerçevesi mevcut etkinliği silmez", async () => {
+    const k = kur();
+    await baslat(k);
+    const b = k.ws.son();
+    b.gel(etkinlikCercevesi("t2", "komut", 0));
+    b.gel(bitisCercevesi("t1"));
+    await bosalt();
+    assert.equal(k.s.durum().etkinlik?.turn_id, "t2");
+    assert.equal(k.s.durum().etkinlik?.etkinlik, "komut");
+  });
+
+  it("bitiş çerçevesinden sonra aynı turun gecikmiş etkinlik çerçevesi durumu geri getirmez", async () => {
+    const k = kur();
+    await baslat(k);
+    const b = k.ws.son();
+    b.gel(etkinlikCercevesi("t1", "yaziyor", 0));
+    b.gel(bitisCercevesi("t1"));
+    b.gel(etkinlikCercevesi("t1", "komut", 50));
+    await bosalt();
+    assert.equal(k.s.durum().etkinlik, null);
+    // Yeni tur yeniden doldurur.
+    b.gel(etkinlikCercevesi("t2", "dusunuyor", 0));
+    assert.equal(k.s.durum().etkinlik?.turn_id, "t2");
+  });
+
+  it("bitiş olayı yazılmadan kapanan tur: bitiş çerçevesi gelince, server_status hâlâ tur_suruyor olsa da etkinlik null", async () => {
+    const k = kur();
+    await baslat(k);
+    const b = k.ws.son();
+    b.gel(sunucuDurumu({ sohbetler: [{ sohbet_id: "ana", eren: "tur_suruyor" }] }));
+    b.gel(etkinlikCercevesi("t1", "dusunuyor", 0));
+    b.gel(bitisCercevesi("t1"));
+    b.gel(sunucuDurumu({ sohbetler: [{ sohbet_id: "ana", eren: "tur_suruyor" }] }));
+    await bosalt();
+    assert.equal(k.s.durum().etkinlik, null);
+    assert.deepEqual(k.s.durum().ogeler, [], "kalıcı olay yok");
+  });
+
+  it("silinmiş sohbete gelen bitiş çerçevesi yok sayılır", async () => {
+    const k = kur();
+    await baslat(k);
+    const b = k.ws.son();
+    b.gel(olayCercevesi(sohbetAcildiOlayi(1, "s-b-1", "B")));
+    b.gel(olayCercevesi(sohbetSilindiOlayi(2, "s-b-1")));
+    await bosalt();
+    const listeOnce = kimlikler(k);
+    assert.doesNotThrow(() => b.gel(bitisCercevesi("t9", "s-b-1")));
+    await bosalt();
+    assert.equal(k.c.sohbet("s-b-1").durum().etkinlik, null);
+    assert.deepEqual(kimlikler(k), listeOnce);
+    assert.equal(k.c.durum().hata, null);
+    assert.equal(b.kapatildi, false, "bağlantı kapanmamalı");
+  });
+
+  it("bitiş çerçevesi diske yazılmaz, telafi sayacını etkilemez", async () => {
+    const k = kur();
+    await baslat(k);
+    const b = k.ws.son();
+    b.gel(olayCercevesi(yankiOlayi(1, "a")));
+    await bosalt();
+    b.gel(etkinlikCercevesi("t1", "dusunuyor", 0));
+    await bosalt();
+    const islemOnce = k.depo.islemler.length;
+    const kvOnce = JSON.stringify([...k.depo.kv]);
+    const gunlukOnce = JSON.stringify([...k.depo.gunlukler]);
+    b.gel(bitisCercevesi("t1"));
+    await bosalt();
+    assert.equal(k.depo.islemler.length, islemOnce);
+    assert.equal(JSON.stringify([...k.depo.kv]), kvOnce);
+    assert.equal(JSON.stringify([...k.depo.gunlukler]), gunlukOnce);
+    assert.equal(k.depo.kv.get(TELAFI_ANAHTARLARI.sonSeq), "1");
+    // Sonraki olay `seq` 2 ile sorunsuz uygulanır (sayaç kaymadı).
+    b.gel(olayCercevesi(asistanOlayi(2, "t1", "Cevap")));
+    await bosalt();
+    assert.deepEqual(k.s.durum().ogeler.map((g) => g.seq), [1, 2]);
+  });
+
+  it("sesli cevap mantığını etkilemez: dikte cevabı arada etkinlik gelse de bir kez okunur", async () => {
+    const seslendirilenler: string[] = [];
+    const ses: SesPortu = {
+      seslendir: (metin) => {
+        seslendirilenler.push(metin);
+        return Promise.resolve(true);
+      },
+      durdur: () => Promise.resolve(),
+      durumDinle: () => () => undefined,
+    };
+    const ws = new SahteWs();
+    const saat = new SahteSaat();
+    const c = cekirdekKur({ ws, kimlik: new SahteKimlik(), depo: new SahteDepo(), saat, ses });
+    await c.baslat();
+    await bosalt();
+    await elSikis(ws.son(), 0);
+    const s = c.sohbet("ana");
+    const g = await s.mesajYolla("nasıl gitti", "dikte");
+    assert.ok(g.ok);
+    await bosalt();
+    const b = ws.son();
+    b.gel(ack(g.client_msg_id, true, { seq: 1 }));
+    b.gel(olayCercevesi({ ...yankiOlayi(1, g.client_msg_id, "nasıl gitti"), input: "dikte" }));
+    // Sözleşme: tur insan mesajıyla başladıysa etkinlik çerçeveleri `kaynak_msg_id` taşır.
+    b.gel(etkinlikCercevesi("t2", "dusunuyor", 0, "ana", g.client_msg_id));
+    b.gel(etkinlikCercevesi("t2", "komut", 100, "ana", g.client_msg_id));
+    b.gel(olayCercevesi(asistanOlayi(2, "t2", "Tamam.")));
+    b.gel(bitisCercevesi("t2"));
+    await bosalt();
+    assert.deepEqual(seslendirilenler, ["Tamam."]);
+    assert.equal(s.durum().etkinlik, null);
+    c.kapat();
   });
 });

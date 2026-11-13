@@ -132,20 +132,41 @@ export const AsistanBalonu = memo(function AsistanBalonu(p: { metin: string }): 
 /**
  * Süren tur. Metin yoksa balonun içinde yazıyor göstergesi; varsa balon büyür. Altında "Turu kes"
  * metin düğmesi: düğme durdurduğu şeyin yanında durur (6.4).
+ *
+ * `etkinlik` (servis etkinlik bildiriyorsa): "Yazıyor" yerine "Komut çalıştırıyor · 42 sn" gibi
+ * etiket; metin yokken de göstergenin altında görünür. Etiket canlı bölge değildir (süre her saniye
+ * değişir); göstergenin süresiz erişim etiketi (`erisim`) yalnız etkinlik değişince duyurulur.
+ * Verilmezse (`null`) bugünkü görünüm.
  */
-export function AkisBalonu(p: { metin: string; kesiliyor: boolean; onKes: () => void }): ReactNode {
+export function AkisBalonu(p: {
+  metin: string;
+  kesiliyor: boolean;
+  onKes: () => void;
+  etkinlik?: { metin: string; erisim: string } | null;
+}): ReactNode {
   const bos = p.metin === "";
+  const e = p.etkinlik ?? null;
+  const etiket = e !== null ? e.metin : bos ? null : "Yazıyor";
   return (
     <View style={asistanSutun}>
       {bos ? (
-        <YaziyorGostergesi />
+        <YaziyorGostergesi etiket={e?.erisim} />
       ) : (
         <View style={asistanBalonStili}>
           <Markdown metin={p.metin} />
         </View>
       )}
       <View style={{ flexDirection: "row", alignItems: "center" }}>
-        {!bos && <Text style={[yazi.mini, { color: renk.metinSonuk }]}>Yazıyor</Text>}
+        {etiket !== null && (
+          <Text
+            // Metin yokken göstergenin erişim etiketi aynı şeyi söyler; ikinci kez okunmasın.
+            importantForAccessibility={bos ? "no" : "auto"}
+            accessibilityElementsHidden={bos}
+            style={[yazi.mini, { color: renk.metinSonuk, flexShrink: 1 }]}
+          >
+            {etiket}
+          </Text>
+        )}
         <Dugme
           tur="metin"
           yazi={p.kesiliyor ? "Kesiliyor" : "Turu kes"}
@@ -167,8 +188,11 @@ function noktaOpakligi(v: Animated.Value, faz: number): Animated.AnimatedInterpo
   return v.interpolate({ inputRange: [0, faz, faz + 0.5, 1], outputRange: [bas, 0.3, 1, bas] });
 }
 
-/** Asistan balonu (64×38) içinde üç nokta. Az harekette duran noktalar. */
-export function YaziyorGostergesi(): ReactNode {
+/**
+ * Asistan balonu (64×38) içinde üç nokta. Az harekette duran noktalar. `etiket`: ekran okuyucu
+ * etiketi (canlı bölge; süre taşımamalı); verilmezse "{ad} yazıyor".
+ */
+export function YaziyorGostergesi(p: { etiket?: string } = {}): ReactNode {
   const az = useAzHareket();
   const v = useRef(new Animated.Value(0)).current;
 
@@ -185,7 +209,7 @@ export function YaziyorGostergesi(): ReactNode {
   return (
     <View
       accessible
-      accessibilityLabel={`${ASISTAN_ADI} yazıyor`}
+      accessibilityLabel={p.etiket ?? `${ASISTAN_ADI} yazıyor`}
       accessibilityLiveRegion="polite"
       style={[
         asistanBalonStili,
