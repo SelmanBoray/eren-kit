@@ -20,39 +20,57 @@ Komutlar:
   defter temizle --tut N                    son N kartı (özet kartları sayılmaz) ve en son özet kartını
                                             tutar; bir dosyanın ya da kavramın en son kaydını taşıyan
                                             kart da silinmez, yani `oku`/`kavram` çıktısı bilgi kaybetmez
+
+Eşzamanlılık: defteri değiştiren her adım (`yaz`, `temizle`, `ozetle --yerel` kaydı) aynı klasördeki
+`defter.kilit` üzerinde işletim sistemi kilidi alır (Windows `msvcrt.locking`, diğerleri `flock`).
+Kilidi tutan süreç ölürse kilidi işletim sistemi bırakır. Kilit `DEFTER_KILIT_SURE` saniye (varsayılan
+30) içinde alınamazsa komut açık bir hatayla çıkar, asılı kalmaz. Okuyan komutlar kilit beklemez.
+
+Budanma koruması: defterin başvurduğu kayıt içerikleri `refs/orkestra/defter` adlı tek bir ref'in
+gösterdiği ağaçta tutulur, böylece `git gc` onları budamaz. Ağaç her `yaz`/`temizle` sonrası
+defterden yeniden kurulur; defterden düşen içerik serbest kalır. Ref bir ağacı gösterir (commit
+değil): dal, etiket, `git status`, `git log --all` ve varsayılan `git push` onu görmez.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime, timezone
 
 OZET_SINIR = 1500
 KAVRAM_SINIR = 240
 VARSAYILAN_FARK_SINIRI = 160
+KILIT_SURE = 30.0
+KILIT_BAYT = 1 << 20  # Windows'ta kilitlenen bayt; sahip bilgisi dosyanın başında okunabilir kalır
+KORUMA_REF = "refs/orkestra/defter"
+_NESNE_ADI = re.compile(r"^[0-9a-f]{40}(?:[0-9a-f]{24})?$")
 
 
 class DefterHatasi(Exception):
     pass
 
 
-def _git(*args: str, cwd: str | None = None, check: bool = True) -> str:
+def _git(*args: str, cwd: str | None = None, check: bool = True, env: dict | None = None,
+         girdi: str | None = None) -> str:
     p = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, encoding="utf-8",
-                       errors="replace")
+                       errors="replace", env=env, input=girdi)
     if check and p.returncode != 0:
         raise DefterHatasi(f"git {' '.join(args[:2])} başarısız: {p.stderr.strip()[:200]}")
     return p.stdout
 
 
-def _git_rc(*args: str, cwd: str | None = None) -> tuple[int, str]:
+def _git_rc(*args: str, cwd: str | None = None, env: dict | None = None) -> tuple[int, str]:
     p = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, encoding="utf-8",
-                       errors="replace")
+                       errors="replace", env=env)
     return p.returncode, p.stdout
 
 
@@ -75,34 +93,207 @@ def goreli(k: str, yol: str) -> str:
     return os.path.relpath(mutlak, k).replace(os.sep, "/")
 
 
-def kartlar(dosya: str) -> list[dict]:
+def _windows_tekrar(islem, sure: float = 10.0):
+    """Windows'ta açık bir dosyanın yerine yazmak ya da değiştirilmekte olan dosyayı açmak kısa süre
+    PermissionError verebilir (okuyan bir süreç, virüs tarayıcısı); kısa aralıklarla yeniden dene."""
+    bitis = time.monotonic() + sure
+    while True:
+        try:
+            return islem()
+        except PermissionError:
+            if os.name != "nt" or time.monotonic() >= bitis:
+                raise
+            time.sleep(0.02)
+
+
+def kartlar_ve_bozuk(dosya: str) -> tuple[list[dict], int]:
+    """Kartlar ve okunamayan (bozuk) satır sayısı. Sonu yeni satırla bitmeyen son satır o an yazılmakta
+    olabilir; bozuk sayılmaz ama okunmaz. Yazıcı ölüp yarım bıraktıysa sonraki `ekle` satırı kapatır."""
     if not os.path.exists(dosya):
-        return []
-    out = []
-    with open(dosya, encoding="utf-8") as f:
-        for satir in f:
-            satir = satir.strip()
-            if not satir:
-                continue
-            try:
-                out.append(json.loads(satir))
-            except json.JSONDecodeError:
-                continue  # yarım yazılmış satır: yok say
-    return out
+        return [], 0
+
+    def oku() -> str:
+        with open(dosya, encoding="utf-8", errors="replace") as f:
+            return f.read()
+
+    satirlar = _windows_tekrar(oku).split("\n")
+    son_yarim = satirlar.pop()  # dosya "\n" ile bitiyorsa boş
+    out, bozuk = [], 0
+    for satir in satirlar:
+        satir = satir.strip()
+        if not satir:
+            continue
+        try:
+            kart = json.loads(satir)
+        except json.JSONDecodeError:
+            kart = None
+        if isinstance(kart, dict):
+            out.append(kart)
+        else:
+            bozuk += 1
+    if son_yarim.strip():
+        try:
+            kart = json.loads(son_yarim)
+        except json.JSONDecodeError:
+            kart = None
+        if isinstance(kart, dict):
+            out.append(kart)
+    return out, bozuk
+
+
+def kartlar(dosya: str) -> list[dict]:
+    return kartlar_ve_bozuk(dosya)[0]
+
+
+def _bozuk_uyarisi(bozuk: int) -> None:
+    if bozuk:
+        print(f"defter: uyarı: {bozuk} bozuk satır okunamadı ve yok sayıldı (ayrıntı: `defter durum`)",
+              file=sys.stderr)
+
+
+# ---------------------------------------------------------------- kilit
+
+if os.name == "nt":
+    import msvcrt
+
+    def _kilitle(fd: int) -> OSError | None:
+        os.lseek(fd, KILIT_BAYT, os.SEEK_SET)
+        try:
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            return None
+        except OSError as e:
+            return e
+
+    def _birak(fd: int) -> None:
+        os.lseek(fd, KILIT_BAYT, os.SEEK_SET)
+        try:
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        except OSError:
+            pass
+else:
+    import fcntl
+
+    def _kilitle(fd: int) -> OSError | None:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return None
+        except OSError as e:
+            return e
+
+    def _birak(fd: int) -> None:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+
+
+def _kilit_suresi() -> float:
+    try:
+        return max(0.0, float(os.environ.get("DEFTER_KILIT_SURE") or KILIT_SURE))
+    except ValueError:
+        return KILIT_SURE
+
+
+@contextlib.contextmanager
+def kilit(defter: str):
+    """Defteri değiştiren adımlar için süreçler arası özel kilit (bkz. modül belgesi)."""
+    klasor = os.path.dirname(defter)
+    yol = os.path.join(klasor, "defter.kilit")
+    try:
+        os.makedirs(klasor, exist_ok=True)
+        fd = os.open(yol, os.O_RDWR | os.O_CREAT, 0o666)
+    except OSError as e:
+        raise DefterHatasi(f"defter kilidi açılamadı ({yol}): {e}") from e
+    try:
+        sure = _kilit_suresi()
+        bitis = time.monotonic() + sure
+        bekle = 0.01
+        while (hata := _kilitle(fd)) is not None:
+            if time.monotonic() >= bitis:
+                try:
+                    os.lseek(fd, 0, os.SEEK_SET)
+                    sahip = os.read(fd, 200).decode("utf-8", "replace").strip()
+                except OSError:
+                    sahip = ""
+                raise DefterHatasi(
+                    f"defter kilidi {sure:g} sn içinde alınamadı ({yol}; tutan: {sahip or 'bilinmiyor'}; "
+                    f"son hata: {hata}). Başka bir defter komutu hâlâ çalışıyor ya da asılı kaldı: o bitince "
+                    "yeniden dene. Kilidi tutan süreç öldüyse kilit kendiliğinden kalkar, dosyayı silme.")
+            time.sleep(bekle)
+            bekle = min(bekle * 2, 0.2)
+        try:
+            os.lseek(fd, 0, os.SEEK_SET)
+            os.ftruncate(fd, 0)
+            os.write(fd, f"pid {os.getpid()}, {simdi()}\n".encode())
+        except OSError:
+            pass  # sahip bilgisi yalnız tanı içindir
+        try:
+            yield
+        finally:
+            _birak(fd)
+    finally:
+        os.close(fd)
 
 
 def ekle(dosya: str, kart: dict) -> None:
+    """Tek satır ekler; çağıran `kilit` tutmalıdır. Önceki yazıcı satırı yarım bıraktıysa önce kapatır,
+    böylece yarım satır yeni kartı bozmaz."""
     os.makedirs(os.path.dirname(dosya), exist_ok=True)
-    with open(dosya, "a", encoding="utf-8") as f:
-        f.write(json.dumps(kart, ensure_ascii=False) + "\n")
+    satir = (json.dumps(kart, ensure_ascii=False) + "\n").encode("utf-8")
+    with open(dosya, "a+b") as f:
+        f.seek(0, os.SEEK_END)
+        if f.tell() > 0:
+            f.seek(-1, os.SEEK_END)
+            if f.read(1) != b"\n":
+                satir = b"\n" + satir
+        f.write(satir)
+        f.flush()
+        os.fsync(f.fileno())
 
 
-def blob(k: str, rel: str, yaz: bool) -> str | None:
+def blob(k: str, rel: str, yaz: bool, env: dict | None = None) -> str | None:
     yol = os.path.join(k, rel)
     if not os.path.isfile(yol):
         return None
     args = ["hash-object"] + (["-w"] if yaz else []) + ["--", rel]
-    return _git(*args, cwd=k).strip()
+    return _git(*args, cwd=k, env=env).strip()
+
+
+# ---------------------------------------------------------------- budanma koruması
+
+def koruma_guncelle(k: str, ks: list[dict]) -> str | None:
+    """`KORUMA_REF`'i defterin başvurduğu ve hâlâ var olan içerikleri tutan ağaca yöneltir; başvuru yoksa
+    ref'i siler. Çağıran `kilit` tutmalıdır. Hata olursa uyarı metni döner (kart yine de yazılmıştır).
+    Yalnız var olan nesneler ağaca girer: kayıp nesneye işaret eden bir ref `git gc`'yi bozardı."""
+    try:
+        aranan = sorted({d.get("blob") for x in ks for d in x.get("dosyalar") or []
+                         if isinstance(d, dict) and _NESNE_ADI.match(str(d.get("blob") or ""))})
+        var = []
+        if aranan:
+            cikti = _git("cat-file", "--batch-check", cwd=k, girdi="\n".join(aranan) + "\n")
+            var = [s.split()[0] for s in cikti.splitlines() if s.split()[1:2] == ["blob"]]
+        if not var:
+            if _git_rc("rev-parse", "-q", "--verify", KORUMA_REF, cwd=k)[0] == 0:
+                _git("update-ref", "-d", KORUMA_REF, cwd=k)
+            return None
+        agac = _git("mktree", cwd=k, girdi="".join(f"100644 blob {b}\t{b}\n" for b in var)).strip()
+        _git("update-ref", KORUMA_REF, agac, cwd=k)
+        return None
+    except (DefterHatasi, OSError) as e:
+        return (f"kayıt içerikleri `git gc` budamasına karşı korunamadı ({e}); defter yine de güncellendi, "
+                "commit edilmemiş eski içerik zamanla budanabilir")
+
+
+@contextlib.contextmanager
+def gecici_nesne_deposu(k: str):
+    """`oku`nun güncel içerik için yazdığı nesneler geçici bir depoya gider; deponun kendi nesneleri
+    alternatif olarak okunur. Komut bitince geçici depo silinir, depoda boşta nesne kalmaz."""
+    asil = _git("rev-parse", "--git-path", "objects", cwd=k).strip()
+    if not os.path.isabs(asil):
+        asil = os.path.join(k, asil)
+    with tempfile.TemporaryDirectory(prefix="defter-") as d:
+        env = dict(os.environ)
+        env["GIT_OBJECT_DIRECTORY"] = d
+        env["GIT_ALTERNATE_OBJECT_DIRECTORIES"] = os.pathsep.join(
+            x for x in (os.path.normpath(asil), os.environ.get("GIT_ALTERNATE_OBJECT_DIRECTORIES")) if x)
+        yield env
 
 
 def simdi() -> str:
@@ -135,8 +326,15 @@ def k_yaz(a) -> int:
     head = _git("rev-parse", "--verify", "-q", "HEAD", cwd=k, check=False).strip() or None
     kart = {"zaman": simdi(), "tur": a.tur, "gorev": (a.gorev or "").strip() or None, "ozet": ozet,
             "dosyalar": dosyalar, "kavramlar": kavramlar, "head": head}
-    ekle(defter_yolu(k), kart)
+    yol = defter_yolu(k)
+    uyari = None
+    with kilit(yol):
+        ekle(yol, kart)
+        if dosyalar:
+            uyari = koruma_guncelle(k, kartlar(yol))
     print(f"defter: kart yazıldı ({len(dosyalar)} dosya, {len(kavramlar)} kavram)")
+    if uyari:
+        print(f"defter: uyarı: {uyari}", file=sys.stderr)
     return 0
 
 
@@ -159,7 +357,8 @@ def son_ozet_karti(ks: list[dict]) -> dict | None:
 
 def k_oku(a) -> int:
     k = kok()
-    ks = kartlar(defter_yolu(k))
+    ks, bozuk = kartlar_ve_bozuk(defter_yolu(k))
+    _bozuk_uyarisi(bozuk)
     son = son_kartlar_dosya_icin(ks)
     ozet_karti = son_ozet_karti(ks)
     istenen = [goreli(k, y) for y in a.yollar] if a.yollar else sorted(son)
@@ -173,13 +372,18 @@ def k_oku(a) -> int:
         if ozet_karti is None:
             print("defter boş: dosyaları gerektiği kadar oku, işin sonunda `defter yaz` ile özetle.")
         return 0
-    kalan = a.sinir
+    with gecici_nesne_deposu(k) as env:
+        _oku_dosyalar(k, istenen, son, a.sinir, env)
+    return 0
+
+
+def _oku_dosyalar(k: str, istenen: list[str], son: dict, kalan: int, env: dict) -> None:
     for rel in istenen:
         if rel not in son:
             print(f"## {rel}\nkayıt yok — dosyayı oku (gerekirse satır aralığıyla), sonra `defter yaz`.\n")
             continue
         kart, eski = son[rel]
-        yeni = blob(k, rel, yaz=True)
+        yeni = blob(k, rel, yaz=False)
         print(f"## {rel}  ({kart['zaman']})")
         print(kart["ozet"] or "(özet yok)")
         if yeni is None:
@@ -188,12 +392,13 @@ def k_oku(a) -> int:
         if yeni == eski:
             print("durum: kayıttan beri DEĞİŞMEDİ — özet güncel, dosyayı yeniden okumaya gerek yok.\n")
             continue
-        if _git_rc("cat-file", "-e", f"{eski}^{{blob}}", cwd=k)[0] != 0:
+        if _git_rc("cat-file", "-e", f"{eski}^{{blob}}", cwd=k, env=env)[0] != 0:
             print("durum: kayıttan beri DEĞİŞTİ, ama kayıttaki eski içerik git'te artık yok (büyük olasılıkla "
                   "`git gc` budadı); fark üretilemiyor ve özet eskimiş olabilir — dosyayı oku (gerekirse "
                   "satır aralığıyla), sonra `defter yaz` ile yeniden kaydet.\n")
             continue
-        rc, ham = _git_rc("diff", "--no-color", "-U2", eski, yeni, cwd=k)
+        blob(k, rel, yaz=True, env=env)  # güncel içerik yalnız geçici depoya yazılır
+        rc, ham = _git_rc("diff", "--no-color", "-U2", eski, yeni, cwd=k, env=env)
         fark = [s for s in ham.splitlines() if not s.startswith(("diff --git", "index "))]
         if rc != 0 or not fark:
             print("durum: kayıttan beri DEĞİŞTİ, ama fark alınamadı (git diff başarısız); "
@@ -208,13 +413,14 @@ def k_oku(a) -> int:
             print(f"[... {len(fark) - kalan} satır daha; gerekirse dosyanın ilgili aralığını oku]")
         kalan -= len(fark)
         print()
-    return 0
 
 
 def k_kavram(a) -> int:
     k = kok()
     son: dict[str, str] = {}
-    for kart in kartlar(defter_yolu(k)):
+    ks, bozuk = kartlar_ve_bozuk(defter_yolu(k))
+    _bozuk_uyarisi(bozuk)
+    for kart in ks:
         for kv in kart.get("kavramlar") or []:
             son[kv["ad"]] = kv["aciklama"]
     if not son:
@@ -227,12 +433,20 @@ def k_kavram(a) -> int:
 def k_durum(a) -> int:
     k = kok()
     yol = defter_yolu(k)
-    ks = kartlar(yol)
+    ks, bozuk = kartlar_ve_bozuk(yol)
     boyut = os.path.getsize(yol) if os.path.exists(yol) else 0
     dosya_sayisi = len(son_kartlar_dosya_icin(ks))
     print(f"defter: {yol}\nkart: {len(ks)}, izlenen dosya: {dosya_sayisi}, boyut: {boyut} bayt")
     if ks:
         print(f"en eski: {ks[0]['zaman']}  en yeni: {ks[-1]['zaman']}")
+    if bozuk:
+        print(f"bozuk satır: {bozuk} (okunamadı, yok sayılıyor; `defter temizle` atar)")
+    rc, agac = _git_rc("rev-parse", "-q", "--verify", KORUMA_REF, cwd=k)
+    if rc == 0:
+        n = len(_git("ls-tree", agac.strip(), cwd=k, check=False).splitlines())
+        print(f"budanma koruması: {KORUMA_REF} ({n} içerik)")
+    else:
+        print("budanma koruması: yok")
     return 0
 
 
@@ -279,8 +493,10 @@ def k_ozetle(a) -> int:
     if p.returncode != 0 or not p.stdout.strip():
         raise DefterHatasi(f"yerel model özet üretemedi: {p.stderr.strip()[:200]}")
     ozet = p.stdout.strip()[:OZET_SINIR]
-    ekle(defter_yolu(k), {"zaman": simdi(), "tur": "ozet", "gorev": f"yerel özet ({a.yerel})",
-                          "ozet": ozet, "dosyalar": [], "kavramlar": [], "head": None})
+    yol = defter_yolu(k)
+    with kilit(yol):  # model çalışırken kilit tutulmaz; yalnız ekleme anında
+        ekle(yol, {"zaman": simdi(), "tur": "ozet", "gorev": f"yerel özet ({a.yerel})",
+                   "ozet": ozet, "dosyalar": [], "kavramlar": [], "head": None})
     print(f"defter: {len(eski)} kart yerel modelle özetlendi ({time.time() - t0:.1f} sn)")
     return 0
 
@@ -313,18 +529,25 @@ def korunacak_kartlar(ks: list[dict], tut: int) -> tuple[set[int], int]:
 def k_temizle(a) -> int:
     k = kok()
     yol = defter_yolu(k)
-    ks = kartlar(yol)
     if a.tut < 0:
         raise DefterHatasi("--tut negatif olamaz")
-    korunan, tasinan = korunacak_kartlar(ks, a.tut)
-    tut = [x for i, x in enumerate(ks) if i in korunan]
-    tmp = yol + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        for kart in tut:
-            f.write(json.dumps(kart, ensure_ascii=False) + "\n")
-    os.replace(tmp, yol)
+    with kilit(yol):  # okuma-yeniden yazma arasında eklenen kart kaybolmasın
+        ks, bozuk = kartlar_ve_bozuk(yol)
+        korunan, tasinan = korunacak_kartlar(ks, a.tut)
+        tut = [x for i, x in enumerate(ks) if i in korunan]
+        tmp = yol + ".tmp"
+        with open(tmp, "wb") as f:
+            for kart in tut:
+                f.write((json.dumps(kart, ensure_ascii=False) + "\n").encode("utf-8"))
+            f.flush()
+            os.fsync(f.fileno())
+        _windows_tekrar(lambda: os.replace(tmp, yol))
+        uyari = koruma_guncelle(k, tut)
     ek = f" ({tasinan} eski kart bir dosyanın/kavramın en son kaydını taşıdığı için tutuldu)" if tasinan else ""
+    ek += f"; {bozuk} bozuk satır atıldı" if bozuk else ""
     print(f"defter: {len(ks) - len(tut)} kart silindi, {len(tut)} kaldı{ek}")
+    if uyari:
+        print(f"defter: uyarı: {uyari}", file=sys.stderr)
     return 0
 
 

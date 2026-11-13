@@ -150,6 +150,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   sent to a closed socket waited until the end of the final delivery timeout.
 - `apps/phone` (app): a plan decision flipped back to "waiting for approval" in the window between
   its reply and its event; an event appended after a half-written log line was corrupted.
+- `opus-orkestra` (ledger): concurrent `defter yaz` / `temizle` / `ozetle --yerel` could lose cards
+  or interleave lines. Writes now take an OS file lock (`msvcrt` on Windows, `flock` elsewhere); a
+  lock held too long fails with a clear error after `DEFTER_KILIT_SURE` seconds (default 30), and a
+  dead holder's lock is released by the OS. A half-written line no longer corrupts the next card;
+  unreadable lines are counted in `defter durum`. Recorded content is kept safe from `git gc` by a
+  single ref, `refs/orkestra/defter`, pointing to a tree (not shown by branches, tags, `git status`
+  or `git log --all`, not pushed by default); content dropped by `temizle` is released. `defter oku`
+  no longer leaves loose objects in the repo.
 
 ### Security
 

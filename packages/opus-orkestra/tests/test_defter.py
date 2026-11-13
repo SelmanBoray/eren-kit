@@ -1,8 +1,10 @@
 """defter.py: bağlam defteri — özet + kayıttan beri yalnız fark."""
+import json
 import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -13,7 +15,9 @@ def git(cwd, *args):
     subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
 
 
-class DefterTest(unittest.TestCase):
+class GeciciDepo(unittest.TestCase):
+    """Geçici git deposu kalıbı; test içermez, alt sınıflar paylaşır."""
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.d = os.path.realpath(self.tmp.name)
@@ -36,6 +40,8 @@ class DefterTest(unittest.TestCase):
                            text=True, encoding="utf-8")
         return p.returncode, p.stdout, p.stderr
 
+
+class DefterTest(GeciciDepo):
     def test_kayitsiz_dosya_okumaya_yonlendirir(self):
         rc, out, _ = self.run_d("oku", "a.py")
         self.assertEqual(rc, 0)
@@ -161,6 +167,8 @@ class DefterTest(unittest.TestCase):
         self.yaz_dosya("c.py", "x = 1\n")  # commit edilmemiş: blob yalnız defterin yazdığı nesnede
         self.run_d("yaz", "--dosya", "c.py", "--ozet", "c ayarı")
         self.yaz_dosya("c.py", "x = 2\n")
+        # Korumasız (eski sürümle yazılmış) defteri ya da korumanın kurulamadığı durumu taklit et.
+        git(self.d, "update-ref", "-d", "refs/orkestra/defter")
         git(self.d, "gc", "-q", "--prune=now")
         rc, out, _ = self.run_d("oku", "c.py")
         self.assertEqual(rc, 0)
@@ -168,6 +176,219 @@ class DefterTest(unittest.TestCase):
         self.assertIn("git'te artık yok", out)
         self.assertIn("dosyayı oku", out)
         self.assertNotIn("DEĞİŞMEDİ", out)
+
+    def git_cikti(self, *args):
+        return subprocess.run(["git", *args], cwd=self.d, check=True, capture_output=True, text=True).stdout
+
+    def nesne_var(self, sha):
+        return subprocess.run(["git", "cat-file", "-e", sha], cwd=self.d, capture_output=True).returncode == 0
+
+    def test_kayit_icerigi_gc_ile_budanmaz_ve_temizle_ile_serbest_kalir(self):
+        git(self.d, "tag", "v1")
+        izler = lambda: [self.git_cikti(*a) for a in (("status", "--porcelain"), ("branch", "-a"),
+                                                       ("tag",), ("log", "--all", "--oneline"),
+                                                       ("stash", "list"), ("ls-files", "-s"))]
+        self.yaz_dosya("c.py", "x = 1\n")  # hiç commit edilmeyecek içerik
+        once = izler()
+        self.assertEqual(self.run_d("yaz", "--dosya", "c.py", "--ozet", "c ayarı")[0], 0)
+        v1 = self.git_cikti("hash-object", "c.py").strip()
+        self.yaz_dosya("c.py", "x = 2\n")
+        v2 = self.git_cikti("hash-object", "c.py").strip()
+        self.assertIn("+x = 2", self.run_d("oku", "c.py")[1])
+        self.assertFalse(self.nesne_var(v2))  # `oku` güncel içeriği depoya yazmadı
+        self.yaz_dosya("c.py", "x = 1\n")
+        self.assertEqual(izler(), once)  # dal, etiket, index, çalışma ağacı, log --all değişmez
+        self.assertIn("budanma koruması: refs/orkestra/defter (1 içerik)", self.run_d("durum")[1])
+        self.yaz_dosya("c.py", "x = 3\n")
+        v3 = self.git_cikti("hash-object", "c.py").strip()
+        git(self.d, "gc", "-q", "--prune=now")
+        self.assertTrue(self.nesne_var(v1))  # commit edilmemiş kayıt içeriği budanmadı
+        out = self.run_d("oku", "c.py")[1]
+        self.assertIn("DEĞİŞTİ", out)
+        self.assertIn("-x = 1", out)
+        self.assertIn("+x = 3", out)
+        self.assertFalse(self.nesne_var(v3))
+        # İkinci kayıt c.py'nin en son kaydı olur; temizle ilk kartı siler ve v1 serbest kalır.
+        self.assertEqual(self.run_d("yaz", "--dosya", "c.py", "--ozet", "c ayarı 3")[0], 0)
+        self.assertEqual(self.run_d("temizle", "--tut", "0")[0], 0)
+        git(self.d, "gc", "-q", "--prune=now")
+        self.assertFalse(self.nesne_var(v1))
+        self.assertTrue(self.nesne_var(v3))
+        self.assertIn("DEĞİŞMEDİ", self.run_d("oku", "c.py")[1])
+        # Defter hiçbir içeriğe başvurmayınca ref de kalkar.
+        with open(os.path.join(self.d, ".git", "orkestra", "defter.jsonl"), "w", encoding="utf-8") as f:
+            f.write("")
+        self.assertEqual(self.run_d("temizle", "--tut", "0")[0], 0)
+        self.assertEqual(self.git_cikti("for-each-ref", "refs/orkestra"), "")
+
+    def test_koruma_kurulamazsa_kart_yine_yazilir(self):
+        # Kayıp nesneye işaret eden kart (ör. budanmış eski defter): ref ağacına girmez, gc bozulmaz.
+        os.makedirs(os.path.join(self.d, ".git", "orkestra"))
+        with open(os.path.join(self.d, ".git", "orkestra", "defter.jsonl"), "w", encoding="utf-8") as f:
+            f.write(json.dumps({"zaman": "2026-01-01T00:00:00+00:00", "tur": "kart", "ozet": "eski",
+                                "dosyalar": [{"yol": "z.py", "blob": "1" * 40}], "kavramlar": []}) + "\n")
+        self.assertEqual(self.run_d("yaz", "--dosya", "a.py", "--ozet", "a")[0], 0)
+        self.assertIn("(1 içerik)", self.run_d("durum")[1])
+        git(self.d, "gc", "-q", "--prune=now")
+        # Ref güncellenemiyor (kilitli ref dosyası): kart yazılır, uyarı verilir.
+        kilit = os.path.join(self.d, ".git", "refs", "orkestra", "defter.lock")
+        os.makedirs(os.path.dirname(kilit), exist_ok=True)
+        open(kilit, "w").close()
+        self.yaz_dosya("b.py", "y = 1\n")
+        rc, out, err = self.run_d("yaz", "--dosya", "b.py", "--ozet", "b modülü")
+        os.remove(kilit)
+        self.assertEqual(rc, 0)
+        self.assertIn("kart yazıldı", out)
+        self.assertIn("korunamadı", err)
+        self.assertIn("b modülü", self.run_d("oku", "b.py")[1])
+
+    def test_bozuk_satir_sayilir_ve_yarim_satir_sonraki_karti_bozmaz(self):
+        self.run_d("yaz", "--dosya", "a.py", "--ozet", "ilk")
+        with open(os.path.join(self.d, ".git", "orkestra", "defter.jsonl"), "a", encoding="utf-8") as f:
+            f.write('{"bozuk": \n{"zaman": "yarım')  # bozuk satır + ölen yazıcının yarım bıraktığı satır
+        self.assertEqual(self.run_d("yaz", "--kavram", "Sepet: ürün listesi")[0], 0)
+        rc, out, err = self.run_d("kavram")
+        self.assertIn("- Sepet: ürün listesi", out)  # yarım satır yeni kartı yutmadı
+        self.assertIn("2 bozuk satır", err)
+        self.assertIn("bozuk satır: 2", self.run_d("durum")[1])
+        self.assertIn("2 bozuk satır atıldı", self.run_d("temizle", "--tut", "5")[1])
+        self.assertNotIn("bozuk", self.run_d("durum")[1])
+
+
+# Eşzamanlılık testleri gerçek süreçlerle çalışır. Süreçler önce "hazır" işareti bırakır, hepsi
+# hazır olunca tek bir başlangıç işaretiyle aynı anda bırakılır; böylece çakışma olasılığı yüksek
+# olur. Doğruluk kontrolleri sıralamadan bağımsızdır: hangi süreç önce kilidi alırsa alsın sonuç
+# aynı olmalıdır.
+BASLAT = (
+    "import os, sys, time\n"
+    "isaret, dizin = sys.argv[1], sys.argv[2]\n"
+    "sys.path.insert(0, dizin)\n"
+    "import defter\n"
+    "open(isaret + '.hazir.' + str(os.getpid()), 'w').close()\n"
+    "while not os.path.exists(isaret):\n"
+    "    time.sleep(0.002)\n"
+    "sys.exit(defter.main(sys.argv[3:]))\n"
+)
+DEFTER_DIZIN = os.path.dirname(os.path.abspath(DEFTER))
+
+
+class EszamanlilikTest(GeciciDepo):
+    def setUp(self):
+        super().setUp()
+        self.isaret_tmp = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        self.isaret_tmp.cleanup()
+        super().tearDown()
+
+    def defter_dosyasi(self):
+        return os.path.join(self.d, ".git", "orkestra", "defter.jsonl")
+
+    def ayni_anda(self, komutlar, tur=0):
+        """Komutları ayrı süreçlerde aynı anda başlatır; (rc, stdout, stderr) listesi döner."""
+        isaret = os.path.join(self.isaret_tmp.name, f"basla{tur}")
+        surecler = [subprocess.Popen([sys.executable, "-c", BASLAT, isaret, DEFTER_DIZIN, *k], cwd=self.d,
+                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                     encoding="utf-8") for k in komutlar]
+        try:
+            bitis = time.monotonic() + 30
+            while time.monotonic() < bitis:
+                hazir = [a for a in os.listdir(self.isaret_tmp.name) if a.startswith(f"basla{tur}.hazir.")]
+                if len(hazir) >= len(surecler) or any(p.poll() is not None for p in surecler):
+                    break
+                time.sleep(0.005)
+            open(isaret, "w").close()
+            ciktilar = [p.communicate(timeout=60) for p in surecler]
+            return [(p.returncode, *c) for p, c in zip(surecler, ciktilar)]
+        finally:
+            for p in surecler:
+                if p.poll() is None:
+                    p.kill()
+
+    def gecerli_satirlar(self):
+        with open(self.defter_dosyasi(), encoding="utf-8") as f:
+            satirlar = [s for s in f.read().split("\n") if s.strip()]
+        for s in satirlar:
+            self.assertIsInstance(json.loads(s), dict, s[:80])  # her satır geçerli JSON nesnesi
+        return [json.loads(s) for s in satirlar]
+
+    def test_eszamanli_yazlar_kart_kaybetmez(self):
+        n = 12
+        uzun = "x" * 200  # büyük satırlar: yazma penceresi genişler, karışma olasılığı artar
+        komutlar = []
+        for i in range(n):
+            self.yaz_dosya(f"f{i}.py", f"DEGER = {i}\n")
+            kv = [a for j in range(15) for a in ("--kavram", f"k{i}_{j}: {uzun}")]
+            komutlar.append(["yaz", "--dosya", f"f{i}.py", "--ozet", f"kart {i}", *kv])
+        sonuc = self.ayni_anda(komutlar)
+        for rc, out, err in sonuc:
+            self.assertEqual(rc, 0, err)
+        ks = self.gecerli_satirlar()
+        self.assertEqual(sorted(k["ozet"] for k in ks), sorted(f"kart {i}" for i in range(n)))
+
+    def test_tutulan_ya_da_terk_edilen_kilit_asili_birakmaz(self):
+        tut = ("import sys, time\n"
+               "sys.path.insert(0, sys.argv[1])\n"
+               "import defter\n"
+               "with defter.kilit(sys.argv[2]):\n"
+               "    print('hazir', flush=True)\n"
+               "    time.sleep(120)\n")
+        self.run_d("yaz", "--dosya", "a.py", "--ozet", "önceki kart")
+        tutan = subprocess.Popen([sys.executable, "-c", tut, DEFTER_DIZIN, self.defter_dosyasi()],
+                                 stdout=subprocess.PIPE, text=True)
+        env = dict(os.environ, DEFTER_KILIT_SURE="1")
+        try:
+            self.assertEqual(tutan.stdout.readline().strip(), "hazir")
+            for komut in (["yaz", "--ozet", "bekleyen"], ["temizle", "--tut", "0"]):
+                t0 = time.monotonic()
+                p = subprocess.run([sys.executable, DEFTER, *komut], cwd=self.d, env=env, capture_output=True,
+                                   text=True, encoding="utf-8", timeout=30)
+                self.assertEqual(p.returncode, 2, p.stderr)
+                self.assertIn("kilidi 1 sn içinde alınamadı", p.stderr)
+                self.assertIn("tutan: pid ", p.stderr)
+                self.assertLess(time.monotonic() - t0, 15)
+            self.assertIn("önceki kart", self.run_d("oku", "a.py")[1])  # okuyan komut kilit beklemez
+        finally:
+            tutan.kill()
+            tutan.wait()
+            tutan.stdout.close()
+        # Kilidi tutan süreç öldü; kilit dosyası diskte duruyor ama kilit işletim sisteminde kalktı.
+        self.assertTrue(os.path.exists(os.path.join(os.path.dirname(self.defter_dosyasi()), "defter.kilit")))
+        env["DEFTER_KILIT_SURE"] = "20"
+        p = subprocess.run([sys.executable, DEFTER, "yaz", "--ozet", "sonraki"], cwd=self.d, env=env,
+                           capture_output=True, text=True, encoding="utf-8", timeout=60)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual([k["ozet"] for k in self.gecerli_satirlar()], ["önceki kart", "sonraki"])
+
+    def test_temizle_ile_yarisan_yaz_son_kaydi_kaybetmez(self):
+        # Büyük bir defter: temizle'nin oku-yaz penceresi uzar.
+        os.makedirs(os.path.dirname(self.defter_dosyasi()), exist_ok=True)
+        with open(self.defter_dosyasi(), "w", encoding="utf-8") as f:
+            for i in range(3000):
+                f.write(json.dumps({"zaman": "2026-01-01T00:00:00+00:00", "tur": "kart", "gorev": None,
+                                    "ozet": f"dolgu {i} " + "y" * 100, "dosyalar": [],
+                                    "kavramlar": [{"ad": "dolgu", "aciklama": str(i)}], "head": None}) + "\n")
+        n = 6
+        for tur in range(3):
+            komutlar = [["temizle", "--tut", "0"]]
+            for i in range(n):
+                self.yaz_dosya(f"t{tur}_{i}.py", f"DEGER = {tur * 100 + i}\n")
+                komutlar.append(["yaz", "--dosya", f"t{tur}_{i}.py", "--ozet", f"tur {tur} kart {i}",
+                                 "--kavram", f"kv{tur}_{i}: tur {tur} kavram {i}"])
+            for rc, out, err in self.ayni_anda(komutlar, tur):
+                self.assertEqual(rc, 0, err)
+        self.gecerli_satirlar()
+        kv = self.run_d("kavram")[1]
+        self.assertIn("- dolgu: 2999", kv)
+        yollar = [f"t{tur}_{i}.py" for tur in range(3) for i in range(n)]
+        out = self.run_d("oku", *yollar)[1]
+        self.assertNotIn("kayıt yok", out)
+        self.assertEqual(out.count("DEĞİŞMEDİ"), len(yollar))
+        for tur in range(3):
+            for i in range(n):
+                self.assertIn(f"## t{tur}_{i}.py", out)
+                self.assertIn(f"tur {tur} kart {i}\n", out)
+                self.assertIn(f"- kv{tur}_{i}: tur {tur} kavram {i}", kv)
 
 
 if __name__ == "__main__":
