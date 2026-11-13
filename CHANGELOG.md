@@ -108,6 +108,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `computer-use-windows`: `key` allows at most 200 presses per call; the `--max-size` upper bound is
   2576 (the API's long-edge limit); `elements` reports when its scan was cut short.
 - `bellek` tests are isolated from user data through a shared `tests/conftest.py`.
+- `opus-orkestra` (ledger): `defter oku` without a path first prints the latest compressed project
+  summary; `defter temizle --tut N` keeps the last N cards, the latest summary and each file's or
+  concept's latest record, so `oku` and `kavram` output does not change; `defter ozetle` feeds the
+  previous summary into the new one; content pruned from git is reported explicitly.
+- `opus-orkestra` (hook): when the installed `SKILL.md` is stale against the repo copy, the hook uses
+  the repo copy and warns with the refresh command.
+- `opus-orkestra` (core rule): new rule 6 on agent lifetime.
 
 ### Fixed
 

@@ -15,13 +15,13 @@ The full rules (limits between agents, flow, brief writing, communication with t
 ## Context economy (core mode, ledger)
 
 By default the hook no longer injects the whole rule book into every session. It injects a short
-**core rule** ([`skill/CEKIRDEK.md`](skill/CEKIRDEK.md), ~2.9 KB instead of ~33 KB, about 91% less
+**core rule** ([`skill/CEKIRDEK.md`](skill/CEKIRDEK.md), ~3.2 KB instead of ~33 KB, about 90% less
 fixed context per session). The full rules are read section by section when a code task actually
 starts. Set `OPUS_ORKESTRA_MOD=tam` (or pass `--mod tam`) to get the old full injection back.
 
 | | Before | Core mode |
 | --- | --- | --- |
-| Context injected at every session start | ~32.8 KB (3 parts) | ~2.9 KB (1 part) |
+| Context injected at every session start | ~32.8 KB (3 parts) | ~3.2 KB (1 part) |
 | Full rules | always in context | read when a code task starts, by section |
 
 **Read diffs, write diffs, remember.** [`defter/defter.py`](defter/defter.py) is a per-repo context
@@ -33,6 +33,8 @@ defter yaz --dosya src/cart.py --ozet "Cart model: add/remove/total; prices in c
 defter oku src/cart.py      # summary + only what changed since, uncommitted edits included
 defter kavram               # domain concepts
 defter ozetle --eski 20     # input for a haiku sub-agent to compress old cards
+defter yaz --tur ozet --ozet "..."   # store the compressed summary; `defter oku` with no path shows it
+defter temizle --tut 20     # keep the last 20 cards, the latest summary and each file's/concept's latest record
 defter ozetle --eski 20 --yerel <ollama-model>   # experimental: summarise with a local model
 ```
 
@@ -50,6 +52,8 @@ Two parts work together:
 2. **A SessionStart hook**: [`hooks/opus-orkestra-sessionstart.py`](hooks/opus-orkestra-sessionstart.py) injects the rules into context at the start of every session, so the rule applies without the model having to remember to load the skill.
 
 Claude Code caps a hook's additional context at 10,000 characters; beyond that only the first 2,000 characters reach the model. The rule text is longer than that, so the hook splits it at `## ` headings into up to 4 parts. Each part is delivered by its own hook command (`--parca 1` to `--parca 4`), and each stays under the limit.
+
+If the installed `~/.claude/skills/opus-orkestra/SKILL.md` differs from the repo copy next to the hook (line endings and BOM ignored), the hook uses the repo copy, adds a note to the context and warns the user to refresh the install (`install.ps1 -Components orkestra`, or the macOS equivalent). Passing `--skill` or a valid `OPUS_ORKESTRA_SKILL` skips the comparison.
 
 ```mermaid
 flowchart LR
