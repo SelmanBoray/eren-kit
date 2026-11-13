@@ -12,6 +12,36 @@ A working rule for Claude Code: the lead model never writes code itself, it spli
 
 The full rules (limits between agents, flow, brief writing, communication with the user) live in [`skill/SKILL.md`](skill/SKILL.md). This README only summarizes them.
 
+## Context economy (core mode, ledger)
+
+By default the hook no longer injects the whole rule book into every session. It injects a short
+**core rule** ([`skill/CEKIRDEK.md`](skill/CEKIRDEK.md), ~2.9 KB instead of ~33 KB, about 91% less
+fixed context per session). The full rules are read section by section when a code task actually
+starts. Set `OPUS_ORKESTRA_MOD=tam` (or pass `--mod tam`) to get the old full injection back.
+
+| | Before | Core mode |
+| --- | --- | --- |
+| Context injected at every session start | ~32.8 KB (3 parts) | ~2.9 KB (1 part) |
+| Full rules | always in context | read when a code task starts, by section |
+
+**Read diffs, write diffs, remember.** [`defter/defter.py`](defter/defter.py) is a per-repo context
+ledger kept inside git (`.git/orkestra/defter.jsonl`, never committed, shared by worktrees):
+
+```bash
+defter yaz --dosya src/cart.py --ozet "Cart model: add/remove/total; prices in cents" \
+           --kavram "Cart: items picked before checkout"
+defter oku src/cart.py      # summary + only what changed since, uncommitted edits included
+defter kavram               # domain concepts
+defter ozetle --eski 20     # input for a haiku sub-agent to compress old cards
+defter ozetle --eski 20 --yerel <ollama-model>   # experimental: summarise with a local model
+```
+
+`defter yaz` stores each file's content in git's object store, so `defter oku` can show the exact
+diff since then; an unchanged file is not re-read at all. The core rule tells the lead and every
+brief to use it, to edit with small replacements instead of rewriting files, and to return
+`git diff --stat` instead of code. Adaptive effort (start low, raise one level on failure) is
+described in the rules as experimental.
+
 ## How it works
 
 Two parts work together:

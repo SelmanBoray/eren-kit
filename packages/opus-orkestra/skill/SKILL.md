@@ -163,6 +163,23 @@ Her brief şunları içerir:
 
 Kullanıcının sözlerini yorumlayıp özetlemek yerine, önemli ifadeleri olduğu gibi aktar.
 
+## Bağlam ekonomisi: farkı oku, farkı yaz, öğrendiğini kaydet
+
+Kalite aynı kalırken token ve bağlam harcamasını düşürmenin yolu, aynı kodu tekrar tekrar okumamak ve yazmamaktır. Ölçümde tekrar okumalar Read token'ının yaklaşık %69'uydu; bu bölüm onu hedefler.
+
+**Bağlam defteri (`defter`).** Depo başına, git'in içinde (`.git/orkestra/defter.jsonl`, commit'e girmez, worktree'ler arasında ortak) tutulan kart defteridir. Komutun bu makinedeki tam yolu oturum başındaki çekirdek kuralda yazılıdır.
+
+- **Okumadan önce:** `defter oku <yollar>` her dosyanın son özetini ve yalnız o kayıttan beri değişen kısmı (commit edilmemiş değişiklik dahil, unified diff) verir. "DEĞİŞMEDİ" diyorsa dosya yeniden okunmaz. "kayıt yok" diyorsa dosya okunur, ama mümkünse yalnız gereken satır aralığı.
+- **İş bitince:** her yazar agent'ın son adımı `defter yaz --dosya <dokunduğu dosyalar> --ozet "<dosyaların şimdi ne yaptığı, kritik arayüzler, verilen karar>"` olur; alan kavramları `--kavram "ad: tek satır"` ile eklenir. Özet kodu tekrar etmez, kodu okumadan anlaşılması gerekeni söyler (≤1500 karakter).
+- **Brief'te:** okunacak dosyalar için önce `defter oku` çalıştırmasını yaz; sonra yalnız gerekeni okusun. Keşif agent'larının bulduğu olgular da `defter yaz` ile kaydedilir ki aynı keşif bir daha yapılmasın.
+
+**Farkı yaz.** Var olan dosyalarda yalnız Edit ile küçük, hedefli değişiklik yapılır; dosyayı Write ile baştan yazmak yalnız yeni dosyalar içindir. Agent raporunda kod yapıştırmaz: `git diff --stat`, çalıştırdığı komutlar ve sonuçları, ≤30 satır. Değişikliğin kendisini görmek gerekirse sen `git diff -- <dosya>` ile hedefli bakarsın.
+
+**Özetçi agent.** Defter uzadıkça `defter ozetle --eski 20` eski kartları sıkıştırma girdisine çevirir. Bu girdiyi `model: "haiku"`, `effort: "low"` bir agent'a ver; tek işi dönen metni ≤1500 karakterlik özete indirip `defter yaz --tur ozet --ozet "..."` ile kaydetmektir, sonra `defter temizle --tut 20`. Özetleme muhakeme gerektirmez; Opus bağlamını buna harcama.
+- **DENEYSEL, yerel model:** makinede `ollama` ve bir model varsa `defter ozetle --eski 20 --yerel <model>` özeti tamamen yerelde üretir ve kaydeder; API token'ı harcanmaz. Kalitesi modele bağlıdır, önemli projede özeti bir kez göz at.
+
+**DENEYSEL, uyarlanabilir efor.** Efor sabit değil, kanıta göre ayarlanır: tarifi tam verilmiş mekanik işte agent'ı düşük eforla başlat. Aynı iş testten geçemezse ya da agent tıkanırsa yeniden denemede efor bir kademe artar (low → medium → high), Sonnet'te high'da da tıkanırsa Opus'a geçer. Bir işin hangi eforla geçtiğini `defter yaz --kavram "efor:<iş türü>: <seviye> yetti"` ile not et; sonraki benzer işte başlangıç eforunu buna göre seç.
+
 ## Kullanıcıyla iletişim
 
 İş sürerken kullanıcıya dalga planını kısaca bildir: kaç agent açıldı, hangi parça hangi agent'ta ve hangi modelde. Kullanıcı senden doğrudan kod yazmanı isterse, bu skill gereği işi alt agent'a verdiğini söyle ve öyle yap; skill'i kapatmanı açıkça isterse onun dediği geçerlidir.
