@@ -115,6 +115,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `opus-orkestra` (hook): when the installed `SKILL.md` is stale against the repo copy, the hook uses
   the repo copy and warns with the refresh command.
 - `opus-orkestra` (core rule): new rule 6 on agent lifetime.
+- `opus-orkestra` (model tiers): Mythos is now reserved for work that is very hard and needs new,
+  inventive ideas; ordinary hard work (design, diagnosis, refactor, cross-component) goes to Opus at
+  high effort, ties between Opus and Mythos resolve to Opus, the reviewer is always Opus and the
+  dual-opinion pair is Opus + Fable.
 
 ### Fixed
 

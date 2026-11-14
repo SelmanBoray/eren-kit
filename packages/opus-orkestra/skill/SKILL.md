@@ -1,6 +1,6 @@
 ---
 name: "opus-orkestra"
-description: "Kod yazma, düzenleme, hata düzeltme, refactor veya test kapsayan her görevde kullan: ana oturum modeli (şef) kod yazmaz, işi çok sayıda dar kapsamlı alt agent'a dağıtır (bir agent bir sorumluluk; çok kolay işe Sonnet, orta işe Opus, zor işe Mythos), her agent'ın sınırını belirler ve sonucu kendisi doğrular."
+description: "Kod yazma, düzenleme, hata düzeltme, refactor veya test kapsayan her görevde kullan: ana oturum modeli (şef) kod yazmaz, işi çok sayıda dar kapsamlı alt agent'a dağıtır (bir agent bir sorumluluk; çok kolay işe Sonnet, orta ve zor işe Opus, yeni fikir icat etmeyi gerektiren istisnai işe Mythos), her agent'ın sınırını belirler ve sonucu kendisi doğrular."
 ---
 
 # Opus Orkestra
@@ -26,11 +26,11 @@ Serbestçe kullandıkların:
 
 Kod gerektirmeyen istekler (bir şeyi açıklamak, soru cevaplamak, mimari tartışmak, plan çıkarmak) için agent çalıştırmana gerek yok; doğrudan cevap ver. Cevabında kod örneği göstermek serbesttir, yasak olan depoyu değiştirmektir.
 
-## Model ve effort seçimi: çok kolay işe Sonnet, orta işe Opus, zor işe Mythos
+## Model ve effort seçimi: çok kolay işe Sonnet, orta ve zor işe Opus, icat gerektiren istisnaya Mythos
 
 Her alt agent'ı Agent aracıyla başlat ve modelini üç kademeden biri olarak **bilerek** seç. Sonnet, Opus ve Haiku için `model` parametresini açıkça yazarsın. Mythos için `model` parametresini **bilerek boş bırakırsın**: Agent aracında `mythos` değeri yoktur (kabul edilenler `sonnet`, `opus`, `haiku`, `fable`), `model` verilmeyen agent ise şefin modelini devralır (ölçüldü: şef Mythos iken `model` verilmeden açılan agent Mythos çalıştı). `model`'i boş bırakmanın tek meşru sebebi budur; unutulduğu için boş kalan `model`, en kolay işi en üst kademeye verir. Kod yazan işler için `subagent_type: "general-purpose"` kullan. Kullanıcı açıkça istemedikçe `codex:*` agent'larını seçme.
 
-**Şef Mythos değilse** boş `model` Mythos vermez, şefin kendi modelini verir. Kendi modelini sistem isteminden bilirsin. Mythos değilsen o oturumda en üst kademe Opus'tur: zor işi `model: "opus"` ve yüksek eforla aç, kullanıcıya da bir kez Mythos kademesinin bu oturumda olmadığını söyle. Devralma ayara da bağlıdır: varsayılan alt agent modeli tanımlıysa ya da agent türü kendi modelini sabitliyorsa boş `model` Mythos vermez. Bu yüzden bir agent türünü (`general-purpose`, `Plan`) oturumda ilk kez boş `model` ile açtığında, raporunda sistem istemindeki model adını yazmasını iste; Mythos çıkmazsa o tür için aynı yolu izle.
+**Şef Mythos değilse** boş `model` Mythos vermez, şefin kendi modelini verir. Kendi modelini sistem isteminden bilirsin. Mythos değilsen o oturumda en üst kademe Opus'tur: Mythos'luk işi de `model: "opus"` ve yüksek eforla aç, kullanıcıya da bir kez Mythos kademesinin bu oturumda olmadığını söyle. Devralma ayara da bağlıdır: varsayılan alt agent modeli tanımlıysa ya da agent türü kendi modelini sabitliyorsa boş `model` Mythos vermez. Bu yüzden bir agent türünü (`general-purpose`, `Plan`) oturumda ilk kez boş `model` ile açtığında, raporunda sistem istemindeki model adını yazmasını iste; Mythos çıkmazsa o tür için aynı yolu izle.
 
 Her Agent çağrısında `effort` parametresini **her zaman açıkça** ver (`model`'i boş bıraktığın Mythos agent'ında da); bu skill senden bunu istiyor, dolayısıyla Agent aracının "yalnızca açıkça istenirse" şartı karşılanmış olur. Değeri işin gerektirdiği düşünme derinliğine göre sen seç: iş ne kadar karar, muhakeme ve hata riski taşıyorsa efor o kadar yüksek, ne kadar mekanik ve tarifi verilmişse o kadar düşük olsun. Efor seçimini varsayılana bırakma.
 
@@ -43,23 +43,23 @@ Seçimi işin zorluğuna göre sen yaparsın:
 - Var olan bir kalıbı yeni dosyaya kopyalayıp adlarını uyarlamak, boilerplate üretmek, docstring/yorum yazmak
 - Hata mesajı, satırı ve düzeltmesi belli tek noktalık hata
 
-**`model: "opus"` — orta işler: sınırı belli, kararları yerel.** Agent yazarken seçim yapar, ama doğru yol amaçtan, sözleşmeden ve mevcut kalıptan çıkar; kararlar tek dosyada ya da tek bileşende kalır ve yanlışsa ucuz düzelir. Örnekler:
+**`model: "opus"` — orta işler ve sıradan zor işler: bilinen mühendislik yöntemiyle çözülen her şey.** Orta işte sınır belli, kararlar yerel: agent seçim yapar ama doğru yol amaçtan, sözleşmeden ve mevcut kalıptan çıkar, yanlışsa ucuz düzelir. Zor işte doğru yolu bulmak işin kendisidir: kararlar birden çok dosyayı ya da bileşeni bağlar, sebep baştan bilinmez; ama çözüm yerleşik yöntemlerle (tasarım, teşhis, ölçüm, refactor) bulunur. Zor iş `effort: "high"` ile açılır. Örnekler:
 
 - Sözleşmesi (imza, davranış, kenar durumları) verilmiş bir fonksiyonu ya da modülü yazmak; aynı sözleşmeden testlerini yazmak
-- Tek dosyada, belirtisi belli bir hatanın sebebini bulup düzeltmek
-- Mevcut kalıbı izleyen küçük bir özelliği bir-iki dosyaya eklemek
+- Tek dosyada, belirtisi belli bir hatanın sebebini bulup düzeltmek; mevcut kalıbı izleyen küçük bir özelliği bir-iki dosyaya eklemek
 - Kod tabanını anlamayı gerektiren keşif, dosya ya da modül özeti, dokümantasyon
+- Yüksek eforla: yeni bir özelliği baştan tasarlayıp birkaç dosyaya yaymak, bileşenler arası kararlar
+- Yüksek eforla: sebebi belli olmayan hatanın kökünü bulmak, kesişen davranışları çözmek
+- Yüksek eforla: refactor, mimari değişiklik, eşzamanlılık / performans / güvenlik işi, birden çok agent'ın çıktısını birleştirip tutarlı hale getirmek
 - Sonnet'in tıkandığı her iş
 
-**`model` boş (Mythos) — zor işler: doğru yolu bulmak işin kendisi.** Kararlar birden çok dosyayı ya da bileşeni bağlıyor, sebep ya da çözüm bilinmiyor, hata pahalı ya da geri dönüşü zor. Örnekler:
+**`model` boş (Mythos) — istisna: çözümün icat edilmesi gereken iş.** İş hem gerçekten çok zor ve karmaşık hem de yeni, akılcı bir fikir üretmeyi gerektiriyor: bilinen, yerleşik yaklaşım yetmiyor, çözüm icat edilmeli. Örnekler:
 
-- Yeni bir özelliği baştan tasarlayıp birkaç dosyaya yaymak
-- Sebebi belli olmayan hatanın kökünü bulmak, kesişen davranışları çözmek
-- Refactor, mimari değişiklik, eşzamanlılık / performans / güvenlik işi
-- Birden çok agent'ın çıktısını birleştirip tutarlı hale getirmek
-- Opus'un tıkandığı her iş
+- Hazır kalıbı olmayan yeni bir algoritma ya da mimari fikri gerektiren problem
+- Standart yaklaşımların denenip tutmadığı problem
+- Yüksek eforlu Opus'un gerçekten tıkandığı iş (bkz. Akış, 5. adım)
 
-Orta ile zor arasındaki çizgi dosya sayısı değil, kararın nereye kadar uzandığıdır: karar agent'ın kendi alanında kalıyor ve test yanlışı hemen gösteriyorsa orta; başka parçaları bağlıyor ya da yanlışı geç ve pahalı ortaya çıkıyorsa zor. İki kademe arasında kaldıysan üsttekini seç; yanlış yönde hata yapmak yavaş değil, bozuk kod demektir. Explore agent'ları için de aynı kural geçerlidir: basit tarama Sonnet, kod tabanını anlamak gerektiren keşif Opus. Küçük keşifleri (bir-iki Grep/Read) kendin yap, geri kalanını dağıt.
+Mythos'a vermeden önce kendine sor: "Yüksek eforlu Opus bunu makul ihtimalle çözer mi?" Evetse ya da emin değilsen iş Opus'undur. Dosya sayısı, bileşen sayısı ya da hatanın pahalı olması tek başına Mythos sebebi değildir; onlar yüksek efor ve ayrı gözden geçiriciyle karşılanır. Beklenti: çoğu görevde hiç Mythos agent'ı açılmaz, bir görevde birden çok Mythos nadirdir. Orta ile zor (ikisi de Opus) arasındaki çizgi eforu belirler ve dosya sayısı değil, kararın nereye kadar uzandığıdır: karar agent'ın kendi alanında kalıyor ve test yanlışı hemen gösteriyorsa orta; başka parçaları bağlıyor ya da yanlışı geç ve pahalı ortaya çıkıyorsa zor, yüksek efor. Arada kalan parça iki yönde de Opus'a gider: Sonnet ile Opus arasındaysa Opus, çünkü o yönde hata yavaşlık değil bozuk koddur; Opus ile Mythos arasındaysa yine Opus, çünkü Opus tıkanırsa Mythos yolu açık kalır. Explore agent'ları için de aynı kural geçerlidir: basit tarama Sonnet, kod tabanını anlamak gerektiren keşif Opus. Küçük keşifleri (bir-iki Grep/Read) kendin yap, geri kalanını dağıt.
 
 ## Paralellik: çok agent, her birine dar bir iş
 
@@ -90,7 +90,7 @@ Bu sayıların altında kalıyorsan bir kez daha bak: neyi birleştirdin, neden?
 - Başlayabilen her şey hemen başlar. Bir dalganın bitmesini beklerken sıradaki dalganın bağımsız parçalarını bekletme.
 - Sıralı bağımlılık zincirini en kısa tut: A bitince hemen B'yi başlat, dalganın tümünü bekleme. Zincir üç halkayı geçiyorsa sözleşmeyi önceden sabitleyip halkaları paralel yapmayı dene.
 - Keşif agent'larını uygulama agent'larıyla aynı dalgada başlat; keşfin sonucu bir sonraki dalganın brief'ine girer.
-- Dar iş çoğu zaman bir alt kademeye iner ve alt kademe daha hızlı üretir. İşi daraltmanın yan faydası budur: Mythos'u gerçekten zor parçalara, Opus'u karar gerektiren parçalara sakla. Kademeyi parçanın darlığı değil taşıdığı karar belirler; zor karar dar da olsa Mythos'undur.
+- Dar iş çoğu zaman bir alt kademeye iner ve alt kademe daha hızlı üretir. İşi daraltmanın yan faydası budur: Opus'u karar gerektiren parçalara, Mythos'u icat gerektiren istisnaya sakla. Kademeyi parçanın darlığı değil taşıdığı karar belirler; zor karar dar da olsa yüksek eforlu Opus'undur, yalnız yeni fikir icat etmeyi gerektiriyorsa Mythos'undur.
 - Agent'lar çalışırken boş durma: bitenleri doğrula, sıradaki dalganın brief'lerini yaz.
 
 **Daha fazla bölmenin yavaşlattığı tek yer sınırdır.** İki dilim aynı dosyayı değiştiriyorsa onlar tek agent'tır ya da sıraya girer; bu kuralı daha küçük dilim uğruna esnetme. Ortak dosyalar (manifest, config, rota tablosu) için aşağıdaki kural geçerlidir. Bunun dışında tek bir agent'a vermenin doğru olduğu tek durum, işin gerçekten tek dosya ve tek adımdan ibaret olmasıdır. Paralel başlatırken aşağıdaki sınır kurallarını ihlal etme; sınır çizilemeyen iş paralel değil sıralı gider.
@@ -129,12 +129,12 @@ Bir agent'ın bağlamı kendi işi boyunca hiç küçülmez ve her API çağrıs
 ## Akış
 
 1. **Anla.** İsteği ve kodun şeklini, sınır çizebilecek ve bitti tanımı yazabilecek kadar oku: hangi dosyalar var, kim kimi çağırıyor, hangi kalıp izleniyor. Fonksiyon gövdelerini okumaya girme; uygulama detayı agent'ın işidir ve senin bağlamını doldurur. Geniş keşfi kendin yapma, Explore agent'larına paralel dağıt ve onlardan çözüm değil olgu iste (yollar, imzalar, mevcut testler). Belirsiz olan ve sonucu değiştiren bir karar varsa kullanıcıya sor; gerisinde makul varsayımı yap ve belirt. Tek istisna: teknik, geri dönüşü zor ve emin olmadığın karar önce çift görüşe gider.
-2. **Böl.** İşi, her biri tek bir sorumluluk taşıyan ve mümkünse tek bir dosyada kalan, olabildiğince çok dar parçaya ayır; dilimleme eksenlerini (dosya, katman, üretim/test, keşif/uygulama, yardımcı işler, doğrulama) sırayla uygula ve sahiplik haritasını çıkar. Parçaları dosya sınırlarına göre böl, iş adımlarına göre değil. Her parça için kademeyi belirle (çok kolay → Sonnet, orta → Opus, zor → Mythos); iki kademe arasında kalan parça üsttekine gider. Parça sayısı ölçek beklentisinin altındaysa neyi birleştirdiğini ve neden birleştirdiğini sorgula. Yalnızca gerçekten tek dosya, tek adımlık işi bölme.
+2. **Böl.** İşi, her biri tek bir sorumluluk taşıyan ve mümkünse tek bir dosyada kalan, olabildiğince çok dar parçaya ayır; dilimleme eksenlerini (dosya, katman, üretim/test, keşif/uygulama, yardımcı işler, doğrulama) sırayla uygula ve sahiplik haritasını çıkar. Parçaları dosya sınırlarına göre böl, iş adımlarına göre değil. Her parça için kademeyi belirle (çok kolay → Sonnet, orta → Opus, sıradan zor → Opus yüksek eforla, icat gerektiren istisna → Mythos); Sonnet ile Opus arasında kalan parça Opus'a, Opus ile Mythos arasında kalan parça da Opus'a gider. Parça sayısı ölçek beklentisinin altındaysa neyi birleştirdiğini ve neden birleştirdiğini sorgula. Yalnızca gerçekten tek dosya, tek adımlık işi bölme.
 3. **Dağıt.** Alanları çakışmayan parçaların hepsini aynı mesajda birden çok Agent çağrısıyla paralel başlat; her çağrıda `effort` açıkça yazılı, `model` kademe kuralına göre verilmiş olsun (Sonnet ve Opus açıkça, Mythos bilerek boş). Aynı dosyalara dokunan ya da birbirinin çıktısına bağlı parçaları sırayla çalıştır, ama bir agent biter bitmez ona bağlı parçayı hemen başlat; dalganın tamamını bekleme.
 4. **Doğrula.** Agent'ın "bitti" demesi kanıt değildir. `git status` ve `git diff --stat` ile değişen dosya listesine bak ve önce sınır ihlalini ara: değişen her dosya, o işi yapan agent'ın sahip olduğu alanda mı? Satır satır diff okumayı tüm değişiklikler için yapma; şüphelendiğin dosyaya hedefli bak. Sonra testleri ve build'i kendin çalıştır, isteğin gerçekten karşılandığını kontrol et. Kapsam dışı değişiklik, atlanmış kenar durumu, silinmiş ya da zayıflatılmış test ara. Paralel tur bittiyse parçaların birlikte çalıştığını da kontrol et; her parça tek başına doğru olup birleşince bozulabilir. Kanıt olarak test ve build çıktısı yeter; kodun kendisini bağlamına taşımak zorunda değilsin. Ayrıntılı inceleme için "Ayrı gözden geçirici" kuralını uygula; son kararı sen verirsin.
 5. **Düzelttir.** Sorun bulursan kendin düzeltme. Neyin yanlış olduğunu kanıtıyla (hata çıktısı, dosya ve satır) gönder; düzeltmenin nasıl yapılacağını yazma, gözlenen hatayı ve beklenen davranışı yaz. Nereye gideceği sorunun türüne bağlıdır:
    - **Eksik ya da atlanmış şey** (yaklaşım doğru, belirli bir nokta kaçmış, düzeltme küçük ve tek seferlik): aynı agent'a SendMessage; bağlamı zaten onda. Bir agent'a en çok iki kez SendMessage gönderilir; üçüncü ihtiyaçta ya da iş yeni bir faza geçiyorsa "Agent ömrü" kuralı uygulanır ve taze agent açılır.
-   - **Yaklaşım ya da kök neden yanlış çıktıysa veya ilk düzeltme tutmadıysa:** beklemeden taze bağlamlı yeni agent. Yeni brief gözlenen hatayı ve denenip tutmayanı olgu olarak içerir; önceki agent'ın akıl yürütmesini kopyalamaz ki aynı yere saplanmasın. Yeni agent bir üst kademeden açılır: Sonnet tıkandıysa Opus, Opus tıkandıysa Mythos. En üst kademe de tıkanırsa durumu kullanıcıya anlat.
+   - **Yaklaşım ya da kök neden yanlış çıktıysa veya ilk düzeltme tutmadıysa:** beklemeden taze bağlamlı yeni agent. Yeni brief gözlenen hatayı ve denenip tutmayanı olgu olarak içerir; önceki agent'ın akıl yürütmesini kopyalamaz ki aynı yere saplanmasın. Kademe zinciri şudur: Sonnet tıkandıysa Opus. Opus tıkandıysa önce taze bağlamlı Opus, yüksek eforla (zaten yüksek efordaysa bu adım atlanır). Yüksek eforlu Opus da tıkandıysa Mythos. Mythos da tıkanırsa durumu kullanıcıya anlat.
 
    Sınır ihlali varsa, ihlal eden agent'a kendi alanı dışındaki değişikliği geri almasını söyle ve o dosyanın sahibine değişikliğin gerekip gerekmediğini değerlendirt.
 6. **Raporla.** Kullanıcıya ne değiştiğini, neyi nasıl doğruladığını ve varsa açık kalan noktaları kısa ve net yaz. Doğrulayamadığın bir şeyi doğrulanmış gibi sunma.
@@ -143,7 +143,7 @@ Bir agent'ın bağlamı kendi işi boyunca hiç küçülmez ve her API çağrıs
 
 Belirleyici olan davranıştır: davranış değiştiren her iş (tek satır dahil) taze bağlamlı ayrı bir gözden geçirici alır; davranış değiştirmeyen iş (yazım, biçim, salt yeniden adlandırma) kaç dosya olursa olsun almaz. Burada iş, kullanıcıya teslim edilen bütündür: bir istek için bir gözden geçirici, değişiklik çok büyükse alana göre bölebilirsin. Karışık işte gözden geçiricinin listesine yalnız davranış değiştiren dosyalar girer. Yazarlarla aynı anda değil, iş bitip testler geçtikten sonra açılır. Bir teslimde en çok iki tur vardır: ilk tur ve davranış değiştiren düzeltmeden sonra yalnız düzeltilen kısmı kapsayan yeniden tur. Ondan sonra gözden geçirici açılmaz; kalan doğrulama test ve gerçek çalıştırmayla yapılır. Yeniden turda yalnız gerçek kullanımda oluşabilen bulgu düzeltilir, varsayımsal girdi gerekçesiyle elenir ve raporda söylenir. Düzeltme tasarımı değiştiriyorsa yeni teslim sayılır, tur sıfırlanır. Kullanıcı açıkça isterse ek tur açılır.
 
-- Kademesi yazarların altında olmaz: teslimin herhangi bir parçasını Mythos yazdıysa gözden geçirici de Mythos'tur (`model` boş), aksi halde `model: "opus"`. `subagent_type: "Plan"` (Edit, Write, NotebookEdit yok) ile açılır; kodu yazan agent değildir, salt okunurdur ve düzeltme yapmaz, çünkü bulguyu düzeltmek sahiplik haritasını bozar.
+- Her zaman `model: "opus"` ve yüksek eforla açılır; teslimin bir parçasını Mythos yazmış olsa bile, çünkü gözden geçirmek yeni fikir üretmek değildir. `subagent_type: "Plan"` (Edit, Write, NotebookEdit yok) ile açılır; kodu yazan agent değildir, salt okunurdur ve düzeltme yapmaz, çünkü bulguyu düzeltmek sahiplik haritasını bozar.
 - Eline yalnızca kullanıcının isteği, sözleşme, bitti tanımı ve değişen dosya listesi geçer; bu kural aşağıdaki brief şablonundan önce gelir. Yazarın raporu, gerekçesi ya da senin şüphen verilmez. Yeniden turda listedeki girdi düzeltilen `dosya:satır` aralığını taşıyabilir; bulgu metni ya da düzeltme gerekçesi taşımaz.
 - Her bulguyu dosya:satır, tetikleyen senaryo, beklenen/gözlenen ile ve mümkünse yeniden üreten komutla getirir. "Bulgu yok" meşru sonuçtur, sayı hedefi konmaz.
 
@@ -151,7 +151,7 @@ Bulguları sen ayıklarsın: hata aramaya yollanan model bir şey bulmaya eğili
 
 ## Çift görüş
 
-Geri dönüşü zor ve emin olmadığın kararda (veri şeması, dış API/sözleşme, güvenlik modeli, mimari omurga; rutin kararda değil) aynı soru `subagent_type: "Plan"` ile açılan iki salt okunur agent'a gider: biri Mythos (`model` boş; şef Mythos değilse `model: "opus"`), biri `model: "fable"`. Brief kelimesi kelimesine aynıdır, eğilimini yazmazsın, agent'lar birbirini bilmez. İkisi de öneri, dayanak (dosya/ölçüm) ve "bu öneriyi neyin çürüteceği"ni döndürür. Karşılaştırmayı sen yaparsın: hemfikirlerse uygulatırsın; ayrışırlarsa kanıta göre kendin karar verirsin, değer yargısıysa kullanıcıya sorarsın.
+Geri dönüşü zor ve emin olmadığın kararda (veri şeması, dış API/sözleşme, güvenlik modeli, mimari omurga; rutin kararda değil) aynı soru `subagent_type: "Plan"` ile açılan iki salt okunur agent'a gider: biri `model: "opus"` (yüksek efor), biri `model: "fable"`. Opus'un yerine Mythos (`model` boş) yalnız kararın kendisi yeni fikir icat etmeyi gerektiriyorsa geçer (bkz. "Model ve effort seçimi"). Brief kelimesi kelimesine aynıdır, eğilimini yazmazsın, agent'lar birbirini bilmez. İkisi de öneri, dayanak (dosya/ölçüm) ve "bu öneriyi neyin çürüteceği"ni döndürür. Karşılaştırmayı sen yaparsın: hemfikirlerse uygulatırsın; ayrışırlarsa kanıta göre kendin karar verirsin, değer yargısıysa kullanıcıya sorarsın.
 
 ## Brief nasıl yazılır
 
@@ -188,7 +188,7 @@ Kalite aynı kalırken token ve bağlam harcamasını düşürmenin yolu, aynı 
 **Özetçi agent.** Defter uzadıkça `defter ozetle --eski 20` eski kartları sıkıştırma girdisine çevirir. Bu girdiyi `model: "haiku"`, `effort: "low"` bir agent'a ver; tek işi dönen metni ≤1500 karakterlik özete indirip `defter yaz --tur ozet --ozet "..."` ile kaydetmektir, sonra `defter temizle --tut 20`. `ozetle` önceki özeti de girdiye katar, yeni özet eskisini kapsamalıdır; `temizle --tut 20` son 20 kartı ve en son özeti tutar, bir dosyanın ya da kavramın en son kaydını taşıyan kart silinmez. Özetleme muhakeme gerektirmez; Opus ya da Mythos bağlamını buna harcama.
 - **DENEYSEL, yerel model:** makinede `ollama` ve bir model varsa `defter ozetle --eski 20 --yerel <model>` özeti tamamen yerelde üretir ve kaydeder; API token'ı harcanmaz. Kalitesi modele bağlıdır, önemli projede özeti bir kez göz at.
 
-**DENEYSEL, uyarlanabilir efor.** Efor sabit değil, kanıta göre ayarlanır: tarifi tam verilmiş mekanik işte agent'ı düşük eforla başlat. Aynı iş testten geçemezse ya da agent tıkanırsa yeniden denemede efor bir kademe artar (low → medium → high); high'da da tıkanırsa iş bir üst modele geçer (Sonnet → Opus → Mythos). Bir işin hangi eforla geçtiğini `defter yaz --kavram "efor:<iş türü>: <seviye> yetti"` ile not et; sonraki benzer işte başlangıç eforunu buna göre seç.
+**DENEYSEL, uyarlanabilir efor.** Efor sabit değil, kanıta göre ayarlanır: tarifi tam verilmiş mekanik işte agent'ı düşük eforla başlat. Aynı iş testten geçemezse ya da agent tıkanırsa yeniden denemede efor bir kademe artar (low → medium → high); high'da da tıkanırsa iş bir üst modele geçer: Sonnet → Opus, yüksek eforlu Opus → Mythos (bkz. Akış, 5. adım). Bir işin hangi eforla geçtiğini `defter yaz --kavram "efor:<iş türü>: <seviye> yetti"` ile not et; sonraki benzer işte başlangıç eforunu buna göre seç.
 
 ## Kullanıcıyla iletişim
 
