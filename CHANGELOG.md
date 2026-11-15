@@ -59,6 +59,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Docs: the root README opens with a before/after overview and the security-relevant facts;
+  `SECURITY.md` now describes the threat model and the known limits; `CONTRIBUTING.md` explains the
+  privacy job's `GIZLILIK_YASAK` secret. The components diagram shows the doc gate.
 - `opus-orkestra`: new "Agent ömrü" rule. A fresh agent per phase with a short handoff note instead of
   keeping one agent alive with `SendMessage` (at most two follow-ups, small fixes only); no `name` on
   agents, because with `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` a named agent becomes a teammate whose
@@ -120,6 +123,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   high effort, ties between Opus and Mythos resolve to Opus, the reviewer is always Opus and the
   dual-opinion pair is Opus + Fable.
 
+### Removed
+
+- `BEKLEYEN-DALLAR.md`, an internal note about branches waiting for review (they are merged).
+
 ### Fixed
 
 - `bellek`: when the brain service rejected a request with a body early, it closed the connection
@@ -179,6 +186,53 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   stolen phone.
 - Installer: the install doctor runs a program it reads from `settings.json` only when its name is
   explicitly a Python interpreter.
+- Installer: the `beyin` MCP server and the brain service task are registered with `python -I`
+  (Windows and macOS), so no code is loaded from the session's working directory (before, opening
+  Claude Code in a folder containing a `bellek` package ran that code). Re-installing replaces the
+  old registration and keeps MCP arguments and `env` values you added (for example a
+  computer-use `--block` list). The doctor flags unsafe MCP registrations (a Python `-m`/`-c` launch
+  without `-I`/`-P`, a relative script path) and a repository folder other accounts can write to,
+  and looks up programs only in absolute `PATH` folders. The install summary says that backups are
+  plain text and are not deleted on uninstall. Existing installs: run
+  `.\install.ps1 -Components beyin` once.
+- `computer-use-windows`: `comtypes` no longer loads generated modules from a fixed folder under the
+  shared `%TEMP%`. The app blocklist now also covers `elements` (refused for a blocked app's
+  windows) and `windows` (titles hidden). The README states what the blocklist does not cover
+  (screenshots), that it is empty by default, and that GUI actions can start programs outside
+  Claude Code's Bash permission rules.
+- `opus-orkestra` (ledger): `defter yaz` refuses files outside the repository, inside `.git` and
+  untracked files git ignores (such as `.env`); `defter temizle` drops such older records. `oku` and
+  `yaz` no longer run external commands from the repository's git configuration (external diff,
+  textconv, filter drivers, fsmonitor, reference-transaction hook). `git` and `ollama` are resolved
+  only from absolute `PATH` folders.
+- CI: every GitHub Action is pinned to a full commit SHA, `actions/checkout` no longer persists
+  credentials, and Dependabot (`.github/dependabot.yml`) proposes weekly updates for npm, pip and
+  GitHub Actions. When the `GIZLILIK_YASAK` secret is empty, the privacy job warns on pull requests
+  and fails on pushes to `main`.
+- `apps/phone` (app): a release build can no longer be signed with the public debug key; it needs a
+  user-specific keystore (`EREN_KIT_RELEASE_STORE_FILE`, `..._STORE_PASSWORD`, `..._KEY_ALIAS`,
+  `..._KEY_PASSWORD`) and stops with a clear error otherwise. Debug builds are unchanged.
+- `apps/phone` (app): full-permission, accessibility and setup texts now say what really happens
+  (ordinary apps are on by default; banking and money apps are switched off by a guess from their
+  name and package, which does not catch every app). Full permission is switched off before a new
+  pairing is saved, so a new pairing does not inherit it. The voice-key shortcut is added next to an
+  existing accessibility shortcut instead of replacing it, and the system's first-use confirmation
+  is no longer suppressed.
+- `bellek`: on Linux and macOS new data folders are created `0700` and files `0600`, and group/other
+  permissions are removed from an existing install (Windows unchanged). The secret filter now also
+  masks `e-mail:password` pairs, `PGPASSWORD`, `mysql -p`, `glpat-` tokens, PEM headers, `curl -u`,
+  Basic auth and similar; the URL rule no longer takes quadratic time. Outside text that reaches hook
+  output (the handoff index, the doc gate's heading map) is stripped of control and invisible
+  characters and capped in length, and the map says that headings are data, not instructions.
+  `/api/gelen/<id>` goes through the same filter as the web UI, and the brain service accepts at
+  most 64 concurrent connections.
+- `apps/phone` (server): the data folder must be open only to the user, SYSTEM and Administrators;
+  the service does not start with an unsafe folder and logs the reason and the fix. `kur.ts`
+  narrows its own `eren-kit` folder; `--izin-duzelt` fixes another one. Permissions are read through
+  .NET, so the check also works when started from PowerShell 7. Before authentication a frame is
+  capped at 16 KiB, an address may hold at most 16 connections, an unresponsive peer is dropped after
+  3 seconds, and browser requests (with an `Origin` header) are rejected. Pairing: 5 wrong codes
+  close the pairing window for that address only; 20 wrong codes in total delete the window.
 
 ## [0.1.0] - 2026-11-09
 
