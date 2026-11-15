@@ -63,9 +63,9 @@ describe("seslendirici", () => {
   it("oku Markdown'ı temizleyip portun seslendir'ini bir kez çağırır", async () => {
     const ses = sahteSes();
     const { s } = kur(ses);
-    s.oku("**Merhaba** Selman");
+    s.oku("**Merhaba** Ada");
     await bosalt();
-    assert.deepEqual(ses.seslendirCagrilari, ["Merhaba Selman"]);
+    assert.deepEqual(ses.seslendirCagrilari, ["Merhaba Ada"]);
   });
 
   it("temizlenince boş kalan metinde port çağrılmaz", async () => {

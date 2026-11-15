@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import { konusmaMetni } from "../../src/cekirdek/konusmaMetni.ts";
 
 const durumlar: Array<[string, string, string]> = [
-  ["kalın vurgu kalkar", "**Merhaba** Selman", "Merhaba Selman"],
+  ["kalın vurgu kalkar", "**Merhaba** Ada", "Merhaba Ada"],
   ["başlık işareti kalkar, satır noktalanır", "# Başlık\nMetin", "Başlık. Metin"],
   ["madde imi kalkar", "- bir\n- iki", "bir. iki"],
   ["numaralı liste numarası kalır", "1. bir\n2. iki", "1. bir. 2. iki"],
