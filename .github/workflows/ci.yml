@@ -21,8 +21,10 @@ jobs:
       run:
         working-directory: packages/bellek
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
           cache: pip
@@ -42,8 +44,10 @@ jobs:
       run:
         working-directory: packages/bellek
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.14"
           allow-prereleases: true
@@ -62,8 +66,10 @@ jobs:
       run:
         working-directory: packages/opus-orkestra
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
       - name: Install
@@ -83,8 +89,10 @@ jobs:
       run:
         working-directory: packages/computer-use-windows
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: ${{ matrix.python-version }}
           allow-prereleases: true
@@ -108,8 +116,10 @@ jobs:
       run:
         working-directory: apps/phone
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: npm
@@ -154,12 +164,18 @@ jobs:
       run:
         working-directory: apps/phone/app/modules/eren-device/cekirdek
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
         with:
           distribution: temurin
           java-version: 21
-      - uses: gradle/actions/setup-gradle@v4
+      # validate-wrappers bu sürümde zaten varsayılan true; gradle-wrapper.jar'ın resmi sağlama
+      # toplamıyla eşleşmesi (fork PR'ı jar'ı değiştirebilir) sürüm yükseltmelerinde de açık kalsın diye yazılı.
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4.4.3
+        with:
+          validate-wrappers: true
       # git yürütme biti kaybolmuş olabilir (Windows'ta eklenen dosya); her durumda güvenli
       - name: Make gradlew executable
         run: chmod +x gradlew
@@ -168,14 +184,19 @@ jobs:
 
   # Gizlilik kapısı: izlenen dosyalarda kişisel yol / e-posta / belirteç / büyük ikili arar
   # (çıkış 1 = bulgu, 2 = hata; ikisi de işi kırar). GIZLILIK_YASAK secret'ı tanımlı değilse ya da
-  # fork PR'ında boş gelirse yasak sözcük kuralı çalışmaz, diğer kurallar yine çalışır.
+  # fork/Dependabot PR'ında boş gelirse yasak sözcük kuralı çalışmaz, diğer kurallar yine çalışır.
+  # Bu durum sessiz kalmasın diye son adım secret'ı denetler: PR'da uyarı (fork'lar secret alamaz,
+  # kırılmaz), main'e push'ta hata (secret eksikse depo sahibi fark etsin). Değer hiçbir yerde
+  # yazdırılmaz; yalnız boş olup olmadığına bakılır.
   gizlilik:
     name: gizlilik
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
       - name: Tara
@@ -186,6 +207,32 @@ jobs:
         run: python -m pip install pytest
       - name: Test (tarayıcı)
         run: python -m pytest -q scripts/tests
+      # Önceki adımlar düşse de koşar (iptal hariç): secret eksikliği her koşuda görünür.
+      - name: Yasak sözcük secret'ı denetimi
+        if: ${{ !cancelled() }}
+        env:
+          GIZLILIK_YASAK: ${{ secrets.GIZLILIK_YASAK }}
+          OLAY: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          FORK_PR: ${{ github.event.pull_request.head.repo.fork }}
+        run: |
+          if [ -n "$GIZLILIK_YASAK" ]; then
+            echo "GIZLILIK_YASAK tanımlı: yasak sözcük kuralı etkin."
+            exit 0
+          fi
+          mesaj="GIZLILIK_YASAK secret'ı boş: yasak sözcük (kişisel ad) kuralı bu koşuda ÇALIŞMADI."
+          if [ "$OLAY" = "push" ] && [ "$REF" = "refs/heads/main" ]; then
+            echo "::error title=Gizlilik::$mesaj Depo ayarlarında (Settings > Secrets and variables > Actions) GIZLILIK_YASAK secret'ını tanımla."
+            echo "**Hata:** $mesaj main push'unda secret zorunlu." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          if [ "$FORK_PR" = "true" ]; then
+            ek="Fork PR'ları secret alamaz; merge etmeden önce yerelde tam tarama yap (python -B scripts/gizlilik_tara.py, GIZLILIK_YASAK ortamda)."
+          else
+            ek="Secret tanımlı değil ya da bu olay (ör. Dependabot PR'ı) secret almıyor; merge öncesi yerelde tam tarama yap."
+          fi
+          echo "::warning title=Gizlilik::$mesaj $ek"
+          echo "**Uyarı:** $mesaj $ek" >> "$GITHUB_STEP_SUMMARY"
 
   # ---------------------------------------------------------------- Windows kurulum
   installer-windows:
@@ -193,8 +240,10 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
       - name: Install
@@ -245,8 +294,10 @@ jobs:
       run:
         working-directory: packages/bellek
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
           cache: pip
@@ -264,8 +315,10 @@ jobs:
       run:
         working-directory: packages/opus-orkestra
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
       - name: Install
@@ -278,8 +331,10 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
       - name: Install

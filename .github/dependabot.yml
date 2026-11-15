@@ -1,0 +1,60 @@
+# Dependabot sürüm güncellemeleri. Gürültüyü düşük tutmak için: haftalık, ekosistem başına tek
+# gruplu PR (minor + patch), major sürümler ayrı PR. Güvenlik güncellemeleri (repo ayarında açıksa)
+# bu gruplamadan bağımsız, hemen gelir. cooldown: yeni yayımlanan sürümü birkaç gün bekletir
+# (ele geçirilmiş bir sürümün fark edilip geri çekilmesine zaman tanır).
+version: 2
+updates:
+  # Telefon: kök (npm workspaces: protocol + server) ve Expo uygulaması ayrı kilit dosyalarıyla.
+  - package-ecosystem: npm
+    directories:
+      - /apps/phone
+      - /apps/phone/app
+    schedule:
+      interval: weekly
+      day: monday
+      timezone: Europe/Istanbul
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(npm)"
+    groups:
+      npm-minor-patch:
+        applies-to: version-updates
+        update-types: [minor, patch]
+
+  # Python paketleri (pyproject.toml).
+  - package-ecosystem: pip
+    directories:
+      - /packages/bellek
+      - /packages/computer-use-windows
+    schedule:
+      interval: weekly
+      day: monday
+      timezone: Europe/Istanbul
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(pip)"
+    groups:
+      pip-minor-patch:
+        applies-to: version-updates
+        update-types: [minor, patch]
+
+  # CI action'ları (ci.yml'de commit SHA'sına sabitli; Dependabot SHA'yı ve sürüm yorumunu birlikte günceller).
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      timezone: Europe/Istanbul
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(actions)"
+    groups:
+      actions:
+        applies-to: version-updates
+        patterns: ["*"]
