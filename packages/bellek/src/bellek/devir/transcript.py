@@ -281,13 +281,206 @@ def _tc_degistir(m: re.Match) -> str:
 
 
 _HARF = "a-zçğıöşü"
-# Komut satırı seçenek değeri: tırnaklı (sınırlı uzunluk: kapanmayan tırnak her
-# başlangıçta metnin sonuna dek taranmasın) ya da "-" ile başlamayan sözcük.
-_KOMUT_DEGER = r"""(?:"[^"\n]{0,200}"|'[^'\n]{0,200}'|[^\s\-]\S*+)"""
-_MASKE_ONBELLEK: list[tuple[re.Pattern[str], object]] | None = None
+_MASKE_ONBELLEK: list[tuple[object, object]] | None = None
+
+# ------------------------------------------------- komut satırı parolaları
+# mysql/mariadb -pDEĞER, sshpass -p DEĞER, curl -u kullanıcı:DEĞER.
+# Düzenli ifade değil belirteç yürüyüşü: komut satırını tek geçişte kabuk
+# sözcüklerine ayırıp kodla yürümek, "seçenek mi, değeri mi, konumsal mı"
+# sorusunu geri izlemeyle bütün bölüntüleri deneyerek değil, sözcük başına bir
+# kez yanıtlar (düzenli ifade biçimi tırnaklı değeri hem değer hem sözcük
+# sayabildiği için üstel geri izliyordu). Süre doğrusal: satır bir kez
+# belirteçlenir, her yürüyüş en geç bir sonraki komut sözcüğünde durur.
+#
+# Yürüyüş ayraçta (; | || && & ( ) ` satır sonu) ve bilinen başka bir komut
+# sözcüğünde (ls, find, ssh, sudo, docker, ...) durur: "mysql -V; ls -pla",
+# "mysql yedeği için find /var -perm 600" maskelenmez. mysql ve curl'de konumsal
+# argüman bayraktan önce gelebilir (mysqldump mydb -uroot -pX, curl ornek.test
+# -u a:X); sshpass'ta ilk konumsal argüman iç komuttur, orada durulur.
+
+_KOMUT_ADAY = re.compile(r"(?i)mysql|mariadb|curl|sshpass")
+# Kabuk belirteci: a = ayraç; adsız = boşluk (ters bölü + satır sonu devam
+# satırıdır, boşluk sayılır); s = sözcük (tırnaklı parçalar, \x kaçışları ve
+# içinde boşluk olmayan & dahil; kapanmayan tırnak düz karakterdir). Bütün
+# parçalar iyelikli; kapanmayan tırnak satır sonuna dek bir kez taranır.
+_KOMUT_BELIRTEC = re.compile(
+    r"(?P<a>\n|&&|\|\||[;|()`]|&(?!\S)|(?<!\S)&)"
+    r"|(?:[^\S\n]|\\\r?\n)++"
+    r"|(?P<s>(?:[^\s\"'`;|&()\\]++|\"(?:[^\"\\\n]++|\\[^\n])*+\"|'[^'\n]*+'"
+    r"|\\[^\r\n]|\\(?![\r\n])|[\"']|&(?=\S))++)")
+_TIRNAKLI = re.compile(r"\"(?:[^\"\\\n]++|\\[^\n])*+\"|'[^'\n]*+'")
+_YOL_AYRAC = re.compile(r"[\\/]")
+# Değerin ardındaki ayraçlı sürüm: "-pAb;cd12" parolası "Ab"de kesilmesin
+# (ayraç ancak ardından boşluk olmayan bir karakter geliyorsa değere katılır).
+_DEGER_UZANTI = re.compile(r"(?:[;|&()`]++[^\s;|&()`]++)*+")
+_DEGER_ILK_RET = frozenset("-`,;)|&>")
+# curl kullanıcı bayrağı: -u / -U (proxy), önünde değersiz kısa seçenek
+# kümesi olabilir (-sSu); --user / --proxy-user.
+_CURL_KULLANICI = re.compile(r"-[sSLkvifgGNqOJRZn0-9#]*+[uU]|--(?:proxy-)?user")
+_KOMUT_HEDEF = {
+    "mysql": "m", "mysqldump": "m", "mysqladmin": "m", "mysqlimport": "m",
+    "mysqlcheck": "m", "mariadb": "m", "mariadb-dump": "m", "mariadb-admin": "m",
+    "curl": "c", "sshpass": "s",
+}
+# Hedef komutun argümanı olarak beklenmeyen, başka bir komut başlatan sözcükler.
+_KOMUT_DURAK = frozenset((
+    "ls find ps ssh scp sftp rsync sudo su doas docker podman kubectl grep egrep "
+    "fgrep rg cat echo printf cd rm cp mv mkdir rmdir chmod chown chgrp kill "
+    "pkill killall git npm npx yarn pnpm pip pip3 python python3 py node deno "
+    "bash sh zsh fish pwsh powershell cmd wget tar zip unzip gzip systemctl "
+    "service apt apt-get yum dnf brew xargs awk sed head tail less more tee env "
+    "export then do done fi else elif nohup exec eval source psql pg_dump mongo "
+    "mongosh redis-cli nc netcat ping netstat ss lsof top htop journalctl ln "
+    "touch du df free mount umount useradd usermod chpasswd passwd id whoami "
+    "make cargo java ruby perl php"
+).split())
 
 
-def _maske_derle() -> list[tuple[re.Pattern[str], object]]:
+def _komut_adi(soz: str) -> str:
+    """Sözcüğün komut adı: tırnaksız, yolsuz, küçük harf, .exe'siz."""
+    ad = _YOL_AYRAC.split(soz.replace('"', "").replace("'", ""))[-1].lower()
+    return ad[:-4] if ad.endswith(".exe") else ad
+
+
+def _komut_yuru(metin: str, toklar: list[tuple[str, int, int]], k: int, tur: str,
+                araliklar: list[tuple[int, int]]) -> None:
+    """Komut sözcüğünden sonraki belirteçleri yürüyüp parola değerlerini işaretler."""
+    n = len(toklar)
+    while k < n:
+        t, tb, ts = toklar[k]
+        if t == "a":
+            return
+        soz = metin[tb:ts]
+        secenek = soz.startswith("-")
+        if not secenek and ts - tb <= 512:
+            ad = _komut_adi(soz)
+            if ad in _KOMUT_HEDEF or ad in _KOMUT_DURAK:
+                return
+        deger: tuple[int, int, int] | None = None  # (belirteç sırası, değer başı, kesim başı)
+        sonraki = k + 1
+        if tur == "m":
+            if soz.startswith("-p") and len(soz) > 2 and soz[2] not in _DEGER_ILK_RET:
+                deger = (k, tb + 2, tb + 2)
+        elif tur == "s":
+            if not secenek:
+                return  # sshpass'ın iç komutu başladı
+            if soz.startswith("-p"):
+                if len(soz) > 2:
+                    if soz[2] not in _DEGER_ILK_RET:
+                        deger = (k, tb + 2, tb + 2)
+                elif k + 1 < n and toklar[k + 1][0] == "s":
+                    db = toklar[k + 1][1]
+                    if metin[db] not in _DEGER_ILK_RET:
+                        deger = (k + 1, db, db)
+            elif soz in ("-f", "-d", "-P"):
+                sonraki = k + 2
+        else:
+            m = _CURL_KULLANICI.match(soz) if secenek else None
+            if m:
+                kalan = soz[m.end():]
+                j, db = -1, -1
+                if soz.startswith("--"):
+                    if kalan.startswith("="):
+                        j, db = k, tb + m.end() + 1
+                    elif not kalan:
+                        j = k + 1
+                elif kalan:
+                    j, db = k, tb + m.end()
+                else:
+                    j = k + 1
+                if j == k + 1 and j < n and toklar[j][0] == "s":
+                    db = toklar[j][1]
+                if db >= 0:
+                    iki = metin.find(":", db, toklar[j][2])
+                    if iki >= 0 and iki + 1 < toklar[j][2] and metin[iki + 1] != ":":
+                        deger = (j, db, iki + 1)
+        if deger is not None:
+            j, db, gb = deger
+            jb, js = toklar[j][1], toklar[j][2]
+            # Ayrı belirteçteki değer bir hedef komutsa ("sshpass -p sshpass -p ...")
+            # yürüyüş orada biter: her yürüyüş en geç sonraki komutta durmalı, yoksa
+            # süre ikinci dereceden büyür. O komut kendi yürüyüşünü başlatır.
+            if j != k and js - jb <= 512 and _komut_adi(metin[jb:js]) in _KOMUT_HEDEF:
+                return
+            son = _DEGER_UZANTI.match(metin, js).end()
+            # "admin:X" tırnak içindeyse kapanış tırnağı korunur: -u 'admin:[gizli]'
+            if son == js and metin[js - 1] in "\"'" and metin[js - 1] in metin[jb:gb]:
+                son -= 1
+            if son > gb:
+                araliklar.append((gb, son))
+            sonraki = j + 1
+            while sonraki < n and toklar[sonraki][1] < son:
+                if toklar[sonraki][0] == "a":
+                    return  # maskelenen değer bir ayracı yuttu: komut orada biter
+                sonraki += 1
+        k = sonraki
+
+
+def _komut_satiri_tara(metin: str, bas: int, son: int,
+                       araliklar: list[tuple[int, int]], derinlik: int) -> None:
+    toklar = [(m.lastgroup, m.start(), m.end())
+              for m in _KOMUT_BELIRTEC.finditer(metin, bas, son) if m.lastgroup]
+    for k, (t, tb, ts) in enumerate(toklar):
+        if t != "s":
+            continue
+        soz = metin[tb:ts]
+        # Tırnak içindeki komut (bash -c "mysql -pX", ssh h 'curl -u a:X', JSON
+        # dizgesi) iç satır olarak taranır; en çok iki kat iç içe (süre ≤ 3n).
+        if derinlik < 2 and ('"' in soz or "'" in soz) and _KOMUT_ADAY.search(soz):
+            for q in _TIRNAKLI.finditer(metin, tb, ts):
+                if _KOMUT_ADAY.search(metin, q.start() + 1, q.end() - 1):
+                    _komut_satiri_tara(metin, q.start() + 1, q.end() - 1, araliklar,
+                                       derinlik + 1)
+        if ts - tb <= 512 and not soz.startswith("-"):
+            tur = _KOMUT_HEDEF.get(_komut_adi(soz))
+            if tur:
+                _komut_yuru(metin, toklar, k + 1, tur, araliklar)
+
+
+def _komut_parolalari(metin: str) -> str:
+    if not _KOMUT_ADAY.search(metin):
+        return metin
+    araliklar: list[tuple[int, int]] = []
+    n = len(metin)
+    i = 0
+    while i < n:
+        m = _KOMUT_ADAY.search(metin, i)
+        if not m:
+            break
+        bas = metin.rfind("\n", 0, m.start()) + 1
+        son = metin.find("\n", m.end())
+        # "\" ile biten satır devam eder (çok satırlı curl komutu).
+        while son > 0 and (metin[son - 1] == "\\"
+                           or (metin[son - 1] == "\r" and son > 1 and metin[son - 2] == "\\")):
+            son = metin.find("\n", son + 1)
+        if son < 0:
+            son = n
+        _komut_satiri_tara(metin, bas, son, araliklar, 0)
+        i = son + 1
+    if not araliklar:
+        return metin
+    araliklar.sort()
+    parcalar: list[str] = []
+    kesim = 0
+    for a, b in araliklar:
+        if b <= kesim:
+            continue
+        if a >= kesim:
+            parcalar += [metin[kesim:a], _GIZLI]
+        kesim = b
+    parcalar.append(metin[kesim:])
+    return "".join(parcalar)
+
+
+class _KomutKurali:
+    """Kalıp listesinde düzenli ifade gibi duran (``sub``) komut satırı kuralı."""
+    pattern = "<komut satırı parolaları>"
+
+    def sub(self, _yerine: object, metin: str) -> str:
+        return _komut_parolalari(metin)
+
+
+def _maske_derle() -> list[tuple[object, object]]:
     """Maske kalıplarını derler; içe aktarmada değil ilk kullanımda çağrılır
     (UserPromptSubmit yolu maske kullanmaz, derleme maliyeti ona yüklenmez).
     """
@@ -354,6 +547,10 @@ def _maske_derle() -> list[tuple[re.Pattern[str], object]]:
         # Değer yalnız true/false/null/none/nil/undefined ise (ardından en çok kapanış
         # noktalaması) dokunulmaz: ayar bayrağı, sır değil. "None-of-x9", "null!x9Q",
         # "True#2024x" gibi bu sözcükle başlayıp süren değerler gizlenir.
+        # Tırnaklı değerin kapanış tırnağına sözcük bitişiyorsa maske o sözcüğün
+        # sonuna dek sürer: tırnak başka bir anahtarın değerinin ortasında
+        # kapanmış olabilir (PGPASSWORD: 'x", DB_PASSWORD = None'Gizli -> önceden
+        # "Gizli" açıkta kalıyordu).
         (re.compile(
             r"(?i)(?<![a-z0-9çğıöşü])"
             r"((?:(?-i:[A-Z]+(?:PASSWORD|PASSWD|SECRET|TOKEN))|password|passwd|pwd|"
@@ -362,7 +559,7 @@ def _maske_derle() -> list[tuple[re.Pattern[str], object]]:
             r"|(?:parola|şifre|sifre)(?:m|n|si|sı|miz|mız|niz|nız)?[\"']?)"
             r"(\s*[:=]\s*)"
             r"(?!(?:true|false|null|none|nil|undefined)[,;.)\]}\"'`]*+(?!\S))"
-            r"(\"[^\"]*\"|'[^']*'|\S+)"),
+            r"(\"[^\"]*+\"(?:(?=\w)\S*+)?|'[^']*+'(?:(?=\w)\S*+)?|\S+)"),
          r"\1\2" + _GIZLI),
         # boşlukla ayrılan parola: "password is hunter2", "parolam 1234".
         # Yanlış pozitifi önlemek için değer en az 4 karakter olmalı ve rakam ya
@@ -417,20 +614,8 @@ def _maske_derle() -> list[tuple[re.Pattern[str], object]]:
          r"\1" + _GIZLI),
         # Komut satırında parola: mysql/mariadb -pDEĞER (bitişik; "-p" tek başına
         # parola sorar, -P port), sshpass -p DEĞER, curl -u kullanıcı:DEĞER.
-        # Komutla bayrak arasında yalnız seçenekler (değerleriyle) bulunabilir:
-        # "mysql ayarlarını yaptım; ls -pla" ya da "find /var -perm" gibi aynı
-        # satırdaki başka komutun bayrağı parola sayılmaz.
-        (re.compile(r"(\b(?:mysql|mysqldump|mysqladmin|mysqlimport|mysqlcheck|mariadb"
-                    r"(?:-dump|-admin)?)(?:\.exe)?\b"
-                    rf"(?:\s+-\S*+(?:\s+{_KOMUT_DEGER})?){{0,12}}?\s+-p)[^\s\-`,;)|&>]\S*"),
-         r"\1" + _GIZLI),
-        (re.compile(rf"(\bsshpass\b(?:\s+(?:-[vhe]\b|-[fdP]\s*{_KOMUT_DEGER})){{0,6}}?\s+-p\s*)"
-                    r"[^\s\-`,;)|&>]\S*"),
-         r"\1" + _GIZLI),
-        (re.compile(r"(\bcurl\b"
-                    rf"(?:\s+(?:-\S*+(?:\s+{_KOMUT_DEGER})?|[A-Za-z][A-Za-z0-9+.\-]*+://\S*+)){{0,16}}?"
-                    r"\s+(?:-u|--user[\s=])\s*[^\s:]+:)[^\s:]\S*"),
-         r"\1" + _GIZLI),
+        # Belirteç yürüyüşüyle (bkz. _komut_parolalari).
+        (_KomutKurali(), None),
         # HTTP Authorization başlığı (Basic/Token; Bearer yukarıda ayrı kuralda).
         (re.compile(r"(?i)(\bauthorization[\"']?\s*[:=]\s*[\"']?(?:basic|token)\s+)"
                     r"[A-Za-z0-9+/._~\-]{8,}=*"),
@@ -438,7 +623,7 @@ def _maske_derle() -> list[tuple[re.Pattern[str], object]]:
     ]
 
 
-def _maske_kaliplari() -> list[tuple[re.Pattern[str], object]]:
+def _maske_kaliplari() -> list[tuple[object, object]]:
     global _MASKE_ONBELLEK
     if _MASKE_ONBELLEK is None:
         _MASKE_ONBELLEK = _maske_derle()
