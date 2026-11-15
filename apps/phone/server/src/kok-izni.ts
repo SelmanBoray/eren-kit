@@ -20,8 +20,14 @@ export const SID = {
 } as const;
 
 /**
- * SDDL'deki iki harfli takma adlar. Yalnız dosya sisteminde görülebilecekler; tabloda olmayan takma ad
- * olduğu gibi kalır (izinli kümede olmadığı için güvensiz sayılır).
+ * SDDL'deki iki harfli, makineden bağımsız takma adlar. Yalnız dosya sisteminde görülebilecekler;
+ * tabloda olmayan takma ad olduğu gibi kalır (izinli kümede olmadığı için güvensiz sayılır).
+ *
+ * Makineye bağlı takma adlar (`LA` yerleşik Administrator = makine etki alanı RID 500, `LG` Guest =
+ * RID 501; etki alanındaki makinede `DA`, `DU`... birincil etki alanına göre) burada AÇILMAZ: anlamları
+ * makinenin SID'ine bağlıdır. Kullanıcının kendisi böyle bir hesapsa (ör. GitHub Actions'ın
+ * `runneradmin`'i yerleşik Administrator'dır) Windows onun SID'ini de takma adla yazar; bunu betiğin
+ * bildirdiği `takma` çözer (`izinCiktisiCoz`, `sddlTakmaAc`).
  */
 const TAKMA_ADLAR: Readonly<Record<string, string>> = {
   SY: SID.SYSTEM,
@@ -219,7 +225,9 @@ export function windowsPowerShellOrtami(ortam: Readonly<Record<string, string | 
  * - `duzelt`: `hazirla` + kök varsa DACL'i `korumaliSddl` ile değiştirir (kalıtım kesilir, alt öğelerin
  *   kalıtılan ACE'leri Windows tarafından yeniden hesaplanır); sahip başkasıysa sahipliği de alır.
  *
- * Çıktı tek satır JSON: `{ sid, sddl, olustu, duzeltildi }` (`izinCiktisiCoz`).
+ * Çıktı tek satır JSON: `{ sid, takma, sddl, olustu, duzeltildi }` (`izinCiktisiCoz`). `takma`:
+ * Windows'un bu kullanıcının SID'ini SDDL'de nasıl yazdığı (çoğu hesapta SID'in kendisi; yerleşik
+ * Administrator'da `LA`).
  */
 export function izinBetigi(yol: string, kip: "oku" | "hazirla" | "duzelt"): string {
   const b64 = Buffer.from(yol, "utf16le").toString("base64");
@@ -230,6 +238,9 @@ export function izinBetigi(yol: string, kip: "oku" | "hazirla" | "duzelt"): stri
     `$p=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('${b64}'))`,
     `$kip='${kip}'`,
     "$sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value",
+    // Windows'un SDDL'de bu kullanıcı için yazdığı biçim: tam SID ya da makineye bağlı takma ad (`LA`...).
+    // Kökün SDDL'ini üreten aynı çevirici, aynı makinede: `sddlTakmaAc` bununla takma adı geri açar.
+    "$takma=(New-Object Security.AccessControl.RawSecurityDescriptor('O:'+$sid)).GetSddlForm('Owner').Substring(2)",
     "$hedef='O:'+$sid+'D:PAI(A;OICI;FA;;;'+$sid+')(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)'",
     "$olustu=$false; $duzeltildi=$false",
     "if (-not [IO.Directory]::Exists($p)) {",
@@ -249,26 +260,59 @@ export function izinBetigi(yol: string, kip: "oku" | "hazirla" | "duzelt"): stri
     "}",
     // Cmdlet değil .NET: modül yüklemesine bağlı kalmaz (bkz. `windowsPowerShellOrtami`).
     "$sddl=(New-Object IO.DirectoryInfo($p)).GetAccessControl('Owner,Group,Access').GetSecurityDescriptorSddlForm('Owner,Group,Access')",
-    "ConvertTo-Json -Compress @{sid=$sid; sddl=$sddl; olustu=$olustu; duzeltildi=$duzeltildi}",
+    "ConvertTo-Json -Compress @{sid=$sid; takma=$takma; sddl=$sddl; olustu=$olustu; duzeltildi=$duzeltildi}",
   ].join("\n");
 }
 
 export interface IzinCiktisi {
   readonly sid: string;
+  /** Kullanıcının takma adı (betiğin `takma`'sı) tam SID'e açılmış SDDL. */
   readonly sddl: string;
   readonly olustu: boolean;
   readonly duzeltildi: boolean;
 }
 
-/** `izinBetigi` çıktısı; bozuksa `null`. */
+/** SDDL'de SID yerindeki iki harfli takma ad (sahip, grup, ACE'nin hesap alanı). */
+const SID_YERI = /([OG]:)([A-Z]{2})(?=[GDS]:|$)|(\((?:[^;()]*;){5})([A-Z]{2})(?=[;)])/gi;
+
+/**
+ * `sddl`'de SID yerinde duran `takma` takma adını `sid` ile değiştirir; başka hiçbir şeye dokunmaz.
+ * `takma` iki harfli bir takma ad değilse tanım aynen döner. Yalnız Windows'un AYNI makinede bu SID için
+ * ürettiği takma adla çağrılır (`izinBetigi` `takma`): takma ad o makinede tek bir SID'e karşılık gelir,
+ * yani açmak tanımın anlamını değiştirmez; yalnız kuralın kullanıcıyı tanımasını sağlar.
+ */
+export function sddlTakmaAc(sddl: string, takma: string, sid: string): string {
+  const t = takma.trim().toUpperCase();
+  if (!/^[A-Z]{2}$/.test(t)) return sddl;
+  return sddl.replace(SID_YERI, (tum: string, bolum?: string, bolumSid?: string, ace?: string, aceSid?: string) => {
+    if (bolum !== undefined && bolumSid?.toUpperCase() === t) return bolum + sid;
+    if (ace !== undefined && aceSid?.toUpperCase() === t) return ace + sid;
+    return tum;
+  });
+}
+
+/**
+ * `izinBetigi` çıktısı; bozuksa `null`. `takma` varsa ve SID'den farklıysa SDDL'deki o takma ad
+ * kullanıcının SID'ine açılır; `takma` beklenmedik biçimdeyse çıktı bozuk sayılır (kapalı başarısızlık).
+ * `takma` yoksa (eski betik, sahte çıktı) SDDL aynen kalır.
+ */
 export function izinCiktisiCoz(metin: string): IzinCiktisi | null {
   try {
     const satir = metin.replace(/^﻿/, "").trim().split(/\r?\n/).filter((s) => s.trim() !== "").at(-1) ?? "";
     const j: unknown = JSON.parse(satir);
     if (typeof j !== "object" || j === null) return null;
-    const { sid, sddl, olustu, duzeltildi } = j as Record<string, unknown>;
+    const { sid, takma, sddl, olustu, duzeltildi } = j as Record<string, unknown>;
     if (typeof sid !== "string" || typeof sddl !== "string") return null;
-    return { sid, sddl, olustu: olustu === true, duzeltildi: duzeltildi === true };
+    let acik = sddl;
+    if (takma !== undefined) {
+      if (typeof takma !== "string") return null;
+      const t = takma.trim().toUpperCase();
+      if (t !== sid.trim().toUpperCase()) {
+        if (!/^[A-Z]{2}$/.test(t)) return null;
+        acik = sddlTakmaAc(sddl, t, sid);
+      }
+    }
+    return { sid, sddl: acik, olustu: olustu === true, duzeltildi: duzeltildi === true };
   } catch {
     return null;
   }

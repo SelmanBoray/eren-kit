@@ -19,13 +19,39 @@ import {
   korumaliSddl,
   posixKokIzniDegerlendir,
   sddlCoz,
+  sddlTakmaAc,
   SID,
   sorunMetni,
   windowsKokIzniDegerlendir,
   windowsPowerShellOrtami,
 } from "../src/kok-izni.ts";
+import type { KokIzniSonucu } from "../src/kok-izni.ts";
 
 const win = process.platform === "win32";
+
+/** Windows PowerShell 5.1'de betik çalıştırır (servisin ortamıyla: PSModulePath'siz); çıktı (hata ancak çıkış 0 değilse). */
+const psCalistir = (betik: string): { status: number | null; cikti: string } => {
+  const r = spawnSync(
+    "powershell.exe",
+    ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(betik, "utf16le").toString("base64")],
+    { encoding: "utf8", windowsHide: true, timeout: 60_000, env: windowsPowerShellOrtami(process.env) },
+  );
+  const cikti = (r.stdout ?? "").trim();
+  return { status: r.status, cikti: r.status === 0 ? cikti : `${cikti} ${r.stderr ?? ""}`.trim() };
+};
+
+/**
+ * Gerçek denemede güvenli beklenen sonuç. Düşerse ileti sorunların türünü ve kimliğini ve kökün ham
+ * izin çıktısını (`sid`, `takma`, `sddl`; yol yok) taşır: CI'da neden günlükte görünür.
+ */
+const guvenliOlmali = (s: KokIzniSonucu, kok: string): void => {
+  if (!s.guvenli) guvenliOlmaliSddl(s, psCalistir(izinBetigi(kok, "oku")).cikti);
+};
+
+/** `guvenliOlmali`'nın kök yerine hazır ham çıktıyla biçimi. */
+const guvenliOlmaliSddl = (s: KokIzniSonucu, ham: string): void => {
+  if (!s.guvenli) assert.fail(`güvenli bekleniyordu; sorunlar: ${JSON.stringify(s.sorunlar)}; ham izin: ${ham}`);
+};
 
 /**
  * PowerShell 7 oturumunun `PSModulePath`'i (PS7 kuruluysa). Node pwsh 7'den başlatılınca bu değeri
@@ -150,6 +176,153 @@ describe("kok-izni: Windows kuralı", () => {
   });
 });
 
+/**
+ * Ortamlar: kullanıcı SID'inin SDDL'deki yazımı. Windows makineye bağlı bazı SID'leri takma adla yazar:
+ * makine etki alanının RID 500'ü (yerleşik Administrator; GitHub Actions'ın `runneradmin`'i) `LA`, RID
+ * 501'i (Guest) `LG`. Başka etki alanının RID 500'ü (alan yöneticisi) tam SID kalır. Değerlendirme
+ * servis ve kurulumla aynı yoldan: betik çıktısı → `izinCiktisiCoz` → `windowsKokIzniDegerlendir`.
+ */
+describe("kok-izni: ortamlar (betik çıktısından karar)", () => {
+  const MAKINE = "S-1-5-21-1111111111-2222222222-3333333333";
+  const ALAN = "S-1-5-21-4444444444-5555555555-6666666666";
+  const YERLESIK_ADMIN = `${MAKINE}-500`;
+  const MISAFIR = `${MAKINE}-501`;
+  const ALAN_KULLANICISI = `${ALAN}-1105`;
+  const ALAN_YONETICISI = `${ALAN}-500`;
+  const MS_HESABI = `${MAKINE}-1001`; // Microsoft hesabıyla oturum: yerel SID, takma adsız.
+  const karar = (o: { sid: string; takma?: unknown; sddl: string }): KokIzniSonucu => {
+    const c = izinCiktisiCoz(JSON.stringify({ ...o, olustu: false, duzeltildi: false }));
+    return c === null ? { guvenli: false, sorunlar: [{ tur: "cozulemedi" }] } : windowsKokIzniDegerlendir(c.sddl, c.sid);
+  };
+  /** Windows'un `korumaliSddl` ile oluşturulan kökü geri okuyunca yazdığı biçim (`takma` yerinde). */
+  const korumaliOkunan = (takma: string, grup: string) =>
+    `O:${takma}G:${grup}D:PAI(A;OICI;FA;;;${takma})(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)`;
+
+  it("yerleşik Administrator (CI'ın runneradmin'i): kendi oluşturduğu korumalı kök güvenli", () => {
+    const sddl = korumaliOkunan("LA", `${MAKINE}-513`);
+    // Eski davranış (takma adı bilmeyen kural) CI'daki iki sorunu tam üretir:
+    assert.deepEqual(windowsKokIzniDegerlendir(sddl, YERLESIK_ADMIN), {
+      guvenli: false,
+      sorunlar: [
+        { tur: "sahip", kimlik: "LA" },
+        { tur: "erisim", kimlik: "LA", kalitimla: false },
+      ],
+    });
+    assert.deepEqual(karar({ sid: YERLESIK_ADMIN, takma: "LA", sddl }), { guvenli: true });
+    assert.deepEqual(karar({ sid: YERLESIK_ADMIN, takma: "la", sddl: korumaliOkunan("LA", "LA") }), { guvenli: true });
+    // Profil altındaki kalıtılmış olağan tanım da.
+    assert.deepEqual(
+      karar({ sid: YERLESIK_ADMIN, takma: "LA", sddl: "O:LAG:LAD:AI(A;OICIID;FA;;;SY)(A;OICIID;FA;;;BA)(A;OICIID;FA;;;LA)" }),
+      { guvenli: true },
+    );
+  });
+
+  it("Guest (LG), sıradan kullanıcı, Microsoft hesabı, alan hesabı, alan yöneticisi: korumalı kök güvenli", () => {
+    assert.deepEqual(karar({ sid: MISAFIR, takma: "LG", sddl: korumaliOkunan("LG", `${MAKINE}-513`) }), { guvenli: true });
+    for (const sid of [BEN, MS_HESABI, ALAN_KULLANICISI, ALAN_YONETICISI]) {
+      assert.deepEqual(karar({ sid, takma: sid, sddl: korumaliOkunan(sid, `${MAKINE}-513`) }), { guvenli: true }, sid);
+      assert.deepEqual(karar({ sid, sddl: korumaliOkunan(sid, `${MAKINE}-513`) }), { guvenli: true }, `${sid} takma yok`);
+    }
+  });
+
+  it("yükseltilmiş yönetici kabuğu: Administrators'ın sahibi olduğu kalıtılmış kök güvenli", () => {
+    for (const [sid, takma] of [[BEN, BEN], [ALAN_KULLANICISI, ALAN_KULLANICISI], [YERLESIK_ADMIN, "LA"]] as const) {
+      const sddl = `O:BAG:SYD:AI(A;OICIID;FA;;;SY)(A;OICIID;FA;;;BA)(A;OICIID;FA;;;${takma})`;
+      assert.deepEqual(karar({ sid, takma, sddl }), { guvenli: true }, sid);
+    }
+  });
+
+  it("yerleşik Administrator: başka hesaba ya da gruba açık kök yine güvensiz", () => {
+    const s = karar({
+      sid: YERLESIK_ADMIN,
+      takma: "LA",
+      sddl: "O:LAD:AI(A;OICIID;FA;;;LA)(A;OICIID;0x1200a9;;;BU)(A;OICIID;0x1301bf;;;AU)(A;;FR;;;LG)",
+    });
+    assert.deepEqual(s, {
+      guvenli: false,
+      sorunlar: [
+        { tur: "erisim", kimlik: "S-1-5-32-545", kalitimla: true },
+        { tur: "erisim", kimlik: "S-1-5-11", kalitimla: true },
+        { tur: "erisim", kimlik: "LG", kalitimla: false },
+      ],
+    });
+    const sahip = karar({ sid: YERLESIK_ADMIN, takma: "LA", sddl: `O:${BASKA}D:PAI(A;OICI;FA;;;LA)` });
+    assert.deepEqual(sahip, { guvenli: false, sorunlar: [{ tur: "sahip", kimlik: BASKA }] });
+  });
+
+  it("takma ad RID'den tahmin edilmez: başka hesabın LA'sı (yerel Administrator) güvensiz", () => {
+    // Alan yöneticisi (alan RID 500) için Windows SID'i tam yazar; kökteki LA makinenin yerel
+    // Administrator'ıdır, kullanıcı değil.
+    for (const sid of [ALAN_YONETICISI, BEN, MS_HESABI]) {
+      const s = karar({ sid, takma: sid, sddl: `O:${sid}D:PAI(A;OICI;FA;;;${sid})(A;OICI;FA;;;LA)` });
+      assert.deepEqual(s, { guvenli: false, sorunlar: [{ tur: "erisim", kimlik: "LA", kalitimla: false }] }, sid);
+      const o = karar({ sid, takma: sid, sddl: `O:LAD:PAI(A;OICI;FA;;;${sid})` });
+      assert.deepEqual(o, { guvenli: false, sorunlar: [{ tur: "sahip", kimlik: "LA" }] }, sid);
+    }
+    // Yerleşik Administrator için LG (Guest) kullanıcı değildir.
+    assert.equal(karar({ sid: YERLESIK_ADMIN, takma: "LA", sddl: "O:LGD:PAI(A;OICI;FA;;;LA)" }).guvenli, false);
+  });
+
+  it("beklenmedik takma (tür, biçim, başka SID) çözülemedi sayılır", () => {
+    const sddl = korumaliOkunan("LA", "LA");
+    for (const takma of [null, 5, "", "L;", "LAX", "S-1-5-32-544", SID.SYSTEM]) {
+      assert.deepEqual(karar({ sid: YERLESIK_ADMIN, takma, sddl }), { guvenli: false, sorunlar: [{ tur: "cozulemedi" }] }, String(takma));
+    }
+  });
+
+  it("sddlTakmaAc yalnız SID yerlerini açar (sahip, grup, ACE hesabı); koşul ve haklar aynen", () => {
+    const X = YERLESIK_ADMIN;
+    assert.equal(
+      sddlTakmaAc("O:LAG:LAD:PAI(A;OICI;FA;;;LA)(A;;FA;;;S-1-5-21-1-2-3-500)(XA;;FA;;;WD;(Member_of {SID(LA)}))(A;;FA;;;LAX)", "LA", X),
+      `O:${X}G:${X}D:PAI(A;OICI;FA;;;${X})(A;;FA;;;S-1-5-21-1-2-3-500)(XA;;FA;;;WD;(Member_of {SID(LA)}))(A;;FA;;;LAX)`,
+    );
+    assert.equal(sddlTakmaAc(`O:${BEN}G:LAD:(A;;FA;;;BA)`, "LA", X), `O:${BEN}G:${X}D:(A;;FA;;;BA)`);
+    assert.equal(sddlTakmaAc("O:LAD:(A;;FA;;;LA)", BEN, X), "O:LAD:(A;;FA;;;LA)");
+  });
+});
+
+describe("kok-izni: Windows'un gerçek takma ad yazımı", { skip: !win }, () => {
+  it("makine RID 500/501 takma adla yazılır, başka etki alanınınki tam; betiğin takma satırı bunu yakalar", () => {
+    // Betiğin kendi satırları: kullanıcı SID'inin yazımı ve korumalı tanım. Yükseltme gerekmez:
+    // tanım bellekte kurulur, Windows'un SDDL çeviricisi (kökü okuyanla aynı) geri yazar.
+    const satirlar = izinBetigi("C:\\k", "oku").split("\n");
+    const satir = (bas: string) => satirlar.find((s) => s.startsWith(bas)) ?? assert.fail(`betikte ${bas} yok`);
+    const betik = (sidIfadesi: string) =>
+      [
+        "$ErrorActionPreference='Stop'",
+        `$sid=${sidIfadesi}`,
+        satir("$takma="),
+        satir("$hedef="),
+        "$sddl=(New-Object Security.AccessControl.RawSecurityDescriptor($hedef)).GetSddlForm('All')",
+        "ConvertTo-Json -Compress @{sid=$sid; takma=$takma; sddl=$sddl}",
+      ].join("\n");
+    const takmaSid = (t: string) => `(New-Object Security.AccessControl.RawSecurityDescriptor('O:${t}')).Owner.Value`;
+    for (const [ifade, beklenenTakma] of [
+      [takmaSid("LA"), "LA"],
+      [takmaSid("LG"), "LG"],
+      ["'S-1-5-21-1-2-3-500'", null],
+    ] as const) {
+      const r = psCalistir(betik(ifade));
+      assert.equal(r.status, 0, r.cikti);
+      const ham = JSON.parse(r.cikti.split(/\r?\n/).at(-1)!) as { sid: string; takma: string; sddl: string };
+      assert.equal(ham.takma, beklenenTakma ?? ham.sid, r.cikti);
+      const c = izinCiktisiCoz(r.cikti);
+      assert.ok(c, r.cikti);
+      guvenliOlmaliSddl(windowsKokIzniDegerlendir(c.sddl, c.sid), r.cikti);
+      if (beklenenTakma !== null) {
+        // Takma adı açmayan eski yol CI'daki iki sorunu üretir.
+        assert.deepEqual(windowsKokIzniDegerlendir(ham.sddl, ham.sid), {
+          guvenli: false,
+          sorunlar: [
+            { tur: "sahip", kimlik: beklenenTakma },
+            { tur: "erisim", kimlik: beklenenTakma, kalitimla: false },
+          ],
+        });
+      }
+    }
+  });
+});
+
 describe("kok-izni: POSIX kuralı", () => {
   it("0700 ve kullanıcının sahipliği güvenli; grup/başkaları biti ya da başka sahip güvensiz", () => {
     assert.deepEqual(posixKokIzniDegerlendir({ uid: 501, kip: 0o40700, kullaniciUid: 501 }), { guvenli: true });
@@ -235,9 +408,9 @@ describe("veriKokuIzniHazirla (gerçek, geçici klasör)", { skip: !win }, () =>
 
   it("olmayan kök yalnız kullanıcıya açık oluşturulur (kalıtım kesik), sonra yine güvenli okunur", async () => {
     const kok = join(taban, "yeni", "veri");
-    assert.deepEqual(await veriKokuIzniHazirla(kok), { guvenli: true });
+    guvenliOlmali(await veriKokuIzniHazirla(kok), kok);
     assert.ok(existsSync(kok));
-    assert.deepEqual(await veriKokuIzniHazirla(kok), { guvenli: true });
+    guvenliOlmali(await veriKokuIzniHazirla(kok), kok);
     // Alt dosya kökten kalıtır: yalnız üç kimlik.
     writeFileSync(join(kok, "sir.txt"), "x");
     const r = spawnSync("icacls", [join(kok, "sir.txt")], { encoding: "utf8", windowsHide: true });
@@ -266,7 +439,7 @@ describe("veriKokuIzniHazirla (gerçek, geçici klasör)", { skip: !win }, () =>
     );
     t.diagnostic(`ham Get-Acl PS7 PSModulePath ile: çıkış ${ham.status}`);
     const yeni = join(taban, "ps7", "veri");
-    assert.deepEqual(await modulYoluyla(yol, () => veriKokuIzniHazirla(yeni)), { guvenli: true });
+    guvenliOlmali(await modulYoluyla(yol, () => veriKokuIzniHazirla(yeni)), yeni);
     const acik = join(taban, "ps7-acik");
     mkdirSync(acik);
     assert.equal(spawnSync("icacls", [acik, "/grant", "*S-1-5-32-545:(OI)(CI)(RX)"], { windowsHide: true }).status, 0);
