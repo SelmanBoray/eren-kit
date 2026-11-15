@@ -325,9 +325,15 @@ class FakeDesktop:
         return found
 
     def list_elements(
-        self, handle: int | None = None, query: str | None = None, limit: int = 80
+        self,
+        handle: int | None = None,
+        query: str | None = None,
+        limit: int = 80,
+        hidden: Any = None,
     ) -> list[Element]:
-        self.element_queries.append({"handle": handle, "query": query, "limit": limit})
+        self.element_queries.append(
+            {"handle": handle, "query": query, "limit": limit, "hidden": hidden}
+        )
         if self.elements_error is not None:
             raise self.elements_error
         needle = (query or "").lower()
@@ -970,6 +976,7 @@ def test_elements_passes_query_and_window(desk: FakeDesktop) -> None:
     [query] = desk.element_queries
     assert query["handle"] == MAIL.handle
     assert query["query"] == "save"
+    assert query["hidden"] is None  # no blocklist: the scan checks nothing extra
 
 
 def test_windows_lists_one_line_per_window_with_flags(desk: FakeDesktop) -> None:
@@ -1206,6 +1213,10 @@ def test_elements_of_other_apps_work_with_a_blocklist(desk: FakeDesktop) -> None
     assert not reply.is_error, reply.text
     assert reply.lines[0].startswith('window: "Untitled - Notepad" (notepad.exe)')
     assert [q["handle"] for q in desk.element_queries] == [NOTEPAD.handle]
+    # The scan itself gets the blocklist too (blocked windows inside the tree, their titles).
+    hidden = desk.element_queries[0]["hidden"]
+    assert callable(hidden)
+    assert hidden("KeePass.exe") and not hidden("notepad.exe")
 
 
 def test_elements_without_foreground_window_is_refused_with_a_blocklist(

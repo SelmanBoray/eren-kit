@@ -351,7 +351,8 @@ class _Session:
         self._check_failsafe(corners)
         window = self._keyboard_target()
         process = window.process
-        safety.check_blocked(process, self.cfg.blocked_processes)
+        for w in _family(window):  # the window and its root owner (a blocked app's dialog)
+            safety.check_blocked(w.process, self.cfg.blocked_processes)
         safety.check_keyboard_target(
             process,
             self.cfg.allow_terminal_input,
@@ -425,6 +426,9 @@ class _Session:
         close = max(abs(actual[0] - point[0]), abs(actual[1] - point[1])) <= _SETTLE_TOLERANCE
         self.last_set = (int(actual[0]), int(actual[1])) if close else point
 
+    def _is_blocked(self, process: str) -> bool:
+        return safety.is_blocked(process, self.cfg.blocked_processes)
+
     def _check_readable(self, handle: int | None, listed: list[uia.WindowInfo]) -> None:
         """Refuse reading a blocked app's elements: its window, root window or root owner.
 
@@ -493,10 +497,15 @@ class _Session:
         # The foreground window is passed by handle, so the listing and the stale-id check below
         # refer to the same window even if the foreground changes meanwhile.
         target = window if window is not None else (info.handle if info else None)
+        hidden = None
         if self.cfg.blocked_processes:
             self._check_readable(target, listed)
+            # Also inside the window: blocked apps' windows in its tree (the desktop window
+            # holds every top-level window) and their titles repeated in its texts (a taskbar
+            # button, an Alt-Tab entry).
+            hidden = self._is_blocked
         # One more than the cap: tells "exactly the cap" apart from "more than the cap".
-        result = uia.list_elements(target, query or None, limit + 1)
+        result = uia.list_elements(target, query or None, limit + 1, hidden=hidden)
         found = list(result)[:limit]
         more = len(result) > limit
         incomplete = getattr(result, "incomplete", "")

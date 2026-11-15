@@ -28,6 +28,7 @@ import threading
 import time
 import types
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -122,6 +123,14 @@ _CHROMIUM_WAKE_S = 0.35  # Chromium builds its web tree lazily after the first U
 # timed out (a busy app) no more are tried.
 _LABEL_TIMEOUT_MS = 100
 _LABEL_BUDGET_S = 0.25
+
+# Element listings while apps are blocked (list_elements(hidden=...)): the name shown instead of
+# a text that carries a blocked app's window title, and the shortest texts that are matched.
+HIDDEN_TEXT = "(text hidden: blocked app)"
+_TITLE_MIN = 3  # shorter window titles are not matched: they would hide unrelated text
+_TRUNCATED_MIN = 8  # a cut-off text ("…") must keep at least this much of a title to match it
+_APP_FRAME_HOST = "applicationframehost.exe"
+_CORE_WINDOW_CLASS = "Windows.UI.Core.CoreWindow"
 
 # UIA control type ids 50000.. → role names (control type name without "Control", lowercase).
 _ROLE_NAMES: dict[int, str] = {
@@ -335,6 +344,7 @@ class _Win32:
         self.IsIconic = fn(u, "IsIconic", w.BOOL, H)
         self.GetForegroundWindow = fn(u, "GetForegroundWindow", H)
         self.GetShellWindow = fn(u, "GetShellWindow", H)
+        self.GetDesktopWindow = fn(u, "GetDesktopWindow", H)
         self.SetForegroundWindow = fn(u, "SetForegroundWindow", w.BOOL, H)
         # Only calls that never wait for the target window's thread are used on windows of other
         # processes: a hung app would otherwise block the server (ShowWindow, BringWindowToTop
@@ -613,9 +623,9 @@ def _win() -> _Win32:
 def _window_info(api: _Win32, hwnd: int, fg: int) -> WindowInfo:
     pid, _ = api.pid_tid(hwnd)
     process = api.process_name(pid)
-    if process == "applicationframehost.exe":
+    if process == _APP_FRAME_HOST:
         # UWP apps: the frame belongs to ApplicationFrameHost; the app is in a child CoreWindow.
-        core = api.FindWindowExW(hwnd, None, "Windows.UI.Core.CoreWindow", None) or 0
+        core = api.FindWindowExW(hwnd, None, _CORE_WINDOW_CLASS, None) or 0
         if core:
             core_pid, _ = api.pid_tid(core)
             if core_pid and core_pid != pid:
@@ -683,9 +693,13 @@ def list_windows() -> list[WindowInfo]:
 
 
 def foreground_window() -> WindowInfo | None:
+    """The foreground window; like list_windows, an owned window carries its root owner in
+    ``related`` (a dialog of another process owned by a blocked app counts as that app)."""
     api = _win()
     fg = api.foreground()
-    return _window_info(api, fg, fg) if fg else None
+    if not fg:
+        return None
+    return _with_related(api, _window_info(api, fg, fg), [_root_owner(api, fg)], fg)
 
 
 def window_at(x: int, y: int) -> WindowInfo | None:
@@ -1157,8 +1171,126 @@ def _make_candidate(
     return _Candidate(role, name, rect, bool(el.CachedIsEnabled), value)
 
 
-def _walk(ctx: _Context, api: _Win32, hwnd: int, state: _WalkState, out: list[_Candidate]) -> None:
-    """Breadth-first walk of one window's control view, collecting listable elements."""
+def _match_text(text: Any) -> str:
+    """Text as the title match compares it: invisible marks dropped, spaces collapsed, casefold."""
+    if not isinstance(text, str):
+        return ""
+    return " ".join(text.translate(_INVISIBLE).split()).casefold()
+
+
+class _Hider:
+    """What one element listing leaves out while the user has blocked apps.
+
+    ``hidden(process)``: whether a process (lowercase exe name) is blocked. A window is hidden
+    when it, its root window or its root owner belongs to a blocked process (for a UWP frame,
+    also the app inside it): its subtree is not read at all. A text is hidden when it contains
+    the title of a visible window that is hidden, the way a taskbar button, an Alt-Tab or Task
+    View entry or a Task Manager row repeats it. Only exact titles are matched (and a cut-off
+    text whose remaining part is in a title); a shortened or reworded title is not caught.
+    Every answer is cached for the one listing.
+    """
+
+    def __init__(self, api: _Win32, hidden: Callable[[str], bool]) -> None:
+        self.api = api
+        self.hidden = hidden
+        self._names: dict[int, str] = {}
+        self._own: dict[int, bool] = {}
+        self._windows: dict[int, bool] = {}
+        self._titles: list[str] | None = None
+
+    def _process(self, hwnd: int) -> str:
+        pid = self.api.pid_tid(hwnd)[0]
+        name = self._names.get(pid)
+        if name is None:
+            name = self.api.process_name(pid) if pid > 0 else ""
+            self._names[pid] = name
+        return name
+
+    def _own_hidden(self, hwnd: int) -> bool:
+        """The window's own process is blocked (for a UWP frame: or the app inside it)."""
+        known = self._own.get(hwnd)
+        if known is None:
+            name = self._process(hwnd)
+            known = bool(self.hidden(name))
+            if not known and name == _APP_FRAME_HOST:
+                core = int(self.api.FindWindowExW(hwnd, None, _CORE_WINDOW_CLASS, None) or 0)
+                known = bool(core) and bool(self.hidden(self._process(core)))
+            self._own[hwnd] = known
+        return known
+
+    def window(self, hwnd: int) -> bool:
+        """Whether the window belongs to a blocked app (itself, its root or its root owner)."""
+        known = self._windows.get(hwnd)
+        if known is None:
+            api = self.api
+            try:
+                family = (hwnd, int(api.GetAncestor(hwnd, _GA_ROOT) or 0), _root_owner(api, hwnd))
+                known = any(h and self._own_hidden(h) for h in family)
+            except Exception:  # fail closed: a window that cannot be checked is not read
+                log.debug("blocklist check of window %s failed", hwnd, exc_info=True)
+                known = True
+            self._windows[hwnd] = known
+        return known
+
+    def titles(self) -> list[str]:
+        """Titles (match form) of the visible top-level windows that are hidden."""
+        if self._titles is None:
+            api = self.api
+            found: set[str] = set()
+            for h in api.enum_windows():
+                try:
+                    if not api.IsWindowVisible(h):
+                        continue
+                    title = _match_text(api.title(h))
+                    if len(title) >= _TITLE_MIN and self.window(h):
+                        found.add(title)
+                except Exception:  # a window that closed meanwhile
+                    log.debug("title check of window %s failed", h, exc_info=True)
+            self._titles = sorted(found, key=len, reverse=True)
+        return self._titles
+
+    def text(self, text: Any) -> bool:
+        """Whether a name or value carries the title of a hidden window."""
+        t = _match_text(text)
+        if not t:
+            return False
+        titles = self.titles()
+        if any(title in t for title in titles):
+            return True
+        if t.endswith(("…", "...")):  # cut off (by the app, or by _clean): match what is left
+            head = t.rstrip(".…").rstrip()
+            return len(head) >= _TRUNCATED_MIN and any(head in title for title in titles)
+        return False
+
+
+def _redact(found: list[_Candidate], hider: _Hider) -> None:
+    """Replace every text that carries a hidden window's title (before any query filter, so a
+    query cannot be used to guess the hidden text)."""
+    for cand in found:
+        if (
+            hider.text(cand.name)
+            or hider.text(cand.value)
+            or any(hider.text(cell) for cell in cand.cells)
+        ):
+            cand.name = HIDDEN_TEXT
+            cand.value = None
+            cand.cells = []
+
+
+def _walk(
+    ctx: _Context,
+    api: _Win32,
+    hwnd: int,
+    state: _WalkState,
+    out: list[_Candidate],
+    hider: _Hider | None = None,
+) -> None:
+    """Breadth-first walk of one window's control view, collecting listable elements.
+
+    ``hider``: elements that are (or are inside) a blocked app's window are skipped with their
+    whole subtree, e.g. another app's top-level windows or a window of another process embedded
+    in this one.
+    """
     win_clip = _intersect(api.frame_rect(hwnd), api.virtual_screen())
     if not _nonempty(win_clip):
         return
@@ -1211,6 +1343,10 @@ def _walk(ctx: _Context, api: _Win32, hwnd: int, state: _WalkState, out: list[_C
                 return
             try:
                 el = children.GetElement(i)
+                if hider is not None:
+                    native = _cached(el, _P_NATIVE_HWND)
+                    if isinstance(native, int) and native and hider.window(native):
+                        continue  # a blocked app's window: neither listed nor descended into
                 role = _ROLE_NAMES.get(el.CachedControlType, "custom")
                 if role in _ROLES_SKIP:
                     continue
@@ -1296,17 +1432,33 @@ def _resolve_target(api: _Win32, handle: int | None) -> int:
 
 
 def list_elements(
-    handle: int | None = None, query: str | None = None, limit: int = 80
+    handle: int | None = None,
+    query: str | None = None,
+    limit: int = 80,
+    hidden: Callable[[str], bool] | None = None,
 ) -> ElementList:
     """On-screen elements of a window worth acting on or reading, top-to-bottom, ids 1..n.
 
     The result says whether the scan was cut short (``incomplete``) and how many elements
     matched before ``limit`` (``total``).
+
+    ``hidden(process)``: the user's blocklist (None: no app is blocked, nothing is checked).
+    With it, windows of blocked apps inside the scanned tree are skipped, texts that carry the
+    title of a blocked app's window read HIDDEN_TEXT, and the desktop window (whose tree holds
+    every app's windows) is refused. The caller still checks the target window itself.
     """
     if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
         raise ValueError(f"limit must be a positive integer, got {limit!r}.")
     api = _win()
     hwnd = _resolve_target(api, handle)
+    hider: _Hider | None = None
+    if hidden is not None:
+        if hwnd == int(api.GetDesktopWindow() or 0):
+            raise RuntimeError(
+                "The desktop window holds the windows of every app, so its elements are not "
+                "listed while apps are blocked. Pass the handle of one window from windows."
+            )
+        hider = _Hider(api, hidden)
     root = api.GetAncestor(hwnd, _GA_ROOT) or hwnd
     if api.IsIconic(root):
         raise RuntimeError("The window is minimized; call focus with its handle first.")
@@ -1317,10 +1469,12 @@ def list_elements(
     found: list[_Candidate] = []
     try:
         roots = (_popups(api, hwnd, api.foreground()) if root == hwnd else []) + [hwnd]
+        if hider is not None:
+            roots = [r for r in roots if not hider.window(r)]
         for target in roots:
             if state.stopped:
                 break
-            _walk(ctx, api, target, state, found)
+            _walk(ctx, api, target, state, found, hider)
         if (
             state.doc_children == 0
             and not state.stopped
@@ -1338,9 +1492,11 @@ def list_elements(
             for target in roots:
                 if state.stopped:
                     break
-                _walk(ctx, api, target, state, found)
+                _walk(ctx, api, target, state, found, hider)
     finally:
         ctx.set_timeout(_CALL_TIMEOUT_MS)
+    if hider is not None and found:
+        _redact(found, hider)
     unique: dict[tuple[str, str, Rect], _Candidate] = {}
     for cand in found:
         unique.setdefault((cand.role, cand.name, cand.rect), cand)

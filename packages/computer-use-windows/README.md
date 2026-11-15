@@ -248,7 +248,7 @@ one first, or to use element ids.
 |---|---|---|
 | `screenshot` | `monitor?` | Captures a monitor, downscaled to the size cap. Returns the image plus one line: monitor, size, scale, token estimate, foreground window. |
 | `zoom` | `x0, y0, x1, y1` | Captures a region of the last screenshot fresh at native resolution, for small text. Coordinates stay in screenshot space. |
-| `elements` | `query?, window?` | Lists the UI Automation elements of the foreground or a given window as text: id, role, name, value, center. Never shows password values. Says when the scan was cut short and the list is incomplete. Refused for a blocked app. |
+| `elements` | `query?, window?` | Lists the UI Automation elements of the foreground or a given window as text: id, role, name, value, center. Never shows password values. Says when the scan was cut short and the list is incomplete. Refused for a blocked app; with a blocklist, other windows' lists leave out its windows and its window titles too (see Blocklist below). |
 | `windows` | none | Lists visible top-level windows: handle, process, title, `[foreground]`/`[minimized]`. A blocked app's titles are hidden. |
 | `focus` | `window` | Restores a window by handle if minimized and brings it to the front. A window that is not responding is refused. |
 | `click` | `x, y` or `element`; `button, clicks, modifiers?` | Left, right or middle click, 1–3 clicks, optionally holding `ctrl`/`alt`/`shift`/`win`. Right and middle clicks on a terminal or on the agent's own window are refused (they paste). |
@@ -311,7 +311,7 @@ Invalid values are rejected with an error that names the flag or variable.
 | `--jpeg-quality N` | `CUW_JPEG_QUALITY` | `80` | JPEG quality, 1–95 |
 | `--monitor N` | `CUW_MONITOR` | primary | Default monitor for `screenshot` (1-based) |
 | `--max-elements N` | `CUW_MAX_ELEMENTS` | `80` | Maximum lines returned by `elements`, 1–500 |
-| `--block NAME` | `CUW_BLOCK` | none | Processes the agent must not operate: input, `focus` and `elements` are refused for their windows, and `windows` and result lines hide their window titles. Screenshots still show them. The flag can repeat and also accepts commas (`--block keepass.exe,1password`); the variable takes a comma-separated list. Matching ignores case, and `.exe` is optional. |
+| `--block NAME` | `CUW_BLOCK` | none | Processes the agent must not operate: input, `focus` and `elements` are refused for their windows, `elements` of other windows leaves out their windows and hides texts that repeat their window titles, and `windows` and result lines hide their window titles. Screenshots still show them. The flag can repeat and also accepts commas (`--block keepass.exe,1password`); the variable takes a comma-separated list. Matching ignores case, and `.exe` is optional. |
 | `--no-failsafe` | `CUW_FAILSAFE` | on | Turns off the screen-corner failsafe. `0`/`false`/`no`/`off` disables it. |
 | `--allow-terminal-input` | `CUW_ALLOW_TERMINAL_INPUT` | off | Allows `type_text`/`key` while a terminal is in front, and right/middle clicks and drags onto a terminal or the agent's own window. `1`/`true`/`yes`/`on` enables it. |
 | `--version` | | | Prints the version and exits |
@@ -339,11 +339,19 @@ Invalid values are rejected with an error that names the flag or variable.
 - **Blocklist.** `--block keepass.exe` keeps the agent from operating that app. Input to it is
   refused: for pointer actions the server checks the window under the target point, for
   `type_text`/`key` the foreground window. `focus` and `elements` are refused for its windows
-  (`elements` with a blocklist also needs a foreground window or a handle). `windows` and the
-  result lines show `(title hidden: blocked app)` instead of its window titles. Each check covers
-  the window's root and root-owner window; pointer checks also cover an embedded child window of
-  another process. The agent is told to ask you to do that step yourself. Screenshots are not
-  filtered (see below), and the list is empty until you set it.
+  (`elements` with a blocklist also needs a foreground window or a handle, and refuses the desktop
+  window, whose tree holds the windows of every app). `elements` of any other window leaves out the
+  blocked app's windows inside it (for example one embedded in another app) and shows
+  `(text hidden: blocked app)` for every element whose name or value contains the title of a
+  visible window of the blocked app, the way a taskbar button, an Alt-Tab or Task View entry or a
+  Task Manager row repeats it. That is a text match: a title that another app shortens or rewords
+  is not caught, and other apps can still show the blocked app's content in their own words.
+  `windows` and the result lines show `(title hidden: blocked app)` instead of its window titles.
+  Each check covers the window's root and root-owner window; pointer checks also cover an embedded
+  child window of another process. Clicking the blocked app's taskbar button is not refused (the
+  click lands on the taskbar), but input to the window it brings forward is. The agent is told to
+  ask you to do that step yourself. Screenshots are not filtered (see below), and the list is empty
+  until you set it.
 - **Failsafe.** Move your mouse into any corner of any monitor. Every action is then refused, and the
   agent is told to stop and ask you. Actions work again once you move the mouse away. The agent can't
   move the mouse out of the corner itself, because `move` is refused too. A corner the agent moved
@@ -356,7 +364,8 @@ Invalid values are rejected with an error that names the flag or variable.
   watch what it does.
 - Anything on screen becomes model input, including text written to manipulate the agent (prompt
   injection). Close or minimize sensitive windows. The blocklist stops input and element reading,
-  but blocked windows still show up in `screenshot` and `zoom` images.
+  but blocked windows still show up in `screenshot` and `zoom` images, and a shortened or reworded
+  title of theirs in another app can still show up in `elements`.
 - **It can run programs outside Claude Code's permission rules.** What you can start with the
   keyboard and mouse, the agent can start too: Win+R, the Start menu search, Task Manager's "Run new
   task" or the address bar of any file dialog can launch `cmd`, PowerShell or any other program.

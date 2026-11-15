@@ -1756,3 +1756,190 @@ def test_click_desktop_icon_under_listed_file_explorer_is_stale(desk: FakeDeskto
     assert "elements" in reply.text.lower(), reply.text
     assert mentions(reply.text, STALE_ROOTS), reply.text
     assert desk.events == []
+
+
+# ============================================================================================
+# h. with a blocklist, an element scan of ANY window shows nothing of a blocked app
+# ============================================================================================
+
+DESKTOP_HANDLE = 65552  # FakeWin32.GetDesktopWindow()
+SECRET_TEXTS = ("master password", "unlock", "passwords.kdbx", "vault")
+EMBEDDED_RECT = (500, 500, 900, 600)  # inside Notepad
+TASKBAR = Win(1020, "", "explorer.exe", 4030, (0, 1040, 1920, 1080), "Shell_TrayWnd")
+LONG_KEEPASS_TITLE = "Passwords.kdbx - " + "Vault " * 15 + "- KeePass"  # longer than a name
+
+
+def _keepass_controls(desk: FakeDesktop, rect: tuple[int, int, int, int]) -> list[FakeElement]:
+    left, top, _, _ = rect
+    return [
+        FakeElement(desk, "edit", "Master password", (left + 20, top + 20, left + 300, top + 45)),
+        FakeElement(desk, "button", "Unlock", (left + 320, top + 20, left + 390, top + 45)),
+    ]
+
+
+def _desktop_tree(desk: FakeDesktop) -> int:
+    """The desktop window (GetDesktopWindow, a csrss.exe window): in UI Automation its children
+    are all top-level windows, KeePass included. Not in the z-order: EnumWindows skips it."""
+    desk.wins[DESKTOP_HANDLE] = Win(
+        DESKTOP_HANDLE, "", "csrss.exe", 600, (0, 0, 1920, 1080), "#32769"
+    )
+    notepad_win, keepass_win = desk.wins[NOTEPAD.handle], desk.wins[KEEPASS.handle]
+    desk.trees[DESKTOP_HANDLE] = FakeElement(
+        desk, "pane", "Desktop 1", (0, 0, 1920, 1080),
+        [
+            FakeElement(desk, "window", notepad_win.title, notepad_win.rect,
+                        [FakeElement(desk, "button", "Save", SAVE_RECT)],
+                        native_hwnd=NOTEPAD.handle),
+            FakeElement(desk, "window", keepass_win.title, keepass_win.rect,
+                        _keepass_controls(desk, keepass_win.rect), native_hwnd=KEEPASS.handle),
+        ],
+    )  # fmt: skip
+    return DESKTOP_HANDLE
+
+
+def _notepad_with_embedded_keepass(desk: FakeDesktop) -> int:
+    """A KeePass window reparented into Notepad (a child window of another process)."""
+    desk.add(Win(2201, "", KEEPASS.process, KEEPASS.pid, EMBEDDED_RECT, "WindowsForms10.Window",
+                 parent=NOTEPAD.handle))  # fmt: skip
+    win = desk.wins[NOTEPAD.handle]
+    desk.trees[NOTEPAD.handle] = FakeElement(
+        desk, "window", win.title, win.rect,
+        [
+            FakeElement(desk, "button", "Save", SAVE_RECT),
+            FakeElement(desk, "pane", "", EMBEDDED_RECT,
+                        _keepass_controls(desk, EMBEDDED_RECT), native_hwnd=2201),
+        ],
+    )  # fmt: skip
+    return NOTEPAD.handle
+
+
+def _taskbar(desk: FakeDesktop, keepass_title: str = KEEPASS.title) -> int:
+    """The taskbar (an explorer.exe window): its buttons repeat the window titles."""
+    desk.wins[KEEPASS.handle].title = keepass_title
+    desk.add(dataclasses.replace(TASKBAR))
+    desk.trees[TASKBAR.handle] = FakeElement(
+        desk, "pane", "Taskbar", TASKBAR.rect,
+        [
+            FakeElement(desk, "button", f"{NOTEPAD.title} - 1 running window",
+                        (100, 1042, 300, 1078)),
+            FakeElement(desk, "button", f"{keepass_title} - 1 running window",
+                        (310, 1042, 510, 1078)),
+        ],
+    )  # fmt: skip
+    return TASKBAR.handle
+
+
+def _elements(cfg: Config, handle: int, **arguments: Any) -> Reply:
+    def session() -> Reply:
+        with connect(cfg) as client:
+            return client.call("elements", window=handle, **arguments)
+
+    return within(SESSION_GUARD_S, session)
+
+
+def _shows_secret(reply: Reply) -> bool:
+    return mentions(reply.text, SECRET_TEXTS)
+
+
+def test_elements_of_the_desktop_window_shows_nothing_of_a_blocked_app(desk: FakeDesktop) -> None:
+    # The desktop window passes the handle check (csrss.exe is not blocked), but its tree is
+    # every top-level window: the scan must not reach KeePass through it.
+    reply = _elements(BLOCK_KEEPASS, _desktop_tree(desk))
+    assert not _shows_secret(reply), reply.text
+    assert_refused(reply, ("blocked",))
+
+
+def test_scan_skips_blocked_top_level_windows_even_where_the_desktop_is_not_recognized(
+    desk: FakeDesktop, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Second line of defense: even if the desktop check missed (another handle with the same
+    # tree), the scan itself skips the windows of blocked apps and still lists the others.
+    handle = _desktop_tree(desk)
+    monkeypatch.setattr(FakeWin32, "GetDesktopWindow", lambda self: 0, raising=False)
+    found = uia.list_elements(handle, hidden=lambda process: process == "keepass.exe")
+    names = [e.name.lower() for e in found]
+    assert "save" in names
+    assert not mentions(" ".join(names), SECRET_TEXTS), names
+
+
+def test_elements_skip_a_blocked_app_window_embedded_in_another_app(desk: FakeDesktop) -> None:
+    reply = _elements(BLOCK_KEEPASS, _notepad_with_embedded_keepass(desk))
+    assert not reply.is_error, reply.text
+    assert '"Save"' in reply.text
+    assert not _shows_secret(reply), reply.text
+
+
+@pytest.mark.parametrize(
+    "keepass_title", [KEEPASS.title, LONG_KEEPASS_TITLE], ids=["title", "cut-off-title"]
+)
+def test_elements_hide_a_blocked_app_title_repeated_by_the_taskbar(
+    desk: FakeDesktop, keepass_title: str
+) -> None:
+    handle = _taskbar(desk, keepass_title)
+    reply = _elements(BLOCK_KEEPASS, handle)
+    assert not reply.is_error, reply.text
+    assert f'"{NOTEPAD.title} - 1 running window"' in reply.text
+    assert not _shows_secret(reply), reply.text
+    assert reply.text.count(uia.HIDDEN_TEXT) == 1, reply.text
+    # A query cannot be used to guess the hidden title: it matches nothing.
+    probe = _elements(BLOCK_KEEPASS, handle, query="kdbx")
+    assert not probe.is_error, probe.text
+    assert _element_lines(probe) == [], probe.text
+
+
+SCENARIOS = [
+    pytest.param(_desktop_tree, id="desktop-window"),
+    pytest.param(_notepad_with_embedded_keepass, id="embedded-window"),
+    pytest.param(_taskbar, id="taskbar"),
+]
+
+
+@pytest.mark.parametrize("scenario", SCENARIOS)
+def test_without_a_blocklist_the_scan_is_unchanged(
+    desk: FakeDesktop, monkeypatch: pytest.MonkeyPatch, scenario: Callable[[FakeDesktop], int]
+) -> None:
+    def no_hider(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("the blocklist filter ran without a blocklist")
+
+    monkeypatch.setattr(uia, "_Hider", no_hider, raising=False)
+    reply = _elements(Config(), scenario(desk))
+    assert not reply.is_error, reply.text
+    assert _shows_secret(reply), reply.text  # nothing is hidden or refused without a blocklist
+    assert "blocked app" not in reply.text
+
+
+def _keepass_owned_dialog_in_front(desk: FakeDesktop) -> None:
+    """A dialog of another process, owned by KeePass, is the foreground window."""
+    desk.add(Win(2301, "Open Database - Passwords.kdbx", "dialoghost.exe", 4020,
+                 (600, 400, 1000, 600), "#32770", owner=KEEPASS.handle))  # fmt: skip
+    desk.foreground = 2301
+
+
+def test_result_lines_hide_the_title_of_a_foreground_dialog_owned_by_a_blocked_app(
+    desk: FakeDesktop,
+) -> None:
+    _keepass_owned_dialog_in_front(desk)
+    with connect(BLOCK_KEEPASS) as client:
+        reply = client.call("wait", seconds=0.01)
+    assert not reply.is_error, reply.text
+    assert "passwords.kdbx" not in reply.text.lower(), reply.text
+    assert "title hidden: blocked app" in reply.text
+
+
+def test_keyboard_input_to_a_foreground_dialog_owned_by_a_blocked_app_is_refused(
+    desk: FakeDesktop,
+) -> None:
+    _keepass_owned_dialog_in_front(desk)
+    with connect(BLOCK_KEEPASS) as client:
+        reply = client.call("key", keys="enter")
+    assert_refused(reply, BLOCKED_ROOTS)
+    assert desk.events == []
+
+
+def test_without_a_blocklist_a_foreground_owned_dialog_is_unchanged(desk: FakeDesktop) -> None:
+    _keepass_owned_dialog_in_front(desk)
+    with connect() as client:
+        reply = client.call("key", keys="enter")
+    assert_ok(reply)
+    assert '"Open Database - Passwords.kdbx"' in reply.text
+    assert desk.events  # the key reached the (fake) keyboard

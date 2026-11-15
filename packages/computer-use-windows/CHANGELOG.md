@@ -26,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The blocklist now covers reading too: `elements` is refused for a blocked app's windows (and,
   with a blocklist, when there is no foreground window), and `windows` and result lines show
   `(title hidden: blocked app)` instead of its window titles. Screenshots are still not filtered.
+- With a blocklist, `elements` no longer reads a blocked app through another window: the desktop
+  window (whose tree holds every top-level window) is refused, windows of blocked apps inside the
+  listed tree (top-level or embedded) are skipped, and element texts that contain the title of a
+  blocked app's window (taskbar buttons, Alt-Tab, Task Manager) read `(text hidden: blocked app)`,
+  also for `query`. The title match is textual: a shortened or reworded title is not caught.
 
 ### Changed
 

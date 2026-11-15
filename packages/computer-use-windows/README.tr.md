@@ -250,7 +250,7 @@ bir id'dir. Ajan hiç ekran görüntüsü almadan `x,y` verirse, önce bir ekran
 |---|---|---|
 | `screenshot` | `monitor?` | Bir monitörün görüntüsünü alır ve boyut sınırına göre küçültür. Görüntüyle birlikte tek satır döndürür: monitör, boyut, ölçek, tahmini token, ön plandaki pencere. |
 | `zoom` | `x0, y0, x1, y1` | Son ekran görüntüsünün bir bölgesini yerel çözünürlükte yeniden yakalar; küçük yazılar içindir. Koordinatlar ekran görüntüsü uzayında kalır. |
-| `elements` | `query?, window?` | Ön plandaki ya da verilen pencerenin UI Automation öğelerini metin olarak listeler: id, rol, ad, değer, merkez. Parola değerlerini asla göstermez. Tarama yarıda kesildiyse listenin eksik olduğunu bildirir. Engelli uygulamada reddedilir. |
+| `elements` | `query?, window?` | Ön plandaki ya da verilen pencerenin UI Automation öğelerini metin olarak listeler: id, rol, ad, değer, merkez. Parola değerlerini asla göstermez. Tarama yarıda kesildiyse listenin eksik olduğunu bildirir. Engelli uygulamada reddedilir; engelleme listesi varken başka pencerelerin listesi de o uygulamanın pencerelerini ve pencere başlıklarını göstermez (aşağıda Engelleme listesi). |
 | `windows` | yok | Görünür üst düzey pencereleri listeler: handle, süreç, başlık, `[foreground]`/`[minimized]`. Engelli uygulamanın başlıkları gizlenir. |
 | `focus` | `window` | Bir pencere simge durumundaysa handle ile geri yükler ve öne getirir. Yanıt vermeyen pencere reddedilir. |
 | `click` | `x, y` veya `element`; `button, clicks, modifiers?` | Sol, sağ veya orta tıklama, 1–3 tıklama; isteğe bağlı olarak `ctrl`/`alt`/`shift`/`win` basılı tutularak. Terminal ya da ajanın kendi penceresi üzerinde sağ ve orta tık reddedilir (yapıştırma yapar). |
@@ -317,7 +317,7 @@ hatayla reddedilir.
 | `--jpeg-quality N` | `CUW_JPEG_QUALITY` | `80` | JPEG kalitesi, 1–95 |
 | `--monitor N` | `CUW_MONITOR` | primary | `screenshot` için varsayılan monitör (1'den başlar) |
 | `--max-elements N` | `CUW_MAX_ELEMENTS` | `80` | `elements`'in döndürdüğü en fazla satır, 1–500 |
-| `--block NAME` | `CUW_BLOCK` | none | Ajanın kullanmaması gereken süreçler: pencerelerine girdi, `focus` ve `elements` reddedilir; `windows` ve sonuç satırları pencere başlıklarını gizler. Ekran görüntülerinde yine görünürler. Bayrak tekrarlanabilir ve virgülle de kabul eder (`--block keepass.exe,1password`); değişken virgülle ayrılmış bir liste alır. Eşleşmede büyük/küçük harf yok sayılır ve `.exe` isteğe bağlıdır. |
+| `--block NAME` | `CUW_BLOCK` | none | Ajanın kullanmaması gereken süreçler: pencerelerine girdi, `focus` ve `elements` reddedilir; başka pencerelerdeki `elements` onların pencerelerini atlar ve pencere başlıklarını tekrarlayan metinleri gizler; `windows` ve sonuç satırları pencere başlıklarını gizler. Ekran görüntülerinde yine görünürler. Bayrak tekrarlanabilir ve virgülle de kabul eder (`--block keepass.exe,1password`); değişken virgülle ayrılmış bir liste alır. Eşleşmede büyük/küçük harf yok sayılır ve `.exe` isteğe bağlıdır. |
 | `--no-failsafe` | `CUW_FAILSAFE` | on | Ekran köşesi failsafe'ini kapatır. `0`/`false`/`no`/`off` kapatır. |
 | `--allow-terminal-input` | `CUW_ALLOW_TERMINAL_INPUT` | off | Bir terminal önde olduğunda `type_text`/`key` kullanımına izin verir; terminalde sağ/orta tık ve sürüklemeye de izin verir. `1`/`true`/`yes`/`on` etkinleştirir. |
 | `--version` | | | Sürümü yazdırıp çıkar |
@@ -345,11 +345,19 @@ hatayla reddedilir.
 - **Engelleme listesi.** `--block keepass.exe`, ajanın o uygulamayı kullanmasını engeller. Ona
   girdi reddedilir: işaretçi eylemlerinde sunucu hedef noktanın altındaki pencereye,
   `type_text`/`key` için ön plandaki pencereye bakar. Pencerelerinde `focus` ve `elements`
-  reddedilir (engelleme listesi varken `elements` bir ön plan penceresi ya da handle ister).
-  `windows` ve sonuç satırları başlıkları yerine `(title hidden: blocked app)` gösterir. Her denetim
-  pencerenin kök ve kök-sahip penceresine bakar; işaretçi denetimleri başka sürece ait gömülü alt
-  pencereye de bakar. Ajana, bu adımı sizin yapmanızı istemesi söylenir. Ekran görüntüleri
-  süzülmez (aşağıya bakın) ve liste siz ayarlayana dek boştur.
+  reddedilir (engelleme listesi varken `elements` bir ön plan penceresi ya da handle ister ve
+  ağacında her uygulamanın penceresi bulunan masaüstü penceresini reddeder). Başka bir pencerede
+  `elements`, içindeki engelli uygulama pencerelerini (ör. başka bir uygulamaya gömülü olanı) atlar;
+  adı ya da değeri engelli uygulamanın görünür bir penceresinin başlığını içeren her öğe için
+  `(text hidden: blocked app)` gösterir: görev çubuğu düğmesi, Alt-Tab ya da Görev Görünümü girdisi
+  veya Görev Yöneticisi satırı başlığı böyle tekrarlar. Bu bir metin eşleşmesidir: başka bir
+  uygulamanın kısalttığı ya da değiştirdiği başlık yakalanmaz ve başka uygulamalar engelli
+  uygulamanın içeriğini kendi sözleriyle yine gösterebilir. `windows` ve sonuç satırları başlıkları
+  yerine `(title hidden: blocked app)` gösterir. Her denetim pencerenin kök ve kök-sahip
+  penceresine bakar; işaretçi denetimleri başka sürece ait gömülü alt pencereye de bakar. Engelli
+  uygulamanın görev çubuğu düğmesine tıklamak reddedilmez (tık görev çubuğuna düşer), ama öne
+  getirdiği pencereye girdi reddedilir. Ajana, bu adımı sizin yapmanızı istemesi söylenir. Ekran
+  görüntüleri süzülmez (aşağıya bakın) ve liste siz ayarlayana dek boştur.
 - **Failsafe.** Farenizi herhangi bir monitörün herhangi bir köşesine götürün. Bundan sonra her eylem
   reddedilir ve ajana durup size sorması söylenir. Fareyi köşeden uzaklaştırdığınızda eylemler yeniden
   çalışır. Ajan fareyi köşeden kendi başına çıkaramaz, çünkü `move` da reddedilir. Ajanın işaretçiyi
@@ -363,7 +371,8 @@ hatayla reddedilir.
 - Ekrandaki her şey modelin girdisi olur; ajanı yönlendirmek için yazılmış metinler de dahil
   (prompt injection). Hassas pencereleri kapatın veya simge durumuna küçültün. Engelleme listesi
   girdiyi ve öğe okumayı durdurur, ama engelli pencereler `screenshot` ve `zoom` görüntülerinde yine
-  görünür.
+  görünür ve başlıklarının başka bir uygulamadaki kısaltılmış ya da değiştirilmiş hali `elements`'te
+  yine çıkabilir.
 - **Claude Code'un izin kurallarının dışında program çalıştırabilir.** Klavye ve fareyle
   başlatabildiğiniz her şeyi ajan da başlatabilir: Win+R, Başlat menüsü araması, Görev Yöneticisi'nin
   "Yeni görev çalıştır"ı ya da herhangi bir dosya penceresinin adres çubuğu `cmd`'yi, PowerShell'i ya
