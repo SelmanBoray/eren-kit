@@ -26,15 +26,15 @@ Bellek, Claude Code için yerel ve oturumlar arası bir hafıza bileşenidir. Cl
 Hiyerarşik bir "beyin haritası": düğümler (başlık, özet, ayrıntı), ekleme-yalnız olgular, gelen kutusu ve değişiklik geçmişi tek bir SQLite dosyasında (`beyin.db`) durur. Bilgiye kökten aşağı inilerek ya da aramayla ulaşılır. Veritabanını yalnız yerel servis yazar. Mimari ve güvenlik modeli: [DESIGN.md §16](DESIGN.md).
 
 ```powershell
-python -m bellek.beyin servis          # yerel servisi başlat (127.0.0.1)
-python -m bellek.beyin mcp             # stdio MCP köprüsü (Claude Code başlatır)
-python -m bellek.beyin ice-al DOSYA.jsonl
-python -m bellek.beyin disa-aktar --bicim md|jsonl [--ozelsiz]
-python -m bellek.beyin ara "sorgu" | gez [ID] | oku ID
-python -m bellek.beyin ac              # web arayüzünü aç
+python -I -m bellek.beyin servis       # yerel servisi başlat (127.0.0.1)
+python -I -m bellek.beyin mcp          # stdio MCP köprüsü (Claude Code başlatır)
+python -I -m bellek.beyin ice-al DOSYA.jsonl
+python -I -m bellek.beyin disa-aktar --bicim md|jsonl [--ozelsiz]
+python -I -m bellek.beyin ara "sorgu" | gez [ID] | oku ID
+python -I -m bellek.beyin ac           # web arayüzünü aç
 ```
 
-`pip install -e .` sonrası `beyin` komutu da aynı girişe bağlıdır.
+`-I` (yalıtılmış kip) zorunlu değil ama önerilir: onsuz `-m`, komutu çalıştırdığınız klasörü modül arama yolunun başına koyar; o klasörde bir `bellek` paketi varsa bizimkinin yerine o çalışır. `-I` ayrıca `PYTHONPATH` gibi `PYTHON*` değişkenlerini yok sayar (`BELLEK_*` değişkenleri etkilenmez). `pip install -e .` sonrası `beyin` komutu da aynı girişe bağlıdır.
 
 ### MCP araçları
 
@@ -52,12 +52,14 @@ Köprü altı araç sunar (`src/bellek/beyin/mcp_kopru.py` içindeki `ARACLAR` l
 Servis kapalıyken okumalar salt-okunur veritabanından yapılır, `beyin_yaz` kuyruk dosyasına düşer ve servis açılınca işlenir. Claude Code'a kullanıcı kapsamlı kaydı:
 
 ```powershell
-claude mcp add beyin -s user -- "<repo>\packages\bellek\.venv\Scripts\python.exe" -m bellek.beyin mcp
+claude mcp add beyin -s user -- "<repo>\packages\bellek\.venv\Scripts\python.exe" -I -m bellek.beyin mcp
 ```
+
+MCP sunucusu Claude Code'u açtığınız (güvenilmeyebilecek) klasörde başlar; bu yüzden kayıtta `-I` gereklidir. Kökteki kurulum betiği eski, `-I`'sız kaydı yeniden kurulumda yeniler; kurulum doktoru (`.\install.ps1 -Doctor`) böyle bir kaydı güvensiz diye işaretler.
 
 ### Web arayüzü
 
-`beyin ac` (ya da `python -m bellek.beyin ac`) arayüz belirtecini hazırlar, servisin ayakta olduğunu doğrular ve varsayılan tarayıcıda `http://127.0.0.1:<port>/#t=<belirteç>` adresini açar. Arayüz, beyin grafını zaman içinde büyüyen bir ağ olarak gösterir; yazma yetkisi yalnız gelen kutusu kararlarıyla sınırlıdır. Seçenekler: `--port`, `--yazdir` (açmadan adresi yaz), `--taban <adres>` (başka bir cihazdan erişim için adres tabanı). Güvenlik modeli ve ek `Host` izni: [DESIGN.md §16.7](DESIGN.md).
+`beyin ac` (ya da `python -I -m bellek.beyin ac`) arayüz belirtecini hazırlar, servisin ayakta olduğunu doğrular ve varsayılan tarayıcıda `http://127.0.0.1:<port>/#t=<belirteç>` adresini açar. Arayüz, beyin grafını zaman içinde büyüyen bir ağ olarak gösterir; yazma yetkisi yalnız gelen kutusu kararlarıyla sınırlıdır. Seçenekler: `--port`, `--yazdir` (açmadan adresi yaz), `--taban <adres>` (başka bir cihazdan erişim için adres tabanı). Güvenlik modeli ve ek `Host` izni: [DESIGN.md §16.7](DESIGN.md).
 
 ## Devir (oturum devri)
 
@@ -125,11 +127,11 @@ Copy-Item bellek.example.toml bellek.toml    # sonra kendi yollarınla düzenle
 
 Ardından:
 
-1. **Beyin servisini çalışır tutun** (`python -m bellek.beyin servis`). Servis kapalıyken yazmalar kuyrukta bekler, `beyin ac` çalışmaz. Kökteki `install.ps1` bunu `eren-kit-beyin-servis` adlı, oturum açılınca başlayan bir zamanlanmış görevle yapar; `-NoService` ile atlanabilir. Elle kurulumda aynı görev `pythonw` ile şöyle kurulur:
+1. **Beyin servisini çalışır tutun** (`python -I -m bellek.beyin servis`). Servis kapalıyken yazmalar kuyrukta bekler, `beyin ac` çalışmaz. Kökteki `install.ps1` bunu `eren-kit-beyin-servis` adlı, oturum açılınca başlayan bir zamanlanmış görevle yapar; `-NoService` ile atlanabilir. Elle kurulumda aynı görev `pythonw` ile şöyle kurulur:
 
    ```powershell
    $py = "<repo>\packages\bellek\.venv\Scripts\pythonw.exe"
-   $a = New-ScheduledTaskAction -Execute $py -Argument "-m bellek.beyin servis"
+   $a = New-ScheduledTaskAction -Execute $py -Argument "-I -m bellek.beyin servis"
    Register-ScheduledTask -TaskName eren-kit-beyin-servis -Action $a -Trigger (New-ScheduledTaskTrigger -AtLogOn)
    ```
 
@@ -163,3 +165,9 @@ Not/arama hattı (aşamalar M0-M7, bkz. [DESIGN.md §12](DESIGN.md)) şu an M1 (
 ## Gizlilik
 
 Vault ve eval verisi git'e girmez. `private: true` işaretli notlar otomatik olarak bağlama alınmaz. Beyinde `ozel` ve `sir_icerir` gizlilik düzeyleri vardır; sır içeren metin yazılmaz. Ajana eklenen her şey, kullanılan modelin sağlayıcısına gider; buna göre karar verin. Hook'lar fail-open'dır: hata durumunda boş çıktı verir, oturumu bozmaz.
+
+- **Dosya izinleri.** POSIX'te (Linux/macOS) veri klasörü 0700, dosyalar (veritabanı, belirteçler, kuyruk, günlükler, hook durumu, yedekler, dökümler) 0600 ile oluşturulur; eski kurulumdaki gevşek izinler servis açılışında daraltılır. Windows'ta izin değiştirilmez; `%LOCALAPPDATA%` zaten kullanıcıya özeldir.
+- **Otomatik devir notları.** Stop hook'u her oturumda `<vault>/devir/oto/<oturum>.md` dosyasına ilk ve son istemin maskeli ilk 200 karakterini, başlığı, çalışma klasörünü ve düzenlenen dosya yollarını düz metin yazar; notlar 28 gün tutulur. Vault eşlenen ya da paylaşılan bir klasördeyse bu metinler makineden çıkar. Transkriptin tamamı saklanmaz.
+- **Sır süzgeci kalıp tabanlıdır, her sırrı yakalayamaz.** Bilinen örnekler ve kapsam: [DESIGN.md §11](DESIGN.md).
+- **Arayüz belirteci süresizdir.** Döndürmek için servisi durdurup `beyin_arayuz_token` dosyasını silin. PWA kipinde (ana ekrana eklenmiş web uygulaması) belirteç tarayıcıda `localStorage`'da kalıcı tutulur. Linux'ta `beyin ac` belirteçli adresi komut satırı argümanı olarak verdiği için süreç listesinden okunabilir.
+- **Model belleğe sormadan yazabilir (bilinen sınır).** Model kullanıcıya sormadan `beyin_yaz` ve `beyin_duzelt` ile kalıcı yazabilir ve `beyin_gelen` ile kök altında dal açmak dahil önerileri kendisi kabul edebilir. "Yalnız kullanıcı onayıyla" kuralı koda değil, modele verilen talimata dayanır. Güvenilmeyen içerik (web sayfası, dosya, araç çıktısı) istem enjeksiyonuyla belleğe sonraki oturumları etkileyen "kural" yazdırabilir. Her yazım `gecmis` tablosuna oturum kimliğiyle ve eski/yeni değerle kaydedilir; tek komutla geri alma yoktur, düzeltme `beyin_duzelt` (olgu silinmez, eskitilir) ya da yedekten geri yükleme (`geri-yukle`) ile yapılır.

@@ -13,7 +13,7 @@ Bellek: Claude Code için yerel, oturumlar arası hafıza bileşeni (not/arama h
 - Testler: `.venv\Scripts\python -m pytest`
   - `tests/conftest.py` her testi kullanıcı verisinden yalıtır (veri kökü ve `BELLEK_*` yolları geçici klasöre yönlenir); yeni test gerçek vault, beyin.db ya da devir klasörüne giden bir varsayılan yola dayanmamalı.
 - CLI: `.venv\Scripts\bellek doktor`
-- Beyin yedeği: `.venv\Scripts\python -m bellek.beyin yedekle | yedekler | geri-yukle`.
+- Beyin yedeği: `.venv\Scripts\python -I -m bellek.beyin yedekle | yedekler | geri-yukle`.
 - Ayar: `bellek.toml` (veya `BELLEK_CONFIG` ortam değişkeni). Şablon: `bellek.example.toml`. `bellek.toml` kişiye özeldir, git'te yok sayılır.
 - Paket düzenlenebilir kurulumla kullanılır: `pip install -e ".[dev]"`.
   - Varsayılan ayar yolu paket kökündeki `bellek.toml`'a göre bulunur; normal (editable olmayan) kurulum desteklenmez.
@@ -22,7 +22,7 @@ Bellek: Claude Code için yerel, oturumlar arası hafıza bileşeni (not/arama h
   - `.venv\Scripts\python -m eval.queries extract [--stats-only]`
   - Kurallar `eval/PROTOCOL.md`'de; `eval/data/` kişisel veridir, git dışıdır.
   - Gerçek veriyle çıkarma/dondurma yalnız kullanıcının açık talimatıyla yapılır.
-- Beyin MCP: `python -m bellek.beyin mcp`. Devir hook'u: `python -I -S src/bellek/devir/hook.py`. Devir skill'i: `skills/devir/SKILL.md`.
+- Beyin MCP: `python -I -m bellek.beyin mcp`. Devir hook'u: `python -I -S src/bellek/devir/hook.py`. Devir skill'i: `skills/devir/SKILL.md`.
 - Kökteki `install.ps1` kurulumu yapar; bu paketi etkileyen yol/ayar değişikliklerinde kurulum betiği ve kök README ile tutarlılık gözetilir.
 
 ## 3. Kod kuralları

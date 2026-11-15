@@ -40,7 +40,11 @@ defter ozetle --eski 20 --yerel <ollama-model>   # experimental: summarise with 
 ```
 
 `defter yaz` stores each file's content in git's object store, so `defter oku` can show the exact
-diff since then; an unchanged file is not re-read at all. The core rule tells the lead and every
+diff since then; an unchanged file is not re-read at all. Only files git can see are stored: paths
+outside the repo, inside `.git`, and untracked files git ignores (e.g. `.env`) are skipped with a
+warning. Stored contents are pinned under `refs/orkestra/defter`; a plain `git push` never sends it,
+but `git push --mirror`, a `refs/*` refspec and `git clone --mirror` do, along with any uncommitted
+content it holds. The core rule tells the lead and every
 brief to use it, to edit with small replacements instead of rewriting files, and to return
 `git diff --stat` instead of code. Adaptive effort (start low, raise one level on failure) is
 described in the rules as experimental.
