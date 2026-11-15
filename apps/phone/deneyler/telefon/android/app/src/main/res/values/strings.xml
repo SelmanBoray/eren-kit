@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <string name="ad">eren-kit deneme</string>
-    <string name="bildirim_kanali">eren-kit ölçüm</string>
-    <string name="bildirim_basligi">eren-kit deneme çalışıyor</string>
-    <string name="erisim_aciklama">eren-kit ölçüm denemesi. PC\'den gelen test komutlarıyla ekranı okur. Dokunma ve yazma yalnız bu uygulamanın kendi ekranlarında çalışır, başka uygulamada reddedilir.</string>
-</resources>

@@ -23,7 +23,10 @@ Görünen asistan adı derleme anında `EREN_KIT_ASSISTANT_NAME`'den gelir (vars
 
 Tek Android süreci; ön plan servisi Expo ve React bağlamından bağımsız düz `Service`, `BOOT_COMPLETED`
 ile RN olmadan kalkar; Expo modülü yalnız istemcidir. Telefonda yalnız release APK, wake lock varsayılan
-kapalı, minSdk 30. `[karar]`
+kapalı, minSdk 30. `[karar]` Release APK yalnız kullanıcının kendi keystore'uyla imzalanır:
+`plugins/with-release-imza.js` şablonun debug imzasını söker, `EREN_KIT_RELEASE_*` ayarları eksikse ya da
+debug anahtarı verilirse release derlemesini durdurur (kurulum: `../README.md` "Release derlemesi ve imza";
+gerekçe: `docs/GUVENLIK.md` "Denetimde kapatılan bulgular"). `[guvenlik]`
 
 ## Genel kurallar
 
@@ -192,7 +195,8 @@ sonra önce `ErisimAnahtari.ac` çalışır; izin yalnız `ACIK` sonucundan sonr
 ## Doğrulama ayrımı
 
 **Cihazsız (bu CI):** çekirdek JVM testleri, kablo uyumu (vektörler, `cihazYukariCoz`), JS çekirdeği
-sahte WS ile, köprü taraması, `tsc`, `expo prebuild`, `assembleRelease`, birleşik manifest (`aapt`: izin
+sahte WS ile, köprü taraması, `tsc`, `expo prebuild`, `assembleRelease` (`EREN_KIT_RELEASE_*` imza
+ayarlarıyla; ayarsız durur), birleşik manifest (`aapt`: izin
 listesi, SYSTEM_ALERT_WINDOW yok, `allowBackup=false`, `QUERY_ALL_PACKAGES` var, `exported` bayrakları,
 release'te `ws://` için cleartext açık). **Yalnız telefonda:** modülün gerçekten çağrılması, gece
 dayanıklılığı, üretici arayüzünün pencere türleri, gerçek tıklama ve `SET_TEXT`, Keystore + biyometri, açılışta
@@ -834,7 +838,7 @@ dosyaları `Sozlesme.kt`, `Portlar.kt`, `IcSozlesme.kt`, `AdaptorSozlesmesi.kt`,
 
 | Dosya | Sorumluluk |
 |---|---|
-| `ErisimAnahtari.kt` (object) | Uygulamanın erişilebilirlik servisini açıp kapatan tek nesne ve `Settings.Secure`'a yazan TEK yer (değişmez 2). Karar: servis yalnız aktif izin varken açık. Kurulumda bir kez `adb shell pm grant dev.eren.app android.permission.WRITE_SECURE_SETTINGS`. `ac(ctx) { AcmaSonucu }`: `ACIK` / `YETKI_YOK` / `ZAMAN_ASIMI` (4 sn); ana iplikte çağrılır, geri çağrı ana iplikte ve tam bir kez gelir; ayar yazımı kendi sıralı ipliğinde; kapanış sürerken gelen `ac` kopuşu bekler, sonra yeniden açar; `ACIK` verildikten sonra en az 10 sn kapatılmaz (izin `ACIK` ile `izinler.ekle` arasında doğarken servis kapanmasın). `OnayActivity` da artık izni `ACIK`'tan sonra doğurur. `sesKisayoluKur` (0.4.3) kilit ekranı anahtarını (`accessibility_shortcut_on_lock_screen`) yine yazmaz; kısayolun kilitliyken çalışmaması `KisayolErisimServisi` içindedir (bağlanınca `KeyguardManager.isKeyguardLocked` ya da alınamazsa kilitli sayılırsa `KisayolActivity` açılmaz, `disableSelf`). |
+| `ErisimAnahtari.kt` (object) | Uygulamanın erişilebilirlik servisini açıp kapatan tek nesne ve `Settings.Secure`'a yazan TEK yer (değişmez 2). Karar: servis yalnız aktif izin varken açık. Kurulumda bir kez `adb shell pm grant dev.eren.app android.permission.WRITE_SECURE_SETTINGS`. `ac(ctx) { AcmaSonucu }`: `ACIK` / `YETKI_YOK` / `ZAMAN_ASIMI` (4 sn); ana iplikte çağrılır, geri çağrı ana iplikte ve tam bir kez gelir; ayar yazımı kendi sıralı ipliğinde; kapanış sürerken gelen `ac` kopuşu bekler, sonra yeniden açar; `ACIK` verildikten sonra en az 10 sn kapatılmaz (izin `ACIK` ile `izinler.ekle` arasında doğarken servis kapanmasın). `OnayActivity` da artık izni `ACIK`'tan sonra doğurur. `sesKisayoluKur` (0.4.3) kilit ekranı anahtarını (`accessibility_shortcut_on_lock_screen`) yine yazmaz; kısayolun kilitliyken çalışmaması `KisayolErisimServisi` içindedir (bağlanınca `KeyguardManager.isKeyguardLocked` ya da alınamazsa kilitli sayılırsa `KisayolActivity` açılmaz, `disableSelf`). 2026-11-15'ten beri `sesKisayoluKur` önceki kısayol hedeflerini silmez (`cekirdek` `KisayolHedefleri.ekle`, ':' listesine ekler; sonuç `KURULDU_DIGERLERIYLE`) ve `accessibility_shortcut_dialog_shown` yazmaz; `EslestirmeActivity.kaydetVeBitir` kayıttan önce `TamYetki.kapat` çağırır (`docs/GUVENLIK.md` "Kısayol", "Eşleşmeyi kaldırma"). |
 | `ErisimServisi`, `EkranOkuyucu`, `Eylemci` | Artık gerçek. `ErisimServisi` ince bağlantı servisi: bağlanma/kopma `ErisimAnahtari`'na ve çekirdeğe, pencere paket adı `EkranOkuyucu.pencereOlayi`'na gider; aktif izin yokken olay işlenmez. `EkranOkuyucu` `EkranPortu`'nu erişilebilirlik ağacından ve `takeScreenshot`'tan gerçekler (pencere türü sınıflaması, parola metni hiç okunmaz). `Eylemci` `EylemPortu`'nu gerçekler (`Gonderildi` yalnız "sisteme verildi"). |
 | `TamYetki.kt` (object) | `acik(ctx)`, `ac(ctx)`, `kapat(ctx)`; kalıcı, uygulama içi SharedPreferences (`MODE_PRIVATE`), varsayılan kapalı; ilk okumadan sonra bellekten. Değişince `Adaptor.olaylar?.durumDegisti()`. `ac`'ın tek çağıranı `TamYetkiActivity` (değişmez 5). |
 | `TamYetkiActivity.kt` | `exported=false`, FLAG_SECURE, `filterTouchesWhenObscured`, erişilebilirlik tıklaması ve örtülü dokunuş reddi; tam yetkinin ne demek olduğunu Türkçe anlatır; `BIOMETRIC_STRONG or DEVICE_CREDENTIAL`; başarıda `TamYetki.ac`. Sonuç `RESULT_OK` + extra `sonuc`: `"acildi"` ya da `"iptal"`. Köprü `startActivityForResult` ile açar (`OnayActivity` deseni). |

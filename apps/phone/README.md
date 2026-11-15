@@ -1,8 +1,8 @@
 # eren-kit telefon uygulaması (`apps/phone`)
 
-> ⚠️ **Experimental / Deneysel.** Bu uygulama geliştirme aşamasındadır, henüz kullanıma hazır değildir. Arayüzler, protokol ve güvenlik modeli değişebilir. Test sunucusunda kimlik doğrulama yoktur; ağa açık çalıştırma.
+> ⚠️ **Experimental / Deneysel.** Bu uygulama geliştirme aşamasındadır, henüz kullanıma hazır değildir. Arayüzler, protokol ve güvenlik modeli değişebilir. Bilinen riskler ve kalan açıklar: [docs/GUVENLIK.md](docs/GUVENLIK.md).
 
-**English summary.** A phone app for talking to your main Claude session running on a PC. The main session does not do the work itself: for every task it opens a fresh Claude Code session, hands the task over and reports the result back to the phone. It can also drive an Android phone through an accessibility service. This directory holds the shared protocol (`protocol/`), the PC service (`server/`), the Expo / React Native client with its Kotlin `eren-device` module (`app/`), the install tooling (`kurulum/`), architecture/security/measurement notes (`docs/`) and a standalone phone experiment (`deneyler/telefon/`). The assistant's display name is neutral and comes from the `EREN_KIT_ASSISTANT_NAME` environment variable (default "Claude"); the data root and the scheduled task name are configurable too (see "Ortam değişkenleri"). Documentation is in Turkish. See the [root README](../../README.md) for the monorepo.
+**English summary.** A phone app for talking to your main Claude session running on a PC. The main session does not do the work itself: for every task it opens a fresh Claude Code session, hands the task over and reports the result back to the phone. It can also drive an Android phone through an accessibility service. This directory holds the shared protocol (`protocol/`), the PC service (`server/`), the Expo / React Native client with its Kotlin `eren-device` module (`app/`), the install tooling (`kurulum/`) and architecture/security/measurement notes (`docs/`). Release APKs must be signed with your own keystore (see "Release derlemesi ve imza"); the build refuses the Android debug key. The assistant's display name is neutral and comes from the `EREN_KIT_ASSISTANT_NAME` environment variable (default "Claude"); the data root and the scheduled task name are configurable too (see "Ortam değişkenleri"). Documentation is in Turkish. See the [root README](../../README.md) for the monorepo.
 
 ---
 
@@ -19,7 +19,6 @@ Asistan adı `EREN_KIT_ASSISTANT_NAME` ortam değişkeninden gelir (varsayılan 
 - **`app/`** (`eren-app`): Expo / React Native istemci (TypeScript) ve Android tarafı için `app/modules/eren-device` Kotlin modülü. Saf Kotlin çekirdek (izin, denetim, komut işleyici) ayrı bir JVM Gradle projesidir; Android adaptörü ve Expo köprüsü onun üstünde durur. Modül dökümü: [app/TASARIM.md](app/TASARIM.md). Çalışma alanı dışındadır: kendi `package.json` ve `package-lock.json` dosyasıyla ayrı kurulur.
 - **`kurulum/`**: servisin sürümlü dağıtımı (`kur.ts`), zamanlanmış görev kaydı ve yardımcı komutlar. Servis işletimi: [docs/SERVIS.md](docs/SERVIS.md).
 - **MCP köprüleri:** ince stdio köprüleri; adlandırılmış boruyla servise bağlanır, mantık serviste kalır.
-- **`deneyler/telefon/`:** ürün olmayan ölçüm denemesi: yalın Kotlin APK + Node test sunucusu.
 - **`docs/`:** mimari kararlar, güvenlik modeli, servis işletimi, tasarım dili ve ölçümler (aşağıda "Belgeler").
 
 Karar gerekçeleri [docs/MIMARI.md](docs/MIMARI.md) içindedir.
@@ -55,8 +54,23 @@ npx tsc --noEmit -p tsconfig.json
 npx tsc --noEmit -p tsconfig.test.json
 node --test "test/**/*.test.ts"  # JS çekirdeği ve ekran mantığı testleri
 npm start                        # expo start
-npm run android                  # expo run:android (APK derlemesi, Android SDK gerekir)
+npm run android                  # expo run:android: yalnız geliştirme (debug) derlemesi, Android SDK gerekir
 ```
+
+#### Release derlemesi ve imza
+
+Telefona kalıcı kurulacak APK release derlemesidir: `npx expo run:android --variant release` ya da `npx expo prebuild -p android` ardından `cd android && ./gradlew assembleRelease` (Windows'ta `.\gradlew.bat assembleRelease`; çıktı `android/app/build/outputs/apk/release/app-release.apk`). Expo şablonu release'i herkesin bildiği Android debug anahtarıyla imzalar; aynı anahtarla imzalanmış başka bir APK kurulu uygulamanın "güncellemesi" olarak kurulup eşleşmeyi ve tam yetkiyi devralabilirdi. `app/plugins/with-release-imza.js` bu yüzden prebuild'de debug imza satırını söker ve imzayı yalnız sizin keystore'unuzdan kurar. Bir kerelik adımlar:
+
+1. Keystore'u repo dışında oluşturun:
+   ```bash
+   keytool -genkeypair -v -storetype PKCS12 -keystore <repo-dışı-yol>/eren-kit-release.p12 -alias eren-kit -keyalg RSA -keysize 4096 -validity 10000
+   ```
+2. Dört ayarı repo dışından verin: `~/.gradle/gradle.properties` dosyasına (yolda `/` kullanın) ya da aynı adlı ortam değişkeni olarak (ayrıca `-P` bayrağıyla da verilebilir): `EREN_KIT_RELEASE_STORE_FILE` (keystore'un mutlak yolu), `EREN_KIT_RELEASE_STORE_PASSWORD`, `EREN_KIT_RELEASE_KEY_ALIAS` (örnekte `eren-kit`), `EREN_KIT_RELEASE_KEY_PASSWORD` (PKCS12 keystore'da keystore parolasıyla aynıdır).
+3. Keystore'u ve parolasını yedekleyin. Kaybolursa kurulu uygulama aynı imzayla güncellenemez (kaldırıp yeniden kurmak ve yeniden eşleşmek gerekir). Keystore repoya konmaz (`app/.gitignore` `*.p12`, `*.jks`, `*.keystore` dosyalarını dışarıda tutar).
+
+Ayar eksikse, keystore'da verilen ad yoksa ya da verilen anahtar bir Android debug sertifikasıysa release derlemesi açık bir hatayla durur ve bu adımları yazar. Debug derlemesi (`npm run android`) etkilenmez.
+
+**Geçiş notu (debug imzalı eski kurulum).** Daha önce debug anahtarıyla imzalı bir release APK kurduysanız yeni imzalı APK onun üzerine kurulamaz (Android imza uyuşmazlığı). Uygulamayı kaldırıp yeni APK'yı kurun; ardından eşleşmeyi yeniden yapın (`eren eslestir`; eski kaydı PC'de `eslestir.ts --kaldir` ile kaldırın, [docs/GUVENLIK.md](docs/GUVENLIK.md#eşleşmeyi-kaldırma-kaybolan-ya-da-çalınan-telefon)), tam yetkiyi gerekiyorsa yeniden açın ve adb ile verilen `WRITE_SECURE_SETTINGS` / `GET_USAGE_STATS` izinleri için `node --disable-warning=ExperimentalWarning kurulum/telefon.ts`'i yeniden çalıştırın ([docs/SERVIS.md](docs/SERVIS.md#telefon-kurulumu)).
 
 Saf Kotlin çekirdeğin birim testleri: `cd app/modules/eren-device/cekirdek` içinde `.\gradlew.bat test`. APK derlemesinde görünen asistan adı `EREN_KIT_ASSISTANT_NAME`'den gelir; verilmezse uygulama adı (launcher) `eren-kit` olur. Telefon kurulumu ve cihaz tarafı ayrıntısı [app/TASARIM.md](app/TASARIM.md) ve [docs/GUVENLIK.md](docs/GUVENLIK.md) içindedir.
 
@@ -68,7 +82,10 @@ Servisin sürümlü dağıtımı `kurulum/kur.ts` ile yapılır: temiz bir kopya
 node --disable-warning=ExperimentalWarning kurulum/kur.ts               # test kapısı + kurulum
 node --disable-warning=ExperimentalWarning kurulum/kur.ts --yalniz-test # yalnız test kapısı, kurmaz
 node --disable-warning=ExperimentalWarning kurulum/kur.ts --durum       # salt okunur: veri kökü, olası çakışmalar
+node --disable-warning=ExperimentalWarning kurulum/kur.ts --izin-duzelt # veri kökünü yalnız bu hesap, SYSTEM ve Administrators'a daralt
 ```
+
+**Veri kökünün izni.** Veri kökü özel anahtarı, veritabanını, köprü jetonlarını ve servisin çalıştırdığı kodu tutar; bu yüzden yalnız sizin hesabınıza, SYSTEM'e ve Administrators'a açık olmalıdır. Servis başka hesaplara açık bir kökle açılmaz (nedeni ve düzeltme komutu `servis.log`'a yazılır); kök yoksa yalnız size açık olarak oluşturur. `kur.ts` (ve `--geri-al`) kopyalamadan önce kökü denetler: eren-kit'e ait görünen kökü (içinde `uygulama` ya da `eren.db` var ya da boş) kendisi daraltır, başka bir klasörü yalnız `--izin-duzelt` ile bilerek daraltır, sürücü kökünü hiç daraltmaz. Daraltma olursa `UYARI:` satırı çıkar: o hesaplara güvenmiyorsanız eşleşmeleri kaldırıp yeniden eşleştirin, sunucu anahtarını (`sunucu-anahtar.pem`) ve Telegram jetonunu yenileyin.
 
 Temizlik denetimi (commit'lenmemiş değişiklik var mı, test sürerken kod değişti mi) yalnız `apps/phone` ağacına bakar: depodaki başka paketlerde değişiklik ya da depoya giren ilgisiz bir commit kurulumu durdurmaz. Sürüm adı da `apps/phone` içeriğine bağlıdır: `apps/phone`'a dokunan son commit'in kısa sha'sı; aynı içerikte kurulu bir sürüm varsa (önceki kurulumların depo HEAD'iyle adlandırdığı sürümler dahil) onun adı yeniden kullanılır. Depoya giren ilgisiz commit yeni sürüm üretmez, eski sürümleri de saklama sınırından erken düşürmez.
 
@@ -95,22 +112,12 @@ Değişken vermezsen varsayılanlar geçerlidir (aşağıda "Ortam değişkenler
 
 Ayrıntı ve yer tutuculu örnekler: [docs/SERVIS.md](docs/SERVIS.md#ortam-değişkenleri-ve-mevcut-kurulum); ilk kurulum ve güncelleme akışı: [İlk kurulum](docs/SERVIS.md#ilk-kurulum), [Güncelleme ve geri alma](docs/SERVIS.md#güncelleme-ve-geri-alma).
 
-### Telefon denemesi
-
-`deneyler/telefon/` altındaki deneme, telefonu PC'den uzaktan okuyup yönlendirmenin mümkün olup olmadığını ölçer.
-
-1. Adresleri ortam değişkenleriyle ver: `EREN_PC_IP` (PC adresi), `EREN_TELEFON_IP` (izinli telefon adresi), isteğe bağlı `EREN_PORT` (varsayılan 47800).
-2. `deneyler/telefon/sunucu` içinde bağımlılıkları kur (`npm ci`) ve test sunucusunu başlat: `node sunucu.js` (ya da penceresiz: `baslat.vbs`; node `PATH`'ten bulunur, farklı kurulumda tam yol `EREN_KIT_NODE` ile verilir). Komut satırı istemcisi: `node cli.js durum`.
-3. Telefonsuz öz sınama: `node oztest.js`.
-4. APK'yı `deneyler/telefon/android/` altından derle; PC adresi derleme sırasında `EREN_KIT_PC_URL` ortam değişkeninden okunur (örn. `ws://<pc-adresi>:47800/`), verilmezse `PC_ADRESI_BURAYA` yer tutucusu kalır.
-5. Telefon kurulumu: `deneyler/telefon/TELEFON_TALIMATI.md`. Sonuçlar: [docs/OLCUMLER.md](docs/OLCUMLER.md).
-
 ## Ortam değişkenleri
 
 - `EREN_KIT_ASSISTANT_NAME`: asistan adı (varsayılan "Claude"). Sunucuda persona metinlerine, bildirimlere ve ilk ana sohbet adına girer; uygulamada derleme anında okunur ve launcher adını belirler (verilmezse `eren-kit`).
-- `EREN_KIT_DATA_DIR`: veri kökü; mutlak yol olmalı. Verilmezse varsayılan `%LOCALAPPDATA%\eren-kit`. Sunucu, bekçi ve kurulum aynı kuralı uygular; kurulum klasörü `<veri kökü>\uygulama\...`, bekçi günlüğü `<veri kökü>\logs` altındadır. Servis kurulurken üç `EREN_KIT_*` değişkeni de kalıcı kullanıcı ortamında olmalıdır (yukarıda "Servis kurulumu").
+- `EREN_KIT_DATA_DIR`: veri kökü; mutlak yol olmalı. Verilmezse varsayılan `%LOCALAPPDATA%\eren-kit`. Sunucu, bekçi ve kurulum aynı kuralı uygular; kurulum klasörü `<veri kökü>\uygulama\...`, bekçi günlüğü `<veri kökü>\logs` altındadır. Servis kurulurken üç `EREN_KIT_*` değişkeni de kalıcı kullanıcı ortamında olmalıdır (yukarıda "Servis kurulumu"). Klasör yalnız sizin hesabınıza, SYSTEM'e ve Administrators'a açık olmalıdır, yoksa servis açılmaz (yukarıda "Veri kökünün izni"). Kullanıcı profilinizin dışındaki bir klasör (`C:\…`, `D:\…`) önerilmez: oralarda Windows varsayılanı çoğunlukla bütün yerel kullanıcılara erişim verir; böyle bir kök ya boş ve yeni olmalı ya da `--izin-duzelt` ile bilerek daraltılmalıdır.
 - `EREN_KIT_PHONE_TASK_NAME`: kurulumun kaydettiği zamanlanmış görevin adı (varsayılan `eren-kit-telefon`).
-- `EREN_KIT_PC_URL` (APK derlemesi), `EREN_KIT_NODE` (`baslat.vbs`), `EREN_PC_IP`, `EREN_TELEFON_IP`, `EREN_PORT` (telefon denemesi): yukarıda açıklandı.
+- `EREN_KIT_RELEASE_STORE_FILE`, `EREN_KIT_RELEASE_STORE_PASSWORD`, `EREN_KIT_RELEASE_KEY_ALIAS`, `EREN_KIT_RELEASE_KEY_PASSWORD`: release APK imzası (yukarıda "Release derlemesi ve imza"). Ortam değişkeni ya da `~/.gradle/gradle.properties` özelliği olarak verilir; repoya yazılmaz. Eksikse release derlemesi durur; debug derlemesi bunları istemez.
 
 ### Mevcut bir kurulumu sürdürmek
 
@@ -128,11 +135,13 @@ Mevcut veritabanındaki ana sohbetin adı yeniden adlandırılmaz; yeni ad yaln�
 
 ## Güvenlik notu
 
-- Deneme sunucusunda kimlik doğrulama yoktur; yalnızca özel, güvenilir bir ağda ve izinli IP ile çalıştır.
-- Tasarlanan servis modeli: eşleştirme normalde kapalıdır, telefon Keystore'da anahtar üretir, PC yalnızca açık anahtarı saklar, her bağlantıda karşılıklı imza sınaması yapılır; paylaşılan sır yoktur.
-- Telefon iş oturumları Bash, dosya ve web aracı almaz; yalnızca telefon araçlarını kullanır; kullanıcıya soru sormaz, belirsizlikte en makul yorumla ilerler. Hassas uygulamalar paket listesiyle (değişmez ret listesi) korunur; `FLAG_SECURE`'a güvenilmez.
+- Servis modeli: eşleştirme normalde kapalıdır, telefon Keystore'da anahtar üretir, PC yalnızca açık anahtarı saklar, her bağlantıda karşılıklı imza sınaması ve eşleşmiş Tailscale IP denetimi yapılır; paylaşılan sır yoktur. Yeni bir PC ile eşleşmek telefonun tam yetkisini kapatır. El sıkışmadan sonraki çerçevelerin gizliliği ve bütünlüğü Tailscale'e (WireGuard) dayanır; kanal kendisi şifrelenmemiş `ws://`'dir (ayrıntı: [docs/GUVENLIK.md](docs/GUVENLIK.md), kalan açık 36).
+- **Tailnet ACL'iyle servisin portunu yalnız telefonunuza açın.** Kimlik doğrulama öncesi yüzey (eşleştirme ve el sıkışma) Tailscale arayüzünü görebilen her tailnet düğümüne açıktır (paylaşılan düğümler, subnet router arkasındaki cihazlar dahil). Tailscale IP'si yalnız ikinci etkendir: subnet router arkasındaki birçok cihaz aynı IP'den gelir ve bu denetim onları ayıramaz (kalan açık 35).
+- **Güvenilmeyen başka yerel hesap olan makineye kurmayın.** Servis sabit adlı Windows borularını kullanır (`\\.\pipe\eren-kopru`, `\\.\pipe\eren-servis-tekil`, `\\.\pipe\eren-bekci`); aynı makinedeki başka bir yerel hesap bu adları önceden alıp servisi açılmaz hâle getirebilir ya da köprünün yolladığı jetonu alabilir. Kodla düzeltilmedi (kalan açık 37). Veri kökü izni daraltma uyarısı (`UYARI:` satırı) görürseniz eşleşmeleri ve sunucu anahtarını yenileyin (yukarıda "Veri kökünün izni").
+- Telefon iş oturumları Bash, dosya ve web aracı almaz; yalnızca telefon araçlarını kullanır; kullanıcıya soru sormaz, belirsizlikte en makul yorumla ilerler. Kurulu sıradan uygulamalar varsayılan olarak açıktır. Ayarlar, Play Store, paket kurucu, izin pencereleri, Tailscale, ana ekran ve klavye değişmez ret listesindedir. Banka, para ve kimlik uygulamaları ad ve paket adından **tahminle** kapalı başlar; tahmin her uygulamayı yakalamaz (liste Türkiye odaklıdır; yurt dışındaki bir bankanın uygulaması açık başlayabilir). Kurulumdan sonra Uygulamalar ekranını gözden geçirip istemediklerinizi kapatın. `FLAG_SECURE`'a güvenilmez.
+- Telefonun ağ çıkışı yalnız PC servisi değildir: QR okuma Google'ın kod tarayıcısıyla (ML Kit tabanlı) yapılır, dikte cihazın sistem tanıyıcısına (çoğu cihazda Google bulutu) gider; ağ trafiği ölçülmedi (kalan açık 38). PC'den gelen bildirimlerin kilit ekranında görünmesi telefonun bildirim ayarına bağlıdır (39).
 - Model davranışı güvenlik kanıtı sayılmaz: güvence Kotlin kapısından ve izin modelinden gelir. Ayrıntı, kalan açıklar ve ölçüm sınırları: [docs/GUVENLIK.md](docs/GUVENLIK.md), [docs/OLCUMLER.md](docs/OLCUMLER.md).
-- Deneme sırasında hassas uygulama açma, gerçek parola girme.
+- Denerken hassas uygulama açmayın, gerçek parola girmeyin.
 
 ## Belgeler
 
@@ -144,6 +153,5 @@ Mevcut veritabanındaki ana sohbetin adı yeniden adlandırılmaz; yeni ad yaln�
 - [protocol/README.md](protocol/README.md), [protocol/CIHAZ.md](protocol/CIHAZ.md): protokol
 - [server/MODULLER.md](server/MODULLER.md): servis modülleri
 - [app/TASARIM.md](app/TASARIM.md): telefon uygulaması modülleri
-- [deneyler/telefon/README.md](deneyler/telefon/README.md): telefon denemesi
 
 Monorepo ana sayfası: [../../README.md](../../README.md)

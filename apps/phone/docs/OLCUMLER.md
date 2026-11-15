@@ -84,11 +84,12 @@ Sürümler: Expo SDK 58.0.23, React Native 0.88.1, React 19.3.0, New Architectur
 | İlk `assembleRelease`, arm64, R8 açık | 271,5 sn = 4 dk 32 sn, APK 19,9 MB |
 
   Günlük döngüde gecikme küçüktür; bir kerelik maliyet ilk derleme ve ilk release'tir. Sınırlar: ilk derleme API 37 ve NDK indirme süresini içermez; yalnız arm64 soğuk ilk derleme ve 4 ABI release ölçülmedi; Kotlin süresi tek dosyalık bağımsız modül içindir, manifest/kaynak değişikliği ölçülmedi.
-- Release: gömülü bundle 1.254.544 bayt Hermes bytecode (sürüm 99); şablon release'i debug anahtarıyla imzalar.
+- Release: gömülü bundle 1.254.544 bayt Hermes bytecode (sürüm 99); şablon release'i debug anahtarıyla imzalar (ölçüm anındaki durum; 2026-11-15'ten beri `app/plugins/with-release-imza.js` bunu söker ve kullanıcının kendi keystore'unu ister, `GUVENLIK.md` "Denetimde kapatılan bulgular").
 - Disk: `node_modules` 881 MB (kurulumdan sonra 311 MB), `android/app/build` 1989 MB, proje toplamı 2906 MB, `~/.gradle` 4041 MB -> 8829 MB (+4788 MB). Boş disk 57 GB'tan 44 GB'a indi.
 - Hatalar: proje adı `expo` bağımlılıkla çakışır (gerçek proje adı `app`, denenmedi); `create-expo-module --local` takılır, kök neden bulunamadı; AAR denetimi `compileSdk 37` ister (36'ya düşmek SDK 58'de desteklenmiyor); `expo-build-properties` `ndkVersion`'ı sessizce yok sayar (yerel config plugin ile çözüldü); şablondaki `-Xmx2048m -XX:MaxMetaspaceSize=512m` Metaspace taşmasına yol açtı (önerilen `-Xmx4096m -XX:MaxMetaspaceSize=1024m` test edilmedi, config plugin ile yazılmalı); `cmd /c gradlew.bat` yerine `.\gradlew.bat`; `~/.gradle` boyutu için Msys `du` yerine `robocopy /L /E /BYTES`.
 
 ## 5. Android cihaz bulguları (yalın Kotlin APK, Android 16 tabanlı, üretici arayüzlü bir cihaz)
+Bu bölümün ölçümleri ürün dışı, kimlik doğrulamasız bir denemeyle (`apps/phone/deneyler/telefon/`) yapıldı. Deneme kodu public depodan kaldırıldı; git geçmişinde durur (ör. `git show 2911352:apps/phone/deneyler/telefon/README.md`).
 - Yan yükleme kuruldu; "kısıtlı ayar" uyarısı çıktı ve "Kısıtlı ayarlara izin ver" ile aşıldı; erişilebilirlik servisi bağlandı.
 - WebSocket RTT 60-135 ms. `tap_node` ve ham `tap` çalıştı, `type` çalıştı.
 - Parola alanı: `hasText=false`, metin dönmedi, günlükte 0 eşleşme. `type` `ok:true` döndüğü halde parola uzunluğu 0 kaldı: `ok` eylemin sonucunu kanıtlamaz, durum yeniden okunmalı.

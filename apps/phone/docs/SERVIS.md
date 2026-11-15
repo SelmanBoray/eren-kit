@@ -123,13 +123,16 @@ Bundan sonra servis her oturum açılışında kendiliğinden başlar; elle baş
 node --disable-warning=ExperimentalWarning kurulum/kur.ts
 node --disable-warning=ExperimentalWarning kurulum/kur.ts --geri-al
 node --disable-warning=ExperimentalWarning kurulum/kur.ts --durum
+node --disable-warning=ExperimentalWarning kurulum/kur.ts --izin-duzelt
 ```
+
+`--izin-duzelt` yalnız veri kökünün iznini daraltır (eren-kit'e ait görünmeyen klasörü de, bilerek) ve çıkar; kurmaz.
 
 `kur.ts` (seçeneksiz) sırayla şunları yapar; biri düşerse durur, `guncel` değişmez ve çıkış kodu sıfırdan farklıdır:
 
 1. `git status --porcelain -- .` boş değilse durur; denetim yalnız `apps/phone` ağacına bakar, toplu depodaki başka paketlerin değişikliği sayılmaz. `--kirli` ile geçilir; sürüm adı `<ad>-k<zaman>` olur (`<ad>` yukarıdaki kural), aynı adın temiz kopyasını gölgelemez.
 2. Test kapısı: `npm run typecheck -w server`, server testleri (`dis-dunya.test.ts` hariç: canlı servisle aynı tekil boruyu kullanır), `dis-dunya.test.ts`'ten yalnız transkript testleri (`--test-name-pattern=transkript`; tekil boruyu kullanan gruplar koşmaz), `npm test -w protocol`, kurulum tip denetimi (`kurulum/tsconfig.json`), kurulum testleri. `--testsiz` kapıyı atlar. `--yalniz-test` yalnız kapıyı çalıştırır, kurmaz.
-3. Sürümü `surumler\<sürüm>`'e kopyalar. Testten sonra `apps/phone` ağacı değiştiyse (temiz kurulumda: ağaç kimliği `HEAD:./` ya da `status -- .` farklıysa) kopyayı silip durur; depoya giren ve bu ağacı değiştirmeyen ilgisiz commit durdurmaz.
+3. Kopyadan önce veri kökünün iznini sağlar (`kurulum/izin.ts`, kural `server/src/kok-izni.ts`): kök yoksa yalnız bu hesaba, SYSTEM'e ve Administrators'a açık oluşturur; varsa ve başka hesaplara açıksa eren-kit'e ait kökü (içinde `uygulama` ya da `eren.db` var ya da boş) daraltır ve sırları yenileme uyarısı yazar, başka klasörde ve sürücü kökünde durur (bilerek daraltmak için `--izin-duzelt`; sürücü kökü hiç daraltılmaz). `--geri-al` da aynısını yapar. Sonra sürümü `surumler\<sürüm>`'e kopyalar. Testten sonra `apps/phone` ağacı değiştiyse (temiz kurulumda: ağaç kimliği `HEAD:./` ya da `status -- .` farklıysa) kopyayı silip durur; depoya giren ve bu ağacı değiştirmeyen ilgisiz commit durdurmaz.
 4. Duman testi: yeni sürümde `server/src` altındaki tüm modülleri yeni dizinden içe aktarır. Dört giriş dosyası (`ana.ts`, `kopru.ts`, `eslestir.ts`, `bekci-ana.ts`) `if (import.meta.main)` korumalıysa onlar da girer; korumasız olan olursa yalnız dış paketleri yüklenir ve bu yazdırılır. `@eren/protocol`'ün sürümün kendi `protocol`'üne çözüldüğünü denetler.
 5. `guncel`'i yeni sürüme çevirir, `gecmis.json`'a ekler. Görev kapalıysa (Disabled) `guncel` değişmeden durur ve önce `eren baslat` denir (`--geri-al` için de aynı). Bundan önce (ve en başta da) bekçisiz çalışan servis denetlenir: bekçi borusu yok ama `\\.\pipe\eren-servis-tekil` açıksa elle başlatılmış bir servis vardır; `kur.ts` `guncel`'i değiştirmeden durur. Önce o servis `/T`'siz durdurulmalıdır (`/T` `detached` iş oturumlarını da öldürür).
 6. Servisi yeniler. Bekçi çalışıyor ve görev kayıtlıysa bekçiye `kapan` der, bekçi borusu kaybolana ve bekçi süreci gerçekten bitene kadar bekler (en çok 60 sn), `schtasks /run /tn <görev adı>` ile yeni bekçiyi başlatır; böylece bekçinin kendisi de yeni sürümden gelir. Boru 10 sn içinde gelmezse (ya da `/run` sıfır dışı dönerse) (`IgnoreNew` eski görev örneği bitmeden isteği yutabilir) `/run` en çok 2 kez yinelenir. Bekçi çalışıyor ama görev kayıtlı değilse yalnız `yenile` gönderir (bekçi eski sürümde kalır; uyarı yazar). Bekçi yoksa ve görev kayıtlıysa görevi çalıştırır.
@@ -164,7 +167,7 @@ Telefon uygulamasının erişilebilirlik servisini kendisi açabilmesi ve kısay
 node --disable-warning=ExperimentalWarning kurulum/telefon.ts
 ```
 
-Önce telefonda "USB hata ayıklama" açık olmalıdır; bazı üretici arayüzlerinde ayrıca "USB hata ayıklama (Güvenlik ayarları)" açılır (aksi halde izin verilemez). Komut `WRITE_SECURE_SETTINGS` iznini ve `GET_USAGE_STATS` kullanım erişimini verir ve sonucu `dumpsys`/`appops` ile doğrular. Bittikten sonra USB hata ayıklamayı kapat (servis `device_state.adb_enabled` açıldığında uyarır). Uygulama kaldırılıp yeniden kurulursa izinler gitmiş olabilir; `kurulum/telefon.ts` doğrulamayı yeniden yapar, gerekirse tekrar çalıştır. İzinler olmadan telefon planları onay ekranında kalır (`erisim_acilamadi`) ve kısayol bağlam almaz.
+Önce telefonda "USB hata ayıklama" açık olmalıdır; bazı üretici arayüzlerinde ayrıca "USB hata ayıklama (Güvenlik ayarları)" açılır (aksi halde izin verilemez). Komut `WRITE_SECURE_SETTINGS` iznini ve `GET_USAGE_STATS` kullanım erişimini verir ve sonucu `dumpsys`/`appops` ile doğrular. Bittikten sonra USB hata ayıklamayı kapat (servis `device_state.adb_enabled` açıldığında uyarır). Telefona kurulan release APK kendi keystore'unuzla imzalanmış olmalıdır (`README.md` "Release derlemesi ve imza"); debug imzalı eski bir kurulumdan geçerken uygulama kaldırılıp yeniden kurulur. Uygulama kaldırılıp yeniden kurulursa izinler gitmiş olabilir; `kurulum/telefon.ts` doğrulamayı yeniden yapar, gerekirse tekrar çalıştır. İzinler olmadan telefon planları onay ekranında kalır (`erisim_acilamadi`) ve kısayol bağlam almaz.
 
 ## Servis bilgisi telefonda
 
@@ -245,6 +248,7 @@ Referans makinede canlı ölçümler:
 | `kur.ts` "servis kararlı çalışmadı" dedi | Mesaj "otomatik geri alındı" diyorsa servis önceki sürümde çalışıyordur (`kur.ts --durum` ile doğrula), `--geri-al` gerekmez; nedeni `eren log --bekci` ve `eren log` ile bul. "Önceki sürüm de ayakta kalmadı" ya da "önceki sürüm yok" diyorsa servis kapalı olabilir, elle bak |
 | `kur.ts` "görev kapalı" dedi | `eren baslat` (önce `eren dur` ile kapatılmıştır), sonra yeniden dene |
 | `eren baslat` "veri kökünde çalıştığı doğrulanamadı" dedi | Servis durdurulmamıştır. `eren durum` (bekçinin veri kökü, `UYARI:`) ve `eren log` ile bak; "kararlı çalışmadı" ise nedeni `eren log --bekci`. Kök yanlışsa servis durdurulmuş ve görev kapatılmıştır: ortamı düzeltip (oturumu kapatıp açın) yeniden `eren baslat` |
+| Servis açılmıyor, `servis.log`'da `baslatma_hatasi` + "veri kökü başka hesaplara açık" | Veri kökü yalnız bu hesaba, SYSTEM'e ve Administrators'a açık olmalı. `apps/phone` içinde `node --disable-warning=ExperimentalWarning kurulum/kur.ts --izin-duzelt`; o hesaplara güvenmiyorsanız eşleşmeleri ve sunucu anahtarını yenileyin (`docs/GUVENLIK.md` "Denetimde kapatılan bulgular") |
 | Çok sık yeniden başlıyor | `bekci.log`'da `firtina` var mı; sebebi `servis.log`'da (bozuk ayar, kilitli dosya) |
 | Ana ikinci örnek diyor | Başka bir ana (elle başlatılmış) tekil kilidi tutuyor; `eren durum` ve `Get-Process node` ile bak, elle başlatılanı kapat |
 | Görev kayıtlı mı, ayarı doğru mu? | `schtasks /query /tn <görev adı> /xml`; yeniden kaydetmek için `gorev-kaydet.ts` |
