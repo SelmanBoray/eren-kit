@@ -53,6 +53,43 @@ const guvenliOlmaliSddl = (s: KokIzniSonucu, ham: string): void => {
   if (!s.guvenli) assert.fail(`güvenli bekleniyordu; sorunlar: ${JSON.stringify(s.sorunlar)}; ham izin: ${ham}`);
 };
 
+/** Yalnız izin veren ACE'lerin (sıralı, tekil) SID'leri. */
+const izinliKimlikler = (aceler: readonly { tur: string; sid: string }[]): string[] =>
+  [...new Set(aceler.filter((a) => !["D", "OD", "XD"].includes(a.tur)).map((a) => a.sid))].sort();
+
+/** Sözleşmenin üç kimliği (sıralı): kullanıcı, SYSTEM, Administrators. */
+const UC_KIMLIK = (sid: string): string[] => [sid.toUpperCase(), SID.SYSTEM, SID.ADMINISTRATORS].sort();
+
+/**
+ * Kökün (`izinBetigi` `oku`) ve altındaki öğelerin DACL'i, kullanıcının takma adı (`LA`...) açılmış.
+ * `ileti`: düşen onaya eklenecek teşhis; yol yok, kullanıcının SID'i `BEN` yazılır.
+ */
+const izinIzi = (kok: string, adlar: readonly string[]): { sid: string; kok: string; alt: Record<string, string>; ileti: string } => {
+  const ham = psCalistir(izinBetigi(kok, "oku")).cikti;
+  const j = JSON.parse(ham.split(/\r?\n/).at(-1) ?? "{}") as { sid?: string; takma?: string };
+  const c = izinCiktisiCoz(ham);
+  assert.ok(c && j.sid && j.takma, "kök izni okunamadı");
+  const b64 = adlar.map((a) => `'${Buffer.from(join(kok, a), "utf16le").toString("base64")}'`).join(",");
+  const r = psCalistir(
+    [
+      "$ErrorActionPreference='Stop'",
+      `foreach($b in @(${b64})){ $p=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($b)); (Get-Item -LiteralPath $p -Force).GetAccessControl('Access').GetSecurityDescriptorSddlForm('Access') }`,
+    ].join("\n"),
+  );
+  assert.equal(r.status, 0, "alt öğe izni okunamadı");
+  const satirlar = r.cikti.split(/\r?\n/).map((s) => s.trim());
+  const alt: Record<string, string> = {};
+  adlar.forEach((a, i) => (alt[a] = sddlTakmaAc(satirlar[i] ?? "", j.takma!, j.sid!)));
+  // Makine SID'i de basılmaz: kullanıcı `BEN`, aynı makinenin öteki hesapları/grupları `S-1-5-21-MAKINE-<rid>`.
+  const makine = /^S-1-5-21-\d+-\d+-\d+/.exec(c.sid)?.[0];
+  const gizle = (s: string): string => {
+    const t = s.split(c.sid).join("BEN");
+    return makine === undefined ? t : t.split(makine).join("S-1-5-21-MAKINE");
+  };
+  const ileti = `takma ${j.takma === j.sid ? "yok" : j.takma}; kök ${gizle(c.sddl)}; ${adlar.map((a) => `${a} ${gizle(alt[a]!)}`).join("; ")}`;
+  return { sid: c.sid, kok: c.sddl, alt, ileti };
+};
+
 /**
  * PowerShell 7 oturumunun `PSModulePath`'i (PS7 kuruluysa). Node pwsh 7'den başlatılınca bu değeri
  * devralır; Windows PowerShell 5.1 alt süreci onu aynen kullanırsa PS7'nin Security modülünü yüklemeye
@@ -411,11 +448,22 @@ describe("veriKokuIzniHazirla (gerçek, geçici klasör)", { skip: !win }, () =>
     guvenliOlmali(await veriKokuIzniHazirla(kok), kok);
     assert.ok(existsSync(kok));
     guvenliOlmali(await veriKokuIzniHazirla(kok), kok);
-    // Alt dosya kökten kalıtır: yalnız üç kimlik.
+    // Alt dosya ve klasör kökten kalıtır: yalnız üç kimlik, hepsi kalıtılmış (`ID`), açık ACE yok.
     writeFileSync(join(kok, "sir.txt"), "x");
-    const r = spawnSync("icacls", [join(kok, "sir.txt")], { encoding: "utf8", windowsHide: true });
-    assert.equal(r.status, 0);
-    assert.equal(r.stdout.split(/\r?\n/).filter((s) => s.includes("(I)")).length, 3, r.stdout);
+    mkdirSync(join(kok, "alt"));
+    const iz = izinIzi(kok, ["sir.txt", "alt"]);
+    const kokC = sddlCoz(iz.kok);
+    assert.ok(kokC?.dacl, iz.ileti);
+    // Kök: kalıtım kesik (`P`), otomatik kalıtım açık (`AI`), her ACE dosyaya ve klasöre kalıtılabilir.
+    assert.ok(/P/.test(kokC.dacl.bayraklar) && /AI/.test(kokC.dacl.bayraklar), `kök bayrakları: ${iz.ileti}`);
+    assert.deepEqual(izinliKimlikler(kokC.dacl.aceler), UC_KIMLIK(iz.sid), iz.ileti);
+    for (const a of kokC.dacl.aceler) assert.ok(a.bayraklar.includes("OI") && a.bayraklar.includes("CI") && !a.bayraklar.includes("ID"), `kök ACE ${a.bayraklar}: ${iz.ileti}`);
+    for (const [ad, sddl] of Object.entries(iz.alt)) {
+      const c = sddlCoz(sddl);
+      assert.ok(c?.dacl, `${ad}: ${iz.ileti}`);
+      assert.deepEqual(izinliKimlikler(c.dacl.aceler), UC_KIMLIK(iz.sid), `${ad}: ${iz.ileti}`);
+      for (const a of c.dacl.aceler) assert.ok(a.bayraklar.includes("ID"), `${ad} kalıtılmamış ACE (${a.bayraklar}): ${iz.ileti}`);
+    }
   });
 
   it("başka hesaba açık var olan köke dokunmaz, güvensiz der", async () => {

@@ -221,7 +221,8 @@ export function windowsPowerShellOrtami(ortam: Readonly<Record<string, string | 
  *
  * - `oku`: kök yoksa hata (`kok_yok`).
  * - `hazirla`: kök yoksa `korumaliSddl` tanımıyla TEK adımda oluşturur (`CreateDirectory(yol, güvenlik)`:
- *   oluşturma ile daraltma arasında açık pencere yok); varsa dokunmaz.
+ *   oluşturma ile daraltma arasında açık pencere yok), sonra aynı DACL'i yeniden yazıp otomatik kalıtım
+ *   (`AI`) bayrağını kurar (alt öğeler her ortamda `ID` ile kalıtır); varsa dokunmaz.
  * - `duzelt`: `hazirla` + kök varsa DACL'i `korumaliSddl` ile değiştirir (kalıtım kesilir, alt öğelerin
  *   kalıtılan ACE'leri Windows tarafından yeniden hesaplanır); sahip başkasıysa sahipliği de alır.
  *
@@ -248,6 +249,13 @@ export function izinBetigi(yol: string, kip: "oku" | "hazirla" | "duzelt"): stri
     "  $ds=New-Object Security.AccessControl.DirectorySecurity",
     "  $ds.SetSecurityDescriptorSddlForm($hedef)",
     "  [void][IO.Directory]::CreateDirectory($p,$ds)",
+    // Oluşturma tanımın AI (otomatik kalıtım) bayrağını düşürür: kök `D:P` kalır. AI'sız kökte Windows
+    // alt öğelere eski usul kalıtım uygular; ACE'lerin kalıtılmış (`ID`) işaretlenmesi ortama göre
+    // değişir, işaretsiz kopyalar kökün sonraki değişikliğini izlemez. Aynı DACL'i yeniden yazmak
+    // (boş klasör, daha dar ya da geniş değil) AI'yı kurar: `D:PAI`, `duzelt` ile aynı sonuç.
+    "  $da=New-Object Security.AccessControl.DirectorySecurity",
+    "  $da.SetSecurityDescriptorSddlForm($hedef,[Security.AccessControl.AccessControlSections]'Access')",
+    "  (New-Object IO.DirectoryInfo($p)).SetAccessControl($da)",
     "  $olustu=$true",
     "} elseif ($kip -eq 'duzelt') {",
     "  $d=New-Object IO.DirectoryInfo($p)",
