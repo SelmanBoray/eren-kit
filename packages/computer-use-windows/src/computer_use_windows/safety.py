@@ -92,19 +92,23 @@ def failsafe_exemption(
     return (int(last_set[0]), int(last_set[1]))
 
 
-def check_blocked(process: str | None, blocked: Sequence[str]) -> None:
-    """Raise if ``process`` is on the user's blocklist (case and ``.exe`` insensitive)."""
+def is_blocked(process: str | None, blocked: Sequence[str]) -> bool:
+    """Whether ``process`` is on the user's blocklist (case and ``.exe`` insensitive)."""
     if not process or not process.strip():
-        return
+        return False
     target = _norm(process)
     if not target:
-        return
-    for entry in blocked:
-        if entry and _norm(entry) == target:
-            raise SafetyError(
-                f"{process} is blocked by the user's configuration. "
-                "Ask the user to do this step themselves."
-            )
+        return False
+    return any(entry and _norm(entry) == target for entry in blocked)
+
+
+def check_blocked(process: str | None, blocked: Sequence[str]) -> None:
+    """Raise if ``process`` is on the user's blocklist (case and ``.exe`` insensitive)."""
+    if is_blocked(process, blocked):
+        raise SafetyError(
+            f"{process} is blocked by the user's configuration. "
+            "Ask the user to do this step themselves."
+        )
 
 
 def is_terminal(process: str | None, window_class: str = "") -> bool:

@@ -905,6 +905,24 @@ _tls = threading.local()
 _chromium_woken: set[int] = set()
 
 
+class _NoImportDir:
+    """A package ``__path__`` entry that names a directory but is never searched for modules.
+
+    The import system's path finder only searches ``str`` entries and skips anything else, while
+    ``os`` functions accept this object as a path (``__fspath__``). So comtypes can check the
+    directory and name in-memory modules after it, and no file in it is ever imported.
+    """
+
+    def __init__(self, path: str) -> None:
+        self._path = path
+
+    def __fspath__(self) -> str:
+        return self._path
+
+    def __repr__(self) -> str:
+        return f"_NoImportDir({self._path!r})"
+
+
 def _load_uia_module() -> Any:
     """Import comtypes and build the UIAutomationClient wrapper in memory (once per process)."""
     if sys.platform != "win32":
@@ -915,29 +933,24 @@ def _load_uia_module() -> Any:
     import comtypes
 
     if "comtypes.client" not in sys.modules and "comtypes.gen" not in sys.modules:
-        # Pre-create comtypes.gen as a memory package pointing at an empty temp directory, so that
-        # importing comtypes.client does not write into site-packages or %APPDATA%.
-        try:
-            anchor = os.path.join(tempfile.gettempdir(), "computer-use-windows", "comtypes-gen")
-            os.makedirs(anchor, exist_ok=True)
-            gen = types.ModuleType("comtypes.gen")
-            gen.__path__ = [anchor]  # type: ignore[attr-defined]
-            sys.modules["comtypes.gen"] = gen
-            comtypes.gen = gen  # type: ignore[attr-defined]
-        except OSError:
-            log.debug("could not prepare in-memory comtypes.gen", exc_info=True)
+        # comtypes.gen becomes a memory package, so importing comtypes.client writes nothing to
+        # site-packages or %APPDATA%. comtypes needs a writable directory as its path (it checks
+        # one on import and names in-memory modules after it), but GetModule first tries to
+        # *import* an existing wrapper from that path: a .py planted there would run in this
+        # process. The path entry is therefore a _NoImportDir, which the import system skips.
+        gen = types.ModuleType("comtypes.gen")
+        gen.__path__ = [_NoImportDir(tempfile.gettempdir())]  # type: ignore[attr-defined]
+        sys.modules["comtypes.gen"] = gen
+        comtypes.gen = gen  # type: ignore[attr-defined]
     import comtypes.client
 
     path = os.path.join(_win().system_directory(), "UIAutomationCore.dll")
     if not os.path.exists(path):
         path = "UIAutomationCore.dll"
-    saved = comtypes.client.gen_dir
-    comtypes.client.gen_dir = None  # generate the wrapper in memory, write no files
-    try:
-        with contextlib.redirect_stdout(sys.stderr):  # stdout carries the MCP protocol
-            return comtypes.client.GetModule(path)
-    finally:
-        comtypes.client.gen_dir = saved
+    # Generate wrappers in memory and write no files, also for any later GetModule call.
+    comtypes.client.gen_dir = None
+    with contextlib.redirect_stdout(sys.stderr):  # stdout carries the MCP protocol
+        return comtypes.client.GetModule(path)
 
 
 def _uia() -> Any:

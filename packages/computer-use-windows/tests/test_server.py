@@ -1175,6 +1175,75 @@ def test_focus_on_blocked_window_is_refused(desk: FakeDesktop) -> None:
     assert desk.raised() == ["check_blocked"]
 
 
+# A dialog of another process owned by KeePass (e.g. a file picker host): it stands for KeePass.
+KEEPASS_DIALOG = dataclasses.replace(
+    CONSOLE, handle=1010, title="Open Database - Passwords.kdbx", process="dialoghost.exe",
+    pid=4010, class_name="#32770", related=(KEEPASS,),
+)  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ("foreground", "window"),
+    [(NOTEPAD.handle, KEEPASS.handle), (KEEPASS.handle, None), (NOTEPAD.handle, 1010)],
+    ids=["by-handle", "foreground", "owned-dialog"],
+)
+def test_elements_of_a_blocked_app_are_refused(
+    desk: FakeDesktop, foreground: int, window: int | None
+) -> None:
+    desk.windows = [*desk.windows, KEEPASS_DIALOG]
+    desk.foreground = foreground
+    with connect(Config(blocked_processes=("keepass.exe",))) as client:
+        reply = client.call("elements", window=window)
+    text = assert_error(reply, "keepass", "blocked")
+    assert "passwords.kdbx" not in text
+    assert desk.element_queries == []
+    assert desk.raised() == ["check_blocked"]
+
+
+def test_elements_of_other_apps_work_with_a_blocklist(desk: FakeDesktop) -> None:
+    with connect(Config(blocked_processes=("keepass.exe",))) as client:
+        reply = client.call("elements")
+    assert not reply.is_error, reply.text
+    assert reply.lines[0].startswith('window: "Untitled - Notepad" (notepad.exe)')
+    assert [q["handle"] for q in desk.element_queries] == [NOTEPAD.handle]
+
+
+def test_elements_without_foreground_window_is_refused_with_a_blocklist(
+    desk: FakeDesktop,
+) -> None:
+    # list_elements(None) would read whichever window comes up next, unchecked
+    desk.foreground = 0
+    with connect(Config(blocked_processes=("keepass.exe",))) as client:
+        reply = client.call("elements")
+    assert_error(reply, "no foreground window", "window handle")
+    assert desk.element_queries == []
+
+
+def test_windows_hides_the_titles_of_blocked_apps(desk: FakeDesktop) -> None:
+    desk.windows = [*desk.windows, KEEPASS_DIALOG]
+    with connect(Config(blocked_processes=("keepass",))) as client:
+        reply = client.call("windows")
+    assert not reply.is_error, reply.text
+    assert reply.lines == [
+        '1001 | notepad.exe | "Untitled - Notepad" [foreground]',
+        '1002 | olk.exe | "Inbox - Mail" [minimized]',
+        "1003 | keepass.exe | (title hidden: blocked app)",
+        '1004 | windowsterminal.exe | "Windows PowerShell"',
+        "1010 | dialoghost.exe | (title hidden: blocked app)",
+    ]
+
+
+def test_result_lines_hide_a_blocked_foreground_title(desk: FakeDesktop) -> None:
+    desk.foreground = KEEPASS.handle
+    with connect(Config(blocked_processes=("keepass.exe",))) as client:
+        shot = client.call("screenshot")
+        click = client.call("click", x=100, y=100)  # over Notepad, allowed
+    line = assert_ok_line(click)
+    assert line.endswith("foreground: (title hidden: blocked app) (keepass.exe)"), line
+    assert shot.texts[-1].endswith("foreground: (title hidden: blocked app) (keepass.exe)")
+    assert "Passwords" not in line + shot.texts[-1]
+
+
 KEYBOARD_ACTIONS = [("type_text", {"text": "dir"}), ("key", {"keys": "enter"})]
 
 

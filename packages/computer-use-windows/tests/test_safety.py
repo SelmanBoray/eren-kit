@@ -168,6 +168,22 @@ def test_blocked_no_process_ok(process: str | None) -> None:
     check_blocked(process, ["keepass", ""])
 
 
+@pytest.mark.parametrize(
+    ("process", "blocked", "expected"),
+    [
+        ("KeePass.EXE", ["notepad", "keepass"], True),
+        ("notepad.exe", ["keepass"], False),
+        ("keepass.exe", [], False),
+        (None, ["keepass", ""], False),
+        ("", ["keepass", ""], False),
+    ],
+)
+def test_is_blocked_matches_check_blocked(
+    process: str | None, blocked: list[str], expected: bool
+) -> None:
+    assert safety.is_blocked(process, blocked) is expected
+
+
 # --- check_keyboard_target -----------------------------------------------------------------
 
 

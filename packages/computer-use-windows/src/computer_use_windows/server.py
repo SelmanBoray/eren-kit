@@ -81,10 +81,20 @@ def _one_line(text: str) -> str:
     return text.translate(_LINE_BREAKS)
 
 
-def _describe(window: uia.WindowInfo | None) -> str:
+_HIDDEN_TITLE = "(title hidden: blocked app)"
+
+
+def _title(window: uia.WindowInfo, blocked: tuple[str, ...] = ()) -> str:
+    """A window's title for output, quoted; hidden when the window belongs to a blocked app."""
+    if blocked and any(safety.is_blocked(w.process, blocked) for w in _family(window)):
+        return _HIDDEN_TITLE
+    return f'"{_one_line(window.title)}"'
+
+
+def _describe(window: uia.WindowInfo | None, blocked: tuple[str, ...] = ()) -> str:
     if window is None:
         return "foreground: none"
-    return f'foreground: "{_one_line(window.title)}" ({window.process or "?"})'
+    return f"foreground: {_title(window, blocked)} ({window.process or '?'})"
 
 
 def _handle(window: uia.WindowInfo | None) -> int | None:
@@ -162,7 +172,7 @@ class _Session:
     def _foreground(self) -> str:
         """Foreground part of a result line; never fails (the action already happened)."""
         try:
-            return _describe(uia.foreground_window())
+            return _describe(uia.foreground_window(), self.cfg.blocked_processes)
         except Exception:  # informational only
             log.debug("foreground_window failed", exc_info=True)
             return "foreground: unknown"
@@ -398,7 +408,8 @@ class _Session:
         # is in front now is not where the rest would end up, so the text stops there.
         if typed_piece.endswith(("\r", "\n")) and _handle(current) != _handle(window):
             raise safety.SafetyError(
-                f"The foreground window changed after Enter (now {_describe(current)}), so the "
+                f"The foreground window changed after Enter "
+                f"(now {_describe(current, self.cfg.blocked_processes)}), so the "
                 "rest of the text was not typed: Enter may have started a program whose window "
                 "is not up yet. Check the screen, then type the rest "
                 "with a new type_text call if it is still wanted."
@@ -413,6 +424,21 @@ class _Session:
             actual = point
         close = max(abs(actual[0] - point[0]), abs(actual[1] - point[1])) <= _SETTLE_TOLERANCE
         self.last_set = (int(actual[0]), int(actual[1])) if close else point
+
+    def _check_readable(self, handle: int | None, listed: list[uia.WindowInfo]) -> None:
+        """Refuse reading a blocked app's elements: its window, root window or root owner.
+
+        Like ``focus``, a handle that is not in the window list (a child or an owned window) is
+        checked through ``uia.window_family``.
+        """
+        if handle is None:
+            # Without a foreground window, list_elements would read whatever window comes up
+            # next, which nobody checked.
+            raise RuntimeError("There is no foreground window; pass a window handle from windows.")
+        found = next((w for w in listed if w.handle == handle), None)
+        family = _family(found) if found is not None else uia.window_family(handle)
+        for w in family:
+            safety.check_blocked(w.process, self.cfg.blocked_processes)
 
     # ------------------------------------------------------------------ read-only tools
 
@@ -467,6 +493,8 @@ class _Session:
         # The foreground window is passed by handle, so the listing and the stale-id check below
         # refer to the same window even if the foreground changes meanwhile.
         target = window if window is not None else (info.handle if info else None)
+        if self.cfg.blocked_processes:
+            self._check_readable(target, listed)
         # One more than the cap: tells "exactly the cap" apart from "more than the cap".
         result = uia.list_elements(target, query or None, limit + 1)
         found = list(result)[:limit]
@@ -511,9 +539,11 @@ class _Session:
         return "\n".join(lines)
 
     def windows(self) -> str:
+        """One line per window; a blocked app's windows are listed with their title hidden."""
+        blocked = self.cfg.blocked_processes
         lines = []
         for w in uia.list_windows():
-            line = f'{w.handle} | {w.process or "?"} | "{_one_line(w.title)}"'
+            line = f"{w.handle} | {w.process or '?'} | {_title(w, blocked)}"
             if w.foreground:
                 line += " [foreground]"
             if w.minimized:
@@ -547,7 +577,7 @@ class _Session:
                 "unresponsive, ask the user."
             ) from None
         log.info("focus %s", window)
-        return f"ok | {_describe(info)}"
+        return f"ok | {_describe(info, blocked)}"
 
     def click(
         self,

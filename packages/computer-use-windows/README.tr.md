@@ -75,9 +75,10 @@ monitor 1/2 1280x720 (scale 1.50) ~1196 tokens | foreground: "Settings" (systems
   koordinatlardaki monitörler dahil birden çok monitörü destekler.
 - **Her dilde çalışan yazma.** Unicode yazma, klavye düzenine bağlı değildir (Türkçe `ğüşıöçİ`,
   emoji, her yazı sistemi). Kısayollar (`ctrl+s`) ve tuş dizileri (`tab tab enter`) de desteklenir.
-- **Koruma önlemleri.** Sunucu parola alanlarına ve terminallere yazmaz. İsteğe bağlı bir uygulama
-  engelleme listesi ve bir failsafe (acil durdurma) vardır: ajanı durdurmak için fareyi ekranın bir
-  köşesine götürün.
+- **Koruma önlemleri.** Sunucu parola alanlarına ve terminallere yazmaz. Bir uygulama engelleme
+  listesi (siz ayarlayana dek boş) ve bir failsafe (acil durdurma) vardır: ajanı durdurmak için
+  fareyi ekranın bir köşesine götürün. Bunlar korkuluktur, kum havuzu (sandbox) değil: kullanmadan
+  önce [Güvenlik ve gizlilik](#güvenlik-ve-gizlilik) bölümünü okuyun.
 - **Yalnızca yerel.** Ağ erişimi ve telemetri yoktur. Dört çalışma zamanı bağımlılığı vardır (`mcp`,
   `mss`, `Pillow`, `comtypes`) ve girdi, `ctypes` üzerinden Win32 `SendInput` ile gönderilir.
 
@@ -92,7 +93,8 @@ monitor 1/2 1280x720 (scale 1.50) ~1196 tokens | foreground: "Settings" (systems
 ```
 
 Bu komut `packages/computer-use-windows/.venv` oluşturur, bu paketi kurar ve MCP sunucusunu
-`computer-use-windows` adıyla kaydeder.
+`computer-use-windows` adıyla kaydeder. Sunucuyu seçeneksiz kaydeder; yani engelleme listesi boştur
+ve yükleyici bunu sormaz. Sonradan [Önerilen kurulum](#önerilen-kurulum) bölümündeki gibi ayarlayın.
 
 ### Elle kurulum (venv)
 
@@ -248,8 +250,8 @@ bir id'dir. Ajan hiç ekran görüntüsü almadan `x,y` verirse, önce bir ekran
 |---|---|---|
 | `screenshot` | `monitor?` | Bir monitörün görüntüsünü alır ve boyut sınırına göre küçültür. Görüntüyle birlikte tek satır döndürür: monitör, boyut, ölçek, tahmini token, ön plandaki pencere. |
 | `zoom` | `x0, y0, x1, y1` | Son ekran görüntüsünün bir bölgesini yerel çözünürlükte yeniden yakalar; küçük yazılar içindir. Koordinatlar ekran görüntüsü uzayında kalır. |
-| `elements` | `query?, window?` | Ön plandaki ya da verilen pencerenin UI Automation öğelerini metin olarak listeler: id, rol, ad, değer, merkez. Parola değerlerini asla göstermez. Tarama yarıda kesildiyse listenin eksik olduğunu bildirir. |
-| `windows` | yok | Görünür üst düzey pencereleri listeler: handle, süreç, başlık, `[foreground]`/`[minimized]`. |
+| `elements` | `query?, window?` | Ön plandaki ya da verilen pencerenin UI Automation öğelerini metin olarak listeler: id, rol, ad, değer, merkez. Parola değerlerini asla göstermez. Tarama yarıda kesildiyse listenin eksik olduğunu bildirir. Engelli uygulamada reddedilir. |
+| `windows` | yok | Görünür üst düzey pencereleri listeler: handle, süreç, başlık, `[foreground]`/`[minimized]`. Engelli uygulamanın başlıkları gizlenir. |
 | `focus` | `window` | Bir pencere simge durumundaysa handle ile geri yükler ve öne getirir. Yanıt vermeyen pencere reddedilir. |
 | `click` | `x, y` veya `element`; `button, clicks, modifiers?` | Sol, sağ veya orta tıklama, 1–3 tıklama; isteğe bağlı olarak `ctrl`/`alt`/`shift`/`win` basılı tutularak. Terminal ya da ajanın kendi penceresi üzerinde sağ ve orta tık reddedilir (yapıştırma yapar). |
 | `type_text` | `text` | Klavye düzeninden bağımsız Unicode metin yazar (`\n` = Enter, `\t` = Tab). Hedefi (parola alanı, terminal, engelli uygulama) ilk karakterden sonra, her Tab/Enter'dan sonra ve her 50 karakterde yeniden denetler. Yazma sırasında ön pencere değişirse yeni pencere ilk pencere gibi denetlenir ve geçerse yazma sürer; Enter'dan sonraki değişimde metin durur. Hata kaç karakterin yazıldığını söyler. |
@@ -315,7 +317,7 @@ hatayla reddedilir.
 | `--jpeg-quality N` | `CUW_JPEG_QUALITY` | `80` | JPEG kalitesi, 1–95 |
 | `--monitor N` | `CUW_MONITOR` | primary | `screenshot` için varsayılan monitör (1'den başlar) |
 | `--max-elements N` | `CUW_MAX_ELEMENTS` | `80` | `elements`'in döndürdüğü en fazla satır, 1–500 |
-| `--block NAME` | `CUW_BLOCK` | none | Ajanın girdi göndermemesi gereken süreçler. Bayrak tekrarlanabilir ve virgülle de kabul eder (`--block keepass.exe,1password`); değişken virgülle ayrılmış bir liste alır. Eşleşmede büyük/küçük harf yok sayılır ve `.exe` isteğe bağlıdır. |
+| `--block NAME` | `CUW_BLOCK` | none | Ajanın kullanmaması gereken süreçler: pencerelerine girdi, `focus` ve `elements` reddedilir; `windows` ve sonuç satırları pencere başlıklarını gizler. Ekran görüntülerinde yine görünürler. Bayrak tekrarlanabilir ve virgülle de kabul eder (`--block keepass.exe,1password`); değişken virgülle ayrılmış bir liste alır. Eşleşmede büyük/küçük harf yok sayılır ve `.exe` isteğe bağlıdır. |
 | `--no-failsafe` | `CUW_FAILSAFE` | on | Ekran köşesi failsafe'ini kapatır. `0`/`false`/`no`/`off` kapatır. |
 | `--allow-terminal-input` | `CUW_ALLOW_TERMINAL_INPUT` | off | Bir terminal önde olduğunda `type_text`/`key` kullanımına izin verir; terminalde sağ/orta tık ve sürüklemeye de izin verir. `1`/`true`/`yes`/`on` etkinleştirir. |
 | `--version` | | | Sürümü yazdırıp çıkar |
@@ -340,11 +342,14 @@ hatayla reddedilir.
   uygulama, ajanın kendi barındırıcısı, parola alanı) ve geçerse yazma sürer. Enter'dan sonraki
   değişimde metin durur, çünkü Enter penceresi henüz açılmamış bir programı başlatmış olabilir.
 - **Ön plan penceresi yokken** klavye girdisi reddedilir.
-- **Engelleme listesi.** `--block keepass.exe`, o uygulamaya girdiyi reddeder. İşaretçi eylemlerinde
-  sunucu hedef noktanın altındaki pencereye, `type_text`/`key` için ön plandaki pencereye, `focus`
-  için hedef pencereye bakar; bu denetim de nokta/odak altındaki pencerenin kök ve kök-sahip
-  penceresine (ve başka sürece ait gömülü alt pencereye) bakar. Explorer gibi başlatıcılar ajanın
-  barındırıcısı sayılmaz. Ajana, bu adımı sizin yapmanızı istemesi söylenir.
+- **Engelleme listesi.** `--block keepass.exe`, ajanın o uygulamayı kullanmasını engeller. Ona
+  girdi reddedilir: işaretçi eylemlerinde sunucu hedef noktanın altındaki pencereye,
+  `type_text`/`key` için ön plandaki pencereye bakar. Pencerelerinde `focus` ve `elements`
+  reddedilir (engelleme listesi varken `elements` bir ön plan penceresi ya da handle ister).
+  `windows` ve sonuç satırları başlıkları yerine `(title hidden: blocked app)` gösterir. Her denetim
+  pencerenin kök ve kök-sahip penceresine bakar; işaretçi denetimleri başka sürece ait gömülü alt
+  pencereye de bakar. Ajana, bu adımı sizin yapmanızı istemesi söylenir. Ekran görüntüleri
+  süzülmez (aşağıya bakın) ve liste siz ayarlayana dek boştur.
 - **Failsafe.** Farenizi herhangi bir monitörün herhangi bir köşesine götürün. Bundan sonra her eylem
   reddedilir ve ajana durup size sorması söylenir. Fareyi köşeden uzaklaştırdığınızda eylemler yeniden
   çalışır. Ajan fareyi köşeden kendi başına çıkaramaz, çünkü `move` da reddedilir. Ajanın işaretçiyi
@@ -357,7 +362,40 @@ hatayla reddedilir.
   yaptığını izleyin.
 - Ekrandaki her şey modelin girdisi olur; ajanı yönlendirmek için yazılmış metinler de dahil
   (prompt injection). Hassas pencereleri kapatın veya simge durumuna küçültün. Engelleme listesi
-  girdiyi durdurur, ama bu pencereler yine de ekran görüntülerinde görünür.
+  girdiyi ve öğe okumayı durdurur, ama engelli pencereler `screenshot` ve `zoom` görüntülerinde yine
+  görünür.
+- **Claude Code'un izin kurallarının dışında program çalıştırabilir.** Klavye ve fareyle
+  başlatabildiğiniz her şeyi ajan da başlatabilir: Win+R, Başlat menüsü araması, Görev Yöneticisi'nin
+  "Yeni görev çalıştır"ı ya da herhangi bir dosya penceresinin adres çubuğu `cmd`'yi, PowerShell'i ya
+  da başka bir programı başlatabilir. Claude Code'un Bash izin/yasak kuralları ve sandbox'ı buna
+  uygulanmaz. Terminal koruması yalnızca terminal pencerelerine yazmayı reddeder; engelleme listesi
+  de bu yolu kapatamaz, çünkü neredeyse her uygulamanın bir dosya penceresi vardır. Önündeki tek engel,
+  Claude Code'un her `click`, `type_text` ve `key` çağrısından önce sormasıdır.
+- **Varsayılan engelleme listesi yok.** `--block` ayarlayana dek ajan parola yöneticiniz dahil her
+  uygulamayı kullanabilir.
+
+### Önerilen kurulum
+
+- **Ajanın asla kullanmaması gereken uygulamaları engelleyin**: parola yöneticileri (`keepass.exe`,
+  `keepassxc.exe`, `1password.exe`, `bitwarden.exe`), doğrulayıcı (authenticator), banka ve kripto
+  cüzdanı uygulamaları, uzak erişim araçları (`mstsc.exe`, `anydesk.exe`, `teamviewer.exe`). Eşleşme
+  süreç adıyladır; Görev Yöneticisi'nin Ayrıntılar sekmesi gösterir. Bir tarayıcıyı engellemek tüm
+  pencerelerini engeller; site bazında engelleme yoktur. eren-kit yükleyicisinden sonra sunucuyu
+  listeyle yeniden kaydedin:
+
+  ```powershell
+  claude mcp remove computer-use-windows -s user
+  claude mcp add computer-use-windows -s user -- "<eren-kit>\packages\computer-use-windows\.venv\Scripts\computer-use-windows.exe" --block keepass.exe,keepassxc.exe,1password.exe,bitwarden.exe
+  ```
+
+  Yükleyiciyi yeniden çalıştırdıktan sonra seçeneklerinizin durduğunu
+  `claude mcp get computer-use-windows` ile denetleyin.
+- **Eylemler için onay istemini koruyun.** `click`, `type_text`, `key`, `drag` ya da `focus`'a
+  otomatik izin vermeyin; bir `type_text` ya da `key` çağrısını onaylamadan önce ne yazacağını okuyun.
+- **Şu durumlarda kullanmayın:** gözetimsizken, hassas pencereler açıkken ya da kilidi açıkken, ya
+  da güvenlik sınırınızın Claude Code'un Bash izin kuralları veya sandbox'ı olduğu oturumlarda
+  (örneğin güvenmediğiniz kod üzerinde çalışırken). Sunucuyu yalnızca gereken yerde kaydedin
+  (`-s user` yerine `-s local`) ya da işiniz bitince kaldırın.
 
 **Claude Code için ipucu:** Claude Code, aracı izinli yapmadığınız sürece her MCP aracı çağrısından
 önce sorar. Orta yol, `settings.json` içinde yalnızca salt okunur araçlara otomatik izin vermek;

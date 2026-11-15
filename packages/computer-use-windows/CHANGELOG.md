@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Blocked-app checks look at the root and root-owner window, also for handles that are not in the
   window list.
 - Keyboard input is refused while there is no foreground window.
+- The UI Automation wrapper is no longer looked up on disk. A `.py` file placed in the fixed
+  `%TEMP%\computer-use-windows\comtypes-gen` folder (or in the temp dir) used to run in the server
+  on the first `elements` call. The folder is no longer created; an old one can be deleted.
+- The blocklist now covers reading too: `elements` is refused for a blocked app's windows (and,
+  with a blocklist, when there is no foreground window), and `windows` and result lines show
+  `(title hidden: blocked app)` instead of its window titles. Screenshots are still not filtered.
 
 ### Changed
 

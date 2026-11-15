@@ -105,6 +105,53 @@ def test_element_center() -> None:
     assert odd.center == (-75, -30)
 
 
+# The wrapper module comtypes generates for UIAutomationCore (UIAutomationClient 1.0).
+_UIA_WRAPPER = "_944DE083_8FB8_45CF_BCB7_C477ACB2F897_0_1_0"
+_STDOLE_WRAPPER = "_00020430_0000_0000_C000_000000000046_0_2_0"  # a dependency it pulls in
+
+_LOAD_UIA = """
+import sys
+from computer_use_windows import uia
+module = uia._load_uia_module()
+assert hasattr(module, "IUIAutomation"), module
+print(sorted(name for name in sys.modules if name.startswith("comtypes.gen._944DE083")))
+"""
+
+
+def test_uia_wrapper_never_runs_files_from_the_temp_dir(tmp_path) -> None:
+    """comtypes looks for an already generated wrapper before building one in memory. A module
+    planted in the temp dir (also in the fixed folder older versions used) must not run.
+
+    Loads the type library only: no input, no window, no screen capture.
+    """
+    import os
+
+    temp = tmp_path / "temp"
+    marker = tmp_path / "planted-module-ran"
+    planted = f"import pathlib\npathlib.Path({str(marker)!r}).write_text('ran')\n"
+    for folder in (temp, temp / "computer-use-windows" / "comtypes-gen"):
+        folder.mkdir(parents=True, exist_ok=True)
+        for name in (_UIA_WRAPPER, "UIAutomationClient", _STDOLE_WRAPPER, "stdole"):
+            (folder / f"{name}.py").write_text(planted, encoding="utf-8")
+    before = sorted(p.relative_to(temp) for p in temp.rglob("*"))
+    env = {**os.environ, "TEMP": str(temp), "TMP": str(temp), "TMPDIR": str(temp)}
+    proc = subprocess.run(
+        [sys.executable, "-c", _LOAD_UIA],
+        cwd=tmp_path,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert not marker.exists(), "a module planted in the temp dir ran in the server process"
+    assert proc.returncode == 0, proc.stderr
+    # the planted name is the one comtypes looks up, so the test would catch an import
+    assert f"comtypes.gen.{_UIA_WRAPPER}" in proc.stdout
+    # and nothing was written there either (no generated files, no __pycache__)
+    assert sorted(p.relative_to(temp) for p in temp.rglob("*")) == before
+
+
 # ------------------------------------------------------------------- integration
 
 

@@ -74,8 +74,10 @@ monitor 1/2 1280x720 (scale 1.50) ~1196 tokens | foreground: "Settings" (systems
 - **Typing that works in any language.** Unicode typing doesn't depend on the keyboard layout
   (Turkish `ğüşıöçİ`, emoji, any script). Shortcuts (`ctrl+s`) and key sequences
   (`tab tab enter`) are supported too.
-- **Guard rails.** The server won't type into password fields or terminals. It has an optional app
-  blocklist and a failsafe: move the mouse into a screen corner to stop the agent.
+- **Guard rails.** The server won't type into password fields or terminals. It has an app
+  blocklist (empty until you set it) and a failsafe: move the mouse into a screen corner to stop
+  the agent. These are guard rails, not a sandbox: read [Safety and privacy](#safety-and-privacy)
+  before you use it.
 - **Local only.** No network access and no telemetry. It has four runtime dependencies (`mcp`, `mss`,
   `Pillow`, `comtypes`), and input goes through Win32 `SendInput` via `ctypes`.
 
@@ -90,7 +92,9 @@ From the root of the [eren-kit repository](../../README.md), run:
 ```
 
 It creates `packages/computer-use-windows/.venv`, installs this package and registers the MCP server
-as `computer-use-windows`.
+as `computer-use-windows`. It registers the server without options, so the app blocklist is empty
+and the installer does not ask for one. Set it up afterwards as described in
+[Recommended setup](#recommended-setup).
 
 ### Manual install (venv)
 
@@ -244,8 +248,8 @@ one first, or to use element ids.
 |---|---|---|
 | `screenshot` | `monitor?` | Captures a monitor, downscaled to the size cap. Returns the image plus one line: monitor, size, scale, token estimate, foreground window. |
 | `zoom` | `x0, y0, x1, y1` | Captures a region of the last screenshot fresh at native resolution, for small text. Coordinates stay in screenshot space. |
-| `elements` | `query?, window?` | Lists the UI Automation elements of the foreground or a given window as text: id, role, name, value, center. Never shows password values. Says when the scan was cut short and the list is incomplete. |
-| `windows` | none | Lists visible top-level windows: handle, process, title, `[foreground]`/`[minimized]`. |
+| `elements` | `query?, window?` | Lists the UI Automation elements of the foreground or a given window as text: id, role, name, value, center. Never shows password values. Says when the scan was cut short and the list is incomplete. Refused for a blocked app. |
+| `windows` | none | Lists visible top-level windows: handle, process, title, `[foreground]`/`[minimized]`. A blocked app's titles are hidden. |
 | `focus` | `window` | Restores a window by handle if minimized and brings it to the front. A window that is not responding is refused. |
 | `click` | `x, y` or `element`; `button, clicks, modifiers?` | Left, right or middle click, 1–3 clicks, optionally holding `ctrl`/`alt`/`shift`/`win`. Right and middle clicks on a terminal or on the agent's own window are refused (they paste). |
 | `type_text` | `text` | Types Unicode text, independent of the keyboard layout (`\n` = Enter, `\t` = Tab). Re-checks the target (password field, terminal, blocked app) after its first character, after every Tab/Enter and every 50 characters. If the foreground window changes while typing, the new window is checked like the first one and typing continues if it passes; after an Enter, a change stops the text. The error says how many characters were typed. |
@@ -307,7 +311,7 @@ Invalid values are rejected with an error that names the flag or variable.
 | `--jpeg-quality N` | `CUW_JPEG_QUALITY` | `80` | JPEG quality, 1–95 |
 | `--monitor N` | `CUW_MONITOR` | primary | Default monitor for `screenshot` (1-based) |
 | `--max-elements N` | `CUW_MAX_ELEMENTS` | `80` | Maximum lines returned by `elements`, 1–500 |
-| `--block NAME` | `CUW_BLOCK` | none | Processes the agent must not send input to. The flag can repeat and also accepts commas (`--block keepass.exe,1password`); the variable takes a comma-separated list. Matching ignores case, and `.exe` is optional. |
+| `--block NAME` | `CUW_BLOCK` | none | Processes the agent must not operate: input, `focus` and `elements` are refused for their windows, and `windows` and result lines hide their window titles. Screenshots still show them. The flag can repeat and also accepts commas (`--block keepass.exe,1password`); the variable takes a comma-separated list. Matching ignores case, and `.exe` is optional. |
 | `--no-failsafe` | `CUW_FAILSAFE` | on | Turns off the screen-corner failsafe. `0`/`false`/`no`/`off` disables it. |
 | `--allow-terminal-input` | `CUW_ALLOW_TERMINAL_INPUT` | off | Allows `type_text`/`key` while a terminal is in front, and right/middle clicks and drags onto a terminal or the agent's own window. `1`/`true`/`yes`/`on` enables it. |
 | `--version` | | | Prints the version and exits |
@@ -332,10 +336,14 @@ Invalid values are rejected with an error that names the flag or variable.
   while typing, the new window is checked like the first one (terminal, blocked app, the agent's
   own host, password field) and typing continues if it passes. After an Enter, a change stops the
   text, because Enter may have started a program whose window is not up yet.
-- **Blocklist.** `--block keepass.exe` refuses input to that app. For pointer actions the server
-  checks the window under the target point, for `type_text`/`key` the foreground window, and for
-  `focus` the target window. Each check covers the root and root-owner window and an embedded
-  child window of another process. The agent is told to ask you to do that step yourself.
+- **Blocklist.** `--block keepass.exe` keeps the agent from operating that app. Input to it is
+  refused: for pointer actions the server checks the window under the target point, for
+  `type_text`/`key` the foreground window. `focus` and `elements` are refused for its windows
+  (`elements` with a blocklist also needs a foreground window or a handle). `windows` and the
+  result lines show `(title hidden: blocked app)` instead of its window titles. Each check covers
+  the window's root and root-owner window; pointer checks also cover an embedded child window of
+  another process. The agent is told to ask you to do that step yourself. Screenshots are not
+  filtered (see below), and the list is empty until you set it.
 - **Failsafe.** Move your mouse into any corner of any monitor. Every action is then refused, and the
   agent is told to stop and ask you. Actions work again once you move the mouse away. The agent can't
   move the mouse out of the corner itself, because `move` is refused too. A corner the agent moved
@@ -347,8 +355,40 @@ Invalid values are rejected with an error that names the flag or variable.
 - The tools control your **real** mouse and keyboard. Don't use the PC while the agent works, and
   watch what it does.
 - Anything on screen becomes model input, including text written to manipulate the agent (prompt
-  injection). Close or minimize sensitive windows. The blocklist stops input, but those windows still
-  show up in screenshots.
+  injection). Close or minimize sensitive windows. The blocklist stops input and element reading,
+  but blocked windows still show up in `screenshot` and `zoom` images.
+- **It can run programs outside Claude Code's permission rules.** What you can start with the
+  keyboard and mouse, the agent can start too: Win+R, the Start menu search, Task Manager's "Run new
+  task" or the address bar of any file dialog can launch `cmd`, PowerShell or any other program.
+  Claude Code's Bash allow/deny rules and its sandbox don't apply to that. The terminal guard only
+  refuses typing into terminal windows, and the blocklist can't close this path either, because
+  almost every app has a file dialog. What stands in the way is Claude Code asking before each
+  `click`, `type_text` and `key` call.
+- **No blocklist by default.** Until you set `--block`, the agent may operate every app, including
+  your password manager.
+
+### Recommended setup
+
+- **Block the apps the agent must never operate**: password managers (`keepass.exe`,
+  `keepassxc.exe`, `1password.exe`, `bitwarden.exe`), authenticator, banking and crypto-wallet
+  apps, and remote-access tools (`mstsc.exe`, `anydesk.exe`, `teamviewer.exe`). The match is by
+  process name; Task Manager's Details tab shows it. Blocking a browser blocks all of its windows;
+  there is no per-site blocking. After the eren-kit installer, register the server again with the
+  list:
+
+  ```powershell
+  claude mcp remove computer-use-windows -s user
+  claude mcp add computer-use-windows -s user -- "<eren-kit>\packages\computer-use-windows\.venv\Scripts\computer-use-windows.exe" --block keepass.exe,keepassxc.exe,1password.exe,bitwarden.exe
+  ```
+
+  After you run the installer again, check with `claude mcp get computer-use-windows` that your
+  options are still there.
+- **Keep the prompts for actions.** Don't auto-allow `click`, `type_text`, `key`, `drag` or
+  `focus`, and read what a `type_text` or `key` call is about to type before you approve it.
+- **Don't use it** unattended, while sensitive windows are open or unlocked, or in sessions where
+  Claude Code's Bash permission rules or sandbox are your security boundary (for example when
+  working on code you don't trust). Register it only where you need it (`-s local` instead of
+  `-s user`) or remove it when you are done.
 
 **Tip for Claude Code:** Claude Code asks before each MCP tool call unless you allow the tool. A
 middle ground is to auto-allow only the read-only tools in `settings.json` and keep prompts for
