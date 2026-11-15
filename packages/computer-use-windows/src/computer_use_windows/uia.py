@@ -234,9 +234,13 @@ _WS_EX_TOOLWINDOW = 0x00000080
 _WS_EX_APPWINDOW = 0x00040000
 _WS_EX_TRANSPARENT = 0x00000020
 _ES_PASSWORD = 0x0020
+_GA_PARENT = 1
 _GA_ROOT = 2
 _GA_ROOTOWNER = 3
+_GW_HWNDNEXT = 2
+_GW_HWNDPREV = 3
 _GW_OWNER = 4
+_GW_CHILD = 5
 _SW_RESTORE = 9
 _HWND_TOP = 0
 _SWP_NOSIZE = 0x0001
@@ -722,16 +726,52 @@ def window_at(x: int, y: int) -> WindowInfo | None:
     return _with_related(api, info, others, fg)
 
 
+def _is_desktop(api: _Win32, hwnd: int) -> bool:
+    """Whether ``hwnd`` is a window without a parent: the desktop window, whose tree holds the
+    windows of every app (or the root of the message-only windows). Windows answers this for
+    the window itself, so every number that names the desktop window counts."""
+    return not int(api.GetAncestor(hwnd, _GA_PARENT) or 0)
+
+
+def _check_reported(api: _Win32, hwnd: int) -> None:
+    """Refuse a handle that is not the number Windows reports for its window.
+
+    Windows reads only the low 32 bits of a window handle, and 0xFFFF in their high word matches
+    the window with the same low word, so one window answers to several numbers. Such a number
+    would slip past every check that compares handles (the desktop window, the window list), and
+    for the wildcard form Windows does not even tell the window's process (blocklist checks).
+    """
+    desktop = int(api.GetDesktopWindow() or 0)
+    parent = int(api.GetAncestor(hwnd, _GA_PARENT) or 0)
+    if not parent:
+        reported = hwnd == desktop
+    elif parent == desktop:  # a top-level window is its own root
+        reported = int(api.GetAncestor(hwnd, _GA_ROOT) or 0) == hwnd
+    else:  # a child window: its neighbour in z-order names it the way Windows does
+        before = int(api.GetWindow(hwnd, _GW_HWNDPREV) or 0)
+        if before:
+            reported = int(api.GetWindow(before, _GW_HWNDNEXT) or 0) == hwnd
+        else:
+            reported = int(api.GetWindow(parent, _GW_CHILD) or 0) == hwnd
+    if not reported:
+        raise ValueError(
+            f"Window handle {hwnd} is not the handle Windows reports for that window (Windows "
+            "accepts several numbers for one window); pass the handle exactly as windows lists it."
+        )
+
+
 def window_family(handle: int) -> list[WindowInfo]:
     """The window ``handle`` (any window, also a child or an unlisted one), its root window and
     its root owner: every window whose process a ``focus`` of this handle would bring forward.
 
-    Raises ValueError for an invalid handle.
+    Raises ValueError for an invalid handle, also for another number that Windows accepts for a
+    window but does not report for it (see ``_check_reported``).
     """
     api = _win()
     hwnd = _check_handle(handle)
     if not api.IsWindow(hwnd):
         raise ValueError(f"No window with handle {hwnd}; call windows to list current windows.")
+    _check_reported(api, hwnd)
     fg = api.foreground()
     family: list[WindowInfo] = []
     seen: set[int] = set()
@@ -1198,23 +1238,29 @@ class _Hider:
         self._windows: dict[int, bool] = {}
         self._titles: list[str] | None = None
 
-    def _process(self, hwnd: int) -> str:
+    def _process(self, hwnd: int) -> str | None:
+        """The window's process name; None when Windows does not tell whose window it is."""
         pid = self.api.pid_tid(hwnd)[0]
+        if pid <= 0:
+            return None
         name = self._names.get(pid)
         if name is None:
-            name = self.api.process_name(pid) if pid > 0 else ""
-            self._names[pid] = name
+            name = self._names[pid] = self.api.process_name(pid)
         return name
 
     def _own_hidden(self, hwnd: int) -> bool:
-        """The window's own process is blocked (for a UWP frame: or the app inside it)."""
+        """The window's own process is blocked (for a UWP frame: or the app inside it). A window
+        whose process Windows does not tell (closed meanwhile, or a number that names it only
+        through a wildcard, see ``_check_reported``) counts as blocked: it is not read."""
         known = self._own.get(hwnd)
         if known is None:
             name = self._process(hwnd)
-            known = bool(self.hidden(name))
+            known = name is None or bool(self.hidden(name))
             if not known and name == _APP_FRAME_HOST:
                 core = int(self.api.FindWindowExW(hwnd, None, _CORE_WINDOW_CLASS, None) or 0)
-                known = bool(core) and bool(self.hidden(self._process(core)))
+                if core:
+                    core_name = self._process(core)
+                    known = core_name is None or bool(self.hidden(core_name))
             self._own[hwnd] = known
         return known
 
@@ -1445,7 +1491,8 @@ def list_elements(
     ``hidden(process)``: the user's blocklist (None: no app is blocked, nothing is checked).
     With it, windows of blocked apps inside the scanned tree are skipped, texts that carry the
     title of a blocked app's window read HIDDEN_TEXT, and the desktop window (whose tree holds
-    every app's windows) is refused. The caller still checks the target window itself.
+    every app's windows) is refused, as is a handle that is not the number Windows reports for
+    its window. The caller still checks the target window itself.
     """
     if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
         raise ValueError(f"limit must be a positive integer, got {limit!r}.")
@@ -1453,11 +1500,12 @@ def list_elements(
     hwnd = _resolve_target(api, handle)
     hider: _Hider | None = None
     if hidden is not None:
-        if hwnd == int(api.GetDesktopWindow() or 0):
+        if _is_desktop(api, hwnd):
             raise RuntimeError(
                 "The desktop window holds the windows of every app, so its elements are not "
                 "listed while apps are blocked. Pass the handle of one window from windows."
             )
+        _check_reported(api, hwnd)
         hider = _Hider(api, hidden)
     root = api.GetAncestor(hwnd, _GA_ROOT) or hwnd
     if api.IsIconic(root):

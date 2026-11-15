@@ -340,18 +340,28 @@ Invalid values are rejected with an error that names the flag or variable.
   refused: for pointer actions the server checks the window under the target point, for
   `type_text`/`key` the foreground window. `focus` and `elements` are refused for its windows
   (`elements` with a blocklist also needs a foreground window or a handle, and refuses the desktop
-  window, whose tree holds the windows of every app). `elements` of any other window leaves out the
-  blocked app's windows inside it (for example one embedded in another app) and shows
-  `(text hidden: blocked app)` for every element whose name or value contains the title of a
+  window, whose tree holds the windows of every app). With a blocklist, `focus` and `elements` take
+  a window handle only in the form Windows reports it (as `windows` lists it); Windows also
+  accepts other numbers for the same window, and those are refused. `elements` of any other window
+  leaves out the blocked app's windows inside it (for example one embedded in another app) and
+  shows `(text hidden: blocked app)` for every element whose name or value contains the title of a
   visible window of the blocked app, the way a taskbar button, an Alt-Tab or Task View entry or a
-  Task Manager row repeats it. That is a text match: a title that another app shortens or rewords
-  is not caught, and other apps can still show the blocked app's content in their own words.
-  `windows` and the result lines show `(title hidden: blocked app)` instead of its window titles.
-  Each check covers the window's root and root-owner window; pointer checks also cover an embedded
-  child window of another process. Clicking the blocked app's taskbar button is not refused (the
-  click lands on the taskbar), but input to the window it brings forward is. The agent is told to
-  ask you to do that step yourself. Screenshots are not filtered (see below), and the list is empty
-  until you set it.
+  Task Manager row repeats it. That is a text match that ignores case and invisible characters,
+  with limits: titles shorter than 3 characters are not matched at all (they would hide unrelated
+  text), a text cut off with "…" is matched only when at least 8 characters of it are left, a
+  title that another app shortens or rewords is not caught, and other apps can still show the
+  blocked app's content in their own words. `windows` and the result lines show
+  `(title hidden: blocked app)` instead of its window titles. Each check covers the window's root
+  and root-owner window; pointer checks also cover an embedded child window of another process.
+  When a step is refused, the agent is told to ask you to do it yourself. Screenshots are not
+  filtered (see below), and the list is empty until you set it.
+- **What the blocklist doesn't stop.** It refuses input *to* the blocked app's windows, not
+  actions on other windows that act *on* the app. Through the Windows shell the agent can still
+  bring it forward, minimize it, close it or end its process: clicking its taskbar button (the
+  click lands on the taskbar; input to the window it brings forward is refused), "Close window" in
+  its taskbar jump list, the close button of its Alt-Tab or Task View entry, "End task" in Task
+  Manager, or keys sent to another window (Alt+Tab, Win+D). Closing it this way can lose unsaved
+  work in that app.
 - **Failsafe.** Move your mouse into any corner of any monitor. Every action is then refused, and the
   agent is told to stop and ask you. Actions work again once you move the mouse away. The agent can't
   move the mouse out of the corner itself, because `move` is refused too. A corner the agent moved

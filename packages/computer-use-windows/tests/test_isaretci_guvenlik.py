@@ -83,7 +83,10 @@ _KEYEVENTF_UNICODE = 0x0004
 _GA_PARENT = 1
 _GA_ROOT = 2
 _GA_ROOTOWNER = 3
+_GW_HWNDNEXT = 2
+_GW_HWNDPREV = 3
 _GW_OWNER = 4
+_GW_CHILD = 5
 _GWL_STYLE = -16
 _GWL_EXSTYLE = -20
 _WS_CHILD = 0x40000000
@@ -309,8 +312,29 @@ class FakeDesktop:
         if self.foreground == handle:
             self.foreground = self.z[0] if self.z else 0
 
+    def canonical(self, handle: int) -> int:
+        """The handle Windows reports for the window that ``handle`` names, 0 for none.
+
+        Like Windows (measured on Windows 11): only the low 32 bits count, and 0xFFFF in their
+        high word is a wildcard that matches the window with the same low word.
+        """
+        h = int(handle or 0)
+        if h in self.wins:
+            return h
+        low = h & 0xFFFFFFFF
+        if low in self.wins:
+            return low
+        if low >> 16 == 0xFFFF:
+            return next((c for c in self.wins if c & 0xFFFF == low & 0xFFFF), 0)
+        return 0
+
+    def wildcard(self, handle: int) -> bool:
+        """``handle`` names a window only through the 0xFFFF wildcard."""
+        h = int(handle or 0)
+        return h not in self.wins and (h & 0xFFFFFFFF) >> 16 == 0xFFFF
+
     def win(self, handle: int) -> Win | None:
-        return self.wins.get(int(handle or 0))
+        return self.wins.get(self.canonical(handle))
 
     def tid(self, handle: int) -> int:
         win = self.win(handle)
@@ -513,10 +537,11 @@ class FakeWin32(uia._Win32):
         return len(text)
 
     def GetWindowThreadProcessId(self, hwnd: int, ref: Any) -> int:  # noqa: N802
-        win = self.desk.win(hwnd)
+        # Windows fails this call for a wildcard handle (that IsWindow and GetAncestor accept).
+        win = None if self.desk.wildcard(hwnd) else self.desk.win(hwnd)
         if ref is not None:
             ref._obj.value = win.pid if win else 0
-        return self.desk.tid(hwnd)
+        return self.desk.tid(hwnd) if win else 0
 
     def IsWindow(self, hwnd: int) -> int:  # noqa: N802
         return int(self.desk.win(hwnd) is not None)
@@ -553,8 +578,10 @@ class FakeWin32(uia._Win32):
         win = self.desk.win(hwnd)
         if win is None:
             return 0
-        if flag == _GA_PARENT:
-            return win.parent
+        if flag == _GA_PARENT:  # top-level windows: the desktop window; the desktop: none
+            if win.parent:
+                return win.parent
+            return 0 if win.handle == DESKTOP_HANDLE else DESKTOP_HANDLE
         if flag == _GA_ROOT:
             return self.desk.root(hwnd)
         if flag == _GA_ROOTOWNER:
@@ -567,11 +594,27 @@ class FakeWin32(uia._Win32):
             return 0
         return win.parent or win.owner
 
+    def _children(self, parent: int) -> list[int]:
+        if parent == DESKTOP_HANDLE:
+            return list(self.desk.z)
+        return [h for h, w in self.desk.wins.items() if w.parent == parent]
+
     def GetWindow(self, hwnd: int, cmd: int) -> int:  # noqa: N802
         win = self.desk.win(hwnd)
-        if win is None or cmd != _GW_OWNER:
+        if win is None:
             return 0
-        return win.owner
+        if cmd == _GW_OWNER:
+            return win.owner
+        if cmd == _GW_CHILD:
+            kids = self._children(win.handle)
+            return kids[0] if kids else 0
+        if cmd in (_GW_HWNDNEXT, _GW_HWNDPREV):
+            siblings = self._children(win.parent or DESKTOP_HANDLE)
+            if win.handle not in siblings:
+                return 0
+            i = siblings.index(win.handle) + (1 if cmd == _GW_HWNDNEXT else -1)
+            return siblings[i] if 0 <= i < len(siblings) else 0
+        return 0
 
     def GetLastActivePopup(self, hwnd: int) -> int:  # noqa: N802
         return int(hwnd)
@@ -777,7 +820,7 @@ class FakeAutomation:
 
     def ElementFromHandleBuildCache(self, hwnd: int, request: Any) -> FakeElement:  # noqa: N802
         self.calls += 1
-        tree = self.desk.trees.get(int(hwnd))
+        tree = self.desk.trees.get(self.desk.canonical(hwnd) or int(hwnd))  # aliases too
         if tree is None:
             raise FakeComError(_E_FAIL - (1 << 32), "no provider")
         self.desk.clock.advance(tree.delay)
@@ -1855,7 +1898,7 @@ def test_scan_skips_blocked_top_level_windows_even_where_the_desktop_is_not_reco
     # Second line of defense: even if the desktop check missed (another handle with the same
     # tree), the scan itself skips the windows of blocked apps and still lists the others.
     handle = _desktop_tree(desk)
-    monkeypatch.setattr(FakeWin32, "GetDesktopWindow", lambda self: 0, raising=False)
+    monkeypatch.setattr(uia, "_is_desktop", lambda api, hwnd: False, raising=False)
     found = uia.list_elements(handle, hidden=lambda process: process == "keepass.exe")
     names = [e.name.lower() for e in found]
     assert "save" in names
@@ -1906,6 +1949,103 @@ def test_without_a_blocklist_the_scan_is_unchanged(
     assert not reply.is_error, reply.text
     assert _shows_secret(reply), reply.text  # nothing is hidden or refused without a blocklist
     assert "blocked app" not in reply.text
+
+
+# Other numbers that Windows accepts for one window (measured on Windows 11 with IsWindow,
+# GetAncestor and UI Automation's ElementFromHandle): only the low 32 bits count, and 0xFFFF in
+# their high word is a wildcard for the window with the same low word. GetWindowThreadProcessId
+# fails for the wildcard forms, so the window's process is unknown.
+SPELLINGS = {
+    "upper-bits": lambda h: h + 2**32,
+    "upper-bits-all-set": lambda h: h | 0xFFFFFFFF00000000,
+    "wildcard": lambda h: (h & 0xFFFF) | 0xFFFF0000,
+    "wildcard-sign-extended": lambda h: (h & 0xFFFF) | 0xFFFFFFFFFFFF0000,
+}
+spellings = pytest.mark.parametrize("spell", list(SPELLINGS.values()), ids=list(SPELLINGS))
+EMBEDDED_KEEPASS = 2201  # _notepad_with_embedded_keepass()
+
+
+def _embedded_keepass_readable_by_handle(desk: FakeDesktop) -> int:
+    """Notepad with the embedded KeePass window, which UI Automation also reads by its handle."""
+    _notepad_with_embedded_keepass(desk)
+    desk.trees[EMBEDDED_KEEPASS] = FakeElement(
+        desk, "pane", "", EMBEDDED_RECT, _keepass_controls(desk, EMBEDDED_RECT)
+    )
+    return EMBEDDED_KEEPASS
+
+
+@spellings
+def test_elements_refuse_the_desktop_window_under_every_number_windows_accepts(
+    desk: FakeDesktop, spell: Callable[[int], int]
+) -> None:
+    alias = spell(_desktop_tree(desk))
+    assert desk.canonical(alias) == DESKTOP_HANDLE  # the fake resolves it like Windows
+    reply = _elements(BLOCK_KEEPASS, alias)
+    assert reply.is_error, f"expected a refusal, got: {reply.text!r}"
+    assert not _shows_secret(reply), reply.text
+    assert desk.automation.calls == 0  # nothing of the desktop's tree was read
+    with pytest.raises(RuntimeError, match="desktop window"):
+        uia.list_elements(alias, hidden=lambda process: process == "keepass.exe")
+
+
+@spellings
+def test_elements_refuse_a_blocked_window_under_every_number_windows_accepts(
+    desk: FakeDesktop, spell: Callable[[int], int]
+) -> None:
+    # The embedded KeePass window sits in Notepad: its root and root owner are not blocked, so
+    # only its own process (which Windows does not tell for a wildcard number) shows it is KeePass.
+    alias = spell(_embedded_keepass_readable_by_handle(desk))
+    assert desk.canonical(alias) == EMBEDDED_KEEPASS
+    reply = _elements(BLOCK_KEEPASS, alias)
+    assert reply.is_error, f"expected a refusal, got: {reply.text!r}"
+    assert not _shows_secret(reply), reply.text
+    with pytest.raises(ValueError, match="windows lists it"):
+        uia.list_elements(alias, hidden=lambda process: process == "keepass.exe")
+
+
+@spellings
+@pytest.mark.parametrize("target", [KEEPASS.handle, EMBEDDED_KEEPASS], ids=["window", "embedded"])
+def test_focus_refuses_a_blocked_window_under_every_number_windows_accepts(
+    desk: FakeDesktop, spell: Callable[[int], int], target: int
+) -> None:
+    _notepad_with_embedded_keepass(desk)
+    desk.foreground = PAINT.handle
+    with connect(BLOCK_KEEPASS) as client:
+        reply = client.call("focus", window=spell(target))
+    assert reply.is_error, f"expected a refusal, got: {reply.text!r}"
+    assert desk.set_foreground == []
+    assert desk.foreground == PAINT.handle
+
+
+def test_handles_as_windows_reports_them_pass_the_spelling_check(desk: FakeDesktop) -> None:
+    _notepad_with_embedded_keepass(desk)
+    desk.add(Win(2202, "", NOTEPAD.process, NOTEPAD.pid, (100, 900, 300, 950), "Edit",
+                 parent=NOTEPAD.handle))  # fmt: skip
+    _desktop_tree(desk)
+    api = uia._win()
+    # top-level, first child, a later child, the desktop window
+    for handle in (NOTEPAD.handle, KEEPASS.handle, EMBEDDED_KEEPASS, 2202, DESKTOP_HANDLE):
+        uia._check_reported(api, handle)
+        for spell in SPELLINGS.values():
+            with pytest.raises(ValueError, match="windows lists it"):
+                uia._check_reported(api, spell(handle))
+
+
+@spellings
+def test_without_a_blocklist_every_number_windows_accepts_works_as_before(
+    desk: FakeDesktop, monkeypatch: pytest.MonkeyPatch, spell: Callable[[int], int]
+) -> None:
+    def not_without_a_blocklist(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("a blocklist check ran without a blocklist")
+
+    for name in ("_Hider", "_check_reported", "_is_desktop"):
+        monkeypatch.setattr(uia, name, not_without_a_blocklist, raising=False)
+    desktop = _desktop_tree(desk)
+    canonical = _elements(Config(), desktop)
+    reply = _elements(Config(), spell(desktop))
+    assert not reply.is_error, reply.text
+    assert _element_lines(reply) == _element_lines(canonical)
+    assert _shows_secret(reply), reply.text
 
 
 def _keepass_owned_dialog_in_front(desk: FakeDesktop) -> None:

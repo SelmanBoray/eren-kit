@@ -346,18 +346,30 @@ hatayla reddedilir.
   girdi reddedilir: işaretçi eylemlerinde sunucu hedef noktanın altındaki pencereye,
   `type_text`/`key` için ön plandaki pencereye bakar. Pencerelerinde `focus` ve `elements`
   reddedilir (engelleme listesi varken `elements` bir ön plan penceresi ya da handle ister ve
-  ağacında her uygulamanın penceresi bulunan masaüstü penceresini reddeder). Başka bir pencerede
-  `elements`, içindeki engelli uygulama pencerelerini (ör. başka bir uygulamaya gömülü olanı) atlar;
-  adı ya da değeri engelli uygulamanın görünür bir penceresinin başlığını içeren her öğe için
-  `(text hidden: blocked app)` gösterir: görev çubuğu düğmesi, Alt-Tab ya da Görev Görünümü girdisi
-  veya Görev Yöneticisi satırı başlığı böyle tekrarlar. Bu bir metin eşleşmesidir: başka bir
+  ağacında her uygulamanın penceresi bulunan masaüstü penceresini reddeder). Engelleme listesi
+  varken `focus` ve `elements` pencere handle'ını yalnızca Windows'un bildirdiği biçimde
+  (`windows`'un listelediği gibi) kabul eder; Windows aynı pencere için başka sayıları da kabul
+  eder, bunlar reddedilir. Başka bir pencerede `elements`, içindeki engelli uygulama pencerelerini
+  (ör. başka bir uygulamaya gömülü olanı) atlar; adı ya da değeri engelli uygulamanın görünür bir
+  penceresinin başlığını içeren her öğe için `(text hidden: blocked app)` gösterir: görev çubuğu
+  düğmesi, Alt-Tab ya da Görev Görünümü girdisi veya Görev Yöneticisi satırı başlığı böyle
+  tekrarlar. Bu, büyük/küçük harfe ve görünmez karakterlere bakmayan bir metin eşleşmesidir ve
+  sınırları vardır: 3 karakterden kısa başlıklar hiç eşleştirilmez (ilgisiz metinleri de
+  gizlerdi), "…" ile kesilmiş bir metin ancak en az 8 karakteri kalmışsa eşleşir, başka bir
   uygulamanın kısalttığı ya da değiştirdiği başlık yakalanmaz ve başka uygulamalar engelli
   uygulamanın içeriğini kendi sözleriyle yine gösterebilir. `windows` ve sonuç satırları başlıkları
   yerine `(title hidden: blocked app)` gösterir. Her denetim pencerenin kök ve kök-sahip
-  penceresine bakar; işaretçi denetimleri başka sürece ait gömülü alt pencereye de bakar. Engelli
-  uygulamanın görev çubuğu düğmesine tıklamak reddedilmez (tık görev çubuğuna düşer), ama öne
-  getirdiği pencereye girdi reddedilir. Ajana, bu adımı sizin yapmanızı istemesi söylenir. Ekran
-  görüntüleri süzülmez (aşağıya bakın) ve liste siz ayarlayana dek boştur.
+  penceresine bakar; işaretçi denetimleri başka sürece ait gömülü alt pencereye de bakar. Bir adım
+  reddedildiğinde ajana, o adımı sizin yapmanızı istemesi söylenir. Ekran görüntüleri süzülmez
+  (aşağıya bakın) ve liste siz ayarlayana dek boştur.
+- **Engelleme listesinin durdurmadıkları.** Engelli uygulamanın *kendi* pencerelerine girdiyi
+  reddeder; başka pencerelerde yapılıp o uygulamayı *etkileyen* eylemleri değil. Ajan Windows
+  kabuğu üzerinden onu yine öne getirebilir, küçültebilir, kapatabilir ya da sürecini
+  sonlandırabilir: görev çubuğu düğmesine tıklamak (tık görev çubuğuna düşer; öne getirdiği
+  pencereye girdi reddedilir), görev çubuğu atlama listesindeki "Pencereyi kapat", Alt-Tab ya da
+  Görev Görünümü girdisinin kapatma düğmesi, Görev Yöneticisi'nde "Görevi sonlandır" ya da başka bir
+  pencereye gönderilen tuşlar (Alt+Tab, Win+D). Böyle kapatmak o uygulamadaki kaydedilmemiş işi
+  kaybettirebilir.
 - **Failsafe.** Farenizi herhangi bir monitörün herhangi bir köşesine götürün. Bundan sonra her eylem
   reddedilir ve ajana durup size sorması söylenir. Fareyi köşeden uzaklaştırdığınızda eylemler yeniden
   çalışır. Ajan fareyi köşeden kendi başına çıkaramaz, çünkü `move` da reddedilir. Ajanın işaretçiyi
