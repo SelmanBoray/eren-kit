@@ -25,6 +25,7 @@ import {
 } from "../kur.ts";
 import type { IzinDuzeltBaglari, KokHatasiBag, SurumBilgisi } from "../kur.ts";
 import type { KaliciOrtam, Ortam } from "../ortam.ts";
+import type { IzinSonucu } from "../izin.ts";
 
 const kokleri: string[] = [];
 
@@ -543,7 +544,7 @@ test("temizSurumAdi: ilgisiz commit aynı içerik için yeni sürüm üretmez; e
 });
 
 /** `izinDuzeltKomutu` için sahte bağlar: daraltılan kökleri ve terminal satırlarını toplar. */
-function izinDuzeltSahte(ortam: Ortam, kalici: KaliciOrtam) {
+function izinDuzeltSahte(ortam: Ortam, kalici: KaliciOrtam, sonuc: IzinSonucu | Error = "daraltildi") {
   const daraltilan: string[] = [];
   const satirlar: string[] = [];
   const b: IzinDuzeltBaglari = {
@@ -551,7 +552,8 @@ function izinDuzeltSahte(ortam: Ortam, kalici: KaliciOrtam) {
     kaliciOrtam: () => kalici,
     sagla: (kok) => {
       daraltilan.push(kok);
-      return "daraltildi";
+      if (sonuc instanceof Error) throw sonuc;
+      return sonuc;
     },
     yaz: (s) => satirlar.push(s),
     uyar: (s) => satirlar.push(s),
@@ -565,7 +567,7 @@ test("--izin-duzelt servisin kökünü (kalıcı ortam) daraltır, kabuktakini d
   const a = izinDuzeltSahte({ LOCALAPPDATA: LA, EREN_KIT_DATA_DIR: "D:\\kabuk" }, { EREN_KIT_DATA_DIR: "E:\\servis" });
   assert.equal(izinDuzeltKomutu(a.b), 0);
   assert.deepEqual(a.daraltilan, ["E:\\servis"]);
-  assert.ok(a.satirlar.some((s) => s.includes("E:\\servis") && s.includes("Düzeltilen veri kökü")));
+  assert.ok(a.satirlar.some((s) => s.includes("E:\\servis") && s.startsWith("Hedef veri kökü (servisin kullanacağı)")));
   assert.ok(a.satirlar.some((s) => s.startsWith("UYARI:") && s.includes("D:\\kabuk")), "fark söylenir");
 
   // kabukta değer var, kalıcı ortamda yok: servis varsayılan köke yazar
@@ -589,4 +591,44 @@ test("--izin-duzelt servisin kökünü (kalıcı ortam) daraltır, kabuktakini d
   const e = izinDuzeltSahte({ LOCALAPPDATA: LA }, { EREN_KIT_DATA_DIR: "goreli" });
   assert.throws(() => izinDuzeltKomutu(e.b), /mutlak yol/);
   assert.deepEqual(e.daraltilan, []);
+});
+
+test("--izin-duzelt önce hedef kökü, daraltmadan sonra gerçek sonucu yazar; başarısız ya da gereksiz işlem 'düzeltildi' görünmez", () => {
+  const ortam = { LOCALAPPDATA: "C:\\ornek\\Yerel", EREN_KIT_DATA_DIR: "E:\\servis" };
+  const kalici = { EREN_KIT_DATA_DIR: "E:\\servis" };
+  const duzeltildiMi = (s: string): boolean => /düzeltildi|daraltıldı/i.test(s);
+
+  // başarı: hedef, ardından "düzeltildi" sonucu
+  const a = izinDuzeltSahte(ortam, kalici, "daraltildi");
+  assert.equal(izinDuzeltKomutu(a.b), 0);
+  assert.equal(a.satirlar.length, 2);
+  assert.ok(a.satirlar[0]!.startsWith("Hedef veri kökü") && a.satirlar[0]!.includes("E:\\servis"));
+  assert.ok(a.satirlar[1]!.startsWith("Sonuç: düzeltildi") && a.satirlar[1]!.includes("E:\\servis"));
+
+  // zaten güvenli: hedef + "değişiklik gerekmedi"; hiçbir satır düzeltildi demez
+  const g = izinDuzeltSahte(ortam, kalici, "guvenli");
+  assert.equal(izinDuzeltKomutu(g.b), 0);
+  assert.equal(g.satirlar.length, 2);
+  assert.ok(g.satirlar[1]!.startsWith("Sonuç: değişiklik gerekmedi"));
+  assert.ok(!g.satirlar.some(duzeltildiMi), g.satirlar.join("\n"));
+
+  // kök yoktu, oluşturuldu: düzeltildi denmez
+  const o = izinDuzeltSahte(ortam, kalici, "olusturuldu");
+  assert.equal(izinDuzeltKomutu(o.b), 0);
+  assert.ok(o.satirlar[1]!.includes("oluşturuldu"));
+  assert.ok(!o.satirlar.some(duzeltildiMi), o.satirlar.join("\n"));
+
+  // başarısız: hata aynen yeniden atılır; önce hedef, sonra "düzeltilemedi"; hiçbir satır düzeltildi demez
+  const hata = new Error("veri kökü başka hesaplara açık ve daraltılamadı");
+  const f = izinDuzeltSahte(ortam, kalici, hata);
+  assert.throws(() => izinDuzeltKomutu(f.b), (e) => e === hata);
+  assert.equal(f.satirlar.length, 2);
+  assert.ok(f.satirlar[0]!.startsWith("Hedef veri kökü"));
+  assert.ok(f.satirlar[1]!.startsWith("Sonuç: veri kökü düzeltilemedi") && f.satirlar[1]!.includes("E:\\servis"));
+  assert.ok(!f.satirlar.some(duzeltildiMi), f.satirlar.join("\n"));
+
+  // kalıcı ortam okunamadı: hedef bu kabuğun kökü olarak adlandırılır
+  const k = izinDuzeltSahte(ortam, null, "guvenli");
+  izinDuzeltKomutu(k.b);
+  assert.ok(k.satirlar.some((s) => s.startsWith("Hedef veri kökü (bu kabuğun)")));
 });

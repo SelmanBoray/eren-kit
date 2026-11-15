@@ -1632,7 +1632,8 @@ const gercekIzinDuzeltBaglari = (): IzinDuzeltBaglari => ({
  * `--izin-duzelt`: servisin gerçekten kullanacağı veri kökünü daraltır ve hangisi olduğunu terminale yazar.
  * Görev Zamanlayıcı'nın başlattığı servis kalıcı ortamı görür; kabuktaki `EREN_KIT_DATA_DIR` ondan farklıysa
  * kabuğun kökü değil servisinki düzeltilir ve fark söylenir (servisin açılma hatası bilerek yol yazmaz).
- * Kalıcı ortam okunamazsa bu kabuğun kökü, uyarıyla.
+ * Kalıcı ortam okunamazsa bu kabuğun kökü, uyarıyla. Önce hedef kök, daraltmadan sonra sonucu yazılır
+ * (düzeltildi / oluşturuldu / değişiklik gerekmedi); başarısızlıkta sonuç satırı uyarı olarak çıkar, hata yeniden atılır.
  */
 export const izinDuzeltKomutu = (b: IzinDuzeltBaglari = gercekIzinDuzeltBaglari()): number => {
   const servis = servisVeriKoku(b.ortam, b.kaliciOrtam());
@@ -1658,9 +1659,18 @@ export const izinDuzeltKomutu = (b: IzinDuzeltBaglari = gercekIzinDuzeltBaglari(
       );
     }
   }
-  b.yaz(`Düzeltilen veri kökü (servisin kullanacağı): ${kok}`);
-  const sonuc = b.sagla(kok);
-  if (sonuc === "guvenli") b.yaz(`Veri kökü zaten yalnız bu hesaba, SYSTEM'e ve Administrators'a açık: ${kok}`);
+  // Önce hedef, sonra gerçek sonuç: başarısız ya da gereksiz işlem "düzeltildi" gibi görünmez.
+  b.yaz(`Hedef veri kökü (${servis === null ? "bu kabuğun" : "servisin kullanacağı"}): ${kok}`);
+  let sonuc: IzinSonucu;
+  try {
+    sonuc = b.sagla(kok);
+  } catch (e) {
+    b.uyar(`Sonuç: veri kökü düzeltilemedi (nedeni aşağıdaki kur: satırında): ${kok}`);
+    throw e;
+  }
+  if (sonuc === "daraltildi") b.yaz(`Sonuç: düzeltildi; izinler yalnız bu hesap, SYSTEM ve Administrators kalacak biçimde daraltıldı: ${kok}`);
+  else if (sonuc === "olusturuldu") b.yaz(`Sonuç: kök yoktu; yalnız bu hesaba, SYSTEM'e ve Administrators'a açık olarak oluşturuldu: ${kok}`);
+  else b.yaz(`Sonuç: değişiklik gerekmedi; kök zaten yalnız bu hesaba, SYSTEM'e ve Administrators'a açık: ${kok}`);
   return 0;
 };
 
