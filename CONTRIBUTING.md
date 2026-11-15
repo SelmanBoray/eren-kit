@@ -4,11 +4,11 @@ Thanks for your interest in eren-kit. This is a Windows-first monorepo.
 
 ## Repository layout
 
-- `packages/bellek` - Python package `bellek`: brain memory MCP server, web UI, handoff hooks, evals.
+- `packages/bellek` - Python package `bellek`: brain memory MCP server, web UI, handoff and doc gate hooks, evals.
 - `packages/computer-use-windows` - Python MCP server for Windows desktop control.
 - `packages/opus-orkestra` - skill (`skill/SKILL.md`), SessionStart hook and tests (plain Python).
 - `apps/phone` - experimental phone app and server (npm workspaces, TypeScript, Node >= 24).
-- `install.ps1` - installer at the repository root.
+- `install.ps1`, `install.sh` - installers (Windows, macOS) at the repository root; their modules and tests live in `scripts/installer`.
 
 ## Running tests
 
@@ -64,6 +64,13 @@ Run `python scripts/gizlilik_tara.py` before opening a pull request. If it
 reports a finding, fix it or add a narrow, justified line to
 `.github/gizlilik-izinli.txt`.
 
+The scanner's forbidden-word rule (personal names) reads its list from the
+`GIZLILIK_YASAK` environment variable, which CI fills from a repository secret.
+When the secret is empty, the `gizlilik` job warns on pull requests and fails
+on pushes to `main`. Pull requests from forks never receive the secret, so
+before merging one a maintainer runs the full scan locally with
+`GIZLILIK_YASAK` set.
+
 After changes to the installer scripts, a quick check is
 `python scripts/installer/doktor.py --claude-home <temporary directory> --no-network`.
 
@@ -72,7 +79,8 @@ After changes to the installer scripts, a quick check is
 - Keep commits small and focused; one logical change each.
 - Write clear, imperative commit messages.
 - Pull the latest remote commits before you continue working.
-- Open a pull request against `main`; CI must pass.
+- Open a pull request against `main`; CI must pass. GitHub Actions in the
+  workflows are pinned to full commit SHAs; Dependabot proposes updates.
 
 ## Personal data and secrets
 

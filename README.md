@@ -7,6 +7,7 @@
 
 **Memory, orchestration and hands for Claude Code.**
 
+[![CI](https://github.com/SelmanBoray/eren-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/SelmanBoray/eren-kit/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Platform: Windows 10 | 11 · macOS](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20%C2%B7%20macOS-0078D6.svg)](#-quick-start)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-3776AB.svg)](packages/bellek/pyproject.toml)
@@ -20,24 +21,36 @@ English · [Türkçe](README.tr.md)
 
 ---
 
-## 💡 Why
+Claude Code forgets you when a session ends, does every job inside one ever-growing context, and
+in the Windows CLI it cannot see your screen. **eren-kit fixes all three, on your own machine:** a
+local brain that Claude searches and updates across sessions, a rule that turns the lead model into
+a planner that hands work to narrow sub-agents, and an MCP server that gives it eyes and hands on
+the Windows desktop. One PowerShell script installs it; `-DryRun` shows every change first and
+`-Uninstall` takes it back out.
 
-Claude Code is a strong pair programmer, but out of the box it forgets everything when a session
-ends, does all the work inside one ever-growing context, and in the Windows CLI it cannot see or
-use your screen. eren-kit is a personal toolkit that fills those three gaps: a local **memory**
-that survives across sessions (plus handoff notes between them), an **orchestration** rule that
-makes the lead model delegate to narrow sub-agents, and **hands** in the form of a Windows
-computer-use MCP server. Everything runs on your machine, and one PowerShell script installs it.
+<div align="center">
 
-> [!NOTE]
-> eren-kit is **alpha** software, built for and tested on one person's Windows setup. Parts of the
-> documentation and the Opus Orkestra rules are still in Turkish. Expect rough edges, and read
-> what the installer will do with `-DryRun` first.
+**[Quick start](#-quick-start)** · [What's inside](#-whats-inside) · [Components](#-components) · [Privacy & safety](#-privacy--safety) · [Security policy](SECURITY.md)
+
+</div>
+
+## ✨ Before and after
+
+| Claude Code on its own | With eren-kit |
+| --- | --- |
+| Every session starts from zero: who you are, what you are building, what you decided last week. | **[Memory & Brain](#memory--brain-beyin)** keeps a knowledge tree about you and your work in one local SQLite file. Claude reaches it through six MCP tools, so *"What do you know about my current projects?"* gets an answer from your own notes. |
+| A long session gets slow and expensive, and starting a fresh one loses the thread. | **[Handoff](#handoff-devir)** writes a short note when a session ends and lists recent notes when the next one starts. `/devir` writes a rich note on request. |
+| Agents page through big design docs 275-280 lines at a time, again and again. | **[Doc gate](#doc-gate-kapi)** answers the first read of a Markdown file of 16 KB or more with a heading map (line ranges and sizes), so the agent reads only the section it needs. |
+| The lead model reads, writes and tests everything itself, and its context fills up with file dumps. | **[Opus Orkestra](#opus-orkestra)** makes it a planner: narrow sub-agents work in parallel, a reviewer with fresh context checks the result, and the lead verifies. Its default core rule adds about 4 KB of context per session instead of about 35 KB for the full rule book. |
+| In the Windows CLI there is no computer use. | **[computer-use-windows](#computer-use-windows)** adds 12 MCP tools for screen, UI Automation, mouse and keyboard. It reads the UI as text before it looks at pixels; a default screenshot costs about 1.2k tokens. |
+
+Also in the box, and clearly labelled experimental: a [phone app](#phone-app-experimental) for
+talking to your main Claude Code session on the PC.
 
 ## 🧩 What's inside
 
 <p align="center">
-  <img src="docs/assets/components.svg" alt="eren-kit components: Memory &amp; Brain, Handoff, Opus Orchestra, computer-use-windows, Phone app (experimental)" width="100%">
+  <img src="docs/assets/components.svg" alt="eren-kit components: Memory &amp; Brain, Handoff, Doc gate, Opus Orchestra, computer-use-windows, Phone app (experimental)" width="100%">
 </p>
 
 | Component | What it does | Type | Status |
@@ -49,61 +62,28 @@ computer-use MCP server. Everything runs on your machine, and one PowerShell scr
 | [**computer-use-windows**](#computer-use-windows) (`packages/computer-use-windows`) | Screen, UI Automation, mouse and keyboard for terminal agents on Windows, with guard rails | MCP | Working (0.1.0) |
 | [**Phone app**](#phone-app-experimental) (`apps/phone`) | Talk to the main Claude session on your PC from your phone | App | **Experimental**, not ready for use |
 
-## 🏗️ Architecture
+## 🔍 Built to be checked
 
-```mermaid
-flowchart LR
-    subgraph PC["Your Windows PC"]
-        CC["Claude Code session"]
+- **Local by default.** The brain service listens on `127.0.0.1` only and checks the `Host`
+  header, the `Origin` header and a per-install token on its API. The brain, the hooks and
+  computer-use-windows send no telemetry and call no cloud or embedding API; what reaches your
+  model provider is what Claude reads in your session.
+- **An installer you can read before you run it.** No `irm | iex`, no administrator rights (the
+  brain service is a user-level scheduled task). `-DryRun` lists every change, `settings.json` is
+  merged rather than overwritten, everything is backed up before it is changed, re-running is
+  safe, and `-Uninstall` removes only what eren-kit installed. A read-only
+  [doctor](#installation-doctor) checks the wiring afterwards.
+- **Fail-open hooks.** If a hook breaks, it prints nothing and your session carries on.
+- **Tested.** More than 4,000 automated tests across the Python, TypeScript and Kotlin parts. CI
+  runs them on every pull request, on Windows (the Kotlin core on Linux), and again on macOS for
+  the brain, Opus Orkestra and the installer.
+- **Honest about limits.** [SECURITY.md](SECURITY.md) lists what eren-kit does not protect you
+  from, and the [roadmap](#-roadmap) lists what is missing.
 
-        subgraph MCP["MCP servers (stdio)"]
-            BMCP["beyin<br/>brain bridge"]
-            CUW["computer-use-windows"]
-        end
-
-        subgraph HOOKS["Hooks (settings.json)"]
-            HD["devir hook<br/>SessionStart · UserPromptSubmit · Stop"]
-            HK["kapi hook<br/>PreToolUse · big .md reads"]
-            HO["Opus Orkestra hook<br/>SessionStart, 4 parts"]
-        end
-
-        subgraph SKILLS["Skills (~/.claude/skills)"]
-            SD["/devir"]
-            SO["opus-orkestra"]
-        end
-
-        subgraph DATA["Local data"]
-            SVC["beyin service<br/>127.0.0.1, starts at sign-in"]
-            DB[("beyin.db<br/>SQLite")]
-            NOTES[("handoff notes<br/>vault/devir")]
-        end
-
-        WEB["Web UI<br/>beyin ac"]
-        DESK["Desktop<br/>screen, mouse, keyboard"]
-    end
-
-    PHONE["Phone app<br/>experimental"]
-
-    CC <--> BMCP
-    CC <--> CUW
-    HD --> CC
-    HK --> CC
-    HO --> CC
-    CC --> SD
-    CC --> SO
-    BMCP <--> SVC
-    SVC <--> DB
-    WEB <--> SVC
-    HD --> NOTES
-    SD --> NOTES
-    CUW <--> DESK
-    PHONE -.-> CC
-```
-
-Claude Code talks to two local MCP servers over stdio. Hooks inject context at session start and
-write handoff notes when a turn ends. The brain database has a single writer, a small service on
-`127.0.0.1`; the MCP bridge and the web UI both go through it. The phone link (dashed) is
-experimental.
+> [!NOTE]
+> eren-kit is **alpha** software. It grew out of one person's daily Windows setup and has been
+> tested there, not across many machines. Parts of the documentation and the Opus Orkestra rules
+> are still in Turkish. Expect rough edges, and run the installer with `-DryRun` first.
 
 ## 🚀 Quick start
 
@@ -120,7 +100,11 @@ experimental.
 
 ### Install
 
+Clone into your user folder (for example `%USERPROFILE%\eren-kit`), not directly under `C:\`:
+folders under `C:\` are writable by every local account, and the hooks run their code as you.
+
 ```powershell
+cd $env:USERPROFILE
 git clone https://github.com/SelmanBoray/eren-kit.git
 cd eren-kit
 
@@ -167,7 +151,70 @@ ask for it.
 .\install.ps1 -Components phone                # experimental phone app dependencies (npm ci)
 ```
 
-Running the installer again is safe: it updates what changed and leaves the rest alone.
+Running the installer again is safe: it updates what changed and leaves the rest alone. Only want
+the computer-use server? It also runs without cloning, through `uvx`; see
+[its README](packages/computer-use-windows/README.md#alternative-uvx-without-cloning).
+
+**Upgrading an existing install:** `git pull`, then run `.\install.ps1` again (at least
+`.\install.ps1 -Components beyin`). This replaces an older `beyin` MCP registration with the current
+one, which starts Python with `-I` so that no code is loaded from the folder Claude Code was opened
+in.
+
+## 🏗️ Architecture
+
+```mermaid
+flowchart LR
+    subgraph PC["Your Windows PC"]
+        CC["Claude Code session"]
+
+        subgraph MCP["MCP servers (stdio)"]
+            BMCP["beyin<br/>brain bridge"]
+            CUW["computer-use-windows"]
+        end
+
+        subgraph HOOKS["Hooks (settings.json)"]
+            HD["devir hook<br/>SessionStart · UserPromptSubmit · Stop"]
+            HK["kapi hook<br/>PreToolUse · big .md reads"]
+            HO["Opus Orkestra hook<br/>SessionStart"]
+        end
+
+        subgraph SKILLS["Skills (~/.claude/skills)"]
+            SD["/devir"]
+            SO["opus-orkestra"]
+        end
+
+        subgraph DATA["Local data"]
+            SVC["beyin service<br/>127.0.0.1, starts at sign-in"]
+            DB[("beyin.db<br/>SQLite")]
+            NOTES[("handoff notes<br/>vault/devir")]
+        end
+
+        WEB["Web UI<br/>beyin ac"]
+        DESK["Desktop<br/>screen, mouse, keyboard"]
+    end
+
+    PHONE["Phone app<br/>experimental"]
+
+    CC <--> BMCP
+    CC <--> CUW
+    HD --> CC
+    HK --> CC
+    HO --> CC
+    CC --> SD
+    CC --> SO
+    BMCP <--> SVC
+    SVC <--> DB
+    WEB <--> SVC
+    HD --> NOTES
+    SD --> NOTES
+    CUW <--> DESK
+    PHONE -.-> CC
+```
+
+Claude Code talks to two local MCP servers over stdio. Hooks inject context at session start and
+write handoff notes when a turn ends. The brain database has a single writer, a small service on
+`127.0.0.1`; the MCP bridge and the web UI both go through it. The phone link (dashed) is
+experimental.
 
 ## 🍎 macOS & iOS
 
@@ -226,6 +273,9 @@ only for the session. Nothing is opened to the internet: no funnel, and the serv
 .\install.ps1 -Doctor [-Json] [-ClaudeHome <folder>]
 ```
 
+<details>
+<summary>All parameters, and what each component installs</summary>
+
 | Parameter | Description |
 | --- | --- |
 | `-Components` | Comma-separated component list, e.g. `-Components beyin,devir`. Valid: `beyin`, `devir`, `kapi`, `orkestra`, `computer-use`, `phone`. Default: `beyin, devir, kapi, orkestra, computer-use` |
@@ -243,12 +293,14 @@ only for the session. Nothing is opened to the internet: no funnel, and the serv
 
 | Component | What the installer does |
 | --- | --- |
-| `beyin` | Creates `packages\bellek\.venv` and runs `pip install -e`; copies `bellek.example.toml` to `bellek.toml` if missing; checks that `bellek.beyin` imports; registers the `beyin` MCP server (user scope); registers and starts the brain service task (see below) |
+| `beyin` | Creates `packages\bellek\.venv` and runs `pip install -e`; copies `bellek.example.toml` to `bellek.toml` if missing; checks that `bellek.beyin` imports; registers the `beyin` MCP server (user scope, `python -I -m bellek.beyin mcp`); registers and starts the brain service task (see below) |
 | `devir` | Uses the same venv; checks that `python` on `PATH` is 3.11+; adds the handoff hook to `SessionStart`, `UserPromptSubmit` and `Stop`; copies the skill to `<ClaudeHome>\skills\devir` |
 | `kapi` | Checks that `python` on `PATH` is 3.11+; adds the doc gate hook to `PreToolUse` for Markdown reads and to `SessionStart` (`compact` matcher). No venv, no skill |
 | `orkestra` | Checks that `python` on `PATH` is 3.11+; copies `SKILL.md` to `<ClaudeHome>\skills\opus-orkestra`; adds four `SessionStart` hook commands |
 | `computer-use` | Creates `packages\computer-use-windows\.venv` and runs `pip install -e`; registers the `computer-use-windows` MCP server (user scope) |
 | `phone` | Checks for Node 24+ and npm; runs `npm ci` in `apps\phone`. Nothing is registered; it is started by hand |
+
+</details>
 
 How it treats your existing setup:
 
@@ -257,16 +309,19 @@ How it treats your existing setup:
   twice, and moving the repository updates the old entries. If nothing changes, the file is not
   touched.
 - **Backups first.** Before changing `settings.json` or replacing a skill folder, the original is
-  copied to `<ClaudeHome>\backups\eren-kit\<timestamp>\`.
+  copied to `<ClaudeHome>\backups\eren-kit\<timestamp>\`. Backups are plain-text copies (including
+  MCP `env` values, which may hold tokens); `-Uninstall` never deletes them. Delete the folder when
+  no longer needed and keep it out of any dotfiles repository.
 - **MCP registrations** go to the `claude` CLI's own user configuration (independent of
   `-ClaudeHome`). An identical registration is left alone. A registration with the same name but a
   different command is backed up, then replaced; if the new one cannot be added, the old one is
-  restored. If that registration points outside the repository, the installer says so, in
-  `-DryRun` too.
+  restored. Arguments you added yourself (for example a computer-use `--block` list) and `env`
+  values are carried over to the new registration. If that registration points outside the
+  repository, the installer says so, in `-DryRun` too.
 - **Brain service task.** The `beyin` component registers a user-level Task Scheduler task named
   `eren-kit-beyin-servis` (no administrator rights needed). It runs
-  `packages\bellek\.venv\Scripts\pythonw.exe -m bellek.beyin servis` silently at every sign-in and
-  is started right after installation. Re-installing updates and restarts it;
+  `packages\bellek\.venv\Scripts\pythonw.exe -I -m bellek.beyin servis` silently at every sign-in
+  and is started right after installation. Re-installing updates and restarts it;
   `-Uninstall -Components beyin` stops and removes it; `-NoService` skips this step. If another
   task already runs the same service, the installer warns you, since both would use the same port.
 - **Copied skills** get a small `.eren-kit` marker file. `-Uninstall` only removes skill folders
@@ -302,18 +357,20 @@ This removes hooks, copied skills, the brain service task (removing the `phone` 
 deletes its `eren-kit-telefon` scheduled task), and the MCP registrations that point
 into this repository (a `beyin` or `computer-use-windows` registration pointing elsewhere is left
 alone, with a warning). It keeps the venvs, `bellek.toml`, your
-brain database, your notes and the `EREN_KIT_ASSISTANT_NAME` variable; delete those by hand if you
-want them gone.
+brain database, your notes, the installer's backups and the `EREN_KIT_ASSISTANT_NAME` variable;
+delete those by hand if you want them gone.
 
 ### Installation doctor
 
 `python scripts/installer/doktor.py` (or `.\install.ps1 -Doctor`, `./install.sh --doctor`) checks,
 read-only, that the installed components are wired into Claude Code correctly: hook registrations
 (duplicates, stale locations, missing events, script path), whether the installed skill copies
-match the repo, MCP registrations, and the brain service and its task. `--json` gives machine
-output, `--no-network` skips live system queries and external processes. Exit code: 0 no problems,
-1 warnings, 2 errors. A component that is not installed is not an error. The installer runs it once
-at the end of a real install.
+match the repo, MCP registrations, and the brain service and its task. It also flags unsafe MCP
+registrations (a `-m` or `-c` Python launch without `-I`/`-P`, or a relative script path) and a
+repository folder that other accounts can write to. `--json` gives machine output, `--no-network`
+skips live system queries and external processes. Exit code: 0 no problems, 1 warnings, 2 errors.
+A component that is not installed is not an error. The installer runs it once at the end of a real
+install.
 
 ## 📦 Components
 
@@ -333,6 +390,9 @@ inbox for suggestions without a clear place, and a change history, all in one SQ
   mycelium network growing over time. It can only write inbox decisions.
 - **Guard rails.** Text that looks like a secret is rejected by `beyin_yaz`; nodes can be marked
   private.
+- **Claude writes on its own.** The MCP server tells Claude to record lasting new facts about you
+  in the same turn, without asking first. Review what it wrote in the web UI; see
+  [SECURITY.md](SECURITY.md) for why this matters.
 - **Tool names and CLI are in Turkish** (`ara` = search, `gez` = browse, `oku` = read,
   `yaz` = write, `duzelt` = correct, `gelen` = inbox).
 
@@ -389,7 +449,8 @@ thread.
   starts with `/devir` is not caught by the whitespace guard.
 
 Notes live under `BELLEK_DEVIR_DIR`, or by default in the `devir` folder inside your `vault`
-(automatic notes in `devir\oto\`).
+(automatic notes in `devir\oto\`). Automatic notes quote short excerpts of the session's first and
+last prompt in plain text.
 
 Example: type `/devir` before closing a session, then in the new one say *"continue from the last
 handoff note"*.
@@ -425,9 +486,16 @@ each one's limits, and verifies the result.
 
 - **Why:** the lead's context stays on the plan and your intent; independent work runs in
   parallel; a reviewer with fresh context is not anchored on the author's assumptions.
-- **Always on:** a `SessionStart` hook injects the rules at the start of every session. Claude Code
-  caps hook context at 10,000 characters, so the text is split at `## ` headings and delivered by
-  four hook commands (`--parca 1` to `--parca 4`).
+- **Always on, and small:** a `SessionStart` hook injects a short core rule
+  ([`skill/CEKIRDEK.md`](packages/opus-orkestra/skill/CEKIRDEK.md)) at the start of every session,
+  about 4 KB of context instead of about 35 KB for the full rule book. The full rules are read
+  section by section when a code task starts. Set `OPUS_ORKESTRA_MOD=tam` to inject the full rules
+  instead; since Claude Code caps hook context at 10,000 characters, they are split at `## `
+  headings across the four hook commands (`--parca 1` to `--parca 4`).
+- **Context ledger (`defter`):** per-repository summary cards kept inside git, so an agent reads a
+  file's summary plus only what changed since. It does not record files outside the repository,
+  inside `.git` or ignored by git (such as `.env`), and it does not run external commands from the
+  repository's git configuration (external diff, textconv, filters, fsmonitor, hooks).
 - **Off switch:** ask the model to switch it off for a session, or remove it with
   `.\install.ps1 -Uninstall -Components orkestra`.
 - **Language:** the rule text is currently Turkish. An English version is on the
@@ -447,6 +515,10 @@ it to the agent in your terminal, built around two rules: **terminal first** and
   downscaled to about 1.2k tokens by default; action tools never return images.
 - **Guard rails.** It refuses to type into password fields and terminals, supports an app
   blocklist (`--block`), and has a failsafe: **move the mouse into a screen corner to stop it.**
+  The blocklist is empty until you set it, and the installer doesn't ask for one; see the package
+  README's ["Recommended setup"](packages/computer-use-windows/README.md#recommended-setup).
+  Driven through Win+R or a file dialog, it can start programs outside Claude Code's Bash
+  permission rules and sandbox.
 - **Local only:** no network access, no telemetry.
 - **Safety checks:** typing re-checks the password-field / terminal / blocked-app rules after every
   Tab or Enter and stops when the foreground window changes; right and middle clicks on a terminal
@@ -464,17 +536,24 @@ Details, options and token-cost tables:
 
 > [!WARNING]
 > This is a work in progress and **not ready for use**. Interfaces, protocol and security model may
-> change. The test server has no authentication: never expose it to a network you do not trust.
+> change. Read [apps/phone/docs/GUVENLIK.md](apps/phone/docs/GUVENLIK.md) (Turkish) before you run
+> the service, and never expose it beyond your own tailnet.
 
 Talk from your phone to the main Claude Code session on your PC. The main session does not do the
-work itself; it opens a fresh Claude Code session for each task, shows you a plan to approve, and
-reports the result back. Each chat has its own main session, and a task session can manage an
+work itself; it opens a fresh Claude Code session for each task, writes a plan (shown on the phone
+for approval unless you turned on full permission), and reports the result back. Each chat has its own main session, and a task session can manage an
 Android device through a restricted tool set (read the screen, tap, type). The directory holds the
 shared protocol, the PC service, the Expo / React Native Android app with its Kotlin `eren-device`
-module, the install scripts (`kurulum/kur.ts`), the docs and a standalone measurement experiment.
-It is still experimental. Paired devices can be listed and unpaired on the PC
-(`node --disable-warning=ExperimentalWarning src/eslestir.ts --liste` / `--kaldir <id>` in
-`apps/phone/server`), and the server pings every connection and drops dead ones within 60 s.
+module, the install scripts (`kurulum/kur.ts`) and the docs.
+
+- **Pairing:** the service listens on the PC's Tailscale address. Each phone is paired with its own
+  key and must answer a signature challenge on every connection. The part of the service that runs
+  before authentication is reachable from your whole tailnet, so limit it with tailnet ACLs.
+- **Paired devices** can be listed and unpaired on the PC
+  (`node --disable-warning=ExperimentalWarning src/eslestir.ts --liste` / `--kaldir <id>` in
+  `apps/phone/server`), and the server pings every connection and drops dead ones within 60 s.
+- **Release builds** need your own signing key: a release APK is not built without a user-specific
+  keystore, and the public debug key is refused.
 
 Configuration is through environment variables (full list in the
 [phone README](apps/phone/README.md)):
@@ -503,9 +582,12 @@ py -3.12 -m venv .venv
 .venv\Scripts\python -m pip install -e .
 Copy-Item bellek.example.toml bellek.toml        # then edit the paths
 .venv\Scripts\bellek doktor
-claude mcp add beyin -s user -- "$PWD\.venv\Scripts\python.exe" -m bellek.beyin mcp
+claude mcp add beyin -s user -- "$PWD\.venv\Scripts\python.exe" -I -m bellek.beyin mcp
 .venv\Scripts\beyin servis                       # brain service; keep this terminal open
 ```
+
+Keep the `-I`: the MCP server starts in whatever folder Claude Code was opened in, and without
+`-I` Python would import a `bellek` package found in that folder instead of the installed one.
 
 Without the installer there is no scheduled task, so start `beyin servis` yourself (or with your
 own Task Scheduler entry) whenever you want writes applied and the web UI available.
@@ -560,6 +642,9 @@ It can also run without cloning, through `uvx`; see
 
 ### Environment variables
 
+<details>
+<summary>All environment variables</summary>
+
 | Variable | Used by | Default | Meaning |
 | --- | --- | --- | --- |
 | `CLAUDE_CONFIG_DIR` | installer | `%USERPROFILE%\.claude` | Claude Code's settings folder; the installer uses it as the default for `-ClaudeHome` |
@@ -574,10 +659,13 @@ It can also run without cloning, through `uvx`; see
 | `BELLEK_DEVIR_UYARI` | Handoff | `durdur` | Warning mode: `durdur` (stop), `uyar` (warn), `kapali` (off) |
 | `BELLEK_KAPI` | Doc gate | empty (on) | Set to `kapali` to switch the doc gate off |
 | `OPUS_ORKESTRA_SKILL` | Opus Orkestra | `~\.claude\skills\opus-orkestra\SKILL.md` | Path of the rule file the hook injects |
+| `OPUS_ORKESTRA_MOD` | Opus Orkestra | `cekirdek` | `cekirdek` (core rule only) or `tam` (full rules at every session start) |
 | `CUW_MAX_SIZE`, `CUW_BLOCK`, `CUW_FAILSAFE`, … | computer-use-windows | see package README | Image size, app blocklist, failsafe and more ([full table](packages/computer-use-windows/README.md#configuration)) |
 
 The brain also has variables for its log, queue and token files; see the
 [bellek README](packages/bellek/README.md#ortam-değişkenleri).
+
+</details>
 
 ### `bellek.toml`
 
@@ -600,68 +688,90 @@ You can also add read-only note sources (`[[source]]`) and map folders to projec
 ## 🔒 Privacy & safety
 
 - **Your data stays local.** The brain database, notes, logs and tokens live under
-  `%LOCALAPPDATA%\Bellek` (macOS: `~/Library/Application Support/Bellek`) and your vault folder. The brain service listens on `127.0.0.1` only.
+  `%LOCALAPPDATA%\Bellek` (macOS: `~/Library/Application Support/Bellek`) and your vault folder.
+  The brain service listens on `127.0.0.1` only. If your vault folder syncs to a cloud service,
+  your handoff notes (which quote short excerpts of your prompts) go with it.
 - **Nothing personal goes into the repository.** `bellek.toml`, `vault/`, eval data, databases,
   `.env` files and keys are listed in [`.gitignore`](.gitignore).
 - **Mind the model provider.** Whatever a tool returns (brain entries, screenshots, screen text)
   becomes part of your Claude session and is sent to your model provider like the rest of it.
+- **The brain is written by the model.** Claude can add facts and decide inbox items without asking
+  you. A web page or document that misleads it could leave a note that later sessions read as your
+  rule. Review what it wrote in the web UI now and then, and don't connect the `beyin` MCP server in sessions
+  that read untrusted content.
 - **computer-use-windows controls your real mouse and keyboard.** It will not type into password
-  fields or terminals, it honours an app blocklist, and moving the mouse into a screen corner stops
-  every action. Don't use the PC while it works, close sensitive windows, and type passwords
-  yourself.
+  fields or terminals, it honours an app blocklist (empty by default; it stops input and element
+  reading, not screenshots), and moving the mouse into a screen corner stops every action. Don't
+  use the PC while it works, close sensitive windows, and type passwords yourself. It can launch
+  programs through the GUI, which Claude Code's Bash allow/deny rules don't cover: keep approving
+  its `click`, `type_text` and `key` calls one by one, and don't connect it in sessions where those
+  rules are your security boundary.
+- **The Opus Orkestra ledger lives in your git repository** under `refs/orkestra/defter`. A plain
+  `git push` does not send it, but `git push --mirror`, a `refs/*` refspec and `git clone --mirror`
+  do, including recorded working-tree content that was never committed.
 - **Hooks are fail-open.** A broken hook prints nothing and never blocks your session.
 - **A privacy scanner guards the repo.** `python scripts/gizlilik_tara.py` scans tracked files for
   personal paths, e-mail addresses, token-shaped strings and large binaries (allow list in
   `.github/gizlilik-izinli.txt`; extra forbidden words via the `GIZLILIK_YASAK` environment
   variable). It also runs in CI (the `gizlilik` job in `.github/workflows/ci.yml`): a finding fails
-  the job; either fix it or add a narrow, justified line to `.github/gizlilik-izinli.txt`.
-- **Reporting a vulnerability:** see [SECURITY.md](SECURITY.md).
+  the job; either fix it or add a narrow, justified line to `.github/gizlilik-izinli.txt`. The
+  forbidden-word list comes from a repository secret. When it is empty the job warns on pull
+  requests and fails on pushes to `main`; pull requests from forks never receive it, so a
+  maintainer runs the full scan locally before merging.
+- **Known limits and reporting a vulnerability:** see [SECURITY.md](SECURITY.md).
 
 ## 🗂️ Repository layout
 
 ```text
 eren-kit/
-├── install.ps1                    # one-command installer (run with -Help)
+├── install.ps1                    # one-command installer for Windows (run with -Help)
+├── install.sh                     # installer for macOS
 ├── scripts/
 │   ├── installer/                 # installer module and settings.json hook merger
 │   │   └── doktor.py              #   installation doctor (read-only)
 │   └── gizlilik_tara.py           # privacy scanner for tracked files
 ├── packages/
-│   ├── bellek/                    # Memory & Brain + Handoff (Python 3.12+)
-│   │   ├── src/bellek/            #   core, beyin (brain), devir (handoff)
+│   ├── bellek/                    # Memory & Brain + Handoff + Doc gate (Python 3.12+)
+│   │   ├── src/bellek/            #   core, beyin (brain), devir (handoff), kapi (doc gate)
 │   │   ├── skills/devir/          #   /devir skill
 │   │   ├── eval/                  #   retrieval evaluation set
 │   │   └── bellek.example.toml    #   config template
 │   ├── opus-orkestra/             # orchestration rule
-│   │   ├── skill/SKILL.md         #   the rules (Turkish)
-│   │   └── hooks/                 #   SessionStart hook
+│   │   ├── skill/                 #   SKILL.md (full rules) and CEKIRDEK.md (core rule), Turkish
+│   │   ├── hooks/                 #   SessionStart hook
+│   │   └── defter/                #   context ledger
 │   └── computer-use-windows/      # Windows computer-use MCP server (Python 3.11+)
 ├── apps/
 │   └── phone/                     # experimental phone app (Node 24+, TypeScript; Expo app, PC service, install scripts)
 ├── docs/assets/                   # banner and diagrams
-└── .github/workflows/ci.yml       # tests on windows-latest
+└── .github/workflows/ci.yml       # tests on Windows and macOS
 ```
 
 ## 🧭 Roadmap
 
-Detailed proposals with evidence and cost: [docs/ONERILER.md](docs/ONERILER.md) (Turkish).
+The maintainer's working list of proposals, with evidence and cost, is in
+[docs/ONERILER.md](docs/ONERILER.md) (Turkish, internal notes dated 2026-11-09; some items are done
+since).
 
 Honest list of what is missing, in no particular order:
 
 - [ ] **English Opus Orkestra rules** (currently Turkish only).
-- [ ] **A usable phone app:** the app now exists, but authentication and pairing are still being designed.
+- [ ] **A usable phone app:** the app and its paired PC service exist, but the protocol and
+      security model are still changing.
 - [x] **macOS support** (`install.sh`, LaunchAgent, built-in computer use) and the brain web UI on
       iPhone/iPad. computer-use-windows stays Windows-only by design.
 - [ ] **Linux support** (paths are ready; there is no installer or service unit yet).
 - [ ] **One-line install with `uvx`** for the whole kit (today only computer-use-windows can run
       through `uvx`).
+- [ ] **A review step for brain writes:** today Claude writes to the brain without asking; see
+      [SECURITY.md](SECURITY.md).
 - [ ] More English documentation for the `bellek` package.
 
 ## 🤝 Contributing
 
 Issues and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) explains how to run each
-package's tests; CI runs them on Windows for every pull request. Please never commit personal data
-or secrets, and read the assistant name from `EREN_KIT_ASSISTANT_NAME` instead of hard-coding one.
+package's tests; CI runs them for every pull request. Please never commit personal data or
+secrets, and read the assistant name from `EREN_KIT_ASSISTANT_NAME` instead of hard-coding one.
 Changes are tracked in [CHANGELOG.md](CHANGELOG.md).
 
 ## 📄 License
