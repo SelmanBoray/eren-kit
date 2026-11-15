@@ -255,6 +255,226 @@ class DefterTest(GeciciDepo):
         self.assertNotIn("bozuk", self.run_d("durum")[1])
 
 
+class GuvenlikTest(GeciciDepo):
+    """Defter, kullanıcının git dışında tuttuğu içeriği git'e sabitlemez; deponun yapılandırmasındaki
+    dış komutları ve çalışma klasöründeki `git`i çalıştırmaz."""
+
+    GIZLILER = {".env": b"API_KEY=GIZLI_ENV_DEGERI\n", "gizli/anahtar.txt": b"GIZLI_KLASOR_DEGERI\n"}
+    DIS_ICERIK = b"GIZLI_DIS_DEGER\n"
+
+    def setUp(self):
+        super().setUp()
+        self.dis = tempfile.TemporaryDirectory()
+        self.dis_d = os.path.realpath(self.dis.name)
+
+    def tearDown(self):
+        self.dis.cleanup()
+        super().tearDown()
+
+    def git_cikti(self, *args, cwd=None, girdi=None):
+        return subprocess.run(["git", *args], cwd=cwd or self.d, check=True, capture_output=True,
+                              input=girdi).stdout.decode("utf-8", "replace")
+
+    def sha(self, icerik: bytes) -> str:
+        return self.git_cikti("hash-object", "--stdin", girdi=icerik).strip()
+
+    def nesne_var(self, sha, cwd=None):
+        return subprocess.run(["git", "cat-file", "-e", sha], cwd=cwd or self.d, capture_output=True).returncode == 0
+
+    def gizli_dosyalar(self):
+        self.yaz_dosya(".gitignore", ".env\ngizli/\n*.log\n")
+        self.yaz_dosya("izli.log", "izlenen ama desene uyan dosya\n")
+        git(self.d, "add", ".gitignore")
+        git(self.d, "add", "-f", "izli.log")
+        git(self.d, "commit", "-qm", "ignore")
+        os.makedirs(os.path.join(self.d, "gizli"))
+        for ad, icerik in self.GIZLILER.items():
+            with open(os.path.join(self.d, ad), "wb") as f:
+                f.write(icerik)
+        self.dis_dosya = os.path.join(self.dis_d, "disari.txt")
+        with open(self.dis_dosya, "wb") as f:
+            f.write(self.DIS_ICERIK)
+        self.yaz_dosya("yeni.py", "YENI = 1\n")  # izlenmeyen ama yok sayılmayan: kabul edilir
+
+    def test_yok_sayilan_depo_disi_ve_git_ici_dosyalar_kaydedilmez(self):
+        self.gizli_dosyalar()
+        rc, out, err = self.run_d("yaz", "--dosya", ".env", "--dosya", "gizli/anahtar.txt", "--dosya",
+                                  self.dis_dosya, "--dosya", ".git/config", "--dosya", "izli.log",
+                                  "--dosya", "yeni.py", "--dosya", "a.py", "--ozet", "karışık iş")
+        self.assertEqual(rc, 0, err)  # reddedilen dosya çağıranın işini düşürmez
+        self.assertIn("kart yazıldı (3 dosya, 0 kavram; 4 dosya kaydedilmedi)", out)
+        for ad in (".env", "gizli/anahtar.txt", ".git/config"):
+            self.assertIn(f"{ad} kaydedilmedi", err)
+        self.assertIn("depo dışında", err)
+        self.assertIn("yok sayıyor", err)
+        gizli_shalar = [self.sha(x) for x in (*self.GIZLILER.values(), self.DIS_ICERIK)]
+        for s in gizli_shalar:
+            self.assertFalse(self.nesne_var(s))  # nesne deposuna hiç yazılmadı
+        self.assertEqual(len(self.git_cikti("ls-tree", "refs/orkestra/defter").splitlines()), 3)
+        # Ayna push'u (ve ayna klon) gizli içeriği taşımaz.
+        ayna = os.path.join(self.dis_d, "ayna.git")
+        git(self.dis_d, "init", "-q", "--bare", ayna)
+        git(self.d, "push", "-q", "--mirror", ayna)
+        self.assertIn("refs/orkestra/defter", self.git_cikti("for-each-ref", cwd=ayna))
+        for s in gizli_shalar:
+            self.assertFalse(self.nesne_var(s, cwd=ayna))
+        out = self.run_d("oku", ".env", "a.py")[1]
+        self.assertIn("## .env\ndefter bu dosyayı kaydetmez", out)
+        self.assertIn("DEĞİŞMEDİ", out)
+        rc, out, err = self.run_d("yaz", "--dosya", ".env", "--ozet", "yalnız gizli dosya")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("kart yazıldı (0 dosya, 0 kavram; 1 dosya kaydedilmedi)", out)
+
+    def test_sembolik_bag_gercek_hedefine_gore_degerlendirilir(self):
+        self.gizli_dosyalar()
+        try:
+            os.symlink(os.path.join(self.d, ".env"), os.path.join(self.d, "bag.txt"))
+            os.symlink(self.dis_dosya, os.path.join(self.d, "dis_bag.txt"))
+        except (OSError, NotImplementedError):
+            self.skipTest("bu sistemde sembolik bağ oluşturulamıyor")
+        rc, out, err = self.run_d("yaz", "--dosya", "bag.txt", "--dosya", "dis_bag.txt", "--ozet", "bağlar")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("bag.txt kaydedilmedi: git yok sayıyor", err)
+        self.assertIn("dis_bag.txt kaydedilmedi: depo dışında", err)
+        self.assertFalse(self.nesne_var(self.sha(self.GIZLILER[".env"])))
+        self.assertFalse(self.nesne_var(self.sha(self.DIS_ICERIK)))
+
+    def test_eski_git_disi_kayitlar_sabitlenmez_ve_temizle_cikarir(self):
+        self.gizli_dosyalar()
+        # Eski sürüm .env'yi ve depo dışı dosyayı kabul edip sabitliyordu: o durumu elle kur.
+        env_sha = self.git_cikti("hash-object", "-w", "--stdin", girdi=self.GIZLILER[".env"]).strip()
+        dis_sha = self.git_cikti("hash-object", "-w", "--stdin", girdi=self.DIS_ICERIK).strip()
+        a_sha = self.git_cikti("hash-object", "a.py").strip()
+        dis_yol = os.path.relpath(self.dis_dosya, self.d).replace(os.sep, "/")
+        os.makedirs(os.path.join(self.d, ".git", "orkestra"))
+        with open(os.path.join(self.d, ".git", "orkestra", "defter.jsonl"), "w", encoding="utf-8") as f:
+            f.write(json.dumps({"zaman": "2026-01-01T00:00:00+00:00", "tur": "kart", "ozet": "eski kart",
+                                "dosyalar": [{"yol": ".env", "blob": env_sha}, {"yol": dis_yol, "blob": dis_sha},
+                                             {"yol": "a.py", "blob": a_sha}], "kavramlar": []}) + "\n")
+        agac = self.git_cikti("mktree", girdi="".join(f"100644 blob {s}\t{s}\n" for s in
+                                                       sorted({env_sha, dis_sha, a_sha})).encode()).strip()
+        git(self.d, "update-ref", "refs/orkestra/defter", agac)
+        self.assertIn("git dışı kayıt: 2", self.run_d("durum")[1])
+        # Depo dışını gösteren eski kayıt `oku`yu düşürmez, içeriği karşılaştırılmaz.
+        for args in ((), (dis_yol, "a.py")):
+            rc, out, err = self.run_d("oku", *args)
+            self.assertEqual(rc, 0, err)
+            self.assertIn(f"## {dis_yol}\ndefter bu dosyayı kaydetmez (depo dışında)", out)
+            self.assertIn("DEĞİŞMEDİ", out)
+        # Sonraki her yaz/temizle koruma ağacını yeniden kurar: git dışı içerik ref'ten düşer.
+        self.assertEqual(self.run_d("yaz", "--dosya", "yeni.py", "--ozet", "yeni")[0], 0)
+        tutulan = self.git_cikti("ls-tree", "refs/orkestra/defter")
+        self.assertIn(a_sha, tutulan)
+        self.assertNotIn(env_sha, tutulan)
+        self.assertNotIn(dis_sha, tutulan)
+        git(self.d, "gc", "-q", "--prune=now")
+        self.assertFalse(self.nesne_var(env_sha))
+        self.assertFalse(self.nesne_var(dis_sha))
+        rc, out, err = self.run_d("temizle", "--tut", "5")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("2 git dışı dosya kaydı çıkarıldı", out)
+        self.assertNotIn("git dışı kayıt", self.run_d("durum")[1])
+        self.assertIn("defter bu dosyayı kaydetmez", self.run_d("oku", ".env")[1])
+        self.assertIn("eski kart", self.run_d("oku", "a.py")[1])  # izlenen dosyanın kaydı kalır
+
+    def test_depo_yapilandirmasindaki_dis_komutlar_calismaz(self):
+        isaretler = os.path.join(self.dis_d, "isaret")
+        os.makedirs(isaretler)
+        betik = os.path.join(self.dis_d, "isaret.py")
+        with open(betik, "w", encoding="utf-8") as f:
+            f.write("import os, sys\n"
+                    f"open(os.path.join({isaretler!r}, 'isaret-' + sys.argv[1]), 'a').close()\n"
+                    "if sys.argv[1] in ('clean', 'textconv'):\n"
+                    "    sys.stdout.write(sys.stdin.read() if sys.argv[1] == 'clean' else open(sys.argv[2]).read())\n")
+        komut = lambda tur: '"%s" "%s" %s' % (sys.executable.replace(os.sep, "/"), betik.replace(os.sep, "/"), tur)
+        git(self.d, "config", "diff.external", komut("diff"))
+        git(self.d, "config", "diff.kotu.textconv", komut("textconv"))
+        git(self.d, "config", "filter.kotu.clean", komut("clean"))
+        git(self.d, "config", "core.fsmonitor", komut("fsmon"))
+        with open(os.path.join(self.d, ".git", "info", "attributes"), "w", encoding="utf-8") as f:
+            f.write("*.py filter=kotu diff=kotu\n* diff=kotu\n")
+        kanca = os.path.join(self.d, ".git", "hooks", "reference-transaction")
+        os.makedirs(os.path.dirname(kanca), exist_ok=True)
+        with open(kanca, "w", encoding="utf-8", newline="\n") as f:
+            f.write("#!/bin/sh\n" + komut("hook") + "\n")
+        os.chmod(kanca, 0o755)
+        # Ayarlar gerçekten etkin: düz git çağrıları dış komutları çalıştırıyor.
+        git(self.d, "update-ref", "refs/deneme/x", "HEAD")
+        git(self.d, "hash-object", "a.py")
+        git(self.d, "status")
+        self.yaz_dosya("a.py", "def topla(x, y):\n    return x + y\n# degisti\n")
+        git(self.d, "diff", "HEAD")
+        self.assertLessEqual({"isaret-clean", "isaret-diff", "isaret-fsmon", "isaret-hook"},
+                             set(os.listdir(isaretler)))
+        for ad in os.listdir(isaretler):
+            os.remove(os.path.join(isaretler, ad))
+        self.assertEqual(self.run_d("yaz", "--dosya", "a.py", "--ozet", "toplama")[0], 0)
+        self.assertIn("DEĞİŞMEDİ", self.run_d("oku", "a.py")[1])
+        self.yaz_dosya("a.py", "def topla(x, y):\n    return x + y\n\n\ndef cikar(x, y):\n    return x - y\n")
+        rc, out, err = self.run_d("oku", "a.py")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("+def cikar(x, y):", out)
+        self.assertEqual(self.run_d("temizle", "--tut", "0")[0], 0)
+        self.assertEqual(self.run_d("durum")[0], 0)
+        self.assertEqual(os.listdir(isaretler), [])
+
+    def _defter_modulu(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("defter_cozum_deneme", DEFTER)
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        return m
+
+    def test_git_calisma_klasorunden_ya_da_goreli_path_girdisinden_cozulmez(self):
+        from unittest import mock
+        m = self._defter_modulu()
+        os.makedirs(os.path.join(self.d, "goreli"))
+        for klasor in (self.d, os.path.join(self.d, "goreli")):
+            sahte = os.path.join(klasor, "git.exe" if os.name == "nt" else "git")
+            with open(sahte, "w") as f:
+                f.write("#!/bin/sh\nexit 3\n")
+            os.chmod(sahte, 0o755)
+        onceki = os.getcwd()
+        yol = os.pathsep.join([".", "", "goreli", os.environ.get("PATH", "")])
+        try:
+            os.chdir(self.d)
+            with mock.patch.dict(os.environ, {"PATH": yol}):
+                m._CALISTIRILABILIR.clear()
+                bulunan = m.calistirilabilir("git")
+        finally:
+            os.chdir(onceki)
+        self.assertIsNotNone(bulunan)
+        self.assertTrue(os.path.isabs(bulunan))
+        self.assertFalse(os.path.normcase(os.path.realpath(bulunan)).startswith(os.path.normcase(self.d)))
+
+    def test_calisma_klasorundeki_sahte_git_calismaz(self):
+        import shutil
+        env = {a: d for a, d in os.environ.items() if a.lower() != "nodefaultcurrentdirectoryinexepath"}
+        env["PATH"] = os.pathsep.join([".", env.get("PATH", "")])
+        if os.name == "nt":
+            shutil.copy(os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "hostname.exe"),
+                        os.path.join(self.d, "git.exe"))
+        else:
+            with open(os.path.join(self.d, "git"), "w") as f:
+                f.write("#!/bin/sh\necho SAHTE\nexit 3\n")
+            os.chmod(os.path.join(self.d, "git"), 0o755)
+        # Windows'ta arama, çağıran sürecin ortamına bakar: düz çağrıyı o ortamla çalışan bir alt süreçte dene.
+        duz = subprocess.run([sys.executable, "-c", "import subprocess; print(subprocess.run(['git', '--version'], "
+                              "capture_output=True, text=True, errors='replace').stdout)"],
+                             cwd=self.d, env=env, capture_output=True, text=True, errors="replace")
+        if "git version" in duz.stdout:
+            self.skipTest("bu sistemde düz çağrı da çalışma klasöründeki git'i seçmiyor; senaryo kurulamadı")
+        ciktilar = {}
+        for komut in ("yaz", "oku", "durum"):
+            ek = {"yaz": ["--dosya", "a.py", "--ozet", "toplama"], "oku": ["a.py"], "durum": []}[komut]
+            p = subprocess.run([sys.executable, DEFTER, komut, *ek], cwd=self.d, env=env, capture_output=True,
+                               text=True, encoding="utf-8")
+            self.assertEqual(p.returncode, 0, p.stderr)
+            ciktilar[komut] = p.stdout
+        self.assertIn("DEĞİŞMEDİ", ciktilar["oku"])
+        self.assertIn("budanma koruması: refs/orkestra/defter (1 içerik)", ciktilar["durum"])
+
+
 # Eşzamanlılık testleri gerçek süreçlerle çalışır. Süreçler önce "hazır" işareti bırakır, hepsi
 # hazır olunca tek bir başlangıç işaretiyle aynı anda bırakılır; böylece çakışma olasılığı yüksek
 # olur. Doğruluk kontrolleri sıralamadan bağımsızdır: hangi süreç önce kilidi alırsa alsın sonuç

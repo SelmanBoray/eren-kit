@@ -29,7 +29,20 @@ Kilidi tutan süreç ölürse kilidi işletim sistemi bırakır. Kilit `DEFTER_K
 Budanma koruması: defterin başvurduğu kayıt içerikleri `refs/orkestra/defter` adlı tek bir ref'in
 gösterdiği ağaçta tutulur, böylece `git gc` onları budamaz. Ağaç her `yaz`/`temizle` sonrası
 defterden yeniden kurulur; defterden düşen içerik serbest kalır. Ref bir ağacı gösterir (commit
-değil): dal, etiket, `git status`, `git log --all` ve varsayılan `git push` onu görmez.
+değil): dal, etiket, `git status`, `git log --all` ve varsayılan `git push` onu görmez; ama
+`git push --mirror`, `refs/*` refspec'i ve `git clone --mirror` onu ve içindeki commit edilmemiş
+içeriği taşır.
+
+Git dışı içerik: defter yalnız git'in görebileceği dosyaları kaydeder. Depo dışı yollar, git'in kendi
+klasörü ve git'in yok saydığı izlenmeyen dosyalar (.gitignore/exclude; ör. `.env`) nesne deposuna hiç
+yazılmaz: `yaz` onları atlar, uyarır, kalan dosyaları kaydeder. Eski sürümün yazdığı böyle kayıtların
+içeriği koruma ağacına girmez (her `yaz`/`temizle` ağacı yeniden kurar), `temizle` kayıtları defterden
+çıkarır; nesneyi hemen silmek için ardından `git gc --prune=now`.
+
+Git güvenliği: git (ve `ollama`) PATH'in mutlak klasörlerinden tam yoluyla çağrılır, çalışma
+klasöründeki `git.exe` çalışmaz. Deponun yapılandırmasındaki dış komutlar çalışmaz: `core.fsmonitor`,
+kancalar (`update-ref` → `reference-transaction`), `diff.external`/diff sürücüsü/textconv ve
+`filter.<ad>.clean`/`process` sürücüleri kapalıdır.
 """
 
 from __future__ import annotations
@@ -39,7 +52,6 @@ import contextlib
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -59,22 +71,70 @@ class DefterHatasi(Exception):
     pass
 
 
+_CALISTIRILABILIR: dict[str, str | None] = {}
+
+
+def calistirilabilir(ad: str) -> str | None:
+    """`ad` programının PATH'teki mutlak yolu; yoksa None. Yalnız mutlak PATH klasörlerine bakılır:
+    çalışma klasörü ve göreli PATH girdileri aranmaz. Windows'ta `subprocess.run(["git", ...])`
+    (CreateProcess) `NoDefaultCurrentDirectoryInExePath` tanımlı değilse çalışma klasöründeki `git.exe`yi
+    PATH'tekinin önüne koyar; incelenen bir depo kökünde `git.exe` taşıyabilir."""
+    if ad not in _CALISTIRILABILIR:
+        bulunan = None
+        uzantilar = (".exe",) if os.name == "nt" else ("",)
+        for dizin in os.environ.get("PATH", "").split(os.pathsep):
+            dizin = dizin.strip().strip('"')
+            if not dizin or not os.path.isabs(dizin):
+                continue
+            for u in uzantilar:
+                aday = os.path.join(dizin, ad + u)
+                if os.path.isfile(aday) and os.access(aday, os.X_OK):
+                    bulunan = aday
+                    break
+            if bulunan:
+                break
+        _CALISTIRILABILIR[ad] = bulunan
+    return _CALISTIRILABILIR[ad]
+
+
+def _git_yolu() -> str:
+    git = calistirilabilir("git")
+    if git is None:
+        raise DefterHatasi("git bulunamadı: PATH'teki mutlak bir klasörde git olmalı "
+                           "(çalışma klasöründeki git kullanılmaz)")
+    return git
+
+
+# Deponun yapılandırmasıyla (`.git/config`, `.git/hooks`) dış komut çalıştırabilecek ayarlar kapalı:
+# `core.fsmonitor` (index okuyan komutlar), kancalar (`update-ref` `reference-transaction` kancasını
+# çalıştırır). `core.hooksPath` bu dosyanın kendisini gösterir: bir dosyanın altında kanca olamaz.
+# Dış diff/textconv `git diff`'te bayrakla, filtre sürücüleri `blob`ta kapatılır.
+_GUVENLI_AYARLAR = ("-c", "core.fsmonitor=false",
+                    "-c", "core.hooksPath=" + os.path.abspath(__file__).replace(os.sep, "/"))
+
+
+def _git_calistir(args: tuple[str, ...], cwd: str | None, env: dict | None,
+                  girdi: str | None) -> subprocess.CompletedProcess:
+    return subprocess.run([_git_yolu(), *_GUVENLI_AYARLAR, *args], cwd=cwd, capture_output=True, text=True,
+                          encoding="utf-8", errors="replace", env=env, input=girdi)
+
+
 def _git(*args: str, cwd: str | None = None, check: bool = True, env: dict | None = None,
          girdi: str | None = None) -> str:
-    p = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, encoding="utf-8",
-                       errors="replace", env=env, input=girdi)
+    p = _git_calistir(args, cwd, env, girdi)
     if check and p.returncode != 0:
         raise DefterHatasi(f"git {' '.join(args[:2])} başarısız: {p.stderr.strip()[:200]}")
     return p.stdout
 
 
-def _git_rc(*args: str, cwd: str | None = None, env: dict | None = None) -> tuple[int, str]:
-    p = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, encoding="utf-8",
-                       errors="replace", env=env)
+def _git_rc(*args: str, cwd: str | None = None, env: dict | None = None,
+            girdi: str | None = None) -> tuple[int, str]:
+    p = _git_calistir(args, cwd, env, girdi)
     return p.returncode, p.stdout
 
 
 def kok() -> str:
+    _git_yolu()  # git yoksa bunu söyle, "depo içinde çalıştır" deme
     try:
         return _git("rev-parse", "--show-toplevel").strip()
     except (DefterHatasi, FileNotFoundError) as e:
@@ -91,6 +151,63 @@ def defter_yolu(k: str) -> str:
 def goreli(k: str, yol: str) -> str:
     mutlak = os.path.abspath(yol)
     return os.path.relpath(mutlak, k).replace(os.sep, "/")
+
+
+def _icinde(yol: str, ust: str) -> bool:
+    yol, ust = os.path.normcase(yol), os.path.normcase(ust)
+    try:
+        return os.path.commonpath([yol, ust]) == ust
+    except ValueError:  # Windows'ta farklı sürücü
+        return False
+
+
+def git_disi(k: str, rels: list[str]) -> dict[str, str]:
+    """Defterin içeriğini git'e yazmayacağı yollar -> neden. Kullanıcının bilerek git dışında tuttuğu
+    içerik nesne deposuna sabitlenmez (`refs/orkestra/defter` `git push --mirror` ile gider): depo dışı
+    yollar, git'in kendi klasörü ve git'in yok saydığı izlenmeyen dosyalar (.gitignore, info/exclude,
+    core.excludesFile). İzlenen dosya, deseni eşleşse de kabul edilir (içeriği zaten git'te). Yol
+    gerçek yoluna (sembolik bağlar çözülerek) göre değerlendirilir: `hash-object` bağı izler."""
+    gercek_kok = os.path.realpath(k)
+    git_dizinleri = [os.path.realpath(d if os.path.isabs(d) else os.path.join(k, d)) for d in
+                     _git("rev-parse", "--git-dir", "--git-common-dir", cwd=k).splitlines() if d.strip()]
+    nedenler: dict[str, str] = {}
+    sorulacak: dict[str, list[str]] = {}  # gerçek göreli yol -> bu yola çıkan kayıt yolları
+    for rel in dict.fromkeys(rels):
+        gercek = os.path.realpath(os.path.join(k, rel))
+        if not _icinde(gercek, gercek_kok):
+            nedenler[rel] = "depo dışında"
+            continue
+        g = os.path.relpath(gercek, gercek_kok).replace(os.sep, "/")
+        if (g == "." or any(p.casefold() == ".git" for p in g.split("/"))
+                or any(_icinde(gercek, d) for d in git_dizinleri)):
+            nedenler[rel] = "git'in kendi klasöründe"
+            continue
+        # check-ignore yolu pathspec olarak ayrıştırır (`--literal-pathspecs` desteklemez); ":" ile
+        # başlayan ad "./" ile büyü sayılmaktan korunur.
+        sorulacak.setdefault("./" + g if g.startswith(":") else g, []).append(rel)
+    if not sorulacak:
+        return nedenler
+
+    def yok_sayilan(yollar: list[str]) -> set[str] | None:
+        rc, cikti = _git_rc("check-ignore", "--stdin", "-z", cwd=k, girdi="".join(y + "\0" for y in yollar))
+        return {y for y in cikti.split("\0") if y} if rc in (0, 1) else None
+
+    yollar = sorted(sorulacak)
+    toplu = yok_sayilan(yollar)
+    for g in yollar:
+        if toplu is not None:
+            sonuc = toplu
+        else:  # biri (ör. alt modül içindeki yol) tüm sorguyu düşürdü: tek tek sor
+            sonuc = yok_sayilan([g])
+        if sonuc is None:
+            neden = "git bu yolu değerlendiremedi (alt modül ya da iç içe depo olabilir)"
+        elif g in sonuc:
+            neden = "git yok sayıyor (.gitignore/exclude); izlenmeyen bu içerik git'e yazılmaz"
+        else:
+            continue
+        for rel in sorulacak[g]:
+            nedenler[rel] = neden
+    return nedenler
 
 
 def _windows_tekrar(islem, sure: float = 10.0):
@@ -248,10 +365,58 @@ def ekle(dosya: str, kart: dict) -> None:
         os.fsync(f.fileno())
 
 
-def blob(k: str, rel: str, yaz: bool, env: dict | None = None) -> str | None:
+def filtresiz_ortam(k: str, rels: list[str], env: dict | None = None) -> tuple[dict, set[str]]:
+    """`rels` için öznitelikle seçilen filtre sürücülerini (`filter.<ad>.clean`/`process`: deponun
+    yapılandırmasındaki dış komut) kapatan ortam ve özniteliği okunamayan yollar (ör. depo dışı eski
+    kayıt; bunlar `hash-object`e verilmez). Satır sonu dönüşümü (`core.autocrlf`, `eol`) sürer, böylece
+    blob adı commit'tekiyle aynı kalır. check-attr belirsiz değerleri ("set", "unspecified") de ad
+    olarak yazdığından basılan değer ne olursa kapatılır; sürücü değilse etkisizdir.
+    GIT_CONFIG_COUNT anahtar/değeri ayrı taşır (`-c` gibi `=` içeren adda bölünmez)."""
+    yeni = dict(os.environ if env is None else env)
+    okunamayan: set[str] = set()
+    if not rels:
+        return yeni, okunamayan
+
+    def sor(yollar: list[str]) -> list[str] | None:
+        rc, cikti = _git_rc("check-attr", "-z", "--stdin", "filter", cwd=k, env=env,
+                            girdi="".join(r + "\0" for r in yollar))
+        return cikti.split("\0") if rc == 0 else None
+
+    cikti = sor(rels)
+    if cikti is None:  # biri tüm sorguyu düşürdü: tek tek sor
+        cikti = []
+        for r in rels:
+            tek = sor([r])
+            if tek is None:
+                okunamayan.add(r)
+            else:
+                cikti += tek[:3]
+    adlar = sorted({cikti[i] for i in range(2, len(cikti), 3) if cikti[i]})
+    try:
+        n = max(0, int(yeni.get("GIT_CONFIG_COUNT") or 0))
+    except ValueError:
+        n = 0
+    for ad in adlar:
+        for anahtar, deger in ((f"filter.{ad}.clean", ""), (f"filter.{ad}.process", ""),
+                               (f"filter.{ad}.required", "false")):
+            yeni[f"GIT_CONFIG_KEY_{n}"] = anahtar
+            yeni[f"GIT_CONFIG_VALUE_{n}"] = deger
+            n += 1
+    if adlar:
+        yeni["GIT_CONFIG_COUNT"] = str(n)
+    return yeni, okunamayan
+
+
+def blob(k: str, rel: str, yaz: bool, env: dict | None = None, filtresiz: bool = False) -> str | None:
+    """`rel`in blob adı. `filtresiz`: `env` `rel`i kapsayan bir `filtresiz_ortam` çağrısından geliyor;
+    değilse filtre sürücüleri burada kapatılır."""
     yol = os.path.join(k, rel)
     if not os.path.isfile(yol):
         return None
+    if not filtresiz:
+        env, okunamayan = filtresiz_ortam(k, [rel], env)
+        if okunamayan:
+            raise DefterHatasi(f"{rel}: git öznitelikleri okunamadı, içerik güvenle karşılaştırılamıyor")
     args = ["hash-object"] + (["-w"] if yaz else []) + ["--", rel]
     return _git(*args, cwd=k, env=env).strip()
 
@@ -261,10 +426,14 @@ def blob(k: str, rel: str, yaz: bool, env: dict | None = None) -> str | None:
 def koruma_guncelle(k: str, ks: list[dict]) -> str | None:
     """`KORUMA_REF`'i defterin başvurduğu ve hâlâ var olan içerikleri tutan ağaca yöneltir; başvuru yoksa
     ref'i siler. Çağıran `kilit` tutmalıdır. Hata olursa uyarı metni döner (kart yine de yazılmıştır).
-    Yalnız var olan nesneler ağaca girer: kayıp nesneye işaret eden bir ref `git gc`'yi bozardı."""
+    Yalnız var olan nesneler ağaca girer: kayıp nesneye işaret eden bir ref `git gc`'yi bozardı.
+    Git dışı yolların (bkz. `git_disi`; eski sürümün yazdığı kayıtlar) içeriği ağaca girmez: ref'ten
+    düşer, `git push --mirror` onu taşımaz, `git gc` zamanla budar."""
     try:
-        aranan = sorted({d.get("blob") for x in ks for d in x.get("dosyalar") or []
-                         if isinstance(d, dict) and _NESNE_ADI.match(str(d.get("blob") or ""))})
+        girdiler = [d for x in ks for d in x.get("dosyalar") or []
+                    if isinstance(d, dict) and _NESNE_ADI.match(str(d.get("blob") or ""))]
+        disarida = git_disi(k, [str(d.get("yol") or "") for d in girdiler]) if girdiler else {}
+        aranan = sorted({d["blob"] for d in girdiler if str(d.get("yol") or "") not in disarida})
         var = []
         if aranan:
             cikti = _git("cat-file", "--batch-check", cwd=k, girdi="\n".join(aranan) + "\n")
@@ -316,10 +485,20 @@ def k_yaz(a) -> int:
             raise DefterHatasi(f'kavram "ad: açıklama" biçiminde ve ≤{KAVRAM_SINIR} karakter olmalı')
         ad, _, aciklama = kv.partition(":")
         kavramlar.append({"ad": ad.strip(), "aciklama": aciklama.strip()})
+    rels = list(dict.fromkeys(goreli(k, y) for y in a.dosya or []))
+    for rel in rels:
+        if not os.path.isfile(os.path.join(k, rel)):
+            raise DefterHatasi(f"dosya yok: {rel}")
+    # Uygunluk içerik nesne deposuna yazılmadan önce denetlenir; reddedilen dosya kartı düşürmez.
+    reddedilen = git_disi(k, rels) if rels else {}
+    kabul = [r for r in rels if r not in reddedilen]
+    env, okunamayan = filtresiz_ortam(k, kabul)
+    for rel in okunamayan:
+        reddedilen[rel] = "git öznitelikleri okunamadı"
+    kabul = [r for r in kabul if r not in okunamayan]
     dosyalar = []
-    for y in a.dosya or []:
-        rel = goreli(k, y)
-        b = blob(k, rel, yaz=True)
+    for rel in kabul:
+        b = blob(k, rel, yaz=True, env=env, filtresiz=True)
         if b is None:
             raise DefterHatasi(f"dosya yok: {rel}")
         dosyalar.append({"yol": rel, "blob": b})
@@ -332,7 +511,11 @@ def k_yaz(a) -> int:
         ekle(yol, kart)
         if dosyalar:
             uyari = koruma_guncelle(k, kartlar(yol))
-    print(f"defter: kart yazıldı ({len(dosyalar)} dosya, {len(kavramlar)} kavram)")
+    ek = f"; {len(reddedilen)} dosya kaydedilmedi" if reddedilen else ""
+    print(f"defter: kart yazıldı ({len(dosyalar)} dosya, {len(kavramlar)} kavram{ek})")
+    for rel, neden in reddedilen.items():
+        print(f"defter: uyarı: {rel} kaydedilmedi: {neden}. Defter yalnız git'in görebileceği dosyaları "
+              "tutar; bu dosyayı gerektiğinde doğrudan oku.", file=sys.stderr)
     if uyari:
         print(f"defter: uyarı: {uyari}", file=sys.stderr)
     return 0
@@ -377,13 +560,41 @@ def k_oku(a) -> int:
     return 0
 
 
+def _depo_disi_yazim(rel: str) -> bool:
+    """Kayıt yolu yazımıyla depo dışını gösteriyor mu (git'e sormadan)."""
+    return rel == ".." or rel.startswith("../") or os.path.isabs(rel)
+
+
+def _git_disi_guvenli(k: str, rels: list[str]) -> dict[str, str]:
+    """`git_disi`; git sorusu başarısızsa boş (yalnız bilgi amaçlı çağrılar için)."""
+    try:
+        return git_disi(k, rels) if rels else {}
+    except DefterHatasi:
+        return {}
+
+
 def _oku_dosyalar(k: str, istenen: list[str], son: dict, kalan: int, env: dict) -> None:
+    # Kayıtsız yollar ve depo dışını gösteren eski kayıtlar (eski sürüm kabul ediyordu) sorulur.
+    disarida = _git_disi_guvenli(k, [r for r in istenen if r not in son or _depo_disi_yazim(r)])
+    for r in istenen:
+        if _depo_disi_yazim(r):
+            disarida.setdefault(r, "depo dışında")
+    env, okunamayan = filtresiz_ortam(k, [r for r in istenen if r in son and r not in disarida
+                                          and os.path.isfile(os.path.join(k, r))], env)
     for rel in istenen:
+        if rel in okunamayan:
+            print(f"## {rel}\ndurum: git bu yolun özniteliklerini okuyamadı; fark üretilmedi — dosyayı "
+                  "doğrudan oku.\n")
+            continue
+        if rel in disarida:
+            print(f"## {rel}\ndefter bu dosyayı kaydetmez ({disarida[rel]}) — gerekiyorsa doğrudan oku, "
+                  "`defter yaz`a verme.\n")
+            continue
         if rel not in son:
             print(f"## {rel}\nkayıt yok — dosyayı oku (gerekirse satır aralığıyla), sonra `defter yaz`.\n")
             continue
         kart, eski = son[rel]
-        yeni = blob(k, rel, yaz=False)
+        yeni = blob(k, rel, yaz=True, env=env, filtresiz=True)  # güncel içerik yalnız geçici depoya
         print(f"## {rel}  ({kart['zaman']})")
         print(kart["ozet"] or "(özet yok)")
         if yeni is None:
@@ -397,8 +608,10 @@ def _oku_dosyalar(k: str, istenen: list[str], son: dict, kalan: int, env: dict) 
                   "`git gc` budadı); fark üretilemiyor ve özet eskimiş olabilir — dosyayı oku (gerekirse "
                   "satır aralığıyla), sonra `defter yaz` ile yeniden kaydet.\n")
             continue
-        blob(k, rel, yaz=True, env=env)  # güncel içerik yalnız geçici depoya yazılır
-        rc, ham = _git_rc("diff", "--no-color", "-U2", eski, yeni, cwd=k, env=env)
+        # --no-ext-diff/--no-textconv: deponun `diff.external`, `diff.<sürücü>.command`/`textconv`
+        # ayarlarındaki dış komut çalışmaz.
+        rc, ham = _git_rc("diff", "--no-color", "--no-ext-diff", "--no-textconv", "-U2", eski, yeni,
+                          cwd=k, env=env)
         fark = [s for s in ham.splitlines() if not s.startswith(("diff --git", "index "))]
         if rc != 0 or not fark:
             print("durum: kayıttan beri DEĞİŞTİ, ama fark alınamadı (git diff başarısız); "
@@ -441,6 +654,10 @@ def k_durum(a) -> int:
         print(f"en eski: {ks[0]['zaman']}  en yeni: {ks[-1]['zaman']}")
     if bozuk:
         print(f"bozuk satır: {bozuk} (okunamadı, yok sayılıyor; `defter temizle` atar)")
+    disarida = _git_disi_guvenli(k, sorted(son_kartlar_dosya_icin(ks)))
+    if disarida:
+        ornek = ", ".join(sorted(disarida)[:5]) + (" ..." if len(disarida) > 5 else "")
+        print(f"git dışı kayıt: {len(disarida)} ({ornek}); içerikleri korunmaz, `defter temizle` çıkarır")
     rc, agac = _git_rc("rev-parse", "-q", "--verify", KORUMA_REF, cwd=k)
     if rc == 0:
         n = len(_git("ls-tree", agac.strip(), cwd=k, check=False).splitlines())
@@ -485,10 +702,11 @@ def k_ozetle(a) -> int:
     if not a.yerel:
         print(istem)
         return 0
-    if not shutil.which("ollama"):
+    ollama = calistirilabilir("ollama")
+    if not ollama:
         raise DefterHatasi("--yerel için `ollama` bulunamadı; yerel model yoksa haiku alt agent'ı kullan")
     t0 = time.time()
-    p = subprocess.run(["ollama", "run", a.yerel], input=istem, capture_output=True, text=True,
+    p = subprocess.run([ollama, "run", a.yerel], input=istem, capture_output=True, text=True,
                        encoding="utf-8", errors="replace", timeout=600)
     if p.returncode != 0 or not p.stdout.strip():
         raise DefterHatasi(f"yerel model özet üretemedi: {p.stderr.strip()[:200]}")
@@ -533,6 +751,17 @@ def k_temizle(a) -> int:
         raise DefterHatasi("--tut negatif olamaz")
     with kilit(yol):  # okuma-yeniden yazma arasında eklenen kart kaybolmasın
         ks, bozuk = kartlar_ve_bozuk(yol)
+        # Git dışı yolların kayıtları (eski sürümün kabul ettiği .gitignore'daki ya da depo dışı dosyalar)
+        # çıkarılır; aksi halde "her dosyanın en son kaydı tutulur" kuralı onları sonsuza dek taşırdı.
+        disarida = _git_disi_guvenli(k, sorted({str(d.get("yol") or "") for x in ks
+                                                for d in x.get("dosyalar") or [] if isinstance(d, dict)}))
+        cikarilan = 0
+        for x in ks if disarida else []:
+            ds = x.get("dosyalar") or []
+            kalan = [d for d in ds if not (isinstance(d, dict) and str(d.get("yol") or "") in disarida)]
+            if len(kalan) != len(ds):
+                cikarilan += len(ds) - len(kalan)
+                x["dosyalar"] = kalan
         korunan, tasinan = korunacak_kartlar(ks, a.tut)
         tut = [x for i, x in enumerate(ks) if i in korunan]
         tmp = yol + ".tmp"
@@ -545,6 +774,7 @@ def k_temizle(a) -> int:
         uyari = koruma_guncelle(k, tut)
     ek = f" ({tasinan} eski kart bir dosyanın/kavramın en son kaydını taşıdığı için tutuldu)" if tasinan else ""
     ek += f"; {bozuk} bozuk satır atıldı" if bozuk else ""
+    ek += f"; {cikarilan} git dışı dosya kaydı çıkarıldı" if cikarilan else ""
     print(f"defter: {len(ks) - len(tut)} kart silindi, {len(tut)} kaldı{ek}")
     if uyari:
         print(f"defter: uyarı: {uyari}", file=sys.stderr)
