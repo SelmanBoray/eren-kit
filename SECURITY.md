@@ -60,9 +60,11 @@ them.
   Through Win+R, the Start menu or any file dialog it can start programs,
   which Claude Code's Bash allow/deny rules and sandbox don't cover. Its
   blocklist is empty until you set it (the installer doesn't ask), and it
-  stops input and element reading, not screenshots. Keep approving its
-  `click`, `type_text` and `key` calls one by one, set a blocklist (see the
-  package README's
+  stops input and element reading, not screenshots; a title another app
+  shortens or rewords can still show, and through the Windows shell the
+  agent can still bring forward, minimize or close a blocked app. Keep
+  approving its `click`, `type_text` and `key` calls one by one, set a
+  blocklist (see the package README's
   [Recommended setup](packages/computer-use-windows/README.md#recommended-setup)),
   and don't connect it in sessions where those rules are your security
   boundary.
