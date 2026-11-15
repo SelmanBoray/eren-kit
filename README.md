@@ -316,8 +316,11 @@ How it treats your existing setup:
   `-ClaudeHome`). An identical registration is left alone. A registration with the same name but a
   different command is backed up, then replaced; if the new one cannot be added, the old one is
   restored. Arguments you added yourself (for example a computer-use `--block` list) and `env`
-  values are carried over to the new registration. If that registration points outside the
-  repository, the installer says so, in `-DryRun` too.
+  values are carried over to the new registration unchanged: the registration goes to
+  `claude mcp add-json` as one escaped JSON argument, so no value is read as a command, and the
+  output shows only how many arguments and which `env` names were carried, not their values. A
+  registration that cannot be carried over exactly is not carried, and the installer says so. If
+  that registration points outside the repository, the installer says so, in `-DryRun` too.
 - **Brain service task.** The `beyin` component registers a user-level Task Scheduler task named
   `eren-kit-beyin-servis` (no administrator rights needed). It runs
   `packages\bellek\.venv\Scripts\pythonw.exe -I -m bellek.beyin servis` silently at every sign-in
@@ -701,7 +704,7 @@ You can also add read-only note sources (`[[source]]`) and map folders to projec
   that read untrusted content.
 - **computer-use-windows controls your real mouse and keyboard.** It will not type into password
   fields or terminals, it honours an app blocklist (empty by default; it stops input and element
-  reading, not screenshots), and moving the mouse into a screen corner stops every action. Don't
+  reading, not screenshots, and a title another app shortens or rewords can still show), and moving the mouse into a screen corner stops every action. Don't
   use the PC while it works, close sensitive windows, and type passwords yourself. It can launch
   programs through the GUI, which Claude Code's Bash allow/deny rules don't cover: keep approving
   its `click`, `type_text` and `key` calls one by one, and don't connect it in sessions where those

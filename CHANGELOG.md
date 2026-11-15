@@ -190,28 +190,52 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (Windows and macOS), so no code is loaded from the session's working directory (before, opening
   Claude Code in a folder containing a `bellek` package ran that code). Re-installing replaces the
   old registration and keeps MCP arguments and `env` values you added (for example a
-  computer-use `--block` list). The doctor flags unsafe MCP registrations (a Python `-m`/`-c` launch
-  without `-I`/`-P`, a relative script path) and a repository folder other accounts can write to,
-  and looks up programs only in absolute `PATH` folders. The install summary says that backups are
+  computer-use `--block` list) unchanged: the registration goes to `claude mcp add-json` as one
+  escaped JSON argument, started through .NET `Process`, so Windows PowerShell 5.1 no longer drops
+  the double quotes in a value and an `&` in a value is no longer run as a command through
+  `claude.cmd`. A registration that cannot be carried over exactly is not carried, and the installer
+  says so without printing values; the install output shows carried arguments only as a count and
+  `env` values only by name. The macOS dry run no longer suggests a manual command for a
+  registration with carried values. The doctor flags unsafe MCP registrations (a Python `-m`/`-c` launch
+  without `-I`/`-P`, a relative script path; a long Python option that takes a value, such as
+  `--check-hash-based-pycs always`, is not flagged by mistake) and a repository folder other
+  accounts can write to, and looks up programs only in absolute `PATH` folders. The install summary says that backups are
   plain text and are not deleted on uninstall. Existing installs: run
   `.\install.ps1 -Components beyin` once.
 - `computer-use-windows`: `comtypes` no longer loads generated modules from a fixed folder under the
   shared `%TEMP%`. The app blocklist now also covers `elements` (refused for a blocked app's
-  windows) and `windows` (titles hidden). The README states what the blocklist does not cover
-  (screenshots), that it is empty by default, and that GUI actions can start programs outside
-  Claude Code's Bash permission rules.
+  windows) and `windows` (titles hidden). With a blocklist, `elements` no longer reads a blocked app
+  through another window: the desktop window is refused, the blocked app's windows inside a listed
+  tree (top-level or embedded) are skipped, and element texts that contain the title of a blocked
+  app's window (taskbar buttons, Alt-Tab, Task Manager) are hidden; the match is textual, so a
+  shortened or reworded title is not caught. `focus` and `elements` accept a window handle only in
+  the form Windows reports it (other numbers Windows accepts for the same window, such as a wildcard
+  high word, got past the checks), and a window whose process Windows does not tell is not read
+  inside a listing. Without a blocklist nothing changes. The README states what the blocklist does
+  not cover (screenshots; closing, minimizing or ending the app through the Windows shell), that it
+  is empty by default, and that GUI actions can start programs outside Claude Code's Bash
+  permission rules.
 - `opus-orkestra` (ledger): `defter yaz` refuses files outside the repository, inside `.git` and
   untracked files git ignores (such as `.env`); `defter temizle` drops such older records. `oku` and
   `yaz` no longer run external commands from the repository's git configuration (external diff,
   textconv, filter drivers, fsmonitor, reference-transaction hook). `git` and `ollama` are resolved
-  only from absolute `PATH` folders.
+  only from absolute `PATH` folders. Tracked files inside a submodule or nested repository are
+  recorded again (each is checked against its own repository's rules); `temizle` does not delete a
+  record git could not evaluate (its content is not kept either) and `durum` lists such records
+  separately. A path git cannot evaluate no longer makes the ledger slow: an inner repository git
+  cannot work in at all costs a fixed number of git processes (4-5 at 100 and 1000 paths) instead of
+  two per path.
 - CI: every GitHub Action is pinned to a full commit SHA, `actions/checkout` no longer persists
   credentials, and Dependabot (`.github/dependabot.yml`) proposes weekly updates for npm, pip and
   GitHub Actions. When the `GIZLILIK_YASAK` secret is empty, the privacy job warns on pull requests
   and fails on pushes to `main`.
 - `apps/phone` (app): a release build can no longer be signed with the public debug key; it needs a
   user-specific keystore (`EREN_KIT_RELEASE_STORE_FILE`, `..._STORE_PASSWORD`, `..._KEY_ALIAS`,
-  `..._KEY_PASSWORD`) and stops with a clear error otherwise. Debug builds are unchanged.
+  `..._KEY_PASSWORD`) and stops with a clear error otherwise. Debug builds are unchanged. An
+  `android/` folder generated before this change never got the signing plugin (Expo skips prebuild
+  when the folder exists): the release path now stops and asks for
+  `npx expo prebuild -p android --clean`, other commands warn once. The app README describes that
+  step and how to undo the old voice-key shortcut changes by hand.
 - `apps/phone` (app): full-permission, accessibility and setup texts now say what really happens
   (ordinary apps are on by default; banking and money apps are switched off by a guess from their
   name and package, which does not catch every app). Full permission is switched off before a new
@@ -221,15 +245,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `bellek`: on Linux and macOS new data folders are created `0700` and files `0600`, and group/other
   permissions are removed from an existing install (Windows unchanged). The secret filter now also
   masks `e-mail:password` pairs, `PGPASSWORD`, `mysql -p`, `glpat-` tokens, PEM headers, `curl -u`,
-  Basic auth and similar; the URL rule no longer takes quadratic time. Outside text that reaches hook
+  Basic auth and similar. The filter runs in linear time (the URL, `e-mail:password`, PIN and TC
+  rules took quadratic time on long input; every rule now stays under 1 s on 200 KB). Values that
+  start with a flag word but go on (`password=None-of-...`) are masked; a context rule no longer
+  swallows the keyword and leaves the value in the clear; a password in a URL with a long scheme
+  name is masked; the `mysql`/`sshpass`/`curl` rules match
+  only the command's own options (`ls -pla` or `find -perm` on the same line is not masked); a card
+  number is looked for in every window of a digit run, and a decimal fraction (`0.4111...`) is not
+  taken for a card. Outside text that reaches hook
   output (the handoff index, the doc gate's heading map) is stripped of control and invisible
   characters and capped in length, and the map says that headings are data, not instructions.
   `/api/gelen/<id>` goes through the same filter as the web UI, and the brain service accepts at
   most 64 concurrent connections.
 - `apps/phone` (server): the data folder must be open only to the user, SYSTEM and Administrators;
   the service does not start with an unsafe folder and logs the reason and the fix. `kur.ts`
-  narrows its own `eren-kit` folder; `--izin-duzelt` fixes another one. Permissions are read through
-  .NET, so the check also works when started from PowerShell 7. Before authentication a frame is
+  narrows its own `eren-kit` folder; `--izin-duzelt` fixes another one. `--izin-duzelt` fixes the
+  folder the service will really use (the persistent `EREN_KIT_DATA_DIR`, user scope first, then
+  machine scope, not the current shell's value), prints that folder first and the result after
+  narrowing, and warns when the shell's value differs. Permissions are read through .NET, so the
+  check also works when started from PowerShell 7. The check expands account abbreviations in the
+  folder's security descriptor (for example `LA` for the built-in Administrator) to the user's own
+  SID, so the service starts under the built-in Administrator account (including the GitHub Windows
+  runner). Before authentication a frame is
   capped at 16 KiB, an address may hold at most 16 connections, an unresponsive peer is dropped after
   3 seconds, and browser requests (with an `Origin` header) are rejected. Pairing: 5 wrong codes
   close the pairing window for that address only; 20 wrong codes in total delete the window.

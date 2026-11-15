@@ -319,7 +319,10 @@ Mevcut kurulumunuza nasıl davrandığı:
   bağımsızdır). Aynı olan bir kayda dokunulmaz. Adı aynı ama komutu farklı olan bir kayıt önce
   yedeklenir, sonra değiştirilir; yenisi eklenemezse eskisi geri yüklenir. Kendi eklediğiniz
   argümanlar (örneğin computer-use için bir `--block` listesi) ve `env` değerleri yeni kayda
-  taşınır. Bu kayıt deponun dışını gösteriyorsa kurulum betiği bunu söyler, `-DryRun` sırasında da.
+  birebir taşınır: kayıt `claude mcp add-json`'a kaçışlı tek bir JSON argümanı olarak gider, hiçbir
+  değer komut olarak yorumlanmaz ve çıktı değerleri değil yalnız taşınan argüman sayısını ve `env`
+  adlarını gösterir. Birebir taşınamayan kayıt taşınmaz, kurulum betiği bunu söyler. Bu kayıt
+  deponun dışını gösteriyorsa kurulum betiği bunu söyler, `-DryRun` sırasında da.
 - **Beyin servisi görevi.** `beyin` bileşeni, `eren-kit-beyin-servis` adlı kullanıcı düzeyinde bir
   Görev Zamanlayıcı görevi kaydeder (yönetici hakkı gerekmez). Görev,
   `packages\bellek\.venv\Scripts\pythonw.exe -I -m bellek.beyin servis` komutunu her oturum
@@ -709,7 +712,8 @@ eşleyebilirsiniz (`[projects]`); şablon ikisini de açıklar.
   içerik okuyan oturumlarda `beyin` MCP sunucusunu bağlamayın.
 - **computer-use-windows gerçek farenizi ve klavyenizi kontrol eder.** Parola alanlarına ya da
   terminallere yazmaz, bir uygulama engelleme listesine uyar (varsayılanda boştur; girdiyi ve öğe
-  okumayı durdurur, ekran görüntülerini değil) ve fareyi bir ekran köşesine götürmek her eylemi
+  okumayı durdurur, ekran görüntülerini değil; başka bir uygulamanın kısalttığı ya da değiştirdiği
+  başlık yine görünebilir) ve fareyi bir ekran köşesine götürmek her eylemi
   durdurur. O çalışırken PC'yi kullanmayın, hassas pencereleri kapatın ve parolaları kendiniz yazın.
   Claude Code'un Bash izin/ret kurallarının kapsamadığı biçimde, arayüz üzerinden program
   başlatabilir: `click`, `type_text` ve `key` çağrılarını tek tek onaylamayı sürdürün ve bu
