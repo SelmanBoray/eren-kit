@@ -14,6 +14,7 @@ açılır açılmaz kullanıcının yetkisiyle çalışırdı. Bu dosya:
 
 from __future__ import annotations
 
+import base64
 import importlib.util
 import json
 import os
@@ -165,7 +166,7 @@ $global:eklenen = New-Object System.Collections.Generic.List[object]
 $global:silinen = 0
 Set-McpApi @{
     Get    = { param($Name) $old }.GetNewClosure()
-    Add    = { param($Name, $Entry) $global:eklenen.Add($Entry); [pscustomobject]@{ ExitCode = 0; Output = @() } }
+    Add    = { param($Name, $Json) $global:eklenen.Add(($Json | ConvertFrom-Json)); [pscustomobject]@{ ExitCode = 0; Output = @() } }
     Remove = { param($Name) $global:silinen++; [pscustomobject]@{ ExitCode = 0; Output = @() } }
 }
 # PowerShell 5.1'de ConvertFrom-Json diziyi tek nesne olarak verir: öğeler ayrıca açılır.
@@ -231,15 +232,243 @@ def test_ps_yeniden_kurulum_kullanici_argumanlarini_ve_envi_korur(shell, tmp_pat
     assert _args(res["added"]) == [*ps1_beyin_mcp_args(), "--ek"], res
     assert res["added"]["env"] == {"BELLEK_BEYIN_PORT": "47999"}, res
     assert "BELLEK_BEYIN_PORT" in res["message"] and "47999" not in res["message"], res  # değer yazılmaz
+    assert "--ek" not in res["message"] and "1 adet" in res["message"], res  # argüman da yalnız sayıyla
 
     dry = _register(shell, tmp_path, old, [str(py), *ps1_beyin_mcp_args()], mode="dry")
     assert dry["status"] == "dry" and "-I" in dry["message"] and "BELLEK_BEYIN_PORT" in dry["message"], dry
+    assert "--ek" not in dry["message"], dry
 
     # Biçimi tanınmayan eski kayıt: taşınamayan env açıkça söylenir (warn).
     old = {"type": "stdio", "command": str(py), "args": ["baska.py"], "env": {"GIZLI": "x"}}
     res = _register(shell, tmp_path, old, [str(py), *ps1_beyin_mcp_args()])
     assert res["status"] == "warn" and "TAŞINMAZ" in res["message"] and "GIZLI" in res["message"], res
     assert "env" not in res["added"] or not res["added"]["env"], res
+
+
+# ---------------------------------------------------------------- gerçek claude çağrısı: özel karakterler
+#
+# Yukarıdaki test claude çağrısını sahte bir API ile değiştirir. Buradakiler modülün GERÇEK yolunu
+# (Get-McpUserEntry -> mcp_config.py, claude mcp remove/add-json) sahte bir claude ile çalıştırır:
+# npm'in claude.cmd sarmalayıcısı biçiminde bir .cmd (satır cmd.exe'den geçer) ve argümanlarını
+# kaydeden derlenmiş bir .exe. Gerçek ~/.claude.json'a dokunulmaz (CLAUDE_CONFIG_DIR geçici).
+
+_FAKE_PY = r"""
+import base64, os, sys
+with open(os.environ["FAKE_CLAUDE_LOG"], "a", encoding="ascii") as f:
+    f.write(",".join(base64.b64encode(a.encode("utf-8", "surrogatepass")).decode() for a in sys.argv[1:]) + "\n")
+"""
+
+# npm cmd-shim biçimi (bu makinedeki claude.cmd ile aynı akış: SETLOCAL, CALL, "%dp0%..." %*).
+_FAKE_CMD = """@ECHO off
+GOTO start
+:find_dp0
+SET dp0=%~dp0
+EXIT /b
+:start
+SETLOCAL
+CALL :find_dp0
+"{py}" -I "%dp0%\\fake_claude.py"   %*
+"""
+
+_FAKE_CS = r"""
+using System; using System.IO; using System.Text;
+class P { static int Main(string[] a) {
+  var sb = new StringBuilder();
+  for (int i = 0; i < a.Length; i++) { if (i > 0) sb.Append(','); sb.Append(Convert.ToBase64String(Encoding.UTF8.GetBytes(a[i]))); }
+  File.AppendAllText(Environment.GetEnvironmentVariable("FAKE_CLAUDE_LOG"), sb.ToString() + "\n");
+  return 0; } }
+"""
+
+_REAL_HARNESS = r"""
+param([string]$Module, [string]$Claude, [string]$Helper, [string]$CmdFile, [string]$Bk, [string]$Repo, [string]$Mode)
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+Import-Module $Module -Force -DisableNameChecking
+Set-InstallerOption -DryRun ($Mode -eq 'dry') -BackupDir $Bk
+Set-McpContext -ClaudeExe $Claude -HelperPath $Helper
+$cmd = [string[]]@((Get-Content -LiteralPath $CmdFile -Raw -Encoding UTF8 | ConvertFrom-Json) | ForEach-Object { $_ })
+try {
+    $r = Register-McpServer -Name 'beyin' -ServerCommand $cmd -RepoRoot $Repo
+    $o = @{ status = $r.Status; message = $r.Message }
+} catch {
+    $o = @{ status = 'error'; message = "$_" }
+}
+Write-Output ('JSON:' + ($o | ConvertTo-Json -Compress))
+"""
+
+
+def _csc() -> Path | None:
+    windir = os.environ.get("WINDIR", r"C:\Windows")
+    for fw in ("Framework64", "Framework"):
+        p = Path(windir, "Microsoft.NET", fw, "v4.0.30319", "csc.exe")
+        if p.exists():
+            return p
+    return None
+
+
+@pytest.fixture(scope="module")
+def sahte_claude(tmp_path_factory):
+    """{"cmd": claude.cmd, "exe": claude.exe (derlenebildiyse)}; ikisi de argümanlarını
+    FAKE_CLAUDE_LOG dosyasına (base64) yazar ve 0 döner."""
+    d = tmp_path_factory.mktemp("sahte-claude")
+    (d / "fake_claude.py").write_text(_FAKE_PY, encoding="utf-8")
+    (d / "claude.cmd").write_text(_FAKE_CMD.format(py=sys.executable), encoding="ascii")
+    out = {"cmd": d / "claude.cmd"}
+    csc = _csc()
+    if csc:
+        exe_dir = d / "exe"
+        exe_dir.mkdir()
+        (exe_dir / "fake.cs").write_text(_FAKE_CS, encoding="utf-8")
+        r = subprocess.run([str(csc), "/nologo", "/out:" + str(exe_dir / "claude.exe"), str(exe_dir / "fake.cs")],
+                           capture_output=True, timeout=120)
+        if r.returncode == 0:
+            out["exe"] = exe_dir / "claude.exe"
+    return out
+
+
+def _calls(log: Path) -> list[list[str]]:
+    if not log.exists():
+        return []
+    return [[base64.b64decode(x).decode("utf-8") for x in line.split(",")] if line else []
+            for line in log.read_text(encoding="ascii").splitlines()]
+
+
+def _entry_of(call: list[str]) -> dict:
+    """claude'a ulaşan kaydı çözer: "mcp add-json AD JSON" ya da (eski kod) "mcp add AD -e K=V -- komut"."""
+    if call[:2] == ["mcp", "add-json"]:
+        return json.loads(call[3])
+    assert call[:2] == ["mcp", "add"], call
+    rest = call[2:]
+    head, tail = rest[:rest.index("--")], rest[rest.index("--") + 1:]
+    env = {}
+    for j, t in enumerate(head):
+        if t == "-e":
+            k, _, v = head[j + 1].partition("=")
+            env[k] = v
+    return {"command": tail[0], "args": tail[1:], "env": env}
+
+
+def _ozel_kayit(tmp_path: Path, py: str):
+    """Yan komut çalışırsa iz bırakan (işaret dosyası) ve 5.1/cmd.exe'nin bozduğu değerler."""
+    m = {k: tmp_path / f"pwned-{k}.txt" for k in ("amp", "pipe", "redir", "arg")}
+    env = {
+        "JSON_V": '{"a":1,"b":"x y"}',
+        "AMP": f'a&echo PWNED>"{m["amp"]}"',
+        "PIPE": f'b|echo PWNED>"{m["pipe"]}"',
+        "REDIR": f'c>"{m["redir"]}"',
+        "PCT": "%PATH% %% %~dp0 %1",
+        "CARET": "a^b^^c",
+        "BANG": "!PATH!",
+        "LT_GT": "<x> (y) [z]",
+        "BS_SON": "C:\\dir with space\\",
+        "BS_TIRNAK": 'a\\"b\\\\"c',
+        "SATIR": "l1\r\nl2\tt",
+        "UNI": "Şükrü ğüşiöç 😀",
+        "TARIH": "2026-01-01T00:00:00Z",
+        "BOS": "",
+        "TOKEN": "GIZLI-env-degeri-123",
+    }
+    extra = ["--block", "GIZLI-arg-456", f'z&echo PWNED>"{m["arg"]}"', '"q q"', "%USERPROFILE%", "^", "", "-e",
+             "--", "2026-01-01T00:00:00Z", "a\\"]
+    old = {"type": "stdio", "command": py, "args": ["-m", "bellek.beyin", "mcp", *extra], "env": env}
+    return old, extra, env, m
+
+
+def _register_real(shell: str, tmp_path: Path, claude: Path, old: dict, cmd: list[str], mode: str = "real"):
+    cfg = tmp_path / "cfg"
+    cfg.mkdir(exist_ok=True)
+    (cfg / ".claude.json").write_text(json.dumps({"mcpServers": {"beyin": old}}, ensure_ascii=False), encoding="utf-8")
+    script = tmp_path / "harness-real.ps1"
+    script.write_text(_REAL_HARNESS, encoding="utf-8-sig")
+    cmd_file = tmp_path / "cmd.json"
+    cmd_file.write_text(json.dumps(cmd), encoding="utf-8")
+    log = tmp_path / f"claude-{mode}.log"
+    args = [shell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(script),
+            "-Module", str(INSTALLER / "ErenKit.Installer.psm1"), "-Claude", str(claude),
+            "-Helper", str(INSTALLER / "mcp_config.py"), "-CmdFile", str(cmd_file), "-Bk", str(tmp_path / "bk"),
+            "-Repo", str(tmp_path / "repo"), "-Mode", mode]
+    env = dict(os.environ, CLAUDE_CONFIG_DIR=str(cfg), FAKE_CLAUDE_LOG=str(log))
+    if shell == "powershell":
+        env.pop("PSModulePath", None)
+    r = subprocess.run(args, capture_output=True, timeout=180, env=env, cwd=str(tmp_path))
+    out = r.stdout.decode("utf-8", "replace") + r.stderr.decode("utf-8", "replace")
+    line = [s for s in out.splitlines() if s.startswith("JSON:")]
+    assert line, out
+    return json.loads(line[-1][5:]), _calls(log), out
+
+
+def _kinds() -> list[str]:
+    return ["cmd", "exe"]
+
+
+@pytest.mark.skipif(not _shells(), reason="Windows PowerShell gerekli")
+def test_kontrol_sahte_claude_cmd_yan_komutu_gercekten_calistirir(sahte_claude, tmp_path):
+    """Testin kendisini doğrular: sahte claude.cmd'ye çıplak '&' giderse cmd.exe yan komutu çalıştırır."""
+    m = tmp_path / "kontrol.txt"
+    env = dict(os.environ, FAKE_CLAUDE_LOG=str(tmp_path / "k.log"))
+    subprocess.run(f'"{sahte_claude["cmd"]}" mcp a&echo PWNED>"{m}"', env=env, capture_output=True, timeout=60)
+    assert m.exists()
+
+
+@pytest.mark.skipif(not _shells(), reason="Windows PowerShell gerekli")
+@pytest.mark.parametrize("kind", _kinds())
+@pytest.mark.parametrize("shell", _shells() or ["-"])
+def test_gercek_claude_cagrisi_ozel_karakterleri_birebir_tasir(shell, kind, sahte_claude, tmp_path):
+    if kind not in sahte_claude:
+        pytest.skip("csc.exe yok: sahte claude.exe derlenemedi")
+    claude = sahte_claude[kind]
+    py = tmp_path / "repo" / ".venv" / "Scripts" / "python.exe"
+    py.parent.mkdir(parents=True)
+    py.write_bytes(b"")
+    old, extra, env, marks = _ozel_kayit(tmp_path, str(py))
+    cmd = [str(py), *ps1_beyin_mcp_args()]
+
+    dry, calls, out = _register_real(shell, tmp_path, claude, old, cmd, mode="dry")
+    assert dry["status"] == "dry" and calls == [], (dry, calls)
+    assert "TOKEN" in dry["message"] and "GIZLI" not in out, out  # env adı var, değerler yok
+
+    res, calls, out = _register_real(shell, tmp_path, claude, old, cmd)
+    assert res["status"] == "ok", (res, out)
+    assert len(calls) == 2 and calls[0][:3] == ["mcp", "remove", "beyin"], calls
+    assert calls[1][:2] in (["mcp", "add"], ["mcp", "add-json"]) and calls[1][2] == "beyin", calls
+    entry = _entry_of(calls[-1])
+    assert entry["command"] == str(py)
+    assert entry["args"] == [*ps1_beyin_mcp_args(), *extra]
+    assert entry["env"] == env
+    assert not [p.name for p in marks.values() if p.exists()], "yan komut çalıştı"
+    assert "GIZLI" not in out, out  # ne env ne argüman değeri ekrana yazılır
+    bk = json.loads((tmp_path / "bk" / "mcp" / "beyin.json").read_text(encoding="utf-8"))
+    assert bk["entry"] == old  # yedek de birebir
+
+
+@pytest.mark.skipif(not _shells(), reason="Windows PowerShell gerekli")
+@pytest.mark.parametrize("shell", _shells() or ["-"])
+def test_cmd_yolu_guvensizse_hicbir_sey_degismez(shell, sahte_claude, tmp_path):
+    d = tmp_path / "a%PATH%b"
+    d.mkdir()
+    for f in ("claude.cmd", "fake_claude.py"):
+        (d / f).write_bytes((sahte_claude["cmd"].parent / f).read_bytes())
+    py = tmp_path / "repo" / "python.exe"
+    py.parent.mkdir(parents=True)
+    py.write_bytes(b"")
+    old = {"type": "stdio", "command": str(py), "args": ["-m", "bellek.beyin", "mcp"], "env": {"A": "1"}}
+    dry, calls, _ = _register_real(shell, tmp_path, d / "claude.cmd", old, [str(py), *ps1_beyin_mcp_args()], "dry")
+    assert dry["status"] == "warn" and "kaydedilemeyecek" in dry["message"] and calls == [], dry
+    res, calls, _ = _register_real(shell, tmp_path, d / "claude.cmd", old, [str(py), *ps1_beyin_mcp_args()])
+    assert res["status"] == "error" and "hiçbir şey değiştirilmedi" in res["message"], res
+    assert calls == []  # eski kayıt silinmedi
+
+
+@pytest.mark.parametrize("v", [
+    "", "düz", 'a"b\\c', "&|<>^%!()\r\n\t\x00", "Şü 😀", {"K&": ["x", None, 1, 2.5, True]}, [], {},
+])
+def test_safe_json_birebir_ve_yalniz_guvenli_karakter(v):
+    import mcp_config
+
+    s = mcp_config.safe_json(v)
+    assert json.loads(s) == v
+    assert re.fullmatch(r'[A-Za-z0-9 ._,:/=+@#~\-{}\[\]"\\]*', s), s
+    assert not re.search(r'\\"', s) and not re.search(r'\\(?!u[0-9a-f]{4})', s), s  # \ yalnız \uXXXX
 
 
 def test_macos_yeniden_kurulum_kullanici_argumanlarini_ve_envi_korur(tmp_path, monkeypatch):
@@ -264,6 +493,14 @@ def test_macos_yeniden_kurulum_kullanici_argumanlarini_ve_envi_korur(tmp_path, m
     add = next(c for c in calls if c[1:3] == ["mcp", "add"])
     assert add[add.index("--") + 1:] == [py, *im.BEYIN_MCP_ARGS, "--ek"]
     assert add[add.index("-e") + 1] == "BELLEK_BEYIN_PORT=47999"
+    assert "--ek" not in r.message and "1 adet" in r.message, r  # argüman değeri yazılmaz, sayısı yazılır
+
+    # Kuru çalıştırma: taşınan argümanları düşüren bir "elle komut" önerilmez, değerler yazılmaz.
+    calls.clear()
+    dry = im.mcp_register(im.Ctx(claude_home=tmp_path, claude_exe="claude", run=run, dry_run=True),
+                          "beyin", [py, *im.BEYIN_MCP_ARGS])
+    assert dry.status == "dry" and calls == [], dry
+    assert "claude mcp add" not in dry.message and "--ek" not in dry.message and "1 adet" in dry.message, dry
 
     cuw = {"type": "stdio", "command": "/r/cuw", "args": ["--block", "x"], "env": {"A": "1"}}
     monkeypatch.setattr(im, "_mcp_get", lambda name: cuw)
@@ -294,6 +531,8 @@ def test_macos_yeniden_kurulum_kullanici_argumanlarini_ve_envi_korur(tmp_path, m
     ("python", ["-IB", "-m", "x"], {}, False),
     ("python", ["-Im", "x"], {}, False),
     ("python", ["-X", "utf8", "-I", "-m", "x"], {}, False),
+    ("python", ["--check-hash-based-pycs", "always", "-I", "-m", "x"], {}, False),  # değer betik sanılmaz
+    ("python", ["--check-hash-based-pycs", "always", "-m", "x"], {}, True),
     ("python", ["-m", "x"], {"PYTHONSAFEPATH": "1"}, False),
     ("python", ["/abs/hook.py"] if os.name != "nt" else ["C:/abs/hook.py"], {}, False),
     ("C:/r/.venv/Scripts/computer-use-windows.exe", [], {}, False),  # konsol betiği: Python adı değil

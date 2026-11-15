@@ -429,11 +429,149 @@ function Invoke-SettingsHook {
 
 # MCP çağrıları tek yerden geçer; testler Set-McpApi ile sahtesini verir.
 #   Get(name)          -> kayıt nesnesi ({type, command, args, env, ...}) ya da $null (salt okunur)
-#   Add(name, entry)   -> @{ ExitCode; Output }
+#   Add(name, json)    -> @{ ExitCode; Output }   (json: ConvertTo-SafeJson biçiminde kayıt)
 #   Remove(name)       -> @{ ExitCode; Output }
+#   Check(name, json)  -> $null ya da Add'in neden güvenle çalıştırılamayacağı (isteğe bağlı)
 $script:McpApi = $null
 $script:ClaudeExe = $null
 $script:McpHelper = $null
+# Get-McpUserEntry'nin son okuduğu kaydın değerleri, PowerShell nesnesine dönüşmeden
+# (mcp_config.py "safe" alanı): ad -> {entry, args, env, pretty}.
+$script:McpRaw = @{}
+
+# ---------------------------------------------------------------- claude çağrısı: argüman güvenliği
+#
+# Kullanıcının MCP kaydındaki env/argüman değerleri claude'a komut satırıyla gider. Windows
+# PowerShell 5.1 yerel programa geçerken çift tırnakları siler; claude bir .cmd sarmalayıcısıysa
+# (npm) satır cmd.exe'den geçer ve & | < > ^ % ! yorumlanır (değerdeki "&komut" ÇALIŞIR). Bu
+# yüzden: (1) kayıt "claude mcp add-json" ile tek JSON argümanı olarak verilir ve JSON'daki
+# dizelerde güvenli küme dışındaki her karakter \uXXXX yazılır (mcp_config.py safe_json ile aynı
+# kural): satırda yapısal " dışında özel karakter kalmaz; (2) komut satırı PowerShell'in argüman
+# geçirmesine bırakılmaz, MSVC/CommandLineToArgvW kuralıyla elle kurulup Process ile başlatılır
+# (5.1 ve 7'de aynı); (3) .cmd/.bat için satır yine denetlenir, güvenli değilse çalıştırılmaz.
+
+$script:JsonSafeChars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ._,:/=+@#~-'
+
+function ConvertTo-SafeJsonString {
+    param([string]$Text)
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.Append('"')
+    foreach ($ch in $Text.ToCharArray()) {
+        if ($script:JsonSafeChars.IndexOf($ch) -ge 0) { [void]$sb.Append($ch) }
+        else { [void]$sb.Append(('\u{0:x4}' -f [int]$ch)) }
+    }
+    [void]$sb.Append('"')
+    return $sb.ToString()
+}
+
+# ConvertTo-Json yerine: 5.1/7 farkları (tek öğeli dizi, < > & kaçışı, derinlik) olmadan, dizeleri
+# ConvertTo-SafeJsonString ile yazar.
+function ConvertTo-SafeJson {
+    param($Value)
+    if ($null -eq $Value) { return 'null' }
+    if ($Value -is [string] -or $Value -is [char]) { return ConvertTo-SafeJsonString "$Value" }
+    if ($Value -is [bool]) { if ($Value) { return 'true' } return 'false' }
+    if ($Value -is [datetime]) { return ConvertTo-SafeJsonString ($Value.ToString('o')) }
+    $inv = [Globalization.CultureInfo]::InvariantCulture
+    if ($Value -is [double] -or $Value -is [single]) { return $Value.ToString('R', $inv) }
+    if ($Value -is [int] -or $Value -is [long] -or $Value -is [decimal] -or $Value -is [int16] -or
+        $Value -is [byte] -or $Value -is [uint32] -or $Value -is [uint64] -or $Value -is [sbyte] -or $Value -is [uint16]) {
+        return [Convert]::ToString($Value, $inv)
+    }
+    if ($Value -is [System.Collections.IDictionary]) {
+        $items = @(foreach ($k in $Value.Keys) { (ConvertTo-SafeJsonString "$k") + ':' + (ConvertTo-SafeJson $Value[$k]) })
+        return '{' + ($items -join ',') + '}'
+    }
+    if ($Value -is [System.Collections.IEnumerable]) {
+        $items = @(foreach ($x in $Value) { ConvertTo-SafeJson $x })
+        return '[' + ($items -join ',') + ']'
+    }
+    if ($Value.PSObject.BaseObject -is [System.Management.Automation.PSCustomObject]) {
+        $items = @(foreach ($p in $Value.PSObject.Properties) { (ConvertTo-SafeJsonString $p.Name) + ':' + (ConvertTo-SafeJson $p.Value) })
+        return '{' + ($items -join ',') + '}'
+    }
+    return ConvertTo-SafeJsonString "$Value"
+}
+
+# Tek argümanı MSVC/CommandLineToArgvW kuralıyla yazar (claude.exe ve node/bun bunu çözer).
+function ConvertTo-WindowsArgument {
+    param([string]$Arg)
+    if ($Arg.Length -gt 0 -and $Arg -notmatch '[\s"]') { return $Arg }
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.Append('"')
+    $bs = 0
+    foreach ($ch in $Arg.ToCharArray()) {
+        if ($ch -eq [char]'\') { $bs++; continue }
+        if ($ch -eq [char]'"') { [void]$sb.Append('\' * (2 * $bs + 1)); [void]$sb.Append('"') }
+        else { [void]$sb.Append('\' * $bs); [void]$sb.Append($ch) }
+        $bs = 0
+    }
+    [void]$sb.Append('\' * (2 * $bs))
+    [void]$sb.Append('"')
+    return $sb.ToString()
+}
+
+function Join-WindowsCommandLine {
+    param([string[]]$ArgumentList = @())
+    return (@($ArgumentList | ForEach-Object { ConvertTo-WindowsArgument $_ }) -join ' ')
+}
+
+# claude'u bu argümanlarla güvenle çalıştırmanın önünde bir engel var mı? Varsa nedeni (değer
+# yazılmaz), yoksa $null.
+function Get-ClaudeCallProblem {
+    param([string]$FilePath, [string[]]$ArgumentList = @())
+    if (-not $FilePath) { return 'claude CLI yolu bilinmiyor' }
+    $line = Join-WindowsCommandLine $ArgumentList
+    $ext = [IO.Path]::GetExtension($FilePath).ToLowerInvariant()
+    if ($ext -eq '.cmd' -or $ext -eq '.bat') {
+        # Program yolu tırnak içinde gider: orada yalnız % ve ! (gecikmeli genişletme) yorumlanır.
+        if ($FilePath -match '[%!"\r\n]') {
+            return ('claude sarmalayıcısının yolu ({0}) cmd.exe''nin yorumladığı bir karakter (% ! ") içeriyor' -f $FilePath)
+        }
+        # Argümanlarda tırnak durumu " ile değişebilir: hiçbir cmd.exe özel karakteri kalmamalı.
+        if ($line -match '[%!^&|<>\r\n]') {
+            return 'komut satırında cmd.exe''nin yorumlayacağı bir karakter kalıyor (claude.cmd sarmalayıcısı)'
+        }
+        if (($FilePath.Length + $line.Length + 3) -gt 8000) {
+            return 'komut satırı cmd.exe sınırını (8191 karakter) aşıyor (claude.cmd sarmalayıcısı)'
+        }
+    } elseif (($FilePath.Length + $line.Length + 3) -gt 32000) {
+        return 'komut satırı Windows sınırını (32767 karakter) aşıyor'
+    }
+    if ($line.IndexOf([char]0) -ge 0) { return 'argümanda NUL karakteri var' }
+    return $null
+}
+
+# claude'u PowerShell'in yerel argüman geçirmesini kullanmadan çalıştırır (bkz. yukarı).
+function Invoke-ClaudeCli {
+    param([string[]]$ArgumentList = @(), [string]$FilePath = $script:ClaudeExe)
+    $problem = Get-ClaudeCallProblem $FilePath $ArgumentList
+    if ($problem) { return [pscustomobject]@{ ExitCode = -1; Output = @('çalıştırılmadı: ' + $problem) } }
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $FilePath
+    $psi.Arguments = Join-WindowsCommandLine $ArgumentList
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.RedirectStandardInput = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $utf8 = New-Object System.Text.UTF8Encoding($false)
+    $psi.StandardOutputEncoding = $utf8
+    $psi.StandardErrorEncoding = $utf8
+    try {
+        $p = [System.Diagnostics.Process]::Start($psi)
+        $p.StandardInput.Close()
+        $so = $p.StandardOutput.ReadToEndAsync()
+        $se = $p.StandardError.ReadToEndAsync()
+        $p.WaitForExit()
+        $text = $so.Result + $se.Result
+        $code = $p.ExitCode
+        $p.Dispose()
+        return [pscustomobject]@{ ExitCode = $code; Output = @($text -split "`r?`n" | Where-Object { $_ -ne '' }) }
+    } catch {
+        return [pscustomobject]@{ ExitCode = -1; Output = @("$_") }
+    }
+}
 
 function Set-McpContext {
     param([string]$ClaudeExe, [string]$HelperPath)
@@ -450,8 +588,9 @@ function Get-McpApi {
     if (-not $script:McpApi) {
         $script:McpApi = @{
             Get    = { param($Name) Get-McpUserEntry $Name }
-            Add    = { param($Name, $Entry) Invoke-McpAddEntry $Name $Entry }
-            Remove = { param($Name) Invoke-Native $script:ClaudeExe @('mcp', 'remove', $Name, '-s', 'user') }
+            Add    = { param($Name, $Json) Invoke-ClaudeCli @('mcp', 'add-json', $Name, $Json, '-s', 'user') }
+            Remove = { param($Name) Invoke-ClaudeCli @('mcp', 'remove', $Name, '-s', 'user') }
+            Check  = { param($Name, $Json) Get-ClaudeCallProblem $script:ClaudeExe @('mcp', 'add-json', $Name, $Json, '-s', 'user') }
         }
     }
     return $script:McpApi
@@ -459,6 +598,7 @@ function Get-McpApi {
 
 function Get-McpUserEntry {
     param([string]$Name)
+    $script:McpRaw.Remove($Name)
     $py = Find-Python ([version]'3.8')
     if (-not $py) { throw 'MCP kaydını okumak için Python gerekli' }
     $r = Invoke-Native $py.Exe (@($py.Args) + @('-I', $script:McpHelper, '--name', $Name))
@@ -467,6 +607,7 @@ function Get-McpUserEntry {
     $o = $json[0] | ConvertFrom-Json
     if ($o.PSObject.Properties['error']) { throw ('MCP yapılandırması okunamadı ({0}): {1}' -f $o.path, $o.error) }
     if (-not $o.found) { return $null }
+    if ($o.PSObject.Properties['safe'] -and $o.safe) { $script:McpRaw[$Name] = $o.safe }
     return $o.entry
 }
 
@@ -479,37 +620,23 @@ function Get-EntryValue {
     return $null
 }
 
-function Invoke-McpAddEntry {
-    param([string]$Name, $Entry)
-    $type = "$(Get-EntryValue $Entry 'type')"
-    if ($type -and $type -ne 'stdio') {
-        $json = $Entry | ConvertTo-Json -Depth 10 -Compress
-        return Invoke-Native $script:ClaudeExe @('mcp', 'add-json', $Name, $json, '-s', 'user')
-    }
-    $a = @('mcp', 'add', $Name, '-s', 'user')
-    $envObj = Get-EntryValue $Entry 'env'
-    if ($envObj) {
-        $pairs = @()
-        if ($envObj -is [hashtable]) { $pairs = @($envObj.GetEnumerator() | ForEach-Object { '{0}={1}' -f $_.Key, $_.Value }) }
-        else { $pairs = @($envObj.PSObject.Properties | ForEach-Object { '{0}={1}' -f $_.Name, $_.Value }) }
-        foreach ($p in $pairs) { $a += @('-e', $p) }
-    }
-    $a += '--'
-    $a += "$(Get-EntryValue $Entry 'command')"
-    $a += @(Get-EntryValue $Entry 'args' | Where-Object { $null -ne $_ } | ForEach-Object { "$_" })
-    return Invoke-Native $script:ClaudeExe $a
-}
-
+# Kaydın ekranda gösterilecek biçimi. Yalnız ilk $Shown argüman yazılır (bizim bildiğimiz
+# argümanlar); kalanı yalnız sayılır: kullanıcının argümanlarında sır olabilir. $Shown < 0: hepsi.
 function Format-McpEntry {
-    param($Entry)
+    param($Entry, [int]$Shown = -1)
     $cmd = Get-EntryValue $Entry 'command'
     if (-not $cmd) {
         $url = Get-EntryValue $Entry 'url'
         if ($url) { return ('{0} {1}' -f (Get-EntryValue $Entry 'type'), $url) }
         return ($Entry | ConvertTo-Json -Depth 10 -Compress)
     }
-    $parts = @($cmd) + @(Get-EntryValue $Entry 'args' | Where-Object { $null -ne $_ })
-    return (($parts | ForEach-Object { if ("$_" -match '\s') { '"' + $_ + '"' } else { "$_" } }) -join ' ')
+    $all = @(Get-EntryValue $Entry 'args' | Where-Object { $null -ne $_ })
+    if ($Shown -lt 0 -or $Shown -gt $all.Count) { $Shown = $all.Count }
+    $parts = @($cmd) + @($all | Select-Object -First $Shown)
+    $text = (($parts | ForEach-Object { if ("$_" -match '\s') { '"' + $_ + '"' } else { "$_" } }) -join ' ')
+    $hidden = $all.Count - $Shown
+    if ($hidden -gt 0) { $text += (' (+{0} argüman daha; değerleri yazılmaz)' -f $hidden) }
+    return $text
 }
 
 # Kayıt bu repoyu mu gösteriyor? (komut ya da argümanlardan biri repo altında)
@@ -559,17 +686,20 @@ function Get-McpCarryOver {
         if (-not $match) { continue }
         $envObj = Get-EntryValue $Entry 'env'
         if (@(Get-McpEnvName $envObj).Count -eq 0) { $envObj = $null }
-        return [pscustomobject]@{ Extra = [string[]]@($have | Select-Object -Skip $v.Count); Env = $envObj }
+        return [pscustomobject]@{
+            Extra = [string[]]@($have | Select-Object -Skip $v.Count); Env = $envObj
+            Matched = $v.Count; Total = $have.Count
+        }
     }
     return $null
 }
 
-# Taşınanların kısa açıklaması (env yalnız adlarıyla: değerler sır olabilir).
+# Taşınanların kısa açıklaması: argümanlar yalnız sayıyla, env yalnız adlarıyla (değerler sır olabilir).
 function Format-McpCarryOver {
     param($Carry)
     if (-not $Carry) { return '' }
     $parts = @()
-    if (@($Carry.Extra).Count -gt 0) { $parts += ('ek argümanlar: {0}' -f (@($Carry.Extra) -join ' ')) }
+    if (@($Carry.Extra).Count -gt 0) { $parts += ('ek argümanlar ({0} adet; değerleri yazılmaz)' -f @($Carry.Extra).Count) }
     $names = @(Get-McpEnvName $Carry.Env)
     if ($names.Count -gt 0) { $parts += ('env: {0}' -f ($names -join ', ')) }
     if ($parts.Count -eq 0) { return '' }
@@ -591,14 +721,32 @@ function Test-McpEntrySame {
 function Register-McpServer {
     param([string]$Name, [string[]]$ServerCommand, [string]$RepoRoot)
     $api = Get-McpApi
+    $script:McpRaw.Remove($Name)
     $old = & $api.Get $Name
+    $raw = $null
+    if ($old -and $script:McpRaw.ContainsKey($Name)) { $raw = $script:McpRaw[$Name] }
     # Kullanıcının eski kayda eklediği argümanlar ve env yeni kayda taşınır (sessizce düşmez).
     $carry = Get-McpCarryOver $old $ServerCommand
-    $target = [string[]]@($ServerCommand)
-    $envObj = $null
-    if ($carry) {
-        $target = [string[]](@($ServerCommand) + @($carry.Extra))
-        $envObj = $carry.Env
+    if ($carry -and (Test-McpEntrySame $old ([string[]](@($ServerCommand) + @($carry.Extra))))) {
+        return New-StepResult ok ('MCP zaten kayıtlı: {0}{1}' -f $Name, (Format-McpCarryOver $carry))
+    }
+    # Taşınan değerler, varsa PowerShell nesnesine hiç dönüşmemiş biçimden (mcp_config.py "safe")
+    # alınır: ConvertFrom-Json PowerShell 7'de tarih biçimli dizeyi DateTime'a çevirir.
+    $extraJson = @()
+    $envJson = $null
+    if ($carry -and $raw) {
+        $rawArgs = @($raw.args | Where-Object { $null -ne $_ })
+        $rawEnv = $null
+        if ($raw.PSObject.Properties['env'] -and $raw.env) { $rawEnv = "$($raw.env)" }
+        if ($rawArgs.Count -eq $carry.Total -and (-not $carry.Env -or $rawEnv)) {
+            $extraJson = @($rawArgs | Select-Object -Skip $carry.Matched | ForEach-Object { "$_" })
+            if ($carry.Env) { $envJson = $rawEnv }
+        } else {
+            $carry = $null  # birebir eşlenemedi: hiçbir şey taşınmaz, aşağıda açıkça söylenir
+        }
+    } elseif ($carry) {
+        $extraJson = @($carry.Extra | ForEach-Object { ConvertTo-SafeJson $_ })
+        if ($carry.Env) { $envJson = ConvertTo-SafeJson $carry.Env }
     }
     $kept = Format-McpCarryOver $carry
     # Biçimi tanınmayan eski kayıttaki env/argümanlar taşınamaz: bunu açıkça söyle (yedekte kalır).
@@ -608,14 +756,33 @@ function Register-McpServer {
         if ($lostEnv.Count -gt 0) { $lost = ('; DİKKAT: eski kaydın env değerleri ({0}) ve argümanları yeni kayda TAŞINMAZ, yalnız yedekte kalır' -f ($lostEnv -join ', ')) }
         else { $lost = '; DİKKAT: eski kaydın argümanları yeni kayda TAŞINMAZ, yalnız yedekte kalır' }
     }
-    $display = Format-McpEntry ([pscustomobject]@{ command = $target[0]; args = @($target | Select-Object -Skip 1) })
-    if ($old -and $carry -and (Test-McpEntrySame $old $target)) {
-        return New-StepResult ok ('MCP zaten kayıtlı: {0}{1}' -f $Name, $kept)
-    }
+    # Ekranda yalnız bizim komutumuz; taşınan argümanlar $kept'te sayıyla geçer.
+    $display = Format-McpEntry ([pscustomobject]@{ command = $ServerCommand[0]; args = @($ServerCommand | Select-Object -Skip 1) })
+    $argJson = @(@($ServerCommand | Select-Object -Skip 1) | ForEach-Object { ConvertTo-SafeJson $_ }) + @($extraJson)
+    $newJson = '{"type":"stdio","command":' + (ConvertTo-SafeJson $ServerCommand[0]) + ',"args":[' + ($argJson -join ',') + ']'
+    if ($envJson) { $newJson += ',"env":' + $envJson }
+    $newJson += '}'
+    $oldJson = $null
+    if ($old -and $raw) { $oldJson = "$($raw.entry)" }
+    elseif ($old) { $oldJson = ConvertTo-SafeJson $old }
     $foreign = $old -and -not (Test-McpEntryOwned $old $RepoRoot)
     $oldText = $null
-    if ($old) { $oldText = Format-McpEntry $old }
+    if ($old) {
+        $oldShown = 0
+        if ($carry) { $oldShown = $carry.Matched }
+        $oldText = Format-McpEntry $old $oldShown
+    }
+    # claude güvenle çağrılamayacaksa (ör. .cmd yolunda %) eski kayda dokunmadan dur.
+    $problem = $null
+    if ($api.ContainsKey('Check')) {
+        foreach ($j in @($newJson, $oldJson)) {
+            if ($null -eq $j) { continue }
+            $problem = & $api.Check $Name $j
+            if ($problem) { break }
+        }
+    }
     if ($script:DryRun) {
+        if ($problem) { return New-StepResult warn ('MCP: "{0}" kaydedilemeyecek, hiçbir şey değiştirilmeyecek: {1}' -f $Name, $problem) }
         if ($foreign) {
             return New-StepResult warn ('MCP: "{0}" şu an repo DIŞINI gösteriyor ve DEĞİŞTİRİLECEK (eski: {1}; yedeklenir) -> {2}{3}{4}' -f $Name, $oldText, $display, $kept, $lost)
         }
@@ -626,10 +793,16 @@ function Register-McpServer {
     if (-not (Test-Path -LiteralPath $ServerCommand[0])) {
         throw ('MCP sunucu programı yok: {0}' -f $ServerCommand[0])
     }
+    if ($problem) { throw ('MCP kaydı yapılmadı, hiçbir şey değiştirilmedi: {0}' -f $problem) }
     $bkFile = $null
     if ($old) {
         $bkFile = Get-BackupPath (Join-Path 'mcp' ($Name + '.json'))
-        $bkJson = [ordered]@{ name = $Name; scope = 'user'; entry = $old } | ConvertTo-Json -Depth 10
+        if ($raw -and $raw.PSObject.Properties['pretty'] -and $raw.pretty) {
+            # Kaydın dosyadaki değerleri, PowerShell'den geçmeden (tarih/sayı dönüşümü yok).
+            $bkJson = "{`n  ""name"": " + (ConvertTo-SafeJsonString $Name) + ",`n  ""scope"": ""user"",`n  ""entry"": " + "$($raw.pretty)" + "`n}"
+        } else {
+            $bkJson = [ordered]@{ name = $Name; scope = 'user'; entry = $old } | ConvertTo-Json -Depth 10
+        }
         [IO.File]::WriteAllText($bkFile, $bkJson + "`n", (New-Object Text.UTF8Encoding($false)))
         Write-StepLine info ('eski MCP kaydı ({0}): {1}  [yedek: {2}]' -f $Name, $oldText, $bkFile)
         $r = & $api.Remove $Name
@@ -637,12 +810,11 @@ function Register-McpServer {
             throw ("eski MCP kaydı kaldırılamadı (çıkış {0}); hiçbir şey değiştirilmedi:{1}{2}" -f $r.ExitCode, [Environment]::NewLine, (Format-OutputTail $r.Output))
         }
     }
-    $new = [pscustomobject]@{ type = 'stdio'; command = $target[0]; args = @($target | Select-Object -Skip 1); env = $envObj }
-    $r = & $api.Add $Name $new
+    $r = & $api.Add $Name $newJson
     if ($r.ExitCode -ne 0) {
         $why = "MCP kaydı başarısız (çıkış {0}):{1}{2}" -f $r.ExitCode, [Environment]::NewLine, (Format-OutputTail $r.Output)
         if ($old) {
-            $rr = & $api.Add $Name $old
+            $rr = & $api.Add $Name $oldJson
             if ($rr.ExitCode -eq 0) { throw ('{0}{1}      eski kayıt geri yüklendi: {2}' -f $why, [Environment]::NewLine, $oldText) }
             throw ('{0}{1}      eski kayıt GERİ YÜKLENEMEDİ; yedek: {2}' -f $why, [Environment]::NewLine, $bkFile)
         }
@@ -661,7 +833,7 @@ function Unregister-McpServer {
     $api = Get-McpApi
     $old = & $api.Get $Name
     if (-not $old) { return New-StepResult skip ('MCP kaydı yok: {0}' -f $Name) }
-    $oldText = Format-McpEntry $old
+    $oldText = Format-McpEntry $old 0   # argüman değerleri yazılmaz (kullanıcınınkiler sır olabilir)
     if (-not (Test-McpEntryOwned $old $RepoRoot)) {
         return New-StepResult warn ('MCP kaydı "{0}" bu repoyu göstermiyor ({1}); dokunulmadı' -f $Name, $oldText)
     }

@@ -599,6 +599,8 @@ def _fmt_cmd(entry: dict) -> str:
 
 
 _PY_OPTS_WITH_ARG = set("WX")  # "-W arg", "-X arg": argüman alan (mod dışı) Python seçenekleri
+# Değeri ayrı argümanda gelen uzun seçenekler ("--check-hash-based-pycs always").
+_PY_LONG_OPTS_WITH_ARG = {"--check-hash-based-pycs"}
 
 
 def _cwd_code_risk(command: str, args: list, env: dict) -> str | None:
@@ -624,8 +626,8 @@ def _cwd_code_risk(command: str, args: list, env: dict) -> str | None:
             if t and t != "-" and not _expand(t).is_absolute():
                 return f"betik yolu göreli ({t}); çalışma klasöründen okunur"
             return None
-        if t.startswith("--"):  # --version, --help ...
-            i += 1
+        if t.startswith("--"):  # --version, --help ...; değer alan uzun seçeneğin değeri atlanır
+            i += 2 if t in _PY_LONG_OPTS_WITH_ARG else 1
             continue
         flags = t[1:]
         for j, ch in enumerate(flags):

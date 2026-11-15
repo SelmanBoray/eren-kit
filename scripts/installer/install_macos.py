@@ -416,7 +416,9 @@ def _carry_over(entry: dict | None, cmd: list[str]) -> tuple[list[str], dict] | 
 
 
 def _carry_text(extra: list[str], env: dict) -> str:
-    parts = ([f"ek argümanlar: {' '.join(extra)}"] if extra else []) + ([f"env: {', '.join(env)}"] if env else [])
+    """Taşınanların kısa açıklaması: argümanlar yalnız sayıyla, env yalnız adlarıyla (sır olabilir)."""
+    parts = ([f"ek argümanlar ({len(extra)} adet; değerleri yazılmaz)"] if extra else []) \
+        + ([f"env: {', '.join(env)}"] if env else [])
     return f"; korunan {'; '.join(parts)}" if parts else ""
 
 
@@ -452,6 +454,8 @@ def mcp_register(ctx: Ctx, name: str, cmd: list[str]) -> Step:
         lost = (f"; DİKKAT: eski kaydın env değerleri ({', '.join(map(str, old_env))}) ve argümanları yeni kayda "
                 "TAŞINMAZ, yalnız yedekte kalır" if old_env else
                 "; DİKKAT: eski kaydın argümanları yeni kayda TAŞINMAZ, yalnız yedekte kalır")
+    # Ekranda yalnız bizim komutumuz (shown); taşınan argümanlar kept'te sayıyla geçer.
+    shown = _fmt(cmd)
     cmd = [*cmd, *extra]
     if carry is not None and _entry_same(old, cmd):
         return Step("ok", f"MCP zaten kayıtlı: {name}{kept}")
@@ -460,10 +464,13 @@ def mcp_register(ctx: Ctx, name: str, cmd: list[str]) -> Step:
     if ctx.dry_run:
         if foreign:
             return Step("warn", f'MCP: "{name}" şu an repo DIŞINI gösteriyor ve değiştirilecek (yedeklenir) -> '
-                                f"{_fmt(cmd)}{kept}{lost}")
+                                f"{shown}{kept}{lost}")
         if old and lost:
-            return Step("warn", f"MCP: güncellenir: {_fmt(cmd)}{lost}")
-        return Step("dry", f"MCP: {'güncellenir' if old else 'eklenir'}: {manual}{kept}")
+            return Step("warn", f"MCP: güncellenir: {shown}{lost}")
+        if old:
+            # Elle komut önerilmez: taşınan argüman/env değerleri ekrana yazılmadan verilemez.
+            return Step("dry", f"MCP: güncellenir (eski kayıt yedeklenir) -> {shown}{kept}")
+        return Step("dry", f"MCP: eklenir: {manual}")
     if not Path(cmd[0]).exists():
         raise StepError(f"MCP sunucu programı yok: {cmd[0]}")
     bk = None
