@@ -18,6 +18,7 @@ export type EslestirmeSonucu = "tamam" | "iptal" | "hata";
 export type IzinIstegiSonucu = "onaylandi" | "reddedildi" | "iptal" | "gecersiz";
 export type AyarHedefi = "erisilebilirlik" | "uygulama_bilgisi" | "pil" | "bildirim" | "vpn";
 export type BildirimTuru = "plan" | "soru" | "is_bitti" | "sistem";
+export type SesKisayoluSonucu = "kuruldu" | "kuruldu_digerleriyle" | "yetki_yok" | "hata";
 
 /** Telefonun o anki durumu. Her alan `durum()` ile çekilir; olaylar yalnız hızlandırıcıdır. */
 export interface CihazDurumu {
@@ -164,10 +165,11 @@ export interface ErenDeviceModulu {
   /** Sistemden Hızlı Ayarlar'a asistan kutucuğunu ekleme ister (Android 13+; altında `desteklenmiyor`). */
   kisayolKutucuguEkle(): Promise<"eklendi" | "zaten" | "reddedildi" | "desteklenmiyor">;
   /**
-   * Ses tuşu kısayolunu kurar (iki ses tuşunu basılı tutmak asistanı açar). `yetki_yok`: `WRITE_SECURE_SETTINGS`
-   * verilmemiş; `hata`: kurulamadı ya da bağlam yok.
+   * Ses tuşu kısayolunu kurar (iki ses tuşunu basılı tutmak asistanı açar). Önceki kısayol hedefleri silinmez:
+   * `kuruldu_digerleriyle` onlar korunup bizimki eklendi demektir (basışta Android hangisini açacağını sorar).
+   * `yetki_yok`: `WRITE_SECURE_SETTINGS` verilmemiş; `hata`: kurulamadı ya da bağlam yok.
    */
-  sesKisayoluKur(): Promise<"kuruldu" | "yetki_yok" | "hata">;
+  sesKisayoluKur(): Promise<SesKisayoluSonucu>;
   /** Metni verilen dilde (ör. `tr-TR`) okumaya başlar; okunamadıysa `false`. */
   seslendir(metin: string, dil: string): Promise<boolean>;
   /** Süren seslendirmeyi keser. */

@@ -421,7 +421,8 @@ interface DenetimKapisi {
  *     kisayolTuket(id)  → KisayolDeposu.tuket
  *     kisayolKutucuguEkle() → StatusBarManager.requestAddTileService(KisayolKutucugu) (API 33+;
  *                         altı "desteklenmiyor") → "eklendi" | "zaten" | "reddedildi" | "desteklenmiyor"
- *     sesKisayoluKur()  → ErisimAnahtari.sesKisayoluKur → "kuruldu" | "yetki_yok" | "hata" (bağlam yoksa hata)
+ *     sesKisayoluKur()  → ErisimAnahtari.sesKisayoluKur → "kuruldu" | "kuruldu_digerleriyle" (önceki
+ *                         kısayol hedefleri korundu) | "yetki_yok" | "hata" (bağlam yoksa hata)
  *     seslendir(m,dil)  → Seslendirici.seslendir → true (kabul; bitmesi beklenmez) | false (reddetmez)
  *     seslendirmeyiDurdur() → Seslendirici.durdur (okuma yoksa sessizce döner)
  *   Olaylar: durumDegisti/izinlerDegisti/bildirimAcildi{tur}/kisayolGeldi{id} → `AdaptorOlaylari` ile

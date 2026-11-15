@@ -44,8 +44,10 @@ class UygulamaListesiActivity : Activity() {
             textSize = 14f
             setTextColor(Renkler.metinIkincil)
             text = "Açık uygulamalarda ${asistanAdi()} uygulamasına izin verebilirsiniz; kapalı olanlarda " +
-                "verilemez. Uygulamalar (yeni kurulanlar da) açık başlar; banka, para ve kimlik uygulamaları " +
-                "ile sistem bileşenleri kendiliğinden kapalıdır. Açmak doğrulama ister, kapatmak istemez. Kilitli olanlar değişmez."
+                "verilemez. Uygulamalar (yeni kurulanlar da) açık başlar. Banka, para ve kimlik uygulamaları " +
+                "adından ve paket adından tahminle, sistem bileşenleri de kendiliğinden kapalı başlar; tahmin " +
+                "her uygulamayı yakalamaz, listeyi kontrol edin. Açmak doğrulama ister, kapatmak istemez. " +
+                "Kilitli olanlar değişmez."
         }
         kok.addView(ust)
         liste = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }

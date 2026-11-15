@@ -327,6 +327,7 @@ class ErenDeviceModule : Module(), AdaptorOlaylari {
                 try {
                     when (ErisimAnahtari.sesKisayoluKur(ctx)) {
                         SesKisayoluSonucu.KURULDU -> "kuruldu"
+                        SesKisayoluSonucu.KURULDU_DIGERLERIYLE -> "kuruldu_digerleriyle"
                         SesKisayoluSonucu.YETKI_YOK -> "yetki_yok"
                         SesKisayoluSonucu.HATA -> "hata"
                     }

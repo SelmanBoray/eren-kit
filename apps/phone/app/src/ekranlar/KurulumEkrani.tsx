@@ -6,6 +6,13 @@ import type { Cekirdek } from "../cekirdek/index.ts";
 import type { ErenCihaz } from "../cihaz/erenDevice.ts";
 import { ASISTAN_ADI } from "../platform/asistanAdi.ts";
 import { BolumAdi, Dugme, DurumEtiketi, Serit } from "./Bilesenler.tsx";
+import {
+  eslesmeNotu,
+  sesKisayoluAciklamasi,
+  sesKisayoluNotu,
+  tamYetkiAciklamasi,
+  uygulamalarAciklamasi,
+} from "./kurulumMetni.ts";
 import { modulYokMetni } from "./modulYok.ts";
 import { bosluk, cizgi, olcu, renk, yazi } from "./tema.ts";
 
@@ -73,12 +80,11 @@ export function KurulumEkrani(p: { cihaz: ErenCihaz; cekirdek: Cekirdek }): Reac
   }, [yenile]);
 
   const eslestir = async (): Promise<void> => {
+    // Yeni eşleşme kaydı tam yetkiyi kapatır (Kotlin); not bunu söylesin diye önceki durum okunur.
+    const tamYetkiOnceAcikti = durum?.tam_yetki === true;
     const r = await cihaz.eslestir();
-    if (!r.ok) {
-      setNot(r.neden === "desteklenmiyor" ? "Bu cihazda eşleşme desteklenmiyor." : "Eşleşme başlatılamadı.");
-      return;
-    }
-    setNot(r.deger.sonuc === "tamam" ? "Eşleşildi." : r.deger.sonuc === "iptal" ? "Eşleşme iptal edildi." : "Eşleşme başarısız.");
+    setNot(eslesmeNotu(r, tamYetkiOnceAcikti));
+    if (!r.ok) return;
     await yenile();
     if (r.deger.sonuc === "tamam") cekirdek.simdiBaglan();
   };
@@ -112,15 +118,7 @@ export function KurulumEkrani(p: { cihaz: ErenCihaz; cekirdek: Cekirdek }): Reac
 
   const sesKisayoluKur = async (): Promise<void> => {
     const r = await cihaz.sesKisayoluKur();
-    if (!r.ok || r.deger === "hata") {
-      setKisayolNotu(
-        "Kısayol kurulamadı. Ayarlar > Erişilebilirlik > Erişilebilirlik kısayolundan elle \"Ses tuşu kısayolu\" seçebilirsin.",
-      );
-    } else if (r.deger === "yetki_yok") {
-      setKisayolNotu("Kurulum adımı eksik: telefonu USB ile bağlayıp `node kurulum/telefon.ts` çalıştır.");
-    } else {
-      setKisayolNotu("Kısayol kuruldu. İlk kullanımda telefon bir kez onay isteyebilir.");
-    }
+    setKisayolNotu(sesKisayoluNotu(r));
     await yenile();
   };
 
@@ -178,7 +176,7 @@ export function KurulumEkrani(p: { cihaz: ErenCihaz; cekirdek: Cekirdek }): Reac
                 ? { metin: "Açık", renkAdi: "uyari" }
                 : { metin: "Kapalı", renkAdi: "metinSonuk" }
           }
-          aciklama={`Açıkken ${ASISTAN_ADI} telefonda onay sormadan okur, yazar, gönderir. Banka/hassas uygulamalar, Ayarlar ve parola alanları yine yasak; kalıcı bildirimdeki Durdur o anki işleri keser ve tam yetkiyi de kapatır; yeniden açmak için buradan Aç (kimlik doğrulama).`}
+          aciklama={tamYetkiAciklamasi(ASISTAN_ADI)}
           dugme={
             durum?.tam_yetki === true ? (
               <Dugme yazi="Kapat" tur="ikincil" kapali={!cihaz.desteklenir} basinca={() => void tamYetkiKapat()} />
@@ -198,7 +196,7 @@ export function KurulumEkrani(p: { cihaz: ErenCihaz; cekirdek: Cekirdek }): Reac
         <View style={{ height: cizgi.ince, backgroundColor: renk.kenar }} />
         <Satir
           ad="Uygulamalar"
-          aciklama={`${ASISTAN_ADI} telefonda banka, para ve kimlik uygulamaları (banka, e-para, kripto, borsa, iki adımlı doğrulama, e-Devlet) dışındaki her uygulamayı kullanabilir; istemediğini buradan kapatabilirsin.`}
+          aciklama={uygulamalarAciklamasi(ASISTAN_ADI)}
           dugme={<Dugme yazi="Uygulamalar" tur="ikincil" kapali={!cihaz.desteklenir} basinca={() => void ekranAc("uygulamalar")} />}
         />
         <Satir
@@ -261,7 +259,7 @@ export function KurulumEkrani(p: { cihaz: ErenCihaz; cekirdek: Cekirdek }): Reac
                 ? { metin: "Kurulu", renkAdi: "basari" }
                 : { metin: "Kurulu değil", renkAdi: "uyari" }
           }
-          aciklama={`Ses açma ve kısma tuşlarını birlikte yaklaşık 3 saniye basılı tut: ${ASISTAN_ADI} dinlemeye başlar, baktığın uygulamayı bağlam olarak alır.`}
+          aciklama={sesKisayoluAciklamasi(ASISTAN_ADI)}
           dugme={<Dugme yazi="Kur" tur="ikincil" kapali={!cihaz.desteklenir} basinca={() => void sesKisayoluKur()} />}
         />
         {kisayolNotu !== null && <Text style={[yazi.kucuk, { color: renk.metinSonuk }]}>{kisayolNotu}</Text>}

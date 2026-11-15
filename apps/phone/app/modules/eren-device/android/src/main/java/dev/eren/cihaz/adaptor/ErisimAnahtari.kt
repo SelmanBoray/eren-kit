@@ -11,12 +11,16 @@ import android.os.HandlerThread
 import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
+import dev.eren.cihaz.cekirdek.KisayolHedefleri
 
 /** [ErisimAnahtari.ac] sonucu; geri çağrı her zaman tam bir kez ve ana iplikte gelir. */
 enum class AcmaSonucu { ACIK, YETKI_YOK, ZAMAN_ASIMI }
 
-/** [ErisimAnahtari.sesKisayoluKur] sonucu. */
-enum class SesKisayoluSonucu { KURULDU, YETKI_YOK, HATA }
+/**
+ * [ErisimAnahtari.sesKisayoluKur] sonucu. `KURULDU_DIGERLERIYLE`: kullanıcının önceki kısayol
+ * hedefleri korundu, bizimki yanlarına eklendi (tuşlara basınca Android hangisini açacağını sorar).
+ */
+enum class SesKisayoluSonucu { KURULDU, KURULDU_DIGERLERIYLE, YETKI_YOK, HATA }
 
 /**
  * Uygulamanın erişilebilirlik servisini (`ErisimServisi`) açıp kapatan süreç genelinde tek nesne ve
@@ -41,9 +45,6 @@ object ErisimAnahtari {
 
     /** AOSP `Settings.Secure.ACCESSIBILITY_SHORTCUT_TARGET_SERVICE` (@hide). */
     private const val KISAYOL_HEDEF = "accessibility_shortcut_target_service"
-
-    /** AOSP `Settings.Secure.ACCESSIBILITY_SHORTCUT_DIALOG_SHOWN` (@hide). */
-    private const val KISAYOL_DIYALOG_GORULDU = "accessibility_shortcut_dialog_shown"
 
     private val kilit = Any()
     private val ana = Handler(Looper.getMainLooper())
@@ -182,15 +183,17 @@ object ErisimAnahtari {
     // ---- Ses tuşu kısayolu (ses aç + ses kıs ~3 sn) ----
 
     /**
-     * Ses tuşu kısayolunu `KisayolErisimServisi`'ne bağlar. DİKKAT: kullanıcının önceki kısayol hedefi
-     * (`accessibility_shortcut_target_service`) varsa ÜZERİNE YAZILIR. İki ayar yazılır:
-     * hedef servis ve `accessibility_shortcut_dialog_shown`=1 (ilk kullanımda sistem onay penceresi
-     * çıkmasın). Kilit ekranı anahtarı (`accessibility_shortcut_on_lock_screen`) yazılmaz. Bu anahtar
+     * Ses tuşu kısayolunu `KisayolErisimServisi`'ne bağlar. Kullanıcının önceki kısayol hedefleri
+     * (`accessibility_shortcut_target_service`, ':' ile ayrılmış liste) SİLİNMEZ: bizimki yoksa sona
+     * eklenir ([KisayolHedefleri.ekle]); birden çok hedef varken Android basışta hangisinin açılacağını
+     * sorar. Yalnız bu tek ayar yazılır. `accessibility_shortcut_dialog_shown`'a dokunulmaz: Android'in
+     * ilk kullanımda gösterdiği "kısayol neyi açar" onay penceresi bastırılmaz.
+     * Kilit ekranı anahtarı (`accessibility_shortcut_on_lock_screen`) yazılmaz. Bu anahtar
      * kilitli korumayı sağlamaz: ölçümde (2026-11-09) 0 iken de kısayol kilitliyken tetiklendi. Kilitliyken
      * açmama koruması `KisayolErisimServisi`'ndedir (`KeyguardManager.isKeyguardLocked`).
      * `ENABLED_ACCESSIBILITY_SERVICES`'a dokunmaz; kısayol servisini sistem açıp kapatır.
-     * Herhangi bir iplikten çağrılabilir (iki küçük ayar yazımı). Anahtar adları `Settings.Secure`'ın
-     * gizli (@hide) alanlarıdır (AOSP `Settings.java`), bu yüzden dizge olarak yazılır.
+     * Herhangi bir iplikten çağrılabilir (bir okuma, en çok bir yazım). Anahtar adı `Settings.Secure`'ın
+     * gizli (@hide) alanıdır (AOSP `Settings.java`), bu yüzden dizge olarak yazılır.
      */
     fun sesKisayoluKur(ctx: Context): SesKisayoluSonucu {
         val app = uygulama(ctx)
@@ -198,9 +201,13 @@ object ErisimAnahtari {
         return try {
             val cr = app.contentResolver
             val hedef = ComponentName(app, KisayolErisimServisi::class.java).flattenToString()
-            Settings.Secure.putString(cr, KISAYOL_HEDEF, hedef)
-            Settings.Secure.putInt(cr, KISAYOL_DIYALOG_GORULDU, 1)
-            SesKisayoluSonucu.KURULDU
+            val ekleme = KisayolHedefleri.ekle(Settings.Secure.getString(cr, KISAYOL_HEDEF), hedef)
+            if (ekleme.degisti) Settings.Secure.putString(cr, KISAYOL_HEDEF, ekleme.yeniDeger)
+            if (ekleme.digerHedefler.isEmpty()) {
+                SesKisayoluSonucu.KURULDU
+            } else {
+                SesKisayoluSonucu.KURULDU_DIGERLERIYLE
+            }
         } catch (e: SecurityException) {
             SesKisayoluSonucu.HATA
         } catch (e: RuntimeException) {
@@ -215,11 +222,8 @@ object ErisimAnahtari {
     fun sesKisayoluKurulu(ctx: Context): Boolean {
         return try {
             val app = uygulama(ctx)
-            val biz = ComponentName(app, KisayolErisimServisi::class.java)
-            Settings.Secure.getString(app.contentResolver, KISAYOL_HEDEF)
-                ?.split(':')
-                ?.any { it.isNotBlank() && ComponentName.unflattenFromString(it.trim()) == biz }
-                ?: false
+            val biz = ComponentName(app, KisayolErisimServisi::class.java).flattenToString()
+            KisayolHedefleri.iceriyor(Settings.Secure.getString(app.contentResolver, KISAYOL_HEDEF), biz)
         } catch (e: RuntimeException) {
             false
         }

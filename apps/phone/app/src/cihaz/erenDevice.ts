@@ -12,6 +12,7 @@ import type {
   IzinIsteSonucu,
   KisayolMesaji,
   OtoIzinSonucu,
+  SesKisayoluSonucu,
 } from "../../modules/eren-device/src/ErenDevice.types.ts";
 import type { KimlikPortu, SesPortu } from "../cekirdek/sozlesme.ts";
 
@@ -34,7 +35,7 @@ export interface ErenCihaz {
   tamYetkiKapat(): Promise<Sonuc<true>>;
   kisayolAl(): Promise<Sonuc<KisayolMesaji | null>>;
   kisayolTuket(id: string): Promise<Sonuc<true>>;
-  sesKisayoluKur(): Promise<Sonuc<"kuruldu" | "yetki_yok" | "hata">>;
+  sesKisayoluKur(): Promise<Sonuc<SesKisayoluSonucu>>;
   kisayolKutucuguEkle(): Promise<Sonuc<"eklendi" | "zaten" | "reddedildi" | "desteklenmiyor">>;
   /** `kisayolGeldi` olayına abone olur; modül yoksa ya da hata olursa boş kapatıcı döner. */
   kisayolGeldiDinle(f: (veri: { id: string }) => void): () => void;

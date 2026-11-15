@@ -130,7 +130,7 @@ class EslestirmeActivity : Activity() {
         biyometriIptal = iptal
         val istem = BiometricPrompt.Builder(this)
             .setTitle("Yeniden eşleştirme")
-            .setSubtitle("Mevcut eşleşmenin yerine yenisi yazılacak")
+            .setSubtitle("Mevcut eşleşmenin yerine yenisi yazılacak; tam yetki açıksa kapanır")
             .setAllowedAuthenticators(kimlikler)
             .build()
         istem.authenticate(
@@ -415,6 +415,10 @@ class EslestirmeActivity : Activity() {
     }
 
     private fun kaydetVeBitir(kayit: KayitliEslesme) {
+        // Tam yetki önceki PC'ye verilmişti; yeni eşleşme onu devralmaz. Kayıttan ÖNCE kapanır: yeni
+        // eşleşme ile açık tam yetki hiçbir an birlikte durmaz. Kayıt düşerse yetki kapalı kalır
+        // (güvenli yön); kullanıcı yeniden açabilir.
+        TamYetki.kapat(this)
         try {
             EslesmeDeposu(this).kaydet(kayit)
         } catch (_: Exception) {

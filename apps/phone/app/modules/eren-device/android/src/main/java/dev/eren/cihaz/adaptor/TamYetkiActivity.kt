@@ -91,13 +91,24 @@ class TamYetkiActivity : Activity() {
             ),
         )
 
+        kok.addView(baslik("Hangi uygulamalarda"))
+        kok.addView(
+            kutu(
+                "• Uygulamalar ekranında açık olan her uygulamada çalışır. Kurulu sıradan uygulamalar " +
+                    "(sonradan kurulanlar da) siz kapatmadıkça açık başlar.\n" +
+                    "• Banka, e-para, kripto, borsa, iki adımlı doğrulama, e-Devlet ve parola uygulamalarını " +
+                    "adından ve paket adından tahmin edip kapalı başlatır. Bu tahmin her uygulamayı yakalamaz; " +
+                    "açmadan önce Uygulamalar ekranındaki listeyi kontrol edin ve istemediklerinizi kapatın.",
+                fg,
+            ),
+        )
+
         kok.addView(baslik("Değişmeyenler (yine geçerli)"))
         kok.addView(
             kutu(
                 "• Değişmez ret listesi: Ayarlar, Play Store, kurulum ve izin pencereleri, kilit ekranı, " +
                     "Tailscale, üretici güvenlik uygulamaları ve $ad uygulamasının kendisi. $ad bunlara hiç girmez.\n" +
-                    "• Hassas olarak işaretlediğiniz uygulamalar (banka, parola): $ad bunlara girmez.\n" +
-                    "• Yalnız Uygulamalar ekranında açtığınız uygulamalarda çalışır.\n" +
+                    "• Uygulamalar ekranında kapalı olan uygulamalara girmez.\n" +
                     "• Parola alanlarına yazmaz.\n" +
                     "• Her iş yine süreli ve eylem bütçelidir ve denetim günlüğüne kaydedilir.\n" +
                     "• Kalıcı bildirim açık kalır; Durdur ile her işi anında kesersiniz.",
@@ -108,7 +119,8 @@ class TamYetkiActivity : Activity() {
         kok.addView(baslik("Kapatmak"))
         kok.addView(
             kutu(
-                "İstediğiniz an $ad uygulamasından kapatabilirsiniz. Kapatmak kimlik doğrulama istemez.",
+                "İstediğiniz an $ad uygulamasından kapatabilirsiniz. Kapatmak kimlik doğrulama istemez. " +
+                    "Başka bir PC ile eşleşmek de tam yetkiyi kapatır; yeni PC için yeniden açmanız gerekir.",
                 fg,
             ),
         )

@@ -6,7 +6,7 @@
   metinleri adı çalışma anında uygulama etiketinden okur (AsistanAdi.kt).
 -->
 <resources>
-    <string name="eren_erisim_aciklama">Bu uygulama bu servisle telefonu okur ve kullanır. Servis yalnız bir iş sürerken açılır. Tam yetki kapalıyken her iş telefonda onayınızı ister; açıkken onaysız çalışır. Banka ve hassas uygulamalar, Ayarlar ve parola alanları her zaman yasaktır. Kalıcı bildirimdeki Durdur her işi keser ve tam yetkiyi kapatır.</string>
+    <string name="eren_erisim_aciklama">Bu uygulama bu servisle telefonu okur ve kullanır. Kurulum adımı yapıldıysa servisi yalnız bir iş sürerken açık tutar; yapılmadıysa servisi siz buradan açarsınız ve açık kalır. Tam yetki kapalıyken her iş telefonda onayınızı ister; açıkken onaysız çalışır. Uygulamalar listesinde kapalı olan uygulamalara, Ayarlar\'a ve parola alanlarına girmez. Sıradan kurulu uygulamalar varsayılan olarak açıktır; banka ve para uygulamaları adından tahminle kapalı başlar, bu tahmin her uygulamayı yakalamaz. Kalıcı bildirimdeki Durdur her işi keser ve tam yetkiyi kapatır.</string>
     <string name="eren_kisayol_ad">Ses tuşu kısayolu</string>
     <string name="eren_kisayol_aciklama">Ses tuşu kısayolu: ses tuşlarına basılı tutunca asistana sesli komut verirsin. Bu servis ekranı okumaz, yalnız kısayolu açar.</string>
     <string name="eren_fgs_aciklama">Kullanicinin kendi PC\'sine Tailscale uzerinden surekli WebSocket baglantisi: telefonu PC\'deki asistan oturumundan yonetme.</string>
