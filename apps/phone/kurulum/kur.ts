@@ -49,6 +49,7 @@ import type { Stats } from "node:fs";
 import { connect } from "node:net";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
+import { veriKokuIzniniSagla } from "./izin.ts";
 import {
   ESKI_KOK_BAYRAGI,
   eskiKurulumSorunlari,
@@ -710,6 +711,8 @@ const YARDIM = [
   "  --geri-al      önceki sürüme dön ve servisi yeniden başlat",
   "  --durum        güncel sürüm, geçmiş ve bekçi durumu (salt okunur)",
   "  --yalniz-test  yalnız test kapısını çalıştır, kurma",
+  "  --izin-duzelt  veri kökünü yalnız bu hesaba, SYSTEM'e ve Administrators'a açık olacak biçimde daralt",
+  "                 (servis başka hesaplara açık kökle açılmaz; kur ve --geri-al eren-kit kökünü kendiliğinden daraltır)",
   `  ${ESKI_KOK_BAYRAGI}  eski veri kökü doluyken bilerek yeni veri köküne kur (kur ve --geri-al ile)`,
   "Ortam (kalıcı kullanıcı ortamında olmalı): EREN_KIT_DATA_DIR (veri kökü, mutlak yol),",
   "  EREN_KIT_PHONE_TASK_NAME (görev adı, yoksa eren-kit-telefon)",
@@ -1480,7 +1483,10 @@ const kur = async (o: { kirli: boolean; testsiz: boolean; eskiKokuYoksay: boolea
   if (o.testsiz) console.log("Test kapısı atlandı (--testsiz).");
   else testKapisi(kaynak);
 
-  // (4) kopya
+  // (4) kopya. Önce kökün izni: kod ve sırlar başka hesaba açık köke yazılmaz; kök yoksa yalnız bu hesaba
+  // açık oluşur, eren-kit'in kökü başka hesaplara açıksa daraltılır (izin.ts). Yeni servis aynı kuralla
+  // açılmayı reddeder; daraltma kopyadan önce olmazsa güncelleme var olan kurulumu düşürürdü.
+  veriKokuIzniniSagla(veriKoku(process.env));
   const bas = Date.now();
   const s = surumKur({ kaynakKok: kaynak, hedefKok: hedef, bilgi: { sha, dal, tarih_ms: Date.now(), ...(kirli.length === 0 ? { agac: kimlik } : {}) } });
   if (s.yeni) console.log(`Kopyalandı: ${s.yol} (${s.dosya} dosya, ${mb(s.bayt)}, ${sn(Date.now() - bas)})`);
@@ -1516,6 +1522,7 @@ const geriAl = async (eskiKokuYoksay: boolean): Promise<number> => {
   if (o === null) throw new KurHatasi("geri alınacak önceki sürüm yok");
   gorevKapaliDenetle();
   await bekcisizServisDenetle();
+  veriKokuIzniniSagla(veriKoku(process.env));
   guncelYap(hedef, o);
   console.log(`guncel: ${g ?? "yok"} → ${o}`);
   if (g !== null) sohbetUyarisi(hedef, o, g);
@@ -1603,6 +1610,7 @@ const calistir = async (argv: readonly string[]): Promise<number> => {
     "--geri-al",
     "--durum",
     "--yalniz-test",
+    "--izin-duzelt",
     ESKI_KOK_BAYRAGI,
     "-h",
     "--help",
@@ -1618,13 +1626,19 @@ const calistir = async (argv: readonly string[]): Promise<number> => {
     console.log(YARDIM);
     return 0;
   }
-  const kipler = ["--geri-al", "--durum", "--yalniz-test"].filter((k) => argv.includes(k));
+  const kipler = ["--geri-al", "--durum", "--yalniz-test", "--izin-duzelt"].filter((k) => argv.includes(k));
   if (kipler.length > 1) {
     console.error(`kur: bu seçenekler birlikte kullanılamaz: ${kipler.join(" ")}`);
     return 2;
   }
   try {
     if (argv.includes("--durum")) return await durumKomutu();
+    if (argv.includes("--izin-duzelt")) {
+      const kok = veriKoku(process.env);
+      const sonuc = veriKokuIzniniSagla(kok, undefined, { bilerek: true });
+      if (sonuc === "guvenli") console.log(`Veri kökü zaten yalnız bu hesaba, SYSTEM'e ve Administrators'a açık: ${kok}`);
+      return 0;
+    }
     if (argv.includes("--yalniz-test")) {
       testKapisi(kaynakKoku());
       console.log("Test kapısı geçti.");

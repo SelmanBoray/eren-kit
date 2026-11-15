@@ -93,7 +93,7 @@ function kur() {
     depo,
     gunluk,
   });
-  ws.dinle({ host: "100.64.0.1", port: 1, azamiCerceve: { "/sohbet": 1, "/cihaz": 1 }, baglanti: () => {} });
+  ws.dinle({ host: "100.64.0.1", port: 1, azamiCerceve: { "/sohbet": 1, "/cihaz": 1 }, kimlikOncesiAzamiBayt: 1, ipBasinaAzamiBaglanti: 1, baglanti: () => {} });
   return { zaman, rastgele, gunluk, veriyolu, ws, depo, yazilanOlaylar, cihaz };
 }
 
@@ -1079,7 +1079,7 @@ describe("cihaz: gerçek günlükle hata kodu", () => {
     const kayit = sahteKayit();
     const gunluk = gunlukKur({ kayit, saat: zaman.saat, azamiBayt: 1 << 20, azamiDosya: 3 });
     const ws = sahteWs();
-    ws.dinle({ host: "100.64.0.1", port: 1, azamiCerceve: { "/sohbet": 1, "/cihaz": 1 }, baglanti: () => {} });
+    ws.dinle({ host: "100.64.0.1", port: 1, azamiCerceve: { "/sohbet": 1, "/cihaz": 1 }, kimlikOncesiAzamiBayt: 1, ipBasinaAzamiBaglanti: 1, baglanti: () => {} });
     const cihaz = cihazKur({
       ayar: { sureler },
       saat: zaman.saat,
@@ -1125,6 +1125,7 @@ function inatci() {
     },
     mesajDinle: (f: (m: string) => void): void => void mesajlar.push(f),
     kapanisDinle: (f: () => void): void => void kapanislar.push(f),
+    kimlikDogrulandi: (): void => {},
   };
   return {
     baglanti,

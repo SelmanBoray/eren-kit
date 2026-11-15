@@ -774,6 +774,8 @@ export interface SahteWsBaglantisi extends WsBaglantisi {
   mesajGonder(metin: string): void;
   /** Karşı taraf kopardı: `kapanisDinle` dinleyicileri çağrılır. */
   istemciKopar(): void;
+  /** `kimlikDogrulandi` çağrıldı mı (kimlik öncesi bayt sınırı kalktı mı). */
+  readonly kimlikDogrulandiMi: boolean;
 }
 
 export interface SahteWs extends WsSunucuPortu {
@@ -826,6 +828,7 @@ export function sahteWs(): SahteWs {
       const kapanislar: Array<() => void> = [];
       const gonderilenler: string[] = [];
       let kapanis: { kod: number; neden: string } | null = null;
+      let kimlikDogrulandiMi = false;
       const kapanisYay = (): void => {
         for (const f of [...kapanislar]) f();
       };
@@ -836,6 +839,12 @@ export function sahteWs(): SahteWs {
         gonderilenler,
         get kapanis() {
           return kapanis;
+        },
+        get kimlikDogrulandiMi() {
+          return kimlikDogrulandiMi;
+        },
+        kimlikDogrulandi: () => {
+          kimlikDogrulandiMi = true;
         },
         gonder: (m) => {
           if (kapanis === null) gonderilenler.push(m);

@@ -407,6 +407,7 @@ function enkarnasyonKur(d: SahteDunya, anahtar: AnahtarPortu): { dunya: DisDunya
     kapat: (k, n) => b.kapat(k, n),
     mesajDinle: (f) => b.mesajDinle(kapili(f)),
     kapanisDinle: (f) => b.kapanisDinle(kapili(f)),
+    kimlikDogrulandi: () => b.kimlikDogrulandi(),
   });
   const ws: WsSunucuPortu = {
     dinle: (i) => d.ws.dinle({ ...i, baglanti: (b) => i.baglanti(wsSar(b)) }),

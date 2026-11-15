@@ -280,6 +280,11 @@ export interface WsBaglantisi {
   kapat(kod: number, neden: string): void;
   mesajDinle(f: (metin: string) => void): void;
   kapanisDinle(f: () => void): void;
+  /**
+   * Karşı uç kimliğini kanıtladı: `kimlikOncesiAzamiBayt` sınırı kalkar, yalnız kanal sınırı
+   * (`azamiCerceve`) kalır. Birden çok çağrı zararsızdır.
+   */
+  kimlikDogrulandi(): void;
 }
 
 export interface WsSunucuIstegi {
@@ -287,6 +292,14 @@ export interface WsSunucuIstegi {
   port: number;
   /** Bayt sınırı, `ws` `maxPayload`. */
   azamiCerceve: Readonly<Record<WsYolu, number>>;
+  /**
+   * Kimlik doğrulanana dek (`kimlikDogrulandi`) karşı uçtan okunacak en çok bayt (yükseltme isteği
+   * hariç, WebSocket çerçeve başlıkları dahil). Aşılınca bağlantı çerçevenin tamamı beklenmeden
+   * koparılır: kimliksiz uç büyük çerçeveyle bellek tüketemez.
+   */
+  kimlikOncesiAzamiBayt: number;
+  /** Aynı uzak adresten aynı anda açık en çok TCP bağlantısı (kimlikli ve kimliksiz toplam). */
+  ipBasinaAzamiBaglanti: number;
   baglanti: (b: WsBaglantisi) => void;
 }
 

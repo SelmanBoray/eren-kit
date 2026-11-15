@@ -222,6 +222,8 @@ test("ws: bağlantı, gönderme, mesaj, kapanış", async () => {
     host: "100.64.0.1",
     port: 1,
     azamiCerceve: { "/sohbet": 10, "/cihaz": 20 },
+    kimlikOncesiAzamiBayt: Number.MAX_SAFE_INTEGER,
+    ipBasinaAzamiBaglanti: 1_000,
     baglanti: (b) => {
       b.mesajDinle((m) => gelenler.push(`${b.yol}:${b.uzakIp}:${m}`));
       b.kapanisDinle(() => kapanan++);
@@ -247,7 +249,7 @@ test("ws: bağlantı, gönderme, mesaj, kapanış", async () => {
   await sunucu.kapat();
   assert.equal(d.ws.kapatildi, true);
   d.ws.sonrakiDinlemeHatasi(new Error("EADDRINUSE"));
-  await assert.rejects(d.dunya.ws.dinle({ host: "h", port: 2, azamiCerceve: { "/sohbet": 1, "/cihaz": 1 }, baglanti: () => {} }), /EADDRINUSE/);
+  await assert.rejects(d.dunya.ws.dinle({ host: "h", port: 2, azamiCerceve: { "/sohbet": 1, "/cihaz": 1 }, kimlikOncesiAzamiBayt: 1, ipBasinaAzamiBaglanti: 1, baglanti: () => {} }), /EADDRINUSE/);
 });
 
 test("boru: satır, azami satır aşımında kapanır ve iletmez", async () => {

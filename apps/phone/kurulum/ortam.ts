@@ -19,6 +19,7 @@
  */
 import { spawnSync } from "node:child_process";
 import win32 from "node:path/win32";
+import { windowsPowerShellOrtami } from "./izin.ts";
 
 export type Ortam = Readonly<Record<string, string | undefined>>;
 
@@ -186,6 +187,8 @@ export const kaliciOrtamOku = (ortam: Ortam = process.env): KaliciOrtam => {
   const r = spawnSync(ps, ["-NoProfile", "-NonInteractive", "-Command", betik], {
     encoding: "utf8",
     windowsHide: true,
+    // PS7'den devralınan `PSModulePath` 5.1'in modül yüklemesini bozabilir (izin.ts `windowsPowerShellOrtami`).
+    env: windowsPowerShellOrtami(ortam),
     stdio: ["ignore", "pipe", "ignore"],
     timeout: 20_000,
   });

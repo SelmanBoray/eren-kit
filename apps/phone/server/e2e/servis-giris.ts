@@ -47,6 +47,7 @@ const baglantiSar = (b: WsBaglantisi): WsBaglantisi => ({
   kapat: (k, n) => b.kapat(k, n),
   mesajDinle: (f) => b.mesajDinle(f),
   kapanisDinle: (f) => b.kapanisDinle(f),
+  kimlikDogrulandi: () => b.kimlikDogrulandi(),
 });
 
 const sar = (d: DisDunya): DisDunya => ({

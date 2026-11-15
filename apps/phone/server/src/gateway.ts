@@ -57,7 +57,23 @@ import { gunSinirlari } from "./tuketim.ts";
 
 const EL_SIKISMA_MS = 10_000;
 const ADRES_DENEME_MS = 30_000;
-const AZAMI_YANLIS_KOD = 5;
+/**
+ * Eşleştirme penceresi başına yanlış kod sınırları. Bir uzak adres en çok `ADRES_BASINA_YANLIS_KOD`
+ * yanlış deneyebilir; fazlası o adrese `eslestirme_kapali` döner, pencereye dokunmaz. Pencere ancak bütün
+ * adreslerden toplam `AZAMI_YANLIS_KOD` yanlışta silinir (kaba kuvvet tavanı: 36^8 kodda 20 deneme
+ * ihmal edilir). Böylece tek bir tailnet düğümü beş yanlış kodla meşru eşleştirmeyi kapatamaz.
+ */
+const ADRES_BASINA_YANLIS_KOD = 5;
+const AZAMI_YANLIS_KOD = 20;
+/** Bellekteki adres sayacının üst sınırı (yalnız 100.64/10 adresleri buraya ulaşır). */
+const AZAMI_SAYILAN_ADRES = 1_024;
+/**
+ * Kimlik öncesi okunacak en çok bayt (`pair_request` + `hello` + `auth_response`, her biri 1 KiB'ın
+ * altında; pay geniş). Kanal sınırı (2/10 MiB) yalnız kimlikten sonra geçerlidir.
+ */
+const KIMLIK_ONCESI_AZAMI_BAYT = 16 * 1024;
+/** Aynı adresten aynı anda en çok TCP bağlantısı. Telefon iki kanal ve yeniden bağlanma artığı açar. */
+const IP_BASINA_AZAMI_BAGLANTI = 16;
 const TELAFI_PARTISI = 200;
 /**
  * Eşleşmesi kaldırılan cihazın açık bağlantıları bu aralıkla yoklanır ve kapatılır. Kaldırma ayrı
@@ -156,6 +172,7 @@ function devirGorunumu(b: WsBaglantisi): { gorunum: WsBaglantisi; oldur: () => v
       if (olu) f();
       else kapanislar.push(f);
     },
+    kimlikDogrulandi: () => b.kimlikDogrulandi(),
   };
   return { gorunum, oldur };
 }
@@ -228,6 +245,10 @@ export const gatewayKur: GatewayFabrikasi = ({
   let denemeIptal: IptalEt | null = null;
   let sonDoluluk: LimitDolulugu | null = null;
   let yoklamaIptal: IptalEt | null = null;
+  // Eşleştirme: o anki pencerenin (kod özetiyle tanınır) adres başına yanlış kod sayısı. Bellekte:
+  // servis yeniden başlarsa adres hakları yenilenir, toplam tavan (`yanlis_deneme`) depoda kalır.
+  let yanlisPenceresi: string | null = null;
+  const adresYanlislari = new Map<string, number>();
 
   // Hata iletisi güvenilmez değer taşıyabilir: yalnız türü yazılır.
   const hataYaz = (olay: string, e: unknown): void => {
@@ -489,6 +510,8 @@ export const gatewayKur: GatewayFabrikasi = ({
     g.sureIptal?.();
     g.sureIptal = null;
     g.kimlik = kimlik;
+    // Kimlik öncesi bayt sınırı kalkar; bundan sonra yalnız kanal sınırı (`azamiCerceve`) geçerli.
+    g.b.kimlikDogrulandi();
     const device_id = a.cihaz.device_id;
     gunluk.bilgi("gateway", "kimlik_tamam", { kanal: g.kanal, device_id });
 
@@ -522,7 +545,18 @@ export const gatewayKur: GatewayFabrikasi = ({
     depo.islem((): EslestirmeSonucu => {
       const kayit = depo.eslestirmeOku();
       if (kayit === null || saat.simdiMs() >= kayit.son_ms) return { ok: false, code: "eslestirme_kapali" };
+      // Adres sayaçları pencereye aittir: yeni pencere (yeni kod) sayaçları sıfırlar.
+      if (yanlisPenceresi !== kayit.kod_ozeti) {
+        yanlisPenceresi = kayit.kod_ozeti;
+        adresYanlislari.clear();
+      }
+      const adresYanlisi = adresYanlislari.get(uzakIp) ?? 0;
+      // Hakkını bitiren (ya da sayaç dolduğunda yeni gelen) adres kodu denetletemez; pencere başkalarına açık kalır.
+      if (adresYanlisi >= ADRES_BASINA_YANLIS_KOD || (adresYanlisi === 0 && adresYanlislari.size >= AZAMI_SAYILAN_ADRES)) {
+        return { ok: false, code: "eslestirme_kapali" };
+      }
       if (!anahtar.sabitZamanEsit(sha256Hex(utf8Bayt(m.kod)), kayit.kod_ozeti)) {
+        adresYanlislari.set(uzakIp, adresYanlisi + 1);
         if (kayit.yanlis_deneme + 1 >= AZAMI_YANLIS_KOD) depo.eslestirmeSil();
         else depo.eslestirmeYanlisSay();
         return { ok: false, code: "eslestirme_kodu_gecersiz" };
@@ -817,6 +851,8 @@ export const gatewayKur: GatewayFabrikasi = ({
         host: adres,
         port: ayar.wsPort,
         azamiCerceve: { "/sohbet": AZAMI_CERCEVE.SOHBET, "/cihaz": AZAMI_CERCEVE.CIHAZ },
+        kimlikOncesiAzamiBayt: KIMLIK_ONCESI_AZAMI_BAYT,
+        ipBasinaAzamiBaglanti: IP_BASINA_AZAMI_BAGLANTI,
         baglanti: baglantiAl,
       });
       if (!calisiyor) {

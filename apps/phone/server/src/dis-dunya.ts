@@ -33,6 +33,14 @@ import { freemem, networkInterfaces, totalmem } from "node:os";
 import { dirname, win32 } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { SOHBET_YETENEK_PARAMETRESI } from "@eren/protocol";
+import {
+  izinBetigi,
+  izinCiktisiCoz,
+  posixKokIzniDegerlendir,
+  windowsKokIzniDegerlendir,
+  windowsPowerShellOrtami,
+} from "./kok-izni.ts";
+import type { KokIzniSonucu } from "./kok-izni.ts";
 import { WebSocketServer } from "ws";
 import type { RawData, WebSocket } from "ws";
 import type {
@@ -339,11 +347,49 @@ const powershellCalistir = async (betik: string): Promise<string> => {
   const s = await kisaCalistir(
     powershellYolu(),
     ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", kodlu],
-    { zamanAsimiMs: SORGU_ZAMAN_ASIMI_MS },
+    // PS7'den devralınan `PSModulePath` 5.1'de modül yüklemesini bozar (`windowsPowerShellOrtami`).
+    { zamanAsimiMs: SORGU_ZAMAN_ASIMI_MS, ortam: windowsPowerShellOrtami(process.env) },
   );
   if (s.zamanAsimi) throw new Error("powershell_zaman_asimi");
   if (s.kod !== 0) throw new Error("powershell_hata");
   return s.stdout;
+};
+
+// ---------------------------------------------------------------------------------------------
+// Veri kökü izni
+// ---------------------------------------------------------------------------------------------
+
+export interface KokIzniBaglari {
+  readonly platform: NodeJS.Platform;
+  /** Windows: betiği Windows PowerShell'de çalıştırır, stdout'u döner; başarısızsa atar. */
+  readonly powershell: (betik: string) => Promise<string>;
+}
+
+const GERCEK_KOK_IZNI_BAGLARI: KokIzniBaglari = { platform: process.platform, powershell: (b) => powershellCalistir(b) };
+
+/**
+ * Servis açılışında, kökte hiçbir dosya açılmadan önce: kök yoksa yalnız kullanıcıya açık oluşturur
+ * (Windows: tek adımda güvenlik tanımıyla; POSIX: 0700), sonra izni `kok-izni.ts` kuralıyla
+ * değerlendirir. Var olan köke dokunmaz: daraltma kurulumun işidir (`kur.ts --izin-duzelt`). Okuma
+ * başarısızsa güvensiz sayılır (kapalı başarısızlık). Atmaz.
+ */
+export const veriKokuIzniHazirla = async (
+  kok: string,
+  b: KokIzniBaglari = GERCEK_KOK_IZNI_BAGLARI,
+): Promise<KokIzniSonucu> => {
+  const okunamadi: KokIzniSonucu = { guvenli: false, sorunlar: [{ tur: "cozulemedi" }] };
+  try {
+    if (b.platform === "win32") {
+      const c = izinCiktisiCoz(await b.powershell(izinBetigi(kok, "hazirla")));
+      return c === null ? okunamadi : windowsKokIzniDegerlendir(c.sddl, c.sid);
+    }
+    await mkdir(kok, { recursive: true, mode: 0o700 });
+    const d = await stat(kok);
+    if (!d.isDirectory()) return okunamadi;
+    return posixKokIzniDegerlendir({ uid: d.uid, kip: d.mode, kullaniciUid: process.getuid?.() ?? -1 });
+  } catch {
+    return okunamadi;
+  }
 };
 
 const SUREC_SORGUSU = (filtre: string): string =>
@@ -767,9 +813,39 @@ const tutmayanAralik: ZamanlayiciPortu["herAralik"] = (ms, f) => {
 export interface WsCanlilikAyari {
   aralikMs: number;
   herAralik: ZamanlayiciPortu["herAralik"];
+  /**
+   * Sunucunun başlattığı kapanışta karşı ucun kapanış çerçevesi için beklenen süre; dolunca soket
+   * koparılır. `ws`'nin kendi süresi 30 sn'dir: yanıt vermeyen (kimliksiz) uç reddedildikten sonra
+   * soketi o kadar tutamasın. Verilmezse `WS_KAPANIS_BEKLEME_MS`.
+   */
+  kapanisBeklemeMs?: number;
 }
 
+export const WS_KAPANIS_BEKLEME_MS = 3_000;
+
 const VARSAYILAN_CANLILIK: WsCanlilikAyari = { aralikMs: WS_CANLILIK_ARALIGI_MS, herAralik: tutmayanAralik };
+
+/**
+ * Yükseltme isteğinin `Origin` başlığı kabul edilir mi. Başlık yoksa evet (OkHttp, `ws`). React Native'in
+ * WebSocket'i (Android ve iOS) başlığı bağlanılan adresten türetir: `http://<host>:<port>`; bu da kabul.
+ * Başka her değer (tarayıcıda açılmış bir sayfanın kaynağı, `null`, birden çok başlık) reddedilir: aynı
+ * tailnet'teki bir cihazın tarayıcısında açılan sayfa kimliksiz yüzeye ulaşamaz. Bu adres ve portta
+ * HTTP sayfası sunulmadığından (her HTTP isteği 426) hiçbir sayfa bu kaynağa sahip olamaz.
+ */
+export const kaynakIzinliMi = (origin: string | readonly string[] | undefined, host: string, port: number): boolean => {
+  if (origin === undefined) return true;
+  if (typeof origin !== "string") return false;
+  let u: URL;
+  try {
+    u = new URL(origin);
+  } catch {
+    return false;
+  }
+  if (u.protocol !== "http:" && u.protocol !== "https:") return false;
+  if (u.username !== "" || u.password !== "" || u.pathname !== "/" || u.search !== "" || u.hash !== "") return false;
+  const etkinPort = u.port === "" ? (u.protocol === "http:" ? 80 : 443) : Number(u.port);
+  return u.hostname.toLowerCase() === host.toLowerCase() && etkinPort === port;
+};
 
 /**
  * Sözleşmedeki `gonder` `void` döner; gerçekleme gönderimin sokete verilip verilmediğini söyler:
@@ -787,10 +863,28 @@ const wsBaglantisiKur = (
   soket: Socket,
   canlilik: WsCanlilikAyari,
   izleyiciler: Set<CanlilikIzleyicisi>,
+  kimlikOncesi: { readonly baslangicBayt: number; readonly azamiBayt: number },
 ): GercekWsBaglantisi => {
   const mesajlar: Array<(metin: string) => void> = [];
   const kapanislar = birKezOlayKur();
   const uzakIp = soket.remoteAddress ?? "";
+  // Kimlik öncesi bayt sınırı. `ws`'nin `data` dinleyicisi bundan önce eklendi ve iletiyi eşzamanlı
+  // yayar: aynı TCP parçasındaki `auth_response` önce işlenir (sınır kalkar), denetim ondan sonra
+  // çalışır. Sayaç soketin kendi `bytesRead`'idir; büyük çerçeve tamamı tamponlanmadan, parça parça
+  // yakalanır (bellek: sınır + en çok bir okuma parçası).
+  let kimlikOncesiSinir: number | null = kimlikOncesi.baslangicBayt + kimlikOncesi.azamiBayt;
+  const sinirKaldir = (): void => {
+    kimlikOncesiSinir = null;
+    soket.off("data", sinirDenetle);
+  };
+  function sinirDenetle(): void {
+    if (kimlikOncesiSinir === null || soket.bytesRead <= kimlikOncesiSinir) return;
+    sinirKaldir();
+    ws.terminate();
+  }
+  soket.on("data", sinirDenetle);
+  sinirDenetle();
+  const kapanisBeklemeMs = canlilik.kapanisBeklemeMs ?? WS_KAPANIS_BEKLEME_MS;
   const izleyici = canlilikIzleyicisiKur({
     aralikMs: canlilik.aralikMs,
     herAralik: canlilik.herAralik,
@@ -813,6 +907,7 @@ const wsBaglantisiKur = (
   ws.on("error", bos);
   ws.on("pong", () => izleyici.canliIsaretle());
   ws.on("close", () => {
+    sinirKaldir();
     izleyici.durdur();
     izleyiciler.delete(izleyici);
     kapanislar.tetikle();
@@ -850,12 +945,18 @@ const wsBaglantisiKur = (
       } catch {
         // geçersiz kod ya da uzun neden: zorla kapat
         ws.terminate();
+        return;
       }
+      if (ws.readyState === ws.CLOSED) return;
+      const t = setTimeout(() => ws.terminate(), kapanisBeklemeMs);
+      t.unref();
+      ws.once("close", () => clearTimeout(t));
     },
     mesajDinle: (f) => {
       mesajlar.push(f);
     },
     kapanisDinle: (f) => kapanislar.dinle(f),
+    kimlikDogrulandi: sinirKaldir,
   };
 };
 
@@ -907,6 +1008,25 @@ export const wsKur = (canlilik: WsCanlilikAyari = VARSAYILAN_CANLILIK): WsSunucu
         y.end();
       });
       const izleyiciler = new Set<CanlilikIzleyicisi>();
+      // Uzak adres başına açık TCP bağlantısı: tek bir uç (ya da aynı adresi paylaşan bir LAN) yarım
+      // açık, yanıtsız ya da kimliksiz bağlantıyla sınırsız soket tutamasın. Fazlası hemen koparılır.
+      const adresBasina = new Map<string, number>();
+      http.on("connection", (soket: Socket) => {
+        const adres = soket.remoteAddress ?? "";
+        const n = (adresBasina.get(adres) ?? 0) + 1;
+        if (n > istek.ipBasinaAzamiBaglanti) {
+          soket.destroy();
+          return;
+        }
+        adresBasina.set(adres, n);
+        soket.once("close", () => {
+          const kalan = (adresBasina.get(adres) ?? 1) - 1;
+          if (kalan <= 0) adresBasina.delete(adres);
+          else adresBasina.set(adres, kalan);
+        });
+      });
+      // Yükseltme isteğinin başlıkları sayaca girmez; başlıkla aynı parçada gelen çerçeve baytları girer.
+      const kimlikOncesiBaslangic = new WeakMap<object, number>();
       // `maxPayload` yol başınadır, bu yüzden yol başına bir `WebSocketServer` ve elle yükseltme.
       const sunucular = new Map<WsYolu, WebSocketServer>();
       for (const yol of WS_YOLLARI) {
@@ -918,7 +1038,10 @@ export const wsKur = (canlilik: WsCanlilikAyari = VARSAYILAN_CANLILIK): WsSunucu
         w.on("connection", (ws, req) => {
           // Yetenek yalnız `/sohbet`'te okunur; kimlikten önce okunur ama anlamı kimlik sonrası gönderimdedir.
           const yetenekler = yol === "/sohbet" ? yetenekleriCoz(req.url) : BOS_YETENEKLER;
-          const b = wsBaglantisiKur(ws, yol, yetenekler, req.socket, canlilik, izleyiciler);
+          const b = wsBaglantisiKur(ws, yol, yetenekler, req.socket, canlilik, izleyiciler, {
+            baslangicBayt: kimlikOncesiBaslangic.get(req) ?? req.socket.bytesRead,
+            azamiBayt: istek.kimlikOncesiAzamiBayt,
+          });
           try {
             istek.baglanti(b);
           } catch {
@@ -936,6 +1059,12 @@ export const wsKur = (canlilik: WsCanlilikAyari = VARSAYILAN_CANLILIK): WsSunucu
           soket.destroy();
           return;
         }
+        if (!kaynakIzinliMi(req.headers.origin, istek.host, istek.port)) {
+          soket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+          soket.destroy();
+          return;
+        }
+        kimlikOncesiBaslangic.set(req, (soket as Socket).bytesRead - head.length);
         w.handleUpgrade(req, soket, head, (ws) => w.emit("connection", ws, req));
       });
       http.once("error", reddet);

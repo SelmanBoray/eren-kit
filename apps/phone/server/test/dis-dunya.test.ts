@@ -313,6 +313,8 @@ describe("dis-dunya", { skip: !win }, () => {
         host: "127.0.0.1",
         port,
         azamiCerceve: { "/sohbet": 1024, "/cihaz": 256 },
+        kimlikOncesiAzamiBayt: Number.MAX_SAFE_INTEGER,
+        ipBasinaAzamiBaglanti: 1_000,
         baglanti: (b) => {
           const k = { yol: b.yol, uzakIp: b.uzakIp, metinler: [] as string[], kapandi: false };
           baglantilar.push(k);
@@ -383,6 +385,8 @@ describe("dis-dunya", { skip: !win }, () => {
         host: "127.0.0.1",
         port,
         azamiCerceve: { "/sohbet": 1024, "/cihaz": 1024 },
+        kimlikOncesiAzamiBayt: Number.MAX_SAFE_INTEGER,
+        ipBasinaAzamiBaglanti: 1_000,
         baglanti: (b) => {
           gelenler.push({ yol: b.yol, yetenekler: [...b.yetenekler].sort() });
         },
@@ -422,6 +426,8 @@ describe("dis-dunya", { skip: !win }, () => {
         host: "127.0.0.1",
         port,
         azamiCerceve: { "/sohbet": 1024, "/cihaz": 1024 },
+        kimlikOncesiAzamiBayt: Number.MAX_SAFE_INTEGER,
+        ipBasinaAzamiBaglanti: 1_000,
         baglanti: (b) => {
           uzak = b.uzakIp;
         },
@@ -1063,6 +1069,8 @@ describe("ws canlılık yoklaması (sahte zamanlayıcı)", () => {
         host: "127.0.0.1",
         port,
         azamiCerceve: { "/sohbet": azami, "/cihaz": azami },
+        kimlikOncesiAzamiBayt: Number.MAX_SAFE_INTEGER,
+        ipBasinaAzamiBaglanti: 1_000,
         baglanti: (b) => {
           const k: Kayit = { b, kapandi: false, metinler: [] };
           kayitlar.push(k);

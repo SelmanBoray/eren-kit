@@ -11,11 +11,12 @@ import { AyarHatasi, ayarKur, yollariUret } from "./ayar.ts";
 import { bildirimKur } from "./bildirim.ts";
 import { cihazKur } from "./cihaz.ts";
 import { depoKur } from "./depo.ts";
-import { disDunyaKur, dosyaPortuKur } from "./dis-dunya.ts";
+import { disDunyaKur, dosyaPortuKur, veriKokuIzniHazirla } from "./dis-dunya.ts";
 import { gatewayKur } from "./gateway.ts";
 import { gunlukKur } from "./gunluk.ts";
 import { islerKur } from "./isler.ts";
 import { kilitKur } from "./kilit.ts";
+import { kokIzniHataMetni } from "./kok-izni.ts";
 import { konusmaKur } from "./konusma.ts";
 import { kopruSunucuKur } from "./kopru-sunucu.ts";
 import { planlarKur } from "./planlar.ts";
@@ -381,6 +382,10 @@ const giris = async (): Promise<void> => {
 
   try {
     const ayar = await ayarKur({ dosya: dosyaPortuKur(), ortam, execPath: process.execPath, baslangicMs });
+    // Kökte anahtar, veritabanı, jeton ve çalışan kod durur: başka hesaba açık kökle açılmaz (kok-izni.ts).
+    // `disDunyaKur` anahtarı okur/yazar; denetim ondan önce. Kök yoksa burada yalnız kullanıcıya açık oluşur.
+    const izin = await veriKokuIzniHazirla(ayar.yollar.kok);
+    if (!izin.guvenli) throw new AyarHatasi(kokIzniHataMetni(izin.sorunlar));
     const dunya = await disDunyaKur({ yollar: ayar.yollar });
     const g = gunlukYap(dunya);
     gunluk = g;

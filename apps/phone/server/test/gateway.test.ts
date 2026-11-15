@@ -509,6 +509,36 @@ describe("gateway: ağ", () => {
     assert.notEqual(i.host, "0.0.0.0");
     assert.equal(i.port, WS_PORT);
     assert.deepEqual(i.azamiCerceve, { "/sohbet": AZAMI_CERCEVE.SOHBET, "/cihaz": AZAMI_CERCEVE.CIHAZ });
+    // Kimlik öncesi sınırlar: kanal sınırından çok küçük bayt sınırı, adres başına bağlantı sınırı.
+    assert.equal(i.kimlikOncesiAzamiBayt, 16 * 1024);
+    assert.ok(i.kimlikOncesiAzamiBayt < AZAMI_CERCEVE.SOHBET);
+    assert.equal(i.ipBasinaAzamiBaglanti, 16);
+  });
+
+  it("kimlik öncesi bayt sınırı yalnız kimlik tamamlanınca kalkar (iki kanalda); eşleştirme ve ret kaldırmaz", async () => {
+    const o = await hazir();
+    for (const yol of ["/sohbet", "/cihaz"] as const) {
+      const ist = o.bagla(yol, IP1);
+      await ist.gonder(helloMesaji(yol, "tel-1", ISTEMCI_NONCE, 0));
+      assert.equal(ist.tur("auth_challenge").length, 1);
+      assert.equal(ist.c.kimlikDogrulandiMi, false, `${yol}: hello sınırı kaldırmamalı`);
+    }
+    for (const yol of ["/sohbet", "/cihaz"] as const) {
+      const ist = await o.giris(yol, IP1);
+      assert.equal(ist.c.kimlikDogrulandiMi, true, `${yol}: kimlik sonrası sınır kalkmalı`);
+    }
+    const yanlis = o.bagla("/sohbet", IP1);
+    await elSik(yanlis, { anahtar: TEL2.private });
+    assert.equal(yanlis.hataKodu, "imza_gecersiz");
+    assert.equal(yanlis.c.kimlikDogrulandiMi, false);
+
+    const p = kur();
+    await p.baslat();
+    p.eslestirmeKur();
+    const ist = p.bagla("/sohbet", IP1);
+    await ist.gonder({ v: 1, type: "pair_request", kod: KOD, public_key: TEL1.acik, platform: "android" });
+    assert.equal(ist.tur("pair_result")[0]?.ok, true);
+    assert.equal(ist.c.kimlikDogrulandiMi, false, "eşleştirme kimlik değildir");
   });
 
   it("adres yoksa dinlemez, 30 sn'de bir dener ve adres gelince bir kez dinler", async () => {
@@ -927,16 +957,46 @@ describe("gateway: eşleştirme", () => {
     assert.equal(o.depo.cihazlar().length, 0);
   });
 
-  it("5 yanlışta kayıt silinir, sonra doğru kod da eslestirme_kapali", async () => {
+  it("tek adresten 5 yanlış pencereyi kapatmaz: o adres kapanır, başka adres doğru kodla eşleşir", async () => {
     const o = kur();
     await o.baslat();
     o.eslestirmeKur();
     for (let i = 1; i <= 5; i++) {
-      assert.equal((await eslestir(o, "ZZZZZZ")).sonuc, "eslestirme_kodu_gecersiz", `${i}. deneme`);
+      assert.equal((await eslestir(o, "ZZZZZZ", IP1)).sonuc, "eslestirme_kodu_gecersiz", `${i}. deneme`);
+    }
+    assert.equal(o.depo.eslestirmeOku()?.yanlis_deneme, 5);
+    // Hakkı biten adres doğru kodu da denetletemez (kaba kuvvet o adresten sürmez).
+    assert.equal((await eslestir(o, KOD, IP1)).sonuc, "eslestirme_kapali");
+    assert.equal((await eslestir(o, "ZZZZZZ", IP1)).sonuc, "eslestirme_kapali");
+    assert.equal(o.depo.eslestirmeOku()?.yanlis_deneme, 5, "kapalı adresin denemesi toplam sayaca girmez");
+    const { sonuc, kare } = await eslestir(o, KOD, IP2);
+    assert.equal(sonuc, "ok");
+    assert.equal(o.depo.cihazGetir(kare!.device_id)?.tailscale_ip, IP2);
+  });
+
+  it("bütün adreslerden toplam 20 yanlışta kayıt silinir, sonra doğru kod da eslestirme_kapali", async () => {
+    const o = kur();
+    await o.baslat();
+    o.eslestirmeKur();
+    const adresler = ["100.64.1.1", "100.64.1.2", "100.64.1.3", "100.64.1.4"];
+    for (const ip of adresler) {
+      for (let i = 1; i <= 5; i++) {
+        assert.equal((await eslestir(o, "ZZZZZZ", ip)).sonuc, "eslestirme_kodu_gecersiz", `${ip} ${i}. deneme`);
+      }
     }
     assert.equal(o.depo.eslestirmeOku(), null);
-    assert.equal((await eslestir(o, KOD)).sonuc, "eslestirme_kapali");
+    assert.equal((await eslestir(o, KOD, IP2)).sonuc, "eslestirme_kapali");
     assert.equal(o.depo.cihazlar().length, 0);
+  });
+
+  it("yeni pencere (yeni kod) adres haklarını sıfırlar", async () => {
+    const o = kur();
+    await o.baslat();
+    o.eslestirmeKur();
+    for (let i = 0; i < 5; i++) await eslestir(o, "ZZZZZZ", IP1);
+    assert.equal((await eslestir(o, KOD, IP1)).sonuc, "eslestirme_kapali");
+    o.eslestirmeKur("YENIKOD9");
+    assert.equal((await eslestir(o, "YENIKOD9", IP1)).sonuc, "ok");
   });
 
   it("4 yanlıştan sonra doğru kod hâlâ geçer", async () => {
@@ -2858,6 +2918,7 @@ function inatciBaglanti(yol: WsYolu, uzakIp: string) {
     },
     mesajDinle: (f: (m: string) => void): void => void mesajlar.push(f),
     kapanisDinle: (f: () => void): void => void kapanislar.push(f),
+    kimlikDogrulandi: (): void => {},
     /** CLOSING'de de yayılır. */
     mesajGonder: (m: string): void => {
       for (const f of [...mesajlar]) f(m);
