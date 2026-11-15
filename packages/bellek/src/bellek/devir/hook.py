@@ -86,8 +86,9 @@ def state_dir(env: Mapping[str, str] | None = None) -> Path:
 def log_error(mesaj: str, env: Mapping[str, str] | None = None) -> None:
     """Hata günlüğü; kendisi de asla istisna fırlatmaz."""
     try:
+        from bellek.izin import ozel_acici, ozel_klasor
         klasor = state_dir(env)
-        klasor.mkdir(parents=True, exist_ok=True)
+        ozel_klasor(klasor)
         yol = klasor / "hook.log"
         try:
             if yol.stat().st_size > LOG_MAX_BAYT:
@@ -99,7 +100,7 @@ def log_error(mesaj: str, env: Mapping[str, str] | None = None) -> None:
         except FileNotFoundError:
             pass
         zaman = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        with open(yol, "a", encoding="utf-8", newline="\n") as f:
+        with open(yol, "a", encoding="utf-8", newline="\n", opener=ozel_acici) as f:
             f.write(f"[{zaman}] {mesaj.rstrip()}\n")
     except Exception:
         pass
@@ -164,10 +165,13 @@ def load_state(oturum: str, env: Mapping[str, str] | None = None) -> dict:
 
 
 def save_state(oturum: str, veri: dict, env: Mapping[str, str] | None = None) -> None:
+    from bellek.izin import kisitla, ozel_acici, ozel_klasor
     yol = _durum_yolu(oturum, env)
-    yol.parent.mkdir(parents=True, exist_ok=True)
+    ozel_klasor(yol.parent)  # POSIX: yeni klasörler 0700, eskiler düzeltilir
+    kisitla(yol.parent.parent)
     tmp = yol.with_name(f".{yol.name}.{os.getpid()}.tmp")
-    tmp.write_text(json.dumps(veri, ensure_ascii=False), encoding="utf-8")
+    with open(tmp, "w", encoding="utf-8", opener=ozel_acici) as f:
+        f.write(json.dumps(veri, ensure_ascii=False))
     os.replace(tmp, yol)
 
 

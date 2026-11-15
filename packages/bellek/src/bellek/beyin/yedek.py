@@ -349,7 +349,8 @@ def yedekle(
     if dizin.exists() and not dizin.is_dir():
         raise YedekHatasi(f"Yedek dizini bir klasör değil: {dizin}")
     try:
-        dizin.mkdir(parents=True, exist_ok=True)
+        from bellek.izin import ozel_klasor
+        ozel_klasor(dizin, duzelt=False)  # POSIX: yeni yedek dizini 0700
     except OSError as e:
         raise YedekHatasi(f"Yedek dizini oluşturulamadı: {dizin} ({_neden(e)}).") from e
     damga = (simdi or datetime.now()).strftime("%Y%m%d-%H%M%S")

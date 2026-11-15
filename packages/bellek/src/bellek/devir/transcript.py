@@ -168,6 +168,15 @@ def _iban_degistir(m: re.Match) -> str:
     return m.group(0)
 
 
+def _iban_kucuk_degistir(m: re.Match) -> str:
+    """Küçük harfle yazılmış IBAN ("tr33 0006 ..."): küçük harfli hex/sözcük dizilerinde
+    yanlış alarmı önlemek için mod-97 sağlaması ve hesap kısmında en az 10 rakam aranır."""
+    n = re.sub(r"[ \-]", "", m.group(0)).upper()
+    if sum(c.isdigit() for c in n[4:]) >= 10 and _iban_gecerli(n):
+        return _GIZLI
+    return m.group(0)
+
+
 def _kart_degistir(m: re.Match) -> str:
     """13-19 hane, Luhn ve kart ağı ön eki (2-6: Mastercard/Amex/Visa/...,
     9792: Troy); 1 ile başlayan milisaniye zaman damgaları böylece elenir.
@@ -204,7 +213,7 @@ def _kart_bicimi(metin: str) -> bool:
     """
     if _ISO_TARIH.search(metin):
         return False
-    gruplar = re.split(r"[ \-]+", metin.strip(" -"))
+    gruplar = re.split(r"[ \-.]+", metin.strip(" -."))
     if len(gruplar) == 1:
         return True
     if sum(1 for g in gruplar if len(g) == 4 and _YIL.fullmatch(g)) >= 2:
@@ -228,11 +237,20 @@ def _maske_derle() -> list[tuple[re.Pattern[str], object]]:
     (UserPromptSubmit yolu maske kullanmaz, derleme maliyeti ona yüklenmez).
     """
     return [
+        # PEM özel anahtar bloğu: başlıktan END satırına, END yoksa (kesilmiş metin)
+        # metnin sonuna kadar. Gövde "-----END" görene dek tek geçişle taranır;
+        # END'siz ilk blok metnin sonunu yuttuğu için tarama doğrusal kalır.
+        (re.compile(r"-----BEGIN[A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?-----"
+                    r"(?:(?!-----END)[\s\S])*(?:-----END[A-Z0-9 ]{0,40}-----)?"), _GIZLI),
         # IBAN: ülke kodu + 2 sağlama + 11-30 alfasayısal, 4'lü gruplar boşluklu
         # ya da bitişik (önce: içindeki rakamlar kart/TC kuralına takılmasın).
         # Büyük harf zorunlu: küçük harfli hex dizileri aday bile olmaz.
         (re.compile(r"(?<![A-Za-z0-9])[A-Z]{2}\d{2}(?:[ \-]?[A-Z0-9]{4}){2,7}"
                     r"(?:[ \-]?[A-Z0-9]{1,4})?(?![A-Za-z0-9])"), _iban_degistir),
+        # Tümü küçük harfli IBAN: ayrı kural (büyük harfli adayın önüne geçip onu
+        # yutmasın); kabul için sağlama + en az 10 rakam (bkz. _iban_kucuk_degistir).
+        (re.compile(r"(?<![A-Za-z0-9])[a-z]{2}\d{2}(?:[ \-]?[a-z0-9]{4}){2,7}"
+                    r"(?:[ \-]?[a-z0-9]{1,4})?(?![A-Za-z0-9])"), _iban_kucuk_degistir),
         # PIN/CVV/CVC/kart şifresi/... kodu + en çok 3 ara sözcük + 3-6 rakam:
         # "Kart PIN 4821", "PIN kodum 4821", "CVV'si 123", "güvenlik kodu (CVV)
         # 123", "kartın şifresi 4821". Ara sözcükler rakam içermez; Türkçe ekler
@@ -249,27 +267,54 @@ def _maske_derle() -> list[tuple[re.Pattern[str], object]]:
         # Anahtar sözcüklü TC kimlik no: sağlama aranmaz (bağlam açık).
         (re.compile(
             rf"(?i)(?<![{_HARF}0-9])(t\.?\s?c\.?(?:\s?kimlik)?(?:\s?no)?|tckn|"
-            rf"kimlik\s?(?:no|numarası|numaram)?)(\s*[:=]?\s*)\d{{11}}(?!\d)"),
+            rf"kimlik\s?(?:no|numarası|numaram)?)(\s*[:=]?\s*)"
+            rf"(?:\d{{11}}|\d{{3}}[ \-]\d{{3}}[ \-]\d{{3}}[ \-]\d{{2}})(?!\d)"),
          r"\1\2" + _GIZLI),
-        # Kart numarası: 13-19 hane, boşluk/tire ayraçlı; Luhn ile doğrulanır.
-        (re.compile(r"(?<![\d\-])\d(?:[ \-]?\d){12,18}(?![\d])"), _kart_degistir),
+        # Kart numarası: 13-19 hane, boşluk/tire/nokta ayraçlı; Luhn ve grup biçimiyle
+        # doğrulanır (ondalık sayı, sürüm, IP biçimleri _kart_bicimi'nde elenir).
+        (re.compile(r"(?<![\d\-])(?<!\d\.)\d(?:[ \-.]?\d){12,18}(?![\d])"), _kart_degistir),
         # Anahtar sözcüksüz 11 haneli sayı: yalnız TC algoritmasından geçerse.
         (re.compile(r"(?<![\d.,\-])[1-9]\d{10}(?![\d])"), _tc_degistir),
         # URL'deki kullanıcı:parola -> scheme://kullanici:[gizli]@
-        (re.compile(r"(?i)\b([a-z][a-z0-9+.\-]*://[^\s:/@]+:)[^\s@/]+@"),
+        # Şema adı sınırlı (≤32): sınırsız olsaydı "a-a-a-..." gibi uzun dizide her
+        # sözcük sınırından sona dek taranır, süre ikinci dereceden büyürdü.
+        (re.compile(r"(?i)\b([a-z][a-z0-9+.\-]{0,31}://[^\s:/@]+:)[^\s@/]+@"),
          r"\1" + _GIZLI + "@"),
+        # e-posta:parola -> e-posta korunur. Değer boşluğa ya da metin sonuna dek
+        # sürer, "/" içermez (git@host:grup/repo dokunulmaz), en az 4 karakterdir,
+        # rakam ya da simge içerir; yalnız 1-5 rakamsa (port) dokunulmaz.
+        (re.compile(r"(?<![A-Za-z0-9._%+\-])([A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}:)"
+                    r"(?!\d{1,5}(?!\S))(?=[^\s/]*[0-9!@#$%^&*?_+=])[^\s/]{4,}(?!\S)"),
+         r"\1" + _GIZLI),
+        # Komut satırında parola: mysql/mariadb -pDEĞER (bitişik; "-p" tek başına
+        # parola sorar, -P port), sshpass -p DEĞER, curl -u kullanıcı:DEĞER.
+        (re.compile(r"(\b(?:mysql|mysqldump|mysqladmin|mysqlimport|mysqlcheck|mariadb"
+                    r"(?:-dump|-admin)?)(?:\.exe)?\b[^\n]{0,200}?\s-p)[^\s\-]\S*"),
+         r"\1" + _GIZLI),
+        (re.compile(r"(\bsshpass\b[^\n]{0,100}?\s-p\s*)[^\s\-]\S*"), r"\1" + _GIZLI),
+        (re.compile(r"(\bcurl\b[^\n]{0,300}?\s(?:-u|--user)[\s=]+[^\s:]+:)[^\s:]\S*"),
+         r"\1" + _GIZLI),
+        # HTTP Authorization başlığı (Basic/Token; Bearer aşağıda ayrıca).
+        (re.compile(r"(?i)(\bauthorization[\"']?\s*[:=]\s*[\"']?(?:basic|token)\s+)"
+                    r"[A-Za-z0-9+/._~\-]{8,}=*"),
+         r"\1" + _GIZLI),
         # JWT (base64url '{"' = eyJ), kısa olanlar da
         (re.compile(r"\beyJ[A-Za-z0-9_\-]{8,}(?:\.[A-Za-z0-9_\-]*){0,2}"), _GIZLI),
         # anahtar=deger / anahtar: deger -> anahtar korunur, değer gizlenir.
         # Önde harf/rakam olmamalı ama "_" olabilir: DB_PASSWORD=, GITHUB_TOKEN=,
         # MY_SECRET=, AWS_SECRET_ACCESS_KEY=. Türkçe ekli biçimler: şifrem:,
-        # parolası=. "key" yalnız "_KEY"/"-key" son eki olarak sayılır.
+        # parolası=. "key" yalnız "_KEY"/"-key" son eki olarak sayılır. Büyük harfli
+        # ortam değişkeninde önek bitişik olabilir: PGPASSWORD=, GHTOKEN= (camelCase
+        # isPassword: true ya da bypass= sayılmaz). Anahtar tırnaklı olabilir:
+        # {"password": "..."} ("path-key": gibi son ekli anahtar tırnaklıyken sayılmaz).
+        # Değer true/false/null/none ise dokunulmaz (ayar bayrağı, sır değil).
         (re.compile(
             r"(?i)(?<![a-z0-9çğıöşü])"
-            r"((?:password|passwd|pwd|passphrase|pass|secret|token|"
-            r"api[_-]?key|access[_-]?key|private[_-]?key|(?<=[_\-])key)"
-            r"|(?:parola|şifre|sifre)(?:m|n|si|sı|miz|mız|niz|nız)?)"
-            r"(\s*[:=]\s*)(\"[^\"]*\"|'[^']*'|\S+)"),
+            r"((?:(?-i:[A-Z]+(?:PASSWORD|PASSWD|SECRET|TOKEN))|password|passwd|pwd|"
+            r"passphrase|pass|secret|token|api[_-]?key|access[_-]?key|private[_-]?key)[\"']?"
+            r"|(?<=[_\-])key"
+            r"|(?:parola|şifre|sifre)(?:m|n|si|sı|miz|mız|niz|nız)?[\"']?)"
+            r"(\s*[:=]\s*)(?!(?:true|false|null|none|nil|undefined)\b)(\"[^\"]*\"|'[^']*'|\S+)"),
          r"\1\2" + _GIZLI),
         # boşlukla ayrılan parola: "password is hunter2", "parolam 1234".
         # Yanlış pozitifi önlemek için değer en az 4 karakter olmalı ve rakam ya
@@ -286,8 +331,21 @@ def _maske_derle() -> list[tuple[re.Pattern[str], object]]:
         (re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}"), _GIZLI),
         (re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}"), _GIZLI),
         (re.compile(r"\bAIza[0-9A-Za-z_\-]{30,}"), _GIZLI),
-        (re.compile(r"\bxox[bap]-[A-Za-z0-9\-]{10,}"), _GIZLI),
-        (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), _GIZLI),
+        (re.compile(r"\bxox[abeoprs]-[A-Za-z0-9\-]{10,}"), _GIZLI),
+        (re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"), _GIZLI),
+        # Önekli hizmet belirteçleri: GitLab, npm, Hugging Face, Stripe, PyPI,
+        # Google OAuth erişim belirteci.
+        (re.compile(r"\bgl(?:pat|dt|rt|ptt|ft|soat|cbt)-[A-Za-z0-9_\-]{20,}"), _GIZLI),
+        (re.compile(r"\bnpm_[A-Za-z0-9]{30,}"), _GIZLI),
+        (re.compile(r"\bhf_[A-Za-z0-9]{30,}"), _GIZLI),
+        (re.compile(r"\b[rs]k_(?:live|test)_[A-Za-z0-9]{16,}"), _GIZLI),
+        (re.compile(r"\bpypi-[A-Za-z0-9_\-]{40,}"), _GIZLI),
+        (re.compile(r"\bya29\.[A-Za-z0-9_\-]{20,}"), _GIZLI),
+        # Webhook adresleri: yolun gizli kısmı (adres yapısı korunur).
+        (re.compile(r"(?i)(\bhooks\.slack\.com/(?:services|workflows|triggers)/)[A-Za-z0-9/_\-]{10,}"),
+         r"\1" + _GIZLI),
+        (re.compile(r"(?i)(\bdiscord(?:app)?\.com/api/webhooks/)[0-9]+/[A-Za-z0-9_\-]{20,}"),
+         r"\1" + _GIZLI),
         # 32+ karakterlik kesintisiz hex/base64 benzeri dizi; en az bir rakam
         # içermeli (uzun snake_case adları ve sözcükleri korumak için). "/"
         # karakter sınıfında yok: dosya yolları maskelenmesin.
@@ -310,14 +368,32 @@ def __getattr__(ad: str):
     raise AttributeError(f"module {__name__!r} has no attribute {ad!r}")
 
 
+def _maske_uygula(metin: str) -> str:
+    for kalip, yerine in _maske_kaliplari():
+        metin = kalip.sub(yerine, metin)
+    return metin
+
+
 def maskele(metin: str) -> str:
-    """API anahtarı/token benzeri dizileri ``[gizli]`` ile değiştirir."""
+    """API anahtarı/token benzeri dizileri ``[gizli]`` ile değiştirir.
+
+    Uyumluluk biçimleri (tam genişlik "ｓｋ－...", matematik harfleri) kalıpları atlatmasın
+    diye ASCII dışı metin NFKC ile de denenir; normalleştirilmiş metin daha çok gizli değer
+    yakalarsa o döner. Sırsız metin değişmeden döner (yazma yolu ``maskele(x) != x`` ile sır
+    arar; yalnız normalleştirme yüzünden yazma reddedilmez).
+    """
     try:
         if not metin:
             return metin if isinstance(metin, str) else ""
-        for kalip, yerine in _maske_kaliplari():
-            metin = kalip.sub(yerine, metin)
-        return metin
+        sonuc = _maske_uygula(metin)
+        if not metin.isascii():
+            import unicodedata
+            normal = unicodedata.normalize("NFKC", metin)
+            if normal != metin:
+                normal_sonuc = _maske_uygula(normal)
+                if normal_sonuc.count(_GIZLI) > sonuc.count(_GIZLI):
+                    return normal_sonuc
+        return sonuc
     except Exception:
         return ""
 

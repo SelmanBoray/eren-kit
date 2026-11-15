@@ -170,9 +170,10 @@ def gunluk(mesaj: str) -> None:
     """Günlük yalnız dosyaya (yazılamazsa stderr'e); stdout protokole ayrılmıştır."""
     satir = f"{datetime.now().isoformat(timespec='seconds')} [{os.getpid()}] {mesaj}\n"
     try:
+        from bellek.izin import ozel_acici, ozel_klasor
         yol = _log_yolu()
-        yol.parent.mkdir(parents=True, exist_ok=True)
-        with open(yol, "a", encoding="utf-8") as f:
+        ozel_klasor(yol.parent, duzelt=False)
+        with open(yol, "a", encoding="utf-8", opener=ozel_acici) as f:
             f.write(satir)
     except Exception:
         try:
@@ -366,8 +367,12 @@ def _yedek_oku(islev: str, *a, onek_uzunlugu: int = 0, **kw) -> dict:
 
 
 def kuyruga_ekle(govde: dict, neden: str) -> Path:
+    from bellek.izin import kisitla, ozel_acici, ozel_klasor
     yol = _kuyruk_yolu()
-    yol.parent.mkdir(parents=True, exist_ok=True)
+    ozel_klasor(yol.parent, duzelt=False)  # POSIX: yeni klasör 0700
+    if not os.environ.get("BELLEK_BEYIN_KUYRUK"):
+        kisitla(yol.parent)  # varsayılan veri klasörü: eski kurulumda da 0700
+    kisitla(yol)
     satir = dict(govde)
     satir["kuyruk_zamani"] = datetime.now().isoformat(timespec="seconds")
     satir["kuyruk_nedeni"] = neden
@@ -375,7 +380,7 @@ def kuyruga_ekle(govde: dict, neden: str) -> Path:
     # Tek write() ile ekle; satır yarım kalmasın diye kısa bir kilit dosyası kullan.
     kilit = yol.with_name(yol.name + ".kilit")
     with _dosya_kilidi(kilit):
-        with open(yol, "ab") as f:
+        with open(yol, "ab", opener=ozel_acici) as f:
             f.write(ham)
             f.flush()
     return yol
@@ -387,7 +392,8 @@ class _dosya_kilidi:
 
     def __enter__(self):
         try:
-            self.f = open(self.yol, "a+b")
+            from bellek.izin import ozel_acici
+            self.f = open(self.yol, "a+b", opener=ozel_acici)
         except OSError:
             return self
         bitis = time.monotonic() + self.sure

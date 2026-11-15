@@ -210,7 +210,15 @@ def baglan(yol: str | os.PathLike[str] | None = None, salt_okunur: bool = False)
         uri = hedef.resolve().as_uri() + "?mode=ro"
         con = sqlite3.connect(uri, uri=True, timeout=5.0)
     else:
-        hedef.parent.mkdir(parents=True, exist_ok=True)
+        from bellek import izin
+
+        izin.ozel_klasor(hedef.parent, duzelt=False)
+        if str(hedef) != ":memory:":
+            # POSIX: veritabanı 0600 oluşur (SQLite -wal/-shm/-journal dosyalarına ana
+            # dosyanın iznini verir); eski kurulumun geniş izinli dosyaları da kısıtlanır.
+            izin.ozel_dosya_olustur(hedef)
+            for ek in ("-wal", "-shm", "-journal"):
+                izin.kisitla(f"{hedef}{ek}")
         con = sqlite3.connect(str(hedef), timeout=5.0)
     con.row_factory = sqlite3.Row
     _normalize_kaydet(con)

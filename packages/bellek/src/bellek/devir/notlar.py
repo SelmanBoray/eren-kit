@@ -78,7 +78,8 @@ def _onbellege_yaz(onbellek: Path, ayar_env: str, yol: Path, damga: list[int],
         if not isinstance(ham, str) or any(c in ham for c in "%$~"):
             return
         klasor = Path(onbellek)
-        klasor.mkdir(parents=True, exist_ok=True)
+        from bellek.izin import ozel_klasor
+        ozel_klasor(klasor)  # hook durum klasörü: POSIX'te yalnız sahibine açık
         hedef = klasor / _KOK_ONBELLEK_ADI
         tmp = klasor / f".{_KOK_ONBELLEK_ADI}.{os.getpid()}.tmp"
         tmp.write_text(json.dumps({"surum": _KOK_ONBELLEK_SURUM, "ayar_env": ayar_env,
@@ -167,12 +168,20 @@ globals().pop("DEVIR_KOK", None)  # reload ayni sozlugu kullanir: eski degeri bi
 OTO_MAX_GUN = 14
 OTO_BUDAMA_GUN = 2 * OTO_MAX_GUN  # otomatik notlar bundan eskiyse diskten silinir
 BITTI_MAX_GUN = 30
+# SessionStart dizininde notlardan gelen alanların üst sınırı (konu 100). Değerler dış
+# kaynaklıdır (paylaşılan/eşlenen vault): her oturumun bağlamına girdikleri için kısa tutulur.
+DIZIN_DURUM_SINIR = 24  # devam | bitti | beklemede; uzun serbest metin kısaltılır
+DIZIN_AD_SINIR = 80
 OTO_MAX_KARAKTER = 1500
 ON_BILGI_OKUMA = 2048  # bayt; on bilgi bunun icinde kalir
 
 
 def _tek_satir(deger, sinir: int = 0) -> str:
-    s = " ".join(str(deger if deger is not None else "").split())
+    """Tek satır: denetim/biçim karakterleri (satır sonları, ESC, yön işaretleri, sıfır
+    genişlikli karakterler) boşluk olur, boşluklar teke iner; ``sinir`` verilirse kısaltılır.
+    Notlardaki dış kaynaklı metin hook çıktısına satır ya da gizli karakter sokamaz."""
+    s = "".join(c if c.isprintable() else " " for c in str(deger if deger is not None else ""))
+    s = " ".join(s.split())
     if sinir and len(s) > sinir:
         s = s[: sinir - 1].rstrip() + "…"
     return s
@@ -453,9 +462,10 @@ def dizin_metni(kok: Path, simdi: datetime, oturum: str | None = None,
                     gosterim = t
             else:
                 gosterim = t
-            ad = f"oto/{n['yol'].name}" if oto_mu else n["yol"].name
+            ad = _tek_satir(f"oto/{n['yol'].name}" if oto_mu else n["yol"].name, DIZIN_AD_SINIR)
+            durum = _tek_satir(n["durum"], DIZIN_DURUM_SINIR) or "bilinmiyor"
             satirlar.append(f"- {gosterim.strftime('%Y-%m-%d %H:%M')} {etiket} {konu} · "
-                            f"{_tek_satir(n['durum'])} · {ad}")
+                            f"{durum} · {ad}")
 
         def ek(dis: int) -> str:
             return f"… ve {dis} not daha dışarıda"

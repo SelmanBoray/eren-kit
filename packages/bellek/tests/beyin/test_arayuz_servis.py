@@ -873,6 +873,27 @@ def test_gelen_karar_duzeltme_gizlilik_yukseltilemez(taze):
         assert OZEL_GELEN_ISARET.encode() not in ui_get(o, yol).ham, yol
 
 
+def test_ana_api_gelen_karar_ayni_duzeltme_suzgeci(taze):
+    """Güvenlik denetimi B7: /api/gelen/<id> (ana belirteç) arayüz yoluyla aynı süzgeçten geçer;
+    düzeltme önerinin metnini ya da gizliliğini değiştiremez, geçerli düzeltme çalışır."""
+    o = taze
+    once = db_ozeti(o["db"])
+    isaret = "ENJEKTE_ana"
+    for duz in ({"dugum_id": o["zeybek"], "metin": isaret},
+                {"ebeveyn": o["muzik"], "baslik": "Sızıntı", "gizlilik": "normal"},
+                {"metin": isaret}, [], {"dugum_id": ""}):
+        r = istek(o, "POST", f"/api/gelen/{o['gelen_normal']}", ui=None, ana=True,
+                  govde={"karar": "kabul", "duzeltme": duz})
+        assert r.kod == 400, (duz, r.kod, r.ham)
+    assert db_ozeti(o["db"]) == once
+    assert gelen_durumu(o["db"], o["gelen_normal"]) == "bekliyor"
+    assert isaret not in _db_dokumu(o["db"])
+    r = istek(o, "POST", f"/api/gelen/{o['gelen_normal']}", ui=None, ana=True,
+              govde={"karar": "kabul", "duzeltme": {"dugum_id": o["zeybek"]}})
+    assert r.kod == 200, (r.kod, r.ham)
+    assert gelen_durumu(o["db"], o["gelen_normal"]) == "kabul"
+
+
 def test_gelen_karar_duzeltme_bicimsiz_400(taze):
     o = taze
     once = db_ozeti(o["db"])

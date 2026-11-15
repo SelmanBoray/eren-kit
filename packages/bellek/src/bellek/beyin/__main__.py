@@ -173,7 +173,9 @@ def main(argv=None) -> int:
             if args.bicim == "md":
                 metin = disa_aktar.markdown_agac(con, ozel_dahil=not args.ozelsiz)
                 if args.cikti:
-                    with open(args.cikti, "w", encoding="utf-8", newline="\n") as f:
+                    from bellek.izin import ozel_acici  # POSIX: yeni döküm dosyası 0600
+                    with open(args.cikti, "w", encoding="utf-8", newline="\n",
+                              opener=ozel_acici) as f:
                         f.write(metin)
                 else:
                     sys.stdout.write(metin)

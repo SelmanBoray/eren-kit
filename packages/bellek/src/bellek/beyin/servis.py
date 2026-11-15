@@ -26,6 +26,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
 
+from bellek import izin
+
 SURUM = 1
 VARSAYILAN_PORT = 47321
 WEB_KOK = Path(__file__).resolve().parent / "web"
@@ -35,6 +37,9 @@ SOKET_ZAMAN_ASIMI = 10.0
 # bayt boyunca okunup atılır; sonra soket kapatılır (bkz. Isleyici.finish).
 BOSALTMA_SURESI = 2.0
 BOSALTMA_SINIRI = 4 * MAX_GOVDE
+# Eşzamanlı bağlantı (= iş parçacığı) üst sınırı. Meşru kullanım: birkaç MCP köprüsü + tarayıcı
+# (sekme başına ≤6 kalıcı bağlantı); 64 bol pay bırakır (bkz. _Sunucu).
+AZAMI_BAGLANTI = 64
 KUYRUK_ARALIK = 60.0
 ISTEK_ID_SINIRI = 10_000
 YAZ_ALANLARI = ("metin", "dugum_id", "ebeveyn", "baslik", "gizlilik", "kaynak")
@@ -113,8 +118,8 @@ _log_kilit = threading.Lock()
 def gunluk(mesaj: str) -> None:
     try:
         yol = _log_yolu()
-        yol.parent.mkdir(parents=True, exist_ok=True)
-        with _log_kilit, open(yol, "a", encoding="utf-8") as f:
+        izin.ozel_klasor(yol.parent, duzelt=False)
+        with _log_kilit, open(yol, "a", encoding="utf-8", opener=izin.ozel_acici) as f:
             f.write(f"{datetime.now().isoformat(timespec='seconds')} {mesaj}\n")
     except Exception:
         pass
@@ -184,8 +189,10 @@ _PORT_DOLU = {errno.EADDRINUSE, 10048}  # 10048: WSAEADDRINUSE
 # ------------------------------------------------------------ belirteç, kilit
 def _belirtec_dosyasi_hazirla(yol: Path, yasak: str | None = None) -> str:
     """Dosya yoksa 32 bayt rastgele hex üretip yazar; değeri döndürür.
-    `yasak` verilirse o değere eşit (ya da boş/kısa) dosyanın üzerine yeni değer yazılır."""
-    yol.parent.mkdir(parents=True, exist_ok=True)
+    `yasak` verilirse o değere eşit (ya da boş/kısa) dosyanın üzerine yeni değer yazılır.
+    POSIX'te dosya 0600 oluşur; eski sürümün bıraktığı geniş izinli dosya da kısıtlanır."""
+    izin.ozel_klasor(yol.parent, duzelt=False)
+    izin.kisitla(yol)
 
     def gecersiz(d: str) -> bool:
         return len(d) < 32 or (yasak is not None and hmac.compare_digest(d.encode("utf-8"), yasak.encode("utf-8")))
@@ -203,7 +210,8 @@ def _belirtec_dosyasi_hazirla(yol: Path, yasak: str | None = None) -> str:
         while yasak is not None and yeni == yasak:
             yeni = secrets.token_hex(32)
         try:
-            with open(yol, "x", encoding="utf-8") as f:  # yarış olursa kazananın değeri okunur
+            # yarış olursa kazananın değeri okunur
+            with open(yol, "x", encoding="utf-8", opener=izin.ozel_acici) as f:
                 f.write(yeni)
             return yeni
         except FileExistsError:
@@ -246,9 +254,9 @@ class TekSurecKilidi:
     """Durum klasöründe kilit dosyası; ikinci servis açılmaz."""
 
     def __init__(self, klasor: Path) -> None:
-        klasor.mkdir(parents=True, exist_ok=True)
+        izin.ozel_klasor(klasor, duzelt=False)
         self.yol = klasor / "beyin_servis.lock"
-        self.f = open(self.yol, "a+b")
+        self.f = open(self.yol, "a+b", opener=izin.ozel_acici)
         try:
             if sys.platform == "win32":
                 import msvcrt
@@ -286,6 +294,7 @@ class IstekDeposu:
         self.yol = yol
         self.kayitlar: OrderedDict[str, dict] = OrderedDict()
         self.satir = 0
+        izin.kisitla(yol)
         try:
             with open(yol, encoding="utf-8", errors="replace") as f:
                 for s in f:
@@ -311,7 +320,7 @@ class IstekDeposu:
     def _yeniden_yaz(self) -> None:
         try:
             gecici = self.yol.with_name(self.yol.name + ".tmp")
-            with open(gecici, "w", encoding="utf-8") as f:
+            with open(gecici, "w", encoding="utf-8", opener=izin.ozel_acici) as f:
                 for i, s in self.kayitlar.items():
                     f.write(json.dumps({"istek_id": i, "sonuc": s}, ensure_ascii=False, default=str) + "\n")
             os.replace(gecici, self.yol)
@@ -327,7 +336,7 @@ class IstekDeposu:
         self.kayitlar.move_to_end(istek_id)
         self._kirp()
         try:
-            with open(self.yol, "a", encoding="utf-8") as f:
+            with open(self.yol, "a", encoding="utf-8", opener=izin.ozel_acici) as f:
                 f.write(json.dumps({"istek_id": istek_id, "sonuc": sonuc}, ensure_ascii=False, default=str) + "\n")
             self.satir += 1
         except OSError as e:
@@ -494,14 +503,15 @@ def _kuyruk_dosyasi_isle(durum: Durum, dosya: Path, islenmis: Path) -> int:
             "dugum_id": d.get("dugum_id"),
         }
         try:
-            with open(islenmis, "a", encoding="utf-8") as f:
+            with open(islenmis, "a", encoding="utf-8", opener=izin.ozel_acici) as f:
                 f.write(json.dumps(kayit, ensure_ascii=False, default=str) + "\n")
         except OSError as e:
             gunluk(f"islenmiş kuyruk yazılamadı: {type(e).__name__}")
     try:
         if kalan:
             gecici = dosya.with_name(dosya.name + ".tmp")
-            gecici.write_text("\n".join(kalan) + "\n", encoding="utf-8")
+            with open(gecici, "w", encoding="utf-8", opener=izin.ozel_acici) as f:
+                f.write("\n".join(kalan) + "\n")
             os.replace(gecici, dosya)
         else:
             dosya.unlink()
@@ -1142,7 +1152,9 @@ def _yapilandir(durum: Durum, belirtec: str, sunucu_ref: list, arayuz_belirtec: 
                 g = self._govde_json()
                 if not isinstance(g.get("karar"), str) or not g["karar"]:
                     raise GecersizIstek("'karar' gerekli")
-                kod, govde = _gelen_karar_uygula(durum, gid, g["karar"], g.get("duzeltme"))
+                # Arayüz yoluyla aynı süzgeç: düzeltme hedefi seçer, önerinin metnini ya da
+                # gizliliğini değiştiremez.
+                kod, govde = _gelen_karar_uygula(durum, gid, g["karar"], _ui_duzeltme(g.get("duzeltme")))
                 return self._json(kod, govde)
             self._hata(404, "bulunamadı")
 
@@ -1162,8 +1174,34 @@ UI_ROTALAR = {
 
 
 class _Sunucu(ThreadingHTTPServer):
+    """Bağlantı başına iş parçacığı; eşzamanlı bağlantı sayısı AZAMI_BAGLANTI ile sınırlı.
+
+    Sınır yokken yerel herhangi bir süreç binlerce boş bağlantı açıp (her biri
+    SOKET_ZAMAN_ASIMI boyunca) binlerce iş parçacığı yaratabilirdi. Sınır doluyken kabul
+    edilen bağlantı yanıtsız kapatılır; kabul döngüsü hiç beklemez.
+    """
     allow_reuse_address = False
     daemon_threads = True
+
+    def __init__(self, *a, **kw) -> None:
+        self._baglanti_sinir = threading.BoundedSemaphore(AZAMI_BAGLANTI)
+        super().__init__(*a, **kw)
+
+    def process_request(self, request, client_address) -> None:
+        if not self._baglanti_sinir.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self._baglanti_sinir.release()
+            raise
+
+    def process_request_thread(self, request, client_address) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._baglanti_sinir.release()
 
     def server_bind(self) -> None:
         if sys.platform == "win32":
@@ -1182,6 +1220,12 @@ class Sunucu:
     """Sunucu + durum + arka plan kuyruk döngüsü + kilit; testlerde ve calistir'da ortak."""
 
     def __init__(self, host: str, port: int) -> None:
+        # POSIX: eski sürümlerin umask izinleriyle (0755/0644) bıraktığı kurulumu düzelt:
+        # veri klasörü 0700, kişisel veri taşıyan dosyalar 0600 (Windows'ta etkisiz).
+        izin.kisitla(_veri_klasoru())
+        for yol in (_kuyruk_yolu(), _log_yolu(),
+                    _kuyruk_yolu().with_name("beyin_kuyruk.islenmis.jsonl")):
+            izin.kisitla(yol)
         self.kilit = TekSurecKilidi(_durum_klasoru())
         self.durum = None
         self.http = None

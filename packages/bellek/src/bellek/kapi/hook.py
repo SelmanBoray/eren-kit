@@ -116,8 +116,9 @@ def _now_iso() -> str:
 def log_error(mesaj: str, env: Mapping[str, str] | None = None) -> None:
     """Hata günlüğü (boyut sınırlı); kendisi de asla istisna fırlatmaz."""
     try:
+        from bellek.izin import ozel_acici, ozel_klasor
         klasor = state_dir(env)
-        os.makedirs(klasor, exist_ok=True)
+        ozel_klasor(klasor)
         yol = os.path.join(klasor, "hook.log")
         try:
             if os.stat(yol).st_size > LOG_MAX_BAYT:
@@ -129,7 +130,7 @@ def log_error(mesaj: str, env: Mapping[str, str] | None = None) -> None:
                     f.write(kuyruk[kes + 1:] if kes >= 0 else kuyruk)
         except FileNotFoundError:
             pass
-        with open(yol, "a", encoding="utf-8", newline="\n") as f:
+        with open(yol, "a", encoding="utf-8", newline="\n", opener=ozel_acici) as f:
             f.write(f"[{_now_iso()}] {mesaj.rstrip()}\n")
     except Exception:
         pass
@@ -278,7 +279,7 @@ def _append_bytes(yol: str, veri: bytes) -> None:
         finally:
             _winapi.CloseHandle(tutamac)
     else:
-        fd = os.open(yol, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o666)
+        fd = os.open(yol, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)  # yalnız sahibi
         try:
             os.write(fd, veri)
         finally:
@@ -308,7 +309,8 @@ def _prepare_agent_dir(onad: str) -> None:
     ajan_klasor = os.path.dirname(onad)
     oturum_klasor = os.path.dirname(ajan_klasor)
     yeni_oturum = not os.path.isdir(oturum_klasor)
-    os.makedirs(ajan_klasor, exist_ok=True)
+    from bellek.izin import ozel_klasor
+    ozel_klasor(ajan_klasor, duzelt=False)  # POSIX: yeni klasörler 0700
     if yeni_oturum:
         _prune_sessions(os.path.dirname(oturum_klasor), os.path.basename(oturum_klasor))
     else:
@@ -320,7 +322,7 @@ def _prepare_agent_dir(onad: str) -> None:
 
 def _create_marker(yol: str) -> None:
     """Harita işaretini atomik oluşturur; zaten varsa FileExistsError fırlatır."""
-    fd = os.open(yol, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    fd = os.open(yol, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     try:
         os.close(fd)
     except OSError:
@@ -361,7 +363,8 @@ def _log_decision(durum: str, kayit: dict, env: Mapping[str, str]) -> None:
     yol = os.path.join(durum, "kapi.jsonl")
     _rotate_log(yol)
     try:
-        os.makedirs(durum, exist_ok=True)
+        from bellek.izin import ozel_klasor
+        ozel_klasor(durum)  # POSIX: eski kurulumun 0755 kapı klasörü de 0700'e iner
         _append_line(yol, kayit)
     except Exception:
         _log_exception("kapi.jsonl yazılamadı", env)

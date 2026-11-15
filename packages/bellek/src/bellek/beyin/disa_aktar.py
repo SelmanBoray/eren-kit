@@ -141,7 +141,9 @@ def jsonl_dok(con, yol) -> int:
     etkin = sorgu._EtkinGizlilik(con)
     sirlar = set()
     n = 0
-    with open(yol, "w", encoding="utf-8", newline="\n") as f:
+    from bellek.izin import ozel_acici  # POSIX: yeni döküm dosyası 0600 (yedekler gibi)
+
+    with open(yol, "w", encoding="utf-8", newline="\n", opener=ozel_acici) as f:
         def yaz(tur, satir):
             nonlocal n
             f.write(json.dumps({"tur": tur, **{k: v for k, v in satir.items() if k != "tur"}},
