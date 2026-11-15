@@ -8,8 +8,15 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 
+type Denetim = { tur: "yok" } | { tur: "uyar" | "dur"; ileti: string };
+
 interface ReleaseImzaPlugin {
   releaseImzaUygula(metin: string): string;
+  eskiAndroidDenetle(
+    projeKoku: string | undefined,
+    argv: string[],
+    bag: { varMi(yol: string): boolean; oku(yol: string): string },
+  ): Denetim;
   AYARLAR: Record<string, string>;
   KONTROL_BAGLANAN_GOREVLER: string;
   BLOK_BASI: string;
@@ -141,5 +148,46 @@ describe("with-release-imza: build.gradle dönüşümü", () => {
     );
     const cikti = releaseImzaUygula(esitli);
     assert.doesNotMatch(govde(govde(sablonAndroid(cikti), "buildTypes"), "release"), /signingConfigs\.debug/);
+  });
+});
+
+describe("with-release-imza: plugin'den önce üretilmiş android/ klasörü", () => {
+  const KOK = join(BURASI, "sahte-proje");
+  const GRADLE = join(KOK, "android", "app", "build.gradle");
+  /** `gradle` null: android/ yok. */
+  const bag = (gradle: string | null) => ({
+    varMi: (yol: string) => gradle !== null && yol === GRADLE,
+    oku: (yol: string) => {
+      assert.equal(yol, GRADLE);
+      return gradle ?? "";
+    },
+  });
+  const cli = (...a: string[]) => ["node", "expo", ...a];
+
+  it("eski android/ ile release yolu durur: run:android --variant release ve Android export:embed", () => {
+    for (const argv of [
+      cli("run:android", "--variant", "release"),
+      cli("run:android", "--variant=Release"),
+      cli("export:embed", "--platform", "android", "--dev", "false"),
+    ]) {
+      const d = plugin.eskiAndroidDenetle(KOK, argv, bag(FIXTURE));
+      assert.equal(d.tur, "dur", argv.join(" "));
+      assert.match(d.tur === "dur" ? d.ileti : "", /expo prebuild -p android --clean/);
+    }
+  });
+
+  it("eski android/ ile debug derlemesi ve başka komutlar yalnız uyarır", () => {
+    for (const argv of [cli("run:android"), cli("run:android", "--variant", "debug"), cli("start")]) {
+      assert.equal(plugin.eskiAndroidDenetle(KOK, argv, bag(FIXTURE)).tur, "uyar", argv.join(" "));
+    }
+    assert.equal(plugin.eskiAndroidDenetle(KOK, cli("export:embed", "--platform", "ios"), bag(FIXTURE)).tur, "uyar");
+  });
+
+  it("prebuild, plugin'i almış android/, android/ yokluğu ve bilinmeyen kök dokunulmaz", () => {
+    const release = cli("run:android", "--variant", "release");
+    assert.equal(plugin.eskiAndroidDenetle(KOK, cli("prebuild", "-p", "android"), bag(FIXTURE)).tur, "yok");
+    assert.equal(plugin.eskiAndroidDenetle(KOK, release, bag(releaseImzaUygula(FIXTURE))).tur, "yok");
+    assert.equal(plugin.eskiAndroidDenetle(KOK, release, bag(null)).tur, "yok");
+    assert.equal(plugin.eskiAndroidDenetle(undefined, release, bag(FIXTURE)).tur, "yok");
   });
 });

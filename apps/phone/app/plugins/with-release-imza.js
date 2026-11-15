@@ -1,3 +1,5 @@
+const fs = require("node:fs");
+const path = require("node:path");
 const { withAppBuildGradle } = require("expo/config-plugins");
 
 // Expo prebuild şablonu release derlemesini herkesin bildiği debug anahtarıyla imzalar
@@ -11,6 +13,7 @@ const { withAppBuildGradle } = require("expo/config-plugins");
 //      keystore'daki sertifika Android debug sertifikasıysa derleme açık bir hatayla durur.
 // Ayar yokken release imza ayarı `null` kalır (kontrol atlansa bile çıktı imzasızdır, debug imzalı değil).
 // Debug derlemesi etkilenmez. Şablon tanınmazsa prebuild durur (sessizce güvencesiz geçmez).
+// Plugin'den önce üretilmiş (bloğu olmayan) bir android/ klasöründe release yolu durur: `eskiAndroidDenetle`.
 
 const BLOK_BASI = "// @generated begin eren-kit-release-imza";
 const BLOK_SONU = "// @generated end eren-kit-release-imza";
@@ -217,7 +220,50 @@ function releaseImzaUygula(gradleMetni) {
   return `${metin.replace(/\n*$/, "\n")}\n${GROOVY_BLOK}`;
 }
 
+/**
+ * Eski `android/` denetimi. Plugin yalnız prebuild'de uygulanır; `expo run:android` `android/` varsa prebuild'i
+ * hiç çalıştırmaz, Gradle de config plugin çalıştırmaz. Plugin'den önce üretilmiş bir `android/` bu yüzden
+ * sessizce debug imzalı release verirdi. Plugin gövdesi ise her config okumasında çalışır (`getConfig`:
+ * `expo run:android`, release paketlemesindeki `expo export:embed`, `expo start`, prebuild); burada bakılır:
+ *   - `android/app/build.gradle` var ve üretilmiş blok yoksa: release yolunda (`run:android` debug dışı
+ *     `--variant` ile ya da Android için `export:embed`) "dur", başka komutta "uyar";
+ *   - prebuild komutu zaten düzeltir: dokunulmaz.
+ * Saf işlev: dosya erişimi `bag` ile verilir.
+ * @returns {{ tur: "yok" } | { tur: "uyar" | "dur", ileti: string }}
+ */
+function eskiAndroidDenetle(projeKoku, argv, bag = { varMi: fs.existsSync, oku: (y) => fs.readFileSync(y, "utf8") }) {
+  if (typeof projeKoku !== "string" || projeKoku === "") return { tur: "yok" };
+  if (argv.includes("prebuild")) return { tur: "yok" };
+  const gradle = path.join(projeKoku, "android", "app", "build.gradle");
+  if (!bag.varMi(gradle) || bag.oku(gradle).includes(BLOK_BASI)) return { tur: "yok" };
+
+  const deger = (ad) => {
+    const i = argv.indexOf(ad);
+    if (i !== -1 && i + 1 < argv.length) return argv[i + 1];
+    const esit = argv.find((a) => a.startsWith(`${ad}=`));
+    return esit === undefined ? undefined : esit.slice(ad.length + 1);
+  };
+  const variant = (deger("--variant") ?? "debug").toLowerCase();
+  const releaseYolu =
+    (argv.includes("run:android") && !["debug", "debugoptimized"].includes(variant)) ||
+    (argv.includes("export:embed") && (deger("--platform") ?? "android") === "android");
+  const ileti =
+    "eren-kit: android/ klasörü release imza plugin'i (plugins/with-release-imza.js) uygulanmadan üretilmiş; " +
+    "bu hâliyle release APK herkesin bildiği Android debug anahtarıyla imzalanır. `expo run:android` android/ varken " +
+    "prebuild'i yeniden çalıştırmaz. Önce `npx expo prebuild -p android --clean` çalıştırın (android/ içindeki elle " +
+    "yapılmış değişiklikler silinir) ya da android/ klasörünü silin; ayrıntı: apps/phone/README.md, \"Release derlemesi ve imza\".";
+  return { tur: releaseYolu ? "dur" : "uyar", ileti };
+}
+
+let eskiAndroidUyarildi = false;
+
 function withReleaseImza(config) {
+  const denetim = eskiAndroidDenetle(config._internal?.projectRoot, process.argv);
+  if (denetim.tur === "dur") throw new Error(denetim.ileti);
+  if (denetim.tur === "uyar" && !eskiAndroidUyarildi) {
+    eskiAndroidUyarildi = true;
+    console.warn(`UYARI: ${denetim.ileti}`);
+  }
   return withAppBuildGradle(config, (cfg) => {
     if (cfg.modResults.language !== "groovy") {
       throw surecDur(`app/build.gradle dili '${cfg.modResults.language}', yalnız groovy destekleniyor.`);
@@ -229,6 +275,7 @@ function withReleaseImza(config) {
 
 module.exports = withReleaseImza;
 module.exports.releaseImzaUygula = releaseImzaUygula;
+module.exports.eskiAndroidDenetle = eskiAndroidDenetle;
 module.exports.AYARLAR = AYARLAR;
 module.exports.KONTROL_BAGLANAN_GOREVLER = KONTROL_BAGLANAN_GOREVLER;
 module.exports.BLOK_BASI = BLOK_BASI;
