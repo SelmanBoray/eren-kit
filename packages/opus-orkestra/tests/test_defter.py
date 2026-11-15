@@ -475,6 +475,124 @@ class GuvenlikTest(GeciciDepo):
         self.assertIn("budanma koruması: refs/orkestra/defter (1 içerik)", ciktilar["durum"])
 
 
+class IcDepoTest(GeciciDepo):
+    """Alt modüldeki yol alt modülün kendi kurallarıyla, index'te olmayan iç içe depodaki yol iki deponun
+    kurallarıyla değerlendirilir; git'in değerlendiremediği bir yol toplu sorguyu yol başına sorguya
+    çevirmez ve `temizle` onu belirsizlik yüzünden silmez."""
+
+    def setUp(self):
+        super().setUp()
+        self.kaynak = tempfile.TemporaryDirectory()
+        s = os.path.realpath(self.kaynak.name)
+        git(s, "init", "-q")
+        git(s, "config", "user.email", "t@example.invalid")
+        git(s, "config", "user.name", "t")
+        for ad, metin in (("s.txt", "alt modül\n"), (".gitignore", "*.gizli\n"), ("izli.gizli", "izlenen\n")):
+            with open(os.path.join(s, ad), "w", encoding="utf-8") as f:
+                f.write(metin)
+        git(s, "add", "s.txt", ".gitignore")
+        git(s, "add", "-f", "izli.gizli")
+        git(s, "commit", "-qm", "alt")
+        git(self.d, "-c", "protocol.file.allow=always", "submodule", "add", "-q", s, "sub")
+        git(self.d, "commit", "-qm", "alt modül")
+
+    def tearDown(self):
+        super().tearDown()
+        self.kaynak.cleanup()
+
+    def cikti(self, *args, girdi=None):
+        return subprocess.run(["git", *args], cwd=self.d, check=True, capture_output=True,
+                              input=girdi).stdout.decode("utf-8", "replace")
+
+    def koruma(self):
+        return self.cikti("ls-tree", "refs/orkestra/defter")
+
+    def test_alt_moduldeki_izlenen_dosya_kaydedilir_okunur_temizlenmez(self):
+        self.yaz_dosya("sub/yeni.txt", "izlenmeyen, yok sayılmayan\n")
+        self.yaz_dosya("sub/x.gizli", "GIZLI_ALT_DEGER\n")
+        rc, out, err = self.run_d("yaz", "--dosya", "sub/s.txt", "--dosya", "sub/izli.gizli", "--dosya",
+                                  "sub/yeni.txt", "--dosya", "sub/x.gizli", "--ozet", "alt modül işi")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("kart yazıldı (3 dosya, 0 kavram; 1 dosya kaydedilmedi)", out)
+        self.assertIn("sub/x.gizli kaydedilmedi: git yok sayıyor", err)  # alt modülün kendi .gitignore'u
+        gizli = self.cikti("hash-object", "--stdin", girdi=b"GIZLI_ALT_DEGER\n").strip()
+        self.assertNotEqual(subprocess.run(["git", "cat-file", "-e", gizli], cwd=self.d,
+                                           capture_output=True).returncode, 0)
+        s_sha = self.cikti("hash-object", "sub/s.txt").strip()
+        self.assertIn(s_sha, self.koruma())
+        out = self.run_d("oku", "sub/s.txt")[1]
+        self.assertIn("alt modül işi", out)
+        self.assertIn("DEĞİŞMEDİ", out)
+        rc, out, err = self.run_d("temizle", "--tut", "0")
+        self.assertEqual(rc, 0, err)
+        self.assertNotIn("git dışı", out)
+        self.assertIn("DEĞİŞMEDİ", self.run_d("oku", "sub/s.txt")[1])
+        self.assertIn(s_sha, self.koruma())
+        self.assertNotIn("git dışı kayıt", self.run_d("durum")[1])
+
+    def test_ic_ice_deponun_kendi_kurallari_da_uygulanir(self):
+        ic = os.path.join(self.d, "ic")
+        os.makedirs(ic)
+        git(ic, "init", "-q")
+        self.yaz_dosya("ic/n.txt", "iç depo\n")
+        self.yaz_dosya("ic/ex.txt", "GIZLI_IC_DEGER\n")
+        with open(os.path.join(ic, ".git", "info", "exclude"), "a", encoding="utf-8") as f:
+            f.write("\nex.txt\n")
+        rc, out, err = self.run_d("yaz", "--dosya", "ic/n.txt", "--dosya", "ic/ex.txt", "--ozet", "iç")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("kart yazıldı (1 dosya, 0 kavram; 1 dosya kaydedilmedi)", out)
+        self.assertIn("ic/ex.txt kaydedilmedi: git yok sayıyor", err)
+        gizli = self.cikti("hash-object", "--stdin", girdi=b"GIZLI_IC_DEGER\n").strip()
+        self.assertNotEqual(subprocess.run(["git", "cat-file", "-e", gizli], cwd=self.d,
+                                           capture_output=True).returncode, 0)
+
+    def test_degerlendirilemeyen_yol_toplu_sorguyu_bozmaz_ve_temizlenmez(self):
+        import importlib.util
+        from unittest import mock
+        os.makedirs(os.path.join(self.d, "src"))
+        yollar = [f"src/f{i:03}.py" for i in range(150)]
+        for y in yollar:
+            self.yaz_dosya(y, f"x = {y!r}\n")
+        git(self.d, "add", "src")
+        git(self.d, "commit", "-qm", "src")
+        s_sha = self.cikti("hash-object", "-w", "sub/s.txt").strip()
+        git(self.d, "submodule", "deinit", "-q", "-f", "sub")  # sub/ boş kalır, gitlink index'te
+        kartlar = [{"yol": s.split("\t")[1], "blob": s.split()[1]}
+                   for s in self.cikti("ls-files", "-s", "src").splitlines()]
+        self.assertEqual([d["yol"] for d in kartlar], yollar)
+        os.makedirs(os.path.join(self.d, ".git", "orkestra"), exist_ok=True)
+        with open(os.path.join(self.d, ".git", "orkestra", "defter.jsonl"), "w", encoding="utf-8") as f:
+            for ozet, ds in (("hepsi", kartlar), ("alt eski", [{"yol": "sub/s.txt", "blob": s_sha}])):
+                f.write(json.dumps({"zaman": "2026-01-01T00:00:00+00:00", "tur": "kart", "ozet": ozet,
+                                    "dosyalar": ds, "kavramlar": []}) + "\n")
+        # Ayrı bir git süreci sayacıyla: yol başına bir check-ignore açılmaz.
+        spec = importlib.util.spec_from_file_location("defter_ic_depo_deneme", DEFTER)
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        komutlar = []
+        asil = m._git_calistir
+
+        def sayan(args, *a, **kw):
+            komutlar.append(args[0])
+            return asil(args, *a, **kw)
+
+        with mock.patch.object(m, "_git_calistir", sayan):
+            sonuc = m.git_disi(self.d, yollar + ["sub/s.txt"])
+        self.assertEqual(list(sonuc), ["sub/s.txt"])
+        self.assertIn("değerlendiremedi", sonuc["sub/s.txt"])
+        self.assertLessEqual(komutlar.count("check-ignore"), 3)
+        # Komut satırından: yaz çalışır, değerlendirilemeyen içerik korunmaz ama kaydı silinmez.
+        rc, out, err = self.run_d("yaz", "--dosya", "src/f000.py", "--ozet", "x")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(len(self.koruma().splitlines()), 150)
+        self.assertNotIn(s_sha, self.koruma())
+        self.assertIn("değerlendiremediği kayıt: 1 (sub/s.txt)", self.run_d("durum")[1])
+        rc, out, err = self.run_d("temizle", "--tut", "0")
+        self.assertEqual(rc, 0, err)
+        self.assertNotIn("git dışı dosya kaydı çıkarıldı", out)
+        self.assertIn("alt eski", self.run_d("oku", "sub/s.txt")[1])
+
+
 # Eşzamanlılık testleri gerçek süreçlerle çalışır. Süreçler önce "hazır" işareti bırakır, hepsi
 # hazır olunca tek bir başlangıç işaretiyle aynı anda bırakılır; böylece çakışma olasılığı yüksek
 # olur. Doğruluk kontrolleri sıralamadan bağımsızdır: hangi süreç önce kilidi alırsa alsın sonuç

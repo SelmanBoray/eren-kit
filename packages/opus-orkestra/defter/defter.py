@@ -35,9 +35,11 @@ içeriği taşır.
 
 Git dışı içerik: defter yalnız git'in görebileceği dosyaları kaydeder. Depo dışı yollar, git'in kendi
 klasörü ve git'in yok saydığı izlenmeyen dosyalar (.gitignore/exclude; ör. `.env`) nesne deposuna hiç
-yazılmaz: `yaz` onları atlar, uyarır, kalan dosyaları kaydeder. Eski sürümün yazdığı böyle kayıtların
+yazılmaz: `yaz` onları atlar, uyarır, kalan dosyaları kaydeder. Alt modüldeki yol alt modülün kendi
+kurallarıyla, index'te olmayan iç içe depodaki yol iki deponun kurallarıyla değerlendirilir; git'in
+değerlendiremediği yol (ör. kaldırılmış alt modül) da kaydedilmez. Eski sürümün yazdığı böyle kayıtların
 içeriği koruma ağacına girmez (her `yaz`/`temizle` ağacı yeniden kurar), `temizle` kayıtları defterden
-çıkarır; nesneyi hemen silmek için ardından `git gc --prune=now`.
+çıkarır (değerlendirilemeyenler hariç); nesneyi hemen silmek için ardından `git gc --prune=now`.
 
 Git güvenliği: git (ve `ollama`) PATH'in mutlak klasörlerinden tam yoluyla çağrılır, çalışma
 klasöründeki `git.exe` çalışmaz. Deponun yapılandırmasındaki dış komutlar çalışmaz: `core.fsmonitor`,
@@ -161,6 +163,98 @@ def _icinde(yol: str, ust: str) -> bool:
         return False
 
 
+DEGERLENDIRILEMEDI = "git bu yolu değerlendiremedi (alt modül ya da iç içe depo olabilir)"
+YOK_SAYILAN = "git yok sayıyor (.gitignore/exclude); izlenmeyen bu içerik git'e yazılmaz"
+_ALT_MODUL_DERINLIK = 8
+
+
+def _toplu_sor(args: tuple[str, ...], k: str, yollar: list[str], alan: int, basarili: tuple[int, ...],
+               env: dict | None = None) -> dict[str, list[str]]:
+    """`git <args> --stdin -z` sorgusunun yol başına `alan` alanlı kayıtları (yol -> alanlar; yollar
+    benzersiz). Git girdiyi sırayla işler ve her yoldan sonra çıktıyı boşaltır (`GIT_FLUSH=1`); bir yol
+    sorguyu düşürürse (ör. `check-ignore` alt modül içindeki yolda) o ana dek basılan kayıtlar alınır,
+    düşüren yol tek başına sorulur ve sorgu ondan sonrasıyla sürer. Böylece değerlendirilemeyen k yol
+    n yollu sorguya yol başına bir süreç değil 2·k süreç ekler. Kaydı alınamayan yol sonuçta yoktur."""
+    ortam = dict(os.environ if env is None else env)
+    ortam["GIT_FLUSH"] = "1"
+    kayit: dict[str, list[str]] = {}
+    i = 0
+    while i < len(yollar):
+        kalan = yollar[i:]
+        rc, cikti = _git_rc(*args, cwd=k, env=ortam, girdi="".join(y + "\0" for y in kalan))
+        alanlar = cikti.split("\0")
+        n = min(len(alanlar) // alan, len(kalan))
+        for j in range(n):
+            kayit[kalan[j]] = alanlar[j * alan:(j + 1) * alan]
+        i += n
+        if rc in basarili or i >= len(yollar):
+            break
+        rc, cikti = _git_rc(*args, cwd=k, env=ortam, girdi=yollar[i] + "\0")
+        alanlar = cikti.split("\0")
+        if rc in basarili and len(alanlar) > alan:
+            kayit[yollar[i]] = alanlar[:alan]
+        i += 1
+    return kayit
+
+
+def _ayni_yol(a: str, b: str) -> bool:
+    return a == b or (os.name == "nt" and a.casefold() == b.casefold())
+
+
+def _ic_depolar(k: str, yollar: list[str]) -> dict[str, tuple[str, bool]]:
+    """`k` deposunun içindeki başka bir deponun yolları -> (o yolu içeren en dıştaki `.git` taşıyan ara
+    klasör, `k`nin index'inde gitlink yani alt modül mü). Git'e yalnız böyle bir klasör varsa sorulur."""
+    var: dict[str, bool] = {}
+    en_dis: dict[str, str] = {}
+    for y in yollar:
+        parcalar = y.split("/")
+        for i in range(1, len(parcalar)):
+            d = "/".join(parcalar[:i])
+            if d not in var:
+                var[d] = os.path.lexists(os.path.join(k, d, ".git"))
+            if var[d]:
+                en_dis[y] = d
+                break
+    if not en_dis:
+        return {}
+    rc, cikti = _git_rc("--literal-pathspecs", "ls-files", "-s", "-z", "--", *sorted(set(en_dis.values())), cwd=k)
+    gitlink = [s.split("\t", 1)[1] for s in cikti.split("\0")
+               if "\t" in s and s.split(None, 1)[0] == "160000"] if rc == 0 else []
+    return {y: (d, any(_ayni_yol(d, g) for g in gitlink)) for y, d in en_dis.items()}
+
+
+def _yok_sayma_nedenleri(k: str, yollar: list[str], derinlik: int = 0) -> dict[str, str]:
+    """`k` deposunun çalışma ağacındaki gerçek göreli yollardan (sembolik bağ ve `.git` içermez) git'in
+    yok saydıkları ya da değerlendiremedikleri -> neden. İzlenen dosya, deseni eşleşse de yok sayılmaz.
+    Alt modül içindeki yolu üst depo değerlendiremez (`check-ignore` sorguyu düşürür) ve git onun için
+    üst deponun kurallarını uygulamaz: o yol yalnız alt modülün kendi deposunda, kendi kurallarıyla
+    (izleme, .gitignore, info/exclude) sorulur. Index'te olmayan iç içe depodaki yol iki depoya da
+    sorulur; biri yok sayıyorsa yok sayılır (üst depo onu zaten içerik olarak görmez)."""
+    nedenler: dict[str, str] = {}
+    ic = _ic_depolar(k, yollar)
+    gruplar: dict[str, list[str]] = {}
+    for y, (d, _) in ic.items():
+        gruplar.setdefault(d, []).append(y)
+    for d, ys in gruplar.items():
+        if derinlik >= _ALT_MODUL_DERINLIK:
+            nedenler.update(dict.fromkeys(ys, DEGERLENDIRILEMEDI))
+            continue
+        alt = _yok_sayma_nedenleri(os.path.join(k, d), [y[len(d) + 1:] for y in ys], derinlik + 1)
+        nedenler.update({f"{d}/{y}": n for y, n in alt.items()})
+    # check-ignore yolu pathspec olarak ayrıştırır (`--literal-pathspecs` desteklemez); ":" ile
+    # başlayan ad "./" ile büyü sayılmaktan korunur. --verbose --non-matching her yola bir kayıt
+    # (kaynak, satır, desen, yol) basar; yok sayılan: desen var ve "!" ile başlamıyor.
+    sorgu = {("./" + y if y.startswith(":") else y): y for y in yollar if not ic.get(y, ("", False))[1]}
+    kayit = _toplu_sor(("check-ignore", "--verbose", "--non-matching", "--stdin", "-z"), k, sorted(sorgu),
+                       4, (0, 1))
+    for q, y in sorgu.items():
+        if q not in kayit:
+            nedenler.setdefault(y, DEGERLENDIRILEMEDI)
+        elif kayit[q][2] and not kayit[q][2].startswith("!"):
+            nedenler[y] = YOK_SAYILAN
+    return nedenler
+
+
 def git_disi(k: str, rels: list[str]) -> dict[str, str]:
     """Defterin içeriğini git'e yazmayacağı yollar -> neden. Kullanıcının bilerek git dışında tuttuğu
     içerik nesne deposuna sabitlenmez (`refs/orkestra/defter` `git push --mirror` ile gider): depo dışı
@@ -182,29 +276,10 @@ def git_disi(k: str, rels: list[str]) -> dict[str, str]:
                 or any(_icinde(gercek, d) for d in git_dizinleri)):
             nedenler[rel] = "git'in kendi klasöründe"
             continue
-        # check-ignore yolu pathspec olarak ayrıştırır (`--literal-pathspecs` desteklemez); ":" ile
-        # başlayan ad "./" ile büyü sayılmaktan korunur.
-        sorulacak.setdefault("./" + g if g.startswith(":") else g, []).append(rel)
+        sorulacak.setdefault(g, []).append(rel)
     if not sorulacak:
         return nedenler
-
-    def yok_sayilan(yollar: list[str]) -> set[str] | None:
-        rc, cikti = _git_rc("check-ignore", "--stdin", "-z", cwd=k, girdi="".join(y + "\0" for y in yollar))
-        return {y for y in cikti.split("\0") if y} if rc in (0, 1) else None
-
-    yollar = sorted(sorulacak)
-    toplu = yok_sayilan(yollar)
-    for g in yollar:
-        if toplu is not None:
-            sonuc = toplu
-        else:  # biri (ör. alt modül içindeki yol) tüm sorguyu düşürdü: tek tek sor
-            sonuc = yok_sayilan([g])
-        if sonuc is None:
-            neden = "git bu yolu değerlendiremedi (alt modül ya da iç içe depo olabilir)"
-        elif g in sonuc:
-            neden = "git yok sayıyor (.gitignore/exclude); izlenmeyen bu içerik git'e yazılmaz"
-        else:
-            continue
+    for g, neden in _yok_sayma_nedenleri(gercek_kok, sorted(sorulacak)).items():
         for rel in sorulacak[g]:
             nedenler[rel] = neden
     return nedenler
@@ -377,21 +452,10 @@ def filtresiz_ortam(k: str, rels: list[str], env: dict | None = None) -> tuple[d
     if not rels:
         return yeni, okunamayan
 
-    def sor(yollar: list[str]) -> list[str] | None:
-        rc, cikti = _git_rc("check-attr", "-z", "--stdin", "filter", cwd=k, env=env,
-                            girdi="".join(r + "\0" for r in yollar))
-        return cikti.split("\0") if rc == 0 else None
-
-    cikti = sor(rels)
-    if cikti is None:  # biri tüm sorguyu düşürdü: tek tek sor
-        cikti = []
-        for r in rels:
-            tek = sor([r])
-            if tek is None:
-                okunamayan.add(r)
-            else:
-                cikti += tek[:3]
-    adlar = sorted({cikti[i] for i in range(2, len(cikti), 3) if cikti[i]})
+    yollar = list(dict.fromkeys(rels))
+    kayit = _toplu_sor(("check-attr", "-z", "--stdin", "filter"), k, yollar, 3, (0,), env=env)
+    okunamayan.update(r for r in yollar if r not in kayit)
+    adlar = sorted({a[2] for a in kayit.values() if a[2]})
     try:
         n = max(0, int(yeni.get("GIT_CONFIG_COUNT") or 0))
     except ValueError:
@@ -655,9 +719,15 @@ def k_durum(a) -> int:
     if bozuk:
         print(f"bozuk satır: {bozuk} (okunamadı, yok sayılıyor; `defter temizle` atar)")
     disarida = _git_disi_guvenli(k, sorted(son_kartlar_dosya_icin(ks)))
-    if disarida:
-        ornek = ", ".join(sorted(disarida)[:5]) + (" ..." if len(disarida) > 5 else "")
-        print(f"git dışı kayıt: {len(disarida)} ({ornek}); içerikleri korunmaz, `defter temizle` çıkarır")
+    belirsiz = sorted(r for r, n in disarida.items() if n == DEGERLENDIRILEMEDI)
+    kesin = sorted(r for r in disarida if r not in belirsiz)
+    if kesin:
+        ornek = ", ".join(kesin[:5]) + (" ..." if len(kesin) > 5 else "")
+        print(f"git dışı kayıt: {len(kesin)} ({ornek}); içerikleri korunmaz, `defter temizle` çıkarır")
+    if belirsiz:
+        ornek = ", ".join(belirsiz[:5]) + (" ..." if len(belirsiz) > 5 else "")
+        print(f"git'in değerlendiremediği kayıt: {len(belirsiz)} ({ornek}); içerikleri korunmaz, "
+              "`defter temizle` çıkarmaz")
     rc, agac = _git_rc("rev-parse", "-q", "--verify", KORUMA_REF, cwd=k)
     if rc == 0:
         n = len(_git("ls-tree", agac.strip(), cwd=k, check=False).splitlines())
@@ -753,8 +823,11 @@ def k_temizle(a) -> int:
         ks, bozuk = kartlar_ve_bozuk(yol)
         # Git dışı yolların kayıtları (eski sürümün kabul ettiği .gitignore'daki ya da depo dışı dosyalar)
         # çıkarılır; aksi halde "her dosyanın en son kaydı tutulur" kuralı onları sonsuza dek taşırdı.
-        disarida = _git_disi_guvenli(k, sorted({str(d.get("yol") or "") for x in ks
-                                                for d in x.get("dosyalar") or [] if isinstance(d, dict)}))
+        # Git'in değerlendiremediği yol (ör. kaldırılmış alt modül, git'in geçici hatası) çıkarılmaz:
+        # içeriği korunmaz ama özeti belirsizlik yüzünden silinmez.
+        disarida = {r: n for r, n in _git_disi_guvenli(k, sorted({
+            str(d.get("yol") or "") for x in ks for d in x.get("dosyalar") or [] if isinstance(d, dict)})).items()
+            if n != DEGERLENDIRILEMEDI}
         cikarilan = 0
         for x in ks if disarida else []:
             ds = x.get("dosyalar") or []
