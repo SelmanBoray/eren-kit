@@ -1,7 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Cleartext yalnız gerekli olduğu için açık: telefonun tek ağ çıkışı, Tailscale "her zaman açık VPN"
-  üzerinden PC eşine kurulan tek ws:// WebSocket soketidir (INTERNET izni yalnız bunun için).
+  Cleartext yalnız gerekli olduğu için açık: uygulama kodunun kendi açtığı ağ bağlantısı, Tailscale
+  "her zaman açık VPN" üzerinden PC eşine kurulan ws:// WebSocket soketidir (INTERNET izni bunun için
+  istenir). Tek ağ çıkışı bu değildir: süreçteki ML Kit kod tarayıcısı kütüphanesinin telemetri
+  bileşeni de ağ kullanabilir; dikte, sistemin konuşma tanıyıcısında (kendi sürecinde) çalışır ve o da
+  ağ kullanabilir. İkisi ölçülmedi.
   Hedef, cihaza özel dinamik bir Tailscale CGNAT adresidir (kişisel veri); sabit alan adı/IP ile
   daraltılamaz, bu yüzden kapsam uygulama geneli base-config'tir. VPN dışı trafik işletim sistemince
   engellenir. TLS'li ws(s):// gerekmez: güven sınırı telefon kapısıdır, taşıma Tailscale'in WireGuard'ı.

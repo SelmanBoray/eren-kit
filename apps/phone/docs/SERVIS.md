@@ -126,7 +126,7 @@ node --disable-warning=ExperimentalWarning kurulum/kur.ts --durum
 node --disable-warning=ExperimentalWarning kurulum/kur.ts --izin-duzelt
 ```
 
-`--izin-duzelt` yalnız veri kökünün iznini daraltır (eren-kit'e ait görünmeyen klasörü de, bilerek) ve çıkar; kurmaz.
+`--izin-duzelt` yalnız veri kökünün iznini daraltır (eren-kit'e ait görünmeyen klasörü de, bilerek) ve çıkar; kurmaz. Daralttığı kök servisin gerçekten kullanacağı köktür: kalıcı kullanıcı ortamındaki `EREN_KIT_DATA_DIR` (yoksa `%LOCALAPPDATA%\eren-kit`), bu kabuktaki değer değil; çünkü Görev Zamanlayıcı'nın başlattığı servis kalıcı ortamı görür. Hangi kökü düzelttiğini terminale yazar; kabuktaki değer farklıysa `UYARI:` satırıyla söyler (servisin açılma hatası bilerek yol yazmaz, bu satır yazar). Kalıcı ortam okunamazsa bu kabuğun kökünü uyarıyla düzeltir; kalıcı değer göreliyse hiçbir şeye dokunmadan durur.
 
 `kur.ts` (seçeneksiz) sırayla şunları yapar; biri düşerse durur, `guncel` değişmez ve çıkış kodu sıfırdan farklıdır:
 
