@@ -592,6 +592,73 @@ class IcDepoTest(GeciciDepo):
         self.assertNotIn("git dışı dosya kaydı çıkarıldı", out)
         self.assertIn("alt eski", self.run_d("oku", "sub/s.txt")[1])
 
+    def sayan_modul(self):
+        """Ayrı yüklenmiş defter modülü ve açtığı git süreçlerinin (komut adı) listesi."""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("defter_surec_sayaci", DEFTER)
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        komutlar = []
+        asil = m._git_calistir
+
+        def sayan(args, *a, **kw):
+            komutlar.append(next(x for x in args if not x.startswith("-")))
+            return asil(args, *a, **kw)
+
+        m._git_calistir = sayan
+        return m, komutlar
+
+    def test_calismayan_ic_depo_yol_basina_surec_acmaz(self):
+        """Taşınmış ana deponun worktree'si: `.git` dosyası artık olmayan bir yolu gösterir, git o klasörde
+        hiç çalışmaz. Oradaki yollar değerlendirilemez sayılır; açılan süreç yol sayısıyla büyümez."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        eski = os.path.join(os.path.realpath(tmp.name), "eski")
+        os.makedirs(eski)
+        git(eski, "init", "-q")
+        with open(os.path.join(eski, ".gitignore"), "w", encoding="utf-8") as f:
+            f.write("zz.gizli\n")
+        with open(os.path.join(eski, "a.py"), "w", encoding="utf-8") as f:
+            f.write("x = 1\n")
+        git(eski, "add", "-A")
+        git(eski, "-c", "user.email=t@example.invalid", "-c", "user.name=t", "commit", "-qm", "ilk")
+        git(eski, "worktree", "add", "-q", ".worktrees/x", "-b", "x")
+        os.makedirs(os.path.join(eski, ".worktrees", "x", "src"))
+        yollar = [f".worktrees/x/src/f{i:03}.py" for i in range(100)]
+        for y in yollar:
+            with open(os.path.join(eski, *y.split("/")), "w", encoding="utf-8") as f:
+                f.write("y = 2\n")
+        yeni = os.path.join(os.path.realpath(tmp.name), "yeni")
+        os.rename(eski, yeni)
+        self.assertNotEqual(subprocess.run(["git", "status"], cwd=os.path.join(yeni, ".worktrees", "x"),
+                                           capture_output=True).returncode, 0)
+        m, komutlar = self.sayan_modul()
+        sonuc = m.git_disi(yeni, ["a.py"] + yollar + ["zz.gizli"])
+        self.assertEqual(sorted(sonuc), sorted(yollar + ["zz.gizli"]))
+        self.assertEqual({sonuc[y] for y in yollar}, {m.DEGERLENDIRILEMEDI})
+        self.assertEqual(sonuc["zz.gizli"], m.YOK_SAYILAN)
+        self.assertLessEqual(len(komutlar), 6, komutlar)
+        # Komut satırından: yaz kaydetmez, uyarır; kalan dosya kaydedilir.
+        p = subprocess.run([sys.executable, DEFTER, "yaz", "--dosya", "a.py", "--dosya", yollar[0], "--ozet", "x"],
+                           cwd=yeni, capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("kart yazıldı (1 dosya, 0 kavram; 1 dosya kaydedilmedi)", p.stdout)
+        self.assertIn("değerlendiremedi", p.stderr)
+
+    def test_ilklenmemis_alt_moduldeki_kayitlar_yol_basina_surec_acmaz(self):
+        """Defter worktree'ler arasında ortaktır; alt modülü ilklenmemiş bir worktree'de (gitlink index'te,
+        `.git` yok) oradaki kayıtlar değerlendirilemez. Açılan süreç bu kayıtların sayısıyla büyümez,
+        alt modülden sonra gelen yollar yine değerlendirilir."""
+        self.yaz_dosya(".gitignore", "zz.gizli\n")
+        git(self.d, "submodule", "deinit", "-q", "-f", "sub")
+        yollar = [f"sub/src/f{i:03}.py" for i in range(100)]
+        m, komutlar = self.sayan_modul()
+        sonuc = m.git_disi(self.d, ["a.py"] + yollar + ["zz.gizli"])
+        self.assertEqual(sorted(sonuc), sorted(yollar + ["zz.gizli"]))
+        self.assertEqual({sonuc[y] for y in yollar}, {m.DEGERLENDIRILEMEDI})
+        self.assertEqual(sonuc["zz.gizli"], m.YOK_SAYILAN)
+        self.assertLessEqual(len(komutlar), 6, komutlar)
+
 
 # Eşzamanlılık testleri gerçek süreçlerle çalışır. Süreçler önce "hazır" işareti bırakır, hepsi
 # hazır olunca tek bir başlangıç işaretiyle aynı anda bırakılır; böylece çakışma olasılığı yüksek

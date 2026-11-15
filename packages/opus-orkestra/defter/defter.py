@@ -37,7 +37,8 @@ Git dışı içerik: defter yalnız git'in görebileceği dosyaları kaydeder. D
 klasörü ve git'in yok saydığı izlenmeyen dosyalar (.gitignore/exclude; ör. `.env`) nesne deposuna hiç
 yazılmaz: `yaz` onları atlar, uyarır, kalan dosyaları kaydeder. Alt modüldeki yol alt modülün kendi
 kurallarıyla, index'te olmayan iç içe depodaki yol iki deponun kurallarıyla değerlendirilir; git'in
-değerlendiremediği yol (ör. kaldırılmış alt modül) da kaydedilmez. Eski sürümün yazdığı böyle kayıtların
+değerlendiremediği yol (ör. kaldırılmış ya da ilklenmemiş alt modül, `.git` dosyası geçersiz kalmış worktree
+gibi git'in çalışamadığı iç depo) da kaydedilmez; böyle yollar sayıca artsa da git'e yol başına sorulmaz. Eski sürümün yazdığı böyle kayıtların
 içeriği koruma ağacına girmez (her `yaz`/`temizle` ağacı yeniden kurar), `temizle` kayıtları defterden
 çıkarır (değerlendirilemeyenler hariç); nesneyi hemen silmek için ardından `git gc --prune=now`.
 
@@ -169,15 +170,22 @@ _ALT_MODUL_DERINLIK = 8
 
 
 def _toplu_sor(args: tuple[str, ...], k: str, yollar: list[str], alan: int, basarili: tuple[int, ...],
-               env: dict | None = None) -> dict[str, list[str]]:
+               env: dict | None = None, ayikla=None) -> dict[str, list[str]]:
     """`git <args> --stdin -z` sorgusunun yol başına `alan` alanlı kayıtları (yol -> alanlar; yollar
     benzersiz). Git girdiyi sırayla işler ve her yoldan sonra çıktıyı boşaltır (`GIT_FLUSH=1`); bir yol
     sorguyu düşürürse (ör. `check-ignore` alt modül içindeki yolda) o ana dek basılan kayıtlar alınır,
     düşüren yol tek başına sorulur ve sorgu ondan sonrasıyla sürer. Böylece değerlendirilemeyen k yol
-    n yollu sorguya yol başına bir süreç değil 2·k süreç ekler. Kaydı alınamayan yol sonuçta yoktur."""
+    n yollu sorguya yol başına bir süreç değil 2·k süreç ekler. Kaydı alınamayan yol sonuçta yoktur.
+    Depo geneli hata (geçersiz `.git` dosyası, başka kullanıcının deposu, bozuk index ya da yapılandırma)
+    girdi okunmadan verilir: hiç kayıt basılmadan düşen sorgu bir kez boş girdiyle denenir, o da düşerse
+    hiçbir yol değerlendirilemez ve sorgu biter. `ayikla(düşen_yol, kalanlar)` verilirse tek başına da
+    düşen yoldan sonra kalanlardan aynı nedenle düşecekleri döndürür (sorulmadan atlanırlar); boş
+    dönerse neden bilinmiyordur, sonraki düşen yollar yine tek tek sorulur."""
     ortam = dict(os.environ if env is None else env)
     ortam["GIT_FLUSH"] = "1"
     kayit: dict[str, list[str]] = {}
+    yollar = list(yollar)
+    calisiyor = False
     i = 0
     while i < len(yollar):
         kalan = yollar[i:]
@@ -189,10 +197,19 @@ def _toplu_sor(args: tuple[str, ...], k: str, yollar: list[str], alan: int, basa
         i += n
         if rc in basarili or i >= len(yollar):
             break
+        if n == 0 and not calisiyor and _git_rc(*args, cwd=k, env=ortam, girdi="")[0] not in basarili:
+            break
+        calisiyor = True
         rc, cikti = _git_rc(*args, cwd=k, env=ortam, girdi=yollar[i] + "\0")
         alanlar = cikti.split("\0")
         if rc in basarili and len(alanlar) > alan:
             kayit[yollar[i]] = alanlar[:alan]
+        elif ayikla is not None:
+            dusen = ayikla(yollar[i], yollar[i + 1:])
+            if dusen:
+                yollar[i + 1:] = [y for y in yollar[i + 1:] if y not in dusen]
+            else:
+                ayikla = None
         i += 1
     return kayit
 
@@ -223,6 +240,23 @@ def _ic_depolar(k: str, yollar: list[str]) -> dict[str, tuple[str, bool]]:
     return {y: (d, any(_ayni_yol(d, g) for g in gitlink)) for y, d in en_dis.items()}
 
 
+def _ayni_alt_modulde(k: str, dusen: str, kalanlar: list[str]) -> set[str]:
+    """`check-ignore`u düşüren `dusen` yolu `k`nin index'indeki bir gitlink'in (alt modül) altındaysa
+    `kalanlar`dan aynı gitlink'in altında olanlar. İlklenmemiş alt modülde (ör. defteri paylaşan başka bir
+    worktree'de; `.git` yok) yolu soracak depo yoktur, üst depo da onu değerlendiremez."""
+    parcalar = dusen.split("/")
+    dizinler = ["/".join(parcalar[:i]) for i in range(1, len(parcalar))]
+    if not dizinler:
+        return set()
+    rc, cikti = _git_rc("--literal-pathspecs", "ls-files", "-s", "-z", "--", *dizinler, cwd=k)
+    gitlink = [s.split("\t", 1)[1] for s in cikti.split("\0")
+               if "\t" in s and s.split(None, 1)[0] == "160000"] if rc == 0 else []
+    g = next((d for d in dizinler if any(_ayni_yol(d, x) for x in gitlink)), None)
+    if g is None:
+        return set()
+    return {q for q in kalanlar if _ayni_yol((q[2:] if q.startswith("./") else q)[:len(g) + 1], g + "/")}
+
+
 def _yok_sayma_nedenleri(k: str, yollar: list[str], derinlik: int = 0) -> dict[str, str]:
     """`k` deposunun çalışma ağacındaki gerçek göreli yollardan (sembolik bağ ve `.git` içermez) git'in
     yok saydıkları ya da değerlendiremedikleri -> neden. İzlenen dosya, deseni eşleşse de yok sayılmaz.
@@ -246,7 +280,7 @@ def _yok_sayma_nedenleri(k: str, yollar: list[str], derinlik: int = 0) -> dict[s
     # (kaynak, satır, desen, yol) basar; yok sayılan: desen var ve "!" ile başlamıyor.
     sorgu = {("./" + y if y.startswith(":") else y): y for y in yollar if not ic.get(y, ("", False))[1]}
     kayit = _toplu_sor(("check-ignore", "--verbose", "--non-matching", "--stdin", "-z"), k, sorted(sorgu),
-                       4, (0, 1))
+                       4, (0, 1), ayikla=lambda q, kalanlar: _ayni_alt_modulde(k, sorgu[q], kalanlar))
     for q, y in sorgu.items():
         if q not in kayit:
             nedenler.setdefault(y, DEGERLENDIRILEMEDI)
