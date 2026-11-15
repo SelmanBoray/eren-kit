@@ -50,16 +50,20 @@ import { connect } from "node:net";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { veriKokuIzniniSagla } from "./izin.ts";
+import type { IzinSonucu } from "./izin.ts";
 import {
   ESKI_KOK_BAYRAGI,
+  VERI_KOKU_ORTAMI,
+  ayniYolMu,
   eskiKurulumSorunlari,
   gorevAdi,
   kaliciOrtamKarsilastir,
   kaliciOrtamOku,
+  servisVeriKoku,
   uygulamaKoku,
   veriKoku,
 } from "./ortam.ts";
-import type { Ortam } from "./ortam.ts";
+import type { KaliciOrtam, Ortam } from "./ortam.ts";
 
 export { uygulamaKoku, veriKoku } from "./ortam.ts";
 
@@ -1603,6 +1607,63 @@ const durumKomutu = async (): Promise<number> => {
   return 0;
 };
 
+export type IzinDuzeltBaglari = {
+  /** Bu kabuğun ortamı. */
+  readonly ortam: Ortam;
+  /** Görev Zamanlayıcı'nın göreceği kalıcı ortam (`kaliciOrtamOku`); null = okunamadı. */
+  readonly kaliciOrtam: () => KaliciOrtam;
+  /** Kökü daraltır (`veriKokuIzniniSagla(kok, …, { bilerek: true })`). */
+  readonly sagla: (kok: string) => IzinSonucu;
+  /** Kullanıcının terminaline bilgi satırı. */
+  readonly yaz: (satir: string) => void;
+  /** Kullanıcının terminaline uyarı satırı. */
+  readonly uyar: (satir: string) => void;
+};
+
+const gercekIzinDuzeltBaglari = (): IzinDuzeltBaglari => ({
+  ortam: process.env,
+  kaliciOrtam: () => kaliciOrtamOku(process.env),
+  sagla: (kok) => veriKokuIzniniSagla(kok, undefined, { bilerek: true }),
+  yaz: (satir) => console.log(satir),
+  uyar: (satir) => console.error(satir),
+});
+
+/**
+ * `--izin-duzelt`: servisin gerçekten kullanacağı veri kökünü daraltır ve hangisi olduğunu terminale yazar.
+ * Görev Zamanlayıcı'nın başlattığı servis kalıcı ortamı görür; kabuktaki `EREN_KIT_DATA_DIR` ondan farklıysa
+ * kabuğun kökü değil servisinki düzeltilir ve fark söylenir (servisin açılma hatası bilerek yol yazmaz).
+ * Kalıcı ortam okunamazsa bu kabuğun kökü, uyarıyla.
+ */
+export const izinDuzeltKomutu = (b: IzinDuzeltBaglari = gercekIzinDuzeltBaglari()): number => {
+  const servis = servisVeriKoku(b.ortam, b.kaliciOrtam());
+  let kok: string;
+  if (servis === null) {
+    kok = veriKoku(b.ortam);
+    b.uyar(
+      `UYARI: kalıcı kullanıcı ortamı okunamadı; servisin göreceği ${VERI_KOKU_ORTAMI} bilinmiyor, bu kabuğun veri kökü düzeltiliyor. ` +
+        "Servis yine açılmazsa kalıcı ortamdaki değeri denetleyin.",
+    );
+  } else {
+    kok = servis;
+    let kabuk: string | null = null;
+    try {
+      kabuk = veriKoku(b.ortam);
+    } catch {
+      kabuk = null; // kabuktaki değer geçersiz; servis onu zaten görmez
+    }
+    if (kabuk === null || !ayniYolMu(kabuk, servis)) {
+      b.uyar(
+        `UYARI: bu kabuğun veri kökü (${kabuk ?? "geçersiz"}) servisinkinden farklı; Görev Zamanlayıcı'nın başlattığı servis ` +
+          `kalıcı ortamı gördüğü için servisin kökü düzeltiliyor. Kabuktaki ${VERI_KOKU_ORTAMI}'i kaldırın ya da kalıcı ortama yazın.`,
+      );
+    }
+  }
+  b.yaz(`Düzeltilen veri kökü (servisin kullanacağı): ${kok}`);
+  const sonuc = b.sagla(kok);
+  if (sonuc === "guvenli") b.yaz(`Veri kökü zaten yalnız bu hesaba, SYSTEM'e ve Administrators'a açık: ${kok}`);
+  return 0;
+};
+
 const calistir = async (argv: readonly string[]): Promise<number> => {
   const bilinen = new Set([
     "--kirli",
@@ -1633,12 +1694,7 @@ const calistir = async (argv: readonly string[]): Promise<number> => {
   }
   try {
     if (argv.includes("--durum")) return await durumKomutu();
-    if (argv.includes("--izin-duzelt")) {
-      const kok = veriKoku(process.env);
-      const sonuc = veriKokuIzniniSagla(kok, undefined, { bilerek: true });
-      if (sonuc === "guvenli") console.log(`Veri kökü zaten yalnız bu hesaba, SYSTEM'e ve Administrators'a açık: ${kok}`);
-      return 0;
-    }
+    if (argv.includes("--izin-duzelt")) return izinDuzeltKomutu();
     if (argv.includes("--yalniz-test")) {
       testKapisi(kaynakKoku());
       console.log("Test kapısı geçti.");

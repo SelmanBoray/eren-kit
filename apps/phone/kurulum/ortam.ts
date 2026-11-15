@@ -172,6 +172,19 @@ export const kaliciOrtamKarsilastir = (
 };
 
 /**
+ * Görev Zamanlayıcı'nın başlattığı servisin kullanacağı veri kökü: kalıcı ortamdaki `EREN_KIT_DATA_DIR`,
+ * yoksa `%LOCALAPPDATA%\eren-kit` (LOCALAPPDATA kullanıcı profilinden gelir, bu süreçten okunur).
+ * Kalıcı ortam okunamadıysa null; kalıcı değer göreliyse `veriKoku` gibi fırlatır.
+ */
+export const servisVeriKoku = (surec: Ortam, kalici: KaliciOrtam): string | null => {
+  if (kalici === null) return null;
+  return veriKoku({
+    LOCALAPPDATA: ortamDegeri(surec, "LOCALAPPDATA"),
+    [VERI_KOKU_ORTAMI]: ortamDegeri(kalici, VERI_KOKU_ORTAMI),
+  });
+};
+
+/**
  * Üç değişkenin kalıcı değerini okur: kullanıcı kapsamı, yoksa makine kapsamı (`REG_EXPAND_SZ`
  * açılmış olarak). Windows PowerShell çalıştırır; okunamazsa null.
  */

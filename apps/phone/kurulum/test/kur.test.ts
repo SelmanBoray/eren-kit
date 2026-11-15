@@ -21,8 +21,10 @@ import {
   servisDogrula,
   temizSurumAdi,
   veriKokuHatasindanCik,
+  izinDuzeltKomutu,
 } from "../kur.ts";
-import type { KokHatasiBag, SurumBilgisi } from "../kur.ts";
+import type { IzinDuzeltBaglari, KokHatasiBag, SurumBilgisi } from "../kur.ts";
+import type { KaliciOrtam, Ortam } from "../ortam.ts";
 
 const kokleri: string[] = [];
 
@@ -538,4 +540,53 @@ test("temizSurumAdi: ilgisiz commit aynı içerik için yeni sürüm üretmez; e
   } finally {
     temizle();
   }
+});
+
+/** `izinDuzeltKomutu` için sahte bağlar: daraltılan kökleri ve terminal satırlarını toplar. */
+function izinDuzeltSahte(ortam: Ortam, kalici: KaliciOrtam) {
+  const daraltilan: string[] = [];
+  const satirlar: string[] = [];
+  const b: IzinDuzeltBaglari = {
+    ortam,
+    kaliciOrtam: () => kalici,
+    sagla: (kok) => {
+      daraltilan.push(kok);
+      return "daraltildi";
+    },
+    yaz: (s) => satirlar.push(s),
+    uyar: (s) => satirlar.push(s),
+  };
+  return { b, daraltilan, satirlar };
+}
+
+test("--izin-duzelt servisin kökünü (kalıcı ortam) daraltır, kabuktakini değil, ve hangisini söyler", () => {
+  const LA = "C:\\ornek\\Yerel";
+  // kabukta geçici farklı kök; kalıcı ortamda başka kök
+  const a = izinDuzeltSahte({ LOCALAPPDATA: LA, EREN_KIT_DATA_DIR: "D:\\kabuk" }, { EREN_KIT_DATA_DIR: "E:\\servis" });
+  assert.equal(izinDuzeltKomutu(a.b), 0);
+  assert.deepEqual(a.daraltilan, ["E:\\servis"]);
+  assert.ok(a.satirlar.some((s) => s.includes("E:\\servis") && s.includes("Düzeltilen veri kökü")));
+  assert.ok(a.satirlar.some((s) => s.startsWith("UYARI:") && s.includes("D:\\kabuk")), "fark söylenir");
+
+  // kabukta değer var, kalıcı ortamda yok: servis varsayılan köke yazar
+  const b = izinDuzeltSahte({ LOCALAPPDATA: LA, EREN_KIT_DATA_DIR: "D:\\kabuk" }, {});
+  izinDuzeltKomutu(b.b);
+  assert.deepEqual(b.daraltilan, [`${LA}\\eren-kit`]);
+
+  // aynı kök: uyarı yok
+  const c = izinDuzeltSahte({ LOCALAPPDATA: LA, EREN_KIT_DATA_DIR: "E:\\servis" }, { EREN_KIT_DATA_DIR: "e:\\servis\\" });
+  izinDuzeltKomutu(c.b);
+  assert.deepEqual(c.daraltilan, ["e:\\servis\\"]);
+  assert.ok(!c.satirlar.some((s) => s.startsWith("UYARI:")));
+
+  // kalıcı ortam okunamadı: kabuğun kökü, uyarıyla
+  const d = izinDuzeltSahte({ LOCALAPPDATA: LA, EREN_KIT_DATA_DIR: "D:\\kabuk" }, null);
+  izinDuzeltKomutu(d.b);
+  assert.deepEqual(d.daraltilan, ["D:\\kabuk"]);
+  assert.ok(d.satirlar.some((s) => s.startsWith("UYARI:") && s.includes("okunamadı")));
+
+  // kalıcı değer göreli: hiçbir şey daraltılmaz
+  const e = izinDuzeltSahte({ LOCALAPPDATA: LA }, { EREN_KIT_DATA_DIR: "goreli" });
+  assert.throws(() => izinDuzeltKomutu(e.b), /mutlak yol/);
+  assert.deepEqual(e.daraltilan, []);
 });
