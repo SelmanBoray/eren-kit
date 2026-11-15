@@ -86,10 +86,11 @@ Parametreler:
 
 Gerekenler: Python 3.11+ (bellek için 3.12+), Claude Code CLI ("claude"), phone için Node 24+.
 Yürütme ilkesi engellerse:  powershell -ExecutionPolicy Bypass -File .\install.ps1
-Yedekler <ClaudeHome>\backups\eren-kit\<zaman> altına alınır. MCP kayıtları "claude" CLI'nin
-kendi kullanıcı yapılandırmasına yazılır (-ClaudeHome'dan bağımsızdır).
+Yedekler <ClaudeHome>\backups\eren-kit\<zaman> altına alınır; değiştirilen settings.json ve MCP
+kayıtlarının (env değerleri dahil) düz metin kopyalarıdır, sır içerebilir ve kaldırmada silinmez.
+MCP kayıtları "claude" CLI'nin kendi kullanıcı yapılandırmasına yazılır (-ClaudeHome'dan bağımsızdır).
 
-Beyin servisi: beyin MCP'si yazmaları yerel servise (python -m bellek.beyin servis) bırakır;
+Beyin servisi: beyin MCP'si yazmaları yerel servise (python -I -m bellek.beyin servis) bırakır;
 servis kapalıyken yazmalar kuyrukta bekler. Kurulum, kullanıcı düzeyinde (yönetici gerekmez)
 "eren-kit-beyin-servis" adlı bir Görev Zamanlayıcı görevi kaydeder: her oturum açılışında
 pythonw ile sessizce başlar, kurulumdan hemen sonra da başlatılır. Tekrar kurulumda görev
@@ -165,6 +166,8 @@ $P = @{
 }
 $P.BellekPy = Join-Path $P.Bellek '.venv\Scripts\python.exe'
 $P.CuwExe = Join-Path $P.ComputerUse '.venv\Scripts\computer-use-windows.exe'
+# Beyin MCP komutu (bkz. 'MCP' adımı: -I neden zorunlu). Testler bu satırı okur.
+$P.BeyinMcp = [string[]]@($P.BellekPy, '-I', '-m', 'bellek.beyin', 'mcp')
 $P.DevirHook = Join-Path $P.Bellek 'src\bellek\devir\hook.py'
 $P.DevirSkill = Join-Path $P.Bellek 'skills\devir'
 $P.KapiHook = Join-Path $P.Bellek 'src\bellek\kapi\hook.py'
@@ -357,7 +360,7 @@ function Invoke-BeyinService {
         return $r
     }
     $r = Install-ServiceTask -Name $ServiceTaskName -PythonW (Join-Path $P.Bellek '.venv\Scripts\pythonw.exe') `
-        -Arguments '-m bellek.beyin servis' -WorkingDirectory $P.Bellek `
+        -Arguments '-I -m bellek.beyin servis' -WorkingDirectory $P.Bellek `
         -Description 'eren-kit: beyin yerel servisi (beyin MCP yazmalarını işler). Kaldırmak: install.ps1 -Uninstall -Components beyin' `
         -ConflictPattern 'bellek\.beyin\s+servis'
     if ($r.Status -eq 'ok' -or $r.Status -eq 'warn') {
@@ -424,7 +427,11 @@ if (-not $Uninstall) {
             }
         },
         @{ Name = 'servis'; Run = { Invoke-BeyinService } },
-        @{ Name = 'MCP'; Run = { Invoke-McpRegister 'beyin' @($P.BellekPy, '-m', 'bellek.beyin', 'mcp') } }
+        # -I zorunlu: MCP sunucusu Claude Code'un açıldığı (güvenilmeyebilecek) klasörde başlar; -I'siz
+        # "-m" o klasörü sys.path'in başına koyar ve oradaki bir "bellek" paketi bizimkinin yerine
+        # çalışır. -I ayrıca PYTHONPATH gibi ortam değişkenlerini yok sayar. Eski (-I'siz) kayıt
+        # yeniden kurulumda bu komutla değiştirilir; doktor onu "güvensiz" diye işaretler.
+        @{ Name = 'MCP'; Run = { Invoke-McpRegister 'beyin' $P.BeyinMcp } }
     )
     $S['devir'] = @(
         @{ Name = 'venv'; Run = { Invoke-Venv $P.Bellek 'packages\bellek' } },
@@ -589,7 +596,9 @@ foreach ($r in $results) {
 if ($script:ServiceNote) { Write-StepLine info $script:ServiceNote }
 if ($script:PhoneNote) { Write-StepLine info $script:PhoneNote }
 $bk = Get-InstallerBackupDir
-if ($bk) { Write-StepLine info ('Yedekler: {0}' -f $bk) }
+if ($bk) {
+    Write-StepLine info ('Yedekler: {0} (eski settings.json ve MCP kayıtları, env değerleri dahil düz metin; sır içerebilir, kaldırma silmez; gerekmiyorsa sil)' -f $bk)
+}
 
 # Gerçek kurulumun sonunda doktor bir kez çalışır. Sonucu yalnız bilgi içindir: kurulumun çıkış
 # kodunu değiştirmez; doktor yoksa ya da çökerse kurulum yine de olduğu gibi biter.

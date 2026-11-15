@@ -116,7 +116,7 @@ def test_plist_icerigi(tmp_path):
     ctx = _ctx(tmp_path, assistant_name="Ada", tailscale_host="mac.tail.ts.net")
     p = im.service_plist(ctx)
     assert p["Label"] == im.SERVICE_LABEL
-    assert p["ProgramArguments"][1:] == ["-m", "bellek.beyin", "servis"]
+    assert p["ProgramArguments"][1:] == ["-I", "-m", "bellek.beyin", "servis"]
     assert p["ProgramArguments"][0].endswith("/packages/bellek/.venv/bin/python")
     assert p["EnvironmentVariables"]["EREN_KIT_ASSISTANT_NAME"] == "Ada"
     assert p["EnvironmentVariables"]["BELLEK_BEYIN_IZINLI_HOST"] == "mac.tail.ts.net"
@@ -307,11 +307,13 @@ def test_servis_kurulum_launchctl_cagrilari(tmp_path, monkeypatch):
 # ---------------------------------------------------------------- MCP sahiplik
 
 def test_mcp_sahiplik_ve_esitlik():
-    cmd = [str(im.P["bellek_py"]), "-m", "bellek.beyin", "mcp"]
+    cmd = [str(im.P["bellek_py"]), *im.BEYIN_MCP_ARGS]
     assert im._entry_owned({"command": cmd[0], "args": cmd[1:]})
     assert not im._entry_owned({"command": "/baska/python", "args": ["x"]})
     assert im._entry_same({"type": "stdio", "command": cmd[0], "args": cmd[1:], "env": {}}, cmd)
-    assert not im._entry_same({"command": cmd[0], "args": cmd[1:], "env": {"A": "1"}}, cmd)
+    # env karşılaştırılmaz: kurulum kullanıcının env'ini korur (yeniden kayıt onu düşürmez).
+    assert im._entry_same({"command": cmd[0], "args": cmd[1:], "env": {"A": "1"}}, cmd)
+    assert not im._entry_same({"command": cmd[0], "args": ["-m", "bellek.beyin", "mcp"]}, cmd)  # eski -I'siz biçim
 
 
 def test_mcp_cli_yoksa_elle_komut_gosterilir(tmp_path):

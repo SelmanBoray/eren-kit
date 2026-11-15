@@ -6,8 +6,11 @@
 --repo         eren-kit deposu (varsayılan: bu betiğin bulunduğu depo).
 --no-network   Canlı sistem sorgusu ve kullanıcı dosyalarından gelen dış süreç yok: servis sağlık
                isteği (/api/saglik), servis görevi (Görev Zamanlayıcı / launchd), "bellek doktor"
-               alt süreci ve hook yorumlayıcısının sürüm yoklaması atlanır. Yalnız dosya denetimleri
-               kalır (telefon:node yalnız sabit adlı "node"u çalıştırır).
+               alt süreci, hook yorumlayıcısının sürüm yoklaması ve depo klasörü izin denetimi
+               (makineye bağlı sonuç) atlanır. Yalnız dosya denetimleri kalır (telefon:node yalnız
+               sabit adlı "node"u çalıştırır).
+Çıplak program adları (python, node) yalnız PATH'in mutlak klasörlerinde aranır; çalışma klasörü
+aranmaz. Windows sistem programları (schtasks, powershell) System32'deki tam yoluyla çağrılır.
 Güvenlik: settings.json / .claude.json'dan okunan bir program yalnız adı açıkça bir Python
 yorumlayıcısıysa (python, python3, pythonX.Y, py; .exe dahil) ve --no-network verilmemişse
 çalıştırılır; diğerleri çalıştırılmaz. Her alt süreç çağrısının zaman aşımı vardır.
@@ -31,7 +34,6 @@ import argparse
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import urllib.error
@@ -139,7 +141,41 @@ def _which(token: str) -> str | None:
         if os.name == "nt" and not p.suffix and p.with_suffix(".exe").is_file():
             return str(p.with_suffix(".exe"))
         return None
-    return shutil.which(token)
+    return _path_which(token)
+
+
+def _path_which(name: str) -> str | None:
+    """Çıplak komut adını yalnız PATH'teki MUTLAK klasörlerde arar.
+
+    shutil.which Windows'ta (3.11'de her zaman, 3.12+'da NoDefaultCurrentDirectoryInExePath
+    tanımlı değilse) önce çalışma klasörüne bakar: doktoru kötü niyetli bir deponun içinden
+    çalıştıran kullanıcıda oradaki git.exe/python.exe gerçek programın yerine çalışırdı. Boş ve
+    göreli PATH girdileri de (çalışma klasörüne göre çözüldükleri için) atlanır.
+    """
+    dirs = []
+    for d in os.environ.get("PATH", "").split(os.pathsep):
+        d = d.strip().strip('"')
+        if d and os.path.isabs(d):
+            dirs.append(d)
+    if os.name == "nt":
+        exts = [e for e in os.environ.get("PATHEXT", ".COM;.EXE;.BAT;.CMD").split(";") if e]
+        names = [name] if any(name.lower().endswith(e.lower()) for e in exts) else [name + e for e in exts]
+    else:
+        names = [name]
+    for d in dirs:
+        for n in names:
+            cand = os.path.join(d, n)
+            if os.path.isfile(cand) and (os.name == "nt" or os.access(cand, os.X_OK)):
+                return cand
+    return None
+
+
+def _system_exe(name: str) -> str:
+    """Windows sistem programının (schtasks, powershell) tam yolu; PATH ve çalışma klasörü aranmaz."""
+    root = os.environ.get("SystemRoot") or os.environ.get("windir") or r"C:\Windows"
+    if name == "powershell":
+        return os.path.join(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+    return os.path.join(root, "System32", f"{name}.exe")
 
 
 def _run(args: list[str], timeout: float, env: dict | None = None) -> subprocess.CompletedProcess:
@@ -562,6 +598,58 @@ def _fmt_cmd(entry: dict) -> str:
     return " ".join(f'"{p}"' if any(c.isspace() for c in p) else p for p in parts)
 
 
+_PY_OPTS_WITH_ARG = set("WX")  # "-W arg", "-X arg": argüman alan (mod dışı) Python seçenekleri
+
+
+def _cwd_code_risk(command: str, args: list, env: dict) -> str | None:
+    """Python komutu, sürecin çalışma klasöründeki bir dosyayı kod olarak yükleyebiliyorsa nedeni.
+
+    MCP sunucuları Claude Code'un açıldığı klasörde başlar. "-m modül" ya da "-c kod" çalışma
+    klasörünü sys.path'in başına koyar (-I ya da -P yoksa, PYTHONSAFEPATH de yoksa); göreli bir
+    betik yolu doğrudan o klasörden okunur. Python dışı programlar (ör. konsol betiği .exe)
+    için None.
+    """
+    if not _is_python_name(command):
+        return None
+    safe = False
+    ignore_env = False
+    toks = [str(a) for a in args]
+    i = 0
+    while i < len(toks):
+        t = toks[i]
+        if t == "--" or t == "-" or not t.startswith("-"):
+            if t == "--":
+                i += 1
+                t = toks[i] if i < len(toks) else ""
+            if t and t != "-" and not _expand(t).is_absolute():
+                return f"betik yolu göreli ({t}); çalışma klasöründen okunur"
+            return None
+        if t.startswith("--"):  # --version, --help ...
+            i += 1
+            continue
+        flags = t[1:]
+        for j, ch in enumerate(flags):
+            if ch in "IP":
+                safe = True
+                if ch == "I":
+                    ignore_env = True
+            elif ch == "E":
+                ignore_env = True
+            elif ch in "mc":
+                env_safe = bool(str((env or {}).get("PYTHONSAFEPATH", "")).strip()) and not ignore_env
+                if safe or env_safe:
+                    return None
+                return (f'"python -{ch}" -I (ya da -P) olmadan çalışıyor; sunucu Claude Code\'u açtığınız '
+                        "klasörü Python arama yolunun başına koyar, oradaki aynı adlı bir paket gerçeğinin "
+                        "yerine çalışır")
+            elif ch in _PY_OPTS_WITH_ARG:
+                if j == len(flags) - 1:
+                    i += 1  # argüman sonraki parçada
+                break
+        i += 1
+    return None
+
+
 def check_mcp(ctx: Ctx, server: str) -> Check:
     name = f"mcp:{server}"
     servers, err = ctx.mcp_servers()
@@ -592,6 +680,11 @@ def check_mcp(ctx: Ctx, server: str) -> Check:
                 return Check(name, ERROR, f"betik dosyası yok: {a} (kayıt: {shown}). {FIX_HINT}")
     owned = any(_under(_expand(str(v)), ctx.repo) for v in [cmd, *args] if isinstance(v, str) and _expand(v).is_absolute())
     note = "" if owned else " (bu --repo dışında)"
+    env = entry.get("env") if isinstance(entry.get("env"), dict) else {}
+    risk = _cwd_code_risk(cmd, args, env)
+    if risk:
+        fix = FIX_HINT if owned else "Kaydı -I ile yeniden ekleyin (claude mcp remove/add)."
+        return Check(name, WARN, f"GÜVENSİZ kayıt: {risk}. Kayıt: {shown}{note}. {fix}")
     return Check(name, OK, f"kayıtlı: {shown}{note}")
 
 
@@ -613,7 +706,7 @@ def _service_hint() -> str:
         return f'Görev Zamanlayıcı\'da "{SERVICE_TASK}" görevini başlatın ya da oturumu yeniden açın'
     if sys.platform == "darwin":
         return f"launchctl kickstart gui/$(id -u)/{SERVICE_LABEL}"
-    return "servisi elle başlatın: python -m bellek.beyin servis"
+    return "servisi elle başlatın: python -I -m bellek.beyin servis"
 
 
 def check_service(ctx: Ctx) -> Check:
@@ -668,7 +761,7 @@ def check_service_task(ctx: Ctx) -> Check:
         return Check(name, OK, "kurulu değil (beyin MCP kaydı yok)")
     if sys.platform == "win32":
         try:
-            r = _run(["schtasks", "/Query", "/TN", SERVICE_TASK, "/XML"], PROBE_TIMEOUT)
+            r = _run([_system_exe("schtasks"), "/Query", "/TN", SERVICE_TASK, "/XML"], PROBE_TIMEOUT)
         except (OSError, subprocess.TimeoutExpired) as e:
             return Check(name, WARN, f"Görev Zamanlayıcı sorgulanamadı ({type(e).__name__})")
         if r.returncode != 0:
@@ -710,6 +803,8 @@ def _bellek_python(ctx: Ctx) -> tuple[str | None, dict]:
         args = [str(a) for a in entry.get("args") or []]
         # .claude.json'dan gelen komut yalnız adı Python yorumlayıcısıysa kullanılır;
         # değilse deponun kendi venv'ine düşülür.
+        while args and args[0] in ("-I", "-P", "-B", "-E", "-s", "-S", "-u"):  # "-I -m bellek.beyin" (güncel biçim)
+            args = args[1:]
         if args[:2] == ["-m", "bellek.beyin"] and _is_python_name(entry["command"]):
             exe = _which(entry["command"])
             env = entry.get("env") if isinstance(entry.get("env"), dict) else {}
@@ -733,7 +828,9 @@ def check_bellek_doctor(ctx: Ctx) -> Check:
     env.update(extra_env)
     env.update({"PYTHONDONTWRITEBYTECODE": "1", "PYTHONIOENCODING": "utf-8"})
     try:
-        r = _run([exe, "-B", "-m", "bellek", "doktor", "--json"], BELLEK_DOCTOR_TIMEOUT, env=env)
+        # -I: "-m bellek" doktorun çalıştığı klasördeki bir "bellek" paketini yüklemesin (kullanıcı
+        # doktoru herhangi bir klasörden çalıştırabilir); BELLEK_* değişkenleri -I'dan etkilenmez.
+        r = _run([exe, "-I", "-B", "-m", "bellek", "doktor", "--json"], BELLEK_DOCTOR_TIMEOUT, env=env)
     except subprocess.TimeoutExpired:
         return Check(name, WARN, f"bellek doktor {BELLEK_DOCTOR_TIMEOUT:.0f} sn içinde bitmedi")
     except OSError as e:
@@ -760,7 +857,7 @@ def check_phone(ctx: Ctx) -> Check:
     phone = ctx.repo / "apps" / "phone"
     if not (phone / "node_modules").is_dir():
         return Check(name, OK, "kurulu değil (apps/phone/node_modules yok)")
-    node = shutil.which("node")
+    node = _path_which("node")
     if node is None:
         return Check(name, WARN, f"telefon bağımlılıkları kurulu ama node bulunamadı; Node {NODE_MIN}+ kurun")
     try:
@@ -773,6 +870,162 @@ def check_phone(ctx: Ctx) -> Check:
     if int(m.group(1)) < NODE_MIN:
         return Check(name, WARN, f"Node {m.group(0)[1:]} çok eski, {NODE_MIN}+ gerekli: {node}")
     return Check(name, OK, f"Node {m.group(0)[1:]}: {node}")
+
+
+# Herkesi kapsayan gruplar (SID -> ad): bunlara yazma izni veren ACE, makinedeki her hesaba izin verir.
+_BROAD_SIDS = {
+    "S-1-1-0": "Everyone",
+    "S-1-5-11": "Authenticated Users",
+    "S-1-5-32-545": "Users",
+    "S-1-5-4": "INTERACTIVE",
+    "S-1-5-32-546": "Guests",
+    "S-1-5-2": "NETWORK",
+    "S-1-5-7": "ANONYMOUS LOGON",
+}
+# Yazma sayılan haklar: WriteData/CreateFiles, AppendData/CreateDirectories, DeleteChild, DELETE,
+# WRITE_DAC, WRITE_OWNER, GENERIC_ALL, GENERIC_WRITE (genel haklar devralınacak ACE'lerde görünür).
+_WRITE_MASK = 0x2 | 0x4 | 0x40 | 0x10000 | 0x40000 | 0x80000 | 0x10000000 | 0x40000000
+
+
+def _rights_text(mask: int) -> str:
+    if mask & 0x10000000 or mask & 0x1F01FF == 0x1F01FF:
+        return "tam denetim"
+    if mask & 0x40000000 or (mask & 0x2 and mask & 0x10000):
+        return "değiştirme"
+    if mask & 0x2:
+        return "yazma"
+    if mask & 0x4:
+        return "klasör oluşturma"
+    return "silme/izin değiştirme"
+
+
+def _broad_writers_windows(path: Path) -> tuple[list[str] | None, str]:
+    """(geniş gruplara yazma veren izinler, hata); liste None ise denetlenemedi.
+
+    DACL Win32 API'siyle (ctypes) okunur: alt süreç yok, hiçbir dosyaya yazılmaz. Devralınacak
+    (yalnız alt öğelere uygulanan) ACE'ler de sayılır: depodaki dosyalar onlardan izin alır.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    class _Acl(ctypes.Structure):
+        _fields_ = [("AclRevision", ctypes.c_ubyte), ("Sbz1", ctypes.c_ubyte), ("AclSize", wintypes.WORD),
+                    ("AceCount", wintypes.WORD), ("Sbz2", wintypes.WORD)]
+
+    class _AceHeader(ctypes.Structure):
+        _fields_ = [("AceType", ctypes.c_ubyte), ("AceFlags", ctypes.c_ubyte), ("AceSize", wintypes.WORD)]
+
+    class _AllowedAce(ctypes.Structure):
+        _fields_ = [("Header", _AceHeader), ("Mask", wintypes.DWORD), ("SidStart", wintypes.DWORD)]
+
+    try:
+        advapi = ctypes.WinDLL("advapi32", use_last_error=True)
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    except (AttributeError, OSError) as e:
+        return None, f"Windows API yüklenemedi ({type(e).__name__})"
+    get_info = advapi.GetNamedSecurityInfoW
+    get_info.argtypes = [wintypes.LPCWSTR, ctypes.c_int, wintypes.DWORD] + [ctypes.POINTER(ctypes.c_void_p)] * 5
+    get_info.restype = wintypes.DWORD
+    get_ace = advapi.GetAce
+    get_ace.argtypes = [ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(ctypes.c_void_p)]
+    get_ace.restype = wintypes.BOOL
+    sid_str = advapi.ConvertSidToStringSidW
+    sid_str.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)]
+    sid_str.restype = wintypes.BOOL
+    local_free = kernel.LocalFree
+    local_free.argtypes = [ctypes.c_void_p]
+    local_free.restype = ctypes.c_void_p
+
+    dacl, sd = ctypes.c_void_p(), ctypes.c_void_p()
+    # SE_FILE_OBJECT = 1, DACL_SECURITY_INFORMATION = 4
+    rc = get_info(str(path), 1, 4, None, None, ctypes.byref(dacl), None, ctypes.byref(sd))
+    if rc != 0:
+        return None, f"ACL okunamadı (Windows hata {rc})"
+    found: dict[str, int] = {}
+    try:
+        if not dacl.value:
+            return ["DACL yok (herkes tam denetimli)"], ""
+        acl = _Acl.from_address(dacl.value)
+        for i in range(acl.AceCount):
+            ace_p = ctypes.c_void_p()
+            if not get_ace(dacl, i, ctypes.byref(ace_p)) or not ace_p.value:
+                continue
+            if _AceHeader.from_address(ace_p.value).AceType != 0:  # ACCESS_ALLOWED_ACE_TYPE
+                continue
+            ace = _AllowedAce.from_address(ace_p.value)
+            if not ace.Mask & _WRITE_MASK:
+                continue
+            buf = ctypes.c_void_p()
+            if not sid_str(ace_p.value + _AllowedAce.SidStart.offset, ctypes.byref(buf)):
+                continue
+            try:
+                sid = ctypes.wstring_at(buf.value)
+            finally:
+                local_free(buf)
+            if sid in _BROAD_SIDS:
+                found[sid] = found.get(sid, 0) | ace.Mask
+    finally:
+        local_free(sd)
+    return [f"{_BROAD_SIDS[s]}: {_rights_text(m)}" for s, m in found.items()], ""
+
+
+
+def _private_group(gid: int) -> bool:
+    """Grup yalnız bu kullanıcının kişisel grubu mu (Linux'taki kullanıcıya özel grup düzeni)?
+    macOS'taki "staff" gibi herkesin üye olduğu grup kişisel sayılmaz."""
+    try:
+        import grp
+        import pwd
+
+        me = pwd.getpwuid(os.getuid()).pw_name
+        g = grp.getgrgid(gid)
+    except (ImportError, KeyError, OSError, AttributeError):
+        return False
+    return g.gr_name == me and all(m == me for m in g.gr_mem)
+
+
+def check_repo_permissions(ctx: Ctx) -> Check:
+    """Depo klasörü başka kullanıcılarca yazılabilir mi? Hook'lar, servis ve MCP sunucuları buradaki
+    kodu kurulumu yapan kullanıcının yetkisiyle çalıştırır; yazabilen başka bir kullanıcı onun
+    adına kod çalıştırır. Tek kullanıcılı makinede zararsızdır, yine de uyarılır."""
+    name = "depo:izin"
+    if not (any(ctx.installed(w) for w in ("mcp:beyin", *HOOK_KEYS))
+            or isinstance(ctx.mcp_entry("computer-use-windows"), dict)):
+        return Check(name, OK, "kurulu değil (eren-kit hook'u ya da MCP kaydı yok)")
+    # Sonuç makineye göre değiştiği için (aynı depo başka makinede başka izinli) yalnız dosya
+    # denetimlerinin kaldığı --no-network kipinde atlanır.
+    if not ctx.network:
+        return Check(name, OK, "atlandı (--no-network)")
+    repo = ctx.repo
+    if not repo.is_dir():
+        return Check(name, WARN, f"depo klasörü yok: {repo}")
+    if os.name == "nt":
+        found, err = _broad_writers_windows(repo)
+        if found is None:
+            return Check(name, WARN, f"depo klasörünün izinleri denetlenemedi: {err}")
+        if not found:
+            return Check(name, OK, f"depo yalnız size (ve yöneticilere) yazılabilir: {repo}")
+        return Check(name, WARN, f"depo klasörü başka kullanıcılarca yazılabilir: {repo} ({'; '.join(found[:4])}). "
+                                 "Hook'lar, beyin servisi ve MCP sunucuları buradaki kodu sizin yetkinizle "
+                                 "çalıştırır; makinede başka hesap varsa depoyu kullanıcı klasörünüze (ör. "
+                                 "%USERPROFILE%\\eren-kit) klonlayıp kurulumu oradan yeniden çalıştırın ya da "
+                                 "bu grupların yazma iznini kaldırın.")
+    import stat
+
+    st = repo.stat()
+    issues = []
+    if st.st_mode & stat.S_IWOTH:
+        issues.append("herkese yazılabilir (o+w)")
+    if st.st_mode & stat.S_IWGRP and not _private_group(st.st_gid):
+        issues.append("gruba yazılabilir (g+w)")
+    getuid = getattr(os, "getuid", None)
+    if getuid is not None and st.st_uid not in (getuid(), 0):
+        issues.append(f"sahibi başka bir kullanıcı (uid {st.st_uid})")
+    if not issues:
+        return Check(name, OK, f"depo yalnız size yazılabilir: {repo}")
+    return Check(name, WARN, f"depo klasörü: {', '.join(issues)}: {repo}. Hook'lar, beyin servisi ve MCP "
+                             "sunucuları buradaki kodu sizin yetkinizle çalıştırır; chmod go-w ile kapatın "
+                             "ya da depoyu kendi kullanıcı klasörünüze klonlayın.")
 
 
 # ------------------------------------------------------------------ çalıştırma
@@ -804,6 +1057,7 @@ def run_checks(claude_home: Path, repo: Path, network: bool = True) -> dict:
         ("servis:gorev", lambda: check_service_task(ctx)),
         ("bellek:doktor", lambda: check_bellek_doctor(ctx)),
         ("telefon:node", lambda: check_phone(ctx)),
+        ("depo:izin", lambda: check_repo_permissions(ctx)),
     ]
     checks = [_safe(n, f) for n, f in plan]
     return {
@@ -829,6 +1083,9 @@ def _setup_streams() -> None:
 
 def main(argv: list[str] | None = None) -> int:
     _setup_streams()
+    if os.name == "nt":
+        # Alt süreçler (bellek doktor vb.) de çıplak program adlarını çalışma klasöründe aramasın.
+        os.environ.setdefault("NoDefaultCurrentDirectoryInExePath", "1")
     p = argparse.ArgumentParser(prog="doktor.py",
                                 description="eren-kit kurulum doktoru (salt okunur denetim)")
     p.add_argument("--json", action="store_true", help="çıktıyı JSON olarak ver")

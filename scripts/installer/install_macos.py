@@ -71,6 +71,14 @@ P["devir_skill"] = P["bellek"] / "skills" / "devir"
 P["ork_hook"] = P["orkestra"] / "hooks" / "opus-orkestra-sessionstart.py"
 P["ork_skill"] = P["orkestra"] / "skill"
 
+# Beyin MCP'si ve servisi yorumlayıcıya "-I" ile verilir: MCP sunucusu Claude Code'un açıldığı
+# (güvenilmeyebilecek) klasörde başlar; -I'siz "-m" o klasörü sys.path'in başına koyar ve oradaki
+# bir "bellek" paketi bizimkinin yerine çalışır. -I ayrıca PYTHONPATH gibi ortam değişkenlerini yok
+# sayar. Eski (-I'siz) kayıt yeniden kurulumda değiştirilir; doktor onu "güvensiz" diye işaretler.
+# install.ps1 ile aynı argümanlar (testler ikisini karşılaştırır).
+BEYIN_MCP_ARGS = ["-I", "-m", "bellek.beyin", "mcp"]
+BEYIN_SERVICE_ARGS = ["-I", "-m", "bellek.beyin", "servis"]
+
 
 # ---------------------------------------------------------------- çıktı
 
@@ -380,11 +388,36 @@ def _entry_owned(entry: dict) -> bool:
 
 
 def _entry_same(entry: dict | None, cmd: list[str]) -> bool:
+    """Kayıt istenen komutla aynı mı? env karşılaştırılmaz: kurulum env yazmaz, var olanı korur."""
     if not entry:
         return False
-    if entry.get("type") not in (None, "stdio") or entry.get("env"):
+    if entry.get("type") not in (None, "stdio"):
         return False
     return [entry.get("command")] + list(entry.get("args") or []) == cmd
+
+
+def _carry_over(entry: dict | None, cmd: list[str]) -> tuple[list[str], dict] | None:
+    """Eski kayıttan yeni kayda taşınacak (kullanıcının ek argümanları, env); install.ps1
+    Get-McpCarryOver ile aynı kural. Eski kayıt aynı programı (dosya adı) çalıştırıyor VE
+    argümanları bizimkilerle (ya da "-I" olmadan yazılmış eski biçimiyle) başlıyorsa kalan
+    argümanlar kullanıcınındır. Biçim tanınmazsa None: hiçbir şey taşınmaz."""
+    if not entry or entry.get("type") not in (None, "stdio") or not isinstance(entry.get("command"), str):
+        return None
+    if Path(entry["command"]).name != Path(cmd[0]).name:
+        return None
+    have = [str(a) for a in entry.get("args") or []]
+    want = list(cmd[1:])
+    variants = [want] + ([[a for a in want if a != "-I"]] if "-I" in want else [])
+    env = entry.get("env") if isinstance(entry.get("env"), dict) else {}
+    for v in variants:
+        if have[: len(v)] == v:
+            return have[len(v):], {str(k): str(val) for k, val in env.items()}
+    return None
+
+
+def _carry_text(extra: list[str], env: dict) -> str:
+    parts = ([f"ek argümanlar: {' '.join(extra)}"] if extra else []) + ([f"env: {', '.join(env)}"] if env else [])
+    return f"; korunan {'; '.join(parts)}" if parts else ""
 
 
 def _mcp_get(name: str) -> dict | None:
@@ -409,13 +442,28 @@ def mcp_register(ctx: Ctx, name: str, cmd: list[str]) -> Step:
     if not ctx.claude_exe:
         return Step("warn", f"claude CLI yok, MCP kaydı atlandı. Sonra elle: {manual}")
     old = _mcp_get(name)
-    if _entry_same(old, cmd):
-        return Step("ok", f"MCP zaten kayıtlı: {name}")
+    # Kullanıcının eski kayda eklediği argümanlar ve env yeni kayda taşınır (sessizce düşmez).
+    carry = _carry_over(old, cmd)
+    extra, env = carry if carry else ([], {})
+    kept = _carry_text(extra, env)
+    lost = ""
+    if old and carry is None:
+        old_env = old.get("env") if isinstance(old.get("env"), dict) else {}
+        lost = (f"; DİKKAT: eski kaydın env değerleri ({', '.join(map(str, old_env))}) ve argümanları yeni kayda "
+                "TAŞINMAZ, yalnız yedekte kalır" if old_env else
+                "; DİKKAT: eski kaydın argümanları yeni kayda TAŞINMAZ, yalnız yedekte kalır")
+    cmd = [*cmd, *extra]
+    if carry is not None and _entry_same(old, cmd):
+        return Step("ok", f"MCP zaten kayıtlı: {name}{kept}")
+    env_args = [a for k, v in env.items() for a in ("-e", f"{k}={v}")]
     foreign = old is not None and not _entry_owned(old)
     if ctx.dry_run:
         if foreign:
-            return Step("warn", f'MCP: "{name}" şu an repo DIŞINI gösteriyor ve değiştirilecek (yedeklenir)')
-        return Step("dry", f"MCP: {'güncellenir' if old else 'eklenir'}: {manual}")
+            return Step("warn", f'MCP: "{name}" şu an repo DIŞINI gösteriyor ve değiştirilecek (yedeklenir) -> '
+                                f"{_fmt(cmd)}{kept}{lost}")
+        if old and lost:
+            return Step("warn", f"MCP: güncellenir: {_fmt(cmd)}{lost}")
+        return Step("dry", f"MCP: {'güncellenir' if old else 'eklenir'}: {manual}{kept}")
     if not Path(cmd[0]).exists():
         raise StepError(f"MCP sunucu programı yok: {cmd[0]}")
     bk = None
@@ -425,7 +473,7 @@ def mcp_register(ctx: Ctx, name: str, cmd: list[str]) -> Step:
         r = run_cmd(ctx, [ctx.claude_exe, "mcp", "remove", name, "-s", "user"], timeout=60)
         if r.returncode != 0:
             raise StepError(f"eski MCP kaydı kaldırılamadı; hiçbir şey değişmedi:\n{tail(r.stdout + r.stderr)}")
-    r = run_cmd(ctx, [ctx.claude_exe, "mcp", "add", name, "-s", "user", "--", *cmd], timeout=60)
+    r = run_cmd(ctx, [ctx.claude_exe, "mcp", "add", name, "-s", "user", *env_args, "--", *cmd], timeout=60)
     if r.returncode != 0:
         why = f"MCP kaydı başarısız:\n{tail(r.stdout + r.stderr)}"
         if old:
@@ -433,8 +481,10 @@ def mcp_register(ctx: Ctx, name: str, cmd: list[str]) -> Step:
             why += "\n      eski kayıt geri yüklendi" if rr.returncode == 0 else f"\n      eski kayıt GERİ YÜKLENEMEDİ; yedek: {bk}"
         raise StepError(why)
     if foreign:
-        return Step("warn", f"MCP kaydedildi: {name}; repo dışını gösteren eski kayıt değiştirildi (yedek: {bk})")
-    return Step("ok", f"MCP {'güncellendi' if old else 'kaydedildi'}: {name} (kullanıcı kapsamı)")
+        return Step("warn", f"MCP kaydedildi: {name}; repo dışını gösteren eski kayıt değiştirildi (yedek: {bk}){kept}{lost}")
+    if old and lost:
+        return Step("warn", f"MCP güncellendi: {name} (yedek: {bk}){lost}")
+    return Step("ok", f"MCP {'güncellendi' if old else 'kaydedildi'}: {name} (kullanıcı kapsamı){kept}")
 
 
 def mcp_unregister(ctx: Ctx, name: str) -> Step:
@@ -473,7 +523,7 @@ def service_plist(ctx: Ctx) -> dict:
         env["BELLEK_BEYIN_IZINLI_HOST"] = host
     return {
         "Label": SERVICE_LABEL,
-        "ProgramArguments": [str(P["bellek_py"]), "-m", "bellek.beyin", "servis"],
+        "ProgramArguments": [str(P["bellek_py"]), *BEYIN_SERVICE_ARGS],
         "WorkingDirectory": str(P["bellek"]),
         "EnvironmentVariables": env,
         "RunAtLoad": True,
@@ -654,7 +704,7 @@ def phone_steps(ctx: Ctx) -> list[Callable[[], Step]]:
 
 
 def build_steps(ctx: Ctx) -> dict[str, list[Callable[[], Step]]]:
-    beyin_cmd = [str(P["bellek_py"]), "-m", "bellek.beyin", "mcp"]
+    beyin_cmd = [str(P["bellek_py"]), *BEYIN_MCP_ARGS]
     if ctx.uninstall:
         return {
             "beyin": [lambda: mcp_unregister(ctx, "beyin"), lambda: service_uninstall(ctx)],
@@ -891,7 +941,8 @@ def main(argv: list[str] | None = None) -> int:
     for k, st, note in results:
         line(st, f"{k}{(': ' + note) if note and st in ('warn', 'fail') else ''}")
     if ctx.backup_used and not ctx.dry_run:
-        line("info", f"Yedekler: {ctx.backup_dir}")
+        line("info", f"Yedekler: {ctx.backup_dir} (eski settings.json ve MCP kayıtları, env değerleri dahil düz "
+                     "metin; sır içerebilir, kaldırma silmez; gerekmiyorsa sil)")
     if not a.dry_run and not a.uninstall and any(st in ("ok", "warn") for _, st, _ in results):
         line("info", "Claude Code'u yeniden başlat; yeni hook, skill ve MCP'ler oturum açılışında yüklenir.")
         if "beyin" in selected:

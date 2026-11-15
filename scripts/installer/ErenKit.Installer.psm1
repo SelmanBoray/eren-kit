@@ -524,17 +524,64 @@ function Test-McpEntryOwned {
     return $false
 }
 
+function Get-McpEnvName {
+    param($EnvObj)
+    if ($null -eq $EnvObj) { return @() }
+    if ($EnvObj -is [hashtable]) { return @($EnvObj.Keys | ForEach-Object { "$_" }) }
+    return @($EnvObj.PSObject.Properties | ForEach-Object { $_.Name })
+}
+
+# Eski kayıttan yeni kayda taşınacaklar: kullanıcının eklediği argümanlar (ör. computer-use
+# "--block x") ve env. Eski kayıt aynı programı (dosya adı) çalıştırıyor VE argümanları bizim
+# argümanlarımızla (ya da "-I" olmadan yazılmış eski biçimiyle) başlıyorsa, kalan argümanlar
+# kullanıcınındır. Biçim tanınmazsa $null: hiçbir şey taşınmaz, çağıran bunu açıkça söyler.
+function Get-McpCarryOver {
+    param($Entry, [string[]]$ServerCommand)
+    if (-not $Entry) { return $null }
+    $type = "$(Get-EntryValue $Entry 'type')"
+    if ($type -and $type -ne 'stdio') { return $null }
+    $cmd = "$(Get-EntryValue $Entry 'command')"
+    if (-not $cmd) { return $null }
+    $leafOld = [IO.Path]::GetFileName(($cmd -replace '/', '\')).ToLowerInvariant()
+    $leafNew = [IO.Path]::GetFileName(($ServerCommand[0] -replace '/', '\')).ToLowerInvariant()
+    if ($leafOld -ne $leafNew) { return $null }
+    $have = @(Get-EntryValue $Entry 'args' | Where-Object { $null -ne $_ } | ForEach-Object { "$_" })
+    $want = @($ServerCommand | Select-Object -Skip 1)
+    $variants = New-Object System.Collections.Generic.List[object]
+    $variants.Add($want)
+    $legacy = @($want | Where-Object { $_ -cne '-I' })
+    if ($legacy.Count -ne $want.Count) { $variants.Add($legacy) }
+    foreach ($v in $variants) {
+        $v = @($v)
+        if ($have.Count -lt $v.Count) { continue }
+        $match = $true
+        for ($i = 0; $i -lt $v.Count; $i++) { if ($have[$i] -cne $v[$i]) { $match = $false; break } }
+        if (-not $match) { continue }
+        $envObj = Get-EntryValue $Entry 'env'
+        if (@(Get-McpEnvName $envObj).Count -eq 0) { $envObj = $null }
+        return [pscustomobject]@{ Extra = [string[]]@($have | Select-Object -Skip $v.Count); Env = $envObj }
+    }
+    return $null
+}
+
+# Taşınanların kısa açıklaması (env yalnız adlarıyla: değerler sır olabilir).
+function Format-McpCarryOver {
+    param($Carry)
+    if (-not $Carry) { return '' }
+    $parts = @()
+    if (@($Carry.Extra).Count -gt 0) { $parts += ('ek argümanlar: {0}' -f (@($Carry.Extra) -join ' ')) }
+    $names = @(Get-McpEnvName $Carry.Env)
+    if ($names.Count -gt 0) { $parts += ('env: {0}' -f ($names -join ', ')) }
+    if ($parts.Count -eq 0) { return '' }
+    return ('; korunan {0}' -f ($parts -join '; '))
+}
+
+# Kayıt istenen komutla aynı mı? env karşılaştırılmaz: kurulum env yazmaz, var olanı korur.
 function Test-McpEntrySame {
     param($Entry, [string[]]$ServerCommand)
     if (-not $Entry) { return $false }
     $type = "$(Get-EntryValue $Entry 'type')"
     if ($type -and $type -ne 'stdio') { return $false }
-    if (Get-EntryValue $Entry 'env') {
-        $e = Get-EntryValue $Entry 'env'
-        $n = 0
-        if ($e -is [hashtable]) { $n = $e.Count } else { $n = @($e.PSObject.Properties).Count }
-        if ($n -gt 0) { return $false }
-    }
     $have = @("$(Get-EntryValue $Entry 'command')") + @(Get-EntryValue $Entry 'args' | Where-Object { $null -ne $_ } | ForEach-Object { "$_" })
     if ($have.Count -ne $ServerCommand.Count) { return $false }
     for ($i = 0; $i -lt $have.Count; $i++) { if ($have[$i] -ne $ServerCommand[$i]) { return $false } }
@@ -545,18 +592,35 @@ function Register-McpServer {
     param([string]$Name, [string[]]$ServerCommand, [string]$RepoRoot)
     $api = Get-McpApi
     $old = & $api.Get $Name
-    $display = Format-McpEntry ([pscustomobject]@{ command = $ServerCommand[0]; args = @($ServerCommand | Select-Object -Skip 1) })
-    if ($old -and (Test-McpEntrySame $old $ServerCommand)) {
-        return New-StepResult ok ('MCP zaten kayıtlı: {0}' -f $Name)
+    # Kullanıcının eski kayda eklediği argümanlar ve env yeni kayda taşınır (sessizce düşmez).
+    $carry = Get-McpCarryOver $old $ServerCommand
+    $target = [string[]]@($ServerCommand)
+    $envObj = $null
+    if ($carry) {
+        $target = [string[]](@($ServerCommand) + @($carry.Extra))
+        $envObj = $carry.Env
+    }
+    $kept = Format-McpCarryOver $carry
+    # Biçimi tanınmayan eski kayıttaki env/argümanlar taşınamaz: bunu açıkça söyle (yedekte kalır).
+    $lost = ''
+    if ($old -and -not $carry) {
+        $lostEnv = @(Get-McpEnvName (Get-EntryValue $old 'env'))
+        if ($lostEnv.Count -gt 0) { $lost = ('; DİKKAT: eski kaydın env değerleri ({0}) ve argümanları yeni kayda TAŞINMAZ, yalnız yedekte kalır' -f ($lostEnv -join ', ')) }
+        else { $lost = '; DİKKAT: eski kaydın argümanları yeni kayda TAŞINMAZ, yalnız yedekte kalır' }
+    }
+    $display = Format-McpEntry ([pscustomobject]@{ command = $target[0]; args = @($target | Select-Object -Skip 1) })
+    if ($old -and $carry -and (Test-McpEntrySame $old $target)) {
+        return New-StepResult ok ('MCP zaten kayıtlı: {0}{1}' -f $Name, $kept)
     }
     $foreign = $old -and -not (Test-McpEntryOwned $old $RepoRoot)
     $oldText = $null
     if ($old) { $oldText = Format-McpEntry $old }
     if ($script:DryRun) {
         if ($foreign) {
-            return New-StepResult warn ('MCP: "{0}" şu an repo DIŞINI gösteriyor ve DEĞİŞTİRİLECEK (eski: {1}; yedeklenir) -> {2}' -f $Name, $oldText, $display)
+            return New-StepResult warn ('MCP: "{0}" şu an repo DIŞINI gösteriyor ve DEĞİŞTİRİLECEK (eski: {1}; yedeklenir) -> {2}{3}{4}' -f $Name, $oldText, $display, $kept, $lost)
         }
-        if ($old) { return New-StepResult dry ('MCP: "{0}" güncellenir (eski: {1}; yedeklenir) -> {2}' -f $Name, $oldText, $display) }
+        if ($old -and $lost) { return New-StepResult warn ('MCP: "{0}" güncellenir (eski: {1}; yedeklenir) -> {2}{3}' -f $Name, $oldText, $display, $lost) }
+        if ($old) { return New-StepResult dry ('MCP: "{0}" güncellenir (eski: {1}; yedeklenir) -> {2}{3}' -f $Name, $oldText, $display, $kept) }
         return New-StepResult dry ('MCP: claude mcp add {0} -s user -- {1}' -f $Name, $display)
     }
     if (-not (Test-Path -LiteralPath $ServerCommand[0])) {
@@ -573,7 +637,7 @@ function Register-McpServer {
             throw ("eski MCP kaydı kaldırılamadı (çıkış {0}); hiçbir şey değiştirilmedi:{1}{2}" -f $r.ExitCode, [Environment]::NewLine, (Format-OutputTail $r.Output))
         }
     }
-    $new = [pscustomobject]@{ type = 'stdio'; command = $ServerCommand[0]; args = @($ServerCommand | Select-Object -Skip 1) }
+    $new = [pscustomobject]@{ type = 'stdio'; command = $target[0]; args = @($target | Select-Object -Skip 1); env = $envObj }
     $r = & $api.Add $Name $new
     if ($r.ExitCode -ne 0) {
         $why = "MCP kaydı başarısız (çıkış {0}):{1}{2}" -f $r.ExitCode, [Environment]::NewLine, (Format-OutputTail $r.Output)
@@ -585,9 +649,10 @@ function Register-McpServer {
         throw $why
     }
     if ($foreign) {
-        return New-StepResult warn ('MCP kaydedildi: {0}; repo dışını gösteren eski kayıt değiştirildi (eski: {1}; yedek: {2})' -f $Name, $oldText, $bkFile)
+        return New-StepResult warn ('MCP kaydedildi: {0}; repo dışını gösteren eski kayıt değiştirildi (eski: {1}; yedek: {2}){3}{4}' -f $Name, $oldText, $bkFile, $kept, $lost)
     }
-    if ($old) { return New-StepResult ok ('MCP kaydı güncellendi: {0} (eski kaydın yedeği: {1})' -f $Name, $bkFile) }
+    if ($old -and $lost) { return New-StepResult warn ('MCP kaydı güncellendi: {0} (eski: {1}; yedek: {2}){3}' -f $Name, $oldText, $bkFile, $lost) }
+    if ($old) { return New-StepResult ok ('MCP kaydı güncellendi: {0} (eski kaydın yedeği: {1}){2}' -f $Name, $bkFile, $kept) }
     return New-StepResult ok ('MCP kaydedildi: {0} (kullanıcı kapsamı)' -f $Name)
 }
 
