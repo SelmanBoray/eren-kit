@@ -249,8 +249,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   rules took quadratic time on long input; every rule now stays under 1 s on 200 KB). Values that
   start with a flag word but go on (`password=None-of-...`) are masked; a context rule no longer
   swallows the keyword and leaves the value in the clear; a password in a URL with a long scheme
-  name is masked; the `mysql`/`sshpass`/`curl` rules match
-  only the command's own options (`ls -pla` or `find -perm` on the same line is not masked); a card
+  name is masked; the `mysql`/`sshpass`/`curl` rules walk
+  the command line word by word (options and positional arguments such as `mysqldump mydb -uroot -pX`
+  or `curl host -u a:X`, quoted commands, `\`-continued lines) and stop at a shell separator or
+  another command name, so `ls -pla` or `find -perm` on the same line is not masked; a card
   number is looked for in every window of a digit run, and a decimal fraction (`0.4111...`) is not
   taken for a card. Outside text that reaches hook
   output (the handoff index, the doc gate's heading map) is stripped of control and invisible
