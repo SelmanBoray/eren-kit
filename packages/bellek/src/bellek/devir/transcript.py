@@ -184,19 +184,71 @@ def _kart_degistir(m: re.Match) -> str:
     Eşleşme ayraçla bitişen başka bir sayıyı da yutmuş olabilir ("4111 ...
     1111 20"); bu durumda yalnız ayraç sınırında biten önekler denenir,
     kalan kısım korunur. Bitişik rakam dizisi bölünmez.
+
+    Eşleşme ayraçlı rakam dizisinin tamamıdır; kart önünde ayraçla bitişen bir
+    sayı da olabilir ("1.4111 1111 ...", "7 4111 1111 ..."). Bu yüzden her grup
+    başından başlayan pencereler denenir (en uzun önce); dizideki her kart
+    gizlenir. Nokta sonrası bitişik kart adayı ondalık kesirdir ("0.4111..."),
+    gizlenmez.
     """
     metin = m.group(0)
-    if not (metin[0] in "23456" or metin.startswith("9792")):
+    gruplar = [(g.start(), g.end()) for g in _RAKAM_GRUBU.finditer(metin)]
+    parcalar: list[str] = []
+    kesim = 0
+    g = 0
+    while g < len(gruplar):
+        h = _kart_penceresi(metin, gruplar, g)
+        if h is None:
+            g += 1
+            continue
+        parcalar += [metin[kesim:gruplar[g][0]], _GIZLI]
+        kesim = gruplar[h][1]
+        g = h + 1
+    if not parcalar:
         return metin
-    konumlar = [i for i, c in enumerate(metin) if c.isdigit()]
-    rakamlar = "".join(metin[i] for i in konumlar)
-    for k in range(min(19, len(rakamlar)), 12, -1):
-        son = konumlar[k - 1] + 1
-        if son < len(metin) and metin[son].isdigit():
-            continue  # grup ortasında kesme
-        if _kart_bicimi(metin[:son]) and _luhn_gecerli(rakamlar[:k]):
-            return _GIZLI + metin[son:]
-    return metin
+    parcalar.append(metin[kesim:])
+    return "".join(parcalar)
+
+
+_RAKAM_GRUBU = re.compile(r"\d+")
+
+
+def _kart_boylari(boylar: list[int]) -> bool:
+    """Grup boyları kart biçimine uyuyor mu (_kart_bicimi'nin ucuz ön süzgeci)."""
+    if len(boylar) == 1:
+        return True
+    if boylar in ([4, 6, 5], [4, 6, 4]):
+        return True
+    return all(b == 4 for b in boylar[:-1]) and 1 <= boylar[-1] <= 4
+
+
+def _kart_penceresi(metin: str, gruplar: list[tuple[int, int]], g: int) -> int | None:
+    """g. gruptan başlayan geçerli kartın son grubunun sırası (yoksa None)."""
+    bas = gruplar[g][0]
+    if not (metin[bas] in "23456" or metin.startswith("9792", bas)):
+        return None
+    boylar: list[int] = []
+    toplam = 0
+    adaylar: list[int] = []
+    for h in range(g, len(gruplar)):
+        b = gruplar[h][1] - gruplar[h][0]
+        toplam += b
+        if toplam > 19:
+            break
+        boylar.append(b)
+        if toplam >= 13 and _kart_boylari(boylar):
+            adaylar.append(h)
+        if boylar[0] != 4 and h > g:
+            break  # çok gruplu biçimlerin hepsi 4'lü grupla başlar
+    nokta = bas > 0 and metin[bas - 1] == "."
+    for h in reversed(adaylar):
+        if nokta and h == g:
+            continue  # "0.4111..." ondalık kesir
+        aday = metin[bas:gruplar[h][1]]
+        # Luhn önce: ucuz ve adayların ~%90'ını eler (_kart_bicimi düzenli ifade çalıştırır).
+        if _luhn_gecerli("".join(metin[a:b] for a, b in gruplar[g:h + 1])) and _kart_bicimi(aday):
+            return h
+    return None
 
 
 _ISO_TARIH = re.compile(r"(?:19|20)\d\d-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])")
@@ -229,6 +281,9 @@ def _tc_degistir(m: re.Match) -> str:
 
 
 _HARF = "a-zçğıöşü"
+# Komut satırı seçenek değeri: tırnaklı (sınırlı uzunluk: kapanmayan tırnak her
+# başlangıçta metnin sonuna dek taranmasın) ya da "-" ile başlamayan sözcük.
+_KOMUT_DEGER = r"""(?:"[^"\n]{0,200}"|'[^'\n]{0,200}'|[^\s\-]\S*+)"""
 _MASKE_ONBELLEK: list[tuple[re.Pattern[str], object]] | None = None
 
 
@@ -261,43 +316,32 @@ def _maske_derle() -> list[tuple[re.Pattern[str], object]]:
             rf"|(?:şifre|sifre|güvenlik|guvenlik|onay|doğrulama|dogrulama|sms)\s+kod[{_HARF}]*)"
             rf"(?:'?(?:si|sı|su|sü|im|ım|um|üm|in|ın|un|ün|i|ı|u|ü|m|n|e|a|de|da|le|la|ni|nı))?)"
             rf"(?![{_HARF}])"
-            rf"((?:[\s:=()\[\]\-–]*[^\s\d:=()\[\]]{{1,24}}?[)\]]?){{0,3}}?[\s:=()\[\]\-–]*)"
+            # Ayraç ve sözcük parçaları iyelikli (*+, {{1,24}}+): sözcük sınıfı "-"yi de
+            # kapsadığından geri izlemeli biçim "pin-pin-pin-..." gibi girdide her
+            # başlangıçta binlerce bölüntü deniyordu (4 KB'ta saniyeler).
+            rf"((?:[\s:=()\[\]\-–]*+[^\s\d:=()\[\]]{{1,24}}+){{0,3}}?[\s:=()\[\]\-–]*+)"
             rf"(?<![0-9])\d{{3,6}}(?![\d.,/:\-]\d|\d)"),
          r"\1\2" + _GIZLI),
         # Anahtar sözcüklü TC kimlik no: sağlama aranmaz (bağlam açık).
         (re.compile(
             rf"(?i)(?<![{_HARF}0-9])(t\.?\s?c\.?(?:\s?kimlik)?(?:\s?no)?|tckn|"
-            rf"kimlik\s?(?:no|numarası|numaram)?)(\s*[:=]?\s*)"
+            rf"kimlik\s?(?:no|numarası|numaram)?)(\s*+[:=]?\s*+)"
             rf"(?:\d{{11}}|\d{{3}}[ \-]\d{{3}}[ \-]\d{{3}}[ \-]\d{{2}})(?!\d)"),
          r"\1\2" + _GIZLI),
         # Kart numarası: 13-19 hane, boşluk/tire/nokta ayraçlı; Luhn ve grup biçimiyle
         # doğrulanır (ondalık sayı, sürüm, IP biçimleri _kart_bicimi'nde elenir).
-        (re.compile(r"(?<![\d\-])(?<!\d\.)\d(?:[ \-.]?\d){12,18}(?![\d])"), _kart_degistir),
+        # Aday ayraçlı rakam dizisinin tamamıdır (iyelikli): 19 haneyle kesilseydi
+        # öndeki bir sayı ("1.", "7 ") kartı pencerenin dışına iterdi.
+        (re.compile(r"(?<![\d\-])(?<!\d\.)\d(?:[ \-.]?\d){12,}+"), _kart_degistir),
         # Anahtar sözcüksüz 11 haneli sayı: yalnız TC algoritmasından geçerse.
         (re.compile(r"(?<![\d.,\-])[1-9]\d{10}(?![\d])"), _tc_degistir),
         # URL'deki kullanıcı:parola -> scheme://kullanici:[gizli]@
-        # Şema adı sınırlı (≤32): sınırsız olsaydı "a-a-a-..." gibi uzun dizide her
-        # sözcük sınırından sona dek taranır, süre ikinci dereceden büyürdü.
-        (re.compile(r"(?i)\b([a-z][a-z0-9+.\-]{0,31}://[^\s:/@]+:)[^\s@/]+@"),
+        # Şema adı sınırlı (≤32) ve başlangıç çapasız: sınırsız olsaydı "a-a-a-..."
+        # gibi uzun dizide her sözcük sınırından sona dek taranır, süre ikinci
+        # dereceden büyürdü; çapasız olduğu için 32'den uzun şema adının son 32
+        # karakterinden eşleşir, parola yine gizlenir.
+        (re.compile(r"(?i)([a-z][a-z0-9+.\-]{0,31}://[^\s:/@]+:)[^\s@/]+@"),
          r"\1" + _GIZLI + "@"),
-        # e-posta:parola -> e-posta korunur. Değer boşluğa ya da metin sonuna dek
-        # sürer, "/" içermez (git@host:grup/repo dokunulmaz), en az 4 karakterdir,
-        # rakam ya da simge içerir; yalnız 1-5 rakamsa (port) dokunulmaz.
-        (re.compile(r"(?<![A-Za-z0-9._%+\-])([A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}:)"
-                    r"(?!\d{1,5}(?!\S))(?=[^\s/]*[0-9!@#$%^&*?_+=])[^\s/]{4,}(?!\S)"),
-         r"\1" + _GIZLI),
-        # Komut satırında parola: mysql/mariadb -pDEĞER (bitişik; "-p" tek başına
-        # parola sorar, -P port), sshpass -p DEĞER, curl -u kullanıcı:DEĞER.
-        (re.compile(r"(\b(?:mysql|mysqldump|mysqladmin|mysqlimport|mysqlcheck|mariadb"
-                    r"(?:-dump|-admin)?)(?:\.exe)?\b[^\n]{0,200}?\s-p)[^\s\-]\S*"),
-         r"\1" + _GIZLI),
-        (re.compile(r"(\bsshpass\b[^\n]{0,100}?\s-p\s*)[^\s\-]\S*"), r"\1" + _GIZLI),
-        (re.compile(r"(\bcurl\b[^\n]{0,300}?\s(?:-u|--user)[\s=]+[^\s:]+:)[^\s:]\S*"),
-         r"\1" + _GIZLI),
-        # HTTP Authorization başlığı (Basic/Token; Bearer aşağıda ayrıca).
-        (re.compile(r"(?i)(\bauthorization[\"']?\s*[:=]\s*[\"']?(?:basic|token)\s+)"
-                    r"[A-Za-z0-9+/._~\-]{8,}=*"),
-         r"\1" + _GIZLI),
         # JWT (base64url '{"' = eyJ), kısa olanlar da
         (re.compile(r"\beyJ[A-Za-z0-9_\-]{8,}(?:\.[A-Za-z0-9_\-]*){0,2}"), _GIZLI),
         # anahtar=deger / anahtar: deger -> anahtar korunur, değer gizlenir.
@@ -307,14 +351,18 @@ def _maske_derle() -> list[tuple[re.Pattern[str], object]]:
         # ortam değişkeninde önek bitişik olabilir: PGPASSWORD=, GHTOKEN= (camelCase
         # isPassword: true ya da bypass= sayılmaz). Anahtar tırnaklı olabilir:
         # {"password": "..."} ("path-key": gibi son ekli anahtar tırnaklıyken sayılmaz).
-        # Değer true/false/null/none ise dokunulmaz (ayar bayrağı, sır değil).
+        # Değer yalnız true/false/null/none/nil/undefined ise (ardından en çok kapanış
+        # noktalaması) dokunulmaz: ayar bayrağı, sır değil. "None-of-x9", "null!x9Q",
+        # "True#2024x" gibi bu sözcükle başlayıp süren değerler gizlenir.
         (re.compile(
             r"(?i)(?<![a-z0-9çğıöşü])"
             r"((?:(?-i:[A-Z]+(?:PASSWORD|PASSWD|SECRET|TOKEN))|password|passwd|pwd|"
             r"passphrase|pass|secret|token|api[_-]?key|access[_-]?key|private[_-]?key)[\"']?"
             r"|(?<=[_\-])key"
             r"|(?:parola|şifre|sifre)(?:m|n|si|sı|miz|mız|niz|nız)?[\"']?)"
-            r"(\s*[:=]\s*)(?!(?:true|false|null|none|nil|undefined)\b)(\"[^\"]*\"|'[^']*'|\S+)"),
+            r"(\s*[:=]\s*)"
+            r"(?!(?:true|false|null|none|nil|undefined)[,;.)\]}\"'`]*+(?!\S))"
+            r"(\"[^\"]*\"|'[^']*'|\S+)"),
          r"\1\2" + _GIZLI),
         # boşlukla ayrılan parola: "password is hunter2", "parolam 1234".
         # Yanlış pozitifi önlemek için değer en az 4 karakter olmalı ve rakam ya
@@ -351,6 +399,42 @@ def _maske_derle() -> list[tuple[re.Pattern[str], object]]:
         # karakter sınıfında yok: dosya yolları maskelenmesin.
         (re.compile(r"(?<![A-Za-z0-9+_\-])(?=[A-Za-z_\-+]*[0-9])"
                     r"[A-Za-z0-9+_\-]{32,}={0,2}(?![A-Za-z0-9+_\-])"), _GIZLI),
+        # Bağlamlı yeni kurallar (e-posta:parola, komut satırı, Authorization) en
+        # sonda: önde olsalardı "curl -u a:password=X", "<e-posta>:token=X" gibi
+        # metinde anahtar sözcüğü kendi değerleri sanıp yutar, asıl değeri anahtar=değer
+        # kuralından kaçırırlardı.
+        # e-posta:parola -> e-posta korunur. Değer boşluğa ya da metin sonuna dek
+        # sürer, "/" içermez (git@host:grup/repo dokunulmaz), en az 4 karakterdir,
+        # rakam ya da simge içerir; yalnız 1-5 rakamsa (port) dokunulmaz.
+        # Doğrusal süre: eşleşme yalnız boşluk/"/" sonrası parça başında başlar,
+        # parçanın boşlukla ya da metin sonuyla bittiği bir kez denetlenir, e-posta
+        # parça içinde tembel önekle aranır (önek grup 1'de korunur). Çapasız
+        # biçim "<e-posta>:<e-posta>:...<e-posta>:/" girdisinde her e-postadan sona dek tarayıp
+        # geri izliyordu (56 KB'ta onlarca saniye).
+        (re.compile(r"(?<![^\s/])(?=[^\s/]*+(?!\S))"
+                    r"([^\s/]*?(?<![A-Za-z0-9._%+\-])[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}:)"
+                    r"(?!\d{1,5}(?!\S))(?=[^\s/]*[0-9!@#$%^&*?_+=])[^\s/]{4,}+(?!\S)"),
+         r"\1" + _GIZLI),
+        # Komut satırında parola: mysql/mariadb -pDEĞER (bitişik; "-p" tek başına
+        # parola sorar, -P port), sshpass -p DEĞER, curl -u kullanıcı:DEĞER.
+        # Komutla bayrak arasında yalnız seçenekler (değerleriyle) bulunabilir:
+        # "mysql ayarlarını yaptım; ls -pla" ya da "find /var -perm" gibi aynı
+        # satırdaki başka komutun bayrağı parola sayılmaz.
+        (re.compile(r"(\b(?:mysql|mysqldump|mysqladmin|mysqlimport|mysqlcheck|mariadb"
+                    r"(?:-dump|-admin)?)(?:\.exe)?\b"
+                    rf"(?:\s+-\S*+(?:\s+{_KOMUT_DEGER})?){{0,12}}?\s+-p)[^\s\-`,;)|&>]\S*"),
+         r"\1" + _GIZLI),
+        (re.compile(rf"(\bsshpass\b(?:\s+(?:-[vhe]\b|-[fdP]\s*{_KOMUT_DEGER})){{0,6}}?\s+-p\s*)"
+                    r"[^\s\-`,;)|&>]\S*"),
+         r"\1" + _GIZLI),
+        (re.compile(r"(\bcurl\b"
+                    rf"(?:\s+(?:-\S*+(?:\s+{_KOMUT_DEGER})?|[A-Za-z][A-Za-z0-9+.\-]*+://\S*+)){{0,16}}?"
+                    r"\s+(?:-u|--user[\s=])\s*[^\s:]+:)[^\s:]\S*"),
+         r"\1" + _GIZLI),
+        # HTTP Authorization başlığı (Basic/Token; Bearer yukarıda ayrı kuralda).
+        (re.compile(r"(?i)(\bauthorization[\"']?\s*[:=]\s*[\"']?(?:basic|token)\s+)"
+                    r"[A-Za-z0-9+/._~\-]{8,}=*"),
+         r"\1" + _GIZLI),
     ]
 
 
