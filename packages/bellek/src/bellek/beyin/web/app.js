@@ -115,7 +115,7 @@ function girisGoster(yetkisiz) {
       (el.querySelector('.giris-kart') || el).appendChild(not);
     }
     not.textContent = 'Anahtar artık geçerli değil; beyin servisi yeniden başlamış olabilir. '
-      + 'Terminalde python -m bellek.beyin ac komutuyla arayüzü yeniden aç.';
+      + 'Terminalde python -I -m bellek.beyin ac komutuyla arayüzü yeniden aç.';
   }
   el.hidden = false;
 }
