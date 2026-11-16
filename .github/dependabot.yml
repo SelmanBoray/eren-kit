@@ -22,6 +22,11 @@ updates:
       npm-minor-patch:
         applies-to: version-updates
         update-types: [minor, patch]
+    # react ve react-native sürümünü Expo SDK tam olarak sabitliyor; yalnız SDK yükseltmesiyle
+    # (npx expo install --fix) değişmeli, Dependabot dokunmasın.
+    ignore:
+      - dependency-name: "react"
+      - dependency-name: "react-native"
 
   # Python paketleri (pyproject.toml).
   - package-ecosystem: pip
