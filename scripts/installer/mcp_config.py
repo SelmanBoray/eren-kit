@@ -61,6 +61,127 @@ def safe_parts(entry: dict) -> dict:
     }
 
 
+# ---------------------------------------------------------------- kaydı göstermek ve denetlemek
+#
+# Kurulum (install_macos.py, ErenKit.Installer.psm1'deki eşleri) ve doktor aynı kuralı uygular.
+# Kullanıcının kaydı sır taşıyabilir (uzak sunucu adresinde belirteç, Authorization başlığı,
+# "--token=..." argümanı, env değeri). Ekrana yazılan metin terminal kaydına, ekran paylaşımına ve
+# yapıştırılan hata raporuna gider; bu yüzden kayıttan yalnız şunlar gösterilir:
+# - program yolu (kaydın kimliği; sır yeri değil),
+# - kurulumun kendi yazdığı (depoda herkese açık) önek argümanlar; kalanlar yalnız sayıyla,
+# - uzak sunucu için tür ve şema://sunucu[:port]; kullanıcı:parola@, yol, sorgu ve parça gizlenir,
+# - env/headers yalnız adlarıyla (değerleri hiçbir yerde).
+
+# Gösterilecek port yalnız şemanın varsayılanı değilse yazılır (.NET Uri.IsDefaultPort ile aynı).
+_DEFAULT_PORTS = {"http": 80, "https": 443, "ws": 80, "wss": 443}
+
+
+def describe_url(url) -> str:
+    """Uzak sunucu adresinin sır taşımayan kısmı: şema://sunucu[:port], gerisi '/…'."""
+    from urllib.parse import urlsplit
+
+    if not isinstance(url, str) or not url:
+        return "(adres yok)"
+    try:
+        u = urlsplit(url)
+        host, port = u.hostname, u.port
+    except ValueError:
+        return "(adres çözümlenemedi; gösterilmez)"
+    if not u.scheme or not host:
+        return "(adres çözümlenemedi; gösterilmez)"
+    scheme = u.scheme.lower()
+    text = f"{scheme}://" + (f"[{host}]" if ":" in host else host)
+    if port is not None and port != _DEFAULT_PORTS.get(scheme):
+        text += f":{port}"
+    hidden = u.username is not None or u.password is not None or u.path not in ("", "/") or u.query or u.fragment
+    return text + ("/…" if hidden else "")
+
+
+def describe_entry(entry, shown_args: int = 0) -> str:
+    """Kaydın ekranda gösterilecek biçimi (bkz. yukarıdaki kural). shown_args: baştan kaç argüman
+    yazılır (yalnız kurulumun bildiği önek); kalanlar sayılır."""
+    if not isinstance(entry, dict):
+        return "(kayıt bir JSON nesnesi değil)"
+    cmd = entry.get("command")
+    if not cmd:
+        if entry.get("url"):
+            return f"{entry.get('type') or '?'} {describe_url(entry.get('url'))}"
+        return f"(komutu ya da adresi olmayan kayıt; alanlar: {', '.join(map(str, entry)) or '-'})"
+    args = entry.get("args")
+    args = [a for a in args if a is not None] if isinstance(args, list) else []
+    shown_args = max(0, min(shown_args, len(args)))
+    parts = [str(cmd)] + [str(a) for a in args[:shown_args]]
+    text = " ".join(f'"{p}"' if any(c.isspace() for c in p) else p for p in parts)
+    hidden = len(args) - shown_args
+    return text + (f" (+{hidden} argüman daha; değerleri yazılmaz)" if hidden else "")
+
+
+def known_prefix(entry, variants) -> int:
+    """Kaydın argümanları bu öneklerden biriyle başlıyorsa en uzun eşleşenin uzunluğu, yoksa 0."""
+    args = entry.get("args") if isinstance(entry, dict) else None
+    if not isinstance(args, list):
+        return 0
+    best = 0
+    for v in variants:
+        v = list(v)
+        if len(v) > best and args[: len(v)] == v:
+            best = len(v)
+    return best
+
+
+def _kind(v) -> str:
+    if v is None:
+        return "null"
+    if isinstance(v, bool):
+        return "true/false"
+    if isinstance(v, (int, float)):
+        return "sayı"
+    if isinstance(v, dict):
+        return "nesne"
+    if isinstance(v, list):
+        return "dizi"
+    if isinstance(v, str):
+        return "dize"
+    return type(v).__name__
+
+
+def entry_problems(entry) -> list[str]:
+    """Claude Code'un kabul etmediği değerlerin yeri ve türü (değer yazılmaz).
+
+    Elle düzenlenmiş .claude.json'da "env": {"PORT": 8080} gibi dize olmayan bir değer varsa
+    Claude Code o kaydı yok sayar ("Skipped — invalid MCP server config") ve "claude mcp add-json"
+    aynı kaydı reddeder: böyle bir kayıt silinirse geri yüklenemez. Kurulum bu durumda kayda
+    dokunmaz, doktor hata verir. Denetlenen: command/url dize; args dize dizisi; env/headers
+    değerleri dize olan nesne (alan varsa; null da reddedilir)."""
+    if not isinstance(entry, dict):
+        return []
+    out: list[str] = []
+    for key in ("command", "url"):
+        if key in entry and not isinstance(entry[key], str):
+            out.append(f"{key}: {_kind(entry[key])}")
+    if "args" in entry:
+        a = entry["args"]
+        if not isinstance(a, list):
+            out.append(f"args: {_kind(a)} (dizi olmalı)")
+        else:
+            out.extend(f"args[{i}]: {_kind(x)}" for i, x in enumerate(a) if not isinstance(x, str))
+    for key in ("env", "headers"):
+        if key in entry:
+            d = entry[key]
+            if not isinstance(d, dict):
+                out.append(f"{key}: {_kind(d)} (nesne olmalı)")
+            else:
+                out.extend(f"{key}.{k}: {_kind(x)}" for k, x in d.items() if not isinstance(x, str))
+    return out
+
+
+def problem_text(name: str, problems: list[str]) -> str:
+    """entry_problems için kullanıcı iletisi (ErenKit.Installer.psm1 Format-McpProblem ile aynı)."""
+    return (f'"{name}" kaydında Claude Code\'un kabul etmediği, dize olmayan değer var ({", ".join(problems)}); '
+            "Claude Code bu kaydı şu an yok sayıyor. .claude.json'da değeri tırnak içine alın "
+            '(ör. 8080 -> "8080") ya da kaydı silin, sonra yeniden çalıştırın')
+
+
 def default_config() -> str:
     d = os.environ.get("CLAUDE_CONFIG_DIR")
     if d:

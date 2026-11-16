@@ -169,6 +169,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   single ref, `refs/orkestra/defter`, pointing to a tree (not shown by branches, tags, `git status`
   or `git log --all`, not pushed by default); content dropped by `temizle` is released. `defter oku`
   no longer leaves loose objects in the repo.
+- Installer and doctor no longer print secrets from an existing MCP registration (remote URL
+  credentials/path/query, headers, env values, user-added arguments); remote servers are shown as
+  `scheme://host[:port]/…`. A hand-edited registration with a non-string value (e.g.
+  `"env": {"PORT": 8080}`), which Claude Code ignores, is now left untouched with a clear message
+  instead of being lost (Windows) or silently rewritten (macOS); the doctor reports it as an error.
 
 ### Security
 

@@ -444,6 +444,15 @@ def mcp_register(ctx: Ctx, name: str, cmd: list[str]) -> Step:
     if not ctx.claude_exe:
         return Step("warn", f"claude CLI yok, MCP kaydı atlandı. Sonra elle: {manual}")
     old = _mcp_get(name)
+    # Elle düzenlenmiş kayıtta dize olmayan değer (ör. "env": {"PORT": 8080}): Claude Code kaydı zaten
+    # yok sayıyor ve "add-json" onu geri yüklemeyi reddeder. Sessizce dönüştürmek (True -> "True",
+    # null -> "None") ya da silmek yerine dokunmadan dur.
+    bad = mcp_config.entry_problems(old) if old else []
+    if bad:
+        why = mcp_config.problem_text(name, bad)
+        if ctx.dry_run:
+            return Step("warn", f'MCP: "{name}" kaydedilemeyecek, hiçbir şey değiştirilmeyecek: {why}')
+        raise StepError(f"MCP kaydı yapılmadı, hiçbir şey değiştirilmedi: {why}")
     # Kullanıcının eski kayda eklediği argümanlar ve env yeni kayda taşınır (sessizce düşmez).
     carry = _carry_over(old, cmd)
     extra, env = carry if carry else ([], {})
@@ -454,8 +463,11 @@ def mcp_register(ctx: Ctx, name: str, cmd: list[str]) -> Step:
         lost = (f"; DİKKAT: eski kaydın env değerleri ({', '.join(map(str, old_env))}) ve argümanları yeni kayda "
                 "TAŞINMAZ, yalnız yedekte kalır" if old_env else
                 "; DİKKAT: eski kaydın argümanları yeni kayda TAŞINMAZ, yalnız yedekte kalır")
-    # Ekranda yalnız bizim komutumuz (shown); taşınan argümanlar kept'te sayıyla geçer.
+    # Ekranda yalnız bizim komutumuz (shown); taşınan argümanlar kept'te sayıyla geçer. Eski kayıt
+    # mcp_config.describe_entry kuralıyla (Windows Format-McpEntry ile aynı): yalnız bilinen önek
+    # argümanlar, uzak adresin yalnız şema://sunucu[:port] kısmı.
     shown = _fmt(cmd)
+    old_text = mcp_config.describe_entry(old, len(old.get("args") or []) - len(extra) if carry else 0) if old else ""
     cmd = [*cmd, *extra]
     if carry is not None and _entry_same(old, cmd):
         return Step("ok", f"MCP zaten kayıtlı: {name}{kept}")
@@ -463,8 +475,8 @@ def mcp_register(ctx: Ctx, name: str, cmd: list[str]) -> Step:
     foreign = old is not None and not _entry_owned(old)
     if ctx.dry_run:
         if foreign:
-            return Step("warn", f'MCP: "{name}" şu an repo DIŞINI gösteriyor ve değiştirilecek (yedeklenir) -> '
-                                f"{shown}{kept}{lost}")
+            return Step("warn", f'MCP: "{name}" şu an repo DIŞINI gösteriyor ve değiştirilecek (eski: {old_text}; '
+                                f"yedeklenir) -> {shown}{kept}{lost}")
         if old and lost:
             return Step("warn", f"MCP: güncellenir: {shown}{lost}")
         if old:
@@ -488,7 +500,8 @@ def mcp_register(ctx: Ctx, name: str, cmd: list[str]) -> Step:
             why += "\n      eski kayıt geri yüklendi" if rr.returncode == 0 else f"\n      eski kayıt GERİ YÜKLENEMEDİ; yedek: {bk}"
         raise StepError(why)
     if foreign:
-        return Step("warn", f"MCP kaydedildi: {name}; repo dışını gösteren eski kayıt değiştirildi (yedek: {bk}){kept}{lost}")
+        return Step("warn", f"MCP kaydedildi: {name}; repo dışını gösteren eski kayıt değiştirildi (eski: {old_text}; "
+                            f"yedek: {bk}){kept}{lost}")
     if old and lost:
         return Step("warn", f"MCP güncellendi: {name} (yedek: {bk}){lost}")
     return Step("ok", f"MCP {'güncellendi' if old else 'kaydedildi'}: {name} (kullanıcı kapsamı){kept}")
@@ -503,7 +516,7 @@ def mcp_unregister(ctx: Ctx, name: str) -> Step:
     if not old:
         return Step("skip", f"MCP kaydı yok: {name}")
     if not _entry_owned(old):
-        return Step("warn", f'MCP kaydı "{name}" bu repoyu göstermiyor; dokunulmadı')
+        return Step("warn", f'MCP kaydı "{name}" bu repoyu göstermiyor ({mcp_config.describe_entry(old, 0)}); dokunulmadı')
     if ctx.dry_run:
         return Step("dry", f"MCP: claude mcp remove {name} -s user")
     r = run_cmd(ctx, [ctx.claude_exe, "mcp", "remove", name, "-s", "user"], timeout=60)

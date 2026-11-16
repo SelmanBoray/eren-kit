@@ -620,17 +620,117 @@ function Get-EntryValue {
     return $null
 }
 
-# Kaydın ekranda gösterilecek biçimi. Yalnız ilk $Shown argüman yazılır (bizim bildiğimiz
-# argümanlar); kalanı yalnız sayılır: kullanıcının argümanlarında sır olabilir. $Shown < 0: hepsi.
+# Alanın varlığı ve değeri. Değer dizi olsa da açılmaz (return diziyi boru hattına döker, tek
+# öğeli dizi skalere, boş dizi $null'a dönerdi).
+function Get-EntryField {
+    param($Entry, [string]$Key)
+    $none = [pscustomobject]@{ Has = $false; Value = $null }
+    if ($null -eq $Entry) { return $none }
+    if ($Entry -is [System.Collections.IDictionary]) {
+        if ($Entry.Contains($Key)) { return [pscustomobject]@{ Has = $true; Value = $Entry[$Key] } }
+        return $none
+    }
+    $p = $Entry.PSObject.Properties[$Key]
+    if ($p) { return [pscustomobject]@{ Has = $true; Value = $p.Value } }
+    return $none
+}
+
+# JSON değerinin türü (mcp_config.py _kind ile aynı adlar). PowerShell 7'nin ConvertFrom-Json'ı tarih
+# biçimli dizeyi DateTime'a çevirir: dosyada o da bir dizedir.
+function Get-JsonKind {
+    param($Value)
+    if ([object]::ReferenceEquals($Value, $null)) { return 'null' }
+    if ($Value -is [string] -or $Value -is [char] -or $Value -is [datetime] -or $Value -is [datetimeoffset]) { return 'dize' }
+    if ($Value -is [bool]) { return 'true/false' }
+    if ($Value -is [System.Collections.IDictionary] -or $Value.PSObject.BaseObject -is [System.Management.Automation.PSCustomObject]) { return 'nesne' }
+    if ($Value -is [System.Collections.IEnumerable]) { return 'dizi' }
+    if ($Value -is [ValueType]) { return 'sayı' }
+    return $Value.GetType().Name
+}
+
+# Claude Code'un kabul etmediği değerlerin yeri ve türü; değer yazılmaz (mcp_config.py
+# entry_problems ile aynı kural). Elle düzenlenmiş .claude.json'da "env": {"PORT": 8080} gibi dize
+# olmayan bir değer varsa Claude Code kaydı yok sayar ve "claude mcp add-json" aynı kaydı reddeder:
+# böyle bir kayıt silinirse geri yüklenemez.
+function Get-McpEntryProblem {
+    param($Entry)
+    $out = New-Object System.Collections.Generic.List[string]
+    if ($null -eq $Entry) { return @() }
+    foreach ($k in 'command', 'url') {
+        $f = Get-EntryField $Entry $k
+        if ($f.Has) { $kind = Get-JsonKind $f.Value; if ($kind -ne 'dize') { $out.Add(('{0}: {1}' -f $k, $kind)) } }
+    }
+    $f = Get-EntryField $Entry 'args'
+    if ($f.Has) {
+        $kind = Get-JsonKind $f.Value
+        if ($kind -ne 'dizi') { $out.Add(('args: {0} (dizi olmalı)' -f $kind)) }
+        else {
+            $i = 0
+            foreach ($x in $f.Value) {
+                $xk = Get-JsonKind $x
+                if ($xk -ne 'dize') { $out.Add(('args[{0}]: {1}' -f $i, $xk)) }
+                $i++
+            }
+        }
+    }
+    foreach ($k in 'env', 'headers') {
+        $f = Get-EntryField $Entry $k
+        if (-not $f.Has) { continue }
+        $kind = Get-JsonKind $f.Value
+        if ($kind -ne 'nesne') { $out.Add(('{0}: {1} (nesne olmalı)' -f $k, $kind)); continue }
+        foreach ($n in @(Get-McpEnvName $f.Value)) {
+            $xk = Get-JsonKind (Get-EntryField $f.Value $n).Value
+            if ($xk -ne 'dize') { $out.Add(('{0}.{1}: {2}' -f $k, $n, $xk)) }
+        }
+    }
+    return $out.ToArray()
+}
+
+# Get-McpEntryProblem için kullanıcı iletisi (mcp_config.py problem_text ile aynı).
+function Format-McpProblem {
+    param([string]$Name, [string[]]$Problem)
+    return ('"{0}" kaydında Claude Code''un kabul etmediği, dize olmayan değer var ({1}); Claude Code bu kaydı şu an yok sayıyor. .claude.json''da değeri tırnak içine alın (ör. 8080 -> "8080") ya da kaydı silin, sonra yeniden çalıştırın' -f $Name, ($Problem -join ', '))
+}
+
+# Uzak sunucu adresinin sır taşımayan kısmı: şema://sunucu[:port]; kullanıcı:parola@, yol, sorgu ve
+# parça (belirteç taşıyabilir) '/…' olarak gizlenir (mcp_config.py describe_url ile aynı).
+function Format-McpUrl {
+    param($Url)
+    if (-not ($Url -is [string]) -or -not $Url) { return '(adres yok)' }
+    $u = $null
+    if (-not [Uri]::TryCreate($Url, [UriKind]::Absolute, [ref]$u) -or -not $u.Host) { return '(adres çözümlenemedi; gösterilmez)' }
+    $hostText = $u.Host
+    # .NET Framework (PowerShell 5.1) IPv6 adresini açık yazar ([0000:...:0001]): yazıldığı gibi göster.
+    if ($u.HostNameType -eq [UriHostNameType]::IPv6 -and $Url -match '^[^:/?#]+://(?:[^@/?#]*@)?(\[[^\]/?#]+\])') {
+        $hostText = $Matches[1].ToLowerInvariant()
+    }
+    $text = '{0}://{1}' -f $u.Scheme, $hostText
+    if (-not $u.IsDefaultPort) { $text += (':{0}' -f $u.Port) }
+    if ($u.UserInfo -or $u.AbsolutePath -ne '/' -or $u.Query -or $u.Fragment) { $text += '/…' }
+    return $text
+}
+
+# Kaydın ekranda gösterilecek biçimi (mcp_config.py describe_entry ile aynı kural). Yalnız ilk
+# $Shown argüman yazılır (bizim bildiğimiz argümanlar); kalanı yalnız sayılır: kullanıcının
+# argümanlarında sır olabilir. $Shown < 0: hepsi (yalnız kurulumun kendi komutu için). Uzak
+# sunucunun adresi Format-McpUrl ile kısaltılır; env/headers değerleri hiç yazılmaz.
 function Format-McpEntry {
     param($Entry, [int]$Shown = -1)
     $cmd = Get-EntryValue $Entry 'command'
     if (-not $cmd) {
         $url = Get-EntryValue $Entry 'url'
-        if ($url) { return ('{0} {1}' -f (Get-EntryValue $Entry 'type'), $url) }
-        return ($Entry | ConvertTo-Json -Depth 10 -Compress)
+        if ($url) {
+            $type = Get-EntryValue $Entry 'type'
+            if (-not $type) { $type = '?' }
+            return ('{0} {1}' -f $type, (Format-McpUrl $url))
+        }
+        $names = @(Get-McpEnvName $Entry)
+        if ($names.Count -eq 0) { $names = @('-') }
+        return ('(komutu ya da adresi olmayan kayıt; alanlar: {0})' -f ($names -join ', '))
     }
-    $all = @(Get-EntryValue $Entry 'args' | Where-Object { $null -ne $_ })
+    $af = Get-EntryField $Entry 'args'
+    $all = @()
+    if ((Get-JsonKind $af.Value) -eq 'dizi') { $all = @($af.Value | Where-Object { $null -ne $_ }) }
     if ($Shown -lt 0 -or $Shown -gt $all.Count) { $Shown = $all.Count }
     $parts = @($cmd) + @($all | Select-Object -First $Shown)
     $text = (($parts | ForEach-Object { if ("$_" -match '\s') { '"' + $_ + '"' } else { "$_" } }) -join ' ')
@@ -723,6 +823,14 @@ function Register-McpServer {
     $api = Get-McpApi
     $script:McpRaw.Remove($Name)
     $old = & $api.Get $Name
+    # Dize olmayan değer (elle düzenlenmiş kayıt): Claude Code kaydı zaten yok sayıyor ve add-json onu
+    # geri yüklemeyi reddeder. Silip kaybetmek ya da "zaten kayıtlı" demek yerine dokunmadan dur.
+    $bad = @(Get-McpEntryProblem $old)
+    if ($bad.Count -gt 0) {
+        $why = Format-McpProblem $Name $bad
+        if ($script:DryRun) { return New-StepResult warn ('MCP: "{0}" kaydedilemeyecek, hiçbir şey değiştirilmeyecek: {1}' -f $Name, $why) }
+        throw ('MCP kaydı yapılmadı, hiçbir şey değiştirilmedi: {0}' -f $why)
+    }
     $raw = $null
     if ($old -and $script:McpRaw.ContainsKey($Name)) { $raw = $script:McpRaw[$Name] }
     # Kullanıcının eski kayda eklediği argümanlar ve env yeni kayda taşınır (sessizce düşmez).

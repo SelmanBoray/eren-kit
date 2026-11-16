@@ -51,6 +51,7 @@ sys.dont_write_bytecode = True
 try:
     if str(HERE) not in sys.path:
         sys.path.insert(0, str(HERE))
+    import mcp_config  # kayıt gösterimi/denetimi kurulumla ortak (yalnız standart kitaplık)
     import settings_hooks as sh
 
     _SH_ERROR: str | None = None
@@ -593,9 +594,17 @@ def check_skill_devir(ctx: Ctx) -> Check:
 _SCRIPT_SUFFIXES = (".py", ".pyw", ".js", ".mjs", ".cjs", ".exe", ".cmd", ".bat", ".ps1", ".sh")
 
 
-def _fmt_cmd(entry: dict) -> str:
-    parts = [str(entry.get("command", ""))] + [str(a) for a in entry.get("args") or [] if a is not None]
-    return " ".join(f'"{p}"' if any(c.isspace() for c in p) else p for p in parts)
+# Kurulumun kendi yazdığı argümanlar (install.ps1 $P.BeyinMcp / install_macos BEYIN_MCP_ARGS ve
+# -I'siz eski biçimi; computer-use-windows argümansız). Doktor kaydı gösterirken yalnız bu öneki
+# yazar, kullanıcının eklediği argümanları sayar (değerleri sır olabilir).
+_KNOWN_MCP_ARGS = {
+    "beyin": (("-I", "-m", "bellek.beyin", "mcp"), ("-m", "bellek.beyin", "mcp")),
+    "computer-use-windows": ((),),
+}
+
+
+def _fmt_cmd(server: str, entry: dict) -> str:
+    return mcp_config.describe_entry(entry, mcp_config.known_prefix(entry, _KNOWN_MCP_ARGS.get(server, ())))
 
 
 _PY_OPTS_WITH_ARG = set("WX")  # "-W arg", "-X arg": argüman alan (mod dışı) Python seçenekleri
@@ -662,13 +671,19 @@ def check_mcp(ctx: Ctx, server: str) -> Check:
         return Check(name, OK, f"kurulu değil ({ctx.mcp_path} içinde kayıt yok)")
     if not isinstance(entry, dict):
         return Check(name, ERROR, f"kayıt bir JSON nesnesi değil ({ctx.mcp_path})")
+    bad = mcp_config.entry_problems(entry)
+    if bad:
+        return Check(name, ERROR, f"Claude Code bu kaydı yok sayıyor: dize olmayan değer ({', '.join(bad)}). "
+                                  f'{ctx.mcp_path} içinde değeri tırnak içine alın (ör. 8080 -> "8080"); '
+                                  "kurulum bu kayda dokunmaz.")
     typ = str(entry.get("type") or "stdio")
     if typ != "stdio" or (not entry.get("command") and entry.get("url")):
-        return Check(name, OK, f"uzak sunucu ({typ}): {entry.get('url', '?')}")
+        # Adresin yalnız şema://sunucu[:port] kısmı: yol/sorgu/kullanıcı bilgisi belirteç taşıyabilir.
+        return Check(name, OK, f"uzak sunucu ({typ}): {mcp_config.describe_url(entry.get('url'))}")
     cmd = entry.get("command")
     if not isinstance(cmd, str) or not cmd.strip():
         return Check(name, ERROR, f"kayıtta komut yok ({ctx.mcp_path}). {FIX_HINT}")
-    shown = _fmt_cmd(entry)
+    shown = _fmt_cmd(server, entry)
     exe = _which(cmd)
     if exe is None:
         return Check(name, ERROR, f"komut bulunamadı: {cmd} (kayıt: {shown}). {FIX_HINT}")
@@ -811,7 +826,8 @@ def _bellek_python(ctx: Ctx) -> tuple[str | None, dict]:
             exe = _which(entry["command"])
             env = entry.get("env") if isinstance(entry.get("env"), dict) else {}
             if exe and _is_python_name(exe):
-                return exe, {str(k): str(v) for k, v in env.items()}
+                # Dize olmayan değer (elle düzenlenmiş kayıt) "None"/"True" gibi uydurma bir değere dönüşmez.
+                return exe, {str(k): v for k, v in env.items() if isinstance(v, str)}
     venv = ctx.repo / "packages" / "bellek" / ".venv"
     exe = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
     return (str(exe), {}) if exe.is_file() else (None, {})
