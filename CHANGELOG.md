@@ -170,10 +170,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   or `git log --all`, not pushed by default); content dropped by `temizle` is released. `defter oku`
   no longer leaves loose objects in the repo.
 - Installer and doctor no longer print secrets from an existing MCP registration (remote URL
-  credentials/path/query, headers, env values, user-added arguments); remote servers are shown as
-  `scheme://host[:port]/…`. A hand-edited registration with a non-string value (e.g.
-  `"env": {"PORT": 8080}`), which Claude Code ignores, is now left untouched with a clear message
-  instead of being lost (Windows) or silently rewritten (macOS); the doctor reports it as an error.
+  credentials/path/query, headers, env values, user-added arguments, a password embedded in
+  `command`, non-string `command`/`type` values); remote servers are shown as
+  `scheme://host[:port]/…` and an unusual or ambiguous URL or program path as a fixed placeholder,
+  identically on Windows and macOS. Text taken from a registration or another tool's output can no
+  longer reach the terminal as control characters, ANSI escapes or extra lines. A registration that
+  Claude Code rejects (boundary measured against `claude` 2.1.325, e.g. `"env": {"PORT": 8080}` or
+  `"type": 5`) is now left untouched by both install and uninstall, with a clear message, instead of
+  being lost (Windows) or silently rewritten (macOS); fields Claude Code ignores for the server's
+  type no longer stop the installer; the doctor reports only what Claude Code rejects. On Windows an
+  env with keys differing only in case (`Path`/`PATH`) or an empty key, and a command containing
+  control characters on Windows PowerShell 5.1, no longer stop the installer with a raw error.
 
 ### Security
 

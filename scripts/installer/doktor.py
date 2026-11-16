@@ -633,7 +633,10 @@ def _cwd_code_risk(command: str, args: list, env: dict) -> str | None:
                 i += 1
                 t = toks[i] if i < len(toks) else ""
             if t and t != "-" and not _expand(t).is_absolute():
-                return f"betik yolu göreli ({t}); çalışma klasöründen okunur"
+                # Yalnız betik adına benzeyen (izinli karakterler, bilinen uzantı) yol yazılır: bu
+                # konum bir seçeneğin değeri de olabilir (ör. "-Wdefault GİZLİ"); sır basılmaz.
+                looks = mcp_config.program_shown(t) and " " not in t and t.lower().endswith(_SCRIPT_SUFFIXES)
+                return f"betik yolu göreli ({t if looks else 'değeri yazılmaz'}); çalışma klasöründen okunur"
             return None
         if t.startswith("--"):  # --version, --help ...; değer alan uzun seçeneğin değeri atlanır
             i += 2 if t in _PY_LONG_OPTS_WITH_ARG else 1
@@ -671,30 +674,30 @@ def check_mcp(ctx: Ctx, server: str) -> Check:
         return Check(name, OK, f"kurulu değil ({ctx.mcp_path} içinde kayıt yok)")
     if not isinstance(entry, dict):
         return Check(name, ERROR, f"kayıt bir JSON nesnesi değil ({ctx.mcp_path})")
+    # Claude Code'un kabul/ret sınırı (gerçek claude ile ölçülmüş; bkz. mcp_config.entry_problems).
     bad = mcp_config.entry_problems(entry)
     if bad:
-        return Check(name, ERROR, f"Claude Code bu kaydı yok sayıyor: dize olmayan değer ({', '.join(bad)}). "
-                                  f'{ctx.mcp_path} içinde değeri tırnak içine alın (ör. 8080 -> "8080"); '
-                                  "kurulum bu kayda dokunmaz.")
-    typ = str(entry.get("type") or "stdio")
-    if typ != "stdio" or (not entry.get("command") and entry.get("url")):
+        return Check(name, ERROR, f"Claude Code bu kaydı yok sayıyor: geçersiz değer ({', '.join(bad)}). "
+                                  f"{ctx.mcp_path} içinde değeri düzeltin (ör. sayıysa tırnak içine alın: "
+                                  '8080 -> "8080"); kurulum bu kayda dokunmaz.')
+    typ = mcp_config._entry_type(entry)
+    if typ in mcp_config.REMOTE_TYPES:
         # Adresin yalnız şema://sunucu[:port] kısmı: yol/sorgu/kullanıcı bilgisi belirteç taşıyabilir.
         return Check(name, OK, f"uzak sunucu ({typ}): {mcp_config.describe_url(entry.get('url'))}")
-    cmd = entry.get("command")
-    if not isinstance(cmd, str) or not cmd.strip():
+    cmd = entry["command"]  # entry_problems: stdio kaydında boş olmayan dize
+    if not cmd.strip():
         return Check(name, ERROR, f"kayıtta komut yok ({ctx.mcp_path}). {FIX_HINT}")
     shown = _fmt_cmd(server, entry)
     exe = _which(cmd)
     if exe is None:
-        return Check(name, ERROR, f"komut bulunamadı: {cmd} (kayıt: {shown}). {FIX_HINT}")
+        return Check(name, ERROR, f"komut bulunamadı (kayıt: {shown}). {FIX_HINT}")
     args = entry.get("args") or []
-    if not isinstance(args, list):
-        return Check(name, ERROR, f'kayıttaki "args" bir liste değil ({ctx.mcp_path})')
     for a in args:
         if isinstance(a, str) and a.lower().endswith(_SCRIPT_SUFFIXES):
             p = _expand(a)
             if p.is_absolute() and not p.is_file():
-                return Check(name, ERROR, f"betik dosyası yok: {a} (kayıt: {shown}). {FIX_HINT}")
+                return Check(name, ERROR, f"betik dosyası yok: {mcp_config.describe_program(a)} (kayıt: {shown}). "
+                                          f"{FIX_HINT}")
     owned = any(_under(_expand(str(v)), ctx.repo) for v in [cmd, *args] if isinstance(v, str) and _expand(v).is_absolute())
     note = "" if owned else " (bu --repo dışında)"
     env = entry.get("env") if isinstance(entry.get("env"), dict) else {}
@@ -1121,11 +1124,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.json:
         print(json.dumps(report, ensure_ascii=True))
     else:
+        # Ayrıntılar dış kaynaktan (kayıtlar, yollar, alt süreç çıktısı) parça taşır: terminale kontrol
+        # karakteri/ANSI kaçışı olarak geçmesin (mcp_config.terminal_safe; satır yapısı korunur).
+        safe = mcp_config.terminal_safe
         print("eren-kit kurulum doktoru")
-        print(f"Claude dizini: {claude_home}")
-        print(f"Depo: {repo}")
+        print(f"Claude dizini: {safe(claude_home)}")
+        print(f"Depo: {safe(repo)}")
         for c in report["checks"]:
-            print(f"{_MARKS.get(c['status'], c['status'])} {c['name']}: {c['detail']}")
+            print(safe(f"{_MARKS.get(c['status'], c['status'])} {c['name']}: {c['detail']}", keep_newline=True))
         print(f"Genel durum: {_OVERALL[report['status']]}")
     return EXIT[report["status"]]
 

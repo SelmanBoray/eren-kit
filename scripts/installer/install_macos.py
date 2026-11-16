@@ -92,7 +92,9 @@ def line(status: str, msg: str) -> None:
     sym = SYMBOL[status]
     if _TTY:
         sym = f"\033[{COLOR[status]}m{sym}\033[0m"
-    print(f"  {sym} {msg}", flush=True)
+    # İleti dış kaynaktan (MCP kaydı, alt süreç çıktısı, yollar) parça taşıyabilir: kontrol karakteri/
+    # ANSI kaçışı terminale geçmez (iletinin kendi satır yapısı korunur).
+    print(f"  {sym} {mcp_config.terminal_safe(msg, keep_newline=True)}", flush=True)
 
 
 def title(t: str) -> None:
@@ -383,7 +385,8 @@ def current_assistant_name(ctx: Ctx) -> str | None:
 
 def _entry_owned(entry: dict) -> bool:
     root = str(REPO).rstrip("/") + "/"
-    vals = [entry.get("command")] + list(entry.get("args") or [])
+    args = entry.get("args")
+    vals = [entry.get("command")] + (args if isinstance(args, list) else [])
     return any(isinstance(v, str) and v.startswith(root) for v in vals)
 
 
@@ -418,7 +421,7 @@ def _carry_over(entry: dict | None, cmd: list[str]) -> tuple[list[str], dict] | 
 def _carry_text(extra: list[str], env: dict) -> str:
     """Taşınanların kısa açıklaması: argümanlar yalnız sayıyla, env yalnız adlarıyla (sır olabilir)."""
     parts = ([f"ek argümanlar ({len(extra)} adet; değerleri yazılmaz)"] if extra else []) \
-        + ([f"env: {', '.join(env)}"] if env else [])
+        + ([f"env: {', '.join(mcp_config.terminal_safe(k) for k in env)}"] if env else [])
     return f"; korunan {'; '.join(parts)}" if parts else ""
 
 
@@ -460,7 +463,8 @@ def mcp_register(ctx: Ctx, name: str, cmd: list[str]) -> Step:
     lost = ""
     if old and carry is None:
         old_env = old.get("env") if isinstance(old.get("env"), dict) else {}
-        lost = (f"; DİKKAT: eski kaydın env değerleri ({', '.join(map(str, old_env))}) ve argümanları yeni kayda "
+        lost = (f"; DİKKAT: eski kaydın env değerleri ({', '.join(mcp_config.terminal_safe(k) for k in old_env)}) "
+                "ve argümanları yeni kayda "
                 "TAŞINMAZ, yalnız yedekte kalır" if old_env else
                 "; DİKKAT: eski kaydın argümanları yeni kayda TAŞINMAZ, yalnız yedekte kalır")
     # Ekranda yalnız bizim komutumuz (shown); taşınan argümanlar kept'te sayıyla geçer. Eski kayıt
@@ -515,6 +519,11 @@ def mcp_unregister(ctx: Ctx, name: str) -> Step:
     old = _mcp_get(name)
     if not old:
         return Step("skip", f"MCP kaydı yok: {name}")
+    # Geçersiz kayıt (Claude Code zaten yok sayıyor): kurmadaki gibi dokunulmaz. Kaldırma yedek
+    # almaz; elle yazılmış değerler geri getirilemezdi. Kullanıcı isterse komutla kendisi siler.
+    bad = mcp_config.entry_problems(old)
+    if bad:
+        return Step("warn", mcp_config.unregister_problem_text(name, bad))
     if not _entry_owned(old):
         return Step("warn", f'MCP kaydı "{name}" bu repoyu göstermiyor ({mcp_config.describe_entry(old, 0)}); dokunulmadı')
     if ctx.dry_run:
@@ -831,7 +840,7 @@ def post_install_doctor(ctx: Ctx) -> None:
         return
     for row in ((r.stdout or "") + (r.stderr or "")).splitlines():
         if row.strip():
-            print(f"    {row}", flush=True)
+            print(f"    {mcp_config.terminal_safe(row)}", flush=True)
     if r.returncode == 0:
         line("ok", "doktor: her şey yolunda")
     elif r.returncode == 1:

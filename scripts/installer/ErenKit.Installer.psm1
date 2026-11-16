@@ -38,11 +38,45 @@ function Write-Title {
     Write-Host $Text -ForegroundColor Cyan
 }
 
+# Metni terminale güvenle yazılabilir yapar (mcp_config.py terminal_safe ile aynı kural): C0 (satır
+# sonu dahil), DEL, C1 (0x9b = CSI), yön/görünmez biçim karakterleri ve eşi olmayan UTF-16 vekilleri
+# görünür kaçışa (\xNN, \uNNNN) çevrilir; ANSI kaçışı, satır başı ya da sahte satır üretemez.
+# -KeepNewline: iletinin kendi satır yapısı korunur (\r\n -> \n).
+$script:InvisiblePattern = '[\x00-\x1F\x7F-\x9F؜​-‏  ‪-‮⁠-⁤⁦-⁯﻿￹-￻\uD800-\uDFFF]'
+function Format-TerminalText {
+    param($Text, [switch]$KeepNewline)
+    if ($null -eq $Text) { return '' }
+    $s = [string]$Text
+    if ($KeepNewline) { $s = $s.Replace("`r`n", "`n") }
+    if ($s -cnotmatch $script:InvisiblePattern) { return $s }
+    $sb = New-Object System.Text.StringBuilder
+    $n = $s.Length
+    for ($i = 0; $i -lt $n; $i++) {
+        $c = $s[$i]
+        $code = [int]$c
+        if ($KeepNewline -and $code -eq 10) { [void]$sb.Append($c); continue }
+        if ($code -ge 0xD800 -and $code -le 0xDBFF -and $i + 1 -lt $n -and [int]$s[$i + 1] -ge 0xDC00 -and [int]$s[$i + 1] -le 0xDFFF) {
+            [void]$sb.Append($c); [void]$sb.Append($s[$i + 1]); $i++; continue
+        }
+        $bad = $code -lt 0x20 -or ($code -ge 0x7F -and $code -le 0x9F) -or ($code -ge 0xD800 -and $code -le 0xDFFF) -or
+            $code -eq 0x061C -or $code -eq 0x2028 -or $code -eq 0x2029 -or $code -eq 0xFEFF -or
+            ($code -ge 0x200B -and $code -le 0x200F) -or ($code -ge 0x202A -and $code -le 0x202E) -or
+            ($code -ge 0x2060 -and $code -le 0x2064) -or ($code -ge 0x2066 -and $code -le 0x206F) -or
+            ($code -ge 0xFFF9 -and $code -le 0xFFFB)
+        if (-not $bad) { [void]$sb.Append($c) }
+        elseif ($code -le 0xFF) { [void]$sb.Append(('\x{0:x2}' -f $code)) }
+        else { [void]$sb.Append(('\u{0:x4}' -f $code)) }
+    }
+    return $sb.ToString()
+}
+
 function Write-StepLine {
     param(
         [ValidateSet('ok', 'fail', 'warn', 'dry', 'skip', 'info')][string]$Status,
         [string]$Text
     )
+    # İleti dış kaynaktan (MCP kaydı, claude/npm çıktısı, yollar) parça taşıyabilir.
+    $Text = Format-TerminalText $Text -KeepNewline
     switch ($Status) {
         'ok'   { Write-Host ('  {0} ' -f $script:Sym.Ok) -ForegroundColor Green -NoNewline }
         'fail' { Write-Host ('  {0} ' -f $script:Sym.Fail) -ForegroundColor Red -NoNewline }
@@ -438,6 +472,10 @@ $script:McpHelper = $null
 # Get-McpUserEntry'nin son okuduğu kaydın değerleri, PowerShell nesnesine dönüşmeden
 # (mcp_config.py "safe" alanı): ad -> {entry, args, env, pretty}.
 $script:McpRaw = @{}
+# Get-McpUserEntry'nin okuduğu kayıtta PowerShell'in ConvertFrom-Json'ının okuyamadığı anahtarlar
+# (boş anahtar, yalnız harf büyüklüğüyle ayrılan anahtarlar; mcp_config.py ps_key_problems): ad -> sorunlar.
+# Böyle bir kayda kurulum da kaldırma da dokunmaz.
+$script:McpReadProblem = @{}
 
 # ---------------------------------------------------------------- claude çağrısı: argüman güvenliği
 #
@@ -599,6 +637,7 @@ function Get-McpApi {
 function Get-McpUserEntry {
     param([string]$Name)
     $script:McpRaw.Remove($Name)
+    $script:McpReadProblem.Remove($Name)
     $py = Find-Python ([version]'3.8')
     if (-not $py) { throw 'MCP kaydını okumak için Python gerekli' }
     $r = Invoke-Native $py.Exe (@($py.Args) + @('-I', $script:McpHelper, '--name', $Name))
@@ -608,6 +647,9 @@ function Get-McpUserEntry {
     if ($o.PSObject.Properties['error']) { throw ('MCP yapılandırması okunamadı ({0}): {1}' -f $o.path, $o.error) }
     if (-not $o.found) { return $null }
     if ($o.PSObject.Properties['safe'] -and $o.safe) { $script:McpRaw[$Name] = $o.safe }
+    if ($o.PSObject.Properties['ps_problems'] -and @($o.ps_problems).Count -gt 0) {
+        $script:McpReadProblem[$Name] = [string[]]@($o.ps_problems)
+    }
     return $o.entry
 }
 
@@ -648,40 +690,118 @@ function Get-JsonKind {
     return $Value.GetType().Name
 }
 
+$script:RemoteMcpTypes = @('sse', 'http', 'ws')
+
+# Kaydın türü: alan yoksa 'stdio' (Claude Code'un varsayılanı); geçersizse $null (mcp_config.py _entry_type).
+function Get-McpEntryType {
+    param($Entry)
+    $f = Get-EntryField $Entry 'type'
+    if (-not $f.Has) { return 'stdio' }
+    if ($f.Value -is [string] -and (@('stdio') + $script:RemoteMcpTypes) -ccontains $f.Value) { return $f.Value }
+    return $null
+}
+
+# JavaScript Number.isSafeInteger ve > 0 (mcp_config.py _positive_int).
+function Test-PositiveSafeInt {
+    param($Value)
+    if ((Get-JsonKind $Value) -ne 'sayı') { return $false }
+    try { $d = [decimal]$Value } catch { return $false }
+    return ($d -gt 0 -and $d -eq [decimal]::Truncate($d) -and $d -le [decimal]9007199254740991)
+}
+
+function Add-McpMapProblem {
+    param($Entry, [string]$Key, $Out)
+    $f = Get-EntryField $Entry $Key
+    if (-not $f.Has) { return }
+    $kind = Get-JsonKind $f.Value
+    if ($kind -ne 'nesne') { $Out.Add(('{0}: {1} (nesne olmalı)' -f $Key, $kind)); return }
+    foreach ($n in @(Get-McpEnvName $f.Value)) {
+        $xk = Get-JsonKind (Get-EntryField $f.Value $n).Value
+        if ($xk -ne 'dize') { $Out.Add(('{0}.{1}: {2}' -f $Key, (Format-TerminalText $n), $xk)) }
+    }
+}
+
 # Claude Code'un kabul etmediği değerlerin yeri ve türü; değer yazılmaz (mcp_config.py
-# entry_problems ile aynı kural). Elle düzenlenmiş .claude.json'da "env": {"PORT": 8080} gibi dize
-# olmayan bir değer varsa Claude Code kaydı yok sayar ve "claude mcp add-json" aynı kaydı reddeder:
-# böyle bir kayıt silinirse geri yüklenemez.
+# entry_problems ile aynı kural ve aynı metin). Sınır gerçek claude 2.1.325 ile ölçüldü
+# (tests/claude_mcp_sinir.json): type yok/stdio/sse/http/ws; stdio'da command boş olmayan dize, args
+# dize dizisi, env dize değerli nesne; uzakta url dize, headers dize değerli nesne, headersHelper
+# dize, sse/http'de oauth nesne (clientId dize) ve tools nesne dizisi (name dize); hepsinde timeout
+# pozitif tam sayı. Türe ait olmayan alanlar Claude Code'ca yok sayılır, burada da denetlenmez.
+# Geçersiz kaydı Claude Code yok sayar ve "claude mcp add-json" reddeder: silinirse geri yüklenemez.
 function Get-McpEntryProblem {
     param($Entry)
     $out = New-Object System.Collections.Generic.List[string]
-    if ($null -eq $Entry) { return @() }
-    foreach ($k in 'command', 'url') {
-        $f = Get-EntryField $Entry $k
-        if ($f.Has) { $kind = Get-JsonKind $f.Value; if ($kind -ne 'dize') { $out.Add(('{0}: {1}' -f $k, $kind)) } }
+    if ($null -eq $Entry -or (Get-JsonKind $Entry) -ne 'nesne') { return @() }
+    $t = Get-McpEntryType $Entry
+    if ($null -eq $t) {
+        $kind = Get-JsonKind (Get-EntryField $Entry 'type').Value
+        if ($kind -eq 'dize') { return @('type: bilinmeyen tür') }
+        return @(('type: {0}' -f $kind))
     }
-    $f = Get-EntryField $Entry 'args'
-    if ($f.Has) {
-        $kind = Get-JsonKind $f.Value
-        if ($kind -ne 'dizi') { $out.Add(('args: {0} (dizi olmalı)' -f $kind)) }
+    if ($t -ceq 'stdio') {
+        $f = Get-EntryField $Entry 'command'
+        if (-not $f.Has) { $out.Add('command: yok (zorunlu)') }
         else {
-            $i = 0
-            foreach ($x in $f.Value) {
-                $xk = Get-JsonKind $x
-                if ($xk -ne 'dize') { $out.Add(('args[{0}]: {1}' -f $i, $xk)) }
-                $i++
+            $kind = Get-JsonKind $f.Value
+            if ($kind -ne 'dize') { $out.Add(('command: {0}' -f $kind)) }
+            elseif ("$($f.Value)" -eq '') { $out.Add('command: boş dize') }
+        }
+        $f = Get-EntryField $Entry 'args'
+        if ($f.Has) {
+            $kind = Get-JsonKind $f.Value
+            if ($kind -ne 'dizi') { $out.Add(('args: {0} (dizi olmalı)' -f $kind)) }
+            else {
+                $i = 0
+                foreach ($x in $f.Value) {
+                    $xk = Get-JsonKind $x
+                    if ($xk -ne 'dize') { $out.Add(('args[{0}]: {1}' -f $i, $xk)) }
+                    $i++
+                }
+            }
+        }
+        Add-McpMapProblem $Entry 'env' $out
+    } else {
+        $f = Get-EntryField $Entry 'url'
+        if (-not $f.Has) { $out.Add('url: yok (zorunlu)') }
+        else { $kind = Get-JsonKind $f.Value; if ($kind -ne 'dize') { $out.Add(('url: {0}' -f $kind)) } }
+        Add-McpMapProblem $Entry 'headers' $out
+        $f = Get-EntryField $Entry 'headersHelper'
+        if ($f.Has) { $kind = Get-JsonKind $f.Value; if ($kind -ne 'dize') { $out.Add(('headersHelper: {0}' -f $kind)) } }
+        if ($t -cne 'ws') {
+            $f = Get-EntryField $Entry 'oauth'
+            if ($f.Has) {
+                $kind = Get-JsonKind $f.Value
+                if ($kind -ne 'nesne') { $out.Add(('oauth: {0} (nesne olmalı)' -f $kind)) }
+                else {
+                    $g = Get-EntryField $f.Value 'clientId'
+                    if ($g.Has) { $kind = Get-JsonKind $g.Value; if ($kind -ne 'dize') { $out.Add(('oauth.clientId: {0}' -f $kind)) } }
+                }
+            }
+            $f = Get-EntryField $Entry 'tools'
+            if ($f.Has) {
+                $kind = Get-JsonKind $f.Value
+                if ($kind -ne 'dizi') { $out.Add(('tools: {0} (dizi olmalı)' -f $kind)) }
+                else {
+                    $i = 0
+                    foreach ($x in $f.Value) {
+                        $xk = Get-JsonKind $x
+                        if ($xk -ne 'nesne') { $out.Add(('tools[{0}]: {1} (nesne olmalı)' -f $i, $xk)) }
+                        else {
+                            $g = Get-EntryField $x 'name'
+                            if (-not $g.Has) { $out.Add(('tools[{0}].name: yok (zorunlu)' -f $i)) }
+                            else { $nk = Get-JsonKind $g.Value; if ($nk -ne 'dize') { $out.Add(('tools[{0}].name: {1}' -f $i, $nk)) } }
+                        }
+                        $i++
+                    }
+                }
             }
         }
     }
-    foreach ($k in 'env', 'headers') {
-        $f = Get-EntryField $Entry $k
-        if (-not $f.Has) { continue }
+    $f = Get-EntryField $Entry 'timeout'
+    if ($f.Has) {
         $kind = Get-JsonKind $f.Value
-        if ($kind -ne 'nesne') { $out.Add(('{0}: {1} (nesne olmalı)' -f $k, $kind)); continue }
-        foreach ($n in @(Get-McpEnvName $f.Value)) {
-            $xk = Get-JsonKind (Get-EntryField $f.Value $n).Value
-            if ($xk -ne 'dize') { $out.Add(('{0}.{1}: {2}' -f $k, $n, $xk)) }
-        }
+        if ($kind -ne 'sayı') { $out.Add(('timeout: {0}' -f $kind)) }
+        elseif (-not (Test-PositiveSafeInt $f.Value)) { $out.Add('timeout: sayı (pozitif tam sayı olmalı)') }
     }
     return $out.ToArray()
 }
@@ -689,64 +809,169 @@ function Get-McpEntryProblem {
 # Get-McpEntryProblem için kullanıcı iletisi (mcp_config.py problem_text ile aynı).
 function Format-McpProblem {
     param([string]$Name, [string[]]$Problem)
-    return ('"{0}" kaydında Claude Code''un kabul etmediği, dize olmayan değer var ({1}); Claude Code bu kaydı şu an yok sayıyor. .claude.json''da değeri tırnak içine alın (ör. 8080 -> "8080") ya da kaydı silin, sonra yeniden çalıştırın' -f $Name, ($Problem -join ', '))
+    return ('"{0}" kaydında Claude Code''un kabul etmediği değer var ({1}); Claude Code bu kaydı şu an yok sayıyor. .claude.json''da değeri düzeltin (ör. sayıysa tırnak içine alın: 8080 -> "8080") ya da kaydı silin, sonra yeniden çalıştırın' -f $Name, ($Problem -join ', '))
 }
 
-# Uzak sunucu adresinin sır taşımayan kısmı: şema://sunucu[:port]; kullanıcı:parola@, yol, sorgu ve
-# parça (belirteç taşıyabilir) '/…' olarak gizlenir (mcp_config.py describe_url ile aynı).
+# PowerShell'in okuyamadığı kayıt (bkz. $script:McpReadProblem) için kullanıcı iletisi.
+function Format-McpReadProblem {
+    param([string]$Name, [string[]]$Problem)
+    return ('"{0}" kaydı Windows PowerShell''de okunamıyor ({1}); Windows''ta ortam değişkeni adları büyük/küçük harf ayırmaz. .claude.json''da anahtarı düzeltin ya da kaydı silin, sonra yeniden çalıştırın' -f $Name, ($Problem -join ', '))
+}
+
+# Kaldırmada geçersiz kayıt: dokunulmaz (mcp_config.py unregister_problem_text ile aynı ileti).
+function Format-McpUnregisterProblem {
+    param([string]$Name, [string]$Why)
+    return ('MCP kaydı "{0}" kaldırılmadı, hiçbir şey değiştirilmedi: {1}. Kaydı yine de silmek için: claude mcp remove {0} -s user' -f $Name, $Why)
+}
+
+$script:UnresolvedUrl = '(adres çözümlenemedi; gösterilmez)'
+$script:HiddenProgram = '(program yolu olağandışı; gösterilmez)'
+$script:DefaultPorts = @{ http = 80; https = 443; ws = 80; wss = 443 }
+
+# Uzak sunucu adresinin sır taşımayan kısmı: şema://sunucu[:port], gizlenen bir şey varsa '/…'.
+# mcp_config.py describe_url ile aynı dar izin listesi (ayrıntı orada); .NET Uri kullanılmaz: Python
+# ile aynı sonucu veren düz bir eşleştirme. Yalnız basılabilir ASCII, ters bölü yok; şema http/https/
+# ws/wss; sunucu kısmında en çok bir '@' (önündeki kullanıcı bilgisi gizlenir), geri kalanda '@' yok;
+# sunucu adı harf/rakam/'-' etiketleri ya da köşeli parantezli IPv6; port 0-65535. Gerisi sabit metin.
 function Format-McpUrl {
     param($Url)
+    if ($Url -is [datetime] -or $Url -is [datetimeoffset]) { return $script:UnresolvedUrl }  # PS 7: tarih biçimli dize
     if (-not ($Url -is [string]) -or -not $Url) { return '(adres yok)' }
-    $u = $null
-    if (-not [Uri]::TryCreate($Url, [UriKind]::Absolute, [ref]$u) -or -not $u.Host) { return '(adres çözümlenemedi; gösterilmez)' }
-    $hostText = $u.Host
-    # .NET Framework (PowerShell 5.1) IPv6 adresini açık yazar ([0000:...:0001]): yazıldığı gibi göster.
-    if ($u.HostNameType -eq [UriHostNameType]::IPv6 -and $Url -match '^[^:/?#]+://(?:[^@/?#]*@)?(\[[^\]/?#]+\])') {
-        $hostText = $Matches[1].ToLowerInvariant()
+    if ($Url -cmatch '[^\x21-\x7e]' -or $Url.Contains('\')) { return $script:UnresolvedUrl }
+    $m = [regex]::Match($Url, '\A([A-Za-z][A-Za-z0-9+.\-]*)://([^/?#]*)(.*)\z', [Text.RegularExpressions.RegexOptions]::Singleline)
+    if (-not $m.Success) { return $script:UnresolvedUrl }
+    $scheme = $m.Groups[1].Value.ToLowerInvariant()
+    $auth = $m.Groups[2].Value
+    $rest = $m.Groups[3].Value
+    if (-not $script:DefaultPorts.ContainsKey($scheme) -or $rest.Contains('@')) { return $script:UnresolvedUrl }
+    $userinfo = $null
+    $hostport = $auth
+    $at = $auth.IndexOf('@')
+    if ($at -ge 0) {
+        $userinfo = $auth.Substring(0, $at)
+        $hostport = $auth.Substring($at + 1)
+        if ($hostport.Contains('@') -or $userinfo -cnotmatch '\A[A-Za-z0-9\-._~!$&''()*+,;=:%]*\z') { return $script:UnresolvedUrl }
     }
-    $text = '{0}://{1}' -f $u.Scheme, $hostText
-    if (-not $u.IsDefaultPort) { $text += (':{0}' -f $u.Port) }
-    if ($u.UserInfo -or $u.AbsolutePath -ne '/' -or $u.Query -or $u.Fragment) { $text += '/…' }
+    $hm = [regex]::Match($hostport, '\A(\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9.\-]+)(?::([0-9]{1,5}))?\z')
+    if (-not $hm.Success) { return $script:UnresolvedUrl }
+    $h = $hm.Groups[1].Value.ToLowerInvariant()
+    if ($h[0] -eq [char]'[') {
+        if (-not $h.Contains(':')) { return $script:UnresolvedUrl }
+    } else {
+        foreach ($lab in $h.Split('.')) {
+            if ($lab -cnotmatch '\A[a-z0-9](?:[a-z0-9\-]{0,61}[a-z0-9])?\z') { return $script:UnresolvedUrl }
+        }
+    }
+    $text = '{0}://{1}' -f $scheme, $h
+    if ($hm.Groups[2].Success) {
+        $port = [int]$hm.Groups[2].Value
+        if ($port -gt 65535) { return $script:UnresolvedUrl }
+        if ($port -ne $script:DefaultPorts[$scheme]) { $text += (':{0}' -f $port) }
+    }
+    if ($null -ne $userinfo -or ($rest -cne '' -and $rest -cne '/')) { $text += '/…' }
     return $text
 }
 
-# Kaydın ekranda gösterilecek biçimi (mcp_config.py describe_entry ile aynı kural). Yalnız ilk
-# $Shown argüman yazılır (bizim bildiğimiz argümanlar); kalanı yalnız sayılır: kullanıcının
-# argümanlarında sır olabilir. $Shown < 0: hepsi (yalnız kurulumun kendi komutu için). Uzak
-# sunucunun adresi Format-McpUrl ile kısaltılır; env/headers değerleri hiç yazılmaz.
-function Format-McpEntry {
-    param($Entry, [int]$Shown = -1)
-    $cmd = Get-EntryValue $Entry 'command'
-    if (-not $cmd) {
-        $url = Get-EntryValue $Entry 'url'
-        if ($url) {
-            $type = Get-EntryValue $Entry 'type'
-            if (-not $type) { $type = '?' }
-            return ('{0} {1}' -f $type, (Format-McpUrl $url))
+# Program yolu ekrana yazılabilir mi? (mcp_config.py program_shown ile aynı kural; gerekçe orada)
+$script:ProgramAscii = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ._-+~/\()@'
+$script:ProgramSuffixes = @('.exe', '.cmd', '.bat', '.com', '.ps1', '.py', '.pyw', '.js', '.mjs', '.cjs', '.sh')
+function Test-McpProgramShown {
+    param($Cmd)
+    if (-not ($Cmd -is [string]) -or -not $Cmd) { return $false }
+    for ($i = 0; $i -lt $Cmd.Length; $i++) {
+        $code = [int]$Cmd[$i]
+        if ($code -eq 58) {  # ':' yalnız sürücü harfinden sonra
+            if ($i -ne 1 -or -not ("$($Cmd[0])" -cmatch '\A[A-Za-z]\z')) { return $false }
+            continue
         }
-        $names = @(Get-McpEnvName $Entry)
+        $ok = ($code -lt 128 -and $script:ProgramAscii.IndexOf($Cmd[$i]) -ge 0) -or
+            ($code -ge 0xC0 -and $code -le 0x24F -and $code -ne 0xD7 -and $code -ne 0xF7)
+        if (-not $ok) { return $false }
+    }
+    if (-not $Cmd.Contains(' ')) { return $true }
+    if ($Cmd -cne $Cmd.Trim(' ') -or $Cmd.Contains('  ')) { return $false }
+    $abs = ($Cmd -cmatch '\A[A-Za-z]:[\\/]') -or $Cmd.StartsWith('/', [StringComparison]::Ordinal) -or
+        $Cmd.StartsWith('\\', [StringComparison]::Ordinal) -or $Cmd.StartsWith('~/', [StringComparison]::Ordinal) -or
+        $Cmd.StartsWith('~\', [StringComparison]::Ordinal)
+    if (-not $abs) { return $false }
+    $words = $Cmd.Split(' ')
+    for ($j = 1; $j -lt $words.Count; $j++) { if ($words[$j].StartsWith('-', [StringComparison]::Ordinal)) { return $false } }
+    $last = $words[$words.Count - 1]
+    if ($last.Contains('/') -or $last.Contains('\')) { return $true }
+    foreach ($s in $script:ProgramSuffixes) {
+        if ($last.Length -ge $s.Length -and $last.Substring($last.Length - $s.Length).ToLowerInvariant() -ceq $s) { return $true }
+    }
+    return $false
+}
+
+# Program yolunun ekrandaki biçimi (mcp_config.py describe_program): izin listesine uymayan sabit metin.
+function Format-McpProgram {
+    param($Cmd)
+    if (-not (Test-McpProgramShown $Cmd)) { return $script:HiddenProgram }
+    if ($Cmd.Contains(' ')) { return '"' + $Cmd + '"' }
+    return $Cmd
+}
+
+# Kurulumun kendi komutu (kayıttan gelmez): olduğu gibi, boşluklu parça tırnakla.
+function Format-McpCommandLine {
+    param([string[]]$Command)
+    return ((@($Command) | ForEach-Object { if ($_.Contains(' ')) { '"' + $_ + '"' } else { $_ } }) -join ' ')
+}
+
+# Kaydın ekranda gösterilecek biçimi (mcp_config.py describe_entry ile aynı kural ve aynı metin).
+# Yalnız ilk $Shown argüman yazılır (kurulumun bildiği önek); kalanı yalnız sayılır: kullanıcının
+# argümanlarında sır olabilir. Uzak sunucunun adresi Format-McpUrl, program yolu Format-McpProgram
+# ile; dize olmayan değerin yalnız türü yazılır; env/headers değerleri hiç yazılmaz.
+function Format-McpEntry {
+    param($Entry, [int]$Shown = 0)
+    if ($null -eq $Entry -or (Get-JsonKind $Entry) -ne 'nesne') { return '(kayıt bir JSON nesnesi değil)' }
+    $t = Get-McpEntryType $Entry
+    if ($null -eq $t) { return ('(türü tanınmayan kayıt: {0})' -f (Get-JsonKind (Get-EntryField $Entry 'type').Value)) }
+    if ($script:RemoteMcpTypes -ccontains $t) { return ('{0} {1}' -f $t, (Format-McpUrl (Get-EntryField $Entry 'url').Value)) }
+    $cf = Get-EntryField $Entry 'command'
+    $cmd = $cf.Value
+    $prog = $null
+    if ($cf.Has -and -not ($cmd -is [string])) {
+        # PS 7 tarih biçimli dizeyi DateTime yapar; böyle bir dize (':' içerir) izin listesine zaten uymaz.
+        if ($cmd -is [datetime] -or $cmd -is [datetimeoffset]) { $prog = $script:HiddenProgram }
+        else { return ('(komutu dize olmayan kayıt: {0}; değeri yazılmaz)' -f (Get-JsonKind $cmd)) }
+    }
+    if (-not $prog -and -not $cmd) {
+        $names = @(Get-McpEnvName $Entry | ForEach-Object { Format-TerminalText $_ })
         if ($names.Count -eq 0) { $names = @('-') }
         return ('(komutu ya da adresi olmayan kayıt; alanlar: {0})' -f ($names -join ', '))
     }
+    if (-not $prog) { $prog = Format-McpProgram $cmd }
     $af = Get-EntryField $Entry 'args'
     $all = @()
     if ((Get-JsonKind $af.Value) -eq 'dizi') { $all = @($af.Value | Where-Object { $null -ne $_ }) }
-    if ($Shown -lt 0 -or $Shown -gt $all.Count) { $Shown = $all.Count }
-    $parts = @($cmd) + @($all | Select-Object -First $Shown)
-    $text = (($parts | ForEach-Object { if ("$_" -match '\s') { '"' + $_ + '"' } else { "$_" } }) -join ' ')
+    # Yalnız baştaki dize argümanlar yazılabilir (bilinen önek hep dizedir).
+    $k = 0
+    while ($k -lt $Shown -and $k -lt $all.Count -and $all[$k] -is [string]) { $k++ }
+    $Shown = $k
+    $parts = @($prog) + @($all | Select-Object -First $Shown | ForEach-Object {
+        $p = Format-TerminalText $_
+        if ($p.Contains(' ')) { '"' + $p + '"' } else { $p }
+    })
+    $text = $parts -join ' '
     $hidden = $all.Count - $Shown
     if ($hidden -gt 0) { $text += (' (+{0} argüman daha; değerleri yazılmaz)' -f $hidden) }
     return $text
 }
 
-# Kayıt bu repoyu mu gösteriyor? (komut ya da argümanlardan biri repo altında)
+# Kayıt bu repoyu mu gösteriyor? (komut ya da argümanlardan biri repo altında; yalnız dize değerler,
+# sıralı karşılaştırma: kültüre duyarlı StartsWith görünmez karakterleri yok sayabilir)
 function Test-McpEntryOwned {
     param($Entry, [string]$RepoRoot)
     $root = ($RepoRoot.TrimEnd('\', '/') -replace '/', '\').ToLowerInvariant() + '\'
-    $vals = @(Get-EntryValue $Entry 'command') + @(Get-EntryValue $Entry 'args')
+    $vals = @()
+    $c = (Get-EntryField $Entry 'command').Value
+    if ($c -is [string]) { $vals += $c }
+    $af = Get-EntryField $Entry 'args'
+    if ((Get-JsonKind $af.Value) -eq 'dizi') { $vals += @($af.Value) }
     foreach ($v in $vals) {
-        if ($null -eq $v) { continue }
-        if (("$v" -replace '/', '\').ToLowerInvariant().StartsWith($root)) { return $true }
+        if (-not ($v -is [string])) { continue }
+        if (($v -replace '/', '\').ToLowerInvariant().StartsWith($root, [StringComparison]::Ordinal)) { return $true }
     }
     return $false
 }
@@ -762,6 +987,16 @@ function Get-McpEnvName {
 # "--block x") ve env. Eski kayıt aynı programı (dosya adı) çalıştırıyor VE argümanları bizim
 # argümanlarımızla (ya da "-I" olmadan yazılmış eski biçimiyle) başlıyorsa, kalan argümanlar
 # kullanıcınındır. Biçim tanınmazsa $null: hiçbir şey taşınmaz, çağıran bunu açıkça söyler.
+# Yolun son parçası, küçük harfle ('\', '/' ve sürücü öneki "C:" ayırıcıdır; GetFileName gibi).
+function Get-PathLeaf {
+    param([string]$Path)
+    $p = $Path -replace '/', '\'
+    $i = $p.LastIndexOf('\')
+    if ($i -ge 0) { $p = $p.Substring($i + 1) }
+    elseif ($p -cmatch '\A[A-Za-z]:') { $p = $p.Substring(2) }
+    return $p.ToLowerInvariant()
+}
+
 function Get-McpCarryOver {
     param($Entry, [string[]]$ServerCommand)
     if (-not $Entry) { return $null }
@@ -769,8 +1004,10 @@ function Get-McpCarryOver {
     if ($type -and $type -ne 'stdio') { return $null }
     $cmd = "$(Get-EntryValue $Entry 'command')"
     if (-not $cmd) { return $null }
-    $leafOld = [IO.Path]::GetFileName(($cmd -replace '/', '\')).ToLowerInvariant()
-    $leafNew = [IO.Path]::GetFileName(($ServerCommand[0] -replace '/', '\')).ToLowerInvariant()
+    # [IO.Path]::GetFileName yerine: Windows PowerShell 5.1'de (.NET Framework) yolda geçersiz
+    # karakter (ör. kontrol karakteri) olunca hata fırlatır ve kurulumu ham hatayla durdururdu.
+    $leafOld = Get-PathLeaf $cmd
+    $leafNew = Get-PathLeaf $ServerCommand[0]
     if ($leafOld -ne $leafNew) { return $null }
     $have = @(Get-EntryValue $Entry 'args' | Where-Object { $null -ne $_ } | ForEach-Object { "$_" })
     $want = @($ServerCommand | Select-Object -Skip 1)
@@ -800,7 +1037,7 @@ function Format-McpCarryOver {
     if (-not $Carry) { return '' }
     $parts = @()
     if (@($Carry.Extra).Count -gt 0) { $parts += ('ek argümanlar ({0} adet; değerleri yazılmaz)' -f @($Carry.Extra).Count) }
-    $names = @(Get-McpEnvName $Carry.Env)
+    $names = @(Get-McpEnvName $Carry.Env | ForEach-Object { Format-TerminalText $_ })
     if ($names.Count -gt 0) { $parts += ('env: {0}' -f ($names -join ', ')) }
     if ($parts.Count -eq 0) { return '' }
     return ('; korunan {0}' -f ($parts -join '; '))
@@ -822,12 +1059,16 @@ function Register-McpServer {
     param([string]$Name, [string[]]$ServerCommand, [string]$RepoRoot)
     $api = Get-McpApi
     $script:McpRaw.Remove($Name)
+    $script:McpReadProblem.Remove($Name)
     $old = & $api.Get $Name
-    # Dize olmayan değer (elle düzenlenmiş kayıt): Claude Code kaydı zaten yok sayıyor ve add-json onu
-    # geri yüklemeyi reddeder. Silip kaybetmek ya da "zaten kayıtlı" demek yerine dokunmadan dur.
+    # Geçersiz kayıt (elle düzenlenmiş; ör. dize olmayan değer): Claude Code kaydı zaten yok sayıyor ve
+    # add-json onu geri yüklemeyi reddeder. Silip kaybetmek ya da "zaten kayıtlı" demek yerine dokunmadan
+    # dur. PowerShell'in okuyamadığı kayıt (env'de Path/PATH) da aynı yoldan: taşınamaz, dokunulmaz.
     $bad = @(Get-McpEntryProblem $old)
-    if ($bad.Count -gt 0) {
-        $why = Format-McpProblem $Name $bad
+    $why = $null
+    if ($bad.Count -gt 0) { $why = Format-McpProblem $Name $bad }
+    elseif ($script:McpReadProblem.ContainsKey($Name)) { $why = Format-McpReadProblem $Name $script:McpReadProblem[$Name] }
+    if ($why) {
         if ($script:DryRun) { return New-StepResult warn ('MCP: "{0}" kaydedilemeyecek, hiçbir şey değiştirilmeyecek: {1}' -f $Name, $why) }
         throw ('MCP kaydı yapılmadı, hiçbir şey değiştirilmedi: {0}' -f $why)
     }
@@ -860,12 +1101,12 @@ function Register-McpServer {
     # Biçimi tanınmayan eski kayıttaki env/argümanlar taşınamaz: bunu açıkça söyle (yedekte kalır).
     $lost = ''
     if ($old -and -not $carry) {
-        $lostEnv = @(Get-McpEnvName (Get-EntryValue $old 'env'))
+        $lostEnv = @(Get-McpEnvName (Get-EntryValue $old 'env') | ForEach-Object { Format-TerminalText $_ })
         if ($lostEnv.Count -gt 0) { $lost = ('; DİKKAT: eski kaydın env değerleri ({0}) ve argümanları yeni kayda TAŞINMAZ, yalnız yedekte kalır' -f ($lostEnv -join ', ')) }
         else { $lost = '; DİKKAT: eski kaydın argümanları yeni kayda TAŞINMAZ, yalnız yedekte kalır' }
     }
     # Ekranda yalnız bizim komutumuz; taşınan argümanlar $kept'te sayıyla geçer.
-    $display = Format-McpEntry ([pscustomobject]@{ command = $ServerCommand[0]; args = @($ServerCommand | Select-Object -Skip 1) })
+    $display = Format-McpCommandLine $ServerCommand
     $argJson = @(@($ServerCommand | Select-Object -Skip 1) | ForEach-Object { ConvertTo-SafeJson $_ }) + @($extraJson)
     $newJson = '{"type":"stdio","command":' + (ConvertTo-SafeJson $ServerCommand[0]) + ',"args":[' + ($argJson -join ',') + ']'
     if ($envJson) { $newJson += ',"env":' + $envJson }
@@ -939,8 +1180,16 @@ function Register-McpServer {
 function Unregister-McpServer {
     param([string]$Name, [string]$RepoRoot)
     $api = Get-McpApi
+    $script:McpReadProblem.Remove($Name)
     $old = & $api.Get $Name
     if (-not $old) { return New-StepResult skip ('MCP kaydı yok: {0}' -f $Name) }
+    # Geçersiz (ya da PowerShell'in okuyamadığı) kayıt: kurmadaki gibi dokunulmaz. Kaldırma yedek
+    # almaz; elle yazılmış değerler geri getirilemezdi. Kullanıcı isterse komutla kendisi siler.
+    $bad = @(Get-McpEntryProblem $old)
+    if ($bad.Count -gt 0) { return New-StepResult warn (Format-McpUnregisterProblem $Name (Format-McpProblem $Name $bad)) }
+    if ($script:McpReadProblem.ContainsKey($Name)) {
+        return New-StepResult warn (Format-McpUnregisterProblem $Name (Format-McpReadProblem $Name $script:McpReadProblem[$Name]))
+    }
     $oldText = Format-McpEntry $old 0   # argüman değerleri yazılmaz (kullanıcınınkiler sır olabilir)
     if (-not (Test-McpEntryOwned $old $RepoRoot)) {
         return New-StepResult warn ('MCP kaydı "{0}" bu repoyu göstermiyor ({1}); dokunulmadı' -f $Name, $oldText)
