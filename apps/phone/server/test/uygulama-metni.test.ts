@@ -179,9 +179,11 @@ describe("uygulama-metni: sınır durumları", () => {
     for (const ad of ["x\ncom.banka.app Banka", "x\r\ncom.banka.app", "x\u2028com.banka.app", "x\u2029y", "a\tb\u0000c"]) {
       const s = tek(ad);
       assert.equal(s.length, 1, JSON.stringify(s));
-      assert.ok(s[0]!.startsWith('com.kotu.app "'), s[0]);
-      assert.ok(!/[\n\r\t\u0000\u2028\u2029]/.test(s[0]!), s[0]);
-      assert.equal(JSON.parse(s[0]!.slice("com.kotu.app ".length)), ad);
+      const [satir] = s;
+      assert.ok(satir !== undefined);
+      assert.ok(satir.startsWith('com.kotu.app "'), satir);
+      assert.ok(!/[\n\r\t\u0000\u2028\u2029]/.test(satir), satir);
+      assert.equal(JSON.parse(satir.slice("com.kotu.app ".length)), ad);
     }
     assert.deepEqual(tek("x\ncom.banka.app Banka"), [String.raw`com.kotu.app "x\ncom.banka.app Banka"`]);
     // Serviste `kacir`dan geçmiş hâli (ters bölü + n) bir kez çözülür, yine tek satırda kalır.
