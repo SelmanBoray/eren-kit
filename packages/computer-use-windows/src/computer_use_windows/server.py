@@ -12,6 +12,13 @@ ToolError, the exception type for tools whose text both mcp 1.x and 2.x pass on 
 text of any other exception with a generic "Error executing tool <name>"). Anything else is logged
 with its traceback on stderr and reported as a one-line message.
 
+Text: window titles, UI Automation texts, process names and error messages come from other
+programs and may hold an unpaired UTF-16 surrogate, which UTF-8 cannot carry. The SDK's stdio
+writer fails on it outside any request handler: the call is never answered and the server exits
+on the next message. So every text a tool returns or raises leaves through ``_wire_text`` (in
+``build_server``'s ``call``), after all safety checks: such a unit is sent as U+FFFD, and text
+without one is sent unchanged.
+
 MCP SDK: works with mcp 1.x (``FastMCP``, ``mcp.server.fastmcp``) and 2.x (renamed ``MCPServer``,
 ``mcp.server.mcpserver``); the same tools, schemas, instructions and result content go out on
 both (the order of JSON keys on the wire may differ).
@@ -23,6 +30,7 @@ monkeypatch e.g. ``computer_use_windows.input.click``.
 from __future__ import annotations
 
 import logging
+import re
 import sys
 import threading
 import time
@@ -98,6 +106,27 @@ _LINE_BREAKS = str.maketrans({"\r": " ", "\n": " ", "\t": " ", "\v": " ", "\f": 
 def _one_line(text: str) -> str:
     """Keep UI text on one output line."""
     return text.translate(_LINE_BREAKS)
+
+
+_SURROGATE = re.compile("[\ud800-\udfff]")
+
+
+def _wire_text(text: str) -> str:
+    """``text`` as UTF-8 can carry it: an unpaired surrogate becomes U+FFFD, a pair that came as
+    two units is joined into its character. Text without surrogates is returned unchanged."""
+    if not _SURROGATE.search(text):
+        return text
+    return text.encode("utf-16-le", "surrogatepass").decode("utf-16-le", "replace")
+
+
+def _wire(result: _T) -> _T:
+    """A tool body's result (a text, or image bytes and a text) with ``_wire_text`` applied."""
+    if isinstance(result, str):
+        return _wire_text(result)  # type: ignore[return-value]
+    if isinstance(result, tuple):
+        parts = (_wire_text(v) if isinstance(v, str) else v for v in result)
+        return tuple(parts)  # type: ignore[return-value]
+    return result
 
 
 _HIDDEN_TITLE = "(title hidden: blocked app)"
@@ -755,10 +784,11 @@ def build_server(config: Config) -> MCPServer:
                 return _guarded(fn, args)
 
         try:
-            return await to_thread.run_sync(locked)
+            result = await to_thread.run_sync(locked)
         except (safety.SafetyError, ValueError, RuntimeError) as exc:
             # ToolError keeps the message for the agent on mcp 1.x and 2.x alike (see above).
-            raise ToolError(str(exc)) from exc
+            raise ToolError(_wire_text(str(exc))) from exc
+        return _wire(result)  # see "Text" above
 
     if _MCP2:
         server = MCPServer(

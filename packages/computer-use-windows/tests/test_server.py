@@ -1019,6 +1019,98 @@ def test_windows_lists_one_line_per_window_with_flags(desk: FakeDesktop) -> None
 
 
 # --------------------------------------------------------------------------------------------
+# Text from other programs that UTF-8 cannot carry
+# --------------------------------------------------------------------------------------------
+
+# An unpaired UTF-16 surrogate: any app can put one in a window title or a UI Automation text.
+# The SDK's stdio writer cannot encode it (tests/test_stdio.py shows the real transport); the
+# in-memory client below does not encode at all, so these tests check that every reply text is
+# valid UTF-8 and how the unit is shown (U+FFFD).
+LONE = "\ud800"
+
+
+def assert_utf8(reply: Reply) -> None:
+    for text in reply.texts:
+        text.encode("utf-8")  # strict, like the stdio transport
+
+
+def test_unpaired_surrogates_in_window_texts_are_sent_as_replacement_chars(
+    desk: FakeDesktop,
+) -> None:
+    odd = dataclasses.replace(NOTEPAD, title=f"Bad {LONE} title \udc80", process=f"odd{LONE}.exe")
+    desk.windows = [odd, MAIL]
+    with connect() as client:
+        listed = client.call("windows")
+        shot = client.call("screenshot")
+        waited = client.call("wait", seconds=0.01)
+    for reply in (listed, shot, waited):
+        assert not reply.is_error, reply.text
+        assert_utf8(reply)
+    shown = '"Bad \ufffd title \ufffd" (odd\ufffd.exe)'
+    assert listed.lines[0] == '1001 | odd\ufffd.exe | "Bad \ufffd title \ufffd" [foreground]'
+    assert shot.texts[0].endswith(f"| foreground: {shown}")
+    assert waited.text == f"ok | foreground: {shown}"
+
+
+def test_unpaired_surrogates_in_element_texts_are_sent_as_replacement_chars(
+    desk: FakeDesktop,
+) -> None:
+    desk.windows = [dataclasses.replace(NOTEPAD, title=f"Doc{LONE}")]
+    desk.elements = [dataclasses.replace(ELEMENTS[1], name=f"Na{LONE}me", value="v\udfff")]
+    with connect() as client:
+        reply = client.call("elements")
+    assert not reply.is_error, reply.text
+    assert_utf8(reply)
+    assert reply.lines == [
+        'window: "Doc\ufffd" (notepad.exe) — 1 elements',
+        '[1] edit "Na\ufffdme" = "v\ufffd"',
+    ]
+
+
+@pytest.mark.parametrize(
+    ("error", "message"),
+    [
+        (safety.SafetyError(f"odd{LONE}.exe is blocked"), "odd\ufffd.exe is blocked"),
+        (ValueError(f'No window "{LONE}"'), 'No window "\ufffd"'),
+        (RuntimeError(f'Window 5 ("x{LONE}") is hidden'), 'Window 5 ("x\ufffd") is hidden'),
+        (OSError(f"t{LONE}"), "wait failed: OSError: t\ufffd"),  # unexpected
+    ],
+)
+def test_unpaired_surrogates_in_error_messages_are_sent_as_replacement_chars(
+    monkeypatch: pytest.MonkeyPatch, error: Exception, message: str
+) -> None:
+    def wait(self: Any, seconds: float) -> str:
+        raise error
+
+    monkeypatch.setattr(server_mod._Session, "wait", wait)
+    with connect() as client:
+        reply = client.call("wait", seconds=1)
+    assert_utf8(reply)
+    assert reply.result == {
+        "content": [{"type": "text", "text": f"Error executing tool wait: {message}"}],
+        "isError": True,
+    }
+
+
+def test_text_utf8_can_carry_is_sent_unchanged(desk: FakeDesktop) -> None:
+    """Only unpaired surrogates change: other text keeps every character (token frugality)."""
+    title = "Belge çğış — 文字 😀 \ufffd \u200b é"
+    desk.windows = [dataclasses.replace(NOTEPAD, title=title)]
+    with connect() as client:
+        reply = client.call("windows")
+    assert reply.text == f'1001 | notepad.exe | "{title}" [foreground]'
+    assert reply.text.encode("utf-8") == f'1001 | notepad.exe | "{title}" [foreground]'.encode()
+
+
+def test_a_surrogate_pair_split_into_two_units_is_joined(desk: FakeDesktop) -> None:
+    desk.windows = [dataclasses.replace(NOTEPAD, title="smile \ud83d\ude00")]
+    with connect() as client:
+        reply = client.call("windows")
+    assert_utf8(reply)
+    assert reply.text == '1001 | notepad.exe | "smile \U0001f600" [foreground]'
+
+
+# --------------------------------------------------------------------------------------------
 # Action replies, focus, type_text, key
 # --------------------------------------------------------------------------------------------
 

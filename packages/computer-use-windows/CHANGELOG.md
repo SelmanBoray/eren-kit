@@ -59,6 +59,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   covered by another main window.
 - Exactly `limit` elements are no longer reported as truncated.
 - Reading labels from an unresponsive app no longer exceeds the scan time budget.
+- Text from another program (a window title, a UI Automation name or value, a process name, an
+  error message) with an unpaired UTF-16 surrogate no longer leaves the call unanswered: the stdio
+  transport could not encode it, so the reply was never sent and the server exited on the next
+  message. Such a character is now sent as U+FFFD (`�`); all other text is sent unchanged.
 
 ## [0.1.0] - Unreleased
 
