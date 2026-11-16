@@ -173,14 +173,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   credentials/path/query, headers, env values, user-added arguments, a password embedded in
   `command`, non-string `command`/`type` values); remote servers are shown as
   `scheme://host[:port]/…` and an unusual or ambiguous URL or program path as a fixed placeholder,
-  identically on Windows and macOS. Text taken from a registration or another tool's output can no
-  longer reach the terminal as control characters, ANSI escapes or extra lines. A registration that
-  Claude Code rejects (boundary measured against `claude` 2.1.325, e.g. `"env": {"PORT": 8080}` or
-  `"type": 5`) is now left untouched by both install and uninstall, with a clear message, instead of
-  being lost (Windows) or silently rewritten (macOS); fields Claude Code ignores for the server's
-  type no longer stop the installer; the doctor reports only what Claude Code rejects. On Windows an
-  env with keys differing only in case (`Path`/`PATH`) or an empty key, and a command containing
-  control characters on Windows PowerShell 5.1, no longer stop the installer with a raw error.
+  identically on Windows and macOS; program paths with letters from any writing system (Cyrillic,
+  Greek, CJK, Arabic, ...) and `'`, `,`, `&`, `#` are shown. Text taken from a registration or another
+  tool's output can no longer reach the terminal as control characters, ANSI escapes or extra lines.
+  A registration that Claude Code rejects (boundary measured against `claude` 2.1.325, e.g.
+  `"env": {"PORT": 8080}`, `"type": 5`, `"alwaysLoad": "true"`, `oauth.callbackPort: "8080"`) is now
+  left untouched by both install and uninstall, with a clear message, instead of being lost (Windows)
+  or silently rewritten (macOS); an existing but empty or non-object registration (`{}`, `5`) counts
+  as invalid, not as missing, on every platform; uninstall no longer suggests deleting an invalid
+  registration that points to another program. Uninstall now backs up a registration before removing
+  it, like install does, so a value Claude Code starts rejecting in a later version is never lost.
+  Fields Claude Code ignores for the server's type no longer stop the installer; the doctor reports
+  only what Claude Code rejects. On Windows, whether a registration's keys can be read (`Path`/`PATH`,
+  an empty key; `ı`/`I` are fine) is decided by the running PowerShell itself, a `__type` key (dropped
+  by Windows PowerShell 5.1) stops the installer with a clear message, and a command containing
+  control characters on Windows PowerShell 5.1 no longer stops the installer with a raw error.
 
 ### Security
 

@@ -8,7 +8,8 @@
 2. Claude Code'un geçersiz saydığı kayıt (tests/claude_mcp_sinir.json: gerçek claude 2.1.325 ile
    ölçülmüş kabul/ret sınırı). Claude Code böyle bir kaydı yok sayar, "mcp add-json" reddeder; kurulum
    ve kaldırma kayda dokunmaz, nedeni (yalnız yer ve tür) söylenir. Geçerli kayıtta türe ait olmayan
-   alan (stdio'da headers, http'de env) kurulumu durdurmaz.
+   alan (stdio'da headers, http'de env) kurulumu durdurmaz. Denetimin bilmediği bir ret de değer
+   kaybettirmez: kayda dokunan her yol önce yedekler (dosyanın sonundaki üçüncü tur testleri).
 3. Adres ve kayıt gösterimi iki platformda her girdide aynıdır; şüpheli adres sabit metindir.
 4. Kayıttan gelen hiçbir metin terminale kontrol karakteri, ANSI kaçışı ya da satır sonu olarak geçmez.
 
@@ -54,7 +55,13 @@ H = mcp_config.HIDDEN_PROGRAM
 # Gözden geçiricinin terminal örneği: env anahtarında satır sonu sahte bir "kaydedildi" satırı üretirdi.
 SAHTE_SATIR = "  \u2714 MCP kaydedildi: sahte"
 KONTROL_ANAHTAR = "K\r\n" + SAHTE_SATIR
-SINIR = json.loads((Path(__file__).resolve().parent / "claude_mcp_sinir.json").read_text(encoding="utf-8"))["vakalar"]
+_OLCUM = json.loads((Path(__file__).resolve().parent / "claude_mcp_sinir.json").read_text(encoding="utf-8"))
+SINIR = _OLCUM["vakalar"] + [[ad, {"type": t, "url": "https://example.invalid/" + "a" * (n - 24)}, kabul]
+                             for ad, t, n, kabul in _OLCUM["uzun_url"]]
+# Denetimin bilerek taklit etmediği ölçülmüş ret (bkz. mcp_config.entry_problems "Bilinen eksik"):
+# claude authServerMetadataUrl'yi WHATWG URL ayrıştırıcısıyla da denetler. Bu vakalar ve claude'un
+# ileride reddetmeye başlayacağı alanlar için güvence yedektir (test_*_denetimin_bilmedigi_ret_*).
+BILINEN_EKSIK = {"sse|oauth.authServerMetadataUrl|yalniz_sema", "http|oauth.authServerMetadataUrl|yalniz_sema"}
 
 
 @pytest.fixture(autouse=True)
@@ -136,42 +143,77 @@ def _gecersiz_kayitlar(py: str) -> dict:
 #
 # Gerçek claude 2.1.325 ile ölçülen davranış (claude_mcp_sinir.json): "mcp add-json" geçersiz kaydı
 # "Invalid configuration: : Invalid input" ile 1 döner, yazmaz; geçerli kayıtta türe ait olmayan
-# alanları atar ve stdio'ya "args": [] ekler; "mcp remove" geçersiz kaydı da siler. Kabul kararı
-# entry_problems'in kopyası değil, ölçümden çıkarılmış bir tablodur; test_oykunucu_olcumle_ayni
-# tabloyu ölçülen her vakaya karşı sınar.
+# alanları atar ve stdio'ya "args": [] ekler; "mcp remove" geçersiz kaydı da siler. null değerli kayıt
+# "yok" sayılır (add-json ekler, remove "yok" der); nesne olmayan değer (5, "x", [], {}) "var"dır
+# (add-json "already exists" der, remove siler). Kabul kararı entry_problems'in kopyası değil, ölçümden
+# çıkarılmış bir tablodur; test_oykunucu_olcumle_ayni tabloyu ölçülen her vakaya karşı sınar.
+# Yapılandırma klasöründe "reddedilen-alanlar" dosyası varsa (satır başına bir alan adı) öykünücü o
+# alanı taşıyan kaydı reddeder: claude'un ileride yeni bir alanı reddetmeye başladığı durum.
 
 _EMU = r'''
 import json, os, sys
 
+from urllib.parse import urlsplit
+
 # Tür -> alan -> kabul edilen biçimler. Tabloda olmayan alan yok sayılır (add-json'da atılır).
+ORTAK = {"timeout": {"pozitif_guvenli_tam"}, "alwaysLoad": {"bool"}, "bareElicitationCapability": {"bool"}}
 TABLO = {
-    "stdio": {"command": {"dolu_dize"}, "args": {"dize_dizisi"}, "env": {"dize_nesnesi"},
-              "timeout": {"pozitif_guvenli_tam"}},
-    "sse": {"url": {"dolu_dize", "bos_dize"}, "headers": {"dize_nesnesi"}, "headersHelper": {"dolu_dize", "bos_dize"},
-            "oauth": {"clientId_dize_nesnesi"}, "tools": {"adli_nesne_dizisi"}, "timeout": {"pozitif_guvenli_tam"}},
-    "ws": {"url": {"dolu_dize", "bos_dize"}, "headers": {"dize_nesnesi"}, "headersHelper": {"dolu_dize", "bos_dize"},
-           "timeout": {"pozitif_guvenli_tam"}},
+    "stdio": {"command": {"dolu_dize"}, "args": {"dize_dizisi"}, "env": {"dize_nesnesi"}, **ORTAK},
+    "sse": {"url": {"kisa_dize"}, "headers": {"dize_nesnesi"}, "headersHelper": {"dolu_dize", "bos_dize"},
+            "oauth": {"gecerli_oauth"}, "tools": {"adli_nesne_dizisi"}, "toolPermissions": {"izin_nesnesi"},
+            "discoveryCache": {"bool"}, **ORTAK},
+    "ws": {"url": {"kisa_dize"}, "headers": {"dize_nesnesi"}, "headersHelper": {"dolu_dize", "bos_dize"}, **ORTAK},
 }
 TABLO["http"] = TABLO["sse"]
 ZORUNLU = {"stdio": "command", "sse": "url", "http": "url", "ws": "url"}
 
+def pozitif_tam(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and float(v).is_integer() and 0 < v <= 2 ** 53 - 1
+
+def u16(s):
+    return len(s.encode("utf-16-le", "surrogatepass")) // 2
+
+def gecerli_oauth(o):
+    if "clientId" in o and not isinstance(o["clientId"], str):
+        return False
+    if "callbackPort" in o and not pozitif_tam(o["callbackPort"]):
+        return False
+    if "scopes" in o and not (isinstance(o["scopes"], str) and o["scopes"]):
+        return False
+    if "xaa" in o and not isinstance(o["xaa"], bool):
+        return False
+    if "authServerMetadataUrl" in o:
+        m = o["authServerMetadataUrl"]
+        if not isinstance(m, str) or u16(m) > 4096:
+            return False
+        m = m.strip()  # claude (zod url()) baştaki/sondaki boşluğu atıp URL olarak ayrıştırır
+        if not m.startswith("https://") or not urlsplit(m).netloc:
+            return False
+    return True
+
 def bicimler(v):
     b = set()
-    if isinstance(v, str):
+    if isinstance(v, bool):
+        b.add("bool")
+    elif isinstance(v, str):
         b.add("dolu_dize" if v else "bos_dize")
-    elif isinstance(v, (int, float)) and not isinstance(v, bool):
-        if float(v).is_integer() and 0 < v <= 2 ** 53 - 1:
-            b.add("pozitif_guvenli_tam")
+        if u16(v) <= 65536:
+            b.add("kisa_dize")
+    elif pozitif_tam(v):
+        b.add("pozitif_guvenli_tam")
     elif isinstance(v, list):
         if all(isinstance(x, str) for x in v):
             b.add("dize_dizisi")
-        if all(isinstance(x, dict) and isinstance(x.get("name"), str) for x in v):
+        if all(isinstance(x, dict) and isinstance(x.get("name"), str)
+               and x.get("permission_policy", "always_ask") in ("always_allow", "always_ask", "always_deny") for x in v):
             b.add("adli_nesne_dizisi")
     elif isinstance(v, dict):
         if all(isinstance(x, str) for x in v.values()):
             b.add("dize_nesnesi")
-        if isinstance(v.get("clientId", ""), str):
-            b.add("clientId_dize_nesnesi")
+        if all(x in ("allow", "ask", "blocked") for x in v.values()):
+            b.add("izin_nesnesi")
+        if gecerli_oauth(v):
+            b.add("gecerli_oauth")
     return b
 
 def kabul(e):
@@ -200,7 +242,7 @@ def calistir(argv, cfg_dir):
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f)
     if argv[:2] == ["mcp", "remove"]:
-        if argv[2] not in servers:
+        if servers.get(argv[2]) is None:
             return 1, "", "No MCP server found"
         del servers[argv[2]]
         yaz()
@@ -222,9 +264,11 @@ def calistir(argv, cfg_dir):
                     k, _, v = head[j + 1].partition("=")
                     env[k] = v
             entry = {"type": "stdio", "command": cmd[0], "args": cmd[1:], "env": env}
-        if not kabul(entry):
+        red = os.path.join(cfg_dir, "reddedilen-alanlar")
+        yeni_ret = open(red, encoding="utf-8").read().split() if os.path.exists(red) else []
+        if not kabul(entry) or any(k in entry for k in yeni_ret):
             return 1, "", "Invalid configuration: : Invalid input"
-        if name in servers:
+        if servers.get(name) is not None:
             return 1, "", f"MCP server {name} already exists in user config"
         servers[name] = sakla(entry)
         yaz()
@@ -281,7 +325,9 @@ def test_olcum_dosyasi_beklenen_vakalari_tasir():
 def test_denetim_olculen_claude_siniriyla_ayni():
     yanlis = [(ad, e, kabul, mcp_config.entry_problems(e)) for ad, e, kabul in SINIR
               if (mcp_config.entry_problems(e) == []) != kabul]
-    assert not yanlis, yanlis[:10]
+    # Tek fark bilinen eksik: claude reddediyor, denetim geçerli sayıyor (tersi, yani gereksiz ret, yok).
+    assert {ad for ad, *_ in yanlis} == BILINEN_EKSIK, [y for y in yanlis if y[0] not in BILINEN_EKSIK][:10]
+    assert all(not kabul for _, _, kabul, _ in yanlis)
 
 
 def test_oykunucu_olcumle_ayni(tmp_path):
@@ -437,10 +483,8 @@ def test_windows_gecersiz_kayda_dokunulmaz(shell, tmp_path):
         dry, real = res[f"{kind}-reg-dry"], res[f"{kind}-reg-real"]
         assert dry["status"] == "warn" and "kaydedilemeyecek" in dry["message"], dry
         assert real["status"] == "error" and "hiçbir şey değiştirilmedi" in real["message"], real
-        for op in ("dry", "real"):  # kaldırma da dokunmaz (yedek almadan silerdi)
-            u = res[f"{kind}-unreg-{op}"]
-            assert u["status"] == "warn" and "kaldırılmadı" in u["message"], u
-            assert "claude mcp remove beyin -s user" in u["message"], u
+        for op in ("dry", "real"):  # kaldırma da dokunmaz
+            _kaldirma_iletisi(res[f"{kind}-unreg-{op}"], _sahip(old, repo))
         for p in parts:
             assert all(p in res[f"{kind}-{x}"]["message"] for x in ("reg-dry", "reg-real", "unreg-dry", "unreg-real")), \
                 (kind, p, real)
@@ -505,10 +549,14 @@ Write-StepLine info ("e" + [char]0x202e + "f" + [char]0xd800 + "g")
 
 # ---------------------------------------------------------------- macOS/Linux: install_macos.py
 
-def _mac(tmp_path: Path, monkeypatch, sid: str, old: dict, fail: int = 0, dry: bool = False, op: str = "reg"):
+def _mac(tmp_path: Path, monkeypatch, sid: str, old, fail: int = 0, dry: bool = False, op: str = "reg",
+         reject: tuple = ()):
     d = tmp_path / "s" / sid
     cfg = _cfg(d, {"beyin": old}, fail)
+    if reject:
+        (cfg / "reddedilen-alanlar").write_text("\n".join(reject), encoding="utf-8")
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(cfg))
+    monkeypatch.setattr(im, "REPO", tmp_path / "repo")  # sahiplik: kayıt sınama deposunu mu gösteriyor
     emu = _emu_module(tmp_path)
 
     def run(args, **kw):
@@ -527,7 +575,26 @@ def _mac_py(tmp_path: Path) -> str:
     p = tmp_path / "repo" / "python"
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_bytes(b"")
-    return str(p)
+    return f"{p.parent}/python"  # install_macos sahipliği '/' ayırıcısıyla sınar (Windows'ta da)
+
+
+def _sahip(entry, repo: Path) -> bool:
+    """Kayıt sınama deposunu gösteriyor mu (kurulumların ölçütü: dize command/args depo altında)."""
+    if not isinstance(entry, dict):
+        return False
+    args = entry.get("args") if isinstance(entry.get("args"), list) else []
+    root = str(repo).replace("\\", "/").rstrip("/").lower() + "/"
+    return any(isinstance(v, str) and v.replace("\\", "/").lower().startswith(root) for v in [entry.get("command"), *args])
+
+
+def _kaldirma_iletisi(u: dict, owned: bool) -> None:
+    """Geçersiz kayıtta kaldırma: dokunulmaz; elle silme yalnız depoyu gösteren kayıtta önerilir."""
+    assert u["status"] == "warn", u
+    if owned:
+        assert "kaldırılmadı" in u["message"] and "claude mcp remove beyin -s user" in u["message"], u
+    else:  # başka bir programın kaydı: kullanıcınındır, silmeye yönlendirilmez
+        assert "bu repoyu göstermiyor" in u["message"] and "yok sayıyor" in u["message"], u
+        assert "claude mcp remove" not in u["message"], u
 
 
 def test_macos_mevcut_kayit_sirlari_yazilmaz(tmp_path, monkeypatch):
@@ -565,9 +632,10 @@ def test_macos_gecersiz_kayda_dokunulmaz_ve_donusturulmez(tmp_path, monkeypatch)
             status, msg, cfg = _mac(tmp_path, monkeypatch, f"{kind}-{op}-{dry}", old, dry=dry, op=op)
             if op == "reg":
                 want = ("warn", "kaydedilemeyecek") if dry else ("error", "hiçbir şey değiştirilmedi")
+                assert status == want[0] and want[1] in msg, (kind, op, dry, msg)
             else:
-                want = ("warn", "kaldırılmadı")
-            assert status == want[0] and want[1] in msg and all(p in msg for p in parts), (kind, op, dry, msg)
+                _kaldirma_iletisi({"status": status, "message": msg}, _sahip(old, tmp_path / "repo"))
+            assert all(p in msg for p in parts), (kind, op, dry, msg)
             assert SIR not in msg, (kind, msg)
             _temiz_terminal(msg)
             assert _servers(cfg)["beyin"] == old, (kind, _servers(cfg))  # True -> "True" gibi dönüşüm yok
@@ -869,3 +937,352 @@ def test_doktor_bellek_ortamina_uydurma_deger_vermez(tmp_path):
     (home / ".claude.json").write_text(json.dumps({"mcpServers": {"beyin": entry}}), encoding="utf-8")
     exe, env = doktor._bellek_python(doktor.Ctx(home, REPO, False))
     assert exe is not None and env == {"A": "1"}, env
+
+
+# ---------------------------------------------------------------- üçüncü tur: kayıp, boş kayıt, yol, anahtar
+#
+# 1. Kurulum da kaldırma da elle yazılmış bir değeri geri getirilemez biçimde kaybettirmez. Biçim
+#    denetimi (entry_problems) claude'un ölçülen sınırını izler ama her sürümü kovalayamaz; asıl güvence
+#    yedektir: kayda dokunan her yol (güncelleme, kaldırma) önce kaydı birebir yedekler. Testler claude'un
+#    denetimin bilmediği bir alanı reddettiği durumu (öykünücüde "reddedilen-alanlar"; ve ölçülmüş
+#    BILINEN_EKSIK) iki platformda sınar.
+# 2. Var ama geçersiz kayıt ({}, 5, "x", []) her yerde "geçersiz"dir, "yok" değil; null "yok"tur.
+# 3. Her yazı sisteminden harfli program yolu gösterilir; kural iki kabukta ve Python'da aynıdır.
+# 4. PowerShell'in okuyamadığı anahtar kararı kabuğun kendi ConvertFrom-Json davranışıdır.
+
+def _yedek(bk_root: Path):
+    files = sorted(bk_root.rglob("beyin.json")) if bk_root.exists() else []
+    return json.loads(files[0].read_text(encoding="utf-8")) if files else None
+
+
+def _gelecek_kayitlari(py: str) -> dict:
+    """(kayıt, öykünücünün ayrıca reddettiği alanlar). Denetim ikisini de geçerli sayar."""
+    return {
+        # claude'un ileride reddetmeye başladığı bir alan (öykünücü "gelecekAlan"ı reddeder).
+        "gelecek": ({"type": "stdio", "command": py, "args": ["-m", "bellek.beyin", "mcp", "--SAHTEek"],
+                     "env": {"K": "SAHTEENV"}, "gelecekAlan": {"SAHTEalt": 5}}, ("gelecekAlan",)),
+        # Bugün ölçülmüş, denetimin taklit etmediği ret (BILINEN_EKSIK): yalnız "https://".
+        "eksik": ({"type": "http", "url": "https://example.invalid/", "headers": {"A": "SAHTEBASLIK"},
+                   "oauth": {"authServerMetadataUrl": "https://", "clientId": "SAHTEistemci"}}, ()),
+    }
+
+
+def test_denetimin_bilmedigi_ret_gercekten_bilinmiyor(tmp_path):
+    """Senaryonun kendisi: denetim bu kayıtları geçerli sayar, claude (öykünücü/ölçüm) reddeder."""
+    emu = _emu_module(tmp_path)
+    for kind, (old, reject) in _gelecek_kayitlari("C:/r/python.exe").items():
+        assert mcp_config.entry_problems(old) == [], kind
+        assert reject or not emu.kabul(old), kind
+
+
+def _gelecek_beklenen(kind, op, fail, status, msg, cfg, yedek, old):
+    """İki platformda aynı beklenti: değer ya kayıtta yerinde ya da yedekte birebir."""
+    if op == "unreg":
+        if kind == "gelecek":  # depoyu gösteren geçerli kayıt: yedeklenip kaldırılır
+            assert status == "ok" and "yedek:" in msg, (kind, msg)
+            assert "beyin" not in _servers(cfg) and yedek["entry"] == old, (kind, yedek)
+        else:  # yabancı kayıt: dokunulmaz
+            assert status == "warn" and _servers(cfg)["beyin"] == old, (kind, msg)
+        return
+    assert yedek is not None and yedek["entry"] == old, (kind, op, fail, yedek)  # her durumda birebir yedek
+    if fail:  # yeni kayıt başarısız; claude eski kaydı geri almaz, değeri yedekte
+        assert status == "error" and "GERİ YÜKLENEMEDİ" in msg, (kind, msg)
+    else:  # yeni kayıt yazıldı; eski kaydın değerleri yedekte
+        new = _servers(cfg)["beyin"]
+        assert status in ("ok", "warn") and new["args"][:len(BEYIN_ARGS)] == BEYIN_ARGS, (kind, msg, new)
+        if kind == "gelecek":  # kullanıcının argümanı ve env değeri yeni kayda da taşınır
+            assert new["args"][len(BEYIN_ARGS):] == ["--SAHTEek"] and new["env"] == {"K": "SAHTEENV"}, new
+
+
+@pytest.mark.skipif(not _shells(), reason="Windows PowerShell gerekli")
+@pytest.mark.parametrize("shell", _shells() or ["-"])
+def test_windows_denetimin_bilmedigi_ret_degeri_kaybettirmez(shell, tmp_path):
+    repo, py = _win_repo(tmp_path)
+    cases = _gelecek_kayitlari(py)
+    plan = []
+    for kind, (old, reject) in cases.items():
+        for op, fail in (("reg", 0), ("reg", 1), ("unreg", 0)):
+            sid = f"{kind}-{op}-{fail}"
+            d = tmp_path / "s" / sid
+            cfg = _cfg(d, {"beyin": old}, fail)
+            if reject:
+                (cfg / "reddedilen-alanlar").write_text("\n".join(reject), encoding="utf-8")
+            plan.append({"id": sid, "cfg": str(cfg), "bk": str(d / "bk"), "dry": False, "op": op,
+                         "cmd": [py, *BEYIN_ARGS]})
+    res, texts = _run_ps(shell, tmp_path, plan, repo)
+    for s in plan:
+        kind, op, fail = s["id"].split("-")
+        r = res[s["id"]]
+        text = texts[s["id"]] + r["message"]
+        assert SIR not in text, (s["id"], text)
+        _temiz_terminal(text)
+        _gelecek_beklenen(kind, op, int(fail), r["status"], r["message"], Path(s["cfg"]),
+                          _yedek(Path(s["bk"])), cases[kind][0])
+
+
+def test_macos_denetimin_bilmedigi_ret_degeri_kaybettirmez(tmp_path, monkeypatch):
+    py = _mac_py(tmp_path)
+    cases = _gelecek_kayitlari(py)
+    for kind, (old, reject) in cases.items():
+        for op, fail in (("reg", 0), ("reg", 1), ("unreg", 0)):
+            sid = f"{kind}-{op}-{fail}"
+            status, msg, cfg = _mac(tmp_path, monkeypatch, sid, old, fail, op=op, reject=reject)
+            assert SIR not in msg, (sid, msg)
+            _temiz_terminal(msg)
+            _gelecek_beklenen(kind, op, fail, status, msg, cfg, _yedek(tmp_path / "s" / sid / "home"), old)
+
+
+def _alan_kayitlari(py: str) -> dict:
+    """Gözden geçiricinin örnekleri: gerçek claude 2.1.325 reddediyor (ölçüm: claude_mcp_sinir.json)."""
+    return {
+        "alwaysload": ({"command": py, "args": BEYIN_ARGS, "env": {"K": "SAHTEENV"}, "alwaysLoad": "true"},
+                       "alwaysLoad: dize (true/false olmalı)"),
+        "port": ({"type": "http", "url": "https://example.invalid/", "oauth": {"callbackPort": "8080"}},
+                 "oauth.callbackPort: dize (pozitif tam sayı olmalı)"),
+        "kapsam": ({"type": "sse", "url": "https://example.invalid/", "oauth": {"scopes": 5}}, "oauth.scopes: sayı (dize olmalı)"),
+        "meta": ({"type": "http", "url": "https://example.invalid/", "oauth": {"authServerMetadataUrl": 5}},
+                 "oauth.authServerMetadataUrl: sayı (dize olmalı)"),
+    }
+
+
+@pytest.mark.skipif(not _shells(), reason="Windows PowerShell gerekli")
+@pytest.mark.parametrize("shell", _shells() or ["-"])
+def test_windows_olculen_yeni_alanlar_kayda_dokundurmaz(shell, tmp_path):
+    repo, py = _win_repo(tmp_path)
+    cases = _alan_kayitlari(py)
+    plan = []
+    for kind, (old, _) in cases.items():
+        for op, dry in (("reg", True), ("reg", False), ("unreg", True), ("unreg", False)):
+            sid = f"{kind}-{op}-{'dry' if dry else 'real'}"
+            d = tmp_path / "s" / sid
+            plan.append({"id": sid, "cfg": str(_cfg(d, {"beyin": old})), "bk": str(d / "bk"),
+                         "dry": dry, "op": op, "cmd": [py, *BEYIN_ARGS]})
+    res, _ = _run_ps(shell, tmp_path, plan, repo)
+    for s in plan:
+        kind, op, mode = s["id"].split("-")
+        old, part = cases[kind]
+        r = res[s["id"]]
+        assert part in r["message"] and SIR not in r["message"], r
+        if op == "reg":
+            assert r["status"] == ("warn" if mode == "dry" else "error"), r
+        else:
+            _kaldirma_iletisi(r, _sahip(old, repo))
+        assert _servers(Path(s["cfg"]))["beyin"] == old and _calls(Path(s["cfg"])) == [], s["id"]
+    # İletinin önerisi alanın beklediği türü söyler (callbackPort'ta "8080 -> \"8080\"" ters yöndü).
+    assert "parantez içinde başka bir tür" in res["port-reg-dry"]["message"]
+
+
+def test_macos_ve_doktor_olculen_yeni_alanlar_kayda_dokundurmaz(tmp_path, monkeypatch):
+    py = _mac_py(tmp_path)
+    for kind, (old, part) in _alan_kayitlari(py).items():
+        for op, dry in (("reg", True), ("reg", False), ("unreg", True), ("unreg", False)):
+            status, msg, cfg = _mac(tmp_path, monkeypatch, f"{kind}-{op}-{dry}", old, dry=dry, op=op)
+            assert part in msg and SIR not in msg, (kind, op, msg)
+            if op == "reg":
+                assert status == ("warn" if dry else "error"), (kind, msg)
+            else:
+                _kaldirma_iletisi({"status": status, "message": msg}, _sahip(old, tmp_path / "repo"))
+            assert _servers(cfg)["beyin"] == old and _calls(cfg) == [], kind
+        c = _doktor_mcp(tmp_path, old)
+        assert c["status"] == "error" and "yok sayıyor" in c["detail"] and part in c["detail"], c
+
+
+# Var ama geçersiz kayıt: claude add-json "already exists" der (kurulum o hatayla dururdu), remove siler.
+_VAR_GECERSIZ = {"bos": ({}, "command: yok (zorunlu)"), "sayi": (5, "kayıt: sayı (nesne olmalı)"),
+                 "dize": ("SAHTEDIZE", "kayıt: dize (nesne olmalı)"), "dizi": (["SAHTE"], "kayıt: dizi (nesne olmalı)")}
+
+
+def _var_gecersiz_beklenen(kind, op, dry, status, msg, cfg):
+    if kind == "null":  # null "kayıt yok" sayılır (claude da öyle sayar)
+        if op == "reg":
+            assert status == ("dry" if dry else "ok"), msg
+            assert (_servers(cfg)["beyin"] is None) if dry else isinstance(_servers(cfg)["beyin"], dict), msg
+        else:
+            assert status == "skip" and "MCP kaydı yok" in msg, msg
+        return
+    old, part = _VAR_GECERSIZ[kind]
+    assert part in msg and "MCP kaydı yok" not in msg and SIR not in msg, (kind, op, msg)
+    if op == "reg":
+        assert status == ("warn" if dry else "error") and "değiştiril" in msg, (kind, msg)
+    else:
+        assert status == "warn" and "yok sayıyor" in msg and "claude mcp remove" not in msg, (kind, msg)
+    assert _servers(cfg)["beyin"] == old and _calls(cfg) == [], (kind, op)
+
+
+@pytest.mark.skipif(not _shells(), reason="Windows PowerShell gerekli")
+@pytest.mark.parametrize("shell", _shells() or ["-"])
+def test_windows_var_ama_gecersiz_kayit_yok_sayilmaz(shell, tmp_path):
+    repo, py = _win_repo(tmp_path)
+    plan = []
+    for kind, old in [*((k, v[0]) for k, v in _VAR_GECERSIZ.items()), ("null", None)]:
+        for op, dry in (("reg", True), ("reg", False), ("unreg", True), ("unreg", False)):
+            sid = f"{kind}-{op}-{'dry' if dry else 'real'}"
+            d = tmp_path / "s" / sid
+            plan.append({"id": sid, "cfg": str(_cfg(d, {"beyin": old})), "bk": str(d / "bk"),
+                         "dry": dry, "op": op, "cmd": [py, *BEYIN_ARGS]})
+    res, _ = _run_ps(shell, tmp_path, plan, repo)
+    for s in plan:
+        kind, op, mode = s["id"].split("-")
+        r = res[s["id"]]
+        _var_gecersiz_beklenen(kind, op, mode == "dry", r["status"], r["message"], Path(s["cfg"]))
+
+
+def test_macos_ve_doktor_var_ama_gecersiz_kayit_yok_sayilmaz(tmp_path, monkeypatch):
+    for kind, old in [*((k, v[0]) for k, v in _VAR_GECERSIZ.items()), ("null", None)]:
+        for op, dry in (("reg", True), ("reg", False), ("unreg", True), ("unreg", False)):
+            _mac_py(tmp_path)
+            status, msg, cfg = _mac(tmp_path, monkeypatch, f"{kind}-{op}-{dry}", old, dry=dry, op=op)
+            _var_gecersiz_beklenen(kind, op, dry, status, msg, cfg)
+        c = _doktor_mcp(tmp_path, old)
+        if kind == "null":
+            assert c["status"] == "ok" and "kurulu değil" in c["detail"], c
+        else:
+            assert c["status"] == "error" and SIR not in c["detail"], c
+
+
+# ---------------------------------------------------------------- program yolu: her yazı sistemi
+
+_YAZI_YOLLARI = [
+    "D:/Ev/\u0418\u0432\u0430\u043d/x.exe",  # Kiril
+    "D:/Ev/\u738b\u5c0f\u660e/x.exe",  # CJK
+    "D:/Ev/\u0393\u03b9\u03ce\u03c1\u03b3\u03bf\u03c2/x.exe",  # Yunanca
+    "/home/\u05e9\u05e8\u05d4/bin/x", "/home/\u0645\u062d\u0645\u062f/bin/x",  # İbranice, Arapça
+    "D:/Ev/\uae40\ubbfc\uc900/x.exe", "D:/Ev/\u3072\u308d\u3057/x.exe", "D:/Ev/\u30bf\u30ed\u30a6/x.exe",
+    "D:/Ev/\u0930\u093e\u092e/x.exe", "D:/Ev/Nguy\u1ec5n/x.exe", "D:/Ev/\u10d2\u10d8\u10dd/x.exe",
+    "D:/Ev/O'Brien/x.exe", "C:/R&D, Ar-Ge/C#/x.exe", "C:/Program Files/R&D/x.exe",
+]
+_GIZLI_YOLLAR = [  # boşluk/ayırıcı benzeri, görünmez, yön ve BMP dışı karakterler; ASCII ayırıcılar
+    "C:/a\u00a0b.exe", "C:/a\u3000b.exe", "C:/a\uff1db.exe", "C:/a\uff1ab.exe", "C:/a\u037eb.exe", "C:/a\u1361b.exe",
+    "C:/a\u115fb.exe", "C:/a\u3164b.exe", "C:/a\u00adb.exe", "C:/a\u30fbb.exe", "C:/a\u200eb.exe", "C:/a\u202eb.exe",
+    "C:/a\U0001f600.exe", "C:/a\U00020000.exe", "C:/a%b.exe", "C:/a=b.exe", "C:/a;b.exe", "C:/a!b.exe",
+    'C:/a"b.exe', "C:/a?b.exe", "C:/a$b.exe", "C:/a|b.exe", "C:/a`b.exe", "C:/a*b.exe",
+    "C:/x.exe --token=SAHTE", "C:/R&D/x.exe SAHTE", "C:/O'Brien/x.exe -k", "curl https://kul:SAHTE@example.invalid",
+]
+
+
+@pytest.mark.parametrize("cmd", _YAZI_YOLLARI)
+def test_describe_program_her_yazi_sistemi(cmd):
+    assert mcp_config.describe_program(cmd) == (f'"{cmd}"' if " " in cmd else cmd)
+
+
+@pytest.mark.parametrize("cmd", _GIZLI_YOLLAR)
+def test_describe_program_supheli_karakter(cmd):
+    assert mcp_config.describe_program(cmd) == H
+
+
+def test_doktor_her_yazi_sisteminden_yolu_gosterir(tmp_path):
+    exe = tmp_path / "\u0418\u0432\u0430\u043d \u738b" / "O'Brien & Co" / "x.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_bytes(b"")
+    c = _doktor_mcp(tmp_path, {"command": str(exe), "args": BEYIN_ARGS})
+    assert H not in c["detail"] and str(exe) in c["detail"], c
+
+
+_PROGRAM_HARNESS = r"""
+param([string]$Module, [string]$In)
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+$m = Import-Module $Module -Force -DisableNameChecking -PassThru
+$izinli = & $m {
+    $l = New-Object System.Collections.Generic.List[int]
+    for ($c = 0; $c -le 0xFFFF; $c++) { if (Test-McpProgramShown ('a' + [string][char]$c)) { $l.Add($c) } }
+    , $l.ToArray()
+}
+$paths = @(Get-Content -LiteralPath $In -Raw -Encoding UTF8 | ConvertFrom-Json)
+$g = @(foreach ($p in @($paths | ForEach-Object { $_ })) { & $m { param($x) Format-McpProgram $x } $p })
+Write-Output ('JSON:' + (ConvertTo-Json @{ izinli = @($izinli); g = $g } -Depth 3 -Compress))
+"""
+
+
+@pytest.mark.skipif(not _shells(), reason="Windows PowerShell gerekli")
+@pytest.mark.parametrize("shell", _shells() or ["-"])
+def test_program_yolu_kurali_tum_bmpde_iki_kabukta_ayni(shell, tmp_path):
+    """Tablo Unicode sınıfına dayanmaz: .NET Framework 4.x, .NET 8+ ve Python her BMP karakterinde
+    aynı kararı verir (vekil birimleri ve BMP dışı karakterler iki tarafta da gösterilmez)."""
+    paths = _YAZI_YOLLARI + _GIZLI_YOLLAR
+    inp = tmp_path / "yollar.json"
+    inp.write_text(json.dumps(paths), encoding="utf-8")
+    script = tmp_path / "program.ps1"
+    script.write_text(_PROGRAM_HARNESS, encoding="utf-8-sig")
+    r = subprocess.run([shell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(script),
+                        "-Module", str(INSTALLER / "ErenKit.Installer.psm1"), "-In", str(inp)],
+                       capture_output=True, timeout=600, env=_ps_env(shell))
+    out = r.stdout.decode("utf-8", "replace")
+    line = [x for x in out.splitlines() if x.startswith("JSON:")]
+    assert line, out + r.stderr.decode("utf-8", "replace")
+    got = json.loads(line[-1][5:])
+    beklenen = [c for c in range(0x10000) if mcp_config.program_shown("a" + chr(c))]
+    assert got["izinli"] == beklenen, sorted(set(got["izinli"]) ^ set(beklenen))[:20]
+    assert got["g"] == [mcp_config.describe_program(p) for p in paths], got["g"]
+
+
+# ---------------------------------------------------------------- Windows: anahtar kararı kabuğun kendisi
+
+_ANAHTAR_ENV = {  # env'de yalnız harf büyüklüğüyle (ya da özel adıyla) ayrılan anahtarlar
+    "i_noktasiz": {"\u0131": "SAHTEa", "I": "SAHTEb"}, "uzun_s": {"\u017f": "SAHTEa", "S": "SAHTEb"},
+    "dz": {"\u01c4": "SAHTEa", "\u01c5": "SAHTEb"}, "sigma": {"\u03c2": "SAHTEa", "\u03a3": "SAHTEb"},
+    "mikro": {"\u00b5": "SAHTEa", "\u039c": "SAHTEb"}, "path": {"Path": "SAHTEa", "PATH": "SAHTEb"},
+    "tip": {"__type": "SAHTEt"},
+}
+
+_OKU_HARNESS = r"""
+param([string]$In)
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+$cases = Get-Content -LiteralPath $In -Raw -Encoding UTF8 | ConvertFrom-Json
+$out = @{}
+foreach ($p in $cases.PSObject.Properties) {
+    try { $o = $p.Value | ConvertFrom-Json; $out[$p.Name] = @($o.PSObject.Properties).Count }
+    catch { $out[$p.Name] = -1 }
+}
+Write-Output ('JSON:' + (ConvertTo-Json $out -Compress))
+"""
+
+
+def _kabuk_okur(shell: str, tmp_path: Path) -> dict:
+    """Kabuğun ConvertFrom-Json'ı her env'i eksiksiz okuyor mu (kurulumdan bağımsız ölçüm)."""
+    inp = tmp_path / "oku.json"
+    inp.write_text(json.dumps({k: json.dumps(v) for k, v in _ANAHTAR_ENV.items()}), encoding="utf-8")
+    script = tmp_path / "oku.ps1"
+    script.write_text(_OKU_HARNESS, encoding="utf-8-sig")
+    r = subprocess.run([shell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(script),
+                        "-In", str(inp)], capture_output=True, timeout=120, env=_ps_env(shell))
+    line = [x for x in r.stdout.decode("utf-8", "replace").splitlines() if x.startswith("JSON:")]
+    got = json.loads(line[-1][5:])
+    return {k: got[k] == len(v) for k, v in _ANAHTAR_ENV.items()}
+
+
+@pytest.mark.skipif(not _shells(), reason="Windows PowerShell gerekli")
+@pytest.mark.parametrize("shell", _shells() or ["-"])
+def test_windows_anahtar_karari_kabugun_kendi_okumasidir(shell, tmp_path):
+    repo, py = _win_repo(tmp_path)
+    okur = _kabuk_okur(shell, tmp_path)
+    # Ölçülen gerçek (gözden geçirici + bu tur): iki kabuk ı/I ve ſ/S'yi ayrı okur, Path/PATH'i okuyamaz;
+    # yalnız 5.1 "__type"ı atar.
+    assert okur["i_noktasiz"] and okur["uzun_s"] and not okur["path"], okur
+    assert okur["tip"] == (shell == "pwsh"), okur
+    plan = []
+    for kind, env in _ANAHTAR_ENV.items():
+        old = {"type": "stdio", "command": py, "args": ["-m", "bellek.beyin", "mcp"], "env": env}  # eski biçim: güncellenir
+        for op, dry in (("reg", True), ("reg", False), ("unreg", False)):
+            sid = f"{kind}-{op}-{'dry' if dry else 'real'}"
+            d = tmp_path / "s" / sid
+            plan.append({"id": sid, "cfg": str(_cfg(d, {"beyin": old})), "bk": str(d / "bk"),
+                         "dry": dry, "op": op, "cmd": [py, *BEYIN_ARGS]})
+    res, texts = _run_ps(shell, tmp_path, plan, repo)
+    for s in plan:
+        kind, op, mode = s["id"].split("-")
+        r, cfg = res[s["id"]], Path(s["cfg"])
+        assert SIR not in texts[s["id"]] + r["message"], r
+        if okur[kind]:  # kabuk okuyabiliyor: normal akış, değerler yeni kayda birebir
+            assert "okunamıyor" not in r["message"], r
+            if op == "reg" and mode == "real":
+                assert r["status"] == "ok" and _servers(cfg)["beyin"]["env"] == _ANAHTAR_ENV[kind], (r, _servers(cfg))
+            if op == "unreg":
+                assert r["status"] == "ok" and "beyin" not in _servers(cfg), r
+                assert _yedek(Path(s["bk"]))["entry"]["env"] == _ANAHTAR_ENV[kind]
+        else:  # okuyamıyor (ya da 5.1'de "__type" düşerdi): açık ileti, kayda dokunulmaz
+            assert "okunamıyor" in r["message"], r
+            assert r["status"] == ("error" if (op, mode) == ("reg", "real") else "warn"), r
+            assert _calls(cfg) == [] and _servers(cfg)["beyin"]["env"] == _ANAHTAR_ENV[kind], s["id"]
+            if kind == "tip":
+                assert '"__type" anahtarı' in r["message"], r

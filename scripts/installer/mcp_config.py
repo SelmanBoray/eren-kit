@@ -6,10 +6,14 @@ Kullanıcı kapsamlı MCP sunucuları Claude Code'un ~/.claude.json dosyasında 
 CLAUDE_CONFIG_DIR ayarlıysa $CLAUDE_CONFIG_DIR/.claude.json) "mcpServers" altında durur.
 "claude mcp get" sunucuyu başlatıp sağlık denetimi yaptığı için onun yerine dosya okunur.
 Çıktı: stdout'a tek satır ASCII JSON:
-    {"found": bool, "path": ..., "entry": {...}|null, "safe": {...}|null, "ps_problems": [...]}
+    {"found": bool, "path": ..., "entry": {...}|null, "entry_json": "...", "safe": {...}|null,
+     "ps_problems": [...], "type_keys": [...], "kind": "..."}
 
-"entry", PowerShell'in ConvertFrom-Json'ının okuyabileceği kopyadır; okuyamadığı anahtarlar (boş,
-yalnız harf büyüklüğüyle ayrılan) "ps_problems"te yazılır ve install.ps1 o kayda dokunmaz.
+null değerli kayıt "yok" sayılır; nesne olmayan kayıtta yalnız "kind" (türü) verilir. "entry_json"
+kaydın tamamıdır (dize): install.ps1 onu ConvertFrom-Json ile okumayı dener. Okuyamazsa (boş anahtar,
+yalnız harf büyüklüğüyle ayrılan anahtarlar) "entry" (her durumda okunabilen kopya) ve "ps_problems"
+(adaylar) kullanılır ve kayda dokunulmaz. "type_keys": Windows PowerShell 5.1'in sessizce attığı
+"__type" anahtarlarının yeri.
 
 "safe", kaydın değerlerini PowerShell nesnesine dönüştürmeden (ConvertFrom-Json PowerShell 7'de
 tarih biçimli dizeleri DateTime'a çevirir) yeniden yazabilmek içindir: "entry" kaydın tamamı,
@@ -20,6 +24,7 @@ dosyası için okunur JSON. install.ps1 bunları "claude mcp add-json" komutuna 
 from __future__ import annotations
 
 import argparse
+import bisect
 import json
 import os
 import re
@@ -166,15 +171,45 @@ def describe_url(url) -> str:
     return text + ("/…" if userinfo is not None or rest not in ("", "/") else "")
 
 
-# describe_program: program yolunda izin verilen karakterler. Harf/rakam, boşluk, . _ - + ~ / \ ( ) @
-# ve Latin harfleri (U+00C0-U+024F; × ve ÷ hariç: Türkçe/Avrupa dillerindeki kullanıcı adları).
-# ':' yalnız sürücü harfinden sonra (C:). '=', '%', '$', '?', '#', '&', ';', tırnaklar ve benzeri yok.
-_PROGRAM_ASCII = frozenset(string.ascii_letters + string.digits + " ._-+~/\\()@")
+# describe_program: program yolunda izin verilen karakterler. ASCII'den harf/rakam, boşluk ve
+# . _ - + ~ / \ ( ) @ ' , & # (klasör adlarında görülen noktalama: O'Brien, "R&D", "C#"); ':' yalnız
+# sürücü harfinden sonra (C:). '=', '%', '$', '?', ';', '!', '"', '|', '<', '>', '`', '*' yok.
+# ASCII dışından yalnız _PROGRAM_RANGES: dünyadaki yazı sistemlerinin harf blokları, sabit aralıklar.
+# Kural Unicode sınıflarına (\w, isalpha, char.IsLetter) DAYANMAZ: Python'un ve .NET Framework 4.x /
+# .NET 8+'nın Unicode sürümleri farklıdır; sabit tablo her ortamda aynı sonucu verir (test tüm BMP'yi
+# iki kabukla karşılaştırır). Tabloda boşluk benzeri (U+00A0, U+3000), görünmez (U+00AD, Hangul dolgu
+# U+115F/U+1160/U+3164), yön (U+200E...) ve ASCII ayırıcı benzeri (tam genişlikli '＝' '：', Yunanca ';'
+# U+037E, Etiyopya ':' U+1361) karakter yoktur. BMP dışı karakter (UTF-16 vekil çifti) gösterilmez.
+_PROGRAM_ASCII = frozenset(string.ascii_letters + string.digits + " ._-+~/\\()@',&#")
+_PROGRAM_RANGES = (
+    (0x00C0, 0x00D6), (0x00D8, 0x00F6), (0x00F8, 0x024F),  # Latin-1 harfleri (× ÷ hariç), Latin Genişletilmiş-A/B
+    (0x0386, 0x0386), (0x0388, 0x03FF),  # Yunanca ve Kıptîce (U+037E ';' ve U+0387 '·' hariç)
+    (0x0400, 0x052F),  # Kiril ve Kiril Ek
+    (0x0531, 0x0556), (0x0560, 0x0588),  # Ermenice harfler
+    (0x05D0, 0x05EA),  # İbranice harfler
+    (0x0620, 0x064A), (0x066E, 0x06D3), (0x06D5, 0x06D5),  # Arapça harfler (Farsça/Urduca dahil)
+    (0x0900, 0x0DFF),  # Hint yazıları: Devanagari ... Sinhala
+    (0x0E00, 0x0EFF),  # Tay, Lao
+    (0x10A0, 0x10FF),  # Gürcüce
+    (0x1200, 0x135A),  # Etiyopya heceleri (noktalaması U+1360- hariç)
+    (0x1E00, 0x1EFF),  # Latin Genişletilmiş Ek (Vietnamca)
+    (0x3041, 0x3096), (0x309D, 0x309F),  # Hiragana
+    (0x30A1, 0x30FA), (0x30FC, 0x30FF),  # Katakana (U+30FB '・' hariç)
+    (0x3400, 0x4DBF), (0x4E00, 0x9FFF),  # CJK birleşik ideogramlar (+ Ek A)
+    (0xAC00, 0xD7A3),  # Hangul heceleri
+)
 _PROGRAM_SUFFIXES = (".exe", ".cmd", ".bat", ".com", ".ps1", ".py", ".pyw", ".js", ".mjs", ".cjs", ".sh")
 
 
+_PROGRAM_STARTS = [lo for lo, _ in _PROGRAM_RANGES]
+
+
 def _program_char_ok(ch: str) -> bool:
-    return ch in _PROGRAM_ASCII or (0xC0 <= ord(ch) <= 0x24F and ch not in "\u00d7\u00f7")
+    if ch in _PROGRAM_ASCII:
+        return True
+    code = ord(ch)
+    i = bisect.bisect_right(_PROGRAM_STARTS, code) - 1
+    return i >= 0 and code <= _PROGRAM_RANGES[i][1]
 
 
 def program_shown(cmd) -> bool:
@@ -304,23 +339,78 @@ def _check_str_map(entry: dict, key: str, out: list[str]) -> None:
             out.extend(f"{key}.{terminal_safe(k)}: {_kind(x)}" for k, x in d.items() if not isinstance(x, str))
 
 
+# Ölçülen sınırın sabitleri (claude 2.1.325; tests/claude_mcp_sinir.json).
+_BOOL_FIELDS = ("alwaysLoad", "bareElicitationCapability")  # her türde true/false
+_TOOL_POLICIES = ("always_allow", "always_ask", "always_deny")  # sse/http tools[].permission_policy
+_TOOL_PERMISSIONS = ("allow", "ask", "blocked")  # sse/http toolPermissions değerleri
+_URL_MAX = 65536  # uzak url, UTF-16 birimi
+_META_URL_MAX = 4096  # oauth.authServerMetadataUrl, UTF-16 birimi
+# JavaScript String.prototype.trim'in sildiği karakterler (sabit küme; .NET Trim() ve Python strip()
+# varsayılanları bundan farklıdır). ErenKit.Installer.psm1 $script:JsTrimChars ile aynı.
+_JS_TRIM = ("\t\n\x0b\x0c\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009"
+            "\u200a\u2028\u2029\u202f\u205f\u3000\ufeff")
+
+
+def _utf16_len(s: str) -> int:
+    return len(s.encode("utf-16-le", "surrogatepass")) // 2
+
+
+def _check_bool(d: dict, key: str, label: str, out: list[str]) -> None:
+    if key in d and not isinstance(d[key], bool):
+        out.append(f"{label}: {_kind(d[key])} (true/false olmalı)")
+
+
+def _check_oauth(o: dict, out: list[str]) -> None:
+    if "clientId" in o and not isinstance(o["clientId"], str):
+        out.append(f"oauth.clientId: {_kind(o['clientId'])}")
+    if "callbackPort" in o and not _positive_int(o["callbackPort"]):
+        out.append(f"oauth.callbackPort: {_kind(o['callbackPort'])} (pozitif tam sayı olmalı)")
+    if "authServerMetadataUrl" in o:
+        v = o["authServerMetadataUrl"]
+        if not isinstance(v, str):
+            out.append(f"oauth.authServerMetadataUrl: {_kind(v)} (dize olmalı)")
+        elif _utf16_len(v) > _META_URL_MAX:
+            out.append(f"oauth.authServerMetadataUrl: dize (en çok {_META_URL_MAX} karakter)")
+        elif not v.strip(_JS_TRIM).startswith("https://"):
+            out.append("oauth.authServerMetadataUrl: dize (https:// adresi olmalı)")
+    if "scopes" in o:
+        v = o["scopes"]
+        if not isinstance(v, str):
+            out.append(f"oauth.scopes: {_kind(v)} (dize olmalı)")
+        elif not v:
+            out.append("oauth.scopes: boş dize")
+    _check_bool(o, "xaa", "oauth.xaa", out)
+
+
 def entry_problems(entry) -> list[str]:
     """Claude Code'un kabul etmediği değerlerin yeri ve türü (değer yazılmaz).
 
     Claude Code geçersiz bir kaydı yok sayar ("Skipped — invalid MCP server config") ve "claude mcp
-    add-json" aynı kaydı reddeder: böyle bir kayıt silinirse geri yüklenemez. Kurulum bu durumda
-    kayda dokunmaz, doktor hata verir. Sınır tahmin değil, gerçek claude 2.1.325 ile ölçüldü
-    (tests/claude_mcp_sinir.json; testler her vakayı buna karşı sınar):
+    add-json" aynı kaydı reddeder. Kurulum bu durumda kayda dokunmaz, doktor hata verir. Sınır tahmin
+    değil, gerçek claude 2.1.325 ile ölçüldü (tests/claude_mcp_sinir.json; testler her vakayı buna
+    karşı sınar):
+    - kayıt JSON nesnesi olmalı (null "kayıt yok" sayılır: claude da öyle sayar);
     - type yoksa "stdio"; yalnız "stdio", "sse", "http", "ws" kabul (null, büyük harf, "sse-ide"... ret).
     - stdio: command boş olmayan dize (zorunlu); args dize dizisi; env değerleri dize olan nesne.
-    - sse/http/ws: url dize (zorunlu; biçimi denetlenmez); headers değerleri dize olan nesne;
-      headersHelper dize. sse/http'de ayrıca oauth nesne (clientId varsa dize) ve tools nesne dizisi
-      (her öğede name dize).
-    - hepsinde timeout pozitif tam sayı (en çok 2^53-1).
+    - sse/http/ws: url dize (zorunlu; en çok 65536 UTF-16 birimi; biçimi denetlenmez); headers
+      değerleri dize olan nesne; headersHelper dize.
+    - sse/http'de ayrıca: oauth nesne (clientId dize, callbackPort pozitif tam sayı, scopes boş olmayan
+      dize, xaa true/false, authServerMetadataUrl en çok 4096 birimlik ve baştaki/sondaki boşluk
+      atılınca "https://" ile başlayan dize); tools nesne dizisi (her öğede name dize, permission_policy
+      varsa always_allow/always_ask/always_deny); toolPermissions değerleri allow/ask/blocked olan
+      nesne; discoveryCache true/false.
+    - hepsinde timeout pozitif tam sayı (en çok 2^53-1); alwaysLoad ve bareElicitationCapability
+      true/false.
     Kaydın türüne ait olmayan alanlar (stdio'da url/headers, uzakta command/args/env, bilinmeyen
-    alanlar) Claude Code'ca yok sayılır, burada da denetlenmez."""
-    if not isinstance(entry, dict):
+    alanlar) Claude Code'ca yok sayılır, burada da denetlenmez.
+
+    Bilinen eksik: authServerMetadataUrl'nin URL sözdizimi (claude WHATWG URL ayrıştırıcısıyla bakar;
+    ör. yalnız "https://" reddedilir) taklit edilmez. Bu denetimin kaçırdığı (ya da claude'un ileride
+    reddetmeye başladığı) bir değer kaybolmaz: kurulum ve kaldırma kayda dokunmadan önce onu yedekler."""
+    if entry is None:
         return []
+    if not isinstance(entry, dict):
+        return [f"kayıt: {_kind(entry)} (nesne olmalı)"]
     out: list[str] = []
     t = _entry_type(entry)
     if t is None:
@@ -345,6 +435,8 @@ def entry_problems(entry) -> list[str]:
             out.append("url: yok (zorunlu)")
         elif not isinstance(entry["url"], str):
             out.append(f"url: {_kind(entry['url'])}")
+        elif _utf16_len(entry["url"]) > _URL_MAX:
+            out.append(f"url: dize (en çok {_URL_MAX} karakter)")
         _check_str_map(entry, "headers", out)
         if "headersHelper" in entry and not isinstance(entry["headersHelper"], str):
             out.append(f"headersHelper: {_kind(entry['headersHelper'])}")
@@ -353,8 +445,8 @@ def entry_problems(entry) -> list[str]:
                 o = entry["oauth"]
                 if not isinstance(o, dict):
                     out.append(f"oauth: {_kind(o)} (nesne olmalı)")
-                elif "clientId" in o and not isinstance(o["clientId"], str):
-                    out.append(f"oauth.clientId: {_kind(o['clientId'])}")
+                else:
+                    _check_oauth(o, out)
             if "tools" in entry:
                 tl = entry["tools"]
                 if not isinstance(tl, list):
@@ -363,40 +455,65 @@ def entry_problems(entry) -> list[str]:
                     for i, x in enumerate(tl):
                         if not isinstance(x, dict):
                             out.append(f"tools[{i}]: {_kind(x)} (nesne olmalı)")
-                        elif not isinstance(x.get("name"), str):
+                            continue
+                        if not isinstance(x.get("name"), str):
                             out.append(f"tools[{i}].name: {_kind(x['name']) if 'name' in x else 'yok (zorunlu)'}")
+                        if "permission_policy" in x and x["permission_policy"] not in _TOOL_POLICIES:
+                            v = x["permission_policy"]
+                            out.append(f"tools[{i}].permission_policy: "
+                                       f"{'bilinmeyen değer' if isinstance(v, str) else _kind(v)}")
+            if "toolPermissions" in entry:
+                tp = entry["toolPermissions"]
+                if not isinstance(tp, dict):
+                    out.append(f"toolPermissions: {_kind(tp)} (nesne olmalı)")
+                else:
+                    out.extend(f"toolPermissions.{terminal_safe(k)}: {'bilinmeyen değer' if isinstance(v, str) else _kind(v)}"
+                               for k, v in tp.items() if not (isinstance(v, str) and v in _TOOL_PERMISSIONS))
+            _check_bool(entry, "discoveryCache", "discoveryCache", out)
     if "timeout" in entry:
         v = entry["timeout"]
         if isinstance(v, bool) or not isinstance(v, (int, float)):
             out.append(f"timeout: {_kind(v)}")
         elif not _positive_int(v):
             out.append("timeout: sayı (pozitif tam sayı olmalı)")
+    for f in _BOOL_FIELDS:
+        _check_bool(entry, f, f, out)
     return out
 
 
 def problem_text(name: str, problems: list[str]) -> str:
     """entry_problems için kullanıcı iletisi (ErenKit.Installer.psm1 Format-McpProblem ile aynı)."""
     return (f'"{name}" kaydında Claude Code\'un kabul etmediği değer var ({", ".join(problems)}); '
-            "Claude Code bu kaydı şu an yok sayıyor. .claude.json'da değeri düzeltin (ör. sayıysa tırnak "
-            'içine alın: 8080 -> "8080") ya da kaydı silin, sonra yeniden çalıştırın')
+            "Claude Code bu kaydı şu an yok sayıyor. .claude.json'da değeri düzeltin (env, args ve headers "
+            'değerleri dize olmalı, ör. 8080 -> "8080"; parantez içinde başka bir tür yazıyorsa o) ya da '
+            "kaydı silin, sonra yeniden çalıştırın")
 
 
 def unregister_problem_text(name: str, problems: list[str]) -> str:
-    """Kaldırmada geçersiz kayıt: dokunulmaz (ErenKit.Installer.psm1 ile aynı ileti)."""
+    """Kaldırmada depoyu gösteren geçersiz kayıt: dokunulmaz (ErenKit.Installer.psm1 ile aynı ileti)."""
     return (f'MCP kaydı "{name}" kaldırılmadı, hiçbir şey değiştirilmedi: {problem_text(name, problems)}. '
             f"Kaydı yine de silmek için: claude mcp remove {name} -s user")
 
 
+def foreign_problem_text(name: str, shown: str, problems: list[str]) -> str:
+    """Kaldırmada başka bir programı gösteren geçersiz kayıt: kullanıcınındır, silme önerilmez
+    (ErenKit.Installer.psm1 Format-McpForeignProblem ile aynı ileti)."""
+    return (f'MCP kaydı "{name}" bu repoyu göstermiyor ({shown}); dokunulmadı. Claude Code bu kaydı şu an '
+            f"yok sayıyor ({', '.join(problems)}); kullanıyorsanız .claude.json'da düzeltin")
+
+
 def _fold(k: str) -> str:
-    # .NET OrdinalIgnoreCase'e yakın: karakter karakter büyük harf (tek karaktere eşlenenler).
+    # Karakter karakter büyük harf (tek karaktere eşlenenler). Kabukların gerçek kararından GENİŞTİR
+    # (ör. ı/I ve ſ/S'yi de eşler; ikisi de bunları ayrı okur): yalnız aday üretir, karar PowerShell'de
+    # kaydın kendisini ConvertFrom-Json ile okumayı denemekle verilir (bkz. main ve Get-McpUserEntry).
     return "".join(c.upper() if len(c.upper()) == 1 else c for c in k)
 
 
 def ps_key_problems(entry):
-    """PowerShell'in ConvertFrom-Json'ının okuyamadığı nesne anahtarları: boş anahtar ve yalnız harf
-    büyüklüğüyle ayrılan anahtarlar (ör. env'de Path ile PATH; Windows'ta ortam değişkeni adları
-    zaten büyük/küçük harf ayırmaz). (sorunlar, PowerShell'in okuyabileceği kopya) döner; kopyada boş
-    anahtarlar düşer, aynı anahtarın yalnız ilk yazılışı kalır. install.ps1 sorun varsa kayda dokunmaz."""
+    """PowerShell'in ConvertFrom-Json'ının okuyamayabileceği nesne anahtarları (adaylar): boş anahtar ve
+    yalnız harf büyüklüğüyle ayrılabilen anahtarlar (ör. env'de Path ile PATH). (adaylar, her durumda
+    okunabilen kopya) döner; kopyada boş anahtarlar düşer, aynı anahtarın yalnız ilk yazılışı kalır.
+    install.ps1 kaydın tamamını okumayı dener; okuyamazsa bu kopyayı ve adayları kullanır, kayda dokunmaz."""
     problems: list[str] = []
 
     def walk(v, where: str):
@@ -425,6 +542,27 @@ def ps_key_problems(entry):
     return problems, reduced
 
 
+def type_key_paths(entry) -> list[str]:
+    """Adı tam olarak "__type" olan anahtarların yeri. Windows PowerShell 5.1'in ConvertFrom-Json'ı
+    (JavaScriptSerializer) bu anahtarı hata vermeden ATAR (ölçüldü; PowerShell 7 ve "__TYPE" etkilenmez).
+    install.ps1 kabuğu böyle davranıyorsa kayda dokunmaz: değer sessizce düşerdi."""
+    found: list[str] = []
+
+    def walk(v, where: str):
+        if isinstance(v, dict):
+            for k, x in v.items():
+                here = f"{where}.{k}" if where else k
+                if k == "__type":
+                    found.append(terminal_safe(here))
+                walk(x, here)
+        elif isinstance(v, list):
+            for i, x in enumerate(v):
+                walk(x, f"{where}[{i}]")
+
+    walk(entry, "")
+    return found
+
+
 def default_config() -> str:
     d = os.environ.get("CLAUDE_CONFIG_DIR")
     if d:
@@ -445,14 +583,21 @@ def main(argv=None) -> int:
         with open(path, encoding="utf-8-sig") as f:
             data = json.load(f)
         servers = data.get("mcpServers") if isinstance(data, dict) else None
+        # null değer "kayıt yok" sayılır (claude da öyle sayar: add-json ekler, remove "yok" der).
         entry = servers.get(args.name) if isinstance(servers, dict) else None
+        if entry is None:
+            print(json.dumps({"found": False, "path": path, "entry": None, "safe": None}))
+            return 0
         if not isinstance(entry, dict):
-            entry = None
-        # "entry" PowerShell'in okuyabileceği kopyadır; "safe" (dize) her zaman dosyadaki kaydın tamamı.
-        ps_problems, ps_entry = ps_key_problems(entry) if entry is not None else ([], None)
-        print(json.dumps({"found": entry is not None, "path": path, "entry": ps_entry,
-                          "safe": safe_parts(entry) if entry is not None else None,
-                          "ps_problems": ps_problems}))
+            # Var ama nesne değil (5, "x", []): claude add-json "already exists" der; dokunulmaz.
+            print(json.dumps({"found": True, "path": path, "entry": None, "safe": None, "kind": _kind(entry)}))
+            return 0
+        # "entry_json" kaydın tamamı (dize olarak; install.ps1 okumayı dener), "entry" her durumda
+        # okunabilen kopya, "safe" (dizeler) dosyadaki kaydın tamamı.
+        ps_problems, ps_entry = ps_key_problems(entry)
+        print(json.dumps({"found": True, "path": path, "entry": ps_entry, "entry_json": json.dumps(entry),
+                          "safe": safe_parts(entry), "ps_problems": ps_problems,
+                          "type_keys": type_key_paths(entry)}))
         return 0
     except Exception as e:  # noqa: BLE001 - tek satır hata özeti istenir
         print(json.dumps({"error": f"{type(e).__name__}: {e}", "path": path}))

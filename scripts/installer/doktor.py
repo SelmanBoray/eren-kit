@@ -678,8 +678,9 @@ def check_mcp(ctx: Ctx, server: str) -> Check:
     bad = mcp_config.entry_problems(entry)
     if bad:
         return Check(name, ERROR, f"Claude Code bu kaydı yok sayıyor: geçersiz değer ({', '.join(bad)}). "
-                                  f"{ctx.mcp_path} içinde değeri düzeltin (ör. sayıysa tırnak içine alın: "
-                                  '8080 -> "8080"); kurulum bu kayda dokunmaz.')
+                                  f"{ctx.mcp_path} içinde değeri düzeltin (env, args ve headers değerleri dize "
+                                  'olmalı, ör. 8080 -> "8080"; parantez içinde başka bir tür yazıyorsa o); '
+                                  "kurulum bu kayda dokunmaz.")
     typ = mcp_config._entry_type(entry)
     if typ in mcp_config.REMOTE_TYPES:
         # Adresin yalnız şema://sunucu[:port] kısmı: yol/sorgu/kullanıcı bilgisi belirteç taşıyabilir.

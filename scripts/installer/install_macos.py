@@ -383,7 +383,9 @@ def current_assistant_name(ctx: Ctx) -> str | None:
 
 # ---------------------------------------------------------------- MCP
 
-def _entry_owned(entry: dict) -> bool:
+def _entry_owned(entry) -> bool:
+    if not isinstance(entry, dict):
+        return False
     root = str(REPO).rstrip("/") + "/"
     args = entry.get("args")
     vals = [entry.get("command")] + (args if isinstance(args, list) else [])
@@ -425,15 +427,25 @@ def _carry_text(extra: list[str], env: dict) -> str:
     return f"; korunan {'; '.join(parts)}" if parts else ""
 
 
-def _mcp_get(name: str) -> dict | None:
+def _mcp_get(name: str):
+    """Kayıt; yoksa None. null değer "yok" sayılır (claude da öyle sayar). Nesne olmayan değer (5, "x",
+    [], {}) olduğu gibi döner: "yok" değildir (claude add-json "already exists" der) ve
+    mcp_config.entry_problems onu geçersiz sayar; Windows ve doktor ile aynı karar."""
     path = mcp_config.default_config()
     if not os.path.exists(path):
         return None
     with open(path, encoding="utf-8-sig") as f:
         data = json.load(f)
     servers = data.get("mcpServers") if isinstance(data, dict) else None
-    entry = servers.get(name) if isinstance(servers, dict) else None
-    return entry if isinstance(entry, dict) else None
+    return servers.get(name) if isinstance(servers, dict) else None
+
+
+def _mcp_backup(ctx: Ctx, name: str, entry) -> Path:
+    """Kaydı claude'a dokunmadan önce yedekler: claude'un bugün ya da ileride reddettiği bir değer olsa
+    da yedekte birebir kalır (elle yazılmış hiçbir değer geri getirilemez biçimde kaybolmaz)."""
+    bk = ctx.backup_path(f"mcp/{name}.json")
+    bk.write_text(json.dumps({"name": name, "scope": "user", "entry": entry}, indent=2) + "\n", encoding="utf-8")
+    return bk
 
 
 def _fmt(cmd: list[str]) -> str:
@@ -450,7 +462,7 @@ def mcp_register(ctx: Ctx, name: str, cmd: list[str]) -> Step:
     # Elle düzenlenmiş kayıtta dize olmayan değer (ör. "env": {"PORT": 8080}): Claude Code kaydı zaten
     # yok sayıyor ve "add-json" onu geri yüklemeyi reddeder. Sessizce dönüştürmek (True -> "True",
     # null -> "None") ya da silmek yerine dokunmadan dur.
-    bad = mcp_config.entry_problems(old) if old else []
+    bad = mcp_config.entry_problems(old)
     if bad:
         why = mcp_config.problem_text(name, bad)
         if ctx.dry_run:
@@ -461,7 +473,7 @@ def mcp_register(ctx: Ctx, name: str, cmd: list[str]) -> Step:
     extra, env = carry if carry else ([], {})
     kept = _carry_text(extra, env)
     lost = ""
-    if old and carry is None:
+    if old is not None and carry is None:
         old_env = old.get("env") if isinstance(old.get("env"), dict) else {}
         lost = (f"; DİKKAT: eski kaydın env değerleri ({', '.join(mcp_config.terminal_safe(k) for k in old_env)}) "
                 "ve argümanları yeni kayda "
@@ -471,7 +483,8 @@ def mcp_register(ctx: Ctx, name: str, cmd: list[str]) -> Step:
     # mcp_config.describe_entry kuralıyla (Windows Format-McpEntry ile aynı): yalnız bilinen önek
     # argümanlar, uzak adresin yalnız şema://sunucu[:port] kısmı.
     shown = _fmt(cmd)
-    old_text = mcp_config.describe_entry(old, len(old.get("args") or []) - len(extra) if carry else 0) if old else ""
+    old_text = mcp_config.describe_entry(old, len(old.get("args") or []) - len(extra) if carry else 0) \
+        if old is not None else ""
     cmd = [*cmd, *extra]
     if carry is not None and _entry_same(old, cmd):
         return Step("ok", f"MCP zaten kayıtlı: {name}{kept}")
@@ -481,34 +494,35 @@ def mcp_register(ctx: Ctx, name: str, cmd: list[str]) -> Step:
         if foreign:
             return Step("warn", f'MCP: "{name}" şu an repo DIŞINI gösteriyor ve değiştirilecek (eski: {old_text}; '
                                 f"yedeklenir) -> {shown}{kept}{lost}")
-        if old and lost:
+        if old is not None and lost:
             return Step("warn", f"MCP: güncellenir: {shown}{lost}")
-        if old:
+        if old is not None:
             # Elle komut önerilmez: taşınan argüman/env değerleri ekrana yazılmadan verilemez.
             return Step("dry", f"MCP: güncellenir (eski kayıt yedeklenir) -> {shown}{kept}")
         return Step("dry", f"MCP: eklenir: {manual}")
     if not Path(cmd[0]).exists():
         raise StepError(f"MCP sunucu programı yok: {cmd[0]}")
     bk = None
-    if old:
-        bk = ctx.backup_path(f"mcp/{name}.json")
-        bk.write_text(json.dumps({"name": name, "scope": "user", "entry": old}, indent=2) + "\n", encoding="utf-8")
+    if old is not None:
+        bk = _mcp_backup(ctx, name, old)
         r = run_cmd(ctx, [ctx.claude_exe, "mcp", "remove", name, "-s", "user"], timeout=60)
         if r.returncode != 0:
             raise StepError(f"eski MCP kaydı kaldırılamadı; hiçbir şey değişmedi:\n{tail(r.stdout + r.stderr)}")
     r = run_cmd(ctx, [ctx.claude_exe, "mcp", "add", name, "-s", "user", *env_args, "--", *cmd], timeout=60)
     if r.returncode != 0:
         why = f"MCP kaydı başarısız:\n{tail(r.stdout + r.stderr)}"
-        if old:
+        if old is not None:
             rr = run_cmd(ctx, [ctx.claude_exe, "mcp", "add-json", name, json.dumps(old), "-s", "user"], timeout=60)
             why += "\n      eski kayıt geri yüklendi" if rr.returncode == 0 else f"\n      eski kayıt GERİ YÜKLENEMEDİ; yedek: {bk}"
         raise StepError(why)
     if foreign:
         return Step("warn", f"MCP kaydedildi: {name}; repo dışını gösteren eski kayıt değiştirildi (eski: {old_text}; "
                             f"yedek: {bk}){kept}{lost}")
-    if old and lost:
+    if old is not None and lost:
         return Step("warn", f"MCP güncellendi: {name} (yedek: {bk}){lost}")
-    return Step("ok", f"MCP {'güncellendi' if old else 'kaydedildi'}: {name} (kullanıcı kapsamı){kept}")
+    if old is not None:
+        return Step("ok", f"MCP güncellendi: {name} (kullanıcı kapsamı; eski kaydın yedeği: {bk}){kept}")
+    return Step("ok", f"MCP kaydedildi: {name} (kullanıcı kapsamı){kept}")
 
 
 def mcp_unregister(ctx: Ctx, name: str) -> Step:
@@ -517,21 +531,28 @@ def mcp_unregister(ctx: Ctx, name: str) -> Step:
     if not ctx.claude_exe:
         return Step("warn", f"claude CLI yok; sonra elle: claude mcp remove {name} -s user")
     old = _mcp_get(name)
-    if not old:
+    if old is None:
         return Step("skip", f"MCP kaydı yok: {name}")
-    # Geçersiz kayıt (Claude Code zaten yok sayıyor): kurmadaki gibi dokunulmaz. Kaldırma yedek
-    # almaz; elle yazılmış değerler geri getirilemezdi. Kullanıcı isterse komutla kendisi siler.
+    old_text = mcp_config.describe_entry(old, 0)
+    owned = _entry_owned(old)
+    # Geçersiz kayıt (Claude Code zaten yok sayıyor): kurmadaki gibi dokunulmaz. Depoyu gösteriyorsa
+    # elle silme komutu söylenir; başka bir programı gösteriyorsa kullanıcınındır, silme önerilmez.
     bad = mcp_config.entry_problems(old)
     if bad:
+        if not owned:
+            return Step("warn", mcp_config.foreign_problem_text(name, old_text, bad))
         return Step("warn", mcp_config.unregister_problem_text(name, bad))
-    if not _entry_owned(old):
-        return Step("warn", f'MCP kaydı "{name}" bu repoyu göstermiyor ({mcp_config.describe_entry(old, 0)}); dokunulmadı')
+    if not owned:
+        return Step("warn", f'MCP kaydı "{name}" bu repoyu göstermiyor ({old_text}); dokunulmadı')
     if ctx.dry_run:
-        return Step("dry", f"MCP: claude mcp remove {name} -s user")
+        return Step("dry", f"MCP: claude mcp remove {name} -s user ({old_text}; eski kayıt yedeklenir)")
+    # Silmeden önce yedek: bu denetimin bilmediği (ya da claude'un ileride reddetmeye başladığı) bir alan
+    # olsa da elle yazılmış hiçbir değer geri getirilemez biçimde kaybolmaz.
+    bk = _mcp_backup(ctx, name, old)
     r = run_cmd(ctx, [ctx.claude_exe, "mcp", "remove", name, "-s", "user"], timeout=60)
     if r.returncode != 0:
-        raise StepError(f"MCP kaydı kaldırılamadı:\n{tail(r.stdout + r.stderr)}")
-    return Step("ok", f"MCP kaydı kaldırıldı: {name}")
+        raise StepError(f"MCP kaydı kaldırılamadı; kayıt yerinde:\n{tail(r.stdout + r.stderr)}")
+    return Step("ok", f"MCP kaydı kaldırıldı: {name} (yedek: {bk})")
 
 
 # ---------------------------------------------------------------- launchd servisi
