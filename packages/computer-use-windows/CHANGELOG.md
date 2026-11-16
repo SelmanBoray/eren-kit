@@ -45,6 +45,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--max-size` upper limit is 2576 (was 4096).
 - `elements` reports an incomplete scan.
 - Launchers such as Explorer no longer count as the agent's own window.
+- Works with the MCP Python SDK 2.x as well as 1.x: the dependency is now `mcp>=1.30.0,<3`
+  (was `<2`). A new install gets 2.x; an existing venv keeps its 1.x. Tool names, descriptions,
+  input schemas, server instructions and reply content are the same on both (2.x may order JSON
+  keys differently and omits the empty `capabilities.experimental` of 1.x) (`serverInfo.version` stays
+  the package version; tool errors keep their message, which 2.x would otherwise replace with
+  "Error executing tool <name>").
 
 ### Fixed
 

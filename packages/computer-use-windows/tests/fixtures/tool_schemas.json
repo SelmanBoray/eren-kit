@@ -1,0 +1,355 @@
+{
+  "click": {
+    "annotations": {
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "button": {
+          "default": "left",
+          "title": "Button",
+          "type": "string"
+        },
+        "clicks": {
+          "default": 1,
+          "title": "Clicks",
+          "type": "integer"
+        },
+        "element": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Element"
+        },
+        "modifiers": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Modifiers"
+        },
+        "x": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "X"
+        },
+        "y": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Y"
+        }
+      },
+      "title": "clickArguments",
+      "type": "object"
+    }
+  },
+  "drag": {
+    "annotations": {
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "x0": {
+          "title": "X0",
+          "type": "integer"
+        },
+        "x1": {
+          "title": "X1",
+          "type": "integer"
+        },
+        "y0": {
+          "title": "Y0",
+          "type": "integer"
+        },
+        "y1": {
+          "title": "Y1",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "x0",
+        "y0",
+        "x1",
+        "y1"
+      ],
+      "title": "dragArguments",
+      "type": "object"
+    }
+  },
+  "elements": {
+    "annotations": {
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {
+        "query": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Query"
+        },
+        "window": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Window"
+        }
+      },
+      "title": "elementsArguments",
+      "type": "object"
+    }
+  },
+  "focus": {
+    "annotations": {
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "window": {
+          "title": "Window",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "window"
+      ],
+      "title": "focusArguments",
+      "type": "object"
+    }
+  },
+  "key": {
+    "annotations": {
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "keys": {
+          "title": "Keys",
+          "type": "string"
+        },
+        "repeat": {
+          "default": 1,
+          "title": "Repeat",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "keys"
+      ],
+      "title": "keyArguments",
+      "type": "object"
+    }
+  },
+  "move": {
+    "annotations": {
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "x": {
+          "title": "X",
+          "type": "integer"
+        },
+        "y": {
+          "title": "Y",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "title": "moveArguments",
+      "type": "object"
+    }
+  },
+  "screenshot": {
+    "annotations": {
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {
+        "monitor": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Monitor"
+        }
+      },
+      "title": "screenshotArguments",
+      "type": "object"
+    }
+  },
+  "scroll": {
+    "annotations": {
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "amount": {
+          "default": 3,
+          "title": "Amount",
+          "type": "integer"
+        },
+        "direction": {
+          "title": "Direction",
+          "type": "string"
+        },
+        "x": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "X"
+        },
+        "y": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Y"
+        }
+      },
+      "required": [
+        "direction"
+      ],
+      "title": "scrollArguments",
+      "type": "object"
+    }
+  },
+  "type_text": {
+    "annotations": {
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "type_textArguments",
+      "type": "object"
+    }
+  },
+  "wait": {
+    "annotations": {
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {
+        "seconds": {
+          "title": "Seconds",
+          "type": "number"
+        }
+      },
+      "required": [
+        "seconds"
+      ],
+      "title": "waitArguments",
+      "type": "object"
+    }
+  },
+  "windows": {
+    "annotations": {
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {},
+      "title": "windowsArguments",
+      "type": "object"
+    }
+  },
+  "zoom": {
+    "annotations": {
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {
+        "x0": {
+          "title": "X0",
+          "type": "integer"
+        },
+        "x1": {
+          "title": "X1",
+          "type": "integer"
+        },
+        "y0": {
+          "title": "Y0",
+          "type": "integer"
+        },
+        "y1": {
+          "title": "Y1",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "x0",
+        "y0",
+        "x1",
+        "y1"
+      ],
+      "title": "zoomArguments",
+      "type": "object"
+    }
+  }
+}

@@ -12,29 +12,29 @@ import base64
 import dataclasses
 import functools
 import io
+import json
 import math
 import re
 import sys
 import time
-from collections.abc import AsyncIterator, Iterator
-from contextlib import asynccontextmanager, contextmanager
-from datetime import timedelta
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path
 from typing import Any
 
-import anyio
 import pytest
 from anyio.from_thread import BlockingPortal, start_blocking_portal
-from mcp import types
-from mcp.client.session import ClientSession
-from mcp.shared.memory import create_client_server_memory_streams
+from mcp_client import Session, open_session
 from PIL import Image
 
+from computer_use_windows import __version__, instructions, safety, screen, uia
 from computer_use_windows import input as inp
-from computer_use_windows import instructions, safety, screen, uia
 from computer_use_windows import server as server_mod
 from computer_use_windows.config import Config
 from computer_use_windows.screen import CoordMap, MonitorInfo
 from computer_use_windows.uia import Element, WindowInfo
+
+FIXTURES = Path(__file__).parent / "fixtures"
 
 TOOL_NAMES = frozenset(
     {
@@ -434,19 +434,23 @@ def desk(monkeypatch: pytest.MonkeyPatch) -> FakeDesktop:
 
 @dataclasses.dataclass
 class Reply:
-    result: types.CallToolResult
+    result: dict[str, Any]  # CallToolResult, wire form (mcp_client)
+
+    @property
+    def content(self) -> list[dict[str, Any]]:
+        return self.result["content"]
 
     @property
     def is_error(self) -> bool:
-        return bool(self.result.isError)
+        return bool(self.result.get("isError"))
 
     @property
     def texts(self) -> list[str]:
-        return [c.text for c in self.result.content if isinstance(c, types.TextContent)]
+        return [c["text"] for c in self.content if c["type"] == "text"]
 
     @property
-    def images(self) -> list[types.ImageContent]:
-        return [c for c in self.result.content if isinstance(c, types.ImageContent)]
+    def images(self) -> list[dict[str, Any]]:
+        return [c for c in self.content if c["type"] == "image"]
 
     @property
     def text(self) -> str:
@@ -460,42 +464,18 @@ class Reply:
 @dataclasses.dataclass
 class Client:
     portal: BlockingPortal
-    session: ClientSession
-    init: types.InitializeResult
+    session: Session
+
+    @property
+    def init(self) -> dict[str, Any]:
+        """The InitializeResult's "instructions" and "serverInfo", as a client receives them."""
+        return self.session.init
 
     def call(self, name: str, **arguments: Any) -> Reply:
         return Reply(self.portal.call(self.session.call_tool, name, arguments))
 
-    def tools(self) -> list[types.Tool]:
-        return self.portal.call(self.session.list_tools).tools
-
-
-@asynccontextmanager
-async def _open_session(mcp_server: Any) -> AsyncIterator[tuple[ClientSession, Any]]:
-    # Same wiring as mcp.shared.memory.create_connected_server_and_client_session, but keeps the
-    # InitializeResult so the server instructions can be checked as a client receives them.
-    low = mcp_server._mcp_server
-    async with create_client_server_memory_streams() as (client_streams, server_streams):
-        async with anyio.create_task_group() as tg:
-            tg.start_soon(
-                functools.partial(
-                    low.run,
-                    server_streams[0],
-                    server_streams[1],
-                    low.create_initialization_options(),
-                    raise_exceptions=False,
-                )
-            )
-            try:
-                async with ClientSession(
-                    client_streams[0],
-                    client_streams[1],
-                    read_timeout_seconds=timedelta(seconds=20),
-                ) as session:
-                    init = await session.initialize()
-                    yield session, init
-            finally:
-                tg.cancel_scope.cancel()
+    def tools(self) -> list[dict[str, Any]]:
+        return self.portal.call(self.session.list_tools)
 
 
 @contextmanager
@@ -503,16 +483,16 @@ def connect(config: Config | None = None) -> Iterator[Client]:
     mcp_server = server_mod.build_server(config if config is not None else Config())
     with (
         start_blocking_portal() as portal,
-        portal.wrap_async_context_manager(_open_session(mcp_server)) as (session, init),
+        portal.wrap_async_context_manager(open_session(mcp_server, 20)) as session,
     ):
-        yield Client(portal, session, init)
+        yield Client(portal, session)
 
 
 def assert_ok_line(reply: Reply) -> str:
     """An action reply: no error, no image, exactly one short line containing 'ok'."""
     assert not reply.is_error, reply.text
     assert reply.images == []
-    assert len(reply.result.content) == 1, reply.result.content
+    assert len(reply.content) == 1, reply.content
     line = reply.texts[0].strip()
     assert "\n" not in line, line
     assert re.search(r"\bok\b", line), line
@@ -574,11 +554,11 @@ def test_tool_names_descriptions_and_server_instructions() -> None:
     with connect() as client:
         tools = client.tools()
         init = client.init
-    assert sorted(t.name for t in tools) == sorted(TOOL_NAMES)
+    assert sorted(t["name"] for t in tools) == sorted(TOOL_NAMES)
     for tool in tools:
-        assert tool.description == instructions.TOOL_DESCRIPTIONS[tool.name], tool.name
-    assert init.instructions == instructions.SERVER_INSTRUCTIONS
-    assert init.serverInfo.name == "computer-use-windows"
+        assert tool["description"] == instructions.TOOL_DESCRIPTIONS[tool["name"]], tool["name"]
+    assert init["instructions"] == instructions.SERVER_INSTRUCTIONS
+    assert init["serverInfo"]["name"] == "computer-use-windows"
 
 
 def test_instruction_texts_respect_contract_limits() -> None:
@@ -603,8 +583,8 @@ def _json_types(prop: dict[str, Any]) -> set[str]:
 @pytest.mark.parametrize("tool_name", sorted(EXPECTED_PARAMS))
 def test_tool_parameters_match_contract(tool_name: str) -> None:
     with connect() as client:
-        tools = {t.name: t for t in client.tools()}
-    schema = tools[tool_name].inputSchema
+        tools = {t["name"]: t for t in client.tools()}
+    schema = tools[tool_name]["inputSchema"]
     props: dict[str, Any] = schema.get("properties", {})
     expected = EXPECTED_PARAMS[tool_name]
     assert set(props) == set(expected)
@@ -617,6 +597,52 @@ def test_tool_parameters_match_contract(tool_name: str) -> None:
             assert props[param]["default"] == default, param
 
 
+def test_tool_list_is_exactly_the_contract() -> None:
+    """tools/list as a client receives it: the same content with mcp 1.x and 2.x.
+
+    tool_schemas.json is the list as mcp 1.30 sent it (input schemas, annotations); a new SDK
+    must not add, drop or change a field, since all of it is in the agent's context.
+    (Decoded JSON is compared, so key order on the wire may differ between SDK versions.)
+    """
+    snapshot = json.loads((FIXTURES / "tool_schemas.json").read_text(encoding="utf-8"))
+    with connect() as client:
+        tools = client.tools()
+    assert {t["name"]: t for t in tools} == {
+        name: {"name": name, "description": instructions.TOOL_DESCRIPTIONS[name], **fields}
+        for name, fields in snapshot.items()
+    }
+
+
+def test_server_info_reports_the_package_version() -> None:
+    with connect() as client:
+        info = client.init["serverInfo"]
+    assert info == {"name": "computer-use-windows", "version": __version__}
+
+
+@pytest.mark.parametrize(
+    ("error", "message"),
+    [
+        (safety.SafetyError("refused: a blocked app"), "refused: a blocked app"),
+        (ValueError("seconds must be > 0"), "seconds must be > 0"),
+        (RuntimeError("the window did not answer"), "the window did not answer"),
+        (KeyError("boom"), "wait failed: KeyError: 'boom'"),  # unexpected: one line, no traceback
+    ],
+)
+def test_tool_errors_reach_the_agent_with_their_message(
+    monkeypatch: pytest.MonkeyPatch, error: Exception, message: str
+) -> None:
+    def wait(self: Any, seconds: float) -> str:
+        raise error
+
+    monkeypatch.setattr(server_mod._Session, "wait", wait)
+    with connect() as client:
+        reply = client.call("wait", seconds=1)
+    assert reply.result == {
+        "content": [{"type": "text", "text": f"Error executing tool wait: {message}"}],
+        "isError": True,
+    }
+
+
 # --------------------------------------------------------------------------------------------
 # screenshot
 # --------------------------------------------------------------------------------------------
@@ -626,11 +652,11 @@ def test_screenshot_returns_image_and_status_line(desk: FakeDesktop) -> None:
     with connect() as client:
         reply = client.call("screenshot")
     assert not reply.is_error, reply.text
-    assert len(reply.result.content) == 2
+    assert len(reply.content) == 2
     assert len(reply.images) == 1 and len(reply.texts) == 1
     image = reply.images[0]
-    assert image.mimeType == "image/png"
-    assert base64.b64decode(image.data) == encode_image(1280, 720, "png", 80)
+    assert image["mimeType"] == "image/png"
+    assert base64.b64decode(image["data"]) == encode_image(1280, 720, "png", 80)
     assert reply.texts[0].strip() == (
         'monitor 1/2 1280x720 (scale 1.50) ~1196 tokens | foreground: "Untitled - Notepad"'
         " (notepad.exe)"
@@ -688,8 +714,8 @@ def test_screenshot_uses_config_size_and_format(desk: FakeDesktop) -> None:
     assert capture["max_size"] == 640
     assert capture["image_format"] == "jpeg"
     assert capture["jpeg_quality"] == 50
-    assert reply.images[0].mimeType == "image/jpeg"
-    assert base64.b64decode(reply.images[0].data) == encode_image(640, 360, "jpeg", 50)
+    assert reply.images[0]["mimeType"] == "image/jpeg"
+    assert base64.b64decode(reply.images[0]["data"]) == encode_image(640, 360, "jpeg", 50)
     assert reply.texts[0].strip() == (
         'monitor 1/2 640x360 (scale 3.00) ~299 tokens | foreground: "Untitled - Notepad"'
         " (notepad.exe)"
@@ -1417,10 +1443,10 @@ def test_zoom_returns_image_and_line_and_keeps_coordinate_mapping(desk: FakeDesk
         reply = client.call("zoom", x0=10, y0=20, x1=110, y1=70)
         click = client.call("click", x=100, y=100)
     assert not reply.is_error, reply.text
-    assert len(reply.result.content) == 2
+    assert len(reply.content) == 2
     assert len(reply.images) == 1 and len(reply.texts) == 1
-    assert reply.images[0].mimeType == "image/png"
-    assert base64.b64decode(reply.images[0].data) == encode_image(150, 75, "png", 80)
+    assert reply.images[0]["mimeType"] == "image/png"
+    assert base64.b64decode(reply.images[0]["data"]) == encode_image(150, 75, "png", 80)
     assert reply.texts[0].strip() == (
         "zoom 150x75 of (10,20)-(110,70) ~18 tokens; click coordinates stay in screenshot space"
     )

@@ -78,13 +78,19 @@ jobs:
         run: python -m pytest -q tests
 
   computer-use-windows:
-    name: computer-use-windows (Python ${{ matrix.python-version }})
+    name: computer-use-windows (Python ${{ matrix.python-version }}${{ matrix.mcp != 'latest' && format(', mcp {0}', matrix.mcp) || '' }})
     runs-on: windows-latest
     timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.11", "3.12", "3.13", "3.14"]
+        mcp: ["latest"]
+        # Existing installs keep mcp 1.x (pyproject allows >=1.30.0,<3): one extra job keeps
+        # the lowest supported SDK working.
+        include:
+          - python-version: "3.11"
+            mcp: "1.30.0"
     defaults:
       run:
         working-directory: packages/computer-use-windows
@@ -99,7 +105,13 @@ jobs:
           cache: pip
           cache-dependency-path: packages/computer-use-windows/pyproject.toml
       - name: Install
-        run: python -m pip install -e ".[dev]"
+        env:
+          MCP_VERSION: ${{ matrix.mcp }}
+        run: |
+          $pin = @(if ($env:MCP_VERSION -ne 'latest') { "mcp==$env:MCP_VERSION" })
+          python -m pip install -e ".[dev]" @pin
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m pip show mcp
       - name: Lint
         run: ruff check .
       - name: Format check

@@ -32,18 +32,14 @@ import functools
 import re
 import sys
 import time
-from collections.abc import AsyncIterator, Callable, Iterator
-from contextlib import asynccontextmanager, contextmanager
-from datetime import timedelta
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from types import SimpleNamespace
 from typing import Any
 
-import anyio
 import pytest
 from anyio.from_thread import BlockingPortal, start_blocking_portal
-from mcp import types
-from mcp.client.session import ClientSession
-from mcp.shared.memory import create_client_server_memory_streams
+from mcp_client import Session, open_session
 
 from computer_use_windows import input as inp
 from computer_use_windows import screen, uia
@@ -335,50 +331,24 @@ def desk(monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeDesktop]:
 
 @dataclasses.dataclass
 class Reply:
-    result: types.CallToolResult
+    result: dict[str, Any]  # CallToolResult, wire form (mcp_client)
 
     @property
     def is_error(self) -> bool:
-        return bool(self.result.isError)
+        return bool(self.result.get("isError"))
 
     @property
     def text(self) -> str:
-        return "\n".join(c.text for c in self.result.content if isinstance(c, types.TextContent))
+        return "\n".join(c["text"] for c in self.result["content"] if c["type"] == "text")
 
 
 @dataclasses.dataclass
 class Client:
     portal: BlockingPortal
-    session: ClientSession
+    session: Session
 
     def call(self, name: str, **arguments: Any) -> Reply:
         return Reply(self.portal.call(self.session.call_tool, name, arguments))
-
-
-@asynccontextmanager
-async def _open_session(mcp_server: Any) -> AsyncIterator[ClientSession]:
-    low = mcp_server._mcp_server
-    async with create_client_server_memory_streams() as (client_streams, server_streams):
-        async with anyio.create_task_group() as tg:
-            tg.start_soon(
-                functools.partial(
-                    low.run,
-                    server_streams[0],
-                    server_streams[1],
-                    low.create_initialization_options(),
-                    raise_exceptions=False,
-                )
-            )
-            try:
-                async with ClientSession(
-                    client_streams[0],
-                    client_streams[1],
-                    read_timeout_seconds=timedelta(seconds=60),
-                ) as session:
-                    await session.initialize()
-                    yield session
-            finally:
-                tg.cancel_scope.cancel()
 
 
 @contextmanager
@@ -386,7 +356,7 @@ def connect(config: Config | None = None) -> Iterator[Client]:
     mcp_server = server_mod.build_server(config if config is not None else Config())
     with (
         start_blocking_portal() as portal,
-        portal.wrap_async_context_manager(_open_session(mcp_server)) as session,
+        portal.wrap_async_context_manager(open_session(mcp_server, 60)) as session,
     ):
         yield Client(portal, session)
 

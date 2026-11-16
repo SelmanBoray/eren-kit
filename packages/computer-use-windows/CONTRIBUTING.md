@@ -40,9 +40,21 @@ All code is in `src/computer_use_windows/`:
 - `uia.py` - windows list, focus, and UI Automation element listing (comtypes).
 - `safety.py` - failsafe corner, process blocklist, terminal and password-field refusals.
 - `instructions.py` - the server instructions and tool descriptions that clients send to the model.
-- `server.py` - the FastMCP server: registers the tools and wires the modules together.
+- `server.py` - the MCP server (`MCPServer` in mcp 2.x, `FastMCP` in mcp 1.x): registers the tools and wires the modules together.
 
-Tests are in `tests/`; the WinForms fixture is `tests/fixtures/test_form.ps1`.
+Tests are in `tests/`; the WinForms fixture is `tests/fixtures/test_form.ps1`. `tests/mcp_client.py` is the in-memory MCP client the tool-level tests use; it returns replies in wire form, the same on mcp 1.x and 2.x. `tests/fixtures/tool_schemas.json` is the tools' input schemas and annotations as clients receive them: update it only on purpose, when a tool's parameters change.
+
+## mcp 1.x and 2.x
+
+The package supports `mcp>=1.30.0,<3`. A new install gets 2.x; an existing venv keeps its 1.x until it is upgraded. Both must send the same tool list, instructions and result content (key order on the wire may differ), so run the tests against both before a change to `server.py`:
+
+```powershell
+py -3.12 -m venv .venv-mcp1
+.venv-mcp1\Scripts\python -m pip install -e ".[dev]" "mcp==1.30.0"
+.venv-mcp1\Scripts\python -m pytest
+```
+
+The version-specific code in `server.py` is small: the import of the server class, `Image` and `ToolError`, and how `serverInfo.version` is set (a constructor argument in 2.x). Tool errors are raised as the SDK's `ToolError`: mcp 2.x replaces the text of any other exception with "Error executing tool <name>", and the agent would no longer see why a tool refused.
 
 ## Code rules
 
@@ -71,7 +83,7 @@ These are ideas, not promises or a roadmap; open an issue to discuss before star
 ## Pull request checklist
 
 - [ ] `ruff check .` and `ruff format .` are clean.
-- [ ] `pytest` passes; new behavior has tests. Integration tests were run if you touched input or UIA.
+- [ ] `pytest` passes; new behavior has tests. Integration tests were run if you touched input or UIA. If you touched `server.py`, it also passes with `mcp==1.30.0`.
 - [ ] Nothing writes to stdout; no import-time side effects.
 - [ ] No new runtime dependency (or an issue approved it).
 - [ ] Error messages are short and tell the agent what to do.

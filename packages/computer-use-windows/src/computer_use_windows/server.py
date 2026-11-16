@@ -6,9 +6,15 @@ interleave. uia.py initializes COM per calling thread and screen.py opens mss pe
 not matter which worker thread runs a call. ``focus`` is additionally bounded in time
 (``_FOCUS_TIMEOUT``), so a window that stops responding cannot hold the lock.
 
-Errors: SafetyError / ValueError / RuntimeError from the sibling modules propagate unchanged;
-FastMCP turns them into tool errors carrying their message (no traceback). Anything else is logged
-with its traceback on stderr and re-raised as a RuntimeError with a one-line message.
+Errors: SafetyError / ValueError / RuntimeError from the sibling modules keep their message and
+reach the agent as a tool error (no traceback): the tool wrapper re-raises them as the SDK's
+ToolError, the exception type for tools whose text both mcp 1.x and 2.x pass on (2.x replaces the
+text of any other exception with a generic "Error executing tool <name>"). Anything else is logged
+with its traceback on stderr and reported as a one-line message.
+
+MCP SDK: works with mcp 1.x (``FastMCP``, ``mcp.server.fastmcp``) and 2.x (renamed ``MCPServer``,
+``mcp.server.mcpserver``); the same tools, schemas, instructions and result content go out on
+both (the order of JSON keys on the wire may differ).
 
 Sibling modules are imported as modules and called via attribute access at call time, so tests can
 monkeypatch e.g. ``computer_use_windows.input.click``.
@@ -25,8 +31,21 @@ from dataclasses import dataclass
 from typing import TypeVar
 
 from anyio import to_thread
-from mcp.server.fastmcp import FastMCP, Image
 from mcp.types import ToolAnnotations
+
+try:  # mcp 2.x
+    from mcp.server.mcpserver import Image, MCPServer
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    _MCP2 = True
+except ModuleNotFoundError as exc:  # mcp 1.x: no mcp.server.mcpserver yet
+    if exc.name != "mcp.server.mcpserver":
+        raise  # a broken mcp 2.x install: show its real error, not a 1.x import failure
+    from mcp.server.fastmcp import FastMCP as MCPServer
+    from mcp.server.fastmcp import Image
+    from mcp.server.fastmcp.exceptions import ToolError
+
+    _MCP2 = False
 
 from . import __version__, config, instructions, safety, screen, uia
 from . import input as inp
@@ -724,8 +743,8 @@ def _guarded(fn: Callable[..., _T], args: tuple[object, ...]) -> _T:
         raise RuntimeError(f"{name} failed: {type(exc).__name__}: {exc}") from exc
 
 
-def build_server(config: Config) -> FastMCP:
-    """Create the FastMCP server with the 12 tools; state lives in this server instance."""
+def build_server(config: Config) -> MCPServer:
+    """Create the MCP server (FastMCP/MCPServer) with the 12 tools; state lives in this instance."""
     session = _Session(config)
     lock = threading.Lock()
     image_format = config.image_format
@@ -735,12 +754,23 @@ def build_server(config: Config) -> FastMCP:
             with lock:
                 return _guarded(fn, args)
 
-        return await to_thread.run_sync(locked)
+        try:
+            return await to_thread.run_sync(locked)
+        except (safety.SafetyError, ValueError, RuntimeError) as exc:
+            # ToolError keeps the message for the agent on mcp 1.x and 2.x alike (see above).
+            raise ToolError(str(exc)) from exc
 
-    server = FastMCP(SERVER_NAME, instructions=instructions.SERVER_INSTRUCTIONS)
-    lowlevel = getattr(server, "_mcp_server", None)
-    if lowlevel is not None and hasattr(lowlevel, "version"):
-        lowlevel.version = __version__  # serverInfo.version; FastMCP would report the SDK's
+    if _MCP2:
+        server = MCPServer(
+            SERVER_NAME, instructions=instructions.SERVER_INSTRUCTIONS, version=__version__
+        )
+    else:
+        server = MCPServer(SERVER_NAME, instructions=instructions.SERVER_INSTRUCTIONS)
+        # serverInfo.version: FastMCP has no parameter for it and would report the SDK's
+        # version. Its lowlevel server is private, but mcp 1.x only gets fixes now.
+        lowlevel = getattr(server, "_mcp_server", None)
+        if lowlevel is not None and hasattr(lowlevel, "version"):
+            lowlevel.version = __version__
 
     desc = instructions.TOOL_DESCRIPTIONS
     read_only = ToolAnnotations(readOnlyHint=True)
@@ -813,7 +843,7 @@ def build_server(config: Config) -> FastMCP:
 def _configure_logging() -> None:
     """Log to stderr only: stdout carries the MCP protocol.
 
-    Runs before FastMCP is created, so FastMCP's own basicConfig call becomes a no-op. A root
+    Runs before the MCP server is created, so the SDK's own basicConfig call becomes a no-op. A root
     logger that is already configured (e.g. by a test runner) is left alone.
     """
     logging.basicConfig(
