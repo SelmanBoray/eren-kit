@@ -3,8 +3,11 @@ import {
   ajandaMetni,
   ajandaSatiri,
   AjandaZamani,
+  gercekTarihMi,
   type Hatirlatma,
   Hatirlatmalar,
+  ornekGunleriMi,
+  ornekGunuMu,
   Tarih,
   Tekrar,
   zamanKurallari,
@@ -122,9 +125,12 @@ export type AjandaKanalHatasi = z.infer<typeof AjandaKanalHatasi>;
  * - `kimlik_cakisiyor`: `ekle`'nin `kayit_id`'si başka işlemle zaten kullanılmış.
  * - `tutarsiz_kayit`: değişiklik uygulanınca kayıt `AjandaKaydi` kurallarını bozuyor.
  * - `saat_dilimi_bilinmiyor`: biçimi doğru ama servisin dilim veritabanında yok.
- * - `ornek_gecersiz`: `ornek_tarihi` tekrarsız kayıtta ya da serinin örneği değil; ya da `ORNEK_ADET` doldu.
+ * - `ornek_gecersiz`: `ornek_tarihi` tekrarsız kayıtta ya da serinin örneği değil; ya da budamadan
+ *   sonra da `ORNEK_ADET` aşılıyor (`ajandaOrnekDurumuUygula`).
  * - `kayit_siniri`: `KAYIT_ADET` doldu.
- * - `sentetik_turda_izinsiz`: insan kökenli olmayan turdan taslak olmayan kayda değişiklik.
+ * - `sentetik_turda_izinsiz`: insan kökenli olmayan turdan taslak olmayan kayda değişiklik ya da onay.
+ * - `simdi_uyusmuyor`: yalnız araç; modelin `dayanak`'ı servisin şimdisiyle uyuşmuyor (`dayanakGecerliMi`).
+ * - `ic_hata`: geçici (`AJANDA_GECICI_RET_NEDENLERI`); öteki nedenler kalıcıdır.
  */
 export const AJANDA_RET_NEDENLERI = [
   "kayit_bulunamadi",
@@ -135,10 +141,21 @@ export const AJANDA_RET_NEDENLERI = [
   "ornek_gecersiz",
   "kayit_siniri",
   "sentetik_turda_izinsiz",
+  "simdi_uyusmuyor",
   "ic_hata",
 ] as const;
 export const AjandaRetNedeni = z.enum(AJANDA_RET_NEDENLERI);
 export type AjandaRetNedeni = z.infer<typeof AjandaRetNedeni>;
+
+/**
+ * Geçici ret: işlem uygulanmadı ve tekrarsızlık kaydı yazılmadı; aynı `islem_id` ile yeniden
+ * yollanır, iyimser değişiklik durur. Öteki nedenler kalıcıdır (aynı kimlik hep aynı sonucu alır).
+ */
+export const AJANDA_GECICI_RET_NEDENLERI = ["ic_hata"] as const satisfies readonly AjandaRetNedeni[];
+
+export function ajandaRetGeciciMi(neden: AjandaRetNedeni): boolean {
+  return (AJANDA_GECICI_RET_NEDENLERI as readonly string[]).includes(neden);
+}
 
 // Kayıt
 
@@ -271,7 +288,9 @@ const GOVDE_ALANLARI = {
 /**
  * Kaydın PC'deki güncel hali; `/ajanda` `kayit` çerçevesi bunu taşır. Eylemsiz veridir: URL, intent,
  * komut alanı yoktur; metinler düz metin gösterilir. Kurallar: `zamanKurallari`; `ornekler` yalnız
- * tekrarda, tarih sırasıyla tekil ve çapadan sonra; `elle_alanlar` kanonik sırada.
+ * tekrarda, tarih sırasıyla tekil ve her biri serinin örnek günü (`ornekGunuMu`); `elle_alanlar`
+ * kanonik sırada. `guncelleme_ms`, kaydın güncel revizyonunu yazan geçmiş satırının `ts_ms`'idir
+ * (telafi izi bu eşitliğe dayanır: `ajandaTelafiTamMi`).
  * - `taslak`: insan kökenli olmayan turda doğdu; kullanıcı `onayla`yana kadar hatırlatma kurulmaz.
  * - `silindi`: mezar taşı; içerik `geri_yukle` için durur, hatırlatma kurulmaz.
  * - `elle_alanlar`: kullanıcının emriyle (uygulamadan ya da insan turundaki araçla) değişen alanlar;
@@ -300,6 +319,15 @@ export const AjandaKaydi = z
         ctx.addIssue({ code: "custom", path: ["ornekler"], message: "ornekler tarih sırasıyla ve tekil" });
       } else if (k.zaman !== undefined && "tarih" in k.zaman && k.ornekler[0]!.tarih < k.zaman.tarih) {
         ctx.addIssue({ code: "custom", path: ["ornekler"], message: "örnek çapadan önce" });
+      } else if (
+        k.zaman !== undefined &&
+        "tarih" in k.zaman &&
+        gercekTarihMi(k.zaman.tarih) &&
+        Tekrar.safeParse(k.tekrar).success &&
+        k.ornekler.every((o) => gercekTarihMi(o.tarih)) &&
+        !ornekGunleriMi(k.zaman.tarih, k.tekrar, k.ornekler.map((o) => o.tarih))
+      ) {
+        ctx.addIssue({ code: "custom", path: ["ornekler"], message: "örnek serinin günü değil" });
       }
     }
     if (k.guncelleme_ms < k.olusturma_ms) {
@@ -381,6 +409,8 @@ export const AjandaParca = z.strictObject({
   silindi: z.boolean().optional(),
   /** Yalnız `ornek_tarihi`'li girdide: o örneğin durumu, `null` açık. */
   ornek_durumu: OrnekDurumu.nullable().optional(),
+  /** Tekrar ya da çapa değişince budanan, ya da `ORNEK_ADET` için atılan örnek satırları: tam liste. */
+  ornekler: z.array(AjandaOrnegi).max(AJANDA_SINIRLARI.ORNEK_ADET).optional(),
 });
 export type AjandaParca = z.infer<typeof AjandaParca>;
 
@@ -410,13 +440,22 @@ export const AjandaPairRequest = ajandaMesaj("pair_request", {
   etiket: z.string().max(SINIRLAR.CIHAZ_ETIKETI).optional(),
 });
 /**
- * `son_rev`: uygulamanın uyguladığı en büyük revizyon. `depo_id`: en son `welcome`'daki; yoksa ya da
- * değiştiyse servis `tam` telafi yapar.
+ * Telafi izi: uygulamanın sunucu kopyasında revizyonu `son_rev` olan kaydın kimliği ve
+ * `guncelleme_ms`'i. Servis kendi geçmişindeki `son_rev` satırıyla karşılaştırır; tutmazsa (yedekten
+ * geri yükleme, sayaç geriye gitti) `tam` telafi yapar (`ajandaTelafiTamMi`).
+ */
+export const AjandaRevIzi = z.strictObject({ kayit_id: KayitId, guncelleme_ms: ZamanMs });
+export type AjandaRevIzi = z.infer<typeof AjandaRevIzi>;
+
+/**
+ * `son_rev`: uygulamanın uyguladığı en büyük revizyon. `depo_id`: en son `welcome`'daki.
+ * `son_rev_izi`: `son_rev` > 0 iken yollanır; yoksa servis `tam` telafi yapar.
  */
 export const AjandaHello = ajandaMesaj("hello", {
   device_id: OpakId,
   son_rev: SonRevizyon,
   depo_id: DepoId.optional(),
+  son_rev_izi: AjandaRevIzi.optional(),
   client_nonce: Nonce,
 });
 export const AjandaAuthResponse = ajandaMesaj("auth_response", { signature: Imza });
@@ -456,8 +495,9 @@ export const AjandaPairResult = ajandaMesaj("pair_result", {
 /** `server_signature` = `ajandaKimlikImzaMetni({ rol: "pc", ... })` imzası. */
 export const AjandaAuthChallenge = ajandaMesaj("auth_challenge", { server_nonce: Nonce, server_signature: Imza });
 /**
- * `tam`: uygulama yerel kopyasını atar, ardından 0'dan bütün kayıtlar gelir (`depo_id` yok ya da
- * farklı, ya da `son_rev > bas_rev`). Değilse `son_rev`'ten büyük revizyonlu kayıtlar gelir.
+ * `tam` (`ajandaTelafiTamMi`): uygulama sunucu kopyasını atar ve `son_rev`'i 0'a çeker, ardından
+ * bütün kayıtlar gelir; gönderilmemiş işlem kuyruğu korunur ve `esitlendi`'den sonra yollanır.
+ * Değilse `son_rev`'ten büyük revizyonlu kayıtlar gelir.
  */
 export const AjandaWelcome = ajandaMesaj("welcome", {
   depo_id: DepoId,
@@ -472,7 +512,9 @@ export const AjandaEsitlendi = ajandaMesaj("esitlendi", { rev: SonRevizyon });
 /**
  * `islem`'in sonucu. `ok` ve `rev`: değişikliğin revizyonu; yan etkisiz `ok`'ta (aynı değer, zaten
  * silinmiş) `rev` yok. `korunan_alanlar` yalnız emir olmayan otomasyonda dolabilir, uygulamaya hep boş/yok.
- * `ok:false` yeniden yollanmaz; uygulama iyimser değişikliğini geri alır.
+ * `ok:false`: geçici nedende (`ajandaRetGeciciMi`) işlem kuyruğun başında kalır, aynı `islem_id` ile
+ * sonra yeniden yollanır, iyimser değişiklik durur. Kalıcı nedende yeniden yollanmaz, iyimser
+ * değişiklik geri alınır ve işlem içeriğiyle kullanıcının göreceği ret listesine geçer.
  */
 export const AjandaIslemSonucu = ajandaMesaj("islem_sonucu", {
   islem_id: OpakId,
@@ -535,7 +577,22 @@ export type AjandaBirlesimi = {
   kayit: AjandaKaydi;
   uygulanan: AjandaAlani[];
   korunan: AjandaAlani[];
+  /** Tekrar kalktığı, çapa ya da kural değiştiği için atılan örnek satırları (geçmişe `ornekler` olarak yazılır). */
+  budanan_ornekler: AjandaKaydi["ornekler"];
 };
+
+/**
+ * Seriye artık ait olmayan örnek satırlarını atar: tekrar yoksa hepsi; zamanın günü yoksa (tekrar
+ * zaten tutarsız) dokunmaz; değilse çapadan önceki ve serinin günü olmayanlar.
+ */
+function ornekleriBuda(k: AjandaKaydi): { kalan: AjandaKaydi["ornekler"]; budanan: AjandaKaydi["ornekler"] } {
+  if (k.tekrar === undefined) return { kalan: [], budanan: [...k.ornekler] };
+  if (k.zaman === undefined || !("tarih" in k.zaman)) return { kalan: [...k.ornekler], budanan: [] };
+  const capa = k.zaman.tarih;
+  const tekrar = k.tekrar;
+  const kalan = k.ornekler.filter((o) => ornekGunuMu(capa, tekrar, o.tarih));
+  return { kalan, budanan: k.ornekler.filter((o) => !kalan.includes(o)) };
+}
 
 /** Asistan aracı yolları: insan turundaki çağrıları kullanıcının kendi emridir. */
 export const ARAC_YOLLARI = ["sohbet_araci", "pc_araci"] as const satisfies readonly KaynakYolu[];
@@ -554,8 +611,10 @@ export function kullaniciEmriMi(yazar: { yol: KaynakYolu; tur_kokeni: TurKokeni 
  * (`kullaniciEmriMi` yanlış) `elle_alanlar`'daki alan değişmez, `korunan`'a girer. Emir olan
  * değişiklikte (uygulamadan elle ya da insan turundaki araç çağrısı) her alan uygulanır ve uygulanan
  * alanlar `elle_alanlar`'a eklenir: kullanıcının açıkça istediği değer de sonraki otomasyona karşı
- * korunur. Silinmiş kayıt, sentetik tur ve revizyon kararları çağıranındır; sonuç `AjandaKaydi` ile
- * doğrulanmalıdır.
+ * korunur. `tekrar` ya da `zaman` uygulanınca seriye ait olmayan örnek satırları budanır (tekrar
+ * kaldırılabilir, çapa ileri alınabilir). Zaman kesinliği değişince hatırlatma listesine dokunulmaz:
+ * `once` saat yokken bekler, saat gelince kurulur. Silinmiş kayıt, sentetik tur ve revizyon kararları
+ * çağıranındır; sonuç `AjandaKaydi` ile doğrulanmalıdır.
  */
 export function ajandaDegisikligiUygula(
   kayit: AjandaKaydi,
@@ -583,12 +642,20 @@ export function ajandaDegisikligiUygula(
   const elle_alanlar = otomasyon
     ? [...kayit.elle_alanlar]
     : AJANDA_ALANLARI.filter((a) => kayit.elle_alanlar.includes(a) || uygulanan.includes(a));
-  return { kayit: { ...(yeni as AjandaKaydi), elle_alanlar }, uygulanan, korunan };
+  let sonuc: AjandaKaydi = { ...(yeni as AjandaKaydi), elle_alanlar };
+  let budanan_ornekler: AjandaKaydi["ornekler"] = [];
+  if ((uygulanan.includes("tekrar") || uygulanan.includes("zaman")) && sonuc.ornekler.length > 0) {
+    const b = ornekleriBuda(sonuc);
+    sonuc = { ...sonuc, ornekler: b.kalan };
+    budanan_ornekler = b.budanan;
+  }
+  return { kayit: sonuc, uygulanan, korunan, budanan_ornekler };
 }
 
 /**
  * Otomatik eklemenin tekilleştirme anahtarı: aynı kapsamda (ör. `sohbet:<id>`) aynı tür, başlık ve
- * zaman aynı anahtarı verir. `"t1:" + sha256(kanonik JSON)`. Servis silinmemiş eşini bulursa eklemez.
+ * zaman aynı anahtarı verir. `"t1:" + sha256(kanonik JSON)`. Eşin eklemeyi engelleyip engellemediği
+ * `ajandaTekilKarari`'dır. Anahtar tekil indeks değildir: bitmiş eşin yanında yenisi doğabilir.
  */
 export function ajandaTekilAnahtari(girdi: {
   kapsam: string;

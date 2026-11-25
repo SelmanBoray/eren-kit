@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   AJANDA_AZAMI_CERCEVE,
+  AJANDA_GECICI_RET_NEDENLERI,
   AJANDA_IMZA_ONEKI,
+  ajandaOrnekDurumuUygula,
+  ajandaRetGeciciMi,
+  gunNoTarih,
+  tarihGunNo,
   AJANDA_KANAL_HATALARI,
   AJANDA_RET_NEDENLERI,
   AJANDA_SINIRLARI,
@@ -163,7 +168,7 @@ test("en büyük kayıt, geçmiş sayfası ve kimlik öncesi çerçeveler sını
   assert.ok(Buffer.byteLength(kayitCercevesi) < AJANDA_AZAMI_CERCEVE.KANAL / 8, String(Buffer.byteLength(kayitCercevesi)));
   assert.equal(ajandaAsagiCoz(kayitCercevesi).ok, true);
 
-  const parca = { tur: kayit.tur, baslik: kayit.baslik, aciklama: kayit.aciklama, zaman: kayit.zaman, hatirlatmalar: kayit.hatirlatmalar, tekrar: kayit.tekrar, durum: kayit.durum, taslak: false, silindi: false };
+  const parca = { tur: kayit.tur, baslik: kayit.baslik, aciklama: kayit.aciklama, zaman: kayit.zaman, hatirlatmalar: kayit.hatirlatmalar, tekrar: kayit.tekrar, durum: kayit.durum, taslak: false, silindi: false, ornekler: kayit.ornekler };
   const girdiler = Array.from({ length: AJANDA_SINIRLARI.GECMIS_SAYFA }, (_, i) => ({
     rev: 1000 - i,
     ts_ms: 1,
@@ -274,8 +279,68 @@ test("birleştirme: insan uygulanan alanı izler, otomasyon izi değiştirmez, g
   assert.deepEqual(oto.kayit.elle_alanlar, ["baslik", "durum"]);
   assert.equal(oto.kayit.durum, "tamam");
   assert.notEqual(oto.kayit.elle_alanlar, insan.kayit.elle_alanlar);
-  // Tutarsız birleşimi şema yakalar: `once` hatırlatmalı kayıt `gun`a çekilirse servis `tutarsiz_kayit` döner.
+  // Saat kalkınca `once` hatırlatması kalır ve bekler; kayıt tutarlıdır (tutarsiz_kayit yok).
   const anli = AjandaKaydi.parse({ ...kayit, zaman: { kesinlik: "an", tarih: "2026-11-30", saat: "10:00", saat_dilimi: IST }, hatirlatmalar: [{ tur: "once", dk: 10 }] });
-  const bozuk = ajandaDegisikligiUygula(anli, { zaman: { kesinlik: "gun", tarih: "2026-11-30", saat_dilimi: IST } }, ELLE);
+  const saatsiz = ajandaDegisikligiUygula(anli, { zaman: { kesinlik: "gun", tarih: "2026-11-30", saat_dilimi: IST } }, ELLE);
+  assert.equal(AjandaKaydi.safeParse(saatsiz.kayit).success, true);
+  assert.deepEqual(saatsiz.kayit.hatirlatmalar, [{ tur: "once", dk: 10 }]);
+  // Tutarsız birleşimi şema yakalar: tekrar eden kaydın zamanı dönem olursa servis `tutarsiz_kayit` döner.
+  const seri = AjandaKaydi.parse({ ...anli, tekrar: { siklik: "haftalik", aralik: 1 } });
+  const bozuk = ajandaDegisikligiUygula(seri, { zaman: { kesinlik: "donem", baslangic: "2026-11-30", bitis: "2026-12-02", saat_dilimi: IST } }, ELLE);
   assert.equal(AjandaKaydi.safeParse(bozuk.kayit).success, false);
+});
+
+test("ret nedenleri: yalnız ic_hata geçicidir", () => {
+  for (const neden of AJANDA_RET_NEDENLERI) assert.equal(ajandaRetGeciciMi(neden), neden === "ic_hata", neden);
+  assert.deepEqual([...AJANDA_GECICI_RET_NEDENLERI], ["ic_hata"]);
+});
+
+test("hello telafi izi: kimlik ve zaman, fazla alan yok", () => {
+  const hello = { v, type: "hello", device_id: "d1", son_rev: 100, depo_id: "d_a", client_nonce: NONCE };
+  assert.equal(ajandaYukariCoz(JSON.stringify({ ...hello, son_rev_izi: { kayit_id: "k7", guncelleme_ms: 1 } })).ok, true);
+  assert.equal(ajandaYukariCoz(JSON.stringify(hello)).ok, true, "izsiz hello geçerli, servis tam telafi yapar");
+  assert.equal(ajandaYukariCoz(JSON.stringify({ ...hello, son_rev_izi: { kayit_id: "k7" } })).ok, false);
+  assert.equal(ajandaYukariCoz(JSON.stringify({ ...hello, son_rev_izi: { kayit_id: "k7", guncelleme_ms: -1 } })).ok, false);
+});
+
+test("tekrar kaldırma ve çapayı ileri alma tutarlı kayıt verir; uzun seri örnek tavanında kilitlenmez", () => {
+  const seri = AjandaKaydi.parse({
+    kayit_id: "k1",
+    revizyon: 5,
+    tur: "gorev",
+    baslik: "Spor",
+    zaman: { kesinlik: "gun", tarih: "2026-11-02", saat_dilimi: IST },
+    hatirlatmalar: [],
+    tekrar: { siklik: "haftalik", aralik: 1 },
+    ornekler: [{ tarih: "2026-11-09", durum: "tamam" }],
+    durum: "acik",
+    taslak: false,
+    silindi: false,
+    elle_alanlar: [],
+    kaynak: { yol: "elle", tur_kokeni: "insan", device_id: "d1" },
+    olusturma_ms: 1,
+    guncelleme_ms: 1,
+  });
+  const kaldir = ajandaDegisikligiUygula(seri, { tekrar: null }, ELLE);
+  assert.equal(AjandaKaydi.safeParse(kaldir.kayit).success, true);
+  assert.deepEqual(kaldir.kayit.ornekler, []);
+  assert.deepEqual(kaldir.budanan_ornekler, [{ tarih: "2026-11-09", durum: "tamam" }]);
+  const ileri = ajandaDegisikligiUygula(seri, { zaman: { kesinlik: "gun", tarih: "2026-11-16", saat_dilimi: IST } }, ELLE);
+  assert.equal(AjandaKaydi.safeParse(ileri.kayit).success, true);
+  assert.deepEqual(ileri.kayit.ornekler, []);
+  assert.deepEqual(seri.ornekler, [{ tarih: "2026-11-09", durum: "tamam" }], "girdi değişmez");
+  // Değişiklik zaman ya da tekrara değmiyorsa örneklere dokunulmaz.
+  assert.deepEqual(ajandaDegisikligiUygula(seri, { baslik: "Koşu" }, ELLE).budanan_ornekler, []);
+
+  // Günlük seri ~16 ay sonra: her gün tamamlanmış, tavan dolu; bugün yine tamamlanabilir.
+  let gunluk = AjandaKaydi.parse({ ...seri, zaman: { kesinlik: "gun", tarih: "2026-01-01", saat_dilimi: IST }, tekrar: { siklik: "gunluk", aralik: 1 }, ornekler: [] });
+  for (let i = 0; i < AJANDA_SINIRLARI.ORNEK_ADET + 30; i++) {
+    const gun = gunNoTarih(tarihGunNo("2026-01-01") + i);
+    const s = ajandaOrnekDurumuUygula(gunluk, gun, "tamam", gun);
+    assert.equal(s.ok, true, gun);
+    if (!s.ok) return;
+    gunluk = AjandaKaydi.parse({ ...gunluk, ornekler: s.ornekler });
+  }
+  assert.equal(gunluk.ornekler.length, AJANDA_SINIRLARI.ORNEK_ADET);
+  assert.equal(gunluk.ornekler.at(-1)!.tarih, gunNoTarih(tarihGunNo("2026-01-01") + AJANDA_SINIRLARI.ORNEK_ADET + 29));
 });

@@ -14,3 +14,4 @@ export * from "./ajanda-zaman.ts";
 export * from "./ajanda.ts";
 export * from "./ajanda-arac.ts";
 export * from "./ajanda-metin.ts";
+export * from "./ajanda-kural.ts";

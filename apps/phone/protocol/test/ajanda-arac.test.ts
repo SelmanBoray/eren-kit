@@ -12,6 +12,10 @@ import {
   ajandaEkleMetni,
   ajandaFiilRoldeIzinliMi,
   ajandaGuncelleMetni,
+  ajandaKacir,
+  kacir,
+  simdiDamgasi,
+  simdiMetni,
   AjandaKaydi,
   ajandaKaydiSatiri,
   ajandaKopruAsagiCoz,
@@ -33,8 +37,11 @@ const kodu = (s: CozumSonucu<unknown>) => (s.ok ? null : s.kod);
 const v = PROTOKOL_SURUMU;
 const IST = "Europe/Istanbul";
 
+const DAYANAK = { tarih: "2026-11-25", saat: "14:05" };
+const SIMDI = { tarih: "2026-11-25", saat: "14:05", saat_dilimi: "Europe/Istanbul" };
+
 const GECERLI_GIRDILER: Record<string, object> = {
-  ajanda_ekle: { tur: "randevu", baslik: "Dişçi", zaman: { kesinlik: "an", tarih: "2026-11-26", saat: "15:00", ifade: "yarın 3'te" } },
+  ajanda_ekle: { tur: "randevu", baslik: "Dişçi", zaman: { kesinlik: "an", tarih: "2026-11-26", saat: "15:00", ifade: "yarın 3'te" }, dayanak: DAYANAK },
   ajanda_guncelle: { kayit_id: "k1", degisiklik: { zaman: null, durum: "tamam" } },
   ajanda_listele: {},
 };
@@ -137,22 +144,40 @@ test("araç girdileri: geçersizler reddedilir", () => {
   const ekle = AJANDA_ARACLARI.ajanda_ekle.girdi;
   const kotu: unknown[] = [
     { tur: "randevu" },
-    { tur: "randevu", baslik: "x", zaman: { kesinlik: "gun", tarih: "2026-11-26" }, hatirlatmalar: [{ tur: "once", dk: 5 }] },
-    { tur: "randevu", baslik: "x", zaman: { kesinlik: "an", tarih: "2026-11-26" } },
+    { tur: "randevu", baslik: "x", zaman: { kesinlik: "an", tarih: "2026-11-26" }, dayanak: DAYANAK },
+    { tur: "randevu", baslik: "x", zaman: { kesinlik: "an", tarih: "2026-11-26", saat: "15:00" } },
+    { tur: "randevu", baslik: "x", hatirlatmalar: [{ tur: "mutlak", tarih: "2026-11-26", saat: "09:00" }] },
     { tur: "randevu", baslik: "x", zaman: { kesinlik: "belirsiz" } },
+    { tur: "randevu", baslik: "x\u{E0041}" },
+    { tur: "randevu", baslik: "x\u{FE0F}" },
+    { tur: "randevu", baslik: "x", dayanak: { tarih: "2026-11-25", saat: "14:05", fazla: 1 } },
+    { tur: "randevu", baslik: "x", dayanak: { tarih: "2026-11-25" } },
     { tur: "randevu", baslik: "x‏y" },
     { tur: "randevu", baslik: "x", alinti: "a\nb" },
     { tur: "randevu", baslik: "a".repeat(AJANDA_SINIRLARI.BASLIK + 1) },
   ];
   for (const g of kotu) assert.equal(ekle.safeParse(g).success, false, JSON.stringify(g));
   assert.equal(ekle.safeParse({ tur: "not", baslik: "x", zaman: { kesinlik: "belirsiz", ifade: "bir ara" }, hatirlatmalar: [] }).success, true);
-  assert.equal(ekle.safeParse({ tur: "gorev", baslik: "x", zaman: { kesinlik: "gun", tarih: "2026-11-26" }, hatirlatmalar: [{ tur: "mutlak", tarih: "2026-11-26", saat: "09:00" }] }).success, true);
+  assert.equal(ekle.safeParse({ tur: "gorev", baslik: "x", zaman: { kesinlik: "gun", tarih: "2026-11-26" }, hatirlatmalar: [{ tur: "mutlak", tarih: "2026-11-26", saat: "09:00" }], dayanak: DAYANAK }).success, true);
+  // `once` saatsiz kayıtta da kaydedilir (saat gelene dek bekler).
+  assert.equal(ekle.safeParse({ tur: "randevu", baslik: "x", zaman: { kesinlik: "gun", tarih: "2026-11-26" }, hatirlatmalar: [{ tur: "once", dk: 5 }], dayanak: DAYANAK }).success, true);
+  assert.equal(ekle.safeParse({ tur: "gorev", baslik: "Ekmek al" }).success, true, "zamansız ekleme dayanak istemez");
 
   const guncelle = AJANDA_ARACLARI.ajanda_guncelle.girdi;
   assert.equal(guncelle.safeParse({ kayit_id: "k1", degisiklik: {} }).success, false);
   assert.equal(guncelle.safeParse({ kayit_id: "k1", degisiklik: { silindi: true } }).success, false);
   assert.equal(guncelle.safeParse({ kayit_id: "k1", degisiklik: { baslik: null } }).success, false);
   assert.equal(guncelle.safeParse({ kayit_id: "k 1", degisiklik: { durum: "tamam" } }).success, false);
+  assert.equal(guncelle.safeParse({ kayit_id: "k1", degisiklik: { onayla: false } }).success, false);
+  assert.equal(guncelle.safeParse({ kayit_id: "k1", degisiklik: { taslak: false } }).success, false);
+  assert.equal(guncelle.safeParse({ kayit_id: "k1", degisiklik: { onayla: true } }).success, true);
+  assert.equal(guncelle.safeParse({ kayit_id: "k1", degisiklik: { durum: "tamam" } }).success, true);
+  assert.equal(guncelle.safeParse({ kayit_id: "k1", degisiklik: { zaman: null } }).success, true, "zamanı kaldırmak dayanak istemez");
+  const yarin = { kesinlik: "gun", tarih: "2026-11-26" };
+  assert.equal(guncelle.safeParse({ kayit_id: "k1", degisiklik: { zaman: yarin } }).success, false, "zaman dayanak ister");
+  assert.equal(guncelle.safeParse({ kayit_id: "k1", dayanak: DAYANAK, degisiklik: { zaman: yarin } }).success, true);
+  assert.equal(guncelle.safeParse({ kayit_id: "k1", degisiklik: { hatirlatmalar: [{ tur: "mutlak", tarih: "2026-11-26", saat: "09:00" }] } }).success, false);
+  assert.equal(guncelle.safeParse({ kayit_id: "k1", degisiklik: { hatirlatmalar: [{ tur: "once", dk: 30 }] } }).success, true);
 
   const listele = AJANDA_ARACLARI.ajanda_listele.girdi;
   assert.equal(listele.safeParse({ baslangic: "2026-11-30", bitis: "2026-11-01" }).success, false);
@@ -161,15 +186,31 @@ test("araç girdileri: geçersizler reddedilir", () => {
 });
 
 test("araç çıktıları: sonuç birleşimleri ve listede mezar taşı yok", () => {
+  const ozet = (yama: Record<string, unknown> = {}) => ({
+    kayit_id: "k1",
+    revizyon: 1,
+    durum: "acik",
+    taslak: false,
+    silindi: false,
+    hatirlatma: { toplam: 1, kurulacak: 1, saatsiz: 0, gecmis: 0 },
+    ...yama,
+  });
   const ekle = AJANDA_ARACLARI.ajanda_ekle.cikti;
-  assert.equal(ekle.safeParse({ sonuc: "eklendi", kayit_id: "k1", revizyon: 1, taslak: true, hatirlatma_sayisi: 1 }).success, true);
-  assert.equal(ekle.safeParse({ sonuc: "zaten_var", kayit_id: "k1" }).success, true);
-  assert.equal(ekle.safeParse({ sonuc: "ret", neden: "kayit_siniri" }).success, true);
-  assert.equal(ekle.safeParse({ sonuc: "ret", neden: "telefon_bagli_degil" }).success, false);
-  assert.equal(ekle.safeParse({ sonuc: "eklendi", kayit_id: "k1", revizyon: 1, hatirlatma_sayisi: 1 }).success, false);
+  for (const sonuc of ["eklendi", "onaylandi", "zaten_var"]) {
+    assert.equal(ekle.safeParse({ sonuc, simdi: SIMDI, kayit: ozet() }).success, true, sonuc);
+    assert.equal(ekle.safeParse({ sonuc, kayit: ozet() }).success, false, `${sonuc}: simdi zorunlu`);
+    const { taslak: _t, ...taslaksiz } = ozet();
+    assert.equal(ekle.safeParse({ sonuc, simdi: SIMDI, kayit: taslaksiz }).success, false, `${sonuc}: taslak her zaman söylenir`);
+  }
+  assert.equal(ekle.safeParse({ sonuc: "ret", simdi: SIMDI, neden: "kayit_siniri" }).success, true);
+  assert.equal(ekle.safeParse({ sonuc: "ret", simdi: SIMDI, neden: "telefon_bagli_degil" }).success, false);
+  assert.equal(ekle.safeParse({ sonuc: "eklendi", simdi: SIMDI, kayit: ozet({ baslik: "x" }) }).success, false, "özet kayıt metni taşımaz");
+  assert.equal(ekle.safeParse({ sonuc: "eklendi", simdi: SIMDI, kayit: ozet({ hatirlatma: { toplam: 1, kurulacak: 1, saatsiz: 0, gecmis: 1 } }) }).success, false);
   const guncelle = AJANDA_ARACLARI.ajanda_guncelle.cikti;
-  assert.equal(guncelle.safeParse({ sonuc: "guncellendi", kayit_id: "k1", revizyon: 2, korunan_alanlar: ["zaman"] }).success, true);
-  assert.equal(guncelle.safeParse({ sonuc: "degismedi", kayit_id: "k1", korunan_alanlar: [] }).success, true);
+  assert.equal(guncelle.safeParse({ sonuc: "guncellendi", simdi: SIMDI, kayit: ozet({ revizyon: 2 }), korunan_alanlar: ["zaman"] }).success, true);
+  assert.equal(guncelle.safeParse({ sonuc: "degismedi", simdi: SIMDI, kayit: ozet(), korunan_alanlar: [] }).success, true);
+  assert.equal(guncelle.safeParse({ sonuc: "guncellendi", simdi: SIMDI, kayit_id: "k1", revizyon: 2, korunan_alanlar: [] }).success, false);
+  assert.equal(guncelle.safeParse({ sonuc: "ret", simdi: SIMDI, neden: "simdi_uyusmuyor" }).success, true);
   const simdi = { tarih: "2026-11-25", saat: "14:05", saat_dilimi: IST };
   assert.equal(AjandaListeleCikti.safeParse({ simdi, kayitlar: [kayit()], toplam: 1 }).success, true);
   assert.equal(AjandaListeleCikti.safeParse({ simdi, kayitlar: [kayit({ silindi: true })], toplam: 1 }).success, false);
@@ -201,7 +242,7 @@ test("liste metni: kayıt metni tek satırda kaçışlı, gövde çitli", () => 
   });
   const metin = ajandaListesiMetni(cit, { simdi: { tarih: "2026-11-25", saat: "14:05", saat_dilimi: IST }, kayitlar: [kayit(), zararli], toplam: 2 });
   const satirlar = metin.split("\n");
-  assert.equal(satirlar[0], `ajanda: simdi=2026-11-25 14:05 ${IST} gosterilen=2 toplam=2`);
+  assert.equal(satirlar[0], `ajanda: simdi=2026-11-25 Çarşamba 14:05 ${IST} gosterilen=2 toplam=2`);
   assert.equal(satirlar[1], `<<<okunan-metin ${cit}>>>`);
   assert.equal(satirlar.at(-1), `<<<okunan-metin-sonu ${cit}>>>`);
   assert.equal(satirlar.length, 5, "her kayıt tek satır");
@@ -225,19 +266,86 @@ test("liste metni: açıklama modele kırpılarak gider, kesilme bildirilir", ()
   assert.match(metin.split("\n")[1]!, /^kesildi:/);
 });
 
-test("ekle ve güncelle metinleri ham kod ve kullanıcı metni taşımaz, korunan alanı söyler", () => {
-  const eklendi = ajandaEkleMetni({
-    sonuc: "eklendi",
-    kayit_id: "k1",
-    revizyon: 4,
-    taslak: true,
-    zaman: { kesinlik: "an", tarih: "2026-11-26", saat: "15:00", saat_dilimi: IST, ifade: "GIZLI_IFADE" },
-    hatirlatma_sayisi: 1,
-  });
+const OZET = {
+  kayit_id: "k1",
+  revizyon: 4,
+  durum: "acik",
+  taslak: false,
+  silindi: false,
+  zaman: { kesinlik: "an", tarih: "2026-11-26", saat: "15:00", saat_dilimi: IST, ifade: "GIZLI_IFADE" },
+  hatirlatma: { toplam: 1, kurulacak: 1, saatsiz: 0, gecmis: 0 },
+} as const;
+
+test("ekle ve güncelle metinleri ham kod ve kullanıcı metni taşımaz, şimdiyi ve korunan alanı söyler", () => {
+  const eklendi = ajandaEkleMetni({ sonuc: "eklendi", simdi: SIMDI, kayit: OZET });
   assert.equal(eklendi.includes("GIZLI_IFADE"), false);
-  assert.match(eklendi, /Taslak/);
-  assert.match(eklendi, /zaman=2026-11-26 15:00 Europe\/Istanbul/);
-  assert.match(ajandaEkleMetni({ sonuc: "zaten_var", kayit_id: "k1" }), /zaten kayıtlı/);
-  assert.match(ajandaGuncelleMetni({ sonuc: "guncellendi", kayit_id: "k1", revizyon: 5, korunan_alanlar: ["zaman"] }), /başlamadığı için uygulanmadı: zaman\. Değişmesi gerekiyorsa kullanıcıya sor/);
-  assert.equal(ajandaGuncelleMetni({ sonuc: "ret", neden: "kayit_silinmis" }), "ajanda_guncelle: uygulanmadı, neden=kayit_silinmis");
+  assert.equal(eklendi.includes("Taslak"), false);
+  assert.match(eklendi, /^ajanda_ekle: eklendi \(kayit k1\) durum=acik zaman=2026-11-26 15:00 Europe\/Istanbul hatirlatma=1 kurulacak=1\./);
+  assert.match(eklendi, /simdi=2026-11-25 Çarşamba 14:05 Europe\/Istanbul$/);
+  assert.match(ajandaGuncelleMetni({ sonuc: "guncellendi", simdi: SIMDI, kayit: OZET, korunan_alanlar: ["zaman"] }), /başlamadığı için uygulanmadı: zaman\. Değişmesi gerekiyorsa kullanıcıya sor/);
+  assert.equal(
+    ajandaGuncelleMetni({ sonuc: "ret", simdi: SIMDI, neden: "kayit_silinmis" }),
+    "ajanda_guncelle: uygulanmadı, neden=kayit_silinmis. simdi=2026-11-25 Çarşamba 14:05 Europe/Istanbul",
+  );
+});
+
+test("araç metinleri taslağı her sonuçta söyler; sohbetten onay ayrı söylenir", () => {
+  const taslak = { ...OZET, taslak: true };
+  for (const m of [
+    ajandaEkleMetni({ sonuc: "eklendi", simdi: SIMDI, kayit: taslak }),
+    ajandaEkleMetni({ sonuc: "zaten_var", simdi: SIMDI, kayit: taslak }),
+    ajandaGuncelleMetni({ sonuc: "guncellendi", simdi: SIMDI, kayit: taslak, korunan_alanlar: [] }),
+    ajandaGuncelleMetni({ sonuc: "degismedi", simdi: SIMDI, kayit: taslak, korunan_alanlar: [] }),
+  ]) {
+    assert.match(m, / taslak /);
+    assert.match(m, /Taslak: onaylanmadı, hatırlatma kurulmaz/);
+    assert.match(m, /kaydedildi deme/);
+  }
+  const onay = ajandaEkleMetni({ sonuc: "onaylandi", simdi: SIMDI, kayit: OZET });
+  assert.match(onay, /taslak olarak vardı, kullanıcının isteğiyle onaylandı/);
+  assert.equal(onay.includes("Taslak:"), false);
+  const silinmis = ajandaEkleMetni({ sonuc: "zaten_var", simdi: SIMDI, kayit: { ...OZET, silindi: true } });
+  assert.match(silinmis, /kullanıcı bu kaydı silmiş; yeniden eklenmedi/);
+});
+
+test("araç metinleri geçmişte kalan ve saat bekleyen hatırlatmayı söyler", () => {
+  const m = ajandaEkleMetni({ sonuc: "eklendi", simdi: SIMDI, kayit: { ...OZET, hatirlatma: { toplam: 2, kurulacak: 0, saatsiz: 1, gecmis: 1 } } });
+  assert.match(m, /hatirlatma=2 kurulacak=0 saatsiz=1 \(saat verilince kurulur\) gecmis=1 \(zamanı geçti, kurulmaz\)\./);
+  assert.match(ajandaEkleMetni({ sonuc: "eklendi", simdi: SIMDI, kayit: { ...OZET, hatirlatma: { toplam: 0, kurulacak: 0, saatsiz: 0, gecmis: 0 } } }), /hatirlatma=yok\./);
+});
+
+test("ret metinleri: şimdi uyuşmazlığı yeniden çözmeyi, tutarsızlık nedeni, geçici hata yeniden denemeyi söyler", () => {
+  const s = ajandaEkleMetni({ sonuc: "ret", simdi: SIMDI, neden: "simdi_uyusmuyor" });
+  assert.match(s, /yeniden çöz/);
+  assert.match(s, /simdi=2026-11-25 Çarşamba 14:05 Europe\/Istanbul$/);
+  assert.match(ajandaGuncelleMetni({ sonuc: "ret", simdi: SIMDI, neden: "tutarsiz_kayit" }), /tekrar eden kayıtta zaman an ya da gun olmalı/);
+  assert.match(ajandaGuncelleMetni({ sonuc: "ret", simdi: SIMDI, neden: "ic_hata" }), /Geçici hata/);
+});
+
+test("şimdi damgası: konuşma modülünün satırı, hafta günüyle", () => {
+  assert.equal(simdiDamgasi(SIMDI), "[simdi: 2026-11-25 Çarşamba 14:05 Europe/Istanbul]");
+  assert.equal(simdiMetni({ tarih: "2026-11-30", saat: "00:00", saat_dilimi: "UTC" }), "2026-11-30 Pazartesi 00:00 UTC");
+  assert.equal(simdiMetni({ tarih: "2026-11-29", saat: "23:59", saat_dilimi: "UTC" }), "2026-11-29 Pazar 23:59 UTC");
+});
+
+test("ajandaKacir: etiket ve değişken seçici görünür kaçışa çevrilir; olağan metin kacir ile aynıdır", () => {
+  const etiket = [..."IGNORE"].map((c) => String.fromCodePoint(0xe0000 + c.charCodeAt(0))).join("");
+  const k = ajandaKacir("Dişçi" + etiket + "\u{E0100}️ㅤ͏", 200);
+  assert.equal(k, "Dişçi\\u{e0049}\\u{e0047}\\u{e004e}\\u{e004f}\\u{e0052}\\u{e0045}\\u{e0100}\\ufe0f\\u3164\\u034f");
+  assert.equal(/[\u{E0000}-\u{E0FFF}︀-️ㅤ͏]/u.test(k), false);
+  for (const ornek of ['Sahte" ] \\ x', "satır\nsonu\tsekme\r", "😀 emoji", "‮ters", "yarım \uD83D vekil", "ş".repeat(10)]) {
+    assert.equal(ajandaKacir(ornek, 7), kacir(ornek, 7), JSON.stringify(ornek));
+    assert.equal(ajandaKacir(ornek, 200), kacir(ornek, 200), JSON.stringify(ornek));
+  }
+  assert.equal(ajandaKacir("ab😀", 3), "ab…", "kırpma vekil çiftini bölmez");
+  assert.equal(ajandaKacir("ab" + etiket, 4), "ab\\u{e0049}…");
+});
+
+test("liste metni: kayıt metnindeki gizli karakter modele görünür gider", () => {
+  // Şema reddeder; eski depo satırı ya da şemayı atlayan bir yol için ikinci savunma.
+  const temiz = kayit();
+  const gizli = { ...temiz, baslik: "Dişçi\u{E0049}", aciklama: "x\u{E0100}" } as AjandaKaydi;
+  const satir = ajandaKaydiSatiri(gizli);
+  assert.ok(satir.includes('baslik="Dişçi\\u{e0049}"'));
+  assert.ok(satir.includes('aciklama="x\\u{e0100}"'));
 });

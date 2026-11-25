@@ -146,6 +146,96 @@
    "kod": "gecersiz_mesaj"
   },
   {
+   "ad": "kayit başlıkta etiket karakterleri U+E0049 U+E0047 (gizli metin)",
+   "ham": "{\"v\":1,\"type\":\"kayit\",\"kayit\":{\"kayit_id\":\"k_dis01\",\"revizyon\":12,\"tur\":\"randevu\",\"baslik\":\"Dişçi󠁉󠁇󠁎󠁏󠁒󠁅\",\"zaman\":{\"kesinlik\":\"an\",\"tarih\":\"2026-11-26\",\"saat\":\"15:00\",\"saat_dilimi\":\"Europe/Istanbul\",\"ifade\":\"yarın 3'te\"},\"hatirlatmalar\":[{\"tur\":\"once\",\"dk\":60}],\"ornekler\":[],\"durum\":\"acik\",\"taslak\":false,\"silindi\":false,\"elle_alanlar\":[],\"kaynak\":{\"yol\":\"sohbet_araci\",\"tur_kokeni\":\"insan\",\"sohbet_id\":\"ana\",\"kaynak_msg_id\":\"m_0001\",\"alinti\":\"yarın 3'te dişçi\",\"tekil_anahtar\":\"t1:0000000000000000000000000000000000000000000000000000000000000000\"},\"olusturma_ms\":1795000000000,\"guncelleme_ms\":1795000000000}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "kayit başlıkta değişken seçici eki U+E0100",
+   "ham": "{\"v\":1,\"type\":\"kayit\",\"kayit\":{\"kayit_id\":\"k_dis01\",\"revizyon\":12,\"tur\":\"randevu\",\"baslik\":\"Dişçi󠄀󠄁\",\"zaman\":{\"kesinlik\":\"an\",\"tarih\":\"2026-11-26\",\"saat\":\"15:00\",\"saat_dilimi\":\"Europe/Istanbul\",\"ifade\":\"yarın 3'te\"},\"hatirlatmalar\":[{\"tur\":\"once\",\"dk\":60}],\"ornekler\":[],\"durum\":\"acik\",\"taslak\":false,\"silindi\":false,\"elle_alanlar\":[],\"kaynak\":{\"yol\":\"sohbet_araci\",\"tur_kokeni\":\"insan\",\"sohbet_id\":\"ana\",\"kaynak_msg_id\":\"m_0001\",\"alinti\":\"yarın 3'te dişçi\",\"tekil_anahtar\":\"t1:0000000000000000000000000000000000000000000000000000000000000000\"},\"olusturma_ms\":1795000000000,\"guncelleme_ms\":1795000000000}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "kayit başlıkta değişken seçici U+FE0F",
+   "ham": "{\"v\":1,\"type\":\"kayit\",\"kayit\":{\"kayit_id\":\"k_dis01\",\"revizyon\":12,\"tur\":\"randevu\",\"baslik\":\"Dişçi ❤️\",\"zaman\":{\"kesinlik\":\"an\",\"tarih\":\"2026-11-26\",\"saat\":\"15:00\",\"saat_dilimi\":\"Europe/Istanbul\",\"ifade\":\"yarın 3'te\"},\"hatirlatmalar\":[{\"tur\":\"once\",\"dk\":60}],\"ornekler\":[],\"durum\":\"acik\",\"taslak\":false,\"silindi\":false,\"elle_alanlar\":[],\"kaynak\":{\"yol\":\"sohbet_araci\",\"tur_kokeni\":\"insan\",\"sohbet_id\":\"ana\",\"kaynak_msg_id\":\"m_0001\",\"alinti\":\"yarın 3'te dişçi\",\"tekil_anahtar\":\"t1:0000000000000000000000000000000000000000000000000000000000000000\"},\"olusturma_ms\":1795000000000,\"guncelleme_ms\":1795000000000}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "kayit başlıkta Hangul dolgu U+3164",
+   "ham": "{\"v\":1,\"type\":\"kayit\",\"kayit\":{\"kayit_id\":\"k_dis01\",\"revizyon\":12,\"tur\":\"randevu\",\"baslik\":\"Dişㅤçi\",\"zaman\":{\"kesinlik\":\"an\",\"tarih\":\"2026-11-26\",\"saat\":\"15:00\",\"saat_dilimi\":\"Europe/Istanbul\",\"ifade\":\"yarın 3'te\"},\"hatirlatmalar\":[{\"tur\":\"once\",\"dk\":60}],\"ornekler\":[],\"durum\":\"acik\",\"taslak\":false,\"silindi\":false,\"elle_alanlar\":[],\"kaynak\":{\"yol\":\"sohbet_araci\",\"tur_kokeni\":\"insan\",\"sohbet_id\":\"ana\",\"kaynak_msg_id\":\"m_0001\",\"alinti\":\"yarın 3'te dişçi\",\"tekil_anahtar\":\"t1:0000000000000000000000000000000000000000000000000000000000000000\"},\"olusturma_ms\":1795000000000,\"guncelleme_ms\":1795000000000}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "kayit başlıkta yarım genişlik Hangul dolgu U+FFA0",
+   "ham": "{\"v\":1,\"type\":\"kayit\",\"kayit\":{\"kayit_id\":\"k_dis01\",\"revizyon\":12,\"tur\":\"randevu\",\"baslik\":\"Dişﾠçi\",\"zaman\":{\"kesinlik\":\"an\",\"tarih\":\"2026-11-26\",\"saat\":\"15:00\",\"saat_dilimi\":\"Europe/Istanbul\",\"ifade\":\"yarın 3'te\"},\"hatirlatmalar\":[{\"tur\":\"once\",\"dk\":60}],\"ornekler\":[],\"durum\":\"acik\",\"taslak\":false,\"silindi\":false,\"elle_alanlar\":[],\"kaynak\":{\"yol\":\"sohbet_araci\",\"tur_kokeni\":\"insan\",\"sohbet_id\":\"ana\",\"kaynak_msg_id\":\"m_0001\",\"alinti\":\"yarın 3'te dişçi\",\"tekil_anahtar\":\"t1:0000000000000000000000000000000000000000000000000000000000000000\"},\"olusturma_ms\":1795000000000,\"guncelleme_ms\":1795000000000}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "kayit başlıkta Hangul dolgu U+115F",
+   "ham": "{\"v\":1,\"type\":\"kayit\",\"kayit\":{\"kayit_id\":\"k_dis01\",\"revizyon\":12,\"tur\":\"randevu\",\"baslik\":\"Dişᅟçi\",\"zaman\":{\"kesinlik\":\"an\",\"tarih\":\"2026-11-26\",\"saat\":\"15:00\",\"saat_dilimi\":\"Europe/Istanbul\",\"ifade\":\"yarın 3'te\"},\"hatirlatmalar\":[{\"tur\":\"once\",\"dk\":60}],\"ornekler\":[],\"durum\":\"acik\",\"taslak\":false,\"silindi\":false,\"elle_alanlar\":[],\"kaynak\":{\"yol\":\"sohbet_araci\",\"tur_kokeni\":\"insan\",\"sohbet_id\":\"ana\",\"kaynak_msg_id\":\"m_0001\",\"alinti\":\"yarın 3'te dişçi\",\"tekil_anahtar\":\"t1:0000000000000000000000000000000000000000000000000000000000000000\"},\"olusturma_ms\":1795000000000,\"guncelleme_ms\":1795000000000}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "kayit başlıkta birleştirici yok sayılan U+034F",
+   "ham": "{\"v\":1,\"type\":\"kayit\",\"kayit\":{\"kayit_id\":\"k_dis01\",\"revizyon\":12,\"tur\":\"randevu\",\"baslik\":\"Diş͏çi\",\"zaman\":{\"kesinlik\":\"an\",\"tarih\":\"2026-11-26\",\"saat\":\"15:00\",\"saat_dilimi\":\"Europe/Istanbul\",\"ifade\":\"yarın 3'te\"},\"hatirlatmalar\":[{\"tur\":\"once\",\"dk\":60}],\"ornekler\":[],\"durum\":\"acik\",\"taslak\":false,\"silindi\":false,\"elle_alanlar\":[],\"kaynak\":{\"yol\":\"sohbet_araci\",\"tur_kokeni\":\"insan\",\"sohbet_id\":\"ana\",\"kaynak_msg_id\":\"m_0001\",\"alinti\":\"yarın 3'te dişçi\",\"tekil_anahtar\":\"t1:0000000000000000000000000000000000000000000000000000000000000000\"},\"olusturma_ms\":1795000000000,\"guncelleme_ms\":1795000000000}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "kayit başlıkta Moğol ünlü ayırıcı U+180E",
+   "ham": "{\"v\":1,\"type\":\"kayit\",\"kayit\":{\"kayit_id\":\"k_dis01\",\"revizyon\":12,\"tur\":\"randevu\",\"baslik\":\"Diş᠎çi\",\"zaman\":{\"kesinlik\":\"an\",\"tarih\":\"2026-11-26\",\"saat\":\"15:00\",\"saat_dilimi\":\"Europe/Istanbul\",\"ifade\":\"yarın 3'te\"},\"hatirlatmalar\":[{\"tur\":\"once\",\"dk\":60}],\"ornekler\":[],\"durum\":\"acik\",\"taslak\":false,\"silindi\":false,\"elle_alanlar\":[],\"kaynak\":{\"yol\":\"sohbet_araci\",\"tur_kokeni\":\"insan\",\"sohbet_id\":\"ana\",\"kaynak_msg_id\":\"m_0001\",\"alinti\":\"yarın 3'te dişçi\",\"tekil_anahtar\":\"t1:0000000000000000000000000000000000000000000000000000000000000000\"},\"olusturma_ms\":1795000000000,\"guncelleme_ms\":1795000000000}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "kayit başlıkta müzik biçim karakteri U+1D173",
+   "ham": "{\"v\":1,\"type\":\"kayit\",\"kayit\":{\"kayit_id\":\"k_dis01\",\"revizyon\":12,\"tur\":\"randevu\",\"baslik\":\"Diş𝅳çi\",\"zaman\":{\"kesinlik\":\"an\",\"tarih\":\"2026-11-26\",\"saat\":\"15:00\",\"saat_dilimi\":\"Europe/Istanbul\",\"ifade\":\"yarın 3'te\"},\"hatirlatmalar\":[{\"tur\":\"once\",\"dk\":60}],\"ornekler\":[],\"durum\":\"acik\",\"taslak\":false,\"silindi\":false,\"elle_alanlar\":[],\"kaynak\":{\"yol\":\"sohbet_araci\",\"tur_kokeni\":\"insan\",\"sohbet_id\":\"ana\",\"kaynak_msg_id\":\"m_0001\",\"alinti\":\"yarın 3'te dişçi\",\"tekil_anahtar\":\"t1:0000000000000000000000000000000000000000000000000000000000000000\"},\"olusturma_ms\":1795000000000,\"guncelleme_ms\":1795000000000}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "kayit başlıkta ara metin işareti U+FFF9",
+   "ham": "{\"v\":1,\"type\":\"kayit\",\"kayit\":{\"kayit_id\":\"k_dis01\",\"revizyon\":12,\"tur\":\"randevu\",\"baslik\":\"Diş￹çi\",\"zaman\":{\"kesinlik\":\"an\",\"tarih\":\"2026-11-26\",\"saat\":\"15:00\",\"saat_dilimi\":\"Europe/Istanbul\",\"ifade\":\"yarın 3'te\"},\"hatirlatmalar\":[{\"tur\":\"once\",\"dk\":60}],\"ornekler\":[],\"durum\":\"acik\",\"taslak\":false,\"silindi\":false,\"elle_alanlar\":[],\"kaynak\":{\"yol\":\"sohbet_araci\",\"tur_kokeni\":\"insan\",\"sohbet_id\":\"ana\",\"kaynak_msg_id\":\"m_0001\",\"alinti\":\"yarın 3'te dişçi\",\"tekil_anahtar\":\"t1:0000000000000000000000000000000000000000000000000000000000000000\"},\"olusturma_ms\":1795000000000,\"guncelleme_ms\":1795000000000}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "kayit başlıkta hiyeroglif biçim denetimi U+13430",
+   "ham": "{\"v\":1,\"type\":\"kayit\",\"kayit\":{\"kayit_id\":\"k_dis01\",\"revizyon\":12,\"tur\":\"randevu\",\"baslik\":\"Diş𓐰çi\",\"zaman\":{\"kesinlik\":\"an\",\"tarih\":\"2026-11-26\",\"saat\":\"15:00\",\"saat_dilimi\":\"Europe/Istanbul\",\"ifade\":\"yarın 3'te\"},\"hatirlatmalar\":[{\"tur\":\"once\",\"dk\":60}],\"ornekler\":[],\"durum\":\"acik\",\"taslak\":false,\"silindi\":false,\"elle_alanlar\":[],\"kaynak\":{\"yol\":\"sohbet_araci\",\"tur_kokeni\":\"insan\",\"sohbet_id\":\"ana\",\"kaynak_msg_id\":\"m_0001\",\"alinti\":\"yarın 3'te dişçi\",\"tekil_anahtar\":\"t1:0000000000000000000000000000000000000000000000000000000000000000\"},\"olusturma_ms\":1795000000000,\"guncelleme_ms\":1795000000000}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "kayit açıklamada etiket karakterleri",
+   "ham": "{\"v\":1,\"type\":\"kayit\",\"kayit\":{\"kayit_id\":\"k_dis01\",\"revizyon\":12,\"tur\":\"randevu\",\"baslik\":\"Dişçi\",\"zaman\":{\"kesinlik\":\"an\",\"tarih\":\"2026-11-26\",\"saat\":\"15:00\",\"saat_dilimi\":\"Europe/Istanbul\",\"ifade\":\"yarın 3'te\"},\"hatirlatmalar\":[{\"tur\":\"once\",\"dk\":60}],\"ornekler\":[],\"durum\":\"acik\",\"taslak\":false,\"silindi\":false,\"elle_alanlar\":[],\"kaynak\":{\"yol\":\"sohbet_araci\",\"tur_kokeni\":\"insan\",\"sohbet_id\":\"ana\",\"kaynak_msg_id\":\"m_0001\",\"alinti\":\"yarın 3'te dişçi\",\"tekil_anahtar\":\"t1:0000000000000000000000000000000000000000000000000000000000000000\"},\"olusturma_ms\":1795000000000,\"guncelleme_ms\":1795000000000,\"aciklama\":\"Kontrol\\n󠁨󠁩󠁤󠁤󠁥󠁮\"}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "kayit ifadede değişken seçici eki U+E01EF",
+   "ham": "{\"v\":1,\"type\":\"kayit\",\"kayit\":{\"kayit_id\":\"k_dis01\",\"revizyon\":12,\"tur\":\"randevu\",\"baslik\":\"Dişçi\",\"zaman\":{\"kesinlik\":\"an\",\"tarih\":\"2026-11-26\",\"saat\":\"15:00\",\"saat_dilimi\":\"Europe/Istanbul\",\"ifade\":\"yarın 3'te󠇯\"},\"hatirlatmalar\":[{\"tur\":\"once\",\"dk\":60}],\"ornekler\":[],\"durum\":\"acik\",\"taslak\":false,\"silindi\":false,\"elle_alanlar\":[],\"kaynak\":{\"yol\":\"sohbet_araci\",\"tur_kokeni\":\"insan\",\"sohbet_id\":\"ana\",\"kaynak_msg_id\":\"m_0001\",\"alinti\":\"yarın 3'te dişçi\",\"tekil_anahtar\":\"t1:0000000000000000000000000000000000000000000000000000000000000000\"},\"olusturma_ms\":1795000000000,\"guncelleme_ms\":1795000000000}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "kayit alıntıda etiket karakteri",
+   "ham": "{\"v\":1,\"type\":\"kayit\",\"kayit\":{\"kayit_id\":\"k_dis01\",\"revizyon\":12,\"tur\":\"randevu\",\"baslik\":\"Dişçi\",\"zaman\":{\"kesinlik\":\"an\",\"tarih\":\"2026-11-26\",\"saat\":\"15:00\",\"saat_dilimi\":\"Europe/Istanbul\",\"ifade\":\"yarın 3'te\"},\"hatirlatmalar\":[{\"tur\":\"once\",\"dk\":60}],\"ornekler\":[],\"durum\":\"acik\",\"taslak\":false,\"silindi\":false,\"elle_alanlar\":[],\"kaynak\":{\"yol\":\"sohbet_araci\",\"tur_kokeni\":\"insan\",\"sohbet_id\":\"ana\",\"kaynak_msg_id\":\"m_0001\",\"alinti\":\"yarın󠁸\",\"tekil_anahtar\":\"t1:0000000000000000000000000000000000000000000000000000000000000000\"},\"olusturma_ms\":1795000000000,\"guncelleme_ms\":1795000000000}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "kayit başlıkta birleşen aksan ve ten rengi emoji (görünür)",
+   "ham": "{\"v\":1,\"type\":\"kayit\",\"kayit\":{\"kayit_id\":\"k_dis01\",\"revizyon\":12,\"tur\":\"randevu\",\"baslik\":\"Café 👍🏽\",\"zaman\":{\"kesinlik\":\"an\",\"tarih\":\"2026-11-26\",\"saat\":\"15:00\",\"saat_dilimi\":\"Europe/Istanbul\",\"ifade\":\"yarın 3'te\"},\"hatirlatmalar\":[{\"tur\":\"once\",\"dk\":60}],\"ornekler\":[],\"durum\":\"acik\",\"taslak\":false,\"silindi\":false,\"elle_alanlar\":[],\"kaynak\":{\"yol\":\"sohbet_araci\",\"tur_kokeni\":\"insan\",\"sohbet_id\":\"ana\",\"kaynak_msg_id\":\"m_0001\",\"alinti\":\"yarın 3'te dişçi\",\"tekil_anahtar\":\"t1:0000000000000000000000000000000000000000000000000000000000000000\"},\"olusturma_ms\":1795000000000,\"guncelleme_ms\":1795000000000}}",
+   "gecerli": true,
+   "tur": "kayit"
+  },
+  {
    "ad": "kayit başlıkta satır sonu",
    "ham": "{\"v\":1,\"type\":\"kayit\",\"kayit\":{\"kayit_id\":\"k_dis01\",\"revizyon\":12,\"tur\":\"randevu\",\"baslik\":\"Dişçi\\nsahte satır\",\"zaman\":{\"kesinlik\":\"an\",\"tarih\":\"2026-11-26\",\"saat\":\"15:00\",\"saat_dilimi\":\"Europe/Istanbul\",\"ifade\":\"yarın 3'te\"},\"hatirlatmalar\":[{\"tur\":\"once\",\"dk\":60}],\"ornekler\":[],\"durum\":\"acik\",\"taslak\":false,\"silindi\":false,\"elle_alanlar\":[],\"kaynak\":{\"yol\":\"sohbet_araci\",\"tur_kokeni\":\"insan\",\"sohbet_id\":\"ana\",\"kaynak_msg_id\":\"m_0001\",\"alinti\":\"yarın 3'te dişçi\",\"tekil_anahtar\":\"t1:0000000000000000000000000000000000000000000000000000000000000000\"},\"olusturma_ms\":1795000000000,\"guncelleme_ms\":1795000000000}}",
    "gecerli": false,
@@ -260,16 +350,16 @@
    "kod": "gecersiz_mesaj"
   },
   {
-   "ad": "kayit gun kesinliğinde once hatırlatması",
+   "ad": "kayit gun kesinliğinde once hatırlatması (saat gelene dek bekler)",
    "ham": "{\"v\":1,\"type\":\"kayit\",\"kayit\":{\"kayit_id\":\"k_dis01\",\"revizyon\":12,\"tur\":\"randevu\",\"baslik\":\"Dişçi\",\"zaman\":{\"kesinlik\":\"gun\",\"tarih\":\"2026-11-26\",\"saat_dilimi\":\"Europe/Istanbul\"},\"hatirlatmalar\":[{\"tur\":\"once\",\"dk\":60}],\"ornekler\":[],\"durum\":\"acik\",\"taslak\":false,\"silindi\":false,\"elle_alanlar\":[],\"kaynak\":{\"yol\":\"sohbet_araci\",\"tur_kokeni\":\"insan\",\"sohbet_id\":\"ana\",\"kaynak_msg_id\":\"m_0001\",\"alinti\":\"yarın 3'te dişçi\",\"tekil_anahtar\":\"t1:0000000000000000000000000000000000000000000000000000000000000000\"},\"olusturma_ms\":1795000000000,\"guncelleme_ms\":1795000000000}}",
-   "gecerli": false,
-   "kod": "gecersiz_mesaj"
+   "gecerli": true,
+   "tur": "kayit"
   },
   {
-   "ad": "kayit zamansız once hatırlatması",
+   "ad": "kayit zamansız once hatırlatması (bekler)",
    "ham": "{\"v\":1,\"type\":\"kayit\",\"kayit\":{\"kayit_id\":\"k_dis01\",\"revizyon\":12,\"tur\":\"randevu\",\"baslik\":\"Dişçi\",\"hatirlatmalar\":[{\"tur\":\"once\",\"dk\":60}],\"ornekler\":[],\"durum\":\"acik\",\"taslak\":false,\"silindi\":false,\"elle_alanlar\":[],\"kaynak\":{\"yol\":\"sohbet_araci\",\"tur_kokeni\":\"insan\",\"sohbet_id\":\"ana\",\"kaynak_msg_id\":\"m_0001\",\"alinti\":\"yarın 3'te dişçi\",\"tekil_anahtar\":\"t1:0000000000000000000000000000000000000000000000000000000000000000\"},\"olusturma_ms\":1795000000000,\"guncelleme_ms\":1795000000000}}",
-   "gecerli": false,
-   "kod": "gecersiz_mesaj"
+   "gecerli": true,
+   "tur": "kayit"
   },
   {
    "ad": "kayit dönem ters",
@@ -358,6 +448,30 @@
   {
    "ad": "kayit örnek durumu acik",
    "ham": "{\"v\":1,\"type\":\"kayit\",\"kayit\":{\"kayit_id\":\"k_rapor\",\"revizyon\":15,\"tur\":\"gorev\",\"baslik\":\"Haftalık rapor\",\"zaman\":{\"kesinlik\":\"an\",\"tarih\":\"2026-11-30\",\"saat\":\"10:00\",\"saat_dilimi\":\"Europe/Istanbul\"},\"hatirlatmalar\":[{\"tur\":\"once\",\"dk\":15}],\"tekrar\":{\"siklik\":\"haftalik\",\"aralik\":1,\"gunler\":[\"pzt\"]},\"ornekler\":[{\"tarih\":\"2026-11-30\",\"durum\":\"acik\"}],\"durum\":\"acik\",\"taslak\":false,\"silindi\":false,\"elle_alanlar\":[\"tekrar\"],\"kaynak\":{\"yol\":\"elle\",\"tur_kokeni\":\"insan\",\"device_id\":\"cihaz_AjandaOrnek01\"},\"olusturma_ms\":1795000000000,\"guncelleme_ms\":1795000000000}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "kayit örnek serinin günü değil (pazartesi serisinde salı)",
+   "ham": "{\"v\":1,\"type\":\"kayit\",\"kayit\":{\"kayit_id\":\"k_rapor\",\"revizyon\":15,\"tur\":\"gorev\",\"baslik\":\"Haftalık rapor\",\"zaman\":{\"kesinlik\":\"an\",\"tarih\":\"2026-11-30\",\"saat\":\"10:00\",\"saat_dilimi\":\"Europe/Istanbul\"},\"hatirlatmalar\":[{\"tur\":\"once\",\"dk\":15}],\"tekrar\":{\"siklik\":\"haftalik\",\"aralik\":1,\"gunler\":[\"pzt\"]},\"ornekler\":[{\"tarih\":\"2026-12-01\",\"durum\":\"tamam\"}],\"durum\":\"acik\",\"taslak\":false,\"silindi\":false,\"elle_alanlar\":[\"tekrar\"],\"kaynak\":{\"yol\":\"elle\",\"tur_kokeni\":\"insan\",\"device_id\":\"cihaz_AjandaOrnek01\"},\"olusturma_ms\":1795000000000,\"guncelleme_ms\":1795000000000}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "kayit aylık 31 çapası, 31 çeken ayda örnek",
+   "ham": "{\"v\":1,\"type\":\"kayit\",\"kayit\":{\"kayit_id\":\"k_rapor\",\"revizyon\":15,\"tur\":\"gorev\",\"baslik\":\"Haftalık rapor\",\"zaman\":{\"kesinlik\":\"gun\",\"tarih\":\"2026-01-31\",\"saat_dilimi\":\"Europe/Istanbul\"},\"hatirlatmalar\":[],\"tekrar\":{\"siklik\":\"aylik\",\"aralik\":1},\"ornekler\":[{\"tarih\":\"2026-03-31\",\"durum\":\"tamam\"}],\"durum\":\"acik\",\"taslak\":false,\"silindi\":false,\"elle_alanlar\":[\"tekrar\"],\"kaynak\":{\"yol\":\"elle\",\"tur_kokeni\":\"insan\",\"device_id\":\"cihaz_AjandaOrnek01\"},\"olusturma_ms\":1795000000000,\"guncelleme_ms\":1795000000000}}",
+   "gecerli": true,
+   "tur": "kayit"
+  },
+  {
+   "ad": "kayit aylık 31 çapası, şubat sonunda örnek yok",
+   "ham": "{\"v\":1,\"type\":\"kayit\",\"kayit\":{\"kayit_id\":\"k_rapor\",\"revizyon\":15,\"tur\":\"gorev\",\"baslik\":\"Haftalık rapor\",\"zaman\":{\"kesinlik\":\"gun\",\"tarih\":\"2026-01-31\",\"saat_dilimi\":\"Europe/Istanbul\"},\"hatirlatmalar\":[],\"tekrar\":{\"siklik\":\"aylik\",\"aralik\":1},\"ornekler\":[{\"tarih\":\"2026-02-28\",\"durum\":\"tamam\"}],\"durum\":\"acik\",\"taslak\":false,\"silindi\":false,\"elle_alanlar\":[\"tekrar\"],\"kaynak\":{\"yol\":\"elle\",\"tur_kokeni\":\"insan\",\"device_id\":\"cihaz_AjandaOrnek01\"},\"olusturma_ms\":1795000000000,\"guncelleme_ms\":1795000000000}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "kayit adet dolduktan sonra örnek",
+   "ham": "{\"v\":1,\"type\":\"kayit\",\"kayit\":{\"kayit_id\":\"k_rapor\",\"revizyon\":15,\"tur\":\"gorev\",\"baslik\":\"Haftalık rapor\",\"zaman\":{\"kesinlik\":\"an\",\"tarih\":\"2026-11-30\",\"saat\":\"10:00\",\"saat_dilimi\":\"Europe/Istanbul\"},\"hatirlatmalar\":[{\"tur\":\"once\",\"dk\":15}],\"tekrar\":{\"siklik\":\"haftalik\",\"aralik\":1,\"gunler\":[\"pzt\"],\"adet\":2},\"ornekler\":[{\"tarih\":\"2026-12-14\",\"durum\":\"tamam\"}],\"durum\":\"acik\",\"taslak\":false,\"silindi\":false,\"elle_alanlar\":[\"tekrar\"],\"kaynak\":{\"yol\":\"elle\",\"tur_kokeni\":\"insan\",\"device_id\":\"cihaz_AjandaOrnek01\"},\"olusturma_ms\":1795000000000,\"guncelleme_ms\":1795000000000}}",
    "gecerli": false,
    "kod": "gecersiz_mesaj"
   },
@@ -482,6 +596,12 @@
    "tur": "islem_sonucu"
   },
   {
+   "ad": "islem_sonucu geçici ret (ic_hata, kuyrukta kalır)",
+   "ham": "{\"v\":1,\"type\":\"islem_sonucu\",\"islem_id\":\"i_0001\",\"ok\":false,\"code\":\"ic_hata\"}",
+   "gecerli": true,
+   "tur": "islem_sonucu"
+  },
+  {
    "ad": "islem_sonucu ok ve code",
    "ham": "{\"v\":1,\"type\":\"islem_sonucu\",\"islem_id\":\"i1\",\"ok\":true,\"code\":\"ic_hata\"}",
    "gecerli": false,
@@ -514,6 +634,12 @@
   {
    "ad": "gecmis örnek girdisi",
    "ham": "{\"v\":1,\"type\":\"gecmis\",\"istek_id\":\"g2\",\"kayit_id\":\"k_rapor\",\"girdiler\":[{\"rev\":15,\"ts_ms\":1795000000000,\"islem\":\"durum\",\"yazar\":{\"yol\":\"elle\",\"tur_kokeni\":\"insan\",\"device_id\":\"cihaz_AjandaOrnek01\"},\"ornek_tarihi\":\"2026-11-30\",\"onceki\":{\"ornek_durumu\":null},\"sonraki\":{\"ornek_durumu\":\"tamam\"}}],\"devami\":true}",
+   "gecerli": true,
+   "tur": "gecmis"
+  },
+  {
+   "ad": "gecmis tekrar kaldırma, budanan örnekler",
+   "ham": "{\"v\":1,\"type\":\"gecmis\",\"istek_id\":\"g3\",\"kayit_id\":\"k_rapor\",\"girdiler\":[{\"rev\":17,\"ts_ms\":1795000000002,\"islem\":\"guncelle\",\"yazar\":{\"yol\":\"elle\",\"tur_kokeni\":\"insan\",\"device_id\":\"cihaz_AjandaOrnek01\"},\"temel_revizyon\":15,\"onceki\":{\"tekrar\":{\"siklik\":\"haftalik\",\"aralik\":1,\"gunler\":[\"pzt\"]},\"ornekler\":[{\"tarih\":\"2026-11-30\",\"durum\":\"tamam\"}]},\"sonraki\":{\"tekrar\":null,\"ornekler\":[]}}],\"devami\":false}",
    "gecerli": true,
    "tur": "gecmis"
   },
@@ -605,9 +731,27 @@
   },
   {
    "ad": "hello depo kimlikli",
+   "ham": "{\"v\":1,\"type\":\"hello\",\"device_id\":\"cihaz_AjandaOrnek01\",\"son_rev\":16,\"depo_id\":\"d_7f3a\",\"son_rev_izi\":{\"kayit_id\":\"k_tatil\",\"guncelleme_ms\":1795000000001},\"client_nonce\":\"QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVowMTIzNA==\"}",
+   "gecerli": true,
+   "tur": "hello"
+  },
+  {
+   "ad": "hello izsiz (servis tam telafi yapar)",
    "ham": "{\"v\":1,\"type\":\"hello\",\"device_id\":\"cihaz_AjandaOrnek01\",\"son_rev\":16,\"depo_id\":\"d_7f3a\",\"client_nonce\":\"QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVowMTIzNA==\"}",
    "gecerli": true,
    "tur": "hello"
+  },
+  {
+   "ad": "hello izde fazla alan",
+   "ham": "{\"v\":1,\"type\":\"hello\",\"device_id\":\"cihaz_AjandaOrnek01\",\"son_rev\":16,\"depo_id\":\"d_7f3a\",\"son_rev_izi\":{\"kayit_id\":\"k_tatil\",\"guncelleme_ms\":1,\"rev\":16},\"client_nonce\":\"QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVowMTIzNA==\"}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "hello izde kimliksiz",
+   "ham": "{\"v\":1,\"type\":\"hello\",\"device_id\":\"cihaz_AjandaOrnek01\",\"son_rev\":16,\"depo_id\":\"d_7f3a\",\"son_rev_izi\":{\"guncelleme_ms\":1},\"client_nonce\":\"QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVowMTIzNA==\"}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
   },
   {
    "ad": "hello /sohbet biçimi (last_seq)",
@@ -670,10 +814,10 @@
    "kod": "gecersiz_mesaj"
   },
   {
-   "ad": "islem ekle gün zamanında once",
+   "ad": "islem ekle gün zamanında once (bekler)",
    "ham": "{\"v\":1,\"type\":\"islem\",\"islem_id\":\"i_0001\",\"islem\":{\"islem\":\"ekle\",\"kayit_id\":\"k_yeni01\",\"tur\":\"randevu\",\"baslik\":\"Kuaför\",\"zaman\":{\"kesinlik\":\"gun\",\"tarih\":\"2026-12-02\",\"saat_dilimi\":\"Europe/Istanbul\"},\"hatirlatmalar\":[{\"tur\":\"once\",\"dk\":60}],\"girdi_yolu\":\"elle\"}}",
-   "gecerli": false,
-   "kod": "gecersiz_mesaj"
+   "gecerli": true,
+   "tur": "islem"
   },
   {
    "ad": "islem ekle url alanı",

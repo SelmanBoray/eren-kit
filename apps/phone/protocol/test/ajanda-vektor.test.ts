@@ -3,19 +3,36 @@ import { createPublicKey, verify } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
+  AJANDA_GORUNMEZ_ARALIKLARI,
+  AjandaBaslik,
   AjandaEslestirmeQr,
   ajandaAsagiCoz,
   ajandaDegisikligiUygula,
+  ajandaGorunmezMi,
   AjandaKaydi,
   ajandaKimlikImzaMetni,
+  ajandaOrnekDurumuUygula,
   ajandaTekilAnahtari,
+  ajandaTekilKarari,
+  ajandaTelafiTamMi,
   ajandaYukariCoz,
+  type AnCevirici,
   type CihazKapsami,
+  dayanakGecerliMi,
   type KaynakYolu,
   type TurKokeni,
   EslestirmeQr,
+  gunNoTarih,
   hatirlatmaEtkinMi,
+  type HatirlatmaHali,
+  hatirlatmaHalleri,
+  hatirlatmaOzeti,
   kanalKapsamdaMi,
+  kurulacakHatirlatmalar,
+  ornekGunuMu,
+  tarihGunNo,
+  Tekrar,
+  tekrarOrnekleri,
 } from "../src/index.ts";
 
 type Oge = { ad: string; ham: string; gecerli: boolean; tur?: string; kod?: string };
@@ -32,11 +49,64 @@ const kurallar = oku("ajanda-kurallar.json") as {
     kayit: unknown;
     degisiklik: Record<string, unknown>;
     yazar: { yol: KaynakYolu; tur_kokeni: TurKokeni };
-    beklenen: { uygulanan: string[]; korunan: string[]; elle_alanlar: string[]; kaldirilan?: string[] };
+    beklenen: {
+      uygulanan: string[];
+      korunan: string[];
+      elle_alanlar: string[];
+      kaldirilan?: string[];
+      hatirlatmalar?: unknown[];
+      ornekler?: unknown[];
+      budanan_ornekler?: unknown[];
+    };
   }[];
   hatirlatma_etkin: { taslak: boolean; silindi: boolean; durum: "acik" | "tamam" | "iptal"; etkin: boolean }[];
   tekil_anahtar: { girdi: Parameters<typeof ajandaTekilAnahtari>[0]; anahtar: string }[];
+  gorunmez: { araliklar: [number, number][]; ornekler: { kod_noktasi: number; gorunmez: boolean }[] };
+  tekil_karar: {
+    ad: string;
+    esler: { silindi: boolean; durum: "acik" | "tamam" | "iptal"; taslak: boolean }[];
+    yazar: { yol: KaynakYolu; tur_kokeni: TurKokeni };
+    karar: string;
+    sira?: number;
+  }[];
+  telafi: (Parameters<typeof ajandaTelafiTamMi>[0] & { ad: string; tam: boolean })[];
+  dayanak: { ad: string; dayanak_ms: number; tur_baslangic_ms: number; cagri_ms: number; gecerli: boolean }[];
+  tekrar_ornekleri: { ad: string; capa: string; tekrar: unknown; en_az?: string; beklenen: string[]; devami: boolean }[];
+  hatirlatma_plani: {
+    ofset_dk: Record<string, number>;
+    vakalar: { ad: string; kayit: unknown; simdi_ms: number; haller: HatirlatmaHali[]; ozet: ReturnType<typeof hatirlatmaOzeti> }[];
+  };
+  ornek_durumu: {
+    ad: string;
+    kayit: Record<string, unknown>;
+    ornek_tarihi: string;
+    durum: "acik" | "tamam" | "iptal";
+    bugun: string;
+    sonuc: {
+      ok: boolean;
+      neden?: string;
+      degisti?: boolean;
+      atilan?: unknown[];
+      ornekler?: unknown[];
+      ornek_sayisi?: number;
+      ilk?: string;
+      son?: string;
+    };
+  }[];
 };
+
+/** `ornekler_gunluk {bas, adet, durum}`: `bas`'tan başlayan ardışık günlük örnek satırları. */
+function kayitAc(ham: Record<string, unknown>): AjandaKaydi {
+  const { ornekler_gunluk, ...kayit } = ham as { ornekler_gunluk?: { bas: string; adet: number; durum: string } };
+  if (ornekler_gunluk !== undefined) {
+    const bas = tarihGunNo(ornekler_gunluk.bas);
+    (kayit as Record<string, unknown>).ornekler = Array.from({ length: ornekler_gunluk.adet }, (_, i) => ({
+      tarih: gunNoTarih(bas + i),
+      durum: ornekler_gunluk.durum,
+    }));
+  }
+  return AjandaKaydi.parse(kayit);
+}
 
 function dene(yon: Oge[], coz: (ham: string) => { ok: boolean; mesaj?: { type: string }; kod?: string }) {
   assert.ok(yon.length > 0);
@@ -116,6 +186,9 @@ test("birleştirme vektörü ajandaDegisikligiUygula ile aynıdır ve sonuç ge�
     assert.deepEqual(s.korunan, v.beklenen.korunan, v.ad);
     assert.deepEqual(s.kayit.elle_alanlar, v.beklenen.elle_alanlar, v.ad);
     for (const alan of v.beklenen.kaldirilan ?? []) assert.equal(alan in s.kayit, false, v.ad);
+    if (v.beklenen.hatirlatmalar !== undefined) assert.deepEqual(s.kayit.hatirlatmalar, v.beklenen.hatirlatmalar, v.ad);
+    if (v.beklenen.ornekler !== undefined) assert.deepEqual(s.kayit.ornekler, v.beklenen.ornekler, v.ad);
+    if (v.beklenen.budanan_ornekler !== undefined) assert.deepEqual(s.budanan_ornekler, v.beklenen.budanan_ornekler, v.ad);
     assert.equal(JSON.stringify(kayit), once, `${v.ad}: girdi değişmemeli`);
     assert.equal(AjandaKaydi.safeParse(s.kayit).success, true, v.ad);
   }
@@ -130,5 +203,92 @@ test("tekilleştirme anahtarı vektörü", () => {
   for (const v of kurallar.tekil_anahtar) {
     assert.match(v.anahtar, /^t1:[0-9a-f]{64}$/);
     assert.equal(ajandaTekilAnahtari(v.girdi), v.anahtar);
+  }
+});
+
+test("görünmez kod noktası vektörü: tablo birebir, örnekler ajandaGorunmezMi ile aynı", () => {
+  assert.deepEqual(AJANDA_GORUNMEZ_ARALIKLARI.map((a) => [...a]), kurallar.gorunmez.araliklar);
+  for (const o of kurallar.gorunmez.ornekler) {
+    assert.equal(ajandaGorunmezMi(o.kod_noktasi), o.gorunmez, o.kod_noktasi.toString(16));
+    const metin = "a" + String.fromCodePoint(o.kod_noktasi) + "b";
+    if (o.kod_noktasi !== 0x0a && o.kod_noktasi !== 0x0d && o.kod_noktasi !== 0x09) {
+      assert.equal(AjandaBaslik.safeParse(metin).success, !o.gorunmez, o.kod_noktasi.toString(16));
+    }
+  }
+});
+
+test("tekil karar vektörü", () => {
+  for (const v of kurallar.tekil_karar) {
+    const k = ajandaTekilKarari(v.esler, v.yazar);
+    assert.equal(k.karar, v.karar, v.ad);
+    assert.equal("sira" in k ? k.sira : undefined, v.sira, v.ad);
+  }
+});
+
+test("telafi vektörü", () => {
+  for (const v of kurallar.telafi) assert.equal(ajandaTelafiTamMi(v), v.tam, v.ad);
+});
+
+test("dayanak vektörü", () => {
+  for (const v of kurallar.dayanak) assert.equal(dayanakGecerliMi(v.dayanak_ms, v.tur_baslangic_ms, v.cagri_ms), v.gecerli, v.ad);
+});
+
+test("tekrar örnekleri vektörü", () => {
+  for (const v of kurallar.tekrar_ornekleri) {
+    const t = Tekrar.parse(v.tekrar);
+    const gen = tekrarOrnekleri(v.capa, t, v.en_az);
+    const gunler: string[] = [];
+    for (const g of gen) {
+      gunler.push(g);
+      if (gunler.length === v.beklenen.length) break;
+    }
+    assert.deepEqual(gunler, v.beklenen, v.ad);
+    const sonraki = [...tekrarOrneklerindenSonraki(v.capa, t, v.en_az, v.beklenen.length)];
+    assert.equal(sonraki.length > 0, v.devami, `${v.ad}: devami`);
+    for (const g of v.beklenen) assert.equal(ornekGunuMu(v.capa, t, g), true, `${v.ad}: ${g}`);
+  }
+});
+
+function tekrarOrneklerindenSonraki(capa: string, t: Tekrar, enAz: string | undefined, atla: number): string[] {
+  let i = 0;
+  for (const g of tekrarOrnekleri(capa, t, enAz)) if (i++ === atla) return [g];
+  return [];
+}
+
+test("hatırlatma planı vektörü: hal, kurulacaklar ve özet", () => {
+  const { ofset_dk, vakalar } = kurallar.hatirlatma_plani;
+  const anCevir: AnCevirici = (tarih, saat, dilim) => {
+    const ofset = ofset_dk[dilim];
+    assert.notEqual(ofset, undefined, dilim);
+    return Date.parse(`${tarih}T${saat}:00Z`) - ofset! * 60_000;
+  };
+  for (const v of vakalar) {
+    const kayit = AjandaKaydi.parse(v.kayit);
+    assert.deepEqual(hatirlatmaHalleri(kayit, v.simdi_ms, anCevir), v.haller, v.ad);
+    const beklenenKurulacak = hatirlatmaEtkinMi(kayit) ? v.haller.filter((h) => h.hal === "kurulur") : [];
+    assert.deepEqual(kurulacakHatirlatmalar(kayit, v.simdi_ms, anCevir), beklenenKurulacak, v.ad);
+    assert.deepEqual(hatirlatmaOzeti(kayit, v.simdi_ms, anCevir), v.ozet, v.ad);
+    for (const h of kurulacakHatirlatmalar(kayit, v.simdi_ms, anCevir)) assert.ok(h.tetik_ms > v.simdi_ms, v.ad);
+  }
+});
+
+test("örnek durumu vektörü", () => {
+  for (const v of kurallar.ornek_durumu) {
+    const kayit = kayitAc(v.kayit);
+    const s = ajandaOrnekDurumuUygula(kayit, v.ornek_tarihi, v.durum, v.bugun);
+    assert.equal(s.ok, v.sonuc.ok, v.ad);
+    if (!s.ok) {
+      assert.equal(s.neden, v.sonuc.neden, v.ad);
+      continue;
+    }
+    assert.equal(s.degisti, v.sonuc.degisti, v.ad);
+    assert.deepEqual(s.atilan, v.sonuc.atilan, v.ad);
+    if (v.sonuc.ornekler !== undefined) assert.deepEqual(s.ornekler, v.sonuc.ornekler, v.ad);
+    if (v.sonuc.ornek_sayisi !== undefined) {
+      assert.equal(s.ornekler.length, v.sonuc.ornek_sayisi, v.ad);
+      assert.equal(s.ornekler[0]!.tarih, v.sonuc.ilk, v.ad);
+      assert.equal(s.ornekler.at(-1)!.tarih, v.sonuc.son, v.ad);
+    }
+    assert.equal(AjandaKaydi.safeParse({ ...kayit, ornekler: s.ornekler }).success, true, `${v.ad}: sonuç geçerli kayıt`);
   }
 });

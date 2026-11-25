@@ -152,6 +152,8 @@ export const AJANDA_SINIRLARI = {
   GECMIS_SAYFA: 20,
   /** Modele giden liste metninde açıklamanın kırpıldığı uzunluk (kablo sınırı `ACIKLAMA`). */
   MODEL_ACIKLAMA: 300,
+  /** Araç `dayanak`'ının tur başlangıcından önce ve çağrı anından sonra sapabileceği dakika. */
+  DAYANAK_SAPMA_DK: 10,
 } as const;
 
 /** `/ajanda` çerçevesinin ve ajanda borusunun ayrıştırma öncesi üst sınırı (UTF-16 birimi). */
