@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ANA_SOHBET_ID, type SohbetId } from "@eren/protocol";
+import { AJANDA_BORU_ADI, ANA_SOHBET_ID, type SohbetId } from "@eren/protocol";
 import type { SurecKapisi } from "../src/sozlesme.ts";
 import * as sahteler from "./sahte.ts";
-import { sahteDunya, sahteRastgele, sahteZaman } from "./sahte.ts";
+import { sahteDunya, sahteRastgele, sahteTakvim, sahteZaman } from "./sahte.ts";
 
 test("saat elle ilerler, zamanlayıcılar vade sırasıyla tetiklenir", () => {
   const z = sahteZaman(1000);
@@ -363,4 +363,60 @@ test("sahteKapi: yuva tutmayan sohbetin bırakması etkisiz; her çağrı yeni b
   assert.equal(b.yuvaIste({ sohbet_id: SOHBET_B }), true);
   assert.equal(b.istekler.length, 1);
   assert.equal(a.istekler.length, 0);
+});
+
+// ---------------------------------------------------------------------------------------------
+// Ajanda dalgası: iki adlı boru ve sahteTakvim
+// ---------------------------------------------------------------------------------------------
+
+test("boru: iki adlı boru ayrı dinlenir, ada göre bağlanılır; adsız yardımcılar en son dinleneni görür", async () => {
+  const d = sahteDunya();
+  const gelen: Array<[string, string]> = [];
+  const dinle = (ad: string) =>
+    d.dunya.boru.dinle({ ad, azamiSatir: 100, baglanti: (b) => b.satirDinle((s) => gelen.push([ad, s])) });
+  const eren = await dinle("eren");
+  await dinle(AJANDA_BORU_ADI);
+  assert.equal(d.boru.istek()?.ad, AJANDA_BORU_ADI);
+  assert.equal(d.boru.istek("eren")?.ad, "eren");
+  assert.equal(d.boru.istek("yok"), null);
+  d.boru.baglan("eren").satirGonder("a");
+  d.boru.baglan(AJANDA_BORU_ADI).satirGonder("b");
+  d.boru.baglan().satirGonder("c");
+  assert.deepEqual(gelen, [
+    ["eren", "a"],
+    [AJANDA_BORU_ADI, "b"],
+    [AJANDA_BORU_ADI, "c"],
+  ]);
+  assert.throws(() => d.boru.baglan("yok"), /dinle çağrılmadı/);
+  await eren.kapat();
+  assert.equal(d.boru.kapatildiMi("eren"), true);
+  assert.equal(d.boru.kapatildiMi(AJANDA_BORU_ADI), false);
+  assert.equal(d.boru.kapatildi, false, "en son dinlenen (ajanda) açık");
+});
+
+test("sahteTakvim: sabit ofsetli yerel an ve geri çeviri, saniye kesilir, dilim değişir, bilinmeyen dilim atar", () => {
+  const t = sahteTakvim();
+  assert.equal(t.kullaniciDilimi(), "Europe/Istanbul");
+  // 2026-11-25 20:58:59.999 UTC = 23:58 İstanbul
+  const ms = Date.UTC(2026, 10, 25, 20, 58, 59, 999);
+  assert.deepEqual(t.yerelAn(ms, "Europe/Istanbul"), { tarih: "2026-11-25", saat: "23:58", saat_dilimi: "Europe/Istanbul" });
+  assert.deepEqual(t.yerelAn(ms + 61_000, "Europe/Istanbul"), {
+    tarih: "2026-11-26",
+    saat: "00:00",
+    saat_dilimi: "Europe/Istanbul",
+  });
+  assert.equal(t.anCevir("2026-11-25", "23:58", "Europe/Istanbul"), Date.UTC(2026, 10, 25, 20, 58));
+  assert.equal(t.anCevir("2026-11-25", "23:58", "UTC"), Date.UTC(2026, 10, 25, 23, 58));
+  assert.deepEqual(t.yerelAn(ms, "America/Sao_Paulo").tarih, "2026-11-25");
+  t.dilim = "Asia/Tokyo";
+  assert.equal(t.kullaniciDilimi(), "Asia/Tokyo");
+  assert.equal(t.dilimBiliniyorMu("Asia/Tokyo"), true);
+  assert.equal(t.dilimBiliniyorMu("Mars/Olympus"), false);
+  assert.throws(() => t.yerelAn(ms, "Mars/Olympus"), RangeError);
+  assert.throws(() => t.anCevir("2026-11-25", "23:58", "Mars/Olympus"), RangeError);
+  assert.throws(() => t.anCevir("2026-11-5", "23:58", "UTC"), RangeError);
+  t.ofsetler.set("Mars/Olympus", 0);
+  assert.equal(t.dilimBiliniyorMu("Mars/Olympus"), true);
+  assert.equal(t.cagrilar.say("yerelAn"), 4);
+  assert.equal(sahteDunya().takvim.kullaniciDilimi(), "Europe/Istanbul");
 });

@@ -13,6 +13,8 @@
  *   d.dosya.cagrilar.say("atomikYaz");            // her sahte `cagrilar` ile ne çağrıldığını sorgulatır
  *   d.transkript.sonrakiSonuc({ silinen: 2, bulunamayan: 0, silinemeyen: 1, reddedilen: 0 }); d.transkript.silinenIstekler;
  * Hata vermek için: d.surec.sonrakiBaslatmaHatasi(new Error("x")), d.dosya.hataVer("oku", err), d.http.hataVer(err).
+ * Ajanda dalgası: d.boru.baglan(AJANDA_BORU_ADI) (iki adlı boru), d.takvim (sabit ofsetli `TakvimPortu`;
+ * `d.takvim.dilim = "Asia/Tokyo"` kullanıcının dilimini değiştirir; `DisDunya`'da değildir).
  */
 import type {
   AnahtarPortu,
@@ -43,6 +45,7 @@ import type {
   SurecKapisi,
   SurecKimligi,
   SurecPortu,
+  TakvimPortu,
   TekilKilitPortu,
   TranskriptPortu,
   TranskriptSilmeSonucu,
@@ -881,25 +884,36 @@ export interface SahteBoruBaglantisi extends BoruBaglantisi {
   istemciKopar(): void;
 }
 
+/**
+ * Ajanda dalgası: aynı port birden çok adlı boruyu dinleyebilir (`eren` ve `eren-ajanda`). Ad verilmeyen
+ * yardımcılar en son `dinle`'ye bakar (eski kullanım aynen çalışır); ad verilen o borunun isteğine.
+ */
 export interface SahteBoru extends BoruSunucuPortu {
   cagrilar: CagriDefteri;
-  istek(): BoruSunucuIstegi | null;
+  /** `ad` yoksa en son dinlenen borunun isteği; varsa o adın son isteği. */
+  istek(ad?: string): BoruSunucuIstegi | null;
+  /** En son dinlenen boru kapatıldı mı. */
   readonly kapatildi: boolean;
-  baglan(): SahteBoruBaglantisi;
+  /** Ajanda dalgası: o adlı boru kapatıldı mı (hiç dinlenmediyse `false`). */
+  kapatildiMi(ad: string): boolean;
+  /** `ad` yoksa en son dinlenen boruya, varsa o adlıya bağlanır. Dinlenmemişse atar. */
+  baglan(ad?: string): SahteBoruBaglantisi;
   sonrakiDinlemeHatasi(hata: Error): void;
 }
 
 export function sahteBoru(): SahteBoru {
   const cagrilar = new CagriDefteri();
-  let istek: BoruSunucuIstegi | null = null;
-  let kapatildi = false;
+  const istekler = new Map<string, BoruSunucuIstegi>();
+  const kapatilanlar = new Set<string>();
+  let son: BoruSunucuIstegi | null = null;
   let dinlemeHatasi: Error | null = null;
   return {
     cagrilar,
     get kapatildi() {
-      return kapatildi;
+      return son !== null && kapatilanlar.has(son.ad);
     },
-    istek: () => istek,
+    kapatildiMi: (ad) => kapatilanlar.has(ad),
+    istek: (ad) => (ad === undefined ? son : (istekler.get(ad) ?? null)),
     sonrakiDinlemeHatasi: (h) => {
       dinlemeHatasi = h;
     },
@@ -910,17 +924,19 @@ export function sahteBoru(): SahteBoru {
         dinlemeHatasi = null;
         throw h;
       }
-      istek = i;
-      kapatildi = false;
+      istekler.set(i.ad, i);
+      son = i;
+      kapatilanlar.delete(i.ad);
       return {
         kapat: async () => {
-          cagrilar.ekle("sunucuKapat");
-          kapatildi = true;
+          cagrilar.ekle("sunucuKapat", i.ad);
+          kapatilanlar.add(i.ad);
         },
       };
     },
-    baglan: () => {
-      if (!istek) throw new Error("sahte boru: dinle çağrılmadı");
+    baglan: (ad) => {
+      const istek = ad === undefined ? son : (istekler.get(ad) ?? null);
+      if (!istek) throw new Error(`sahte boru: dinle çağrılmadı${ad === undefined ? "" : ` (${ad})`}`);
       const azamiSatir = istek.azamiSatir;
       const satirlar: Array<(s: string) => void> = [];
       const kapanislar: Array<() => void> = [];
@@ -1082,6 +1098,74 @@ export function sahteKapi(): SahteKapi {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Takvim (ajanda dalgası): sabit ofsetli dilimler, yaz saati yok
+// ---------------------------------------------------------------------------------------------
+
+/** Sahtenin bildiği dilimler ve UTC'den ofsetleri (dakika). Yaz saati sınamaları gerçek `takvim.ts`'tedir. */
+export const SAHTE_DILIMLER: Readonly<Record<string, number>> = {
+  "Europe/Istanbul": 180,
+  UTC: 0,
+  "Etc/UTC": 0,
+  "Asia/Tokyo": 540,
+  "America/Sao_Paulo": -180,
+};
+
+export interface SahteTakvim extends TakvimPortu {
+  cagrilar: CagriDefteri;
+  /** `kullaniciDilimi()`'nin döndüğü dilim; test değiştirebilir (kullanıcının dilimi değişti). */
+  dilim: string;
+  /** Bilinen dilimler (ad → dakika ofseti); test ekleyebilir. */
+  readonly ofsetler: Map<string, number>;
+}
+
+const iki = (n: number): string => String(n).padStart(2, "0");
+
+/**
+ * `TakvimPortu` sahtesi. `yerelAn` saniyeyi keser; `anCevir` `YYYY-AA-GG` + `SS:DD` ister. Bilinmeyen
+ * dilimde (ya da bozuk tarih/saatte) iki işlev de atar, `dilimBiliniyorMu` `false` döner.
+ */
+export function sahteTakvim(dilim = "Europe/Istanbul", ofsetler: Readonly<Record<string, number>> = SAHTE_DILIMLER): SahteTakvim {
+  const cagrilar = new CagriDefteri();
+  const harita = new Map(Object.entries(ofsetler));
+  const ofset = (ad: string): number => {
+    const o = harita.get(ad);
+    if (o === undefined) throw new RangeError(`sahte takvim: bilinmeyen dilim ${ad}`);
+    return o;
+  };
+  const t: SahteTakvim = {
+    cagrilar,
+    dilim,
+    ofsetler: harita,
+    kullaniciDilimi: () => {
+      cagrilar.ekle("kullaniciDilimi");
+      return t.dilim;
+    },
+    dilimBiliniyorMu: (ad) => {
+      cagrilar.ekle("dilimBiliniyorMu", ad);
+      return harita.has(ad);
+    },
+    yerelAn: (ms, saat_dilimi) => {
+      cagrilar.ekle("yerelAn", ms, saat_dilimi);
+      const d = new Date(Math.floor(ms / 60_000) * 60_000 + ofset(saat_dilimi) * 60_000);
+      return {
+        tarih: `${String(d.getUTCFullYear()).padStart(4, "0")}-${iki(d.getUTCMonth() + 1)}-${iki(d.getUTCDate())}`,
+        saat: `${iki(d.getUTCHours())}:${iki(d.getUTCMinutes())}`,
+        saat_dilimi,
+      };
+    },
+    anCevir: (tarih, saat, saat_dilimi) => {
+      cagrilar.ekle("anCevir", tarih, saat, saat_dilimi);
+      const g = /^(\d{4})-(\d{2})-(\d{2})$/.exec(tarih);
+      const s = /^(\d{2}):(\d{2})$/.exec(saat);
+      if (g === null || s === null) throw new RangeError("sahte takvim: bozuk tarih ya da saat");
+      const utc = Date.UTC(Number(g[1]), Number(g[2]) - 1, Number(g[3]), Number(s[1]), Number(s[2]));
+      return utc - ofset(saat_dilimi) * 60_000;
+    },
+  };
+  return t;
+}
+
+// ---------------------------------------------------------------------------------------------
 // Hepsi bir arada
 // ---------------------------------------------------------------------------------------------
 
@@ -1110,6 +1194,8 @@ export interface SahteDunya {
   tekilKilit: SahteTekilKilit;
   transkript: SahteTranskript;
   gunluk: SahteGunluk;
+  /** Ajanda dalgası. `DisDunya`'da DEĞİL (`TakvimPortu` `ana`'da `takvimKur` ile kurulur); varsayılan `Europe/Istanbul`. */
+  takvim: SahteTakvim;
 }
 
 export function sahteDunya(sec: SahteDunyaSecenekleri = {}): SahteDunya {
@@ -1157,5 +1243,6 @@ export function sahteDunya(sec: SahteDunyaSecenekleri = {}): SahteDunya {
     tekilKilit,
     transkript,
     gunluk,
+    takvim: sahteTakvim(),
   };
 }

@@ -6,6 +6,22 @@
  */
 import type { z } from "zod";
 import type {
+  AJANDA_ARACLARI,
+  AjandaEslestirmeQr,
+  AjandaFiili,
+  AjandaGecmisGirdisi,
+  AjandaIslem,
+  AjandaIslemSonucu,
+  AjandaKaydi,
+  AjandaKopruRolu,
+  AjandaRetNedeni,
+  AjandaRevIzi,
+  AjandaYerelAn,
+  AnCevirici,
+  CihazKapsami,
+  KayitDurumu,
+  KayitTuru,
+  TurKokeni,
   AkisEtkinligi,
   ChatClear,
   ChatCreate,
@@ -269,7 +285,11 @@ export interface SistemPortu {
   masaustuDurumu(): Promise<MasaustuDurumu>;
 }
 
-export type WsYolu = "/sohbet" | "/cihaz";
+/**
+ * Ajanda dalgası: `/ajanda` eklendi (`docs/AJANDA.md`). Gerçekleme (`dis-dunya.ts` `WS_YOLLARI`) yolu
+ * yalnız `WsSunucuIstegi.azamiCerceve["/ajanda"]` verilmişse dinler; verilmemişse yükseltme reddedilir.
+ */
+export type WsYolu = "/sohbet" | "/cihaz" | "/ajanda";
 
 export interface WsBaglantisi {
   readonly yol: WsYolu;
@@ -290,8 +310,11 @@ export interface WsBaglantisi {
 export interface WsSunucuIstegi {
   host: string;
   port: number;
-  /** Bayt sınırı, `ws` `maxPayload`. */
-  azamiCerceve: Readonly<Record<WsYolu, number>>;
+  /**
+   * Bayt sınırı, `ws` `maxPayload`. Ajanda dalgası: `/ajanda` isteğe bağlıdır (eski çağıranlar iki yolu
+   * verir); yoksa `/ajanda` dinlenmez. Gateway `AJANDA_AZAMI_CERCEVE.KANAL` verir.
+   */
+  azamiCerceve: Readonly<Record<"/sohbet" | "/cihaz", number>> & Readonly<Partial<Record<"/ajanda", number>>>;
   /**
    * Kimlik doğrulanana dek (`kimlikDogrulandi`) karşı uçtan okunacak en çok bayt (yükseltme isteği
    * hariç, WebSocket çerçeve başlıkları dahil). Aşılınca bağlantı çerçevenin tamamı beklenmeden
@@ -679,6 +702,13 @@ export interface ServisOlaylari {
    * kaldırıldı (`chat_deleted` yazıldıktan sonra). `gateway` `server_status`'u yeniden yayar. Ad yok.
    */
   sohbet_listesi_degisti: { sohbet_id: SohbetId; olay: "olusturuldu" | "silindi" };
+  /**
+   * Ajanda dalgası. Yalnız `Depo.ajandaDegisiklikYaz` yayınlar, EN DIŞTAKİ işlem bittikten sonra (geri
+   * alınan işlemde hiç): her yeni revizyon için bir kez, revizyon artan sırayla. `kayit` o revizyonun son
+   * halidir (mezar taşı dahil). Küresel (sohbete bağlı değil). Dinleyen: `gateway` (`/ajanda` canlı
+   * `kayit` çerçevesi). Kayıt metni taşır: günlüğe yazılmaz.
+   */
+  ajanda_kayit_yazildi: { kayit: AjandaKaydi };
 }
 
 export type ServisOlayAdi = keyof ServisOlaylari;
@@ -920,7 +950,27 @@ export interface ErenKuyrukSatiri {
   sohbet_id: SohbetId;
   kaynak: ErenKuyrukKaynagi;
   metin: string;
+  /** Satırın servise varış anı (epoch ms). */
   olusturma_ms: number;
+  /**
+   * Ajanda dalgası (`kuyruk_ekleri`, ek göç 6). Varışta kullanıcının o anki dilimiyle hesaplanıp
+   * saklanan yerel an (`KuyrukSatirEki.mesaj_ani`). Yoksa (eski kodun ya da ek yazılmadan yazdığı
+   * satır) alan yoktur: `konusma` `olusturma_ms`'i o anki dilimle çevirir.
+   */
+  mesaj_ani?: AjandaYerelAn;
+  /** Ajanda dalgası. İnsan satırının `client_msg_id`'si (`KuyrukSatirEki.kaynak_msg_id`); yoksa alan yok. */
+  kaynak_msg_id?: string;
+}
+
+/**
+ * Ajanda dalgası. Kuyruk satırının eki: `Depo.kuyrukEkiYaz` ile `kuyrugaEkle`'yle AYNI `islem` içinde
+ * yazılır. Metin taşımaz (yalnız an ve kimlik): "geçmişi sil" satırla birlikte siler, geri alınmış
+ * eski kodun bıraktığı yetim ek de içerik sızdırmaz.
+ */
+export interface KuyrukSatirEki {
+  mesaj_ani: AjandaYerelAn;
+  /** Yalnız insan satırında: `DogrulanmisInsanMesaji.client_msg_id`. */
+  kaynak_msg_id?: string;
 }
 
 export type CihazPlatformu = z.infer<typeof PairRequest>["platform"];
@@ -933,12 +983,25 @@ export interface CihazKaydi {
   platform: CihazPlatformu;
   etiket: string | null;
   eslesme_ms: number;
+  /**
+   * Ajanda dalgası. Cihazın kapsamı (`CIHAZ_KAPSAMLARI`). Alan YOKSA `ESKI_CIHAZ_KAPSAMI` (`sohbet`):
+   * okunan sohbet cihazında alan hiç yazılmaz, yalnız ajanda cihazında `"ajanda"` gelir. Yazarken
+   * (`cihazEkle`) `"ajanda"` ise cihaz ayrı tabloya (`ajanda_cihazlari`) gider ve `cihazGetir`/`cihazlar`
+   * onu hiç döndürmez: `/sohbet` ve `/cihaz` yolları ajanda cihazını yapıdan dolayı tanımaz.
+   */
+  kapsam?: CihazKapsami;
 }
 
 export interface EslestirmeKaydi {
   kod_ozeti: string;
   son_ms: number;
   yanlis_deneme: number;
+  /**
+   * Ajanda dalgası. Pencerenin kapsamı; alan YOKSA `sohbet` (okurken sohbet penceresinde alan yazılmaz).
+   * Tek pencere: yeni yazılan, kapsamı ne olursa olsun öncekinin yerine geçer. `gateway` pencerenin
+   * kapsamı bağlantının yolunun kapsamı değilse (`KAPSAM_ESLESTIRME_KANALI`) `eslestirme_kapali` der.
+   */
+  kapsam?: CihazKapsami;
 }
 
 export interface KonusmaSatiri {
@@ -1143,15 +1206,39 @@ export interface Depo {
   kuyrukBasi(sohbet: SohbetSecimi): ErenKuyrukSatiri | null;
   /** Bastan gelen ardışık `sentetik` satırlar: tek satırda birleştirmek için. Yalnız o sohbetin. */
   kuyrukSentetikBasi(adet: number, sohbet: SohbetSecimi): ErenKuyrukSatiri[];
+  /** Ajanda dalgası: satırların ekleri (`kuyruk_ekleri`) de silinir. */
   kuyruktanSil(idler: readonly number[]): void;
+  /**
+   * Ajanda dalgası (ek göç 6). Satırın ekini yazar; `kuyrugaEkle` ile AYNI `islem` içinde, hemen ardından
+   * çağrılır. `mesaj_ani` `AjandaYerelAn`'dan geçmezse ya da satır yoksa ATAR (dıştaki işlem geri
+   * alınır); ikinci yazım öncekinin yerine geçer. `kuyrukBasi`/`kuyrukSentetikBasi` eki satırla döner.
+   * `kuyruktanSil`, `gecmisiTemizle`, `sohbetiSil` eki satırla birlikte siler.
+   */
+  kuyrukEkiYaz(kuyruk_id: number, ek: KuyrukSatirEki): void;
 
+  /**
+   * Ajanda dalgası: `kayit.kapsam` `"ajanda"` ise ajanda cihazı yazılır (`ajanda_cihazlari`), değilse
+   * bugünkü gibi sohbet cihazı (`cihazlar`, aynı kimlikle yeniden eşleşmede güncellenir). Kimlik
+   * kaldırılmışsa ya da ÖTEKİ kapsamda varsa ATAR (bir kimlik tek kapsamdadır).
+   */
   cihazEkle(kayit: CihazKaydi): void;
+  /** Yalnız `sohbet` kapsamlı, kaldırılmamış cihaz (`/sohbet`, `/cihaz`). Ajanda cihazı burada YOKTUR. */
   cihazGetir(device_id: string): CihazKaydi | null;
+  /** Yalnız `sohbet` kapsamlı cihazlar. */
   cihazlar(): CihazKaydi[];
+  /**
+   * Ajanda dalgası. Kapsamı ne olursa olsun kaldırılmamış cihaz; ajanda cihazında `kapsam:"ajanda"`,
+   * sohbet cihazında alan yok (`ESKI_CIHAZ_KAPSAMI`). `gateway` `hello`'da her yolda bununla okur ve
+   * `kanalKapsamdaMi` yanlışsa `kanal_desteklenmiyor` der; `/ajanda`'nın kimlik ve yoklama denetimi de bundan.
+   */
+  kapsamliCihazGetir(device_id: string): CihazKaydi | null;
 
+  /** Ajanda dalgası: `kayit.kapsam` yoksa `sohbet`. Tek pencere: öteki kapsamın penceresi silinir. */
   eslestirmeYaz(kayit: EslestirmeKaydi): void;
+  /** Açık pencere (son süreye bakılmaz) ya da `null`. Ajanda penceresinde `kapsam:"ajanda"`, sohbet penceresinde alan yok. */
   eslestirmeOku(): EslestirmeKaydi | null;
   eslestirmeYanlisSay(): void;
+  /** Kapsamı ne olursa olsun pencereyi kapatır. */
   eslestirmeSil(): void;
 
   /** Dilim 2: `eren` kapsamının `sohbet_id`'si `kopru_jetonlari.sohbet_id`'ye. */
@@ -1174,10 +1261,11 @@ export interface Depo {
    * (1) `sinir_seq = basSeq()` (küresel), silmeden önce; (2) o sohbetin `SILINMEZ_OLAY_TURLERI` dışındaki
    * `seq <= sinir_seq` bütün `events` satırları silinir (`ana` için `sohbet_id IS NULL` satırlar da);
    * (3) o sohbetin kapalı turlarının (`bitis_ms` dolu) `kismi_metin`'i boşaltılır, satırları kalır;
-   * (4) o sohbetin `eren_kuyrugu` satırlarının hepsi silinir (insan ve sentetik); (5)
-   * `olayEkle({type:"chat_cleared", sohbet_id, sinir_seq})`. Başka sohbetlerin satırlarına ve `isler,
-   * planlar, sorular, nesiller, acklar, is_pidleri, cihazlar, kopru_jetonlari, kirli_okumalar,
-   * eren_oturumlari, sohbetler` tablolarına dokunulmaz. `seq` AUTOINCREMENT olduğu için mezar taşı her
+   * (4) o sohbetin `eren_kuyrugu` satırlarının hepsi silinir (insan ve sentetik; ajanda dalgası: ekleriyle,
+   * `kuyruk_ekleri`); (5) `olayEkle({type:"chat_cleared", sohbet_id, sinir_seq})`. Başka sohbetlerin
+   * satırlarına ve `isler, planlar, sorular, nesiller, acklar, is_pidleri, cihazlar, kopru_jetonlari,
+   * kirli_okumalar, eren_oturumlari, sohbetler` tablolarına, ajanda dalgasında hiçbir `ajanda_*` tablosuna
+   * dokunulmaz (`sohbetiSil` de). `seq` AUTOINCREMENT olduğu için mezar taşı her
    * zaman en yenidir, `head_seq` gerilemez. Hata atarsa işlem geri alınır, hiçbir şey silinmez.
    */
   gecmisiTemizle(sohbet: SohbetSecimi): GecmisTemizlemeSonucu;
@@ -1245,7 +1333,82 @@ export interface Depo {
   tuketimEkle(kayitlar: readonly TuketimKaydi[]): void;
   /** Bugün, son 7 gün (bugün dahil), sohbet başına ve son `isAdet` iş toplamı. */
   tuketimOzeti(g: { gunBaslangicMs: number; yediGunBaslangicMs: number; isAdet: number }): TuketimOzeti;
+
+  // Ajanda dalgası: ajanda kalıcı katmanı (ek göç 6). Uygulama: depo.ts, test/depo-ajanda.test.ts.
+  // Yazan YALNIZ `ajanda.ts` (tek yazar); okuyan `ajanda.ts`. Jeton işlevleri yalnız
+  // `ajanda-kopru-sunucu.ts`. MODULLER.md "Ajanda dalgası" > "depo". `gecmisiTemizle` ve `sohbetiSil`
+  // bu tabloların HİÇBİRİNE dokunmaz: kayıt kullanıcının ajandasıdır, sohbet geçmişi değil.
+
+  /** Depo kimliği (`welcome.depo_id`); yoksa `yeni()` ile üretip yazar (tek işlem). `DepoId`'den geçmezse atar. */
+  ajandaDepoKimligi(yeni: () => string): string;
+  /** Geri yükleme ve içe aktarmada yeni kimlik (uygulamalar tam telafi yapar). `DepoId`'den geçmezse atar. */
+  ajandaDepoKimligiYenile(depo_id: string): void;
+  /** En büyük revizyon (`welcome.bas_rev`); hiç değişiklik yoksa 0. Tek artan sayaç, geri gitmez. */
+  ajandaBasRev(): number;
+  /** Silinmiş (mezar taşı) dahil; yoksa `null`. */
+  ajandaKaydiGetir(kayit_id: string): AjandaKaydi | null;
+  /** Silinmiş dahil kayıt sayısı (`KAYIT_ADET`, `kayit_siniri`). */
+  ajandaKayitSayisi(): number;
+  /** `kaynak.tekil_anahtar`'ı bu olan kayıtlar (silinmiş dahil), oluşturma sırasıyla: `ajandaTekilKarari`'nın `esler`'i. */
+  ajandaTekilEsler(tekil_anahtar: string): AjandaKaydi[];
+  /** Süzgece uyan kayıtlar, oluşturma sırasıyla. Tarih, metin araması ve sıralama çağıranındır (`ajanda_listele`). */
+  ajandaKayitlari(suzgec?: AjandaKayitSuzgeci): AjandaKaydi[];
+  /**
+   * Telafi: `sonRev < revizyon <= ustRev` kayıtların son hali (mezar taşı dahil), revizyon artan, en çok
+   * `adet`. Tam telafi `sonRev: 0` ile başlar.
+   */
+  ajandaRevAraligi(g: { sonRev: number; ustRev: number; adet: number }): AjandaKaydi[];
+  /**
+   * Tek değişiklik: tek sayaçtan yeni revizyon, geçmiş satırı ve kaydın son hali AYNI işlemde (`islem`
+   * içinden de çağrılabilir). Kaydın `revizyon`'u ve `guncelleme_ms`'i geçmiş satırının `rev` ve `ts_ms`'i
+   * olur. Yazmadan önce kayıt `AjandaKaydi`, girdi `AjandaGecmisGirdisi` şemasından geçer; geçmezse,
+   * `ekle`'de kimlik zaten varsa, ötekilerde kimlik yoksa ya da `kaynak`/`olusturma_ms` değiştirilmeye
+   * çalışılırsa ATAR ve hiçbir şey yazılmaz.
+   * Yayın: `ajanda_kayit_yazildi{kayit}` en dıştaki işlem bitince. Döner: yazılan kayıt.
+   */
+  ajandaDegisiklikYaz(g: AjandaDegisiklikYazimi): AjandaKaydi;
+  /** Bir kaydın geçmişi, `rev` azalan, `once_rev` verilirse ondan küçükler, en çok `adet`. Kayıt yoksa boş. */
+  ajandaGecmisi(g: { kayit_id: string; once_rev?: number; adet: number }): AjandaGecmisGirdisi[];
+  /** Telafi izi (`ajandaTelafiTamMi.izdeki`): o revizyonun geçmiş satırının kaydı ve `ts_ms`'i; yoksa `null`. */
+  ajandaGecmisSatiri(rev: number): { kayit_id: string; ts_ms: number } | null;
+  /** Tekrarsızlık: `(device_id, islem_id)`'nin kalıcı sonucu ya da `null`. */
+  ajandaIslemSonucuBul(device_id: string, islem_id: string): AjandaIslemSonucuGovdesi | null;
+  /**
+   * Kalıcı sonucu yazar; ilk yazılan kazanır (ikincisi sessizce yok sayılır). Sonuç `islem_sonucu`
+   * şemasından geçmezse ya da geçici retse (`ajandaRetGeciciMi`, `ic_hata`) ATAR: geçici ret yazılmaz.
+   * Değişiklikle aynı `islem` içinde çağrılır.
+   */
+  ajandaIslemSonucuYaz(device_id: string, islem_id: string, sonuc: AjandaIslemSonucuGovdesi, ts_ms: number): void;
+
+  /** Ajanda borusu jetonu: yalnız özet (`kopru_jetonlari`'ndan ayrı tablo; eski kod görmez, `eren` borusu bulmaz). */
+  ajandaJetonEkle(kayit: AjandaJetonKaydi): void;
+  /** Tanınmayan roldeki satır (sonraki dilimin rolü) `null` okunur. */
+  ajandaJetonBul(ozet: string): AjandaJetonKaydi | null;
+  /** Kapsamın bütün alanları eşit satırlar. */
+  ajandaJetonlariSil(kapsam: AjandaJetonKapsami): void;
+  /** Bütün ajanda jetonları (açılışta, önceki ömrün jetonları ölsün); silinen sayısı. */
+  ajandaJetonlariniSil(): number;
 }
+
+/** Ajanda dalgası. `Depo.ajandaKayitlari` süzgeci; verilmeyen alan süzmez. Silinmişler varsayılan olarak DIŞTA. */
+export interface AjandaKayitSuzgeci {
+  silinmislerDahil?: boolean;
+  durumlar?: readonly KayitDurumu[];
+  turler?: readonly KayitTuru[];
+}
+
+/** Ajanda dalgası. `Depo.ajandaDegisiklikYaz` girdisi. */
+export interface AjandaDegisiklikYazimi {
+  /** Kaydın yeni hali; `revizyon` ve `guncelleme_ms`'i depo koyar. `ekle`'de `olusturma_ms` = `ts_ms`. */
+  kayit: Omit<AjandaKaydi, "revizyon" | "guncelleme_ms">;
+  /** Kaydın (`kayit.kayit_id`) geçmiş satırı; `rev` ve `ts_ms`'i depo koyar. `islem: "ekle"` yeni kayıt demektir. */
+  girdi: Omit<AjandaGecmisGirdisi, "rev" | "ts_ms">;
+  /** Değişikliğin anı (servis saati): geçmişin `ts_ms`'i, kaydın `guncelleme_ms`'i. */
+  ts_ms: number;
+}
+
+/** Ajanda dalgası. `islem_sonucu`'nun zarf ve `islem_id` dışındaki alanları (tekrarsızlık kaydının gövdesi). */
+export type AjandaIslemSonucuGovdesi = Omit<z.infer<typeof AjandaIslemSonucu>, "v" | "type" | "islem_id">;
 
 export interface DepoBagimliliklari {
   /** `:memory:` testlerde. */
@@ -1745,6 +1908,13 @@ export interface Konusma {
    */
   insanTuru(): string | null;
   /**
+   * Ajanda dalgası. Uygulama: konusma.ts; çağıran `ana`'nın ajanda bağı (`AjandaBagimliliklari.turBaglami`).
+   * Bu örneğin `nesil` numaralı sürecinde (etkin ya da devir adayı) açık tur varsa onun ajanda bağlamı,
+   * yoksa (tur yok, kapandı, başka nesil, örnek kapanmış) `null`. Eşzamanlı, hiç atmaz. Kurallar
+   * `AjandaTurBaglami`'nda. İsteğe bağlı YALNIZ geçiş içindir (eski test sahteleri); `konusma.ts` uygular.
+   */
+  turBaglami?(nesil: number): AjandaTurBaglami | null;
+  /**
    * `user_echo{sohbet_id}` + kuyruk satırı + `sohbetEtkinlikYaz` tek işlemde. Ana oturum kapalı, kilitli,
    * uyuyor ya da sıradayken de kabul eder; süreç yoksa ardından `uyandir()`. Dilim 2: `mesaj.sohbet_id`
    * bu örneğinkinden farklıysa atar, hiçbir şey yazmaz. Dilim 3b (v4): `user_echo` öneksiz metni ve
@@ -1814,6 +1984,18 @@ export interface KonusmaBagimliliklari {
   rastgele: RastgelePortu;
   veriyolu: Veriyolu;
   gunluk: Gunluk;
+  /**
+   * Ajanda dalgası. Varış anının yerel hali (`yerelAn(ms, kullaniciDilimi())`), satırla saklanır
+   * (`kuyrukEkiYaz`) ve ana oturuma giden her kullanıcı rolündeki satırın başına `mesajAniDamgasi` olur.
+   * `ana` her zaman verir; yokluğu (eski testler) "ajanda kapalı" demektir: damga ve ajanda köprüsü yok.
+   */
+  takvim?: TakvimPortu;
+  /**
+   * Ajanda dalgası. Her süreç başlatmasında `eren` jetonunun yanında `{rol:"ana_oturum", sohbet_id, nesil}`
+   * kapsamlı ajanda jetonu (mcp dosyasında `AjandaMcpSunucuAdi` girdisi); `eren` jetonunun iptal edildiği
+   * her yerde bu da iptal edilir. `takvim` ile birlikte verilir; yoksa ajanda köprüsü yok.
+   */
+  ajandaKopru?: Pick<AjandaKopruSunucu, "jetonUret" | "jetonlariIptalEt">;
 }
 
 /** Dilim 2. Bütün örneklerin ortak bağımlılıkları: `sohbetler` bunlara sohbete özgü üçünü ekleyip `konusmaKur`'a verir. */
@@ -2031,6 +2213,11 @@ export interface GatewayBagimliliklari {
    * `gecmisiSil({sohbet_id})`; `chat_delete` → `sohbetiSil({sohbet_id})`, `ok` ise `ack{ok:true, seq}`.
    */
   temizlik: Pick<Temizlik, "gecmisiSil" | "sohbetiSil">;
+  /**
+   * Ajanda dalgası: `/ajanda` kanalının tek yazarı ve okuyucusu. Yoksa (eski testler) `/ajanda` açılmaz
+   * (`azamiCerceve["/ajanda"]` verilmez). Canlı kayıtlar `veriyolu` `ajanda_kayit_yazildi`'dan.
+   */
+  ajanda?: AjandaGatewayYuzu;
   cihaz: Pick<CihazYoneticisi, "baglandi">;
   kilit: Pick<LimitKilidi, "durum">;
   sistem: Pick<SistemPortu, "tailscaleAdresi">;
@@ -2066,3 +2253,265 @@ export interface EslestirmeBagimliliklari {
 }
 
 export type EslestirmeBaslatici = (b: EslestirmeBagimliliklari) => Sonuc<EslestirmeBaslatma, "ic_hata">;
+
+/**
+ * Ajanda dalgası. `eslestir --ajanda`: `EslestirmeBaslatma` gibi ama QR `AjandaEslestirmeQr`'dır
+ * (`kanal:"ajanda"`) ve pencere `kapsam:"ajanda"` ile yazılır. Aynı kod üreteci, aynı süre, tek pencere.
+ */
+export interface AjandaEslestirmeBaslatma {
+  qr: AjandaEslestirmeQr;
+  kod: string;
+  sonMs: number;
+}
+
+export type AjandaEslestirmeBaslatici = (b: EslestirmeBagimliliklari) => Sonuc<AjandaEslestirmeBaslatma, "ic_hata">;
+
+// =============================================================================================
+// AJANDA DALGASI. Ortak sözleşme `docs/AJANDA.md` ve `protocol/src/ajanda*.ts`; modül başına kural ve
+// bitti tanımı MODULLER.md "Ajanda dalgası". Aşağıdakiler yalnız servis içi yüzeydir.
+// =============================================================================================
+
+// ---------------------------------------------------------------------------------------------
+// takvim: saat dilimi. Uygulama: takvim.ts (`takvimKur`), test/takvim.test.ts; sahte: test/sahte.ts
+// `sahteTakvim`. Dilim veritabanı `Intl`'dendir (saf); sistemin dilimini yalnız `ana` okur.
+// ---------------------------------------------------------------------------------------------
+
+/** Duvar saati ile an arasında çeviri. Hepsi eşzamanlı. */
+export interface TakvimPortu {
+  /** Kullanıcının şu anki IANA dilimi (PC'nin sistem dilimi). Her çağrıda yeniden okunur, önbelleklenmez. */
+  kullaniciDilimi(): string;
+  /** Dilim adı servisin dilim veritabanında var mı (`saat_dilimi_bilinmiyor`). Hiç atmaz. */
+  dilimBiliniyorMu(ad: string): boolean;
+  /** Epoch ms'in dilimdeki yerel hali, dakika çözünürlüğü (saniye kesilir, yuvarlanmaz). Bilinmeyen dilimde atar. */
+  yerelAn(ms: number, saat_dilimi: string): AjandaYerelAn;
+  /**
+   * Duvar saatinden epoch ms; java.time `ZonedDateTime.of` kuralı: yaz saati boşluğunda boşluk kadar
+   * ileri, çakışmada önceki (yaz) ofset. Uygulamayla aynı sonucu vermelidir. Bilinmeyen dilimde atar.
+   */
+  anCevir: AnCevirici;
+}
+
+export interface TakvimBagimliliklari {
+  /** `ana` verir: `Intl.DateTimeFormat().resolvedOptions().timeZone`. */
+  sistemDilimi: () => string;
+}
+
+export type TakvimFabrikasi = (b: TakvimBagimliliklari) => TakvimPortu;
+
+// ---------------------------------------------------------------------------------------------
+// Turun ajanda bağlamı: `konusma` üretir (`Konusma.turBaglami`), `ajanda` tüketir (araç çağrısı anında).
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Araç çağrısının geldiği turun kökeni ve anı. Kaynak izini ve denetimi servis buradan kurar; araç
+ * girdisinden değil (model kaydı insan kökenli ilan edemez).
+ * - `tur_kokeni: "insan"` YALNIZ tur kuyruğun `kaynak=="insan"` satırından (gateway'in doğruladığı
+ *   `/sohbet` insan mesajı) başladıysa. Sentetik, birleşik sentetik, devir ve kurtarma turları `sentetik`.
+ * - `mesaj_ani` turun mesaj anıdır (`AJANDA.md` "Mesaj anı"): insan turunda satırın varışı
+ *   (`ErenKuyrukSatiri.mesaj_ani`; yoksa `olusturma_ms` o anki dilimle), birleşik sentetik turda en yeni
+ *   satırın varışı, kuyruktan gelmeyen (devir, kurtarma, bekleyen not) turda turun açıldığı an. Ana oturuma
+ *   giden satırın `mesajAniDamgasi`'yla AYNI değerdir; tur boyunca değişmez.
+ * - `insan_metni`: turu başlatan insan mesajının metni, öneksiz (kısayol öneki yok) ve damgasız
+ *   (`DogrulanmisInsanMesaji.text`); `alinti` denetimi bununla. Servis yeniden başladıysa ve satır
+ *   bellekte değilse kuyruk satırının metni (kısayolda önekli) kullanılır.
+ * - `kaynak_msg_id`: `client_msg_id`; bilinmiyorsa alan yok.
+ */
+export type AjandaTurBaglami =
+  | {
+      tur_kokeni: Extract<TurKokeni, "insan">;
+      turn_id: string;
+      mesaj_ani: AjandaYerelAn;
+      insan_metni: string;
+      kaynak_msg_id?: string;
+    }
+  | {
+      tur_kokeni: Extract<TurKokeni, "sentetik">;
+      turn_id: string;
+      mesaj_ani: AjandaYerelAn;
+    };
+
+// ---------------------------------------------------------------------------------------------
+// ajanda-kopru-sunucu: ajanda borusu (`AJANDA_BORU_ADI`). Uygulama: ajanda-kopru-sunucu.ts
+// (`ajandaKopruSunucuKur`), test/ajanda-kopru-sunucu.test.ts. Stdio ucu: kopru.ts `--rol ana_oturum`.
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Ajanda jetonunun kapsamı = bağlantının bağlamı: telefondaki bir sohbetin ana oturumunun bir nesli.
+ * Rol, sohbet ve nesil YALNIZ jetondan türer; fiil girdisinde sohbet yoktur. `pc_araci` sonraki dilimde.
+ */
+export interface AjandaJetonKapsami {
+  rol: Extract<AjandaKopruRolu, "ana_oturum">;
+  sohbet_id: SohbetId;
+  nesil: number;
+}
+export type AjandaKopruBaglami = Readonly<AjandaJetonKapsami>;
+
+export interface AjandaJetonKaydi {
+  /** `sha256Hex(utf8Bayt(jeton))`; düz jeton depoya ve günlüğe girmez. */
+  ozet: string;
+  kapsam: AjandaJetonKapsami;
+}
+
+/** Fiil başına boru girdi ve çıktısı: `AJANDA_ARACLARI`'ndan türer, elle yazılmaz. */
+export type AjandaFiilGirdisi<F extends AjandaFiili> = z.infer<(typeof AJANDA_ARACLARI)[F]["girdi"]>;
+export type AjandaFiilCiktisi<F extends AjandaFiili> = z.infer<(typeof AJANDA_ARACLARI)[F]["cikti"]>;
+
+/**
+ * Boru düzeyi sonuç. Alan kararları (`ret` dahil) `ok:true` ile çıktının içindedir (`sonuc:"ret"`,
+ * `neden`, `mesaj_ani`); `ok:false` yalnız çıktı kurulamadığında: `tur_gecersiz` (bu nesilde açık tur
+ * yok, mesaj anı bilinmiyor), `ic_hata`.
+ */
+export type AjandaFiilSonucu<F extends AjandaFiili> = Sonuc<AjandaFiilCiktisi<F>, "tur_gecersiz" | "ic_hata">;
+
+export type AjandaFiilIsleyici<F extends AjandaFiili> = (
+  girdi: AjandaFiilGirdisi<F>,
+  baglam: AjandaKopruBaglami,
+  sinyal: AbortSignal,
+) => Promise<AjandaFiilSonucu<F>>;
+
+export type AjandaFiilIsleyiciler = { readonly [F in AjandaFiili]: AjandaFiilIsleyici<F> };
+
+/**
+ * `KopruSunucu`'nun ajanda borusundaki eşi; kurallar aynıdır (ilk mesaj `kopru_hello`, 10 sn, jeton
+ * özeti, rol eşitliği, `ajandaFiilRoldeIzinliMi`, `yinelenen_istek`, iptal nedenleri, çıktı
+ * `AJANDA_ARACLARI[fiil].cikti` ile doğrulanır, uymazsa `ic_hata`). Çözücü `ajandaKopruYukariCoz`,
+ * sınır `AJANDA_AZAMI_CERCEVE.BORU`, `v` = `PROTOKOL_SURUMU`. Tek bağlantı: aynı kapsamla el sıkışmış
+ * açık bağlantı varken ikinci `kopru_hello` `jeton_gecersiz`. `eren` borusuyla hiçbir jeton ortak değildir.
+ */
+export interface AjandaKopruSunucu {
+  /** Düz jetonu verir, depoya yalnız özetini yazar (`ajandaJetonEkle`). */
+  jetonUret(kapsam: AjandaJetonKapsami): string;
+  /** Depodan siler ve o kapsamın açık bağlantılarını kapatır. */
+  jetonlariIptalEt(kapsam: AjandaJetonKapsami): void;
+  /** `ana` açılışta, `sohbetler.baslat()`'tan ÖNCE: bütün ajanda jetonları + açık bağlantılar; silinen sayısı. */
+  jetonlariniSil(): number;
+  baslat(isleyiciler: AjandaFiilIsleyiciler): Promise<void>;
+  kapat(): Promise<void>;
+}
+
+export interface AjandaKopruSunucuBagimliliklari {
+  boru: BoruSunucuPortu;
+  depo: Pick<Depo, "ajandaJetonEkle" | "ajandaJetonBul" | "ajandaJetonlariSil" | "ajandaJetonlariniSil">;
+  rastgele: RastgelePortu;
+  anahtar: Pick<AnahtarPortu, "sabitZamanEsit">;
+  zamanlayici: Pick<ZamanlayiciPortu, "sonra">;
+  gunluk: Gunluk;
+}
+
+export type AjandaKopruSunucuFabrikasi = (b: AjandaKopruSunucuBagimliliklari) => AjandaKopruSunucu;
+
+/**
+ * Ana oturumun mcp dosyasındaki ajanda köprüsünün sunucu adı: araçlar `mcp__eren-ajanda__<fiil>`.
+ * `konusma` yazar (`{type:"stdio", command: nodeExe, args: [kopruBetigi, "--rol", "ana_oturum"],
+ * env: {EREN_KOPRU_JETON: <ajanda jetonu>}, alwaysLoad: true}`), `init` denetimi bekler.
+ */
+export type AjandaMcpSunucuAdi = "eren-ajanda";
+
+/**
+ * `kopru.ts` `--rol ana_oturum` ile ajanda kipine girer: boru `AJANDA_BORU_ADI`, araçlar
+ * `AJANDA_ROL_FIILLERI.ana_oturum`, MCP girdi şeması `jsonSemasi(AJANDA_ARACLARI[fiil].girdi)`,
+ * `outputSchema` yok, sonuç yalnız `ajandaMcpSonucu` (çit her çağrıda güvenli üreteçten). Jeton
+ * `EREN_KOPRU_JETON`'dan, argümanda taşınmaz.
+ */
+export interface AjandaKopruIstemciAyari {
+  rol: AjandaKopruRolu;
+  jeton: string;
+  boruAdi: string;
+}
+
+// ---------------------------------------------------------------------------------------------
+// ajanda: ajanda modülü, TEK YAZAR. Uygulama: ajanda.ts (`ajandaKur`; yardımcılar ajanda-<ek>.ts),
+// test/ajanda*.test.ts. MODULLER.md "Ajanda dalgası" > "ajanda".
+// ---------------------------------------------------------------------------------------------
+
+/** `hello`'nun telafi alanları (`ajandaHelloAlanlari`'nın ürettiği). */
+export interface AjandaHelloOzeti {
+  son_rev: number;
+  depo_id?: string;
+  son_rev_izi?: AjandaRevIzi;
+}
+
+/** `welcome`'un servis alanları. `server_time_ms` gateway'indir. */
+export interface AjandaKarsilama {
+  depo_id: string;
+  bas_rev: number;
+  tam: boolean;
+}
+
+/** `gecmis` çerçevesinin zarf ve `istek_id` dışındaki alanları. */
+export interface AjandaGecmisSayfasi {
+  kayit_id: string;
+  girdiler: AjandaGecmisGirdisi[];
+  devami: boolean;
+  /** Yalnız `kayit_bulunamadi` (girdi yok, `devami` yanlış). */
+  code?: AjandaRetNedeni;
+}
+
+/**
+ * Bütün ajanda değişikliklerinin tek kapısı: telefon işlemi ve araç çağrısı aynı modülden, aynı sırayla
+ * geçer. Hepsi eşzamanlıdır (araç işleyicileri `Promise` döner ama araya `await` girmez). Hiçbiri
+ * kullanıcı metnini günlüğe yazmaz.
+ */
+export interface AjandaYoneticisi {
+  /** Açılışta bir kez (gateway ve köprüden önce): depo kimliğini kurar (`ajandaDepoKimligi`). */
+  baslat(): void;
+  /**
+   * `/ajanda` `islem`. Tekrarsızlık `(device_id, islem_id)`: kalıcı kaydı varsa AYNI sonuç döner, işlem
+   * ikinci kez uygulanmaz. Yoksa uygular ve kalıcı sonucu (ret dahil) değişiklikle aynı işlemde yazar;
+   * geçici ret (`ic_hata`, ör. veritabanı hatası) yazılmaz. Kaynak `elle` (`girdi_yolu`), `device_id`.
+   */
+  islemUygula(device_id: string, islem_id: string, islem: AjandaIslem): AjandaIslemSonucuGovdesi;
+  /**
+   * Zarfı geçerli ama gövdesi şemadan geçmeyen `islem` (`ajandaYukariCoz` sonucundaki `islem_id`):
+   * kalıcı kaydı varsa onu, yoksa `{ok:false, code:"gecersiz_islem"}`'i yazar ve döner.
+   */
+  gecersizIslem(device_id: string, islem_id: string): AjandaIslemSonucuGovdesi;
+  /** `hello` → `welcome` alanları: `ajandaTelafiTamMi` (iz `ajandaGecmisSatiri`'ndan). */
+  karsila(hello: AjandaHelloOzeti): AjandaKarsilama;
+  /**
+   * Telafi sayfası: `sonRev < revizyon <= ustRev` (ustRev = `karsila`'nın `bas_rev`'i) kayıtların son hali,
+   * revizyon artan, en çok `adet`. `ustRev`'den sonra doğanlar `ajanda_kayit_yazildi` ile gelir.
+   */
+  telafiSayfasi(g: { sonRev: number; ustRev: number; adet: number }): AjandaKaydi[];
+  /** `gecmis_iste`: en çok `GECMIS_SAYFA` girdi, `rev` azalan; kayıt yoksa `code:"kayit_bulunamadi"`. */
+  gecmis(kayit_id: string, once_rev?: number): AjandaGecmisSayfasi;
+  /** Ajanda borusunun işleyicileri: `AjandaKopruSunucu.baslat`'a verilir. */
+  readonly araclar: AjandaFiilIsleyiciler;
+}
+
+export interface AjandaBagimliliklari {
+  depo: Pick<
+    Depo,
+    | "islem"
+    | "ajandaDepoKimligi"
+    | "ajandaBasRev"
+    | "ajandaKaydiGetir"
+    | "ajandaKayitSayisi"
+    | "ajandaTekilEsler"
+    | "ajandaKayitlari"
+    | "ajandaRevAraligi"
+    | "ajandaDegisiklikYaz"
+    | "ajandaGecmisi"
+    | "ajandaGecmisSatiri"
+    | "ajandaIslemSonucuBul"
+    | "ajandaIslemSonucuYaz"
+  >;
+  takvim: TakvimPortu;
+  saat: SaatPortu;
+  /** Araçla doğan kaydın kimliği (`opakId`) ve depo kimliği. */
+  rastgele: Pick<RastgelePortu, "opakId">;
+  /**
+   * Araç çağrısının turu: `ana` bağlar, `sohbetler.konusma(sohbet)?.turBaglami?.(nesil) ?? null`.
+   * `null` ise araç `tur_gecersiz` döner, hiçbir şey yazılmaz.
+   */
+  turBaglami: (sohbet: SohbetSecimi, nesil: number) => AjandaTurBaglami | null;
+  gunluk: Gunluk;
+}
+
+export type AjandaFabrikasi = (b: AjandaBagimliliklari) => AjandaYoneticisi;
+
+/** `gateway`'in ajanda modülünden gördüğü yüz. */
+export type AjandaGatewayYuzu = Pick<
+  AjandaYoneticisi,
+  "islemUygula" | "gecersizIslem" | "karsila" | "telafiSayfasi" | "gecmis"
+>;

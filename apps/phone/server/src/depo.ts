@@ -5,10 +5,17 @@
 import { DatabaseSync } from "node:sqlite";
 import type { SQLInputValue, StatementSync } from "node:sqlite";
 import {
+  AJANDA_SURUMU,
   ANA_SOHBET_ID,
+  AjandaGecmisGirdisi,
+  AjandaIslemSonucu,
+  AjandaKaydi,
+  AjandaYerelAn,
+  DepoId,
   IsId,
   IsProfili,
   Olay,
+  OpakId,
   Plan,
   Sayac,
   SILINMEZ_OLAY_TURLERI,
@@ -16,11 +23,18 @@ import {
   SohbetAdi,
   SohbetId,
   VARSAYILAN_IS_PROFILI,
+  ajandaRetGeciciMi,
+  kanonikJson,
 } from "@eren/protocol";
-import type { TuketimIkilisi, TuketimToplami } from "@eren/protocol";
+import type { CihazKapsami, TuketimIkilisi, TuketimToplami } from "@eren/protocol";
 import { anaSohbetAdiUret } from "./ana-sohbet-adi.ts";
 import type {
   AckGovdesi,
+  AjandaDegisiklikYazimi,
+  AjandaIslemSonucuGovdesi,
+  AjandaJetonKapsami,
+  AjandaJetonKaydi,
+  AjandaKayitSuzgeci,
   CihazKaydi,
   Depo,
   DepoBagimliliklari,
@@ -36,6 +50,7 @@ import type {
   JetonKaydi,
   KirliOkumaKaydi,
   KonusmaSatiri,
+  KuyrukSatirEki,
   MezarTasiOlayi,
   NesilKaydi,
   OlayGirdisi,
@@ -296,6 +311,76 @@ const ekGocler = (anaAdi: string): readonly string[] => [
     iptal_ms INTEGER NOT NULL
   ) STRICT;
   `,
+  // 6: ajanda (docs/AJANDA.md, MODULLER.md "Ajanda dalgası" > "depo"). YALNIZ yeni tablo ve dizin: var
+  // olan hiçbir tabloya ve sütuna dokunmaz (`ALTER` yok), bu yüzden sayacı geri kalmış dosyada yeniden
+  // uygulanabilir ve eski kod hiçbir şeyi görmez. Kapsam bilerek SÜTUN DEĞİL, ayrı tablodur: geri alınan
+  // eski kod ajanda cihazını (`ajanda_cihazlari`), ajanda penceresini (`ajanda_eslestirme`) ve ajanda
+  // jetonunu (`ajanda_jetonlari`) hiç görmez; kapsamı bilmeyen kod ajanda cihazına `/sohbet` açamaz,
+  // ajanda jetonunu `eren` borusunda başka rol diye okuyamaz. `kuyruk_ekleri` metin taşımaz (an ve
+  // kimlik): eski kodun "geçmişi sil"i satırı silip eki yetim bıraksa da içerik kalmaz; yetim açılışta
+  // silinir (`eren_kuyrugu.id` AUTOINCREMENT, kimlik yeniden kullanılmaz). Geçmiş `rev` AUTOINCREMENT:
+  // tek artan revizyon sayacı, geri gitmez. "Geçmişi sil" bu tabloların hiçbirine dokunmaz.
+  `
+  CREATE TABLE IF NOT EXISTS ajanda_kayitlari (
+    kayit_id TEXT PRIMARY KEY,
+    revizyon INTEGER NOT NULL,
+    olusturma_rev INTEGER NOT NULL,
+    tekil_anahtar TEXT,
+    tur TEXT NOT NULL,
+    durum TEXT NOT NULL,
+    silindi INTEGER NOT NULL,
+    veri TEXT NOT NULL
+  ) STRICT;
+  CREATE UNIQUE INDEX IF NOT EXISTS ajanda_kayit_rev ON ajanda_kayitlari (revizyon);
+  CREATE UNIQUE INDEX IF NOT EXISTS ajanda_kayit_sira ON ajanda_kayitlari (olusturma_rev);
+  CREATE INDEX IF NOT EXISTS ajanda_kayit_tekil ON ajanda_kayitlari (tekil_anahtar) WHERE tekil_anahtar IS NOT NULL;
+  CREATE TABLE IF NOT EXISTS ajanda_gecmisi (
+    rev INTEGER PRIMARY KEY AUTOINCREMENT,
+    kayit_id TEXT NOT NULL,
+    ts_ms INTEGER NOT NULL,
+    veri TEXT NOT NULL
+  ) STRICT;
+  CREATE INDEX IF NOT EXISTS ajanda_gecmisi_kayit ON ajanda_gecmisi (kayit_id, rev);
+  CREATE TABLE IF NOT EXISTS ajanda_islemleri (
+    device_id TEXT NOT NULL,
+    islem_id TEXT NOT NULL,
+    sonuc TEXT NOT NULL,
+    ts_ms INTEGER NOT NULL,
+    PRIMARY KEY (device_id, islem_id)
+  ) STRICT;
+  CREATE TABLE IF NOT EXISTS ajanda_meta (
+    anahtar TEXT PRIMARY KEY,
+    deger TEXT NOT NULL
+  ) STRICT;
+  CREATE TABLE IF NOT EXISTS ajanda_jetonlari (
+    ozet TEXT PRIMARY KEY,
+    rol TEXT NOT NULL,
+    sohbet_id TEXT NOT NULL,
+    nesil INTEGER NOT NULL
+  ) STRICT;
+  CREATE TABLE IF NOT EXISTS ajanda_cihazlari (
+    device_id TEXT PRIMARY KEY,
+    public_key TEXT NOT NULL,
+    tailscale_ip TEXT NOT NULL,
+    platform TEXT NOT NULL,
+    etiket TEXT,
+    eslesme_ms INTEGER NOT NULL
+  ) STRICT;
+  CREATE TABLE IF NOT EXISTS ajanda_cihaz_iptalleri (
+    device_id TEXT PRIMARY KEY
+  ) STRICT;
+  CREATE TABLE IF NOT EXISTS ajanda_eslestirme (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    kod_ozeti TEXT NOT NULL,
+    son_ms INTEGER NOT NULL,
+    yanlis_deneme INTEGER NOT NULL
+  ) STRICT;
+  CREATE TABLE IF NOT EXISTS kuyruk_ekleri (
+    kuyruk_id INTEGER PRIMARY KEY,
+    mesaj_ani TEXT NOT NULL,
+    kaynak_msg_id TEXT
+  ) STRICT;
+  `,
 ];
 
 /** Mezar taşının olay türü. Silinmeyenler listesi ayrıca `SILINMEZ_OLAY_TURLERI`'nden okunur. */
@@ -465,22 +550,55 @@ const soruSatiri = (r: Satir): SoruKaydi => ({
   son_ms: sayi(r.son_ms),
 });
 
-const cihazSatiri = (r: Satir): CihazKaydi => ({
+/** Sohbet cihazında `kapsam` alanı yazılmaz (`ESKI_CIHAZ_KAPSAMI`); ajanda cihazında `"ajanda"`. */
+const cihazSatiri = (r: Satir, kapsam: CihazKapsami = "sohbet"): CihazKaydi => ({
   device_id: String(r.device_id),
   public_key: String(r.public_key),
   tailscale_ip: String(r.tailscale_ip),
   platform: String(r.platform) as CihazKaydi["platform"],
   etiket: metinVeyaNull(r.etiket),
   eslesme_ms: sayi(r.eslesme_ms),
+  ...(kapsam === "sohbet" ? {} : { kapsam }),
 });
 
-const kuyrukSatiri = (r: Satir): ErenKuyrukSatiri => ({
-  id: sayi(r.id),
-  sohbet_id: String(r.sohbet_id),
-  kaynak: String(r.kaynak) as ErenKuyrukKaynagi,
-  metin: String(r.metin),
-  olusturma_ms: sayi(r.olusturma_ms),
-});
+/** Kuyruk satırı + eki (`kuyruk_ekleri`, LEFT JOIN `ek_` önekli sütunlar). Bozuk ek okunmaz, satır okunur. */
+const kuyrukSatiri = (r: Satir): ErenKuyrukSatiri => {
+  const satir: ErenKuyrukSatiri = {
+    id: sayi(r.id),
+    sohbet_id: String(r.sohbet_id),
+    kaynak: String(r.kaynak) as ErenKuyrukKaynagi,
+    metin: String(r.metin),
+    olusturma_ms: sayi(r.olusturma_ms),
+  };
+  if (typeof r.ek_mesaj_ani === "string") {
+    try {
+      const an = AjandaYerelAn.safeParse(JSON.parse(r.ek_mesaj_ani));
+      if (an.success) satir.mesaj_ani = an.data;
+    } catch {
+      // bozuk ek: alan yok, `konusma` varış anını `olusturma_ms`'ten hesaplar
+    }
+  }
+  if (typeof r.ek_kaynak_msg_id === "string") satir.kaynak_msg_id = r.ek_kaynak_msg_id;
+  return satir;
+};
+
+/** Kuyruk okumalarının ortak başı: satır + eki. */
+const KUYRUK_SECIMI = `SELECT q.id, q.sohbet_id, q.kaynak, q.metin, q.olusturma_ms,
+  e.mesaj_ani AS ek_mesaj_ani, e.kaynak_msg_id AS ek_kaynak_msg_id
+  FROM eren_kuyrugu q LEFT JOIN kuyruk_ekleri e ON e.kuyruk_id = q.id`;
+
+// --- Ajanda (ek göç 6) ---
+
+/** Ajanda kaydı satırından: `veri` tam `AjandaKaydi` JSON'udur (yazarken şemadan geçti). */
+const ajandaKaydiSatiri = (r: Satir): AjandaKaydi => JSON.parse(String(r.veri)) as AjandaKaydi;
+
+/** Geçmiş satırından: `rev` ve `ts_ms` sütundadır, gövde `veri`'de. */
+const gecmisGirdisiSatiri = (r: Satir): AjandaGecmisGirdisi =>
+  ({ rev: sayi(r.rev), ts_ms: sayi(r.ts_ms), ...(JSON.parse(String(r.veri)) as object) }) as AjandaGecmisGirdisi;
+
+/** Ajanda jetonunun tek tanınan rolü; başka roldeki satır (sonraki dilim) `null` okunur. */
+const AJANDA_JETON_ROLU = "ana_oturum" satisfies AjandaJetonKapsami["rol"];
+const AJANDA_DEPO_ANAHTARI = "depo_id";
 
 const sohbetSatiri = (r: Satir): SohbetKaydi => ({
   sohbet_id: String(r.sohbet_id),
@@ -611,6 +729,8 @@ export interface EslesmeOzeti {
   eslesme_ms: number;
   /** `null`: eşleşme etkin. */
   iptal_ms: number | null;
+  /** Ajanda dalgası: yalnız ajanda cihazında `"ajanda"`; yoksa `sohbet` (`ESKI_CIHAZ_KAPSAMI`). */
+  kapsam?: CihazKapsami;
 }
 
 export type CihazKaldirmaSonucu =
@@ -622,8 +742,10 @@ export interface CihazYonetimi {
   /** Etkin ve kaldırılmış eşleşmeler, eşleşme sırasıyla. */
   eslesmeler(): EslesmeOzeti[];
   /**
-   * Tek işlem: kimlik bilgili `cihazlar` satırı silinir, kimlik `cihaz_iptalleri`'ne taşınır. Bundan
-   * sonra `cihazGetir`/`cihazlar` o kimliği hiç döndürmez. İdempotent; bilinmeyen kimlik `bulunamadi`.
+   * Tek işlem: kimlik bilgili `cihazlar` (ajanda dalgası: ya da `ajanda_cihazlari`) satırı silinir, kimlik
+   * `cihaz_iptalleri`'ne taşınır (ajanda cihazında ayrıca `ajanda_cihaz_iptalleri`'ne: listede kapsam).
+   * Bundan sonra `cihazGetir`/`cihazlar`/`kapsamliCihazGetir` o kimliği hiç döndürmez. İdempotent;
+   * bilinmeyen kimlik `bulunamadi`.
    */
   cihazKaldir(device_id: string): CihazKaldirmaSonucu;
 }
@@ -632,6 +754,9 @@ export type CihazYonetimliDepo = Depo & CihazYonetimi;
 
 /** Kaldırılmış kimlik süzgeci: `cihazlar` satırı ancak iptal kaydı yoksa geçerlidir (savunma). */
 const IPTAL_EDILMEMIS = "NOT EXISTS (SELECT 1 FROM cihaz_iptalleri i WHERE i.device_id = cihazlar.device_id)";
+/** Aynı süzgeç ajanda cihazları için. */
+const AJANDA_IPTAL_EDILMEMIS =
+  "NOT EXISTS (SELECT 1 FROM cihaz_iptalleri i WHERE i.device_id = ajanda_cihazlari.device_id)";
 
 export const depoKur: DepoFabrikasi = (b) => depoAc(b);
 
@@ -728,9 +853,20 @@ export const depoAc = (b: DepoBagimliliklari): CihazYonetimliDepo => {
   db.exec("PRAGMA secure_delete = ON");
   b.gunluk.bilgi("depo", "acildi", { surum: SURUM, ek_surum: ekSurum });
 
+  // Ek göç 6: geri alınmış eski kodun sildiği kuyruk satırlarının yetim ekleri (içerik taşımaz). Kimlik
+  // yeniden kullanılmadığı için zararsızdır; yine de birikmesin. Yapılamazsa açılış sürer.
+  try {
+    const yetim = db.prepare("DELETE FROM kuyruk_ekleri WHERE kuyruk_id NOT IN (SELECT id FROM eren_kuyrugu)").run();
+    if (Number(yetim.changes) > 0) b.gunluk.uyari("depo", "yetim_kuyruk_eki_silindi", { adet: Number(yetim.changes) });
+  } catch {
+    b.gunluk.uyari("depo", "yetim_kuyruk_eki_silinemedi");
+  }
+
   // --- işlem ---
   let derinlik = 0;
   let bekleyenOlaylar: Olay[] = [];
+  /** Ajanda dalgası: `ajanda_kayit_yazildi` de `olay_yazildi` gibi en dıştaki işlem bitince yayınlanır. */
+  let bekleyenAjanda: AjandaKaydi[] = [];
 
   const islem = <T>(f: () => T): T => {
     if (derinlik > 0) {
@@ -749,6 +885,7 @@ export const depoAc = (b: DepoBagimliliklari): CihazYonetimliDepo => {
       db.exec("COMMIT");
     } catch (e) {
       bekleyenOlaylar = [];
+      bekleyenAjanda = [];
       derinlik = 0;
       try {
         db.exec("ROLLBACK");
@@ -760,8 +897,11 @@ export const depoAc = (b: DepoBagimliliklari): CihazYonetimliDepo => {
     derinlik = 0;
     const yayinlanacak = bekleyenOlaylar;
     bekleyenOlaylar = [];
+    const ajandaYayini = bekleyenAjanda;
+    bekleyenAjanda = [];
     if (b.veriyolu !== undefined) {
       for (const olay of yayinlanacak) b.veriyolu.yayinla("olay_yazildi", { olay });
+      for (const kayit of ajandaYayini) b.veriyolu.yayinla("ajanda_kayit_yazildi", { kayit });
     }
     return sonuc;
   };
@@ -793,6 +933,7 @@ export const depoAc = (b: DepoBagimliliklari): CihazYonetimliDepo => {
    */
   const kayitNoktasinda = <T>(ad: string, f: () => T): T => {
     const yayinOncesi = bekleyenOlaylar.length;
+    const ajandaOncesi = bekleyenAjanda.length;
     db.exec(`SAVEPOINT ${ad}`);
     try {
       const sonuc = f();
@@ -800,6 +941,7 @@ export const depoAc = (b: DepoBagimliliklari): CihazYonetimliDepo => {
       return sonuc;
     } catch (e) {
       bekleyenOlaylar.splice(yayinOncesi);
+      bekleyenAjanda.splice(ajandaOncesi);
       try {
         db.exec(`ROLLBACK TO ${ad}`);
         db.exec(`RELEASE ${ad}`);
@@ -831,9 +973,17 @@ export const depoAc = (b: DepoBagimliliklari): CihazYonetimliDepo => {
       "UPDATE turns SET kismi_metin = '' WHERE sohbet_id = ? AND bitis_ms IS NOT NULL AND kismi_metin <> ''",
       sohbet_id,
     ).changes;
+    // Ajanda dalgası: ekler satırlarla birlikte gider. Ajanda tablolarına DOKUNULMAZ.
+    calistir("DELETE FROM kuyruk_ekleri WHERE kuyruk_id IN (SELECT id FROM eren_kuyrugu WHERE sohbet_id = ?)", sohbet_id);
     const silinen_kuyruk = calistir("DELETE FROM eren_kuyrugu WHERE sohbet_id = ?", sohbet_id).changes;
     return { silinen_olay, bosaltilan_tur, silinen_kuyruk };
   };
+
+  /** Ajanda cihazı mı (iptal süzgeçsiz: kimlik tek kapsamdadır kuralı için). */
+  const ajandaCihaziVarMi = (device_id: string): boolean =>
+    bir("SELECT 1 AS var FROM ajanda_cihazlari WHERE device_id = ?", device_id) !== null;
+  const sohbetCihaziVarMi = (device_id: string): boolean =>
+    bir("SELECT 1 AS var FROM cihazlar WHERE device_id = ?", device_id) !== null;
 
   const depo: CihazYonetimliDepo = {
     islem,
@@ -1139,12 +1289,12 @@ export const depoAc = (b: DepoBagimliliklari): CihazYonetimliDepo => {
       ).kimlik;
     },
     kuyrukBasi(sohbet) {
-      const r = bir("SELECT * FROM eren_kuyrugu WHERE sohbet_id = ? ORDER BY id LIMIT 1", sohbet.sohbet_id);
+      const r = bir(`${KUYRUK_SECIMI} WHERE q.sohbet_id = ? ORDER BY q.id LIMIT 1`, sohbet.sohbet_id);
       return r === null ? null : kuyrukSatiri(r);
     },
     kuyrukSentetikBasi(adet, sohbet) {
       const bas: ErenKuyrukSatiri[] = [];
-      const satirlar = hepsi("SELECT * FROM eren_kuyrugu WHERE sohbet_id = ? ORDER BY id LIMIT ?", sohbet.sohbet_id, adet);
+      const satirlar = hepsi(`${KUYRUK_SECIMI} WHERE q.sohbet_id = ? ORDER BY q.id LIMIT ?`, sohbet.sohbet_id, adet);
       for (const r of satirlar) {
         const s = kuyrukSatiri(r);
         if (s.kaynak !== "sentetik") break;
@@ -1154,44 +1304,81 @@ export const depoAc = (b: DepoBagimliliklari): CihazYonetimliDepo => {
     },
     kuyruktanSil(idler) {
       islem(() => {
-        for (const id of idler) calistir("DELETE FROM eren_kuyrugu WHERE id = ?", id);
+        for (const id of idler) {
+          calistir("DELETE FROM kuyruk_ekleri WHERE kuyruk_id = ?", id);
+          calistir("DELETE FROM eren_kuyrugu WHERE id = ?", id);
+        }
+      });
+    },
+    kuyrukEkiYaz(kuyruk_id, ek: KuyrukSatirEki) {
+      const an = AjandaYerelAn.parse(ek.mesaj_ani);
+      const msg = ek.kaynak_msg_id === undefined ? null : OpakId.parse(ek.kaynak_msg_id);
+      islem(() => {
+        if (bir("SELECT 1 AS var FROM eren_kuyrugu WHERE id = ?", kuyruk_id) === null) {
+          throw new Error("depo: eki yazılacak kuyruk satırı yok");
+        }
+        calistir(
+          `INSERT INTO kuyruk_ekleri (kuyruk_id, mesaj_ani, kaynak_msg_id) VALUES (?, ?, ?)
+           ON CONFLICT (kuyruk_id) DO UPDATE SET mesaj_ani = excluded.mesaj_ani, kaynak_msg_id = excluded.kaynak_msg_id`,
+          kuyruk_id,
+          JSON.stringify(an),
+          msg,
+        );
       });
     },
 
     cihazEkle(k) {
-      // Kaldırılmış kimlik dirilmez: yeniden eşleşme hep yeni `device_id` ile olur.
-      if (bir("SELECT 1 AS var FROM cihaz_iptalleri WHERE device_id = ?", k.device_id) !== null) {
-        throw new Error("depo: kaldırılmış cihaz kimliği yeniden eklenemez");
-      }
-      calistir(
-        `INSERT INTO cihazlar (device_id, public_key, tailscale_ip, platform, etiket, eslesme_ms)
-         VALUES (?, ?, ?, ?, ?, ?)
-         ON CONFLICT (device_id) DO UPDATE SET public_key = excluded.public_key,
-           tailscale_ip = excluded.tailscale_ip, platform = excluded.platform,
-           etiket = excluded.etiket, eslesme_ms = excluded.eslesme_ms`,
-        k.device_id,
-        k.public_key,
-        k.tailscale_ip,
-        k.platform,
-        k.etiket,
-        k.eslesme_ms,
-      );
+      const ajanda = k.kapsam === "ajanda";
+      islem(() => {
+        // Kaldırılmış kimlik dirilmez: yeniden eşleşme hep yeni `device_id` ile olur.
+        if (bir("SELECT 1 AS var FROM cihaz_iptalleri WHERE device_id = ?", k.device_id) !== null) {
+          throw new Error("depo: kaldırılmış cihaz kimliği yeniden eklenemez");
+        }
+        // Ajanda dalgası: bir kimlik tek kapsamdadır; kapsam değiştirmek yeni eşleşme (yeni kimlik) ister.
+        if (ajanda ? sohbetCihaziVarMi(k.device_id) : ajandaCihaziVarMi(k.device_id)) {
+          throw new Error("depo: cihaz kimliği öteki kapsamda var");
+        }
+        calistir(
+          `INSERT INTO ${ajanda ? "ajanda_cihazlari" : "cihazlar"} (device_id, public_key, tailscale_ip, platform, etiket, eslesme_ms)
+           VALUES (?, ?, ?, ?, ?, ?)
+           ON CONFLICT (device_id) DO UPDATE SET public_key = excluded.public_key,
+             tailscale_ip = excluded.tailscale_ip, platform = excluded.platform,
+             etiket = excluded.etiket, eslesme_ms = excluded.eslesme_ms`,
+          k.device_id,
+          k.public_key,
+          k.tailscale_ip,
+          k.platform,
+          k.etiket,
+          k.eslesme_ms,
+        );
+      });
     },
     cihazGetir(device_id) {
       // Bütün kimlik denetimleri (gateway `hello`, `auth_response`, kimlik sonrası çerçeve ve yoklama)
-      // buradan okur: iptal süzgeci tek yerde.
+      // buradan okur: iptal süzgeci tek yerde. Ajanda dalgası: yalnız sohbet kapsamı (`cihazlar`).
       const r = bir(`SELECT * FROM cihazlar WHERE device_id = ? AND ${IPTAL_EDILMEMIS}`, device_id);
       return r === null ? null : cihazSatiri(r);
     },
     cihazlar() {
-      return hepsi(`SELECT * FROM cihazlar WHERE ${IPTAL_EDILMEMIS} ORDER BY eslesme_ms, rowid`).map(cihazSatiri);
+      return hepsi(`SELECT * FROM cihazlar WHERE ${IPTAL_EDILMEMIS} ORDER BY eslesme_ms, rowid`).map((r) => cihazSatiri(r));
+    },
+    kapsamliCihazGetir(device_id) {
+      const sohbet = depo.cihazGetir(device_id);
+      if (sohbet !== null) return sohbet;
+      const r = bir(`SELECT * FROM ajanda_cihazlari WHERE device_id = ? AND ${AJANDA_IPTAL_EDILMEMIS}`, device_id);
+      return r === null ? null : cihazSatiri(r, "ajanda");
     },
     eslesmeler() {
       return hepsi(
-        `SELECT device_id, platform, etiket, eslesme_ms, NULL AS iptal_ms, 0 AS grup FROM cihazlar
+        `SELECT device_id, platform, etiket, eslesme_ms, NULL AS iptal_ms, 0 AS ajanda, 0 AS grup FROM cihazlar
            WHERE ${IPTAL_EDILMEMIS}
          UNION ALL
-         SELECT device_id, platform, etiket, eslesme_ms, iptal_ms, 1 AS grup FROM cihaz_iptalleri
+         SELECT device_id, platform, etiket, eslesme_ms, NULL AS iptal_ms, 1 AS ajanda, 0 AS grup FROM ajanda_cihazlari
+           WHERE ${AJANDA_IPTAL_EDILMEMIS}
+         UNION ALL
+         SELECT device_id, platform, etiket, eslesme_ms, iptal_ms,
+           EXISTS (SELECT 1 FROM ajanda_cihaz_iptalleri a WHERE a.device_id = cihaz_iptalleri.device_id) AS ajanda,
+           1 AS grup FROM cihaz_iptalleri
          ORDER BY grup, eslesme_ms, device_id`,
       ).map((r) => ({
         device_id: String(r.device_id),
@@ -1199,6 +1386,7 @@ export const depoAc = (b: DepoBagimliliklari): CihazYonetimliDepo => {
         etiket: metinVeyaNull(r.etiket),
         eslesme_ms: sayi(r.eslesme_ms),
         iptal_ms: sayiVeyaNull(r.iptal_ms),
+        ...(Number(r.ajanda) !== 0 ? { kapsam: "ajanda" as const } : {}),
       }));
     },
     cihazKaldir(device_id) {
@@ -1207,9 +1395,15 @@ export const depoAc = (b: DepoBagimliliklari): CihazYonetimliDepo => {
         if (onceki !== null) {
           // Savunma: iki tabloda birden kalmış satır (elle ya da eski kodla yazılmış) burada da silinir.
           calistir("DELETE FROM cihazlar WHERE device_id = ?", device_id);
+          calistir("DELETE FROM ajanda_cihazlari WHERE device_id = ?", device_id);
           return { sonuc: "zaten_kaldirilmis", iptal_ms: sayi(onceki.iptal_ms) };
         }
-        const r = bir("SELECT platform, etiket, eslesme_ms FROM cihazlar WHERE device_id = ?", device_id);
+        let tablo = "cihazlar";
+        let r = bir("SELECT platform, etiket, eslesme_ms FROM cihazlar WHERE device_id = ?", device_id);
+        if (r === null) {
+          tablo = "ajanda_cihazlari";
+          r = bir("SELECT platform, etiket, eslesme_ms FROM ajanda_cihazlari WHERE device_id = ?", device_id);
+        }
         if (r === null) return { sonuc: "bulunamadi" };
         const iptal_ms = b.saat.simdiMs();
         calistir(
@@ -1220,29 +1414,49 @@ export const depoAc = (b: DepoBagimliliklari): CihazYonetimliDepo => {
           sayi(r.eslesme_ms),
           iptal_ms,
         );
+        if (tablo === "ajanda_cihazlari") calistir("INSERT INTO ajanda_cihaz_iptalleri (device_id) VALUES (?)", device_id);
         // `secure_delete` açık: açık anahtar ve IP dosyada da sıfırlanır.
-        calistir("DELETE FROM cihazlar WHERE device_id = ?", device_id);
+        calistir(`DELETE FROM ${tablo} WHERE device_id = ?`, device_id);
         return { sonuc: "kaldirildi", iptal_ms };
       });
     },
 
+    // Ajanda dalgası: tek pencere, kapsam ayrı tabloda (`ajanda_eslestirme`; eski kod görmez).
     eslestirmeYaz(k) {
-      calistir(
-        "INSERT OR REPLACE INTO eslestirme (id, kod_ozeti, son_ms, yanlis_deneme) VALUES (1, ?, ?, ?)",
-        k.kod_ozeti,
-        k.son_ms,
-        k.yanlis_deneme,
-      );
+      const ajanda = k.kapsam === "ajanda";
+      islem(() => {
+        calistir(`DELETE FROM ${ajanda ? "eslestirme" : "ajanda_eslestirme"} WHERE id = 1`);
+        calistir(
+          `INSERT OR REPLACE INTO ${ajanda ? "ajanda_eslestirme" : "eslestirme"} (id, kod_ozeti, son_ms, yanlis_deneme)
+           VALUES (1, ?, ?, ?)`,
+          k.kod_ozeti,
+          k.son_ms,
+          k.yanlis_deneme,
+        );
+      });
     },
     eslestirmeOku() {
-      const r = bir("SELECT kod_ozeti, son_ms, yanlis_deneme FROM eslestirme WHERE id = 1");
-      return r === null ? null : { kod_ozeti: String(r.kod_ozeti), son_ms: sayi(r.son_ms), yanlis_deneme: sayi(r.yanlis_deneme) };
+      const s = bir("SELECT kod_ozeti, son_ms, yanlis_deneme FROM eslestirme WHERE id = 1");
+      const a = bir("SELECT kod_ozeti, son_ms, yanlis_deneme FROM ajanda_eslestirme WHERE id = 1");
+      // İkisi birden ancak karışık sürümle (geri alınmış eski kodun yazdığı sohbet penceresi) olur: son
+      // süresi geç olan (sonra açılan) kazanır, eşitlikte sohbet.
+      const ajanda = a !== null && (s === null || sayi(a.son_ms) > sayi(s.son_ms));
+      const r = ajanda ? a : s;
+      if (r === null) return null;
+      return {
+        kod_ozeti: String(r.kod_ozeti),
+        son_ms: sayi(r.son_ms),
+        yanlis_deneme: sayi(r.yanlis_deneme),
+        ...(ajanda ? { kapsam: "ajanda" as const } : {}),
+      };
     },
     eslestirmeYanlisSay() {
       calistir("UPDATE eslestirme SET yanlis_deneme = yanlis_deneme + 1 WHERE id = 1");
+      calistir("UPDATE ajanda_eslestirme SET yanlis_deneme = yanlis_deneme + 1 WHERE id = 1");
     },
     eslestirmeSil() {
       calistir("DELETE FROM eslestirme WHERE id = 1");
+      calistir("DELETE FROM ajanda_eslestirme WHERE id = 1");
     },
 
     jetonEkle(k: JetonKaydi) {
@@ -1554,6 +1768,184 @@ export const depoAc = (b: DepoBagimliliklari): CihazYonetimliDepo => {
       };
       if (silinmisSatirlar.length > 0) ozet.silinmis_sohbetler = tuketimIkilisi(silinmisSatirlar);
       return ozet;
+    },
+
+    // --- Ajanda (ek göç 6). Tek yazar `ajanda.ts`; kayıt metni günlüğe yazılmaz. "Geçmişi sil" dokunmaz. ---
+
+    ajandaDepoKimligi(yeni) {
+      return islem(() => {
+        const r = bir("SELECT deger FROM ajanda_meta WHERE anahtar = ?", AJANDA_DEPO_ANAHTARI);
+        if (r !== null) return String(r.deger);
+        const depo_id = DepoId.parse(yeni());
+        calistir("INSERT INTO ajanda_meta (anahtar, deger) VALUES (?, ?)", AJANDA_DEPO_ANAHTARI, depo_id);
+        return depo_id;
+      });
+    },
+    ajandaDepoKimligiYenile(depo_id) {
+      const gecerli = DepoId.parse(depo_id);
+      calistir(
+        "INSERT INTO ajanda_meta (anahtar, deger) VALUES (?, ?) ON CONFLICT (anahtar) DO UPDATE SET deger = excluded.deger",
+        AJANDA_DEPO_ANAHTARI,
+        gecerli,
+      );
+    },
+    ajandaBasRev() {
+      return sayi((bir("SELECT COALESCE(MAX(rev), 0) AS r FROM ajanda_gecmisi") as Satir).r);
+    },
+    ajandaKaydiGetir(kayit_id) {
+      const r = bir("SELECT veri FROM ajanda_kayitlari WHERE kayit_id = ?", kayit_id);
+      return r === null ? null : ajandaKaydiSatiri(r);
+    },
+    ajandaKayitSayisi() {
+      return sayi((bir("SELECT COUNT(*) AS n FROM ajanda_kayitlari") as Satir).n);
+    },
+    ajandaTekilEsler(tekil_anahtar) {
+      return hepsi(
+        "SELECT veri FROM ajanda_kayitlari WHERE tekil_anahtar = ? ORDER BY olusturma_rev",
+        tekil_anahtar,
+      ).map(ajandaKaydiSatiri);
+    },
+    ajandaKayitlari(suzgec: AjandaKayitSuzgeci = {}) {
+      const kosullar: string[] = [];
+      const degerler: SQLInputValue[] = [];
+      if (suzgec.silinmislerDahil !== true) kosullar.push("silindi = 0");
+      const liste = (sutun: string, l: readonly string[] | undefined): void => {
+        if (l === undefined) return;
+        if (l.length === 0) {
+          kosullar.push("0");
+          return;
+        }
+        kosullar.push(`${sutun} IN (${l.map(() => "?").join(", ")})`);
+        degerler.push(...l);
+      };
+      liste("durum", suzgec.durumlar);
+      liste("tur", suzgec.turler);
+      const nerede = kosullar.length === 0 ? "" : `WHERE ${kosullar.join(" AND ")} `;
+      return hepsi(`SELECT veri FROM ajanda_kayitlari ${nerede}ORDER BY olusturma_rev`, ...degerler).map(ajandaKaydiSatiri);
+    },
+    ajandaRevAraligi({ sonRev, ustRev, adet }) {
+      return hepsi(
+        "SELECT veri FROM ajanda_kayitlari WHERE revizyon > ? AND revizyon <= ? ORDER BY revizyon LIMIT ?",
+        sonRev,
+        ustRev,
+        Math.max(0, Math.trunc(adet)),
+      ).map(ajandaKaydiSatiri);
+    },
+    ajandaDegisiklikYaz(g: AjandaDegisiklikYazimi): AjandaKaydi {
+      const { kayit_id } = g.kayit;
+      const ekle = g.girdi.islem === "ekle";
+      // Önce denetim, sonra yazım: revizyon ve zaman yer tutucuyla şemadan geçer (kurallar ikisine bağlı
+      // değil, `guncelleme_ms >= olusturma_ms` dışında: o da gerçek `ts_ms` ile denetlenir).
+      const ornekKayit = AjandaKaydi.parse({ ...g.kayit, revizyon: 1, guncelleme_ms: g.ts_ms });
+      const ornekGirdi = AjandaGecmisGirdisi.parse({ ...g.girdi, rev: 1, ts_ms: g.ts_ms });
+      const { rev: _r, ts_ms: _t, ...girdiGovdesi } = ornekGirdi;
+      return islem(() =>
+        kayitNoktasinda("ajanda_degisiklik", () => {
+          const simdiki = depo.ajandaKaydiGetir(kayit_id);
+          if (ekle && simdiki !== null) throw new Error("depo: ajanda kaydı zaten var");
+          if (!ekle && simdiki === null) throw new Error("depo: ajanda kaydı yok");
+          if (simdiki !== null) {
+            // Kaynak izi ve doğuş anı kayıt doğarken yazılır, sonra değişmez.
+            if (kanonikJson(simdiki.kaynak) !== kanonikJson(ornekKayit.kaynak)) {
+              throw new Error("depo: ajanda kaydının kaynağı değiştirilemez");
+            }
+            if (simdiki.olusturma_ms !== ornekKayit.olusturma_ms) {
+              throw new Error("depo: ajanda kaydının oluşturma anı değiştirilemez");
+            }
+          }
+          const rev = calistir(
+            "INSERT INTO ajanda_gecmisi (kayit_id, ts_ms, veri) VALUES (?, ?, ?)",
+            kayit_id,
+            g.ts_ms,
+            JSON.stringify(girdiGovdesi),
+          ).kimlik;
+          if (simdiki !== null && !(rev > simdiki.revizyon)) throw new Error("depo: ajanda revizyonu geriledi");
+          const kayit: AjandaKaydi = { ...ornekKayit, revizyon: rev, guncelleme_ms: g.ts_ms };
+          // `olusturma_rev` (oluşturma sırası) yalnız ilk yazımda girer; güncellemede değişmez.
+          calistir(
+            `INSERT INTO ajanda_kayitlari (kayit_id, revizyon, olusturma_rev, tekil_anahtar, tur, durum, silindi, veri)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT (kayit_id) DO UPDATE SET revizyon = excluded.revizyon, tur = excluded.tur,
+               durum = excluded.durum, silindi = excluded.silindi, veri = excluded.veri`,
+            kayit_id,
+            rev,
+            rev,
+            kayit.kaynak.tekil_anahtar ?? null,
+            kayit.tur,
+            kayit.durum,
+            kayit.silindi ? 1 : 0,
+            JSON.stringify(kayit),
+          );
+          bekleyenAjanda.push(kayit);
+          return kayit;
+        }),
+      );
+    },
+    ajandaGecmisi({ kayit_id, once_rev, adet }) {
+      const sinir = Math.max(0, Math.trunc(adet));
+      const satirlar =
+        once_rev === undefined
+          ? hepsi("SELECT rev, ts_ms, veri FROM ajanda_gecmisi WHERE kayit_id = ? ORDER BY rev DESC LIMIT ?", kayit_id, sinir)
+          : hepsi(
+              "SELECT rev, ts_ms, veri FROM ajanda_gecmisi WHERE kayit_id = ? AND rev < ? ORDER BY rev DESC LIMIT ?",
+              kayit_id,
+              once_rev,
+              sinir,
+            );
+      return satirlar.map(gecmisGirdisiSatiri);
+    },
+    ajandaGecmisSatiri(rev) {
+      const r = bir("SELECT kayit_id, ts_ms FROM ajanda_gecmisi WHERE rev = ?", rev);
+      return r === null ? null : { kayit_id: String(r.kayit_id), ts_ms: sayi(r.ts_ms) };
+    },
+    ajandaIslemSonucuBul(device_id, islem_id) {
+      const r = bir("SELECT sonuc FROM ajanda_islemleri WHERE device_id = ? AND islem_id = ?", device_id, islem_id);
+      return r === null ? null : (JSON.parse(String(r.sonuc)) as AjandaIslemSonucuGovdesi);
+    },
+    ajandaIslemSonucuYaz(device_id, islem_id, sonuc, ts_ms) {
+      // Şemadan geçmeyen ya da geçici sonuç kalıcı olamaz: aynı kimliğe hep aynı (yanlış) cevap dönerdi.
+      const { v: _v, type: _ty, islem_id: _i, ...govde } = AjandaIslemSonucu.parse({
+        ...sonuc,
+        v: AJANDA_SURUMU,
+        type: "islem_sonucu",
+        islem_id,
+      });
+      if (!govde.ok && govde.code !== undefined && ajandaRetGeciciMi(govde.code)) {
+        throw new Error("depo: geçici ajanda reddi tekrarsızlık kaydına yazılmaz");
+      }
+      calistir(
+        "INSERT OR IGNORE INTO ajanda_islemleri (device_id, islem_id, sonuc, ts_ms) VALUES (?, ?, ?, ?)",
+        OpakId.parse(device_id),
+        islem_id,
+        JSON.stringify(govde),
+        ts_ms,
+      );
+    },
+
+    ajandaJetonEkle(k: AjandaJetonKaydi) {
+      calistir(
+        "INSERT OR REPLACE INTO ajanda_jetonlari (ozet, rol, sohbet_id, nesil) VALUES (?, ?, ?, ?)",
+        k.ozet,
+        k.kapsam.rol,
+        k.kapsam.sohbet_id,
+        k.kapsam.nesil,
+      );
+    },
+    ajandaJetonBul(ozet) {
+      const r = bir("SELECT ozet, rol, sohbet_id, nesil FROM ajanda_jetonlari WHERE ozet = ?", ozet);
+      if (r === null || r.rol !== AJANDA_JETON_ROLU) return null;
+      return { ozet: String(r.ozet), kapsam: { rol: AJANDA_JETON_ROLU, sohbet_id: String(r.sohbet_id), nesil: sayi(r.nesil) } };
+    },
+    ajandaJetonlariSil(kapsam: AjandaJetonKapsami) {
+      calistir(
+        "DELETE FROM ajanda_jetonlari WHERE rol = ? AND sohbet_id = ? AND nesil = ?",
+        kapsam.rol,
+        kapsam.sohbet_id,
+        kapsam.nesil,
+      );
+    },
+    ajandaJetonlariniSil() {
+      return calistir("DELETE FROM ajanda_jetonlari").changes;
     },
   };
   return depo;

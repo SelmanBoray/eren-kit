@@ -121,15 +121,15 @@ const isEkle = (d: Depo, plan_id: string): number => {
 };
 
 describe("depo tüketim: şema", () => {
-  it("boş dosyada tuketim tablosu ve ek_surum 5; yeniden açılışta göç yinelenmez", () => {
+  it("boş dosyada tuketim tablosu ve ek_surum 6; yeniden açılışta göç yinelenmez", () => {
     const yol = yeniYol();
     const a = kur(yol);
-    assert.equal(a.semaBilgisi().ek_surum, 5);
+    assert.equal(a.semaBilgisi().ek_surum, 6);
     a.tuketimEkle([sohbetKaydi(GUN)]);
     a.kapat();
     assert.equal(tabloVar(yol, "tuketim"), true);
     const b = kur(yol);
-    assert.equal(b.semaBilgisi().ek_surum, 5);
+    assert.equal(b.semaBilgisi().ek_surum, 6);
     assert.equal(say(yol, "sema_ek"), 1);
     assert.equal(say(yol, "tuketim"), 1, "ikinci açılış tabloyu sıfırlamaz");
     assert.equal(ozet(b).bugun.sohbet.sonuc_adet, 1);
@@ -141,7 +141,7 @@ describe("depo tüketim: şema", () => {
     assert.equal(ozet(d).bugun.sohbet.sonuc_adet, 1);
   });
 
-  it("ek sürüm 3'ten göç edilen dosyada tablo var, eski satırlar durur, ek_surum 5, ikinci açılışta yeniden çalışmaz", () => {
+  it("ek sürüm 3'ten göç edilen dosyada tablo var, eski satırlar durur, ek_surum 6, ikinci açılışta yeniden çalışmaz", () => {
     const yol = yeniYol();
     const a = kur(yol);
     planEkle(a, "p1");
@@ -153,12 +153,12 @@ describe("depo tüketim: şema", () => {
     assert.equal(tabloVar(yol, "tuketim"), false);
     const b = kur(yol);
     assert.equal(tabloVar(yol, "tuketim"), true);
-    assert.equal(b.semaBilgisi().ek_surum, 5);
+    assert.equal(b.semaBilgisi().ek_surum, 6);
     assert.notEqual(b.planGetir("p1"), null, "eski veri korunur");
     b.tuketimEkle([sohbetKaydi(GUN)]);
     b.kapat();
     const c = kur(yol);
-    assert.equal(c.semaBilgisi().ek_surum, 5);
+    assert.equal(c.semaBilgisi().ek_surum, 6);
     assert.equal(say(yol, "tuketim"), 1, "göç yinelenmedi, satır durur");
     assert.equal(say(yol, "sema_ek"), 1);
   });
