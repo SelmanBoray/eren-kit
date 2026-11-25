@@ -107,6 +107,13 @@ impl Depo {
         Ok(())
     }
 
+    /// Teslim işaretini kaldırır (R4: kaçırılan özeti Android'de gösterilemedi; satır yeniden "kurulu,
+    /// teslim edilmemiş" olur, sonraki senkron ya da yeniden kurulum pencere içindeyse yeniden gösterir).
+    pub fn alarm_teslimi_geri_al(&self, alarm_no: i64) -> Result<(), CekirdekHatasi> {
+        self.baglanti.execute("UPDATE kurulu_alarmlar SET teslim_ms = NULL WHERE alarm_no = ?1", [alarm_no])?;
+        Ok(())
+    }
+
     pub fn alarm_sil(&self, alarm_no: i64) -> Result<(), CekirdekHatasi> {
         self.baglanti.execute("DELETE FROM kurulu_alarmlar WHERE alarm_no = ?1", [alarm_no])?;
         Ok(())

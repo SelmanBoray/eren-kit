@@ -81,6 +81,14 @@ pub fn govdeyi_hazirla(govde: KayitGovdesi) -> Result<KayitGovdesi, CekirdekHata
     kural(|| crate::kural::metin::govdeyi_hazirla(govde))?.map_err(CekirdekHatasi::from)
 }
 
+/// Kabuğun başaramadığı etkiler: kurulamayan alarmlar (`alarm_no`, neden) ve gösterilemeyen kaçırılan özetinin
+/// alarm numaraları.
+#[derive(Default)]
+struct BasarisizEtkiler {
+    kurulamayan: Vec<(i64, String)>,
+    gosterilemeyen: Vec<i64>,
+}
+
 /// Süreç başına bir tane açılır (Kotlin `CekirdekErisimi`). İş parçacığı güvenlidir.
 #[derive(uniffi::Object)]
 pub struct Cekirdek {
@@ -94,6 +102,9 @@ pub struct Cekirdek {
     nesil: AtomicU64,
     gozlemciler: Mutex<Vec<(u64, Arc<dyn Gozlemci>)>>,
     gozlemci_sayaci: AtomicU64,
+    /// Arayüz sorgularının (`liste`, `kayit`, `ret_listesi`) ayrı okuma bağlantısı: motor kilidini almaz,
+    /// uzun bir telafi yazması sürerken son kalıcı hali okur (WAL). Bellek içi veritabanında yok (motor okur).
+    okuyucu: Option<Mutex<crate::depo::Depo>>,
 }
 
 impl Cekirdek {
@@ -107,9 +118,9 @@ impl Cekirdek {
             let tasima = kilitle(&self.tasima).clone();
             (sonuc, tasima, kilitle(&self.etki))
         };
-        let kurulamayan = self.etkileri_uygula(etkiler, tasima.map(|(_, t)| t));
+        let basarisiz = self.etkileri_uygula(etkiler, tasima.map(|(_, t)| t));
         drop(etki_kilidi);
-        self.kurulamayanlari_bildir(kurulamayan);
+        self.basarisizlari_bildir(basarisiz);
         match sonuc {
             Ok(s) => s,
             Err(yuk) => match yuk.downcast_ref::<Yazilmadi>() {
@@ -119,15 +130,19 @@ impl Cekirdek {
         }
     }
 
-    /// Kurulamayan alarmları motora bildirir (genel olmayan işlev: `calistir`'in örneklenmesi sonlu kalsın).
-    fn kurulamayanlari_bildir(&self, kurulamayan: Vec<(i64, String)>) {
-        for (alarm_no, neden) in kurulamayan {
+    /// Kurulamayan alarmları ve gösterilemeyen kaçırılan özetini motora bildirir (genel olmayan işlev:
+    /// `calistir`'in örneklenmesi sonlu kalsın). Bu çağrıların etkisi yoktur (yalnız satır düzeltir).
+    fn basarisizlari_bildir(&self, b: BasarisizEtkiler) {
+        for (alarm_no, neden) in b.kurulamayan {
             let _ = self.calistir(|m, _, _| m.alarm_kurulamadi(alarm_no, &neden));
+        }
+        if !b.gosterilemeyen.is_empty() {
+            let _ = self.calistir(|m, _, _| m.kacirilan_gosterilemedi(&b.gosterilemeyen));
         }
     }
 
-    /// Döner: kurulamayan alarmlar (motor kilidi yeniden alınarak bildirilir).
-    fn etkileri_uygula(&self, e: Etkiler, tasima: Option<Arc<dyn Tasima>>) -> Vec<(i64, String)> {
+    /// Döner: kabuğun başaramadığı etkiler (motor kilidi yeniden alınarak bildirilir).
+    fn etkileri_uygula(&self, e: Etkiler, tasima: Option<Arc<dyn Tasima>>) -> BasarisizEtkiler {
         if let Some(t) = &tasima {
             for metin in e.gonderilecek {
                 if !t.gonder(metin) {
@@ -148,8 +163,13 @@ impl Cekirdek {
                 kurulamayan.push((no, h.to_string()));
             }
         }
+        let mut gosterilemeyen = Vec::new();
         if let Some(k) = e.kacirilan {
-            let _ = self.alarm.kacirilanlari_goster(k);
+            let nolar: Vec<i64> = k.satirlar.iter().map(|s| s.alarm_no).collect();
+            // Motor bu satırları teslim edildi işaretledi; gösterilemezse işaret kaldırılır (bilgi kaybolmasın).
+            if self.alarm.kacirilanlari_goster(k).is_err() {
+                gosterilemeyen = nolar;
+            }
         }
         if !e.degisim.bos_mu() {
             let gozlemciler: Vec<_> = kilitle(&self.gozlemciler).iter().map(|(_, g)| g.clone()).collect();
@@ -157,11 +177,19 @@ impl Cekirdek {
                 g.degisti(e.degisim.clone());
             }
         }
-        kurulamayan
+        BasarisizEtkiler { kurulamayan, gosterilemeyen }
     }
 
     fn guncel_nesil(&self) -> Option<u64> {
         kilitle(&self.tasima).as_ref().map(|(n, _)| *n)
+    }
+
+    /// Salt okuma sorgusu: okuma bağlantısında (yoksa motor kilidi altında). Etkisi yoktur.
+    fn oku<T>(&self, f: impl FnOnce(&crate::depo::Depo) -> Result<T, CekirdekHatasi>) -> Result<T, CekirdekHatasi> {
+        match &self.okuyucu {
+            Some(o) => f(&kilitle(o)),
+            None => f(&kilitle(&self.motor).depo),
+        }
     }
 }
 
@@ -175,8 +203,11 @@ impl Cekirdek {
         zaman: Arc<dyn ZamanKabugu>,
         alarm: Arc<dyn AlarmKabugu>,
     ) -> Result<Arc<Self>, CekirdekHatasi> {
+        let motor = Motor::ac(&veritabani_yolu)?;
+        let okuyucu = crate::depo::Depo::okuyucu_ac(&veritabani_yolu)?.map(Mutex::new);
         Ok(Arc::new(Cekirdek {
-            motor: Mutex::new(Motor::ac(&veritabani_yolu)?),
+            motor: Mutex::new(motor),
+            okuyucu,
             etki: Mutex::new(()),
             kimlik,
             zaman,
@@ -274,15 +305,15 @@ impl Cekirdek {
     // Sorgular (K4)
 
     pub fn liste(&self, sorgu: ListeSorgusu) -> Result<Vec<KayitGorunumu>, CekirdekHatasi> {
-        self.calistir(|m, _, _| m.liste(&sorgu))
+        self.oku(|d| crate::motor::sorgu::liste(d, &sorgu))
     }
 
     pub fn kayit(&self, kayit_id: String) -> Result<Option<KayitGorunumu>, CekirdekHatasi> {
-        self.calistir(|m, _, _| m.kayit(&kayit_id))
+        self.oku(|d| crate::motor::sorgu::kayit(d, &kayit_id))
     }
 
     pub fn ret_listesi(&self) -> Result<Vec<RetGirdisi>, CekirdekHatasi> {
-        self.calistir(|m, _, _| m.ret_listesi())
+        self.oku(crate::motor::sorgu::ret_listesi)
     }
 
     pub fn gecmis_iste(&self, kayit_id: String, once_rev: Option<i64>) -> Result<(), CekirdekHatasi> {
@@ -328,7 +359,7 @@ impl Cekirdek {
     // Alarmlar (K3)
 
     pub fn alarmlari_yeniden_kur(&self, neden: YenidenKurmaNedeni) -> Result<(), CekirdekHatasi> {
-        self.calistir(|m, o, e| m.alarmlari_yeniden_kur(o, e, neden))
+        self.calistir(|m, o, e| m.alarm_isleminde(o, e, |m, o, e| m.alarmlari_yeniden_kur(o, e, neden)))
     }
 
     /// Alarm alıcısı çağırır. `None`: gösterme (kayıt değişti ya da silindi).

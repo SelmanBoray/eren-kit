@@ -136,7 +136,7 @@ mod testler {
     use crate::kopru::Cekirdek;
     use std::sync::Arc;
 
-    /// Köprü kabuğu Rust'tan da sürülebilir; ikinci dalga parçaları `Yazilmadi` döner.
+    /// Köprü kabuğu Rust'tan da sürülebilir. Eşleşme yokken bağlantı açılamaz, hiçbir şey yollanmaz.
     #[test]
     fn cekirdek_sahtelerle_acilir() {
         let c = Cekirdek::ac(
@@ -146,9 +146,9 @@ mod testler {
             Arc::new(SahteAlarm::default()),
         )
         .unwrap();
-        assert_eq!(c.sema_surumu().unwrap(), 2);
+        assert_eq!(c.sema_surumu().unwrap(), 3);
         let t = Arc::new(SahteTasima::default());
-        assert!(matches!(c.baglanti_acildi(t.clone()), Err(crate::CekirdekHatasi::Yazilmadi { .. })));
+        assert!(matches!(c.baglanti_acildi(t.clone()), Err(crate::CekirdekHatasi::Eslesme { .. })));
         assert!(t.giden.lock().unwrap().is_empty());
         assert_eq!(crate::kopru::metni_temizle("a\u{200b}".into()).unwrap(), "a");
     }

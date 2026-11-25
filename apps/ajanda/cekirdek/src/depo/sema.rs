@@ -3,6 +3,9 @@
 //! şef sırasıyla, 2. göç yerinde düzeltilebilir: `MIMARI.md` "Ortak dosyalar".)
 //!
 //! `kurulu_alarmlar` tablosunu R3 (`depo/alarmlar.rs`) kullanır; sütun değişikliği R3 ile birlikte.
+//!
+//! Not: 2. göç ilk dalganın debug APK'larıyla cihazlara gitmiş olabileceği için yerinde değiştirilmedi;
+//! R4'ün eklediği sütunlar 3. göçtedir.
 
 pub const GOCLER: &[&str] = &[
     // 1: iskelet tablosu (köprü kanıtı). Yayımlanmış iskelet APK'sı açabilsin diye durur, 2. göç siler.
@@ -85,4 +88,13 @@ pub const GOCLER: &[&str] = &[
         teslim_ms    INTEGER,
         UNIQUE (kayit_id, tetik_ms)
     );",
+    // 3: eşitleme motoru (R4).
+    // `kuyruk.bekledigi_rev`: servis işlemi kabul etti (`islem_sonucu.ok`, `rev`) ama o revizyonun `kayit`
+    // çerçevesi henüz gelmedi; satır yollanmaz, iyimser hal görünmeye devam eder (sıra garanti değil:
+    // sonuç kayıttan önce gelirse görünen kopya bir an eski hale dönmesin). Sunucu kopyası o revizyona
+    // ulaşınca ya da telafi bitince silinir. `ret_listesi.govde_json`: düzeltme formunun gövdesi;
+    // `ret_listesi.sira`: işlemin kuyruktaki sırası (aynı anda reddedilenlerin sırası).
+    "ALTER TABLE kuyruk ADD COLUMN bekledigi_rev INTEGER;
+    ALTER TABLE ret_listesi ADD COLUMN govde_json TEXT;
+    ALTER TABLE ret_listesi ADD COLUMN sira INTEGER NOT NULL DEFAULT 0;",
 ];

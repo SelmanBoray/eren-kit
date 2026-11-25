@@ -1,21 +1,60 @@
-//! SAHİBİ: R4. Yerel SQLite deposu (tek bağlantı, WAL). Köprüden habersizdir; model tipleri konuşur.
+//! SAHİBİ: R4. Yerel SQLite deposu (tek yazar bağlantı, WAL). Köprüden habersizdir; model tipleri konuşur.
 //! Alt dosyalar `impl Depo` bloklarıdır, her biri bir tabloya bakar:
 //! - `gorunen.rs` (R4): görünen kopya (arayüz ve alarmlar yalnız bunu okur). Okuma imzaları sabittir.
+//! - `kopya.rs` (R4): sunucu kopyası, süren tam telafinin toplananları, `depo_id`/`son_rev`, `hello` alanları.
+//! - `kuyruk.rs` (R4): kalıcı işlem kuyruğu ve kullanıcının ret listesi.
 //! - `alarmlar.rs` (R3): kurulu alarmlar.
 //!
-//! R4 sunucu kopyası, telafi, kuyruk, ret listesi ve meta için yeni dosyalar ekleyebilir (bu dosya R4'ün).
+//! Yazma kuralı: motor birden çok tabloya dokunan her değişikliği `yazma` ile tek SQLite işleminde yapar
+//! (hata ya da panikte hiçbiri kalmaz); etkiler (`motor::Etkiler`) ancak işlem kalıcı olduktan sonra
+//! yazılır. R3'ün alarm yazmaları savepoint'tir ve motor onları kendi işlemi bittikten SONRA çağırır.
 
 mod alarmlar;
 mod gorunen;
+mod kopya;
+mod kuyruk;
 mod sema;
 
 pub use alarmlar::KuruluAlarm;
 pub use gorunen::{GorunenKayit, GorunenSuzgec};
+pub use kopya::KopyaTablosu;
+pub use kuyruk::{KuyrukSatiri, RetSatiri};
 
+use crate::hata::CekirdekHatasi;
 use rusqlite::Connection;
+
+/// `meta` anahtarları (tekil değerler).
+pub mod anahtar {
+    /// Sunucu kopyasının depo kimliği (`welcome.depo_id`).
+    pub const DEPO_ID: &str = "depo_id";
+    /// Sunucu kopyasının ulaştığı en büyük revizyon (`hello.son_rev`).
+    pub const SON_REV: &str = "son_rev";
+    /// Son `esitlendi`'nin yerel zamanı (ms).
+    pub const SON_ESITLENME_MS: &str = "son_esitlenme_ms";
+    /// Bitmiş eşleşme (JSON: `device_id`, `host`, `port`, `server_public_key`).
+    pub const ESLESME: &str = "eslesme";
+    /// Okunmuş, sonucu bekleyen eşleştirme QR'ı (JSON, `AjandaEslestirmeQr`).
+    pub const ESLESTIRME_QR: &str = "eslestirme_qr";
+    /// Son eşleştirmenin reddi (`pair_result.code`).
+    pub const ESLESME_REDDI: &str = "eslesme_reddi";
+}
 
 pub struct Depo {
     baglanti: Connection,
+}
+
+/// Açık yazma işlemi; bırakılmadan düşerse (hata ya da panik) geri alınır.
+struct YazmaIslemi<'a> {
+    depo: &'a Depo,
+    bitti: bool,
+}
+
+impl Drop for YazmaIslemi<'_> {
+    fn drop(&mut self) {
+        if !self.bitti {
+            let _ = self.depo.baglanti.execute_batch("ROLLBACK");
+        }
+    }
 }
 
 impl Depo {
@@ -25,9 +64,24 @@ impl Depo {
         // WAL: arayüz okurken alarm alıcısı yazabilsin. Bellek içi veritabanında "memory" döner.
         let _mod: String = baglanti.query_row("PRAGMA journal_mode=WAL", [], |s| s.get(0))?;
         baglanti.pragma_update(None, "foreign_keys", true)?;
+        // Aynı dosyaya ikinci bağlantı (okuyucu, test) varken kısa kilit çakışması hata olmasın.
+        baglanti.busy_timeout(std::time::Duration::from_secs(5))?;
         let mut depo = Depo { baglanti };
         depo.goc_et()?;
         Ok(depo)
+    }
+
+    /// Aynı dosyaya ikinci (yalnız okuyan) bağlantı: arayüz sorguları yazma sürerken son kalıcı hali okur
+    /// (WAL). Göç yapmaz; yazan bağlantı (`ac`) önce açılmış olmalıdır. Bellek içi veritabanında anlamsızdır
+    /// (ikinci bağlantı başka bir veritabanı olur): `None`.
+    pub fn okuyucu_ac(yol: &str) -> rusqlite::Result<Option<Self>> {
+        if yol.is_empty() || yol == ":memory:" || yol.starts_with("file::memory:") {
+            return Ok(None);
+        }
+        let baglanti = Connection::open(yol)?;
+        baglanti.busy_timeout(std::time::Duration::from_secs(5))?;
+        baglanti.pragma_update(None, "query_only", true)?;
+        Ok(Some(Depo { baglanti }))
     }
 
     fn goc_et(&mut self) -> rusqlite::Result<()> {
@@ -55,6 +109,40 @@ impl Depo {
         Ok(sonuc)
     }
 
+    /// `f`'in bütün yazmalarını tek işlemde yapar (`BEGIN IMMEDIATE` .. `COMMIT`); `f` hata dönerse ya da
+    /// paniklerse hiçbiri kalmaz. `f` `Depo` yöntemlerini çağırabilir; iç içe `yazma` açılmaz (SQLite
+    /// iç içe `BEGIN`'i reddeder). Döndüğünde değişiklik kalıcıdır.
+    pub fn yazma<T>(&self, f: impl FnOnce(&Depo) -> Result<T, CekirdekHatasi>) -> Result<T, CekirdekHatasi> {
+        self.islem_baslat()?;
+        let mut islem = YazmaIslemi { depo: self, bitti: false };
+        let sonuc = f(self)?;
+        self.baglanti.execute_batch("COMMIT")?;
+        islem.bitti = true;
+        Ok(sonuc)
+    }
+
+    /// Elle işlem başlatır (`BEGIN IMMEDIATE`). Yalnız `&Depo` dışında bir şeye (motorun kendisine)
+    /// ihtiyaç duyan yazma dizileri için: çağıran `islem_bitir` ya da `islem_geri_al`'ı paniğe karşı da
+    /// garanti etmelidir. Önceki bir panikten açık kalmış işlem varsa önce geri alınır.
+    pub fn islem_baslat(&self) -> Result<(), CekirdekHatasi> {
+        if !self.baglanti.is_autocommit() {
+            self.baglanti.execute_batch("ROLLBACK")?;
+        }
+        self.baglanti.execute_batch("BEGIN IMMEDIATE")?;
+        Ok(())
+    }
+
+    pub fn islem_bitir(&self) -> Result<(), CekirdekHatasi> {
+        self.baglanti.execute_batch("COMMIT")?;
+        Ok(())
+    }
+
+    pub fn islem_geri_al(&self) {
+        if !self.baglanti.is_autocommit() {
+            let _ = self.baglanti.execute_batch("ROLLBACK");
+        }
+    }
+
     /// Tekil değer okur (`meta`).
     pub fn meta_oku(&self, anahtar: &str) -> rusqlite::Result<Option<String>> {
         use rusqlite::OptionalExtension;
@@ -70,6 +158,16 @@ impl Depo {
             )?,
             None => self.baglanti.execute("DELETE FROM meta WHERE anahtar = ?1", [anahtar])?,
         };
+        Ok(())
+    }
+
+    /// Eşleşme kaldırılınca: eşleşmeye bağlı her şey (meta, sunucu kopyası, telafi, kuyruk, ret listesi,
+    /// görünen kopya). Kurulu alarmlara dokunmaz: onları R3 `tum_alarmlari_kaldir` iptal edip siler.
+    pub fn eslesmeye_bagli_her_seyi_sil(&self) -> Result<(), CekirdekHatasi> {
+        self.baglanti.execute_batch(
+            "DELETE FROM meta; DELETE FROM sunucu_kayitlari; DELETE FROM telafi_kayitlari;
+             DELETE FROM kuyruk; DELETE FROM ret_listesi; DELETE FROM gorunen;",
+        )?;
         Ok(())
     }
 }
@@ -100,5 +198,26 @@ mod testler {
         for ek in ["", "-wal", "-shm"] {
             let _ = std::fs::remove_file(format!("{yol_str}{ek}"));
         }
+    }
+
+    #[test]
+    fn yazma_hatada_ve_panikte_geri_alinir() {
+        let d = Depo::ac(":memory:").unwrap();
+        let r: Result<(), CekirdekHatasi> = d.yazma(|d| {
+            d.meta_yaz("a", Some("1"))?;
+            Err(CekirdekHatasi::GecersizDurum { mesaj: "deneme".into() })
+        });
+        assert!(r.is_err());
+        assert_eq!(d.meta_oku("a").unwrap(), None);
+        let p = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = d.yazma(|d| -> Result<(), CekirdekHatasi> {
+                d.meta_yaz("a", Some("1"))?;
+                panic!("deneme");
+            });
+        }));
+        assert!(p.is_err());
+        assert_eq!(d.meta_oku("a").unwrap(), None);
+        d.yazma(|d| Ok(d.meta_yaz("a", Some("2"))?)).unwrap();
+        assert_eq!(d.meta_oku("a").unwrap().as_deref(), Some("2"));
     }
 }

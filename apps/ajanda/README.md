@@ -4,10 +4,10 @@ Yalnız Android. İş mantığı Rust'ta (`cekirdek/`), ekranlar ve Android API'
 (`android/`). Köprü: [UniFFI](https://mozilla.github.io/uniffi-rs/) 0.32 (proc-macro, Kotlin+JNA).
 Sözleşme: `apps/phone/docs/AJANDA.md`. **Mimari, iş bölümü ve ikinci dalganın iş parçaları: [MIMARI.md](MIMARI.md).**
 
-Durum (ilk dalga): veri modeli, JSON çözme/kodlama ve şema doğrulaması yazıldı; `ajanda-mesaj.json`'ın
-173 vektörünün tamamı Rust'ta TypeScript ile aynı sonucu veriyor. Köprü yüzeyi, geri çağrı arayüzleri,
-depo şeması ve modül sınırları hazır; kurallar, eşitleme motoru, alarm planı ve Kotlin parçaları
-`Yazilmadi` döner (MIMARI.md "İkinci dalga").
+Durum: Rust çekirdeği tam (ikinci dalga R1-R4): veri modeli ve şema, saf kurallar (vektörlerin tamamı
+geçiyor), hatırlatma planı ve alarm kayıtları, yerel depo ve eşitleme motoru (kanal durum makinesi,
+telafi, kalıcı kuyruk ve ret listesi, iyimser işlemler, sorgular). Köprüde `Yazilmadi` dönen motor
+yöntemi kalmadı. Kotlin parçaları (K1-K4) MIMARI.md "İkinci dalga"dadır.
 
 ## Klasör düzeni
 
@@ -22,6 +22,8 @@ apps/ajanda/
     src/motor/                kanal durum makinesi (sans-IO), kuyruk, sorgular, alarm planı
     src/kopru/                KÖPRÜ YÜZEYİ: #[uniffi::export] yalnız burada; geri çağrı arayüzleri
     tests/vektorler.rs        dil bağımsız vektör düzeneği (kendi main'i)
+    tests/uctan_uca.rs        köprü yüzeyi + sahte kabuklar + sahte PC servisi (tests/ortak/)
+    tests/buyuk_kopya.rs      büyük kopyada eşitleme ve sorgu süreleri
     uniffi.toml               Kotlin paketi: dev.eren.ajanda.cekirdek
   uniffi-bindgen/             bağlama üreticisi (çalışma alanının kendi ikilisi)
   android/                    Gradle projesi (AGP 8.13, Kotlin 2.2.20, Gradle 8.14)
@@ -51,6 +53,9 @@ Kotlin bağlamaları -> `android/app/build/generated/java/uniffi<Varyant>KotlinU
 # Rust çekirdek testleri + vektör tablosu (apps/ajanda içinden)
 cargo test -p ajanda-cekirdek
 cargo test -p ajanda-cekirdek --test vektorler     # yalnız vektörler
+cargo test -p ajanda-cekirdek --test uctan_uca     # yalnız uçtan uca senaryolar
+# büyük kopya ölçümü (süreleri basar; adet varsayılan 5000)
+AJANDA_OLCUM_ADET=20000 cargo test --release -p ajanda-cekirdek --test buyuk_kopya -- --nocapture
 
 # arm64 APK + Kotlin köprü testi (apps/ajanda/android içinden)
 ./gradlew assembleDebug testDebugUnitTest          # Windows: .\gradlew.bat ...
@@ -91,6 +96,18 @@ R8 (`isMinifyEnabled`) açılırsa JNA, OkHttp ve `dev.eren.ajanda.cekirdek.**` 
 | Soğuk Rust NDK derlemesi (arm64, release) | ~33 s (iskelette ~26-28 s) |
 | `assembleDebug testDebugUnitTest` (Rust değişmiş, sıcak) | ~26 s |
 | `cargo test` (değişiklik sonrası / değişiklik yok) | ~2.9 s / 0.5 s |
+
+Eşitleme motoru (`tests/buyuk_kopya.rs`, `--release`, bu makine, masaüstü SSD; telefonda birkaç kat
+yavaş beklenir):
+
+| | 5000 kayıt | 20000 kayıt |
+|---|---|---|
+| ilk tam eşitleme (eşleştirme dahil, alarmlar kuruluyor) | ~0,35 s | ~1,3 s |
+| aynı içerikle yeniden tam eşitleme | ~0,22 s | ~1,0 s |
+| artımlı (değişen yok) | <1 ms | <1 ms |
+| tarihli sekme (yarısı) | ~20-35 ms | ~130 ms |
+| canlı `kayit` / `ekle`+sonuç | ~1 ms / ~3 ms | ~1 ms / ~3 ms |
+| `alarmlariYenidenKur` | ~60 ms | ~0,4 s |
 
 APK (debug, yalnız arm64, temiz paketleme): 3.80 MB (iskelet 2.89 MB). `libajanda_cekirdek.so`
 1.94 MB (iskelet 1.70 MB; +0.24 MB: serde_json, model, köprü yüzeyi); OkHttp + Okio ~0.55 MB (dex).

@@ -94,6 +94,13 @@ impl Depo {
         satir.map(|(json, bekleyen)| satir_oku(&json, bekleyen)).transpose()
     }
 
+    /// Satırın ham hali (kayıt JSON metni, bekleyen): değişiklik var mı karşılaştırması ayrıştırmadan yapılır.
+    pub fn gorunen_ham(&self, kayit_id: &str) -> rusqlite::Result<Option<(String, bool)>> {
+        self.baglanti
+            .query_row("SELECT json, bekleyen FROM gorunen WHERE kayit_id = ?1", [kayit_id], |s| Ok((s.get(0)?, s.get(1)?)))
+            .optional()
+    }
+
     /// Süzgece uyan kayıtlar. Tarihliler `sira_anahtari` artan, eşitlikte oluşturma artan; ötekiler
     /// oluşturma azalan (en yeni üstte).
     pub fn gorunen_liste(&self, s: &GorunenSuzgec) -> rusqlite::Result<Vec<GorunenKayit>> {

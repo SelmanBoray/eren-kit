@@ -69,7 +69,7 @@ fn bildirim(kayit: &AjandaKaydi, s: &KuruluAlarm) -> HatirlatmaBildirimi {
 
 /// İptal: aynı `Etkiler`'de henüz uygulanmamış `kur` varsa düşer (köprü iptali kurdan önce uygular;
 /// aynı çağrıda önce kurulup sonra iptal edilen alarm Android'de kalmasın).
-fn iptal_yaz(e: &mut Etkiler, alarm_no: i64) {
+pub(super) fn iptal_yaz(e: &mut Etkiler, alarm_no: i64) {
     e.alarm_kur.retain(|a| a.alarm_no != alarm_no);
     if !e.alarm_iptal.contains(&alarm_no) {
         e.alarm_iptal.push(alarm_no);
@@ -77,13 +77,13 @@ fn iptal_yaz(e: &mut Etkiler, alarm_no: i64) {
 }
 
 /// Kur: aynı numara bu `Etkiler`'de bir kez (aynı planın iki kez kurulmaması).
-fn kur_yaz(e: &mut Etkiler, alarm: KurulacakAlarm) {
+pub(super) fn kur_yaz(e: &mut Etkiler, alarm: KurulacakAlarm) {
     e.alarm_kur.retain(|a| a.alarm_no != alarm.alarm_no);
     e.alarm_kur.push(alarm);
 }
 
 /// Kaçırılanlar tek özettir: aynı çağrıda birden çok kayıt (ya da birden çok senkron) birleşir.
-fn kacirilan_yaz(e: &mut Etkiler, satirlar: Vec<HatirlatmaBildirimi>) {
+pub(super) fn kacirilan_yaz(e: &mut Etkiler, satirlar: Vec<HatirlatmaBildirimi>) {
     if satirlar.is_empty() {
         return;
     }
@@ -94,6 +94,20 @@ fn kacirilan_yaz(e: &mut Etkiler, satirlar: Vec<HatirlatmaBildirimi>) {
         }
     }
     ozet.satirlar.sort_by_key(|s| (s.tetik_ms, s.alarm_no));
+}
+
+/// Ayrı toplanmış alarm etkilerini `e`'ye katar (R4 `Motor::alarm_isleminde`: işlem kalıcı olunca).
+/// Aynı yazma kuralları geçerlidir: iptal bekleyen kuru düşürür, numara başına tek kur, tek özet.
+pub(super) fn alarm_etkilerini_kat(e: &mut Etkiler, ek: Etkiler) {
+    for no in ek.alarm_iptal {
+        iptal_yaz(e, no);
+    }
+    for a in ek.alarm_kur {
+        kur_yaz(e, a);
+    }
+    if let Some(k) = ek.kacirilan {
+        kacirilan_yaz(e, k.satirlar);
+    }
 }
 
 impl Motor {
@@ -169,6 +183,19 @@ impl Motor {
             self.depo.alarm_sil(alarm_no)?;
         }
         Ok(())
+    }
+
+    /// Köprü `AlarmKabugu.kacirilanlari_goster` başarısız olunca çağırır (R4): gösterilemeyen satırların
+    /// teslim işareti kaldırılır, satır yeniden "kurulu, teslim edilmemiş" olur; sonraki senkron ya da
+    /// yeniden kurulum tetiği pencere içindeyse onu yeniden kaçırılan olarak gösterir, değilse sessizce
+    /// düşürür (`kaydi_esitle`'nin fark tablosu). Böylece gösterim hatası bilgiyi kaybettirmez.
+    pub(crate) fn kacirilan_gosterilemedi(&mut self, alarm_nolari: &[i64]) -> Result<(), CekirdekHatasi> {
+        self.depo.alarm_islemi(|d| {
+            for &no in alarm_nolari {
+                d.alarm_teslimi_geri_al(no)?;
+            }
+            Ok(())
+        })
     }
 
     /// Eşleşme kaldırılınca (R4 `motor/eslesme.rs`): bütün alarmları iptal eder, satırları siler.
