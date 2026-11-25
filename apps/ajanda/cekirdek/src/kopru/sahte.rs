@@ -150,6 +150,6 @@ mod testler {
         let t = Arc::new(SahteTasima::default());
         assert!(matches!(c.baglanti_acildi(t.clone()), Err(crate::CekirdekHatasi::Yazilmadi { .. })));
         assert!(t.giden.lock().unwrap().is_empty());
-        assert!(matches!(crate::kopru::metni_temizle("a".into()), Err(crate::CekirdekHatasi::Yazilmadi { .. })));
+        assert_eq!(crate::kopru::metni_temizle("a\u{200b}".into()).unwrap(), "a");
     }
 }
