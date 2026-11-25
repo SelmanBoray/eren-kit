@@ -12,8 +12,8 @@ import {
   Revizyon,
 } from "./ajanda.ts";
 import {
-  AjandaZamani,
   AjandaZamaniGirdisi,
+  AjandaZamanOzeti,
   ajandaSatiri,
   HatirlatmaGirdileri,
   Saat,
@@ -35,6 +35,7 @@ import { Jeton, mesaj, OpakId } from "./temel.ts";
  * anındaki turun kökeninden kurar. Model kaydı insan kökenli ilan edemez; taslağı yalnız turu
  * doğrulanmış insan mesajıyla başlamışsa (kullanıcı emri) kesinleştirebilir (`onayla`, ya da aynı
  * kaydı yeniden eklemek: `ajandaTekilKarari`). Sentetik turda servis bunu `sentetik_turda_izinsiz` ile reddeder.
+ * Çıktılar modele yapılandırılmış gitmez: köprü yalnız `ajandaMcpSonucu`'nun tek metin içeriğini verir.
  */
 
 export const AJANDA_BORU_ADI = "\\\\.\\pipe\\eren-ajanda";
@@ -60,7 +61,7 @@ export function ajandaFiilRoldeIzinliMi(rol: AjandaKopruRolu, fiil: string): boo
 // Girdi ve çıktılar
 
 const ZAMAN_ACIKLAMASI =
-  "Kullanıcının söylediği zaman. Göreli ifadeyi (yarın, bu akşam, 1 saat sonra) dayanak'taki şimdiye " +
+  "Kullanıcının söylediği zaman. Göreli ifadeyi (yarın, bu akşam, 1 saat sonra) dayanak'taki mesaj anına " +
   "göre çöz. Söylenmeyeni uydurma: saat yoksa kesinlik gun, gün aralığıysa donem, takvime oturmuyorsa " +
   "belirsiz. ifade alanına kullanıcının sözünü birebir yaz. saat_dilimi verilmezse kullanıcınınki kullanılır.";
 const HATIRLATMA_ACIKLAMASI =
@@ -68,14 +69,15 @@ const HATIRLATMA_ACIKLAMASI =
   "yokken bekler, saat verilince kurulur. Zamanı geçmiş hatırlatma kurulmaz.";
 const ALINTI_ACIKLAMASI = "Kaydı doğuran kullanıcı sözünden kısa, birebir parça (isteğe bağlı).";
 const DAYANAK_ACIKLAMASI =
-  "Göreli zamanı çözerken dayandığın şimdiki yerel tarih ve saat: kullanıcı mesajının başındaki [simdi: ...] " +
-  "damgasından ya da son ajanda çıktısındaki simdi'den al, tahmin etme. zaman (belirsiz dışında) ya da " +
-  "mutlak hatırlatma verirken zorunlu. Servisin şimdisiyle uyuşmazsa çağrı simdi_uyusmuyor ile reddedilir " +
-  "ve doğru şimdi döner: zamanı ona göre yeniden çöz.";
+  "Göreli zamanı çözerken dayandığın an: bu turdaki kullanıcı mesajının başındaki [mesaj_ani: ...] " +
+  "damgasının tarihi ve saati (ajanda çıktılarındaki mesaj_ani aynı değerdir). Mesaj sana geç ulaşmış olsa " +
+  "da şimdiki saati değil mesaj anını kullan, tahmin etme. zaman (belirsiz dışında) ya da mutlak hatırlatma " +
+  "verirken zorunlu. Mesaj anıyla uyuşmazsa çağrı dayanak_uyusmuyor ile reddedilir ve mesaj anı döner: " +
+  "zamanı ona göre yeniden çöz.";
 
 /**
- * Modelin göreli zamanı çözerken dayandığı şimdi. Servis `dayanakGecerliMi` ile denetler; konuşma
- * modülü her kullanıcı rolündeki mesajın başına `simdiDamgasi` koyar (`docs/AJANDA.md`).
+ * Modelin göreli zamanı çözerken dayandığı an: turun mesaj anı. Servis `dayanakGecerliMi` ile
+ * denetler; konuşma modülü her kullanıcı rolündeki mesajın başına `mesajAniDamgasi` koyar.
  */
 export const AjandaDayanak = z
   .strictObject({ tarih: Tarih, saat: Saat, saat_dilimi: SaatDilimi.optional() })
@@ -114,9 +116,16 @@ export const AjandaEkleGirdi = z
   });
 export type AjandaEkleGirdi = z.infer<typeof AjandaEkleGirdi>;
 
-/** Kullanıcının yerel şimdisi; her araç çıktısında (göreli tarihleri çözmek ve dayanak için). */
-export const AjandaSimdi = z.strictObject({ tarih: Tarih, saat: Saat, saat_dilimi: SaatDilimi });
-export type AjandaSimdi = z.infer<typeof AjandaSimdi>;
+/** Bir anın kullanıcının dilimindeki yerel hali (dakika çözünürlüğü). */
+export const AjandaYerelAn = z.strictObject({ tarih: Tarih, saat: Saat, saat_dilimi: SaatDilimi });
+export type AjandaYerelAn = z.infer<typeof AjandaYerelAn>;
+
+/**
+ * Her araç çıktısındaki `mesaj_ani`: turun mesaj anı, yani turu açan kullanıcı mesajının (birleşik
+ * sentetik turda en yeni satırın; kuyruktan gelmeyen devir ve kurtarma turunda turun açıldığı an)
+ * servise ulaştığı an. Göreli tarihler buna göre çözülür ve `dayanak` budur (`dayanakGecerliMi`).
+ */
+const MesajAni = AjandaYerelAn;
 
 const Adet = z.number().int().min(0).max(AJANDA_SINIRLARI.HATIRLATMA_ADET);
 
@@ -126,8 +135,9 @@ export const AjandaHatirlatmaOzeti = z
   .refine((h) => h.kurulacak + h.saatsiz + h.gecmis <= h.toplam, { message: "sayılar toplamı aşıyor" });
 
 /**
- * Araç çıktısındaki kayıt özeti; kayıt metni (başlık, açıklama, ifade) taşımaz. `taslak` her zaman
- * vardır: taslağın hatırlatması kurulmaz. `zaman` servisin sakladığı (dilimi doldurulmuş) haldir.
+ * Araç çıktısındaki kayıt özeti; kayıt metni (başlık, açıklama, ifade, alıntı) taşımaz ve şema bunu
+ * zorlar (`zaman` `AjandaZamanOzeti`'dir: `ifade` reddedilir; servis `ajandaZamanOzeti` ile kurar).
+ * `taslak` her zaman vardır: taslağın hatırlatması kurulmaz.
  */
 export const AjandaKayitOzeti = z.strictObject({
   kayit_id: KayitId,
@@ -135,7 +145,7 @@ export const AjandaKayitOzeti = z.strictObject({
   durum: KayitDurumu,
   taslak: z.boolean(),
   silindi: z.boolean(),
-  zaman: AjandaZamani.optional(),
+  zaman: AjandaZamanOzeti.optional(),
   hatirlatma: AjandaHatirlatmaOzeti,
 });
 export type AjandaKayitOzeti = z.infer<typeof AjandaKayitOzeti>;
@@ -145,12 +155,24 @@ export type AjandaKayitOzeti = z.infer<typeof AjandaKayitOzeti>;
  * - `onaylandi`: kullanıcının emriyle gelen aynı kayıt taslak olarak açıktı; taslak kesinleşti.
  * - `zaten_var`: eş engelledi (`ajandaTekilKarari`); yeni kayıt yok. Emir olmayan turda eş bitmiş ya
  *   da silinmiş olabilir (`kayit.durum`, `kayit.silindi`).
+ * - `onaylandi` ve `zaten_var`'da `uygulanan_alanlar`: kullanıcının bu turda söyleyip eşe işlenen
+ *   alanlar (`ajandaEsDegisikligi`); emir olmayan turda hep boş.
  */
 export const AjandaEkleCikti = z.discriminatedUnion("sonuc", [
-  z.strictObject({ sonuc: z.literal("eklendi"), simdi: AjandaSimdi, kayit: AjandaKayitOzeti }),
-  z.strictObject({ sonuc: z.literal("onaylandi"), simdi: AjandaSimdi, kayit: AjandaKayitOzeti }),
-  z.strictObject({ sonuc: z.literal("zaten_var"), simdi: AjandaSimdi, kayit: AjandaKayitOzeti }),
-  z.strictObject({ sonuc: z.literal("ret"), simdi: AjandaSimdi, neden: AjandaRetNedeni }),
+  z.strictObject({ sonuc: z.literal("eklendi"), mesaj_ani: MesajAni, kayit: AjandaKayitOzeti }),
+  z.strictObject({
+    sonuc: z.literal("onaylandi"),
+    mesaj_ani: MesajAni,
+    kayit: AjandaKayitOzeti,
+    uygulanan_alanlar: z.array(AjandaAlani),
+  }),
+  z.strictObject({
+    sonuc: z.literal("zaten_var"),
+    mesaj_ani: MesajAni,
+    kayit: AjandaKayitOzeti,
+    uygulanan_alanlar: z.array(AjandaAlani),
+  }),
+  z.strictObject({ sonuc: z.literal("ret"), mesaj_ani: MesajAni, neden: AjandaRetNedeni }),
 ]);
 export type AjandaEkleCikti = z.infer<typeof AjandaEkleCikti>;
 
@@ -186,17 +208,17 @@ export type AjandaGuncelleGirdi = z.infer<typeof AjandaGuncelleGirdi>;
 export const AjandaGuncelleCikti = z.discriminatedUnion("sonuc", [
   z.strictObject({
     sonuc: z.literal("guncellendi"),
-    simdi: AjandaSimdi,
+    mesaj_ani: MesajAni,
     kayit: AjandaKayitOzeti,
     korunan_alanlar: z.array(AjandaAlani),
   }),
   z.strictObject({
     sonuc: z.literal("degismedi"),
-    simdi: AjandaSimdi,
+    mesaj_ani: MesajAni,
     kayit: AjandaKayitOzeti,
     korunan_alanlar: z.array(AjandaAlani),
   }),
-  z.strictObject({ sonuc: z.literal("ret"), simdi: AjandaSimdi, neden: AjandaRetNedeni }),
+  z.strictObject({ sonuc: z.literal("ret"), mesaj_ani: MesajAni, neden: AjandaRetNedeni }),
 ]);
 export type AjandaGuncelleCikti = z.infer<typeof AjandaGuncelleCikti>;
 
@@ -221,10 +243,13 @@ export const AjandaListeleGirdi = z
   });
 export type AjandaListeleGirdi = z.infer<typeof AjandaListeleGirdi>;
 
-/** `simdi`: kullanıcının yerel günü ve saati (göreli tarihleri çözmek için). `toplam`: süzgece uyan. */
+/**
+ * `toplam`: süzgece uyan. Kayıtlar tam haldir ve kayıt metni taşır: bu çıktı modele yapılandırılmış
+ * olarak gitmez, köprü yalnız `ajandaMcpSonucu` metnini (çitli, kaçışlı) verir.
+ */
 export const AjandaListeleCikti = z
   .strictObject({
-    simdi: AjandaSimdi,
+    mesaj_ani: MesajAni,
     kayitlar: z.array(AjandaKaydi).max(AJANDA_SINIRLARI.LISTE_ADET),
     toplam: z.number().int().min(0),
   })

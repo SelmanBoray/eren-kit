@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  AJANDA_EMOJI_BIRLESTIRICILERI,
   AJANDA_GORUNMEZ_ARALIKLARI,
   AJANDA_SINIRLARI,
   AJANDA_VARSAYILAN_HATIRLATMALAR,
   ajandaGorunmezMi,
+  ajandaGorunmezVarMi,
   ajandaMetni,
+  ajandaMetniTemizle,
+  iyiBicimliMi,
   ajandaSatiri,
   AjandaZamani,
   AjandaZamaniGirdisi,
@@ -100,7 +104,7 @@ test("görünmez tablo: Default_Ignorable ve kontrol karakterlerinin tamamını,
 test("ajanda metni görünmez kod noktasını reddeder, görünür birleşik karakteri kabul eder", () => {
   const satir = ajandaSatiri(1, 50);
   const metin = ajandaMetni(50);
-  for (const kod of [0xe0049, 0xe0001, 0xe0100, 0xe01ef, 0xfe0f, 0x3164, 0x034f, 0x180e, 0xffa0, 0x1d173, 0x115f, 0x1160]) {
+  for (const kod of [0xe0049, 0xe0001, 0xe0100, 0xe01ef, 0xfe00, 0xfe0d, 0x3164, 0x034f, 0x180e, 0xffa0, 0x1d173, 0x115f, 0x1160, 0x200b, 0x200c]) {
     const s = "Diş" + String.fromCodePoint(kod) + "çi";
     assert.equal(satir.safeParse(s).success, false, kod.toString(16));
     assert.equal(metin.safeParse(s).success, false, kod.toString(16));
@@ -108,6 +112,77 @@ test("ajanda metni görünmez kod noktasını reddeder, görünür birleşik kar
   assert.equal(satir.safeParse("Café \u{1F44D}\u{1F3FD} 日本").success, true);
   assert.equal(metin.safeParse("iki\nsatır\tsekme").success, true);
   assert.equal(gorunmezBirimMi(0xdb40), false, "eski birim denetimi etiketleri görmez (bulgu; eski kanallar değişmedi)");
+});
+
+test("emoji birleştiricileri yalnız bağlamında kabul edilir; zincir, baş, son ve boşluk yanı reddedilir", () => {
+  assert.deepEqual([...AJANDA_EMOJI_BIRLESTIRICILERI], [0x200d, 0xfe0e, 0xfe0f]);
+  for (const k of AJANDA_EMOJI_BIRLESTIRICILERI) assert.equal(ajandaGorunmezMi(k), true, "tabloda kalır: modele kaçışla gider");
+  const satir = ajandaSatiri(1, 80);
+  const metin = ajandaMetni(80);
+  const Z = "‍";
+  const VS16 = "️";
+  const VS15 = "︎";
+  const gecerli = [
+    `Kahve ☕${VS16}`,
+    `❤${VS16} Dişçi`,
+    `Aile \u{1F468}${Z}\u{1F469}${Z}\u{1F467} yemeği`,
+    `\u{1F441}${VS16}${Z}\u{1F5E8}${VS16}`,
+    `\u{1F3F3}${VS16}${Z}\u{1F308}`,
+    `\u{1F469}\u{1F3FD}${Z}\u{1F4BB}`,
+    `1${VS16}⃣ \u{1F1F9}\u{1F1F7}`,
+    `ok ↔${VS15}`,
+  ];
+  for (const s of gecerli) {
+    assert.equal(ajandaGorunmezVarMi(s), false, JSON.stringify(s));
+    assert.equal(satir.safeParse(s).success, true, JSON.stringify(s));
+    assert.equal(metin.safeParse(s).success, true, JSON.stringify(s));
+    assert.equal(ajandaMetniTemizle(s), s, `geçerli metinde temizlik kimlik: ${JSON.stringify(s)}`);
+  }
+  const gecersiz = [
+    `${VS16}Kahve`, // başta seçici
+    `Kahve ☕${VS16}${VS16}`, // zincir
+    `Kahve ☕${VS15}${VS16}`,
+    `Kahve ${VS16}x`, // boşluktan sonra
+    `${Z}Kahve`, // başta birleştirici
+    `Kahve${Z}`, // sonda
+    `Kahve ${Z}☕`, // boşluktan sonra
+    `Kahve${Z} ☕`, // boşluktan önce
+    `a${Z}${Z}b`, // zincir
+    `a${Z}${VS16}b`, // birleştiriciden sonra seçici
+    `a${VS15}${Z}b`, // metin seçicisinden sonra birleştirici
+    "a︀b", // VS1: bayt kaçırma yolu
+    "a\u{E0100}b",
+    "\u{1F3F4}\u{E0067}\u{E0062}\u{E007F}", // etiketli bayrak: etiketler hiçbir bağlamda yok
+  ];
+  for (const s of gecersiz) {
+    assert.equal(ajandaGorunmezVarMi(s), true, JSON.stringify(s));
+    assert.equal(metin.safeParse(s).success, false, JSON.stringify(s));
+  }
+  assert.equal(metin.safeParse(`Kahve\n${VS16}x`).success, false, "satır sonundan sonra seçici");
+});
+
+test("giriş temizliği: çıktı her zaman geçerli ve iyi biçimli, geçerli metne dokunmaz", () => {
+  const Z = "‍";
+  const VS16 = "️";
+  assert.equal(ajandaMetniTemizle(`${VS16}Kahve ☕${VS16}${VS16} \u{E0049}x${Z}`), `Kahve ☕${VS16} x`);
+  assert.equal(ajandaMetniTemizle(`a${Z}${Z}b`), `a${Z}b`);
+  assert.equal(ajandaMetniTemizle(`a${Z} b`), "a b");
+  assert.equal(ajandaMetniTemizle("a\uD83D b"), "a b", "eşsiz vekil atılır");
+  assert.equal(ajandaMetniTemizle("\u{1F3F4}\u{E0067}\u{E0062}\u{E007F}"), "\u{1F3F4}");
+  // Küçük alfabeyle rastgele dizilerde özellik: çıktı geçerli, iyi biçimli, temizlik eş-güçlü.
+  const alfabe = ["a", " ", "\n", "☕", "\u{1F468}", Z, VS16, "︎", "︀", "\u{E0049}", "​", "\uD83D", "\uDC00", "1", "⃣"];
+  let tohum = 12345;
+  const rastgele = () => (tohum = (tohum * 1103515245 + 12345) % 2 ** 31) / 2 ** 31;
+  for (let n = 0; n < 3000; n++) {
+    let s = "";
+    const boy = Math.floor(rastgele() * 10);
+    for (let i = 0; i < boy; i++) s += alfabe[Math.floor(rastgele() * alfabe.length)];
+    const t = ajandaMetniTemizle(s);
+    assert.equal(ajandaGorunmezVarMi(t), false, JSON.stringify(s));
+    assert.equal(iyiBicimliMi(t), true, JSON.stringify(s));
+    assert.equal(ajandaMetniTemizle(t), t, JSON.stringify(s));
+    if (!ajandaGorunmezVarMi(s) && iyiBicimliMi(s)) assert.equal(t, s, JSON.stringify(s));
+  }
 });
 
 test("gunNoTarih tarihGunNo'nun tersidir; hafta günü", () => {

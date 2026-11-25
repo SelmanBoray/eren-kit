@@ -10,9 +10,10 @@ import {
   ornekGunuMu,
   Tarih,
   Tekrar,
+  zamanCekirdegi,
   zamanKurallari,
 } from "./ajanda-zaman.ts";
-import { cozumle } from "./cozumle.ts";
+import { cozumle, type CozumSonucu } from "./cozumle.ts";
 import { HataKodu } from "./hatalar.ts";
 import { kanonikJson, sha256Hex, utf8Bayt } from "./kanonik.ts";
 import { AJANDA_AZAMI_CERCEVE, AJANDA_SINIRLARI, AJANDA_SURUMU, SINIRLAR } from "./sinirlar.ts";
@@ -129,7 +130,9 @@ export type AjandaKanalHatasi = z.infer<typeof AjandaKanalHatasi>;
  *   sonra da `ORNEK_ADET` aşılıyor (`ajandaOrnekDurumuUygula`).
  * - `kayit_siniri`: `KAYIT_ADET` doldu.
  * - `sentetik_turda_izinsiz`: insan kökenli olmayan turdan taslak olmayan kayda değişiklik ya da onay.
- * - `simdi_uyusmuyor`: yalnız araç; modelin `dayanak`'ı servisin şimdisiyle uyuşmuyor (`dayanakGecerliMi`).
+ * - `dayanak_uyusmuyor`: yalnız araç; modelin `dayanak`'ı turun mesaj anıyla uyuşmuyor (`dayanakGecerliMi`).
+ * - `gecersiz_islem`: yalnız `islem_sonucu`; zarf ve `islem_id` geçerli ama işlemin gövdesi servisin
+ *   şemasından geçmedi (`ajandaYukariCoz` sonucunda `islem_id`). Bağlantı kapanmaz.
  * - `ic_hata`: geçici (`AJANDA_GECICI_RET_NEDENLERI`); öteki nedenler kalıcıdır.
  */
 export const AJANDA_RET_NEDENLERI = [
@@ -141,7 +144,8 @@ export const AJANDA_RET_NEDENLERI = [
   "ornek_gecersiz",
   "kayit_siniri",
   "sentetik_turda_izinsiz",
-  "simdi_uyusmuyor",
+  "dayanak_uyusmuyor",
+  "gecersiz_islem",
   "ic_hata",
 ] as const;
 export const AjandaRetNedeni = z.enum(AJANDA_RET_NEDENLERI);
@@ -149,7 +153,8 @@ export type AjandaRetNedeni = z.infer<typeof AjandaRetNedeni>;
 
 /**
  * Geçici ret: işlem uygulanmadı ve tekrarsızlık kaydı yazılmadı; aynı `islem_id` ile yeniden
- * yollanır, iyimser değişiklik durur. Öteki nedenler kalıcıdır (aynı kimlik hep aynı sonucu alır).
+ * yollanır, iyimser değişiklik durur, `ISLEM_DENEME` sınırı vardır (`ajandaKuyrukKarari`). Öteki
+ * nedenler kalıcıdır (aynı kimlik hep aynı sonucu alır).
  */
 export const AJANDA_GECICI_RET_NEDENLERI = ["ic_hata"] as const satisfies readonly AjandaRetNedeni[];
 
@@ -459,7 +464,10 @@ export const AjandaHello = ajandaMesaj("hello", {
   client_nonce: Nonce,
 });
 export const AjandaAuthResponse = ajandaMesaj("auth_response", { signature: Imza });
-/** Kimlik sonrası. Aynı `islem_id` yeniden gelirse aynı `islem_sonucu` döner, ikinci kez uygulanmaz. */
+/**
+ * Kimlik sonrası. Aynı `islem_id` yeniden gelirse aynı `islem_sonucu` döner, ikinci kez uygulanmaz.
+ * Gövdesi geçersiz işlem `gecersiz_islem` alır, bağlantı kapanmaz (`ajandaYukariCoz`).
+ */
 export const AjandaIslemMesaji = ajandaMesaj("islem", { islem_id: OpakId, islem: AjandaIslem });
 /** Bir kaydın geçmişi, en yeniden geriye sayfa sayfa. `once_rev`: bu revizyondan küçükler. */
 export const AjandaGecmisIste = ajandaMesaj("gecmis_iste", {
@@ -495,9 +503,10 @@ export const AjandaPairResult = ajandaMesaj("pair_result", {
 /** `server_signature` = `ajandaKimlikImzaMetni({ rol: "pc", ... })` imzası. */
 export const AjandaAuthChallenge = ajandaMesaj("auth_challenge", { server_nonce: Nonce, server_signature: Imza });
 /**
- * `tam` (`ajandaTelafiTamMi`): uygulama sunucu kopyasını atar ve `son_rev`'i 0'a çeker, ardından
- * bütün kayıtlar gelir; gönderilmemiş işlem kuyruğu korunur ve `esitlendi`'den sonra yollanır.
- * Değilse `son_rev`'ten büyük revizyonlu kayıtlar gelir.
+ * `tam` (`ajandaTelafiTamMi`): 0'dan bütün kayıtlar gelir. Uygulama bunları ayrı toplar; görünen
+ * kopya, kurulu alarmlar, `son_rev` ve `depo_id` `esitlendi`'ye kadar değişmez, `esitlendi`'de
+ * toplanan kopyanın yerine geçer, kopmada atılır (`ajandaEsitlemeAdimi`). Sonucu gelmemiş işlem
+ * kuyruğu her durumda korunur. Değilse `son_rev`'ten büyük revizyonlu kayıtlar gelir.
  */
 export const AjandaWelcome = ajandaMesaj("welcome", {
   depo_id: DepoId,
@@ -512,9 +521,8 @@ export const AjandaEsitlendi = ajandaMesaj("esitlendi", { rev: SonRevizyon });
 /**
  * `islem`'in sonucu. `ok` ve `rev`: değişikliğin revizyonu; yan etkisiz `ok`'ta (aynı değer, zaten
  * silinmiş) `rev` yok. `korunan_alanlar` yalnız emir olmayan otomasyonda dolabilir, uygulamaya hep boş/yok.
- * `ok:false`: geçici nedende (`ajandaRetGeciciMi`) işlem kuyruğun başında kalır, aynı `islem_id` ile
- * sonra yeniden yollanır, iyimser değişiklik durur. Kalıcı nedende yeniden yollanmaz, iyimser
- * değişiklik geri alınır ve işlem içeriğiyle kullanıcının göreceği ret listesine geçer.
+ * Uygulamanın kuyruktaki işlemle ne yapacağı `ajandaKuyrukKarari`'dır (geçici ret ve kopmada deneme
+ * sınırı, kalıcı retle ret listesi).
  */
 export const AjandaIslemSonucu = ajandaMesaj("islem_sonucu", {
   islem_id: OpakId,
@@ -555,8 +563,31 @@ export const AjandaAsagi = z.discriminatedUnion("type", [
 ]);
 export type AjandaAsagi = z.infer<typeof AjandaAsagi>;
 
+/** `islem` çerçevesinin zarfı: gövdeye bakmadan `islem_id`'yi okumak için. */
+const AjandaIslemZarfi = ajandaMesaj("islem", { islem_id: OpakId, islem: z.unknown().optional() });
+
+/**
+ * `ajandaYukariCoz` sonucu. `islem_id` yalnız şu halde vardır: çerçeve `gecersiz_mesaj`, ama zarfı
+ * (`v`, `type:"islem"`, geçerli `islem_id`, başka alan yok) geçerli; yani yalnız işlemin gövdesi
+ * şemadan geçmedi. Servis bu halde bağlantıyı kapatmaz, `islem_sonucu{islem_id, ok:false,
+ * code:"gecersiz_islem"}` döner ve tekrarsızlık kaydına yazar: iki taraftaki doğrulama bir yerde
+ * ayrışsa da tek işlem kuyruğu tıkayamaz, kullanıcının ret listesine düşer.
+ */
+export type AjandaYukariCozumu = CozumSonucu<AjandaYukari> & { islem_id?: string };
+
 /** `/ajanda` çözücüleri: tek sürüm `AJANDA_SURUMU`, sınır `AJANDA_AZAMI_CERCEVE.KANAL`. */
-export const ajandaYukariCoz = (ham: string) => cozumle(AjandaYukari, ham, AJANDA_AZAMI_CERCEVE.KANAL, AJANDA_SURUMU);
+export function ajandaYukariCoz(ham: string): AjandaYukariCozumu {
+  const sonuc = cozumle(AjandaYukari, ham, AJANDA_AZAMI_CERCEVE.KANAL, AJANDA_SURUMU);
+  if (sonuc.ok || sonuc.kod !== "gecersiz_mesaj") return sonuc;
+  let deger: unknown;
+  try {
+    deger = JSON.parse(ham);
+  } catch {
+    return sonuc;
+  }
+  const zarf = AjandaIslemZarfi.safeParse(deger);
+  return zarf.success ? { ...sonuc, islem_id: zarf.data.islem_id } : sonuc;
+}
 export const ajandaAsagiCoz = (ham: string) => cozumle(AjandaAsagi, ham, AJANDA_AZAMI_CERCEVE.KANAL, AJANDA_SURUMU);
 
 // Saf yardımcılar (servis ve uygulama aynı sonucu versin)
@@ -653,9 +684,13 @@ export function ajandaDegisikligiUygula(
 }
 
 /**
- * Otomatik eklemenin tekilleştirme anahtarı: aynı kapsamda (ör. `sohbet:<id>`) aynı tür, başlık ve
- * zaman aynı anahtarı verir. `"t1:" + sha256(kanonik JSON)`. Eşin eklemeyi engelleyip engellemediği
- * `ajandaTekilKarari`'dır. Anahtar tekil indeks değildir: bitmiş eşin yanında yenisi doğabilir.
+ * Otomatik eklemenin tekilleştirme anahtarı: aynı kapsamda (ör. `sohbet:<id>`) aynı tür, birebir aynı
+ * başlık ve aynı çözülmüş zaman (`zamanCekirdegi`: `ifade` ve `sure_dk` girmez) aynı anahtarı verir;
+ * "yarın 3'te" ile "bugün 3'te" aynı güne çözüldüyse aynı kayıttır. Girdi saklanacak haldir: servis
+ * dilimi doldurduktan sonra hesaplar (`AjandaZamani`, dilim zorunlu). Anahtar kayıt doğarken
+ * `kaynak.tekil_anahtar`'a yazılır, sonra değişmez; eşler aynı anahtarı saklayan kayıtlardır.
+ * `"t1:" + sha256(kanonik JSON {kapsam, tur, baslik, zaman: çekirdek | null})`. Eşin eklemeyi
+ * engelleyip engellemediği `ajandaTekilKarari`'dır. Anahtar tekil indeks değildir.
  */
 export function ajandaTekilAnahtari(girdi: {
   kapsam: string;
@@ -663,6 +698,31 @@ export function ajandaTekilAnahtari(girdi: {
   baslik: string;
   zaman?: AjandaZamani | undefined;
 }): string {
-  const govde = { kapsam: girdi.kapsam, tur: girdi.tur, baslik: girdi.baslik, zaman: girdi.zaman ?? null };
+  const zaman = girdi.zaman === undefined ? null : zamanCekirdegi(girdi.zaman);
+  const govde = { kapsam: girdi.kapsam, tur: girdi.tur, baslik: girdi.baslik, zaman };
   return "t1:" + sha256Hex(utf8Bayt(kanonikJson(govde)));
+}
+
+/**
+ * Kullanıcının emriyle (`kullaniciEmriMi`) gelen eklemenin açık bir eşi varsa (`ajandaTekilKarari`:
+ * `onayla` ya da `zaten_var`) kullanıcının bu turda söylediği ve eşte farklı olan alanlar: yeni kayıt
+ * açılmaz ama söylenen kayda yansır. Girdi saklanacak haldir (dilim doldurulmuş) ve yalnız açıkça
+ * verilen alanları taşır; varsayılan hatırlatma eşe uygulanmaz.
+ * - `aciklama`, `hatirlatmalar`: verilmişse.
+ * - `zaman`: anahtar aynı olduğu için gün ve saat aynıdır; yalnız yeni bir `sure_dk` eşin zamanına
+ *   işlenir. Eşin `ifade`'si (kaydı doğuran söz) korunur.
+ * Servis sonucu `ajandaDegisikligiUygula(es, degisiklik, yazar)` ile uygular (boşsa değişiklik yok);
+ * eş taslaksa aynı işlemde onaylar. Emir olmayan otomasyonda çağrılmaz: eş olduğu gibi kalır.
+ */
+export function ajandaEsDegisikligi(
+  es: Pick<AjandaKaydi, "zaman">,
+  girdi: { aciklama?: string | undefined; zaman?: AjandaZamani | undefined; hatirlatmalar?: Hatirlatma[] | undefined },
+): AjandaAlanDegisikligi {
+  const degisiklik: AjandaAlanDegisikligi = {};
+  if (girdi.aciklama !== undefined) degisiklik.aciklama = girdi.aciklama;
+  if (girdi.hatirlatmalar !== undefined) degisiklik.hatirlatmalar = girdi.hatirlatmalar;
+  const z = es.zaman;
+  const sure = girdi.zaman?.kesinlik === "an" ? girdi.zaman.sure_dk : undefined;
+  if (z?.kesinlik === "an" && sure !== undefined && sure !== z.sure_dk) degisiklik.zaman = { ...z, sure_dk: sure };
+  return degisiklik;
 }

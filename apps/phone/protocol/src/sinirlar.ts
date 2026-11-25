@@ -152,8 +152,18 @@ export const AJANDA_SINIRLARI = {
   GECMIS_SAYFA: 20,
   /** Modele giden liste metninde açıklamanın kırpıldığı uzunluk (kablo sınırı `ACIKLAMA`). */
   MODEL_ACIKLAMA: 300,
-  /** Araç `dayanak`'ının tur başlangıcından önce ve çağrı anından sonra sapabileceği dakika. */
+  /** Araç `dayanak`'ının turun mesaj anından (aynı yerel gün içinde) sapabileceği dakika. */
   DAYANAK_SAPMA_DK: 10,
+  /**
+   * Uygulama kuyruğundaki bir işlemin sonuçsuz deneme sınırı (geçici ret ya da sonucu gelmeden
+   * kopma): sınıra varan işlem ret listesine geçer, arkasındakiler gider (`ajandaKuyrukKarari`).
+   */
+  ISLEM_DENEME: 5,
+  /**
+   * Kurulmuş ama teslim edilmemiş hatırlatmanın kaçırılan olarak gösterildiği geçmiş, dakika
+   * (`kacirilanHatirlatmalar`); daha eskisi sessizce düşer.
+   */
+  KACIRILAN_PENCERE_DK: 360,
 } as const;
 
 /** `/ajanda` çerçevesinin ve ajanda borusunun ayrıştırma öncesi üst sınırı (UTF-16 birimi). */

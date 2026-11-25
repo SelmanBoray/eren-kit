@@ -3,15 +3,31 @@ import { createPublicKey, verify } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
+  AJANDA_EMOJI_BIRLESTIRICILERI,
   AJANDA_GORUNMEZ_ARALIKLARI,
+  AJANDA_SINIRLARI,
+  AjandaAciklama,
   AjandaBaslik,
   AjandaEslestirmeQr,
   ajandaAsagiCoz,
   ajandaDegisikligiUygula,
+  ajandaEsDegisikligi,
+  ajandaEsitlemeAdimi,
   ajandaGorunmezMi,
+  ajandaGorunmezVarMi,
+  ajandaHelloAlanlari,
   AjandaKaydi,
+  type AjandaKopya,
+  type AjandaKopyaKaydi,
+  type AjandaKuyrukKarari,
+  type AjandaKuyrukOlayi,
+  ajandaKuyrukKarari,
   ajandaKimlikImzaMetni,
+  ajandaMetniTemizle,
   ajandaOrnekDurumuUygula,
+  type KacirilanHatirlatma,
+  kacirilanHatirlatmalar,
+  type YerelAn,
   ajandaTekilAnahtari,
   ajandaTekilKarari,
   ajandaTelafiTamMi,
@@ -35,7 +51,8 @@ import {
   tekrarOrnekleri,
 } from "../src/index.ts";
 
-type Oge = { ad: string; ham: string; gecerli: boolean; tur?: string; kod?: string };
+type Oge = { ad: string; ham: string; gecerli: boolean; tur?: string; kod?: string; islem_id?: string };
+type KopyaVektoru = { depo_id?: string; son_rev: number; kayitlar: AjandaKopyaKaydi[] };
 const oku = (ad: string) => JSON.parse(readFileSync(new URL(`../vektorler/${ad}`, import.meta.url), "utf8"));
 const mesajlar = oku("ajanda-mesaj.json") as { surum: number; asagi: Oge[]; yukari: Oge[] };
 const kurallar = oku("ajanda-kurallar.json") as {
@@ -60,8 +77,21 @@ const kurallar = oku("ajanda-kurallar.json") as {
     };
   }[];
   hatirlatma_etkin: { taslak: boolean; silindi: boolean; durum: "acik" | "tamam" | "iptal"; etkin: boolean }[];
-  tekil_anahtar: { girdi: Parameters<typeof ajandaTekilAnahtari>[0]; anahtar: string }[];
-  gorunmez: { araliklar: [number, number][]; ornekler: { kod_noktasi: number; gorunmez: boolean }[] };
+  tekil_anahtar: { ad: string; girdi: Parameters<typeof ajandaTekilAnahtari>[0]; anahtar: string }[];
+  es_degisikligi: { ad: string; es: Pick<AjandaKaydi, "zaman">; girdi: Parameters<typeof ajandaEsDegisikligi>[1]; degisiklik: Record<string, unknown> }[];
+  gorunmez: {
+    araliklar: [number, number][];
+    emoji_birlestiricileri: number[];
+    ornekler: { kod_noktasi: number; gorunmez: boolean }[];
+    metinler: { ad: string; kod_noktalari: number[]; gecerli: boolean; temiz: number[] }[];
+  };
+  kuyruk_karari: { ad: string; olay: AjandaKuyrukOlayi; deneme: number; karar: AjandaKuyrukKarari }[];
+  esitleme: {
+    ad: string;
+    baslangic: KopyaVektoru;
+    olaylar: ({ olay: "welcome"; depo_id: string; tam: boolean } | { olay: "kayit"; kayit: AjandaKopyaKaydi } | { olay: "esitlendi" } | { olay: "kopma" })[];
+    beklenen: KopyaVektoru & { tam_suruyor: boolean; hello: ReturnType<typeof ajandaHelloAlanlari> };
+  }[];
   tekil_karar: {
     ad: string;
     esler: { silindi: boolean; durum: "acik" | "tamam" | "iptal"; taslak: boolean }[];
@@ -70,11 +100,12 @@ const kurallar = oku("ajanda-kurallar.json") as {
     sira?: number;
   }[];
   telafi: (Parameters<typeof ajandaTelafiTamMi>[0] & { ad: string; tam: boolean })[];
-  dayanak: { ad: string; dayanak_ms: number; tur_baslangic_ms: number; cagri_ms: number; gecerli: boolean }[];
+  dayanak: { ad: string; dayanak: Parameters<typeof dayanakGecerliMi>[0]; mesaj_ani: YerelAn; gecerli: boolean }[];
   tekrar_ornekleri: { ad: string; capa: string; tekrar: unknown; en_az?: string; beklenen: string[]; devami: boolean }[];
   hatirlatma_plani: {
     ofset_dk: Record<string, number>;
     vakalar: { ad: string; kayit: unknown; simdi_ms: number; haller: HatirlatmaHali[]; ozet: ReturnType<typeof hatirlatmaOzeti> }[];
+    kacirilan: { ad: string; kayit: unknown; simdi_ms: number; kurulanlar: number[]; beklenen: KacirilanHatirlatma[] }[];
   };
   ornek_durumu: {
     ad: string;
@@ -108,7 +139,7 @@ function kayitAc(ham: Record<string, unknown>): AjandaKaydi {
   return AjandaKaydi.parse(kayit);
 }
 
-function dene(yon: Oge[], coz: (ham: string) => { ok: boolean; mesaj?: { type: string }; kod?: string }) {
+function dene(yon: Oge[], coz: (ham: string) => { ok: boolean; mesaj?: { type: string }; kod?: string; islem_id?: string }) {
   assert.ok(yon.length > 0);
   for (const o of yon) {
     const s = coz(o.ham);
@@ -118,8 +149,15 @@ function dene(yon: Oge[], coz: (ham: string) => { ok: boolean; mesaj?: { type: s
     } else {
       assert.equal(s.ok, false, o.ad);
       assert.equal(s.kod, o.kod, o.ad);
+      assert.equal(s.islem_id, o.islem_id, `${o.ad}: islem_id`);
     }
   }
+}
+
+function kopyaAc(v: KopyaVektoru): AjandaKopya<AjandaKopyaKaydi> {
+  const k: AjandaKopya<AjandaKopyaKaydi> = { son_rev: v.son_rev, kayitlar: new Map(v.kayitlar.map((x) => [x.kayit_id, x])) };
+  if (v.depo_id !== undefined) k.depo_id = v.depo_id;
+  return k;
 }
 
 test("ajanda vektör dosyaları sürüm 1, adlar tekil", () => {
@@ -198,22 +236,60 @@ test("hatırlatma etkinliği vektörü", () => {
   for (const v of kurallar.hatirlatma_etkin) assert.equal(hatirlatmaEtkinMi(v), v.etkin, JSON.stringify(v));
 });
 
-test("tekilleştirme anahtarı vektörü", () => {
-  assert.ok(kurallar.tekil_anahtar.length >= 2);
+test("tekilleştirme anahtarı vektörü: ifade ve süre anahtara girmez", () => {
+  assert.ok(kurallar.tekil_anahtar.length >= 6);
   for (const v of kurallar.tekil_anahtar) {
     assert.match(v.anahtar, /^t1:[0-9a-f]{64}$/);
-    assert.equal(ajandaTekilAnahtari(v.girdi), v.anahtar);
+    assert.equal(ajandaTekilAnahtari(v.girdi), v.anahtar, v.ad);
   }
+  const anahtar = (ad: string) => kurallar.tekil_anahtar.find((v) => v.ad === ad)!.anahtar;
+  assert.equal(anahtar("yarın 3'te"), anahtar("ertesi gün bugün 3'te"));
+  assert.equal(anahtar("yarın 3'te"), anahtar("ifadesiz"));
+  assert.equal(anahtar("yarın 3'te"), anahtar("süre eklenmiş"));
+  assert.notEqual(anahtar("yarın 3'te"), anahtar("saat farklı"));
 });
 
-test("görünmez kod noktası vektörü: tablo birebir, örnekler ajandaGorunmezMi ile aynı", () => {
+test("eş değişikliği vektörü: kullanıcının bu turda söylediği alanlar", () => {
+  assert.ok(kurallar.es_degisikligi.length >= 4);
+  for (const v of kurallar.es_degisikligi) assert.deepEqual(ajandaEsDegisikligi(v.es, v.girdi), v.degisiklik, v.ad);
+});
+
+test("görünmez kod noktası vektörü: tablo birebir, örnekler ajandaGorunmezMi ile aynı, emoji bağlamı", () => {
   assert.deepEqual(AJANDA_GORUNMEZ_ARALIKLARI.map((a) => [...a]), kurallar.gorunmez.araliklar);
+  assert.deepEqual([...AJANDA_EMOJI_BIRLESTIRICILERI], kurallar.gorunmez.emoji_birlestiricileri);
   for (const o of kurallar.gorunmez.ornekler) {
     assert.equal(ajandaGorunmezMi(o.kod_noktasi), o.gorunmez, o.kod_noktasi.toString(16));
     const metin = "a" + String.fromCodePoint(o.kod_noktasi) + "b";
+    const baglamli = kurallar.gorunmez.emoji_birlestiricileri.includes(o.kod_noktasi);
     if (o.kod_noktasi !== 0x0a && o.kod_noktasi !== 0x0d && o.kod_noktasi !== 0x09) {
-      assert.equal(AjandaBaslik.safeParse(metin).success, !o.gorunmez, o.kod_noktasi.toString(16));
+      assert.equal(AjandaBaslik.safeParse(metin).success, !o.gorunmez || baglamli, o.kod_noktasi.toString(16));
     }
+  }
+  assert.ok(kurallar.gorunmez.metinler.length >= 10);
+  for (const m of kurallar.gorunmez.metinler) {
+    const metin = String.fromCodePoint(...m.kod_noktalari);
+    assert.equal(ajandaGorunmezVarMi(metin), !m.gecerli, m.ad);
+    assert.equal(AjandaAciklama.safeParse(metin).success, m.gecerli, m.ad);
+    assert.deepEqual(Array.from(ajandaMetniTemizle(metin), (c) => c.codePointAt(0)), m.temiz, `${m.ad}: temiz`);
+  }
+});
+
+test("kuyruk kararı vektörü", () => {
+  assert.ok(kurallar.kuyruk_karari.length >= 8);
+  for (const v of kurallar.kuyruk_karari) assert.deepEqual(ajandaKuyrukKarari(v.olay, v.deneme), v.karar, v.ad);
+});
+
+test("eşitleme vektörü: olay dizisi, görünen kopya ve hello alanları", () => {
+  assert.ok(kurallar.esitleme.length >= 5);
+  for (const v of kurallar.esitleme) {
+    let d = kopyaAc(v.baslangic);
+    for (const o of v.olaylar) d = ajandaEsitlemeAdimi(d, o);
+    assert.equal(d.depo_id, v.beklenen.depo_id, `${v.ad}: depo_id`);
+    assert.equal(d.son_rev, v.beklenen.son_rev, `${v.ad}: son_rev`);
+    const kayitlar = [...d.kayitlar.values()].sort((a, b) => (a.kayit_id < b.kayit_id ? -1 : 1));
+    assert.deepEqual(kayitlar, v.beklenen.kayitlar, `${v.ad}: kayitlar`);
+    assert.equal(d.tam !== undefined, v.beklenen.tam_suruyor, `${v.ad}: tam`);
+    assert.deepEqual(ajandaHelloAlanlari(d), v.beklenen.hello, `${v.ad}: hello`);
   }
 });
 
@@ -229,8 +305,9 @@ test("telafi vektörü", () => {
   for (const v of kurallar.telafi) assert.equal(ajandaTelafiTamMi(v), v.tam, v.ad);
 });
 
-test("dayanak vektörü", () => {
-  for (const v of kurallar.dayanak) assert.equal(dayanakGecerliMi(v.dayanak_ms, v.tur_baslangic_ms, v.cagri_ms), v.gecerli, v.ad);
+test("dayanak vektörü: turun mesaj anı, aynı yerel gün", () => {
+  assert.ok(kurallar.dayanak.length >= 8);
+  for (const v of kurallar.dayanak) assert.equal(dayanakGecerliMi(v.dayanak, v.mesaj_ani), v.gecerli, v.ad);
 });
 
 test("tekrar örnekleri vektörü", () => {
@@ -269,6 +346,13 @@ test("hatırlatma planı vektörü: hal, kurulacaklar ve özet", () => {
     assert.deepEqual(kurulacakHatirlatmalar(kayit, v.simdi_ms, anCevir), beklenenKurulacak, v.ad);
     assert.deepEqual(hatirlatmaOzeti(kayit, v.simdi_ms, anCevir), v.ozet, v.ad);
     for (const h of kurulacakHatirlatmalar(kayit, v.simdi_ms, anCevir)) assert.ok(h.tetik_ms > v.simdi_ms, v.ad);
+  }
+  assert.ok(kurallar.hatirlatma_plani.kacirilan.length >= 6);
+  for (const v of kurallar.hatirlatma_plani.kacirilan) {
+    const kayit = AjandaKaydi.parse(v.kayit);
+    const k = kacirilanHatirlatmalar(kayit, v.simdi_ms, anCevir, v.kurulanlar);
+    assert.deepEqual(k, v.beklenen, v.ad);
+    for (const h of k) assert.ok(h.tetik_ms <= v.simdi_ms && v.simdi_ms - h.tetik_ms < AJANDA_SINIRLARI.KACIRILAN_PENCERE_DK * 60_000, v.ad);
   }
 });
 

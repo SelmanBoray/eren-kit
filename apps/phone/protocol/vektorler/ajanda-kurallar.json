@@ -1,5 +1,5 @@
 {
- "aciklama": "Ajanda kuralları için dil bağımsız vektörler. imza_metni: ajandaKimlikImzaMetni çıktısı ve UTF-8 baytları. imza: test için üretilmiş tek kullanımlık P-256 anahtarıyla (özel anahtar saklanmadı) metin[pc] üzerine DER imza; aynı imza telefon metniyle doğrulanmamalı. kapsam: kanalKapsamdaMi. birlestirme: ajandaDegisikligiUygula(kayit, degisiklik, yazar); koruma yalnız kullaniciEmriMi(yazar) yanlışken; beklenen.ornekler/budanan_ornekler verilmişse örnek budaması. hatirlatma_etkin: hatirlatmaEtkinMi. tekil_anahtar: ajandaTekilAnahtari. gorunmez: AJANDA_GORUNMEZ_ARALIKLARI (kod noktası, iki uç dahil) ve örnek kod noktaları. tekil_karar: ajandaTekilKarari. telafi: ajandaTelafiTamMi. dayanak: dayanakGecerliMi (ms). tekrar_ornekleri: tekrarOrnekleri(capa, tekrar, en_az) ilk en çok 5 gün ve devami. hatirlatma_plani: hatirlatmaHalleri/kurulacakHatirlatmalar/hatirlatmaOzeti; duvar saati ofset_dk tablosuyla ana çevrilir (Etc/GMT-3 = UTC+3, POSIX işaret tersliği). ornek_durumu: ajandaOrnekDurumuUygula; ornekler_gunluk {bas, adet, durum} bas'tan başlayan ardışık günlük satırlar demektir.",
+ "aciklama": "Ajanda kuralları için dil bağımsız vektörler. imza_metni: ajandaKimlikImzaMetni çıktısı ve UTF-8 baytları. imza: test için üretilmiş tek kullanımlık P-256 anahtarıyla (özel anahtar saklanmadı) metin[pc] üzerine DER imza; aynı imza telefon metniyle doğrulanmamalı. kapsam: kanalKapsamdaMi. birlestirme: ajandaDegisikligiUygula(kayit, degisiklik, yazar); koruma yalnız kullaniciEmriMi(yazar) yanlışken; beklenen.ornekler/budanan_ornekler verilmişse örnek budaması. hatirlatma_etkin: hatirlatmaEtkinMi. tekil_anahtar: ajandaTekilAnahtari (ifade ve sure_dk anahtara girmez). es_degisikligi: ajandaEsDegisikligi(es, girdi). gorunmez: AJANDA_GORUNMEZ_ARALIKLARI (kod noktası, iki uç dahil), örnek kod noktaları (emoji_birlestiricileri bağlamında kabul edilir), metinler: kod noktası dizisi, ajandaGorunmezVarMi'nin tersi (gecerli) ve ajandaMetniTemizle çıktısı (temiz). tekil_karar: ajandaTekilKarari. telafi: ajandaTelafiTamMi. dayanak: dayanakGecerliMi(dayanak, mesaj_ani). tekrar_ornekleri: tekrarOrnekleri(capa, tekrar, en_az) ilk en çok 5 gün ve devami. hatirlatma_plani: hatirlatmaHalleri/kurulacakHatirlatmalar/hatirlatmaOzeti ve kacirilan: kacirilanHatirlatmalar(kayit, simdi_ms, kurulanlar); duvar saati ofset_dk tablosuyla ana çevrilir (Etc/GMT-3 = UTC+3, POSIX işaret tersliği). ornek_durumu: ajandaOrnekDurumuUygula; ornekler_gunluk {bas, adet, durum} bas'tan başlayan ardışık günlük satırlar demektir. kuyruk_karari: ajandaKuyrukKarari(olay, deneme). esitleme: baslangic kopyasına olaylar sırayla ajandaEsitlemeAdimi ile uygulanır; beklenen görünen kopya (kayitlar kayit_id sırasıyla), tam_suruyor ve ajandaHelloAlanlari.",
  "surum": 1,
  "imza_metni": [
   {
@@ -949,6 +949,7 @@
  ],
  "tekil_anahtar": [
   {
+   "ad": "yarın 3'te",
    "girdi": {
     "kapsam": "sohbet:ana",
     "tur": "randevu",
@@ -961,15 +962,280 @@
      "ifade": "yarın 3'te"
     }
    },
-   "anahtar": "t1:3aeabe0e37e481e7461cfce220b9aaee5deef03178c6a03baf6f47185d0ff30c"
+   "anahtar": "t1:07f88f3ca81b7d654e28728abc65cdf23f5058315c5b7bb14b3dffe01c18afcf"
   },
   {
+   "ad": "ertesi gün bugün 3'te",
+   "girdi": {
+    "kapsam": "sohbet:ana",
+    "tur": "randevu",
+    "baslik": "Dişçi",
+    "zaman": {
+     "kesinlik": "an",
+     "tarih": "2026-11-26",
+     "saat": "15:00",
+     "saat_dilimi": "Europe/Istanbul",
+     "ifade": "bugün 3'te"
+    }
+   },
+   "anahtar": "t1:07f88f3ca81b7d654e28728abc65cdf23f5058315c5b7bb14b3dffe01c18afcf"
+  },
+  {
+   "ad": "ifadesiz",
+   "girdi": {
+    "kapsam": "sohbet:ana",
+    "tur": "randevu",
+    "baslik": "Dişçi",
+    "zaman": {
+     "kesinlik": "an",
+     "tarih": "2026-11-26",
+     "saat": "15:00",
+     "saat_dilimi": "Europe/Istanbul"
+    }
+   },
+   "anahtar": "t1:07f88f3ca81b7d654e28728abc65cdf23f5058315c5b7bb14b3dffe01c18afcf"
+  },
+  {
+   "ad": "süre eklenmiş",
+   "girdi": {
+    "kapsam": "sohbet:ana",
+    "tur": "randevu",
+    "baslik": "Dişçi",
+    "zaman": {
+     "kesinlik": "an",
+     "tarih": "2026-11-26",
+     "saat": "15:00",
+     "saat_dilimi": "Europe/Istanbul",
+     "sure_dk": 45,
+     "ifade": "yarın 3'te, 45 dakika"
+    }
+   },
+   "anahtar": "t1:07f88f3ca81b7d654e28728abc65cdf23f5058315c5b7bb14b3dffe01c18afcf"
+  },
+  {
+   "ad": "saat farklı",
+   "girdi": {
+    "kapsam": "sohbet:ana",
+    "tur": "randevu",
+    "baslik": "Dişçi",
+    "zaman": {
+     "kesinlik": "an",
+     "tarih": "2026-11-26",
+     "saat": "16:00",
+     "saat_dilimi": "Europe/Istanbul",
+     "ifade": "yarın 4'te"
+    }
+   },
+   "anahtar": "t1:dea496a2ce52831b9a1641457d7a8373639dc12df5ec2a011b00471dbf43c66c"
+  },
+  {
+   "ad": "zamansız görev",
    "girdi": {
     "kapsam": "sohbet:ana",
     "tur": "gorev",
     "baslik": "Ekmek al"
    },
    "anahtar": "t1:0e60ad256359ae654d6a47d40c66b1bfa1e792e76469cda5b8c6f472364554e5"
+  },
+  {
+   "ad": "belirsiz bir ara",
+   "girdi": {
+    "kapsam": "sohbet:ana",
+    "tur": "gorev",
+    "baslik": "Kitap iade",
+    "zaman": {
+     "kesinlik": "belirsiz",
+     "ifade": "bir ara"
+    }
+   },
+   "anahtar": "t1:75856d882bc7f85103c05244c14e68b31fa9e3cc6bd77ab7b3572b03d31de2b4"
+  },
+  {
+   "ad": "belirsiz başka söz",
+   "girdi": {
+    "kapsam": "sohbet:ana",
+    "tur": "gorev",
+    "baslik": "Kitap iade",
+    "zaman": {
+     "kesinlik": "belirsiz",
+     "ifade": "müsait olunca"
+    }
+   },
+   "anahtar": "t1:75856d882bc7f85103c05244c14e68b31fa9e3cc6bd77ab7b3572b03d31de2b4"
+  }
+ ],
+ "es_degisikligi": [
+  {
+   "ad": "taslak onayında yarım saat önce hatırlat",
+   "es": {
+    "zaman": {
+     "kesinlik": "an",
+     "tarih": "2026-11-26",
+     "saat": "15:00",
+     "saat_dilimi": "Europe/Istanbul",
+     "ifade": "yarın 3'te"
+    }
+   },
+   "girdi": {
+    "zaman": {
+     "kesinlik": "an",
+     "tarih": "2026-11-26",
+     "saat": "15:00",
+     "saat_dilimi": "Europe/Istanbul",
+     "ifade": "yarın 3'te"
+    },
+    "hatirlatmalar": [
+     {
+      "tur": "once",
+      "dk": 30
+     }
+    ]
+   },
+   "degisiklik": {
+    "hatirlatmalar": [
+     {
+      "tur": "once",
+      "dk": 30
+     }
+    ]
+   }
+  },
+  {
+   "ad": "açıklama söylendi",
+   "es": {
+    "zaman": {
+     "kesinlik": "an",
+     "tarih": "2026-11-26",
+     "saat": "15:00",
+     "saat_dilimi": "Europe/Istanbul",
+     "ifade": "yarın 3'te"
+    }
+   },
+   "girdi": {
+    "aciklama": "Dolgu kontrolü",
+    "zaman": {
+     "kesinlik": "an",
+     "tarih": "2026-11-26",
+     "saat": "15:00",
+     "saat_dilimi": "Europe/Istanbul"
+    }
+   },
+   "degisiklik": {
+    "aciklama": "Dolgu kontrolü"
+   }
+  },
+  {
+   "ad": "yalnız aynı zaman: değişiklik yok, varsayılan hatırlatma eşe uygulanmaz",
+   "es": {
+    "zaman": {
+     "kesinlik": "an",
+     "tarih": "2026-11-26",
+     "saat": "15:00",
+     "saat_dilimi": "Europe/Istanbul",
+     "ifade": "yarın 3'te"
+    }
+   },
+   "girdi": {
+    "zaman": {
+     "kesinlik": "an",
+     "tarih": "2026-11-26",
+     "saat": "15:00",
+     "saat_dilimi": "Europe/Istanbul",
+     "ifade": "bugün 3'te"
+    }
+   },
+   "degisiklik": {}
+  },
+  {
+   "ad": "yeni süre işlenir, eşin ifadesi korunur",
+   "es": {
+    "zaman": {
+     "kesinlik": "an",
+     "tarih": "2026-11-26",
+     "saat": "15:00",
+     "saat_dilimi": "Europe/Istanbul",
+     "ifade": "yarın 3'te"
+    }
+   },
+   "girdi": {
+    "zaman": {
+     "kesinlik": "an",
+     "tarih": "2026-11-26",
+     "saat": "15:00",
+     "saat_dilimi": "Europe/Istanbul",
+     "sure_dk": 45,
+     "ifade": "bugün 3'te"
+    }
+   },
+   "degisiklik": {
+    "zaman": {
+     "kesinlik": "an",
+     "tarih": "2026-11-26",
+     "saat": "15:00",
+     "saat_dilimi": "Europe/Istanbul",
+     "ifade": "yarın 3'te",
+     "sure_dk": 45
+    }
+   }
+  },
+  {
+   "ad": "aynı süre: zaman değişmez",
+   "es": {
+    "zaman": {
+     "kesinlik": "an",
+     "tarih": "2026-11-26",
+     "saat": "15:00",
+     "saat_dilimi": "Europe/Istanbul",
+     "sure_dk": 45
+    }
+   },
+   "girdi": {
+    "zaman": {
+     "kesinlik": "an",
+     "tarih": "2026-11-26",
+     "saat": "15:00",
+     "saat_dilimi": "Europe/Istanbul",
+     "sure_dk": 45
+    }
+   },
+   "degisiklik": {}
+  },
+  {
+   "ad": "boş hatırlatma listesi de söylenmiştir",
+   "es": {
+    "zaman": {
+     "kesinlik": "an",
+     "tarih": "2026-11-26",
+     "saat": "15:00",
+     "saat_dilimi": "Europe/Istanbul",
+     "ifade": "yarın 3'te"
+    }
+   },
+   "girdi": {
+    "hatirlatmalar": []
+   },
+   "degisiklik": {
+    "hatirlatmalar": []
+   }
+  },
+  {
+   "ad": "saatsiz eşte süre yok",
+   "es": {
+    "zaman": {
+     "kesinlik": "gun",
+     "tarih": "2026-11-26",
+     "saat_dilimi": "Europe/Istanbul"
+    }
+   },
+   "girdi": {
+    "zaman": {
+     "kesinlik": "gun",
+     "tarih": "2026-11-26",
+     "saat_dilimi": "Europe/Istanbul",
+     "ifade": "yarın"
+    }
+   },
+   "degisiklik": {}
   }
  ],
  "gorunmez": {
@@ -1062,6 +1328,11 @@
     917504,
     921599
    ]
+  ],
+  "emoji_birlestiricileri": [
+   8205,
+   65038,
+   65039
   ],
   "ornekler": [
    {
@@ -1227,6 +1498,297 @@
    {
     "kod_noktasi": 1114111,
     "gorunmez": false
+   }
+  ],
+  "metinler": [
+   {
+    "ad": "VS16'lı kahve",
+    "kod_noktalari": [
+     75,
+     97,
+     104,
+     118,
+     101,
+     32,
+     9749,
+     65039
+    ],
+    "gecerli": true,
+    "temiz": [
+     75,
+     97,
+     104,
+     118,
+     101,
+     32,
+     9749,
+     65039
+    ]
+   },
+   {
+    "ad": "aile emojisi (ZWJ)",
+    "kod_noktalari": [
+     128104,
+     8205,
+     128105,
+     8205,
+     128103
+    ],
+    "gecerli": true,
+    "temiz": [
+     128104,
+     8205,
+     128105,
+     8205,
+     128103
+    ]
+   },
+   {
+    "ad": "VS16'dan sonra ZWJ",
+    "kod_noktalari": [
+     128065,
+     65039,
+     8205,
+     128488,
+     65039
+    ],
+    "gecerli": true,
+    "temiz": [
+     128065,
+     65039,
+     8205,
+     128488,
+     65039
+    ]
+   },
+   {
+    "ad": "ten rengiyle meslek",
+    "kod_noktalari": [
+     128105,
+     127997,
+     8205,
+     128187
+    ],
+    "gecerli": true,
+    "temiz": [
+     128105,
+     127997,
+     8205,
+     128187
+    ]
+   },
+   {
+    "ad": "metin sunumu VS15",
+    "kod_noktalari": [
+     8596,
+     65038
+    ],
+    "gecerli": true,
+    "temiz": [
+     8596,
+     65038
+    ]
+   },
+   {
+    "ad": "tuş başlığı",
+    "kod_noktalari": [
+     49,
+     65039,
+     8419
+    ],
+    "gecerli": true,
+    "temiz": [
+     49,
+     65039,
+     8419
+    ]
+   },
+   {
+    "ad": "başta VS16",
+    "kod_noktalari": [
+     65039,
+     97
+    ],
+    "gecerli": false,
+    "temiz": [
+     97
+    ]
+   },
+   {
+    "ad": "VS16 zinciri",
+    "kod_noktalari": [
+     9749,
+     65039,
+     65039
+    ],
+    "gecerli": false,
+    "temiz": [
+     9749,
+     65039
+    ]
+   },
+   {
+    "ad": "boşluktan sonra VS16",
+    "kod_noktalari": [
+     97,
+     32,
+     65039
+    ],
+    "gecerli": false,
+    "temiz": [
+     97,
+     32
+    ]
+   },
+   {
+    "ad": "satır sonundan sonra VS16",
+    "kod_noktalari": [
+     97,
+     10,
+     65039
+    ],
+    "gecerli": false,
+    "temiz": [
+     97,
+     10
+    ]
+   },
+   {
+    "ad": "sonda ZWJ",
+    "kod_noktalari": [
+     97,
+     8205
+    ],
+    "gecerli": false,
+    "temiz": [
+     97
+    ]
+   },
+   {
+    "ad": "başta ZWJ",
+    "kod_noktalari": [
+     8205,
+     97
+    ],
+    "gecerli": false,
+    "temiz": [
+     97
+    ]
+   },
+   {
+    "ad": "ZWJ zinciri",
+    "kod_noktalari": [
+     97,
+     8205,
+     8205,
+     98
+    ],
+    "gecerli": false,
+    "temiz": [
+     97,
+     8205,
+     98
+    ]
+   },
+   {
+    "ad": "ZWJ'den sonra boşluk",
+    "kod_noktalari": [
+     97,
+     8205,
+     32,
+     98
+    ],
+    "gecerli": false,
+    "temiz": [
+     97,
+     32,
+     98
+    ]
+   },
+   {
+    "ad": "ZWJ'den sonra VS16",
+    "kod_noktalari": [
+     97,
+     8205,
+     65039,
+     98
+    ],
+    "gecerli": false,
+    "temiz": [
+     97,
+     65039,
+     98
+    ]
+   },
+   {
+    "ad": "VS15'ten sonra ZWJ",
+    "kod_noktalari": [
+     97,
+     65038,
+     8205,
+     98
+    ],
+    "gecerli": false,
+    "temiz": [
+     97,
+     65038,
+     98
+    ]
+   },
+   {
+    "ad": "VS1: bayt kaçırma yolu",
+    "kod_noktalari": [
+     97,
+     65024,
+     98
+    ],
+    "gecerli": false,
+    "temiz": [
+     97,
+     98
+    ]
+   },
+   {
+    "ad": "değişken seçici eki zinciri",
+    "kod_noktalari": [
+     97,
+     917760,
+     917761,
+     917762
+    ],
+    "gecerli": false,
+    "temiz": [
+     97
+    ]
+   },
+   {
+    "ad": "etiketli bayrak: etiketler atılır",
+    "kod_noktalari": [
+     127988,
+     917607,
+     917602,
+     917605,
+     917614,
+     917607,
+     917631
+    ],
+    "gecerli": false,
+    "temiz": [
+     127988
+    ]
+   },
+   {
+    "ad": "sıfır genişlik boşluk",
+    "kod_noktalari": [
+     97,
+     8203,
+     98
+    ],
+    "gecerli": false,
+    "temiz": [
+     97,
+     98
+    ]
    }
   ]
  },
@@ -1577,59 +2139,161 @@
  ],
  "dayanak": [
   {
-   "ad": "turun damgası, aynı dakika",
-   "dayanak_ms": 1795606200000,
-   "tur_baslangic_ms": 1795606220000,
-   "cagri_ms": 1795606245000,
+   "ad": "damga birebir",
+   "dayanak": {
+    "tarih": "2026-11-25",
+    "saat": "14:30"
+   },
+   "mesaj_ani": {
+    "tarih": "2026-11-25",
+    "saat": "14:30",
+    "saat_dilimi": "Europe/Istanbul"
+   },
    "gecerli": true
   },
   {
-   "ad": "uzun turda çağrı 30 dk sonra, dayanak tur başı",
-   "dayanak_ms": 1795606200000,
-   "tur_baslangic_ms": 1795606200000,
-   "cagri_ms": 1795608000000,
+   "ad": "dilimli damga birebir",
+   "dayanak": {
+    "tarih": "2026-11-25",
+    "saat": "14:30",
+    "saat_dilimi": "Europe/Istanbul"
+   },
+   "mesaj_ani": {
+    "tarih": "2026-11-25",
+    "saat": "14:30",
+    "saat_dilimi": "Europe/Istanbul"
+   },
    "gecerli": true
+  },
+  {
+   "ad": "sınır: mesaj anından 10 dk sonra",
+   "dayanak": {
+    "tarih": "2026-11-25",
+    "saat": "14:40"
+   },
+   "mesaj_ani": {
+    "tarih": "2026-11-25",
+    "saat": "14:30",
+    "saat_dilimi": "Europe/Istanbul"
+   },
+   "gecerli": true
+  },
+  {
+   "ad": "sınır dışı: 11 dk sonra",
+   "dayanak": {
+    "tarih": "2026-11-25",
+    "saat": "14:41"
+   },
+   "mesaj_ani": {
+    "tarih": "2026-11-25",
+    "saat": "14:30",
+    "saat_dilimi": "Europe/Istanbul"
+   },
+   "gecerli": false
+  },
+  {
+   "ad": "sınır: 10 dk önce",
+   "dayanak": {
+    "tarih": "2026-11-25",
+    "saat": "14:20"
+   },
+   "mesaj_ani": {
+    "tarih": "2026-11-25",
+    "saat": "14:30",
+    "saat_dilimi": "Europe/Istanbul"
+   },
+   "gecerli": true
+  },
+  {
+   "ad": "gece yarısı: mesaj 23:58, iletim 00:01, dayanak mesaj anı",
+   "dayanak": {
+    "tarih": "2026-11-25",
+    "saat": "23:58"
+   },
+   "mesaj_ani": {
+    "tarih": "2026-11-25",
+    "saat": "23:58",
+    "saat_dilimi": "Europe/Istanbul"
+   },
+   "gecerli": true
+  },
+  {
+   "ad": "gece yarısı: dayanak iletim anı 00:01 (ertesi gün) reddedilir",
+   "dayanak": {
+    "tarih": "2026-11-26",
+    "saat": "00:01"
+   },
+   "mesaj_ani": {
+    "tarih": "2026-11-25",
+    "saat": "23:58",
+    "saat_dilimi": "Europe/Istanbul"
+   },
+   "gecerli": false
+  },
+  {
+   "ad": "gece yarısı: mesaj 00:03, dayanak önceki gün 23:59",
+   "dayanak": {
+    "tarih": "2026-11-25",
+    "saat": "23:59"
+   },
+   "mesaj_ani": {
+    "tarih": "2026-11-26",
+    "saat": "00:03",
+    "saat_dilimi": "Europe/Istanbul"
+   },
+   "gecerli": false
   },
   {
    "ad": "eski oturum: dünün tarihi",
-   "dayanak_ms": 1795519800000,
-   "tur_baslangic_ms": 1795606200000,
-   "cagri_ms": 1795606260000,
+   "dayanak": {
+    "tarih": "2026-11-24",
+    "saat": "14:30"
+   },
+   "mesaj_ani": {
+    "tarih": "2026-11-25",
+    "saat": "14:30",
+    "saat_dilimi": "Europe/Istanbul"
+   },
    "gecerli": false
   },
   {
-   "ad": "gece yarısı: mesaj 23:58, çağrı 00:05, dayanak 23:58",
-   "dayanak_ms": 1795640280000,
-   "tur_baslangic_ms": 1795640310000,
-   "cagri_ms": 1795640700000,
-   "gecerli": true
-  },
-  {
-   "ad": "sınır: tur başından 10 dk önce",
-   "dayanak_ms": 1795605600000,
-   "tur_baslangic_ms": 1795606200000,
-   "cagri_ms": 1795606200000,
-   "gecerli": true
-  },
-  {
-   "ad": "sınır dışı: tur başından 11 dk önce",
-   "dayanak_ms": 1795605540000,
-   "tur_baslangic_ms": 1795606200000,
-   "cagri_ms": 1795606200000,
+   "ad": "oturum uykudaydı: mesaj 10:00, araç 18:00'de; dayanak çağrı anı reddedilir",
+   "dayanak": {
+    "tarih": "2026-11-25",
+    "saat": "18:00"
+   },
+   "mesaj_ani": {
+    "tarih": "2026-11-25",
+    "saat": "10:00",
+    "saat_dilimi": "Europe/Istanbul"
+   },
    "gecerli": false
   },
   {
-   "ad": "sınır: çağrıdan 10 dk sonra",
-   "dayanak_ms": 1795606800000,
-   "tur_baslangic_ms": 1795606200000,
-   "cagri_ms": 1795606200000,
+   "ad": "oturum uykudaydı: dayanak mesaj anı kabul",
+   "dayanak": {
+    "tarih": "2026-11-25",
+    "saat": "10:00"
+   },
+   "mesaj_ani": {
+    "tarih": "2026-11-25",
+    "saat": "10:00",
+    "saat_dilimi": "Europe/Istanbul"
+   },
    "gecerli": true
   },
   {
-   "ad": "gelecek: çağrıdan 1 saat sonra",
-   "dayanak_ms": 1795609800000,
-   "tur_baslangic_ms": 1795606200000,
-   "cagri_ms": 1795606200000,
+   "ad": "başka dilim",
+   "dayanak": {
+    "tarih": "2026-11-25",
+    "saat": "14:30",
+    "saat_dilimi": "UTC"
+   },
+   "mesaj_ani": {
+    "tarih": "2026-11-25",
+    "saat": "14:30",
+    "saat_dilimi": "Europe/Istanbul"
+   },
    "gecerli": false
   }
  ],
@@ -2420,6 +3084,447 @@
      "gecmis": 0
     }
    }
+  ],
+  "kacirilan": [
+   {
+    "ad": "telefon kapalıydı: kurulu 14:00 tetiği 14:30'da kaçırılan olarak gösterilir",
+    "kayit": {
+     "kayit_id": "k_dis01",
+     "revizyon": 12,
+     "tur": "randevu",
+     "baslik": "Dişçi",
+     "ornekler": [],
+     "durum": "acik",
+     "taslak": false,
+     "silindi": false,
+     "elle_alanlar": [],
+     "kaynak": {
+      "yol": "sohbet_araci",
+      "tur_kokeni": "insan",
+      "sohbet_id": "ana"
+     },
+     "olusturma_ms": 1795000000000,
+     "guncelleme_ms": 1795000000000,
+     "zaman": {
+      "kesinlik": "an",
+      "tarih": "2026-11-25",
+      "saat": "15:00",
+      "saat_dilimi": "Etc/GMT-3"
+     },
+     "hatirlatmalar": [
+      {
+       "tur": "once",
+       "dk": 60
+      }
+     ]
+    },
+    "simdi_ms": 1795606200000,
+    "kurulanlar": [
+     1795604400000
+    ],
+    "beklenen": [
+     {
+      "sira": 0,
+      "tetik_ms": 1795604400000
+     }
+    ]
+   },
+   {
+    "ad": "hiç kurulmamış (14:30'da eklenen bugün 3'te): çalmaz",
+    "kayit": {
+     "kayit_id": "k_dis01",
+     "revizyon": 12,
+     "tur": "randevu",
+     "baslik": "Dişçi",
+     "ornekler": [],
+     "durum": "acik",
+     "taslak": false,
+     "silindi": false,
+     "elle_alanlar": [],
+     "kaynak": {
+      "yol": "sohbet_araci",
+      "tur_kokeni": "insan",
+      "sohbet_id": "ana"
+     },
+     "olusturma_ms": 1795000000000,
+     "guncelleme_ms": 1795000000000,
+     "zaman": {
+      "kesinlik": "an",
+      "tarih": "2026-11-25",
+      "saat": "15:00",
+      "saat_dilimi": "Etc/GMT-3"
+     },
+     "hatirlatmalar": [
+      {
+       "tur": "once",
+       "dk": 60
+      }
+     ]
+    },
+    "simdi_ms": 1795606200000,
+    "kurulanlar": [],
+    "beklenen": []
+   },
+   {
+    "ad": "kurulu ama pencereden eski (7,5 saat): sessizce düşer",
+    "kayit": {
+     "kayit_id": "k_dis01",
+     "revizyon": 12,
+     "tur": "randevu",
+     "baslik": "Dişçi",
+     "ornekler": [],
+     "durum": "acik",
+     "taslak": false,
+     "silindi": false,
+     "elle_alanlar": [],
+     "kaynak": {
+      "yol": "sohbet_araci",
+      "tur_kokeni": "insan",
+      "sohbet_id": "ana"
+     },
+     "olusturma_ms": 1795000000000,
+     "guncelleme_ms": 1795000000000,
+     "zaman": {
+      "kesinlik": "an",
+      "tarih": "2026-11-25",
+      "saat": "08:00",
+      "saat_dilimi": "Etc/GMT-3"
+     },
+     "hatirlatmalar": [
+      {
+       "tur": "once",
+       "dk": 60
+      }
+     ]
+    },
+    "simdi_ms": 1795606200000,
+    "kurulanlar": [
+     1795579200000
+    ],
+    "beklenen": []
+   },
+   {
+    "ad": "pencere sınırı: tam 6 saat önceki düşer, 5 sa 59 dk önceki gösterilir",
+    "kayit": {
+     "kayit_id": "k_dis01",
+     "revizyon": 12,
+     "tur": "randevu",
+     "baslik": "Dişçi",
+     "ornekler": [],
+     "durum": "acik",
+     "taslak": false,
+     "silindi": false,
+     "elle_alanlar": [],
+     "kaynak": {
+      "yol": "sohbet_araci",
+      "tur_kokeni": "insan",
+      "sohbet_id": "ana"
+     },
+     "olusturma_ms": 1795000000000,
+     "guncelleme_ms": 1795000000000,
+     "zaman": {
+      "kesinlik": "an",
+      "tarih": "2026-11-25",
+      "saat": "15:00",
+      "saat_dilimi": "Etc/GMT-3"
+     },
+     "hatirlatmalar": [
+      {
+       "tur": "mutlak",
+       "tarih": "2026-11-25",
+       "saat": "08:30",
+       "saat_dilimi": "Etc/GMT-3"
+      },
+      {
+       "tur": "mutlak",
+       "tarih": "2026-11-25",
+       "saat": "08:31",
+       "saat_dilimi": "Etc/GMT-3"
+      }
+     ]
+    },
+    "simdi_ms": 1795606200000,
+    "kurulanlar": [
+     1795584600000,
+     1795584660000
+    ],
+    "beklenen": [
+     {
+      "sira": 1,
+      "tetik_ms": 1795584660000
+     }
+    ]
+   },
+   {
+    "ad": "tetik tam şimdi, kurulu ve teslim edilmemiş: kaçırılan (kurulacaklarda yok)",
+    "kayit": {
+     "kayit_id": "k_dis01",
+     "revizyon": 12,
+     "tur": "randevu",
+     "baslik": "Dişçi",
+     "ornekler": [],
+     "durum": "acik",
+     "taslak": false,
+     "silindi": false,
+     "elle_alanlar": [],
+     "kaynak": {
+      "yol": "sohbet_araci",
+      "tur_kokeni": "insan",
+      "sohbet_id": "ana"
+     },
+     "olusturma_ms": 1795000000000,
+     "guncelleme_ms": 1795000000000,
+     "zaman": {
+      "kesinlik": "an",
+      "tarih": "2026-11-25",
+      "saat": "15:00",
+      "saat_dilimi": "Etc/GMT-3"
+     },
+     "hatirlatmalar": [
+      {
+       "tur": "mutlak",
+       "tarih": "2026-11-25",
+       "saat": "14:30",
+       "saat_dilimi": "Etc/GMT-3"
+      }
+     ]
+    },
+    "simdi_ms": 1795606200000,
+    "kurulanlar": [
+     1795606200000
+    ],
+    "beklenen": [
+     {
+      "sira": 0,
+      "tetik_ms": 1795606200000
+     }
+    ]
+   },
+   {
+    "ad": "kayıt değişti, kurulu tetik artık kayıtta yok: düşer",
+    "kayit": {
+     "kayit_id": "k_dis01",
+     "revizyon": 12,
+     "tur": "randevu",
+     "baslik": "Dişçi",
+     "ornekler": [],
+     "durum": "acik",
+     "taslak": false,
+     "silindi": false,
+     "elle_alanlar": [],
+     "kaynak": {
+      "yol": "sohbet_araci",
+      "tur_kokeni": "insan",
+      "sohbet_id": "ana"
+     },
+     "olusturma_ms": 1795000000000,
+     "guncelleme_ms": 1795000000000,
+     "zaman": {
+      "kesinlik": "an",
+      "tarih": "2026-11-25",
+      "saat": "15:00",
+      "saat_dilimi": "Etc/GMT-3"
+     },
+     "hatirlatmalar": [
+      {
+       "tur": "once",
+       "dk": 15
+      }
+     ]
+    },
+    "simdi_ms": 1795606200000,
+    "kurulanlar": [
+     1795604400000
+    ],
+    "beklenen": []
+   },
+   {
+    "ad": "taslak: kaçırılan da yok",
+    "kayit": {
+     "kayit_id": "k_dis01",
+     "revizyon": 12,
+     "tur": "randevu",
+     "baslik": "Dişçi",
+     "ornekler": [],
+     "durum": "acik",
+     "taslak": true,
+     "silindi": false,
+     "elle_alanlar": [],
+     "kaynak": {
+      "yol": "sohbet_araci",
+      "tur_kokeni": "sentetik",
+      "sohbet_id": "ana"
+     },
+     "olusturma_ms": 1795000000000,
+     "guncelleme_ms": 1795000000000,
+     "zaman": {
+      "kesinlik": "an",
+      "tarih": "2026-11-25",
+      "saat": "15:00",
+      "saat_dilimi": "Etc/GMT-3"
+     },
+     "hatirlatmalar": [
+      {
+       "tur": "once",
+       "dk": 60
+      }
+     ]
+    },
+    "simdi_ms": 1795606200000,
+    "kurulanlar": [
+     1795604400000
+    ],
+    "beklenen": []
+   },
+   {
+    "ad": "aynı tetikli iki hatırlatma: ikisi de söylenir (uygulama tek bildirim yapar)",
+    "kayit": {
+     "kayit_id": "k_dis01",
+     "revizyon": 12,
+     "tur": "randevu",
+     "baslik": "Dişçi",
+     "ornekler": [],
+     "durum": "acik",
+     "taslak": false,
+     "silindi": false,
+     "elle_alanlar": [],
+     "kaynak": {
+      "yol": "sohbet_araci",
+      "tur_kokeni": "insan",
+      "sohbet_id": "ana"
+     },
+     "olusturma_ms": 1795000000000,
+     "guncelleme_ms": 1795000000000,
+     "zaman": {
+      "kesinlik": "an",
+      "tarih": "2026-11-25",
+      "saat": "15:00",
+      "saat_dilimi": "Etc/GMT-3"
+     },
+     "hatirlatmalar": [
+      {
+       "tur": "once",
+       "dk": 60
+      },
+      {
+       "tur": "mutlak",
+       "tarih": "2026-11-25",
+       "saat": "14:00",
+       "saat_dilimi": "Etc/GMT-3"
+      }
+     ]
+    },
+    "simdi_ms": 1795606200000,
+    "kurulanlar": [
+     1795604400000
+    ],
+    "beklenen": [
+     {
+      "sira": 0,
+      "tetik_ms": 1795604400000
+     },
+     {
+      "sira": 1,
+      "tetik_ms": 1795604400000
+     }
+    ]
+   },
+   {
+    "ad": "günlük seri: bugünkü kaçırılan, dünkü pencereden eski",
+    "kayit": {
+     "kayit_id": "k_dis01",
+     "revizyon": 12,
+     "tur": "randevu",
+     "baslik": "Dişçi",
+     "ornekler": [],
+     "durum": "acik",
+     "taslak": false,
+     "silindi": false,
+     "elle_alanlar": [],
+     "kaynak": {
+      "yol": "sohbet_araci",
+      "tur_kokeni": "insan",
+      "sohbet_id": "ana"
+     },
+     "olusturma_ms": 1795000000000,
+     "guncelleme_ms": 1795000000000,
+     "zaman": {
+      "kesinlik": "an",
+      "tarih": "2026-11-20",
+      "saat": "14:00",
+      "saat_dilimi": "Etc/GMT-3"
+     },
+     "hatirlatmalar": [
+      {
+       "tur": "once",
+       "dk": 0
+      }
+     ],
+     "tekrar": {
+      "siklik": "gunluk",
+      "aralik": 1
+     }
+    },
+    "simdi_ms": 1795606200000,
+    "kurulanlar": [
+     1795518000000,
+     1795604400000
+    ],
+    "beklenen": [
+     {
+      "sira": 0,
+      "tetik_ms": 1795604400000,
+      "ornek_tarihi": "2026-11-25"
+     }
+    ]
+   },
+   {
+    "ad": "günlük seri: bugünkü örnek kapatılmış, kaçırılan yok",
+    "kayit": {
+     "kayit_id": "k_dis01",
+     "revizyon": 12,
+     "tur": "randevu",
+     "baslik": "Dişçi",
+     "ornekler": [
+      {
+       "tarih": "2026-11-25",
+       "durum": "tamam"
+      }
+     ],
+     "durum": "acik",
+     "taslak": false,
+     "silindi": false,
+     "elle_alanlar": [],
+     "kaynak": {
+      "yol": "sohbet_araci",
+      "tur_kokeni": "insan",
+      "sohbet_id": "ana"
+     },
+     "olusturma_ms": 1795000000000,
+     "guncelleme_ms": 1795000000000,
+     "zaman": {
+      "kesinlik": "an",
+      "tarih": "2026-11-20",
+      "saat": "14:00",
+      "saat_dilimi": "Etc/GMT-3"
+     },
+     "hatirlatmalar": [
+      {
+       "tur": "once",
+       "dk": 0
+      }
+     ],
+     "tekrar": {
+      "siklik": "gunluk",
+      "aralik": 1
+     }
+    },
+    "simdi_ms": 1795606200000,
+    "kurulanlar": [
+     1795604400000
+    ],
+    "beklenen": []
+   }
   ]
  },
  "ornek_durumu": [
@@ -2942,6 +4047,641 @@
    "sonuc": {
     "ok": false,
     "neden": "ornek_gecersiz"
+   }
+  }
+ ],
+ "kuyruk_karari": [
+  {
+   "ad": "başarı çıkarır",
+   "olay": {
+    "olay": "sonuc",
+    "ok": true
+   },
+   "deneme": 0,
+   "karar": {
+    "karar": "cikar"
+   }
+  },
+  {
+   "ad": "denemelerden sonra başarı",
+   "olay": {
+    "olay": "sonuc",
+    "ok": true
+   },
+   "deneme": 3,
+   "karar": {
+    "karar": "cikar"
+   }
+  },
+  {
+   "ad": "kalıcı ret ret listesine",
+   "olay": {
+    "olay": "sonuc",
+    "ok": false,
+    "code": "kayit_silinmis"
+   },
+   "deneme": 0,
+   "karar": {
+    "karar": "ret_listesi",
+    "neden": "kayit_silinmis"
+   }
+  },
+  {
+   "ad": "geçersiz gövde kalıcıdır",
+   "olay": {
+    "olay": "sonuc",
+    "ok": false,
+    "code": "gecersiz_islem"
+   },
+   "deneme": 0,
+   "karar": {
+    "karar": "ret_listesi",
+    "neden": "gecersiz_islem"
+   }
+  },
+  {
+   "ad": "geçici ret: ilk deneme",
+   "olay": {
+    "olay": "sonuc",
+    "ok": false,
+    "code": "ic_hata"
+   },
+   "deneme": 0,
+   "karar": {
+    "karar": "bekle",
+    "deneme": 1
+   }
+  },
+  {
+   "ad": "geçici ret: dördüncü",
+   "olay": {
+    "olay": "sonuc",
+    "ok": false,
+    "code": "ic_hata"
+   },
+   "deneme": 3,
+   "karar": {
+    "karar": "bekle",
+    "deneme": 4
+   }
+  },
+  {
+   "ad": "geçici ret: beşinci sınırda ret listesine",
+   "olay": {
+    "olay": "sonuc",
+    "ok": false,
+    "code": "ic_hata"
+   },
+   "deneme": 4,
+   "karar": {
+    "karar": "ret_listesi",
+    "neden": "ic_hata"
+   }
+  },
+  {
+   "ad": "yanıtsız kopma: kuyrukta kalır",
+   "olay": {
+    "olay": "kopma"
+   },
+   "deneme": 0,
+   "karar": {
+    "karar": "bekle",
+    "deneme": 1
+   }
+  },
+  {
+   "ad": "yanıtsız kopma: beşinci sınırda teslim edilemedi",
+   "olay": {
+    "olay": "kopma"
+   },
+   "deneme": 4,
+   "karar": {
+    "karar": "ret_listesi",
+    "neden": "teslim_edilemedi"
+   }
+  },
+  {
+   "ad": "tam telafi işlemi atmaz, denemeyi değiştirmez",
+   "olay": {
+    "olay": "tam_telafi"
+   },
+   "deneme": 2,
+   "karar": {
+    "karar": "bekle",
+    "deneme": 2
+   }
+  }
+ ],
+ "esitleme": [
+  {
+   "ad": "artımlı: büyük revizyon uygulanır, küçüğü atlanır, son_rev her çerçevede ilerler",
+   "baslangic": {
+    "depo_id": "d_a",
+    "son_rev": 7,
+    "kayitlar": [
+     {
+      "kayit_id": "k1",
+      "revizyon": 5,
+      "guncelleme_ms": 1000
+     },
+     {
+      "kayit_id": "k2",
+      "revizyon": 7,
+      "guncelleme_ms": 2000
+     }
+    ]
+   },
+   "olaylar": [
+    {
+     "olay": "welcome",
+     "depo_id": "d_a",
+     "tam": false
+    },
+    {
+     "olay": "kayit",
+     "kayit": {
+      "kayit_id": "k3",
+      "revizyon": 8,
+      "guncelleme_ms": 3000
+     }
+    },
+    {
+     "olay": "kayit",
+     "kayit": {
+      "kayit_id": "k1",
+      "revizyon": 4,
+      "guncelleme_ms": 900
+     }
+    },
+    {
+     "olay": "kayit",
+     "kayit": {
+      "kayit_id": "k1",
+      "revizyon": 9,
+      "guncelleme_ms": 4000
+     }
+    },
+    {
+     "olay": "esitlendi"
+    }
+   ],
+   "beklenen": {
+    "depo_id": "d_a",
+    "son_rev": 9,
+    "kayitlar": [
+     {
+      "kayit_id": "k1",
+      "revizyon": 9,
+      "guncelleme_ms": 4000
+     },
+     {
+      "kayit_id": "k2",
+      "revizyon": 7,
+      "guncelleme_ms": 2000
+     },
+     {
+      "kayit_id": "k3",
+      "revizyon": 8,
+      "guncelleme_ms": 3000
+     }
+    ],
+    "tam_suruyor": false,
+    "hello": {
+     "son_rev": 9,
+     "depo_id": "d_a",
+     "son_rev_izi": {
+      "kayit_id": "k1",
+      "guncelleme_ms": 4000
+     }
+    }
+   }
+  },
+  {
+   "ad": "artımlıda kopma: uygulananlar kalır",
+   "baslangic": {
+    "depo_id": "d_a",
+    "son_rev": 7,
+    "kayitlar": [
+     {
+      "kayit_id": "k1",
+      "revizyon": 5,
+      "guncelleme_ms": 1000
+     },
+     {
+      "kayit_id": "k2",
+      "revizyon": 7,
+      "guncelleme_ms": 2000
+     }
+    ]
+   },
+   "olaylar": [
+    {
+     "olay": "welcome",
+     "depo_id": "d_a",
+     "tam": false
+    },
+    {
+     "olay": "kayit",
+     "kayit": {
+      "kayit_id": "k3",
+      "revizyon": 8,
+      "guncelleme_ms": 3000
+     }
+    },
+    {
+     "olay": "kopma"
+    }
+   ],
+   "beklenen": {
+    "depo_id": "d_a",
+    "son_rev": 8,
+    "kayitlar": [
+     {
+      "kayit_id": "k1",
+      "revizyon": 5,
+      "guncelleme_ms": 1000
+     },
+     {
+      "kayit_id": "k2",
+      "revizyon": 7,
+      "guncelleme_ms": 2000
+     },
+     {
+      "kayit_id": "k3",
+      "revizyon": 8,
+      "guncelleme_ms": 3000
+     }
+    ],
+    "tam_suruyor": false,
+    "hello": {
+     "son_rev": 8,
+     "depo_id": "d_a",
+     "son_rev_izi": {
+      "kayit_id": "k3",
+      "guncelleme_ms": 3000
+     }
+    }
+   }
+  },
+  {
+   "ad": "tam telafi tamamlanır: gelmeyen kayıt düşer, depo değişir",
+   "baslangic": {
+    "depo_id": "d_a",
+    "son_rev": 7,
+    "kayitlar": [
+     {
+      "kayit_id": "k1",
+      "revizyon": 5,
+      "guncelleme_ms": 1000
+     },
+     {
+      "kayit_id": "k2",
+      "revizyon": 7,
+      "guncelleme_ms": 2000
+     }
+    ]
+   },
+   "olaylar": [
+    {
+     "olay": "welcome",
+     "depo_id": "d_b",
+     "tam": true
+    },
+    {
+     "olay": "kayit",
+     "kayit": {
+      "kayit_id": "k1",
+      "revizyon": 1,
+      "guncelleme_ms": 500
+     }
+    },
+    {
+     "olay": "kayit",
+     "kayit": {
+      "kayit_id": "k9",
+      "revizyon": 2,
+      "guncelleme_ms": 600
+     }
+    },
+    {
+     "olay": "esitlendi"
+    }
+   ],
+   "beklenen": {
+    "depo_id": "d_b",
+    "son_rev": 2,
+    "kayitlar": [
+     {
+      "kayit_id": "k1",
+      "revizyon": 1,
+      "guncelleme_ms": 500
+     },
+     {
+      "kayit_id": "k9",
+      "revizyon": 2,
+      "guncelleme_ms": 600
+     }
+    ],
+    "tam_suruyor": false,
+    "hello": {
+     "son_rev": 2,
+     "depo_id": "d_b",
+     "son_rev_izi": {
+      "kayit_id": "k9",
+      "guncelleme_ms": 600
+     }
+    }
+   }
+  },
+  {
+   "ad": "tam telafi sürerken görünen kopya değişmez",
+   "baslangic": {
+    "depo_id": "d_a",
+    "son_rev": 7,
+    "kayitlar": [
+     {
+      "kayit_id": "k1",
+      "revizyon": 5,
+      "guncelleme_ms": 1000
+     },
+     {
+      "kayit_id": "k2",
+      "revizyon": 7,
+      "guncelleme_ms": 2000
+     }
+    ]
+   },
+   "olaylar": [
+    {
+     "olay": "welcome",
+     "depo_id": "d_b",
+     "tam": true
+    },
+    {
+     "olay": "kayit",
+     "kayit": {
+      "kayit_id": "k1",
+      "revizyon": 1,
+      "guncelleme_ms": 500
+     }
+    }
+   ],
+   "beklenen": {
+    "depo_id": "d_a",
+    "son_rev": 7,
+    "kayitlar": [
+     {
+      "kayit_id": "k1",
+      "revizyon": 5,
+      "guncelleme_ms": 1000
+     },
+     {
+      "kayit_id": "k2",
+      "revizyon": 7,
+      "guncelleme_ms": 2000
+     }
+    ],
+    "tam_suruyor": true,
+    "hello": {
+     "son_rev": 7,
+     "depo_id": "d_a",
+     "son_rev_izi": {
+      "kayit_id": "k2",
+      "guncelleme_ms": 2000
+     }
+    }
+   }
+  },
+  {
+   "ad": "tam telafi yarıda kesilir: görünen kopya, son_rev, depo ve iz aynen kalır",
+   "baslangic": {
+    "depo_id": "d_a",
+    "son_rev": 7,
+    "kayitlar": [
+     {
+      "kayit_id": "k1",
+      "revizyon": 5,
+      "guncelleme_ms": 1000
+     },
+     {
+      "kayit_id": "k2",
+      "revizyon": 7,
+      "guncelleme_ms": 2000
+     }
+    ]
+   },
+   "olaylar": [
+    {
+     "olay": "welcome",
+     "depo_id": "d_b",
+     "tam": true
+    },
+    {
+     "olay": "kayit",
+     "kayit": {
+      "kayit_id": "k1",
+      "revizyon": 1,
+      "guncelleme_ms": 500
+     }
+    },
+    {
+     "olay": "kopma"
+    }
+   ],
+   "beklenen": {
+    "depo_id": "d_a",
+    "son_rev": 7,
+    "kayitlar": [
+     {
+      "kayit_id": "k1",
+      "revizyon": 5,
+      "guncelleme_ms": 1000
+     },
+     {
+      "kayit_id": "k2",
+      "revizyon": 7,
+      "guncelleme_ms": 2000
+     }
+    ],
+    "tam_suruyor": false,
+    "hello": {
+     "son_rev": 7,
+     "depo_id": "d_a",
+     "son_rev_izi": {
+      "kayit_id": "k2",
+      "guncelleme_ms": 2000
+     }
+    }
+   }
+  },
+  {
+   "ad": "kesilen tam telafiden sonra yeni bağlantıda baştan tamamlanır",
+   "baslangic": {
+    "depo_id": "d_a",
+    "son_rev": 7,
+    "kayitlar": [
+     {
+      "kayit_id": "k1",
+      "revizyon": 5,
+      "guncelleme_ms": 1000
+     },
+     {
+      "kayit_id": "k2",
+      "revizyon": 7,
+      "guncelleme_ms": 2000
+     }
+    ]
+   },
+   "olaylar": [
+    {
+     "olay": "welcome",
+     "depo_id": "d_b",
+     "tam": true
+    },
+    {
+     "olay": "kayit",
+     "kayit": {
+      "kayit_id": "k1",
+      "revizyon": 1,
+      "guncelleme_ms": 500
+     }
+    },
+    {
+     "olay": "kopma"
+    },
+    {
+     "olay": "welcome",
+     "depo_id": "d_b",
+     "tam": true
+    },
+    {
+     "olay": "kayit",
+     "kayit": {
+      "kayit_id": "k1",
+      "revizyon": 1,
+      "guncelleme_ms": 500
+     }
+    },
+    {
+     "olay": "kayit",
+     "kayit": {
+      "kayit_id": "k2",
+      "revizyon": 3,
+      "guncelleme_ms": 700
+     }
+    },
+    {
+     "olay": "esitlendi"
+    }
+   ],
+   "beklenen": {
+    "depo_id": "d_b",
+    "son_rev": 3,
+    "kayitlar": [
+     {
+      "kayit_id": "k1",
+      "revizyon": 1,
+      "guncelleme_ms": 500
+     },
+     {
+      "kayit_id": "k2",
+      "revizyon": 3,
+      "guncelleme_ms": 700
+     }
+    ],
+    "tam_suruyor": false,
+    "hello": {
+     "son_rev": 3,
+     "depo_id": "d_b",
+     "son_rev_izi": {
+      "kayit_id": "k2",
+      "guncelleme_ms": 700
+     }
+    }
+   }
+  },
+  {
+   "ad": "boş kopyada ilk eşitleme",
+   "baslangic": {
+    "son_rev": 0,
+    "kayitlar": []
+   },
+   "olaylar": [
+    {
+     "olay": "welcome",
+     "depo_id": "d_a",
+     "tam": true
+    },
+    {
+     "olay": "kayit",
+     "kayit": {
+      "kayit_id": "k1",
+      "revizyon": 1,
+      "guncelleme_ms": 500
+     }
+    },
+    {
+     "olay": "esitlendi"
+    }
+   ],
+   "beklenen": {
+    "depo_id": "d_a",
+    "son_rev": 1,
+    "kayitlar": [
+     {
+      "kayit_id": "k1",
+      "revizyon": 1,
+      "guncelleme_ms": 500
+     }
+    ],
+    "tam_suruyor": false,
+    "hello": {
+     "son_rev": 1,
+     "depo_id": "d_a",
+     "son_rev_izi": {
+      "kayit_id": "k1",
+      "guncelleme_ms": 500
+     }
+    }
+   }
+  },
+  {
+   "ad": "boş depoya tam telafi kopyayı boşaltır",
+   "baslangic": {
+    "depo_id": "d_a",
+    "son_rev": 7,
+    "kayitlar": [
+     {
+      "kayit_id": "k1",
+      "revizyon": 5,
+      "guncelleme_ms": 1000
+     },
+     {
+      "kayit_id": "k2",
+      "revizyon": 7,
+      "guncelleme_ms": 2000
+     }
+    ]
+   },
+   "olaylar": [
+    {
+     "olay": "welcome",
+     "depo_id": "d_c",
+     "tam": true
+    },
+    {
+     "olay": "esitlendi"
+    }
+   ],
+   "beklenen": {
+    "depo_id": "d_c",
+    "son_rev": 0,
+    "kayitlar": [],
+    "tam_suruyor": false,
+    "hello": {
+     "son_rev": 0,
+     "depo_id": "d_c"
+    }
    }
   }
  ]

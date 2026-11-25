@@ -1,7 +1,6 @@
 import { z } from "zod";
-import { kanonikJson } from "./kanonik.ts";
+import { iyiBicimliMi, kanonikJson } from "./kanonik.ts";
 import { AJANDA_SINIRLARI } from "./sinirlar.ts";
-import { planMetni, planSatiri } from "./temel.ts";
 
 /**
  * Ajandanın zaman, hatırlatma ve tekrar şemaları. Saat dilimi veritabanı kullanılmaz (Hermes ve
@@ -12,7 +11,9 @@ import { planMetni, planSatiri } from "./temel.ts";
 // Metin
 
 /**
- * Ajanda metninde yasak kod noktaları (iki uç dahil). Kod noktasına bakılır, UTF-16 birimine değil:
+ * Ajanda metninde yasak kod noktaları (iki uç dahil; tek istisna bağlamındaki
+ * `AJANDA_EMOJI_BIRLESTIRICILERI`) ve modele hep kaçışla giden kod noktaları (`ajandaKacir`, istisnasız).
+ * Kod noktasına bakılır, UTF-16 birimine değil:
  * etiket (U+E0000-E0FFF) ve değişken seçici (U+FE00-FE0F, U+E0100-E01EF) karakterleri görünmeden
  * metin taşıyabilir. Kapsam: kontrol karakterleri (C0, DEL, C1; sekme ve satır sonları hariç, onlar
  * şemada ayrıca denetlenir), Unicode `Default_Ignorable_Code_Point` kümesinin tamamı, satır ve
@@ -53,29 +54,95 @@ export function ajandaGorunmezMi(kodNoktasi: number): boolean {
   return false;
 }
 
-/** Metinde yasak kod noktası var mı (eşsiz vekil burada sayılmaz; onu `iyiBicimliMi` yakalar). */
+/**
+ * Gündelik emojinin parçası olan üç tablo karakteri: sıfır genişlikli birleştirici (U+200D, aile ve
+ * meslek emojileri) ve sunum seçicileri (U+FE0E metin, U+FE0F emoji: `☕️`, `❤️`). Tablodadırlar ve
+ * modele hep görünür kaçışla gider (`ajandaKacir`); kayıt metninde yalnız bağlamında kabul edilir
+ * (`ajandaGorunmezVarMi`). Öteki değişken seçiciler (U+FE00-FE0D, U+E0100-E01EF) ve etiketler, bayt
+ * kaçırma yolu oldukları için hiçbir bağlamda kabul edilmez.
+ */
+export const AJANDA_EMOJI_BIRLESTIRICILERI = [0x200d, 0xfe0e, 0xfe0f] as const;
+
+/** Sunum seçicisinin ve birleştiricinin dayanabileceği karakter: tabloda değil, boşluk değil. */
+function emojiTabaniMi(k: number | undefined): boolean {
+  return k !== undefined && k !== 0x20 && k !== 0x09 && k !== 0x0a && k !== 0x0d && !ajandaGorunmezMi(k);
+}
+
+/**
+ * Metinde kabul edilmeyen görünmez kod noktası var mı. Tablodaki her kod noktası yasaktır; tek
+ * istisna `AJANDA_EMOJI_BIRLESTIRICILERI`'nin bağlamıdır (kod noktası dizisinde):
+ * - U+FE0E, U+FE0F: hemen önünde taban karakter (tabloda değil, boşluk değil) varsa.
+ * - U+200D: önünde taban ya da kabul edilmiş U+FE0F, hemen arkasında taban varsa.
+ * Böylece seçici ya da birleştirici zincirlenemez, başta, sonda ve boşluk yanında duramaz: görünür
+ * karakter başına en çok bir seçici ve bir birleştirici. Eşsiz vekil burada sayılmaz (`iyiBicimliMi`).
+ */
 export function ajandaGorunmezVarMi(metin: string): boolean {
-  for (const karakter of metin) {
-    if (ajandaGorunmezMi(karakter.codePointAt(0)!)) return true;
+  const kn = Array.from(metin, (c) => c.codePointAt(0)!);
+  for (let i = 0; i < kn.length; i++) {
+    const k = kn[i]!;
+    if (!ajandaGorunmezMi(k)) continue;
+    const once = kn[i - 1];
+    if ((k === 0xfe0e || k === 0xfe0f) && emojiTabaniMi(once)) continue;
+    if (k === 0x200d && (emojiTabaniMi(once) || once === 0xfe0f) && emojiTabaniMi(kn[i + 1])) continue;
+    return true;
   }
   return false;
 }
 
 /**
- * Ajandanın tek satırlık metni: satır sonu, sekme, `AJANDA_GORUNMEZ_ARALIKLARI`, bozuk vekil yok;
- * uzunluk UTF-16 birimi (zod `max` kod noktası sayar); baştaki ya da sondaki boşluk yok.
+ * Uygulamanın giriş temizliği: `ajandaGorunmezVarMi`'nin kabul etmediği her kod noktasını ve eşsiz
+ * vekili atar; bağlamındaki emoji birleştiricilerini korur (`☕️`, aile emojisi olduğu gibi kalır).
+ * Çıktı hep `ajandaGorunmezVarMi` yanlış ve iyi biçimlidir; geçerli metinde kimliktir. Satır sonu,
+ * sekme ve kenar boşluğu bu işin dışındadır (alanın kuralı). Köprü ve servis temizlemez, doğrular:
+ * `ifade` ve `alinti` birebir saklanır.
+ */
+export function ajandaMetniTemizle(metin: string): string {
+  const cikti: number[] = [];
+  let bekleyenZwj = false; // son eklenen U+200D: arkasından taban gelmezse atılır
+  for (const c of metin) {
+    const k = c.codePointAt(0)!;
+    if (k >= 0xd800 && k <= 0xdfff) continue;
+    if (bekleyenZwj && !emojiTabaniMi(k)) cikti.pop();
+    bekleyenZwj = false;
+    const son = cikti[cikti.length - 1];
+    if (!ajandaGorunmezMi(k)) cikti.push(k);
+    else if ((k === 0xfe0e || k === 0xfe0f) && emojiTabaniMi(son)) cikti.push(k);
+    else if (k === 0x200d && (emojiTabaniMi(son) || son === 0xfe0f)) {
+      cikti.push(k);
+      bekleyenZwj = true;
+    }
+  }
+  if (bekleyenZwj) cikti.pop();
+  let sonuc = "";
+  for (const k of cikti) sonuc += String.fromCodePoint(k);
+  return sonuc;
+}
+
+const SATIR_SONU = /[\t\n\r]/;
+
+/**
+ * Ajandanın tek satırlık metni: satır sonu, sekme, kabul edilmeyen görünmez kod noktası
+ * (`ajandaGorunmezVarMi`), bozuk vekil yok; uzunluk UTF-16 birimi; baştaki ya da sondaki boşluk yok.
  */
 export function ajandaSatiri(en: number, boy: number) {
-  return planSatiri(en, boy)
+  return z
+    .string()
+    .min(en)
+    .max(boy)
     .refine((s) => s.length <= boy, { message: "çok uzun (UTF-16 birimi)" })
+    .refine((s) => !SATIR_SONU.test(s) && iyiBicimliMi(s), { message: "satır sonu ya da bozuk vekil" })
     .refine((s) => !ajandaGorunmezVarMi(s), { message: "görünmez ya da yok sayılan karakter" })
     .refine((s) => s.trim() === s, { message: "baştaki ya da sondaki boşluk" });
 }
 
-/** Ajandanın çok satırlı metni: `\t \n \r` serbest, `AJANDA_GORUNMEZ_ARALIKLARI` yok, boş olamaz. */
+/** Ajandanın çok satırlı metni: `\t \n \r` serbest, kabul edilmeyen görünmez kod noktası yok, boş olamaz. */
 export function ajandaMetni(boy: number) {
-  return planMetni(1, boy)
+  return z
+    .string()
+    .min(1)
+    .max(boy)
     .refine((s) => s.length <= boy, { message: "çok uzun (UTF-16 birimi)" })
+    .refine((s) => iyiBicimliMi(s), { message: "bozuk vekil" })
     .refine((s) => !ajandaGorunmezVarMi(s), { message: "görünmez ya da yok sayılan karakter" })
     .refine((s) => s.trim().length > 0, { message: "yalnız boşluk" });
 }
@@ -227,6 +294,44 @@ export type AjandaZamani = z.infer<typeof AjandaZamani>;
 /** Araç girdisinin zamanı: saat dilimi verilmezse servis varsayılanı koyar. */
 export const AjandaZamaniGirdisi = zamanSemasi(SaatDilimi.optional());
 export type AjandaZamaniGirdisi = z.infer<typeof AjandaZamaniGirdisi>;
+
+/**
+ * Araç çıktısındaki zaman: kaydın zamanı, `ifade` olmadan. Kayıt metni modele yalnız `ajandaKacir`
+ * ve çit yolundan gider; şema `ifade`'yi reddeder (`belirsiz` yalnız kesinliğini taşır).
+ */
+export const AjandaZamanOzeti = z.discriminatedUnion("kesinlik", [
+  z.strictObject({
+    kesinlik: z.literal("an"),
+    tarih: Tarih,
+    saat: Saat,
+    sure_dk: z.number().int().min(1).max(AJANDA_SINIRLARI.SURE_DK).optional(),
+    saat_dilimi: SaatDilimi,
+  }),
+  z.strictObject({ kesinlik: z.literal("gun"), tarih: Tarih, saat_dilimi: SaatDilimi }),
+  z
+    .strictObject({ kesinlik: z.literal("donem"), baslangic: Tarih, bitis: Tarih, saat_dilimi: SaatDilimi })
+    .refine(donemGecerliMi, { message: "bitis baslangictan önce ya da dönem çok uzun", path: ["bitis"] }),
+  z.strictObject({ kesinlik: z.literal("belirsiz") }),
+]);
+export type AjandaZamanOzeti = z.infer<typeof AjandaZamanOzeti>;
+
+/** Kaydın zamanından araç çıktısının zamanı: `ifade` atılır. */
+export function ajandaZamanOzeti(zaman: AjandaZamani): AjandaZamanOzeti {
+  const { ifade: _ifade, ...ozet } = zaman;
+  return ozet;
+}
+
+/**
+ * Zamanın "ne zaman" çekirdeği: kesinlik, gün(ler), saat, dilim. `ifade` (kullanıcının sözü) ve
+ * `sure_dk` (sürenin uzunluğu) girmez: aynı randevu başka sözle ya da süre eklenerek anıldığında
+ * aynı çekirdek çıkar. Tekilleştirme anahtarı bundan hesaplanır (`ajandaTekilAnahtari`).
+ */
+export function zamanCekirdegi(zaman: AjandaZamani): AjandaZamanOzeti {
+  const ozet = ajandaZamanOzeti(zaman);
+  if (ozet.kesinlik !== "an") return ozet;
+  const { sure_dk: _sure, ...cekirdek } = ozet;
+  return cekirdek;
+}
 
 // Hatırlatma
 
