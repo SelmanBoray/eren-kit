@@ -12,7 +12,7 @@ Ayrı bir Android uygulaması (ajanda) görev, randevu ve notları gösterir; as
 
 ## Kapsam ve eşleştirme
 
-- `CIHAZ_KAPSAMLARI` = `sohbet` | `ajanda`. Kapsamı telefon beyan etmez (`pair_request` kapsam alanı taşıyamaz): PC'deki eşleştirme komutu açtığı pencereye yazar (ör. `eren eslestir --ajanda`), eşleşen cihaz kaydına geçer. Kapsam sütunu olmayan eski kayıt `ESKI_CIHAZ_KAPSAMI` = `sohbet`.
+- `CIHAZ_KAPSAMLARI` = `sohbet` | `ajanda`. Kapsamı telefon beyan etmez (`pair_request` kapsam alanı taşıyamaz): PC'deki eşleştirme komutu açtığı pencereye yazar (`eren eslestir --ajanda`, `SERVIS.md` "Ajanda"), eşleşen cihaz kaydına geçer. Kapsamı kayıtlı olmayan (eski) cihaz `ESKI_CIHAZ_KAPSAMI` = `sohbet`. Kapsam sütun değil yapıdır: ajanda cihazı ve ajanda penceresi ayrı tablolardadır (`ajanda_cihazlari`, `ajanda_eslestirme`), sohbet cihazı ve penceresi bugünkü tablolarda alansız kalır. Böylece geri alınan eski servis ajanda cihazını hiç görmez ve ona hiçbir kanal açmaz (`server/MODULLER.md` "Ajanda dalgası" > "depo").
 - `KAPSAM_KANALLARI`: `sohbet` → `/sohbet`, `/cihaz`; `ajanda` → `/ajanda`. Kesişmez: ajanda cihazı `/sohbet`'ten insan mesajı gönderemez, eski cihaz `/ajanda` açamaz.
 - Eşleştirme kapsamın kanalında yapılır (`KAPSAM_ESLESTIRME_KANALI`). Ajanda `pair_request`'i `/sohbet`'in v1 `PairRequest` şemasına da uyar; ayrımı şema değil pencere denetimi yapar (testle sabit). QR: `AjandaEslestirmeQr` (`EslestirmeQr` + `kanal:"ajanda"`); iki uygulama birbirinin QR'ını reddeder.
 - Kimlik: `ajandaKimlikImzaMetni` = `eren-ajanda-auth-v1`, rol, `kanal:ajanda`, `kapsam:ajanda`, `device_id`, iki nonce (satır sonuyla); `/sohbet` ya da `/cihaz` imzası yerine geçemez. IP eşleşmesi, 10 sn süre, kimlik öncesi 16 KiB sınırı, PC'nin kendi adresinden eşleştirme reddi ve kaldırma (`--kaldir`) bugünkü gibidir.
@@ -56,7 +56,7 @@ Sözleşmenin üstüne yazılacak kodun yapması gerekenlerin tek listesi; adlar
 
 ### Servis: ajanda modülü
 
-- Tek yazar, tek sıra; her başarılı değişiklikte tek sayaçtan revizyon ve geçmiş satırı (`guncelleme_ms` = satırın `ts_ms`'i, geçmiş budanmaz); geri yükleme ve içe aktarmada yeni `depo_id`; `KAYIT_ADET` (`kayit_siniri`).
+- Tek yazar, tek sıra; her başarılı değişiklikte tek sayaçtan revizyon ve geçmiş satırı (`guncelleme_ms` = satırın `ts_ms`'i, geçmiş budanmaz); `KAYIT_ADET` (`kayit_siniri`). Geri yükleme ve içe aktarmada yeni `depo_id` ilkesi geçerlidir, ama serviste böyle bir işlem yoktur (bkz. "Kalan açıklar").
 - Değişiklik `ajandaDegisikligiUygula`, örnek durumu `ajandaOrnekDurumuUygula` (`bugun`: kaydın dilimindeki yerel gün); sonuç `AjandaKaydi` ile doğrulanır, budananlar geçmişe yazılır. Silme, sentetik tur ve tur kökeni kuralları yukarıdaki gibidir.
 - Ekleme: dilimi doldur ve denetle, varsayılan hatırlatma, `alinti` denetimi; otomatik eklemede `ajandaTekilAnahtari` → `kaynak.tekil_anahtar`, `ajandaTekilKarari`, emirde açık eşe `ajandaEsDegisikligi` (taslaksa aynı işlemde onay, `uygulanan_alanlar`).
 - Araçta `dayanakGecerliMi(dayanak, turun mesaj anı)` (`dayanak_uyusmuyor`); çıktıda turun `mesaj_ani`'sı, `ajandaZamanOzeti`, `hatirlatmaOzeti` (java.time kuralıyla `AnCevirici`).
@@ -65,13 +65,14 @@ Sözleşmenin üstüne yazılacak kodun yapması gerekenlerin tek listesi; adlar
 ### Servis: gateway ve eşleştirme
 
 - `/ajanda` yolu, `ajandaYukariCoz`/`ajandaAsagiCoz`, sınır `AJANDA_AZAMI_CERCEVE.KANAL`. Kimlik sonrası çözüm `islem_id` taşıyorsa bağlantıyı kapatma: `islem_sonucu{islem_id, ok:false, code:"gecersiz_islem"}` yolla ve tekrarsızlık kaydına yaz; öteki geçersiz çerçeve `gecersiz_mesaj` + kapat.
-- `hello`'da cihaz kaydını taze oku, `kanalKapsamdaMi` yanlışsa `kanal_desteklenmiyor` + kapat (sınama başlamadan); eşleştirme penceresi denetimi; `ajandaKimlikImzaMetni`, `AjandaEslestirmeQr`, `AJANDA_KANAL_HATALARI`. Depoya `cihazlar.kapsam`, `eslestirme.kapsam` (ek göç).
+- `hello`'da cihaz kaydını taze oku, `kanalKapsamdaMi` yanlışsa `kanal_desteklenmiyor` + kapat (sınama başlamadan); eşleştirme penceresi denetimi; `ajandaKimlikImzaMetni`, `AjandaEslestirmeQr`, `AJANDA_KANAL_HATALARI`. Kapsam depoda ayrı tablolardır (ek göç 6: `ajanda_cihazlari`, `ajanda_cihaz_iptalleri`, `ajanda_eslestirme`); `cihazlar`'a ve `eslestirme`'ye sütun eklenmez (bkz. "Kapsam ve eşleştirme").
 - Telafi (`ajandaTelafiTamMi`): bağlantı başına son gönderilen revizyonu tut, telafi sürerken doğanı sıraya al, aynı revizyonu iki kez yollama.
 
 ### Konuşma modülü
 
 - Her kuyruk satırının (insan ve sentetik) varış anını kullanıcının o anki dilimiyle `AjandaYerelAn`'a çevirip satırla sakla; ana oturuma giden her kullanıcı rolündeki mesajın başına bundan `mesajAniDamgasi` koy (iletim anı ya da şimdiki saat değil).
 - Turun mesaj anını ("Mesaj anı" tanımıyla) ve turun kökenini servise ver.
+- Ana oturumun sistem istemi damgayı yalnız konumuyla anar (kısayol öneki damgadan sonraki satırdadır); göreli zamanın damgaya göre çözüleceğini ajanda araçlarının ve `dayanak` alanının açıklaması söyler. Çit kuralı istemde kaynak saymadan bütün çitli metne (ajanda listesi dahil) uyar.
 - Köprüye `ana_oturum` jetonu (kapsam `sohbet_id` + nesil) ve ajanda borusu bağlantısı.
 
 ### Köprü
@@ -101,5 +102,7 @@ Sözleşmenin üstüne yazılacak kodun yapması gerekenlerin tek listesi; adlar
 - Telefonun outbox'ında bekleyip gece yarısından sonra servise ulaşan mesajın mesaj anı varış anıdır: `/sohbet` v5 `user_message` istemci zamanı taşımaz ve baytları değişmez, "yarın" bir gün kayar. Kayıt ve hatırlatması uygulamada görünür; düzeltme kullanıcıdadır. Kapanması istemci zamanı taşıyan yeni bir `/sohbet` sürümü ister.
 - Dayanak turun mesaj anıdır: göreli ifade gece yarısından önceki bir turda söylenip ayrıntısı sonraki turda tamamlanırsa model ifadeyi bu turun anına göre çözebilir ve denetim bunu yakalamaz.
 - Yedekten geri yükleme, yedekten sonra onaylanmış değişiklikleri kullanıcıya haber vermeden kaybettirir; uygulama `tam` telafide yalnız sonucu gelmemiş kuyruğunu korur, onaylanmış eski hali geri yollamaz. Geri yükleme kullanıcının elle yaptığı nadir bir işlemdir.
+- Serviste geri yükleme ya da içe aktarma işlemi yoktur, bu yüzden "yeni `depo_id`" ilkesi uygulanmadı: elle geri konan veritabanı aynı `depo_id`'yi taşır. Tam telafiye dönüşü `ajandaTelafiTamMi` yapar (uygulamanın `son_rev`'i servisinkinden büyük ya da `son_rev_izi` servisin geçmişindeki satırla tutmuyor); iz de tutuyorsa telafi artımlı kalır. Sınananlar: kimlik değişince tam telafi (ajanda modülü testi) ve aynı kimlikte iz tutmayınca tam telafi (birleşim testi); gerçek bir yedekten geri yükleme denenmedi.
 - Yaz saati boşluğu ve çakışması için hatırlatma planı vektörü yok (vektörler sabit ofsetli dilimlerle sınar); kural yukarıda yazılıdır.
+- Servis tarafının güvenlik yüzeyi ve kalan açıkları (kimlik öncesi `/ajanda`, telafi yükü, şemasız giden `kayit`, kapsamın ret kodundan anlaşılması) `GUVENLIK.md` "Ajanda" ve 40-46'dadır.
 - Sonucu gelmeden kopma da deneme sayılır: bağlantı çok kararsızsa geçerli bir işlem `teslim_edilemedi` ile ret listesine düşebilir (kaybolmaz, kullanıcı yeniden ekler); servisin uyguladığı ama yanıtı her seferinde kaybolan bir `ekle` yeniden eklenirse `kimlik_cakisiyor` alır.

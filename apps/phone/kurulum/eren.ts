@@ -1,6 +1,6 @@
-// Telefon servisini yöneten küçük komut: eren durum | yeniden-baslat | dur | baslat | log [n] [--bekci]
+// Telefon servisini yöneten küçük komut: eren durum | yeniden-baslat | dur | baslat | log [n] [--bekci] | eslestir [...]
 // ("eren" komut adıdır.) Veri kökü ve görev adı ortamdan: ortam.ts.
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { closeSync, existsSync, fstatSync, openSync, readSync } from "node:fs";
 import { join } from "node:path";
 import { bekciIstegi, durumOzeti, guncelSha, servisiDogrulaBekle, veriKokuMesaji } from "./kur.ts";
@@ -35,6 +35,9 @@ const YARDIM = `Kullanım: eren <komut>
                         (dur ve baslat eski kurulumla çakışmada hiçbir şeye dokunmadan durur;
                         eski veri kökü doluyken bilerek sürdürmek için ${ESKI_KOK_BAYRAGI})
   log [n] [--bekci]     son n (varsayılan 20) olay; --bekci ile bekci.log
+  eslestir [seçenek]    kurulu (güncel) sürümün eşleştirme komutu: seçeneksiz telefon (sohbet)
+                        için kod ve QR; --ajanda ajanda uygulaması için; --liste, --kaldir <kimlik>
+                        (ayrıntı: eren eslestir --yardim)
   yardim | -h           bu yardım`;
 
 export const sureMetni = (ms: number): string => {
@@ -245,7 +248,7 @@ const eskiKurulumDenetle = (b: Bag, ortam: Ortam, komut: string, secenek: Secene
  * `kur.ts` ile aynı ön denetim: kabuktaki veri kökü Görev Zamanlayıcı'nın göreceği kalıcı değerden farklıysa
  * servis başka köke açılır. Hata varsa hiçbir şeye dokunmadan yazar ve false döner; uyarıları yalnız yazar.
  */
-const kaliciOrtamDenetle = (b: Bag, ortam: Ortam, komut: string): boolean => {
+const kaliciOrtamDenetle = (b: Pick<Bag, "kaliciOrtam">, ortam: Ortam, komut: string): boolean => {
   const { hatalar, uyarilar } = kaliciOrtamKarsilastir(ortam, b.kaliciOrtam());
   for (const u of uyarilar) console.error(`UYARI: ${u}`);
   if (hatalar.length === 0) return true;
@@ -396,6 +399,46 @@ export const baslatKomutu = async (b: Bag = gercekBag, ortam: Ortam = process.en
   return 1;
 };
 
+export type EslestirBag = {
+  /** Yol var mı; verilmezse existsSync. */
+  readonly varMi: (yol: string) => boolean;
+  /** Komutu stdio'yu devrederek çalıştırır, çıkış kodunu döner (başlatılamazsa 1). */
+  readonly calistir: (dosya: string, args: readonly string[]) => number;
+  /** Görev Zamanlayıcı'nın göreceği kalıcı ortam (`kaliciOrtamOku`). */
+  readonly kaliciOrtam: () => KaliciOrtam;
+};
+
+const gercekEslestirBag: EslestirBag = {
+  varMi: existsSync,
+  calistir: (dosya, args) => {
+    const r = spawnSync(dosya, [...args], { stdio: "inherit", shell: false, windowsHide: true });
+    return r.error === undefined && typeof r.status === "number" ? r.status : 1;
+  },
+  kaliciOrtam: () => kaliciOrtamOku(process.env),
+};
+
+/** Güncel sürümün eşleştirme komutu: `<uygulama kökü>\guncel\server\src\eslestir.ts`. */
+export const eslestirBetigi = (ortam: Ortam): string =>
+  join(uygulamaKoku(veriKoku(ortam)), "guncel", "server", "src", "eslestir.ts");
+
+/**
+ * `eren eslestir [...]`: seçenekleri olduğu gibi GÜNCEL sürümün `eslestir.ts`'ine verir (aynı Node, aynı
+ * ortam). Çalışan servisle aynı sürüm ve aynı veri kökü: kod, servisin okuduğu veritabanına yazılır;
+ * depodaki kaynaktan çalıştırmak, servisten yeni koda ait bir göçü canlı veritabanına önceden uygulayabilirdi.
+ * Kabuktaki veri kökü kalıcı ortamdakinden farklıysa (`eren baslat` ile aynı kural) hiçbir şeye dokunmaz:
+ * kod başka bir veritabanına yazılır ve telefon "eşleştirme kapalı" görürdü. Seçenekleri `eslestir.ts`
+ * denetler: eski bir sürüm `--ajanda`'yı tanımaz ve 2 ile çıkar.
+ */
+export const eslestirKomutu = (args: readonly string[], b: EslestirBag = gercekEslestirBag, ortam: Ortam = process.env): number => {
+  if (!kaliciOrtamDenetle({ kaliciOrtam: b.kaliciOrtam }, ortam, "eslestir")) return 1;
+  const betik = eslestirBetigi(ortam);
+  if (!b.varMi(betik)) {
+    console.error(`eren eslestir: kurulu sürüm bulunamadı (${betik}). Önce kurulum/kur.ts ile kurun.`);
+    return 1;
+  }
+  return b.calistir(process.execPath, ["--disable-warning=ExperimentalWarning", betik, ...args]);
+};
+
 const logKomutu = (args: readonly string[]): number => {
   const bekci = args.includes("--bekci");
   const sayiArg = args.find((a) => /^\d+$/.test(a));
@@ -435,6 +478,8 @@ const komutCalistir = async (argv: readonly string[]): Promise<number> => {
     }
     case "log":
       return logKomutu(geri);
+    case "eslestir":
+      return eslestirKomutu(geri);
     case undefined:
     case "yardim":
     case "-h":

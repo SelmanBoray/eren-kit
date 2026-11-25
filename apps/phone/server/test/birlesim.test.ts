@@ -130,6 +130,24 @@ const bosalt = async (): Promise<void> => {
   for (let i = 0; i < 30; i++) await new Promise<void>((r) => setImmediate(r));
 };
 
+/** Ajanda dalgası: servis kullanıcının dilimini sistemden okur; testte sabit (`servisKur` `ajanda.sistemDilimi`). */
+const DILIM = "Europe/Istanbul";
+/** `mesajAniDamgasi` biçimi (protocol `ajanda-metin.ts`): `[mesaj_ani: YYYY-MM-DD <gün> HH:MM <dilim>]` + satır sonu. */
+const DAMGA = /^\[mesaj_ani: \d{4}-\d{2}-\d{2} \p{L}+ \d{2}:\d{2} Europe\/Istanbul\]\n/u;
+
+/**
+ * Ana oturumun stdin satırı. Ajanda dalgasından beri kullanıcı rolündeki HER satırın içeriği mesaj anı
+ * damgasıyla başlar (`AJANDA.md` "Mesaj anı"): burada varlığı doğrulanır ve ayıklanır, senaryolar ajanda
+ * öncesindeki içeriği karşılaştırır. Damganın değeri `birlesim-ajanda.test.ts`'te sınanır.
+ */
+const stdinSatiri = (x: string): J => {
+  const l = JSON.parse(x) as J;
+  if (l["type"] !== "user") return l;
+  const c = l["message"]["content"] as unknown;
+  assert.ok(typeof c === "string" && DAMGA.test(c), `kullanıcı satırı mesaj anı damgasıyla başlamıyor: ${String(c).slice(0, 160)}`);
+  return { ...l, message: { ...l["message"], content: c.replace(DAMGA, "") } };
+};
+
 const oturumKimligi = (s: SahteBoruluSurec): string => {
   const a = s.istek.argv;
   const i = Math.max(a.indexOf("--session-id"), a.indexOf("--resume"));
@@ -523,7 +541,7 @@ async function ortamKur(sec: OrtamSecenegi = {}) {
     /** Yeni servis süreci: `servisKur` + `baslat`. */
     baslat: async (): Promise<Servis> => {
       const e = enkarnasyonKur(d, anahtar);
-      const servis = servisKur({ dunya: e.dunya, ayar, depoYolu });
+      const servis = servisKur({ dunya: e.dunya, ayar, depoYolu, ajanda: { sistemDilimi: () => DILIM } });
       enkarnasyonlar.push({ servis, e });
       await servis.baslat();
       await bosalt();
@@ -592,7 +610,7 @@ async function ortamKur(sec: OrtamSecenegi = {}) {
     yeniStdin: (s: SahteBoruluSurec = d.surec.sonBorulu()): J[] => {
       const i = okunan.get(s) ?? 0;
       okunan.set(s, s.yazilanlar.length);
-      return s.yazilanlar.slice(i).map((x) => JSON.parse(x) as J);
+      return s.yazilanlar.slice(i).map(stdinSatiri);
     },
     /** Bütün ana oturum süreçlerinin bütün stdin satırları: sızma taraması için. */
     tumStdin: (): string => d.surec.borulular().flatMap((s) => s.yazilanlar).join("\n"),
@@ -1026,7 +1044,7 @@ describe("birleşim: ana akış", () => {
     assert.deepEqual(sohbet.olaylar(), o.olaylar() as J[], "telefonun gördüğü olaylar depoyla aynı değil");
 
     // Tek satır kuralı ve satır biçimi: her satır ya insan ya sentetik, ikisi birden değil.
-    const tumu = eren.yazilanlar.map((x) => JSON.parse(x) as J);
+    const tumu = eren.yazilanlar.map(stdinSatiri);
     for (const l of tumu) {
       assert.equal(l["client_composed"], true);
       assert.notEqual("origin" in l, "isSynthetic" in l, `satır biçimi: ${JSON.stringify(l)}`);
@@ -1234,7 +1252,7 @@ describe("birleşim: servis öldür-kur", () => {
     // Ana oturum `init` görür, kuyruk akar: açık tur notu ilk satır, kuyruktaki mesaj bir kez, açık turun mesajı yeniden gitmez.
     await o.erenInit();
     await o.erenBosalt();
-    const stdin = yeniEren.yazilanlar.map((x) => JSON.parse(x) as J);
+    const stdin = yeniEren.yazilanlar.map(stdinSatiri);
     assert.ok(stdin.length > 0, "yeni ana oturuma hiç satır gitmedi");
     assert.equal(stdin[0]!["isSynthetic"], true, "ilk satır sentetik kurtarma notu olmalı");
     assert.ok((stdin[0]!["message"]["content"] as string).includes(kalici), "kurtarma notunda yarım metin yok");
@@ -1392,7 +1410,7 @@ describe("birleşim: servis öldür-kur", () => {
 
     await o.erenInit();
     await o.erenBosalt();
-    const stdin = icerikler(o.eren().yazilanlar.map((x) => JSON.parse(x) as J));
+    const stdin = icerikler(o.eren().yazilanlar.map(stdinSatiri));
     assert.ok(stdin.some((c) => c.includes("Servis yeniden başladı: 0 iş sahiplenildi, 1 iş bitti.")));
     assert.ok(stdin.some((c) => c.includes(`İş ${is.is_id} bitti, durum: tamam.`)), "uzlaştırmada biten iş ana oturuma bildirilmedi");
     sizmaYok("ana oturum stdin", o.tumStdin(), [K.rapor]);
@@ -1561,7 +1579,7 @@ describe("birleşim: limit tatbikatı", () => {
     // Kuyruk akar: kilitliyken gelen mesaj bir kez, insan satırı olarak; biten telefon işi sentetikle.
     await o.erenInit();
     await o.erenBosalt();
-    const stdin = kilitSonrasi.yazilanlar.map((x) => JSON.parse(x) as J);
+    const stdin = kilitSonrasi.yazilanlar.map(stdinSatiri);
     assert.deepEqual(
       stdin.filter((l) => "origin" in l),
       [insanSatiri(kilitliMetin)],
@@ -2136,7 +2154,7 @@ const sohbetOlaylari = (olaylar: readonly object[], sohbet_id: string): J[] =>
   (olaylar as J[]).filter((e) => sohbetAnahtari(e) === sohbet_id);
 
 const stdinMetni = (s: SahteBoruluSurec): string =>
-  icerikler(s.yazilanlar.map((x) => JSON.parse(x) as J)).join("\n");
+  icerikler(s.yazilanlar.map(stdinSatiri)).join("\n");
 
 /** `B` açılır; ilk mesajı ana oturum sürecini açar, `init` görülür, tur biter; B'nin ana oturum köprüsü bağlanır. */
 const bAc = async (o: Ortami, h: Hazir, ilk = "B ilk mesaj") => {

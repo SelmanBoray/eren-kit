@@ -6,6 +6,8 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import win32 from "node:path/win32";
 import { VARSAYILAN_IS_PROFILI } from "@eren/protocol";
 import type { CmdAdi, CmdSonucu } from "@eren/protocol";
+import { ajandaKopruSunucuKur } from "./ajanda-kopru-sunucu.ts";
+import { ajandaKur } from "./ajanda.ts";
 import { akisKur } from "./akis.ts";
 import { AyarHatasi, ayarKur, yollariUret } from "./ayar.ts";
 import { bildirimKur } from "./bildirim.ts";
@@ -21,9 +23,12 @@ import { konusmaKur } from "./konusma.ts";
 import { kopruSunucuKur } from "./kopru-sunucu.ts";
 import { planlarKur } from "./planlar.ts";
 import { sohbetlerKur } from "./sohbetler.ts";
+import { takvimKur } from "./takvim.ts";
 import { temizlikKur } from "./temizlik.ts";
 import { veriyoluKur } from "./veriyolu.ts";
 import type {
+  AjandaKopruSunucu,
+  AjandaYoneticisi,
   Ayar,
   Bildirim,
   CihazYoneticisi,
@@ -42,6 +47,7 @@ import type {
   PlanYoneticisi,
   SohbetYoneticisi,
   Sonuc,
+  TakvimPortu,
   Temizlik,
   Veriyolu,
 } from "./sozlesme.ts";
@@ -55,10 +61,20 @@ const KAPANIS_SINYALLERI: readonly NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIG
 
 const ROL_HATASI = { ok: false, code: "rol_fiil_izinsiz" } as const;
 
+/** Ajanda dalgası: kullanıcının IANA dilimi = PC'nin sistem dilimi, her çağrıda yeniden okunur (A0.4). */
+const sistemDilimi = (): string => Intl.DateTimeFormat().resolvedOptions().timeZone;
+
 export interface ServisGirdisi {
   dunya: DisDunya;
   ayar: Ayar;
   depoYolu: string;
+  /**
+   * Ajanda dalgası (MODULLER.md "Ajanda dalgası" > "ana"). Verilmezse ajanda açıktır ve dilim sistemden
+   * okunur (`giris` hep böyle kurar). `{ sistemDilimi }` dilim kaynağını değiştirir (testler). `false`
+   * ajandayı hiç kurmaz: takvim, ajanda modülü, ajanda borusu ve `/ajanda` yolu yoktur, `sohbetler` ve
+   * `gateway` ajanda bağımlılıksız kurulur, davranış ajanda öncesiyle aynıdır (A0.6; birleşim testi sabitler).
+   */
+  ajanda?: false | { sistemDilimi: () => string };
 }
 
 export interface Servis {
@@ -77,6 +93,10 @@ export interface Servis {
   bildirim: Bildirim;
   gateway: Gateway;
   gunluk: Gunluk;
+  /** Ajanda dalgası; `ServisGirdisi.ajanda === false` ise üçü de `null`. */
+  takvim: TakvimPortu | null;
+  ajanda: AjandaYoneticisi | null;
+  ajandaKopru: AjandaKopruSunucu | null;
   baslat(): Promise<void>;
   kapat(): Promise<void>;
 }
@@ -161,7 +181,7 @@ const fiilleriKur = ({ ayar, planlar, isler, cihaz, sohbetler }: FiilModulleri):
   };
 };
 
-export function servisKur({ dunya, ayar, depoYolu }: ServisGirdisi): Servis {
+export function servisKur({ dunya, ayar, depoYolu, ajanda: ajandaSecenegi }: ServisGirdisi): Servis {
   const { saat, zamanlayici, rastgele, dosya, surec, sistem, ws, boru, http, anahtar, transkript } = dunya;
   const gunluk = gunlukYap(dunya);
 
@@ -171,6 +191,23 @@ export function servisKur({ dunya, ayar, depoYolu }: ServisGirdisi): Servis {
 
   const akis = akisKur();
   const kopru = kopruSunucuKur({ boru, depo, rastgele, anahtar, zamanlayici, gunluk });
+
+  // Ajanda dalgası. Tek yazar `ajanda`; araç çağrısının turu `sohbetler`'den okunur. `sohbetler` aşağıda
+  // kurulur: bağ geç çözülür (yalnız araç çağrısı anında, `baslat`'tan sonra), kurulum sırası değişmez.
+  const ajandaAcik = ajandaSecenegi !== false;
+  const takvim = ajandaAcik ? takvimKur({ sistemDilimi: ajandaSecenegi?.sistemDilimi ?? sistemDilimi }) : null;
+  const ajanda =
+    takvim === null
+      ? null
+      : ajandaKur({
+          depo,
+          takvim,
+          saat,
+          rastgele,
+          gunluk,
+          turBaglami: (sohbet, nesil) => sohbetler.konusma(sohbet)?.turBaglami?.(nesil) ?? null,
+        });
+  const ajandaKopru = ajanda === null ? null : ajandaKopruSunucuKur({ boru, depo, rastgele, anahtar, zamanlayici, gunluk });
   const cihaz = cihazKur({ ayar, saat, zamanlayici, rastgele, veriyolu, depo, gunluk });
   const isler = islerKur({
     ayar,
@@ -221,6 +258,8 @@ export function servisKur({ dunya, ayar, depoYolu }: ServisGirdisi): Servis {
     veriyolu,
     gunluk,
     sistem,
+    // A0.6: ikisi birlikte verilir ya da hiçbiri; yoksa örnekler ajanda öncesi gibi kurulur.
+    ...(takvim !== null && ajandaKopru !== null && { takvim, ajandaKopru }),
   });
   // `sohbetler`'den sonra, `gateway`'den önce. Transkript portu yalnız buraya bağlanır: dar porttur,
   // yalnız ana oturum nesillerinin oturum kimliklerini alır.
@@ -243,6 +282,8 @@ export function servisKur({ dunya, ayar, depoYolu }: ServisGirdisi): Servis {
     zamanlayici,
     veriyolu,
     gunluk,
+    // `/ajanda` yolu, dinleme sınırı, kayıt yayını aboneliği, yetki yoklaması ve kanal kapanışı gateway'de.
+    ...(ajanda !== null && { ajanda }),
   });
 
   const fiiller = fiilleriKur({ ayar, planlar, isler, cihaz, sohbetler });
@@ -262,12 +303,25 @@ export function servisKur({ dunya, ayar, depoYolu }: ServisGirdisi): Servis {
     bildirim,
     gateway,
     gunluk,
+    takvim,
+    ajanda,
+    ajandaKopru,
 
     async baslat() {
       const adimlar: ReadonlyArray<() => unknown> = [
         // Fabrikalar eşzamanlı olduğu için ilk okuma burada. Modüllerden sonra olması şart: `cihaz`
         // kilidi yalnız `kilit_degisti`'nden öğrenir, açılıştaki aktif kilidi başka yerden göremez.
         () => kilit.baslat(),
+        // Ajanda dalgası: depo kimliği gateway ve köprüden önce kurulur (`karsila` ve araçlar onu okur).
+        () => ajanda?.baslat(),
+        // Önceki ömrün ajanda jetonları ve açık bağlantıları: `sohbetler.baslat()` yenilerini üretmeden
+        // önce (`eren` jetonlarını `sohbetler` kendisi siler). Silinen sayı ajanda borusunun günlüğünde.
+        () => ajandaKopru?.jetonlariniSil(),
+        // Ana oturumların köprüleri bağlanmadan dinliyor olmalı: `sohbetler.baslat()`'tan önce. Boru
+        // açılamazsa (ad başka süreçte) `eren` borusu gibi açılış düşer: sahte bir sunucuya jeton gitmesin.
+        // `eren` borusundan önce: iki boru bağımsızdır; sahte borunun adsız `baglan`'ı en son dinlenene
+        // (`eren`) gittiği için eski birleşim testleri değişmeden kalır.
+        () => (ajanda === null ? undefined : ajandaKopru?.baslat(ajanda.araclar)),
         () => kopru.baslat(fiiller),
         () => isler.uzlastir(),
         // Küresel, alansız: `ana`'da görünür. Önceki ömürde herhangi bir sohbette nesil açıldıysa.
@@ -314,8 +368,10 @@ export function servisKur({ dunya, ayar, depoYolu }: ServisGirdisi): Servis {
           // Yoklamalar durur, bütün örnekler paralel kapanır; açık tur kısmi metniyle kalır.
           ["sohbetler", () => sohbetler.kapat()],
           ["cihaz", () => cihaz.kapat()],
+          // `/ajanda` bağlantıları ve kayıt yayını aboneliği burada kapanır.
           ["gateway", () => gateway.kapat()],
           ["kopru", () => kopru.kapat()],
+          ["ajandaKopru", () => ajandaKopru?.kapat()],
           ["depo", () => depo.kapat()],
         ];
         for (const [ad, adim] of adimlar) {
