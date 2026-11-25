@@ -1,23 +1,69 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Ortak dosya (ilk dalgada dondurulur): ikinci dalganın bütün bileşenleri ve izinleri burada önceden
+  bildirildi. Değişiklik gerekiyorsa agent raporuna yazar, şef sırayla uygular (MIMARI.md "Ortak dosyalar").
+-->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- İskelet: izin yok. Alarm/açılış/bildirim izinleri o özellikler gelince eklenir. -->
+    <!-- K2: PC'ye yalnız Tailscale üstünden ws:// (QR şeması 100.64.0.0/10 dışını reddeder). -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- K3: kesin alarm. 12-12L: SCHEDULE_EXACT_ALARM; 13+: takvim/hatırlatıcıya verilen USE_EXACT_ALARM. -->
+    <uses-permission
+        android:name="android.permission.SCHEDULE_EXACT_ALARM"
+        android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:allowBackup="false"
         android:icon="@android:drawable/ic_menu_agenda"
         android:label="Ajanda"
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
+        android:usesCleartextTraffic="true"
         tools:ignore="MissingApplicationIcon">
 
+        <!-- K4 -->
         <activity
-            android:name=".AnaEkran"
+            android:name=".ekran.AnaEkran"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity
+            android:name=".ekran.KayitEkrani"
+            android:exported="false" />
+
+        <!-- K1 -->
+        <activity
+            android:name=".kimlik.EslestirmeEkrani"
+            android:exported="false" />
+
+        <!-- K3 -->
+        <receiver
+            android:name=".alarm.AlarmAlici"
+            android:exported="false" />
+        <receiver
+            android:name=".alarm.AcilisAlici"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- K2 -->
+        <service
+            android:name=".ag.EsitlemeIsi"
+            android:exported="true"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
     </application>
 </manifest>

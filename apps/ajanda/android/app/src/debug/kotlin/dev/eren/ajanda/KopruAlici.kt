@@ -7,7 +7,7 @@ import android.util.Log
 
 /**
  * YALNIZ DEBUG: arayüz hiç açılmadan çekirdeğin bir alıcıdan çağrılabildiğini gösterir
- * (alarm/açılış alıcıları da aynı yolu kullanacak):
+ * (alarm/açılış alıcıları da aynı yolu kullanır):
  *   adb shell am broadcast -f 0x20 -n dev.eren.ajanda/.KopruAlici
  */
 class KopruAlici : BroadcastReceiver() {
@@ -15,9 +15,9 @@ class KopruAlici : BroadcastReceiver() {
         val bekleyen = goAsync()
         Thread {
             try {
-                val sonuc = runCatching { KopruKaniti.calistir(CekirdekErisimi.al(context), "alıcıdan") }
+                val sonuc = runCatching { KopruKaniti.calistir(CekirdekErisimi.al(context)) }
                     .getOrElse { "HATA: $it" }
-                Log.i(AnaEkran.ETIKET, "[alıcı] $sonuc")
+                Log.i(KopruKaniti.ETIKET, "[alıcı] $sonuc")
             } finally {
                 bekleyen.finish()
             }

@@ -1,8 +1,10 @@
 package dev.eren.ajanda
 
 import android.content.Context
+import dev.eren.ajanda.alarm.AlarmPlanlayici
 import dev.eren.ajanda.cekirdek.Cekirdek
-import dev.eren.ajanda.kabuk.AndroidKabuk
+import dev.eren.ajanda.kabuk.JavaZaman
+import dev.eren.ajanda.kimlik.KeystoreKimlik
 import java.io.File
 
 /**
@@ -10,6 +12,8 @@ import java.io.File
  * işi aynı yoldan alır; arayüz açık olmak zorunda değildir (yalnız bir Context yeter).
  *
  * Çekirdek çağrıları eşzamanlıdır ve SQLite'a dokunur: ana iş parçacığından çağırma.
+ * Geri çağrı uygulamaları (kimlik, zaman, alarm) burada bağlanır; her birinin sahibi MIMARI.md'de.
+ * Bu dosya ilk dalgada dondurulur.
  */
 object CekirdekErisimi {
     const val VERITABANI = "ajanda.sqlite3"
@@ -19,8 +23,14 @@ object CekirdekErisimi {
 
     fun al(context: Context): Cekirdek =
         ornek ?: synchronized(this) {
-            ornek ?: ac(File(context.applicationContext.filesDir, VERITABANI)).also { ornek = it }
+            ornek ?: ac(context.applicationContext).also { ornek = it }
         }
 
-    private fun ac(dosya: File): Cekirdek = Cekirdek.ac(dosya.absolutePath, AndroidKabuk())
+    private fun ac(uygulama: Context): Cekirdek =
+        Cekirdek.ac(
+            File(uygulama.filesDir, VERITABANI).absolutePath,
+            KeystoreKimlik(uygulama),
+            JavaZaman,
+            AlarmPlanlayici(uygulama),
+        )
 }

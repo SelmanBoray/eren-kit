@@ -14,3 +14,13 @@ uniffi = { workspace = true }
 # bundled: SQLite C kaynağı NDK clang'ı ile derlenip .so'ya gömülür; cihazdaki SQLite sürümüne bağlı kalmayız.
 rusqlite = { version = "0.43", features = ["bundled"] }
 thiserror = "2"
+# Kablo JSON'u: yalnız `Value` (derive yok). Çerçeve önce `Value`'ya çözülür, sonra `model::json`
+# okuyucusu zod `strictObject` anlamıyla doğrular. Zaten uniffi-bindgen üzerinden kilit dosyasındaydı.
+serde_json = "1"
+
+# Dil bağımsız vektör düzeneği: kendi `main`'i var, her bölümün geçen/kalan/bekleyen sayısını basar.
+# Vektörler `apps/phone/protocol/vektorler/` altından okunur (kopya yok).
+[[test]]
+name = "vektorler"
+path = "tests/vektorler.rs"
+harness = false

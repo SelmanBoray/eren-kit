@@ -1,27 +1,34 @@
-# Ajanda — Rust çekirdek + Kotlin kabuk (yürüyen iskelet)
+# Ajanda — Rust çekirdek + Kotlin kabuk
 
 Yalnız Android. İş mantığı Rust'ta (`cekirdek/`), ekranlar ve Android API'leri Kotlin'de
 (`android/`). Köprü: [UniFFI](https://mozilla.github.io/uniffi-rs/) 0.32 (proc-macro, Kotlin+JNA).
-Şu an yalnız köprüyü kanıtlar: Kotlin → Rust, Rust → Kotlin geri çağrısı, Rust içinden gömülü SQLite.
+Sözleşme: `apps/phone/docs/AJANDA.md`. **Mimari, iş bölümü ve ikinci dalganın iş parçaları: [MIMARI.md](MIMARI.md).**
+
+Durum (ilk dalga): veri modeli, JSON çözme/kodlama ve şema doğrulaması yazıldı; `ajanda-mesaj.json`'ın
+173 vektörünün tamamı Rust'ta TypeScript ile aynı sonucu veriyor. Köprü yüzeyi, geri çağrı arayüzleri,
+depo şeması ve modül sınırları hazır; kurallar, eşitleme motoru, alarm planı ve Kotlin parçaları
+`Yazilmadi` döner (MIMARI.md "İkinci dalga").
 
 ## Klasör düzeni
 
 ```
 apps/ajanda/
   Cargo.toml, Cargo.lock      Rust çalışma alanı (release profili: opt-level=s, LTO)
+  MIMARI.md                   iş bölümü, modül/paket düzeni, iş parçaları, ortak dosyalar
   cekirdek/                   ajanda-cekirdek -> libajanda_cekirdek.so
-    src/lib.rs                KÖPRÜ YÜZEYİ: yalnız burada #[uniffi::export]
-    src/hata.rs               CekirdekHatasi / KabukHatasi (Kotlin'de istisna)
-    src/kabuk.rs              Kabuk: Rust'ın Kotlin'i geri çağırdığı arayüz
-    src/depo.rs               SQLite (rusqlite, bundled) + göçler; köprüden habersiz
+    src/model/                veri modeli + JSON + şema (zod anlamıyla)
+    src/kural/                servisle aynı sonucu veren saf kurallar
+    src/depo/                 SQLite (rusqlite, bundled) + göçler
+    src/motor/                kanal durum makinesi (sans-IO), kuyruk, sorgular, alarm planı
+    src/kopru/                KÖPRÜ YÜZEYİ: #[uniffi::export] yalnız burada; geri çağrı arayüzleri
+    tests/vektorler.rs        dil bağımsız vektör düzeneği (kendi main'i)
     uniffi.toml               Kotlin paketi: dev.eren.ajanda.cekirdek
   uniffi-bindgen/             bağlama üreticisi (çalışma alanının kendi ikilisi)
   android/                    Gradle projesi (AGP 8.13, Kotlin 2.2.20, Gradle 8.14)
     app/build.gradle.kts      cargo ndk + uniffi-bindgen görevleri burada
     app/src/main/kotlin/dev/eren/ajanda/
-      CekirdekErisimi.kt      süreç başına tek Cekirdek (etkinlik/alıcı/iş aynı yoldan)
-      kabuk/AndroidKabuk.kt   Kabuk'un Android uygulaması (imza şimdilik SHA-256 yer tutucu)
-      KopruKaniti.kt, AnaEkran.kt
+      CekirdekErisimi.kt      süreç başına tek Cekirdek; kabukları bağlar
+      kabuk/ kimlik/ ag/ alarm/ ekran/   (MIMARI.md "Kotlin")
     app/src/debug/            yalnız debug: arayüzsüz deneme alıcısı (KopruAlici)
     app/src/test/kotlin/      KopruTest: üretilen bağlamalar + gerçek Rust kitaplığı (JVM)
 ```
@@ -36,18 +43,17 @@ Kotlin bağlamaları -> `android/app/build/generated/java/uniffi<Varyant>KotlinU
 - `ANDROID_HOME` = SDK dizini (ya da git'e girmeyen `android/local.properties` içinde `sdk.dir=...`).
   NDK yolu buradan türetilir ve `cargo ndk`'ya `ANDROID_NDK_HOME` olarak verilir.
 - `JAVA_HOME` = JDK. Başka kişisel yol gerekmez.
+- Vektörler `apps/phone/protocol/vektorler/` altından okunur (kopya yok); başka yer için `AJANDA_VEKTOR_DIZINI`.
 
 ## Komutlar
 
 ```sh
-# Rust çekirdek testleri (apps/ajanda içinden)
+# Rust çekirdek testleri + vektör tablosu (apps/ajanda içinden)
 cargo test -p ajanda-cekirdek
+cargo test -p ajanda-cekirdek --test vektorler     # yalnız vektörler
 
-# arm64 APK (apps/ajanda/android içinden) -> app/build/outputs/apk/debug/app-debug.apk
-./gradlew assembleDebug            # Windows: .\gradlew.bat assembleDebug
-
-# Kotlin köprü testi: Rust masaüstü kitaplığını (target/debug) derler, JNA ile yükler
-./gradlew testDebugUnitTest
+# arm64 APK + Kotlin köprü testi (apps/ajanda/android içinden)
+./gradlew assembleDebug testDebugUnitTest          # Windows: .\gradlew.bat ...
 
 # Emülatör için x86_64 de ekle
 ./gradlew assembleDebug -Pajanda.abiler=arm64-v8a,x86_64
@@ -56,35 +62,37 @@ cargo test -p ajanda-cekirdek
 adb shell am broadcast -f 0x20 -n dev.eren.ajanda/.KopruAlici   # logcat etiketi: Ajanda
 ```
 
-## Köprüye yeni işlev eklemek
+Vektör düzeneği her koşuda bölüm tablosu basar: GEÇTİ / KALDI / BEKLİYOR (yazılmamış kural ve sahibi).
+KALDI ya da vektör dosyasında tanınmayan bölüm varsa çıkış 1'dir.
 
-1. İş mantığını köprüden bağımsız bir Rust modülüne yaz (`depo.rs` gibi), `cargo test` ile sına.
-2. `cekirdek/src/lib.rs` içinde `#[uniffi::export] impl Cekirdek` bloğuna yöntem ekle
-   (ya da serbest `#[uniffi::export] fn`). Dönüş `Result<T, CekirdekHatasi>`; köprüden geçen
-   yapılar `#[derive(uniffi::Record)]`, sayımlar `#[derive(uniffi::Enum)]`. Yeni hata durumu ->
-   `hata.rs`'deki `CekirdekHatasi`'na adlandırılmış alanlı değişken.
-3. Rust'ın Kotlin'den bir şey istemesi gerekiyorsa `kabuk.rs`'deki `Kabuk` trait'ine yöntem ekle,
-   `AndroidKabuk`'ta ve testlerdeki sahte kabuklarda uygula. Kabuk çağrısını Mutex kilidi dışında yap.
-4. Gradle derlemesi bağlamaları kendisi üretir; Kotlin adları camelCase olur
-   (`imzala_ve_yaz` -> `cekirdek.imzalaVeYaz(...)`, kurucu `Cekirdek.ac(...)`).
-5. `KopruTest`'e bir durum ekle: `./gradlew testDebugUnitTest`.
+## Köprüye dokunmak
 
-Kurallar: çekirdek çağrıları eşzamanlıdır (SQLite'a dokunur) — ana iş parçacığında çağırma.
-`panic = "unwind"` kalmalı (panik Kotlin'e istisna olarak gelir). `strip = "debuginfo"` kalmalı
-(bindgen `UNIFFI_META` sembollerini .so'dan okur; APK'ya koyarken AGP ayrıca soyar).
-`uniffi` sürümü çalışma alanında sabit; `uniffi-bindgen` aynı sürümü kullanır.
-R8 (`isMinifyEnabled`) açılırsa JNA ve `dev.eren.ajanda.cekirdek.**` için keep kuralı gerekir.
+Köprü yüzeyi (`cekirdek/src/kopru/`, `hata.rs`) ve model ilk dalgada dondurulmuştur; değişiklik
+MIMARI.md "Ortak dosyalar" sırasıyla yapılır. Kalıp:
 
-## Ölçümler (2026-11-25, bu makine, Gradle daemon sıcak, indirme önbellekleri dolu)
+1. İş mantığı köprüden bağımsız modüle (`kural/`, `motor/`, `depo/`), `cargo test` ile sınanır.
+2. Kotlin'e açılan yöntem `kopru/mod.rs`'te `#[uniffi::export] impl Cekirdek` içinde ince kabuktur:
+   `self.calistir(|motor, ortam, etkiler| ...)`. Yan etki `Etkiler`'e yazılır, kilit dışında uygulanır.
+3. Rust'ın Kotlin'den bir şey istemesi `kopru/kabuklar.rs`'deki arayüzlerden biriyle; uygulaması
+   Kotlin'de sahibinin dosyasında, Rust testleri için `kopru/sahte.rs`'te.
+4. Gradle bağlamaları kendisi üretir; Kotlin adları camelCase olur (`durum_degistir` -> `durumDegistir`,
+   kurucu `Cekirdek.ac(...)`, sayım değerleri `KayitTuru.RANDEVU`, `u64` -> `ULong`).
+
+Kurallar: çekirdek çağrıları eşzamanlıdır (SQLite, Keystore) — ana iş parçacığında çağırma; geri
+çağrılardan çekirdeğe eşzamanlı yeniden girme. `panic = "unwind"` kalmalı (panik Kotlin'e istisna
+olarak gelir). `strip = "debuginfo"` kalmalı (bindgen `UNIFFI_META` sembollerini .so'dan okur; APK'ya
+koyarken AGP ayrıca soyar). `uniffi` sürümü çalışma alanında sabit; `uniffi-bindgen` aynı sürümü kullanır.
+R8 (`isMinifyEnabled`) açılırsa JNA, OkHttp ve `dev.eren.ajanda.cekirdek.**` için keep kuralı gerekir.
+
+## Ölçümler (bu makine, Gradle daemon sıcak, indirme önbellekleri dolu)
 
 | | süre |
 |---|---|
-| Soğuk `assembleDebug` (target/ ve build/ silinmiş) | ~80 s (Rust NDK derlemesi ~26-28 s) |
-| Değişiklik yokken `assembleDebug` | ~5 s |
-| Yalnız Rust değişince `assembleDebug` | ~3 s (cargo ~1.4 s) |
-| Yalnız Kotlin değişince `assembleDebug` | ~4-4.5 s |
-| `cargo test` (değişiklik sonrası / değişiklik yok) | ~1.2 s / 0.3 s |
-| `testDebugUnitTest` | ~4.5 s |
+| Soğuk Rust NDK derlemesi (arm64, release) | ~33 s (iskelette ~26-28 s) |
+| `assembleDebug testDebugUnitTest` (Rust değişmiş, sıcak) | ~26 s |
+| `cargo test` (değişiklik sonrası / değişiklik yok) | ~2.9 s / 0.5 s |
 
-APK (debug, yalnız arm64): 2.89 MB; `libajanda_cekirdek.so` 1.70 MB (%59, sıkıştırmasız),
-JNA `libjnidispatch.so` 0.17 MB. x86_64 eklenince +1.70 MB + 0.12 MB. Her iki .so 16 KB sayfa hizalı.
+APK (debug, yalnız arm64, temiz paketleme): 3.80 MB (iskelet 2.89 MB). `libajanda_cekirdek.so`
+1.94 MB (iskelet 1.70 MB; +0.24 MB: serde_json, model, köprü yüzeyi); OkHttp + Okio ~0.55 MB (dex).
+Not: AGP'nin artımlı paketlemesi kaldırılan bağımlılığın girdilerini APK'da bırakabilir; boyut
+ölçmeden önce `app/build/intermediates/apk` ve `app/build/outputs/apk`'yı sil.

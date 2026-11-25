@@ -1,0 +1,338 @@
+//! KÖPRÜ YÜZEYİ: Kotlin'in gördüğü her şey (`#[uniffi::export]`) yalnız `kopru/` altındadır ve ilk
+//! dalgada dondurulur. Yöntemler ince kabuktur: kilidi alır, `Motor`'a devreder, etkileri kilit dışında
+//! uygular. İş mantığı `motor/`, `kural/`, `model/`, `depo/`'dadır.
+//!
+//! İş parçacığı: her çağrı eşzamanlıdır (SQLite, Keystore) — Kotlin ana iş parçacığından çağırmaz.
+//! Kilit sırası: motor -> taşıma (kısa) -> etki. Etkiler (çerçeve yollama, alarm, gözlemci) motor
+//! kilidi bırakılınca, etki kilidi altında, üretildikleri sırayla uygulanır; bu yüzden iki çağrının
+//! çerçeveleri sıra değiştiremez. Geri çağrılar Cekirdek'e eşzamanlı yeniden giremez (bkz. `kabuklar`).
+
+pub mod kabuklar;
+#[cfg(test)]
+pub(crate) mod sahte;
+pub mod tipler;
+
+use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
+
+use crate::hata::CekirdekHatasi;
+use crate::kural::Yazilmadi;
+use crate::model::{AjandaEslestirmeQr, GirdiYolu, Hatirlatma, KayitDurumu, KayitGovdesi};
+use crate::motor::{Etkiler, Motor, Ortam};
+
+use kabuklar::{AlarmKabugu, Gozlemci, KimlikKabugu, Tasima, ZamanKabugu};
+use tipler::{
+    BaglantiDurumu, EslesmeDurumu, GecmisSayfasi, HatirlatmaBildirimi, KayitGorunumu, ListeSorgusu, RetGirdisi,
+    YenidenKurmaNedeni,
+};
+
+fn kilitle<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    // Zehirlenmiş kilit: önceki çağrı panikledi; SQLite işlemi geri alınmış olduğundan durum tutarlıdır.
+    m.lock().unwrap_or_else(|z| z.into_inner())
+}
+
+/// Saf kural çağrısı: yazılmamış kuralın paniğini `CekirdekHatasi::Yazilmadi`'ya çevirir.
+fn kural<T>(f: impl FnOnce() -> T) -> Result<T, CekirdekHatasi> {
+    match catch_unwind(AssertUnwindSafe(f)) {
+        Ok(t) => Ok(t),
+        Err(yuk) => match yuk.downcast_ref::<Yazilmadi>() {
+            Some(y) => Err(CekirdekHatasi::yazilmadi(y.0)),
+            None => resume_unwind(yuk),
+        },
+    }
+}
+
+/// Çekirdek sürümü (köprünün yüklendiğini görmenin en kısa yolu).
+#[uniffi::export]
+pub fn cekirdek_surumu() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
+/// Gömülü SQLite sürümü (cihazınkinden bağımsız olduğunu göstermek için).
+#[uniffi::export]
+pub fn sqlite_surumu() -> String {
+    rusqlite::version().to_string()
+}
+
+/// Elle ekleme ekranının açılış hatırlatmaları (`AJANDA_VARSAYILAN_HATIRLATMALAR`).
+#[uniffi::export]
+pub fn varsayilan_hatirlatmalar() -> Vec<Hatirlatma> {
+    crate::model::varsayilan_hatirlatmalar()
+}
+
+/// QR'dan (ya da yapıştırılan metinden) okunan eşleştirme JSON'unu doğrular (`AjandaEslestirmeQr`:
+/// `kanal:"ajanda"`, Tailscale adresi). Hata: `GecersizGirdi{alan, neden}`.
+#[uniffi::export]
+pub fn eslestirme_qr_coz(metin: String) -> Result<AjandaEslestirmeQr, CekirdekHatasi> {
+    AjandaEslestirmeQr::coz(&metin)
+        .map_err(|h| CekirdekHatasi::GecersizGirdi { alan: h.yol, neden: h.neden.to_string() })
+}
+
+/// Giriş temizliği (`ajandaMetniTemizle`): yazarken ya da yapıştırınca gizli karakterleri atar.
+#[uniffi::export]
+pub fn metni_temizle(metin: String) -> Result<String, CekirdekHatasi> {
+    kural(|| crate::kural::metin::ajanda_metni_temizle(&metin))
+}
+
+/// Formu kabloya hazırlar ve doğrular (kaydetmeden önce alan hatasını göstermek için).
+#[uniffi::export]
+pub fn govdeyi_hazirla(govde: KayitGovdesi) -> Result<KayitGovdesi, CekirdekHatasi> {
+    kural(|| crate::kural::metin::govdeyi_hazirla(govde))?.map_err(CekirdekHatasi::from)
+}
+
+/// Süreç başına bir tane açılır (Kotlin `CekirdekErisimi`). İş parçacığı güvenlidir.
+#[derive(uniffi::Object)]
+pub struct Cekirdek {
+    motor: Mutex<Motor>,
+    etki: Mutex<()>,
+    kimlik: Arc<dyn KimlikKabugu>,
+    zaman: Arc<dyn ZamanKabugu>,
+    alarm: Arc<dyn AlarmKabugu>,
+    /// Açık bağlantının nesli ve yazma ucu; motor kilidi altında değişir.
+    tasima: Mutex<Option<(u64, Arc<dyn Tasima>)>>,
+    nesil: AtomicU64,
+    gozlemciler: Mutex<Vec<(u64, Arc<dyn Gozlemci>)>>,
+    gozlemci_sayaci: AtomicU64,
+}
+
+impl Cekirdek {
+    /// Motoru kilitler, `f`'i çalıştırır, etkileri kilit dışında sırayla uygular.
+    fn calistir<T>(&self, f: impl FnOnce(&mut Motor, &Ortam, &mut Etkiler) -> Result<T, CekirdekHatasi>) -> Result<T, CekirdekHatasi> {
+        let ortam = Ortam { kimlik: &*self.kimlik, zaman: &*self.zaman };
+        let mut etkiler = Etkiler::default();
+        let (sonuc, tasima, etki_kilidi) = {
+            let mut motor = kilitle(&self.motor);
+            let sonuc = catch_unwind(AssertUnwindSafe(|| f(&mut motor, &ortam, &mut etkiler)));
+            let tasima = kilitle(&self.tasima).clone();
+            (sonuc, tasima, kilitle(&self.etki))
+        };
+        let kurulamayan = self.etkileri_uygula(etkiler, tasima.map(|(_, t)| t));
+        drop(etki_kilidi);
+        self.kurulamayanlari_bildir(kurulamayan);
+        match sonuc {
+            Ok(s) => s,
+            Err(yuk) => match yuk.downcast_ref::<Yazilmadi>() {
+                Some(y) => Err(CekirdekHatasi::yazilmadi(y.0)),
+                None => resume_unwind(yuk),
+            },
+        }
+    }
+
+    /// Kurulamayan alarmları motora bildirir (genel olmayan işlev: `calistir`'in örneklenmesi sonlu kalsın).
+    fn kurulamayanlari_bildir(&self, kurulamayan: Vec<(i64, String)>) {
+        for (alarm_no, neden) in kurulamayan {
+            let _ = self.calistir(|m, _, _| m.alarm_kurulamadi(alarm_no, &neden));
+        }
+    }
+
+    /// Döner: kurulamayan alarmlar (motor kilidi yeniden alınarak bildirilir).
+    fn etkileri_uygula(&self, e: Etkiler, tasima: Option<Arc<dyn Tasima>>) -> Vec<(i64, String)> {
+        if let Some(t) = &tasima {
+            for metin in e.gonderilecek {
+                if !t.gonder(metin) {
+                    break;
+                }
+            }
+            if let Some(neden) = e.kapat {
+                t.kapat(neden);
+            }
+        }
+        for no in e.alarm_iptal {
+            let _ = self.alarm.iptal(no);
+        }
+        let mut kurulamayan = Vec::new();
+        for a in e.alarm_kur {
+            let no = a.alarm_no;
+            if let Err(h) = self.alarm.kur(a) {
+                kurulamayan.push((no, h.to_string()));
+            }
+        }
+        if let Some(k) = e.kacirilan {
+            let _ = self.alarm.kacirilanlari_goster(k);
+        }
+        if !e.degisim.bos_mu() {
+            let gozlemciler: Vec<_> = kilitle(&self.gozlemciler).iter().map(|(_, g)| g.clone()).collect();
+            for g in gozlemciler {
+                g.degisti(e.degisim.clone());
+            }
+        }
+        kurulamayan
+    }
+
+    fn guncel_nesil(&self) -> Option<u64> {
+        kilitle(&self.tasima).as_ref().map(|(n, _)| *n)
+    }
+}
+
+#[uniffi::export]
+impl Cekirdek {
+    /// Veritabanını açar (yoksa oluşturur, göçleri uygular). Arayüz olmadan da (alıcı, iş) açılabilir.
+    #[uniffi::constructor]
+    pub fn ac(
+        veritabani_yolu: String,
+        kimlik: Arc<dyn KimlikKabugu>,
+        zaman: Arc<dyn ZamanKabugu>,
+        alarm: Arc<dyn AlarmKabugu>,
+    ) -> Result<Arc<Self>, CekirdekHatasi> {
+        Ok(Arc::new(Cekirdek {
+            motor: Mutex::new(Motor::ac(&veritabani_yolu)?),
+            etki: Mutex::new(()),
+            kimlik,
+            zaman,
+            alarm,
+            tasima: Mutex::new(None),
+            nesil: AtomicU64::new(0),
+            gozlemciler: Mutex::new(Vec::new()),
+            gozlemci_sayaci: AtomicU64::new(0),
+        }))
+    }
+
+    pub fn sema_surumu(&self) -> Result<i64, CekirdekHatasi> {
+        kilitle(&self.motor).sema_surumu()
+    }
+
+    // Gözlemci (K4)
+
+    /// Döner: `gozlemci_cikar` için numara.
+    pub fn gozlemci_ekle(&self, gozlemci: Arc<dyn Gozlemci>) -> u64 {
+        let no = self.gozlemci_sayaci.fetch_add(1, Ordering::Relaxed) + 1;
+        kilitle(&self.gozlemciler).push((no, gozlemci));
+        no
+    }
+
+    pub fn gozlemci_cikar(&self, no: u64) {
+        kilitle(&self.gozlemciler).retain(|(n, _)| *n != no);
+    }
+
+    // Eşleşme (K1)
+
+    pub fn eslestirme_baslat(&self, qr: AjandaEslestirmeQr) -> Result<(), CekirdekHatasi> {
+        self.calistir(|m, o, e| m.eslestirme_baslat(o, e, qr))
+    }
+
+    pub fn eslesme_durumu(&self) -> Result<EslesmeDurumu, CekirdekHatasi> {
+        self.calistir(|m, _, _| m.eslesme_durumu())
+    }
+
+    pub fn eslesmeyi_kaldir(&self) -> Result<(), CekirdekHatasi> {
+        self.calistir(|m, o, e| m.eslesmeyi_kaldir(o, e))
+    }
+
+    /// Açılacak WebSocket adresi; `None`: eşleşme yok, bağlanma.
+    pub fn baglanti_adresi(&self) -> Result<Option<String>, CekirdekHatasi> {
+        self.calistir(|m, _, _| m.baglanti_adresi())
+    }
+
+    // Kanal (K2)
+
+    /// Soket açıldı. Döner: bu bağlantının nesli; `cerceve_geldi` ve `baglanti_kapandi` onu taşır,
+    /// eski neslin geç gelen olayları yok sayılır. Önceki bağlantı açık sayılıyorsa önce kapanmış sayılır.
+    pub fn baglanti_acildi(&self, tasima: Arc<dyn Tasima>) -> Result<u64, CekirdekHatasi> {
+        let nesil = self.nesil.fetch_add(1, Ordering::Relaxed) + 1;
+        if self.guncel_nesil().is_some() {
+            self.calistir(|m, o, e| {
+                *kilitle(&self.tasima) = None;
+                m.baglanti_kapandi(o, e)
+            })?;
+        }
+        let sonuc = self.calistir(|m, o, e| {
+            *kilitle(&self.tasima) = Some((nesil, tasima));
+            let sonuc = m.baglanti_acildi(o, e);
+            if sonuc.is_err() {
+                // Açılamadı: Kotlin nesli hiç almadı, soketi kapatır; taşıma kayıtlı kalmasın.
+                *kilitle(&self.tasima) = None;
+            }
+            sonuc
+        });
+        sonuc.map(|()| nesil)
+    }
+
+    pub fn cerceve_geldi(&self, nesil: u64, metin: String) -> Result<(), CekirdekHatasi> {
+        self.calistir(|m, o, e| {
+            if self.guncel_nesil() != Some(nesil) {
+                return Ok(());
+            }
+            m.cerceve_geldi(o, e, &metin)
+        })
+    }
+
+    pub fn baglanti_kapandi(&self, nesil: u64) -> Result<(), CekirdekHatasi> {
+        self.calistir(|m, o, e| {
+            if self.guncel_nesil() != Some(nesil) {
+                return Ok(());
+            }
+            *kilitle(&self.tasima) = None;
+            m.baglanti_kapandi(o, e)
+        })
+    }
+
+    pub fn baglanti_durumu(&self) -> Result<BaglantiDurumu, CekirdekHatasi> {
+        self.calistir(|m, _, _| m.baglanti_durumu())
+    }
+
+    // Sorgular (K4)
+
+    pub fn liste(&self, sorgu: ListeSorgusu) -> Result<Vec<KayitGorunumu>, CekirdekHatasi> {
+        self.calistir(|m, _, _| m.liste(&sorgu))
+    }
+
+    pub fn kayit(&self, kayit_id: String) -> Result<Option<KayitGorunumu>, CekirdekHatasi> {
+        self.calistir(|m, _, _| m.kayit(&kayit_id))
+    }
+
+    pub fn ret_listesi(&self) -> Result<Vec<RetGirdisi>, CekirdekHatasi> {
+        self.calistir(|m, _, _| m.ret_listesi())
+    }
+
+    pub fn gecmis_iste(&self, kayit_id: String, once_rev: Option<i64>) -> Result<(), CekirdekHatasi> {
+        self.calistir(|m, o, e| m.gecmis_iste(o, e, &kayit_id, once_rev))
+    }
+
+    pub fn gecmis(&self, kayit_id: String) -> Result<Option<GecmisSayfasi>, CekirdekHatasi> {
+        self.calistir(|m, _, _| m.gecmis(&kayit_id))
+    }
+
+    // İşlemler (K4)
+
+    /// Elle ya da sesli not ile yeni kayıt. Döner: `kayit_id`.
+    pub fn ekle(&self, govde: KayitGovdesi, girdi_yolu: GirdiYolu) -> Result<String, CekirdekHatasi> {
+        self.calistir(|m, o, e| m.ekle(o, e, govde, girdi_yolu))
+    }
+
+    pub fn duzenle(&self, kayit_id: String, govde: KayitGovdesi) -> Result<(), CekirdekHatasi> {
+        self.calistir(|m, o, e| m.duzenle(o, e, &kayit_id, govde))
+    }
+
+    /// Tamamla / geri al / iptal; `ornek_tarihi` verilirse tekrarın yalnız o örneği.
+    pub fn durum_degistir(&self, kayit_id: String, durum: KayitDurumu, ornek_tarihi: Option<String>) -> Result<(), CekirdekHatasi> {
+        self.calistir(|m, o, e| m.durum_degistir(o, e, &kayit_id, durum, ornek_tarihi))
+    }
+
+    pub fn onayla(&self, kayit_id: String) -> Result<(), CekirdekHatasi> {
+        self.calistir(|m, o, e| m.onayla(o, e, &kayit_id))
+    }
+
+    pub fn sil(&self, kayit_id: String) -> Result<(), CekirdekHatasi> {
+        self.calistir(|m, o, e| m.sil(o, e, &kayit_id))
+    }
+
+    pub fn geri_yukle(&self, kayit_id: String) -> Result<(), CekirdekHatasi> {
+        self.calistir(|m, o, e| m.geri_yukle(o, e, &kayit_id))
+    }
+
+    pub fn ret_at(&self, islem_id: String) -> Result<(), CekirdekHatasi> {
+        self.calistir(|m, o, e| m.ret_at(o, e, &islem_id))
+    }
+
+    // Alarmlar (K3)
+
+    pub fn alarmlari_yeniden_kur(&self, neden: YenidenKurmaNedeni) -> Result<(), CekirdekHatasi> {
+        self.calistir(|m, o, e| m.alarmlari_yeniden_kur(o, e, neden))
+    }
+
+    /// Alarm alıcısı çağırır. `None`: gösterme (kayıt değişti ya da silindi).
+    pub fn alarm_caldi(&self, alarm_no: i64) -> Result<Option<HatirlatmaBildirimi>, CekirdekHatasi> {
+        self.calistir(|m, o, e| m.alarm_caldi(o, e, alarm_no))
+    }
+}

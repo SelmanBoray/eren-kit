@@ -168,6 +168,8 @@ val rustMasaustuDerle = tasks.register<CargoMasaustuDerle>("rustMasaustuDerle") 
 
 tasks.withType<Test>().configureEach {
     dependsOn(rustMasaustuDerle)
+    // Yalnız Rust değişince de testler yeniden koşsun (masaüstü kitaplığı Gradle girdisi değil).
+    inputs.files(rustKaynakAgaci()).withPathSensitivity(PathSensitivity.RELATIVE)
     // Üretilen bağlamalar kitaplığı JNA ile adıyla yükler; masaüstü kitaplığını buradan bulur.
     systemProperty("jna.library.path", rustKoku.resolve("target/debug").absolutePath)
 }
@@ -175,6 +177,8 @@ tasks.withType<Test>().configureEach {
 dependencies {
     // UniFFI Kotlin bağlamaları JNA kullanır. aar: Android .so'ları; jar: masaüstü JVM testleri.
     implementation("net.java.dev.jna:jna:5.17.0@aar")
+    // K2: WebSocket istemcisi (Android'de yerleşik yok). Soket Kotlin'de, protokol Rust'ta (sans-IO).
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
     testImplementation("net.java.dev.jna:jna:5.17.0")
     testImplementation("junit:junit:4.13.2")
 }
