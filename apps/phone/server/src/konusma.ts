@@ -5,8 +5,11 @@
  * gider, sonraki `result`'tan sonra. Modül düzeyinde durum yok: aynı süreçte birden çok örnek yaşar.
  * MODULLER.md, "konusma" ve "Dilim 2" > "konusma (örnek)".
  */
-import { citleSar, kacir, SINIRLAR, SOHBET_SINIRLARI } from "@eren/protocol";
+import { citleSar, kacir, mesajAniDamgasi, OpakId, SINIRLAR, SOHBET_SINIRLARI } from "@eren/protocol";
+import type { AjandaYerelAn } from "@eren/protocol";
 import type {
+  AjandaJetonKapsami,
+  AjandaTurBaglami,
   AkisOlayi,
   BoruluSurec,
   DogrulanmisInsanMesaji,
@@ -94,6 +97,17 @@ interface Tur {
    * veritabanına, olay günlüğüne ve servis günlüğüne yazılmaz.
    */
   etkinlik: EtkinlikDurumu | null;
+  /**
+   * Ajanda dalgası: turun mesaj anı ve (insan turunda) insan mesajı; `turBaglami` buradan okur. Satırın
+   * başındaki damgayla aynı değer, tur boyunca değişmez. `takvim` yoksa ya da an hesaplanamadıysa `null`.
+   */
+  readonly ajanda: TurAjandasi | null;
+}
+
+interface TurAjandasi {
+  readonly mesaj_ani: AjandaYerelAn;
+  /** Yalnız kuyruğun `insan` satırından açılan turda: öneksiz metin ve `client_msg_id` (bilinmiyorsa `null`). */
+  readonly insan: { readonly metin: string; readonly kaynak_msg_id: string | null } | null;
 }
 
 interface Calisan {
@@ -148,15 +162,23 @@ const sonBoslukSonu = (metin: string, bas: number): number => {
 // Satır kurucular: biçim MODULLER.md tablosuyla bire bir, anahtar sırası dahil. `client_composed` her
 // satırda `@yol` korumasıdır. Başka satır kurucu yoktur.
 
+/**
+ * Ajanda dalgası: kullanıcı rolündeki her satırın içeriği turun mesaj anı damgasıyla başlar (`AJANDA.md`
+ * "Mesaj anı"). Damga YALNIZ burada, stdin'e giden içerikte: kuyruk `metin`'ine, `user_echo`'ya, olaylara
+ * girmez. `an` `null` ise (takvim yok) içerik aynen.
+ */
+const damgali = (metin: string, an: AjandaYerelAn | null): string =>
+  an === null ? metin : `${mesajAniDamgasi(an)}\n${metin}`;
+
 /** İnsan kökenli satırın tek kod noktası. Girdisi yalnız `insanMesajiAl`'ın yazdığı kuyruk satırı. */
-const insanSatiriKur = (satir: ErenKuyrukSatiri): string => {
+const insanSatiriKur = (satir: ErenKuyrukSatiri, an: AjandaYerelAn | null): string => {
   if (satir.kaynak !== "insan") throw new Error("konusma: kuyruk satırı insan kaynaklı değil");
   return JSON.stringify({
     type: "user",
     parent_tool_use_id: null,
     client_composed: true,
     origin: { kind: "human" },
-    message: { role: "user", content: satir.metin },
+    message: { role: "user", content: damgali(satir.metin, an) },
   });
 };
 
@@ -179,13 +201,13 @@ const erenMetniKur = (mesaj: {
   return `${onek}\n${mesaj.text}`;
 };
 
-const sentetikSatirKur = (metin: string): string =>
+const sentetikSatirKur = (metin: string, an: AjandaYerelAn | null): string =>
   JSON.stringify({
     type: "user",
     parent_tool_use_id: null,
     client_composed: true,
     isSynthetic: true,
-    message: { role: "user", content: metin },
+    message: { role: "user", content: damgali(metin, an) },
   });
 
 const kesmeSatiriKur = (request_id: string): string =>
@@ -213,6 +235,8 @@ export const konusmaKur: KonusmaFabrikasi = ({
   rastgele,
   veriyolu,
   gunluk,
+  takvim,
+  ajandaKopru,
 }) => {
   const sureler = ayar.sureler;
   const computerUse = ayar.computerUse ?? null;
@@ -239,6 +263,17 @@ export const konusmaKur: KonusmaFabrikasi = ({
    * sütunu yok); satır tura dönüşünce ya da kuyruk boş görülünce silinir. Önceki servis ömründen kalan satırda yok.
    */
   const kuyrukMesajlari = new Map<number, string>();
+  /**
+   * Ajanda dalgası: insan kuyruk satırı kimliği → öneksiz, damgasız metin (`DogrulanmisInsanMesaji.text`;
+   * `alinti` denetimi). `kuyrukMesajlari` gibi yalnız bellekte; önceki ömürden kalan satırda kuyruk `metin`'i.
+   */
+  const insanMetinleri = new Map<number, string>();
+  /**
+   * Ajanda dalgası (A0.6). `takvim` yoksa damga, kuyruk eki ve tur bağlamı yok; ajanda köprüsü (jeton ve mcp
+   * girdisi) yalnız `takvim` ve `ajandaKopru` birlikteyse. İkisi de yoksa davranış ajanda öncesiyle aynı.
+   */
+  const ajandaKoprusu = takvim === undefined ? null : (ajandaKopru ?? null);
+  const ajandaKapsami = (nesil: number): AjandaJetonKapsami => ({ rol: "ana_oturum", sohbet_id, nesil });
   let nesilNo = depo.sonNesil(sohbet)?.nesil ?? 0;
   // Yuva (dilim 2, `SurecKapisi`): sohbet başına tek birim; süreç, aday ve başlatma kalmayınca bırakılır.
   let yuvaTutuyor = false;
@@ -295,6 +330,74 @@ export const konusmaKur: KonusmaFabrikasi = ({
 
   const arkaPlan = (olay: string, p: Promise<void>): void => {
     p.catch((e: unknown) => hataYaz(olay, e));
+  };
+
+  // ---- ajanda dalgası: mesaj anı ve jeton ----
+
+  /**
+   * `ms`'in kullanıcının ŞU ANKİ dilimindeki yerel hali (A0.4: dilim yalnız `takvim`'den). `takvim` yoksa ya
+   * da atarsa (dilim bilinmiyor) `null`: satır damgasız gider, tur bağlamı yoktur (araç `tur_gecersiz`).
+   */
+  const yerelAnHesapla = (ms: number): AjandaYerelAn | null => {
+    if (takvim === undefined) return null;
+    try {
+      return takvim.yerelAn(ms, takvim.kullaniciDilimi());
+    } catch (e) {
+      hataYaz("mesaj_ani_hesaplanamadi", e);
+      return null;
+    }
+  };
+
+  /** Kuyruktan gelmeyen tur (bekleyen not, devir isteği, devir ilk satırı): turun açıldığı an. */
+  const acilisAni = (): AjandaYerelAn | null => (takvim === undefined ? null : yerelAnHesapla(saat.simdiMs()));
+
+  /** Kuyruk satırının varış anı: varışta saklanan ek; yoksa (eski kod, yazılamayan ek) `olusturma_ms` o anki dilimle. */
+  const satirAni = (s: ErenKuyrukSatiri): AjandaYerelAn | null =>
+    takvim === undefined ? null : (s.mesaj_ani ?? yerelAnHesapla(s.olusturma_ms));
+
+  /**
+   * `kuyrugaEkle` ile AYNI `depo.islem` içinde, hemen ardından. Ek yazılamazsa mesaj YİNE kabul edilir (sohbet
+   * ekten önemli): tek INSERT'tür, hatası işlemi bozmaz; tur açılınca an `olusturma_ms`'ten (aynı varış) hesaplanır.
+   */
+  const kuyrukEkiYaz = (id: number, an: AjandaYerelAn | null, kaynak_msg_id?: string): void => {
+    if (an === null) return;
+    // Şemaya uymayan kimlik anı da düşürmesin: yalnız kimlik düşer.
+    const msg = kaynak_msg_id !== undefined && OpakId.safeParse(kaynak_msg_id).success ? kaynak_msg_id : undefined;
+    try {
+      depo.kuyrukEkiYaz(id, msg === undefined ? { mesaj_ani: an } : { mesaj_ani: an, kaynak_msg_id: msg });
+    } catch (e) {
+      hataYaz("kuyruk_eki_yazilamadi", e);
+    }
+  };
+
+  /** Kuyruktan gelmeyen turun ajanda bağlamı: sentetik köken. */
+  const sentetikAjanda = (an: AjandaYerelAn | null): TurAjandasi | null =>
+    an === null ? null : { mesaj_ani: an, insan: null };
+
+  /**
+   * `eren` jetonunun iptal edildiği HER noktadan geçer: aynı kapsamın ajanda jetonu da iptal edilir. `eren`
+   * iptali bugünkü gibi atabilir; ajanda iptali atsa da `eren` akışını bozmaz (günlüğe yazılır; eski neslin
+   * açık turu olmadığından ajanda borusu onu yine `tur_gecersiz` ile reddeder).
+   */
+  const jetonlariIptalEt = (n: number): void => {
+    try {
+      kopru.jetonlariIptalEt(kapsam(n));
+    } finally {
+      if (ajandaKoprusu !== null) {
+        guvenli("ajanda_jetonu_iptal", () => ajandaKoprusu.jetonlariIptalEt(ajandaKapsami(n)));
+      }
+    }
+  };
+
+  /** `eren` jetonunun yanında; üretilemezse süreç ajandasız açılır (sohbet ajandadan önemli). */
+  const ajandaJetonuUret = (nesil: number): string | null => {
+    if (ajandaKoprusu === null) return null;
+    try {
+      return ajandaKoprusu.jetonUret(ajandaKapsami(nesil));
+    } catch (e) {
+      hataYaz("ajanda_jetonu_uretilemedi", e);
+      return null;
+    }
   };
 
   /** Süren işi izler: yeni sayfa, sonuçlanmadan eski süreçleri saymaz. */
@@ -397,7 +500,7 @@ export const konusmaKur: KonusmaFabrikasi = ({
       c.bilincli = true;
       hazirIsaretle(c);
       uyutulan = { c, istek };
-      guvenli("uyutma_jetonu", () => kopru.jetonlariIptalEt(kapsam(c.nesil)));
+      guvenli("uyutma_jetonu", () => jetonlariIptalEt(c.nesil));
       gunluk.bilgi("konusma", "uyutuldu", { sohbet_id, nesil: c.nesil });
       if (c.bitti) uyutmaBitti(c);
       else surecKapat(c);
@@ -605,8 +708,10 @@ export const konusmaKur: KonusmaFabrikasi = ({
     // Süreçten ÖNCE kalıcı kayıt: nesil kaydına hiç girmese de (başarısız aday, kayıttan önce ölen servis)
     // transkripti geçmişi silmede bulunur. Yazılamazsa süreç açılmaz.
     if (kip === "yeni") depo.oturumKaydet(session_id, saat.simdiMs(), sohbet);
-    if (kip === "devam") kopru.jetonlariIptalEt(kapsam(nesil));
+    if (kip === "devam") jetonlariIptalEt(nesil);
     const jeton = kopru.jetonUret(kapsam(nesil));
+    // Ajanda dalgası: aynı nesil kapsamlı ajanda jetonu `eren`'inkiyle aynı anda (devamda eskisi yukarıda iptal).
+    const ajandaJetonu = ajandaJetonuUret(nesil);
     // Her başlatmada (resume dahil) neslin kendi dosyası yazılır; başlatma başarısızsa silinir.
     mcpKullanim.set(nesil, (mcpKullanim.get(nesil) ?? 0) + 1);
     let s: BoruluSurec;
@@ -617,7 +722,7 @@ export const konusmaKur: KonusmaFabrikasi = ({
         await suren;
         if (mcpSilmeleri.get(nesil) === suren) mcpSilmeleri.delete(nesil);
       }
-      await dosya.atomikYaz(mcpYolu, erenMcpMetni(ayar.nodeExe, ayar.kopruBetigi, jeton, computerUse));
+      await dosya.atomikYaz(mcpYolu, erenMcpMetni(ayar.nodeExe, ayar.kopruBetigi, jeton, computerUse, ajandaJetonu));
       const istem = sistemIstemi(await ayar.kimlikEki(), masaustu, tamYetki, ayar.asistanAdi);
       s = await surec.boruluBaslat({
         exe: ayar.claudeExe,
@@ -678,6 +783,8 @@ export const konusmaKur: KonusmaFabrikasi = ({
       rol: TurRolu;
       idler: readonly number[];
       kaynak_msg_id?: string | null;
+      /** Ajanda dalgası: satırın damgasıyla aynı an; `null`/yok: takvim yok. */
+      ajanda?: TurAjandasi | null;
     },
   ): boolean => {
     if (!c.surec.satirYaz(satir)) return false;
@@ -697,7 +804,10 @@ export const konusmaKur: KonusmaFabrikasi = ({
       });
       if (g.idler.length > 0) depo.kuyruktanSil(g.idler);
     });
-    for (const id of g.idler) kuyrukMesajlari.delete(id);
+    for (const id of g.idler) {
+      kuyrukMesajlari.delete(id);
+      insanMetinleri.delete(id);
+    }
     const tur: Tur = {
       turn_id,
       kaynak: g.kaynak,
@@ -710,6 +820,7 @@ export const konusmaKur: KonusmaFabrikasi = ({
       tamponZamani: null,
       kismiZamani: null,
       etkinlik: g.gorunur ? etkinlikBaslangici(simdi) : null,
+      ajanda: g.ajanda ?? null,
     };
     c.tur = tur;
     if (g.gorunur) {
@@ -729,32 +840,60 @@ export const konusmaKur: KonusmaFabrikasi = ({
     const c = etkin;
     if (kapandi || sayfaSuruyor || devir !== null || baslatmaSuruyor || c === null || c.tur !== null || c.kirik) return;
     let yazildi: boolean;
+    // Ajanda dalgası: satırın damgası ve turun bağlamı AYNI `an`'dır (`AjandaTurBaglami` kuralı).
     if (bekleyenNot !== null) {
-      yazildi = turuYaz(c, sentetikSatirKur(bekleyenNot), { kaynak: "sentetik", gorunur: true, rol: "normal", idler: [] });
+      // Kurtarma notu kuyruktan gelmez: turun açıldığı an.
+      const an = acilisAni();
+      yazildi = turuYaz(c, sentetikSatirKur(bekleyenNot, an), {
+        kaynak: "sentetik",
+        gorunur: true,
+        rol: "normal",
+        idler: [],
+        ajanda: sentetikAjanda(an),
+      });
       if (yazildi) bekleyenNot = null;
     } else {
       const sentetikler = depo.kuyrukSentetikBasi(SENTETIK_BIRLESME, sohbet);
-      if (sentetikler.length > 0) {
-        yazildi = turuYaz(c, sentetikSatirKur(sentetikler.map((s) => s.metin).join("\n")), {
+      const enYeni = sentetikler.at(-1);
+      if (enYeni !== undefined) {
+        // Birleşik sentetik: en yeni (son varan) satırın varışı.
+        const an = satirAni(enYeni);
+        yazildi = turuYaz(c, sentetikSatirKur(sentetikler.map((s) => s.metin).join("\n"), an), {
           kaynak: "sentetik",
           gorunur: true,
           rol: "normal",
           idler: sentetikler.map((s) => s.id),
+          ajanda: sentetikAjanda(an),
         });
       } else {
         const bas = depo.kuyrukBasi(sohbet);
         if (bas === null) {
           // Kuyruk boş: kalan eşlemeler silinmiş (temizlenmiş) satırlarındır.
           kuyrukMesajlari.clear();
+          insanMetinleri.clear();
           return;
         }
+        // İletim anı değil varış anı: satır meşgul ya da uyuyan oturumda beklemiş olabilir.
+        const an = satirAni(bas);
+        const msgId = kuyrukMesajlari.get(bas.id) ?? null;
         // Kaynak kuyruk satırından gelir; `insanSatiriKur` insan dışı satırda atar, tur açılmaz.
-        yazildi = turuYaz(c, insanSatiriKur(bas), {
+        yazildi = turuYaz(c, insanSatiriKur(bas, an), {
           kaynak: bas.kaynak,
           gorunur: true,
           rol: "normal",
           idler: [bas.id],
-          kaynak_msg_id: kuyrukMesajlari.get(bas.id) ?? null,
+          kaynak_msg_id: msgId,
+          ajanda:
+            an === null
+              ? null
+              : {
+                  mesaj_ani: an,
+                  // Önceki ömürden kalan satırda metin kuyruktan (kısayolda önekli), kimlik ekten.
+                  insan: {
+                    metin: insanMetinleri.get(bas.id) ?? bas.metin,
+                    kaynak_msg_id: msgId ?? bas.kaynak_msg_id ?? null,
+                  },
+                },
         });
       }
     }
@@ -763,7 +902,14 @@ export const konusmaKur: KonusmaFabrikasi = ({
 
   /** Kuyruğa satır gelmesi de açılış denemesidir: süreç yoksa yuva istenir. */
   const sentetikEkle = (metin: string): void => {
-    depo.kuyrugaEkle("sentetik", metin, saat.simdiMs(), sohbet);
+    const ms = saat.simdiMs();
+    if (takvim === undefined) {
+      depo.kuyrugaEkle("sentetik", metin, ms, sohbet);
+    } else {
+      // Ajanda dalgası: varış anı satırla aynı işlemde saklanır.
+      const an = yerelAnHesapla(ms);
+      depo.islem(() => kuyrukEkiYaz(depo.kuyrugaEkle("sentetik", metin, ms, sohbet), an));
+    }
     pompala();
     if (etkin === null) guvenli("uyandir", uyandir);
   };
@@ -830,7 +976,7 @@ export const konusmaKur: KonusmaFabrikasi = ({
       turuKapat(aday, bitis, null);
       surecKapat(aday);
     }
-    if (d.nesil !== null) kopru.jetonlariIptalEt(kapsam(d.nesil));
+    if (d.nesil !== null) jetonlariIptalEt(d.nesil);
   };
 
   const yenidenIptal = (): void => {
@@ -894,7 +1040,7 @@ export const konusmaKur: KonusmaFabrikasi = ({
       });
     }
     // Eski neslin numarası ayrı tutulur: araya başka sohbetin nesli girmiş olabilir (`nesil - 1` değil).
-    kopru.jetonlariIptalEt(kapsam(d.eskiNesil));
+    jetonlariIptalEt(d.eskiNesil);
     turuAyir(aday, tur);
     devir = null;
     etkin = aday;
@@ -991,7 +1137,7 @@ export const konusmaKur: KonusmaFabrikasi = ({
       // Beklerken kilit ya da kapanış devri iptal etti.
       c.bilincli = true;
       surecKapat(c);
-      kopru.jetonlariIptalEt(kapsam(nesil));
+      jetonlariIptalEt(nesil);
       return;
     }
     d.aday = c;
@@ -999,8 +1145,9 @@ export const konusmaKur: KonusmaFabrikasi = ({
       adayBasarisiz(d);
       return;
     }
-    const satir = sentetikSatirKur(devirNotu(d.ozet));
-    if (!turuYaz(c, satir, { kaynak: "devir", gorunur: false, rol: "devir_ilk", idler: [] })) {
+    const an = acilisAni();
+    const satir = sentetikSatirKur(devirNotu(d.ozet), an);
+    if (!turuYaz(c, satir, { kaynak: "devir", gorunur: false, rol: "devir_ilk", idler: [], ajanda: sentetikAjanda(an) })) {
       adayBasarisiz(d);
       return;
     }
@@ -1013,7 +1160,9 @@ export const konusmaKur: KonusmaFabrikasi = ({
   const devirBaslat = (eski: Calisan): void => {
     const d: Devir = { nesil: null, eskiNesil: eski.nesil, eski, asama: "ozet", ozet: null, zaman: null, aday: null };
     devir = d;
-    if (!turuYaz(eski, sentetikSatirKur(DEVIR_ISTEGI), { kaynak: "devir", gorunur: false, rol: "devir_istek", idler: [] })) {
+    const an = acilisAni();
+    const istek = sentetikSatirKur(DEVIR_ISTEGI, an);
+    if (!turuYaz(eski, istek, { kaynak: "devir", gorunur: false, rol: "devir_istek", idler: [], ajanda: sentetikAjanda(an) })) {
       devir = null;
       boruKirildi(eski);
       return;
@@ -1290,18 +1439,18 @@ export const konusmaKur: KonusmaFabrikasi = ({
       c = await sureciBaslat(nesil, session_id, "yeni");
     } catch (e) {
       hataYaz("yeni_oturum_baslatilamadi", e);
-      kopru.jetonlariIptalEt(kapsam(nesil));
+      jetonlariIptalEt(nesil);
       yenidenPlanla();
       return;
     }
     if (kapandi || !kilit.baslatmaSerbestMi()) {
       c.bilincli = true;
       surecKapat(c);
-      kopru.jetonlariIptalEt(kapsam(nesil));
+      jetonlariIptalEt(nesil);
       return;
     }
     if (c.bitti) {
-      kopru.jetonlariIptalEt(kapsam(nesil));
+      jetonlariIptalEt(nesil);
       yenidenPlanla();
       return;
     }
@@ -1524,7 +1673,7 @@ export const konusmaKur: KonusmaFabrikasi = ({
 
   const erenJetonlariniIptalEt = (nesiller: Iterable<number>): void => {
     for (const nesil of new Set(nesiller)) {
-      if (nesil > 0) kopru.jetonlariIptalEt(kapsam(nesil));
+      if (nesil > 0) jetonlariIptalEt(nesil);
     }
   };
 
@@ -1833,11 +1982,36 @@ export const konusmaKur: KonusmaFabrikasi = ({
       return tur.turn_id;
     },
 
+    turBaglami(nesil) {
+      // Kökeni yalnız turu açan kuyruk satırı belirler (`Tur.kaynak`); araç girdisi ve model hiçbir yoldan.
+      try {
+        if (kapandi || takvim === undefined) return null;
+        for (const c of [etkin, devir?.aday ?? null]) {
+          if (c === null || c.nesil !== nesil) continue;
+          const tur = c.tur;
+          if (c.bilincli || c.bitti || tur === null || tur.ajanda === null) return null;
+          const a = tur.ajanda;
+          const mesaj_ani = { ...a.mesaj_ani };
+          if (tur.kaynak === "insan" && tur.rol === "normal" && a.insan !== null) {
+            const b: AjandaTurBaglami = { tur_kokeni: "insan", turn_id: tur.turn_id, mesaj_ani, insan_metni: a.insan.metin };
+            return a.insan.kaynak_msg_id === null ? b : { ...b, kaynak_msg_id: a.insan.kaynak_msg_id };
+          }
+          return { tur_kokeni: "sentetik", turn_id: tur.turn_id, mesaj_ani };
+        }
+        return null;
+      } catch (e) {
+        hataYaz("tur_baglami", e);
+        return null;
+      }
+    },
+
     insanMesajiAl(mesaj) {
       // Savunma: yanlış sohbete insan satırı yazılmaz; silinmiş sohbet mesaj almaz. Hiçbir şey yazılmadan atar.
       if (mesaj.sohbet_id !== sohbet_id) throw new Error("konusma: mesaj bu sohbetin değil");
       if (sonlandirildi) throw new Error("konusma: sohbet sonlandırıldı");
       const ms = saat.simdiMs();
+      // Ajanda dalgası: varış anı kullanıcının ŞU ANKİ dilimiyle bir kez, işlemden önce (takvim atarsa ek yok).
+      const an = yerelAnHesapla(ms);
       const { seq, kuyrukId } = depo.islem(() => {
         const olay = depo.olayEkle({
           type: "user_echo",
@@ -1849,12 +2023,15 @@ export const konusmaKur: KonusmaFabrikasi = ({
         });
         // Olay öneksiz (telefonun gördüğü), kuyruk satırı ana oturuma gidecek metin (kısayolda önekli).
         const id = depo.kuyrugaEkle("insan", erenMetniKur(mesaj), ms, sohbet);
+        // Ek metin taşımaz (an + `client_msg_id`); damga kuyruk `metin`'ine ve `user_echo`'ya girmez.
+        kuyrukEkiYaz(id, an, mesaj.client_msg_id);
         depo.sohbetEtkinlikYaz(sohbet, ms);
         return { seq: olay.seq, kuyrukId: id };
       });
       // Canlı etkinlik: bu satırdan açılacak tur mesajın kimliğini taşır. Yazma bittikten sonra (geri alınan
       // işlemin kimliği yeniden kullanılabilir; `set` eskisini ezer).
       kuyrukMesajlari.set(kuyrukId, mesaj.client_msg_id);
+      if (takvim !== undefined) insanMetinleri.set(kuyrukId, mesaj.text);
       // Mesaj kaydedildi: akıştaki hata kabulü geri almaz. Süreç yoksa yuva istenir (uyuyor/sirada).
       guvenli("pompa", pompala);
       if (etkin === null) guvenli("uyandir", uyandir);
@@ -1973,7 +2150,7 @@ export const konusmaKur: KonusmaFabrikasi = ({
       if (d !== null) {
         devirZamaniIptal(d);
         if (d.aday !== null) kapanacak.add(d.aday);
-        if (d.nesil !== null) kopru.jetonlariIptalEt(kapsam(d.nesil));
+        if (d.nesil !== null) jetonlariIptalEt(d.nesil);
       }
       if (etkin !== null) kapanacak.add(etkin);
       for (const c of canlilar) kapanacak.add(c);

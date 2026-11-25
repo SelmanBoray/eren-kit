@@ -30,6 +30,7 @@ import {
 } from "@eren/protocol";
 import { anaSohbetAdiUret } from "./ana-sohbet-adi.ts";
 import type {
+  AjandaJetonKapsami,
   GunlukAlanlari,
   IptalEt,
   Konusma,
@@ -443,6 +444,7 @@ export const sohbetlerKur: SohbetlerFabrikasi = (b) => {
 
   // ---- örnekler ----
 
+  const ajandaKopru = b.ajandaKopru;
   const ortak: KonusmaOrtakBagimliliklari = {
     ayar,
     depo,
@@ -460,6 +462,15 @@ export const sohbetlerKur: SohbetlerFabrikasi = (b) => {
     rastgele: b.rastgele,
     veriyolu,
     gunluk,
+    // Ajanda dalgası (A0.6): yalnız verilmişse; yoksa örnek ajanda öncesi gibi kurulur. Örnek ajanda
+    // köprüsünün yalnız kendi iki fiilini görür (`jetonlariniSil` `ana`'nın).
+    ...(b.takvim !== undefined && { takvim: b.takvim }),
+    ...(ajandaKopru !== undefined && {
+      ajandaKopru: {
+        jetonUret: (kapsam: AjandaJetonKapsami) => ajandaKopru.jetonUret(kapsam),
+        jetonlariIptalEt: (kapsam: AjandaJetonKapsami) => ajandaKopru.jetonlariIptalEt(kapsam),
+      },
+    }),
   };
 
   /** Örneği kurar ve haritaya ekler; kurucu atarsa `null`. `baslat` ayrıca tetiklenir. */

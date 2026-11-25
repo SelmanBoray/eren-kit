@@ -28,6 +28,7 @@ import type {
   NesilKaydi,
   ServisOlaylari,
   SohbetErenDurumuTipi,
+  SohbetlerBagimliliklari,
   SohbetYoneticisi,
 } from "../src/sozlesme.ts";
 import { sahteDunya } from "./sahte.ts";
@@ -159,6 +160,8 @@ function kur(
     asistanAdi?: string;
     /** Yöneticiye verilen depoyu sarar (gerçek depo `h.depo`'da kalır). */
     depoSar?: (depo: Depo) => Depo;
+    /** Ajanda dalgası: verilirse `sohbetlerKur`'a `takvim` ve `ajandaKopru` geçer. */
+    ajanda?: Pick<SohbetlerBagimliliklari, "takvim" | "ajandaKopru">;
   } = {},
 ): Duzen {
   const azami = sec.azami ?? 2;
@@ -399,6 +402,7 @@ function kur(
     veriyolu,
     gunluk: d.gunluk,
     sistem: d.sistem,
+    ...sec.ajanda,
   });
 
   return {
@@ -1363,6 +1367,42 @@ async function surdur(
 // ---------------------------------------------------------------------------------------------
 // Kapanış, günlük, dosya taraması
 // ---------------------------------------------------------------------------------------------
+
+describe("sohbetler: ajanda dalgası bağımlılıkları", () => {
+  it("verilmezse örneğe takvim ve ajandaKopru anahtarı hiç geçmez (A0.6)", async () => {
+    const h = kur();
+    await hazir(h);
+    const b = h.o(ANA_SOHBET_ID).b;
+    assert.equal("takvim" in b, false);
+    assert.equal("ajandaKopru" in b, false);
+  });
+
+  it("verilirse takvim aynen, ajandaKopru yalnız iki fiille geçer; tur bağlamı örneğin kendisinden okunur", async () => {
+    const d = sahteDunya();
+    const cagrilar: string[] = [];
+    const h = kur({
+      ajanda: {
+        takvim: d.takvim,
+        ajandaKopru: {
+          jetonUret: (k) => {
+            cagrilar.push(`uret:${k.sohbet_id}:${k.nesil}`);
+            return "ajanda-jeton";
+          },
+          jetonlariIptalEt: (k) => void cagrilar.push(`iptal:${k.sohbet_id}:${k.nesil}`),
+        },
+      },
+    });
+    await hazir(h);
+    const b = h.o(ANA_SOHBET_ID).b;
+    assert.equal(b.takvim, d.takvim);
+    assert.deepEqual(Object.keys(b.ajandaKopru ?? {}).sort(), ["jetonUret", "jetonlariIptalEt"]);
+    assert.equal(b.ajandaKopru?.jetonUret({ rol: "ana_oturum", sohbet_id: ANA_SOHBET_ID, nesil: 3 }), "ajanda-jeton");
+    b.ajandaKopru?.jetonlariIptalEt({ rol: "ana_oturum", sohbet_id: ANA_SOHBET_ID, nesil: 3 });
+    assert.deepEqual(cagrilar, [`uret:${ANA_SOHBET_ID}:3`, `iptal:${ANA_SOHBET_ID}:3`]);
+    // `ana`'nın bağı `sohbetler.konusma(s)?.turBaglami?.(n)`: yönetici örneğin kendisini verir.
+    assert.equal(h.y.konusma(s(ANA_SOHBET_ID)), h.o(ANA_SOHBET_ID));
+  });
+});
 
 describe("sohbetler: kapat", () => {
   it("bütün örnekler kapat; sonra kapı her isteğe false, boşta yoklaması ve RAM yoklaması durur", async () => {

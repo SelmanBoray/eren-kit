@@ -5,8 +5,9 @@
  * MODULLER.md, "konusma".
  */
 import { kacir, SINIRLAR } from "@eren/protocol";
-import type { IsBitisDurumu } from "@eren/protocol";
+import type { AjandaKopruRolu, IsBitisDurumu } from "@eren/protocol";
 import type {
+  AjandaMcpSunucuAdi,
   IsNo,
   KonusmaSatiri,
   McpSunucuTanimi,
@@ -127,15 +128,24 @@ export const sistemIstemi = (
 /** Sunucu adı iş oturumlarının PC profiliyle aynı: araç adları `mcp__computer-use-windows__<ad>`. */
 export const COMPUTER_USE_SUNUCUSU = "computer-use-windows";
 
+/** Ajanda dalgası. Ana oturumun ajanda köprüsü: araç adları `mcp__eren-ajanda__<fiil>`. */
+export const AJANDA_MCP_SUNUCUSU: AjandaMcpSunucuAdi = "eren-ajanda";
+/** `kopru.ts --rol ana_oturum`: ajanda borusu (`AJANDA_BORU_ADI`), `AJANDA_ROL_FIILLERI.ana_oturum`. */
+const AJANDA_KOPRU_ROLU: Extract<AjandaKopruRolu, "ana_oturum"> = "ana_oturum";
+
 /**
  * `computerUse` doluysa masaüstü sunucusu da girer `[karar 2026-11-07]`. `alwaysLoad`: araçlar ertelenirse
  * `init`'te beklenmeyen bir araç arama aracı görünebilir, denetim ana oturumu durdururdu.
+ * Ajanda dalgası: `ajandaJetonu` verilirse (`konusma`'ya `takvim` ve `ajandaKopru` verildiyse) `eren`'in
+ * hemen ardından `eren-ajanda` girer; jeton yalnız ortamda (`AjandaKopruIstemciAyari.jeton`), argümanda
+ * değil. Verilmezse metin bayt bayt ajanda öncesiyle aynıdır.
  */
 export const erenMcpMetni = (
   nodeExe: string,
   kopruBetigi: string,
   jeton: string,
   computerUse: McpSunucuTanimi | null,
+  ajandaJetonu: string | null = null,
 ): string => {
   const sunucular: Record<string, unknown> = {
     eren: {
@@ -146,6 +156,15 @@ export const erenMcpMetni = (
       alwaysLoad: true,
     },
   };
+  if (ajandaJetonu !== null) {
+    sunucular[AJANDA_MCP_SUNUCUSU] = {
+      type: "stdio",
+      command: nodeExe,
+      args: [kopruBetigi, "--rol", AJANDA_KOPRU_ROLU],
+      env: { EREN_KOPRU_JETON: ajandaJetonu },
+      alwaysLoad: true,
+    };
+  }
   if (computerUse !== null) {
     sunucular[COMPUTER_USE_SUNUCUSU] = {
       type: "stdio",
