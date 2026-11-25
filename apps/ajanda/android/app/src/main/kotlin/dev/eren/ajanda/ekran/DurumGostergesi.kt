@@ -1,0 +1,183 @@
+package dev.eren.ajanda.ekran
+
+import dev.eren.ajanda.alarm.HatirlatmaDurumu
+import dev.eren.ajanda.alarm.HatirlatmaSorunu
+import dev.eren.ajanda.cekirdek.BaglantiAsamasi
+import dev.eren.ajanda.cekirdek.BaglantiDurumu
+import dev.eren.ajanda.cekirdek.EslesmeDurumu
+import java.time.ZoneId
+
+/**
+ * Üst çubuktaki PC bağlantı göstergesi (saf): eşleşme, bağlantı aşaması, kuyruk ve son eşitleme.
+ * Kısa metin çubukta, ayrıntı dokununca açılan pencerede durur.
+ */
+object DurumGostergesi {
+    enum class Ton { IYI, SURUYOR, CEVRIMDISI, UYARI }
+
+    enum class Eylem { ESLESTIR, YOK }
+
+    data class Gosterge(val kisa: String, val ayrinti: String, val ton: Ton, val eylem: Eylem)
+
+    /**
+     * @param adresVar `baglantiAdresi() != null`: eski eşleşme dururken yeni QR reddedilince durum
+     *   `Reddedildi` görünür ama bağlantı eskisiyle sürer (MIMARI "K1").
+     * @param okumaHatasi çekirdek okunamadıysa kısa neden.
+     */
+    fun hesapla(
+        eslesme: EslesmeDurumu?,
+        baglanti: BaglantiDurumu?,
+        adresVar: Boolean,
+        simdiMs: Long,
+        dilim: ZoneId,
+        okumaHatasi: String? = null,
+    ): Gosterge {
+        if (okumaHatasi != null) {
+            return Gosterge("Okunamadı", "Telefondaki ajanda deposu okunamadı: $okumaHatasi", Ton.UYARI, Eylem.YOK)
+        }
+        if (eslesme == null) return Gosterge("…", "Durum okunuyor.", Ton.SURUYOR, Eylem.YOK)
+        val bekleyen = baglanti?.kuyrukta ?: 0
+        val bekleyenMetni = if (bekleyen > 0) "$bekleyen değişiklik PC'ye gönderilmeyi bekliyor." else "Gönderilmeyi bekleyen değişiklik yok."
+        val sonEsitleme = baglanti?.sonEsitlenmeMs?.let { "Son eşitleme: ${EkranMetinleri.goreliAn(it, simdiMs, dilim)}." }
+            ?: "Henüz hiç eşitlenmedi."
+
+        when (eslesme) {
+            is EslesmeDurumu.Yok -> return Gosterge(
+                "Eşleşmedi",
+                "Bu telefon PC ile eşleşmedi. Kayıtlarınız yalnız bu telefonda duruyor; eşleşince PC'ye gönderilir.\n$bekleyenMetni",
+                Ton.UYARI, Eylem.ESLESTIR,
+            )
+            is EslesmeDurumu.Bekliyor -> return Gosterge(
+                "Eşleştiriliyor",
+                "PC ile eşleştirme sürüyor (${eslesme.host}).",
+                Ton.SURUYOR, Eylem.YOK,
+            )
+            is EslesmeDurumu.Reddedildi -> if (!adresVar) {
+                val (neden, _) = EkranMetinleri.kanalHatasi(eslesme.kod)
+                return Gosterge(
+                    "Eşleşme reddedildi",
+                    "PC eşleştirmeyi reddetti: $neden\nPC'de yeni kod alıp yeniden eşleştirin.",
+                    Ton.UYARI, Eylem.ESLESTIR,
+                )
+            }
+            is EslesmeDurumu.Eslesti -> Unit
+        }
+        val reddedildiNotu = if (eslesme is EslesmeDurumu.Reddedildi) {
+            "\nSon eşleştirme denemesi reddedildi; önceki eşleşme sürüyor."
+        } else {
+            ""
+        }
+        val b = baglanti ?: return Gosterge("…", "Bağlantı durumu okunuyor.$reddedildiNotu", Ton.SURUYOR, Eylem.YOK)
+        val hata = b.sonHata?.let { EkranMetinleri.kanalHatasi(it) }
+        val hataSatiri = hata?.let { "\nSon hata: ${it.first}" } ?: ""
+        return when (b.asama) {
+            BaglantiAsamasi.CANLI -> Gosterge(
+                if (bekleyen > 0) "Bağlı · $bekleyen gönderiliyor" else "Bağlı",
+                "PC'ye bağlı, kayıtlar güncel.\n$bekleyenMetni$reddedildiNotu",
+                Ton.IYI, Eylem.YOK,
+            )
+            BaglantiAsamasi.TELAFI -> Gosterge(
+                "Eşitleniyor…",
+                "PC'ye bağlandı, kayıtlar eşitleniyor.\n$sonEsitleme$reddedildiNotu",
+                Ton.SURUYOR, Eylem.YOK,
+            )
+            BaglantiAsamasi.EL_SIKISMA, BaglantiAsamasi.ESLESTIRME -> Gosterge(
+                "Bağlanıyor…",
+                "PC'ye bağlanılıyor.\n$sonEsitleme\n$bekleyenMetni$reddedildiNotu",
+                Ton.SURUYOR, Eylem.YOK,
+            )
+            BaglantiAsamasi.KOPUK -> {
+                val yenidenEslestir = hata?.second == true
+                val kisa = when {
+                    yenidenEslestir -> "PC tanımıyor"
+                    bekleyen > 0 -> "Çevrimdışı · $bekleyen bekliyor"
+                    else -> "Çevrimdışı"
+                }
+                Gosterge(
+                    kisa,
+                    "PC'ye bağlı değil. Değişiklikler telefonda saklanıyor, bağlanınca gönderilir; " +
+                        "hatırlatmalar PC'den bağımsız çalar.\n$sonEsitleme\n$bekleyenMetni$hataSatiri$reddedildiNotu",
+                    if (yenidenEslestir) Ton.UYARI else Ton.CEVRIMDISI,
+                    if (yenidenEslestir) Eylem.ESLESTIR else Eylem.YOK,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Hatırlatmaların çalmasını engelleyen sorunların gösterimi (saf). Engelleyen ilk sorun üstte şerit
+ * olur; hepsi (bilgi düzeyindekiler dahil) dokununca açılan pencerede, her biri çözüm düğmesiyle.
+ */
+object HatirlatmaUyarilari {
+    enum class Cozum {
+        /** `requestPermissions(POST_NOTIFICATIONS)`; kalıcı reddedildiyse ayar ekranı. */
+        IZIN_ISTE,
+
+        /** `HatirlatmaDurumu.cozumNiyeti` ile ayar ekranı. */
+        AYARI_AC,
+
+        /** Kayıtlı sorun: gösterilir, "Anladım" ile `goruldu`. */
+        GORULDU,
+    }
+
+    data class Uyari(val sorun: HatirlatmaSorunu, val baslik: String, val aciklama: String, val dugme: String, val cozum: Cozum, val engel: Boolean)
+
+    fun uyarilar(d: HatirlatmaDurumu): List<Uyari> = d.sorunlar.map { s -> uyari(s, d, s in HatirlatmaDurumu.ENGELLER) }
+
+    /** Şeritte gösterilecek tek uyarı: ilk engel (bilgi düzeyi şeride çıkmaz). */
+    fun serit(d: HatirlatmaDurumu): Uyari? = uyarilar(d).firstOrNull { it.engel }
+
+    /** Şeridin metni: ilk engel, birden çok engel varsa sayısı. */
+    fun seritMetni(d: HatirlatmaDurumu): String? {
+        val engeller = uyarilar(d).filter { it.engel }
+        val ilk = engeller.firstOrNull() ?: return null
+        return if (engeller.size > 1) "${ilk.baslik} (+${engeller.size - 1} sorun)" else ilk.baslik
+    }
+
+    private fun uyari(s: HatirlatmaSorunu, d: HatirlatmaDurumu, engel: Boolean): Uyari = when (s) {
+        HatirlatmaSorunu.BILDIRIM_IZNI_YOK -> Uyari(
+            s, "Bildirim izni yok", "Hatırlatmalar ekranda görünemez. Ajandanın bildirim göstermesine izin verin.",
+            "İzin ver", Cozum.IZIN_ISTE, engel,
+        )
+        HatirlatmaSorunu.BILDIRIMLER_KAPALI -> Uyari(
+            s, "Bildirimler kapalı", "Ajandanın bildirimleri ayarlardan kapatılmış; hiçbir hatırlatma görünmez.",
+            "Bildirimleri aç", Cozum.AYARI_AC, engel,
+        )
+        HatirlatmaSorunu.HATIRLATMA_KANALI_KAPALI -> Uyari(
+            s, "Hatırlatma bildirimleri kapalı", "\"Hatırlatmalar\" bildirim kategorisi kapalı.",
+            "Aç", Cozum.AYARI_AC, engel,
+        )
+        HatirlatmaSorunu.KACIRILAN_KANALI_KAPALI -> Uyari(
+            s, "Kaçırılan hatırlatma bildirimleri kapalı",
+            "Telefon kapalıyken kaçan hatırlatmaların özeti gösterilemez.",
+            "Aç", Cozum.AYARI_AC, engel,
+        )
+        HatirlatmaSorunu.KESIN_ALARM_IZNI_YOK -> Uyari(
+            s, "Kesin alarm izni yok", "Hatırlatmalar dakikalarca, hatta saatlerce gecikebilir. \"Alarmlar ve hatırlatıcılar\" iznini verin.",
+            "İzin ver", Cozum.AYARI_AC, engel,
+        )
+        HatirlatmaSorunu.ARKA_PLAN_KISITLI -> Uyari(
+            s, "Arka plan kısıtlı", "Uygulamanın arka planda çalışması kısıtlanmış; hatırlatmalar çalmayabilir. Pil ayarında \"Kısıtlama yok\"u seçin.",
+            "Ayarı aç", Cozum.AYARI_AC, engel,
+        )
+        HatirlatmaSorunu.PIL_OPTIMIZASYONU -> Uyari(
+            s, "Pil optimizasyonu açık", "Bazı telefonlarda pil tasarrufu hatırlatmaları geciktirebilir. Gecikme görürseniz uygulamayı optimizasyondan çıkarın.",
+            "Ayarı aç", Cozum.AYARI_AC, engel,
+        )
+        HatirlatmaSorunu.GOSTERILEMEYEN_HATIRLATMA -> Uyari(
+            s, "Gösterilemeyen hatırlatma",
+            "${d.kayitli.gosterilemeyenSayisi} hatırlatma çaldığı anda gösterilemedi (bildirimler kapalıydı). İlgili kayıtlara listeden bakın.",
+            "Anladım", Cozum.GORULDU, engel,
+        )
+        HatirlatmaSorunu.KURULAMAYAN_ALARM -> Uyari(
+            s, "Kurulamayan hatırlatma",
+            "${d.kayitli.kurulamayanSayisi} hatırlatma telefona kurulamadı; uygulama her açılışta yeniden dener.",
+            "Anladım", Cozum.GORULDU, engel,
+        )
+        HatirlatmaSorunu.CEKIRDEK_HATASI -> Uyari(
+            s, "Hatırlatma işlenemedi",
+            "Arka planda ${d.kayitli.cekirdekHatasiSayisi} kez hatırlatma işlenirken hata oldu.",
+            "Anladım", Cozum.GORULDU, engel,
+        )
+    }
+}

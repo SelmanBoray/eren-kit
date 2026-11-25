@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- K4: ekran renkleri, açık tema (koyu karşılığı values-night/ekran_renkler.xml). Kâğıt zemin, mürekkep yazı, kiremit vurgu. -->
+<resources>
+    <color name="ekran_zemin">#F5F1EA</color>
+    <color name="ekran_yuzey">#FFFDF9</color>
+    <color name="ekran_yuzey_ikincil">#ECE6DC</color>
+    <color name="ekran_murekkep">#1E1B16</color>
+    <color name="ekran_soluk">#655E53</color>
+    <color name="ekran_cizgi">#DDD5C8</color>
+    <color name="ekran_vurgu">#A8492A</color>
+    <color name="ekran_vurgu_uzerine">#FFFFFF</color>
+    <color name="ekran_gecikmis">#B3261E</color>
+    <color name="ekran_taslak_zemin">#F8E7C2</color>
+    <color name="ekran_taslak_yazi">#5E3D00</color>
+    <color name="ekran_asistan_zemin">#E6E1F3</color>
+    <color name="ekran_asistan_yazi">#433572</color>
+    <color name="ekran_iyi">#2F6B4F</color>
+    <color name="ekran_uyari_zemin">#FBE3DC</color>
+    <color name="ekran_uyari_yazi">#7A2414</color>
+    <color name="ekran_bilgi_zemin">#E3ECEA</color>
+    <color name="ekran_bilgi_yazi">#1F4A44</color>
+</resources>

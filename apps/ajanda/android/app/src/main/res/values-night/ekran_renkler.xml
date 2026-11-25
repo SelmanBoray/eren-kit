@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- K4: ekran renkleri, koyu tema. -->
+<resources>
+    <color name="ekran_zemin">#151311</color>
+    <color name="ekran_yuzey">#1F1C19</color>
+    <color name="ekran_yuzey_ikincil">#2B2723</color>
+    <color name="ekran_murekkep">#EDE7DE</color>
+    <color name="ekran_soluk">#A9A195</color>
+    <color name="ekran_cizgi">#3A352F</color>
+    <color name="ekran_vurgu">#E8916A</color>
+    <color name="ekran_vurgu_uzerine">#2A120A</color>
+    <color name="ekran_gecikmis">#F2B8B5</color>
+    <color name="ekran_taslak_zemin">#3B2E13</color>
+    <color name="ekran_taslak_yazi">#F3D394</color>
+    <color name="ekran_asistan_zemin">#2D2840</color>
+    <color name="ekran_asistan_yazi">#D2C8F4</color>
+    <color name="ekran_iyi">#8FD0AE</color>
+    <color name="ekran_uyari_zemin">#3D1F18</color>
+    <color name="ekran_uyari_yazi">#FFB4A2</color>
+    <color name="ekran_bilgi_zemin">#1C2E2B</color>
+    <color name="ekran_bilgi_yazi">#A8D5CC</color>
+</resources>

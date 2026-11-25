@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- K4: ekranların koyu teması (açığı values/ekran_tema.xml). -->
+<resources>
+    <style name="EkranTema" parent="android:Theme.Material.NoActionBar">
+        <item name="android:colorAccent">@color/ekran_vurgu</item>
+        <item name="android:colorPrimary">@color/ekran_vurgu</item>
+        <item name="android:colorPrimaryDark">@color/ekran_zemin</item>
+        <item name="android:colorBackground">@color/ekran_zemin</item>
+        <item name="android:windowBackground">@color/ekran_zemin</item>
+        <item name="android:statusBarColor">@color/ekran_zemin</item>
+        <item name="android:navigationBarColor">@color/ekran_zemin</item>
+        <item name="android:textColorPrimary">@color/ekran_murekkep</item>
+        <item name="android:textColorSecondary">@color/ekran_soluk</item>
+        <item name="android:textColorHint">@color/ekran_soluk</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>
