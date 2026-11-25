@@ -1,0 +1,16 @@
+[package]
+name = "ajanda-cekirdek"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+name = "ajanda_cekirdek"
+# cdylib: Android .so ve JVM testleri için masaüstü kitaplığı; lib: cargo test.
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+uniffi = { workspace = true }
+# bundled: SQLite C kaynağı NDK clang'ı ile derlenip .so'ya gömülür; cihazdaki SQLite sürümüne bağlı kalmayız.
+rusqlite = { version = "0.43", features = ["bundled"] }
+thiserror = "2"

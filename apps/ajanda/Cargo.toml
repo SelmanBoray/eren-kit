@@ -1,0 +1,25 @@
+# Ajanda Rust çalışma alanı.
+#   cekirdek/        -> ajanda-cekirdek: veri modeli, SQLite deposu, iş kuralları (Android'e .so olarak gider)
+#   uniffi-bindgen/  -> Kotlin bağlamalarını üreten yerel araç (küresel kurulum gerekmez)
+[workspace]
+resolver = "3"
+members = ["cekirdek", "uniffi-bindgen"]
+
+[workspace.package]
+edition = "2024"
+publish = false
+
+[workspace.dependencies]
+# uniffi ile uniffi-bindgen aynı sürümde kalmalı; ikisi de buradan alır.
+uniffi = "=0.32.2"
+
+[profile.release]
+# Telefona giden kitaplık: boyut için "s", tek parça LTO. panic=unwind kalmalı:
+# UniFFI paniği yakalayıp Kotlin'e istisna olarak taşır, abort olursa süreç ölür.
+opt-level = "s"
+lto = true
+codegen-units = 1
+# Yalnız hata ayıklama bilgisini sil: uniffi-bindgen bağlamaları .so içindeki
+# UNIFFI_META sembollerinden okur (strip=true onları da siler). Sembol tablosunu
+# APK'ya koyarken AGP NDK'nın llvm-strip'iyle ayrıca siler.
+strip = "debuginfo"

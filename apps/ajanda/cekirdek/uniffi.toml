@@ -1,0 +1,4 @@
+# Üretilen Kotlin bağlamalarının paketi ve yüklenecek kitaplık adı (libajanda_cekirdek.so).
+[bindings.kotlin]
+package_name = "dev.eren.ajanda.cekirdek"
+cdylib_name = "ajanda_cekirdek"

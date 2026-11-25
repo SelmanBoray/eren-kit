@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- İskelet: izin yok. Alarm/açılış/bildirim izinleri o özellikler gelince eklenir. -->
+
+    <application
+        android:allowBackup="false"
+        android:icon="@android:drawable/ic_menu_agenda"
+        android:label="Ajanda"
+        android:theme="@android:style/Theme.Material.Light.NoActionBar"
+        tools:ignore="MissingApplicationIcon">
+
+        <activity
+            android:name=".AnaEkran"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
