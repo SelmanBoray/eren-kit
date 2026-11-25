@@ -1,7 +1,8 @@
 /**
  * Kimlik öncesi kaynak sınırları (denetim bulgusu B3), gerçek `ws` sunucusuyla: `Origin` süzgeci, kimlik
  * öncesi bayt sınırı, adres başına bağlantı sınırı, yanıtsız uca kapanış süresi. Yalnız 127.0.0.1 ve
- * rastgele port; adlandırılmış boru ve tekil kilit kullanılmaz (canlı servisle çakışmaz).
+ * rastgele port; adlandırılmış boru ve tekil kilit kullanılmaz (canlı servisle çakışmaz). Ajanda dalgası:
+ * `/ajanda` de dinlenir; sınırlar üç yolda aynıdır (aşağıda "/ajanda" bölümü).
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -59,7 +60,7 @@ async function sunucuKur(o: {
   }).dinle({
     host: "127.0.0.1",
     port,
-    azamiCerceve: { "/sohbet": 1024 * 1024, "/cihaz": 1024 * 1024 },
+    azamiCerceve: { "/sohbet": 1024 * 1024, "/cihaz": 1024 * 1024, "/ajanda": 1024 * 1024 },
     kimlikOncesiAzamiBayt: o.kimlikOncesiAzamiBayt ?? 4096,
     ipBasinaAzamiBaglanti: o.ipBasinaAzamiBaglanti ?? 100,
     baglanti: (b) => {
@@ -251,6 +252,63 @@ describe("kapanış süresi", () => {
       assert.ok(await kosulBekle(() => kayitlar[0]!.kapandi));
     } finally {
       soket?.destroy();
+      await sunucu.kapat();
+    }
+  });
+});
+
+describe("/ajanda: kimlik öncesi sınırlar öteki yollarla aynı", () => {
+  it("yabancı kaynak 403; kendi kaynağı ve başlıksız açılır", async () => {
+    const { port, sunucu, kayitlar } = await sunucuKur({});
+    try {
+      await assert.rejects(ac(port, "/ajanda", { Origin: "https://kotu.ornek" }), /yanit:403/);
+      await assert.rejects(ac(port, "/ajanda", { Origin: "null" }), /yanit:403/);
+      assert.equal(kayitlar.length, 0);
+      const a = await ac(port, "/ajanda", { Origin: `http://127.0.0.1:${port}` });
+      const b = await ac(port, "/ajanda");
+      assert.ok(await kosulBekle(() => kayitlar.length === 2));
+      assert.ok(kayitlar.every((k) => k.b.yol === "/ajanda"));
+      a.close();
+      b.close();
+    } finally {
+      await sunucu.kapat();
+    }
+  });
+
+  it("kimlik öncesi bayt sınırını aşan /ajanda çerçevesi koparır, iletilmez; kimlikten sonra kanal sınırı geçerli", async () => {
+    const { port, sunucu, kayitlar } = await sunucuKur({ kimlikOncesiAzamiBayt: 4096 });
+    try {
+      const w = await ac(port, "/ajanda");
+      const k = kapanis(w);
+      w.send("a".repeat(200_000));
+      assert.equal(await k, 1006);
+      assert.ok(await kosulBekle(() => kayitlar[0]!.kapandi));
+      assert.deepEqual(kayitlar[0]!.metinler, []);
+    } finally {
+      await sunucu.kapat();
+    }
+    const ikinci = await sunucuKur({ kimlikOncesiAzamiBayt: 4096, ilkMesajKimlik: true });
+    try {
+      const w = await ac(ikinci.port, "/ajanda");
+      w.send("kimlik");
+      assert.ok(await kosulBekle(() => ikinci.kayitlar[0]?.metinler.length === 1));
+      w.send("c".repeat(150_000));
+      assert.ok(await kosulBekle(() => ikinci.kayitlar[0]!.metinler.length === 2));
+      assert.equal(ikinci.kayitlar[0]!.kapandi, false);
+      w.close();
+    } finally {
+      await ikinci.sunucu.kapat();
+    }
+  });
+
+  it("adres başına bağlantı sınırı üç yolun toplamıdır: /ajanda ayrı hak açmaz", async () => {
+    const { port, sunucu, kayitlar } = await sunucuKur({ ipBasinaAzamiBaglanti: 3 });
+    try {
+      const acik = [await ac(port, "/sohbet"), await ac(port, "/cihaz"), await ac(port, "/ajanda")];
+      await assert.rejects(ac(port, "/ajanda"));
+      assert.equal(kayitlar.length, 3);
+      for (const w of acik) w.close();
+    } finally {
       await sunucu.kapat();
     }
   });

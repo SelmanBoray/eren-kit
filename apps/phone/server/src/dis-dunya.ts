@@ -730,7 +730,11 @@ const sistemKur = (): SistemPortu => ({
 // WebSocket
 // ---------------------------------------------------------------------------------------------
 
-const WS_YOLLARI: readonly WsYolu[] = ["/sohbet", "/cihaz"];
+/**
+ * Bilinen yollar. Ajanda dalgası: `/ajanda` yalnız `azamiCerceve["/ajanda"]` verilmişse dinlenir;
+ * verilmemişse o yola yükseltme yol dışı gibi `404` alır (eski çağıranın davranışı birebir aynı).
+ */
+const WS_YOLLARI: readonly WsYolu[] = ["/sohbet", "/cihaz", "/ajanda"];
 
 const wsMetni = (veri: RawData): string => {
   if (Buffer.isBuffer(veri)) return veri.toString("utf8");
@@ -1030,9 +1034,12 @@ export const wsKur = (canlilik: WsCanlilikAyari = VARSAYILAN_CANLILIK): WsSunucu
       // `maxPayload` yol başınadır, bu yüzden yol başına bir `WebSocketServer` ve elle yükseltme.
       const sunucular = new Map<WsYolu, WebSocketServer>();
       for (const yol of WS_YOLLARI) {
+        const maxPayload = istek.azamiCerceve[yol];
+        // Sınırı verilmeyen yol (`/ajanda` isteğe bağlı) dinlenmez: sınırsız `maxPayload` hiç kurulmaz.
+        if (maxPayload === undefined) continue;
         const w = new WebSocketServer({
           noServer: true,
-          maxPayload: istek.azamiCerceve[yol],
+          maxPayload,
           perMessageDeflate: false,
         });
         w.on("connection", (ws, req) => {

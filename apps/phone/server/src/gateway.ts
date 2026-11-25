@@ -2,11 +2,18 @@
  * Telefonun bilgisayara tek kapısı: tek port, `/sohbet` ve `/cihaz`. El sıkışma, eşleştirme, `ack`,
  * `seq` telafisi, akış, `server_status`. MODULLER.md, "gateway"; dilim 2 (çoklu sohbet): "Dilim 2" >
  * "Modül maddeleri" > "gateway". `/sohbet` sürümü `SOHBET_SURUMU`'dur (v4: kısayol `baglam`'ı).
+ * Ajanda dalgası: `/ajanda` yalnız `ajanda` bağımlılığı verilmişse dinlenir ve `gateway-ajanda.ts`'e
+ * devredilir; kapsam denetimi (`kanalKapsamdaMi`) `hello`'da her yolda, eşleştirme penceresinin kapsamı
+ * eşleştirme yolunun kapsamı olmalı (`KAPSAM_ESLESTIRME_KANALI`).
  */
 import {
+  AJANDA_AZAMI_CERCEVE,
   AZAMI_CERCEVE,
   cihazYukariCoz,
+  ESKI_CIHAZ_KAPSAMI,
   EslestirmeQr,
+  KAPSAM_ESLESTIRME_KANALI,
+  kanalKapsamdaMi,
   kimlikImzaMetni,
   PROTOKOL_SURUMU,
   sha256Hex,
@@ -18,6 +25,8 @@ import {
 } from "@eren/protocol";
 import type {
   CihazAsagi,
+  CihazKanali,
+  CihazKapsami,
   CihazYukari,
   HataKodu,
   HataKoduV1,
@@ -26,6 +35,8 @@ import type {
   SohbetAsagi,
   SohbetYukari,
 } from "@eren/protocol";
+import { ajandaKanaliKur } from "./gateway-ajanda.ts";
+import type { AjandaEslestirmeIstegi, AjandaKanali } from "./gateway-ajanda.ts";
 import type {
   AckGovdesi,
   AktifTur,
@@ -221,6 +232,7 @@ export const gatewayKur: GatewayFabrikasi = ({
   planlar,
   isler,
   temizlik,
+  ajanda,
   cihaz,
   kilit,
   sistem,
@@ -311,6 +323,8 @@ export const gatewayKur: GatewayFabrikasi = ({
       gunluk.uyari("gateway", "yetki_kalkti", { kanal: g.kanal, device_id: g.kimlik.device_id });
       reddet(g, "cihaz_bilinmiyor");
     }
+    // `/ajanda` bağlantıları kendi kümesindedir; denetim aynı aralıkta.
+    ajandaKanali?.yetkiYokla();
   };
 
   // ------------------------------------------------------------------------------------------
@@ -464,6 +478,11 @@ export const gatewayKur: GatewayFabrikasi = ({
   const helloAl = (g: Baglanti, m: Hello): void => {
     // Erken: yerel oturum sunucudan imza alamaz, cihaz kaydının varlığını da öğrenemez.
     if (!uzakIzinli(g.b.uzakIp)) return reddet(g, "ip_uyusmuyor");
+    // Ajanda dalgası: kapsam taze okunur, sınama başlamadan. Ajanda cihazı bu yoldan sunucu imzası almaz.
+    const kapsamli = depo.kapsamliCihazGetir(m.device_id);
+    if (kapsamli === null) return reddet(g, "cihaz_bilinmiyor");
+    if (!kanalKapsamdaMi(kapsamli.kapsam ?? ESKI_CIHAZ_KAPSAMI, g.kanal)) return reddet(g, "kanal_desteklenmiyor");
+    // İkinci duvar: bundan sonrası (imza, yoklama) yalnız sohbet kapsamlı kaydı görür (`cihazGetir`).
     const kayit = depo.cihazGetir(m.device_id);
     if (kayit === null) return reddet(g, "cihaz_bilinmiyor");
     if (g.kanal === "cihaz" && kayit.platform === "ipad") return reddet(g, "kanal_desteklenmiyor");
@@ -540,11 +559,19 @@ export const gatewayKur: GatewayFabrikasi = ({
   // Eşleştirme
   // ------------------------------------------------------------------------------------------
 
-  const eslestir = (uzakIp: string, m: PairRequestMesaji): EslestirmeSonucu =>
+  // Ajanda dalgası: `kanal` isteğin geldiği yoldur. Pencerenin kapsamının eşleştirme yolu bu değilse pencere
+  // yokmuş gibi davranılır: aynı kod (`eslestirme_kapali`), kod denetlenmez, sayaç ve pencereye dokunulmaz;
+  // uç öteki kapsamda bir pencerenin açık olduğunu öğrenemez, yanlış uygulamayla pencereyi de tüketemez.
+  const eslestir = (uzakIp: string, m: AjandaEslestirmeIstegi, kanal: CihazKanali): EslestirmeSonucu =>
     // Tek işlem: `eslestir` komutu aynı dosyaya yazabilir, kod iki bağlantıya birden harcanamaz.
     depo.islem((): EslestirmeSonucu => {
       const kayit = depo.eslestirmeOku();
       if (kayit === null || saat.simdiMs() >= kayit.son_ms) return { ok: false, code: "eslestirme_kapali" };
+      const kapsam: CihazKapsami = kayit.kapsam ?? "sohbet";
+      if (KAPSAM_ESLESTIRME_KANALI[kapsam] !== kanal) {
+        gunluk.uyari("gateway", "eslestirme_kapsam_uyusmuyor", { kanal, pencere: kapsam });
+        return { ok: false, code: "eslestirme_kapali" };
+      }
       // Adres sayaçları pencereye aittir: yeni pencere (yeni kod) sayaçları sıfırlar.
       if (yanlisPenceresi !== kayit.kod_ozeti) {
         yanlisPenceresi = kayit.kod_ozeti;
@@ -570,13 +597,15 @@ export const gatewayKur: GatewayFabrikasi = ({
         platform: m.platform,
         etiket: m.etiket ?? null,
         eslesme_ms: saat.simdiMs(),
+        // Sohbet cihazında alan hiç yazılmaz (bugünkü kayıt); ajanda cihazı ayrı tabloya gider.
+        ...(kapsam === "ajanda" && { kapsam }),
       });
       return { ok: true, deger: device_id };
     });
 
   const eslestirmeAl = (g: Baglanti, m: PairRequestMesaji): void => {
     const sonuc: EslestirmeSonucu = uzakIzinli(g.b.uzakIp)
-      ? eslestir(g.b.uzakIp, m)
+      ? eslestir(g.b.uzakIp, m, g.kanal)
       : { ok: false, code: "ip_uyusmuyor" };
     if (!sonuc.ok) {
       gunluk.uyari("gateway", "eslestirme_ret", { code: sonuc.code });
@@ -595,6 +624,23 @@ export const gatewayKur: GatewayFabrikasi = ({
       server_public_key: anahtar.acikAnahtar(),
     });
   };
+
+  // Ajanda dalgası: `/ajanda` kanalı. Bağımlılık yoksa hiç kurulmaz; yol dinlenmez ve gelen bağlantı kapanır.
+  const ajandaKanali: AjandaKanali | null =
+    ajanda === undefined
+      ? null
+      : ajandaKanaliKur({
+          depo,
+          ajanda,
+          anahtar,
+          rastgele,
+          saat,
+          zamanlayici,
+          gunluk,
+          elSikismaMs: EL_SIKISMA_MS,
+          uzakIzinli,
+          eslestir: (uzakIp, m) => eslestir(uzakIp, m, "ajanda"),
+        });
 
   // ------------------------------------------------------------------------------------------
   // Kimlik sonrası mesajlar
@@ -815,6 +861,12 @@ export const gatewayKur: GatewayFabrikasi = ({
       b.kapat(1001, "kapaniyor");
       return;
     }
+    if (b.yol === "/ajanda") {
+      // Savunma: `ajanda` yokken yol dinlenmez (`azamiCerceve`'de yok); yine de gelirse çerçeve işlenmez.
+      if (ajandaKanali === null) b.kapat(1008, "kanal_desteklenmiyor");
+      else ajandaKanali.baglantiAl(b);
+      return;
+    }
     const g: Baglanti = {
       b,
       kanal: b.yol === "/sohbet" ? "sohbet" : "cihaz",
@@ -850,7 +902,11 @@ export const gatewayKur: GatewayFabrikasi = ({
       const yeni = await ws.dinle({
         host: adres,
         port: ayar.wsPort,
-        azamiCerceve: { "/sohbet": AZAMI_CERCEVE.SOHBET, "/cihaz": AZAMI_CERCEVE.CIHAZ },
+        azamiCerceve: {
+          "/sohbet": AZAMI_CERCEVE.SOHBET,
+          "/cihaz": AZAMI_CERCEVE.CIHAZ,
+          ...(ajandaKanali !== null && { "/ajanda": AJANDA_AZAMI_CERCEVE.KANAL }),
+        },
         kimlikOncesiAzamiBayt: KIMLIK_ONCESI_AZAMI_BAYT,
         ipBasinaAzamiBaglanti: IP_BASINA_AZAMI_BAGLANTI,
         baglanti: baglantiAl,
@@ -889,6 +945,10 @@ export const gatewayKur: GatewayFabrikasi = ({
           sonDoluluk = doluluk;
         }),
       );
+      if (ajandaKanali !== null) {
+        const k = ajandaKanali;
+        veriyoluIptalleri.push(veriyolu.dinle("ajanda_kayit_yazildi", ({ kayit }) => k.kayitYazildi(kayit)));
+      }
       yoklamaIptal = zamanlayici.herAralik(YETKI_YOKLAMA_MS, yetkiYokla);
       await dinlemeyiDene();
       if (calisiyor && sunucu === null) {
@@ -904,6 +964,7 @@ export const gatewayKur: GatewayFabrikasi = ({
       yoklamaIptal = null;
       for (const iptal of veriyoluIptalleri.splice(0)) iptal();
       for (const g of [...baglantilar]) baglantiKapat(g, 1001, "kapaniyor");
+      ajandaKanali?.kapat();
       const eski = sunucu;
       sunucu = null;
       dinlenenAdres = null;

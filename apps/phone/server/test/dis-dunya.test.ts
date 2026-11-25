@@ -1228,3 +1228,112 @@ describe("ws canlılık yoklaması (sahte zamanlayıcı)", () => {
     });
   });
 });
+
+describe("ws.dinle /ajanda (Ajanda dalgası: yol isteğe bağlı)", () => {
+  const ARALIK = WS_CANLILIK_ARALIGI_MS;
+  const ac = (port: number, yol: string, secenek: { autoPong?: boolean; headers?: Record<string, string> } = {}) =>
+    new Promise<WebSocket>((coz, red) => {
+      const w = new WebSocket(`ws://127.0.0.1:${port}${yol}`, secenek);
+      w.once("open", () => coz(w));
+      w.once("error", red);
+      w.once("unexpected-response", (_i, res) => red(new Error("yanit:" + res.statusCode)));
+    });
+  const kapanisKodu = (w: WebSocket) => new Promise<number>((coz) => w.once("close", (kod) => coz(kod)));
+
+  interface Kayit {
+    yol: string;
+    yetenekler: string[];
+    metinler: string[];
+    kapandi: boolean;
+  }
+  const kur = async (azamiCerceve: { "/sohbet": number; "/cihaz": number; "/ajanda"?: number }) => {
+    const zaman = sahteZaman();
+    const port = await rastgeleYerelPort();
+    const kayitlar: Kayit[] = [];
+    const sunucu = await wsKur({ aralikMs: ARALIK, herAralik: zaman.zamanlayici.herAralik }).dinle({
+      host: "127.0.0.1",
+      port,
+      azamiCerceve,
+      kimlikOncesiAzamiBayt: Number.MAX_SAFE_INTEGER,
+      ipBasinaAzamiBaglanti: 1_000,
+      baglanti: (b) => {
+        const k: Kayit = { yol: b.yol, yetenekler: [...b.yetenekler], metinler: [], kapandi: false };
+        kayitlar.push(k);
+        b.mesajDinle((m) => {
+          k.metinler.push(m);
+          b.gonder("yanki:" + m.length);
+        });
+        b.kapanisDinle(() => (k.kapandi = true));
+      },
+    });
+    return { zaman, port, kayitlar, sunucu };
+  };
+
+  test("azamiCerceve['/ajanda'] verilmezse /ajanda yol dışı gibi 404; /sohbet ve /cihaz bugünkü gibi", async () => {
+    const { port, kayitlar, sunucu } = await kur({ "/sohbet": 1024, "/cihaz": 1024 });
+    try {
+      await assert.rejects(ac(port, "/ajanda"), /yanit:404/);
+      await assert.rejects(ac(port, "/ajanda?yetenek=etkinlik1"), /yanit:404/);
+      assert.equal(kayitlar.length, 0);
+      const s = await ac(port, "/sohbet");
+      const c = await ac(port, "/cihaz");
+      assert.ok(await kosulBekle(() => kayitlar.length === 2));
+      s.close();
+      c.close();
+    } finally {
+      await sunucu.kapat();
+    }
+  });
+
+  test("verilince /ajanda açılır: yol '/ajanda', kendi maxPayload'ı (1009), yetenek sorgusu okunmaz, ikili çerçeve kapatır", async () => {
+    const { port, kayitlar, sunucu } = await kur({ "/sohbet": 4096, "/cihaz": 4096, "/ajanda": 512 });
+    try {
+      const w = await ac(port, "/ajanda?yetenek=etkinlik1");
+      assert.ok(await kosulBekle(() => kayitlar.length === 1));
+      assert.equal(kayitlar[0]!.yol, "/ajanda");
+      assert.deepEqual(kayitlar[0]!.yetenekler, []);
+      const tam = await new Promise<string>((coz) => {
+        w.once("message", (m) => coz(m.toString()));
+        w.send("a".repeat(512));
+      });
+      assert.equal(tam, "yanki:512");
+      const kod = kapanisKodu(w);
+      w.send("a".repeat(513));
+      assert.equal(await kod, 1009);
+      assert.ok(await kosulBekle(() => kayitlar[0]!.kapandi));
+      assert.ok(!kayitlar[0]!.metinler.some((m) => m.length > 512));
+      // /sohbet sınırı /ajanda'nınkinden etkilenmez.
+      const s = await ac(port, "/sohbet");
+      const yanit = new Promise<string>((coz) => s.once("message", (m) => coz(m.toString())));
+      s.send("b".repeat(1000));
+      assert.equal(await yanit, "yanki:1000");
+      s.close();
+      const i = await ac(port, "/ajanda");
+      const ik = kapanisKodu(i);
+      i.send(Buffer.from("ikili"), { binary: true });
+      assert.equal(await ik, 1003);
+      // Yabancı kaynak /ajanda'da da 403.
+      await assert.rejects(ac(port, "/ajanda", { headers: { Origin: "https://kotu.ornek" } }), /yanit:403/);
+    } finally {
+      await sunucu.kapat();
+    }
+  });
+
+  test("/ajanda canlılık yoklaması öteki yollarla aynı: pong dönmeyen istemci iki aralıkta düşer", async () => {
+    const { zaman, port, kayitlar, sunucu } = await kur({ "/sohbet": 1024, "/cihaz": 1024, "/ajanda": 1024 });
+    try {
+      const w = await ac(port, "/ajanda", { autoPong: false });
+      assert.ok(await kosulBekle(() => kayitlar.length === 1));
+      assert.equal(zaman.bekleyenSayisi(), 1);
+      const kapanis = new Promise<void>((coz) => w.once("close", () => coz()));
+      zaman.ilerlet(ARALIK);
+      await bekle(50);
+      zaman.ilerlet(ARALIK);
+      await kapanis;
+      assert.ok(await kosulBekle(() => kayitlar[0]!.kapandi));
+      assert.equal(zaman.bekleyenSayisi(), 0);
+    } finally {
+      await sunucu.kapat();
+    }
+  });
+});
