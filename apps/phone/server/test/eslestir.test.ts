@@ -5,10 +5,19 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { EslestirmeQr, sha256Hex, SINIRLAR, utf8Bayt } from "@eren/protocol";
+import { AJANDA_SURUMU, AjandaEslestirmeQr, EslestirmeQr, sha256Hex, SINIRLAR, utf8Bayt } from "@eren/protocol";
 import { createHash, generateKeyPairSync } from "node:crypto";
 import { depoAc, depoKur } from "../src/depo.ts";
-import { argumanCoz, cihazKaldirKomutu, eslestirmeBaslat, listeMetni, parmakIzi } from "../src/eslestir.ts";
+import {
+  ajandaEslestirmeBaslat,
+  argumanCoz,
+  cihazKaldirKomutu,
+  eslestirmeBaslat,
+  kodMetni,
+  KULLANIM,
+  listeMetni,
+  parmakIzi,
+} from "../src/eslestir.ts";
 import type { Depo, EslestirmeBagimliliklari } from "../src/sozlesme.ts";
 import { sahteAnahtar, sahteGunluk, sahteRastgele, sahteSistem, sahteZaman } from "./sahte.ts";
 
@@ -276,6 +285,243 @@ describe("eslestir: --liste ve --kaldir (gerçek depo)", () => {
   });
 });
 
+// ---------------------------------------------------------------------------------------------
+// Ajanda dalgası: --ajanda
+// ---------------------------------------------------------------------------------------------
+
+describe("eslestir --ajanda: pencere ve QR", () => {
+  it("QR AjandaEslestirmeQr'dan geçer, EslestirmeQr'dan geçmez; sohbet QR'ı da tersine", () => {
+    const { b, anahtar } = kur({ port: 8123 });
+    const a = ajandaEslestirmeBaslat(b);
+    assert.equal(a.ok, true);
+    if (!a.ok) return;
+    assert.deepEqual(a.deger.qr, {
+      v: AJANDA_SURUMU,
+      host: "100.64.0.10",
+      port: 8123,
+      kod: a.deger.kod,
+      server_public_key: anahtar.acikAnahtar(),
+      kanal: "ajanda",
+    });
+    assert.equal(AjandaEslestirmeQr.safeParse(a.deger.qr).success, true);
+    assert.equal(EslestirmeQr.safeParse(a.deger.qr).success, false);
+    assert.match(a.deger.kod, /^[A-Z0-9]{8}$/);
+
+    const s = eslestirmeBaslat(kur().b);
+    assert.equal(s.ok, true);
+    if (!s.ok) return;
+    assert.equal(AjandaEslestirmeQr.safeParse(s.deger.qr).success, false);
+    assert.equal("kanal" in s.deger.qr, false);
+  });
+
+  it("pencere depoda kapsam ajanda; yalnız özet, son_ms = şimdi + 5 dk; aynı kod üreteci", () => {
+    const { b, depo, zaman } = kur({ tohum: 11 });
+    zaman.ilerlet(777);
+    const a = ajandaEslestirmeBaslat(b);
+    assert.equal(a.ok, true);
+    if (!a.ok) return;
+    assert.equal(a.deger.sonMs, zaman.simdi() + BES_DK_MS);
+    assert.deepEqual(depo.eslestirmeOku(), {
+      kod_ozeti: sha256Hex(utf8Bayt(a.deger.kod)),
+      son_ms: zaman.simdi() + BES_DK_MS,
+      yanlis_deneme: 0,
+      kapsam: "ajanda",
+    });
+    // Aynı tohumla sohbet kodu da aynı: üreteç ortak.
+    const s = eslestirmeBaslat(kur({ tohum: 11 }).b);
+    assert.equal(s.ok && s.deger.kod, a.deger.kod);
+  });
+
+  it("karışmaz: sohbet penceresi kapsamsız yazılır ve ajanda penceresini kapatır; tersi de", () => {
+    const { b, depo, zaman } = kur({ tohum: 4 });
+    const a = ajandaEslestirmeBaslat(b);
+    assert.equal(a.ok, true);
+    zaman.ilerlet(1000);
+    const s = eslestirmeBaslat(b);
+    assert.equal(s.ok, true);
+    if (!a.ok || !s.ok) return;
+    const sohbetKaydi = depo.eslestirmeOku();
+    assert.deepEqual(sohbetKaydi, { kod_ozeti: sha256Hex(utf8Bayt(s.deger.kod)), son_ms: zaman.simdi() + BES_DK_MS, yanlis_deneme: 0 });
+    assert.equal(sohbetKaydi !== null && "kapsam" in sohbetKaydi, false, "sohbet penceresinde kapsam alanı yok");
+
+    zaman.ilerlet(1000);
+    const a2 = ajandaEslestirmeBaslat(b);
+    assert.equal(a2.ok, true);
+    if (!a2.ok) return;
+    const k = depo.eslestirmeOku();
+    assert.equal(k?.kapsam, "ajanda");
+    assert.equal(k?.kod_ozeti, sha256Hex(utf8Bayt(a2.deger.kod)));
+    assert.notEqual(k?.kod_ozeti, sha256Hex(utf8Bayt(s.deger.kod)));
+  });
+
+  it("Tailscale dışı adres: hata, depoya yazılmaz, önceki sohbet penceresi bozulmaz", () => {
+    const { b, depo, sistem } = kur({ tohum: 5 });
+    assert.equal(eslestirmeBaslat(b).ok, true);
+    const onceki = depo.eslestirmeOku();
+    for (const adres of ["192.168.0.2", null]) {
+      sistem.tailscale = adres;
+      const a = ajandaEslestirmeBaslat(b);
+      assert.equal(a.ok, false);
+      if (!a.ok) assert.equal(a.code, "ic_hata");
+      assert.deepEqual(depo.eslestirmeOku(), onceki);
+    }
+  });
+});
+
+describe("eslestir --ajanda: argümanlar", () => {
+  it("--ajanda tek başına ve --liste/--kaldir ile, her sırada", () => {
+    assert.deepEqual(argumanCoz(["--ajanda"]), { tur: "kod", kapsam: "ajanda" });
+    assert.deepEqual(argumanCoz(["--ajanda", "--liste"]), { tur: "liste", kapsam: "ajanda" });
+    assert.deepEqual(argumanCoz(["--liste", "--ajanda"]), { tur: "liste", kapsam: "ajanda" });
+    assert.deepEqual(argumanCoz(["--ajanda", "--kaldir", "c1"]), { tur: "kaldir", device_id: "c1", kapsam: "ajanda" });
+    assert.deepEqual(argumanCoz(["--kaldir", "c1", "--ajanda"]), { tur: "kaldir", device_id: "c1", kapsam: "ajanda" });
+    assert.deepEqual(argumanCoz(["--ajanda", "-h"]), { tur: "yardim" });
+  });
+
+  it("çelişen, yinelenen, eksik ya da bilinmeyen seçenek anlaşılır hata", () => {
+    const durumlar: [string[], RegExp][] = [
+      [["--ajanda", "--ajanda"], /--ajanda bir kez/],
+      [["--liste", "--kaldir", "c1"], /--liste ve --kaldir/],
+      [["--kaldir", "c1", "--liste"], /--liste ve --kaldir/],
+      [["--liste", "--liste"], /--liste ve --kaldir/],
+      [["--ajanda", "--kaldir"], /--kaldir bir cihaz kimliği ister/],
+      [["--kaldir", "--ajanda"], /--kaldir bir cihaz kimliği ister/],
+      [["--ajanda", "fazla"], /bilinmeyen seçenek: fazla/],
+      [["--ajanda", "--liste", "x"], /--liste ek değer almaz/],
+      [["--ajanda", "--kaldir", "a", "b"], /--kaldir tek kimlik alır/],
+      [["--ajanda", "--sohbet"], /bilinmeyen seçenek: --sohbet/],
+    ];
+    for (const [argv, ileti] of durumlar) {
+      const s = argumanCoz(argv);
+      assert.equal(s.tur, "hata", JSON.stringify(argv));
+      if (s.tur === "hata") assert.match(s.ileti, ileti, JSON.stringify(argv));
+    }
+  });
+
+  it("kullanım metni --ajanda'yı anlatır", () => {
+    assert.match(KULLANIM, /eslestir --ajanda /);
+    assert.match(KULLANIM, /--ajanda --liste/);
+    assert.match(KULLANIM, /--ajanda --kaldir <kimlik>/);
+  });
+});
+
+describe("eslestir --ajanda: kod çıktısı", () => {
+  const ACIK = "YWJj";
+  const temel = { kod: "ABCD2345", sonMs: 1000 + BES_DK_MS };
+  const sohbetQr = { v: 1, host: "100.64.0.10", port: 7443, kod: "ABCD2345", server_public_key: ACIK };
+
+  it("sohbet çıktısı bugünkü üç satır, bayt bayt", () => {
+    assert.equal(
+      kodMetni({ ...temel, qr: sohbetQr }, { simdiMs: 1000 }),
+      `${JSON.stringify(sohbetQr)}\nParmak izi: ${parmakIzi(ACIK)}\nKod:ABCD2345  (5 dakika geçerli, tek kullanımlık)\n`,
+    );
+    // Süresi dolmuş ya da aynı kapsamın penceresi not üretmez.
+    assert.equal(kodMetni({ ...temel, qr: sohbetQr }, { simdiMs: 1000, oncekiPencere: { son_ms: 999 + BES_DK_MS } }).split("\n").length, 4);
+    assert.equal(kodMetni({ ...temel, qr: sohbetQr }, { simdiMs: 1000, oncekiPencere: { son_ms: 999, kapsam: "ajanda" } }).split("\n").length, 4);
+  });
+
+  it("ajanda: ilk satır şemadan geçen JSON, sonda kapsam satırı; açık sohbet penceresi kapandıysa not", () => {
+    const qr = { ...sohbetQr, v: AJANDA_SURUMU, kanal: "ajanda" as const };
+    const metin = kodMetni({ ...temel, qr }, { simdiMs: 1000, kapsam: "ajanda", oncekiPencere: { son_ms: 5000 } });
+    const satirlar = metin.split("\n");
+    assert.equal(AjandaEslestirmeQr.safeParse(JSON.parse(satirlar[0] ?? "")).success, true);
+    assert.equal(satirlar[1], `Parmak izi: ${parmakIzi(ACIK)}`);
+    assert.equal(satirlar[2], "Kod:ABCD2345  (5 dakika geçerli, tek kullanımlık)");
+    assert.match(satirlar[3] ?? "", /^Kapsam: ajanda .*sohbet kanalını açamaz/);
+    assert.match(satirlar[4] ?? "", /^Not: açık sohbet eşleştirme penceresi kapandı/);
+    // Sohbet kodu açık ajanda penceresini kapatınca da söylenir.
+    assert.match(kodMetni({ ...temel, qr: sohbetQr }, { simdiMs: 1000, oncekiPencere: { son_ms: 5000, kapsam: "ajanda" } }), /Not: açık ajanda eşleştirme penceresi kapandı/);
+  });
+});
+
+describe("eslestir --ajanda: --liste ve --kaldir (gerçek depo)", () => {
+  const ACIK = "QUNJSy1BTkFIVEFSLUdJWkxJ";
+  const IP = "100.64.0.42";
+  const zaman = (ms: number): string => `T${ms}`;
+  const depoKurY = () => depoAc({ yol: ":memory:", saat: sahteZaman(1000).saat, gunluk: sahteGunluk() });
+  const ekle = (d: ReturnType<typeof depoKurY>, id: string, ms: number, ajanda: boolean): void =>
+    d.cihazEkle({
+      device_id: id,
+      public_key: ACIK,
+      tailscale_ip: IP,
+      platform: "android",
+      etiket: null,
+      eslesme_ms: ms,
+      ...(ajanda ? { kapsam: "ajanda" as const } : {}),
+    });
+
+  it("liste: ajanda cihazı [ajanda] işaretli, sohbet satırı bugünkü; --ajanda yalnız ajanda cihazlarını gösterir", () => {
+    const d = depoKurY();
+    try {
+      ekle(d, "sohbet-a", 10, false);
+      ekle(d, "ajanda-a", 20, true);
+      ekle(d, "ajanda-b", 30, true);
+      d.cihazKaldir("ajanda-b");
+      assert.equal(
+        listeMetni(d.eslesmeler(), zaman),
+        [
+          "Eşleşmiş cihazlar (2):",
+          "  sohbet-a  android  -  eşleşme T10",
+          "  ajanda-a  android  -  eşleşme T20  [ajanda]",
+          "Kaldırılmış (1; yetkisi yok, geçmişi durur):",
+          "  ajanda-b  android  -  eşleşme T30  kaldırıldı T1000  [ajanda]",
+          "",
+        ].join("\n"),
+      );
+      assert.equal(
+        listeMetni(d.eslesmeler(), zaman, "ajanda"),
+        [
+          "Eşleşmiş ajanda cihazları (1):",
+          "  ajanda-a  android  -  eşleşme T20  [ajanda]",
+          "Kaldırılmış ajanda cihazları (1; yetkisi yok, geçmişi durur):",
+          "  ajanda-b  android  -  eşleşme T30  kaldırıldı T1000  [ajanda]",
+          "",
+        ].join("\n"),
+      );
+      assert.equal(listeMetni([], zaman, "ajanda"), "Eşleşmiş ajanda cihazları (0):\n  (yok)\n");
+    } finally {
+      d.kapat();
+    }
+  });
+
+  it("kaldır: kapsamsız komut ajanda cihazını kaldırır; --ajanda yalnız ajanda cihazını, sohbet cihazına dokunmaz", () => {
+    const d = depoKurY();
+    try {
+      ekle(d, "sohbet-a", 10, false);
+      ekle(d, "ajanda-a", 20, true);
+      ekle(d, "ajanda-b", 30, true);
+
+      const yanlis = cihazKaldirKomutu(d, "sohbet-a", zaman, "ajanda");
+      assert.equal(yanlis.kod, 1);
+      assert.equal(yanlis.cikti, "");
+      assert.match(yanlis.hata, /ajanda cihazı değil \(sohbet cihazı\), kaldırılmadı: sohbet-a/);
+      assert.notEqual(d.cihazGetir("sohbet-a"), null, "sohbet cihazı yerinde kalmalı");
+
+      const yok = cihazKaldirKomutu(d, "yok", zaman, "ajanda");
+      assert.equal(yok.kod, 1);
+      assert.match(yok.hata, /^Ajanda cihazı bulunamadı: yok\nKimlikleri görmek için: eslestir --ajanda --liste\n$/);
+
+      const a = cihazKaldirKomutu(d, "ajanda-a", zaman, "ajanda");
+      assert.equal(a.kod, 0);
+      assert.match(a.cikti, /^Eşleşme kaldırıldı: ajanda-a \(ajanda\)\n[\s\S]*eslestir --ajanda/);
+      assert.equal(d.kapsamliCihazGetir("ajanda-a"), null);
+      assert.deepEqual(cihazKaldirKomutu(d, "ajanda-a", zaman, "ajanda"), {
+        kod: 0,
+        cikti: "Eşleşme zaten kaldırılmış: ajanda-a (ajanda) (T1000)\n",
+        hata: "",
+      });
+
+      const b = cihazKaldirKomutu(d, "ajanda-b", zaman);
+      assert.equal(b.kod, 0);
+      assert.equal(d.kapsamliCihazGetir("ajanda-b"), null);
+      assert.notEqual(d.cihazGetir("sohbet-a"), null);
+      assert.equal(d.eslesmeler().find((e) => e.device_id === "ajanda-b")?.kapsam, "ajanda");
+    } finally {
+      d.kapat();
+    }
+  });
+});
+
 describe("eslestir: komut satırı (ayrı süreç, temiz ortam)", () => {
   const KOMUT = fileURLToPath(new URL("../src/eslestir.ts", import.meta.url));
   const gecici = mkdtempSync(join(tmpdir(), "eren-eslestir-komut-"));
@@ -353,6 +599,43 @@ describe("eslestir: komut satırı (ayrı süreç, temiz ortam)", () => {
     } finally {
       e.kapat();
     }
+  });
+
+  it("--ajanda --liste ve --ajanda --kaldir: yalnız ajanda cihazı; sohbet cihazı 1 ile korunur; çelişen seçenek 2", () => {
+    const d = depoAc({ yol: join(kok, "eren.db"), saat: sahteZaman().saat, gunluk: sahteGunluk() });
+    try {
+      const ortak = { public_key: "QUNJSw==", tailscale_ip: "100.64.0.8", platform: "android" as const, etiket: null };
+      d.cihazEkle({ ...ortak, device_id: "ajanda-s", eslesme_ms: 2, kapsam: "ajanda" });
+      d.cihazEkle({ ...ortak, device_id: "sohbet-s", eslesme_ms: 3 });
+    } finally {
+      d.kapat();
+    }
+    const liste = calistir("--ajanda", "--liste");
+    assert.equal(liste.kod, 0, liste.tani);
+    assert.match(liste.cikti, /^Eşleşmiş ajanda cihazları \(1\):\n {2}ajanda-s {2}android .*\[ajanda\]\n/, liste.tani);
+    assert.ok(!liste.cikti.includes("sohbet-s"), liste.tani);
+
+    const yanlis = calistir("--ajanda", "--kaldir", "sohbet-s");
+    assert.equal(yanlis.kod, 1, yanlis.tani);
+    assert.match(yanlis.hata, /ajanda cihazı değil/, yanlis.tani);
+    const k = calistir("--kaldir", "ajanda-s", "--ajanda");
+    assert.equal(k.kod, 0, k.tani);
+    assert.equal(calistir("--ajanda", "--ajanda").kod, 2);
+    assert.equal(calistir("--ajanda", "--liste", "--kaldir", "x").kod, 2);
+
+    const e = depoAc({ yol: join(kok, "eren.db"), saat: sahteZaman().saat, gunluk: sahteGunluk() });
+    try {
+      assert.equal(e.kapsamliCihazGetir("ajanda-s"), null);
+      assert.notEqual(e.cihazGetir("sohbet-s"), null);
+    } finally {
+      e.kapat();
+    }
+  });
+
+  it("--ajanda kod üretimi de tam ayar ister; neden stderr'e yazılır", () => {
+    const r = calistir("--ajanda");
+    assert.equal(r.kod, 1, r.tani);
+    assert.match(r.hata, /^(eslestir: claude\.exe bulunamadı|Eşleştirme başlatılamadı: )/, r.tani);
   });
 
   it("beklenmeyen hata nedeni stderr'e yazılır (kod üretmek tam ayar ister; claude yokken neden görünür)", () => {

@@ -5,10 +5,31 @@
  * Eşleşme yönetimi (`--liste`, `--kaldir <device_id>`): saf `argumanCoz`, `listeMetni`,
  * `cihazKaldirKomutu`; depo tarafı `depo.ts` `CihazYonetimi`. Kaldırma servisin dışındadır: servis onu
  * `cihazGetir` üzerinden her kimlik denetiminde ve `gateway` yoklamasında görür.
+ *
+ * Ajanda dalgası (`--ajanda`): `ajandaEslestirmeBaslat` aynı kod üreteci ve süreyle `kapsam:"ajanda"`
+ * pencere açar, QR `AjandaEslestirmeQr`'dır. Kapsamı telefon değil bu komut belirler; tek pencere
+ * kuralını depo uygular (yeni pencere öteki kapsamınkini siler). `--liste --ajanda` yalnız ajanda
+ * cihazlarını gösterir, `--kaldir <kimlik> --ajanda` yalnız ajanda cihazını kaldırır.
  */
-import { EslestirmeQr as EslestirmeQrSemasi, kacir, PROTOKOL_SURUMU, sha256Hex, utf8Bayt } from "@eren/protocol";
+import {
+  AJANDA_SURUMU,
+  AjandaEslestirmeQr as AjandaEslestirmeQrSemasi,
+  ESKI_CIHAZ_KAPSAMI,
+  EslestirmeQr as EslestirmeQrSemasi,
+  kacir,
+  PROTOKOL_SURUMU,
+  sha256Hex,
+  utf8Bayt,
+  type CihazKapsami,
+} from "@eren/protocol";
 import type { CihazYonetimi, EslesmeOzeti } from "./depo.ts";
-import type { EslestirmeBaslatici } from "./sozlesme.ts";
+import type {
+  AjandaEslestirmeBaslatici,
+  EslestirmeBagimliliklari,
+  EslestirmeBaslatici,
+  EslestirmeKaydi,
+  Sonuc,
+} from "./sozlesme.ts";
 
 const KOD_UZUNLUGU = 8;
 const KOD_ALFABESI = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -35,29 +56,51 @@ export function parmakIzi(acikAnahtarB64: string): string {
   return (sha256Hex(der).toUpperCase().match(/.{4}/g) ?? []).join(" ");
 }
 
-export const eslestirmeBaslat: EslestirmeBaslatici = (b) => {
+/** QR'ın iki kapsamda ortak alanları. */
+interface QrTemeli {
+  host: string;
+  port: number;
+  kod: string;
+  server_public_key: string;
+}
+
+type QrDogrulama<Q> = { success: true; data: Q } | { success: false };
+
+/**
+ * İki kapsamın ortak çekirdeği. Sıra sabittir (adres, kod, saat, QR doğrulaması, depo): QR şemadan
+ * geçmezse depoya hiç yazılmaz, önceki pencere bozulmaz. `kapsam` yalnız ajanda penceresinde verilir;
+ * sohbet penceresi kaydı bugünkü gibi kapsam alanı olmadan yazılır.
+ */
+function pencereAc<Q>(
+  b: EslestirmeBagimliliklari,
+  qrKur: (temel: QrTemeli) => QrDogrulama<Q>,
+  kapsam?: "ajanda",
+): Sonuc<{ qr: Q; kod: string; sonMs: number }, "ic_hata"> {
   const host = b.sistem.tailscaleAdresi();
   if (host === null) return { ok: false, code: "ic_hata", detail: "tailscale_adresi_yok" };
 
   const kod = kodUret((adet) => b.rastgele.baytlar(adet));
   const sonMs = b.saat.simdiMs() + GECERLILIK_MS;
 
-  const qr = EslestirmeQrSemasi.safeParse({
-    v: PROTOKOL_SURUMU,
-    host,
-    port: b.wsPort,
-    kod,
-    server_public_key: b.anahtar.acikAnahtar(),
-  });
+  const qr = qrKur({ host, port: b.wsPort, kod, server_public_key: b.anahtar.acikAnahtar() });
   if (!qr.success) return { ok: false, code: "ic_hata", detail: "qr_gecersiz" };
 
+  const kayit: EslestirmeKaydi = { kod_ozeti: sha256Hex(utf8Bayt(kod)), son_ms: sonMs, yanlis_deneme: 0 };
+  if (kapsam !== undefined) kayit.kapsam = kapsam;
   try {
-    b.depo.eslestirmeYaz({ kod_ozeti: sha256Hex(utf8Bayt(kod)), son_ms: sonMs, yanlis_deneme: 0 });
+    b.depo.eslestirmeYaz(kayit);
   } catch {
     return { ok: false, code: "ic_hata", detail: "depo_yazilamadi" };
   }
   return { ok: true, deger: { qr: qr.data, kod, sonMs } };
-};
+}
+
+export const eslestirmeBaslat: EslestirmeBaslatici = (b) =>
+  pencereAc(b, (t) => EslestirmeQrSemasi.safeParse({ v: PROTOKOL_SURUMU, ...t }));
+
+/** `eslestir --ajanda`: aynı kod ve süre; QR `AjandaEslestirmeQr`, pencere `kapsam:"ajanda"`. */
+export const ajandaEslestirmeBaslat: AjandaEslestirmeBaslatici = (b) =>
+  pencereAc(b, (t) => AjandaEslestirmeQrSemasi.safeParse({ v: AJANDA_SURUMU, ...t, kanal: "ajanda" }), "ajanda");
 
 // ---------------------------------------------------------------------------------------------
 // Eşleşme yönetimi: saf parçalar (test edilir), komut satırı aşağıda.
@@ -73,29 +116,59 @@ export const KULLANIM = [
   "  eslestir                     Yeni eşleştirme kodu üretir (5 dakika, tek kullanımlık).",
   "  eslestir --liste             Eşleşmiş ve kaldırılmış cihazları listeler.",
   "  eslestir --kaldir <kimlik>   Cihazın eşleşmesini kaldırır; açık bağlantıları da kapanır.",
+  "",
+  "Ajanda uygulaması (yalnız /ajanda kanalı; sohbeti açamaz):",
+  "  eslestir --ajanda                     Ajanda için eşleştirme kodu üretir (5 dakika, tek kullanımlık).",
+  "  eslestir --ajanda --liste             Yalnız ajanda cihazlarını listeler.",
+  "  eslestir --ajanda --kaldir <kimlik>   Ajanda cihazının eşleşmesini kaldırır (sohbet cihazına dokunmaz).",
+  "",
+  "Aynı anda tek eşleştirme penceresi açıktır: yeni kod (hangi kapsamda olursa olsun) öncekini geçersiz kılar.",
 ].join("\n");
 
+/** `kapsam` yalnız `--ajanda` verilince bulunur; yoksa komut bugünkü (sohbet) davranışındadır. */
 export type EslestirKomutu =
-  | { tur: "kod" }
-  | { tur: "liste" }
-  | { tur: "kaldir"; device_id: string }
+  | { tur: "kod"; kapsam?: "ajanda" }
+  | { tur: "liste"; kapsam?: "ajanda" }
+  | { tur: "kaldir"; device_id: string; kapsam?: "ajanda" }
   | { tur: "yardim" }
   | { tur: "hata"; ileti: string };
 
+const YARDIM_SECENEKLERI: readonly string[] = ["-h", "--help", "--yardim"];
+
+/**
+ * Seçenekler herhangi bir sırada; `--kaldir`'ın hemen ardından kimlik gelir. Hata: bilinmeyen seçenek,
+ * yinelenen `--ajanda`, `--liste` ile `--kaldir` birlikte, eksik ya da fazla değer.
+ */
 export function argumanCoz(argv: readonly string[]): EslestirKomutu {
-  if (argv.length === 0) return { tur: "kod" };
-  const [ilk, ...geri] = argv;
-  if (ilk === "-h" || ilk === "--help" || ilk === "--yardim") return { tur: "yardim" };
-  if (ilk === "--liste") {
-    return geri.length === 0 ? { tur: "liste" } : { tur: "hata", ileti: "--liste ek değer almaz" };
+  let ajanda = false;
+  let eylem: { tur: "liste" } | { tur: "kaldir"; device_id: string } | null = null;
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i] ?? "";
+    if (YARDIM_SECENEKLERI.includes(a)) return { tur: "yardim" };
+    if (a === "--ajanda") {
+      if (ajanda) return { tur: "hata", ileti: "--ajanda bir kez verilir" };
+      ajanda = true;
+      continue;
+    }
+    if (a === "--liste" || a === "--kaldir") {
+      if (eylem !== null) return { tur: "hata", ileti: "--liste ve --kaldir birlikte ya da iki kez verilmez" };
+      if (a === "--liste") {
+        eylem = { tur: "liste" };
+        continue;
+      }
+      const id = argv[i + 1];
+      if (id === undefined || id.trim() === "" || id.startsWith("--")) return { tur: "hata", ileti: "--kaldir bir cihaz kimliği ister" };
+      eylem = { tur: "kaldir", device_id: id };
+      i++;
+      continue;
+    }
+    if (!a.startsWith("-") && eylem?.tur === "liste") return { tur: "hata", ileti: "--liste ek değer almaz" };
+    if (!a.startsWith("-") && eylem?.tur === "kaldir") return { tur: "hata", ileti: "--kaldir tek kimlik alır" };
+    return { tur: "hata", ileti: `bilinmeyen seçenek: ${gorunur(a)}` };
   }
-  if (ilk === "--kaldir") {
-    const id = geri[0];
-    if (id === undefined || id.trim() === "" || id.startsWith("--")) return { tur: "hata", ileti: "--kaldir bir cihaz kimliği ister" };
-    if (geri.length > 1) return { tur: "hata", ileti: "--kaldir tek kimlik alır" };
-    return { tur: "kaldir", device_id: id };
-  }
-  return { tur: "hata", ileti: `bilinmeyen seçenek: ${gorunur(ilk ?? "")}` };
+  const kapsam = ajanda ? { kapsam: "ajanda" as const } : {};
+  if (eylem === null) return { tur: "kod", ...kapsam };
+  return { ...eylem, ...kapsam };
 }
 
 /** Telefonun yolladığı etiket ve kullanıcı girdisi terminale tek satır, kaçırılmış gider. */
@@ -108,24 +181,35 @@ export function yerelZaman(ms: number): string {
   return `${t.getFullYear()}-${iki(t.getMonth() + 1)}-${iki(t.getDate())} ${iki(t.getHours())}:${iki(t.getMinutes())}`;
 }
 
+const kapsamOf = (e: Pick<EslesmeOzeti, "kapsam">): CihazKapsami => e.kapsam ?? ESKI_CIHAZ_KAPSAMI;
+
+/** Sohbet cihazının satırı bugünküyle bayt bayt aynı; ajanda cihazına sonda `[ajanda]` eklenir. */
 const satir = (e: EslesmeOzeti, zaman: (ms: number) => string): string => {
   const etiket = e.etiket === null ? "-" : `"${gorunur(e.etiket)}"`;
   const iptal = e.iptal_ms === null ? "" : `  kaldırıldı ${zaman(e.iptal_ms)}`;
-  return `  ${e.device_id}  ${e.platform}  ${etiket}  eşleşme ${zaman(e.eslesme_ms)}${iptal}`;
+  const kapsam = kapsamOf(e) === "ajanda" ? "  [ajanda]" : "";
+  return `  ${e.device_id}  ${e.platform}  ${etiket}  eşleşme ${zaman(e.eslesme_ms)}${iptal}${kapsam}`;
 };
 
 /**
  * Liste çıktısı. Açık anahtar ve IP `EslesmeOzeti`'nde yoktur, burada da yazılmaz. Son görülme
- * tutulmuyor: sütun yok.
+ * tutulmuyor: sütun yok. `kapsam: "ajanda"` verilirse yalnız ajanda cihazları, kendi başlıklarıyla.
  */
-export function listeMetni(liste: readonly EslesmeOzeti[], zaman: (ms: number) => string = yerelZaman): string {
-  const etkin = liste.filter((e) => e.iptal_ms === null);
-  const kaldirilmis = liste.filter((e) => e.iptal_ms !== null);
-  const parcalar = [`Eşleşmiş cihazlar (${etkin.length}):`];
+export function listeMetni(
+  liste: readonly EslesmeOzeti[],
+  zaman: (ms: number) => string = yerelZaman,
+  kapsam?: "ajanda",
+): string {
+  const secili = kapsam === undefined ? liste : liste.filter((e) => kapsamOf(e) === kapsam);
+  const etkin = secili.filter((e) => e.iptal_ms === null);
+  const kaldirilmis = secili.filter((e) => e.iptal_ms !== null);
+  const baslik = kapsam === undefined ? "Eşleşmiş cihazlar" : "Eşleşmiş ajanda cihazları";
+  const parcalar = [`${baslik} (${etkin.length}):`];
   if (etkin.length === 0) parcalar.push("  (yok)");
   for (const e of etkin) parcalar.push(satir(e, zaman));
   if (kaldirilmis.length > 0) {
-    parcalar.push(`Kaldırılmış (${kaldirilmis.length}; yetkisi yok, geçmişi durur):`);
+    const ad = kapsam === undefined ? "Kaldırılmış" : "Kaldırılmış ajanda cihazları";
+    parcalar.push(`${ad} (${kaldirilmis.length}; yetkisi yok, geçmişi durur):`);
     for (const e of kaldirilmis) parcalar.push(satir(e, zaman));
   }
   return `${parcalar.join("\n")}\n`;
@@ -137,29 +221,76 @@ export interface KomutCiktisi {
   hata: string;
 }
 
-/** `--kaldir`: yeni kaldırma ve zaten kaldırılmış 0, bilinmeyen kimlik 1. */
+/**
+ * `--kaldir`: yeni kaldırma ve zaten kaldırılmış 0, bilinmeyen kimlik 1. Kapsamsız çağrı her iki
+ * kapsamda kaldırır (depo yapar). `kapsam: "ajanda"` (`--ajanda --kaldir`) yalnız ajanda cihazını
+ * kaldırır: kimlik sohbet cihazınınsa hiçbir şey değişmez, 1 döner. Sohbet cihazının metinleri bugünkü.
+ */
 export function cihazKaldirKomutu(
-  depo: Pick<CihazYonetimi, "cihazKaldir">,
+  depo: Pick<CihazYonetimi, "cihazKaldir" | "eslesmeler">,
   device_id: string,
   zaman: (ms: number) => string = yerelZaman,
+  kapsam?: "ajanda",
 ): KomutCiktisi {
-  const s = depo.cihazKaldir(device_id);
   const id = gorunur(device_id);
+  const onceki = depo.eslesmeler().find((e) => e.device_id === device_id);
+  const cihazKapsami = onceki === undefined ? null : kapsamOf(onceki);
+  if (kapsam !== undefined && cihazKapsami !== null && cihazKapsami !== kapsam) {
+    return {
+      kod: 1,
+      cikti: "",
+      hata: `Bu kimlik ajanda cihazı değil (${cihazKapsami} cihazı), kaldırılmadı: ${id}\nSohbet cihazını kaldırmak için --ajanda olmadan: eslestir --kaldir <kimlik>\n`,
+    };
+  }
+  const ajanda = cihazKapsami === "ajanda";
+  const s = kapsam !== undefined && cihazKapsami === null ? ({ sonuc: "bulunamadi" } as const) : depo.cihazKaldir(device_id);
   switch (s.sonuc) {
     case "kaldirildi":
       return {
         kod: 0,
         cikti:
-          `Eşleşme kaldırıldı: ${id}\n` +
+          `Eşleşme kaldırıldı: ${id}${ajanda ? " (ajanda)" : ""}\n` +
           `Bu kimlikle yeni bağlantı kabul edilmez; servis çalışıyorsa açık bağlantıları en geç ${KAPANIS_SURESI_SN} sn içinde kapanır.\n` +
-          "Telefonu yeniden kullanmak için yeni eşleştirme gerekir (yeni kimlik).\n",
+          (ajanda
+            ? "Ajanda uygulamasını yeniden kullanmak için yeni eşleştirme gerekir: eslestir --ajanda (yeni kimlik).\n"
+            : "Telefonu yeniden kullanmak için yeni eşleştirme gerekir (yeni kimlik).\n"),
         hata: "",
       };
     case "zaten_kaldirilmis":
-      return { kod: 0, cikti: `Eşleşme zaten kaldırılmış: ${id} (${zaman(s.iptal_ms)})\n`, hata: "" };
+      return { kod: 0, cikti: `Eşleşme zaten kaldırılmış: ${id}${ajanda ? " (ajanda)" : ""} (${zaman(s.iptal_ms)})\n`, hata: "" };
     case "bulunamadi":
-      return { kod: 1, cikti: "", hata: `Cihaz bulunamadı: ${id}\nKimlikleri görmek için: eslestir --liste\n` };
+      return {
+        kod: 1,
+        cikti: "",
+        hata: `${kapsam === undefined ? "Cihaz" : "Ajanda cihazı"} bulunamadı: ${id}\nKimlikleri görmek için: eslestir ${kapsam === undefined ? "" : "--ajanda "}--liste\n`,
+      };
   }
+}
+
+/**
+ * Kod üretiminin terminal çıktısı. İlk satır QR verisi (tek satır JSON; uygulama bunu okur), sonra
+ * parmak izi ve kısa kod. Sohbet çıktısı bugünküyle aynıdır. Ajandada sonda kapsam satırı; öteki
+ * kapsamın hâlâ süresi dolmamış penceresi kapandıysa (tek pencere) bir not satırı.
+ */
+export function kodMetni(
+  s: { qr: { server_public_key: string }; kod: string; sonMs: number },
+  g: { simdiMs: number; kapsam?: "ajanda"; oncekiPencere?: Pick<EslestirmeKaydi, "son_ms" | "kapsam"> | null },
+): string {
+  const dakika = Math.round((s.sonMs - g.simdiMs) / 60000);
+  const satirlar = [
+    JSON.stringify(s.qr),
+    `Parmak izi: ${parmakIzi(s.qr.server_public_key)}`,
+    `Kod:${s.kod}  (${dakika} dakika geçerli, tek kullanımlık)`,
+  ];
+  if (g.kapsam === "ajanda") {
+    satirlar.push("Kapsam: ajanda (yalnız ajanda uygulamasıyla eşleşir; sohbet kanalını açamaz).");
+  }
+  const o = g.oncekiPencere;
+  const yeniKapsam: CihazKapsami = g.kapsam ?? ESKI_CIHAZ_KAPSAMI;
+  if (o !== undefined && o !== null && o.son_ms > g.simdiMs && (o.kapsam ?? ESKI_CIHAZ_KAPSAMI) !== yeniKapsam) {
+    satirlar.push(`Not: açık ${o.kapsam ?? ESKI_CIHAZ_KAPSAMI} eşleştirme penceresi kapandı (aynı anda tek pencere).`);
+  }
+  return `${satirlar.join("\n")}\n`;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -199,33 +330,32 @@ async function komutCalistir(argv: readonly string[]): Promise<number> {
   const depo = depoAc({ yol: yollar.vt, saat: dis.saat, gunluk, anaSohbetAdi });
   try {
     if (komut.tur === "liste") {
-      process.stdout.write(listeMetni(depo.eslesmeler()));
+      process.stdout.write(listeMetni(depo.eslesmeler(), yerelZaman, komut.kapsam));
       return 0;
     }
     if (komut.tur === "kaldir") {
-      const s = cihazKaldirKomutu(depo, komut.device_id);
+      const s = cihazKaldirKomutu(depo, komut.device_id, yerelZaman, komut.kapsam);
       if (s.kod === 0) gunluk.uyari("eslestir", "eslesme_kaldirildi", { device_id: komut.device_id });
       process.stdout.write(s.cikti);
       process.stderr.write(s.hata);
       return s.kod;
     }
     if (ayar === null) return 1; // yukarıdaki iki dal döndü; tip daraltması
-    const s = eslestirmeBaslat({
+    const bag = {
       depo,
       anahtar: dis.anahtar,
       sistem: dis.sistem,
       rastgele: dis.rastgele,
       saat: dis.saat,
       wsPort: ayar.wsPort,
-    });
+    };
+    const oncekiPencere = depo.eslestirmeOku();
+    const s = komut.kapsam === "ajanda" ? ajandaEslestirmeBaslat(bag) : eslestirmeBaslat(bag);
     if (!s.ok) {
       process.stderr.write(`Eşleştirme başlatılamadı: ${s.detail ?? s.code}\n`);
       return 1;
     }
-    const dakika = Math.round((s.deger.sonMs - dis.saat.simdiMs()) / 60000);
-    process.stdout.write(`${JSON.stringify(s.deger.qr)}\n`);
-    process.stdout.write(`Parmak izi: ${parmakIzi(s.deger.qr.server_public_key)}\n`);
-    process.stdout.write(`Kod:${s.deger.kod}  (${dakika} dakika geçerli, tek kullanımlık)\n`);
+    process.stdout.write(kodMetni(s.deger, { simdiMs: dis.saat.simdiMs(), oncekiPencere, ...(komut.kapsam ? { kapsam: komut.kapsam } : {}) }));
     return 0;
   } finally {
     depo.kapat();
