@@ -723,7 +723,8 @@ export const konusmaKur: KonusmaFabrikasi = ({
         if (mcpSilmeleri.get(nesil) === suren) mcpSilmeleri.delete(nesil);
       }
       await dosya.atomikYaz(mcpYolu, erenMcpMetni(ayar.nodeExe, ayar.kopruBetigi, jeton, computerUse, ajandaJetonu));
-      const istem = sistemIstemi(await ayar.kimlikEki(), masaustu, tamYetki, ayar.asistanAdi);
+      // Ajanda dalgası: damga (`damgali`) yalnız `takvim` varken; istem damgadan yalnız o zaman söz eder.
+      const istem = sistemIstemi(await ayar.kimlikEki(), masaustu, tamYetki, ayar.asistanAdi, takvim !== undefined);
       s = await surec.boruluBaslat({
         exe: ayar.claudeExe,
         argv: argvKur(mcpYolu, session_id, kip, istem),

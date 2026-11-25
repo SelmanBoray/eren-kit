@@ -645,6 +645,19 @@ describe("ajanda araçları: liste", () => {
     assert.equal(kisa.toplam, 7);
   });
 
+  it("en_fazla verilmezse LISTE_VARSAYILAN kadar, verilirse istenen kadar (LISTE_ADET'e dek) döner", async () => {
+    const o = kur();
+    const fazla = AJANDA_SINIRLARI.LISTE_ADET + 5;
+    for (let i = 0; i < fazla; i++) assert.equal((await o.ekle({ tur: "not", baslik: `Not ${i}` })).sonuc, "eklendi");
+    const varsayilan = await o.listele();
+    assert.equal(varsayilan.kayitlar.length, AJANDA_SINIRLARI.LISTE_VARSAYILAN);
+    assert.equal(varsayilan.toplam, fazla);
+    assert.equal((await o.listele({ en_fazla: AJANDA_SINIRLARI.LISTE_VARSAYILAN + 3 })).kayitlar.length, AJANDA_SINIRLARI.LISTE_VARSAYILAN + 3);
+    const tavan = await o.listele({ en_fazla: AJANDA_SINIRLARI.LISTE_ADET });
+    assert.equal(tavan.kayitlar.length, AJANDA_SINIRLARI.LISTE_ADET);
+    assert.equal(tavan.toplam, fazla);
+  });
+
   it("liste yazmaz ve sentetik turda da çalışır", async () => {
     const o = kur();
     await doldur(o);

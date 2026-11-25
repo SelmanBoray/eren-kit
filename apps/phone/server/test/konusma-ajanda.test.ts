@@ -17,6 +17,7 @@ import type { Olay } from "@eren/protocol";
 import { akisKur } from "../src/akis.ts";
 import { depoKur } from "../src/depo.ts";
 import { konusmaKur } from "../src/konusma.ts";
+import { sistemIstemi } from "../src/konusma-metin.ts";
 import { veriyoluKur } from "../src/veriyolu.ts";
 import type {
   AjandaJetonKapsami,
@@ -248,8 +249,8 @@ const oturumKimligi = (s: SahteBoruluSurec): string => {
   const a = s.istek.argv;
   return a[Math.max(a.indexOf("--session-id"), a.indexOf("--resume")) + 1]!;
 };
-const initSatiri = (s: SahteBoruluSurec, tools: string[] = ["mcp__eren__plan_oner"]): string =>
-  satir({ type: "system", subtype: "init", session_id: oturumKimligi(s), tools, apiKeySource: "none", model: MODEL });
+const initSatiri = (s: SahteBoruluSurec, tools: string[] = ["mcp__eren__plan_oner"], apiKeySource = "none"): string =>
+  satir({ type: "system", subtype: "init", session_id: oturumKimligi(s), tools, apiKeySource, model: MODEL });
 const asistan = (id: string, input: number): string =>
   satir({
     type: "assistant",
@@ -335,13 +336,23 @@ describe("ajanda kapalı (A0.6): takvim ve ajandaKopru yokken bugünkü gibi", (
     assert.equal(h.sira.some((x) => x.startsWith("ajanda:")), false);
   });
 
-  it("argv (sistem istemi dahil) ajanda açıkken de birebir aynı: istem ve araç listesi değişmez", async () => {
+  it("argv ajanda açıkken yalnız sistem isteminde farklı: kapalıyken ajanda öncesi istem, takvim varken damgalı istem", async () => {
     const kapali = kur({ ajanda: false });
     const acik = kur();
+    const takvimli = kur({ yalnizTakvim: true });
     const s1 = await ac(kapali);
     const s2 = await ac(acik);
-    assert.deepEqual(s2.istek.argv, s1.istek.argv);
-    assert.deepEqual(s2.istek.ortam, s1.istek.ortam);
+    const s3 = await ac(takvimli);
+    const i = s1.istek.argv.indexOf("--system-prompt") + 1;
+    assert.ok(i > 0);
+    // Sahte ayar: kimlik eki boş, computer-use yok (masaüstü kapalı), tam yetki açık, ad "Claude".
+    assert.equal(s1.istek.argv[i], sistemIstemi("", false, true, "Claude"));
+    assert.equal(s1.istek.argv[i]!.includes("mesaj_ani"), false, "ajandasız istem damgadan söz etmez");
+    for (const s of [s2, s3]) {
+      assert.equal(s.istek.argv[i], sistemIstemi("", false, true, "Claude", true));
+      assert.deepEqual(s.istek.argv.toSpliced(i, 1), s1.istek.argv.toSpliced(i, 1), "istem dışında argv aynı");
+      assert.deepEqual(s.istek.ortam, s1.istek.ortam);
+    }
   });
 
   it("yalnız takvim: damga var, ajanda köprüsü (jeton, mcp girdisi) yok", async () => {
@@ -374,16 +385,26 @@ describe("ajanda köprüsü ve jeton", () => {
     assert.deepEqual(h.sira.slice(0, 3), ["eren:uret:1", "ajanda:uret:1", "baslat:yeni"]);
   });
 
-  it("init denetimi mcp__eren-ajanda__* araçlarını kabul eder", async () => {
-    const h = kur();
-    await h.konusma.baslat();
-    h.konusma.uyandir();
-    await bosalt();
-    const s = h.d.surec.borulular().at(-1)!;
-    s.stdoutSatiriGonder(initSatiri(s, ["mcp__eren__plan_oner", "mcp__eren-ajanda__ajanda_ekle", "mcp__eren-ajanda__ajanda_listele"]));
-    await bosalt();
-    assert.equal(h.konusma.durum(), "hazir");
-    assert.equal(s.canli, true);
+  it("init denetimi araç listesine bakmaz: ajanda araçları olsa da olmasa da aynı kabul, abonelik dışı kaynak yine ret", async () => {
+    const AJANDA_ARAC_LISTESI = ["mcp__eren__plan_oner", "mcp__eren-ajanda__ajanda_ekle", "mcp__eren-ajanda__ajanda_listele"];
+    const initGonder = async (tools: string[], apiKeySource: string) => {
+      const h = kur();
+      await h.konusma.baslat();
+      h.konusma.uyandir();
+      await bosalt();
+      const s = h.d.surec.borulular().at(-1)!;
+      s.stdoutSatiriGonder(initSatiri(s, tools, apiKeySource));
+      await bosalt();
+      return { durum: h.konusma.durum(), canli: s.canli };
+    };
+    // Kabul ve ret yalnız `apiKeySource`'a bağlı: aynı kaynakla ajanda araçlarının varlığı sonucu değiştirmez.
+    for (const kaynak of ["none", "ANTHROPIC_API_KEY"]) {
+      const ajandali = await initGonder(AJANDA_ARAC_LISTESI, kaynak);
+      const ajandasiz = await initGonder(["mcp__eren__plan_oner"], kaynak);
+      assert.deepEqual(ajandali, ajandasiz, `apiKeySource=${kaynak}`);
+      assert.equal(ajandali.canli, kaynak === "none", `apiKeySource=${kaynak}`);
+      assert.equal(ajandali.durum === "hazir", kaynak === "none", `apiKeySource=${kaynak}`);
+    }
   });
 
   it("devam (--resume): eski ajanda jetonu yenisi üretilmeden iptal, mcp yeni jetonla yeniden yazılır", async () => {

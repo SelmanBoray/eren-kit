@@ -272,9 +272,11 @@ export function ajandaAraclariKur(b: AjandaBagimliliklari): AjandaFiilIsleyicile
       .map((x) => x.k);
     const tarihsiz = liste.filter((k) => siraAnahtari(k.zaman) === undefined);
     const sirali = [...tarihli, ...tarihsiz];
+    // `en_fazla` yoksa protokol varsayılanı; varsa istenen, şema zaten `LISTE_ADET` ile sınırlar (yine de kırpılır).
+    const adet = Math.min(g.en_fazla ?? AJANDA_SINIRLARI.LISTE_VARSAYILAN, AJANDA_SINIRLARI.LISTE_ADET);
     return {
       mesaj_ani: tur.mesaj_ani,
-      kayitlar: sirali.slice(0, g.en_fazla ?? AJANDA_SINIRLARI.LISTE_ADET),
+      kayitlar: sirali.slice(0, adet),
       toplam: sirali.length,
     };
   };
