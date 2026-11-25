@@ -82,6 +82,10 @@ pub enum AjandaYukari {
 
 /// Aşağı: PC -> ajanda uygulaması.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "çerçeve ileti başına bir kez çözülüp hemen tüketilir; Box her kurulum ve eşleşmeyi bozar, kazancı yok"
+)]
 pub enum AjandaAsagi {
     /// `ok` ise `device_id`, `server_public_key`, `kapsam` (hep `ajanda`) var, `code` yok; değilse tersi.
     PairResult { ok: bool, device_id: Option<String>, server_public_key: Option<String>, code: Option<AjandaKanalHatasi> },

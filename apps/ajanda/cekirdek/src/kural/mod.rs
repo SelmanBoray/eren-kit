@@ -3,8 +3,9 @@
 //! (`simdi_ms`, `bugun`) ve `AnCevirici`'den gelir. Her dosyanın sahibi `MIMARI.md`'de yazılıdır;
 //! imzalar ikinci dalgada değişmez, yalnız gövdeler dolar.
 //!
-//! Yazılmamış kural `yazilmadi!` ile `Yazilmadi` yükü taşıyan bir panik atar: vektör düzeneği bunu
-//! "bekliyor" sayar (sessizce atlamaz), motor çağırırsa Kotlin'e istisna olarak gider.
+//! Bütün kurallar yazıldı. `Yazilmadi` panik yükü yine de durur: yeni bir kural yarım bırakılırsa
+//! `std::panic::panic_any(Yazilmadi("parça"))` atar; vektör düzeneği bunu "bekliyor" sayar
+//! (sessizce atlamaz), köprü `CekirdekHatasi::Yazilmadi`'ya çevirir.
 
 pub mod birlesim;
 pub mod dayanak;
@@ -22,13 +23,6 @@ use std::collections::BTreeMap;
 /// Yazılmamış kuralın panik yükü (parça adı). Vektör düzeneği `catch_unwind` ile tanır.
 #[derive(Debug, Clone, Copy)]
 pub struct Yazilmadi(pub &'static str);
-
-macro_rules! yazilmadi {
-    ($parca:literal) => {
-        std::panic::panic_any($crate::kural::Yazilmadi($parca))
-    };
-}
-pub(crate) use yazilmadi;
 
 /// Dilim veritabanının bilmediği ya da çevrilemeyen yerel an.
 #[derive(Debug, Clone, PartialEq, Eq)]

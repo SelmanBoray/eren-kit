@@ -35,7 +35,8 @@ import dev.eren.ajanda.cekirdek.KurulacakAlarm
  * Kimlik: istek kodu = `alarmNo.toInt()`, niyet = `AlarmAlici` + eylem + `ajanda-alarm:<no>` verisi.
  * Aynı numaranın ikinci `kur`u aynı PendingIntent'i verir; AlarmManager eskisini değiştirir (çift
  * alarm olmaz). `iptal` niyeti aynı işlevden kurar. Kurulamayan alarm `KabukHatasi` fırlatır:
- * çekirdek satırı siler ve sonraki yeniden kurulumda yeniden dener.
+ * çekirdek satırı siler ve sonraki yeniden kurulumda yeniden dener. Gösterilemeyen kaçırılan özeti de
+ * fırlatır: çekirdek teslim işaretini kaldırır, pencere içindeyse sonraki senkronda yeniden gösterir.
  * Çekirdeğin etki kilidi altında çağrılır: çekirdeğe geri girmez, kısa sürer.
  */
 class AlarmPlanlayici internal constructor(
@@ -81,7 +82,11 @@ class AlarmPlanlayici internal constructor(
         } catch (e: Exception) {
             false
         }
-        if (!gosterildi) sorunlar.gosterilemedi(bildirim.satirlar.map { it.kayitId })
+        if (gosterildi) return
+        sorunlar.gosterilemedi(bildirim.satirlar.map { it.kayitId })
+        // Çekirdek bu satırları teslim saydı; hata dönünce işareti kaldırır ve pencere içindeyse sonraki
+        // senkronda yeniden gösterir (MIMARI.md R4 "Kotlin parçalarının bilmesi gerekenler", K3).
+        throw KabukHatasi.Basarisiz("kaçırılan özeti gösterilemedi")
     }
 
     private inline fun dene(blok: () -> Unit): Exception? =

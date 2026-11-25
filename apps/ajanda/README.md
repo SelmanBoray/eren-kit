@@ -7,7 +7,8 @@ Sözleşme: `apps/phone/docs/AJANDA.md`. **Mimari, iş bölümü ve ikinci dalga
 Durum: Rust çekirdeği tam (ikinci dalga R1-R4): veri modeli ve şema, saf kurallar (vektörlerin tamamı
 geçiyor), hatırlatma planı ve alarm kayıtları, yerel depo ve eşitleme motoru (kanal durum makinesi,
 telafi, kalıcı kuyruk ve ret listesi, iyimser işlemler, sorgular). Köprüde `Yazilmadi` dönen motor
-yöntemi kalmadı. Kotlin parçaları (K1-K4) MIMARI.md "İkinci dalga"dadır.
+yöntemi kalmadı. Kotlin: kimlik ve eşleştirme ekranı (K1), alarm, bildirim ve alıcılar (K3) yazıldı;
+ağ taşıması (K2, `ag/`) ve ekranlar (K4, `ekran/`) iskelet — iş parçaları MIMARI.md'de.
 
 ## Klasör düzeni
 
@@ -32,7 +33,8 @@ apps/ajanda/
       CekirdekErisimi.kt      süreç başına tek Cekirdek; kabukları bağlar
       kabuk/ kimlik/ ag/ alarm/ ekran/   (MIMARI.md "Kotlin")
     app/src/debug/            yalnız debug: arayüzsüz deneme alıcısı (KopruAlici)
-    app/src/test/kotlin/      KopruTest: üretilen bağlamalar + gerçek Rust kitaplığı (JVM)
+    app/src/test/kotlin/      KopruTest: üretilen bağlamalar + gerçek Rust kitaplığı (JVM);
+                              kimlik/ ve alarm/ paketlerinin kendi testleri
 ```
 
 Üretilen dosyalar git'e girmez: `.so` -> `android/app/build/generated/jniLibs/rust<Varyant>Derle/`,
@@ -57,7 +59,7 @@ cargo test -p ajanda-cekirdek --test uctan_uca     # yalnız uçtan uca senaryol
 # büyük kopya ölçümü (süreleri basar; adet varsayılan 5000)
 AJANDA_OLCUM_ADET=20000 cargo test --release -p ajanda-cekirdek --test buyuk_kopya -- --nocapture
 
-# arm64 APK + Kotlin köprü testi (apps/ajanda/android içinden)
+# arm64 APK + Kotlin testleri (apps/ajanda/android içinden; bellek kısıtlıysa --no-daemon --offline)
 ./gradlew assembleDebug testDebugUnitTest          # Windows: .\gradlew.bat ...
 
 # Emülatör için x86_64 de ekle
@@ -66,6 +68,10 @@ AJANDA_OLCUM_ADET=20000 cargo test --release -p ajanda-cekirdek --test buyuk_kop
 # Arayüz açmadan köprü (yalnız debug APK):
 adb shell am broadcast -f 0x20 -n dev.eren.ajanda/.KopruAlici   # logcat etiketi: Ajanda
 ```
+
+Köprü tanısı (`KopruKaniti`, salt okur) logcat'e şema, eşleşme/bağlantı durumu ve kayıt sayılarını basar,
+son satırı `KÖPRÜ TAMAM`. Android 15 x86_64 emülatörde (debug APK) hem `AnaEkran` hem `KopruAlici` yolunda
+denendi: çekirdek yüklendi, şema 3.
 
 Vektör düzeneği her koşuda bölüm tablosu basar: GEÇTİ / KALDI / BEKLİYOR (yazılmamış kural ve sahibi).
 KALDI ya da vektör dosyasında tanınmayan bölüm varsa çıkış 1'dir.

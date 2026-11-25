@@ -20,6 +20,7 @@ import android.text.TextWatcher
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowInsets
 import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
 import android.widget.Button
@@ -106,6 +107,15 @@ class EslestirmeEkrani : Activity() {
             isFillViewport = true
             filterTouchesWhenObscured = true
             addView(kok, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        }
+        // targetSdk 35+ cihazda pencere kenardan kenaradır: `adjustResize` (manifest) pencereyi küçültmez,
+        // durum çubuğu ve klavye payı burada boşluk olarak verilir; böylece klavye kod alanını örtmez.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+            kaydirma.setOnApplyWindowInsetsListener { v, payi ->
+                val p = payi.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.ime())
+                v.setPadding(p.left, p.top, p.right, p.bottom)
+                payi
+            }
         }
         setContentView(kaydirma)
 

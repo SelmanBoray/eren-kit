@@ -2,7 +2,7 @@
 //! `ajanda-mesaj.json` ve `ajanda-kurallar.json`'ın HER bölümünü Rust uygulamasına karşı çalıştırır.
 //! Dosyalar kopyalanmaz; yol `AJANDA_VEKTOR_DIZINI` ile değiştirilebilir.
 //!
-//! Her vektör: GEÇTİ, KALDI (fark yazılır) ya da BEKLİYOR (kural `yazilmadi!` ile duruyor). Bölüm
+//! Her vektör: GEÇTİ, KALDI (fark yazılır) ya da BEKLİYOR (kural `Yazilmadi` paniğiyle duruyor). Bölüm
 //! tablosu her koşuda basılır; KALDI varsa ya da vektör dosyasında düzeneğin tanımadığı bir bölüm
 //! varsa çıkış kodu 1'dir. BEKLİYOR başarısızlık değildir ama sayısı görünür ve kimin işi olduğu yazar.
 //! Bu dosya ilk dalgada dondurulur: ikinci dalga yalnız kuralları doldurur, düzeneğe dokunmaz.
@@ -567,7 +567,7 @@ fn esitleme(v: &Value) -> Bolum {
 }
 
 fn main() {
-    // `yazilmadi!` paniklerini sessiz geç (BEKLİYOR sayılır); ötekiler her zamanki gibi yazılsın.
+    // `Yazilmadi` paniklerini sessiz geç (BEKLİYOR sayılır); ötekiler her zamanki gibi yazılsın.
     let onceki = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |bilgi| {
         if bilgi.payload().downcast_ref::<Yazilmadi>().is_none() {

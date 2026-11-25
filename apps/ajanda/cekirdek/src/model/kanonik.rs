@@ -92,7 +92,8 @@ pub fn sha256_hex(veri: &[u8]) -> String {
     }
     dolgulu.extend_from_slice(&((veri.len() as u64) * 8).to_be_bytes());
     let mut w = [0u32; 64];
-    for blok in dolgulu.chunks_exact(64) {
+    // Dolgu uzunluğu 64'ün katı: artık parça hep boş.
+    for blok in dolgulu.as_chunks::<64>().0 {
         for t in 0..16 {
             w[t] = u32::from_be_bytes([blok[4 * t], blok[4 * t + 1], blok[4 * t + 2], blok[4 * t + 3]]);
         }

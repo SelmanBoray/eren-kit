@@ -39,9 +39,11 @@
             android:exported="false" />
 
         <!-- K1 -->
+        <!-- adjustResize: klavye kod alanını ve "Eşleştir" düğmesini örtmesin (görünüm ScrollView içinde). -->
         <activity
             android:name=".kimlik.EslestirmeEkrani"
-            android:exported="false" />
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
 
         <!-- K3 -->
         <receiver
@@ -57,6 +59,8 @@
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
                 <action android:name="android.intent.action.TIME_SET" />
                 <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+                <!-- 12/12L: kesin alarm izni verilince gevşek kurulanlar kesin yoldan yeniden kurulur. -->
+                <action android:name="android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED" />
             </intent-filter>
         </receiver>
 

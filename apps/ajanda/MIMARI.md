@@ -31,9 +31,10 @@ ana iş parçacığından yapılmaz.
 `baglantiKapandi(nesil)` onu taşır. Eski soketin geç olayı yok sayılır; açılış hata verirse taşıma
 kaydı silinir (Kotlin soketi kapatır, `baglantiKapandi` çağırmaz).
 
-**Yazılmamış parça.** Saf kural `yazilmadi!` ile panikler (vektör düzeneği "bekliyor" sayar; köprü
-`CekirdekHatasi.Yazilmadi`'ya çevirir). Motor/depo yöntemleri `Err(CekirdekHatasi::yazilmadi(...))` döner.
-Kotlin iskeletleri `KabukHatasi.Basarisiz("yazılmadı: ...")` fırlatır ya da hiçbir şey yapmaz.
+**Yazılmamış parça.** Rust'ta yazılmamış parça kalmadı (`yazilmadi!` makrosu kaldırıldı). Yeni bir kural
+yarım bırakılırsa `std::panic::panic_any(kural::Yazilmadi("parça"))` atar (vektör düzeneği "bekliyor" sayar;
+köprü `CekirdekHatasi.Yazilmadi`'ya çevirir); motor/depo yöntemi `Err(CekirdekHatasi::yazilmadi(...))` döner.
+Kotlin'de iskelet kalan yalnız `ag/` (K2) ve `ekran/` (K4): hiçbir şey yapmazlar.
 
 ## Rust: `cekirdek/src/`
 
@@ -92,15 +93,20 @@ Kayıt, zaman, hatırlatma, tekrar ve kapalı listeler `uniffi::Record/Enum` tü
 
 ```
 CekirdekErisimi.kt     süreç başına tek Cekirdek; kabukları bağlar              [şef, dondurulmuş]
-KopruKaniti.kt         köprü tanısı (ekran, debug alıcı, JVM testi)             [şef]
+KopruKaniti.kt         salt okur köprü tanısı (debug alıcı, JVM testi)          [şef]
 kabuk/JavaZaman.kt     ZamanKabugu (java.time) — yazıldı                        [şef]
-kimlik/                KeystoreKimlik.kt (KimlikKabugu), EslestirmeEkrani.kt    [K1]
-ag/                    AjandaSoketi.kt (Tasima), BaglantiYoneticisi.kt, EsitlemeIsi.kt   [K2]
-alarm/                 AlarmPlanlayici.kt (AlarmKabugu), AlarmAlici.kt, AcilisAlici.kt   [K3]
-ekran/                 AnaEkran.kt (başlatıcı), KayitEkrani.kt (+ K4'ün ekleyecekleri)   [K4]
+kimlik/                KeystoreKimlik.kt (KimlikKabugu), EslestirmeEkrani.kt (+ EslestirmeDurumu,
+                       EslestirmeVerisi, EslestirmeMetinleri, P256) — yazıldı   [K1, kapandı]
+ag/                    AjandaSoketi.kt (Tasima), BaglantiYoneticisi.kt, EsitlemeIsi.kt — İSKELET  [K2]
+alarm/                 AlarmPlanlayici.kt (AlarmKabugu), AlarmAlici.kt, AcilisAlici.kt (+ Bildirimler,
+                       BildirimIcerigi, HatirlatmaDurumu, SorunKaydi, AlarmIsParcacigi) — yazıldı [K3, kapandı]
+ekran/                 AnaEkran.kt (başlatıcı), KayitEkrani.kt (+ K4'ün ekleyecekleri) — İSKELET  [K4]
 cekirdek/ (üretilir)   UniFFI bağlamaları: build/generated, git'e girmez
 src/test/kotlin/...    KopruTest.kt [şef]; her parça kendi test dosyasını kendi paketinde açar
 ```
+`KopruTest` gerçek Rust kitaplığına karşı (JVM): şema, tanı, ekle -> kayıt/liste -> alarm kur/çaldı,
+boş depoda motor sorguları, eşleştirme akışı (`pair_request`, ret -> `Reddedildi`, yeniden başlatma ->
+`Bekliyor`, kaldırma -> `anahtariSil`), `JavaZaman` kuralı.
 Bağımlılık: JNA 5.17 (UniFFI), OkHttp 4.12 (K2). AndroidX yok (`android.useAndroidX=false`): ekranlar
 platform View'larıyla, iş JobScheduler'la, bildirim platform API'siyle. Kotlin paketleri birbirini
 yalnız şu noktalardan çağırır: `CekirdekErisimi.al`, `BaglantiYoneticisi.basla/birak`,
@@ -157,8 +163,8 @@ bir yazma arayüzü bekletmez. Bellek içi veritabanında (testler) motor okur.
 
 `cargo test` içinde `tests/vektorler.rs` her bölümü çalıştırır ve tablo basar (geçti/kaldı/bekliyor,
 bekleyen parçanın adı). KALDI ya da dosyada tanınmayan bölüm -> çıkış 1. İlk dalga sonu: 267 geçti
-(173/173 mesaj + model kuralları), 132 bekliyor, `imza` (1) Kotlin'e devredildi. İkinci dalganın her Rust
-parçası bitince kendi bölümleri "bekliyor"dan "geçti"ye geçmelidir; düzeneğe dokunulmaz.
+(173/173 mesaj + model kuralları), 132 bekliyor, `imza` (1) Kotlin'e devredildi. İkinci dalga sonu
+(birleşim): **399 geçti, 0 bekliyor, 0 kaldı**, `imza` (1) Kotlin'de (`kimlik/ImzaVektoruTest`).
 
 ## İkinci dalga iş parçaları
 
@@ -282,14 +288,30 @@ Ortak: Türkçe ad ve yorum; kişisel veri yok; her parça yalnız kendi dosyala
   bağımlılığı gerekirse rapora), `eslestirmeQrCoz`, `eslestirmeBaslat`, `eslesmeDurumu`, kaldırma.
 - Test: `ajanda-kurallar.json` `imza` vektörü (java.security ile `dogru_metin` doğrulanır, `yanlis_metin` reddedilir;
   JVM testinde Keystore yok: doğrulamayı Keystore'dan ayrı bir işlevde tut). Bağımlılık: R4 (uçtan uca).
+- **Durum: yazıldı, birleşti (kapandı).** Mantık saf `EslestirmeMakinesi`'nde (birim testli); ekran yalnız
+  çizer. Çekirdek çağrıları ekranın tek arka iş parçacığında; gözlemci yalnız okuma işini oraya atar.
+  `eslestirmeBaslat` bitmeden okunan durum yok sayılır, sonra `eslesmeDurumu` + `baglantiDurumu` okunur (R4
+  sırası). Eşleştirme başlarken `BaglantiYoneticisi.basla(context)`'i ARKA iş parçacığından çağırır, `birak`
+  demez. Açmak: `EslestirmeEkrani.ac(context)` (yeni tamamlanınca `RESULT_OK`). Pencere `FLAG_SECURE`,
+  `adjustResize` + kenardan kenara pay (manifest ve ekran).
 
 ### K2 — Kotlin ağ taşıması ve arka plan eşitlemesi
-- Dosyalar: `ag/AjandaSoketi.kt`, `ag/BaglantiYoneticisi.kt`, `ag/EsitlemeIsi.kt`, `src/test/.../ag/*`.
-- Uygular: `Tasima`; OkHttp dinleyicisi -> `baglantiAcildi`/`cerceveGeldi`/`baglantiKapandi` (nesil); tek soket;
-  yeniden bağlanma (artan bekleme), ağ geri gelince deneme; ping aralığı; `EsitlemeIsi` (JobScheduler, ağ
-  koşullu, periyodik; zamanlamayı K2 kurar, `AnaEkran` açılışında da `BaglantiYoneticisi.basla`).
-  Çekirdek çağrıları OkHttp iş parçacığında; geri çağrıdan çekirdeğe eşzamanlı girme.
-- Bağımlılık: R4 (uçtan uca), K1 (eşleşme).
+- Dosyalar (yalnız bunlara yazar): `ag/` paketinin tamamı (`AjandaSoketi.kt`, `BaglantiYoneticisi.kt`,
+  `EsitlemeIsi.kt`, gerekirse yeni `ag/*.kt`), `src/test/kotlin/dev/eren/ajanda/ag/*`.
+- Uygular: `Tasima` (`gonder` -> `webSocket.send`, `false` = yollanamadı; `kapat` -> `close`); OkHttp dinleyicisi ->
+  `baglantiAcildi`/`cerceveGeldi`/`baglantiKapandi` (nesil; R4 notundaki K2 kuralları); tek soket; yeniden bağlanma
+  (artan bekleme), ağ geri gelince deneme; ping aralığı; `EsitlemeIsi` (JobScheduler, ağ koşullu, periyodik;
+  zamanlamayı K2 kurar; tamam ölçütü `asama == CANLI && kuyrukta == 0`; işin içinde ayrıca
+  `alarm.AlarmYenidenKurma.simdi(context, YenidenKurmaNedeni.PERIYODIK)`).
+- Sabit arayüz (K4 ve K1 çağırır, imza değişmez): `object BaglantiYoneticisi { fun basla(context: Context); fun birak() }`.
+  İkisi de her iş parçacığından çağrılabilir, hemen döner (bloklamaz), tekrarlı çağrı zararsızdır; `basla`
+  eşleşme yokken (`baglantiAdresi() == null`) hiçbir şey açmaz. K1 `basla`'yı arka iş parçacığından çağırır,
+  K4 ana iş parçacığından (`onStart`) çağırabilir.
+- Geri çağrılar (`gonder`, `kapat`) çekirdeğin etki kilidi altında gelir: bloklama, çekirdeğe yeniden girme.
+  Çekirdek çağrıları OkHttp iş parçacığında (ana iş parçacığı değil).
+- Hazır olan: OkHttp 4.12 Gradle'da; manifestte INTERNET, ACCESS_NETWORK_STATE, cleartext, `ag.EsitlemeIsi`
+  (`BIND_JOB_SERVICE`), RECEIVE_BOOT_COMPLETED (kalıcı iş için).
+- Bağımlılık: R4 (uçtan uca), K1 (eşleşme). Doğrulama: aşağıdaki iki komut ve `KopruTest` yeşil kalır.
 
 ### K3 — Kotlin alarm, bildirim, alıcılar
 - Dosyalar: `alarm/AlarmPlanlayici.kt`, `alarm/AlarmAlici.kt`, `alarm/AcilisAlici.kt` (+ `alarm/Bildirimler.kt`),
@@ -298,35 +320,55 @@ Ortak: Türkçe ad ve yorum; kişisel veri yok; her parça yalnız kendi dosyala
   izin yoksa `setAndAllowWhileIdle`; ölçüm sonucu yalnız bu sınıfı değiştirir), bildirim kanalı, hatırlatma ve
   kaçırılan özet bildirimi (dokununca `AnaEkran`), alıcılar `goAsync` + arka plan iş parçacığı.
 - Bağımlılık: R3.
+- **Durum: yazıldı, birleşti (kapandı).** Kurulamayan alarm ve gösterilemeyen kaçırılan özeti
+  `KabukHatasi.Basarisiz` fırlatır (çekirdek satırı siler / teslim işaretini kaldırır) ve `SorunKaydi`'ne yazılır.
+  Açılış alıcısı `SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED`'i de dinler (`PERIYODIK` nedeniyle).
+  Başkalarının kullanacağı yüz: `AlarmYenidenKurma.arkaPlanda(context, neden)` (ana iş parçacığından, sıraya
+  koyar) ve `simdi(context, neden)` (zaten arka plandaysan); `HatirlatmaDurumu.oku(context)` (ekranda
+  gösterilecek sorunlar, ana iş parçacığında okunabilir), `goruldu`, `bildirimIzniIstenmeli`, `cozumNiyeti`;
+  bildirime dokununca başlatıcı etkinlik `Bildirimler.KAYIT_ID` ekstrasıyla (varsa) açılır.
 
 ### K4 — Kotlin ekranlar
-- Dosyalar: `ekran/` paketinin tamamı (`AnaEkran.kt`, `KayitEkrani.kt`, eklenecekler), `src/test/.../ekran/*`.
+- Dosyalar (yalnız bunlara yazar): `ekran/` paketinin tamamı (`AnaEkran.kt`, `KayitEkrani.kt`, eklenecekler),
+  `src/test/kotlin/dev/eren/ajanda/ekran/*`.
 - Kullanır: `liste(ListeSorgusu(Sekme.TARIHLI|TARIHSIZ|TASLAKLAR|SILINENLER, kapalilarDahil))`, `kayit`,
   `ekle`, `duzenle`, `durumDegistir`, `onayla`, `sil`, `geriYukle`, `retListesi`, `retAt`, `gecmisIste`/`gecmis`,
   `baglantiDurumu`, `eslesmeDurumu`, `gozlemciEkle/Cikar`, `varsayilanHatirlatmalar`, `metniTemizle`,
   `govdeyiHazirla`. İki ana sekme; taslak işareti ve onay; tamamla/geri al; ret listesi (düzelt -> form, at);
-  metin düz gösterilir. Eşleşme yoksa `kimlik.EslestirmeEkrani`'na yönlendir; açılışta
-  `alarmlariYenidenKur(UYGULAMA_ACILDI)` ve `BaglantiYoneticisi.basla`.
-- Bağımlılık: R4 (veri), K1 (eşleştirme ekranı).
+  metin düz gösterilir. Eşleşme yoksa `kimlik.EslestirmeEkrani.ac(context)`; açılışta
+  `alarm.AlarmYenidenKurma.arkaPlanda(context, UYGULAMA_ACILDI)`; görünürken `BaglantiYoneticisi.basla(context)`
+  (`onStart`), görünmezken `birak()` (`onStop`). K2'nin gövdesini bekleme: iskeletle de derlenir ve çalışır.
+- Bildirim izni (13+) ve hatırlatma sorunları: `HatirlatmaDurumu` (K3 bölümü). Bildirimden gelen niyette
+  `Bildirimler.KAYIT_ID` varsa o kaydı aç. Android 15+ kenardan kenara: `WindowInsets` payını uygula.
+- `AnaEkran` bugün `KopruKaniti`'ni gösteriyor; K4 onu kendi ekranıyla değiştirir (`KopruKaniti` debug alıcısı
+  ve `KopruTest` için kalır, K4 ona dokunmaz). Yeni Activity yerine aynı Activity içinde görünüm/diyalog
+  kullanırsa manifeste gerek kalmaz; gerekirse rapora.
+- Bağımlılık: R4 (veri), K1 (eşleştirme ekranı), K2 (yalnız `BaglantiYoneticisi` imzası).
 
 ## Ortak dosyalar ve dokunma sırası
 
-Dondurulmuş (ikinci dalgada yalnız şef, iş parçaları birleştikten sonra, sırayla değiştirir):
-`Cargo.toml` (çalışma alanı ve `cekirdek/`), `Cargo.lock`, `cekirdek/src/lib.rs`, `hata.rs`, `kopru/*`,
-`model/*`, `kural/mod.rs`, `tests/vektorler.rs`, `android/app/build.gradle.kts`, `gradle.properties`,
-`settings.gradle.kts`, `AndroidManifest.xml`, `CekirdekErisimi.kt`, `KopruKaniti.kt`, `kabuk/JavaZaman.kt`,
-`KopruTest.kt`, `README.md`, bu belge.
+Dondurulmuş (üçüncü dalgada — K2 ve K4 paralel — yalnız şef, iki parça birleştikten sonra, sırayla
+değiştirir): `Cargo.toml` (çalışma alanı ve `cekirdek/`), `Cargo.lock`, `cekirdek/` (bütün Rust: köprü yüzeyi
+dahil), `android/build.gradle.kts`, `android/app/build.gradle.kts`, `gradle.properties`, `settings.gradle.kts`,
+`AndroidManifest.xml` (main ve debug), `CekirdekErisimi.kt`, `KopruKaniti.kt`, `kabuk/JavaZaman.kt`,
+`src/debug/**`, `KopruTest.kt`, `README.md`, bu belge. Kapanmış paketler de dondurulmuştur: `kimlik/` (K1),
+`alarm/` (K3) ve testleri; K2 ile K4 bunları yalnız çağırır.
 
-- Yeni crate, Gradle bağımlılığı, izin, bileşen, köprü yöntemi, `CekirdekHatasi` değişkeni ya da model düzeltmesi
-  gereken parça bunu raporunda (gerekçe + tam değişiklik) yazar, ortak dosyaya dokunmaz; şef dalga sonunda tek
-  tek uygular, her birinden sonra iki komut yeşil.
-- Önceden bildirilenler: Gradle'da OkHttp; manifestte INTERNET, ACCESS_NETWORK_STATE, SCHEDULE_EXACT_ALARM (≤32),
-  USE_EXACT_ALARM, RECEIVE_BOOT_COMPLETED, POST_NOTIFICATIONS, cleartext; bileşenler `ekran.AnaEkran`,
-  `ekran.KayitEkrani`, `kimlik.EslestirmeEkrani`, `alarm.AlarmAlici`, `alarm.AcilisAlici`, `ag.EsitlemeIsi`.
-  K4 yeni Activity yerine aynı Activity içinde görünüm/diyalog kullanırsa manifeste gerek kalmaz.
+- K2 ile K4 birbirinin paketine yazmaz; aralarındaki tek sözleşme `BaglantiYoneticisi.basla/birak` imzasıdır.
+- Yeni crate, Gradle bağımlılığı, izin, bileşen, köprü yöntemi, `CekirdekHatasi` değişkeni, model düzeltmesi
+  ya da kapanmış pakette değişiklik gereken parça bunu raporunda (gerekçe + tam değişiklik) yazar, dosyaya
+  dokunmaz; şef dalga sonunda tek tek uygular, her birinden sonra iki komut yeşil.
+- Doğrulama (her parça, bitirmeden önce): `apps/ajanda` içinden `cargo test -p ajanda-cekirdek` ve
+  `apps/ajanda/android` içinden `gradlew.bat --no-daemon --offline assembleDebug testDebugUnitTest`
+  (`ANDROID_HOME` verilerek; aynı anda tek Gradle). İkinci dalga sonunda ikisi de tamamen yeşil.
+- Manifestte hazır: INTERNET, ACCESS_NETWORK_STATE, SCHEDULE_EXACT_ALARM (≤32), USE_EXACT_ALARM,
+  RECEIVE_BOOT_COMPLETED, POST_NOTIFICATIONS, cleartext; bileşenler `ekran.AnaEkran` (başlatıcı),
+  `ekran.KayitEkrani`, `kimlik.EslestirmeEkrani` (`adjustResize`), `alarm.AlarmAlici`, `alarm.AcilisAlici`
+  (açılış, paket, saat, dilim, kesin alarm izni), `ag.EsitlemeIsi`.
 - `depo/sema.rs` R4'ündür; `kurulu_alarmlar` değişikliği R3 raporuyla. Yayımdan önce göç 2 yerinde
   düzeltilebilir; yayımdan sonra yalnız yeni göç.
-- Birleştirme sırası önerisi: R1, R2 (bağımsız) -> R3 -> R4 -> K1, K3 -> K2 -> K4.
+- Birleştirme sırası: R1, R2 -> R3 -> R4 -> K1, K3 (ikinci dalga, birleşti) -> K2, K4 (üçüncü dalga, paralel;
+  birleştirmede önce K2).
 
 ## Bilinen ayrışmalar ve açık noktalar
 
@@ -341,5 +383,16 @@ Dondurulmuş (ikinci dalgada yalnız şef, iş parçaları birleştikten sonra, 
   zamanlayıcı ya da "şimdi dene" yöntemi ister (yüzey değişikliği).
 - (R4) Çevrimdışı reddedilen `ekle`'nin arkasından aynı kayda kuyruklanmış işlemler servise gidip
   `kayit_bulunamadi` alır: kullanıcı ret listesinde birden çok satır görür (hiçbiri kaybolmaz).
-- (R4) `kural/mod.rs`'teki `yazilmadi!` makrosu artık hiçbir yerde kullanılmıyor (derleyici uyarısı); şef
-  kaldırabilir.
+- (K3) Kesin alarm izni değişimi (`SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED`) köprüde ayrı neden
+  olmadığından `YenidenKurmaNedeni.PERIYODIK` ile gelir (çekirdek nedeni davranışta kullanmaz). Ayrı değer
+  köprü yüzeyi değişikliğidir; yapılmadı.
+- (K3) Kaçırılan özeti kalıcı olarak gösterilemiyorsa (bildirimler kapalı) her senkronda yeniden denenir ve
+  her deneme `SorunKaydi.gosterilemedi`'ye yazılır: sayaç büyür, kimlik listesinde aynı kayıt yinelenebilir
+  (en çok 20). Çalan TEK hatırlatma gösterilemezse çekirdek onu teslim edilmiş sayar (yalnız `SorunKaydi`'de
+  izi kalır); geri alma yolu köprüde yok.
+- (K1) Eski eşleşme dururken yeni QR reddedilirse `eslesmeDurumu` `Reddedildi` döner (öncelik); eşleştirme
+  ekranı açılışta (`Yukleniyor`) bunu başarısızlık olarak gösterip girişe döner, "eşleşmiş" görünmez.
+  Bağlantı eskisiyle sürer; ana ekran (K4) eşleşmeyi `baglantiAdresi() != null` ile de anlayabilir.
+- (Ekranlar) `targetSdk 36`: Android 15+ cihazda pencere kenardan kenaradır; `adjustResize` tek başına
+  pencereyi küçültmez. `kimlik.EslestirmeEkrani` sistem çubuğu ve klavye payını kendisi uygular; K4'ün
+  ekranları da `WindowInsets` (systemBars + ime) payını uygulamalıdır.

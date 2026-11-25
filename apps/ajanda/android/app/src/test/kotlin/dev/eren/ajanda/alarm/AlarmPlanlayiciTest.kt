@@ -115,15 +115,25 @@ class AlarmPlanlayiciTest {
     }
 
     @Test
-    fun kacirilan_gosterilemezse_kayit_kimlikleri_saklanir() {
+    fun kacirilan_gosterilemezse_kayit_kimlikleri_saklanir_ve_cekirdege_hata_doner() {
         bildirici.gosterebilir = false
-        planlayici.kacirilanlariGoster(KacirilanBildirimi(listOf(bildirim(1), bildirim(2))))
+        gosterilemediBekle { planlayici.kacirilanlariGoster(KacirilanBildirimi(listOf(bildirim(1), bildirim(2)))) }
         assertEquals(listOf("k_1", "k_2"), sorunlar.oku().gosterilemeyenKayitlar)
         assertEquals(2, sorunlar.oku().gosterilemeyenSayisi)
         bildirici.gosterebilir = true
         bildirici.firlat = SecurityException("bildirim")
-        planlayici.kacirilanlariGoster(KacirilanBildirimi(listOf(bildirim(3))))
+        gosterilemediBekle { planlayici.kacirilanlariGoster(KacirilanBildirimi(listOf(bildirim(3)))) }
         assertEquals(3, sorunlar.oku().gosterilemeyenSayisi)
+    }
+
+    /** Çekirdek teslim işaretini ancak hata görürse kaldırır (MIMARI.md R4, K3). */
+    private inline fun gosterilemediBekle(blok: () -> Unit) {
+        try {
+            blok()
+            fail("KabukHatasi bekleniyordu")
+        } catch (e: KabukHatasi.Basarisiz) {
+            assertTrue(e.mesaj, e.mesaj.contains("gösterilemedi"))
+        }
     }
 }
 
