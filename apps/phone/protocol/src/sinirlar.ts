@@ -104,3 +104,58 @@ export const AZAMI_CERCEVE = {
   CIHAZ: 10 * 1024 * 1024,
   KOPRU: 12 * 1024 * 1024,
 } as const;
+
+/**
+ * `/ajanda` kanalının sürümü (ajanda uygulaması, eşleştirmesi ve QR'ı dahil). Öteki iki sabitten
+ * bağımsızdır: `/sohbet`, `/cihaz`, boru ve `eren-auth-v1` baytları bundan etkilenmez. Kural README
+ * "Sürümleme" ile aynıdır: mesaj, alan, kapalı liste öğesi eklemek ya da sınır değiştirmek artıştır.
+ */
+export const AJANDA_SURUMU = 1 as const;
+
+/**
+ * Yalnız ajanda alanlarının sınırları (`docs/AJANDA.md`). `SINIRLAR`'a eklenmez (Kotlin o bloğun
+ * anahtar kümesini sınar). Karakter sınırları UTF-16 birimi, adet sınırları öğe sayısıdır.
+ */
+export const AJANDA_SINIRLARI = {
+  /** Başlık: tek satır. */
+  BASLIK: 200,
+  /** Açıklama: çok satırlı. */
+  ACIKLAMA: 4_000,
+  /** Kullanıcının zaman ifadesi, birebir ("yarın 3'te"). */
+  ZAMAN_IFADESI: 120,
+  /** Kaynak izindeki kısa alıntı: tek satır. */
+  ALINTI: 280,
+  /** IANA saat dilimi adı. */
+  SAAT_DILIMI: 64,
+  TEKIL_ANAHTAR: 128,
+  HATIRLATMA_ADET: 8,
+  /** `once` hatırlatmasının en uzak öne alınışı: 28 gün, dakika. */
+  HATIRLATMA_ONCE_DK: 40_320,
+  /** Randevu süresi üst sınırı: 7 gün, dakika. */
+  SURE_DK: 10_080,
+  /** `donem` zamanının en uzun hali, iki uç dahil gün. */
+  DONEM_GUN: 366,
+  TEKRAR_ARALIK: 99,
+  TEKRAR_ADET: 999,
+  /** Tekrar eden kaydın örnek başına durum satırı üst sınırı. */
+  ORNEK_ADET: 500,
+  YIL_MIN: 1900,
+  YIL_MAX: 2199,
+  /** Silinmiş (mezar taşı) dahil kayıt üst sınırı: servis yeni eklemeyi `kayit_siniri` ile reddeder. */
+  KAYIT_ADET: 50_000,
+  /** `ajanda_listele` en çok bu kadar kayıt döner; `en_fazla` verilmezse `LISTE_VARSAYILAN`. */
+  LISTE_ADET: 50,
+  LISTE_VARSAYILAN: 20,
+  /** `ajanda_listele.ara`. */
+  ARAMA: 100,
+  /** `gecmis` çerçevesinin sayfa boyu. */
+  GECMIS_SAYFA: 20,
+  /** Modele giden liste metninde açıklamanın kırpıldığı uzunluk (kablo sınırı `ACIKLAMA`). */
+  MODEL_ACIKLAMA: 300,
+} as const;
+
+/** `/ajanda` çerçevesinin ve ajanda borusunun ayrıştırma öncesi üst sınırı (UTF-16 birimi). */
+export const AJANDA_AZAMI_CERCEVE = {
+  KANAL: 2 * 1024 * 1024,
+  BORU: 4 * 1024 * 1024,
+} as const;

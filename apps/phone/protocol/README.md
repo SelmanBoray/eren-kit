@@ -155,6 +155,21 @@ Servis `plan_proposed{plan, plan_hash}` yollar. Telefon özeti yeniden hesaplar,
 
 Boruda kullanıcı mesajı gönderen fiil yoktur ve test bunu sabitler. `soru_id` köprüde üretilir: servis yeniden başlarsa köprü bağlanır ve `soru_bekle{soru_id}` ile beklemeyi sürdürür.
 
+### Ajanda
+
+Kararlar ve akış: [../docs/AJANDA.md](../docs/AJANDA.md). Yukarıdaki sürümlerin ve kanalların hiçbir baytını değiştirmez.
+
+| Kanal | Taraflar | Şema | Çözücü | `v` |
+|---|---|---|---|---|
+| `/ajanda` | Ajanda uygulaması, servis | `AjandaYukari`, `AjandaAsagi`, `AjandaKaydi` (`ajanda.ts`) | `ajandaYukariCoz`, `ajandaAsagiCoz` | `AJANDA_SURUMU` (1) |
+| Ajanda borusu (`AJANDA_BORU_ADI`) | Ajanda köprüsü, servis | `AjandaKopruYukari`, `AjandaKopruAsagi`, `AJANDA_ARACLARI` (`ajanda-arac.ts`) | `ajandaKopruYukariCoz`, `ajandaKopruAsagiCoz` | 1 (boru zarfı) |
+
+- `/ajanda` ↑ `pair_request`, `hello{son_rev, depo_id?}`, `auth_response`, `islem{islem_id, islem}`, `gecmis_iste`; ↓ `pair_result{kapsam}`, `auth_challenge`, `welcome{depo_id, bas_rev, tam}`, `kayit`, `esitlendi`, `islem_sonucu`, `gecmis`, `error`. İşlemler (`islem`): `ekle`, `guncelle`, `durum`, `onayla`, `sil`, `geri_yukle`.
+- İmza metni `ajandaKimlikImzaMetni` (`eren-ajanda-auth-v1`, `kanal:ajanda`, `kapsam:ajanda` satırlarıyla); QR `AjandaEslestirmeQr`. Kapsam: `CIHAZ_KAPSAMLARI`, `KAPSAM_KANALLARI`, `kanalKapsamdaMi`.
+- Hata: `error`/`pair_result` `AJANDA_KANAL_HATALARI` (v1 altkümesi); işlem retleri `AJANDA_RET_NEDENLERI` (`HATA_KODLARI` dışında).
+- Sınırlar `AJANDA_SINIRLARI` ve `AJANDA_AZAMI_CERCEVE` (`SINIRLAR`'a girmez). Vektörler: [vektorler/ajanda-mesaj.json](vektorler/ajanda-mesaj.json) (`ham` çerçeve, `gecerli`, `tur`/`kod`; biçim `cihaz-mesaj.json` ile aynı), [vektorler/ajanda-kurallar.json](vektorler/ajanda-kurallar.json) (imza metni ve gerçek P-256 imzası, kapsam, QR, birleştirme, hatırlatma etkinliği, tekilleştirme anahtarı).
+- Ajanda borusu mevcut borudan ayrıdır: `KOPRU_ROLLERI` ve `ROL_FIILLERI` değişmez. Rol `ana_oturum`, fiiller `ajanda_ekle`, `ajanda_guncelle`, `ajanda_listele`. Girdide kaynak, taslak, kimlik ve insan işareti yoktur (test sabitler); modele giden metin `ajandaListesiMetni` (çitli), `ajandaEkleMetni`, `ajandaGuncelleMetni`.
+
 ## `plan_hash`
 
 `plan_hash = hex(SHA-256(UTF-8(kanonik(plan))))`, küçük harf, 64 karakter. Girdi şemadan geçmiş `Plan`dır; `plan_hash` planın alanı değildir. Saf gerçekleme `src/kanonik.ts`. Kotlin için sabit vektörler: [vektorler/plan-hash.json](vektorler/plan-hash.json).

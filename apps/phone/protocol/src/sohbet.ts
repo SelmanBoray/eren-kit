@@ -120,7 +120,8 @@ function yalnizKisayolda(s: { input: string; baglam?: unknown }): boolean {
   return s.baglam === undefined || s.input === "kisayol";
 }
 
-const EslestirmeKodu = z
+/** Eşleştirme kısa kodu. `/ajanda` eşleştirmesi de aynı kuralı kullanır. */
+export const EslestirmeKodu = z
   .string()
   .min(SINIRLAR.ESLESTIRME_KODU_MIN)
   .max(SINIRLAR.ESLESTIRME_KODU_MAX)

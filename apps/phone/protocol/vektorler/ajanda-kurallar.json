@@ -1,0 +1,448 @@
+{
+ "aciklama": "Ajanda kuralları için dil bağımsız vektörler. imza_metni: ajandaKimlikImzaMetni çıktısı ve UTF-8 baytları. imza: test için üretilmiş tek kullanımlık P-256 anahtarıyla (özel anahtar saklanmadı) metin[pc] üzerine DER imza; aynı imza telefon metniyle doğrulanmamalı. kapsam: kanalKapsamdaMi. birlestirme: ajandaDegisikligiUygula. hatirlatma_etkin: hatirlatmaEtkinMi. tekil_anahtar: ajandaTekilAnahtari.",
+ "surum": 1,
+ "imza_metni": [
+  {
+   "ad": "pc",
+   "girdi": {
+    "rol": "pc",
+    "device_id": "cihaz_AjandaOrnek01",
+    "client_nonce": "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVowMTIzNA==",
+    "server_nonce": "WllYV1ZVVFNSUVBPTk1MS0pJSEdGRURDQkEwMTIzNA=="
+   },
+   "metin": "eren-ajanda-auth-v1\npc\nkanal:ajanda\nkapsam:ajanda\ncihaz_AjandaOrnek01\nQUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVowMTIzNA==\nWllYV1ZVVFNSUVBPTk1MS0pJSEdGRURDQkEwMTIzNA==",
+   "utf8_hex": "6572656e2d616a616e64612d617574682d76310a70630a6b616e616c3a616a616e64610a6b617073616d3a616a616e64610a636968617a5f416a616e64614f726e656b30310a51554a44524556475230684a536b744d545535505546465355315256566c645957566f774d54497a4e413d3d0a576c6c5956315a5656464e5355564250546b314d5330704a5345644752555244516b45774d54497a4e413d3d"
+  },
+  {
+   "ad": "telefon",
+   "girdi": {
+    "rol": "telefon",
+    "device_id": "cihaz_AjandaOrnek01",
+    "client_nonce": "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVowMTIzNA==",
+    "server_nonce": "WllYV1ZVVFNSUVBPTk1MS0pJSEdGRURDQkEwMTIzNA=="
+   },
+   "metin": "eren-ajanda-auth-v1\ntelefon\nkanal:ajanda\nkapsam:ajanda\ncihaz_AjandaOrnek01\nQUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVowMTIzNA==\nWllYV1ZVVFNSUVBPTk1MS0pJSEdGRURDQkEwMTIzNA==",
+   "utf8_hex": "6572656e2d616a616e64612d617574682d76310a74656c65666f6e0a6b616e616c3a616a616e64610a6b617073616d3a616a616e64610a636968617a5f416a616e64614f726e656b30310a51554a44524556475230684a536b744d545535505546465355315256566c645957566f774d54497a4e413d3d0a576c6c5956315a5656464e5355564250546b314d5330704a5345644752555244516b45774d54497a4e413d3d"
+  }
+ ],
+ "imza": {
+  "public_key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAELo7RHblixW/eCgcHUWEUpDbbJAklv2hci/UyoZvt3tlFknx8R6AuK4fNoCDUtAri/uqLoKYXC/n78yrmUiLyFg==",
+  "signature": "MEUCIDwRZ0WEFDhwisYn/ZL/wtqgRTHKuO7ZCUZDz6dSTMy3AiEAt8vF9kBGi5Ho5oFUeoZ2t78RJ3f/TGZOA5vt9X4hZCI=",
+  "dogru_metin": "pc",
+  "yanlis_metin": "telefon"
+ },
+ "kapsam": [
+  {
+   "kapsam": "sohbet",
+   "kanal": "sohbet",
+   "izinli": true
+  },
+  {
+   "kapsam": "sohbet",
+   "kanal": "cihaz",
+   "izinli": true
+  },
+  {
+   "kapsam": "sohbet",
+   "kanal": "ajanda",
+   "izinli": false
+  },
+  {
+   "kapsam": "ajanda",
+   "kanal": "ajanda",
+   "izinli": true
+  },
+  {
+   "kapsam": "ajanda",
+   "kanal": "sohbet",
+   "izinli": false
+  },
+  {
+   "kapsam": "ajanda",
+   "kanal": "cihaz",
+   "izinli": false
+  }
+ ],
+ "qr": {
+  "gecerli": [
+   {
+    "v": 1,
+    "kanal": "ajanda",
+    "host": "100.101.102.103",
+    "port": 8765,
+    "kod": "ABCD2345",
+    "server_public_key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAELo7RHblixW/eCgcHUWEUpDbbJAklv2hci/UyoZvt3tlFknx8R6AuK4fNoCDUtAri/uqLoKYXC/n78yrmUiLyFg=="
+   }
+  ],
+  "gecersiz": [
+   {
+    "ad": "eski QR (kanal yok)",
+    "qr": {
+     "v": 1,
+     "host": "100.101.102.103",
+     "port": 8765,
+     "kod": "ABCD2345",
+     "server_public_key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAELo7RHblixW/eCgcHUWEUpDbbJAklv2hci/UyoZvt3tlFknx8R6AuK4fNoCDUtAri/uqLoKYXC/n78yrmUiLyFg=="
+    }
+   },
+   {
+    "ad": "başka kanal",
+    "qr": {
+     "v": 1,
+     "kanal": "sohbet",
+     "host": "100.101.102.103",
+     "port": 8765,
+     "kod": "ABCD2345",
+     "server_public_key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAELo7RHblixW/eCgcHUWEUpDbbJAklv2hci/UyoZvt3tlFknx8R6AuK4fNoCDUtAri/uqLoKYXC/n78yrmUiLyFg=="
+    }
+   },
+   {
+    "ad": "Tailscale dışı adres",
+    "qr": {
+     "v": 1,
+     "kanal": "ajanda",
+     "host": "100.200.1.1",
+     "port": 8765,
+     "kod": "ABCD2345",
+     "server_public_key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAELo7RHblixW/eCgcHUWEUpDbbJAklv2hci/UyoZvt3tlFknx8R6AuK4fNoCDUtAri/uqLoKYXC/n78yrmUiLyFg=="
+    }
+   },
+   {
+    "ad": "kapsam alanı",
+    "qr": {
+     "v": 1,
+     "kanal": "ajanda",
+     "kapsam": "ajanda",
+     "host": "100.101.102.103",
+     "port": 8765,
+     "kod": "ABCD2345",
+     "server_public_key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAELo7RHblixW/eCgcHUWEUpDbbJAklv2hci/UyoZvt3tlFknx8R6AuK4fNoCDUtAri/uqLoKYXC/n78yrmUiLyFg=="
+    }
+   }
+  ]
+ },
+ "birlestirme": [
+  {
+   "ad": "insan iki alanı değiştirir, biri aynı",
+   "kayit": {
+    "kayit_id": "k_dis01",
+    "revizyon": 12,
+    "tur": "randevu",
+    "baslik": "Dişçi",
+    "zaman": {
+     "kesinlik": "an",
+     "tarih": "2026-11-26",
+     "saat": "15:00",
+     "saat_dilimi": "Europe/Istanbul",
+     "ifade": "yarın 3'te"
+    },
+    "hatirlatmalar": [
+     {
+      "tur": "once",
+      "dk": 60
+     }
+    ],
+    "ornekler": [],
+    "durum": "acik",
+    "taslak": false,
+    "silindi": false,
+    "elle_alanlar": [],
+    "kaynak": {
+     "yol": "sohbet_araci",
+     "tur_kokeni": "insan",
+     "sohbet_id": "ana",
+     "kaynak_msg_id": "m_0001",
+     "alinti": "yarın 3'te dişçi",
+     "tekil_anahtar": "t1:0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "olusturma_ms": 1795000000000,
+    "guncelleme_ms": 1795000000000
+   },
+   "degisiklik": {
+    "baslik": "Dişçi",
+    "zaman": {
+     "kesinlik": "an",
+     "tarih": "2026-11-26",
+     "saat": "16:00",
+     "saat_dilimi": "Europe/Istanbul"
+    }
+   },
+   "otomasyon": false,
+   "beklenen": {
+    "uygulanan": [
+     "zaman"
+    ],
+    "korunan": [],
+    "elle_alanlar": [
+     "zaman"
+    ]
+   }
+  },
+  {
+   "ad": "otomasyon elle alanı ezemez",
+   "kayit": {
+    "kayit_id": "k_fatura",
+    "revizyon": 13,
+    "tur": "gorev",
+    "baslik": "Elektrik faturasını öde",
+    "aciklama": "Son gün.\nOtomatik ödeme kapalı.",
+    "zaman": {
+     "kesinlik": "gun",
+     "tarih": "2026-11-30",
+     "saat_dilimi": "Europe/Istanbul"
+    },
+    "hatirlatmalar": [
+     {
+      "tur": "mutlak",
+      "tarih": "2026-11-30",
+      "saat": "09:00",
+      "saat_dilimi": "Europe/Istanbul"
+     }
+    ],
+    "ornekler": [],
+    "durum": "acik",
+    "taslak": false,
+    "silindi": false,
+    "elle_alanlar": [
+     "baslik",
+     "zaman"
+    ],
+    "kaynak": {
+     "yol": "elle",
+     "tur_kokeni": "insan",
+     "device_id": "cihaz_AjandaOrnek01"
+    },
+    "olusturma_ms": 1795000000000,
+    "guncelleme_ms": 1795000060000
+   },
+   "degisiklik": {
+    "baslik": "Fatura",
+    "aciklama": "Yeni not",
+    "durum": "tamam"
+   },
+   "otomasyon": true,
+   "beklenen": {
+    "uygulanan": [
+     "aciklama",
+     "durum"
+    ],
+    "korunan": [
+     "baslik"
+    ],
+    "elle_alanlar": [
+     "baslik",
+     "zaman"
+    ]
+   }
+  },
+  {
+   "ad": "otomasyon elle alana aynı değeri yazarsa korunan sayılmaz",
+   "kayit": {
+    "kayit_id": "k_fatura",
+    "revizyon": 13,
+    "tur": "gorev",
+    "baslik": "Elektrik faturasını öde",
+    "aciklama": "Son gün.\nOtomatik ödeme kapalı.",
+    "zaman": {
+     "kesinlik": "gun",
+     "tarih": "2026-11-30",
+     "saat_dilimi": "Europe/Istanbul"
+    },
+    "hatirlatmalar": [
+     {
+      "tur": "mutlak",
+      "tarih": "2026-11-30",
+      "saat": "09:00",
+      "saat_dilimi": "Europe/Istanbul"
+     }
+    ],
+    "ornekler": [],
+    "durum": "acik",
+    "taslak": false,
+    "silindi": false,
+    "elle_alanlar": [
+     "baslik",
+     "zaman"
+    ],
+    "kaynak": {
+     "yol": "elle",
+     "tur_kokeni": "insan",
+     "device_id": "cihaz_AjandaOrnek01"
+    },
+    "olusturma_ms": 1795000000000,
+    "guncelleme_ms": 1795000060000
+   },
+   "degisiklik": {
+    "baslik": "Elektrik faturasını öde"
+   },
+   "otomasyon": true,
+   "beklenen": {
+    "uygulanan": [],
+    "korunan": [],
+    "elle_alanlar": [
+     "baslik",
+     "zaman"
+    ]
+   }
+  },
+  {
+   "ad": "insan null ile açıklamayı kaldırır",
+   "kayit": {
+    "kayit_id": "k_fatura",
+    "revizyon": 13,
+    "tur": "gorev",
+    "baslik": "Elektrik faturasını öde",
+    "aciklama": "Son gün.\nOtomatik ödeme kapalı.",
+    "zaman": {
+     "kesinlik": "gun",
+     "tarih": "2026-11-30",
+     "saat_dilimi": "Europe/Istanbul"
+    },
+    "hatirlatmalar": [
+     {
+      "tur": "mutlak",
+      "tarih": "2026-11-30",
+      "saat": "09:00",
+      "saat_dilimi": "Europe/Istanbul"
+     }
+    ],
+    "ornekler": [],
+    "durum": "acik",
+    "taslak": false,
+    "silindi": false,
+    "elle_alanlar": [
+     "baslik",
+     "zaman"
+    ],
+    "kaynak": {
+     "yol": "elle",
+     "tur_kokeni": "insan",
+     "device_id": "cihaz_AjandaOrnek01"
+    },
+    "olusturma_ms": 1795000000000,
+    "guncelleme_ms": 1795000060000
+   },
+   "degisiklik": {
+    "aciklama": null
+   },
+   "otomasyon": false,
+   "beklenen": {
+    "uygulanan": [
+     "aciklama"
+    ],
+    "korunan": [],
+    "elle_alanlar": [
+     "baslik",
+     "aciklama",
+     "zaman"
+    ],
+    "kaldirilan": [
+     "aciklama"
+    ]
+   }
+  },
+  {
+   "ad": "olmayan alanı null yapmak değişiklik değildir",
+   "kayit": {
+    "kayit_id": "k_dis01",
+    "revizyon": 12,
+    "tur": "randevu",
+    "baslik": "Dişçi",
+    "zaman": {
+     "kesinlik": "an",
+     "tarih": "2026-11-26",
+     "saat": "15:00",
+     "saat_dilimi": "Europe/Istanbul",
+     "ifade": "yarın 3'te"
+    },
+    "hatirlatmalar": [
+     {
+      "tur": "once",
+      "dk": 60
+     }
+    ],
+    "ornekler": [],
+    "durum": "acik",
+    "taslak": false,
+    "silindi": false,
+    "elle_alanlar": [],
+    "kaynak": {
+     "yol": "sohbet_araci",
+     "tur_kokeni": "insan",
+     "sohbet_id": "ana",
+     "kaynak_msg_id": "m_0001",
+     "alinti": "yarın 3'te dişçi",
+     "tekil_anahtar": "t1:0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "olusturma_ms": 1795000000000,
+    "guncelleme_ms": 1795000000000
+   },
+   "degisiklik": {
+    "aciklama": null
+   },
+   "otomasyon": false,
+   "beklenen": {
+    "uygulanan": [],
+    "korunan": [],
+    "elle_alanlar": []
+   }
+  }
+ ],
+ "hatirlatma_etkin": [
+  {
+   "taslak": false,
+   "silindi": false,
+   "durum": "acik",
+   "etkin": true
+  },
+  {
+   "taslak": true,
+   "silindi": false,
+   "durum": "acik",
+   "etkin": false
+  },
+  {
+   "taslak": false,
+   "silindi": true,
+   "durum": "acik",
+   "etkin": false
+  },
+  {
+   "taslak": false,
+   "silindi": false,
+   "durum": "tamam",
+   "etkin": false
+  },
+  {
+   "taslak": false,
+   "silindi": false,
+   "durum": "iptal",
+   "etkin": false
+  }
+ ],
+ "tekil_anahtar": [
+  {
+   "girdi": {
+    "kapsam": "sohbet:ana",
+    "tur": "randevu",
+    "baslik": "Dişçi",
+    "zaman": {
+     "kesinlik": "an",
+     "tarih": "2026-11-26",
+     "saat": "15:00",
+     "saat_dilimi": "Europe/Istanbul",
+     "ifade": "yarın 3'te"
+    }
+   },
+   "anahtar": "t1:3aeabe0e37e481e7461cfce220b9aaee5deef03178c6a03baf6f47185d0ff30c"
+  },
+  {
+   "girdi": {
+    "kapsam": "sohbet:ana",
+    "tur": "gorev",
+    "baslik": "Ekmek al"
+   },
+   "anahtar": "t1:0e60ad256359ae654d6a47d40c66b1bfa1e792e76469cda5b8c6f472364554e5"
+  }
+ ]
+}
