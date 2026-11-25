@@ -28,7 +28,7 @@ Ayrı bir Android uygulaması (ajanda) görev, randevu ve notları gösterir; as
 ## Çakışma ve otomasyon kuralları
 
 - **Tek yazar, varış sırası.** Bütün değişiklikler serviste tek modülden ve tek işlem sırasıyla geçer. İki insan düzenlemesinde PC'ye son varan kazanır (alan alan; reddetme yok).
-- **Alan izi.** İnsan yolunda (`INSAN_YOLLARI`: `elle`, `sesli_not`) değişen alanlar `elle_alanlar`'a girer ve çıkmaz. Otomasyon (araç ve arka plan, insan turunda bile) bu alanları değiştiremez: alan atlanır, `korunan_alanlar` ile bildirilir, model kullanıcıya uygulamadan değiştirmesini söyler. Birleştirme `ajandaDegisikligiUygula`'dır; sonuç `AjandaKaydi` ile doğrulanır, bozulursa işlem `tutarsiz_kayit`.
+- **Alan izi.** Kullanıcının emri (`kullaniciEmriMi`): insan yolu (`INSAN_YOLLARI`: `elle`, `sesli_not`) ya da turu doğrulanmış insan mesajının başlattığı araç çağrısı (`ARAC_YOLLARI`, `tur_kokeni:"insan"`). Emirle değişen alan, daha önce elle değiştirilmiş olsa da uygulanır ve `elle_alanlar`'a girer, çıkmaz (kullanıcının sohbette açıkça istediği değer de sonraki otomasyona karşı korunmalı). Emir olmayan otomasyon (sentetik turdaki araç çağrısı, insan mesajından da olsa arka plan çıkarımı) bu alanları değiştiremez: alan atlanır, `korunan_alanlar` ile bildirilir. Birleştirme `ajandaDegisikligiUygula(kayit, degisiklik, yazar)`'dır; sonuç `AjandaKaydi` ile doğrulanır, bozulursa işlem `tutarsiz_kayit`. Her değişiklik geçmişe yazılır, geri alınabilir.
 - **Silme otomasyonu yener.** Mezar taşına `geri_yukle` dışında her işlem `kayit_silinmis`. Modelin silme fiili yoktur.
 - **Sentetik tur.** İnsan kökenli olmayan turdan gelen ekleme `taslak:true` doğar; sentetik turdan taslak olmayan kayda değişiklik `sentetik_turda_izinsiz`. Tur kökenini servis belirler (turu doğrulanmış `/sohbet` insan mesajı mı başlattı), araç girdisinde yoktur.
 - **Tekilleştirme.** Servis otomatik eklemede `ajandaTekilAnahtari({kapsam:"sohbet:<id>", tur, baslik, zaman})` hesaplar; silinmemiş eşi varsa `zaten_var`.
@@ -47,7 +47,7 @@ Ayrı bir Android uygulaması (ajanda) görev, randevu ve notları gösterir; as
 
 ## Bağlanma noktaları
 
-- **Sunucu ajanda modülü:** `AjandaKaydi`, `AjandaIslem`, `AjandaDegisiklik`, `AjandaGecmisGirdisi`, `AjandaParca`, `AjandaYazar`, `AjandaKaynagi`, `ajandaDegisikligiUygula`, `ajandaTekilAnahtari`, `otomasyonMu`, `AJANDA_RET_NEDENLERI`, `AJANDA_SINIRLARI` (`KAYIT_ADET`, `ORNEK_ADET`, `GECMIS_SAYFA`), `AJANDA_VARSAYILAN_HATIRLATMALAR`.
+- **Sunucu ajanda modülü:** `AjandaKaydi`, `AjandaIslem`, `AjandaDegisiklik`, `AjandaGecmisGirdisi`, `AjandaParca`, `AjandaYazar`, `AjandaKaynagi`, `ajandaDegisikligiUygula`, `ajandaTekilAnahtari`, `kullaniciEmriMi`, `otomasyonMu`, `AJANDA_RET_NEDENLERI`, `AJANDA_SINIRLARI` (`KAYIT_ADET`, `ORNEK_ADET`, `GECMIS_SAYFA`), `AJANDA_VARSAYILAN_HATIRLATMALAR`.
 - **Gateway ve eşleştirme:** `/ajanda` yolu, `ajandaYukariCoz`/`ajandaAsagiCoz`, `AjandaYukari`/`AjandaAsagi`, `ajandaKimlikImzaMetni`, `CihazKapsami`, `KAPSAM_KANALLARI`, `kanalKapsamdaMi`, `KAPSAM_ESLESTIRME_KANALI`, `ESKI_CIHAZ_KAPSAMI`, `AjandaEslestirmeQr`, `AJANDA_KANAL_HATALARI`, `AJANDA_AZAMI_CERCEVE.KANAL`. Depoya: `cihazlar.kapsam`, `eslestirme.kapsam` (ek göç).
 - **Köprü:** `AJANDA_BORU_ADI`, `AjandaKopruRolu`, `AJANDA_ROL_FIILLERI`, `ajandaFiilRoldeIzinliMi`, `AJANDA_ARACLARI`, `ajandaKopruYukariCoz`/`ajandaKopruAsagiCoz`, `jsonSemasi`, `ajandaListesiMetni`, `ajandaEkleMetni`, `ajandaGuncelleMetni`.
 - **Uygulama:** kanal şemaları ve vektörler, `hatirlatmaEtkinMi`, `ajandaDegisikligiUygula` (iyimser uygulama), `INSAN_YOLLARI`, zaman şemaları.
@@ -63,4 +63,4 @@ Ayrı bir Android uygulaması (ajanda) görev, randevu ve notları gösterir; as
 ## Kalan açıklar
 
 - İnsan turunda model, aynı turda okuduğu güvenilmez metne (web, ekran, rapor) dayanarak kayıt ekleyebilir; kayıt taslak olmaz. Etki eylemsiz bir kayıt ve yanlış bir hatırlatmadır; kaynak izi ve geçmiş bunu gösterir.
-- Kullanıcı bir alanı uygulamadan bir kez değiştirdiyse sohbetten ("dişçiyi 4'e al") o alanı değiştiremez; bu bilinçli seçimdir (model bunu söyler).
+- İnsan turundaki araç çağrısı elle değiştirilmiş alanı da değiştirebildiği için, aynı turda okunan güvenilmez metne kanan model kullanıcının elle düzelttiği bir alanı ezebilir. Etki eylemsiz bir alan değeridir; geçmiş yazarı ve önceki değeri gösterir, geri alınabilir.

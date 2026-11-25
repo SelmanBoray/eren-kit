@@ -27,6 +27,7 @@ import {
   KAPSAM_KANALLARI,
   kanalKapsamdaMi,
   kimlikImzaMetni,
+  kullaniciEmriMi,
   PairRequest,
   PROTOKOL_SURUMU,
   SINIRLAR,
@@ -201,6 +202,53 @@ test("çözücü hata çıktısında gelen değeri yankılamaz", () => {
   assert.equal(JSON.stringify(s).includes(gizli), false);
 });
 
+const ELLE = { yol: "elle", tur_kokeni: "insan" } as const;
+const ARKA_PLAN = { yol: "arka_plan", tur_kokeni: "insan" } as const;
+const INSAN_TURU = { yol: "sohbet_araci", tur_kokeni: "insan" } as const;
+const SENTETIK_TUR = { yol: "sohbet_araci", tur_kokeni: "sentetik" } as const;
+
+test("kullanıcı emri: insan yolu ve insan turundaki araç; sentetik tur ve arka plan değil", () => {
+  assert.equal(kullaniciEmriMi(ELLE), true);
+  assert.equal(kullaniciEmriMi({ yol: "sesli_not", tur_kokeni: "insan" }), true);
+  assert.equal(kullaniciEmriMi(INSAN_TURU), true);
+  assert.equal(kullaniciEmriMi({ yol: "pc_araci", tur_kokeni: "insan" }), true);
+  assert.equal(kullaniciEmriMi(SENTETIK_TUR), false);
+  assert.equal(kullaniciEmriMi({ yol: "pc_araci", tur_kokeni: "sentetik" }), false);
+  assert.equal(kullaniciEmriMi(ARKA_PLAN), false, "insan mesajından çıkarım da emir değildir");
+});
+
+test("insan turundaki araç elle alanı değiştirir ve izler; sentetik tur ve arka plan değiştiremez", () => {
+  const kayit = AjandaKaydi.parse({
+    kayit_id: "k1",
+    revizyon: 4,
+    tur: "randevu",
+    baslik: "Dişçi",
+    zaman: { kesinlik: "an", tarih: "2026-11-26", saat: "15:00", saat_dilimi: IST },
+    hatirlatmalar: [],
+    ornekler: [],
+    durum: "acik",
+    taslak: false,
+    silindi: false,
+    elle_alanlar: ["zaman"],
+    kaynak: { yol: "sohbet_araci", tur_kokeni: "insan", sohbet_id: "ana" },
+    olusturma_ms: 1,
+    guncelleme_ms: 1,
+  });
+  const dort = { kesinlik: "an", tarih: "2026-11-26", saat: "16:00", saat_dilimi: IST } as const;
+  const insan = ajandaDegisikligiUygula(kayit, { zaman: dort, baslik: "Dişçi kontrolü" }, INSAN_TURU);
+  assert.deepEqual(insan.uygulanan, ["baslik", "zaman"]);
+  assert.deepEqual(insan.korunan, []);
+  assert.deepEqual(insan.kayit.zaman, dort);
+  assert.deepEqual(insan.kayit.elle_alanlar, ["baslik", "zaman"], "emirle konan değer de izlenir");
+  for (const yazar of [SENTETIK_TUR, ARKA_PLAN]) {
+    const s = ajandaDegisikligiUygula(insan.kayit, { zaman: kayit.zaman, baslik: "Diş", aciklama: "not" }, yazar);
+    assert.deepEqual(s.korunan, ["baslik", "zaman"], yazar.yol);
+    assert.deepEqual(s.uygulanan, ["aciklama"], yazar.yol);
+    assert.deepEqual(s.kayit.zaman, dort, yazar.yol);
+    assert.deepEqual(s.kayit.elle_alanlar, ["baslik", "zaman"], yazar.yol);
+  }
+});
+
 test("birleştirme: insan uygulanan alanı izler, otomasyon izi değiştirmez, girdi kopyalanır", () => {
   const kayit = AjandaKaydi.parse({
     kayit_id: "k1",
@@ -217,10 +265,10 @@ test("birleştirme: insan uygulanan alanı izler, otomasyon izi değiştirmez, g
     olusturma_ms: 1,
     guncelleme_ms: 1,
   });
-  const insan = ajandaDegisikligiUygula(kayit, { durum: "tamam", baslik: "Süt al" }, false);
+  const insan = ajandaDegisikligiUygula(kayit, { durum: "tamam", baslik: "Süt al" }, ELLE);
   assert.deepEqual(insan.uygulanan, ["baslik", "durum"]);
   assert.deepEqual(insan.kayit.elle_alanlar, ["baslik", "durum"]);
-  const oto = ajandaDegisikligiUygula(insan.kayit, { durum: "acik", aciklama: "x", zaman: { kesinlik: "gun", tarih: "2026-11-30", saat_dilimi: IST } }, true);
+  const oto = ajandaDegisikligiUygula(insan.kayit, { durum: "acik", aciklama: "x", zaman: { kesinlik: "gun", tarih: "2026-11-30", saat_dilimi: IST } }, ARKA_PLAN);
   assert.deepEqual(oto.korunan, ["durum"]);
   assert.deepEqual(oto.uygulanan, ["aciklama", "zaman"]);
   assert.deepEqual(oto.kayit.elle_alanlar, ["baslik", "durum"]);
@@ -228,6 +276,6 @@ test("birleştirme: insan uygulanan alanı izler, otomasyon izi değiştirmez, g
   assert.notEqual(oto.kayit.elle_alanlar, insan.kayit.elle_alanlar);
   // Tutarsız birleşimi şema yakalar: `once` hatırlatmalı kayıt `gun`a çekilirse servis `tutarsiz_kayit` döner.
   const anli = AjandaKaydi.parse({ ...kayit, zaman: { kesinlik: "an", tarih: "2026-11-30", saat: "10:00", saat_dilimi: IST }, hatirlatmalar: [{ tur: "once", dk: 10 }] });
-  const bozuk = ajandaDegisikligiUygula(anli, { zaman: { kesinlik: "gun", tarih: "2026-11-30", saat_dilimi: IST } }, false);
+  const bozuk = ajandaDegisikligiUygula(anli, { zaman: { kesinlik: "gun", tarih: "2026-11-30", saat_dilimi: IST } }, ELLE);
   assert.equal(AjandaKaydi.safeParse(bozuk.kayit).success, false);
 });

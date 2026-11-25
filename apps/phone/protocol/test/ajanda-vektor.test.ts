@@ -11,6 +11,8 @@ import {
   ajandaTekilAnahtari,
   ajandaYukariCoz,
   type CihazKapsami,
+  type KaynakYolu,
+  type TurKokeni,
   EslestirmeQr,
   hatirlatmaEtkinMi,
   kanalKapsamdaMi,
@@ -29,7 +31,7 @@ const kurallar = oku("ajanda-kurallar.json") as {
     ad: string;
     kayit: unknown;
     degisiklik: Record<string, unknown>;
-    otomasyon: boolean;
+    yazar: { yol: KaynakYolu; tur_kokeni: TurKokeni };
     beklenen: { uygulanan: string[]; korunan: string[]; elle_alanlar: string[]; kaldirilan?: string[] };
   }[];
   hatirlatma_etkin: { taslak: boolean; silindi: boolean; durum: "acik" | "tamam" | "iptal"; etkin: boolean }[];
@@ -109,7 +111,7 @@ test("birleştirme vektörü ajandaDegisikligiUygula ile aynıdır ve sonuç ge�
   for (const v of kurallar.birlestirme) {
     const kayit = AjandaKaydi.parse(v.kayit);
     const once = JSON.stringify(kayit);
-    const s = ajandaDegisikligiUygula(kayit, v.degisiklik, v.otomasyon);
+    const s = ajandaDegisikligiUygula(kayit, v.degisiklik, v.yazar);
     assert.deepEqual(s.uygulanan, v.beklenen.uygulanan, v.ad);
     assert.deepEqual(s.korunan, v.beklenen.korunan, v.ad);
     assert.deepEqual(s.kayit.elle_alanlar, v.beklenen.elle_alanlar, v.ad);

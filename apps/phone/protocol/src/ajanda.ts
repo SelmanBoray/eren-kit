@@ -163,7 +163,7 @@ export const KAYNAK_YOLLARI = ["sohbet_araci", "pc_araci", "arka_plan", "sesli_n
 export const KaynakYolu = z.enum(KAYNAK_YOLLARI);
 export type KaynakYolu = z.infer<typeof KaynakYolu>;
 
-/** İnsan elinden (uygulama) gelen yollar; geri kalanı otomasyondur (alan izi bunu kullanır). */
+/** İnsan elinden (uygulama) gelen yollar; geri kalanı otomasyondur (alan izi: `kullaniciEmriMi`). */
 export const INSAN_YOLLARI = ["elle", "sesli_not"] as const satisfies readonly KaynakYolu[];
 
 export function otomasyonMu(yol: KaynakYolu): boolean {
@@ -274,7 +274,8 @@ const GOVDE_ALANLARI = {
  * tekrarda, tarih sırasıyla tekil ve çapadan sonra; `elle_alanlar` kanonik sırada.
  * - `taslak`: insan kökenli olmayan turda doğdu; kullanıcı `onayla`yana kadar hatırlatma kurulmaz.
  * - `silindi`: mezar taşı; içerik `geri_yukle` için durur, hatırlatma kurulmaz.
- * - `elle_alanlar`: kullanıcının uygulamadan değiştirdiği alanlar; otomasyon bunları değiştiremez.
+ * - `elle_alanlar`: kullanıcının emriyle (uygulamadan ya da insan turundaki araçla) değişen alanlar;
+ *   emir olmayan otomasyon (sentetik tur, arka plan) bunları değiştiremez.
  */
 export const AjandaKaydi = z
   .strictObject({
@@ -470,7 +471,7 @@ export const AjandaKayitMesaji = ajandaMesaj("kayit", { kayit: AjandaKaydi });
 export const AjandaEsitlendi = ajandaMesaj("esitlendi", { rev: SonRevizyon });
 /**
  * `islem`'in sonucu. `ok` ve `rev`: değişikliğin revizyonu; yan etkisiz `ok`'ta (aynı değer, zaten
- * silinmiş) `rev` yok. `korunan_alanlar` yalnız otomasyon yolunda dolabilir, uygulamaya hep boş/yok.
+ * silinmiş) `rev` yok. `korunan_alanlar` yalnız emir olmayan otomasyonda dolabilir, uygulamaya hep boş/yok.
  * `ok:false` yeniden yollanmaz; uygulama iyimser değişikliğini geri alır.
  */
 export const AjandaIslemSonucu = ajandaMesaj("islem_sonucu", {
@@ -536,16 +537,32 @@ export type AjandaBirlesimi = {
   korunan: AjandaAlani[];
 };
 
+/** Asistan aracı yolları: insan turundaki çağrıları kullanıcının kendi emridir. */
+export const ARAC_YOLLARI = ["sohbet_araci", "pc_araci"] as const satisfies readonly KaynakYolu[];
+
 /**
- * Alan düzeyinde birleştirme. Değeri aynı olan alan atlanır. `otomasyon` iken `elle_alanlar`'daki
- * alan değişmez, `korunan`'a girer; insan yolunda uygulanan alanlar `elle_alanlar`'a eklenir. Silinmiş
- * kayıt, sentetik tur ve revizyon kararları çağıranındır; sonuç `AjandaKaydi` ile doğrulanmalıdır.
+ * Değişiklik kullanıcının emri mi: insan yolu (`elle`, `sesli_not`) ya da insan turundaki araç
+ * çağrısı. Sentetik turdaki araç çağrısı ve arka plan çıkarımı (insan mesajından da olsa) emir değildir.
+ */
+export function kullaniciEmriMi(yazar: { yol: KaynakYolu; tur_kokeni: TurKokeni }): boolean {
+  if (!otomasyonMu(yazar.yol)) return true;
+  return (ARAC_YOLLARI as readonly string[]).includes(yazar.yol) && yazar.tur_kokeni === "insan";
+}
+
+/**
+ * Alan düzeyinde birleştirme. Değeri aynı olan alan atlanır. Emir olmayan değişiklikte
+ * (`kullaniciEmriMi` yanlış) `elle_alanlar`'daki alan değişmez, `korunan`'a girer. Emir olan
+ * değişiklikte (uygulamadan elle ya da insan turundaki araç çağrısı) her alan uygulanır ve uygulanan
+ * alanlar `elle_alanlar`'a eklenir: kullanıcının açıkça istediği değer de sonraki otomasyona karşı
+ * korunur. Silinmiş kayıt, sentetik tur ve revizyon kararları çağıranındır; sonuç `AjandaKaydi` ile
+ * doğrulanmalıdır.
  */
 export function ajandaDegisikligiUygula(
   kayit: AjandaKaydi,
   degisiklik: AjandaAlanDegisikligi,
-  otomasyon: boolean,
+  yazar: { yol: KaynakYolu; tur_kokeni: TurKokeni },
 ): AjandaBirlesimi {
+  const otomasyon = !kullaniciEmriMi(yazar);
   const yeni: Record<string, unknown> = { ...kayit };
   const uygulanan: AjandaAlani[] = [];
   const korunan: AjandaAlani[] = [];

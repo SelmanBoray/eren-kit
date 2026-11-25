@@ -62,8 +62,8 @@ export function ajandaGuncelleMetni(c: AjandaGuncelleCikti): string {
   const korunan =
     c.korunan_alanlar.length === 0
       ? ""
-      : ` Kullanıcı şu alanları elle değiştirmiş, uygulanmadı: ${c.korunan_alanlar.join(",")}. ` +
-        "Değiştirmek isterse uygulamadan değiştirmesini söyle.";
+      : ` Şu alanları kullanıcı kendisi belirlemiş; bu tur kullanıcının mesajıyla başlamadığı için ` +
+        `uygulanmadı: ${c.korunan_alanlar.join(",")}. Değişmesi gerekiyorsa kullanıcıya sor.`;
   const ozet = c.sonuc === "guncellendi" ? `güncellendi (kayit ${c.kayit_id})` : `değişiklik yok (kayit ${c.kayit_id})`;
   return `ajanda_guncelle: ${ozet}.${korunan}`;
 }

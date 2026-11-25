@@ -114,7 +114,8 @@ export const AjandaGuncelleGirdi = z.strictObject({ kayit_id: KayitId, degisikli
 export type AjandaGuncelleGirdi = z.infer<typeof AjandaGuncelleGirdi>;
 
 /**
- * `korunan_alanlar`: kullanıcının uygulamadan elle değiştirdiği, bu yüzden uygulanmayan alanlar.
+ * `korunan_alanlar`: kullanıcının emriyle konmuş (`elle_alanlar`), bu çağrı emir olmadığı için
+ * (tur insan mesajıyla başlamadı) uygulanmayan alanlar. İnsan turunda hep boştur.
  * `degismedi`: uygulanacak bir şey kalmadı (aynı değer ya da hepsi korunuyor).
  */
 export const AjandaGuncelleCikti = z.discriminatedUnion("sonuc", [

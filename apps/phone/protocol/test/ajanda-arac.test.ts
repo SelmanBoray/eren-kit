@@ -238,6 +238,6 @@ test("ekle ve güncelle metinleri ham kod ve kullanıcı metni taşımaz, koruna
   assert.match(eklendi, /Taslak/);
   assert.match(eklendi, /zaman=2026-11-26 15:00 Europe\/Istanbul/);
   assert.match(ajandaEkleMetni({ sonuc: "zaten_var", kayit_id: "k1" }), /zaten kayıtlı/);
-  assert.match(ajandaGuncelleMetni({ sonuc: "guncellendi", kayit_id: "k1", revizyon: 5, korunan_alanlar: ["zaman"] }), /elle değiştirmiş, uygulanmadı: zaman/);
+  assert.match(ajandaGuncelleMetni({ sonuc: "guncellendi", kayit_id: "k1", revizyon: 5, korunan_alanlar: ["zaman"] }), /başlamadığı için uygulanmadı: zaman\. Değişmesi gerekiyorsa kullanıcıya sor/);
   assert.equal(ajandaGuncelleMetni({ sonuc: "ret", neden: "kayit_silinmis" }), "ajanda_guncelle: uygulanmadı, neden=kayit_silinmis");
 });

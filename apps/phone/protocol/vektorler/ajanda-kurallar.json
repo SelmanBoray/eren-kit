@@ -1,5 +1,5 @@
 {
- "aciklama": "Ajanda kuralları için dil bağımsız vektörler. imza_metni: ajandaKimlikImzaMetni çıktısı ve UTF-8 baytları. imza: test için üretilmiş tek kullanımlık P-256 anahtarıyla (özel anahtar saklanmadı) metin[pc] üzerine DER imza; aynı imza telefon metniyle doğrulanmamalı. kapsam: kanalKapsamdaMi. birlestirme: ajandaDegisikligiUygula. hatirlatma_etkin: hatirlatmaEtkinMi. tekil_anahtar: ajandaTekilAnahtari.",
+ "aciklama": "Ajanda kuralları için dil bağımsız vektörler. imza_metni: ajandaKimlikImzaMetni çıktısı ve UTF-8 baytları. imza: test için üretilmiş tek kullanımlık P-256 anahtarıyla (özel anahtar saklanmadı) metin[pc] üzerine DER imza; aynı imza telefon metniyle doğrulanmamalı. kapsam: kanalKapsamdaMi. birlestirme: ajandaDegisikligiUygula(kayit, degisiklik, yazar); koruma yalnız kullaniciEmriMi(yazar) yanlışken. hatirlatma_etkin: hatirlatmaEtkinMi. tekil_anahtar: ajandaTekilAnahtari.",
  "surum": 1,
  "imza_metni": [
   {
@@ -167,7 +167,10 @@
      "saat_dilimi": "Europe/Istanbul"
     }
    },
-   "otomasyon": false,
+   "yazar": {
+    "yol": "elle",
+    "tur_kokeni": "insan"
+   },
    "beklenen": {
     "uygulanan": [
      "zaman"
@@ -179,7 +182,7 @@
    }
   },
   {
-   "ad": "otomasyon elle alanı ezemez",
+   "ad": "sentetik turdaki araç elle alanı ezemez",
    "kayit": {
     "kayit_id": "k_fatura",
     "revizyon": 13,
@@ -220,7 +223,10 @@
     "aciklama": "Yeni not",
     "durum": "tamam"
    },
-   "otomasyon": true,
+   "yazar": {
+    "yol": "sohbet_araci",
+    "tur_kokeni": "sentetik"
+   },
    "beklenen": {
     "uygulanan": [
      "aciklama",
@@ -236,7 +242,7 @@
    }
   },
   {
-   "ad": "otomasyon elle alana aynı değeri yazarsa korunan sayılmaz",
+   "ad": "sentetik tur elle alana aynı değeri yazarsa korunan sayılmaz",
    "kayit": {
     "kayit_id": "k_fatura",
     "revizyon": 13,
@@ -275,7 +281,10 @@
    "degisiklik": {
     "baslik": "Elektrik faturasını öde"
    },
-   "otomasyon": true,
+   "yazar": {
+    "yol": "sohbet_araci",
+    "tur_kokeni": "sentetik"
+   },
    "beklenen": {
     "uygulanan": [],
     "korunan": [],
@@ -325,7 +334,10 @@
    "degisiklik": {
     "aciklama": null
    },
-   "otomasyon": false,
+   "yazar": {
+    "yol": "elle",
+    "tur_kokeni": "insan"
+   },
    "beklenen": {
     "uygulanan": [
      "aciklama"
@@ -380,11 +392,130 @@
    "degisiklik": {
     "aciklama": null
    },
-   "otomasyon": false,
+   "yazar": {
+    "yol": "elle",
+    "tur_kokeni": "insan"
+   },
    "beklenen": {
     "uygulanan": [],
     "korunan": [],
     "elle_alanlar": []
+   }
+  },
+  {
+   "ad": "insan turundaki araç elle alanı değiştirir ve izler",
+   "kayit": {
+    "kayit_id": "k_fatura",
+    "revizyon": 13,
+    "tur": "gorev",
+    "baslik": "Elektrik faturasını öde",
+    "aciklama": "Son gün.\nOtomatik ödeme kapalı.",
+    "zaman": {
+     "kesinlik": "gun",
+     "tarih": "2026-11-30",
+     "saat_dilimi": "Europe/Istanbul"
+    },
+    "hatirlatmalar": [
+     {
+      "tur": "mutlak",
+      "tarih": "2026-11-30",
+      "saat": "09:00",
+      "saat_dilimi": "Europe/Istanbul"
+     }
+    ],
+    "ornekler": [],
+    "durum": "acik",
+    "taslak": false,
+    "silindi": false,
+    "elle_alanlar": [
+     "baslik",
+     "zaman"
+    ],
+    "kaynak": {
+     "yol": "elle",
+     "tur_kokeni": "insan",
+     "device_id": "cihaz_AjandaOrnek01"
+    },
+    "olusturma_ms": 1795000000000,
+    "guncelleme_ms": 1795000060000
+   },
+   "degisiklik": {
+    "baslik": "Fatura",
+    "aciklama": "Yeni not"
+   },
+   "yazar": {
+    "yol": "sohbet_araci",
+    "tur_kokeni": "insan"
+   },
+   "beklenen": {
+    "uygulanan": [
+     "baslik",
+     "aciklama"
+    ],
+    "korunan": [],
+    "elle_alanlar": [
+     "baslik",
+     "aciklama",
+     "zaman"
+    ]
+   }
+  },
+  {
+   "ad": "arka plan (insan mesajından) elle alanı ezemez",
+   "kayit": {
+    "kayit_id": "k_fatura",
+    "revizyon": 13,
+    "tur": "gorev",
+    "baslik": "Elektrik faturasını öde",
+    "aciklama": "Son gün.\nOtomatik ödeme kapalı.",
+    "zaman": {
+     "kesinlik": "gun",
+     "tarih": "2026-11-30",
+     "saat_dilimi": "Europe/Istanbul"
+    },
+    "hatirlatmalar": [
+     {
+      "tur": "mutlak",
+      "tarih": "2026-11-30",
+      "saat": "09:00",
+      "saat_dilimi": "Europe/Istanbul"
+     }
+    ],
+    "ornekler": [],
+    "durum": "acik",
+    "taslak": false,
+    "silindi": false,
+    "elle_alanlar": [
+     "baslik",
+     "zaman"
+    ],
+    "kaynak": {
+     "yol": "elle",
+     "tur_kokeni": "insan",
+     "device_id": "cihaz_AjandaOrnek01"
+    },
+    "olusturma_ms": 1795000000000,
+    "guncelleme_ms": 1795000060000
+   },
+   "degisiklik": {
+    "baslik": "Fatura",
+    "durum": "tamam"
+   },
+   "yazar": {
+    "yol": "arka_plan",
+    "tur_kokeni": "insan"
+   },
+   "beklenen": {
+    "uygulanan": [
+     "durum"
+    ],
+    "korunan": [
+     "baslik"
+    ],
+    "elle_alanlar": [
+     "baslik",
+     "zaman"
+    ]
    }
   }
  ],
