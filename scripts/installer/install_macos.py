@@ -18,6 +18,8 @@ Kurallar install.ps1 ile aynıdır:
 macOS farkları:
 - Beyin servisi Görev Zamanlayıcı yerine kullanıcı LaunchAgent'ı olarak çalışır
   (~/Library/LaunchAgents/com.eren-kit.beyin-servis.plist; oturum açılışında başlar).
+  Servis açıkken günlük yerel beyin yedeğini de alır (~/Library/Application Support/Bellek/
+  beyin_yedek); yeniden kurulum servisi yeniden yükler, böylece güncel kod devreye girer.
 - Hook'lar PATH'teki "python" yerine 3.11+ bir python3'ün yoluyla kaydedilir
   (macOS'ta "python" komutu genelde yoktur).
 - Asistan adı kullanıcı ortam değişkeni yerine settings.json "env" alanına (Claude Code

@@ -41,6 +41,12 @@ BOSALTMA_SINIRI = 4 * MAX_GOVDE
 # (sekme başına ≤6 kalıcı bağlantı); 64 bol pay bırakır (bkz. _Sunucu).
 AZAMI_BAGLANTI = 64
 KUYRUK_ARALIK = 60.0
+# Otomatik yedek (bkz. OtomatikYedekleyici): açılıştan bu kadar sn sonra ilk denetim, sonra her
+# YEDEK_DENETIM_ARALIGI sn'de bir; başarısız denemeden sonra YEDEK_HATA_BEKLEME sn yeniden denenmez.
+YEDEK_ILK_GECIKME = 60.0
+YEDEK_DENETIM_ARALIGI = 900.0
+YEDEK_HATA_BEKLEME = 3600.0
+YEDEK_KAPANIS_BEKLEME = 60.0  # kapanışta süren bir yedeğin bitmesi için en çok bu kadar beklenir
 ISTEK_ID_SINIRI = 10_000
 YAZ_ALANLARI = ("metin", "dugum_id", "ebeveyn", "baslik", "gizlilik", "kaynak")
 DUZELT_ALANLARI = ("dugum_id", "ozet", "ayrinti", "eskit", "kaynak")
@@ -553,6 +559,82 @@ def kuyruk_bosalt(durum: Durum) -> int:
         if sayi:
             gunluk(f"kuyruktan {sayi} yazma işlendi")
         return sayi
+
+
+# ------------------------------------------------------------- otomatik yedek
+class OtomatikYedekleyici:
+    """Günlük yerel yedek: kendi iş parçacığında, yazar iş parçacığından ve isteklerden bağımsız.
+
+    İlk denetim açılıştan `ilk_gecikme` sn sonra, sonra her `aralik` sn'de bir yapılır. Yedek
+    alınıp alınmayacağı bellekteki bir sayaçla değil yedek dizinindeki dosyalarla
+    (yedek.otomatik_yedek_gerekli, duvar saati) belirlenir: servis yeniden başlasa, makine
+    kapalı/uykuda kalsa da kaçan yedek ilk denetimde alınır. Yedek, yazarın bağlantısını değil
+    kendi salt okunur bağlantısını kullanır (WAL: okuma ve yazmalar beklemez). Hata servisi
+    düşürmez: günlüğe ve yedek dizinindeki durum kaydına yazılır, `hata_bekleme` sn sonra yeniden
+    denenir. Bellekteki son başarı zamanı yedeklerin `yedek.OTOMATIK_ARALIK`'tan sık alınmasını
+    (ve saklama sınırının eski yedekleri hızla silmesini) her durumda engeller.
+    """
+
+    def __init__(self, db_yol: Path, dizin: Path, durdur: threading.Event, *,
+                 ilk_gecikme: float | None = None, aralik: float | None = None,
+                 hata_bekleme: float | None = None, saat=time.time) -> None:
+        self.db_yol = Path(db_yol)
+        self.dizin = Path(dizin)
+        self.durdur = durdur
+        self.ilk_gecikme = YEDEK_ILK_GECIKME if ilk_gecikme is None else ilk_gecikme
+        self.aralik = YEDEK_DENETIM_ARALIGI if aralik is None else aralik
+        self.hata_bekleme = YEDEK_HATA_BEKLEME if hata_bekleme is None else hata_bekleme
+        self.saat = saat
+        self.son_basari: float | None = None
+        self.son_hata: float | None = None
+        self.is_parcacigi = threading.Thread(target=self._dongu, name="beyin-yedek", daemon=True)
+
+    def baslat(self) -> None:
+        self.is_parcacigi.start()
+
+    @staticmethod
+    def _yakin(son: float | None, sure: float, simdi: float) -> bool:
+        # Saat geri alındıysa (simdi < son) bekleme sayılmaz.
+        return son is not None and 0 <= simdi - son < sure
+
+    def denetle(self) -> Path | None:
+        """Gerekirse yedek alır; alınan yedeğin yolunu, alınmadıysa None döndürür.
+
+        Yedekleme hatası fırlatılmaz (günlüğe yazılır); dizin taranamazsa çağıran (_dongu) yakalar."""
+        yedek = _mod("yedek")
+        simdi = self.saat()
+        if self._yakin(self.son_hata, self.hata_bekleme, simdi):
+            return None
+        if self._yakin(self.son_basari, yedek.OTOMATIK_ARALIK, simdi):
+            return None
+        if not yedek.otomatik_yedek_gerekli(self.dizin, simdi) or self.durdur.is_set():
+            return None
+        try:
+            yeni = yedek.otomatik_yedekle(self.db_yol, self.dizin, simdi=simdi)
+        except Exception as e:  # noqa: BLE001 - yedek hatası servisi düşürmez
+            self.son_hata = simdi
+            neden = str(e) if isinstance(e, yedek.YedekHatasi) else type(e).__name__
+            gunluk(f"UYARI: otomatik yedek alınamadı: {neden}")
+            return None
+        self.son_hata = None
+        self.son_basari = simdi
+        gunluk(f"otomatik yedek alındı: {yeni.name}")
+        return yeni
+
+    def _dongu(self) -> None:
+        if self.durdur.wait(self.ilk_gecikme):
+            return
+        while True:
+            try:
+                self.denetle()
+            except Exception as e:  # noqa: BLE001
+                gunluk(f"otomatik yedek denetimi hatası: {type(e).__name__}")
+            if self.durdur.wait(self.aralik):
+                return
+
+    def bekle(self, sure: float) -> None:
+        if self.is_parcacigi.is_alive():
+            self.is_parcacigi.join(sure)
 
 
 def glob_kacis(ad: str) -> str:
@@ -1231,6 +1313,7 @@ class Sunucu:
         self.http = None
         self.durdur = threading.Event()
         self.kuyruk_is_parcacigi = None
+        self.yedekleyici: OtomatikYedekleyici | None = None
         try:
             self.belirtec = belirtec_hazirla()
             self.arayuz_belirtec = arayuz_belirtec_hazirla()
@@ -1246,6 +1329,9 @@ class Sunucu:
             kuyruk_bosalt(self.durum)
             self.kuyruk_is_parcacigi = threading.Thread(target=self._kuyruk_dongusu, name="beyin-kuyruk", daemon=True)
             self.kuyruk_is_parcacigi.start()
+            self.yedekleyici = OtomatikYedekleyici(
+                self.durum.db.varsayilan_yol(), _mod("yedek").varsayilan_yedek_dizini(), self.durdur)
+            self.yedekleyici.baslat()
         except BaseException:
             self.kapat()
             raise
@@ -1277,6 +1363,9 @@ class Sunucu:
                 pass
         if self.durum is not None:
             self.durum.kapat()
+        if self.yedekleyici is not None:
+            # Süren bir yedek kilit bırakılmadan bitsin (geri yükleme kilidi alıp araya girmesin).
+            self.yedekleyici.bekle(YEDEK_KAPANIS_BEKLEME)
         self.kilit.birak()
 
 

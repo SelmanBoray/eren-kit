@@ -95,7 +95,9 @@ servis kapalıyken yazmalar kuyrukta bekler. Kurulum, kullanıcı düzeyinde (y�
 "eren-kit-beyin-servis" adlı bir Görev Zamanlayıcı görevi kaydeder: her oturum açılışında
 pythonw ile sessizce başlar, kurulumdan hemen sonra da başlatılır. Tekrar kurulumda görev
 güncellenip yeniden başlatılır; "-Uninstall -Components beyin" görevi durdurup kaldırır;
--NoService bu adımı atlar.
+-NoService bu adımı atlar. Servis açıkken beyin veritabanının günlük yerel yedeğini de alır
+(%LOCALAPPDATA%\Bellek\beyin_yedek, en yeni 14; kaldırmada silinmez). Durum: -Doctor ya da
+"python -I -m bellek.beyin yedek-durum".
 '@
     Write-Host $text
 }

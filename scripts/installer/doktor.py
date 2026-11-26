@@ -6,7 +6,7 @@
 --repo         eren-kit deposu (varsayılan: bu betiğin bulunduğu depo).
 --no-network   Canlı sistem sorgusu ve kullanıcı dosyalarından gelen dış süreç yok: servis sağlık
                isteği (/api/saglik), servis görevi (Görev Zamanlayıcı / launchd), "bellek doktor"
-               alt süreci, hook yorumlayıcısının sürüm yoklaması ve depo klasörü izin denetimi
+               ve beyin yedek durumu ("bellek.beyin yedek-durum") alt süreçleri, hook yorumlayıcısının sürüm yoklaması ve depo klasörü izin denetimi
                (makineye bağlı sonuç) atlanır. Yalnız dosya denetimleri kalır (telefon:node yalnız
                sabit adlı "node"u çalıştırır).
 Çıplak program adları (python, node) yalnız PATH'in mutlak klasörlerinde aranır; çalışma klasörü
@@ -874,6 +874,41 @@ def check_bellek_doctor(ctx: Ctx) -> Check:
                                f"(ayrıntı: {exe} -m bellek doktor)")
 
 
+def check_backup(ctx: Ctx) -> Check:
+    """Beyin yedeği: hiç yoksa, eskiyse ya da son otomatik deneme başarısızsa uyarı.
+
+    Hesabı bellek'in kendisi yapar (python -I -B -m bellek.beyin yedek-durum --json; salt okunur):
+    yedek dizini ve veritabanı yolu servisle aynı kuralla (BELLEK_BEYIN_DB, veri klasörü) bulunur.
+    """
+    name = "beyin:yedek"
+    if not ctx.network:
+        return Check(name, OK, "atlandı (--no-network)")
+    if not ctx.installed("mcp:beyin"):
+        return Check(name, OK, "kurulu değil (beyin MCP kaydı yok)")
+    exe, extra_env = _bellek_python(ctx)
+    if exe is None:
+        return Check(name, OK, "bellek ortamı (packages/bellek/.venv) bulunamadı; atlandı")
+    env = dict(os.environ)
+    env.update(extra_env)
+    env.update({"PYTHONDONTWRITEBYTECODE": "1", "PYTHONIOENCODING": "utf-8"})
+    try:
+        r = _run([exe, "-I", "-B", "-m", "bellek.beyin", "yedek-durum", "--json"], BELLEK_DOCTOR_TIMEOUT, env=env)
+    except subprocess.TimeoutExpired:
+        return Check(name, WARN, f"yedek durumu {BELLEK_DOCTOR_TIMEOUT:.0f} sn içinde okunamadı")
+    except OSError as e:
+        return Check(name, WARN, f"yedek durumu okunamadı ({type(e).__name__})")
+    try:
+        report = json.loads(r.stdout.decode("utf-8"))
+        state, message = report["durum"], str(report["mesaj"])
+    except (ValueError, KeyError, TypeError, UnicodeDecodeError):
+        lines = _decode(r.stderr).strip().splitlines()
+        return Check(name, WARN, f"yedek durumu okunamadı (çıkış {r.returncode}): "
+                                 f"{_short(lines[-1] if lines else '-', 100)}")
+    if state == "ok":
+        return Check(name, OK, message)
+    return Check(name, WARN, message)
+
+
 def check_phone(ctx: Ctx) -> Check:
     name = "telefon:node"
     phone = ctx.repo / "apps" / "phone"
@@ -1078,6 +1113,7 @@ def run_checks(claude_home: Path, repo: Path, network: bool = True) -> dict:
         ("servis:beyin", lambda: check_service(ctx)),
         ("servis:gorev", lambda: check_service_task(ctx)),
         ("bellek:doktor", lambda: check_bellek_doctor(ctx)),
+        ("beyin:yedek", lambda: check_backup(ctx)),
         ("telefon:node", lambda: check_phone(ctx)),
         ("depo:izin", lambda: check_repo_permissions(ctx)),
     ]

@@ -22,6 +22,10 @@ def _kur():
     a = alt.add_parser("yedekler", help="yedekleri listele")
     a.add_argument("--dizin", default=None, help="yedek dizini (vars. yerel durum dizini)")
 
+    a = alt.add_parser("yedek-durum", help="yedek durumunu denetle (salt okunur; uyarıda çıkış 1)")
+    a.add_argument("--dizin", default=None, help="yedek dizini (vars. yerel durum dizini)")
+    a.add_argument("--json", action="store_true", help="çıktıyı JSON olarak ver")
+
     a = alt.add_parser("geri-yukle", help="yedekten geri yükle (servis kapalıyken)")
     a.add_argument("yedek")
     a.add_argument("--evet", action="store_true", help="onay sormadan geri yükle")
@@ -117,6 +121,15 @@ def _yedek_komutu(k: str, args) -> int:
                 print(yol)
             return 0
 
+        if k == "yedek-durum":
+            dizin = Path(args.dizin) if args.dizin else yedek.varsayilan_yedek_dizini()
+            durum = yedek.yedek_durumu(varsayilan_yol(), dizin)
+            if args.json:
+                print(json.dumps(durum, ensure_ascii=False))
+            else:
+                print(durum["mesaj"])
+            return 0 if durum["durum"] == "ok" else 1
+
         # geri-yukle
         if not args.evet:
             print("Mevcut veritabanı kenara alınıp yedek geri yüklenecek. Devam edilsin mi? [e/H] ",
@@ -162,7 +175,7 @@ def main(argv=None) -> int:
         hatalar = sonuc.get("hatalar") if isinstance(sonuc, dict) else None
         return 1 if hatalar else 0
 
-    if k in ("yedekle", "yedekler", "geri-yukle"):
+    if k in ("yedekle", "yedekler", "yedek-durum", "geri-yukle"):
         return _yedek_komutu(k, args)
 
     if k == "disa-aktar":

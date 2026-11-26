@@ -15,6 +15,11 @@ Adı `beyin-YYYYAAGG-SSDDSS.db` (yerel saat); aynı saniyedeki sonraki yedekler 
 alır. Varsayılan dizin makineye yerel durum dizinidir (Windows: `%LOCALAPPDATA%\\Bellek\\beyin_yedek`);
 kasaya (vault) ya da bulutla eşitlenen bir klasöre konmaz.
 
+Otomatik yedek: beyin servisi açıkken en yeni yedek `OTOMATIK_ARALIK`'tan eskiyse kendiliğinden
+yedek alır (servis.OtomatikYedekleyici, `otomatik_yedekle`); son denemenin sonucu yedek dizininde
+`otomatik-yedek.json`'dadır. `yedek_durumu` (CLI `yedek-durum`, kurulum doktoru) hiç yedek yoksa,
+yedek eskiyse ya da son otomatik deneme başarısızsa uyarır.
+
 ŞİFRELEME YOK: yedek, veritabanının birebir kopyasıdır; sır gövdeleri dahil her şey düz metin
 olarak içindedir. Yerel dizinin erişimi kullanıcıyla sınırlı olmalıdır (Windows'ta
 %LOCALAPPDATA% varsayılan olarak öyledir; POSIX'te yedek dosyaları 0600 yazılır). Makine dışına
@@ -32,6 +37,7 @@ başarısız olursa yapılan taşımalar geri alınır.
 from __future__ import annotations
 
 import errno
+import json
 import os
 import re
 import secrets
@@ -56,6 +62,11 @@ _TASIMA_DENEME = 5  # Windows'ta virüs tarayıcı/dizinleyici dosyayı kısa s�
 _TASIMA_ARALIK = 0.2
 # Bu kadar saniyeden eski 0 baytlık yer tutucu, ölmüş bir yedeklemeden kalmıştır (canlıda ms sürer).
 _YER_TUTUCU_BAYAT = 600.0
+# Yedeklemenin geçici kopyası (`yedekle`'deki `gecici`) ve SQLite yan dosyası. Süreç yedek
+# sürerken öldürülürse kalır: veritabanının şifresiz (yarım) kopyasıdır. Değişiklik zamanı bu kadar
+# saniyeden eskiyse ölmüş bir yedeklemeden kalmıştır (canlı kopya ve doğrulama saniyeler sürer).
+_GECICI_KALIBI = re.compile(r"\.beyin-yedek-[0-9a-f]{12}\.tmp(?:-wal|-shm|-journal)?")
+_GECICI_BAYAT = 3600.0
 _SERVIS_MESAJI = (
     "Beyin servisi çalışıyor; çalışan servisin veritabanı geri yüklenemez. "
     "Önce servisi durdur, sonra yeniden dene."
@@ -277,6 +288,29 @@ def _bayat_yer_tutuculari_sil(dizin: Path) -> None:
                 pass
 
 
+def _bayat_gecicileri_sil(dizin: Path) -> None:
+    """Ölmüş yedeklemelerden kalan geçici kopyaları (`_GECICI_KALIBI`, `_GECICI_BAYAT`'tan eski) siler.
+
+    Taze geçici dosya o an süren bir yedeklemenindir (başka süreç dahil); dokunulmaz. Windows'ta
+    açık dosya zaten silinemez. Hiçbir hata dışarı sızmaz: temizlik yedeği düşürmez, sonraki
+    yedeklemede yeniden denenir.
+    """
+    try:
+        girdiler = list(Path(dizin).iterdir())
+    except OSError:
+        return
+    simdi = time.time()
+    for p in girdiler:
+        if _GECICI_KALIBI.fullmatch(p.name) is None:
+            continue
+        try:
+            st = p.lstat()
+            if stat.S_ISREG(st.st_mode) and simdi - st.st_mtime > _GECICI_BAYAT:
+                p.unlink()
+        except OSError:
+            pass
+
+
 def _yerlestir(gecici: Path, dizin: Path, damga: str) -> Path:
     """Geçici dosyayı var olan hiçbir dosyanın üstüne yazmadan kalıba uyan bir ada taşır.
 
@@ -353,7 +387,8 @@ def yedekle(
         ozel_klasor(dizin, duzelt=False)  # POSIX: yeni yedek dizini 0700
     except OSError as e:
         raise YedekHatasi(f"Yedek dizini oluşturulamadı: {dizin} ({_neden(e)}).") from e
-    damga = (simdi or datetime.now()).strftime("%Y%m%d-%H%M%S")
+    _bayat_gecicileri_sil(dizin)  # kopyadan önce: yedek art arda başarısız olsa da artık birikmez
+    damga =(simdi or datetime.now()).strftime("%Y%m%d-%H%M%S")
     gecici = dizin / f".beyin-yedek-{secrets.token_hex(6)}.tmp"
     try:
         _sqlite_kopyala(db_yol, gecici)
@@ -373,6 +408,168 @@ def yedekle(
         raise
     _buda(dizin, sakla, [yeni, db_yol])
     return yeni
+
+
+# ---------------------------------------------------------------- otomatik yedek
+
+# Beyin servisi en yeni yedek bundan eskiyse (ya da hiç yedek yoksa) kendiliğinden yedek alır
+# (servis.OtomatikYedekleyici). 24 saatten biraz kısa: servis sürekli açıkken her gün bir yedek.
+OTOMATIK_ARALIK = 23 * 3600.0
+# Durum denetiminde (yedek-durum, kurulum doktoru) en yeni yedek bundan eskiyse uyarı verilir.
+ESKI_YEDEK_ESIGI = 48 * 3600.0
+# Değişiklik zamanı şimdiden bu kadar ileride olan yedek "gelecekte" sayılır (saat geri alınmış).
+_GELECEK_PAYI = 3600.0
+# Son otomatik denemenin sonucu yedek dizininde tutulur (kalıba uymaz; yedek sayılmaz).
+DURUM_DOSYASI = "otomatik-yedek.json"
+_ELLE_KOMUT = "python -I -m bellek.beyin yedekle"
+
+
+def _son_yedek(hedef_dizin: Path, simdi: float) -> tuple[Path, float] | None:
+    """Değişiklik zamanı en yeni olan geçerli yedek ve zamanı; geleceğe düşenler sayılmaz."""
+    sinir = simdi + _GELECEK_PAYI
+    adaylar = [(st.st_mtime, p) for _, p, st in _kalip_dosyalari(hedef_dizin)
+               if st.st_size > 0 and st.st_mtime <= sinir]
+    if not adaylar:
+        return None
+    zaman, yol = max(adaylar, key=lambda x: x[0])
+    return yol, zaman
+
+
+def otomatik_yedek_gerekli(
+    hedef_dizin: Path, simdi: float | None = None, aralik: float = OTOMATIK_ARALIK
+) -> bool:
+    """Hiç yedek yoksa ya da en yeni yedek `aralik` saniyeden eskiyse True.
+
+    Zaman duvar saatidir (dosyaların değişiklik zamanı): makine kapalı ya da uykudayken geçen
+    süre de sayılır, uyanınca ilk denetimde kaçan yedek alınır. Elle alınan yedek de sayılır.
+    """
+    simdi = time.time() if simdi is None else simdi
+    son = _son_yedek(Path(hedef_dizin), simdi)
+    return son is None or simdi - son[1] >= aralik
+
+
+def _durum_yaz(hedef_dizin: Path, veri: dict) -> None:
+    from bellek.izin import ozel_acici
+
+    yol = Path(hedef_dizin) / DURUM_DOSYASI
+    gecici = yol.with_name(f".{DURUM_DOSYASI}.{secrets.token_hex(4)}.tmp")
+    try:
+        with open(gecici, "w", encoding="utf-8", opener=ozel_acici) as f:
+            json.dump(veri, f, ensure_ascii=False)
+        os.replace(gecici, yol)
+    except BaseException:
+        try:
+            gecici.unlink()
+        except OSError:
+            pass
+        raise
+
+
+def otomatik_durumu_oku(hedef_dizin: Path) -> dict | None:
+    """Son otomatik yedek denemesinin kaydı; yoksa ya da okunamıyorsa None."""
+    try:
+        veri = json.loads((Path(hedef_dizin) / DURUM_DOSYASI).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(veri, dict) or not isinstance(veri.get("zaman"), (int, float)):
+        return None
+    return veri
+
+
+def otomatik_yedekle(
+    db_yol: Path, hedef_dizin: Path, sakla: int = 14, simdi: float | None = None
+) -> Path:
+    """Servisin otomatik yedeği: `yedekle` ve sonucunu `DURUM_DOSYASI`'na yazar.
+
+    Her hata YedekHatasi olarak fırlar (beklenmeyen hatanın yalnız türü mesaja girer); kayıt
+    yazılamazsa yedeğin sonucu değişmez. Kayıtta veri yoktur: zaman, sonuç, yedek adı ya da
+    hata mesajı (yol ve neden).
+    """
+    zaman = time.time() if simdi is None else simdi
+    try:
+        yeni = yedekle(db_yol, hedef_dizin, sakla=sakla)
+    except Exception as e:
+        mesaj = str(e) if isinstance(e, YedekHatasi) else f"beklenmeyen hata ({type(e).__name__})"
+        try:
+            _durum_yaz(hedef_dizin, {"surum": 1, "zaman": zaman, "sonuc": "hata", "hata": mesaj})
+        except OSError:
+            pass
+        if isinstance(e, YedekHatasi):
+            raise
+        raise YedekHatasi(f"Otomatik yedek alınamadı: {mesaj}") from e
+    try:
+        _durum_yaz(hedef_dizin, {"surum": 1, "zaman": zaman, "sonuc": "basarili", "yedek": yeni.name})
+    except OSError:
+        pass
+    return yeni
+
+
+def _sure(saniye: float) -> str:
+    saniye = max(0.0, saniye)
+    if saniye < 3600:
+        return f"{int(saniye // 60)} dakika"
+    if saniye < 48 * 3600:
+        return f"{int(saniye // 3600)} saat"
+    return f"{int(saniye // 86400)} gün"
+
+
+def yedek_durumu(
+    db_yol: Path, hedef_dizin: Path, simdi: float | None = None, esik: float = ESKI_YEDEK_ESIGI
+) -> dict:
+    """Yedeklerin durumu (salt okunur): `durum` "ok" ya da "uyari", Türkçe `mesaj` ve ayrıntılar.
+
+    Uyarı: veritabanı varken hiç yedek yoksa, en yeni yedek `esik`ten eskiyse, son otomatik
+    deneme en yeni yedekten sonra başarısız olduysa ya da yedeğin zamanı gelecekteyse.
+    """
+    simdi = time.time() if simdi is None else simdi
+    dizin = Path(hedef_dizin)
+    sayi = len(yedekleri_listele(dizin))
+    son = _son_yedek(dizin, simdi)
+    oto = otomatik_durumu_oku(dizin)
+    sonuc: dict = {
+        "durum": "ok",
+        "dizin": str(dizin),
+        "sayi": sayi,
+        "son_yedek": str(son[0]) if son else None,
+        "son_yedek_yas_saat": round((simdi - son[1]) / 3600, 1) if son else None,
+        "otomatik": oto,
+    }
+    hata = None
+    if oto is not None and oto.get("sonuc") == "hata" and (son is None or oto["zaman"] > son[1]):
+        zaman = datetime.fromtimestamp(oto["zaman"]).strftime("%Y-%m-%d %H:%M")
+        neden = str(oto.get("hata") or "bilinmeyen hata").rstrip(". ")
+        hata = f"Son otomatik yedek denemesi başarısız ({zaman}): {neden}."
+
+    def uyari(mesaj: str) -> dict:
+        sonuc["durum"] = "uyari"
+        sonuc["mesaj"] = mesaj + (f" {hata}" if hata else "")
+        return sonuc
+
+    if son is None:
+        if sayi:
+            return uyari(
+                "Beyin yedeklerinin zamanı gelecekte görünüyor; sistem saati değişmiş olabilir. "
+                f"Yeni bir yedek al: {_ELLE_KOMUT}."
+            )
+        if not Path(db_yol).is_file() and hata is None:
+            sonuc["mesaj"] = "Beyin veritabanı henüz yok; yedek gerekmiyor."
+            return sonuc
+        return uyari(
+            f"Hiç beyin yedeği yok ({dizin}). Beyin servisi açıkken ilk yedeği açılıştan kısa süre "
+            f"sonra kendisi alır; elle almak için: {_ELLE_KOMUT}."
+        )
+    yas = simdi - son[1]
+    if yas > esik:
+        return uyari(
+            f"Son beyin yedeği {_sure(yas)} önce alınmış ({son[0].name}). Otomatik yedeği beyin "
+            f"servisi alır; servis çalışıyor mu bak. Elle almak için: {_ELLE_KOMUT}."
+        )
+    if hata is not None:
+        sonuc["durum"] = "uyari"
+        sonuc["mesaj"] = f"{hata} Son başarılı yedek {_sure(yas)} önce ({son[0].name})."
+        return sonuc
+    sonuc["mesaj"] = f"Son beyin yedeği {_sure(yas)} önce alındı ({son[0].name}; {sayi} yedek saklanıyor)."
+    return sonuc
 
 
 # ---------------------------------------------------------------- servis saptama
