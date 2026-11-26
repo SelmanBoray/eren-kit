@@ -56,6 +56,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   does not answer is closed within 60 seconds at the latest.
 - `apps/phone` (app): connection watchdog: when a send has no reply yet and the line is silent for
   20 seconds, the connection is dropped and re-established.
+- `bellek`: the brain service now takes a local backup by itself once a day while it is running (a
+  missed backup is taken on the next check); new read-only command `python -m bellek.beyin
+  yedek-durum`, and the installer's doctor gains a `beyin:yedek` check that warns when there is no
+  backup, the latest one is older than 48 hours, or the last automatic attempt failed.
 
 ### Changed
 
@@ -129,6 +133,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- `bellek`: the brain MCP bridge no longer routes reads to the read-only fallback for 15 seconds
+  after a single slow request while the service is up; it probes the service health first, and the
+  fallback prefix now says "servis yanıt vermedi" instead of "servis kapalı" when the port is
+  listening but no answer came.
 - `bellek`: when the brain service rejected a request with a body early, it closed the connection
   without reading the body; on Windows the client saw a connection error instead of the response
   (the flaky `WinError 10053` in CI). It now sends the response and reads the remaining bytes, bounded

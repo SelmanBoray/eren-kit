@@ -411,13 +411,14 @@ Backup and restore (run from the same venv; the commands are `python -m bellek.b
 ```powershell
 python -m bellek.beyin yedekle [--dizin D] [--sakla N]   # back up the brain database
 python -m bellek.beyin yedekler                          # list backups
+python -m bellek.beyin yedek-durum                       # show the state of the latest backup
 python -m bellek.beyin geri-yukle <backup> [--evet]      # restore (asks first unless --evet)
 python -m bellek.beyin ice-al --uzerine-yaz              # re-import the seed, overwriting corrected nodes
 ```
 
 A backup is an online-consistent copy made with SQLite's backup API; the newest 14 are kept. Restore
 only runs while the service is stopped, and the old database is set aside, not deleted. Local
-backups are not encrypted. A plain re-import (`ice-al`) keeps nodes you corrected after seeding;
+backups are not encrypted. While the service is running, the brain takes a local backup by itself once a day; the installer's doctor (`beyin:yedek`) warns when there is no backup or the latest one is stale. A plain re-import (`ice-al`) keeps nodes you corrected after seeding;
 `--uzerine-yaz` overwrites them too.
 
 If you installed with `-NoService` or by hand, start the service yourself and leave that terminal

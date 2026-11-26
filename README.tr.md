@@ -414,13 +414,14 @@ Yedekleme ve geri yükleme (aynı venv'den çalıştırın; komutlar `python -m 
 ```powershell
 python -m bellek.beyin yedekle [--dizin D] [--sakla N]   # beyin veritabanını yedekler
 python -m bellek.beyin yedekler                          # yedekleri listeler
+python -m bellek.beyin yedek-durum                       # son yedeğin durumunu gösterir
 python -m bellek.beyin geri-yukle <backup> [--evet]      # geri yükler (--evet verilmezse önce sorar)
 python -m bellek.beyin ice-al --uzerine-yaz              # tohumu yeniden içe alır, düzeltilmiş düğümlerin de üzerine yazar
 ```
 
 Yedek, SQLite'ın yedekleme API'siyle alınan, çalışır durumdayken tutarlı bir kopyadır; en yeni 14
 yedek saklanır. Geri yükleme yalnızca servis durmuşken çalışır; eski veritabanı silinmez, kenara
-alınır. Yerel yedekler şifrelenmez. Düz bir yeniden içe alım (`ice-al`), tohumlamadan sonra
+alınır. Yerel yedekler şifrelenmez. Servis açıkken beyin günde bir kez kendiliğinden yerel yedek alır; yedek yoksa ya da eskiyse kurulum doktoru (`beyin:yedek`) uyarır. Düz bir yeniden içe alım (`ice-al`), tohumlamadan sonra
 düzelttiğiniz düğümleri korur; `--uzerine-yaz` onların da üzerine yazar.
 
 `-NoService` ile ya da elle kurduysanız servisi kendiniz başlatın ve o terminali açık bırakın

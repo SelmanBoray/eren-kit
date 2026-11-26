@@ -13,7 +13,7 @@ Bellek: Claude Code için yerel, oturumlar arası hafıza bileşeni (not/arama h
 - Testler: `.venv\Scripts\python -m pytest`
   - `tests/conftest.py` her testi kullanıcı verisinden yalıtır (veri kökü ve `BELLEK_*` yolları geçici klasöre yönlenir); yeni test gerçek vault, beyin.db ya da devir klasörüne giden bir varsayılan yola dayanmamalı.
 - CLI: `.venv\Scripts\bellek doktor`
-- Beyin yedeği: `.venv\Scripts\python -I -m bellek.beyin yedekle | yedekler | geri-yukle`.
+- Beyin yedeği: `.venv\Scripts\python -I -m bellek.beyin yedekle | yedekler | yedek-durum | geri-yukle` (servis günlük yedeği kendisi alır).
 - Ayar: `bellek.toml` (veya `BELLEK_CONFIG` ortam değişkeni). Şablon: `bellek.example.toml`. `bellek.toml` kişiye özeldir, git'te yok sayılır.
 - Paket düzenlenebilir kurulumla kullanılır: `pip install -e ".[dev]"`.
   - Varsayılan ayar yolu paket kökündeki `bellek.toml`'a göre bulunur; normal (editable olmayan) kurulum desteklenmez.
