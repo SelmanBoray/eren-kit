@@ -1,6 +1,6 @@
 {
- "aciklama": "Ajanda kuralları için dil bağımsız vektörler. imza_metni: ajandaKimlikImzaMetni çıktısı ve UTF-8 baytları. imza: test için üretilmiş tek kullanımlık P-256 anahtarıyla (özel anahtar saklanmadı) metin[pc] üzerine DER imza; aynı imza telefon metniyle doğrulanmamalı. kapsam: kanalKapsamdaMi. birlestirme: ajandaDegisikligiUygula(kayit, degisiklik, yazar); koruma yalnız kullaniciEmriMi(yazar) yanlışken; beklenen.ornekler/budanan_ornekler verilmişse örnek budaması. hatirlatma_etkin: hatirlatmaEtkinMi. tekil_anahtar: ajandaTekilAnahtari (ifade ve sure_dk anahtara girmez). es_degisikligi: ajandaEsDegisikligi(es, girdi). gorunmez: AJANDA_GORUNMEZ_ARALIKLARI (kod noktası, iki uç dahil), örnek kod noktaları (emoji_birlestiricileri bağlamında kabul edilir), metinler: kod noktası dizisi, ajandaGorunmezVarMi'nin tersi (gecerli) ve ajandaMetniTemizle çıktısı (temiz). tekil_karar: ajandaTekilKarari. telafi: ajandaTelafiTamMi. dayanak: dayanakGecerliMi(dayanak, mesaj_ani). tekrar_ornekleri: tekrarOrnekleri(capa, tekrar, en_az) ilk en çok 5 gün ve devami. hatirlatma_plani: hatirlatmaHalleri/kurulacakHatirlatmalar/hatirlatmaOzeti ve kacirilan: kacirilanHatirlatmalar(kayit, simdi_ms, kurulanlar); duvar saati ofset_dk tablosuyla ana çevrilir (Etc/GMT-3 = UTC+3, POSIX işaret tersliği). ornek_durumu: ajandaOrnekDurumuUygula; ornekler_gunluk {bas, adet, durum} bas'tan başlayan ardışık günlük satırlar demektir. kuyruk_karari: ajandaKuyrukKarari(olay, deneme). esitleme: baslangic kopyasına olaylar sırayla ajandaEsitlemeAdimi ile uygulanır; beklenen görünen kopya (kayitlar kayit_id sırasıyla), tam_suruyor ve ajandaHelloAlanlari.",
- "surum": 1,
+ "aciklama": "Ajanda kuralları için dil bağımsız vektörler. imza_metni: ajandaKimlikImzaMetni çıktısı ve UTF-8 baytları. imza: test için üretilmiş tek kullanımlık P-256 anahtarıyla (özel anahtar saklanmadı) metin[pc] üzerine DER imza; aynı imza telefon metniyle doğrulanmamalı. kapsam: kanalKapsamdaMi. birlestirme: ajandaDegisikligiUygula(kayit, degisiklik, yazar); koruma yalnız kullaniciEmriMi(yazar) yanlışken; beklenen.ornekler/budanan_ornekler verilmişse örnek budaması. hatirlatma_etkin: hatirlatmaEtkinMi. tekil_anahtar: ajandaTekilAnahtari (ifade ve sure_dk anahtara girmez). es_degisikligi: ajandaEsDegisikligi(es, girdi). gorunmez: AJANDA_GORUNMEZ_ARALIKLARI (kod noktası, iki uç dahil), örnek kod noktaları (emoji_birlestiricileri bağlamında kabul edilir), metinler: kod noktası dizisi, ajandaGorunmezVarMi'nin tersi (gecerli) ve ajandaMetniTemizle çıktısı (temiz). tekil_karar: ajandaTekilKarari. telafi: ajandaTelafiTamMi. dayanak: dayanakGecerliMi(dayanak, mesaj_ani). tekrar_ornekleri: tekrarOrnekleri(capa, tekrar, en_az) ilk en çok 5 gün ve devami. hatirlatma_plani: hatirlatmaHalleri/kurulacakHatirlatmalar/hatirlatmaOzeti ve kacirilan: kacirilanHatirlatmalar(kayit, simdi_ms, kurulanlar); duvar saati ofset_dk tablosuyla ana çevrilir (Etc/GMT-3 = UTC+3, POSIX işaret tersliği). ornek_durumu: ajandaOrnekDurumuUygula; ornekler_gunluk {bas, adet, durum} bas'tan başlayan ardışık günlük satırlar demektir. kuyruk_karari: ajandaKuyrukKarari(olay, deneme). esitleme: baslangic kopyasına olaylar sırayla ajandaEsitlemeAdimi ile uygulanır; beklenen görünen kopya (kayitlar kayit_id sırasıyla), tam_suruyor ve ajandaHelloAlanlari. Sürüm 2: hatirlatma_plani saatsiz gün kaydının gün hatırlatmasını da sınar (hallerde gun_hatirlatmasi {tarih, saat}, özette gun_hatirlatmasi {tarih, saat, gecti}). gun_hatirlatmasi: GUN_HATIRLATMA_SAATLERI (saatler), GUN_HATIRLATMA_VARSAYILAN_SAATI (varsayilan) ve gunHatirlatmasiYereli(gun, dk, gun_bolumu). gece_teyidi: geceTeyidiEksikMi(girdi, mesaj_ani, tur_kokeni), girdi fiilin araç şemasından geçer (servis kuralı; uygulama yalnız okuyabilir). tekil_anahtar: gun_bolumu anahtara girer.",
+ "surum": 2,
  "imza_metni": [
   {
    "ad": "pc",
@@ -66,7 +66,7 @@
  "qr": {
   "gecerli": [
    {
-    "v": 1,
+    "v": 2,
     "kanal": "ajanda",
     "host": "100.101.102.103",
     "port": 8765,
@@ -78,7 +78,7 @@
    {
     "ad": "eski QR (kanal yok)",
     "qr": {
-     "v": 1,
+     "v": 2,
      "host": "100.101.102.103",
      "port": 8765,
      "kod": "ABCD2345",
@@ -88,7 +88,7 @@
    {
     "ad": "başka kanal",
     "qr": {
-     "v": 1,
+     "v": 2,
      "kanal": "sohbet",
      "host": "100.101.102.103",
      "port": 8765,
@@ -99,7 +99,7 @@
    {
     "ad": "Tailscale dışı adres",
     "qr": {
-     "v": 1,
+     "v": 2,
      "kanal": "ajanda",
      "host": "100.200.1.1",
      "port": 8765,
@@ -110,9 +110,20 @@
    {
     "ad": "kapsam alanı",
     "qr": {
-     "v": 1,
+     "v": 2,
      "kanal": "ajanda",
      "kapsam": "ajanda",
+     "host": "100.101.102.103",
+     "port": 8765,
+     "kod": "ABCD2345",
+     "server_public_key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAELo7RHblixW/eCgcHUWEUpDbbJAklv2hci/UyoZvt3tlFknx8R6AuK4fNoCDUtAri/uqLoKYXC/n78yrmUiLyFg=="
+    }
+   },
+   {
+    "ad": "eski sürüm QR (v1)",
+    "qr": {
+     "v": 1,
+     "kanal": "ajanda",
      "host": "100.101.102.103",
      "port": 8765,
      "kod": "ABCD2345",
@@ -519,7 +530,7 @@
    }
   },
   {
-   "ad": "saatli randevu saatsiz güne çekilir; varsayılan hatırlatma kalır ve bekler",
+   "ad": "saatli randevu saatsiz güne çekilir; varsayılan hatırlatma kalır, gün hatırlatması olur",
    "kayit": {
     "kayit_id": "k_dis01",
     "revizyon": 12,
@@ -582,7 +593,7 @@
    }
   },
   {
-   "ad": "saatsiz kayıt saatlenir; bekleyen varsayılan kendiliğinden geçerli olur",
+   "ad": "saatsiz kayıt saatlenir; varsayılan kendiliğinden saatli kurala geçer",
    "kayit": {
     "kayit_id": "k_dis01",
     "revizyon": 12,
@@ -913,6 +924,71 @@
     ],
     "budanan_ornekler": []
    }
+  },
+  {
+   "ad": "gün bölümlü saatsiz kayıt başka güne alınır (gerçek örnek); hatırlatma listesi aynı kalır",
+   "kayit": {
+    "kayit_id": "k_araba",
+    "revizyon": 12,
+    "tur": "gorev",
+    "baslik": "Araba yıkama",
+    "zaman": {
+     "kesinlik": "gun",
+     "tarih": "2026-11-28",
+     "gun_bolumu": "aksam",
+     "saat_dilimi": "Europe/Istanbul",
+     "ifade": "yarın akşama"
+    },
+    "hatirlatmalar": [
+     {
+      "tur": "once",
+      "dk": 60
+     }
+    ],
+    "ornekler": [],
+    "durum": "acik",
+    "taslak": false,
+    "silindi": false,
+    "elle_alanlar": [],
+    "kaynak": {
+     "yol": "sohbet_araci",
+     "tur_kokeni": "insan",
+     "sohbet_id": "ana",
+     "kaynak_msg_id": "m_0001",
+     "alinti": "yarın 3'te dişçi",
+     "tekil_anahtar": "t1:0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "olusturma_ms": 1795000000000,
+    "guncelleme_ms": 1795000000000
+   },
+   "degisiklik": {
+    "zaman": {
+     "kesinlik": "gun",
+     "tarih": "2026-11-27",
+     "gun_bolumu": "aksam",
+     "saat_dilimi": "Europe/Istanbul",
+     "ifade": "cuma akşamı"
+    }
+   },
+   "yazar": {
+    "yol": "sohbet_araci",
+    "tur_kokeni": "insan"
+   },
+   "beklenen": {
+    "uygulanan": [
+     "zaman"
+    ],
+    "korunan": [],
+    "elle_alanlar": [
+     "zaman"
+    ],
+    "hatirlatmalar": [
+     {
+      "tur": "once",
+      "dk": 60
+     }
+    ]
+   }
   }
  ],
  "hatirlatma_etkin": [
@@ -1062,6 +1138,69 @@
     }
    },
    "anahtar": "t1:75856d882bc7f85103c05244c14e68b31fa9e3cc6bd77ab7b3572b03d31de2b4"
+  },
+  {
+   "ad": "saatsiz gün akşam",
+   "girdi": {
+    "kapsam": "sohbet:ana",
+    "tur": "gorev",
+    "baslik": "Araba yıkama",
+    "zaman": {
+     "kesinlik": "gun",
+     "tarih": "2026-11-27",
+     "gun_bolumu": "aksam",
+     "saat_dilimi": "Europe/Istanbul",
+     "ifade": "cuma akşamı"
+    }
+   },
+   "anahtar": "t1:1c2ef3bd00bf073505b8628dcb1bd3158b7c56965a651bd47ebf9b310b98a0cf"
+  },
+  {
+   "ad": "saatsiz gün akşam başka söz",
+   "girdi": {
+    "kapsam": "sohbet:ana",
+    "tur": "gorev",
+    "baslik": "Araba yıkama",
+    "zaman": {
+     "kesinlik": "gun",
+     "tarih": "2026-11-27",
+     "gun_bolumu": "aksam",
+     "saat_dilimi": "Europe/Istanbul",
+     "ifade": "yarın akşama"
+    }
+   },
+   "anahtar": "t1:1c2ef3bd00bf073505b8628dcb1bd3158b7c56965a651bd47ebf9b310b98a0cf"
+  },
+  {
+   "ad": "saatsiz gün sabah",
+   "girdi": {
+    "kapsam": "sohbet:ana",
+    "tur": "gorev",
+    "baslik": "Araba yıkama",
+    "zaman": {
+     "kesinlik": "gun",
+     "tarih": "2026-11-27",
+     "gun_bolumu": "sabah",
+     "saat_dilimi": "Europe/Istanbul",
+     "ifade": "cuma sabahı"
+    }
+   },
+   "anahtar": "t1:16cddcbfed1ca413d00882e11edac49fa3205bba15feddea3b879546a977a077"
+  },
+  {
+   "ad": "saatsiz gün bölümsüz (v1 biçimi)",
+   "girdi": {
+    "kapsam": "sohbet:ana",
+    "tur": "gorev",
+    "baslik": "Araba yıkama",
+    "zaman": {
+     "kesinlik": "gun",
+     "tarih": "2026-11-27",
+     "saat_dilimi": "Europe/Istanbul",
+     "ifade": "cuma"
+    }
+   },
+   "anahtar": "t1:ae16d82dfaa231eaa3dca9c9bb9573b5d45a2cda1635e8fc7aa0c40eb8a5e710"
   }
  ],
  "es_degisikligi": [
@@ -2721,7 +2860,7 @@
     }
    },
    {
-    "ad": "saatsiz gün: once bekler, mutlak kurulur (UTC dilimi)",
+    "ad": "saatsiz gün: once o gün 09:00'da (kaydın dilimi), mutlak kurulur (UTC dilimi)",
     "kayit": {
      "kayit_id": "k_dis01",
      "revizyon": 12,
@@ -2761,7 +2900,12 @@
     "haller": [
      {
       "sira": 0,
-      "hal": "saatsiz"
+      "hal": "kurulur",
+      "tetik_ms": 1795672800000,
+      "gun_hatirlatmasi": {
+       "tarih": "2026-11-26",
+       "saat": "09:00"
+      }
      },
      {
       "sira": 1,
@@ -2771,9 +2915,14 @@
     ],
     "ozet": {
      "toplam": 2,
-     "kurulacak": 1,
-     "saatsiz": 1,
-     "gecmis": 0
+     "kurulacak": 2,
+     "saatsiz": 0,
+     "gecmis": 0,
+     "gun_hatirlatmasi": {
+      "tarih": "2026-11-26",
+      "saat": "09:00",
+      "gecti": false
+     }
     }
    },
    {
@@ -3082,6 +3231,1035 @@
      "kurulacak": 0,
      "saatsiz": 0,
      "gecmis": 0
+    }
+   },
+   {
+    "ad": "gerçek örnek, 01:45: 'yarın akşama' 28'i saatsiz akşam; varsayılan gün hatırlatması 28 17:00, kayıt saatsiz",
+    "kayit": {
+     "kayit_id": "k_araba",
+     "revizyon": 12,
+     "tur": "gorev",
+     "baslik": "Araba yıkama",
+     "ornekler": [],
+     "durum": "acik",
+     "taslak": false,
+     "silindi": false,
+     "elle_alanlar": [],
+     "kaynak": {
+      "yol": "sohbet_araci",
+      "tur_kokeni": "insan",
+      "sohbet_id": "ana"
+     },
+     "olusturma_ms": 1795000000000,
+     "guncelleme_ms": 1795000000000,
+     "zaman": {
+      "kesinlik": "gun",
+      "tarih": "2026-11-28",
+      "gun_bolumu": "aksam",
+      "saat_dilimi": "Etc/GMT-3",
+      "ifade": "yarın akşama"
+     },
+     "hatirlatmalar": [
+      {
+       "tur": "once",
+       "dk": 60
+      }
+     ]
+    },
+    "simdi_ms": 1795733100000,
+    "haller": [
+     {
+      "sira": 0,
+      "hal": "kurulur",
+      "tetik_ms": 1795874400000,
+      "gun_hatirlatmasi": {
+       "tarih": "2026-11-28",
+       "saat": "17:00"
+      }
+     }
+    ],
+    "ozet": {
+     "toplam": 1,
+     "kurulacak": 1,
+     "saatsiz": 0,
+     "gecmis": 0,
+     "gun_hatirlatmasi": {
+      "tarih": "2026-11-28",
+      "saat": "17:00",
+      "gecti": false
+     }
+    }
+   },
+   {
+    "ad": "gerçek örnek, düzeltme: gün 27'ye alındı; gün hatırlatması kendiliğinden 27 17:00",
+    "kayit": {
+     "kayit_id": "k_araba",
+     "revizyon": 12,
+     "tur": "gorev",
+     "baslik": "Araba yıkama",
+     "ornekler": [],
+     "durum": "acik",
+     "taslak": false,
+     "silindi": false,
+     "elle_alanlar": [],
+     "kaynak": {
+      "yol": "sohbet_araci",
+      "tur_kokeni": "insan",
+      "sohbet_id": "ana"
+     },
+     "olusturma_ms": 1795000000000,
+     "guncelleme_ms": 1795000000000,
+     "zaman": {
+      "kesinlik": "gun",
+      "tarih": "2026-11-27",
+      "gun_bolumu": "aksam",
+      "saat_dilimi": "Etc/GMT-3",
+      "ifade": "cuma akşamı"
+     },
+     "hatirlatmalar": [
+      {
+       "tur": "once",
+       "dk": 60
+      }
+     ]
+    },
+    "simdi_ms": 1795733280000,
+    "haller": [
+     {
+      "sira": 0,
+      "hal": "kurulur",
+      "tetik_ms": 1795788000000,
+      "gun_hatirlatmasi": {
+       "tarih": "2026-11-27",
+       "saat": "17:00"
+      }
+     }
+    ],
+    "ozet": {
+     "toplam": 1,
+     "kurulacak": 1,
+     "saatsiz": 0,
+     "gecmis": 0,
+     "gun_hatirlatmasi": {
+      "tarih": "2026-11-27",
+      "saat": "17:00",
+      "gecti": false
+     }
+    }
+   },
+   {
+    "ad": "bölümsüz saatsiz gün: o günün sabahı 09:00",
+    "kayit": {
+     "kayit_id": "k_araba",
+     "revizyon": 12,
+     "tur": "gorev",
+     "baslik": "Araba yıkama",
+     "ornekler": [],
+     "durum": "acik",
+     "taslak": false,
+     "silindi": false,
+     "elle_alanlar": [],
+     "kaynak": {
+      "yol": "sohbet_araci",
+      "tur_kokeni": "insan",
+      "sohbet_id": "ana"
+     },
+     "olusturma_ms": 1795000000000,
+     "guncelleme_ms": 1795000000000,
+     "zaman": {
+      "kesinlik": "gun",
+      "tarih": "2026-11-27",
+      "saat_dilimi": "Etc/GMT-3",
+      "ifade": "bugün"
+     },
+     "hatirlatmalar": [
+      {
+       "tur": "once",
+       "dk": 60
+      }
+     ]
+    },
+    "simdi_ms": 1795733100000,
+    "haller": [
+     {
+      "sira": 0,
+      "hal": "kurulur",
+      "tetik_ms": 1795759200000,
+      "gun_hatirlatmasi": {
+       "tarih": "2026-11-27",
+       "saat": "09:00"
+      }
+     }
+    ],
+    "ozet": {
+     "toplam": 1,
+     "kurulacak": 1,
+     "saatsiz": 0,
+     "gecmis": 0,
+     "gun_hatirlatmasi": {
+      "tarih": "2026-11-27",
+      "saat": "09:00",
+      "gecti": false
+     }
+    }
+   },
+   {
+    "ad": "gün bölümü sabah: 08:00",
+    "kayit": {
+     "kayit_id": "k_araba",
+     "revizyon": 12,
+     "tur": "gorev",
+     "baslik": "Araba yıkama",
+     "ornekler": [],
+     "durum": "acik",
+     "taslak": false,
+     "silindi": false,
+     "elle_alanlar": [],
+     "kaynak": {
+      "yol": "sohbet_araci",
+      "tur_kokeni": "insan",
+      "sohbet_id": "ana"
+     },
+     "olusturma_ms": 1795000000000,
+     "guncelleme_ms": 1795000000000,
+     "zaman": {
+      "kesinlik": "gun",
+      "tarih": "2026-11-28",
+      "gun_bolumu": "sabah",
+      "saat_dilimi": "Etc/GMT-3"
+     },
+     "hatirlatmalar": [
+      {
+       "tur": "once",
+       "dk": 60
+      }
+     ]
+    },
+    "simdi_ms": 1795733100000,
+    "haller": [
+     {
+      "sira": 0,
+      "hal": "kurulur",
+      "tetik_ms": 1795842000000,
+      "gun_hatirlatmasi": {
+       "tarih": "2026-11-28",
+       "saat": "08:00"
+      }
+     }
+    ],
+    "ozet": {
+     "toplam": 1,
+     "kurulacak": 1,
+     "saatsiz": 0,
+     "gecmis": 0,
+     "gun_hatirlatmasi": {
+      "tarih": "2026-11-28",
+      "saat": "08:00",
+      "gecti": false
+     }
+    }
+   },
+   {
+    "ad": "gün bölümü ogle: 11:00",
+    "kayit": {
+     "kayit_id": "k_araba",
+     "revizyon": 12,
+     "tur": "gorev",
+     "baslik": "Araba yıkama",
+     "ornekler": [],
+     "durum": "acik",
+     "taslak": false,
+     "silindi": false,
+     "elle_alanlar": [],
+     "kaynak": {
+      "yol": "sohbet_araci",
+      "tur_kokeni": "insan",
+      "sohbet_id": "ana"
+     },
+     "olusturma_ms": 1795000000000,
+     "guncelleme_ms": 1795000000000,
+     "zaman": {
+      "kesinlik": "gun",
+      "tarih": "2026-11-28",
+      "gun_bolumu": "ogle",
+      "saat_dilimi": "Etc/GMT-3"
+     },
+     "hatirlatmalar": [
+      {
+       "tur": "once",
+       "dk": 60
+      }
+     ]
+    },
+    "simdi_ms": 1795733100000,
+    "haller": [
+     {
+      "sira": 0,
+      "hal": "kurulur",
+      "tetik_ms": 1795852800000,
+      "gun_hatirlatmasi": {
+       "tarih": "2026-11-28",
+       "saat": "11:00"
+      }
+     }
+    ],
+    "ozet": {
+     "toplam": 1,
+     "kurulacak": 1,
+     "saatsiz": 0,
+     "gecmis": 0,
+     "gun_hatirlatmasi": {
+      "tarih": "2026-11-28",
+      "saat": "11:00",
+      "gecti": false
+     }
+    }
+   },
+   {
+    "ad": "gün bölümü ogleden_sonra: 13:00",
+    "kayit": {
+     "kayit_id": "k_araba",
+     "revizyon": 12,
+     "tur": "gorev",
+     "baslik": "Araba yıkama",
+     "ornekler": [],
+     "durum": "acik",
+     "taslak": false,
+     "silindi": false,
+     "elle_alanlar": [],
+     "kaynak": {
+      "yol": "sohbet_araci",
+      "tur_kokeni": "insan",
+      "sohbet_id": "ana"
+     },
+     "olusturma_ms": 1795000000000,
+     "guncelleme_ms": 1795000000000,
+     "zaman": {
+      "kesinlik": "gun",
+      "tarih": "2026-11-28",
+      "gun_bolumu": "ogleden_sonra",
+      "saat_dilimi": "Etc/GMT-3"
+     },
+     "hatirlatmalar": [
+      {
+       "tur": "once",
+       "dk": 60
+      }
+     ]
+    },
+    "simdi_ms": 1795733100000,
+    "haller": [
+     {
+      "sira": 0,
+      "hal": "kurulur",
+      "tetik_ms": 1795860000000,
+      "gun_hatirlatmasi": {
+       "tarih": "2026-11-28",
+       "saat": "13:00"
+      }
+     }
+    ],
+    "ozet": {
+     "toplam": 1,
+     "kurulacak": 1,
+     "saatsiz": 0,
+     "gecmis": 0,
+     "gun_hatirlatmasi": {
+      "tarih": "2026-11-28",
+      "saat": "13:00",
+      "gecti": false
+     }
+    }
+   },
+   {
+    "ad": "gün bölümü gece: 20:00",
+    "kayit": {
+     "kayit_id": "k_araba",
+     "revizyon": 12,
+     "tur": "gorev",
+     "baslik": "Araba yıkama",
+     "ornekler": [],
+     "durum": "acik",
+     "taslak": false,
+     "silindi": false,
+     "elle_alanlar": [],
+     "kaynak": {
+      "yol": "sohbet_araci",
+      "tur_kokeni": "insan",
+      "sohbet_id": "ana"
+     },
+     "olusturma_ms": 1795000000000,
+     "guncelleme_ms": 1795000000000,
+     "zaman": {
+      "kesinlik": "gun",
+      "tarih": "2026-11-28",
+      "gun_bolumu": "gece",
+      "saat_dilimi": "Etc/GMT-3"
+     },
+     "hatirlatmalar": [
+      {
+       "tur": "once",
+       "dk": 60
+      }
+     ]
+    },
+    "simdi_ms": 1795733100000,
+    "haller": [
+     {
+      "sira": 0,
+      "hal": "kurulur",
+      "tetik_ms": 1795885200000,
+      "gun_hatirlatmasi": {
+       "tarih": "2026-11-28",
+       "saat": "20:00"
+      }
+     }
+    ],
+    "ozet": {
+     "toplam": 1,
+     "kurulacak": 1,
+     "saatsiz": 0,
+     "gecmis": 0,
+     "gun_hatirlatmasi": {
+      "tarih": "2026-11-28",
+      "saat": "20:00",
+      "gecti": false
+     }
+    }
+   },
+   {
+    "ad": "14:30'da eklenen bölümsüz 'bugün': 09:00 geçti, hiç çalmaz; özet geçeni söyler",
+    "kayit": {
+     "kayit_id": "k_araba",
+     "revizyon": 12,
+     "tur": "gorev",
+     "baslik": "Araba yıkama",
+     "ornekler": [],
+     "durum": "acik",
+     "taslak": false,
+     "silindi": false,
+     "elle_alanlar": [],
+     "kaynak": {
+      "yol": "sohbet_araci",
+      "tur_kokeni": "insan",
+      "sohbet_id": "ana"
+     },
+     "olusturma_ms": 1795000000000,
+     "guncelleme_ms": 1795000000000,
+     "zaman": {
+      "kesinlik": "gun",
+      "tarih": "2026-11-25",
+      "saat_dilimi": "Etc/GMT-3",
+      "ifade": "bugün"
+     },
+     "hatirlatmalar": [
+      {
+       "tur": "once",
+       "dk": 60
+      }
+     ]
+    },
+    "simdi_ms": 1795606200000,
+    "haller": [
+     {
+      "sira": 0,
+      "hal": "gecmis",
+      "gun_hatirlatmasi": {
+       "tarih": "2026-11-25",
+       "saat": "09:00"
+      }
+     }
+    ],
+    "ozet": {
+     "toplam": 1,
+     "kurulacak": 0,
+     "saatsiz": 0,
+     "gecmis": 1,
+     "gun_hatirlatmasi": {
+      "tarih": "2026-11-25",
+      "saat": "09:00",
+      "gecti": true
+     }
+    }
+   },
+   {
+    "ad": "14:30'da eklenen 'bu akşam': 17:00 kurulur",
+    "kayit": {
+     "kayit_id": "k_araba",
+     "revizyon": 12,
+     "tur": "gorev",
+     "baslik": "Araba yıkama",
+     "ornekler": [],
+     "durum": "acik",
+     "taslak": false,
+     "silindi": false,
+     "elle_alanlar": [],
+     "kaynak": {
+      "yol": "sohbet_araci",
+      "tur_kokeni": "insan",
+      "sohbet_id": "ana"
+     },
+     "olusturma_ms": 1795000000000,
+     "guncelleme_ms": 1795000000000,
+     "zaman": {
+      "kesinlik": "gun",
+      "tarih": "2026-11-25",
+      "gun_bolumu": "aksam",
+      "saat_dilimi": "Etc/GMT-3",
+      "ifade": "bu akşam"
+     },
+     "hatirlatmalar": [
+      {
+       "tur": "once",
+       "dk": 60
+      }
+     ]
+    },
+    "simdi_ms": 1795606200000,
+    "haller": [
+     {
+      "sira": 0,
+      "hal": "kurulur",
+      "tetik_ms": 1795615200000,
+      "gun_hatirlatmasi": {
+       "tarih": "2026-11-25",
+       "saat": "17:00"
+      }
+     }
+    ],
+    "ozet": {
+     "toplam": 1,
+     "kurulacak": 1,
+     "saatsiz": 0,
+     "gecmis": 0,
+     "gun_hatirlatmasi": {
+      "tarih": "2026-11-25",
+      "saat": "17:00",
+      "gecti": false
+     }
+    }
+   },
+   {
+    "ad": "bir gün önce, 1 saat önce ve 5 dk önce: önceki gün ve aynı gün aynı saatte (aynı tetik tek bildirim)",
+    "kayit": {
+     "kayit_id": "k_araba",
+     "revizyon": 12,
+     "tur": "gorev",
+     "baslik": "Araba yıkama",
+     "ornekler": [],
+     "durum": "acik",
+     "taslak": false,
+     "silindi": false,
+     "elle_alanlar": [],
+     "kaynak": {
+      "yol": "sohbet_araci",
+      "tur_kokeni": "insan",
+      "sohbet_id": "ana"
+     },
+     "olusturma_ms": 1795000000000,
+     "guncelleme_ms": 1795000000000,
+     "zaman": {
+      "kesinlik": "gun",
+      "tarih": "2026-11-28",
+      "gun_bolumu": "gece",
+      "saat_dilimi": "Etc/GMT-3"
+     },
+     "hatirlatmalar": [
+      {
+       "tur": "once",
+       "dk": 1440
+      },
+      {
+       "tur": "once",
+       "dk": 60
+      },
+      {
+       "tur": "once",
+       "dk": 5
+      }
+     ]
+    },
+    "simdi_ms": 1795733100000,
+    "haller": [
+     {
+      "sira": 0,
+      "hal": "kurulur",
+      "tetik_ms": 1795798800000,
+      "gun_hatirlatmasi": {
+       "tarih": "2026-11-27",
+       "saat": "20:00"
+      }
+     },
+     {
+      "sira": 1,
+      "hal": "kurulur",
+      "tetik_ms": 1795885200000,
+      "gun_hatirlatmasi": {
+       "tarih": "2026-11-28",
+       "saat": "20:00"
+      }
+     },
+     {
+      "sira": 2,
+      "hal": "kurulur",
+      "tetik_ms": 1795885200000,
+      "gun_hatirlatmasi": {
+       "tarih": "2026-11-28",
+       "saat": "20:00"
+      }
+     }
+    ],
+    "ozet": {
+     "toplam": 3,
+     "kurulacak": 3,
+     "saatsiz": 0,
+     "gecmis": 0,
+     "gun_hatirlatmasi": {
+      "tarih": "2026-11-27",
+      "saat": "20:00",
+      "gecti": false
+     }
+    }
+   },
+   {
+    "ad": "gün sınırı: 1439 dk aynı gün, 2879 dk bir gün önce, ay ve artık yıl sınırı",
+    "kayit": {
+     "kayit_id": "k_araba",
+     "revizyon": 12,
+     "tur": "gorev",
+     "baslik": "Araba yıkama",
+     "ornekler": [],
+     "durum": "acik",
+     "taslak": false,
+     "silindi": false,
+     "elle_alanlar": [],
+     "kaynak": {
+      "yol": "sohbet_araci",
+      "tur_kokeni": "insan",
+      "sohbet_id": "ana"
+     },
+     "olusturma_ms": 1795000000000,
+     "guncelleme_ms": 1795000000000,
+     "zaman": {
+      "kesinlik": "gun",
+      "tarih": "2024-03-01",
+      "saat_dilimi": "Etc/GMT-3"
+     },
+     "hatirlatmalar": [
+      {
+       "tur": "once",
+       "dk": 1439
+      },
+      {
+       "tur": "once",
+       "dk": 2879
+      },
+      {
+       "tur": "once",
+       "dk": 2880
+      }
+     ]
+    },
+    "simdi_ms": 1706734800000,
+    "haller": [
+     {
+      "sira": 0,
+      "hal": "kurulur",
+      "tetik_ms": 1709272800000,
+      "gun_hatirlatmasi": {
+       "tarih": "2024-03-01",
+       "saat": "09:00"
+      }
+     },
+     {
+      "sira": 1,
+      "hal": "kurulur",
+      "tetik_ms": 1709186400000,
+      "gun_hatirlatmasi": {
+       "tarih": "2024-02-29",
+       "saat": "09:00"
+      }
+     },
+     {
+      "sira": 2,
+      "hal": "kurulur",
+      "tetik_ms": 1709100000000,
+      "gun_hatirlatmasi": {
+       "tarih": "2024-02-28",
+       "saat": "09:00"
+      }
+     }
+    ],
+    "ozet": {
+     "toplam": 3,
+     "kurulacak": 3,
+     "saatsiz": 0,
+     "gecmis": 0,
+     "gun_hatirlatmasi": {
+      "tarih": "2024-02-28",
+      "saat": "09:00",
+      "gecti": false
+     }
+    }
+   },
+   {
+    "ad": "kullanıcı hatırlatmayı kapattı ([]): saatsiz günde de hiç kurulmaz",
+    "kayit": {
+     "kayit_id": "k_araba",
+     "revizyon": 12,
+     "tur": "gorev",
+     "baslik": "Araba yıkama",
+     "ornekler": [],
+     "durum": "acik",
+     "taslak": false,
+     "silindi": false,
+     "elle_alanlar": [],
+     "kaynak": {
+      "yol": "sohbet_araci",
+      "tur_kokeni": "insan",
+      "sohbet_id": "ana"
+     },
+     "olusturma_ms": 1795000000000,
+     "guncelleme_ms": 1795000000000,
+     "zaman": {
+      "kesinlik": "gun",
+      "tarih": "2026-11-28",
+      "gun_bolumu": "aksam",
+      "saat_dilimi": "Etc/GMT-3"
+     },
+     "hatirlatmalar": []
+    },
+    "simdi_ms": 1795733100000,
+    "haller": [],
+    "ozet": {
+     "toplam": 0,
+     "kurulacak": 0,
+     "saatsiz": 0,
+     "gecmis": 0
+    }
+   },
+   {
+    "ad": "saat sonradan verildi (an 19:00): gün hatırlatması kalkar, 1 saat önce 18:00",
+    "kayit": {
+     "kayit_id": "k_araba",
+     "revizyon": 12,
+     "tur": "gorev",
+     "baslik": "Araba yıkama",
+     "ornekler": [],
+     "durum": "acik",
+     "taslak": false,
+     "silindi": false,
+     "elle_alanlar": [],
+     "kaynak": {
+      "yol": "sohbet_araci",
+      "tur_kokeni": "insan",
+      "sohbet_id": "ana"
+     },
+     "olusturma_ms": 1795000000000,
+     "guncelleme_ms": 1795000000000,
+     "zaman": {
+      "kesinlik": "an",
+      "tarih": "2026-11-27",
+      "saat": "19:00",
+      "saat_dilimi": "Etc/GMT-3"
+     },
+     "hatirlatmalar": [
+      {
+       "tur": "once",
+       "dk": 60
+      }
+     ]
+    },
+    "simdi_ms": 1795733100000,
+    "haller": [
+     {
+      "sira": 0,
+      "hal": "kurulur",
+      "tetik_ms": 1795791600000
+     }
+    ],
+    "ozet": {
+     "toplam": 1,
+     "kurulacak": 1,
+     "saatsiz": 0,
+     "gecmis": 0
+    }
+   },
+   {
+    "ad": "dönem: once bekler (gün ya da saat verilince kurulur)",
+    "kayit": {
+     "kayit_id": "k_araba",
+     "revizyon": 12,
+     "tur": "gorev",
+     "baslik": "Araba yıkama",
+     "ornekler": [],
+     "durum": "acik",
+     "taslak": false,
+     "silindi": false,
+     "elle_alanlar": [],
+     "kaynak": {
+      "yol": "sohbet_araci",
+      "tur_kokeni": "insan",
+      "sohbet_id": "ana"
+     },
+     "olusturma_ms": 1795000000000,
+     "guncelleme_ms": 1795000000000,
+     "zaman": {
+      "kesinlik": "donem",
+      "baslangic": "2026-11-30",
+      "bitis": "2026-12-06",
+      "saat_dilimi": "Etc/GMT-3"
+     },
+     "hatirlatmalar": [
+      {
+       "tur": "once",
+       "dk": 60
+      }
+     ]
+    },
+    "simdi_ms": 1795733100000,
+    "haller": [
+     {
+      "sira": 0,
+      "hal": "saatsiz"
+     }
+    ],
+    "ozet": {
+     "toplam": 1,
+     "kurulacak": 0,
+     "saatsiz": 1,
+     "gecmis": 0
+    }
+   },
+   {
+    "ad": "taslak saatsiz gün: hal hesaplanır, kurulmaz, özette gün hatırlatması yok",
+    "kayit": {
+     "kayit_id": "k_araba",
+     "revizyon": 12,
+     "tur": "gorev",
+     "baslik": "Araba yıkama",
+     "ornekler": [],
+     "durum": "acik",
+     "taslak": true,
+     "silindi": false,
+     "elle_alanlar": [],
+     "kaynak": {
+      "yol": "sohbet_araci",
+      "tur_kokeni": "sentetik",
+      "sohbet_id": "ana"
+     },
+     "olusturma_ms": 1795000000000,
+     "guncelleme_ms": 1795000000000,
+     "zaman": {
+      "kesinlik": "gun",
+      "tarih": "2026-11-28",
+      "gun_bolumu": "aksam",
+      "saat_dilimi": "Etc/GMT-3"
+     },
+     "hatirlatmalar": [
+      {
+       "tur": "once",
+       "dk": 60
+      }
+     ]
+    },
+    "simdi_ms": 1795733100000,
+    "haller": [
+     {
+      "sira": 0,
+      "hal": "kurulur",
+      "tetik_ms": 1795874400000,
+      "gun_hatirlatmasi": {
+       "tarih": "2026-11-28",
+       "saat": "17:00"
+      }
+     }
+    ],
+    "ozet": {
+     "toplam": 1,
+     "kurulacak": 0,
+     "saatsiz": 0,
+     "gecmis": 0
+    }
+   },
+   {
+    "ad": "geçmiş gün hatırlatması ve gelecek mutlak: biri geçti, mutlak kurulur",
+    "kayit": {
+     "kayit_id": "k_araba",
+     "revizyon": 12,
+     "tur": "gorev",
+     "baslik": "Araba yıkama",
+     "ornekler": [],
+     "durum": "acik",
+     "taslak": false,
+     "silindi": false,
+     "elle_alanlar": [],
+     "kaynak": {
+      "yol": "sohbet_araci",
+      "tur_kokeni": "insan",
+      "sohbet_id": "ana"
+     },
+     "olusturma_ms": 1795000000000,
+     "guncelleme_ms": 1795000000000,
+     "zaman": {
+      "kesinlik": "gun",
+      "tarih": "2026-11-25",
+      "saat_dilimi": "Etc/GMT-3"
+     },
+     "hatirlatmalar": [
+      {
+       "tur": "once",
+       "dk": 60
+      },
+      {
+       "tur": "mutlak",
+       "tarih": "2026-11-25",
+       "saat": "20:00",
+       "saat_dilimi": "Etc/GMT-3"
+      }
+     ]
+    },
+    "simdi_ms": 1795606200000,
+    "haller": [
+     {
+      "sira": 0,
+      "hal": "gecmis",
+      "gun_hatirlatmasi": {
+       "tarih": "2026-11-25",
+       "saat": "09:00"
+      }
+     },
+     {
+      "sira": 1,
+      "hal": "kurulur",
+      "tetik_ms": 1795626000000
+     }
+    ],
+    "ozet": {
+     "toplam": 2,
+     "kurulacak": 1,
+     "saatsiz": 0,
+     "gecmis": 1,
+     "gun_hatirlatmasi": {
+      "tarih": "2026-11-25",
+      "saat": "09:00",
+      "gecti": true
+     }
+    }
+   },
+   {
+    "ad": "haftalık saatsiz seri (pazartesi): kapalı örnek atlanır, sıradakinin günü 09:00",
+    "kayit": {
+     "kayit_id": "k_araba",
+     "revizyon": 12,
+     "tur": "gorev",
+     "baslik": "Araba yıkama",
+     "ornekler": [
+      {
+       "tarih": "2026-11-30",
+       "durum": "tamam"
+      }
+     ],
+     "durum": "acik",
+     "taslak": false,
+     "silindi": false,
+     "elle_alanlar": [],
+     "kaynak": {
+      "yol": "sohbet_araci",
+      "tur_kokeni": "insan",
+      "sohbet_id": "ana"
+     },
+     "olusturma_ms": 1795000000000,
+     "guncelleme_ms": 1795000000000,
+     "zaman": {
+      "kesinlik": "gun",
+      "tarih": "2026-11-23",
+      "saat_dilimi": "Etc/GMT-3"
+     },
+     "hatirlatmalar": [
+      {
+       "tur": "once",
+       "dk": 60
+      }
+     ],
+     "tekrar": {
+      "siklik": "haftalik",
+      "aralik": 1
+     }
+    },
+    "simdi_ms": 1795606200000,
+    "haller": [
+     {
+      "sira": 0,
+      "hal": "kurulur",
+      "tetik_ms": 1796623200000,
+      "ornek_tarihi": "2026-12-07",
+      "gun_hatirlatmasi": {
+       "tarih": "2026-12-07",
+       "saat": "09:00"
+      }
+     }
+    ],
+    "ozet": {
+     "toplam": 1,
+     "kurulacak": 1,
+     "saatsiz": 0,
+     "gecmis": 0,
+     "gun_hatirlatmasi": {
+      "tarih": "2026-12-07",
+      "saat": "09:00",
+      "gecti": false
+     }
+    }
+   },
+   {
+    "ad": "bitmiş saatsiz seri: geçmiş, gün hatırlatması yok",
+    "kayit": {
+     "kayit_id": "k_araba",
+     "revizyon": 12,
+     "tur": "gorev",
+     "baslik": "Araba yıkama",
+     "ornekler": [],
+     "durum": "acik",
+     "taslak": false,
+     "silindi": false,
+     "elle_alanlar": [],
+     "kaynak": {
+      "yol": "sohbet_araci",
+      "tur_kokeni": "insan",
+      "sohbet_id": "ana"
+     },
+     "olusturma_ms": 1795000000000,
+     "guncelleme_ms": 1795000000000,
+     "zaman": {
+      "kesinlik": "gun",
+      "tarih": "2026-11-02",
+      "saat_dilimi": "Etc/GMT-3"
+     },
+     "hatirlatmalar": [
+      {
+       "tur": "once",
+       "dk": 60
+      }
+     ],
+     "tekrar": {
+      "siklik": "gunluk",
+      "aralik": 1,
+      "adet": 3
+     }
+    },
+    "simdi_ms": 1795606200000,
+    "haller": [
+     {
+      "sira": 0,
+      "hal": "gecmis"
+     }
+    ],
+    "ozet": {
+     "toplam": 1,
+     "kurulacak": 0,
+     "saatsiz": 0,
+     "gecmis": 1
     }
    }
   ],
@@ -3524,6 +4702,134 @@
      1795604400000
     ],
     "beklenen": []
+   },
+   {
+    "ad": "saatsiz gün: kurulu 17:00 gün hatırlatması telefon kapalıyken 17:30'da kaçırılan",
+    "kayit": {
+     "kayit_id": "k_araba",
+     "revizyon": 12,
+     "tur": "gorev",
+     "baslik": "Araba yıkama",
+     "ornekler": [],
+     "durum": "acik",
+     "taslak": false,
+     "silindi": false,
+     "elle_alanlar": [],
+     "kaynak": {
+      "yol": "sohbet_araci",
+      "tur_kokeni": "insan",
+      "sohbet_id": "ana"
+     },
+     "olusturma_ms": 1795000000000,
+     "guncelleme_ms": 1795000000000,
+     "zaman": {
+      "kesinlik": "gun",
+      "tarih": "2026-11-27",
+      "gun_bolumu": "aksam",
+      "saat_dilimi": "Etc/GMT-3"
+     },
+     "hatirlatmalar": [
+      {
+       "tur": "once",
+       "dk": 60
+      }
+     ]
+    },
+    "simdi_ms": 1795789800000,
+    "kurulanlar": [
+     1795788000000
+    ],
+    "beklenen": [
+     {
+      "sira": 0,
+      "tetik_ms": 1795788000000
+     }
+    ]
+   },
+   {
+    "ad": "saatsiz gün ertesi güne alındı: eski günün kurulu gün hatırlatması kayıtta yok, düşer",
+    "kayit": {
+     "kayit_id": "k_araba",
+     "revizyon": 12,
+     "tur": "gorev",
+     "baslik": "Araba yıkama",
+     "ornekler": [],
+     "durum": "acik",
+     "taslak": false,
+     "silindi": false,
+     "elle_alanlar": [],
+     "kaynak": {
+      "yol": "sohbet_araci",
+      "tur_kokeni": "insan",
+      "sohbet_id": "ana"
+     },
+     "olusturma_ms": 1795000000000,
+     "guncelleme_ms": 1795000000000,
+     "zaman": {
+      "kesinlik": "gun",
+      "tarih": "2026-11-28",
+      "gun_bolumu": "aksam",
+      "saat_dilimi": "Etc/GMT-3"
+     },
+     "hatirlatmalar": [
+      {
+       "tur": "once",
+       "dk": 60
+      }
+     ]
+    },
+    "simdi_ms": 1795789800000,
+    "kurulanlar": [
+     1795788000000
+    ],
+    "beklenen": []
+   },
+   {
+    "ad": "haftalık saatsiz seri: bugünkü örneğin 09:00 gün hatırlatması kaçırılan",
+    "kayit": {
+     "kayit_id": "k_araba",
+     "revizyon": 12,
+     "tur": "gorev",
+     "baslik": "Araba yıkama",
+     "ornekler": [],
+     "durum": "acik",
+     "taslak": false,
+     "silindi": false,
+     "elle_alanlar": [],
+     "kaynak": {
+      "yol": "sohbet_araci",
+      "tur_kokeni": "insan",
+      "sohbet_id": "ana"
+     },
+     "olusturma_ms": 1795000000000,
+     "guncelleme_ms": 1795000000000,
+     "zaman": {
+      "kesinlik": "gun",
+      "tarih": "2026-11-23",
+      "saat_dilimi": "Etc/GMT-3"
+     },
+     "hatirlatmalar": [
+      {
+       "tur": "once",
+       "dk": 60
+      }
+     ],
+     "tekrar": {
+      "siklik": "haftalik",
+      "aralik": 1
+     }
+    },
+    "simdi_ms": 1796022000000,
+    "kurulanlar": [
+     1796018400000
+    ],
+    "beklenen": [
+     {
+      "sira": 0,
+      "tetik_ms": 1796018400000,
+      "ornek_tarihi": "2026-11-30"
+     }
+    ]
    }
   ]
  },
@@ -4683,6 +5989,468 @@
      "depo_id": "d_c"
     }
    }
+  }
+ ],
+ "gun_hatirlatmasi": {
+  "saatler": {
+   "sabah": "08:00",
+   "ogle": "11:00",
+   "ogleden_sonra": "13:00",
+   "aksam": "17:00",
+   "gece": "20:00"
+  },
+  "varsayilan": "09:00",
+  "vakalar": [
+   {
+    "ad": "akşam, 60 dk: aynı gün",
+    "gun": "2026-11-28",
+    "dk": 60,
+    "gun_bolumu": "aksam",
+    "beklenen": {
+     "tarih": "2026-11-28",
+     "saat": "17:00"
+    }
+   },
+   {
+    "ad": "bölümsüz, 0 dk",
+    "gun": "2026-11-28",
+    "dk": 0,
+    "beklenen": {
+     "tarih": "2026-11-28",
+     "saat": "09:00"
+    }
+   },
+   {
+    "ad": "1439 dk: aynı gün",
+    "gun": "2026-11-28",
+    "dk": 1439,
+    "gun_bolumu": "gece",
+    "beklenen": {
+     "tarih": "2026-11-28",
+     "saat": "20:00"
+    }
+   },
+   {
+    "ad": "1440 dk: bir gün önce",
+    "gun": "2026-11-28",
+    "dk": 1440,
+    "gun_bolumu": "gece",
+    "beklenen": {
+     "tarih": "2026-11-27",
+     "saat": "20:00"
+    }
+   },
+   {
+    "ad": "ay başı, 2 gün önce",
+    "gun": "2026-12-01",
+    "dk": 2880,
+    "gun_bolumu": "sabah",
+    "beklenen": {
+     "tarih": "2026-11-29",
+     "saat": "08:00"
+    }
+   },
+   {
+    "ad": "artık yıl",
+    "gun": "2024-03-01",
+    "dk": 1440,
+    "beklenen": {
+     "tarih": "2024-02-29",
+     "saat": "09:00"
+    }
+   },
+   {
+    "ad": "yıl başı, 28 gün",
+    "gun": "2027-01-10",
+    "dk": 40320,
+    "gun_bolumu": "ogle",
+    "beklenen": {
+     "tarih": "2026-12-13",
+     "saat": "11:00"
+    }
+   }
+  ]
+ },
+ "gece_teyidi": [
+  {
+   "ad": "01:45 insan, göreli gün, teyitsiz: sor",
+   "fiil": "ajanda_ekle",
+   "girdi": {
+    "tur": "gorev",
+    "baslik": "Araba yıkama",
+    "zaman": {
+     "kesinlik": "gun",
+     "tarih": "2026-11-27",
+     "gun_bolumu": "aksam",
+     "ifade": "yarın akşama"
+    },
+    "dayanak": {
+     "tarih": "2026-11-27",
+     "saat": "01:45"
+    }
+   },
+   "mesaj_ani": {
+    "tarih": "2026-11-27",
+    "saat": "01:45",
+    "saat_dilimi": "Europe/Istanbul"
+   },
+   "tur_kokeni": "insan",
+   "eksik": true
+  },
+  {
+   "ad": "01:48 kullanıcı cevapladı: soruldu",
+   "fiil": "ajanda_ekle",
+   "girdi": {
+    "tur": "gorev",
+    "baslik": "Araba yıkama",
+    "zaman": {
+     "kesinlik": "gun",
+     "tarih": "2026-11-27",
+     "gun_bolumu": "aksam",
+     "ifade": "cuma akşamı"
+    },
+    "dayanak": {
+     "tarih": "2026-11-27",
+     "saat": "01:48",
+     "gece_teyidi": "soruldu"
+    }
+   },
+   "mesaj_ani": {
+    "tarih": "2026-11-27",
+    "saat": "01:48",
+    "saat_dilimi": "Europe/Istanbul"
+   },
+   "tur_kokeni": "insan",
+   "eksik": false
+  },
+  {
+   "ad": "gün adıyla söylendi: gun_acik",
+   "fiil": "ajanda_ekle",
+   "girdi": {
+    "tur": "gorev",
+    "baslik": "Araba yıkama",
+    "zaman": {
+     "kesinlik": "gun",
+     "tarih": "2026-11-27",
+     "gun_bolumu": "aksam",
+     "ifade": "yarın akşama"
+    },
+    "dayanak": {
+     "tarih": "2026-11-27",
+     "saat": "01:45",
+     "gece_teyidi": "gun_acik"
+    }
+   },
+   "mesaj_ani": {
+    "tarih": "2026-11-27",
+    "saat": "01:45",
+    "saat_dilimi": "Europe/Istanbul"
+   },
+   "tur_kokeni": "insan",
+   "eksik": false
+  },
+  {
+   "ad": "sınır 00:00 gece içinde",
+   "fiil": "ajanda_ekle",
+   "girdi": {
+    "tur": "gorev",
+    "baslik": "Araba yıkama",
+    "zaman": {
+     "kesinlik": "gun",
+     "tarih": "2026-11-27",
+     "gun_bolumu": "aksam",
+     "ifade": "yarın akşama"
+    },
+    "dayanak": {
+     "tarih": "2026-11-27",
+     "saat": "00:00"
+    }
+   },
+   "mesaj_ani": {
+    "tarih": "2026-11-27",
+    "saat": "00:00",
+    "saat_dilimi": "Europe/Istanbul"
+   },
+   "tur_kokeni": "insan",
+   "eksik": true
+  },
+  {
+   "ad": "sınır 03:59 gece içinde",
+   "fiil": "ajanda_ekle",
+   "girdi": {
+    "tur": "gorev",
+    "baslik": "Araba yıkama",
+    "zaman": {
+     "kesinlik": "gun",
+     "tarih": "2026-11-27",
+     "gun_bolumu": "aksam",
+     "ifade": "yarın akşama"
+    },
+    "dayanak": {
+     "tarih": "2026-11-27",
+     "saat": "03:59"
+    }
+   },
+   "mesaj_ani": {
+    "tarih": "2026-11-27",
+    "saat": "03:59",
+    "saat_dilimi": "Europe/Istanbul"
+   },
+   "tur_kokeni": "insan",
+   "eksik": true
+  },
+  {
+   "ad": "sınır 04:00 gece dışı",
+   "fiil": "ajanda_ekle",
+   "girdi": {
+    "tur": "gorev",
+    "baslik": "Araba yıkama",
+    "zaman": {
+     "kesinlik": "gun",
+     "tarih": "2026-11-27",
+     "gun_bolumu": "aksam",
+     "ifade": "yarın akşama"
+    },
+    "dayanak": {
+     "tarih": "2026-11-27",
+     "saat": "04:00"
+    }
+   },
+   "mesaj_ani": {
+    "tarih": "2026-11-27",
+    "saat": "04:00",
+    "saat_dilimi": "Europe/Istanbul"
+   },
+   "tur_kokeni": "insan",
+   "eksik": false
+  },
+  {
+   "ad": "23:59 gece dışı",
+   "fiil": "ajanda_ekle",
+   "girdi": {
+    "tur": "gorev",
+    "baslik": "Araba yıkama",
+    "zaman": {
+     "kesinlik": "gun",
+     "tarih": "2026-11-27",
+     "gun_bolumu": "aksam",
+     "ifade": "yarın akşama"
+    },
+    "dayanak": {
+     "tarih": "2026-11-26",
+     "saat": "23:59"
+    }
+   },
+   "mesaj_ani": {
+    "tarih": "2026-11-26",
+    "saat": "23:59",
+    "saat_dilimi": "Europe/Istanbul"
+   },
+   "tur_kokeni": "insan",
+   "eksik": false
+  },
+  {
+   "ad": "sentetik tur: soracak kullanıcı yok, kural uygulanmaz",
+   "fiil": "ajanda_ekle",
+   "girdi": {
+    "tur": "gorev",
+    "baslik": "Araba yıkama",
+    "zaman": {
+     "kesinlik": "gun",
+     "tarih": "2026-11-27",
+     "gun_bolumu": "aksam",
+     "ifade": "yarın akşama"
+    },
+    "dayanak": {
+     "tarih": "2026-11-27",
+     "saat": "01:45"
+    }
+   },
+   "mesaj_ani": {
+    "tarih": "2026-11-27",
+    "saat": "01:45",
+    "saat_dilimi": "Europe/Istanbul"
+   },
+   "tur_kokeni": "sentetik",
+   "eksik": false
+  },
+  {
+   "ad": "zamansız ekleme: takvime bağlı değil",
+   "fiil": "ajanda_ekle",
+   "girdi": {
+    "tur": "gorev",
+    "baslik": "Ekmek al"
+   },
+   "mesaj_ani": {
+    "tarih": "2026-11-27",
+    "saat": "01:45",
+    "saat_dilimi": "Europe/Istanbul"
+   },
+   "tur_kokeni": "insan",
+   "eksik": false
+  },
+  {
+   "ad": "belirsiz zaman: takvime bağlı değil",
+   "fiil": "ajanda_ekle",
+   "girdi": {
+    "tur": "not",
+    "baslik": "Kitap",
+    "zaman": {
+     "kesinlik": "belirsiz",
+     "ifade": "bir ara"
+    }
+   },
+   "mesaj_ani": {
+    "tarih": "2026-11-27",
+    "saat": "01:45",
+    "saat_dilimi": "Europe/Istanbul"
+   },
+   "tur_kokeni": "insan",
+   "eksik": false
+  },
+  {
+   "ad": "yalnız mutlak hatırlatma: takvime bağlı",
+   "fiil": "ajanda_ekle",
+   "girdi": {
+    "tur": "gorev",
+    "baslik": "İlaç",
+    "hatirlatmalar": [
+     {
+      "tur": "mutlak",
+      "tarih": "2026-11-27",
+      "saat": "09:00"
+     }
+    ],
+    "dayanak": {
+     "tarih": "2026-11-27",
+     "saat": "01:45"
+    }
+   },
+   "mesaj_ani": {
+    "tarih": "2026-11-27",
+    "saat": "01:45",
+    "saat_dilimi": "Europe/Istanbul"
+   },
+   "tur_kokeni": "insan",
+   "eksik": true
+  },
+  {
+   "ad": "güncelleme: gün değişikliği teyitsiz",
+   "fiil": "ajanda_guncelle",
+   "girdi": {
+    "kayit_id": "k_araba",
+    "dayanak": {
+     "tarih": "2026-11-27",
+     "saat": "01:48"
+    },
+    "degisiklik": {
+     "zaman": {
+      "kesinlik": "gun",
+      "tarih": "2026-11-27",
+      "gun_bolumu": "aksam",
+      "ifade": "cuma akşamı"
+     }
+    }
+   },
+   "mesaj_ani": {
+    "tarih": "2026-11-27",
+    "saat": "01:48",
+    "saat_dilimi": "Europe/Istanbul"
+   },
+   "tur_kokeni": "insan",
+   "eksik": true
+  },
+  {
+   "ad": "güncelleme: gün adıyla düzeltme, gun_acik",
+   "fiil": "ajanda_guncelle",
+   "girdi": {
+    "kayit_id": "k_araba",
+    "dayanak": {
+     "tarih": "2026-11-27",
+     "saat": "01:48",
+     "gece_teyidi": "gun_acik"
+    },
+    "degisiklik": {
+     "zaman": {
+      "kesinlik": "gun",
+      "tarih": "2026-11-27",
+      "gun_bolumu": "aksam",
+      "ifade": "cuma akşamı"
+     }
+    }
+   },
+   "mesaj_ani": {
+    "tarih": "2026-11-27",
+    "saat": "01:48",
+    "saat_dilimi": "Europe/Istanbul"
+   },
+   "tur_kokeni": "insan",
+   "eksik": false
+  },
+  {
+   "ad": "güncelleme: yalnız durum",
+   "fiil": "ajanda_guncelle",
+   "girdi": {
+    "kayit_id": "k_araba",
+    "degisiklik": {
+     "durum": "tamam"
+    }
+   },
+   "mesaj_ani": {
+    "tarih": "2026-11-27",
+    "saat": "01:48",
+    "saat_dilimi": "Europe/Istanbul"
+   },
+   "tur_kokeni": "insan",
+   "eksik": false
+  },
+  {
+   "ad": "güncelleme: yalnız once hatırlatması",
+   "fiil": "ajanda_guncelle",
+   "girdi": {
+    "kayit_id": "k_araba",
+    "degisiklik": {
+     "hatirlatmalar": [
+      {
+       "tur": "once",
+       "dk": 30
+      }
+     ]
+    }
+   },
+   "mesaj_ani": {
+    "tarih": "2026-11-27",
+    "saat": "01:48",
+    "saat_dilimi": "Europe/Istanbul"
+   },
+   "tur_kokeni": "insan",
+   "eksik": false
+  },
+  {
+   "ad": "gün içinde teyit verilse de yok sayılır",
+   "fiil": "ajanda_ekle",
+   "girdi": {
+    "tur": "gorev",
+    "baslik": "Araba yıkama",
+    "zaman": {
+     "kesinlik": "gun",
+     "tarih": "2026-11-27",
+     "gun_bolumu": "aksam",
+     "ifade": "yarın akşama"
+    },
+    "dayanak": {
+     "tarih": "2026-11-27",
+     "saat": "14:00",
+     "gece_teyidi": "soruldu"
+    }
+   },
+   "mesaj_ani": {
+    "tarih": "2026-11-27",
+    "saat": "14:00",
+    "saat_dilimi": "Europe/Istanbul"
+   },
+   "tur_kokeni": "insan",
+   "eksik": false
   }
  ]
 }

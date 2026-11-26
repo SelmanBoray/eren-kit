@@ -64,7 +64,12 @@ export function kanalKapsamdaMi(kapsam: CihazKapsami, kanal: string): boolean {
   return (KAPSAM_KANALLARI[kapsam] as readonly string[]).includes(kanal);
 }
 
-export const AJANDA_IMZA_ONEKI = `eren-ajanda-auth-v${AJANDA_SURUMU}`;
+/**
+ * Ajanda imza metninin öneki. Kanal sürümünden (`AJANDA_SURUMU`) bilerek türemez: kimlik metninin
+ * biçimi değişmedikçe sabit kalır (`/sohbet` v5'in `eren-auth-v1` kullanması gibi); kanal sürümü
+ * artınca eşleşmiş cihazın imzası ve vektördeki gerçek P-256 imzası geçerli kalır.
+ */
+export const AJANDA_IMZA_ONEKI = "eren-ajanda-auth-v1";
 
 /**
  * `/ajanda` karşılıklı sınamasında imzalanan metin (UTF-8 baytları, ECDSA P-256 + SHA-256, DER).
@@ -131,6 +136,9 @@ export type AjandaKanalHatasi = z.infer<typeof AjandaKanalHatasi>;
  * - `kayit_siniri`: `KAYIT_ADET` doldu.
  * - `sentetik_turda_izinsiz`: insan kökenli olmayan turdan taslak olmayan kayda değişiklik ya da onay.
  * - `dayanak_uyusmuyor`: yalnız araç; modelin `dayanak`'ı turun mesaj anıyla uyuşmuyor (`dayanakGecerliMi`).
+ * - `gece_teyidi_gerekli` (v2): yalnız araç; insan turunun mesaj anı gece aralığında (00:00-04:00) ve
+ *   takvime bağlı çağrı `dayanak.gece_teyidi` taşımıyor (`geceTeyidiEksikMi`). Kayıt yazılmaz; model
+ *   kullanıcıya hangi günü kastettiğini sorar. `/ajanda`'da hiç gönderilmez.
  * - `gecersiz_islem`: yalnız `islem_sonucu`; zarf ve `islem_id` geçerli ama işlemin gövdesi servisin
  *   şemasından geçmedi (`ajandaYukariCoz` sonucunda `islem_id`). Bağlantı kapanmaz.
  * - `ic_hata`: geçici (`AJANDA_GECICI_RET_NEDENLERI`); öteki nedenler kalıcıdır.
@@ -145,6 +153,7 @@ export const AJANDA_RET_NEDENLERI = [
   "kayit_siniri",
   "sentetik_turda_izinsiz",
   "dayanak_uyusmuyor",
+  "gece_teyidi_gerekli",
   "gecersiz_islem",
   "ic_hata",
 ] as const;
@@ -643,8 +652,9 @@ export function kullaniciEmriMi(yazar: { yol: KaynakYolu; tur_kokeni: TurKokeni 
  * değişiklikte (uygulamadan elle ya da insan turundaki araç çağrısı) her alan uygulanır ve uygulanan
  * alanlar `elle_alanlar`'a eklenir: kullanıcının açıkça istediği değer de sonraki otomasyona karşı
  * korunur. `tekrar` ya da `zaman` uygulanınca seriye ait olmayan örnek satırları budanır (tekrar
- * kaldırılabilir, çapa ileri alınabilir). Zaman kesinliği değişince hatırlatma listesine dokunulmaz:
- * `once` saat yokken bekler, saat gelince kurulur. Silinmiş kayıt, sentetik tur ve revizyon kararları
+ * kaldırılabilir, çapa ileri alınabilir). Zaman (gün, gün bölümü, kesinlik) değişince hatırlatma
+ * listesine dokunulmaz: `once` kaydın o anki zamanından hesaplanır (`hatirlatmaHalleri`), gün değişince
+ * gün hatırlatması yeni güne gider, saat gelince saatli kurala geçer. Silinmiş kayıt, sentetik tur ve revizyon kararları
  * çağıranındır; sonuç `AjandaKaydi` ile doğrulanmalıdır.
  */
 export function ajandaDegisikligiUygula(
@@ -685,7 +695,8 @@ export function ajandaDegisikligiUygula(
 
 /**
  * Otomatik eklemenin tekilleştirme anahtarı: aynı kapsamda (ör. `sohbet:<id>`) aynı tür, birebir aynı
- * başlık ve aynı çözülmüş zaman (`zamanCekirdegi`: `ifade` ve `sure_dk` girmez) aynı anahtarı verir;
+ * başlık ve aynı çözülmüş zaman (`zamanCekirdegi`: `ifade` ve `sure_dk` girmez, `gun_bolumu` girer,
+ * hatırlatma girmez) aynı anahtarı verir;
  * "yarın 3'te" ile "bugün 3'te" aynı güne çözüldüyse aynı kayıttır. Girdi saklanacak haldir: servis
  * dilimi doldurduktan sonra hesaplar (`AjandaZamani`, dilim zorunlu). Anahtar kayıt doğarken
  * `kaynak.tekil_anahtar`'a yazılır, sonra değişmez; eşler aynı anahtarı saklayan kayıtlardır.

@@ -107,10 +107,13 @@ export const AZAMI_CERCEVE = {
 
 /**
  * `/ajanda` kanalının sürümü (ajanda uygulaması, eşleştirmesi ve QR'ı dahil). Öteki iki sabitten
- * bağımsızdır: `/sohbet`, `/cihaz`, boru ve `eren-auth-v1` baytları bundan etkilenmez. Kural README
- * "Sürümleme" ile aynıdır: mesaj, alan, kapalı liste öğesi eklemek ya da sınır değiştirmek artıştır.
+ * bağımsızdır: `/sohbet`, `/cihaz`, boru ve `eren-auth-v1` baytları bundan etkilenmez; ajanda imza
+ * metninin öneki de (`eren-ajanda-auth-v1`) bu sayıdan türemez. Kural README "Sürümleme" ile aynıdır:
+ * mesaj, alan, kapalı liste öğesi eklemek ya da sınır değiştirmek artıştır.
+ * 1: ilk dilim. 2: saatsiz gün kaydında gün hatırlatması ve `gun_bolumu`, `gece_teyidi_gerekli`
+ * (`docs/AJANDA.md` "Sürüm 2").
  */
-export const AJANDA_SURUMU = 1 as const;
+export const AJANDA_SURUMU = 2 as const;
 
 /**
  * Yalnız ajanda alanlarının sınırları (`docs/AJANDA.md`). `SINIRLAR`'a eklenmez (Kotlin o bloğun
@@ -164,6 +167,12 @@ export const AJANDA_SINIRLARI = {
    * (`kacirilanHatirlatmalar`); daha eskisi sessizce düşer.
    */
   KACIRILAN_PENCERE_DK: 360,
+  /**
+   * Gece aralığı (v2): mesaj anının yerel saati 00:00 ile bu kadar dakika sonrası (dahil değil, 04:00)
+   * arasındaysa insan turundaki takvime bağlı araç çağrısı `dayanak.gece_teyidi` ister
+   * (`geceTeyidiEksikMi`, `gece_teyidi_gerekli`).
+   */
+  GECE_ARALIGI_DK: 240,
 } as const;
 
 /** `/ajanda` çerçevesinin ve ajanda borusunun ayrıştırma öncesi üst sınırı (UTF-16 birimi). */

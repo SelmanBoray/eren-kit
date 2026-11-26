@@ -32,6 +32,18 @@ import {
   ajandaTekilKarari,
   ajandaTelafiTamMi,
   ajandaYukariCoz,
+  AJANDA_ARACLARI,
+  type AjandaFiili,
+  AJANDA_SURUMU,
+  GUN_BOLUMLERI,
+  GUN_HATIRLATMA_SAATLERI,
+  GUN_HATIRLATMA_VARSAYILAN_SAATI,
+  geceTeyidiEksikMi,
+  type GunBolumu,
+  gunHatirlatmasiYereli,
+  kanonikJson,
+  sha256Hex,
+  utf8Bayt,
   type AnCevirici,
   type CihazKapsami,
   dayanakGecerliMi,
@@ -124,6 +136,12 @@ const kurallar = oku("ajanda-kurallar.json") as {
       son?: string;
     };
   }[];
+  gun_hatirlatmasi: {
+    saatler: Record<string, string>;
+    varsayilan: string;
+    vakalar: { ad: string; gun: string; dk: number; gun_bolumu?: GunBolumu; beklenen: { tarih: string; saat: string } }[];
+  };
+  gece_teyidi: { ad: string; fiil: AjandaFiili; girdi: unknown; mesaj_ani: YerelAn; tur_kokeni: TurKokeni; eksik: boolean }[];
 };
 
 /** `ornekler_gunluk {bas, adet, durum}`: `bas`'tan başlayan ardışık günlük örnek satırları. */
@@ -160,9 +178,10 @@ function kopyaAc(v: KopyaVektoru): AjandaKopya<AjandaKopyaKaydi> {
   return k;
 }
 
-test("ajanda vektör dosyaları sürüm 1, adlar tekil", () => {
-  assert.equal(mesajlar.surum, 1);
-  assert.equal(kurallar.surum, 1);
+test("ajanda vektör dosyaları AJANDA_SURUMU (2), adlar tekil", () => {
+  assert.equal(AJANDA_SURUMU, 2);
+  assert.equal(mesajlar.surum, AJANDA_SURUMU);
+  assert.equal(kurallar.surum, AJANDA_SURUMU);
   for (const yon of [mesajlar.asagi, mesajlar.yukari]) assert.equal(new Set(yon.map((o) => o.ad)).size, yon.length);
 });
 
@@ -247,6 +266,34 @@ test("tekilleştirme anahtarı vektörü: ifade ve süre anahtara girmez", () =>
   assert.equal(anahtar("yarın 3'te"), anahtar("ifadesiz"));
   assert.equal(anahtar("yarın 3'te"), anahtar("süre eklenmiş"));
   assert.notEqual(anahtar("yarın 3'te"), anahtar("saat farklı"));
+  // v2: gün bölümü "ne zaman"dır, anahtara girer; bölümsüz gün kaydının anahtarı v1 formülüyle aynıdır.
+  assert.equal(anahtar("saatsiz gün akşam"), anahtar("saatsiz gün akşam başka söz"));
+  assert.notEqual(anahtar("saatsiz gün akşam"), anahtar("saatsiz gün sabah"));
+  assert.notEqual(anahtar("saatsiz gün akşam"), anahtar("saatsiz gün bölümsüz (v1 biçimi)"));
+  const v1 = kurallar.tekil_anahtar.find((v) => v.ad === "saatsiz gün bölümsüz (v1 biçimi)")!;
+  const { ifade: _ifade, ...cekirdek } = v1.girdi.zaman as { ifade?: string };
+  const v1Govde = { kapsam: v1.girdi.kapsam, tur: v1.girdi.tur, baslik: v1.girdi.baslik, zaman: cekirdek };
+  assert.equal(v1.anahtar, "t1:" + sha256Hex(utf8Bayt(kanonikJson(v1Govde))));
+  assert.equal(Object.keys(cekirdek).includes("gun_bolumu"), false);
+});
+
+test("gün hatırlatması vektörü: saat tablosu birebir, yerel tetik günü ve saati", () => {
+  assert.deepEqual(Object.keys(kurallar.gun_hatirlatmasi.saatler), [...GUN_BOLUMLERI]);
+  assert.deepEqual(kurallar.gun_hatirlatmasi.saatler, { ...GUN_HATIRLATMA_SAATLERI });
+  assert.equal(kurallar.gun_hatirlatmasi.varsayilan, GUN_HATIRLATMA_VARSAYILAN_SAATI);
+  assert.ok(kurallar.gun_hatirlatmasi.vakalar.length >= 6);
+  for (const v of kurallar.gun_hatirlatmasi.vakalar) {
+    assert.deepEqual(gunHatirlatmasiYereli(v.gun, v.dk, v.gun_bolumu), v.beklenen, v.ad);
+  }
+});
+
+test("gece teyidi vektörü: girdi araç şemasından geçer, karar geceTeyidiEksikMi ile aynı", () => {
+  assert.ok(kurallar.gece_teyidi.length >= 12);
+  for (const v of kurallar.gece_teyidi) {
+    const p = AJANDA_ARACLARI[v.fiil].girdi.safeParse(v.girdi);
+    assert.equal(p.success, true, `${v.ad}: girdi geçerli`);
+    assert.equal(geceTeyidiEksikMi(p.data as Parameters<typeof geceTeyidiEksikMi>[0], v.mesaj_ani, v.tur_kokeni), v.eksik, v.ad);
+  }
 });
 
 test("eş değişikliği vektörü: kullanıcının bu turda söylediği alanlar", () => {
@@ -346,6 +393,13 @@ test("hatırlatma planı vektörü: hal, kurulacaklar ve özet", () => {
     assert.deepEqual(kurulacakHatirlatmalar(kayit, v.simdi_ms, anCevir), beklenenKurulacak, v.ad);
     assert.deepEqual(hatirlatmaOzeti(kayit, v.simdi_ms, anCevir), v.ozet, v.ad);
     for (const h of kurulacakHatirlatmalar(kayit, v.simdi_ms, anCevir)) assert.ok(h.tetik_ms > v.simdi_ms, v.ad);
+    // Gün hatırlatmasının tetiği, yerel gününün ve saatinin kaydın dilimindeki anıdır; kayıt saatsiz kalır.
+    for (const h of v.haller) {
+      if (h.hal === "saatsiz" || h.gun_hatirlatmasi === undefined) continue;
+      assert.equal(kayit.zaman?.kesinlik, "gun", v.ad);
+      const dilim = (kayit.zaman as { saat_dilimi: string }).saat_dilimi;
+      if (h.hal === "kurulur") assert.equal(h.tetik_ms, anCevir(h.gun_hatirlatmasi.tarih, h.gun_hatirlatmasi.saat, dilim), v.ad);
+    }
   }
   assert.ok(kurallar.hatirlatma_plani.kacirilan.length >= 6);
   for (const v of kurallar.hatirlatma_plani.kacirilan) {

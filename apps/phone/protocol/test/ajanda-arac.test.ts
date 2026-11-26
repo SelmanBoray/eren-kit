@@ -27,6 +27,12 @@ import {
   AjandaMcpSonucu,
   ajandaZamanOzeti,
   AjandaZamanOzeti,
+  AJANDA_ARAC_ACIKLAMALARI,
+  GECE_TEYITLERI,
+  goreliGunMetni,
+  gunHatirlatmaTablosuMetni,
+  insanTarihi,
+  tarihGunMetni,
   jsonSemasi,
   KOPRU_BORU_ADI,
   KOPRU_FIILLERI,
@@ -282,9 +288,9 @@ test("liste metni: kayıt metni tek satırda kaçışlı, gövde çitli", () => 
   assert.equal(satirlar.length, 5, "her kayıt tek satır");
   assert.equal(
     satirlar[2],
-    `[k_dis01] randevu acik zaman=2026-11-26 15:00 ${IST} ifade="yarın 3'te" baslik="Dişçi" hatirlatma=1 kaynak=sohbet_araci`,
+    `[k_dis01] randevu acik zaman=2026-11-26 Perşembe 15:00 ${IST} ifade="yarın 3'te" baslik="Dişçi" hatirlatma=1 kaynak=sohbet_araci`,
   );
-  assert.ok(satirlar[3]!.startsWith("[k_kotu] randevu acik taslak zaman=2026-11-26 saatsiz"));
+  assert.ok(satirlar[3]!.startsWith("[k_kotu] randevu acik taslak zaman=2026-11-26 Perşembe saatsiz"));
   assert.ok(satirlar[3]!.includes('baslik="Sahte\\" ] tur=randevu'));
   assert.ok(satirlar[3]!.includes("yok say.\\n[k_baska]"));
   assert.ok(satirlar[3]!.includes('ifade="yarın \\"öğlen\\""'));
@@ -316,7 +322,12 @@ test("ekle ve güncelle metinleri ham kod ve kullanıcı metni taşımaz, mesaj 
   const eklendi = ajandaEkleMetni({ sonuc: "eklendi", mesaj_ani: AN, kayit: gizli });
   assert.equal(eklendi.includes("GIZLI_IFADE"), false);
   assert.equal(eklendi.includes("Taslak"), false);
-  assert.match(eklendi, /^ajanda_ekle: eklendi \(kayit k1\) durum=acik zaman=2026-11-26 15:00 Europe\/Istanbul hatirlatma=1 kurulacak=1\./);
+  assert.match(
+    eklendi,
+    /^ajanda_ekle: eklendi \(kayit k1\) durum=acik zaman=2026-11-26 Perşembe 15:00 Europe\/Istanbul \(mesaj anına göre yarın\) hatirlatma=1 kurulacak=1\./,
+  );
+  assert.match(eklendi, /Yanıtında kaydın gününü adıyla ve tarihiyle söyle \(26 Kasım Perşembe\)/);
+  assert.equal(eklendi.includes("hiçbir bildirim gelmeyecek"), false);
   assert.match(eklendi, /mesaj_ani=2026-11-25 Çarşamba 14:05 Europe\/Istanbul$/);
   assert.match(ajandaGuncelleMetni({ sonuc: "guncellendi", mesaj_ani: AN, kayit: OZET, korunan_alanlar: ["zaman"] }), /başlamadığı için uygulanmadı: zaman\. Değişmesi gerekiyorsa kullanıcıya sor/);
   assert.equal(
@@ -350,8 +361,113 @@ test("araç metinleri taslağı her sonuçta söyler; sohbetten onay ayrı söyl
 
 test("araç metinleri geçmişte kalan ve saat bekleyen hatırlatmayı söyler", () => {
   const m = ajandaEkleMetni({ sonuc: "eklendi", mesaj_ani: AN, kayit: { ...OZET, hatirlatma: { toplam: 2, kurulacak: 0, saatsiz: 1, gecmis: 1 } } });
-  assert.match(m, /hatirlatma=2 kurulacak=0 saatsiz=1 \(saat verilince kurulur\) gecmis=1 \(zamanı geçti, kurulmaz\)\./);
-  assert.match(ajandaEkleMetni({ sonuc: "eklendi", mesaj_ani: AN, kayit: { ...OZET, hatirlatma: { toplam: 0, kurulacak: 0, saatsiz: 0, gecmis: 0 } } }), /hatirlatma=yok\./);
+  assert.match(m, /hatirlatma=2 kurulacak=0 saatsiz=1 \(gün ya da saat verilince kurulur\) gecmis=1 \(zamanı geçti, kurulmaz\)\./);
+  assert.match(m, /Bu kayıt için şu an hiçbir bildirim gelmeyecek; bunu kullanıcıya söyle/);
+  const kapali = ajandaEkleMetni({ sonuc: "eklendi", mesaj_ani: AN, kayit: { ...OZET, hatirlatma: { toplam: 0, kurulacak: 0, saatsiz: 0, gecmis: 0 } } });
+  assert.match(kapali, /hatirlatma=yok\./);
+  assert.equal(kapali.includes("hiçbir bildirim"), false, "kullanıcı kapattıysa uyarı yok");
+  // Zamansız görevde bekleyen hatırlatma uyarı gerektirmez.
+  const { zaman: _z, ...zamansiz } = OZET;
+  const z = ajandaEkleMetni({ sonuc: "eklendi", mesaj_ani: AN, kayit: { ...zamansiz, hatirlatma: { toplam: 1, kurulacak: 0, saatsiz: 1, gecmis: 0 } } });
+  assert.match(z, /zaman=yok hatirlatma=1 kurulacak=0 saatsiz=1/);
+  assert.equal(z.includes("hiçbir bildirim"), false);
+  assert.equal(z.includes("Yanıtında kaydın gününü"), false);
+});
+
+const GECE = { tarih: "2026-11-27", saat: "01:45", saat_dilimi: IST };
+const GUN_OZETI = {
+  kayit_id: "k_araba",
+  revizyon: 1,
+  durum: "acik",
+  taslak: false,
+  silindi: false,
+  zaman: { kesinlik: "gun", tarih: "2026-11-27", gun_bolumu: "aksam", saat_dilimi: IST },
+  hatirlatma: { toplam: 1, kurulacak: 1, saatsiz: 0, gecmis: 0, gun_hatirlatmasi: { tarih: "2026-11-27", saat: "17:00", gecti: false } },
+} as const;
+
+test("v2: saatsiz gün kaydının gün hatırlatması özetle ve günün adıyla modele gider", () => {
+  const ekle = AJANDA_ARACLARI.ajanda_ekle.cikti;
+  assert.equal(ekle.safeParse({ sonuc: "eklendi", mesaj_ani: GECE, kayit: GUN_OZETI }).success, true);
+  const m = ajandaEkleMetni({ sonuc: "eklendi", mesaj_ani: GECE, kayit: GUN_OZETI });
+  assert.match(m, /zaman=2026-11-27 Cuma saatsiz aksam Europe\/Istanbul \(mesaj anına göre bugün\) hatirlatma=1 kurulacak=1 /);
+  assert.match(m, /gun_hatirlatmasi=2026-11-27 Cuma 17:00 \(saatsiz kayıt: günün yaklaşık saatinde\)\./);
+  assert.match(m, /\(27 Kasım Cuma\)/);
+  // Öğleden sonra eklenen "bugün": sabah hatırlatması geçti, bildirim gelmeyecek; model bunu söyler.
+  const gecti = { ...GUN_OZETI, zaman: { ...GUN_OZETI.zaman, gun_bolumu: undefined }, hatirlatma: { toplam: 1, kurulacak: 0, saatsiz: 0, gecmis: 1, gun_hatirlatmasi: { tarih: "2026-11-27", saat: "09:00", gecti: true } } };
+  const { gun_bolumu: _b, ...bolumsuz } = gecti.zaman;
+  const g = ajandaEkleMetni({ sonuc: "eklendi", mesaj_ani: { ...GECE, saat: "14:30" }, kayit: { ...gecti, zaman: bolumsuz } });
+  assert.match(g, /zaman=2026-11-27 Cuma saatsiz Europe\/Istanbul/);
+  assert.match(g, /gun_hatirlatmasi=2026-11-27 Cuma 09:00 \(geçti\)\. Bu kayıt için şu an hiçbir bildirim gelmeyecek/);
+  // Taslakta uyarı yerine taslak notu.
+  const t = ajandaEkleMetni({ sonuc: "eklendi", mesaj_ani: GECE, kayit: { ...GUN_OZETI, taslak: true, hatirlatma: { toplam: 1, kurulacak: 0, saatsiz: 0, gecmis: 0 } } });
+  assert.equal(t.includes("hiçbir bildirim"), false);
+  assert.match(t, /Taslak: onaylanmadı/);
+  // Özet şeması: gün hatırlatması sayılarla tutarlı olmalı.
+  const ozet = (h: object) => ekle.safeParse({ sonuc: "eklendi", mesaj_ani: GECE, kayit: { ...GUN_OZETI, hatirlatma: h } }).success;
+  assert.equal(ozet({ toplam: 1, kurulacak: 0, saatsiz: 0, gecmis: 1, gun_hatirlatmasi: { tarih: "2026-11-27", saat: "09:00", gecti: false } }), false);
+  assert.equal(ozet({ toplam: 1, kurulacak: 1, saatsiz: 0, gecmis: 0, gun_hatirlatmasi: { tarih: "2026-11-27", saat: "09:00", gecti: true } }), false);
+  assert.equal(ozet({ toplam: 1, kurulacak: 1, saatsiz: 0, gecmis: 0, gun_hatirlatmasi: { tarih: "2026-11-27", saat: "9:00", gecti: false } }), false);
+  assert.equal(ozet({ toplam: 2, kurulacak: 1, saatsiz: 0, gecmis: 1, gun_hatirlatmasi: { tarih: "2026-11-27", saat: "09:00", gecti: true } }), true);
+  // Özet zamanı gün bölümünü taşır, ifadeyi taşımaz.
+  assert.equal(AjandaZamanOzeti.safeParse(GUN_OZETI.zaman).success, true);
+  assert.equal(AjandaZamanOzeti.safeParse({ ...GUN_OZETI.zaman, ifade: "cuma akşamı" }).success, false);
+});
+
+test("v2: gece aralığı reddi modeli kısa bir soruya yönlendirir, iki günü adıyla verir", () => {
+  const s = ajandaEkleMetni({ sonuc: "ret", mesaj_ani: GECE, neden: "gece_teyidi_gerekli" });
+  assert.match(s, /^ajanda_ekle: eklenmedi, neden=gece_teyidi_gerekli\./);
+  assert.match(s, /takvimde bugün 2026-11-27 Cuma, yarın 2026-11-28 Cumartesi/);
+  assert.match(s, /"27 Kasım Cuma mı, 28 Kasım Cumartesi mi\?"/);
+  // Ünlü uyumu: Pazar gecesi sorusu.
+  assert.match(ajandaEkleMetni({ sonuc: "ret", mesaj_ani: { ...GECE, tarih: "2026-11-30" }, neden: "gece_teyidi_gerekli" }), /"30 Kasım Pazartesi mi, 1 Aralık Salı mı\?"/);
+  assert.match(s, /dayanak\.gece_teyidi:"soruldu"/);
+  assert.match(s, /soru sormadan dayanak\.gece_teyidi:"gun_acik"/);
+  assert.match(s, /mesaj_ani=2026-11-27 Cuma 01:45 Europe\/Istanbul$/);
+  assert.match(ajandaGuncelleMetni({ sonuc: "ret", mesaj_ani: GECE, neden: "gece_teyidi_gerekli" }), /^ajanda_guncelle: uygulanmadı, neden=gece_teyidi_gerekli\. Mesaj gece yarısından sonra/);
+  assert.equal(AJANDA_ARACLARI.ajanda_ekle.cikti.safeParse({ sonuc: "ret", mesaj_ani: GECE, neden: "gece_teyidi_gerekli" }).success, true);
+});
+
+test("v2: göreli gün ve insan tarihi", () => {
+  assert.equal(insanTarihi("2026-11-27"), "27 Kasım Cuma");
+  assert.equal(insanTarihi("2027-01-01"), "1 Ocak Cuma");
+  assert.equal(tarihGunMetni("2026-11-28"), "2026-11-28 Cumartesi");
+  assert.equal(goreliGunMetni("2026-11-27", "2026-11-27"), "bugün");
+  assert.equal(goreliGunMetni("2026-11-28", "2026-11-27"), "yarın");
+  assert.equal(goreliGunMetni("2026-11-26", "2026-11-27"), "dün");
+  assert.equal(goreliGunMetni("2026-12-01", "2026-11-27"), "4 gün sonra");
+  assert.equal(goreliGunMetni("2026-11-20", "2026-11-27"), "7 gün önce");
+  const donem = ajandaEkleMetni({
+    sonuc: "eklendi",
+    mesaj_ani: AN,
+    kayit: { ...OZET, zaman: { kesinlik: "donem", baslangic: "2026-11-30", bitis: "2026-12-06", saat_dilimi: IST }, hatirlatma: { toplam: 1, kurulacak: 0, saatsiz: 1, gecmis: 0 } },
+  });
+  assert.match(donem, /zaman=2026-11-30 Pazartesi\.\.2026-12-06 Pazar Europe\/Istanbul \(mesaj anına göre 5 gün sonra\)/);
+  assert.match(donem, /\(30 Kasım Pazartesi - 6 Aralık Pazar\)/);
+  assert.equal(donem.includes("hiçbir bildirim"), false);
+});
+
+test("v2: araç girdisi gün bölümünü ve gece teyidini taşır; tanımlar kuralı söyler", () => {
+  const ekle = AJANDA_ARACLARI.ajanda_ekle.girdi;
+  const taban = { tur: "gorev", baslik: "Araba yıkama", zaman: { kesinlik: "gun", tarih: "2026-11-27", gun_bolumu: "aksam", ifade: "cuma akşamı" }, dayanak: { tarih: "2026-11-27", saat: "01:47", gece_teyidi: "soruldu" } };
+  assert.equal(ekle.safeParse(taban).success, true);
+  assert.equal(ekle.safeParse({ ...taban, zaman: { ...taban.zaman, gun_bolumu: "ikindi" } }).success, false, "kapalı liste");
+  assert.equal(ekle.safeParse({ ...taban, zaman: { kesinlik: "an", tarih: "2026-11-27", saat: "19:00", gun_bolumu: "aksam" } }).success, false, "saatli zamanda bölüm yok");
+  assert.equal(ekle.safeParse({ ...taban, dayanak: { ...taban.dayanak, gece_teyidi: "evet" } }).success, false);
+  assert.deepEqual([...GECE_TEYITLERI], ["soruldu", "gun_acik"]);
+  assert.deepEqual(Object.keys(AJANDA_ARAC_ACIKLAMALARI).sort(), [...AJANDA_FIILLERI].sort());
+  assert.match(AJANDA_ARAC_ACIKLAMALARI.ajanda_ekle, /gece yarısı ile 04:00 arasında/);
+  assert.match(AJANDA_ARAC_ACIKLAMALARI.ajanda_ekle, /hangi günü kastettiğini sor/);
+  assert.match(AJANDA_ARAC_ACIKLAMALARI.ajanda_ekle, /gününü adıyla ve tarihiyle söyle/);
+  assert.match(AJANDA_ARAC_ACIKLAMALARI.ajanda_guncelle, /yeni günü adıyla ve tarihiyle söyle/);
+  const sema = JSON.stringify(jsonSemasi(ekle));
+  for (const b of ["sabah", "ogle", "ogleden_sonra", "aksam", "gece"]) assert.ok(sema.includes(`"${b}"`), b);
+  const props = (jsonSemasi(ekle) as { properties: Record<string, { description?: string; properties?: Record<string, { description?: string }> }> }).properties;
+  assert.match(props.zaman!.description ?? "", /gun_bolumu/);
+  assert.match(props.zaman!.description ?? "", /adıyla ve tarihiyle söyle/);
+  assert.ok((props.hatirlatmalar!.description ?? "").includes(gunHatirlatmaTablosuMetni()));
+  assert.match(gunHatirlatmaTablosuMetni(), /^sabah 08:00, ogle 11:00, ogleden_sonra 13:00, aksam 17:00, gece 20:00; bölüm yoksa 09:00$/);
+  assert.match(props.dayanak!.description ?? "", /00:00-04:00 arasındaysa gece_teyidi de zorunludur/);
+  assert.match(props.dayanak!.properties!.gece_teyidi!.description ?? "", /Soru sormadan soruldu verme/);
 });
 
 test("ret metinleri: dayanak uyuşmazlığında mesaj anına göre yeniden çözmeyi, tutarsızlık nedeni, geçici hata yeniden denemeyi söyler", () => {

@@ -7,7 +7,7 @@ import type {
   AjandaListeleCikti,
   AjandaYerelAn,
 } from "./ajanda-arac.ts";
-import { ajandaGorunmezMi, type AjandaZamani, type AjandaZamanOzeti, haftaGunuNo } from "./ajanda-zaman.ts";
+import { ajandaGorunmezMi, type AjandaZamani, type AjandaZamanOzeti, gunNoTarih, haftaGunuNo, tarihGunNo } from "./ajanda-zaman.ts";
 import { citleSar } from "./cihaz-metin.ts";
 import { GUVENILMEZ_META } from "./mcp.ts";
 import { AJANDA_SINIRLARI } from "./sinirlar.ts";
@@ -66,10 +66,34 @@ export function ajandaKacir(metin: string, boy: number): string {
 }
 
 const GUN_ADLARI = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"] as const;
+/** Gün adının soru eki (ünlü uyumu): Pazartesi mi, Salı mı, ... */
+const GUN_SORU_EKLERI = ["mi", "mı", "mı", "mi", "mı", "mi", "mı"] as const;
+const AY_ADLARI =["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"] as const;
+
+/** `2026-11-27 Cuma`: tarih ve gün adı (modelin okuduğu biçim). */
+export function tarihGunMetni(tarih: string): string {
+  return `${tarih} ${GUN_ADLARI[haftaGunuNo(tarih)]}`;
+}
+
+/** `27 Kasım Cuma`: kullanıcıya söylenecek biçim. */
+export function insanTarihi(tarih: string): string {
+  return `${Number(tarih.slice(8, 10))} ${AY_ADLARI[Number(tarih.slice(5, 7)) - 1]} ${GUN_ADLARI[haftaGunuNo(tarih)]}`;
+}
+
+const soruEki = (tarih: string): string => GUN_SORU_EKLERI[haftaGunuNo(tarih)]!;
+
+/** `tarih`'in mesaj anının gününe göre adı: bugün, yarın, dün, `3 gün sonra`, `2 gün önce`. */
+export function goreliGunMetni(tarih: string, mesajAniTarihi: string): string {
+  const fark = tarihGunNo(tarih) - tarihGunNo(mesajAniTarihi);
+  if (fark === 0) return "bugün";
+  if (fark === 1) return "yarın";
+  if (fark === -1) return "dün";
+  return fark > 0 ? `${fark} gün sonra` : `${-fark} gün önce`;
+}
 
 /** `2026-11-25 Çarşamba 14:30 Europe/Istanbul` */
 export function yerelAnMetni(s: AjandaYerelAn): string {
-  return `${s.tarih} ${GUN_ADLARI[haftaGunuNo(s.tarih)]} ${s.saat} ${s.saat_dilimi}`;
+  return `${tarihGunMetni(s.tarih)} ${s.saat} ${s.saat_dilimi}`;
 }
 
 /**
@@ -83,15 +107,19 @@ export function mesajAniDamgasi(an: AjandaYerelAn): string {
   return `[mesaj_ani: ${yerelAnMetni(an)}]`;
 }
 
-/** `ifadeli` yanlışsa (özet) şemayı atlayan bir yoldan `ifade` gelse de yazılmaz. */
+/**
+ * Zamanın modele giden hali, günler adıyla: `2026-11-26 Perşembe 15:00 Europe/Istanbul`,
+ * `2026-11-27 Cuma saatsiz aksam Europe/Istanbul`, `2026-11-30 Pazartesi..2026-12-06 Pazar Europe/Istanbul`.
+ * `gun_bolumu` kapalı listedendir. `ifadeli` yanlışsa (özet) şemayı atlayan bir yoldan `ifade` gelse de yazılmaz.
+ */
 function zamanMetni(z: AjandaZamani | AjandaZamanOzeti, ifadeli: boolean): string {
   let metin: string;
   if (z.kesinlik === "an") {
-    metin = `${z.tarih} ${z.saat} ${z.saat_dilimi}` + (z.sure_dk === undefined ? "" : ` sure=${z.sure_dk}dk`);
+    metin = `${tarihGunMetni(z.tarih)} ${z.saat} ${z.saat_dilimi}` + (z.sure_dk === undefined ? "" : ` sure=${z.sure_dk}dk`);
   } else if (z.kesinlik === "gun") {
-    metin = `${z.tarih} saatsiz ${z.saat_dilimi}`;
+    metin = `${tarihGunMetni(z.tarih)} saatsiz${z.gun_bolumu === undefined ? "" : ` ${z.gun_bolumu}`} ${z.saat_dilimi}`;
   } else if (z.kesinlik === "donem") {
-    metin = `${z.baslangic}..${z.bitis} ${z.saat_dilimi}`;
+    metin = `${tarihGunMetni(z.baslangic)}..${tarihGunMetni(z.bitis)} ${z.saat_dilimi}`;
   } else {
     metin = "belirsiz";
   }
@@ -123,22 +151,64 @@ const TASLAK_NOTU =
   " Taslak: onaylanmadı, hatırlatma kurulmaz. Kullanıcı isterse onaylar (uygulamadan ya da sohbette " +
   "açıkça isteyince ajanda_guncelle onayla:true); kullanıcıya kaydedildi deme, taslak olduğunu söyle.";
 
-/** Kayıt özetinin modele giden kısmı: durum, zaman (ifadesiz), hatırlatma hali, taslak uyarısı. */
-function ozetMetni(k: AjandaKayitOzeti): string {
+const BILDIRIM_YOK_NOTU =
+  " Bu kayıt için şu an hiçbir bildirim gelmeyecek; bunu kullanıcıya söyle (isterse saat ya da hatırlatma verebilir).";
+
+/** Kaydın gününün kullanıcıya söylenecek hali: `27 Kasım Cuma`, dönemde `30 Kasım Pazartesi - 6 Aralık Pazar`. */
+function insanZamani(z: AjandaZamanOzeti): string | undefined {
+  if (z.kesinlik === "an" || z.kesinlik === "gun") return insanTarihi(z.tarih);
+  if (z.kesinlik === "donem") return `${insanTarihi(z.baslangic)} - ${insanTarihi(z.bitis)}`;
+  return undefined;
+}
+
+/**
+ * Kayıt özetinin modele giden kısmı: durum, zaman (ifadesiz, günler adıyla ve mesaj anına göre:
+ * `(mesaj anına göre yarın)`), hatırlatma hali (gün hatırlatmasının günü ve saati dahil), hiç bildirim
+ * gelmeyecekse uyarı, günü adıyla söyleme yönergesi, taslak uyarısı.
+ */
+function ozetMetni(k: AjandaKayitOzeti, an: AjandaYerelAn): string {
   let metin = `(kayit ${k.kayit_id}) durum=${k.durum}${k.taslak ? " taslak" : ""}`;
   metin += ` zaman=${k.zaman === undefined ? "yok" : zamanMetni(k.zaman, false)}`;
+  const z = k.zaman;
+  const gun = z === undefined ? undefined : z.kesinlik === "donem" ? z.baslangic : z.kesinlik === "belirsiz" ? undefined : z.tarih;
+  if (gun !== undefined) metin += ` (mesaj anına göre ${goreliGunMetni(gun, an.tarih)})`;
   const h = k.hatirlatma;
   if (h.toplam === 0) metin += " hatirlatma=yok.";
   else {
     metin += ` hatirlatma=${h.toplam} kurulacak=${h.kurulacak}`;
-    if (h.saatsiz > 0) metin += ` saatsiz=${h.saatsiz} (saat verilince kurulur)`;
+    if (h.saatsiz > 0) metin += ` saatsiz=${h.saatsiz} (gün ya da saat verilince kurulur)`;
     if (h.gecmis > 0) metin += ` gecmis=${h.gecmis} (zamanı geçti, kurulmaz)`;
+    const g = h.gun_hatirlatmasi;
+    if (g !== undefined) {
+      metin += ` gun_hatirlatmasi=${tarihGunMetni(g.tarih)} ${g.saat}`;
+      metin += g.gecti ? " (geçti)" : " (saatsiz kayıt: günün yaklaşık saatinde)";
+    }
     metin += ".";
+    // Yalnız günü belli kayıtta (an, gun): orada hatırlatma beklenir; dönem, belirsiz ve zamansızda bekleyen yeter.
+    const gunlu = z !== undefined && (z.kesinlik === "an" || z.kesinlik === "gun");
+    if (gunlu && !k.taslak && !k.silindi && k.durum === "acik" && h.kurulacak === 0) metin += BILDIRIM_YOK_NOTU;
+  }
+  const insan = z === undefined ? undefined : insanZamani(z);
+  if (insan !== undefined) {
+    metin += ` Yanıtında kaydın gününü adıyla ve tarihiyle söyle (${insan}); göreli ifadeyi nasıl çözdüğün böyle görünür.`;
   }
   return k.taslak ? metin + TASLAK_NOTU : metin;
 }
 
 const anMetni = (an: AjandaYerelAn) => ` mesaj_ani=${yerelAnMetni(an)}`;
+
+function geceNotu(an: AjandaYerelAn): string {
+  const bugun = an.tarih;
+  const yarin = gunNoTarih(tarihGunNo(bugun) + 1);
+  return (
+    ` Mesaj gece yarısından sonra yazıldı (${an.saat}): takvimde bugün ${tarihGunMetni(bugun)}, yarın ` +
+    `${tarihGunMetni(yarin)}. Kullanıcı günü göreli söylediyse (yarın, bugün, bu akşam, bu gece) uyanınca ` +
+    `başlayacak günü (${insanTarihi(bugun)}) kastediyor olabilir: kaydetmeden önce kısa bir soruyla hangi günü ` +
+    `kastettiğini sor (ör. "${insanTarihi(bugun)} ${soruEki(bugun)}, ${insanTarihi(yarin)} ${soruEki(yarin)}?"), cevabından sonra ` +
+    `dayanak.gece_teyidi:"soruldu" ile yeniden çağır. Günü tarihle ya da adıyla söylediyse ya da yalnız saati ` +
+    `göreliyse (1 saat sonra) soru sormadan dayanak.gece_teyidi:"gun_acik" ile yeniden çağır.`
+  );
+}
 
 function retMetni(fiil: string, eylem: string, neden: string, an: AjandaYerelAn): string {
   let ek = "";
@@ -146,6 +216,8 @@ function retMetni(fiil: string, eylem: string, neden: string, an: AjandaYerelAn)
     ek =
       " Dayanak bu turun mesaj anıyla uyuşmuyor: göreli zamanı kullanıcının mesajının ulaştığı ana " +
       "(aşağıdaki mesaj_ani; şimdiki saat değil) göre yeniden çöz, dayanak olarak onu ver ve yeniden dene.";
+  } else if (neden === "gece_teyidi_gerekli") {
+    ek = geceNotu(an);
   } else if (neden === "tutarsiz_kayit") {
     ek = " Değişiklik kaydın kurallarını bozuyor: tekrar eden kayıtta zaman an ya da gun olmalı, tekrar bitişi çapadan önce olamaz.";
   } else if (neden === "ic_hata") {
@@ -161,15 +233,15 @@ function uygulananMetni(alanlar: readonly string[]): string {
 export function ajandaEkleMetni(c: AjandaEkleCikti): string {
   if (c.sonuc === "ret") return retMetni("ajanda_ekle", "eklenmedi", c.neden, c.mesaj_ani);
   const an = anMetni(c.mesaj_ani);
-  if (c.sonuc === "eklendi") return `ajanda_ekle: eklendi ${ozetMetni(c.kayit)}${an}`;
+  if (c.sonuc === "eklendi") return `ajanda_ekle: eklendi ${ozetMetni(c.kayit, c.mesaj_ani)}${an}`;
   const uygulanan = uygulananMetni(c.uygulanan_alanlar);
   if (c.sonuc === "onaylandi") {
-    return `ajanda_ekle: aynı kayıt taslak olarak vardı, kullanıcının isteğiyle onaylandı; yeni kayıt açılmadı ${ozetMetni(c.kayit)}${uygulanan}${an}`;
+    return `ajanda_ekle: aynı kayıt taslak olarak vardı, kullanıcının isteğiyle onaylandı; yeni kayıt açılmadı ${ozetMetni(c.kayit, c.mesaj_ani)}${uygulanan}${an}`;
   }
   if (c.kayit.silindi) {
     return `ajanda_ekle: kullanıcı bu kaydı silmiş; yeniden eklenmedi (kayit ${c.kayit.kayit_id}).${an}`;
   }
-  return `ajanda_ekle: zaten kayıtlı, yeni kayıt açılmadı ${ozetMetni(c.kayit)}${uygulanan}${an}`;
+  return `ajanda_ekle: zaten kayıtlı, yeni kayıt açılmadı ${ozetMetni(c.kayit, c.mesaj_ani)}${uygulanan}${an}`;
 }
 
 export function ajandaGuncelleMetni(c: AjandaGuncelleCikti): string {
@@ -180,7 +252,7 @@ export function ajandaGuncelleMetni(c: AjandaGuncelleCikti): string {
       : ` Şu alanları kullanıcı kendisi belirlemiş; bu tur kullanıcının mesajıyla başlamadığı için ` +
         `uygulanmadı: ${c.korunan_alanlar.join(",")}. Değişmesi gerekiyorsa kullanıcıya sor.`;
   const ozet = c.sonuc === "guncellendi" ? "güncellendi" : "değişiklik yok";
-  return `ajanda_guncelle: ${ozet} ${ozetMetni(c.kayit)}${korunan}${anMetni(c.mesaj_ani)}`;
+  return `ajanda_guncelle: ${ozet} ${ozetMetni(c.kayit, c.mesaj_ani)}${korunan}${anMetni(c.mesaj_ani)}`;
 }
 
 /**

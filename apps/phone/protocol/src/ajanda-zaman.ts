@@ -240,6 +240,45 @@ export const ZAMAN_KESINLIKLERI = ["an", "gun", "donem", "belirsiz"] as const;
 export const ZamanKesinligi = z.enum(ZAMAN_KESINLIKLERI);
 export type ZamanKesinligi = z.infer<typeof ZamanKesinligi>;
 
+/**
+ * Saatsiz gün kaydında kullanıcının söylediği gün bölümü (v2): "yarın akşama" → `gun` + `aksam`.
+ * Saat değildir ve saat yerine geçmez (kayıt saatsiz kalır, takvimde saatli görünmez); yalnız gün
+ * hatırlatmasının saatini (`GUN_HATIRLATMA_SAATLERI`) ve görünümü belirler. İkindi, akşamüstü gibi
+ * sözler en yakın bölüme eşlenir; söylenmediyse alan yoktur (uydurulmaz).
+ */
+export const GUN_BOLUMLERI = ["sabah", "ogle", "ogleden_sonra", "aksam", "gece"] as const;
+export const GunBolumu = z
+  .enum(GUN_BOLUMLERI)
+  .describe(
+    "Saat söylenmedi ama günün bölümü söylendiyse: sabah, ogle (öğlen), ogleden_sonra (ikindi dahil), aksam (akşamüstü dahil), gece. Söylenmediyse verme.",
+  );
+export type GunBolumu = z.infer<typeof GunBolumu>;
+
+/**
+ * Saatsiz gün kaydının gün hatırlatması saati (v2, yerel duvar saati, kaydın diliminde): gün
+ * bölümünün olağan başından yaklaşık bir saat önce, kullanıcı o bölüm için hazırlanabilsin diye.
+ * Bölüm yoksa `GUN_HATIRLATMA_VARSAYILAN_SAATI` (o günün sabahı). Tablo kapalıdır, vektörde birebir durur.
+ */
+export const GUN_HATIRLATMA_SAATLERI: Readonly<Record<GunBolumu, string>> = {
+  sabah: "08:00",
+  ogle: "11:00",
+  ogleden_sonra: "13:00",
+  aksam: "17:00",
+  gece: "20:00",
+};
+export const GUN_HATIRLATMA_VARSAYILAN_SAATI = "09:00";
+
+/** Saatsiz gün kaydının gün hatırlatması saati: bölümün saati, bölüm yoksa varsayılan. */
+export function gunHatirlatmaSaati(gun_bolumu?: GunBolumu | undefined): string {
+  return gun_bolumu === undefined ? GUN_HATIRLATMA_VARSAYILAN_SAATI : GUN_HATIRLATMA_SAATLERI[gun_bolumu];
+}
+
+/** Modele giden açıklamalarda gün hatırlatması tablosu: `sabah 08:00, ogle 11:00, ...; bölüm yoksa 09:00`. */
+export function gunHatirlatmaTablosuMetni(): string {
+  const bolumler = GUN_BOLUMLERI.map((b) => `${b} ${GUN_HATIRLATMA_SAATLERI[b]}`).join(", ");
+  return `${bolumler}; bölüm yoksa ${GUN_HATIRLATMA_VARSAYILAN_SAATI}`;
+}
+
 const Ifade = ajandaSatiri(1, AJANDA_SINIRLARI.ZAMAN_IFADESI).describe(
   "Kullanıcının zaman ifadesi, birebir (örnek: yarın 3'te). Yorumlanmaz, düzeltilmez.",
 );
@@ -252,8 +291,8 @@ function donemGecerliMi(d: { baslangic: string; bitis: string }): boolean {
 
 /**
  * Zamanın dört biçimi. `dilim` kablo kaydında zorunlu `SaatDilimi`, araç girdisinde isteğe bağlıdır
- * (servis varsayılan dilimi koyar). Saat söylenmediyse `gun`, gün aralığıysa `donem`, takvime
- * oturmuyorsa `belirsiz`: saat ya da gün uydurulmaz.
+ * (servis varsayılan dilimi koyar). Saat söylenmediyse `gun` (gün bölümü söylendiyse `gun_bolumu`,
+ * v2), gün aralığıysa `donem`, takvime oturmuyorsa `belirsiz`: saat ya da gün uydurulmaz.
  */
 function zamanSemasi<D extends z.ZodType>(dilim: D) {
   return z.discriminatedUnion("kesinlik", [
@@ -269,8 +308,14 @@ function zamanSemasi<D extends z.ZodType>(dilim: D) {
       })
       .describe("Gün ve saat belli."),
     z
-      .strictObject({ kesinlik: z.literal("gun"), tarih: Tarih, saat_dilimi: dilim, ifade: Ifade.optional() })
-      .describe("Gün belli, saat söylenmedi."),
+      .strictObject({
+        kesinlik: z.literal("gun"),
+        tarih: Tarih,
+        gun_bolumu: GunBolumu.optional(),
+        saat_dilimi: dilim,
+        ifade: Ifade.optional(),
+      })
+      .describe("Gün belli, saat söylenmedi (günün bölümü söylendiyse gun_bolumu)."),
     z
       .strictObject({
         kesinlik: z.literal("donem"),
@@ -307,7 +352,7 @@ export const AjandaZamanOzeti = z.discriminatedUnion("kesinlik", [
     sure_dk: z.number().int().min(1).max(AJANDA_SINIRLARI.SURE_DK).optional(),
     saat_dilimi: SaatDilimi,
   }),
-  z.strictObject({ kesinlik: z.literal("gun"), tarih: Tarih, saat_dilimi: SaatDilimi }),
+  z.strictObject({ kesinlik: z.literal("gun"), tarih: Tarih, gun_bolumu: GunBolumu.optional(), saat_dilimi: SaatDilimi }),
   z
     .strictObject({ kesinlik: z.literal("donem"), baslangic: Tarih, bitis: Tarih, saat_dilimi: SaatDilimi })
     .refine(donemGecerliMi, { message: "bitis baslangictan önce ya da dönem çok uzun", path: ["bitis"] }),
@@ -322,9 +367,11 @@ export function ajandaZamanOzeti(zaman: AjandaZamani): AjandaZamanOzeti {
 }
 
 /**
- * Zamanın "ne zaman" çekirdeği: kesinlik, gün(ler), saat, dilim. `ifade` (kullanıcının sözü) ve
- * `sure_dk` (sürenin uzunluğu) girmez: aynı randevu başka sözle ya da süre eklenerek anıldığında
- * aynı çekirdek çıkar. Tekilleştirme anahtarı bundan hesaplanır (`ajandaTekilAnahtari`).
+ * Zamanın "ne zaman" çekirdeği: kesinlik, gün(ler), saat, gün bölümü, dilim. `ifade` (kullanıcının
+ * sözü) ve `sure_dk` (sürenin uzunluğu) girmez: aynı randevu başka sözle ya da süre eklenerek
+ * anıldığında aynı çekirdek çıkar. `gun_bolumu` (v2) saat gibi "ne zaman"dır ve girer ("sabah koşu" ile
+ * "akşam koşu" ayrı kayıttır); yoksa çekirdek v1'deki ile bayt bayt aynıdır, saklı anahtarlar
+ * değişmez. Hatırlatma hiç girmez. Tekilleştirme anahtarı bundan hesaplanır (`ajandaTekilAnahtari`).
  */
 export function zamanCekirdegi(zaman: AjandaZamani): AjandaZamanOzeti {
   const ozet = ajandaZamanOzeti(zaman);
@@ -343,8 +390,10 @@ function hatirlatmaSemasi<D extends z.ZodType>(dilim: D) {
         dk: z.number().int().min(0).max(AJANDA_SINIRLARI.HATIRLATMA_ONCE_DK),
       })
       .describe(
-        "Kaydın anından dk dakika önce; tekrar eden kayıtta her örnek için. Zaman kesinliği an değilken " +
-          "bekler (çalmaz), saat verilince kurulur.",
+        "Saatli kayıtta olayın anından dk dakika önce. Saatsiz gün kaydında o günün gün hatırlatması " +
+          `saatinde (${gunHatirlatmaTablosuMetni()}); dk 1440 ve üstüyse tam gün sayısı kadar önceki gün ` +
+          "aynı saatte. Tekrar eden kayıtta her örnek için. Dönem, belirsiz ya da zamansız kayıtta bekler " +
+          "(çalmaz), gün ya da saat verilince kurulur.",
       ),
     z
       .strictObject({ tur: z.literal("mutlak"), tarih: Tarih, saat: Saat, saat_dilimi: dilim })
@@ -373,9 +422,12 @@ export const HatirlatmaGirdileri = hatirlatmaListesi(HatirlatmaGirdisi);
 
 /**
  * Girdide `hatirlatmalar` verilmeyen kayda (zaman kesinliği ne olursa olsun) servisin koyduğu liste.
- * Saat yokken `once` bekler; kayıt sonradan saatli olunca kendiliğinden kurulur, yani saatsiz eklenip
- * sonra saatlenen kayıt saatli eklenmiş gibi davranır. Açık boş dizi ("hatırlatma istemiyorum")
- * varsayılanı almaz ve öyle kalır. Uygulamanın elle ekleme ekranı da bununla açılır.
+ * Saatli kayıtta olaydan 1 saat önce; saatsiz gün kaydında (v2) o günün gün hatırlatması saatinde
+ * (`gunHatirlatmaSaati`: gün bölümüne göre, yoksa 09:00). Liste kaydın zamanına bağlıdır, mutlak bir
+ * ana değil: gün değişince hatırlatma yeni güne gider; kayıt sonradan saatlenince saatli kural,
+ * saati kalkınca gün hatırlatması kendiliğinden geçerli olur (liste hiç yeniden yazılmaz). Dönem,
+ * belirsiz ve zamansız kayıtta bekler. Açık boş dizi ("hatırlatma istemiyorum") varsayılanı almaz ve
+ * öyle kalır. Uygulamanın elle ekleme ekranı da bununla açılır.
  */
 export const AJANDA_VARSAYILAN_HATIRLATMALAR: readonly Hatirlatma[] = [{ tur: "once", dk: 60 }];
 
@@ -511,8 +563,8 @@ export function ornekGunleriMi(capa: string, t: Tekrar, tarihler: readonly strin
 
 /**
  * Zaman, hatırlatma ve tekrarın birbirine bağlı kuralları: tekrar `an` ya da `gun` ister ve bitişi
- * çapadan önce olamaz. `once` hatırlatması her zamanla kaydedilebilir; kesinlik `an` değilken bekler
- * (çalmaz). Kayıt, ekleme ve araç girdisi bunu paylaşır.
+ * çapadan önce olamaz. `once` hatırlatması her zamanla kaydedilebilir; `an`'da olaydan önce, `gun`'da
+ * gün hatırlatması saatinde çalar, öteki kesinliklerde bekler. Kayıt, ekleme ve araç girdisi bunu paylaşır.
  */
 export function zamanKurallari(
   g: {

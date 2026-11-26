@@ -94,7 +94,21 @@ test("mevcut imza metinlerinin baytları değişmedi, ajanda metni ayrı önek t
 test("sürüm sabitleri bağımsız; mevcutlar değişmedi", () => {
   assert.equal(PROTOKOL_SURUMU, 1);
   assert.equal(SOHBET_SURUMU, 5);
-  assert.equal(AJANDA_SURUMU, 1);
+  // v2: saatsiz gün kaydında gün hatırlatması ve gun_bolumu, gece_teyidi_gerekli (docs/AJANDA.md "Sürüm 2").
+  assert.equal(AJANDA_SURUMU, 2);
+});
+
+test("v2: imza öneki kanal sürümünden türemez; eski sürümlü çerçeve protokol_uyumsuz", () => {
+  assert.equal(AJANDA_IMZA_ONEKI, "eren-ajanda-auth-v1");
+  for (const eski of [
+    { v: 1, type: "hello", device_id: "d1", son_rev: 0, client_nonce: NONCE },
+    { v: 1, type: "pair_request", kod: "ABCD2345", public_key: ANAHTAR, platform: "android" },
+  ]) {
+    assert.deepEqual(ajandaYukariCoz(JSON.stringify(eski)), { ok: false, kod: "protokol_uyumsuz", yollar: ["v"] });
+  }
+  assert.equal(kodu(ajandaAsagiCoz(JSON.stringify({ v: 1, type: "esitlendi", rev: 1 }))), "protokol_uyumsuz");
+  // Servisin eski uygulamaya yolladığı ret çerçevesi yeni sürümü taşır; eski uygulama onu da protokol_uyumsuz çözer.
+  assert.equal(ajandaAsagiCoz(JSON.stringify({ v, type: "error", code: "protokol_uyumsuz" })).ok, true);
 });
 
 test("kapsamlar kanalları ayrık paylaşır; eski cihaz sohbet kapsamındadır", () => {
@@ -113,9 +127,11 @@ test("ajanda eşleştirmesi kapsam beyan edemez; ayrımı PC'deki pencere yapar"
   const istek = { v, type: "pair_request", kod: "ABCD2345", public_key: ANAHTAR, platform: "android" };
   assert.equal(ajandaYukariCoz(JSON.stringify(istek)).ok, true);
   assert.equal(ajandaYukariCoz(JSON.stringify({ ...istek, kapsam: "ajanda" })).ok, false);
-  // Bilinen gerçek: aynı çerçeve /sohbet'in v1 PairRequest şemasına da uyar. Bu yüzden servis,
-  // açık pencerenin kapsamı o kanalın kapsamı değilse `eslestirme_kapali` döner (docs/AJANDA.md).
-  assert.equal(PairRequest.safeParse(istek).success, true);
+  // v1'de aynı çerçeve /sohbet'in v1 PairRequest şemasına da uyuyordu; v2'de `v` ayırır. Servisin
+  // pencere denetimi (kapsamı o kanalın kapsamı değilse `eslestirme_kapali`) yine de asıl ayrımdır.
+  assert.equal(PairRequest.safeParse(istek).success, false);
+  assert.equal(PairRequest.safeParse({ ...istek, v: 1 }).success, true);
+  assert.equal(kodu(ajandaYukariCoz(JSON.stringify({ ...istek, v: 1 }))), "protokol_uyumsuz");
 });
 
 test("/ajanda çerçeveleri öteki kanallarda, öteki kanalların çerçeveleri /ajanda'da çözülmez", () => {
@@ -130,7 +146,8 @@ test("/ajanda çerçeveleri öteki kanallarda, öteki kanalların çerçeveleri 
   const sohbetHello = { v: SOHBET_SURUMU, type: "hello", device_id: "d1", last_seq: 0, client_nonce: NONCE };
   assert.equal(kodu(ajandaYukariCoz(JSON.stringify(sohbetHello))), "protokol_uyumsuz");
   const cihazHello = { v: PROTOKOL_SURUMU, type: "hello", device_id: "d1", client_nonce: NONCE };
-  assert.equal(kodu(ajandaYukariCoz(JSON.stringify(cihazHello))), "gecersiz_mesaj");
+  assert.equal(kodu(ajandaYukariCoz(JSON.stringify(cihazHello))), "protokol_uyumsuz");
+  assert.equal(kodu(ajandaYukariCoz(JSON.stringify({ ...cihazHello, v }))), "gecersiz_mesaj");
   const kimlik = { v, type: "auth_challenge", server_nonce: NONCE, server_signature: IMZA };
   assert.equal(AjandaAsagi.safeParse(kimlik).success, true);
 });
@@ -139,8 +156,10 @@ test("QR: eski ve ajanda QR'ı birbirinin şemasına uymaz", () => {
   const eski = { v: 1, host: "100.64.0.1", port: 1, kod: "ABCD2345", server_public_key: ANAHTAR };
   assert.equal(EslestirmeQr.safeParse(eski).success, true);
   assert.equal(AjandaEslestirmeQr.safeParse(eski).success, false);
-  assert.equal(AjandaEslestirmeQr.safeParse({ ...eski, kanal: "ajanda" }).success, true);
-  assert.equal(EslestirmeQr.safeParse({ ...eski, kanal: "ajanda" }).success, false);
+  const ajanda = { ...eski, v: AJANDA_SURUMU, kanal: "ajanda" };
+  assert.equal(AjandaEslestirmeQr.safeParse(ajanda).success, true);
+  assert.equal(EslestirmeQr.safeParse(ajanda).success, false);
+  assert.equal(AjandaEslestirmeQr.safeParse({ ...ajanda, v: 1 }).success, false, "v1 ajanda QR'ı (eski servis) reddedilir");
 });
 
 test("kanal hataları v1 kümesinin altkümesidir; ret nedenleri HATA_KODLARI'na girmez", () => {

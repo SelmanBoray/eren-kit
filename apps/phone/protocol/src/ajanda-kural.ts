@@ -10,12 +10,13 @@ import {
   type KaynakYolu,
   type TurKokeni,
 } from "./ajanda.ts";
-import { gunNoTarih, ornekGunuMu, tarihGunNo, tekrarOrnekleri } from "./ajanda-zaman.ts";
+import { type AjandaZamani, type GunBolumu, gunHatirlatmaSaati, gunNoTarih, ornekGunuMu, tarihGunNo, tekrarOrnekleri } from "./ajanda-zaman.ts";
 import { AJANDA_SINIRLARI } from "./sinirlar.ts";
 
 /**
  * Ajandanın servis ve uygulamada aynı sonucu vermesi gereken saf kararları: hangi hatırlatmanın
- * kurulacağı, tekilleştirme, telafi kipi, modelin "şimdi" dayanağı, örnek durumu. Saat dilimi
+ * kurulacağı (saatsiz gün kaydının gün hatırlatması dahil), tekilleştirme, telafi kipi, modelin
+ * "şimdi" dayanağı ve gece aralığı, örnek durumu. Saat dilimi
  * veritabanı kullanılmaz: duvar saatinden ana çeviri çağırandan gelir (`AnCevirici`; uygulamada
  * java.time `ZonedDateTime.of`, serviste aynı kural). Vektörler sabit ofsetli dilimlerle sınar.
  */
@@ -25,28 +26,73 @@ export type AnCevirici = (tarih: string, saat: string, saat_dilimi: string) => n
 
 const DAKIKA_MS = 60_000;
 const GUN_MS = 86_400_000;
+const GUN_DK = 1_440;
 
-/** Bir hatırlatmanın şimdiye göre hali: kurulur (tetik gelecekte), saatsiz (bekler), geçmiş (çalmaz). */
+/** Gün hatırlatmasının yerel tetik günü ve saati (kaydın diliminde). */
+export type GunHatirlatmasiYereli = { tarih: string; saat: string };
+
+/**
+ * Bir hatırlatmanın şimdiye göre hali: kurulur (tetik gelecekte), saatsiz (bekler), geçmiş (çalmaz).
+ * `gun_hatirlatmasi` yalnız saatsiz gün kaydındaki `once`'ta vardır: tetiğin yerel günü ve saati
+ * (tekrarda geçmiş halde yoktur, çünkü tek bir gün yoktur).
+ */
 export type HatirlatmaHali =
-  | { sira: number; hal: "kurulur"; tetik_ms: number; ornek_tarihi?: string }
+  | { sira: number; hal: "kurulur"; tetik_ms: number; ornek_tarihi?: string; gun_hatirlatmasi?: GunHatirlatmasiYereli }
   | { sira: number; hal: "saatsiz" }
-  | { sira: number; hal: "gecmis" };
+  | { sira: number; hal: "gecmis"; gun_hatirlatmasi?: GunHatirlatmasiYereli };
+
+/**
+ * Saatsiz gün kaydında `once{dk}`'nin yerel tetiği (v2): `gun`'den ⌊dk / 1440⌋ gün önce, gün bölümünün
+ * saatinde (`gunHatirlatmaSaati`). Gün içi öne alış (dk < 1440) saat olmadığı için anlamsızdır ve
+ * aynı güne düşer: kayıtta saat uydurulmaz, hatırlatma günün kendisine bağlanır. Gün sayısı kadar öne
+ * alış ("bir gün önce") korunur.
+ */
+export function gunHatirlatmasiYereli(gun: string, dk: number, gun_bolumu?: GunBolumu | undefined): GunHatirlatmasiYereli {
+  return { tarih: gunNoTarih(tarihGunNo(gun) - Math.floor(dk / GUN_DK)), saat: gunHatirlatmaSaati(gun_bolumu) };
+}
+
+type OnceZamani = Extract<AjandaZamani, { kesinlik: "an" | "gun" }>;
+
+/** `once{dk}`'nin `gun` günündeki örnek için tetiği; saatsiz gün kaydında yerel hali de. */
+function onceTetigi(
+  z: OnceZamani,
+  gun: string,
+  dk: number,
+  anCevir: AnCevirici,
+): { tetik_ms: number; gun_hatirlatmasi?: GunHatirlatmasiYereli } {
+  if (z.kesinlik === "an") return { tetik_ms: anCevir(gun, z.saat, z.saat_dilimi) - dk * DAKIKA_MS };
+  const y = gunHatirlatmasiYereli(gun, dk, z.gun_bolumu);
+  return { tetik_ms: anCevir(y.tarih, y.saat, z.saat_dilimi), gun_hatirlatmasi: y };
+}
+
+/** `once` hatırlatmasının çalabildiği zaman: `an` ya da (v2) `gun`. Ötekilerde bekler. */
+function onceZamani(kayit: AjandaKaydi): OnceZamani | undefined {
+  const z = kayit.zaman;
+  return z !== undefined && (z.kesinlik === "an" || z.kesinlik === "gun") ? z : undefined;
+}
+
+/**
+ * Tekrar taramasının alt günü: tetiği `altMs`'den sonra olabilecek ilk örnek bundan önce olamaz
+ * (örnek günü tetiğin gününden önce değildir; dilim ofseti ve gün saati için 3 gün pay). Pay sonucu
+ * değiştirmez, yalnız taramayı kısaltır.
+ */
+function taramaAlti(altMs: number): string | undefined {
+  return gunAlti(Math.floor(altMs / GUN_MS) - 3);
+}
 
 function seriSonrakiTetik(
   kayit: AjandaKaydi,
   dk: number,
   simdiMs: number,
   anCevir: AnCevirici,
-): { tetik_ms: number; ornek_tarihi: string } | undefined {
-  const z = kayit.zaman;
-  if (z === undefined || z.kesinlik !== "an" || kayit.tekrar === undefined) return undefined;
-  // Tetiği şimdiden sonra olan örnek şimdinin UTC gününden en çok 1 gün önce başlar; 2 gün pay.
-  const enAz = gunAlti(Math.floor(simdiMs / GUN_MS) - 2);
+): { tetik_ms: number; ornek_tarihi: string; gun_hatirlatmasi?: GunHatirlatmasiYereli } | undefined {
+  const z = onceZamani(kayit);
+  if (z === undefined || kayit.tekrar === undefined) return undefined;
   const kapali = new Set(kayit.ornekler.map((o) => o.tarih));
-  for (const gun of tekrarOrnekleri(z.tarih, kayit.tekrar, enAz)) {
+  for (const gun of tekrarOrnekleri(z.tarih, kayit.tekrar, taramaAlti(simdiMs))) {
     if (kapali.has(gun)) continue;
-    const tetik = anCevir(gun, z.saat, z.saat_dilimi) - dk * DAKIKA_MS;
-    if (tetik > simdiMs) return { tetik_ms: tetik, ornek_tarihi: gun };
+    const t = onceTetigi(z, gun, dk, anCevir);
+    if (t.tetik_ms > simdiMs) return { tetik_ms: t.tetik_ms, ornek_tarihi: gun, ...(t.gun_hatirlatmasi && { gun_hatirlatmasi: t.gun_hatirlatmasi }) };
   }
   return undefined;
 }
@@ -54,12 +100,17 @@ function seriSonrakiTetik(
 /**
  * Kaydın her hatırlatmasının şimdiye göre hali (etkinlikten bağımsız). Kural tek anlamlıdır:
  * - `mutlak`: tetik kendi anı; tetik > şimdi ise kurulur, değilse geçmiş (bir kez, tekrarda da).
- * - `once`, zaman kesinliği `an` değil: saatsiz, bekler.
- * - `once`, tekrarsız: tetik = olayın anı − dk; tetik > şimdi ise kurulur, değilse geçmiş.
- * - `once`, tekrarlı: `ornekler`'de kapalı olmayan, tetiği şimdiden sonraki ilk örnek; yoksa geçmiş.
+ * - `once`, zaman `an`: tetik = olayın anı − dk.
+ * - `once`, zaman `gun` (v2, gün hatırlatması): tetik = `gunHatirlatmasiYereli(gün, dk, gun_bolumu)`
+ *   yerel anı, kaydın diliminde; hal `gun_hatirlatmasi`'nı taşır. Kayıt saatsiz kalır.
+ * - `once`, zaman `donem`, `belirsiz` ya da yok: saatsiz, bekler.
+ * - Tekrarsızda tetik > şimdi ise kurulur, değilse geçmiş. Tekrarlıda `ornekler`'de kapalı olmayan,
+ *   tetiği şimdiden sonraki ilk örnek (`ornek_tarihi`); yoksa geçmiş.
+ * Hatırlatma kaydın zamanından her çağrıda yeniden hesaplanır: gün ya da gün bölümü değişince yeni
+ * güne gider, saat gelince saatli kurala, saat kalkınca gün hatırlatmasına döner.
  * `gecmis` kurulmaz. Kurulmuş ama teslim edilmemiş bir alarmın tetiği geçtiyse (telefon kapalıydı,
  * yeniden başladı, kurulum tam o anda yenilendi) onu `kacirilanHatirlatmalar` söyler; hiç kurulmamış
- * (doğduğunda ya da değiştiğinde tetiği zaten geçmiş) hatırlatma hiç çalmaz.
+ * (doğduğunda ya da değiştiğinde tetiği zaten geçmiş: öğleden sonra eklenen "bugün"ün 09:00'u) hiç çalmaz.
  */
 export function hatirlatmaHalleri(kayit: AjandaKaydi, simdiMs: number, anCevir: AnCevirici): HatirlatmaHali[] {
   return kayit.hatirlatmalar.map((h, sira): HatirlatmaHali => {
@@ -67,14 +118,15 @@ export function hatirlatmaHalleri(kayit: AjandaKaydi, simdiMs: number, anCevir: 
       const tetik = anCevir(h.tarih, h.saat, h.saat_dilimi);
       return tetik > simdiMs ? { sira, hal: "kurulur", tetik_ms: tetik } : { sira, hal: "gecmis" };
     }
-    const z = kayit.zaman;
-    if (z === undefined || z.kesinlik !== "an") return { sira, hal: "saatsiz" };
+    const z = onceZamani(kayit);
+    if (z === undefined) return { sira, hal: "saatsiz" };
     if (kayit.tekrar !== undefined) {
       const s = seriSonrakiTetik(kayit, h.dk, simdiMs, anCevir);
       return s === undefined ? { sira, hal: "gecmis" } : { sira, hal: "kurulur", ...s };
     }
-    const tetik = anCevir(z.tarih, z.saat, z.saat_dilimi) - h.dk * DAKIKA_MS;
-    return tetik > simdiMs ? { sira, hal: "kurulur", tetik_ms: tetik } : { sira, hal: "gecmis" };
+    const t = onceTetigi(z, z.tarih, h.dk, anCevir);
+    const yerel = t.gun_hatirlatmasi === undefined ? {} : { gun_hatirlatmasi: t.gun_hatirlatmasi };
+    return t.tetik_ms > simdiMs ? { sira, hal: "kurulur", tetik_ms: t.tetik_ms, ...yerel } : { sira, hal: "gecmis", ...yerel };
   });
 }
 
@@ -120,15 +172,14 @@ export function kacirilanHatirlatmalar(
     if (tetik_ms <= altMs || tetik_ms > simdiMs || !kurulu.has(tetik_ms)) return;
     sonuc.push(ornek_tarihi === undefined ? { sira, tetik_ms } : { sira, tetik_ms, ornek_tarihi });
   };
-  const z = kayit.zaman;
+  const z = onceZamani(kayit);
   kayit.hatirlatmalar.forEach((h, sira) => {
     if (h.tur === "mutlak") return dene(sira, anCevir(h.tarih, h.saat, h.saat_dilimi));
-    if (z === undefined || z.kesinlik !== "an") return;
-    if (kayit.tekrar === undefined) return dene(sira, anCevir(z.tarih, z.saat, z.saat_dilimi) - h.dk * DAKIKA_MS);
+    if (z === undefined) return;
+    if (kayit.tekrar === undefined) return dene(sira, onceTetigi(z, z.tarih, h.dk, anCevir).tetik_ms);
     const kapali = new Set(kayit.ornekler.map((o) => o.tarih));
-    const enAz = gunAlti(Math.floor((altMs + h.dk * DAKIKA_MS) / GUN_MS) - 2);
-    for (const gun of tekrarOrnekleri(z.tarih, kayit.tekrar, enAz)) {
-      const tetik = anCevir(gun, z.saat, z.saat_dilimi) - h.dk * DAKIKA_MS;
+    for (const gun of tekrarOrnekleri(z.tarih, kayit.tekrar, taramaAlti(altMs))) {
+      const tetik = onceTetigi(z, gun, h.dk, anCevir).tetik_ms;
       if (tetik > simdiMs) break;
       if (!kapali.has(gun)) dene(sira, tetik, gun);
     }
@@ -141,20 +192,51 @@ function gunAlti(gunNo: number): string | undefined {
   return gunNo < tarihGunNo(`${AJANDA_SINIRLARI.YIL_MIN}-01-01`) ? undefined : gunNoTarih(gunNo);
 }
 
-/** Araç çıktısının hatırlatma özeti: `kurulacak` etkinlik dahil, öteki sayılar etkinlikten bağımsız. */
-export function hatirlatmaOzeti(
-  kayit: AjandaKaydi,
-  simdiMs: number,
-  anCevir: AnCevirici,
-): { toplam: number; kurulacak: number; saatsiz: number; gecmis: number } {
+/** Özetin gün hatırlatması: sıradaki (`gecti` yanlış) ya da hepsi geçtiyse en son geçen (`gecti` doğru). */
+export type GunHatirlatmasiOzeti = GunHatirlatmasiYereli & { gecti: boolean };
+
+export type HatirlatmaOzeti = {
+  toplam: number;
+  kurulacak: number;
+  saatsiz: number;
+  gecmis: number;
+  gun_hatirlatmasi?: GunHatirlatmasiOzeti;
+};
+
+/**
+ * Araç çıktısının hatırlatma özeti: `kurulacak` etkinlik dahil, öteki sayılar etkinlikten bağımsız.
+ * `gun_hatirlatmasi` (v2) yalnız `hatirlatmaEtkinMi` iken ve halinde `gun_hatirlatmasi` olan bir
+ * hatırlatma varsa: tetiği en erken kurulacak olanın yerel günü ve saati (`gecti:false`), kurulacak yoksa
+ * tetiği en geç geçmiş olanınki (`gecti:true`). Model kullanıcıya "Cuma 17:00'de hatırlatırım" ya da
+ * "sabah hatırlatması geçti, bildirim gelmeyecek" diyebilsin diye. Alan yoksa anahtar da yoktur.
+ */
+export function hatirlatmaOzeti(kayit: AjandaKaydi, simdiMs: number, anCevir: AnCevirici): HatirlatmaOzeti {
   const haller = hatirlatmaHalleri(kayit, simdiMs, anCevir);
   const say = (hal: HatirlatmaHali["hal"]) => haller.filter((h) => h.hal === hal).length;
-  return {
+  const etkin = hatirlatmaEtkinMi(kayit);
+  const ozet: HatirlatmaOzeti = {
     toplam: haller.length,
-    kurulacak: hatirlatmaEtkinMi(kayit) ? say("kurulur") : 0,
+    kurulacak: etkin ? say("kurulur") : 0,
     saatsiz: say("saatsiz"),
     gecmis: say("gecmis"),
   };
+  if (!etkin) return ozet;
+  let sonraki: { tetik: number; y: GunHatirlatmasiYereli } | undefined;
+  let gecen: { tetik: number; y: GunHatirlatmasiYereli } | undefined;
+  for (const h of haller) {
+    if (h.hal === "saatsiz" || h.gun_hatirlatmasi === undefined) continue;
+    const y = h.gun_hatirlatmasi;
+    if (h.hal === "kurulur") {
+      if (sonraki === undefined || h.tetik_ms < sonraki.tetik) sonraki = { tetik: h.tetik_ms, y };
+    } else {
+      // Geçmiş halin tetiği yoktur: yerel gün ve saat sözlük sırası takvim sırasıdır (aynı dilim).
+      const t = tarihGunNo(y.tarih) * GUN_DK + Number(y.saat.slice(0, 2)) * 60 + Number(y.saat.slice(3, 5));
+      if (gecen === undefined || t > gecen.tetik) gecen = { tetik: t, y };
+    }
+  }
+  if (sonraki !== undefined) ozet.gun_hatirlatmasi = { ...sonraki.y, gecti: false };
+  else if (gecen !== undefined) ozet.gun_hatirlatmasi = { ...gecen.y, gecti: true };
+  return ozet;
 }
 
 // Tekilleştirme
@@ -231,6 +313,15 @@ export function dayanakGecerliMi(
   if (dayanak.saat_dilimi !== undefined && dayanak.saat_dilimi !== mesajAni.saat_dilimi) return false;
   if (dayanak.tarih !== mesajAni.tarih) return false;
   return Math.abs(dakikaNo(dayanak.saat) - dakikaNo(mesajAni.saat)) <= AJANDA_SINIRLARI.DAYANAK_SAPMA_DK;
+}
+
+/**
+ * Mesaj anı gece aralığında mı (v2): yerel saat 00:00 ≤ saat < 00:00 + `GECE_ARALIGI_DK` (04:00).
+ * Bu aralıkta kullanıcının "yarın"ı çoğu zaman uyanınca başlayacak günü, yani takvimde bugünü
+ * gösterir; "bugün" de belirsizdir. Duvar saatiyle, dilim veritabanısız.
+ */
+export function geceAraligindaMi(mesajAni: { saat: string }): boolean {
+  return dakikaNo(mesajAni.saat) < AJANDA_SINIRLARI.GECE_ARALIGI_DK;
 }
 
 // Örnek durumu
