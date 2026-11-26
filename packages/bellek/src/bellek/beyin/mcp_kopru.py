@@ -26,10 +26,18 @@ from pathlib import Path
 SURUM = "0.1.0"
 VARSAYILAN_PORT = 47321
 HTTP_ZAMAN_ASIMI = 5.0
-KAPALI_BEKLEME = 15.0  # zaman aşımından sonra okumalar bu kadar saniye doğrudan yedek yola
-# Windows'ta kapalı yerel porta bağlanmak ~2 sn sürer (SYN yeniden denemeleri);
-# okumalar bunu her seferinde ödemesin diye ret sonrası kısa süre doğrudan yedek yol.
+SAGLIK_ZAMAN_ASIMI = 2.0  # kısa sağlık yoklaması (/api/saglik)
+# Bekleme penceresi (bkz. _http). Üç tür:
+# - "kapali": bağlantı reddedildi. Windows'ta kapalı yerel porta bağlanmak ~2 sn sürer (SYN
+#   yeniden denemeleri); okumalar bunu her seferinde ödemesin diye REDDEDILDI_BEKLEME boyunca
+#   servise sorulmadan doğrudan yedek yol.
+# - "suphe": tek bir zaman aşımı ya da bağlantı kopması. Port dinliyor, servis büyük olasılıkla
+#   ayakta ama o an yavaş; pencere içindeki ilk istek önce kısa sağlık yoklaması yapar, yanıt
+#   gelirse pencere kapanır ve istek servise gider. Tek aksama sonraki okumaları yedeğe düşürmez.
+# - "yanitsiz": sağlık yoklaması da yanıtsız ya da yoklamadan hemen sonraki istek yine zaman
+#   aşımı. KAPALI_BEKLEME boyunca servise sorulmaz; askıda serviste her okuma beklemesin.
 # Yazmalar pencereye güvenmez: kuyruğa almadan önce sağlığı yeniden dener.
+KAPALI_BEKLEME = 15.0
 REDDEDILDI_BEKLEME = 5.0
 MAKS_CIKTI = 8000  # modele giden metnin güvenlik tavanı (karakter)
 MAKS_YAZ_METIN = 4000
@@ -204,11 +212,13 @@ def oturum_ref() -> str:
 class ServisYok(Exception):
     """Servise ulaşılamadı; yedek yola geçilmeli."""
 
-    def __init__(self, neden: str, gitmis_olabilir: bool = False):
+    def __init__(self, neden: str, gitmis_olabilir: bool = False, kapali: bool = False):
         super().__init__(neden)
         self.neden = neden
         # True: bağlantı kurulduktan sonra koptu/zaman aşımı; istek servise ulaşmış olabilir.
         self.gitmis_olabilir = gitmis_olabilir
+        # True: bağlanılamadı (servis kapalı); False: port dinliyor ama yanıt gelmedi.
+        self.kapali = kapali
 
 
 class ServisHatasi(Exception):
@@ -219,7 +229,8 @@ class ServisHatasi(Exception):
         self.kod = kod
 
 
-_kapali_bitis = 0.0
+_kapali_bitis = 0.0  # bekleme penceresinin bitişi (monotonic); 0: pencere yok
+_kapali_tur = "kapali"  # pencerenin türü: "kapali" | "suphe" | "yanitsiz" (bkz. sabitler)
 _ACICI = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 # Belirteç önbelleği: (yol, mtime_ns, boyut) değişmedikçe dosya yeniden okunmaz.
@@ -251,11 +262,36 @@ def _belirtec(zorla: bool = False) -> str | None:
     return _belirtec_deger
 
 
+def _pencere_ac(sure: float, tur: str) -> None:
+    global _kapali_bitis, _kapali_tur
+    _kapali_bitis = time.monotonic() + sure
+    _kapali_tur = tur
+
+
+def _pencerede() -> bool:
+    return time.monotonic() < _kapali_bitis
+
+
 def _http(yol: str, govde: dict | None = None, *, pencereyi_yok_say: bool = False,
-          zaman_asimi: float = HTTP_ZAMAN_ASIMI, _yeniden: bool = False) -> dict:
+          zaman_asimi: float | None = None, _yeniden: bool = False) -> dict:
     global _kapali_bitis
-    if not pencereyi_yok_say and time.monotonic() < _kapali_bitis:
-        raise ServisYok("yakın zamanda yanıt vermedi")
+    if zaman_asimi is None:
+        zaman_asimi = HTTP_ZAMAN_ASIMI
+    saglik = yol.startswith("/api/saglik")
+    yoklandi = False  # pencere içinde sağlık yoklaması geçti; bu istek de aksarsa pencere kesinleşir
+    if not pencereyi_yok_say and _pencerede():
+        if _kapali_tur == "kapali":
+            raise ServisYok("yakın zamanda bağlanılamadı", kapali=True)
+        if _kapali_tur != "suphe":
+            raise ServisYok("yakın zamanda yanıt vermedi")
+        if not _servis_ayakta():
+            if _pencerede() and _kapali_tur == "kapali":
+                raise ServisYok("sağlık yoklamasında bağlanılamadı", kapali=True)
+            _pencere_ac(KAPALI_BEKLEME, "yanitsiz")
+            raise ServisYok("yanıt vermedi; sağlık yoklaması da başarısız")
+        yoklandi = True
+    # Kurulmuş bağlantıda aksama: ilk seferde şüphe, sağlık ya da yoklama sonrası istekte kesin.
+    aksama_turu = "yanitsiz" if (saglik or yoklandi) else "suphe"
     url = f"http://127.0.0.1:{_port()}{yol}"
     veri = None
     basliklar = {"Accept": "application/json"}
@@ -281,21 +317,25 @@ def _http(yol: str, govde: dict | None = None, *, pencereyi_yok_say: bool = Fals
         mesaj = _hata_metni(ham) or f"HTTP {e.code}"
         raise ServisHatasi(f"servis reddetti ({e.code}): {mesaj}", e.code)
     except (socket.timeout, TimeoutError) as e:
-        _kapali_bitis = time.monotonic() + KAPALI_BEKLEME
+        _pencere_ac(KAPALI_BEKLEME, aksama_turu)
         raise ServisYok("zaman aşımı", gitmis_olabilir=True) from e
     except urllib.error.URLError as e:
         if isinstance(e.reason, (socket.timeout, TimeoutError)):
-            _kapali_bitis = time.monotonic() + KAPALI_BEKLEME
-            raise ServisYok("zaman aşımı", gitmis_olabilir=True) from e
-        _kapali_bitis = time.monotonic() + REDDEDILDI_BEKLEME
+            # İstek gönderilirken (bağlantı kurulurken) dolan süre: port bağlantı kabul etmedi.
+            # Windows'ta kapalı yerel portun reddi ~2 sn sürer; kısa zaman aşımı (ör. sağlık
+            # yoklaması) reddi zaman aşımı olarak görür. Bu yüzden ret gibi: kısa "kapali" pencere.
+            # Gönderim sırasında dolmuş olabileceği için gitmis_olabilir temkinle True kalır.
+            _pencere_ac(REDDEDILDI_BEKLEME, "kapali")
+            raise ServisYok("bağlantı kurulamadı (zaman aşımı)", gitmis_olabilir=True, kapali=True) from e
         # Reddedilen/ulaşılamayan bağlantı: gitmedi. Kurulduktan sonra kopan (reset/abort): gitmiş olabilir.
         gitmis = isinstance(e.reason, ConnectionError) and not isinstance(e.reason, ConnectionRefusedError)
-        raise ServisYok(f"bağlanılamadı: {e.reason}", gitmis_olabilir=gitmis) from e
+        _pencere_ac(REDDEDILDI_BEKLEME, aksama_turu if gitmis else "kapali")
+        raise ServisYok(f"bağlanılamadı: {e.reason}", gitmis_olabilir=gitmis, kapali=not gitmis) from e
     except (ConnectionError, OSError) as e:
-        _kapali_bitis = time.monotonic() + REDDEDILDI_BEKLEME
         # Yanıt okunurken kopma: gitmiş olabilir; bağlantı reddi: gitmedi.
-        raise ServisYok(f"bağlantı hatası: {e}",
-                        gitmis_olabilir=not isinstance(e, ConnectionRefusedError)) from e
+        gitmis = not isinstance(e, ConnectionRefusedError)
+        _pencere_ac(REDDEDILDI_BEKLEME, aksama_turu if gitmis else "kapali")
+        raise ServisYok(f"bağlantı hatası: {e}", gitmis_olabilir=gitmis, kapali=not gitmis) from e
     try:
         sonuc = json.loads(ham.decode("utf-8"))
     except (UnicodeDecodeError, ValueError) as e:
@@ -309,7 +349,8 @@ def _http(yol: str, govde: dict | None = None, *, pencereyi_yok_say: bool = Fals
 def _servis_ayakta() -> bool:
     """Bekleme penceresini yok sayarak kısa bir sağlık denemesi."""
     try:
-        return _http("/api/saglik", pencereyi_yok_say=True, zaman_asimi=2.0).get("durum") == "ok"
+        return _http("/api/saglik", pencereyi_yok_say=True,
+                     zaman_asimi=SAGLIK_ZAMAN_ASIMI).get("durum") == "ok"
     except (ServisYok, ServisHatasi):
         return False
 
@@ -467,7 +508,15 @@ def _sonuc_metni(d, alan: str = "metin", onek: str = "") -> str:
     return metin
 
 
-YEDEK_ONEK = "[servis kapalı; salt-okunur yedekten]\n"
+YEDEK_ONEK = "[servis kapalı; salt-okunur yedekten]\n"  # bağlanılamadı
+YEDEK_YANITSIZ_ONEK = "[servis yanıt vermedi; salt-okunur yedekten]\n"  # port dinliyor, yanıt yok
+
+
+def _yedek_durumu(e: ServisYok) -> tuple[str, str]:
+    """(yanıt öneki, hata metnindeki durum): servisin gerçek durumunu söyler."""
+    if e.kapali:
+        return YEDEK_ONEK, "servis kapalı"
+    return YEDEK_YANITSIZ_ONEK, "servis yanıt vermedi"
 
 
 def _oku_yolu(http_yol: str, params: dict, yedek_islev: str, yedek_a: tuple, yedek_kw: dict) -> str:
@@ -477,13 +526,14 @@ def _oku_yolu(http_yol: str, params: dict, yedek_islev: str, yedek_a: tuple, yed
     except ServisHatasi as e:
         raise AracHatasi(str(e))
     except ServisYok as e:
-        gunluk(f"servis yok ({e.neden}), yedek okuma: {yedek_islev}")
+        onek, durum = _yedek_durumu(e)
+        gunluk(f"servise ulaşılamadı ({e.neden}), yedek okuma: {yedek_islev}")
     try:
-        sonuc = _yedek_oku(yedek_islev, *yedek_a, onek_uzunlugu=len(YEDEK_ONEK), **yedek_kw)
+        sonuc = _yedek_oku(yedek_islev, *yedek_a, onek_uzunlugu=len(onek), **yedek_kw)
     except Exception as e:
         gunluk(f"yedek okuma başarısız\n{traceback.format_exc()}")
-        raise AracHatasi(f"servis kapalı ve yedek okuma başarısız: {type(e).__name__}")
-    return _sonuc_metni(sonuc, onek=YEDEK_ONEK)
+        raise AracHatasi(f"{durum} ve yedek okuma başarısız: {type(e).__name__}")
+    return _sonuc_metni(sonuc, onek=onek)
 
 
 def arac_gez(arg: dict) -> str:
@@ -709,13 +759,14 @@ def arac_gelen(arg: dict) -> str:
         except ServisHatasi as e:
             raise AracHatasi(str(e))
         except ServisYok as e:
-            gunluk(f"servis yok ({e.neden}), yedek gelen listesi")
+            onek, durum = _yedek_durumu(e)
+            gunluk(f"servise ulaşılamadı ({e.neden}), yedek gelen listesi")
         try:
             ogeler = _yedek_cagir("yaz", "gelen_listele")
         except Exception as e:
             gunluk(f"yedek gelen listesi başarısız\n{traceback.format_exc()}")
-            raise AracHatasi(f"servis kapalı ve yedek okuma başarısız: {type(e).__name__}")
-        return YEDEK_ONEK + _gelen_metni(ogeler)
+            raise AracHatasi(f"{durum} ve yedek okuma başarısız: {type(e).__name__}")
+        return onek + _gelen_metni(ogeler)
     if islem != "karar":
         raise AracHatasi("'islem' 'liste' ya da 'karar' olmalı")
     gid = _str_arg(arg, "gelen_id", zorunlu=True)
