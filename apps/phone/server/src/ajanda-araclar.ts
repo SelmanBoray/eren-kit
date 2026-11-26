@@ -14,6 +14,7 @@ import {
   ajandaTekilAnahtari,
   ajandaTekilKarari,
   dayanakGecerliMi,
+  geceTeyidiEksikMi,
   kullaniciEmriMi,
   OpakId,
   tarihliGirdiMi,
@@ -48,7 +49,10 @@ import type {
  *
  * - Turun kökeni ve mesaj anı YALNIZ `turBaglami`'ndan (jetonun sohbeti + nesli); yoksa `tur_gecersiz`,
  *   hiçbir şey yazılmaz. Yazar `{yol:"sohbet_araci", tur_kokeni, sohbet_id}`.
- * - Takvime bağlı girdi `dayanakGecerliMi(dayanak, mesaj_ani)` ister (`dayanak_uyusmuyor`); dilimsiz
+ * - Takvime bağlı girdi `dayanakGecerliMi(dayanak, mesaj_ani)` ister (`dayanak_uyusmuyor`); hemen
+ *   ardından (v2) `geceTeyidiEksikMi(girdi, mesaj_ani, tur_kokeni)` doğruysa `gece_teyidi_gerekli`
+ *   (insan turunda, mesaj anı 00:00-04:00, takvime bağlı ve `dayanak.gece_teyidi` yok; sentetik turda
+ *   hiç); ikisi de kayda dokunmadan önce, güncellemede kayıt aranmadan önce. Dilimsiz
  *   zaman ve `mutlak` hatırlatma turun mesaj anının dilimini alır; dilim veritabanında yoksa
  *   `saat_dilimi_bilinmiyor`.
  * - Ekleme: tekil anahtar (`sohbet:<id>` kapsamı) → `ajandaTekilKarari`; emir olmayan turda taslak
@@ -151,6 +155,8 @@ export function ajandaAraclariKur(b: AjandaBagimliliklari): AjandaFiilIsleyicile
     const mesaj_ani = tur.mesaj_ani;
     const ret = (neden: Extract<Cikti<"ajanda_ekle">, { sonuc: "ret" }>["neden"]): Cikti<"ajanda_ekle"> => ({ sonuc: "ret", mesaj_ani, neden });
     if (!dayanakTutar(g, g.dayanak, mesaj_ani)) return ret("dayanak_uyusmuyor");
+    // v2: dayanaktan hemen sonra, kayda dokunmadan önce gece aralığı teyidi.
+    if (geceTeyidiEksikMi(g, mesaj_ani, tur.tur_kokeni)) return ret("gece_teyidi_gerekli");
     const yazar = yazarKur(tur, baglam);
     const emir = kullaniciEmriMi(yazar);
     const dilim = mesaj_ani.saat_dilimi;
@@ -218,6 +224,8 @@ export function ajandaAraclariKur(b: AjandaBagimliliklari): AjandaFiilIsleyicile
     });
     const d = g.degisiklik;
     if (!dayanakTutar(d, g.dayanak, mesaj_ani)) return ret("dayanak_uyusmuyor");
+    // v2: sıra dayanak → gece → kayıt (kayıt aranmadan önce; yoksa da teyit istenir).
+    if (geceTeyidiEksikMi(g, mesaj_ani, tur.tur_kokeni)) return ret("gece_teyidi_gerekli");
     const k = depo.ajandaKaydiGetir(g.kayit_id);
     if (k === null) return ret("kayit_bulunamadi");
     if (k.silindi) return ret("kayit_silinmis");

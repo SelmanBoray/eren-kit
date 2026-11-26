@@ -261,16 +261,24 @@ describe("ajanda araçları: kabul senaryosu ve dayanak", () => {
 });
 
 describe("ajanda araçları: ekleme kuralları", () => {
-  it("varsayılan hatırlatma her kesinlikte; [] hiç kurmaz ve öyle kalır; saatsizde bekler", async () => {
+  it("varsayılan hatırlatma her kesinlikte; [] hiç kurmaz ve öyle kalır; saatsiz günde (v2) gün hatırlatması, zamansızda bekler", async () => {
     const o = kur();
     const gun = await o.ekle({ tur: "gorev", baslik: "Fatura", zaman: { kesinlik: "gun", tarih: "2026-11-30" }, dayanak: DAYANAK });
     assert.ok(gun.sonuc === "eklendi");
+    // Servis saatsiz kayda ayrıca hatırlatma koymaz: liste yine varsayılan; gün hatırlatmasını kural hesaplar.
     assert.deepEqual(o.kayit(gun.kayit.kayit_id).hatirlatmalar, [{ tur: "once", dk: 60 }]);
-    assert.deepEqual(gun.kayit.hatirlatma, { toplam: 1, kurulacak: 0, saatsiz: 1, gecmis: 0 });
+    assert.deepEqual(gun.kayit.hatirlatma, {
+      toplam: 1,
+      kurulacak: 1,
+      saatsiz: 0,
+      gecmis: 0,
+      gun_hatirlatmasi: { tarih: "2026-11-30", saat: "09:00", gecti: false },
+    });
     const yok = await o.ekle({ tur: "not", baslik: "Not" });
     assert.ok(yok.sonuc === "eklendi");
     assert.deepEqual(o.kayit(yok.kayit.kayit_id).hatirlatmalar, [{ tur: "once", dk: 60 }]);
     assert.equal(yok.kayit.zaman, undefined);
+    assert.deepEqual(yok.kayit.hatirlatma, { toplam: 1, kurulacak: 0, saatsiz: 1, gecmis: 0 });
     const bos = await o.ekle({ ...DISCI, baslik: "Hatırlatmasız", hatirlatmalar: [] });
     assert.ok(bos.sonuc === "eklendi");
     assert.deepEqual(o.kayit(bos.kayit.kayit_id).hatirlatmalar, []);
@@ -665,5 +673,229 @@ describe("ajanda araçları: liste", () => {
     o.durum.tur = sentetikTur();
     assert.equal((await o.listele()).toplam, 7);
     assert.equal(o.depo.ajandaBasRev(), rev);
+  });
+});
+
+describe("ajanda araçları: sürüm 2 (gün bölümü, gün hatırlatması, gece teyidi)", () => {
+  // 2026-11-27 Cuma 01:45 Europe/Istanbul (UTC+3): ilk gerçek kullanımın anı.
+  const GECE_MS = Date.UTC(2026, 10, 26, 22, 45);
+  const GECE = { tarih: "2026-11-27", saat: "01:45", saat_dilimi: DILIM };
+  const anOf = (saat: string, tarih = "2026-11-27") => ({ tarih, saat, saat_dilimi: DILIM });
+  const YARIN_AKSAM = { kesinlik: "gun" as const, tarih: "2026-11-28", gun_bolumu: "aksam" as const, ifade: "yarın akşama" };
+  const yikama = (ek: Partial<AjandaFiilGirdisi<"ajanda_ekle">> = {}): AjandaFiilGirdisi<"ajanda_ekle"> => ({
+    tur: "gorev",
+    baslik: "Araba yıkama",
+    zaman: YARIN_AKSAM,
+    dayanak: { tarih: "2026-11-27", saat: "01:45" },
+    ...ek,
+  });
+  const geceKur = (saat = "01:45") => {
+    const o = kur({ simdi: GECE_MS });
+    o.durum.tur = insanTuru("Yarın akşama araba yıkama oluştur ajandada", anOf(saat));
+    return o;
+  };
+  const neden = (c: { sonuc: string; neden?: string }): string => (c.sonuc === "ret" ? (c.neden as string) : c.sonuc);
+
+  it("gece aralığında insan turu, tarihe bağlı ekleme teyitsiz: gece_teyidi_gerekli, kayıt yazılmaz, yayın yok", async () => {
+    const o = geceKur();
+    const c = await o.ekle(yikama());
+    assert.deepEqual(c, { sonuc: "ret", mesaj_ani: GECE, neden: "gece_teyidi_gerekli" });
+    assert.equal(o.depo.ajandaKayitSayisi(), 0);
+    assert.equal(o.depo.ajandaBasRev(), 0);
+    assert.equal(o.yayinlar.length, 0);
+    // Mutlak hatırlatma da takvime bağlıdır.
+    const m = await o.ekle({
+      tur: "not",
+      baslik: "Ara",
+      hatirlatmalar: [{ tur: "mutlak", tarih: "2026-11-27", saat: "10:00" }],
+      dayanak: { tarih: "2026-11-27", saat: "01:45" },
+    });
+    assert.equal(neden(m), "gece_teyidi_gerekli");
+    assert.equal(o.gunluk.bul("arac").at(-1)?.alanlar?.["neden"], "gece_teyidi_gerekli");
+  });
+
+  it("teyitle (soruldu ya da gun_acik) yazılır; gün bölümü korunur, gün hatırlatması bölüm saatinde", async () => {
+    const o = geceKur();
+    o.durum.tur = insanTuru("cuma akşamı", anOf("01:47"));
+    const c = await o.ekle(
+      yikama({
+        zaman: { kesinlik: "gun", tarih: "2026-11-27", gun_bolumu: "aksam", ifade: "cuma akşamı" },
+        dayanak: { tarih: "2026-11-27", saat: "01:47", gece_teyidi: "soruldu" },
+      }),
+    );
+    assert.ok(c.sonuc === "eklendi", JSON.stringify(c));
+    const k = o.kayit(c.kayit.kayit_id);
+    assert.deepEqual(k.zaman, { kesinlik: "gun", tarih: "2026-11-27", gun_bolumu: "aksam", ifade: "cuma akşamı", saat_dilimi: DILIM });
+    // Servis saatsiz kayda ayrıca hatırlatma koymaz; varsayılan liste aynı.
+    assert.deepEqual(k.hatirlatmalar, [{ tur: "once", dk: 60 }]);
+    assert.deepEqual(c.kayit.zaman, { kesinlik: "gun", tarih: "2026-11-27", gun_bolumu: "aksam", saat_dilimi: DILIM });
+    assert.deepEqual(c.kayit.hatirlatma, {
+      toplam: 1,
+      kurulacak: 1,
+      saatsiz: 0,
+      gecmis: 0,
+      gun_hatirlatmasi: { tarih: "2026-11-27", saat: "17:00", gecti: false },
+    });
+    assert.deepEqual(
+      kurulacakHatirlatmalar(k, GECE_MS, o.takvim.anCevir).map((h) => h.tetik_ms),
+      [o.takvim.anCevir("2026-11-27", "17:00", DILIM)],
+    );
+    const acik = await o.ekle(
+      yikama({ baslik: "Fatura", zaman: { kesinlik: "gun", tarih: "2026-11-30" }, dayanak: { tarih: "2026-11-27", saat: "01:47", gece_teyidi: "gun_acik" } }),
+    );
+    assert.equal(acik.sonuc, "eklendi");
+  });
+
+  it("sıra dayanak → gece: yanlış dayanak gece aralığında da önce dayanak_uyusmuyor", async () => {
+    const o = geceKur();
+    assert.equal(neden(await o.ekle(yikama({ dayanak: { tarih: "2026-11-26", saat: "23:59" } }))), "dayanak_uyusmuyor");
+    assert.equal(neden(await o.ekle(yikama({ dayanak: { tarih: "2026-11-26", saat: "23:59", gece_teyidi: "soruldu" } }))), "dayanak_uyusmuyor");
+  });
+
+  it("güncelleme: dayanak → gece → kayıt; olmayan kayıtta da önce gece teyidi; takvime bağlı olmayan değişiklik teyit istemez", async () => {
+    const o = geceKur();
+    const id = kimlik(await o.ekle(yikama({ dayanak: { tarih: "2026-11-27", saat: "01:45", gece_teyidi: "soruldu" } })));
+    const rev = o.kayit(id).revizyon;
+    const z27 = { kesinlik: "gun" as const, tarih: "2026-11-27", gun_bolumu: "aksam" as const };
+    const ret = await o.guncelle({ kayit_id: id, degisiklik: { zaman: z27 }, dayanak: { tarih: "2026-11-27", saat: "01:45" } });
+    assert.deepEqual(ret, { sonuc: "ret", mesaj_ani: GECE, neden: "gece_teyidi_gerekli" });
+    assert.equal(o.kayit(id).revizyon, rev);
+    assert.equal(neden(await o.guncelle({ kayit_id: "k_yok", degisiklik: { zaman: z27 }, dayanak: { tarih: "2026-11-27", saat: "01:45" } })), "gece_teyidi_gerekli");
+    assert.equal(
+      neden(await o.guncelle({ kayit_id: "k_yok", degisiklik: { zaman: z27 }, dayanak: { tarih: "2026-11-27", saat: "01:45", gece_teyidi: "soruldu" } })),
+      "kayit_bulunamadi",
+    );
+    assert.equal(
+      neden(await o.guncelle({ kayit_id: id, degisiklik: { zaman: z27 }, dayanak: { tarih: "2026-11-26", saat: "12:00" } })),
+      "dayanak_uyusmuyor",
+    );
+    // Başlık ya da durum takvime bağlı değildir: gece de teyitsiz yazılır.
+    assert.equal((await o.guncelle({ kayit_id: id, degisiklik: { baslik: "Araba yıkat" } })).sonuc, "guncellendi");
+    // Zamanı kaldırmak (null) takvime bağlı değildir.
+    assert.equal((await o.guncelle({ kayit_id: id, degisiklik: { zaman: null } })).sonuc, "guncellendi");
+    // Zamansız ekleme ve liste de teyit istemez.
+    assert.equal((await o.ekle({ tur: "not", baslik: "Kitap" })).sonuc, "eklendi");
+    assert.ok((await o.listele()).toplam >= 2);
+  });
+
+  it("günün sonradan değiştirilmesi: gün hatırlatması kendiliğinden yeni güne taşınır, liste yeniden yazılmaz, tekil anahtar değişmez", async () => {
+    const o = geceKur();
+    const c = await o.ekle(yikama({ dayanak: { tarih: "2026-11-27", saat: "01:45", gece_teyidi: "gun_acik" } }));
+    assert.ok(c.sonuc === "eklendi");
+    assert.deepEqual(c.kayit.hatirlatma.gun_hatirlatmasi, { tarih: "2026-11-28", saat: "17:00", gecti: false });
+    const id = c.kayit.kayit_id;
+    const anahtar = o.kayit(id).kaynak.tekil_anahtar;
+    const g = await o.guncelle({
+      kayit_id: id,
+      degisiklik: { zaman: { kesinlik: "gun", tarih: "2026-11-27", gun_bolumu: "aksam", ifade: "cuma akşamı" } },
+      dayanak: { tarih: "2026-11-27", saat: "01:45", gece_teyidi: "soruldu" },
+    });
+    assert.ok(g.sonuc === "guncellendi");
+    assert.deepEqual(g.kayit.hatirlatma.gun_hatirlatmasi, { tarih: "2026-11-27", saat: "17:00", gecti: false });
+    const k = o.kayit(id);
+    assert.deepEqual(k.hatirlatmalar, [{ tur: "once", dk: 60 }]);
+    assert.equal(k.kaynak.tekil_anahtar, anahtar);
+    assert.deepEqual(
+      kurulacakHatirlatmalar(k, GECE_MS, o.takvim.anCevir).map((h) => h.tetik_ms),
+      [o.takvim.anCevir("2026-11-27", "17:00", DILIM)],
+    );
+    // Bölüm kalkınca 09:00; saat gelince saatli kurala geçer (17:30 − 60 dk).
+    const b = await o.guncelle({
+      kayit_id: id,
+      degisiklik: { zaman: { kesinlik: "gun", tarih: "2026-11-27" } },
+      dayanak: { tarih: "2026-11-27", saat: "01:45", gece_teyidi: "gun_acik" },
+    });
+    assert.ok(b.sonuc === "guncellendi");
+    assert.deepEqual(b.kayit.hatirlatma.gun_hatirlatmasi, { tarih: "2026-11-27", saat: "09:00", gecti: false });
+    const s = await o.guncelle({
+      kayit_id: id,
+      degisiklik: { zaman: { kesinlik: "an", tarih: "2026-11-27", saat: "17:30" } },
+      dayanak: { tarih: "2026-11-27", saat: "01:45", gece_teyidi: "gun_acik" },
+    });
+    assert.ok(s.sonuc === "guncellendi");
+    assert.deepEqual(s.kayit.hatirlatma, { toplam: 1, kurulacak: 1, saatsiz: 0, gecmis: 0 });
+  });
+
+  it("gece aralığının sınırları: 00:00 ve 03:59 teyit ister; 04:00 ve 23:59 istemez; gündüz verilen teyit yok sayılır", async () => {
+    for (const [saat, tarih, ister] of [
+      ["00:00", "2026-11-27", true],
+      ["03:59", "2026-11-27", true],
+      ["04:00", "2026-11-27", false],
+      ["23:59", "2026-11-26", false],
+      ["14:30", "2026-11-27", false],
+    ] as const) {
+      const o = kur({ simdi: GECE_MS });
+      o.durum.tur = insanTuru("yarın akşama araba yıkama", anOf(saat, tarih));
+      const c = await o.ekle(yikama({ zaman: { ...YARIN_AKSAM, tarih: "2026-12-01" }, dayanak: { tarih, saat } }));
+      assert.equal(neden(c), ister ? "gece_teyidi_gerekli" : "eklendi", saat);
+    }
+    const o = kur();
+    assert.equal((await o.ekle({ ...DISCI, dayanak: { ...DAYANAK, gece_teyidi: "soruldu" } })).sonuc, "eklendi");
+  });
+
+  it("sentetik turda gece teyidi uygulanmaz: ekleme taslak doğar", async () => {
+    const o = kur({ simdi: GECE_MS });
+    o.durum.tur = sentetikTur(GECE);
+    const c = await o.ekle(yikama());
+    assert.ok(c.sonuc === "eklendi", JSON.stringify(c));
+    assert.equal(c.kayit.taslak, true);
+    assert.equal(c.kayit.hatirlatma.kurulacak, 0);
+    assert.equal(c.kayit.hatirlatma.gun_hatirlatmasi, undefined, "etkin olmayan kayıtta gün hatırlatması özeti yok");
+  });
+
+  it("gün bölümü tekilleştirme çekirdeğine girer (sabah ve akşam koşu ayrı); bölümsüz anahtar v1'deki ile aynı", async () => {
+    const o = kur();
+    const kos = (gun_bolumu?: "sabah" | "aksam") =>
+      o.ekle({ tur: "gorev", baslik: "Koşu", zaman: { kesinlik: "gun", tarih: "2026-11-28", ...(gun_bolumu && { gun_bolumu }) }, dayanak: DAYANAK });
+    const sabah = await kos("sabah");
+    const aksam = await kos("aksam");
+    const bolumsuz = await kos();
+    assert.equal(sabah.sonuc, "eklendi");
+    assert.equal(aksam.sonuc, "eklendi");
+    assert.equal(bolumsuz.sonuc, "eklendi");
+    assert.equal((await kos("aksam")).sonuc, "zaten_var");
+    const anahtarlar = new Set([kimlik(sabah), kimlik(aksam), kimlik(bolumsuz)].map((id) => o.kayit(id).kaynak.tekil_anahtar));
+    assert.equal(anahtarlar.size, 3);
+    // v1 servisinin bu kayıt için hesapladığı anahtar (sürüm 1 protokol koduyla üretildi, sabit).
+    const v1 = await o.ekle({
+      tur: "gorev",
+      baslik: "Araba yıkama",
+      zaman: { kesinlik: "gun", tarih: "2026-11-28", ifade: "yarın akşama" },
+      dayanak: DAYANAK,
+    });
+    assert.equal(o.kayit(kimlik(v1)).kaynak.tekil_anahtar, "t1:6ee5e7468cc91be723103eddd69a6ef8022b71d7c5278f956fd8ced4f6372eb4");
+  });
+
+  it("bölümsüz bugün öğleden sonra eklenince 09:00 geçmiştir (gecti:true); an'da gun_bolumu şemadan geçmez", async () => {
+    const o = kur();
+    const c = await o.ekle({ tur: "gorev", baslik: "Kargo", zaman: { kesinlik: "gun", tarih: "2026-11-25", ifade: "bugün" }, dayanak: DAYANAK });
+    assert.ok(c.sonuc === "eklendi");
+    assert.deepEqual(c.kayit.hatirlatma, {
+      toplam: 1,
+      kurulacak: 0,
+      saatsiz: 0,
+      gecmis: 1,
+      gun_hatirlatmasi: { tarih: "2026-11-25", saat: "09:00", gecti: true },
+    });
+    const s = await o.ajanda.araclar.ajanda_ekle(
+      {
+        tur: "randevu",
+        baslik: "X",
+        zaman: { kesinlik: "an", tarih: "2026-11-26", saat: "15:00", gun_bolumu: "aksam" },
+        dayanak: DAYANAK,
+      } as unknown as AjandaFiilGirdisi<"ajanda_ekle">,
+      BAGLAM,
+      new AbortController().signal,
+    );
+    assert.deepEqual(s, { ok: false, code: "ic_hata" });
+  });
+
+  it("liste sırası: bölümlü saatsiz gün de günün başında (sözleşme: saatsiz gün günün başında)", async () => {
+    const o = kur();
+    const ekle = async (baslik: string, zaman: AjandaFiilGirdisi<"ajanda_ekle">["zaman"]) =>
+      kimlik(await o.ekle({ tur: "gorev", baslik, zaman, dayanak: DAYANAK }));
+    const erken = await ekle("Erken", { kesinlik: "an", tarih: "2026-11-28", saat: "07:00" });
+    const aksam = await ekle("Akşam işi", { kesinlik: "gun", tarih: "2026-11-28", gun_bolumu: "aksam" });
+    assert.deepEqual((await o.listele()).kayitlar.map((k) => k.kayit_id), [aksam, erken]);
   });
 });

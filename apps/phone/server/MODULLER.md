@@ -507,6 +507,26 @@ Ayrı Android uygulaması (ajanda) servisle yeni `/ajanda` kanalından konuşur;
 - **Bitti (yazıldı):** `test/birlesim-ajanda.test.ts` gerçek modüller ve gerçek `kopru.ts` ajanda kipiyle (bellek içi MCP ve bellek içi boru çifti): kabul senaryosu (23:58 varış, 00:01 çağrı; damga ve `dayanak` 23:58, 00:01 dayanağı `dayanak_uyusmuyor`, kayıt `/ajanda`'ya `kayit`), tursuz çağrı `tur_gecersiz`, kayıt metni günlükte yok; uygulamadan `ekle`/`durum:tamam`/`durum:acik`, tekrarsızlık, `gecersiz_islem` kapatmaz; sentetik turda (plan reddi notu) taslak ve onay `sentetik_turda_izinsiz`; kopup yeniden bağlanınca artımlı telafi, iz tutmayınca tam; ajanda cihazının `/sohbet` ve `/cihaz`'ı, sohbet cihazının `/ajanda`'yı açamaması; aynı veritabanıyla yeniden kurulumda kayıt, revizyon, depo kimliği korunur, önceki ömrün ajanda jetonları (konuşmanın iptal etmediği kapsam dahil) geçersiz; `ajanda:false` ile ajanda öncesi davranış; seçeneksiz kurulumda dilim sistemden. Giden her `/ajanda` ve `/sohbet` çerçevesi kablo şemasından geçer.
 - **Gerçek süreçli e2e (`e2e/`) yazılmadı:** düzenek gerçek `disDunyaKur` ile gerçek boru adlarını (`eren-kopru`, `eren-ajanda`) ve tekil kilidi kullanır, gerçek `claude` başlatır; makinede canlı servis çalışırken bu çakışır. Servis durdurulmuşken elle koşulacak bir ajanda senaryosu sonraki iştir.
 
+### Sözleşme v2 (`AJANDA_SURUMU` 2; `AJANDA.md` "Sürüm 2")
+
+Göç yok, `sozlesme.ts` ve depo değişmedi: v2'nin çoğu `protocol`'ün saf işlevlerinden kendiliğinden gelir (`hatirlatmaOzeti` `gun_hatirlatmasi`'yı, `ajandaTekilAnahtari` bölümü, `ajandaZamanOzeti` bölümü taşır; `zamanDoldur` zamanı yayarak bölümü korur; giden her `/ajanda` çerçevesi ve QR zaten `AJANDA_SURUMU`'nu kullanıyordu). Sunucuda değişen:
+- **ajanda (`ajanda-araclar.ts`):** `ajanda_ekle` ve `ajanda_guncelle`'de `dayanakGecerliMi`'den hemen sonra, kayda dokunmadan (güncellemede kayıt aranmadan) önce `geceTeyidiEksikMi(girdi, tur.mesaj_ani, tur.tur_kokeni)` → `{sonuc:"ret", neden:"gece_teyidi_gerekli"}`. Varsayılan hatırlatma aynı (`AJANDA_VARSAYILAN_HATIRLATMALAR`, kesinlikten bağımsız); servis saatsiz kayda ayrıca hatırlatma koymaz. **Karar:** liste sırası değişmedi, bölümlü saatsiz gün de günün başındadır (`AJANDA.md` v2 (6) "şimdilik"; testle sabit).
+- **kopru (`kopru.ts`):** ajanda araçlarının `description`'ı köprünün sabitinden değil `AJANDA_ARAC_ACIKLAMALARI[fiil]`'den birebir; köprüde ayrı metin yok. `gece_teyidi_gerekli` boru hatası değildir (`ok:true` çıktının `ret`'i, `isError` yok).
+- **gateway, konusma, ana:** kod değişmedi (gateway çerçeveleri zaten `AJANDA_SURUMU`; v1 çerçevesi `ajandaYukariCoz`'da `protokol_uyumsuz` → `error` + 1002; gece kuralının girdileri `AjandaTurBaglami`'nda zaten var; sistem istemine kural eklenmedi).
+- **Geri alma notu:** v2'nin yazdığı `gun_bolumu`'lu kaydı v1 servis kodu katı şemasıyla tanımaz (güncelleme `tutarsiz_kayit`, liste köprüde `ic_hata`, v1 uygulaması çerçeveyi çözemez); veri bozulmaz. İşletim notu `docs/SERVIS.md` "Ajanda sürüm 2".
+
+| v2 gereksinimi (`AJANDA.md` "Ekiplerin gereksinimleri") | Karşılayan | Test |
+|---|---|---|
+| Servis (1) gece teyidi, sıra dayanak → gece → kayıt, ekle ve güncelle; sentetik turda yok; 00:00-04:00 sınırı | `ajanda-araclar.ts` | `ajanda-araclar.test.ts` "sürüm 2", `birlesim-ajanda.test.ts` "sürüm 2" ve sentetik tur (00:00) |
+| Servis (2) `gun_bolumu` korunur, tekil anahtara girer, saklı anahtar yeniden hesaplanmaz; bölümsüz anahtar v1 ile aynı | `zamanDoldur`, `ajandaTekilAnahtari` | `ajanda-araclar.test.ts` (v1 koduyla üretilmiş anahtar sabit), `ajanda-v1-veri.test.ts` |
+| Servis (3) varsayılan hatırlatma aynı, servis saatsize ek hatırlatma koymaz | `ajanda-araclar.ts` `ekle` | `ajanda-araclar.test.ts` "varsayılan hatırlatma" |
+| Servis (4) çıktıda `gun_hatirlatmasi` (sıradaki ya da geçen; etkin değilse yok) | `kayitOzeti` → `hatirlatmaOzeti` | `ajanda-araclar.test.ts` "sürüm 2", birleşim (çıktı metni `ajandaEkleMetni` ile birebir) |
+| Servis (5) göç yok, v1 satırları okunur, yayınlanır, güncellenir | depo (değişmedi) | `ajanda-v1-veri.test.ts` (ham SQL ile v1 satırları) |
+| Servis (6) liste sırası | `siraAnahtari` (değişmedi) | `ajanda-araclar.test.ts` "liste sırası" |
+| Gateway: giden çerçeve ve QR `v:2`; v1 `hello`/`pair_request` `protokol_uyumsuz` + 1002, pencere tüketilmez, sohbet etkilenmez; testlerdeki elle `v` `AJANDA_SURUMU` | `gateway-ajanda.ts`, `eslestir.ts` (değişmedi) | `gateway-ajanda.test.ts` "v2: sürüm 1 konuşan", birleşim "sürüm 1 konuşan" |
+| Konuşma: girdiler `mesaj_ani`/`tur_kokeni`, damga değişmez (gün adı), istemde tarih/saat/gece varsayımı yok | `konusma.ts`, `konusma-metin.ts` (değişmedi) | birleşim (damga "Cuma 01:45"), `konusma-metin.test.ts` "ajanda v2" |
+| Köprü: `description` = `AJANDA_ARAC_ACIKLAMALARI`; girdi şeması `gun_bolumu`, `gece_teyidi` taşır; ret `isError`'sız metin | `kopru.ts` | `kopru-ajanda.test.ts`, birleşim |
+
 ### İzlenebilirlik: `AJANDA.md` "Ekiplerin gereksinimleri" → arayüz
 
 | Gereksinim | Karşılayan |

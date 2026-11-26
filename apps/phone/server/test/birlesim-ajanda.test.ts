@@ -25,15 +25,18 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {
   ANA_SOHBET_ID,
+  AJANDA_ARAC_ACIKLAMALARI,
   AJANDA_BORU_ADI,
   AJANDA_ROL_FIILLERI,
   AJANDA_SURUMU,
   AjandaKaydi,
   ajandaAsagiCoz,
+  ajandaEkleMetni,
   ajandaKimlikImzaMetni,
   KOPRU_BORU_ADI,
   kimlikImzaMetni,
   kopruAsagiCoz,
+  kurulacakHatirlatmalar,
   mesajAniDamgasi,
   PROTOKOL_SURUMU,
   ROL_FIILLERI,
@@ -256,8 +259,9 @@ interface AjandaCihazi {
 
 let msgNo = 0;
 
-async function ortamKur(sec: { depoYolu?: string; ajanda?: ServisGirdisi["ajanda"] } = {}) {
-  const d: SahteDunya = sahteDunya({ baslangicMs: T0, servisPid: 4000 });
+async function ortamKur(sec: { depoYolu?: string; ajanda?: ServisGirdisi["ajanda"]; baslangicMs?: number } = {}) {
+  const baslangicMs = sec.baslangicMs ?? T0;
+  const d: SahteDunya = sahteDunya({ baslangicMs, servisPid: 4000 });
   const anahtar = gercekAnahtar();
   d.dosya.yaz(CLAUDE_EXE, "");
   d.dosya.yaz(YEREL_AYAR, JSON.stringify({ kullanici_adi: "Deneme", claude_exe: CLAUDE_EXE, tam_yetki: false }));
@@ -265,7 +269,7 @@ async function ortamKur(sec: { depoYolu?: string; ajanda?: ServisGirdisi["ajanda
     dosya: d.dosya,
     ortam: { LOCALAPPDATA: YEREL, USERPROFILE: KULLANICI, PATH: "C:\\ornek\\bin" },
     execPath: NODE_EXE,
-    baslangicMs: T0 - 5_000,
+    baslangicMs: baslangicMs - 5_000,
   });
   const depoYolu = sec.depoYolu ?? ":memory:";
   const ajandaSecenegi: ServisGirdisi["ajanda"] = sec.ajanda ?? { sistemDilimi: () => DILIM };
@@ -507,7 +511,12 @@ describe("birleşim: ajanda (kabul senaryosu)", () => {
 
     // Mesaj anına göre çözülen çağrı: kayıt doğar, /ajanda'ya `kayit` gider.
     const tamam = await o.arac(istemci, "ajanda_ekle", yarinUcte({ tarih: "2026-11-25", saat: "23:58" }));
-    assert.match(tamam, /^ajanda_ekle: eklendi \(kayit \S+\) durum=acik zaman=2026-11-26 15:00 Europe\/Istanbul hatirlatma=1 kurulacak=1\./);
+    // v2: gün adıyla ve mesaj anına göre yeri; kullanıcıya söylenecek gün yönergesi.
+    assert.match(
+      tamam,
+      /^ajanda_ekle: eklendi \(kayit \S+\) durum=acik zaman=2026-11-26 Perşembe 15:00 Europe\/Istanbul \(mesaj anına göre yarın\) hatirlatma=1 kurulacak=1\./,
+    );
+    assert.match(tamam, /Yanıtında kaydın gününü adıyla ve tarihiyle söyle \(26 Kasım Perşembe\)/);
     assert.ok(!tamam.includes(BASLIK) && !tamam.includes("yarın 3'te"), "araç çıktısı kayıt metni taşıdı");
     const kayitlar = ajanda.kayitlar();
     assert.equal(kayitlar.length, 1);
@@ -601,12 +610,14 @@ describe("birleşim: ajanda (kabul senaryosu)", () => {
     assert.ok((sentetik["message"]["content"] as string).startsWith(`${an}\n`), "sentetik satırın damgası varış anı değil");
 
     // Sentetik turda ekleme: taslak, kaynakta sentetik köken, hatırlatma kurulmaz uyarısı modele.
+    // Mesaj anı 00:00 gece aralığındadır (v2); sentetik turda gece teyidi istenmez.
     const metin = await o.arac(istemci, "ajanda_ekle", {
       tur: "gorev",
       baslik: "Plan reddedildi notu",
       zaman: { kesinlik: "gun", tarih: "2026-11-27" },
       dayanak: { tarih: "2026-11-26", saat: "00:00" },
     });
+    assert.doesNotMatch(metin, /neden=|gece_teyidi/);
     assert.match(metin, /^ajanda_ekle: eklendi \(kayit \S+\) durum=acik taslak /);
     assert.match(metin, /kaydedildi deme/);
     const k = ajanda.kayitlar().at(-1)!;
@@ -714,6 +725,157 @@ describe("birleşim: ajanda (kabul senaryosu)", () => {
     // Yeni ömrün ana oturumu yeni ajanda jetonuyla bağlanır.
     const { istemci: yeniIstemci } = await o.ajandaKoprusu(o.eren());
     assert.equal((await yeniIstemci.listTools()).tools.length, AJANDA_ROL_FIILLERI.ana_oturum.length);
+  });
+});
+
+describe("birleşim: ajanda sürüm 2 (ilk gerçek kullanım: gece 01:45 'yarın akşama')", () => {
+  // 2026-11-27 Cuma 01:45 Europe/Istanbul (UTC+3) = 2026-11-26 22:45 UTC.
+  const GECE_T0 = Date.UTC(2026, 10, 26, 22, 45, 0);
+  const ISTEK = "Yarın akşama araba yıkama oluştur ajandada";
+  const YIKAMA = "Araba yıkama";
+  const an = (saat: string, tarih = "2026-11-27") => ({ tarih, saat, saat_dilimi: DILIM });
+
+  it("teyitsiz çağrı reddedilir ve iki günü adıyla verir -> teyitli çağrı doğru güne bölümüyle yazar -> çıktı günü adıyla ve hatırlatmanın gün/saatiyle -> /ajanda v2 kayit; gün sonradan değişince hatırlatma taşınır", async () => {
+    const o = await ortamKur({ baslangicMs: GECE_T0 });
+    const { eren, sohbet, ajanda, istemci } = await hazirla(o);
+
+    // Araç tanımları sözleşmeden birebir (köprü kendi metnini koymaz).
+    const { tools } = await istemci.listTools();
+    for (const t of tools) assert.equal(t.description, AJANDA_ARAC_ACIKLAMALARI[t.name as keyof typeof AJANDA_ARAC_ACIKLAMALARI], t.name);
+
+    // 01:45: damga gün adını taşır.
+    await o.kullaniciMesaji(sohbet, ISTEK);
+    const satir = o.kullaniciSatirlari(eren).at(-1)!;
+    assert.equal(satir["message"]["content"], `[mesaj_ani: 2026-11-27 Cuma 01:45 Europe/Istanbul]\n${ISTEK}`);
+
+    // Model "yarın"ı takvime göre (28) çözüp teyitsiz çağırır: kayıt yazılmaz, ret metni iki günü adıyla verir.
+    const yarinAksam = { kesinlik: "gun", tarih: "2026-11-28", gun_bolumu: "aksam", ifade: "yarın akşama" };
+    const ret = await o.arac(istemci, "ajanda_ekle", { tur: "gorev", baslik: YIKAMA, zaman: yarinAksam, dayanak: { tarih: "2026-11-27", saat: "01:45" } });
+    assert.equal(ret, ajandaEkleMetni({ sonuc: "ret", mesaj_ani: an("01:45"), neden: "gece_teyidi_gerekli" }));
+    assert.match(ret, /^ajanda_ekle: eklenmedi, neden=gece_teyidi_gerekli\./);
+    assert.match(ret, /takvimde bugün 2026-11-27 Cuma, yarın 2026-11-28 Cumartesi/);
+    assert.match(ret, /"27 Kasım Cuma mı, 28 Kasım Cumartesi mi\?"/);
+    assert.ok(!ret.includes(YIKAMA), "ret metni kayıt metni taşıdı");
+    assert.equal(ajanda.kayitlar().length, 0, "teyitsiz çağrı kayıt yayınladı");
+    assert.equal(o.servis.depo.ajandaKayitSayisi(), 0);
+    await o.erenSatiri(eren, sonucSatiri(eren, "27 Kasım Cuma mı, 28 Kasım Cumartesi mi?"));
+
+    // 01:47 kullanıcı cevaplar; model teyitle yeniden çağırır.
+    await o.ilerlet(2 * DAKIKA);
+    const cevap = await o.kullaniciMesaji(sohbet, "cuma akşamı");
+    const cumaAksam = { kesinlik: "gun", tarih: "2026-11-27", gun_bolumu: "aksam", ifade: "cuma akşamı" };
+    const tamam = await o.arac(istemci, "ajanda_ekle", {
+      tur: "gorev",
+      baslik: YIKAMA,
+      zaman: cumaAksam,
+      dayanak: { tarih: "2026-11-27", saat: "01:47", gece_teyidi: "soruldu" },
+    });
+    const kayitlar = ajanda.kayitlar();
+    assert.equal(kayitlar.length, 1);
+    const k = kayitlar[0]!;
+    assert.equal(k.baslik, YIKAMA);
+    assert.equal(k.taslak, false);
+    assert.deepEqual(k.zaman, { kesinlik: "gun", tarih: "2026-11-27", gun_bolumu: "aksam", ifade: "cuma akşamı", saat_dilimi: DILIM });
+    assert.deepEqual(k.hatirlatmalar, [{ tur: "once", dk: 60 }]);
+    assert.equal(k.kaynak.kaynak_msg_id, cevap["client_msg_id"]);
+    // Giden çerçeve v2'dir (ham bayt).
+    const hamKayit = ajanda.c.gonderilenler.map((m) => JSON.parse(m) as J).filter((m) => m["type"] === "kayit");
+    assert.deepEqual(hamKayit.map((m) => m["v"]), [2]);
+    // Çıktı metni sözleşmenin metnidir: gün adıyla, mesaj anına göre yeri, gün hatırlatmasının günü ve saati.
+    const beklenen = ajandaEkleMetni({
+      sonuc: "eklendi",
+      mesaj_ani: an("01:47"),
+      kayit: {
+        kayit_id: k.kayit_id,
+        revizyon: k.revizyon,
+        durum: "acik",
+        taslak: false,
+        silindi: false,
+        zaman: { kesinlik: "gun", tarih: "2026-11-27", gun_bolumu: "aksam", saat_dilimi: DILIM },
+        hatirlatma: { toplam: 1, kurulacak: 1, saatsiz: 0, gecmis: 0, gun_hatirlatmasi: { tarih: "2026-11-27", saat: "17:00", gecti: false } },
+      },
+    });
+    assert.equal(tamam, beklenen);
+    assert.match(tamam, /zaman=2026-11-27 Cuma saatsiz aksam Europe\/Istanbul \(mesaj anına göre bugün\)/);
+    assert.match(tamam, /gun_hatirlatmasi=2026-11-27 Cuma 17:00/);
+    assert.match(tamam, /Yanıtında kaydın gününü adıyla ve tarihiyle söyle \(27 Kasım Cuma\)/);
+    assert.ok(!tamam.includes(YIKAMA) && !tamam.includes("cuma akşamı"), "araç çıktısı kayıt metni taşıdı");
+    // Uygulamanın kuracağı alarm: Cuma 17:00.
+    const takvim = o.servis.takvim!;
+    assert.deepEqual(kurulacakHatirlatmalar(k, o.d.saat.simdiMs(), takvim.anCevir).map((h) => h.tetik_ms), [takvim.anCevir("2026-11-27", "17:00", DILIM)]);
+    await o.erenSatiri(eren, sonucSatiri(eren, "27 Kasım Cuma akşamına ekledim, 17:00'de hatırlatırım."));
+
+    // 01:49 kullanıcı günü değiştirir. Gece aralığında teyitsiz güncelleme de reddedilir, kayıt değişmez.
+    await o.ilerlet(2 * DAKIKA);
+    await o.kullaniciMesaji(sohbet, "pardon, cumartesi akşamı olsun");
+    const yeniGun = { kayit_id: k.kayit_id, degisiklik: { zaman: { ...cumaAksam, tarih: "2026-11-28", ifade: "cumartesi akşamı" } } };
+    const gRet = await o.arac(istemci, "ajanda_guncelle", { ...yeniGun, dayanak: { tarih: "2026-11-27", saat: "01:49" } });
+    assert.match(gRet, /^ajanda_guncelle: \S+, neden=gece_teyidi_gerekli\./);
+    assert.equal(ajanda.kayitlar().length, 1);
+    const g = await o.arac(istemci, "ajanda_guncelle", { ...yeniGun, dayanak: { tarih: "2026-11-27", saat: "01:49", gece_teyidi: "gun_acik" } });
+    assert.match(g, /^ajanda_guncelle: güncellendi /);
+    assert.match(g, /zaman=2026-11-28 Cumartesi saatsiz aksam Europe\/Istanbul \(mesaj anına göre yarın\)/);
+    assert.match(g, /gun_hatirlatmasi=2026-11-28 Cumartesi 17:00/);
+    assert.match(g, /\(28 Kasım Cumartesi\)/);
+    const son = ajanda.kayitlar().at(-1)!;
+    assert.equal(son.kayit_id, k.kayit_id);
+    assert.ok(son.revizyon > k.revizyon);
+    assert.deepEqual(son.hatirlatmalar, k.hatirlatmalar, "hatırlatma listesi yeniden yazılmaz");
+    assert.equal(son.kaynak.tekil_anahtar, k.kaynak.tekil_anahtar);
+    assert.deepEqual(kurulacakHatirlatmalar(son, o.d.saat.simdiMs(), takvim.anCevir).map((h) => h.tetik_ms), [takvim.anCevir("2026-11-28", "17:00", DILIM)]);
+
+    // Kayıt metni hiçbir günlük satırında yok.
+    const gunluk = o.d.kayit.satirlar.join("\n");
+    for (const yasak of [YIKAMA, "cuma akşamı", "yarın akşama", "cumartesi akşamı"]) assert.ok(!gunluk.includes(yasak), `günlükte: ${yasak}`);
+  });
+
+  it("gündüz (10:00) aynı istek teyit istemez: 'yarın' takvime göre Cumartesi, çıktı günü adıyla söyler", async () => {
+    const o = await ortamKur({ baslangicMs: Date.UTC(2026, 10, 27, 7, 0, 0) });
+    const { sohbet, ajanda, istemci } = await hazirla(o);
+    await o.kullaniciMesaji(sohbet, ISTEK);
+    const m = await o.arac(istemci, "ajanda_ekle", {
+      tur: "gorev",
+      baslik: YIKAMA,
+      zaman: { kesinlik: "gun", tarih: "2026-11-28", gun_bolumu: "aksam", ifade: "yarın akşama" },
+      dayanak: { tarih: "2026-11-27", saat: "10:00" },
+    });
+    assert.match(m, /^ajanda_ekle: eklendi /);
+    assert.match(m, /zaman=2026-11-28 Cumartesi saatsiz aksam Europe\/Istanbul \(mesaj anına göre yarın\)/);
+    assert.match(m, /\(28 Kasım Cumartesi\)/);
+    assert.match(m, /mesaj_ani=2026-11-27 Cuma 10:00 Europe\/Istanbul/);
+    assert.equal(ajanda.kayitlar().length, 1);
+  });
+
+  it("sürüm 1 konuşan ajanda uygulaması el sıkışmada protokol_uyumsuz (1002) alır; sohbet kanalı etkilenmez", async () => {
+    const o = await ortamKur();
+    const { eren, sohbet, ajCihaz, ajanda } = await hazirla(o);
+    const sohbetOnce = sohbet.c.gonderilenler.length;
+    // v1 hello: yalnız sözleşmedeki hata, kayıt gitmez, sınama başlamaz.
+    const eski = o.d.ws.baglan("/ajanda", TELEFON_IP);
+    eski.mesajGonder(JSON.stringify({ v: 1, type: "hello", device_id: ajCihaz.device_id, son_rev: 0, client_nonce: randomBytes(32).toString("base64") }));
+    await bosalt();
+    assert.deepEqual(hamKareler(eski), [{ v: 2, type: "error", code: "protokol_uyumsuz" }]);
+    assert.equal(eski.kapanis?.kod, 1002);
+    // v1 pair_request de (açık ajanda penceresinde).
+    const b = ajandaEslestirmeBaslat({ depo: o.servis.depo, anahtar: o.anahtar, sistem: o.d.sistem, rastgele: o.d.rastgele, saat: o.d.saat, wsPort: o.ayar.wsPort });
+    assert.ok(b.ok);
+    assert.equal(b.deger.qr.v, AJANDA_SURUMU);
+    const eskiEs = o.d.ws.baglan("/ajanda", TELEFON_IP);
+    eskiEs.mesajGonder(JSON.stringify({ v: 1, type: "pair_request", kod: b.deger.kod, public_key: cihazAnahtari().acik, platform: "android" }));
+    await bosalt();
+    assert.deepEqual(hamKareler(eskiEs), [{ v: 2, type: "error", code: "protokol_uyumsuz" }]);
+    assert.equal(eskiEs.kapanis?.kod, 1002);
+    assert.notEqual(o.servis.depo.eslestirmeOku(), null, "pencere v1 denemesiyle tüketilmedi");
+    // Açık v2 ajanda bağlantısı ve sohbet sürer; sohbete fazladan çerçeve gitmedi, mesaj işlenir.
+    assert.equal(ajanda.c.kapanis, null);
+    assert.equal(sohbet.c.kapanis, null);
+    assert.equal(sohbet.c.gonderilenler.length, sohbetOnce);
+    const ack = await o.kullaniciMesaji(sohbet, "merhaba");
+    assert.equal(ack["ok"], true);
+    assert.ok((o.kullaniciSatirlari(eren).at(-1)!["message"]["content"] as string).endsWith("\nmerhaba"));
+    // Aynı cihaz v2 ile yeniden eşleşmeden bağlanır.
+    const yeni = await ajCihaz.baglan();
+    assert.equal(yeni.tur("welcome").length, 1);
   });
 });
 

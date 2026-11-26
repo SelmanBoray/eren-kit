@@ -146,6 +146,16 @@ describe("sistemIstemi", () => {
     }
   });
 
+  it("ajanda v2: istem tarih, saat ya da gece kuralı varsayımı taşımaz (kural araç tanımında ve ret metnindedir)", () => {
+    for (const [masaustu, tamYetki] of BIRLESIMLER) {
+      const metin = sistemIstemi("", masaustu, tamYetki, AD, true);
+      for (const yasak of ["gece_teyidi", "gece yarısı", "04:00", "gun_bolumu", "yarın", "ajanda_ekle"]) {
+        assert.ok(!metin.includes(yasak), `masaustu=${masaustu} tamYetki=${tamYetki}: istemde ${yasak}`);
+      }
+      assert.doesNotMatch(metin, /\b\d{1,2}:\d{2}\b|\b\d{4}-\d{2}-\d{2}\b/, "istemde saat ya da tarih var");
+    }
+  });
+
   it("kimlikEki hariç sekiz birleşimde de, en uzun asistan adıyla bile en çok 2000 karakter (K5)", () => {
     for (const [masaustu, tamYetki, ajanda] of BIRLESIMLER) {
       for (const ad of [AD, EN_UZUN_AD]) {

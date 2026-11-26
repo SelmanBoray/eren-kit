@@ -18,6 +18,7 @@ import type { KeyObject } from "node:crypto";
 import { afterEach, describe, it } from "node:test";
 import {
   AJANDA_AZAMI_CERCEVE,
+  AJANDA_SURUMU,
   AJANDA_KANAL_HATALARI,
   AjandaKaydi,
   AZAMI_CERCEVE,
@@ -62,6 +63,8 @@ const NONCE = Buffer.alloc(32, 7).toString("base64");
 const KOD = "ABC123XYZ9";
 const SERVIS: ServisBilgisi = { surum: "abc123def456", baslangic_ms: BASLANGIC - 5000 };
 const DEPO_ID = "depo-1";
+/** Ajanda kanalının sürümü: elle yazılan `/ajanda` çerçeveleri bununla (v2). */
+const AV: number = AJANDA_SURUMU;
 
 type Msg = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 
@@ -278,7 +281,7 @@ interface AjandaElSikma {
 async function ajandaElSik(ist: Ist, s: AjandaElSikma = {}): Promise<Msg | null> {
   const device_id = s.device_id ?? "aj-1";
   await ist.gonder({
-    v: 1,
+    v: AV,
     type: "hello",
     device_id,
     son_rev: s.son_rev ?? 0,
@@ -291,7 +294,7 @@ async function ajandaElSik(ist: Ist, s: AjandaElSikma = {}): Promise<Msg | null>
   const metin =
     s.metin?.(ch.server_nonce) ??
     ajandaKimlikImzaMetni({ rol: "telefon", device_id, client_nonce: NONCE, server_nonce: ch.server_nonce });
-  await ist.gonder({ v: 1, type: "auth_response", signature: imzala(s.anahtar ?? AJ1.private, metin) });
+  await ist.gonder({ v: AV, type: "auth_response", signature: imzala(s.anahtar ?? AJ1.private, metin) });
   return ch;
 }
 
@@ -451,7 +454,7 @@ const ekleIslemi = (kayit_id: string, baslik = "Süt al") => ({
   girdi_yolu: "elle",
 });
 
-const islemMesaji = (islem_id: string, islem: object) => ({ v: 1, type: "islem", islem_id, islem });
+const islemMesaji = (islem_id: string, islem: object) => ({ v: AV, type: "islem", islem_id, islem });
 
 // ---------------------------------------------------------------------------------------------
 // Testler
@@ -519,7 +522,7 @@ describe("gateway /ajanda: kapsam (iki yönde kanal_desteklenmiyor, sınama baş
     assert.equal(ist.tur("auth_challenge").length, 0);
     assert.equal(o.anahtar.imzalananlar.length, 0);
     assert.equal(o.aj.c.karsila.length, 0);
-    assert.equal(ist.kare[0]!.v, 1);
+    assert.equal(ist.kare[0]!.v, AV);
   });
 
   it("aynı sohbet cihazı /sohbet ve /cihaz'ı bugünkü gibi açar (kapsam denetimi eski cihazı etkilemez)", async () => {
@@ -613,7 +616,7 @@ describe("gateway /ajanda: imza ayrımı (eren-ajanda-auth-v1)", () => {
 });
 
 describe("gateway /ajanda: eşleştirme (pencere kapsamı = kanal)", () => {
-  const ajandaPair = (kod = KOD, t: Anahtarli = AJ1) => ({ v: 1, type: "pair_request", kod, public_key: t.acik, platform: "android" });
+  const ajandaPair = (kod = KOD, t: Anahtarli = AJ1) => ({ v: AV, type: "pair_request", kod, public_key: t.acik, platform: "android" });
   const sohbetPair = (kod = KOD, t: Anahtarli = TEL) => ({ v: 1, type: "pair_request", kod, public_key: t.acik, platform: "android", etiket: "deneme" });
 
   it("ajanda penceresi + /ajanda: pair_result{kapsam:ajanda}, cihaz ajanda kapsamında, aynı bağlantıda hello sürer", async () => {
@@ -625,7 +628,7 @@ describe("gateway /ajanda: eşleştirme (pencere kapsamı = kanal)", () => {
     assert.ok(pr?.ok, JSON.stringify(ist.kare));
     assert.equal(pr.kapsam, "ajanda");
     assert.equal(pr.server_public_key, o.anahtar.acikAnahtar());
-    assert.equal(JSON.parse(ist.c.gonderilenler[0]!).v, 1);
+    assert.equal(JSON.parse(ist.c.gonderilenler[0]!).v, AV);
     assert.equal(ist.kapali, false);
     const kayit = o.depo.kapsamliCihazGetir(pr.device_id);
     assert.equal(kayit?.kapsam, "ajanda");
@@ -729,7 +732,7 @@ describe("gateway /ajanda: eşleştirme (pencere kapsamı = kanal)", () => {
     await a.gonder(islemMesaji("i-1", ekleIslemi("k1")));
     reddedildi(a, "yetkisiz");
     const b = o.bagla("/ajanda");
-    await b.gonder({ v: 1, type: "gecmis_iste", istek_id: "g1", kayit_id: "k1" });
+    await b.gonder({ v: AV, type: "gecmis_iste", istek_id: "g1", kayit_id: "k1" });
     reddedildi(b, "yetkisiz");
     assert.equal(o.aj.c.uygulanan.length + o.aj.c.gecmis.length, 0);
     const c = await o.ajandaGiris();
@@ -744,19 +747,19 @@ describe("gateway /ajanda: el sıkışma ve çözücü", () => {
     const o = await hazir();
     o.aj.yaz(kayitUret("k1", 0));
     const ist = o.bagla("/ajanda");
-    await ist.gonder({ v: 1, type: "hello", device_id: "aj-1", son_rev: 1, depo_id: DEPO_ID, son_rev_izi: { kayit_id: "k1", guncelleme_ms: BASLANGIC + 1 }, client_nonce: NONCE });
+    await ist.gonder({ v: AV, type: "hello", device_id: "aj-1", son_rev: 1, depo_id: DEPO_ID, son_rev_izi: { kayit_id: "k1", guncelleme_ms: BASLANGIC + 1 }, client_nonce: NONCE });
     assert.equal(ist.c.kimlikDogrulandiMi, false);
     assert.equal(o.aj.c.karsila.length, 0, "karsila kimlikten önce çağrılmamalı");
     const ch = ist.tur("auth_challenge")[0]!;
     await ist.gonder({
-      v: 1,
+      v: AV,
       type: "auth_response",
       signature: imzala(AJ1.private, ajandaKimlikImzaMetni({ rol: "telefon", device_id: "aj-1", client_nonce: NONCE, server_nonce: ch.server_nonce })),
     });
     assert.equal(ist.c.kimlikDogrulandiMi, true);
     assert.deepEqual(o.aj.c.karsila, [{ son_rev: 1, depo_id: DEPO_ID, son_rev_izi: { kayit_id: "k1", guncelleme_ms: BASLANGIC + 1 } }]);
     const w = ist.tur("welcome")[0]!;
-    assert.deepEqual(w, { v: 1, type: "welcome", depo_id: DEPO_ID, bas_rev: 1, tam: false, server_time_ms: BASLANGIC });
+    assert.deepEqual(w, { v: AV, type: "welcome", depo_id: DEPO_ID, bas_rev: 1, tam: false, server_time_ms: BASLANGIC });
     assert.deepEqual(ist.turler, ["auth_challenge", "welcome", "esitlendi"]);
     assert.ok(o.gunluk.bul("kimlik_tamam").some((g) => g.alanlar?.["kanal"] === "ajanda"));
   });
@@ -774,20 +777,20 @@ describe("gateway /ajanda: el sıkışma ve çözücü", () => {
   it("sıra bozuk: hello'dan önce auth_response, hello'dan sonra yine hello: yetkisiz", async () => {
     const o = await hazir();
     const a = o.bagla("/ajanda");
-    await a.gonder({ v: 1, type: "auth_response", signature: "AAAA" });
+    await a.gonder({ v: AV, type: "auth_response", signature: "AAAA" });
     reddedildi(a, "yetkisiz");
     const b = o.bagla("/ajanda");
-    await b.gonder({ v: 1, type: "hello", device_id: "aj-1", son_rev: 0, client_nonce: NONCE });
-    await b.gonder({ v: 1, type: "hello", device_id: "aj-1", son_rev: 0, client_nonce: NONCE });
+    await b.gonder({ v: AV, type: "hello", device_id: "aj-1", son_rev: 0, client_nonce: NONCE });
+    await b.gonder({ v: AV, type: "hello", device_id: "aj-1", son_rev: 0, client_nonce: NONCE });
     reddedildi(b, "yetkisiz");
   });
 
   it("çözücü: başka sürüm protokol_uyumsuz (1002), bozuk JSON ve /sohbet çerçevesi gecersiz_mesaj (1008); hepsi kapatır", async () => {
     const o = await hazir();
-    const v2 = o.bagla("/ajanda");
-    await v2.gonder({ v: 2, type: "hello", device_id: "aj-1", son_rev: 0, client_nonce: NONCE });
-    reddedildi(v2, "protokol_uyumsuz");
-    assert.equal(v2.c.kapanis?.kod, 1002);
+    const ileri = o.bagla("/ajanda");
+    await ileri.gonder({ v: AV + 1, type: "hello", device_id: "aj-1", son_rev: 0, client_nonce: NONCE });
+    reddedildi(ileri, "protokol_uyumsuz");
+    assert.equal(ileri.c.kapanis?.kod, 1002);
     const bozuk = o.bagla("/ajanda");
     await bozuk.gonder("{");
     reddedildi(bozuk, "gecersiz_mesaj");
@@ -795,16 +798,80 @@ describe("gateway /ajanda: el sıkışma ve çözücü", () => {
     const sohbet = o.bagla("/ajanda");
     await sohbet.gonder({ v: SOHBET_SURUMU, type: "hello", device_id: "aj-1", last_seq: 0, client_nonce: NONCE });
     assert.ok(sohbet.kapali);
-    const eski = o.bagla("/ajanda");
-    await eski.gonder({ v: 1, type: "hello", device_id: "aj-1", client_nonce: NONCE });
-    reddedildi(eski, "gecersiz_mesaj");
+    // Ajanda sürümünde ama `son_rev`'siz (/cihaz biçimli) hello: şema reddi.
+    const eksik = o.bagla("/ajanda");
+    await eksik.gonder({ v: AV, type: "hello", device_id: "aj-1", client_nonce: NONCE });
+    reddedildi(eksik, "gecersiz_mesaj");
     assert.equal(o.anahtar.imzalananlar.length, 0);
+  });
+
+  describe("v2: sürüm 1 konuşan (eski) ajanda uygulaması", () => {
+    const V1_HELLO = { v: 1, type: "hello", device_id: "aj-1", son_rev: 3, depo_id: DEPO_ID, client_nonce: NONCE };
+    const V1_PAIR = { v: 1, type: "pair_request", kod: KOD, public_key: AJ1.acik, platform: "android" };
+
+    it("v1 hello: {v:2, error, protokol_uyumsuz} + 1002; sınama yok, karsila yok, kayıt gitmez", async () => {
+      assert.equal(AV, 2);
+      const o = await hazir();
+      o.aj.yaz(kayitUret("k1", 0));
+      const ist = o.bagla("/ajanda");
+      await ist.gonder(V1_HELLO);
+      reddedildi(ist, "protokol_uyumsuz");
+      assert.deepEqual(ist.kare, [{ v: 2, type: "error", code: "protokol_uyumsuz" }]);
+      assert.equal(ist.c.kapanis?.kod, 1002);
+      assert.equal(ajandaAsagiCoz(ist.c.gonderilenler[0]!).ok, true, "giden çerçeve v2 şemasından geçer");
+      assert.equal(o.anahtar.imzalananlar.length, 0);
+      assert.equal(o.aj.c.karsila.length, 0);
+      assert.equal(ist.tur("kayit").length, 0);
+      // Eşleşme göçsüz kalır: aynı cihaz v2 ile aynı anahtarla, yeniden eşleşmeden bağlanır.
+      assert.equal(o.depo.kapsamliCihazGetir("aj-1")?.kapsam, "ajanda");
+      const yeni = await o.ajandaGiris();
+      assert.equal(yeni.tur("kayit").length, 1);
+    });
+
+    it("v1 pair_request açık ajanda penceresinde de protokol_uyumsuz; pencere ve sayaçlar değişmez, cihaz eklenmez", async () => {
+      const o = await hazir();
+      o.pencereAc("ajanda");
+      const once = o.depo.eslestirmeOku();
+      const sayi = o.depo.eslesmeler().length;
+      const ist = o.bagla("/ajanda", IP3);
+      await ist.gonder(V1_PAIR);
+      assert.deepEqual(ist.kare, [{ v: 2, type: "error", code: "protokol_uyumsuz" }]);
+      assert.equal(ist.c.kapanis?.kod, 1002);
+      assert.deepEqual(o.depo.eslestirmeOku(), once);
+      assert.equal(o.depo.eslesmeler().length, sayi);
+      // Pencere v2 uygulamasına açık kalır; pair_result da v2.
+      const v2 = o.bagla("/ajanda", IP3);
+      await v2.gonder({ ...V1_PAIR, v: AV });
+      assert.ok(v2.tur("pair_result")[0]?.ok);
+      assert.equal(JSON.parse(v2.c.gonderilenler[0]!).v, AV);
+    });
+
+    it("v1 uygulamasının reddi /sohbet ve /cihaz'ı etkilemez: açık sohbet bağlantısı sürer, yeni bağlantılar bugünkü gibi açılır", async () => {
+      const o = await hazir();
+      const s = o.bagla("/sohbet");
+      await eskiElSik(s, "tel-1", TEL.private);
+      assert.equal(s.tur("welcome").length, 1, JSON.stringify(s.kare));
+      const sOnce = s.c.gonderilenler.length;
+      for (let i = 0; i < 3; i++) {
+        const ist = o.bagla("/ajanda");
+        await ist.gonder(V1_HELLO);
+        reddedildi(ist, "protokol_uyumsuz");
+      }
+      assert.equal(s.kapali, false);
+      assert.equal(s.c.gonderilenler.length, sOnce, "sohbet bağlantısına çerçeve gitmemeli");
+      const s2 = o.bagla("/sohbet");
+      await eskiElSik(s2, "tel-1", TEL.private);
+      assert.equal(s2.tur("welcome").length, 1);
+      const c = o.bagla("/cihaz");
+      await eskiElSik(c, "tel-1", TEL.private);
+      assert.equal(c.tur("welcome").length, 1, JSON.stringify(c.kare));
+    });
   });
 
   it("kimlik sonrası /sohbet iş çerçevesi (user_message) gecersiz_mesaj + kapat, insan mesajı işlenmez", async () => {
     const o = await hazir();
     const ist = await o.ajandaGiris();
-    await ist.gonder({ v: 1, type: "user_message", client_msg_id: "u1", sohbet_id: "ana", input: "yazi", text: "merhaba" });
+    await ist.gonder({ v: AV, type: "user_message", client_msg_id: "u1", sohbet_id: "ana", input: "yazi", text: "merhaba" });
     assert.equal(ist.hataKodu, "gecersiz_mesaj");
     assert.ok(ist.kapali);
     assert.equal(o.insanMesajlari.length, 0);
@@ -847,7 +914,7 @@ describe("gateway /ajanda: telafi", () => {
     assert.deepEqual(ist.revler, [1, 3, 4]);
     assert.equal(ist.tur("kayit").at(-1)!.kayit.silindi, true);
     assert.deepEqual(ist.turler, ["auth_challenge", "welcome", "kayit", "kayit", "kayit", "esitlendi"]);
-    assert.deepEqual(ist.tur("esitlendi")[0], { v: 1, type: "esitlendi", rev: 4 });
+    assert.deepEqual(ist.tur("esitlendi")[0], { v: AV, type: "esitlendi", rev: 4 });
     assert.deepEqual(o.aj.c.sayfa[0], { sonRev: 0, ustRev: 4, adet: AJANDA_TELAFI_SAYFASI });
   });
 
@@ -951,7 +1018,7 @@ describe("gateway /ajanda: canlı kayıt", () => {
     const a = await o.ajandaGiris();
     const b = await o.ajandaGiris(IP2, { device_id: "aj-2", anahtar: AJ2.private });
     const bekleyen = o.bagla("/ajanda", IP1);
-    await bekleyen.gonder({ v: 1, type: "hello", device_id: "aj-1", son_rev: 0, client_nonce: NONCE });
+    await bekleyen.gonder({ v: AV, type: "hello", device_id: "aj-1", son_rev: 0, client_nonce: NONCE });
     const s = o.bagla("/sohbet");
     await eskiElSik(s, "tel-1", TEL.private);
     const sOnce = s.c.gonderilenler.length;
@@ -964,7 +1031,7 @@ describe("gateway /ajanda: canlı kayıt", () => {
     // Bekleyen bağlantı kimliği bitirince telafiyle alır.
     const ch = bekleyen.tur("auth_challenge")[0]!;
     await bekleyen.gonder({
-      v: 1,
+      v: AV,
       type: "auth_response",
       signature: imzala(AJ1.private, ajandaKimlikImzaMetni({ rol: "telefon", device_id: "aj-1", client_nonce: NONCE, server_nonce: ch.server_nonce })),
     });
@@ -1010,7 +1077,7 @@ describe("gateway /ajanda: işlem ve geçmiş", () => {
     const o = await hazir();
     const ist = await o.ajandaGiris();
     await ist.gonder(islemMesaji("i-1", ekleIslemi("k1")));
-    assert.deepEqual(ist.tur("islem_sonucu"), [{ v: 1, type: "islem_sonucu", islem_id: "i-1", ok: true, kayit_id: "k1", rev: 1 }]);
+    assert.deepEqual(ist.tur("islem_sonucu"), [{ v: AV, type: "islem_sonucu", islem_id: "i-1", ok: true, kayit_id: "k1", rev: 1 }]);
     assert.deepEqual(ist.revler, [1]);
     assert.equal(o.aj.c.uygulanan.length, 1);
     assert.equal(o.aj.c.uygulanan[0]![0], "aj-1");
@@ -1023,7 +1090,7 @@ describe("gateway /ajanda: işlem ve geçmiş", () => {
     assert.deepEqual(ist.revler, [1]);
     // Kalıcı ret ve yan etkisiz ok.
     await ist.gonder(islemMesaji("i-2", { islem: "sil", kayit_id: "yok" }));
-    assert.deepEqual(ist.tur("islem_sonucu")[2], { v: 1, type: "islem_sonucu", islem_id: "i-2", ok: false, code: "kayit_bulunamadi" });
+    assert.deepEqual(ist.tur("islem_sonucu")[2], { v: AV, type: "islem_sonucu", islem_id: "i-2", ok: false, code: "kayit_bulunamadi" });
     assert.equal(ist.kapali, false);
   });
 
@@ -1044,9 +1111,9 @@ describe("gateway /ajanda: işlem ve geçmiş", () => {
 
   it("zarfı geçersiz işlem (islem_id yok ya da bozuk, fazla alan): gecersiz_mesaj + kapat, ajanda çağrılmaz", async () => {
     for (const m of [
-      { v: 1, type: "islem", islem: ekleIslemi("k1") },
-      { v: 1, type: "islem", islem_id: "bozuk kimlik", islem: ekleIslemi("k1") },
-      { v: 1, type: "islem", islem_id: "i-1", islem: ekleIslemi("k1"), fazla: true },
+      { v: AV, type: "islem", islem: ekleIslemi("k1") },
+      { v: AV, type: "islem", islem_id: "bozuk kimlik", islem: ekleIslemi("k1") },
+      { v: AV, type: "islem", islem_id: "i-1", islem: ekleIslemi("k1"), fazla: true },
     ]) {
       const o = await hazir();
       const ist = await o.ajandaGiris();
@@ -1070,7 +1137,7 @@ describe("gateway /ajanda: işlem ve geçmiş", () => {
     const ist = await o.ajandaGiris();
     o.aj.ayar.islemAtar = true;
     await ist.gonder(islemMesaji("i-1", ekleIslemi("k1")));
-    assert.deepEqual(ist.tur("islem_sonucu")[0], { v: 1, type: "islem_sonucu", islem_id: "i-1", ok: false, code: "ic_hata" });
+    assert.deepEqual(ist.tur("islem_sonucu")[0], { v: AV, type: "islem_sonucu", islem_id: "i-1", ok: false, code: "ic_hata" });
     assert.equal(ist.kapali, false);
     o.aj.ayar.islemAtar = false;
     await ist.gonder(islemMesaji("i-1", ekleIslemi("k1")));
@@ -1081,13 +1148,13 @@ describe("gateway /ajanda: işlem ve geçmiş", () => {
     const o = await hazir();
     o.aj.yaz(kayitUret("k1", 0));
     const ist = await o.ajandaGiris();
-    await ist.gonder({ v: 1, type: "gecmis_iste", istek_id: "g1", kayit_id: "k1", once_rev: 5 });
-    assert.deepEqual(ist.tur("gecmis")[0], { v: 1, type: "gecmis", istek_id: "g1", kayit_id: "k1", girdiler: [GECMIS_GIRDISI], devami: true });
+    await ist.gonder({ v: AV, type: "gecmis_iste", istek_id: "g1", kayit_id: "k1", once_rev: 5 });
+    assert.deepEqual(ist.tur("gecmis")[0], { v: AV, type: "gecmis", istek_id: "g1", kayit_id: "k1", girdiler: [GECMIS_GIRDISI], devami: true });
     assert.deepEqual(o.aj.c.gecmis[0], ["k1", 5]);
-    await ist.gonder({ v: 1, type: "gecmis_iste", istek_id: "g2", kayit_id: "yok" });
-    assert.deepEqual(ist.tur("gecmis")[1], { v: 1, type: "gecmis", istek_id: "g2", kayit_id: "yok", girdiler: [], devami: false, code: "kayit_bulunamadi" });
+    await ist.gonder({ v: AV, type: "gecmis_iste", istek_id: "g2", kayit_id: "yok" });
+    assert.deepEqual(ist.tur("gecmis")[1], { v: AV, type: "gecmis", istek_id: "g2", kayit_id: "yok", girdiler: [], devami: false, code: "kayit_bulunamadi" });
     o.aj.ayar.gecmisAtar = true;
-    await ist.gonder({ v: 1, type: "gecmis_iste", istek_id: "g3", kayit_id: "k1" });
+    await ist.gonder({ v: AV, type: "gecmis_iste", istek_id: "g3", kayit_id: "k1" });
     assert.equal(ist.tur("gecmis")[2]!.code, "ic_hata");
     assert.equal(ist.kapali, false);
   });
@@ -1097,7 +1164,7 @@ describe("gateway /ajanda: işlem ve geçmiş", () => {
     o.aj.yuz.islemUygula = () => ({ ok: true, kayit_id: "k1", rev: 3, fazla: "x" }) as unknown as AjandaIslemSonucuGovdesi;
     const ist = await o.ajandaGiris();
     await ist.gonder(islemMesaji("i-1", ekleIslemi("k1")));
-    assert.deepEqual(JSON.parse(ist.c.gonderilenler.at(-1)!), { v: 1, type: "islem_sonucu", islem_id: "i-1", ok: true, kayit_id: "k1", rev: 3 });
+    assert.deepEqual(JSON.parse(ist.c.gonderilenler.at(-1)!), { v: AV, type: "islem_sonucu", islem_id: "i-1", ok: true, kayit_id: "k1", rev: 3 });
   });
 });
 

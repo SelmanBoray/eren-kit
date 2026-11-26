@@ -3,10 +3,13 @@ import { afterEach, describe, it } from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {
+  AJANDA_ARAC_ACIKLAMALARI,
   AJANDA_ARACLARI,
   AJANDA_BORU_ADI,
   AJANDA_FIILLERI,
   AJANDA_ROL_FIILLERI,
+  GECE_TEYITLERI,
+  GUN_BOLUMLERI,
   GUVENILMEZ_META,
   OpakId,
   ajandaEkleMetni,
@@ -281,9 +284,22 @@ describe("kopru ajanda kipi: araç listesi ve el sıkışma", () => {
       const fiil = t.name as AjandaFiili;
       assert.deepEqual(t.inputSchema, jsonSemasi(AJANDA_ARACLARI[fiil].girdi));
       assert.equal("outputSchema" in t, false, fiil);
-      assert.ok((t.description ?? "").length > 0);
+      // v2: tanım metni sözleşmeden birebir (köprünün kendi sabiti yok).
+      assert.equal(t.description, AJANDA_ARAC_ACIKLAMALARI[fiil], fiil);
     }
     assert.equal(istemci.getServerVersion()?.name, "eren-ajanda");
+  });
+
+  it("v2: girdi şeması gun_bolumu ve dayanak.gece_teyidi alanlarını sözleşmeden kendiliğinden taşır", async () => {
+    const { istemci } = await sahteKur();
+    const { tools } = await istemci.listTools();
+    const ekle = tools.find((t) => t.name === "ajanda_ekle");
+    const metin = JSON.stringify(ekle?.inputSchema);
+    for (const b of GUN_BOLUMLERI) assert.ok(metin.includes(`"${b}"`), b);
+    for (const t of GECE_TEYITLERI) assert.ok(metin.includes(`"${t}"`), t);
+    assert.ok(metin.includes('"gun_bolumu"') && metin.includes('"gece_teyidi"'));
+    const guncelle = JSON.stringify(tools.find((t) => t.name === "ajanda_guncelle")?.inputSchema);
+    assert.ok(guncelle.includes('"gun_bolumu"') && guncelle.includes('"gece_teyidi"'));
   });
 
   it("araç girdisi kimlik, kaynak, taslak, tur kökeni, sohbet ya da tekrar taşıyamaz (şemada yok)", async () => {
@@ -383,6 +399,32 @@ describe("kopru ajanda kipi: sonuç metni", () => {
     const [istek] = servis.istekler("ajanda_ekle");
     assert.ok(OpakId.safeParse(istek!["istek_id"]).success);
     assert.deepEqual(istek!["girdi"], EKLE_GIRDI);
+  });
+
+  it("v2: gece_teyidi_gerekli boru hatası değildir: isError yok, modele ajandaEkleMetni/ajandaGuncelleMetni ret metni", async () => {
+    const gece = { tarih: "2026-11-27", saat: "01:45", saat_dilimi: IST };
+    const ekleRet = AJANDA_ARACLARI.ajanda_ekle.cikti.parse({ sonuc: "ret", mesaj_ani: gece, neden: "gece_teyidi_gerekli" });
+    const guncelleRet = AJANDA_ARACLARI.ajanda_guncelle.cikti.parse({ sonuc: "ret", mesaj_ani: gece, neden: "gece_teyidi_gerekli" });
+    const girdi = {
+      tur: "gorev",
+      baslik: "Araba yıkama",
+      zaman: { kesinlik: "gun", tarih: "2026-11-28", gun_bolumu: "aksam", ifade: "yarın akşama" },
+      dayanak: { tarih: "2026-11-27", saat: "01:45" },
+    };
+    const a = await sahteKur((s) => s.yanitla({ ok: true, sonuc: ekleRet }));
+    const r1 = await a.istemci.callTool({ name: "ajanda_ekle", arguments: girdi });
+    assert.ok(!hataMi(r1));
+    yalnizMetin(r1, false);
+    assert.equal(metin(r1), ajandaEkleMetni(ekleRet));
+    assert.match(metin(r1), /27 Kasım Cuma mı, 28 Kasım Cumartesi mi\?/);
+    assert.deepEqual(a.servis.istekler("ajanda_ekle")[0]!["girdi"], girdi);
+    const b = await sahteKur((s) => s.yanitla({ ok: true, sonuc: guncelleRet }));
+    const r2 = await b.istemci.callTool({
+      name: "ajanda_guncelle",
+      arguments: { kayit_id: "k_dis01", degisiklik: { zaman: girdi.zaman }, dayanak: { ...girdi.dayanak, gece_teyidi: "soruldu" } },
+    });
+    assert.ok(!hataMi(r2));
+    assert.equal(metin(r2), ajandaGuncelleMetni(guncelleRet));
   });
 
   it("ajanda_guncelle: modele yalnız ajandaGuncelleMetni", async () => {
