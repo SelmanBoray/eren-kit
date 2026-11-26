@@ -192,15 +192,15 @@ class KayitFormuTest {
         fun o(tarih: String, saat: String, gecti: Boolean = false, kurulacak: Int = if (gecti) 0 else 1, gecmis: Int = if (gecti) 1 else 0) =
             HatirlatmaOnizlemesi(kurulacak.toUInt(), 0u, gecmis.toUInt(), null, GunHatirlatmasi(tarih, saat, gecti))
         val aksam = f.bolumVer(GunBolumu.AKSAM)
-        assertEquals("Cuma 17:00'de hatırlatılır.", KayitFormu.hatirlatmaNotu(aksam, o("2026-11-27", "17:00"), bugun))
+        assertEquals("Cuma 19:00'da hatırlatılır.", KayitFormu.hatirlatmaNotu(aksam, o("2026-11-27", "19:00"), bugun))
         assertEquals("O gün 09:00'da hatırlatılır (Cuma).", KayitFormu.hatirlatmaNotu(f, o("2026-11-27", "09:00"), bugun))
         assertEquals("Yarın 13:00'te hatırlatılır.", KayitFormu.hatirlatmaNotu(aksam, o("2026-11-26", "13:00"), bugun))
         assertEquals(
             "Bu kayıt için bildirim gelmeyecek: hatırlatma zamanı (bugün 09:00) geçti.",
             KayitFormu.hatirlatmaNotu(f.tarihVer(bugun), o("2026-11-25", "09:00", gecti = true), bugun),
         )
-        assertEquals("Taslak onaylanınca: Cuma 17:00'de hatırlatılır.", KayitFormu.hatirlatmaNotu(aksam, o("2026-11-27", "17:00"), bugun, KayitFormu.Companion.Etkinlik.TASLAK))
-        assertEquals("Kayıt açık değil; hatırlatma kurulmaz.", KayitFormu.hatirlatmaNotu(aksam, o("2026-11-27", "17:00"), bugun, KayitFormu.Companion.Etkinlik.KAPALI))
+        assertEquals("Taslak onaylanınca: Cuma 19:00'da hatırlatılır.", KayitFormu.hatirlatmaNotu(aksam, o("2026-11-27", "19:00"), bugun, KayitFormu.Companion.Etkinlik.TASLAK))
+        assertEquals("Kayıt açık değil; hatırlatma kurulmaz.", KayitFormu.hatirlatmaNotu(aksam, o("2026-11-27", "19:00"), bugun, KayitFormu.Companion.Etkinlik.KAPALI))
         // "Saat gelince kurulacak" dili kalktı; önizleme gelmeden saatsiz günde bir şey iddia edilmez.
         assertNull(KayitFormu.hatirlatmaNotu(aksam, null, bugun))
         assertEquals("Hatırlatma kurulmayacak.", KayitFormu.hatirlatmaNotu(aksam.copy(hatirlatmalar = emptyList()), null, bugun))
@@ -213,8 +213,8 @@ class KayitFormuTest {
 
     @Test
     fun saatinBulunmaEki() {
-        val ekler = listOf("08:00", "09:00", "10:00", "11:00", "13:00", "17:00", "20:00", "00:00", "14:30", "10:40", "15:45", "06:00")
+        val ekler = listOf("08:00", "09:00", "10:00", "11:00", "13:00", "19:00", "20:00", "00:00", "14:30", "10:40", "15:45", "06:00")
             .map { it + EkranMetinleri.bulunmaEki(it) }
-        assertEquals(listOf("08:00'de", "09:00'da", "10:00'da", "11:00'de", "13:00'te", "17:00'de", "20:00'de", "00:00'da", "14:30'da", "10:40'ta", "15:45'te", "06:00'da"), ekler)
+        assertEquals(listOf("08:00'de", "09:00'da", "10:00'da", "11:00'de", "13:00'te", "19:00'da", "20:00'de", "00:00'da", "14:30'da", "10:40'ta", "15:45'te", "06:00'da"), ekler)
     }
 }

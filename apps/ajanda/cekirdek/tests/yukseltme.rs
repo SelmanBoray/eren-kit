@@ -100,14 +100,14 @@ fn v1_yerel_veritabani_yeni_kodla_acilir_veri_kuyruk_eslesme_korunur_alarmlar_ye
     // Alarmlar eşitlemeden sonra da aynı plan.
     assert_eq!(h.alarm.kurulular().len(), 4);
 
-    // PC'de gün bölümü eklendi (akşam): gün hatırlatması 09:00'dan 17:00'ye taşınır.
+    // PC'de gün bölümü eklendi (akşam): gün hatırlatması 09:00'dan 19:00'a taşınır.
     let k = h.pc.disaridan_degistir("k_araba", |k| {
         if let Some(AjandaZamani::Gun { gun_bolumu, .. }) = &mut k.zaman {
             *gun_bolumu = Some(ajanda_cekirdek::model::GunBolumu::Aksam);
         }
     });
     h.pc_degisti(k);
-    assert!(h.alarm.kurulular().contains(&("k_araba".to_string(), bugun(17, 0) + 3 * GUN)));
+    assert!(h.alarm.kurulular().contains(&("k_araba".to_string(), bugun(19, 0) + 3 * GUN)));
     assert!(!h.alarm.kurulular().contains(&("k_araba".to_string(), bugun(9, 0) + 3 * GUN)));
 }
 

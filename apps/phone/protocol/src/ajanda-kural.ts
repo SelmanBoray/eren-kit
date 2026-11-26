@@ -207,7 +207,7 @@ export type HatirlatmaOzeti = {
  * Araç çıktısının hatırlatma özeti: `kurulacak` etkinlik dahil, öteki sayılar etkinlikten bağımsız.
  * `gun_hatirlatmasi` (v2) yalnız `hatirlatmaEtkinMi` iken ve halinde `gun_hatirlatmasi` olan bir
  * hatırlatma varsa: tetiği en erken kurulacak olanın yerel günü ve saati (`gecti:false`), kurulacak yoksa
- * tetiği en geç geçmiş olanınki (`gecti:true`). Model kullanıcıya "Cuma 17:00'de hatırlatırım" ya da
+ * tetiği en geç geçmiş olanınki (`gecti:true`). Model kullanıcıya "Cuma 19:00'da hatırlatırım" ya da
  * "sabah hatırlatması geçti, bildirim gelmeyecek" diyebilsin diye. Alan yoksa anahtar da yoktur.
  */
 export function hatirlatmaOzeti(kayit: AjandaKaydi, simdiMs: number, anCevir: AnCevirici): HatirlatmaOzeti {

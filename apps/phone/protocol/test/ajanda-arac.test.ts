@@ -382,7 +382,7 @@ const GUN_OZETI = {
   taslak: false,
   silindi: false,
   zaman: { kesinlik: "gun", tarih: "2026-11-27", gun_bolumu: "aksam", saat_dilimi: IST },
-  hatirlatma: { toplam: 1, kurulacak: 1, saatsiz: 0, gecmis: 0, gun_hatirlatmasi: { tarih: "2026-11-27", saat: "17:00", gecti: false } },
+  hatirlatma: { toplam: 1, kurulacak: 1, saatsiz: 0, gecmis: 0, gun_hatirlatmasi: { tarih: "2026-11-27", saat: "19:00", gecti: false } },
 } as const;
 
 test("v2: saatsiz gün kaydının gün hatırlatması özetle ve günün adıyla modele gider", () => {
@@ -390,7 +390,7 @@ test("v2: saatsiz gün kaydının gün hatırlatması özetle ve günün adıyla
   assert.equal(ekle.safeParse({ sonuc: "eklendi", mesaj_ani: GECE, kayit: GUN_OZETI }).success, true);
   const m = ajandaEkleMetni({ sonuc: "eklendi", mesaj_ani: GECE, kayit: GUN_OZETI });
   assert.match(m, /zaman=2026-11-27 Cuma saatsiz aksam Europe\/Istanbul \(mesaj anına göre bugün\) hatirlatma=1 kurulacak=1 /);
-  assert.match(m, /gun_hatirlatmasi=2026-11-27 Cuma 17:00 \(saatsiz kayıt: günün yaklaşık saatinde\)\./);
+  assert.match(m, /gun_hatirlatmasi=2026-11-27 Cuma 19:00 \(saatsiz kayıt: günün yaklaşık saatinde\)\./);
   assert.match(m, /\(27 Kasım Cuma\)/);
   // Öğleden sonra eklenen "bugün": sabah hatırlatması geçti, bildirim gelmeyecek; model bunu söyler.
   const gecti = { ...GUN_OZETI, zaman: { ...GUN_OZETI.zaman, gun_bolumu: undefined }, hatirlatma: { toplam: 1, kurulacak: 0, saatsiz: 0, gecmis: 1, gun_hatirlatmasi: { tarih: "2026-11-27", saat: "09:00", gecti: true } } };
@@ -465,7 +465,7 @@ test("v2: araç girdisi gün bölümünü ve gece teyidini taşır; tanımlar ku
   assert.match(props.zaman!.description ?? "", /gun_bolumu/);
   assert.match(props.zaman!.description ?? "", /adıyla ve tarihiyle söyle/);
   assert.ok((props.hatirlatmalar!.description ?? "").includes(gunHatirlatmaTablosuMetni()));
-  assert.match(gunHatirlatmaTablosuMetni(), /^sabah 08:00, ogle 11:00, ogleden_sonra 13:00, aksam 17:00, gece 20:00; bölüm yoksa 09:00$/);
+  assert.match(gunHatirlatmaTablosuMetni(), /^sabah 08:00, ogle 11:00, ogleden_sonra 13:00, aksam 19:00, gece 20:00; bölüm yoksa 09:00$/);
   assert.match(props.dayanak!.description ?? "", /00:00-04:00 arasındaysa gece_teyidi de zorunludur/);
   assert.match(props.dayanak!.properties!.gece_teyidi!.description ?? "", /Soru sormadan soruldu verme/);
 });

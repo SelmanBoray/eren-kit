@@ -734,11 +734,11 @@ describe("ajanda araçları: sürüm 2 (gün bölümü, gün hatırlatması, gec
       kurulacak: 1,
       saatsiz: 0,
       gecmis: 0,
-      gun_hatirlatmasi: { tarih: "2026-11-27", saat: "17:00", gecti: false },
+      gun_hatirlatmasi: { tarih: "2026-11-27", saat: "19:00", gecti: false },
     });
     assert.deepEqual(
       kurulacakHatirlatmalar(k, GECE_MS, o.takvim.anCevir).map((h) => h.tetik_ms),
-      [o.takvim.anCevir("2026-11-27", "17:00", DILIM)],
+      [o.takvim.anCevir("2026-11-27", "19:00", DILIM)],
     );
     const acik = await o.ekle(
       yikama({ baslik: "Fatura", zaman: { kesinlik: "gun", tarih: "2026-11-30" }, dayanak: { tarih: "2026-11-27", saat: "01:47", gece_teyidi: "gun_acik" } }),
@@ -782,7 +782,7 @@ describe("ajanda araçları: sürüm 2 (gün bölümü, gün hatırlatması, gec
     const o = geceKur();
     const c = await o.ekle(yikama({ dayanak: { tarih: "2026-11-27", saat: "01:45", gece_teyidi: "gun_acik" } }));
     assert.ok(c.sonuc === "eklendi");
-    assert.deepEqual(c.kayit.hatirlatma.gun_hatirlatmasi, { tarih: "2026-11-28", saat: "17:00", gecti: false });
+    assert.deepEqual(c.kayit.hatirlatma.gun_hatirlatmasi, { tarih: "2026-11-28", saat: "19:00", gecti: false });
     const id = c.kayit.kayit_id;
     const anahtar = o.kayit(id).kaynak.tekil_anahtar;
     const g = await o.guncelle({
@@ -791,13 +791,13 @@ describe("ajanda araçları: sürüm 2 (gün bölümü, gün hatırlatması, gec
       dayanak: { tarih: "2026-11-27", saat: "01:45", gece_teyidi: "soruldu" },
     });
     assert.ok(g.sonuc === "guncellendi");
-    assert.deepEqual(g.kayit.hatirlatma.gun_hatirlatmasi, { tarih: "2026-11-27", saat: "17:00", gecti: false });
+    assert.deepEqual(g.kayit.hatirlatma.gun_hatirlatmasi, { tarih: "2026-11-27", saat: "19:00", gecti: false });
     const k = o.kayit(id);
     assert.deepEqual(k.hatirlatmalar, [{ tur: "once", dk: 60 }]);
     assert.equal(k.kaynak.tekil_anahtar, anahtar);
     assert.deepEqual(
       kurulacakHatirlatmalar(k, GECE_MS, o.takvim.anCevir).map((h) => h.tetik_ms),
-      [o.takvim.anCevir("2026-11-27", "17:00", DILIM)],
+      [o.takvim.anCevir("2026-11-27", "19:00", DILIM)],
     );
     // Bölüm kalkınca 09:00; saat gelince saatli kurala geçer (17:30 − 60 dk).
     const b = await o.guncelle({

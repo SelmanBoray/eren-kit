@@ -1101,7 +1101,7 @@ mod testler {
         assert_eq!(
             kurulan,
             vec![
-                ("k_aksam".into(), bugun(17, 0) + GUN),
+                ("k_aksam".into(), bugun(19, 0) + GUN),
                 ("k_bolumsuz".into(), bugun(9, 0) + GUN),
                 // "1 gün önce" önceki günün 20:00'ı; 60 ve 5 dk aynı günün 20:00'ına düşer (tek alarm).
                 ("k_gece".into(), bugun(20, 0)),
@@ -1116,13 +1116,13 @@ mod testler {
         // Gerçek örnek: 28'i akşam -> 27'si akşam (bugün 25; tarihleri iki gün kaydırılmış biçimi).
         d.yaz(&kayit("k_a", json!({"tur": "gorev", "zaman": gun("2026-11-27", Some("aksam"))})));
         let e = d.senkron(&["k_a"]);
-        assert_eq!(tetikler(&e), vec![bugun(17, 0) + 2 * GUN]);
+        assert_eq!(tetikler(&e), vec![bugun(19, 0) + 2 * GUN]);
         let ilk = e.alarm_kur[0].alarm_no;
 
         d.yaz(&kayit("k_a", json!({"tur": "gorev", "zaman": gun("2026-11-26", Some("aksam"))})));
         let e = d.senkron(&["k_a"]);
         assert_eq!(e.alarm_iptal, vec![ilk], "eski günün alarmı iptal");
-        assert_eq!(tetikler(&e), vec![bugun(17, 0) + GUN]);
+        assert_eq!(tetikler(&e), vec![bugun(19, 0) + GUN]);
         let ikinci = e.alarm_kur[0].alarm_no;
 
         // Saat geldi (19:00): saatli kural, 1 saat önce.
@@ -1153,9 +1153,9 @@ mod testler {
         let e = d.senkron(&[]);
         assert!(e.alarm_kur.is_empty() && e.kacirilan.is_none());
         assert!(d.yeniden(YenidenKurmaNedeni::PaketGuncellendi).alarm_kur.is_empty());
-        // Aynı gün akşama alınınca 17:00 gelecekte: kurulur.
+        // Aynı gün akşama alınınca 19:00 gelecekte: kurulur.
         d.yaz(&kayit("k_bugun", json!({"tur": "gorev", "zaman": gun("2026-11-25", Some("aksam"))})));
-        assert_eq!(tetikler(&d.senkron(&["k_bugun"])), vec![bugun(17, 0)]);
+        assert_eq!(tetikler(&d.senkron(&["k_bugun"])), vec![bugun(19, 0)]);
     }
 
     #[test]
@@ -1163,10 +1163,10 @@ mod testler {
         let mut d = Duzen::yeni();
         d.yaz(&kayit("k_a", json!({"tur": "gorev", "baslik": "Araba yıkama", "zaman": gun("2026-11-25", Some("aksam"))})));
         let no = d.senkron(&["k_a"]).alarm_kur[0].alarm_no;
-        d.saat(bugun(17, 30));
+        d.saat(bugun(19, 30));
         let e = d.yeniden(YenidenKurmaNedeni::Acilis);
         let k = e.kacirilan.unwrap();
-        assert_eq!((k.satirlar[0].alarm_no, k.satirlar[0].tetik_ms), (no, bugun(17, 0)));
+        assert_eq!((k.satirlar[0].alarm_no, k.satirlar[0].tetik_ms), (no, bugun(19, 0)));
         // Bildirim içeriği kaydın zamanını taşır (saatsiz, bölümlü): Kotlin "Bugün akşam" yazar.
         assert!(matches!(&k.satirlar[0].zaman, Some(crate::model::AjandaZamani::Gun { gun_bolumu: Some(crate::model::GunBolumu::Aksam), .. })));
     }
@@ -1179,7 +1179,7 @@ mod testler {
         let gunz = |t: &str, b| Some(crate::model::AjandaZamani::Gun { tarih: t.into(), gun_bolumu: b, saat_dilimi: "Europe/Istanbul".into(), ifade: None });
         let o = hatirlatma_onizlemesi(&govde(gunz("2026-11-27", Some(GunBolumu::Aksam)), crate::model::varsayilan_hatirlatmalar()), SIMDI, &c).unwrap();
         let g = o.gun_hatirlatmasi.unwrap();
-        assert_eq!((g.tarih.as_str(), g.saat.as_str(), g.gecti, o.ilk_tetik_ms), ("2026-11-27", "17:00", false, Some(bugun(17, 0) + 2 * GUN)));
+        assert_eq!((g.tarih.as_str(), g.saat.as_str(), g.gecti, o.ilk_tetik_ms), ("2026-11-27", "19:00", false, Some(bugun(19, 0) + 2 * GUN)));
         let o = hatirlatma_onizlemesi(&govde(gunz("2026-11-25", None), crate::model::varsayilan_hatirlatmalar()), SIMDI, &c).unwrap();
         let g = o.gun_hatirlatmasi.unwrap();
         assert_eq!((g.saat.as_str(), g.gecti, o.kurulacak, o.gecmis, o.ilk_tetik_ms), ("09:00", true, 0, 1, None));

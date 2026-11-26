@@ -215,7 +215,7 @@ describe("ajanda: sürüm 1 verisi sürüm 2 kodunda (göç yok)", () => {
     assert.ok(s.ok);
     const c = AJANDA_ARACLARI.ajanda_guncelle.cikti.parse(s.deger);
     assert.ok(c.sonuc === "guncellendi", JSON.stringify(c));
-    assert.deepEqual(c.kayit.hatirlatma.gun_hatirlatmasi, { tarih: "2026-11-27", saat: "17:00", gecti: false });
+    assert.deepEqual(c.kayit.hatirlatma.gun_hatirlatmasi, { tarih: "2026-11-27", saat: "19:00", gecti: false });
     const k = o.depo.ajandaKaydiGetir(ARAC_KAYDI.kayit_id)!;
     assert.equal(k.kaynak.tekil_anahtar, V1_ANAHTAR);
     assert.equal(k.revizyon, 4);

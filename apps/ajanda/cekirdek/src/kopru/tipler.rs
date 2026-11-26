@@ -141,7 +141,7 @@ pub enum SurumUyusmazligi {
 }
 
 /// Saatsiz gün kaydının gün hatırlatması (v2): kaydın diliminde yerel gün ve saat; `gecti`: tetiği geçti,
-/// bildirim gelmeyecek. Kaydın saati DEĞİLDİR (form ve ayrıntı "Cuma 17:00'de hatırlatılır" der).
+/// bildirim gelmeyecek. Kaydın saati DEĞİLDİR (form ve ayrıntı "Cuma 19:00'da hatırlatılır" der).
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct GunHatirlatmasi {
     pub tarih: String,

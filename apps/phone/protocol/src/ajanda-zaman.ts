@@ -263,7 +263,7 @@ export const GUN_HATIRLATMA_SAATLERI: Readonly<Record<GunBolumu, string>> = {
   sabah: "08:00",
   ogle: "11:00",
   ogleden_sonra: "13:00",
-  aksam: "17:00",
+  aksam: "19:00",
   gece: "20:00",
 };
 export const GUN_HATIRLATMA_VARSAYILAN_SAATI = "09:00";

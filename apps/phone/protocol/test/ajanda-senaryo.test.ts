@@ -225,7 +225,7 @@ test("bulgu 6: kurulmuş ama telefon kapalıyken kaçan hatırlatma açılışta
  * kastediyordu. v1'de asistan cumartesiye (28) saatsiz yazdı, "1 saat önce" hiç çalmayacaktı; kullanıcı
  * üç dakika sonra "cuma akşamı" diye düzeltti. Servis, konuşma modülü ve uygulamanın yapacağı sırayla.
  */
-test("gerçek kullanım: 01:45 'yarın akşama' → gece sorusu → 'cuma akşamı' → kayıt saatsiz, Cuma 17:00'de hatırlatılır", () => {
+test("gerçek kullanım: 01:45 'yarın akşama' → gece sorusu → 'cuma akşamı' → kayıt saatsiz, Cuma 19:00'da hatırlatılır", () => {
   const an0145 = { tarih: "2026-11-27", saat: "01:45", saat_dilimi: IST };
   assert.equal(mesajAniDamgasi(an0145), "[mesaj_ani: 2026-11-27 Cuma 01:45 Europe/Istanbul]");
 
@@ -259,16 +259,16 @@ test("gerçek kullanım: 01:45 'yarın akşama' → gece sorusu → 'cuma akşam
   assert.equal(yeni.zaman?.kesinlik, "gun");
   assert.equal("saat" in yeni.zaman!, false, "kayıt saatsiz kalır: saat uydurulmaz");
   const simdi = yerel("2026-11-27", "01:47");
-  // Uygulama: tek alarm, Cuma 17:00 (akşam bölümünün gün hatırlatması).
+  // Uygulama: tek alarm, Cuma 19:00 (akşam bölümünün gün hatırlatması).
   assert.deepEqual(kurulacakHatirlatmalar(yeni, simdi, anCevir), [
-    { sira: 0, hal: "kurulur", tetik_ms: yerel("2026-11-27", "17:00"), gun_hatirlatmasi: { tarih: "2026-11-27", saat: "17:00" } },
+    { sira: 0, hal: "kurulur", tetik_ms: yerel("2026-11-27", "19:00"), gun_hatirlatmasi: { tarih: "2026-11-27", saat: "19:00" } },
   ]);
   // Model: günü adıyla söyler, hatırlatmanın ne zaman geleceğini bilir.
   const ozet = { kayit_id: yeni.kayit_id, revizyon: 1, durum: yeni.durum, taslak: false, silindi: false, zaman: ajandaZamanOzeti(yeni.zaman!), hatirlatma: hatirlatmaOzeti(yeni, simdi, anCevir) };
   const cikti = AJANDA_ARACLARI.ajanda_ekle.cikti.parse({ sonuc: "eklendi", mesaj_ani: an0147, kayit: ozet });
   const metin = ajandaEkleMetni(cikti);
   assert.match(metin, /zaman=2026-11-27 Cuma saatsiz aksam Europe\/Istanbul \(mesaj anına göre bugün\)/);
-  assert.match(metin, /gun_hatirlatmasi=2026-11-27 Cuma 17:00/);
+  assert.match(metin, /gun_hatirlatmasi=2026-11-27 Cuma 19:00/);
   assert.match(metin, /Yanıtında kaydın gününü adıyla ve tarihiyle söyle \(27 Kasım Cuma\)/);
   assert.equal(metin.includes("cuma akşamı"), false, "kullanıcının sözü özete girmez");
 });
@@ -304,10 +304,10 @@ test("gerçek kullanım, v1 yolu: cumartesiye yazılmış kayıt 'cuma akşamı'
   assert.deepEqual(s.uygulanan, ["zaman"]);
   const yeni = AjandaKaydi.parse({ ...s.kayit, revizyon: 2 });
   assert.deepEqual(yeni.hatirlatmalar, [{ tur: "once", dk: 60 }]);
-  // Uygulama yeniden kurar: tek alarm Cuma 17:00; eski kimlik (28 09:00) yeni kümede yok, iptal edilir,
+  // Uygulama yeniden kurar: tek alarm Cuma 19:00; eski kimlik (28 09:00) yeni kümede yok, iptal edilir,
   // tetiği gelmediği için kaçırılan da sayılmaz.
   const kurulan = kurulacakHatirlatmalar(yeni, simdi0148, anCevir).map((h) => h.tetik_ms);
-  assert.deepEqual(kurulan, [yerel("2026-11-27", "17:00")]);
+  assert.deepEqual(kurulan, [yerel("2026-11-27", "19:00")]);
   assert.equal(kurulan.includes(eski[0]!), false);
   assert.deepEqual(kacirilanHatirlatmalar(yeni, simdi0148, anCevir, eski), []);
   // Model yeni günü adıyla söyler.

@@ -204,8 +204,8 @@ class GercekCekirdekTest {
             val aksam = yarin.bolumVer(dev.eren.ajanda.cekirdek.GunBolumu.AKSAM)
             val o = yuz.hatirlatmaOnizlemesi(aksam.govde())
             assertEquals(bugun.plusDays(1).toString(), o.gunHatirlatmasi!!.tarih)
-            assertEquals("17:00", o.gunHatirlatmasi!!.saat)
-            assertEquals("Yarın 17:00'de hatırlatılır.", KayitFormu.hatirlatmaNotu(aksam, o, bugun))
+            assertEquals("19:00", o.gunHatirlatmasi!!.saat)
+            assertEquals("Yarın 19:00'da hatırlatılır.",KayitFormu.hatirlatmaNotu(aksam, o, bugun))
             assertEquals("09:00", yuz.hatirlatmaOnizlemesi(yarin.govde()).gunHatirlatmasi!!.saat)
             // Elle eklenen saatsiz kayıt gerçekten alarm kurar (v1'de kurmazdı).
             val alarm = TestAlarm()

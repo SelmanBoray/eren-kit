@@ -277,7 +277,7 @@ class ListeTest {
         assertEquals("Tüm gün", satirlar.getValue("bolumsuz").alt)
         assertEquals("Cumartesi · akşam", satirlar.getValue("cumaAksam").alt)
         assertEquals("Cum 4 Ara · öğleden sonra", satirlar.getValue("sonra").alt)
-        // Hatırlatma saati (17:00) listede yazmaz: kaydın saati değildir.
+        // Hatırlatma saati (19:00) listede yazmaz: kaydın saati değildir.
         assertFalse(satirlar.getValue("aksam").alt!!.contains(":"))
         assertTrue(satirlar.getValue("aksam").aciklama.contains("Akşam"))
     }

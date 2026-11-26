@@ -52,7 +52,7 @@ impl GunBolumu {
             GunBolumu::Sabah => "08:00",
             GunBolumu::Ogle => "11:00",
             GunBolumu::OgledenSonra => "13:00",
-            GunBolumu::Aksam => "17:00",
+            GunBolumu::Aksam => "19:00",
             GunBolumu::Gece => "20:00",
         }
     }

@@ -237,7 +237,7 @@ bölümde ve `surum` uyuşmazlığında çıkış 1 verir: sözleşmeye bölüm 
   `gunHatirlatmaSaati(GunBolumu?)`.
 - **Arayüz.** Form (`KayitFormu`, `KayitEkrani`): saatsiz günde isteğe bağlı "Günün bölümü" yongaları (saat
   seçilince kalkar, aynısına dokunmak kaldırır); hatırlatma seçenekleri saatsizde "O gün" ve "1 gün önce";
-  not çekirdeğin önizlemesinden: "Cuma 17:00'de hatırlatılır.", bölümsüzde "O gün 09:00'da hatırlatılır
+  not çekirdeğin önizlemesinden: "Cuma 19:00'da hatırlatılır.", bölümsüzde "O gün 09:00'da hatırlatılır
   (Cuma).", geçtiyse "Bu kayıt için bildirim gelmeyecek…", taslakta "Taslak onaylanınca: …". Liste (`Liste`):
   saatsiz gün saat sırasına girmez, günün başında bölüm sırasıyla, saat yerine bölüm etiketi ("Akşam",
   "Cumartesi · akşam"); hatırlatma saati listede yazılmaz (ayrıntı/form notunda). Bildirim saat uydurmaz:

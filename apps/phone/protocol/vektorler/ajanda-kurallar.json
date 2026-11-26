@@ -3234,7 +3234,7 @@
     }
    },
    {
-    "ad": "gerçek örnek, 01:45: 'yarın akşama' 28'i saatsiz akşam; varsayılan gün hatırlatması 28 17:00, kayıt saatsiz",
+    "ad": "gerçek örnek, 01:45: 'yarın akşama' 28'i saatsiz akşam; varsayılan gün hatırlatması 28 19:00, kayıt saatsiz",
     "kayit": {
      "kayit_id": "k_araba",
      "revizyon": 12,
@@ -3271,10 +3271,10 @@
      {
       "sira": 0,
       "hal": "kurulur",
-      "tetik_ms": 1795874400000,
+      "tetik_ms": 1795881600000,
       "gun_hatirlatmasi": {
        "tarih": "2026-11-28",
-       "saat": "17:00"
+       "saat": "19:00"
       }
      }
     ],
@@ -3285,13 +3285,13 @@
      "gecmis": 0,
      "gun_hatirlatmasi": {
       "tarih": "2026-11-28",
-      "saat": "17:00",
+      "saat": "19:00",
       "gecti": false
      }
     }
    },
    {
-    "ad": "gerçek örnek, düzeltme: gün 27'ye alındı; gün hatırlatması kendiliğinden 27 17:00",
+    "ad": "gerçek örnek, düzeltme: gün 27'ye alındı; gün hatırlatması kendiliğinden 27 19:00",
     "kayit": {
      "kayit_id": "k_araba",
      "revizyon": 12,
@@ -3328,10 +3328,10 @@
      {
       "sira": 0,
       "hal": "kurulur",
-      "tetik_ms": 1795788000000,
+      "tetik_ms": 1795795200000,
       "gun_hatirlatmasi": {
        "tarih": "2026-11-27",
-       "saat": "17:00"
+       "saat": "19:00"
       }
      }
     ],
@@ -3342,7 +3342,7 @@
      "gecmis": 0,
      "gun_hatirlatmasi": {
       "tarih": "2026-11-27",
-      "saat": "17:00",
+      "saat": "19:00",
       "gecti": false
      }
     }
@@ -3683,7 +3683,7 @@
     }
    },
    {
-    "ad": "14:30'da eklenen 'bu akşam': 17:00 kurulur",
+    "ad": "14:30'da eklenen 'bu akşam': 19:00 kurulur",
     "kayit": {
      "kayit_id": "k_araba",
      "revizyon": 12,
@@ -3720,10 +3720,10 @@
      {
       "sira": 0,
       "hal": "kurulur",
-      "tetik_ms": 1795615200000,
+      "tetik_ms": 1795622400000,
       "gun_hatirlatmasi": {
        "tarih": "2026-11-25",
-       "saat": "17:00"
+       "saat": "19:00"
       }
      }
     ],
@@ -3734,7 +3734,7 @@
      "gecmis": 0,
      "gun_hatirlatmasi": {
       "tarih": "2026-11-25",
-      "saat": "17:00",
+      "saat": "19:00",
       "gecti": false
      }
     }
@@ -4068,10 +4068,10 @@
      {
       "sira": 0,
       "hal": "kurulur",
-      "tetik_ms": 1795874400000,
+      "tetik_ms": 1795881600000,
       "gun_hatirlatmasi": {
        "tarih": "2026-11-28",
-       "saat": "17:00"
+       "saat": "19:00"
       }
      }
     ],
@@ -4704,7 +4704,7 @@
     "beklenen": []
    },
    {
-    "ad": "saatsiz gün: kurulu 17:00 gün hatırlatması telefon kapalıyken 17:30'da kaçırılan",
+    "ad": "saatsiz gün: kurulu 19:00 gün hatırlatması telefon kapalıyken 19:30'da kaçırılan",
     "kayit": {
      "kayit_id": "k_araba",
      "revizyon": 12,
@@ -4735,14 +4735,14 @@
       }
      ]
     },
-    "simdi_ms": 1795789800000,
+    "simdi_ms": 1795797000000,
     "kurulanlar": [
-     1795788000000
+     1795795200000
     ],
     "beklenen": [
      {
       "sira": 0,
-      "tetik_ms": 1795788000000
+      "tetik_ms": 1795795200000
      }
     ]
    },
@@ -4778,9 +4778,9 @@
       }
      ]
     },
-    "simdi_ms": 1795789800000,
+    "simdi_ms": 1795797000000,
     "kurulanlar": [
-     1795788000000
+     1795795200000
     ],
     "beklenen": []
    },
@@ -5996,7 +5996,7 @@
    "sabah": "08:00",
    "ogle": "11:00",
    "ogleden_sonra": "13:00",
-   "aksam": "17:00",
+   "aksam": "19:00",
    "gece": "20:00"
   },
   "varsayilan": "09:00",
@@ -6008,7 +6008,7 @@
     "gun_bolumu": "aksam",
     "beklenen": {
      "tarih": "2026-11-28",
-     "saat": "17:00"
+     "saat": "19:00"
     }
    },
    {

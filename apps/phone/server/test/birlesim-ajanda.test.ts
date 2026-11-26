@@ -792,18 +792,18 @@ describe("birleşim: ajanda sürüm 2 (ilk gerçek kullanım: gece 01:45 'yarın
         taslak: false,
         silindi: false,
         zaman: { kesinlik: "gun", tarih: "2026-11-27", gun_bolumu: "aksam", saat_dilimi: DILIM },
-        hatirlatma: { toplam: 1, kurulacak: 1, saatsiz: 0, gecmis: 0, gun_hatirlatmasi: { tarih: "2026-11-27", saat: "17:00", gecti: false } },
+        hatirlatma: { toplam: 1, kurulacak: 1, saatsiz: 0, gecmis: 0, gun_hatirlatmasi: { tarih: "2026-11-27", saat: "19:00", gecti: false } },
       },
     });
     assert.equal(tamam, beklenen);
     assert.match(tamam, /zaman=2026-11-27 Cuma saatsiz aksam Europe\/Istanbul \(mesaj anına göre bugün\)/);
-    assert.match(tamam, /gun_hatirlatmasi=2026-11-27 Cuma 17:00/);
+    assert.match(tamam, /gun_hatirlatmasi=2026-11-27 Cuma 19:00/);
     assert.match(tamam, /Yanıtında kaydın gününü adıyla ve tarihiyle söyle \(27 Kasım Cuma\)/);
     assert.ok(!tamam.includes(YIKAMA) && !tamam.includes("cuma akşamı"), "araç çıktısı kayıt metni taşıdı");
-    // Uygulamanın kuracağı alarm: Cuma 17:00.
+    // Uygulamanın kuracağı alarm: Cuma 19:00.
     const takvim = o.servis.takvim!;
-    assert.deepEqual(kurulacakHatirlatmalar(k, o.d.saat.simdiMs(), takvim.anCevir).map((h) => h.tetik_ms), [takvim.anCevir("2026-11-27", "17:00", DILIM)]);
-    await o.erenSatiri(eren, sonucSatiri(eren, "27 Kasım Cuma akşamına ekledim, 17:00'de hatırlatırım."));
+    assert.deepEqual(kurulacakHatirlatmalar(k, o.d.saat.simdiMs(), takvim.anCevir).map((h) => h.tetik_ms), [takvim.anCevir("2026-11-27", "19:00", DILIM)]);
+    await o.erenSatiri(eren, sonucSatiri(eren, "27 Kasım Cuma akşamına ekledim, 19:00'da hatırlatırım."));
 
     // 01:49 kullanıcı günü değiştirir. Gece aralığında teyitsiz güncelleme de reddedilir, kayıt değişmez.
     await o.ilerlet(2 * DAKIKA);
@@ -815,14 +815,14 @@ describe("birleşim: ajanda sürüm 2 (ilk gerçek kullanım: gece 01:45 'yarın
     const g = await o.arac(istemci, "ajanda_guncelle", { ...yeniGun, dayanak: { tarih: "2026-11-27", saat: "01:49", gece_teyidi: "gun_acik" } });
     assert.match(g, /^ajanda_guncelle: güncellendi /);
     assert.match(g, /zaman=2026-11-28 Cumartesi saatsiz aksam Europe\/Istanbul \(mesaj anına göre yarın\)/);
-    assert.match(g, /gun_hatirlatmasi=2026-11-28 Cumartesi 17:00/);
+    assert.match(g, /gun_hatirlatmasi=2026-11-28 Cumartesi 19:00/);
     assert.match(g, /\(28 Kasım Cumartesi\)/);
     const son = ajanda.kayitlar().at(-1)!;
     assert.equal(son.kayit_id, k.kayit_id);
     assert.ok(son.revizyon > k.revizyon);
     assert.deepEqual(son.hatirlatmalar, k.hatirlatmalar, "hatırlatma listesi yeniden yazılmaz");
     assert.equal(son.kaynak.tekil_anahtar, k.kaynak.tekil_anahtar);
-    assert.deepEqual(kurulacakHatirlatmalar(son, o.d.saat.simdiMs(), takvim.anCevir).map((h) => h.tetik_ms), [takvim.anCevir("2026-11-28", "17:00", DILIM)]);
+    assert.deepEqual(kurulacakHatirlatmalar(son, o.d.saat.simdiMs(), takvim.anCevir).map((h) => h.tetik_ms), [takvim.anCevir("2026-11-28", "19:00", DILIM)]);
 
     // Kayıt metni hiçbir günlük satırında yok.
     const gunluk = o.d.kayit.satirlar.join("\n");

@@ -178,7 +178,7 @@ data class KayitFormu(
         /**
          * Hatırlatma notu (saf): hatırlatmanın gerçekte ne zaman çalacağı. [o]: çekirdeğin önizlemesi
          * (`hatirlatmaOnizlemesi`, formun gövdesiyle); gelmediyse null (o zaman yalnız önizlemesiz bilinenler).
-         * Saatsiz günde gün hatırlatmasının günü ve saati yazılır: "Cuma 17:00'de hatırlatılır", bölüm yoksa
+         * Saatsiz günde gün hatırlatmasının günü ve saati yazılır: "Cuma 19:00'da hatırlatılır", bölüm yoksa
          * "O gün 09:00'da hatırlatılır (Cuma)"; geçmişte kalıyorsa "bildirim gelmeyecek". Kaydın saati değildir.
          */
         fun hatirlatmaNotu(f: KayitFormu, o: HatirlatmaOnizlemesi?, bugun: LocalDate, etkinlik: Etkinlik = Etkinlik.ETKIN): String? {
