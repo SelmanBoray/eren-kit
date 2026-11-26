@@ -121,7 +121,7 @@ class GercekCekirdekTest {
         override fun kapat(neden: String) {}
     }
 
-    private fun cerceve(tur: String, govde: String) = """{"v":1,"type":"$tur"$govde}"""
+    private fun cerceve(tur: String, govde: String) = """{"v":2,"type":"$tur"$govde}"""
 
     @Test
     fun servisReddiRetListesindeGorunurDuzeltilipYenidenEklenir() {
@@ -181,7 +181,7 @@ class GercekCekirdekTest {
             assertEquals(0, a.model().retSayisi)
 
             // Bağlantı koptu: eşleşmiş ama çevrimdışı; yeni değişiklik "PC'yi bekliyor", gönderiliyor değil.
-            c.baglantiKapandi(nesil)
+            c.baglantiKapandi(nesil, null)
             g.gelen.clear()
             val bekleyenId = yuz.ekle(yuz.govdeyiHazirla(f.copy(baslik = "Bekleyen").govde()))
             a.gorunumSec(Gorunum.TARIHSIZ)
@@ -190,6 +190,29 @@ class GercekCekirdekTest {
             assertTrue(s.isaretler.toString(), Liste.Isaret.BEKLIYOR in s.isaretler)
             assertFalse(Liste.Isaret.GONDERILIYOR in s.isaretler)
             assertTrue(s.aciklama, s.aciklama.contains("gönderilmeyi bekliyor"))
+        }
+    }
+
+    @Test
+    fun formNotuGercekCekirdeginGunHatirlatmasindanGelir() {
+        val yol = gecici.newFile("onizleme.sqlite3").absolutePath
+        val bugun = LocalDate.now()
+        ac(yol).use { c ->
+            val yuz = CekirdekYuzu.Gercek(c)
+            val yarin = KayitFormu.yeni(KayitTuru.GOREV, bugun.plusDays(1), "Europe/Istanbul", varsayilanHatirlatmalar())
+                .copy(baslik = "Araba yıkama")
+            val aksam = yarin.bolumVer(dev.eren.ajanda.cekirdek.GunBolumu.AKSAM)
+            val o = yuz.hatirlatmaOnizlemesi(aksam.govde())
+            assertEquals(bugun.plusDays(1).toString(), o.gunHatirlatmasi!!.tarih)
+            assertEquals("17:00", o.gunHatirlatmasi!!.saat)
+            assertEquals("Yarın 17:00'de hatırlatılır.", KayitFormu.hatirlatmaNotu(aksam, o, bugun))
+            assertEquals("09:00", yuz.hatirlatmaOnizlemesi(yarin.govde()).gunHatirlatmasi!!.saat)
+            // Elle eklenen saatsiz kayıt gerçekten alarm kurar (v1'de kurmazdı).
+            val alarm = TestAlarm()
+            Cekirdek.ac(gecici.newFile("alarm.sqlite3").absolutePath, TestKimlik(), JavaZaman, alarm).use { c2 ->
+                c2.ekle(aksam.govde(), dev.eren.ajanda.cekirdek.GirdiYolu.ELLE)
+                assertEquals(1, alarm.kurulan.size)
+            }
         }
     }
 }

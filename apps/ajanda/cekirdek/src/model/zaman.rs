@@ -35,12 +35,41 @@ sabit_liste! {
     ZamanKesinligi { An = "an", Gun = "gun", Donem = "donem", Belirsiz = "belirsiz" }
 }
 
+sabit_liste! {
+    /// `GUN_BOLUMLERI` (v2): saatsiz gün kaydında kullanıcının söylediği gün bölümü ("yarın akşama").
+    /// Saat değildir, saat yerine geçmez: kayıt saatsiz kalır; yalnız gün hatırlatmasının saatini
+    /// (`gun_hatirlatma_saati`) ve görünümü belirler. Yalnız `gun` kesinliğinde vardır.
+    GunBolumu { Sabah = "sabah", Ogle = "ogle", OgledenSonra = "ogleden_sonra", Aksam = "aksam", Gece = "gece" }
+}
+
+/// `GUN_HATIRLATMA_VARSAYILAN_SAATI` (v2): bölümsüz saatsiz gün kaydının gün hatırlatması (o günün sabahı).
+pub const GUN_HATIRLATMA_VARSAYILAN_SAATI: &str = "09:00";
+
+impl GunBolumu {
+    /// `GUN_HATIRLATMA_SAATLERI` (v2): bölümün olağan başından yaklaşık bir saat önce (yerel duvar saati).
+    pub fn hatirlatma_saati(self) -> &'static str {
+        match self {
+            GunBolumu::Sabah => "08:00",
+            GunBolumu::Ogle => "11:00",
+            GunBolumu::OgledenSonra => "13:00",
+            GunBolumu::Aksam => "17:00",
+            GunBolumu::Gece => "20:00",
+        }
+    }
+}
+
+/// `gunHatirlatmaSaati`: bölümün saati, bölüm yoksa `GUN_HATIRLATMA_VARSAYILAN_SAATI`.
+pub fn gun_hatirlatma_saati(gun_bolumu: Option<GunBolumu>) -> &'static str {
+    gun_bolumu.map_or(GUN_HATIRLATMA_VARSAYILAN_SAATI, GunBolumu::hatirlatma_saati)
+}
+
 /// Kablo kaydının zamanı (`AjandaZamani`). Saat söylenmediyse `Gun`, gün aralığıysa `Donem`,
 /// takvime oturmuyorsa `Belirsiz`: saat ya da gün uydurulmaz. `ifade` kullanıcının sözü, birebir.
+/// `Gun.gun_bolumu` (v2) isteğe bağlıdır; yoksa kayıt v1 biçimiyle bayt bayt aynıdır.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum AjandaZamani {
     An { tarih: String, saat: String, sure_dk: Option<i32>, saat_dilimi: String, ifade: Option<String> },
-    Gun { tarih: String, saat_dilimi: String, ifade: Option<String> },
+    Gun { tarih: String, gun_bolumu: Option<GunBolumu>, saat_dilimi: String, ifade: Option<String> },
     /// İki uç dahil; en çok `DONEM_GUN` gün.
     Donem { baslangic: String, bitis: String, saat_dilimi: String, ifade: Option<String> },
     Belirsiz { ifade: String },
@@ -60,6 +89,14 @@ impl AjandaZamani {
     pub fn tarih(&self) -> Option<&str> {
         match self {
             AjandaZamani::An { tarih, .. } | AjandaZamani::Gun { tarih, .. } => Some(tarih),
+            _ => None,
+        }
+    }
+
+    /// Saatsiz gün kaydının gün bölümü (öteki kesinliklerde yok).
+    pub fn gun_bolumu(&self) -> Option<GunBolumu> {
+        match self {
+            AjandaZamani::Gun { gun_bolumu, .. } => *gun_bolumu,
             _ => None,
         }
     }
@@ -86,6 +123,7 @@ impl AjandaZamani {
             },
             ZamanKesinligi::Gun => AjandaZamani::Gun {
                 tarih: n.zorunlu("tarih", tarih_oku)?,
+                gun_bolumu: n.istege_bagli("gun_bolumu", GunBolumu::oku)?,
                 saat_dilimi: n.zorunlu("saat_dilimi", dilim_oku)?,
                 ifade: n.istege_bagli("ifade", ifade_oku)?,
             },
@@ -119,9 +157,11 @@ impl AjandaZamani {
                 .varsa("sure_dk", *sure_dk)
                 .alan("saat_dilimi", saat_dilimi.as_str())
                 .varsa("ifade", ifade.clone()),
-            AjandaZamani::Gun { tarih, saat_dilimi, ifade } => {
-                y.alan("tarih", tarih.as_str()).alan("saat_dilimi", saat_dilimi.as_str()).varsa("ifade", ifade.clone())
-            }
+            AjandaZamani::Gun { tarih, gun_bolumu, saat_dilimi, ifade } => y
+                .alan("tarih", tarih.as_str())
+                .varsa("gun_bolumu", gun_bolumu.map(GunBolumu::ad))
+                .alan("saat_dilimi", saat_dilimi.as_str())
+                .varsa("ifade", ifade.clone()),
             AjandaZamani::Donem { baslangic, bitis, saat_dilimi, ifade } => y
                 .alan("baslangic", baslangic.as_str())
                 .alan("bitis", bitis.as_str())
@@ -141,7 +181,8 @@ impl AjandaZamani {
         v
     }
 
-    /// `zamanCekirdegi`: `ifade` ve `sure_dk` girmez; tekilleştirme anahtarının zamanı.
+    /// `zamanCekirdegi`: `ifade` ve `sure_dk` girmez, `gun_bolumu` girer (yoksa v1 ile bayt bayt aynı);
+    /// tekilleştirme anahtarının zamanı.
     pub fn cekirdek_json(&self) -> Value {
         let mut v = self.ozet_json();
         if let Value::Object(h) = &mut v {
@@ -159,7 +200,9 @@ fn donem_gecerli_mi(z: &AjandaZamani) -> bool {
     }
 }
 
-/// Hatırlatma. `Once`: olayın anından `dk` önce (tekrarda her örnek için; zaman `an` değilken bekler).
+/// Hatırlatma. `Once`: saatli kayıtta olayın anından `dk` önce; saatsiz gün kaydında (v2) o günün gün
+/// hatırlatması saatinde (`dk` 1440 ve üstüyse tam gün sayısı kadar önce); tekrarda her örnek için;
+/// dönem, belirsiz ya da zamansız kayıtta bekler.
 /// `Mutlak`: belirli bir yerel an, bir kez.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum Hatirlatma {

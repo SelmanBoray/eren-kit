@@ -310,7 +310,7 @@ mod testler {
         assert_eq!(r.budanan_ornekler, vec![ornek("2026-11-26")]);
         assert!(r.kayit.gecerli_mi().is_ok());
         // Gün kesinliğine geçiş: hatırlatma listesi aynen kalır (`once` saat gelince kurulur).
-        let gun = AjandaZamani::Gun { tarih: "2026-11-26".into(), saat_dilimi: IST.into(), ifade: None };
+        let gun = AjandaZamani::Gun { tarih: "2026-11-26".into(), gun_bolumu: None, saat_dilimi: IST.into(), ifade: None };
         let r = ajanda_degisikligi_uygula(&k, &AlanDegisikligi { zaman: Alan::Deger(gun), ..Default::default() }, yazar(KaynakYolu::Elle, TurKokeni::Insan));
         assert_eq!(r.kayit.hatirlatmalar, k.hatirlatmalar);
         assert!(r.budanan_ornekler.is_empty());

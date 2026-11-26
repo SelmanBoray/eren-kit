@@ -4,6 +4,7 @@ import dev.eren.ajanda.cekirdek.AjandaKaydi
 import dev.eren.ajanda.cekirdek.AjandaKaynagi
 import dev.eren.ajanda.cekirdek.AjandaZamani
 import dev.eren.ajanda.cekirdek.BaglantiAsamasi
+import dev.eren.ajanda.cekirdek.GunBolumu
 import dev.eren.ajanda.cekirdek.KayitDurumu
 import dev.eren.ajanda.cekirdek.KayitGorunumu
 import dev.eren.ajanda.cekirdek.KayitTuru
@@ -25,6 +26,10 @@ import java.time.temporal.TemporalAdjusters
  * kendi diliminden cihaz dilimine çevrilir (İstanbul'da 01:30'daki randevu Londra'daki telefonda önceki
  * günün 22:30'udur); saatsiz gün ve dönem takvim günüdür, çevrilmez. Kaydın dilimi cihazınkiyle aynı
  * anda farklı ofsetteyse satırda kaydın kendi saati de yazılır.
+ *
+ * Saatsiz gün kaydı (v2) saatli randevu gibi saat sırasına girmez: günün başında, gün bölümü varsa bölüm
+ * sırasıyla (bölümsüz, sabah, öğle, öğleden sonra, akşam, gece) durur ve saat yerine bölüm etiketi taşır
+ * ("Akşam"); gün hatırlatmasının saati listede yazılmaz (kaydın saati değildir, ayrıntıda görünür).
  */
 object Liste {
 
@@ -51,6 +56,8 @@ object Liste {
         val saat: LocalTime?,
         /** Kaydın dilimi farklı ofsetteyse kendi yerel saati ve dilimi ("15:00 Europe/Istanbul"). */
         val kendiSaati: String?,
+        /** Saatsiz gün kaydının gün bölümü (v2); saatli ve dönemde null. */
+        val gunBolumu: GunBolumu? = null,
     )
 
     fun konum(z: AjandaZamani?, cihaz: ZoneId): Konum? = try {
@@ -65,7 +72,7 @@ object Liste {
                     if (farkli) "${z.saat} ${z.saatDilimi}" else null,
                 )
             }
-            is AjandaZamani.Gun -> LocalDate.parse(z.tarih).let { Konum(it, it, null, null) }
+            is AjandaZamani.Gun -> LocalDate.parse(z.tarih).let { Konum(it, it, null, null, z.gunBolumu) }
             is AjandaZamani.Donem -> Konum(LocalDate.parse(z.baslangic), LocalDate.parse(z.bitis), null, null)
             is AjandaZamani.Belirsiz, null -> null
         }
@@ -118,8 +125,8 @@ object Liste {
 
     /**
      * Tarihliler: Gecikmiş, Bugün (boşsa da görünür), Yarın, Bu hafta, Sonrası, Tekrarlayanlar, Geçmiş
-     * (yalnız kapalılar dahilken dolar). Grup içinde gün, sonra tüm gün olanlar, sonra saat; eşitlikte
-     * çekirdeğin sırası. Geçmiş en yeni üstte.
+     * (yalnız kapalılar dahilken dolar). Grup içinde gün, sonra saatsizler (bölümsüz, sonra bölüm sırasıyla),
+     * sonra saat; eşitlikte çekirdeğin sırası. Geçmiş en yeni üstte.
      */
     fun tarihliler(kayitlar: List<KayitGorunumu>, simdi: ZonedDateTime, gonderim: Gonderim = Gonderim.GONDERILIYOR): List<Oge> {
         val bugun = simdi.toLocalDate()
@@ -130,7 +137,9 @@ object Liste {
             val (grup, gun) = tarihliGrup(g.kayit, konum, bugun)
             Yer(g, konum, grup, gun, i)
         }
-        val artan = compareBy<Yer>({ it.gun }, { if (it.konum.saat == null) 0 else 1 }, { it.konum.saat }, { it.sira })
+        val artan = compareBy<Yer>(
+            { it.gun }, { if (it.konum.saat == null) 0 else 1 }, { it.konum.gunBolumu?.ordinal ?: -1 }, { it.konum.saat }, { it.sira },
+        )
         val cikti = mutableListOf<Oge>()
         for (grup in listOf(Grup.GECIKMIS, Grup.BUGUN, Grup.YARIN, Grup.BU_HAFTA, Grup.SONRASI, Grup.TEKRARLAYAN, Grup.GECMIS)) {
             val bu = yerler.filter { it.grup == grup }
@@ -313,8 +322,11 @@ object Liste {
                 else -> parcalar += EkranMetinleri.gunluTarih(kn.ilkGun, bugun)
             }
             val s = kn.saat
+            val bolum = kn.gunBolumu
             when {
                 s != null -> parcalar += EkranMetinleri.saat(s)
+                // Bölüm saat değildir: etiket olarak yazılır, saat sütununa girmez.
+                bolum != null -> parcalar += if (parcalar.isEmpty()) EkranMetinleri.gunBolumuBuyuk(bolum) else EkranMetinleri.gunBolumu(bolum)
                 grup == Grup.BUGUN || grup == Grup.YARIN -> parcalar += "Tüm gün"
             }
             if (z is AjandaZamani.An) z.sureDk?.let { parcalar += EkranMetinleri.sure(it) }

@@ -1,5 +1,6 @@
 package dev.eren.ajanda.alarm
 
+import dev.eren.ajanda.cekirdek.GunBolumu
 import dev.eren.ajanda.cekirdek.AjandaZamani
 import dev.eren.ajanda.cekirdek.KayitTuru
 import org.junit.Assert.assertEquals
@@ -24,7 +25,7 @@ class BildirimIcerigiTest {
         assertEquals("bugün 15:00 (Europe/Berlin)", z(an("2026-11-25", d = "Europe/Berlin"), null))
         // Tekrarda örneğin günü.
         assertEquals("yarın 15:00", z(an("2026-11-01"), "2026-11-26"))
-        assertEquals("bugün", z(AjandaZamani.Gun("2026-11-25", dilim, null), null))
+        assertEquals("bugün", z(AjandaZamani.Gun("2026-11-25", null, dilim, null), null))
         assertEquals("bugün – 27.11.2026", z(AjandaZamani.Donem("2026-11-25", "2026-11-27", dilim, null), null))
         assertEquals("haftaya bir ara", z(AjandaZamani.Belirsiz("haftaya bir ara"), null))
         assertNull(z(null, null))
@@ -64,5 +65,13 @@ class BildirimIcerigiTest {
         val b = BildirimIcerigi.birlestir(listOf(s(3), s(1)), listOf(s(2), s(3)))
         assertEquals(listOf(1L, 2L, 3L), b.map { it.alarmNo })
         assertEquals("3 hatırlatma kaçırıldı", BildirimIcerigi.kacirilan(b).icerik.baslik)
+    }
+
+    @Test
+    fun saatsizGunBildirimiSaatUydurmazBolumuYazar() {
+        val z = { zaman: AjandaZamani?, ornek: String? -> BildirimIcerigi.zamanMetni(zaman, ornek, bugun, dilim) }
+        assertEquals("bugün akşam", z(AjandaZamani.Gun("2026-11-25", GunBolumu.AKSAM, dilim, "bu akşam"), null))
+        assertEquals("yarın öğleden sonra", z(AjandaZamani.Gun("2026-11-26", GunBolumu.OGLEDEN_SONRA, dilim, null), null))
+        assertEquals("yarın", z(AjandaZamani.Gun("2026-11-26", null, dilim, null), null))
     }
 }

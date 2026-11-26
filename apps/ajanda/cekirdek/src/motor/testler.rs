@@ -60,7 +60,7 @@ impl Duzen {
     }
 
     fn kopar(&mut self) {
-        let (r, _) = self.calistir(|m, o, e| m.baglanti_kapandi(o, e));
+        let (r, _) = self.calistir(|m, o, e| m.baglanti_kapandi(o, e, None));
         r.unwrap();
     }
 }

@@ -33,7 +33,7 @@ class EslestirmeDurumuTest {
     private fun durum(e: EslesmeDurumu, b: BaglantiDurumu? = null, simdi: Long = 0) = Olay.DurumGeldi(e, b, simdi)
 
     private fun baglanti(asama: BaglantiAsamasi, sonHata: AjandaKanalHatasi? = null) =
-        BaglantiDurumu(asama = asama, kuyrukta = 0, retListesinde = 0, sonEsitlenmeMs = null, sonHata = sonHata)
+        BaglantiDurumu(asama = asama, kuyrukta = 0, retListesinde = 0, sonEsitlenmeMs = null, sonHata = sonHata, surumUyusmazligi = null)
 
     private val eslesti = EslesmeDurumu.Eslesti("cihaz_AjandaOrnek01", "100.101.102.103", 8765)
 

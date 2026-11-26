@@ -27,6 +27,11 @@ import kotlin.math.pow
  *   bekler; yine kalırsa ağ koşullu tek seferlik iş kurulur (`kuyrukIsiKur`). Daha uzun beklenmez: arka
  *   plandaki süreç dondurulur (Android 14+ önbellek dondurucusu) ve açık soket orada asılı kalır.
  *
+ * SÜRÜM UYUŞMAZLIĞI (v2, çekirdek `surumUyusmazligi`: `protokol_uyumsuz` çerçevesi ya da kapanış 1002): artan
+ *   bekleme yerine [surumBeklemeMs] (30 dk); `basla` ve `hemenDene` hemen bir kez dener (kullanıcı
+ *   güncelleyip uygulamayı açtı), ağ değişimi denemez; arka plan oturumu hemen biter (`SURUM_UYUSMAZ`). Sürüm
+ *   kendiliğinden değişmez: dakikada bir el sıkışma boşuna pil ve PC günlüğüdür. `CANLI`'da durum kalkar.
+ *
  * ARKA PLAN (`EsitlemeIsi`, JobScheduler): uygulama hiç açılmasa da PC'de doğan kayıt telefona insin ve
  * alarmı kurulsun (ürünün vaadi).
  * - Periyodik [PERIYOT_MS] = 15 dk (platformun alt sınırı), ağ koşullu (`NETWORK_TYPE_ANY`), kalıcı
@@ -69,6 +74,8 @@ data class AgAyarlari(
     val bosaltmaSuresiMs: Long = 10_000,
     val arkaPlanSuresiMs: Long = 90_000,
     val arkaPlanDeneme: Int = 3,
+    /** Sürüm uyuşmazlığında arayüz görünürken iki deneme arası (yukarı bak). */
+    val surumBeklemeMs: Long = 30 * 60_000L,
     /** `/ajanda` çerçeve sınırı (UTF-16 birimi = Kotlin `String.length`): `AJANDA_AZAMI_CERCEVE.KANAL`. */
     val azamiCerceve: Int = AZAMI_CERCEVE,
 ) {

@@ -1,6 +1,7 @@
 package dev.eren.ajanda.alarm
 
 import dev.eren.ajanda.cekirdek.AjandaZamani
+import dev.eren.ajanda.cekirdek.GunBolumu
 import dev.eren.ajanda.cekirdek.HatirlatmaBildirimi
 import dev.eren.ajanda.cekirdek.KayitTuru
 import java.time.LocalDate
@@ -42,6 +43,15 @@ object AlarmMetinleri {
         KayitTuru.GOREV -> "Görev"
         KayitTuru.RANDEVU -> "Randevu"
         KayitTuru.NOT -> "Not"
+    }
+
+    /** Gün bölümü (v2): saatsiz kaydın bildiriminde saat yerine ("bugün akşam"); saat uydurulmaz. */
+    fun gunBolumu(b: GunBolumu): String = when (b) {
+        GunBolumu.SABAH -> "sabah"
+        GunBolumu.OGLE -> "öğle"
+        GunBolumu.OGLEDEN_SONRA -> "öğleden sonra"
+        GunBolumu.AKSAM -> "akşam"
+        GunBolumu.GECE -> "gece"
     }
 
     fun kacirilanBaslik(sayi: Int): String = if (sayi == 1) "Kaçırılan hatırlatma" else "$sayi hatırlatma kaçırıldı"
@@ -104,7 +114,7 @@ object BildirimIcerigi {
     }
 
     /**
-     * "bugün 15:00", "yarın", "25.11.2026 – 27.11.2026"; tekrarda örneğin günü. Kaydın dilimi cihazınkinden
+     * "bugün 15:00", "yarın", "bugün akşam" (saatsiz günde bölüm, saat uydurulmaz), "25.11.2026 – 27.11.2026"; tekrarda örneğin günü. Kaydın dilimi cihazınkinden
      * farklıysa saat o dilimdedir ve dilim adı eklenir. Zamansız kayıtta null.
      */
     fun zamanMetni(zaman: AjandaZamani?, ornekTarihi: String?, bugun: LocalDate, cihazDilimi: String): String? {
@@ -112,7 +122,7 @@ object BildirimIcerigi {
         return when (zaman) {
             null -> null
             is AjandaZamani.An -> "${gun(ornekTarihi ?: zaman.tarih, bugun)} ${zaman.saat}${dilimEki(zaman.saatDilimi)}"
-            is AjandaZamani.Gun -> gun(ornekTarihi ?: zaman.tarih, bugun)
+            is AjandaZamani.Gun -> gun(ornekTarihi ?: zaman.tarih, bugun) + (zaman.gunBolumu?.let { " " + AlarmMetinleri.gunBolumu(it) } ?: "")
             is AjandaZamani.Donem -> "${gun(zaman.baslangic, bugun)} – ${gun(zaman.bitis, bugun)}"
             is AjandaZamani.Belirsiz -> zaman.ifade
         }

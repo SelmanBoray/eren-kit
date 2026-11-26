@@ -132,6 +132,54 @@ pub(super) fn alarm_etkilerini_kat(e: &mut Etkiler, ek: Etkiler) {
     }
 }
 
+/// Gövdenin hatırlatmalarının şimdiye göre önizlemesi (v2; form ve ayrıntı görünümü): gövde açık ve taslak
+/// olmayan bir kayıtmış gibi `hatirlatma_ozeti` + ilk kurulacak tetik. Kural alarm planınınkiyle aynıdır
+/// (`kural::hatirlatma`); kayıt saklanmaz. Çeviri hatası (bilinmeyen dilim) döner.
+pub(crate) fn hatirlatma_onizlemesi(
+    govde: &crate::model::KayitGovdesi,
+    simdi_ms: i64,
+    an: &dyn AnCevirici,
+) -> Result<crate::kopru::tipler::HatirlatmaOnizlemesi, crate::kural::ZamanHatasi> {
+    use crate::kopru::tipler::{GunHatirlatmasi, HatirlatmaOnizlemesi};
+    use crate::model::{AjandaKaynagi, KayitDurumu, KaynakYolu, TurKokeni};
+    let kayit = AjandaKaydi {
+        kayit_id: "k_onizleme".into(),
+        revizyon: 1,
+        tur: govde.tur,
+        baslik: govde.baslik.clone(),
+        aciklama: None,
+        zaman: govde.zaman.clone(),
+        hatirlatmalar: govde.hatirlatmalar.clone(),
+        tekrar: govde.tekrar.clone(),
+        ornekler: vec![],
+        durum: KayitDurumu::Acik,
+        taslak: false,
+        silindi: false,
+        elle_alanlar: vec![],
+        kaynak: AjandaKaynagi {
+            yol: KaynakYolu::Elle,
+            tur_kokeni: TurKokeni::Insan,
+            sohbet_id: None,
+            oturum_id: None,
+            kaynak_msg_id: None,
+            device_id: None,
+            alinti: None,
+            tekil_anahtar: None,
+        },
+        olusturma_ms: simdi_ms,
+        guncelleme_ms: simdi_ms,
+    };
+    let oz = crate::kural::hatirlatma::hatirlatma_ozeti(&kayit, simdi_ms, an)?;
+    let ilk = crate::kural::hatirlatma::kurulacak_hatirlatmalar(&kayit, simdi_ms, an)?.iter().map(|t| t.tetik_ms).min();
+    Ok(HatirlatmaOnizlemesi {
+        kurulacak: oz.kurulacak,
+        saatsiz: oz.saatsiz,
+        gecmis: oz.gecmis,
+        ilk_tetik_ms: ilk,
+        gun_hatirlatmasi: oz.gun_hatirlatmasi.map(|g| GunHatirlatmasi { tarih: g.tarih, saat: g.saat, gecti: g.gecti }),
+    })
+}
+
 impl Motor {
     /// R4'ün her görünen kopya değişikliğinden sonra çağırdığı giriş: yalnız bu kayıtların alarmlarını
     /// plana göre düzeltir (yeni tetik kur, artık olmayanı iptal et ve sil, kaçırılanı göster).
@@ -1030,5 +1078,114 @@ mod testler {
         assert!(yazici.tum_kurulu_alarmlar().unwrap().is_empty());
         drop((c, yazici));
         gecici_sil(&yol);
+    }
+
+    fn gun(tarih: &str, bolum: Option<&str>) -> Value {
+        let mut z = json!({"kesinlik": "gun", "tarih": tarih, "saat_dilimi": "Europe/Istanbul"});
+        if let Some(b) = bolum {
+            z["gun_bolumu"] = json!(b);
+        }
+        z
+    }
+
+    #[test]
+    fn saatsiz_gun_kaydi_gun_hatirlatmasini_kurar_bolume_gore_ya_da_sabah() {
+        let mut d = Duzen::yeni();
+        d.yaz(&kayit("k_aksam", json!({"tur": "gorev", "zaman": gun("2026-11-26", Some("aksam"))})));
+        d.yaz(&kayit("k_bolumsuz", json!({"tur": "gorev", "zaman": gun("2026-11-26", None)})));
+        d.yaz(&kayit("k_gece", json!({"tur": "gorev", "zaman": gun("2026-11-26", Some("gece")),
+            "hatirlatmalar": [{"tur": "once", "dk": 1440}, {"tur": "once", "dk": 60}, {"tur": "once", "dk": 5}]})));
+        let e = d.senkron(&[]);
+        let mut kurulan: Vec<(String, i64)> = e.alarm_kur.iter().map(|a| (a.kayit_id.clone(), a.tetik_ms)).collect();
+        kurulan.sort();
+        assert_eq!(
+            kurulan,
+            vec![
+                ("k_aksam".into(), bugun(17, 0) + GUN),
+                ("k_bolumsuz".into(), bugun(9, 0) + GUN),
+                // "1 gün önce" önceki günün 20:00'ı; 60 ve 5 dk aynı günün 20:00'ına düşer (tek alarm).
+                ("k_gece".into(), bugun(20, 0)),
+                ("k_gece".into(), bugun(20, 0) + GUN),
+            ]
+        );
+    }
+
+    #[test]
+    fn gun_degisince_alarm_tasinir_saat_gelince_ve_kalkinca_kural_degisir() {
+        let mut d = Duzen::yeni();
+        // Gerçek örnek: 28'i akşam -> 27'si akşam (bugün 25; tarihleri iki gün kaydırılmış biçimi).
+        d.yaz(&kayit("k_a", json!({"tur": "gorev", "zaman": gun("2026-11-27", Some("aksam"))})));
+        let e = d.senkron(&["k_a"]);
+        assert_eq!(tetikler(&e), vec![bugun(17, 0) + 2 * GUN]);
+        let ilk = e.alarm_kur[0].alarm_no;
+
+        d.yaz(&kayit("k_a", json!({"tur": "gorev", "zaman": gun("2026-11-26", Some("aksam"))})));
+        let e = d.senkron(&["k_a"]);
+        assert_eq!(e.alarm_iptal, vec![ilk], "eski günün alarmı iptal");
+        assert_eq!(tetikler(&e), vec![bugun(17, 0) + GUN]);
+        let ikinci = e.alarm_kur[0].alarm_no;
+
+        // Saat geldi (19:00): saatli kural, 1 saat önce.
+        d.yaz(&kayit("k_a", json!({"tur": "gorev", "zaman": an("2026-11-26", "19:00")})));
+        let e = d.senkron(&["k_a"]);
+        assert_eq!(e.alarm_iptal, vec![ikinci]);
+        assert_eq!(tetikler(&e), vec![bugun(18, 0) + GUN]);
+        let ucuncu = e.alarm_kur[0].alarm_no;
+
+        // Saat kalktı, bölüm yok: o günün 09:00'ı.
+        d.yaz(&kayit("k_a", json!({"tur": "gorev", "zaman": gun("2026-11-26", None)})));
+        let e = d.senkron(&["k_a"]);
+        assert_eq!(e.alarm_iptal, vec![ucuncu]);
+        assert_eq!(tetikler(&e), vec![bugun(9, 0) + GUN]);
+        assert_eq!(d.kurulu().len(), 1);
+    }
+
+    #[test]
+    fn gecmiste_kalan_gun_hatirlatmasi_calmaz_kapatilan_kurulmaz_donem_bekler() {
+        let mut d = Duzen::yeni();
+        // 14:30'da eklenen bölümsüz "bugün": 09:00 geçti, hiç kurulmaz, kaçırılan da değil.
+        d.yaz(&kayit("k_bugun", json!({"tur": "gorev", "zaman": gun("2026-11-25", None)})));
+        // Kullanıcı hatırlatmayı kapattı: hiç kurulmaz.
+        d.yaz(&kayit("k_kapali", json!({"tur": "gorev", "zaman": gun("2026-11-26", Some("aksam")), "hatirlatmalar": []})));
+        // Dönem: once bekler.
+        d.yaz(&kayit("k_donem", json!({"tur": "gorev",
+            "zaman": {"kesinlik": "donem", "baslangic": "2026-11-26", "bitis": "2026-11-28", "saat_dilimi": "Europe/Istanbul"}})));
+        let e = d.senkron(&[]);
+        assert!(e.alarm_kur.is_empty() && e.kacirilan.is_none());
+        assert!(d.yeniden(YenidenKurmaNedeni::PaketGuncellendi).alarm_kur.is_empty());
+        // Aynı gün akşama alınınca 17:00 gelecekte: kurulur.
+        d.yaz(&kayit("k_bugun", json!({"tur": "gorev", "zaman": gun("2026-11-25", Some("aksam"))})));
+        assert_eq!(tetikler(&d.senkron(&["k_bugun"])), vec![bugun(17, 0)]);
+    }
+
+    #[test]
+    fn kurulu_gun_hatirlatmasi_telefon_kapaliyken_kacirilan_ve_bildirim_saat_uydurmaz() {
+        let mut d = Duzen::yeni();
+        d.yaz(&kayit("k_a", json!({"tur": "gorev", "baslik": "Araba yıkama", "zaman": gun("2026-11-25", Some("aksam"))})));
+        let no = d.senkron(&["k_a"]).alarm_kur[0].alarm_no;
+        d.saat(bugun(17, 30));
+        let e = d.yeniden(YenidenKurmaNedeni::Acilis);
+        let k = e.kacirilan.unwrap();
+        assert_eq!((k.satirlar[0].alarm_no, k.satirlar[0].tetik_ms), (no, bugun(17, 0)));
+        // Bildirim içeriği kaydın zamanını taşır (saatsiz, bölümlü): Kotlin "Bugün akşam" yazar.
+        assert!(matches!(&k.satirlar[0].zaman, Some(crate::model::AjandaZamani::Gun { gun_bolumu: Some(crate::model::GunBolumu::Aksam), .. })));
+    }
+
+    #[test]
+    fn onizleme_formun_soyleyecegini_verir() {
+        use crate::model::{GunBolumu, KayitGovdesi, KayitTuru};
+        let c = SabitOfsetCevirici::yeni([("Europe/Istanbul", 180)]);
+        let govde = |zaman, hatirlatmalar| KayitGovdesi { tur: KayitTuru::Gorev, baslik: "x".into(), aciklama: None, zaman, hatirlatmalar, tekrar: None };
+        let gunz = |t: &str, b| Some(crate::model::AjandaZamani::Gun { tarih: t.into(), gun_bolumu: b, saat_dilimi: "Europe/Istanbul".into(), ifade: None });
+        let o = hatirlatma_onizlemesi(&govde(gunz("2026-11-27", Some(GunBolumu::Aksam)), crate::model::varsayilan_hatirlatmalar()), SIMDI, &c).unwrap();
+        let g = o.gun_hatirlatmasi.unwrap();
+        assert_eq!((g.tarih.as_str(), g.saat.as_str(), g.gecti, o.ilk_tetik_ms), ("2026-11-27", "17:00", false, Some(bugun(17, 0) + 2 * GUN)));
+        let o = hatirlatma_onizlemesi(&govde(gunz("2026-11-25", None), crate::model::varsayilan_hatirlatmalar()), SIMDI, &c).unwrap();
+        let g = o.gun_hatirlatmasi.unwrap();
+        assert_eq!((g.saat.as_str(), g.gecti, o.kurulacak, o.gecmis, o.ilk_tetik_ms), ("09:00", true, 0, 1, None));
+        let o = hatirlatma_onizlemesi(&govde(gunz("2026-11-27", None), vec![]), SIMDI, &c).unwrap();
+        assert_eq!((o.kurulacak, o.gun_hatirlatmasi), (0, None));
+        let o = hatirlatma_onizlemesi(&govde(None, crate::model::varsayilan_hatirlatmalar()), SIMDI, &c).unwrap();
+        assert_eq!((o.saatsiz, o.gun_hatirlatmasi), (1, None));
     }
 }

@@ -3,7 +3,9 @@ package dev.eren.ajanda.ekran
 import dev.eren.ajanda.cekirdek.AjandaKaydi
 import dev.eren.ajanda.cekirdek.AjandaZamani
 import dev.eren.ajanda.cekirdek.CekirdekHatasi
+import dev.eren.ajanda.cekirdek.GunBolumu
 import dev.eren.ajanda.cekirdek.Hatirlatma
+import dev.eren.ajanda.cekirdek.HatirlatmaOnizlemesi
 import dev.eren.ajanda.cekirdek.KayitGovdesi
 import dev.eren.ajanda.cekirdek.KayitTuru
 import dev.eren.ajanda.cekirdek.Tekrar
@@ -19,6 +21,9 @@ data class FormSorunu(val alan: FormAlani, val mesaj: String)
  * Elle ekleme/düzenleme formunun durumu (saf). Zaman düzenlenmediyse kaydın özgün zamanı (kullanıcının
  * sözü `ifade`, dönem, belirsiz, süre) aynen korunur; düzenlenince tarih + isteğe bağlı saatten yeniden
  * kurulur ve `ifade` düşer (artık kullanıcının sözünü anlatmaz). Tekrar arayüzü yok: varsa korunur.
+ *
+ * Gün bölümü (v2, `GunBolumu`): saat seçilmemiş günlü kayıtta isteğe bağlıdır; kayıt yine saatsizdir,
+ * bölüm yalnız gün hatırlatmasının saatini ve listedeki etiketi belirler. Saat seçilince bölüm kalkar.
  */
 data class KayitFormu(
     val tur: KayitTuru = KayitTuru.GOREV,
@@ -32,13 +37,15 @@ data class KayitFormu(
     val ozgunZaman: AjandaZamani? = null,
     val zamanDegisti: Boolean = false,
     val tekrar: Tekrar? = null,
+    /** Saatsiz günde kullanıcının seçtiği gün bölümü (v2); saat varken ya da tarih yokken null. */
+    val gunBolumu: GunBolumu? = null,
 ) {
     /** Formun gösterdiği zaman (özgün korunuyorsa o). */
     val zaman: AjandaZamani?
         get() {
             if (!zamanDegisti && ozgunZaman != null) return ozgunZaman
             val t = tarih ?: return null
-            val s = saat ?: return AjandaZamani.Gun(t.toString(), dilim, null)
+            val s = saat ?: return AjandaZamani.Gun(t.toString(), gunBolumu, dilim, null)
             val sure = (ozgunZaman as? AjandaZamani.An)?.sureDk
             return AjandaZamani.An(t.toString(), EkranMetinleri.saat(s), sure, dilim, null)
         }
@@ -52,15 +59,30 @@ data class KayitFormu(
         tekrar = tekrar,
     )
 
-    fun tarihVer(t: LocalDate?): KayitFormu = copy(tarih = t, saat = if (t == null) null else saat, zamanDegisti = true)
-    fun saatVer(s: LocalTime?): KayitFormu = copy(saat = s, zamanDegisti = true)
+    fun tarihVer(t: LocalDate?): KayitFormu =
+        copy(tarih = t, saat = if (t == null) null else saat, gunBolumu = if (t == null) null else gunBolumu, zamanDegisti = true)
+
+    /** Saat seçilince gün bölümü kalkar (saat bölümün yerine geçer); saat kalkınca bölüm seçilebilir. */
+    fun saatVer(s: LocalTime?): KayitFormu = copy(saat = s, gunBolumu = if (s != null) null else gunBolumu, zamanDegisti = true)
+
+    /** Gün bölümü seçimi (aynısına yeniden dokunmak kaldırır). Yalnız tarihli ve saatsiz formda anlamlıdır. */
+    fun bolumVer(b: GunBolumu?): KayitFormu =
+        if (tarih == null || saat != null) this else copy(gunBolumu = if (b == gunBolumu) null else b, zamanDegisti = true)
+
+    /** Gün bölümü seçimi gösterilir mi: gün seçilmiş, saat seçilmemiş. */
+    val bolumSecilebilir: Boolean
+        get() = zaman is AjandaZamani.Gun
 
     fun hatirlatmaDegistir(h: Hatirlatma): KayitFormu =
         copy(hatirlatmalar = if (h in hatirlatmalar) hatirlatmalar - h else hatirlatmalar + h)
 
-    /** Saatsiz kayıtta "önce" hatırlatması saat verilene dek bekler (çalmaz): kullanıcıya söylenir. */
+    /**
+     * "Önce" hatırlatması bekler (çalmaz): zaman yok, belirsiz ya da dönem. Saatsiz günde beklemez (v2):
+     * o günün gün hatırlatması saatinde çalar.
+     */
     val hatirlatmaBekler: Boolean
-        get() = zaman !is AjandaZamani.An && hatirlatmalar.any { it is Hatirlatma.Once }
+        get() = (zaman == null || zaman is AjandaZamani.Belirsiz || zaman is AjandaZamani.Donem) &&
+            hatirlatmalar.any { it is Hatirlatma.Once }
 
     companion object {
         const val BASLIK_SINIRI = 200
@@ -69,6 +91,12 @@ data class KayitFormu(
 
         /** Hatırlatma seçeneklerinde hep görünenler (dakika). */
         val HAZIR_ONCELER = listOf(0, 10, 60, 1440)
+
+        /**
+         * Saatsiz günde hazır seçenekler: dakika öne alış saat olmadığı için aynı güne düşer (sözleşme), bu
+         * yüzden yalnız "o gün" (60: varsayılanla aynı) ve "1 gün önce" sunulur.
+         */
+        val SAATSIZ_HAZIR_ONCELER = listOf(60, 1440)
 
         /** Yeni kayıt: varsayılan hatırlatmalar çekirdekten (`varsayilanHatirlatmalar`). */
         fun yeni(tur: KayitTuru, tarih: LocalDate?, dilim: String, varsayilan: List<Hatirlatma>) =
@@ -101,6 +129,7 @@ data class KayitFormu(
                 ozgunZaman = z,
                 zamanDegisti = false,
                 tekrar = g.tekrar,
+                gunBolumu = (z as? AjandaZamani.Gun)?.gunBolumu,
             )
         }
 
@@ -110,7 +139,7 @@ data class KayitFormu(
 
         /** Hatırlatma seçenekleri: hazır olanlar + formda olup hazır olmayanlar (mutlak dahil), sırayla. */
         fun hatirlatmaSecenekleri(f: KayitFormu): List<Hatirlatma> {
-            val hazir = HAZIR_ONCELER.map { Hatirlatma.Once(it) }
+            val hazir = (if (f.zaman is AjandaZamani.Gun) SAATSIZ_HAZIR_ONCELER else HAZIR_ONCELER).map { Hatirlatma.Once(it) }
             val ek = f.hatirlatmalar.filter { it !in hazir }
             return hazir + ek
         }
@@ -132,6 +161,59 @@ data class KayitFormu(
             if (f.tekrar != null && f.zaman !is AjandaZamani.An && f.zaman !is AjandaZamani.Gun) {
                 add(FormSorunu(FormAlani.TEKRAR, "Bu kayıt tekrar ediyor; bir gün seçilmeli."))
             }
+        }
+
+        /** Hatırlatma seçeneğinin yongadaki adı: saatsiz günde dakika öne alış "O gün" (aynı güne düşer). */
+        fun hatirlatmaAdi(h: Hatirlatma, f: KayitFormu, bugun: LocalDate): String {
+            if (f.zaman is AjandaZamani.Gun && h is Hatirlatma.Once) {
+                val gun = h.dk / 1440
+                return if (gun == 0) "O gün" else EkranMetinleri.onceMetni(gun * 1440)
+            }
+            return EkranMetinleri.hatirlatma(h, bugun)
+        }
+
+        /** Kaydın hatırlatma bakımından hali (form ve ayrıntı): yeni kayıt ve açık kayıt `ETKIN`. */
+        enum class Etkinlik { ETKIN, TASLAK, KAPALI }
+
+        /**
+         * Hatırlatma notu (saf): hatırlatmanın gerçekte ne zaman çalacağı. [o]: çekirdeğin önizlemesi
+         * (`hatirlatmaOnizlemesi`, formun gövdesiyle); gelmediyse null (o zaman yalnız önizlemesiz bilinenler).
+         * Saatsiz günde gün hatırlatmasının günü ve saati yazılır: "Cuma 17:00'de hatırlatılır", bölüm yoksa
+         * "O gün 09:00'da hatırlatılır (Cuma)"; geçmişte kalıyorsa "bildirim gelmeyecek". Kaydın saati değildir.
+         */
+        fun hatirlatmaNotu(f: KayitFormu, o: HatirlatmaOnizlemesi?, bugun: LocalDate, etkinlik: Etkinlik = Etkinlik.ETKIN): String? {
+            if (f.hatirlatmalar.isEmpty()) return "Hatırlatma kurulmayacak."
+            val z = f.zaman
+            val yalnizOnce = f.hatirlatmalar.all { it is Hatirlatma.Once }
+            if ((z == null || z is AjandaZamani.Belirsiz) && yalnizOnce) {
+                return "Tarih yokken hatırlatma bekler; gün seçilince kurulur."
+            }
+            if (z is AjandaZamani.Donem && yalnizOnce) return "Dönem kaydında hatırlatma bekler; tek gün seçilince kurulur."
+            if (etkinlik == Etkinlik.KAPALI) return "Kayıt açık değil; hatırlatma kurulmaz."
+            val on = if (etkinlik == Etkinlik.TASLAK) "Taslak onaylanınca: " else ""
+            o ?: return null
+            val g = o.gunHatirlatmasi
+            if (z is AjandaZamani.Gun && g != null) {
+                val gun = runCatching { LocalDate.parse(g.tarih) }.getOrNull()
+                val gunAdi = gun?.let { EkranMetinleri.hatirlatmaGunu(it, bugun) } ?: g.tarih
+                if (g.gecti) {
+                    return if (o.kurulacak == 0u) {
+                        "Bu kayıt için bildirim gelmeyecek: hatırlatma zamanı ($gunAdi ${g.saat}) geçti."
+                    } else {
+                        "${on}Gün hatırlatması ($gunAdi ${g.saat}) geçti; öteki hatırlatma kurulacak."
+                    }
+                }
+                val ek = EkranMetinleri.bulunmaEki(g.saat)
+                val cumle = if (z.gunBolumu == null && g.tarih == z.tarih) {
+                    "O gün ${g.saat}$ek hatırlatılır ($gunAdi)."
+                } else {
+                    "${gunAdi.replaceFirstChar { it.uppercase() }} ${g.saat}$ek hatırlatılır."
+                }
+                val dahasi = if (o.kurulacak > 1u) " Toplam ${o.kurulacak} hatırlatma." else ""
+                return on + cumle + dahasi
+            }
+            if (o.kurulacak == 0u && o.gecmis > 0u) return "Bu kayıt için bildirim gelmeyecek: hatırlatma zamanı geçti."
+            return null
         }
 
         private fun uzunMesaj(ad: String, sinir: Int, uzunluk: Int) =

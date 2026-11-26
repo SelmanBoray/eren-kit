@@ -119,6 +119,7 @@ impl Motor {
         self.gecmis.clear();
         self.gecmis_istekleri.clear();
         self.son_hata = None;
+        self.surum_uyusmazligi = None;
         if !matches!(self.asama, Asama::Kopuk | Asama::Kapaniyor) {
             self.kapat(e, "eşleşme kaldırıldı");
         }

@@ -1,5 +1,6 @@
 package dev.eren.ajanda.ag
 
+import dev.eren.ajanda.cekirdek.SurumUyusmazligi
 import dev.eren.ajanda.cekirdek.BaglantiAsamasi
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -417,5 +418,60 @@ class BaglantiDenetcisiTest {
             z.execute { l.countDown() }
             assertTrue(l.await(5, TimeUnit.SECONDS))
         }
+    }
+
+    @Test
+    fun surumUyusmazligindaYenidenBaglanmaGeriCekilirOneGelinceBirKezDenenir() {
+        val (d, h) = bagliDenetci()
+        // Eski servis: çekirdek uyuşmazlığı yazdı (v1 error çerçevesi), servis 1002 ile kapattı.
+        cekirdek.durum = SahteCekirdek.durumOlustur(BaglantiAsamasi.KOPUK, 1, SurumUyusmazligi.SERVIS_ESKI)
+        h.karsiKapatti(1002)
+        zaman.bosalt()
+        assertEquals("kapanış kodu çekirdeğe gider", listOf<Int?>(1002), cekirdek.kapanisKodlari)
+        val bekleyen = zaman.bekleyenler()
+        assertTrue(bekleyen.toString(), ayar.surumBeklemeMs in bekleyen)
+        assertFalse("artan beklemeli sıkı döngü yok", bekleyen.any { it < ayar.kapatmaBeklemeMs })
+
+        // Ağ değişimi de boşuna denemez; uzun bekleme sürer.
+        ag.degistir(true)
+        zaman.ilerle(10 * 60_000)
+        assertEquals(1, acici.acilanlar.size)
+
+        // Kullanıcı uygulamayı yeniden öne getirdi (belki güncelledi): hemen bir kez denenir.
+        d.basla()
+        zaman.bosalt()
+        assertEquals(2, acici.acilanlar.size)
+        acici.son.ac()
+        acici.son.karsiKapatti(1002)
+        zaman.bosalt()
+        assertTrue(ayar.surumBeklemeMs in zaman.bekleyenler())
+        assertEquals(2, acici.acilanlar.size)
+
+        // Süre dolunca bir deneme; servis güncellenmiş: CANLI, durum kalkar, sıradan bekleme geri gelir.
+        zaman.ilerle(ayar.surumBeklemeMs)
+        assertEquals(3, acici.acilanlar.size)
+        acici.son.ac()
+        cekirdek.durumYaz(BaglantiAsamasi.CANLI, 0)
+        zaman.bosalt()
+        cekirdek.durum = SahteCekirdek.durumOlustur(BaglantiAsamasi.KOPUK, 0)
+        acici.son.hata()
+        zaman.bosalt()
+        assertEquals(listOf(1_000L), zaman.bekleyenler())
+        d.birak()
+    }
+
+    @Test
+    fun surumUyusmazligindaArkaPlanOturumuHemenBiter() {
+        val d = denetci()
+        val sonuc = mutableListOf<ArkaPlanSonucu>()
+        d.arkaPlanOturumu { sonuc += it }
+        zaman.bosalt()
+        acici.son.ac()
+        zaman.bosalt()
+        cekirdek.durum = SahteCekirdek.durumOlustur(BaglantiAsamasi.KOPUK, 0, SurumUyusmazligi.UYGULAMA_ESKI)
+        acici.son.karsiKapatti(1002)
+        zaman.bosalt()
+        assertEquals(listOf(ArkaPlanSonucu.SURUM_UYUSMAZ), sonuc)
+        assertEquals("üç deneme beklenmez", 1, acici.acilanlar.size)
     }
 }

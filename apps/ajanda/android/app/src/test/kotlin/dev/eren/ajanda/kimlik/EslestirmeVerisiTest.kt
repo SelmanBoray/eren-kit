@@ -83,7 +83,12 @@ class EslestirmeVerisiTest {
             val h = hata(EslestirmeVerisi.coz(Json.yaz(gecerli - alan)))
             assertEquals(alan, VeriHatasi.GecersizAlan(alan, "zorunlu alan yok"), h)
         }
-        val surum = hata(EslestirmeVerisi.coz(Json.yaz(gecerli + ("v" to 2L))))
+        // v1 QR (eski servisin penceresi) ve gelecek sürüm reddedilir (sözleşme "Sürüm 2").
+        val surum = hata(EslestirmeVerisi.coz(Json.yaz(gecerli + ("v" to 1L))))
+        assertTrue(surum is VeriHatasi.GecersizAlan && surum.alan == "v")
+        assertTrue(EslestirmeMetinleri.veriHatasi(surum).contains("sürüm"))
+        val gelecek = hata(EslestirmeVerisi.coz(Json.yaz(gecerli + ("v" to 3L))))
+        assertTrue(gelecek is VeriHatasi.GecersizAlan && gelecek.alan == "v")
         assertTrue(surum is VeriHatasi.GecersizAlan && surum.alan == "v")
         val port = hata(EslestirmeVerisi.coz(Json.yaz(gecerli + ("port" to 70000L))))
         assertTrue(port is VeriHatasi.GecersizAlan && port.alan == "port")

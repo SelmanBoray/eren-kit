@@ -30,7 +30,9 @@ import dev.eren.ajanda.cekirdek.Degisim
 import dev.eren.ajanda.cekirdek.DuzenlemeTemeli
 import dev.eren.ajanda.cekirdek.GecmisSayfasi
 import dev.eren.ajanda.cekirdek.Gozlemci
+import dev.eren.ajanda.cekirdek.GunBolumu
 import dev.eren.ajanda.cekirdek.Hatirlatma
+import dev.eren.ajanda.cekirdek.HatirlatmaOnizlemesi
 import dev.eren.ajanda.cekirdek.KayitDurumu
 import dev.eren.ajanda.cekirdek.KayitGorunumu
 import dev.eren.ajanda.cekirdek.KayitGovdesi
@@ -102,6 +104,9 @@ class KayitEkrani : Activity() {
     private var gecmis: GecmisSayfasi? = null
     private var mesgul = false
     private val cihazDilimi: String = ZoneId.systemDefault().id
+    /** Hatırlatma notunun çekirdekten gelen önizlemesi (v2) ve hangi gövde için istendiği. */
+    private var onizleme: Pair<KayitGovdesi, HatirlatmaOnizlemesi?>? = null
+    private var onizlemeIstenen: KayitGovdesi? = null
 
     private lateinit var icerik: LinearLayout
     private lateinit var baslikYazisi: TextView
@@ -209,7 +214,7 @@ class KayitEkrani : Activity() {
 
     /** Dilim biçimi çekirdeğin kuralından geçiyor mu (cihaz dilimi `GMT+03:00` gibi olabilir). */
     private fun dilimGecerli(dilim: String): Boolean = try {
-        c().govdeyiHazirla(KayitGovdesi(KayitTuru.GOREV, "x", null, AjandaZamani.Gun("2026-01-01", dilim, null), emptyList(), null))
+        c().govdeyiHazirla(KayitGovdesi(KayitTuru.GOREV, "x", null, AjandaZamani.Gun("2026-01-01", null, dilim, null), emptyList(), null))
         true
     } catch (e: CekirdekHatasi.GecersizGirdi) {
         !e.alan.endsWith("saat_dilimi")
@@ -630,10 +635,11 @@ class KayitEkrani : Activity() {
             val saatSatiri = yatay()
             val s = f.saat
             if (s == null) {
+                val saatsizAdi = f.gunBolumu?.let { "Saatsiz · ${EkranMetinleri.gunBolumu(it)}" } ?: "Tüm gün"
                 saatSatiri.addView(t.yonga("Saat ekle", false) { saatSec(LocalTime.of(9, 0)) }.apply {
-                    contentDescription = "Saat ekle; şimdi tüm gün"
+                    contentDescription = "Saat ekle; şimdi ${saatsizAdi.lowercase()}"
                 }, t.sarParam(sag = 6))
-                saatSatiri.addView(t.yazi("Tüm gün", 14f, t.soluk))
+                saatSatiri.addView(t.yazi(saatsizAdi, 14f, t.soluk))
             } else {
                 saatSatiri.addView(t.yonga(EkranMetinleri.saat(s), true) { saatSec(s) }.apply {
                     contentDescription = "Saat ${EkranMetinleri.saat(s)}; değiştirmek için dokunun"
@@ -641,6 +647,19 @@ class KayitEkrani : Activity() {
                 saatSatiri.addView(t.metinDugmesi("Saati kaldır", t.soluk) { formuDegistir(FormAlani.ZAMAN, yeniden = true) { it.saatVer(null) } })
             }
             zamanKutusu.addView(saatSatiri, t.satirParam(ust = 8))
+            if (f.bolumSecilebilir) {
+                // Gün bölümü (v2): isteğe bağlı, saat değildir; yalnız hatırlatma saatini ve listedeki etiketi belirler.
+                val bolumSatiri = yatay()
+                for (b in GunBolumu.values()) {
+                    val secili = f.gunBolumu == b
+                    val ad = EkranMetinleri.gunBolumuBuyuk(b)
+                    bolumSatiri.addView(t.yonga(ad, secili) {
+                        formuDegistir(FormAlani.ZAMAN, yeniden = true) { it.bolumVer(b) }
+                    }.apply { contentDescription = "Günün bölümü: $ad" + if (secili) ", seçili; kaldırmak için dokunun" else "" }, t.sarParam(sag = 6))
+                }
+                zamanKutusu.addView(t.yazi("Günün bölümü (isteğe bağlı):", 13f, t.soluk), t.satirParam(ust = 8))
+                zamanKutusu.addView(kaydirilir(bolumSatiri), t.satirParam(ust = 4))
+            }
         }
 
         dilimKutusu.removeAllViews()
@@ -660,20 +679,43 @@ class KayitEkrani : Activity() {
         val satir = yatay()
         for (h in secenekler) {
             val secili = h in f.hatirlatmalar
-            val ad = EkranMetinleri.hatirlatma(h, bugun)
+            val ad = KayitFormu.hatirlatmaAdi(h, f, bugun)
             satir.addView(t.yonga(ad, secili) {
                 formuDegistir(FormAlani.HATIRLATMA, yeniden = true) { it.hatirlatmaDegistir(h) }
             }.apply { contentDescription = "Hatırlatma: $ad" + if (secili) ", seçili" else "" }, t.sarParam(sag = 6))
         }
         hatirlatmaKutusu.addView(kaydirilir(satir))
-        val not = when {
-            f.hatirlatmalar.isEmpty() -> "Hatırlatma kurulmayacak."
-            f.zaman == null || f.zaman is AjandaZamani.Belirsiz -> "Tarih yokken \"önce\" hatırlatması bekler; tarih ve saat verilince kurulur."
-            f.hatirlatmaBekler -> "Saat seçilmedikçe \"önce\" hatırlatması bekler, çalmaz."
-            else -> null
-        }
+        // Hatırlatmanın gerçekte ne zaman çalacağı (v2): kural çekirdekte; önizleme gelince yeniden çizilir.
+        val govde = f.govde()
+        val o = onizleme?.takeIf { it.first == govde }?.second
+        if (onizleme?.first != govde) onizlemeIste(govde)
+        val not = KayitFormu.hatirlatmaNotu(f, o, bugun, etkinlik())
         if (not != null) hatirlatmaKutusu.addView(t.yazi(not, 13f, t.soluk), t.satirParam(ust = 4))
         sorunlariCiz()
+    }
+
+    /** Düzenlenen kaydın hatırlatma bakımından hali (yeni kayıt ve ret düzeltmesi etkin sayılır). */
+    private fun etkinlik(): KayitFormu.Companion.Etkinlik {
+        val k = kayit?.kayit
+        return when {
+            mod != Mod.DUZENLE || k == null -> KayitFormu.Companion.Etkinlik.ETKIN
+            k.silindi || k.durum != KayitDurumu.ACIK -> KayitFormu.Companion.Etkinlik.KAPALI
+            k.taslak -> KayitFormu.Companion.Etkinlik.TASLAK
+            else -> KayitFormu.Companion.Etkinlik.ETKIN
+        }
+    }
+
+    /** Önizlemeyi arka iş parçacığında ister (çekirdek çağrısı); gelince form hâlâ aynıysa yeniden çizer. */
+    private fun onizlemeIste(govde: KayitGovdesi) {
+        if (onizlemeIstenen == govde) return
+        onizlemeIstenen = govde
+        arkada {
+            val o = runCatching { c().hatirlatmaOnizlemesi(govde) }.getOrNull()
+            anada {
+                onizleme = govde to o
+                if (form?.govde() == govde) secimleriCiz()
+            }
+        }
     }
 
     private fun kaydirilir(v: View) = android.widget.HorizontalScrollView(this).apply {

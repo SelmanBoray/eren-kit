@@ -2,6 +2,7 @@ package dev.eren.ajanda.ekran
 
 import dev.eren.ajanda.cekirdek.AjandaZamani
 import dev.eren.ajanda.cekirdek.DuzenlemeTemeli
+import dev.eren.ajanda.cekirdek.GunBolumu
 import dev.eren.ajanda.cekirdek.HaftaGunu
 import dev.eren.ajanda.cekirdek.Hatirlatma
 import dev.eren.ajanda.cekirdek.KayitGovdesi
@@ -34,7 +35,7 @@ class FormKaydiTest {
         val zamanlar = listOf(
             AjandaZamani.An("2026-11-26", "15:00", 45, "Europe/Istanbul", "yarın öğleden sonra"),
             AjandaZamani.An("2026-11-26", "09:30", null, "UTC", null),
-            AjandaZamani.Gun("2026-12-01", "Europe/Istanbul", "ayın başı"),
+            AjandaZamani.Gun("2026-12-01", GunBolumu.AKSAM, "Europe/Istanbul", "ayın başı"),
             AjandaZamani.Donem("2026-12-24", "2026-12-31", "Europe/Istanbul", null),
             AjandaZamani.Belirsiz("haftaya bir ara"),
             null,
@@ -50,7 +51,7 @@ class FormKaydiTest {
         }
         // Boş gün listeli ve adetli tekrar.
         val t2 = Tekrar(TekrarSikligi.AYLIK, 1, null, null, 12)
-        val g2 = KayitGovdesi(KayitTuru.RANDEVU, "Kira", "açıklama", AjandaZamani.Gun("2026-12-05", "UTC", null), emptyList(), t2)
+        val g2 = KayitGovdesi(KayitTuru.RANDEVU, "Kira", "açıklama", AjandaZamani.Gun("2026-12-05", null, "UTC", null), emptyList(), t2)
         gidipGelir(FormDurumu(KayitFormu.govdeden(g2, "UTC"), DuzenlemeTemeli(1, g2), dilimTanindi = true))
     }
 

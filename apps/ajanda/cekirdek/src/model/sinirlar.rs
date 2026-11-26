@@ -1,8 +1,9 @@
 //! Sözleşmenin sabitleri (`protocol/src/sinirlar.ts`): yalnız ajandanın kullandıkları, birebir.
 //! Karakter sınırları UTF-16 birimi, adet sınırları öğe sayısıdır.
 
-/// `/ajanda` kanalının sürümü (`AJANDA_SURUMU`).
-pub const AJANDA_SURUMU: i64 = 1;
+/// `/ajanda` kanalının sürümü (`AJANDA_SURUMU`). 1: ilk dilim. 2: saatsiz gün kaydında gün hatırlatması,
+/// `gun_bolumu`, `gece_teyidi_gerekli` (`docs/AJANDA.md` "Sürüm 2"). İmza öneki bundan türemez (`eslesme.rs`).
+pub const AJANDA_SURUMU: i64 = 2;
 
 /// `/ajanda` çerçevesinin ayrıştırma öncesi üst sınırı (UTF-16 birimi): `AJANDA_AZAMI_CERCEVE.KANAL`.
 pub const AZAMI_CERCEVE_KANAL: usize = 2 * 1024 * 1024;
@@ -44,4 +45,6 @@ pub mod ajanda {
     pub const DAYANAK_SAPMA_DK: i64 = 10;
     pub const ISLEM_DENEME: u32 = 5;
     pub const KACIRILAN_PENCERE_DK: i64 = 360;
+    /// v2: mesaj anının yerel saati 00:00 ile bu kadar dakika sonrası (dahil değil) arası gece aralığıdır.
+    pub const GECE_ARALIGI_DK: i64 = 240;
 }

@@ -19,7 +19,8 @@ interface KanalCekirdegi {
     fun baglantiAdresi(): String?
     fun baglantiAcildi(tasima: Tasima): ULong
     fun cerceveGeldi(nesil: ULong, metin: String)
-    fun baglantiKapandi(nesil: ULong)
+    /** [kod]: karşı tarafın kapanış çerçevesindeki kod (geldiyse); 1002 sürüm uyuşmazlığıdır. */
+    fun baglantiKapandi(nesil: ULong, kod: Int?)
     fun baglantiDurumu(): BaglantiDurumu
     fun gozlemciEkle(gozlemci: Gozlemci): ULong
 }
@@ -28,7 +29,7 @@ class CekirdekKanali(private val c: Cekirdek) : KanalCekirdegi {
     override fun baglantiAdresi(): String? = c.baglantiAdresi()
     override fun baglantiAcildi(tasima: Tasima): ULong = c.baglantiAcildi(tasima)
     override fun cerceveGeldi(nesil: ULong, metin: String) = c.cerceveGeldi(nesil, metin)
-    override fun baglantiKapandi(nesil: ULong) = c.baglantiKapandi(nesil)
+    override fun baglantiKapandi(nesil: ULong, kod: Int?) = c.baglantiKapandi(nesil, kod)
     override fun baglantiDurumu(): BaglantiDurumu = c.baglantiDurumu()
     override fun gozlemciEkle(gozlemci: Gozlemci): ULong = c.gozlemciEkle(gozlemci)
 }

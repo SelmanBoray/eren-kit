@@ -10,7 +10,9 @@ import dev.eren.ajanda.cekirdek.CekirdekHatasi
 import dev.eren.ajanda.cekirdek.DuzenlemeTemeli
 import dev.eren.ajanda.cekirdek.EslesmeDurumu
 import dev.eren.ajanda.cekirdek.GecmisSayfasi
+import dev.eren.ajanda.cekirdek.GunBolumu
 import dev.eren.ajanda.cekirdek.Hatirlatma
+import dev.eren.ajanda.cekirdek.HatirlatmaOnizlemesi
 import dev.eren.ajanda.cekirdek.KacirilanBildirimi
 import dev.eren.ajanda.cekirdek.KayitDurumu
 import dev.eren.ajanda.cekirdek.KayitGorunumu
@@ -70,7 +72,7 @@ fun gor(k: AjandaKaydi, bekleyen: Boolean = false) = KayitGorunumu(k, bekleyen)
 fun an(tarih: String, saat: String, dilim: String = "Europe/Istanbul", sure: Int? = null, ifade: String? = null) =
     AjandaZamani.An(tarih, saat, sure, dilim, ifade)
 
-fun gun(tarih: String, dilim: String = "Europe/Istanbul") = AjandaZamani.Gun(tarih, dilim, null)
+fun gun(tarih: String, dilim: String = "Europe/Istanbul", bolum: GunBolumu? = null) = AjandaZamani.Gun(tarih, bolum, dilim, null)
 
 /** Çağrıları sayan sahte çekirdek yüzü: listeler bellekte, sekme süzgeci [Yenileme.uyeMi] ile. */
 class SahteYuz : CekirdekYuzu {
@@ -99,7 +101,7 @@ class SahteYuz : CekirdekYuzu {
 
     override fun baglantiDurumu(): BaglantiDurumu {
         cagrilar += "baglantiDurumu"
-        return BaglantiDurumu(BaglantiAsamasi.KOPUK, 0, ret.size, null, null)
+        return BaglantiDurumu(BaglantiAsamasi.KOPUK, 0, ret.size, null, null, null)
     }
 
     override fun eslesmeDurumu(): EslesmeDurumu {
@@ -158,6 +160,8 @@ class SahteYuz : CekirdekYuzu {
     override fun gecmis(kayitId: String): GecmisSayfasi? = null
     override fun govdeyiHazirla(govde: KayitGovdesi): KayitGovdesi = govde
     override fun varsayilanHatirlatmalar(): List<Hatirlatma> = listOf(Hatirlatma.Once(60))
+    var onizleme = HatirlatmaOnizlemesi(0u, 0u, 0u, null, null)
+    override fun hatirlatmaOnizlemesi(govde: KayitGovdesi): HatirlatmaOnizlemesi = onizleme
 }
 
 /** Gerçek çekirdek için sahte kabuklar (JVM'de Keystore ve AlarmManager yok). */

@@ -1,5 +1,6 @@
 package dev.eren.ajanda.ekran
 
+import dev.eren.ajanda.cekirdek.GunBolumu
 import dev.eren.ajanda.cekirdek.AjandaZamani
 import dev.eren.ajanda.cekirdek.BaglantiAsamasi
 import dev.eren.ajanda.cekirdek.KayitDurumu
@@ -256,5 +257,28 @@ class ListeTest {
         // Bilinmeyen dilim: cihaz dilimi varsayılır, kayıt kaybolmaz.
         val o = Liste.tarihliler(listOf(gor(kayit("z", zaman = an("2026-11-26", "12:00", dilim = "Yok/Boyle")))), simdi)
         assertEquals(Liste.Grup.BUGUN to listOf("z"), gruplar(o).first())
+    }
+
+    @Test
+    fun saatsizGunSaatSirasinaGirmezBolumEtiketiylaGununBasindaDurur() {
+        val l = listOf(
+            kayit("erken", zaman = an("2026-11-26", "07:00")),
+            kayit("aksam", baslik = "Araba yıkama", zaman = gun("2026-11-26", bolum = GunBolumu.AKSAM)),
+            kayit("sabah", zaman = gun("2026-11-26", bolum = GunBolumu.SABAH)),
+            kayit("bolumsuz", zaman = gun("2026-11-26")),
+            kayit("cumaAksam", zaman = gun("2026-11-28", bolum = GunBolumu.AKSAM)),
+            kayit("sonra", zaman = gun("2026-12-04", bolum = GunBolumu.OGLEDEN_SONRA)),
+        ).map { gor(it) }
+        val o = Liste.tarihliler(l, simdi)
+        // Saatsizler günün başında (bölümsüz, sonra bölüm sırası), saatli 07:00 en sonda.
+        assertEquals(listOf("bolumsuz", "sabah", "aksam", "erken"), gruplar(o).first { it.first == Liste.Grup.BUGUN }.second)
+        val satirlar = o.filterIsInstance<Liste.Oge.Satir>().associate { it.satir.kayitId to it.satir }
+        assertEquals("Akşam", satirlar.getValue("aksam").alt)
+        assertEquals("Tüm gün", satirlar.getValue("bolumsuz").alt)
+        assertEquals("Cumartesi · akşam", satirlar.getValue("cumaAksam").alt)
+        assertEquals("Cum 4 Ara · öğleden sonra", satirlar.getValue("sonra").alt)
+        // Hatırlatma saati (17:00) listede yazmaz: kaydın saati değildir.
+        assertFalse(satirlar.getValue("aksam").alt!!.contains(":"))
+        assertTrue(satirlar.getValue("aksam").aciklama.contains("Akşam"))
     }
 }

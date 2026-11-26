@@ -3,6 +3,7 @@ package dev.eren.ajanda.ekran
 import android.os.Bundle
 import dev.eren.ajanda.cekirdek.AjandaZamani
 import dev.eren.ajanda.cekirdek.DuzenlemeTemeli
+import dev.eren.ajanda.cekirdek.GunBolumu
 import dev.eren.ajanda.cekirdek.HaftaGunu
 import dev.eren.ajanda.cekirdek.Hatirlatma
 import dev.eren.ajanda.cekirdek.KayitGovdesi
@@ -43,6 +44,7 @@ object FormKaydi {
         koy("tarih", f.tarih)
         koy("saat", f.saat?.let(EkranMetinleri::saat))
         koy("dilim", f.dilim)
+        koy("bolum", f.gunBolumu?.name)
         koy("zamanDegisti", if (f.zamanDegisti) "1" else "0")
         koy("dilimTanindi", if (d.dilimTanindi) "1" else "0")
         hatirlatmalariYaz(m, "h", f.hatirlatmalar)
@@ -72,6 +74,7 @@ object FormKaydi {
             ozgunZaman = zamaniOku(m, "oz"),
             zamanDegisti = m["zamanDegisti"] == "1",
             tekrar = tekrariOku(m, "tk"),
+            gunBolumu = m["bolum"]?.let(GunBolumu::valueOf),
         )
         val temel = m["t.rev"]?.let { rev ->
             DuzenlemeTemeli(
@@ -142,7 +145,8 @@ object FormKaydi {
                 koy("dilim", z.saatDilimi); koy("ifade", z.ifade)
             }
             is AjandaZamani.Gun -> {
-                koy("k", "gun"); koy("tarih", z.tarih); koy("dilim", z.saatDilimi); koy("ifade", z.ifade)
+                koy("k", "gun"); koy("tarih", z.tarih); koy("bolum", z.gunBolumu?.name); koy("dilim", z.saatDilimi)
+                koy("ifade", z.ifade)
             }
             is AjandaZamani.Donem -> {
                 koy("k", "donem"); koy("bas", z.baslangic); koy("bit", z.bitis); koy("dilim", z.saatDilimi)
@@ -159,7 +163,7 @@ object FormKaydi {
         return when (val k = m["$p.k"]) {
             null -> null
             "an" -> AjandaZamani.An(al("tarih"), al("saat"), m["$p.sure"]?.toInt(), al("dilim"), m["$p.ifade"])
-            "gun" -> AjandaZamani.Gun(al("tarih"), al("dilim"), m["$p.ifade"])
+            "gun" -> AjandaZamani.Gun(al("tarih"), m["$p.bolum"]?.let(GunBolumu::valueOf), al("dilim"), m["$p.ifade"])
             "donem" -> AjandaZamani.Donem(al("bas"), al("bit"), al("dilim"), m["$p.ifade"])
             "belirsiz" -> AjandaZamani.Belirsiz(al("ifade"))
             else -> throw IllegalArgumentException("zaman kesinliği: $k")

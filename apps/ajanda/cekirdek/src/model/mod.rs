@@ -31,7 +31,10 @@ pub use kayit::{
     OrnekDurumu, TurKokeni, YazarKimligi, hatirlatma_etkin_mi, kullanici_emri_mi, otomasyon_mu,
 };
 pub use tekrar::{HaftaGunu, Tekrar, TekrarSikligi, ornek_gunleri_mi, ornek_gunu_mu, tekrar_ornekleri};
-pub use zaman::{AjandaZamani, Hatirlatma, ZamanKesinligi, varsayilan_hatirlatmalar, zaman_kurallari};
+pub use zaman::{
+    AjandaZamani, GUN_HATIRLATMA_VARSAYILAN_SAATI, GunBolumu, Hatirlatma, ZamanKesinligi, gun_hatirlatma_saati, varsayilan_hatirlatmalar,
+    zaman_kurallari,
+};
 
 /// Yerel an: tarih, duvar saati, IANA dilimi (`AjandaYerelAn`, `YerelAn`).
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]

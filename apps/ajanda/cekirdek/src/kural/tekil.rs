@@ -121,7 +121,7 @@ mod testler {
         assert!(ajanda_es_degisikligi(Some(&es30), None, Some(&an("15:00", Some(30), "x")), None).bos_mu());
         assert!(ajanda_es_degisikligi(Some(&es), None, Some(&an("15:00", None, "x")), None).bos_mu());
         // Eş `an` değilse süre işlenmez.
-        let gun = AjandaZamani::Gun { tarih: "2026-11-26".into(), saat_dilimi: IST.into(), ifade: None };
+        let gun = AjandaZamani::Gun { tarih: "2026-11-26".into(), gun_bolumu: None, saat_dilimi: IST.into(), ifade: None };
         assert!(ajanda_es_degisikligi(Some(&gun), None, Some(&an("15:00", Some(30), "x")), None).bos_mu());
     }
 

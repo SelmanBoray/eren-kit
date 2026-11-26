@@ -5,7 +5,8 @@
 //! Her vektör: GEÇTİ, KALDI (fark yazılır) ya da BEKLİYOR (kural `Yazilmadi` paniğiyle duruyor). Bölüm
 //! tablosu her koşuda basılır; KALDI varsa ya da vektör dosyasında düzeneğin tanımadığı bir bölüm
 //! varsa çıkış kodu 1'dir. BEKLİYOR başarısızlık değildir ama sayısı görünür ve kimin işi olduğu yazar.
-//! Bu dosya ilk dalgada dondurulur: ikinci dalga yalnız kuralları doldurur, düzeneğe dokunmaz.
+//! Sözleşmeye bölüm eklenince (v2: `gun_hatirlatmasi`, `gece_teyidi`) düzenek de eklenir; tanınmayan bölüm
+//! çıkışı 1 yapar, bölüm sessizce atlanmaz.
 
 use ajanda_cekirdek::kural::{self, AnCevirici, SabitOfsetCevirici, Yazilmadi};
 use ajanda_cekirdek::model::{
@@ -386,23 +387,35 @@ fn tekrar_ornekleri(v: &Value) -> Bolum {
     b
 }
 
+fn yerel_json(y: &kural::hatirlatma::GunHatirlatmasiYereli) -> Value {
+    json!({"tarih": y.tarih, "saat": y.saat})
+}
+
+/// Var olan isteğe bağlı alanları nesneye ekler (TS: alan yoksa anahtar da yok).
+fn ekle(mut v: Value, ornek_tarihi: &Option<String>, gun: &Option<kural::hatirlatma::GunHatirlatmasiYereli>) -> Value {
+    let n = v.as_object_mut().unwrap();
+    if let Some(o) = ornek_tarihi {
+        n.insert("ornek_tarihi".into(), json!(o));
+    }
+    if let Some(y) = gun {
+        n.insert("gun_hatirlatmasi".into(), yerel_json(y));
+    }
+    v
+}
+
 fn hal_json(h: &kural::hatirlatma::HatirlatmaHali) -> Value {
     use kural::hatirlatma::HatirlatmaHali as H;
     match h {
-        H::Kurulur { sira, tetik_ms, ornek_tarihi: None } => json!({"sira": sira, "hal": "kurulur", "tetik_ms": tetik_ms}),
-        H::Kurulur { sira, tetik_ms, ornek_tarihi: Some(o) } => {
-            json!({"sira": sira, "hal": "kurulur", "tetik_ms": tetik_ms, "ornek_tarihi": o})
+        H::Kurulur { sira, tetik_ms, ornek_tarihi, gun_hatirlatmasi } => {
+            ekle(json!({"sira": sira, "hal": "kurulur", "tetik_ms": tetik_ms}), ornek_tarihi, gun_hatirlatmasi)
         }
         H::Saatsiz { sira } => json!({"sira": sira, "hal": "saatsiz"}),
-        H::Gecmis { sira } => json!({"sira": sira, "hal": "gecmis"}),
+        H::Gecmis { sira, gun_hatirlatmasi } => ekle(json!({"sira": sira, "hal": "gecmis"}), &None, gun_hatirlatmasi),
     }
 }
 
 fn tetik_json(t: &kural::hatirlatma::HatirlatmaTetigi) -> Value {
-    match &t.ornek_tarihi {
-        None => json!({"sira": t.sira, "tetik_ms": t.tetik_ms}),
-        Some(o) => json!({"sira": t.sira, "tetik_ms": t.tetik_ms, "ornek_tarihi": o}),
-    }
+    ekle(json!({"sira": t.sira, "tetik_ms": t.tetik_ms}), &t.ornek_tarihi, &t.gun_hatirlatmasi)
 }
 
 fn hatirlatma_plani(v: &Value) -> (Bolum, Bolum) {
@@ -418,7 +431,11 @@ fn hatirlatma_plani(v: &Value) -> (Bolum, Bolum) {
             let haller = kural::hatirlatma::hatirlatma_halleri(&k, simdi, an).map_err(|e| e.mesaj)?;
             esit("haller", Value::Array(haller.iter().map(hal_json).collect()), o["haller"].clone())?;
             let oz = kural::hatirlatma::hatirlatma_ozeti(&k, simdi, an).map_err(|e| e.mesaj)?;
-            let oz = json!({"toplam": oz.toplam, "kurulacak": oz.kurulacak, "saatsiz": oz.saatsiz, "gecmis": oz.gecmis});
+            let mut oz_j = json!({"toplam": oz.toplam, "kurulacak": oz.kurulacak, "saatsiz": oz.saatsiz, "gecmis": oz.gecmis});
+            if let Some(g) = &oz.gun_hatirlatmasi {
+                oz_j["gun_hatirlatmasi"] = json!({"tarih": g.tarih, "saat": g.saat, "gecti": g.gecti});
+            }
+            let oz = oz_j;
             esit("özet", oz, o["ozet"].clone())?;
             // `kurulacakHatirlatmalar` = etkinse `kurulur` halleri (tanım gereği).
             let beklenen: Vec<Value> = if k.hatirlatma_etkin_mi() {
@@ -447,6 +464,46 @@ fn hatirlatma_plani(v: &Value) -> (Bolum, Bolum) {
         });
     }
     (b, kb)
+}
+
+/// v2: `GUN_HATIRLATMA_SAATLERI`, `GUN_HATIRLATMA_VARSAYILAN_SAATI`, `gunHatirlatmasiYereli`.
+fn gun_hatirlatmasi(v: &Value) -> Bolum {
+    let g = &v["gun_hatirlatmasi"];
+    let mut b = Bolum::yeni("gun_hatirlatmasi", "v2 (R3)");
+    b.dene("saatler", || {
+        let tablo: serde_json::Map<String, Value> =
+            model::GunBolumu::HEPSI.iter().map(|b| (b.ad().to_string(), json!(b.hatirlatma_saati()))).collect();
+        esit("saatler", Value::Object(tablo), g["saatler"].clone())
+    });
+    b.dene("varsayilan", || esit("varsayilan", model::GUN_HATIRLATMA_VARSAYILAN_SAATI, metin(g, "varsayilan")));
+    for o in dizi(g, "vakalar") {
+        b.dene(&ad(&o), || {
+            let bolum = o["gun_bolumu"].as_str().map(|s| model::GunBolumu::coz(s).expect("gun_bolumu"));
+            let y = kural::hatirlatma::gun_hatirlatmasi_yereli(metin(&o, "gun"), sayi(&o, "dk"), bolum).ok_or("gün geçersiz")?;
+            esit("yerel", yerel_json(&y), o["beklenen"].clone())
+        });
+    }
+    b
+}
+
+/// v2: `geceTeyidiEksikMi(girdi, mesaj_ani, tur_kokeni)`. Servis kuralıdır; uygulama aynı kuralı sınar.
+/// Girdi araç şemasının (uygulamada yok) gerektirdiği kadarıyla okunur: kesinlik, mutlak hatırlatma, teyit.
+fn gece_teyidi(v: &Value) -> Bolum {
+    let mut b = Bolum::yeni("gece_teyidi", "v2 (servis kuralı)");
+    for o in dizi(v, "gece_teyidi") {
+        b.dene(&ad(&o), || {
+            let g = &o["girdi"];
+            let alanlar = if metin(&o, "fiil") == "ajanda_guncelle" { &g["degisiklik"] } else { g };
+            let kesinlik = alanlar["zaman"]["kesinlik"].as_str().map(|k| model::ZamanKesinligi::coz(k).expect("kesinlik"));
+            let mutlak = dizi(alanlar, "hatirlatmalar").iter().any(|h| h["tur"] == "mutlak");
+            let tarihli = kural::dayanak::tarihli_girdi_mi(kesinlik, mutlak);
+            let teyit = !g["dayanak"]["gece_teyidi"].is_null();
+            let kok = TurKokeni::coz(metin(&o, "tur_kokeni")).expect("tur_kokeni");
+            let eksik = kural::dayanak::gece_teyidi_eksik_mi(tarihli, teyit, metin(&o["mesaj_ani"], "saat"), kok);
+            esit("eksik", eksik, mantik(&o, "eksik"))
+        });
+    }
+    b
 }
 
 /// `ornekler_gunluk {bas, adet, durum}`: `bas`'tan başlayan ardışık günlük satırlar.
@@ -594,13 +651,14 @@ fn main() {
     bolumler.extend([g, gt, tekil_karar(&kurallar), telafi(&kurallar), dayanak(&kurallar), tekrar_ornekleri(&kurallar)]);
     let (hp, hk) = hatirlatma_plani(&kurallar);
     bolumler.extend([hp, hk, ornek_durumu(&kurallar), kuyruk_karari(&kurallar), esitleme(&kurallar)]);
+    bolumler.extend([gun_hatirlatmasi(&kurallar), gece_teyidi(&kurallar)]);
 
     // Dosyada düzeneğin tanımadığı bölüm kalmasın (sözleşmeye eklenen bölüm sessizce atlanmasın).
     let bilinen_mesaj = ["surum", "asagi", "yukari"];
     let bilinen_kural = [
         "aciklama", "surum", "imza_metni", "imza", "kapsam", "qr", "birlestirme", "hatirlatma_etkin", "tekil_anahtar",
         "es_degisikligi", "gorunmez", "tekil_karar", "telafi", "dayanak", "tekrar_ornekleri", "hatirlatma_plani",
-        "ornek_durumu", "kuyruk_karari", "esitleme",
+        "ornek_durumu", "kuyruk_karari", "esitleme", "gun_hatirlatmasi", "gece_teyidi",
     ];
     let mut tanimsiz: Vec<String> = Vec::new();
     for (dosya, bilinen, ad) in [(&mesaj, &bilinen_mesaj[..], "ajanda-mesaj.json"), (&kurallar, &bilinen_kural[..], "ajanda-kurallar.json")] {
@@ -646,5 +704,5 @@ fn main() {
     if tk > 0 || !tanimsiz.is_empty() {
         std::process::exit(1);
     }
-    println!("\nvektörler: {tg} geçti, {tb} bekliyor (ikinci dalga), {td} Kotlin'e devredildi, 0 kaldı");
+    println!("\nvektörler: {tg} geçti, {tb} bekliyor, {td} Kotlin'e devredildi, 0 kaldı");
 }

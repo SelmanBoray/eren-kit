@@ -51,6 +51,10 @@ class AjandaSoketi internal constructor(
     private var nesil: ULong? = null
     private var bitti = false
 
+    /** Karşı tarafın kapanış kodu (`kapaniyor`); çekirdeğe kapanışla gider (1002: sürüm uyuşmazlığı). */
+    @Volatile
+    private var karsiKod: Int? = null
+
     /** Çekirdek bu bağlantıyı kabul etti mi (açılış süresi denetimi için). */
     val acik: Boolean
         get() = synchronized(kilit) { nesil != null && !bitti }
@@ -159,6 +163,7 @@ class AjandaSoketi internal constructor(
     }
 
     override fun kapaniyor(kod: Int) {
+        karsiKod = kod
         // Kapanış el sıkışmasını tamamla (OkHttp yanıtı kendisi yollamaz).
         sonlandir(KapanisTuru.KARSI_KAPATTI, HamIslem.KAPAT, KOD_NORMAL)
     }
@@ -205,7 +210,7 @@ class AjandaSoketi internal constructor(
 
     private fun cekirdegeKapanis(n: ULong) {
         try {
-            cekirdek.baglantiKapandi(n)
+            cekirdek.baglantiKapandi(n, karsiKod)
         } catch (e: Exception) {
             gunluk.uyari("çekirdeğe kapanış bildirilemedi", e)
         }

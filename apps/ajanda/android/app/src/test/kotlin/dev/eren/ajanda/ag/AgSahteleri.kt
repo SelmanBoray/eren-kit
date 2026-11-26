@@ -1,10 +1,12 @@
 package dev.eren.ajanda.ag
 
+import dev.eren.ajanda.cekirdek.AjandaKanalHatasi
 import dev.eren.ajanda.cekirdek.BaglantiAsamasi
 import dev.eren.ajanda.cekirdek.BaglantiDurumu
 import dev.eren.ajanda.cekirdek.CekirdekHatasi
 import dev.eren.ajanda.cekirdek.Degisim
 import dev.eren.ajanda.cekirdek.Gozlemci
+import dev.eren.ajanda.cekirdek.SurumUyusmazligi
 import dev.eren.ajanda.cekirdek.Tasima
 import java.util.PriorityQueue
 
@@ -83,8 +85,8 @@ class SahteHamSoket(val adres: String, val dinleyici: HamDinleyici) : HamSoket {
     // Test yardımcıları (OkHttp'nin yapacağı çağrılar)
     fun ac() = dinleyici.acildi(this)
     fun gelen(metin: String) = dinleyici.mesaj(metin)
-    fun karsiKapatti() {
-        dinleyici.kapaniyor(1000)
+    fun karsiKapatti(kod: Int = 1000) {
+        dinleyici.kapaniyor(kod)
         dinleyici.kapandi(KapanisTuru.KARSI_KAPATTI)
     }
     fun hata() = dinleyici.kapandi(KapanisTuru.HATA)
@@ -167,9 +169,13 @@ class SahteCekirdek : KanalCekirdegi {
         }
     }
 
+    /** Kapanışla gelen karşı kodları (nesil sırasıyla). */
+    val kapanisKodlari = mutableListOf<Int?>()
+
     @Synchronized
-    override fun baglantiKapandi(nesil: ULong) {
+    override fun baglantiKapandi(nesil: ULong, kod: Int?) {
         olaylar += "kapandi $nesil"
+        kapanisKodlari += kod
         if (guncel?.first == nesil) guncel = null
     }
 
@@ -183,8 +189,8 @@ class SahteCekirdek : KanalCekirdegi {
     }
 
     /** Durumu değiştirip gözlemcilere `baglanti` değişimi bildirir (motorun yapacağı gibi). */
-    fun durumYaz(asama: BaglantiAsamasi, kuyrukta: Int) {
-        synchronized(this) { durum = durumOlustur(asama, kuyrukta) }
+    fun durumYaz(asama: BaglantiAsamasi, kuyrukta: Int, surum: SurumUyusmazligi? = null) {
+        synchronized(this) { durum = durumOlustur(asama, kuyrukta, surum) }
         val d = Degisim(emptyList(), false, false, true, false, emptyList())
         gozlemciler.toList().forEach { it.degisti(d) }
     }
@@ -198,7 +204,8 @@ class SahteCekirdek : KanalCekirdegi {
     fun kapanislar(): List<String> = olaylar.filter { it.startsWith("kapandi") }
 
     companion object {
-        fun durumOlustur(asama: BaglantiAsamasi, kuyrukta: Int) = BaglantiDurumu(asama, kuyrukta, 0, null, null)
+        fun durumOlustur(asama: BaglantiAsamasi, kuyrukta: Int, surum: SurumUyusmazligi? = null) =
+            BaglantiDurumu(asama, kuyrukta, 0, null, if (surum != null) AjandaKanalHatasi.PROTOKOL_UYUMSUZ else null, surum)
     }
 }
 

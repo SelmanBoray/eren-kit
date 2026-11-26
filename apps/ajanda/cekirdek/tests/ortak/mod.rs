@@ -729,6 +729,21 @@ impl Hat {
         Hat { c, yol: yol.clone(), kimlik, zaman, alarm, gozlemci, pc, baglanti: None, _dosya: GeciciDosya(yol) }
     }
 
+    /// Var olan bir yerel veritabanının üstüne (yükseltme): `sql` dosyaya yazılır, sonra çekirdek açılır.
+    pub fn sql_depoyla(ad: &str, sql: &str) -> Hat {
+        let yol = gecici_yol(ad);
+        let dosya = GeciciDosya(yol.clone());
+        rusqlite::Connection::open(&yol).unwrap().execute_batch(sql).unwrap();
+        let zaman = Arc::new(SahteZaman::yeni(SIMDI));
+        let kimlik = Arc::new(SahteKimlik::default());
+        let alarm = Arc::new(SahteAlarm::default());
+        let gozlemci = Arc::new(SahteGozlemci::default());
+        let c = Cekirdek::ac(yol.clone(), kimlik.clone(), zaman.clone(), alarm.clone()).unwrap();
+        c.gozlemci_ekle(gozlemci.clone());
+        let pc = SahtePc::yeni("d_pc1", zaman.clone());
+        Hat { c, yol, kimlik, zaman, alarm, gozlemci, pc, baglanti: None, _dosya: dosya }
+    }
+
     /// Süreç öldü ve yeniden açıldı: bağlantı kapanış haberi verilmeden çekirdek düşer. Android'in
     /// alarmları süreçten bağımsızdır (sahte alarm aynı kalır).
     pub fn sureci_oldur_ve_ac(&mut self) {
@@ -755,7 +770,7 @@ impl Hat {
     /// Bağlantı koptu (iki taraf da kapanışı görür).
     pub fn kopar(&mut self) {
         if let Some(b) = self.baglanti.take() {
-            self.c.baglanti_kapandi(b.nesil).unwrap();
+            self.c.baglanti_kapandi(b.nesil, None).unwrap();
         }
     }
 

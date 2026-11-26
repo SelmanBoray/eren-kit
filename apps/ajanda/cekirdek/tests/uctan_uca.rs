@@ -104,7 +104,7 @@ fn eslestirme_reddi_ve_pc_imzasi_gecersiz() {
     assert_eq!((d.asama, d.son_hata), (BaglantiAsamasi::Kopuk, Some(AjandaKanalHatasi::ImzaGecersiz)));
     // Kapanırken gelen başka çerçeve yok sayılır.
     h.c.cerceve_geldi(nesil, ajanda_cekirdek::model::AjandaAsagi::Esitlendi { rev: 1 }.kodla()).unwrap();
-    h.c.baglanti_kapandi(nesil).unwrap();
+    h.c.baglanti_kapandi(nesil, None).unwrap();
     assert_eq!(h.c.baglanti_durumu().unwrap().asama, BaglantiAsamasi::Kopuk);
 }
 
@@ -417,7 +417,7 @@ fn eski_baglanti_neslinin_gec_cercevesi_yok_sayilir() {
     let k = h.pc.disaridan_ekle("k_gec", &govde("Geç", None), false);
     h.c.cerceve_geldi(eski, asagi(ajanda_cekirdek::model::AjandaAsagi::Kayit { kayit: k })).unwrap();
     assert_eq!(h.c.kayit("k_gec".into()).unwrap(), None);
-    h.c.baglanti_kapandi(eski).unwrap();
+    h.c.baglanti_kapandi(eski, None).unwrap();
     assert!(h.canli_mi(), "eski neslin kapanışı yenisini düşürmez");
 }
 
@@ -481,7 +481,7 @@ fn kayit_degisiklikleri_alarm_planina_yansir() {
 fn sekmeler_taslaklar_ve_siralama() {
     let mut h = eslesmis("sekme");
     h.kopar();
-    let gun = |tarih: &str| AjandaZamani::Gun { tarih: tarih.into(), saat_dilimi: IST.into(), ifade: None };
+    let gun = |tarih: &str| AjandaZamani::Gun { tarih: tarih.into(), gun_bolumu: None, saat_dilimi: IST.into(), ifade: None };
     let donem = AjandaZamani::Donem { baslangic: "2026-11-25".into(), bitis: "2026-11-27".into(), saat_dilimi: IST.into(), ifade: None };
     let belirsiz = AjandaZamani::Belirsiz { ifade: "bir ara".into() };
     for (ad, z) in [
@@ -684,7 +684,7 @@ fn cerceve_islenirken_hata_baglantiyi_kapattirir_yeniden_baglanilir() {
     assert_eq!((d.asama, d.son_hata), (BaglantiAsamasi::Kopuk, Some(AjandaKanalHatasi::IcHata)));
     // Kapanırken gelen çerçeve yok sayılır; Kotlin kapanışı bildirir, yeniden bağlanılır.
     h.c.cerceve_geldi(nesil, asagi(ajanda_cekirdek::model::AjandaAsagi::Esitlendi { rev: 1 })).unwrap();
-    h.c.baglanti_kapandi(nesil).unwrap();
+    h.c.baglanti_kapandi(nesil, None).unwrap();
     h.baglan();
     assert!(h.canli_mi());
     assert!(h.c.kayit("k_pc".into()).unwrap().is_some(), "PC'deki kayıt indi");
@@ -702,7 +702,7 @@ fn cerceve_islenirken_hata_baglantiyi_kapattirir_yeniden_baglanilir() {
     assert!(h.c.cerceve_geldi(nesil, sonuc).is_err());
     assert!(t.kapatildi.lock().unwrap().is_some(), "taşıma kapattırıldı");
     assert_eq!(h.c.baglanti_durumu().unwrap().asama, BaglantiAsamasi::Kopuk);
-    h.c.baglanti_kapandi(nesil).unwrap();
+    h.c.baglanti_kapandi(nesil, None).unwrap();
     assert!(matches!(h.c.eslesme_durumu().unwrap(), EslesmeDurumu::Eslesti { .. }), "eşleşme kalıcı");
     h.baglan();
     assert!(h.canli_mi());

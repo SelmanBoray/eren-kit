@@ -3,6 +3,7 @@
 Yalnız Android. Sözleşme: `apps/phone/docs/AJANDA.md` (özellikle "Kanal akışı", "Zaman ve hatırlatma",
 "Ekiplerin gereksinimleri → Uygulama"); şemaların başvurusu `apps/phone/protocol/src/ajanda*.ts`.
 Bu belge iş bölümünü, modül/paket düzenini ve ikinci dalganın iş parçalarını tanımlar; kod içermez.
+Uygulama sözleşmenin **sürüm 2**'sini (`AJANDA_SURUMU` = 2) konuşur; v2'de değişenler "Sürüm 2" bölümündedir.
 Her agent önce "İş bölümü"nü, sonra kendi bölümünü (R1..R4, K1..K4) ve "Ortak dosyalar"ı okur.
 
 ## İş bölümü
@@ -80,12 +81,15 @@ kopru/              Kotlin yüzeyi: #[uniffi::export] YALNIZ burada             
 tests/vektorler.rs  dil bağımsız vektör düzeneği (harness=false)               [şef, dondurulmuş]
 tests/uctan_uca.rs  köprü yüzeyi + sahte kabuklar + sahte PC ile senaryolar     [R4]
 tests/buyuk_kopya.rs  büyük kopyada süre ölçümü (AJANDA_OLCUM_ADET)            [R4]
+tests/yukseltme.rs  v1 yerel veritabanından yükseltme, sürüm uyuşmazlığı        [v2]
+tests/veri/v1_depo.sql  sürüm 1 kodunun ürettiği veritabanının dökümü (fikstür) [v2]
 tests/ortak/        sahte kabuklar ve `/ajanda` konuşan sahte PC servisi        [R4]
 ```
 *Model hatası bulunursa düzeltme şefin sırasıyla yapılır (aşağı bak); model tipleri köprüden de geçer.
 
 Kayıt, zaman, hatırlatma, tekrar ve kapalı listeler `uniffi::Record/Enum` türetir: Kotlin aynı tipi görür
-(`AjandaKaydi`, `AjandaZamani.An(tarih, saat, sureDk, saatDilimi, ifade)`, `KayitTuru.RANDEVU`...).
+(`AjandaKaydi`, `AjandaZamani.An(tarih, saat, sureDk, saatDilimi, ifade)`,
+`AjandaZamani.Gun(tarih, gunBolumu, saatDilimi, ifade)`, `KayitTuru.RANDEVU`, `GunBolumu.AKSAM`...).
 `AjandaDegisiklik`/`AjandaParca` (üç halli alanlar) köprüye çıkmaz: arayüz tam gövde verir
 (`duzenle(kayitId, temel, govde)`), fark Rust'ta hesaplanır.
 
@@ -195,8 +199,49 @@ bir yazma arayüzü bekletmez. Bellek içi veritabanında (testler) motor okur.
 `cargo test` içinde `tests/vektorler.rs` her bölümü çalıştırır ve tablo basar (geçti/kaldı/bekliyor,
 bekleyen parçanın adı). KALDI ya da dosyada tanınmayan bölüm -> çıkış 1. İlk dalga sonu: 267 geçti
 (173/173 mesaj + model kuralları), 132 bekliyor, `imza` (1) Kotlin'e devredildi. İkinci dalga sonu
-(birleşim): **399 geçti, 0 bekliyor, 0 kaldı**, `imza` (1) Kotlin'de (`kimlik/ImzaVektoruTest`).
+(birleşim): **399 geçti, 0 bekliyor, 0 kaldı**, `imza` (1) Kotlin'de (`kimlik/ImzaVektoruTest`). Sürüm 2:
+**464 geçti, 0 bekliyor, 0 kaldı** (yeni bölümler `gun_hatirlatmasi` 9, `gece_teyidi` 16; `gece_teyidi` servis
+kuralıdır, uygulama `kural::dayanak::gece_teyidi_eksik_mi` ile yalnız sınar). Düzenek dosyada tanımadığı
+bölümde ve `surum` uyuşmazlığında çıkış 1 verir: sözleşmeye bölüm eklenince düzenek de eklenir.
 
+## Sürüm 2 (sözleşme `docs/AJANDA.md` "Sürüm 2")
+
+- **Model.** `AjandaZamani::Gun.gun_bolumu: Option<GunBolumu>` (kapalı liste; `an`/`donem`'de şema reddeder;
+  yoksa JSON v1 ile bayt bayt aynı, tekil anahtar değişmez). `AjandaRetNedeni` ve `KuyrukRetNedeni`'ne
+  `gece_teyidi_gerekli`; `AJANDA_SINIRLARI.GECE_ARALIGI_DK`; `AJANDA_SURUMU` = 2 (çerçeve, `pair_request`, QR).
+  İmza öneki `eren-ajanda-auth-v1` sabit (sürümden türemez).
+- **Kural (`kural/hatirlatma.rs`).** `once` saatsiz gün kaydında gün hatırlatmasıdır:
+  `gun_hatirlatmasi_yereli(gün, dk, bölüm)` = gün `− ⌊dk/1440⌋`, saat `GunBolumu::hatirlatma_saati` (08/11/13/17/20)
+  ya da 09:00, kaydın diliminde `AnCevirici` ile. Haller ve kurulacaklar `gun_hatirlatmasi{tarih, saat}`,
+  özet `gun_hatirlatmasi{tarih, saat, gecti}` taşır. Tetik her senkronda kaydın o anki zamanından
+  hesaplandığı için gün/bölüm değişince alarm kendiliğinden taşınır (eski `(kayit_id, tetik_ms)` iptal),
+  saat gelince saatli kurala geçer, kalkınca döner; `donem`/`belirsiz`/zamansız bekler. Alarm motoru
+  (`motor/alarm.rs`) değişmedi: kuralı kullanır.
+- **Yerel veritabanı: göç yok.** Şema 3 kalır; v1 kayıt satırları v2 şemasıyla olduğu gibi okunur, kuyruk
+  gövdeleri (`islem_json`, zarfsız) ve eşleşme (`meta.eslesme`, Keystore anahtarı) aynen geçerlidir.
+  Güncellemeden sonra alarmlar yeni kurala göre `MY_PACKAGE_REPLACED` -> `alarmlariYenidenKur(PAKET_GUNCELLENDI)`
+  (ayrıca her açılışta ve periyodik işte) ile yeniden planlanır: v1 alarmları aynı `alarm_no` ile kalır,
+  saatsiz günler 09:00'ını alır. Sınama: `tests/yukseltme.rs` (fikstür `tests/veri/v1_depo.sql`, sürüm 1
+  kodunun sahte PC ile ürettiği veritabanının dökümü).
+- **Sürüm uyuşmazlığı.** Başka `v`'li çerçeve (çözücüde `protokol_uyumsuz`), `error{protokol_uyumsuz}` ya da
+  karşının kapanış kodu 1002: `BaglantiDurumu.son_hata = protokol_uyumsuz` ve `surum_uyusmazligi`
+  (`ServisEski`: karşı `v` küçük, `UygulamaEski`: büyük, `Bilinmiyor`). Kayıt, kuyruk, alarm değişmez; `CANLI`'da,
+  başka kanal hatasında ve eşleşme değişiminde temizlenir. Kotlin (`ag/BaglantiDenetcisi`) artan beklemeli
+  denemeyi bırakır: görünürken 30 dk'da bir (`AgAyarlari.surumBeklemeMs`), `basla`/`hemenDene` hemen bir kez, ağ
+  değişimi denemez, arka plan oturumu `SURUM_UYUSMAZ` ile biter. Ekran (`DurumGostergesi`) "PC'yi güncelleyin" /
+  "Uygulamayı güncelleyin" / "Sürüm uyuşmuyor" der; eşleştirme ekranı başka sürümün QR'ını açıklamayla reddeder.
+- **Köprü yüzeyi (v2'de değişen).** `AjandaZamani.Gun` yeni alan; yeni `GunBolumu`; `BaglantiDurumu.surumUyusmazligi`
+  + `SurumUyusmazligi`; `baglantiKapandi(nesil, kapanisKodu: Int?)` (OkHttp `onClosing` kodu); yeni
+  `Cekirdek.hatirlatmaOnizlemesi(govde) -> HatirlatmaOnizlemesi{kurulacak, saatsiz, gecmis, ilkTetikMs,
+  gunHatirlatmasi{tarih, saat, gecti}}` (motor kilidini almaz; form ve ayrıntı notu); serbest
+  `gunHatirlatmaSaati(GunBolumu?)`.
+- **Arayüz.** Form (`KayitFormu`, `KayitEkrani`): saatsiz günde isteğe bağlı "Günün bölümü" yongaları (saat
+  seçilince kalkar, aynısına dokunmak kaldırır); hatırlatma seçenekleri saatsizde "O gün" ve "1 gün önce";
+  not çekirdeğin önizlemesinden: "Cuma 17:00'de hatırlatılır.", bölümsüzde "O gün 09:00'da hatırlatılır
+  (Cuma).", geçtiyse "Bu kayıt için bildirim gelmeyecek…", taslakta "Taslak onaylanınca: …". Liste (`Liste`):
+  saatsiz gün saat sırasına girmez, günün başında bölüm sırasıyla, saat yerine bölüm etiketi ("Akşam",
+  "Cumartesi · akşam"); hatırlatma saati listede yazılmaz (ayrıntı/form notunda). Bildirim saat uydurmaz:
+  "Görev · bugün akşam".
 ## İkinci dalga iş parçaları
 
 Ortak: Türkçe ad ve yorum; kişisel veri yok; her parça yalnız kendi dosyalarına yazar; imzalar değişmez

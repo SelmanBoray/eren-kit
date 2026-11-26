@@ -123,6 +123,46 @@ pub struct BaglantiDurumu {
     pub son_esitlenme_ms: Option<i64>,
     /// Son kanal hatası (`error` çerçevesi, imza reddi); kullanıcıya gösterilebilir.
     pub son_hata: Option<AjandaKanalHatasi>,
+    /// v2: `son_hata` `protokol_uyumsuz` iken (çerçeve, `error` ya da kapanış 1002) hangi tarafın eski
+    /// olduğu. Doluyken kabuk yeniden bağlanmayı geri çeker ve "güncelle" durumunu gösterir; `CANLI`'da,
+    /// başka bir kanal hatasında ve eşleşme değişiminde temizlenir. Bellek içidir (süreç ölünce yeniden denenir).
+    pub surum_uyusmazligi: Option<SurumUyusmazligi>,
+}
+
+/// Sürüm uyuşmazlığının yönü (`AJANDA_SURUMU` karşılaştırması).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum SurumUyusmazligi {
+    /// Karşı taraf daha eski `v` konuşuyor: PC'deki servis güncellenmeli.
+    ServisEski,
+    /// Karşı taraf daha yeni `v` konuşuyor: uygulama güncellenmeli.
+    UygulamaEski,
+    /// Yön bilinmiyor (`error{protokol_uyumsuz}` ya da yalnız kapanış 1002): eski olan güncellenmeli.
+    Bilinmiyor,
+}
+
+/// Saatsiz gün kaydının gün hatırlatması (v2): kaydın diliminde yerel gün ve saat; `gecti`: tetiği geçti,
+/// bildirim gelmeyecek. Kaydın saati DEĞİLDİR (form ve ayrıntı "Cuma 17:00'de hatırlatılır" der).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct GunHatirlatmasi {
+    pub tarih: String,
+    pub saat: String,
+    pub gecti: bool,
+}
+
+/// Bir gövdenin hatırlatmalarının şimdiye göre özeti (`hatirlatmaOzeti` ve kurulacak ilk tetik): form ve
+/// ayrıntı görünümü bununla "ne zaman hatırlatılır"ı söyler. Kural çekirdektedir (tek kaynak).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct HatirlatmaOnizlemesi {
+    /// Tetiği gelecekte olan hatırlatma sayısı (aynı tetikli olanlar ayrı sayılır).
+    pub kurulacak: u32,
+    /// Bekleyen `once` (dönem, belirsiz ya da zamansız kayıtta).
+    pub saatsiz: u32,
+    /// Tetiği geçmiş (hiç çalmayacak) hatırlatma sayısı.
+    pub gecmis: u32,
+    /// En yakın gelecek tetik (ms), varsa.
+    pub ilk_tetik_ms: Option<i64>,
+    /// Saatsiz gün kaydında: sıradaki gün hatırlatması, yoksa en son geçen.
+    pub gun_hatirlatmasi: Option<GunHatirlatmasi>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]

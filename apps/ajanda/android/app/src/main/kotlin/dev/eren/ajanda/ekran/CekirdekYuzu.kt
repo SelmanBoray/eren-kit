@@ -10,6 +10,7 @@ import dev.eren.ajanda.cekirdek.EslesmeDurumu
 import dev.eren.ajanda.cekirdek.GecmisSayfasi
 import dev.eren.ajanda.cekirdek.GirdiYolu
 import dev.eren.ajanda.cekirdek.Hatirlatma
+import dev.eren.ajanda.cekirdek.HatirlatmaOnizlemesi
 import dev.eren.ajanda.cekirdek.IslemTuru
 import dev.eren.ajanda.cekirdek.KayitDurumu
 import dev.eren.ajanda.cekirdek.KayitGorunumu
@@ -42,6 +43,8 @@ interface CekirdekYuzu {
     fun gecmis(kayitId: String): GecmisSayfasi?
     fun govdeyiHazirla(govde: KayitGovdesi): KayitGovdesi
     fun varsayilanHatirlatmalar(): List<Hatirlatma>
+    /** Gövde şimdi kaydedilse hatırlatması ne zaman çalar (v2; form notu). Çekirdeğin kuralıyla. */
+    fun hatirlatmaOnizlemesi(govde: KayitGovdesi): HatirlatmaOnizlemesi
 
     class Gercek(private val c: Cekirdek) : CekirdekYuzu {
         override fun liste(sekme: Sekme, kapalilarDahil: Boolean) = c.liste(ListeSorgusu(sekme, kapalilarDahil))
@@ -61,6 +64,7 @@ interface CekirdekYuzu {
         override fun gecmis(kayitId: String) = c.gecmis(kayitId)
         override fun govdeyiHazirla(govde: KayitGovdesi) = dev.eren.ajanda.cekirdek.govdeyiHazirla(govde)
         override fun varsayilanHatirlatmalar() = dev.eren.ajanda.cekirdek.varsayilanHatirlatmalar()
+        override fun hatirlatmaOnizlemesi(govde: KayitGovdesi) = c.hatirlatmaOnizlemesi(govde)
     }
 }
 

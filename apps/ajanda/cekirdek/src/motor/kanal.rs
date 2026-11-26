@@ -10,6 +10,11 @@
 //! kapatılır. Çerçeve işlenirken depo hatası olursa da kapatılır: yarım telafi bir sonraki bağlantıda
 //! baştan yapılır.
 //!
+//! Sürüm uyuşmazlığı (v2, `docs/AJANDA.md` "Sürüm 2"): başka `v`'li çerçeve (çözücüde `protokol_uyumsuz`),
+//! `error{protokol_uyumsuz}` ya da kapanış kodu 1002 `son_hata = protokol_uyumsuz` ve `surum_uyusmazligi`
+//! yazar (karşı `v` küçükse `ServisEski`, büyükse `UygulamaEski`, okunamıyorsa `Bilinmiyor`). Hiçbir kayıt,
+//! kuyruk ya da alarm değişmez; yeniden bağlanmayı geri çekmek kabuğun işidir.
+//!
 //! Telafi (`kural::esitleme` ile aynı anlam, SQLite'ta: `depo/kopya.rs`):
 //! - `welcome{tam:false}`: `depo_id` yazılır; gelen `kayit`'ler sunucu kopyasına (yalnız büyük revizyon)
 //!   ve görünen kopyaya `TELAFI_TAMPONU`'luk işlemlerle yazılır, `son_rev` her işlemde ilerler (kesilen
@@ -34,7 +39,8 @@ use super::iyimser::{gorunen_yenile, islem_coz, istenen_govde};
 use super::{Etkiler, Motor, Ortam, TELAFI_TAMPONU};
 use crate::depo::{KopyaTablosu, KuyrukSatiri, RetSatiri, anahtar};
 use crate::hata::CekirdekHatasi;
-use crate::kopru::tipler::{BaglantiAsamasi, BaglantiDurumu, GecmisSatiri, GecmisSayfasi};
+use crate::kopru::tipler::{BaglantiAsamasi, BaglantiDurumu, GecmisSatiri, GecmisSayfasi, SurumUyusmazligi};
+use crate::model::sinirlar::AJANDA_SURUMU;
 use crate::kural::kuyruk::{KuyrukKarari, KuyrukOlayi, ajanda_kuyruk_karari};
 use crate::model::json::Yazici;
 use crate::model::kanonik::{base64_coz, base64_yaz};
@@ -42,6 +48,20 @@ use crate::model::{
     AjandaAsagi, AjandaEslestirmeQr, AjandaGecmisGirdisi, AjandaKanalHatasi, AjandaKaydi,
     AjandaRetNedeni, AjandaYukari, ImzaRolu, KuyrukRetNedeni, ajanda_asagi_coz, ajanda_kimlik_imza_metni,
 };
+
+/// WebSocket kapanış kodu 1002 (protokol hatası): servis bunu yalnız `protokol_uyumsuz` ile kullanır.
+const KAPANIS_PROTOKOL_HATASI: i32 = 1002;
+
+/// Sürüm uyuşmazlığının yönü: çözülemeyen çerçevenin `v`'si bizimkinden küçükse servis eski, büyükse
+/// uygulama eski; okunamıyorsa bilinmez.
+fn surum_yonu(metin: &str) -> SurumUyusmazligi {
+    let v = serde_json::from_str::<serde_json::Value>(metin).ok().and_then(|d| d.get("v")?.as_f64());
+    match v {
+        Some(v) if v < AJANDA_SURUMU as f64 => SurumUyusmazligi::ServisEski,
+        Some(v) if v > AJANDA_SURUMU as f64 => SurumUyusmazligi::UygulamaEski,
+        _ => SurumUyusmazligi::Bilinmiyor,
+    }
+}
 
 /// Bağlantının bellek içi aşaması.
 pub(crate) enum Asama {
@@ -137,6 +157,11 @@ impl Motor {
 
     fn kanal_hatasi(&mut self, e: &mut Etkiler, kod: AjandaKanalHatasi, neden: &str) {
         self.son_hata = Some(kod);
+        if kod != AjandaKanalHatasi::ProtokolUyumsuz {
+            self.surum_uyusmazligi = None;
+        } else if self.surum_uyusmazligi.is_none() {
+            self.surum_uyusmazligi = Some(SurumUyusmazligi::Bilinmiyor);
+        }
         e.degisim.baglanti = true;
         self.kapat(e, neden);
     }
@@ -145,7 +170,7 @@ impl Motor {
     /// Önceki süreçten sonucu gelmeden kalmış işlem burada `Kopma` sayılır.
     pub(crate) fn baglanti_acildi(&mut self, o: &Ortam, e: &mut Etkiler) -> Result<(), CekirdekHatasi> {
         if !matches!(self.asama, Asama::Kopuk) {
-            self.baglanti_kapandi(o, e)?;
+            self.baglanti_kapandi(o, e, None)?;
         }
         self.kopmalari_isle(o, e)?;
         if let Some(qr) = self.bekleyen_qr()? {
@@ -185,6 +210,8 @@ impl Motor {
         let m = match ajanda_asagi_coz(metin) {
             Ok(m) => m,
             Err(h) => {
+                self.surum_uyusmazligi =
+                    (h.kod.kanal_hatasi() == AjandaKanalHatasi::ProtokolUyumsuz).then(|| surum_yonu(metin));
                 self.kanal_hatasi(e, h.kod.kanal_hatasi(), h.kod.ad());
                 return Ok(());
             }
@@ -203,6 +230,8 @@ impl Motor {
     fn cerceveyi_isle(&mut self, o: &Ortam, e: &mut Etkiler, m: AjandaAsagi) -> Result<(), CekirdekHatasi> {
         match (self.tur(), m) {
             (_, AjandaAsagi::Error { code, .. }) => {
+                // Aynı sürümü konuşan karşı taraf uyuşmazlık diyorsa yön bilinmez.
+                self.surum_uyusmazligi = None;
                 self.kanal_hatasi(e, code, code.ad());
                 Ok(())
             }
@@ -393,6 +422,7 @@ impl Motor {
             }
         }
         self.son_hata = None;
+        self.surum_uyusmazligi = None;
         e.degisim.baglanti = true;
         self.asama = Asama::Canli;
         self.kuyruk_ilerlet(o, e)
@@ -506,8 +536,17 @@ impl Motor {
     }
 
     /// Soket kapandı: süren tam telafi atılır, artımlı tampon yazılır (gelenler geçerli), yollanmış işlem
-    /// `Kopma` sayılır (`kural::kuyruk`), bekleyen geçmiş istekleri düşer.
-    pub(crate) fn baglanti_kapandi(&mut self, o: &Ortam, e: &mut Etkiler) -> Result<(), CekirdekHatasi> {
+    /// `Kopma` sayılır (`kural::kuyruk`), bekleyen geçmiş istekleri düşer. `kapanis_kodu`: karşı tarafın
+    /// kapanış çerçevesinin kodu (biliniyorsa). 1002 sürüm uyuşmazlığıdır (servis 1002'yi yalnız
+    /// `protokol_uyumsuz`'da kullanır): `error` çerçevesi gelmemiş olsa da `son_hata`'ya yazılır.
+    pub(crate) fn baglanti_kapandi(&mut self, o: &Ortam, e: &mut Etkiler, kapanis_kodu: Option<i32>) -> Result<(), CekirdekHatasi> {
+        // Motor bu bağlantıyı kendisi kapattıysa (`Kapaniyor`: çözülen uyuşmazlık çerçevesi yönü zaten yazdı)
+        // kapanış kodu yeni bilgi değildir; değilse bu bağlantının uyuşmazlığı yalnız koddan bilinir.
+        if kapanis_kodu == Some(KAPANIS_PROTOKOL_HATASI) && !matches!(self.asama, Asama::Kapaniyor | Asama::Kopuk) {
+            self.son_hata = Some(AjandaKanalHatasi::ProtokolUyumsuz);
+            self.surum_uyusmazligi = Some(SurumUyusmazligi::Bilinmiyor);
+            e.degisim.baglanti = true;
+        }
         let eski = std::mem::replace(&mut self.asama, Asama::Kopuk);
         if eski.disari() != BaglantiAsamasi::Kopuk {
             e.degisim.baglanti = true;
@@ -537,6 +576,7 @@ impl Motor {
             ret_listesinde: i32::try_from(self.depo.ret_sayisi()?).unwrap_or(i32::MAX),
             son_esitlenme_ms: self.depo.meta_oku(anahtar::SON_ESITLENME_MS)?.and_then(|s| s.parse().ok()),
             son_hata: self.son_hata,
+            surum_uyusmazligi: self.surum_uyusmazligi,
         })
     }
 

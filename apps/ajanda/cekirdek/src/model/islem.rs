@@ -40,6 +40,8 @@ sabit_liste! {
         KayitSiniri = "kayit_siniri",
         SentetikTurdaIzinsiz = "sentetik_turda_izinsiz",
         DayanakUyusmuyor = "dayanak_uyusmuyor",
+        /// v2: yalnız araç yolunda (gece aralığında teyitsiz takvime bağlı çağrı); kabloda gelmez ama çözülür.
+        GeceTeyidiGerekli = "gece_teyidi_gerekli",
         GecersizIslem = "gecersiz_islem",
         IcHata = "ic_hata",
     }
@@ -58,6 +60,8 @@ sabit_liste! {
         KayitSiniri = "kayit_siniri",
         SentetikTurdaIzinsiz = "sentetik_turda_izinsiz",
         DayanakUyusmuyor = "dayanak_uyusmuyor",
+        /// v2: yalnız araç yolunda (gece aralığında teyitsiz takvime bağlı çağrı); kabloda gelmez ama çözülür.
+        GeceTeyidiGerekli = "gece_teyidi_gerekli",
         GecersizIslem = "gecersiz_islem",
         IcHata = "ic_hata",
         TeslimEdilemedi = "teslim_edilemedi",

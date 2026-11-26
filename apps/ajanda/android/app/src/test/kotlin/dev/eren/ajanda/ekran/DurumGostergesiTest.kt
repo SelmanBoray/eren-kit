@@ -8,6 +8,7 @@ import dev.eren.ajanda.cekirdek.AjandaKanalHatasi
 import dev.eren.ajanda.cekirdek.BaglantiAsamasi
 import dev.eren.ajanda.cekirdek.BaglantiDurumu
 import dev.eren.ajanda.cekirdek.EslesmeDurumu
+import dev.eren.ajanda.cekirdek.SurumUyusmazligi
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -20,8 +21,8 @@ class DurumGostergesiTest {
     private val simdi = ZonedDateTime.of(2026, 11, 26, 10, 0, 0, 0, dilim).toInstant().toEpochMilli()
     private val eslesti = EslesmeDurumu.Eslesti("d_ornek", "100.101.102.103", 8765)
 
-    private fun b(asama: BaglantiAsamasi, kuyrukta: Int = 0, son: Long? = null, hata: AjandaKanalHatasi? = null) =
-        BaglantiDurumu(asama, kuyrukta, 0, son, hata)
+    private fun b(asama: BaglantiAsamasi, kuyrukta: Int = 0, son: Long? = null, hata: AjandaKanalHatasi? = null, surum: SurumUyusmazligi? = null) =
+        BaglantiDurumu(asama, kuyrukta, 0, son, hata, surum)
 
     private fun g(e: EslesmeDurumu?, bd: BaglantiDurumu?, adres: Boolean = true, hata: String? = null) =
         DurumGostergesi.hesapla(e, bd, adres, simdi, dilim, hata)
@@ -123,5 +124,23 @@ class DurumGostergesiTest {
             setOf(HatirlatmaSorunu.KACIRILAN_KANALI_KAPALI, HatirlatmaSorunu.PIL_OPTIMIZASYONU),
             uyarilar.filter { !it.engel }.map { it.sorun }.toSet(),
         )
+    }
+
+    @Test
+    fun surumUyusmazligiGuncelleDerYonuSoyler() {
+        val es = EslesmeDurumu.Eslesti("c", "100.64.0.1", 8787)
+        fun g(s: SurumUyusmazligi) = DurumGostergesi.hesapla(
+            es, b(BaglantiAsamasi.KOPUK, kuyrukta = 2, hata = AjandaKanalHatasi.PROTOKOL_UYUMSUZ, surum = s), true, 0, ZoneId.of("UTC"),
+        )
+        val servis = g(SurumUyusmazligi.SERVIS_ESKI)
+        assertEquals("PC'yi güncelleyin", servis.kisa)
+        assertEquals(DurumGostergesi.Ton.UYARI, servis.ton)
+        assertEquals("yeniden eşleştirme istenmez", DurumGostergesi.Eylem.YOK, servis.eylem)
+        assertTrue(servis.ayrinti.contains("eski") && servis.ayrinti.contains("2 değişiklik"))
+        assertEquals("Uygulamayı güncelleyin", g(SurumUyusmazligi.UYGULAMA_ESKI).kisa)
+        assertEquals("Sürüm uyuşmuyor", g(SurumUyusmazligi.BILINMIYOR).kisa)
+        // Yeniden denenirken (el sıkışma) sıradan "bağlanıyor".
+        val dene = DurumGostergesi.hesapla(es, b(BaglantiAsamasi.EL_SIKISMA, surum = SurumUyusmazligi.SERVIS_ESKI), true, 0, ZoneId.of("UTC"))
+        assertEquals("Bağlanıyor…", dene.kisa)
     }
 }

@@ -5,6 +5,7 @@ import dev.eren.ajanda.alarm.HatirlatmaSorunu
 import dev.eren.ajanda.cekirdek.BaglantiAsamasi
 import dev.eren.ajanda.cekirdek.BaglantiDurumu
 import dev.eren.ajanda.cekirdek.EslesmeDurumu
+import dev.eren.ajanda.cekirdek.SurumUyusmazligi
 import java.time.ZoneId
 
 /**
@@ -69,6 +70,18 @@ object DurumGostergesi {
         val b = baglanti ?: return Gosterge("…", "Bağlantı durumu okunuyor.$reddedildiNotu", Ton.SURUYOR, Eylem.YOK)
         val hata = b.sonHata?.let { EkranMetinleri.kanalHatasi(it) }
         val hataSatiri = hata?.let { "\nSon hata: ${it.first}" } ?: ""
+        val surum = b.surumUyusmazligi
+        if (surum != null && b.asama == BaglantiAsamasi.KOPUK) {
+            // Sürüm uyuşmazlığı (v2): yeniden bağlanma geri çekilir; güncellenince kendiliğinden bağlanır.
+            val (kisa, ne) = surumMetni(surum)
+            return Gosterge(
+                kisa,
+                "$ne Kayıtlarınız, bekleyen değişiklikler ve hatırlatmalar telefonda duruyor; hatırlatmalar " +
+                    "PC'den bağımsız çalmaya devam eder. Güncellemeden sonra aynı eşleşmeyle bağlanılır, yeniden " +
+                    "eşleştirme gerekmez.\n$sonEsitleme\n$bekleyenMetni$reddedildiNotu",
+                Ton.UYARI, Eylem.YOK,
+            )
+        }
         return when (b.asama) {
             BaglantiAsamasi.CANLI -> Gosterge(
                 if (bekleyen > 0) "Bağlı · $bekleyen gönderiliyor" else "Bağlı",
@@ -104,6 +117,15 @@ object DurumGostergesi {
     }
 }
 
+/** Sürüm uyuşmazlığının kısa ve uzun metni (yön çekirdekten: karşı tarafın konuştuğu sürüm). */
+fun surumMetni(s: SurumUyusmazligi): Pair<String, String> = when (s) {
+    SurumUyusmazligi.SERVIS_ESKI ->
+        "PC'yi güncelleyin" to "PC'deki ajanda servisi bu uygulamadan eski bir sürümde; bağlantı kurulamıyor. PC'deki eren'i güncelleyin."
+    SurumUyusmazligi.UYGULAMA_ESKI ->
+        "Uygulamayı güncelleyin" to "PC'deki ajanda servisi daha yeni bir sürümde; bu uygulama onunla konuşamıyor. Ajanda uygulamasını güncelleyin."
+    SurumUyusmazligi.BILINMIYOR ->
+        "Sürüm uyuşmuyor" to "Uygulama ile PC'deki ajanda servisi farklı sürümlerde; bağlantı kurulamıyor. Hangisi eskiyse onu güncelleyin."
+}
 /**
  * Hatırlatmaların çalmasını engelleyen sorunların gösterimi (saf). Engelleyen ilk sorun üstte şerit
  * olur; hepsi (bilgi düzeyindekiler dahil) dokununca açılan pencerede, her biri çözüm düğmesiyle.

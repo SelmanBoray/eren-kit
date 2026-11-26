@@ -28,6 +28,9 @@ enum class ArkaPlanSonucu {
 
     /** Çekirdek açılamadı ya da okunamadı. */
     HATA,
+
+    /** Uygulama ile servis farklı sürümde (`protokol_uyumsuz`): yeniden denemek boşuna, sıradaki dönem beklenir. */
+    SURUM_UYUSMAZ,
 }
 
 /**
@@ -39,6 +42,11 @@ enum class ArkaPlanSonucu {
  * Bütün durum yalnız [zaman]'ın tek iş parçacığında değişir; dış çağrılar oraya iş bırakıp hemen döner
  * (her iş parçacığından çağrılabilir, bloklamaz, tekrarlı ve eşzamanlı çağrıya dayanıklı). Çekirdek
  * çağrıları o iş parçacığında ve soketin okuma iş parçacığında yapılır; ana iş parçacığında hiç.
+ *
+ * Sürüm uyuşmazlığı (v2; çekirdek `BaglantiDurumu.surumUyusmazligi`): artan beklemeli yeniden deneme yapılmaz
+ * (sürüm kendiliğinden değişmez). Arayüz görünürken yalnız [AgAyarlari.surumBeklemeMs]'de bir dener; `basla`
+ * (uygulama yeniden öne geldi, kullanıcı belki güncelledi) ve `hemenDene` hemen bir kez dener; ağ değişimi
+ * denemez. Arka plan oturumu `SURUM_UYUSMAZ` ile hemen biter. `CANLI`'ya ulaşınca durum kalkar.
  */
 class BaglantiDenetcisi(
     private val cekirdekAl: () -> KanalCekirdegi,
@@ -120,6 +128,9 @@ class BaglantiDenetcisi(
 
     /** Art arda başarısız bağlantı sayısı; `CANLI`'da ve yeni ağda sıfırlanır. */
     private var deneme = 0
+
+    /** Son kapanış sürüm uyuşmazlığıydı (çekirdekten okundu); `CANLI`'da kalkar. */
+    private var surumUyusmaz = false
     private var periyodikKuruldu = false
     private val oturumlar = ArrayList<Oturum>()
 
@@ -156,6 +167,14 @@ class BaglantiDenetcisi(
             acilisZamani = null
             gunluk.bilgi("bağlantı bitti: $tur")
             if (tur == KapanisTuru.BIZ_KAPATTIK) return@korumali
+            if (surumUyusmazligiOku()) {
+                // Yeniden denemek boşuna: arka plan oturumları biter, arayüz "güncelle" der, uzun bekleme.
+                gunluk.bilgi("sürüm uyuşmazlığı: yeniden bağlanma geri çekildi")
+                oturumlariBitir(ArkaPlanSonucu.SURUM_UYUSMAZ)
+                if (bosaltiliyor) bosaltmayiBitir(kapat = true)
+                degerlendir()
+                return@korumali
+            }
             deneme++
             for (o in oturumlar.toList()) {
                 o.basarisiz++
@@ -210,7 +229,11 @@ class BaglantiDenetcisi(
         }
         if (hemen) beklemeyiIptal()
         if (bekleme != null) return
-        val ms = if (hemen) 0 else ayar.bekleme(deneme, rastgele())
+        val ms = when {
+            hemen -> 0
+            surumUyusmaz -> ayar.surumBeklemeMs
+            else -> ayar.bekleme(deneme, rastgele())
+        }
         if (ms <= 0) {
             bagla()
         } else {
@@ -282,7 +305,10 @@ class BaglantiDenetcisi(
             gunluk.uyari("bağlantı durumu okunamadı", e)
             return null
         }
-        if (d.asama == BaglantiAsamasi.CANLI) deneme = 0
+        if (d.asama == BaglantiAsamasi.CANLI) {
+            deneme = 0
+            surumUyusmaz = false
+        }
         if (d.asama == BaglantiAsamasi.CANLI && d.kuyrukta == 0) {
             if (oturumlar.isNotEmpty()) oturumlariBitir(ArkaPlanSonucu.ESITLENDI)
             if (bosaltiliyor) bosaltmayiBitir(kapat = true)
@@ -291,12 +317,24 @@ class BaglantiDenetcisi(
         return d
     }
 
+    /** Çekirdeğe göre son kapanış sürüm uyuşmazlığı mı; [surumUyusmaz]'ı günceller. */
+    private fun surumUyusmazligiOku(): Boolean {
+        val d = try {
+            cekirdek?.baglantiDurumu()
+        } catch (e: Exception) {
+            gunluk.uyari("bağlantı durumu okunamadı", e)
+            null
+        }
+        surumUyusmaz = d?.surumUyusmazligi != null
+        return surumUyusmaz
+    }
+
     private fun agDegisti(var_: Boolean) {
         agVar = var_
         if (var_) {
-            // Yeni ya da değişen ağ: eski bekleme anlamını yitirdi.
+            // Yeni ya da değişen ağ: eski bekleme anlamını yitirdi (sürüm uyuşmazlığı ağla değişmez: uzun bekleme sürer).
             deneme = 0
-            degerlendir(hemen = true)
+            degerlendir(hemen = !surumUyusmaz)
         } else {
             beklemeyiIptal()
         }

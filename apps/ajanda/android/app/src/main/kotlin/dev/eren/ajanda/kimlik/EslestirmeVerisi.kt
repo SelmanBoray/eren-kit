@@ -11,7 +11,7 @@ import java.security.MessageDigest
  *
  * Komutun çıktısı (`apps/phone/server/src/eslestir.ts` `kodMetni`):
  * ```
- * {"v":1,"kanal":"ajanda","host":...,"port":...,"kod":...,"server_public_key":...}
+ * {"v":2,"kanal":"ajanda","host":...,"port":...,"kod":...,"server_public_key":...}
  * Parmak izi: XXXX XXXX ...
  * Kod:XXXXXXXX  (5 dakika geçerli, tek kullanımlık)
  * Kapsam: ajanda (...)

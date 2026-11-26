@@ -3,6 +3,7 @@ package dev.eren.ajanda.ekran
 import dev.eren.ajanda.cekirdek.AjandaKanalHatasi
 import dev.eren.ajanda.cekirdek.AjandaYazar
 import dev.eren.ajanda.cekirdek.GecmisSatiri
+import dev.eren.ajanda.cekirdek.GunBolumu
 import dev.eren.ajanda.cekirdek.Hatirlatma
 import dev.eren.ajanda.cekirdek.KaynakYolu
 import dev.eren.ajanda.cekirdek.TurKokeni
@@ -122,6 +123,48 @@ object EkranMetinleri {
         else -> "$dk dk önce"
     }
 
+    /** Gün bölümünün adı (v2): "sabah", "öğle", "öğleden sonra", "akşam", "gece". */
+    fun gunBolumu(b: GunBolumu): String = when (b) {
+        GunBolumu.SABAH -> "sabah"
+        GunBolumu.OGLE -> "öğle"
+        GunBolumu.OGLEDEN_SONRA -> "öğleden sonra"
+        GunBolumu.AKSAM -> "akşam"
+        GunBolumu.GECE -> "gece"
+    }
+
+    /** Yongadaki ad: "Sabah", "Öğleden sonra". */
+    fun gunBolumuBuyuk(b: GunBolumu): String = gunBolumu(b).replaceFirstChar { it.uppercase() }
+
+    /** Hatırlatmanın günü: "bugün", "yarın", hafta içindeyse gün adı ("Cuma"), değilse "Cuma, 4 Aralık". */
+    fun hatirlatmaGunu(t: LocalDate, bugun: LocalDate): String {
+        goreliGun(t, bugun)?.let { return it }
+        val fark = ChronoUnit.DAYS.between(bugun, t)
+        return if (fark in 2..6) gunAdi(t.dayOfWeek) else uzunTarih(t, bugun)
+    }
+
+    /**
+     * Saatin bulunma eki, okunuşun son sözüne göre ünlü ve ünsüz uyumuyla: "17:00'de" (on yedi), "09:00'da"
+     * (dokuz), "13:00'te" (on üç), "14:30'da" (otuz), "10:40'ta" (kırk).
+     */
+    fun bulunmaEki(saat: String): String {
+        val p = saat.split(":")
+        val s = p.getOrNull(0)?.toIntOrNull() ?: return "'de"
+        val d = p.getOrNull(1)?.toIntOrNull() ?: 0
+        val son = when {
+            d == 0 -> if (s % 10 == 0) (s / 10) * 10 else s % 10
+            d % 10 == 0 -> d
+            else -> d % 10
+        }
+        return when (son) {
+            0 -> "'da" // sıfır
+            1, 2, 7, 8, 20, 50 -> "'de" // bir, iki, yedi, sekiz, yirmi, elli
+            3, 4, 5 -> "'te" // üç, dört, beş
+            6, 9, 10, 30 -> "'da" // altı, dokuz, on, otuz
+            40 -> "'ta" // kırk
+            else -> "'de"
+        }
+    }
+
     fun islem(i: IslemTuru): String = when (i) {
         IslemTuru.EKLE -> "Ekleme"
         IslemTuru.GUNCELLE -> "Düzenleme"
@@ -142,6 +185,7 @@ object EkranMetinleri {
         KuyrukRetNedeni.KAYIT_SINIRI -> "PC'deki kayıt sınırı doldu."
         KuyrukRetNedeni.SENTETIK_TURDA_IZINSIZ -> "Otomatik bir turda bu değişikliğe izin yok."
         KuyrukRetNedeni.DAYANAK_UYUSMUYOR -> "Zaman dayanağı tutmadı."
+        KuyrukRetNedeni.GECE_TEYIDI_GEREKLI -> "Gece yarısından sonra hangi günün kastedildiği teyit edilmedi."
         KuyrukRetNedeni.GECERSIZ_ISLEM -> "PC işlemi geçersiz buldu."
         KuyrukRetNedeni.IC_HATA -> "PC'de iç hata; birkaç kez denendi."
         KuyrukRetNedeni.TESLIM_EDILEMEDI -> "Bağlantı koptuğu için gönderilemedi; birkaç kez denendi."
@@ -154,7 +198,7 @@ object EkranMetinleri {
         AjandaKanalHatasi.IMZA_GECERSIZ -> "Kimlik doğrulanamadı; yeniden eşleştirin." to true
         AjandaKanalHatasi.KANAL_DESTEKLENMIYOR -> "Bu eşleşme ajanda için değil; ajanda koduyla yeniden eşleştirin." to true
         AjandaKanalHatasi.IP_UYUSMUYOR -> "PC bağlantıyı adres uyuşmadığı için reddetti (Tailscale açık mı?)." to false
-        AjandaKanalHatasi.PROTOKOL_UYUMSUZ -> "PC ile uygulama sürümü uyuşmuyor; ikisini de güncelleyin." to false
+        AjandaKanalHatasi.PROTOKOL_UYUMSUZ -> "PC ile uygulama sürümü uyuşmuyor; eski olanı güncelleyin." to false
         AjandaKanalHatasi.ZAMAN_ASIMI -> "PC zamanında yanıt vermedi." to false
         AjandaKanalHatasi.IC_HATA -> "PC'de iç hata." to false
         AjandaKanalHatasi.GECERSIZ_MESAJ, AjandaKanalHatasi.MESAJ_COK_BUYUK -> "PC bir mesajı reddetti." to false

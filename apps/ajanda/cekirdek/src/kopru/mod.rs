@@ -18,13 +18,13 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::hata::CekirdekHatasi;
 use crate::kural::Yazilmadi;
-use crate::model::{AjandaEslestirmeQr, GirdiYolu, Hatirlatma, KayitDurumu, KayitGovdesi};
+use crate::model::{AjandaEslestirmeQr, GirdiYolu, GunBolumu, Hatirlatma, KayitDurumu, KayitGovdesi};
 use crate::motor::{Etkiler, Motor, Ortam};
 
 use kabuklar::{AlarmKabugu, Gozlemci, KimlikKabugu, Tasima, ZamanKabugu};
 use tipler::{
-    BaglantiDurumu, DuzenlemeTemeli, EslesmeDurumu, GecmisSayfasi, HatirlatmaBildirimi, KayitGorunumu, ListeSorgusu, RetGirdisi,
-    YenidenKurmaNedeni,
+    BaglantiDurumu, DuzenlemeTemeli, EslesmeDurumu, GecmisSayfasi, HatirlatmaBildirimi, HatirlatmaOnizlemesi, KayitGorunumu,
+    ListeSorgusu, RetGirdisi, YenidenKurmaNedeni,
 };
 
 fn kilitle<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -59,6 +59,13 @@ pub fn sqlite_surumu() -> String {
 #[uniffi::export]
 pub fn varsayilan_hatirlatmalar() -> Vec<Hatirlatma> {
     crate::model::varsayilan_hatirlatmalar()
+}
+
+/// Saatsiz gün kaydının gün hatırlatması saati (v2, `gunHatirlatmaSaati`): bölümün saati
+/// (`GUN_HATIRLATMA_SAATLERI`), bölüm yoksa 09:00. Form bölüm seçeneklerinin yanında gösterir.
+#[uniffi::export]
+pub fn gun_hatirlatma_saati(gun_bolumu: Option<GunBolumu>) -> String {
+    crate::model::gun_hatirlatma_saati(gun_bolumu).to_string()
 }
 
 /// QR'dan (ya da yapıştırılan metinden) okunan eşleştirme JSON'unu doğrular (`AjandaEslestirmeQr`:
@@ -264,7 +271,7 @@ impl Cekirdek {
         if self.guncel_nesil().is_some() {
             self.calistir(|m, o, e| {
                 *kilitle(&self.tasima) = None;
-                m.baglanti_kapandi(o, e)
+                m.baglanti_kapandi(o, e, None)
             })?;
         }
         let sonuc = self.calistir(|m, o, e| {
@@ -288,18 +295,28 @@ impl Cekirdek {
         })
     }
 
-    pub fn baglanti_kapandi(&self, nesil: u64) -> Result<(), CekirdekHatasi> {
+    /// Soket kapandı. `kapanis_kodu`: karşı tarafın kapanış çerçevesindeki kod (geldiyse; ağ hatasında`n    /// `None`). 1002 sürüm uyuşmazlığı sayılır (`BaglantiDurumu.surum_uyusmazligi`).
+    pub fn baglanti_kapandi(&self, nesil: u64, kapanis_kodu: Option<i32>) -> Result<(), CekirdekHatasi> {
         self.calistir(|m, o, e| {
             if self.guncel_nesil() != Some(nesil) {
                 return Ok(());
             }
             *kilitle(&self.tasima) = None;
-            m.baglanti_kapandi(o, e)
+            m.baglanti_kapandi(o, e, kapanis_kodu)
         })
     }
 
     pub fn baglanti_durumu(&self) -> Result<BaglantiDurumu, CekirdekHatasi> {
         self.calistir(|m, _, _| m.baglanti_durumu())
+    }
+
+    /// Gövdenin hatırlatmaları şimdi kaydedilse ne zaman çalar (v2; form ve ayrıntı): saatsiz gün kaydında
+    /// gün hatırlatmasının günü ve saati, geçtiyse `gecti`. Motor kilidini almaz; saati ve çeviriyi
+    /// `ZamanKabugu`'ndan alır. Bilinmeyen dilim: `GecersizGirdi{alan:"zaman.saat_dilimi"}`.
+    pub fn hatirlatma_onizlemesi(&self, govde: KayitGovdesi) -> Result<HatirlatmaOnizlemesi, CekirdekHatasi> {
+        let cevirici = kabuklar::KabukCevirici(&*self.zaman);
+        crate::motor::alarm::hatirlatma_onizlemesi(&govde, self.zaman.simdi_ms(), &cevirici)
+            .map_err(|h| CekirdekHatasi::GecersizGirdi { alan: "zaman.saat_dilimi".into(), neden: h.mesaj })
     }
 
     // Sorgular (K4)

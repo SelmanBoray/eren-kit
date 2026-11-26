@@ -1,5 +1,8 @@
 package dev.eren.ajanda.ekran
 
+import dev.eren.ajanda.cekirdek.HatirlatmaOnizlemesi
+import dev.eren.ajanda.cekirdek.GunHatirlatmasi
+import dev.eren.ajanda.cekirdek.GunBolumu
 import dev.eren.ajanda.cekirdek.AjandaZamani
 import dev.eren.ajanda.cekirdek.CekirdekHatasi
 import dev.eren.ajanda.cekirdek.Hatirlatma
@@ -27,16 +30,17 @@ class KayitFormuTest {
         val f = KayitFormu.yeni(KayitTuru.GOREV, gun26, ist, listOf(Hatirlatma.Once(60)))
             .copy(baslik = "Fatura öde", aciklama = "   ")
         assertEquals(
-            KayitGovdesi(KayitTuru.GOREV, "Fatura öde", null, AjandaZamani.Gun("2026-11-26", ist, null), listOf(Hatirlatma.Once(60)), null),
+            KayitGovdesi(KayitTuru.GOREV, "Fatura öde", null, AjandaZamani.Gun("2026-11-26", null, ist, null), listOf(Hatirlatma.Once(60)), null),
             f.govde(),
         )
         val saatli = f.saatVer(LocalTime.of(9, 5))
         assertEquals(AjandaZamani.An("2026-11-26", "09:05", null, ist, null), saatli.govde().zaman)
         assertNull(saatli.tarihVer(null).govde().zaman)
         assertNull("tarih kalkınca saat de kalkar", saatli.tarihVer(null).saat)
-        // Saatsiz kayıtta "önce" hatırlatması bekler (kullanıcıya söylenir).
-        assertTrue(f.hatirlatmaBekler)
+        // v2: saatsiz günde "önce" beklemez (gün hatırlatması); yalnız tarihsizde bekler.
+        assertFalse(f.hatirlatmaBekler)
         assertFalse(saatli.hatirlatmaBekler)
+        assertTrue(f.tarihVer(null).hatirlatmaBekler)
     }
 
     @Test
@@ -57,7 +61,7 @@ class KayitFormuTest {
         val d = AjandaZamani.Donem("2026-12-01", "2026-12-05", ist, "aralık başı")
         val f = KayitFormu.kayittan(kayit("d", zaman = d), ist)
         assertEquals(d, f.govde().zaman)
-        assertEquals(AjandaZamani.Gun("2026-12-03", ist, null), f.tarihVer(LocalDate.of(2026, 12, 3)).govde().zaman)
+        assertEquals(AjandaZamani.Gun("2026-12-03", null, ist, null), f.tarihVer(LocalDate.of(2026, 12, 3)).govde().zaman)
         val b = AjandaZamani.Belirsiz("bir ara")
         val fb = KayitFormu.kayittan(kayit("b", zaman = b), ist)
         assertEquals(b, fb.govde().zaman)
@@ -132,7 +136,7 @@ class KayitFormuTest {
         )
         assertEquals(FormAlani.ACIKLAMA, sorun(taban.copy(aciklama = "a".repeat(4001))).alan)
         // Cihaz dilimi IANA biçiminde değilse (bazı cihazlarda "GMT+03:00") dilim seçtirilir.
-        val dilim = sorun(taban.copy(zaman = AjandaZamani.Gun("2026-11-26", "GMT+03:00", null)))
+        val dilim = sorun(taban.copy(zaman = AjandaZamani.Gun("2026-11-26", null, "GMT+03:00", null)))
         assertEquals(FormSorunu(FormAlani.DILIM, "Saat dilimi tanınmadı; listeden bir dilim seçin."), dilim)
         assertEquals(
             "Aynı hatırlatma iki kez seçilmiş.",
@@ -141,5 +145,76 @@ class KayitFormuTest {
         // Gizli karakter temizlenir, emoji korunur; çok satırlı başlık tek satır olur.
         val temiz = govdeyiHazirla(taban.copy(baslik = "  Dişçi​ ☕️\nkontrol  "))
         assertEquals("Dişçi ☕️ kontrol", temiz.baslik)
+    }
+
+    @Test
+    fun gunBolumuSecimiSaatsizGundeVarSaatGelinceKalkar() {
+        val f = KayitFormu.yeni(KayitTuru.GOREV, gun26, ist, listOf(Hatirlatma.Once(60))).copy(baslik = "Araba yıkama")
+        assertTrue(f.bolumSecilebilir)
+        val aksam = f.bolumVer(GunBolumu.AKSAM)
+        assertEquals(AjandaZamani.Gun("2026-11-26", GunBolumu.AKSAM, ist, null), aksam.govde().zaman)
+        assertNull("aynısına dokunmak kaldırır", aksam.bolumVer(GunBolumu.AKSAM).gunBolumu)
+        assertEquals(GunBolumu.SABAH, aksam.bolumVer(GunBolumu.SABAH).gunBolumu)
+        // Saat seçilince bölüm kalkar, kayıt saatli olur; tarih kalkınca da.
+        val saatli = aksam.saatVer(LocalTime.of(19, 0))
+        assertNull(saatli.gunBolumu)
+        assertFalse(saatli.bolumSecilebilir)
+        assertEquals(saatli, saatli.bolumVer(GunBolumu.GECE))
+        assertNull(aksam.tarihVer(null).gunBolumu)
+        assertFalse(KayitFormu(tarih = null).bolumSecilebilir)
+        // Seçilmezse alan yok (v1 biçimi).
+        assertEquals(AjandaZamani.Gun("2026-11-26", null, ist, null), f.govde().zaman)
+        // Kayıttan açılan form bölümü korur; çekirdeğin şemasından geçer.
+        val k = kayit("k", zaman = AjandaZamani.Gun("2026-11-26", GunBolumu.AKSAM, ist, "yarın akşama"))
+        val acilan = KayitFormu.kayittan(k, ist)
+        assertEquals(GunBolumu.AKSAM, acilan.gunBolumu)
+        assertEquals(k.zaman, acilan.govde().zaman)
+        assertEquals(aksam.govde(), govdeyiHazirla(aksam.govde()))
+    }
+
+    @Test
+    fun saatsizGundeHatirlatmaSecenekleriGunCinsinden() {
+        val saatsiz = KayitFormu.yeni(KayitTuru.GOREV, gun26, ist, listOf(Hatirlatma.Once(60)))
+        assertEquals(listOf(Hatirlatma.Once(60), Hatirlatma.Once(1440)), KayitFormu.hatirlatmaSecenekleri(saatsiz))
+        assertEquals("O gün", KayitFormu.hatirlatmaAdi(Hatirlatma.Once(60), saatsiz, gun26))
+        assertEquals("O gün", KayitFormu.hatirlatmaAdi(Hatirlatma.Once(10), saatsiz, gun26))
+        assertEquals("1 gün önce", KayitFormu.hatirlatmaAdi(Hatirlatma.Once(1440), saatsiz, gun26))
+        assertEquals("2 gün önce", KayitFormu.hatirlatmaAdi(Hatirlatma.Once(3000), saatsiz, gun26))
+        val saatli = saatsiz.saatVer(LocalTime.of(15, 0))
+        assertEquals(4, KayitFormu.hatirlatmaSecenekleri(saatli).size)
+        assertEquals("1 saat önce", KayitFormu.hatirlatmaAdi(Hatirlatma.Once(60), saatli, gun26))
+    }
+
+    @Test
+    fun hatirlatmaNotuGercektenNeZamanCalacaginiSoyler() {
+        val bugun = LocalDate.of(2026, 11, 25) // Çarşamba
+        val f = KayitFormu.yeni(KayitTuru.GOREV, LocalDate.of(2026, 11, 27), ist, listOf(Hatirlatma.Once(60)))
+        fun o(tarih: String, saat: String, gecti: Boolean = false, kurulacak: Int = if (gecti) 0 else 1, gecmis: Int = if (gecti) 1 else 0) =
+            HatirlatmaOnizlemesi(kurulacak.toUInt(), 0u, gecmis.toUInt(), null, GunHatirlatmasi(tarih, saat, gecti))
+        val aksam = f.bolumVer(GunBolumu.AKSAM)
+        assertEquals("Cuma 17:00'de hatırlatılır.", KayitFormu.hatirlatmaNotu(aksam, o("2026-11-27", "17:00"), bugun))
+        assertEquals("O gün 09:00'da hatırlatılır (Cuma).", KayitFormu.hatirlatmaNotu(f, o("2026-11-27", "09:00"), bugun))
+        assertEquals("Yarın 13:00'te hatırlatılır.", KayitFormu.hatirlatmaNotu(aksam, o("2026-11-26", "13:00"), bugun))
+        assertEquals(
+            "Bu kayıt için bildirim gelmeyecek: hatırlatma zamanı (bugün 09:00) geçti.",
+            KayitFormu.hatirlatmaNotu(f.tarihVer(bugun), o("2026-11-25", "09:00", gecti = true), bugun),
+        )
+        assertEquals("Taslak onaylanınca: Cuma 17:00'de hatırlatılır.", KayitFormu.hatirlatmaNotu(aksam, o("2026-11-27", "17:00"), bugun, KayitFormu.Companion.Etkinlik.TASLAK))
+        assertEquals("Kayıt açık değil; hatırlatma kurulmaz.", KayitFormu.hatirlatmaNotu(aksam, o("2026-11-27", "17:00"), bugun, KayitFormu.Companion.Etkinlik.KAPALI))
+        // "Saat gelince kurulacak" dili kalktı; önizleme gelmeden saatsiz günde bir şey iddia edilmez.
+        assertNull(KayitFormu.hatirlatmaNotu(aksam, null, bugun))
+        assertEquals("Hatırlatma kurulmayacak.", KayitFormu.hatirlatmaNotu(aksam.copy(hatirlatmalar = emptyList()), null, bugun))
+        assertEquals("Tarih yokken hatırlatma bekler; gün seçilince kurulur.", KayitFormu.hatirlatmaNotu(f.tarihVer(null), null, bugun))
+        // Saatli kayıt: geçmişte kalan hatırlatma söylenir, gelecekteki için not yok.
+        val saatli = f.saatVer(LocalTime.of(15, 0))
+        assertNull(KayitFormu.hatirlatmaNotu(saatli, HatirlatmaOnizlemesi(1u, 0u, 0u, 1L, null), bugun))
+        assertEquals("Bu kayıt için bildirim gelmeyecek: hatırlatma zamanı geçti.", KayitFormu.hatirlatmaNotu(saatli, HatirlatmaOnizlemesi(0u, 0u, 1u, null, null), bugun))
+    }
+
+    @Test
+    fun saatinBulunmaEki() {
+        val ekler = listOf("08:00", "09:00", "10:00", "11:00", "13:00", "17:00", "20:00", "00:00", "14:30", "10:40", "15:45", "06:00")
+            .map { it + EkranMetinleri.bulunmaEki(it) }
+        assertEquals(listOf("08:00'de", "09:00'da", "10:00'da", "11:00'de", "13:00'te", "17:00'de", "20:00'de", "00:00'da", "14:30'da", "10:40'ta", "15:45'te", "06:00'da"), ekler)
     }
 }

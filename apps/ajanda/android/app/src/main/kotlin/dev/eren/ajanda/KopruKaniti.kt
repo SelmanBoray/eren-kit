@@ -21,7 +21,7 @@ object KopruKaniti {
 
     /** Belgelerde ve testlerde kullanılan örnek QR (Tailscale aralığından). */
     const val ORNEK_QR =
-        """{"v":1,"kanal":"ajanda","host":"100.101.102.103","port":8765,"kod":"ABCD2345","server_public_key":"MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAELo7RHblixW/eCgcHUWEUpDbbJAklv2hci/UyoZvt3tlFknx8R6AuK4fNoCDUtAri/uqLoKYXC/n78yrmUiLyFg=="}"""
+        """{"v":2,"kanal":"ajanda","host":"100.101.102.103","port":8765,"kod":"ABCD2345","server_public_key":"MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAELo7RHblixW/eCgcHUWEUpDbbJAklv2hci/UyoZvt3tlFknx8R6AuK4fNoCDUtAri/uqLoKYXC/n78yrmUiLyFg=="}"""
 
     /** Eşzamanlı (SQLite): ana iş parçacığından çağırma. */
     fun calistir(cekirdek: Cekirdek): String {

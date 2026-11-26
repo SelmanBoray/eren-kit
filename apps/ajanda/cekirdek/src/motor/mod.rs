@@ -16,7 +16,7 @@
 //! kalıcı olduktan SONRA R3'ün `alarm_senkronu`'na verilir ve `Degisim.kayitlar`'a bir kez girer. Tam
 //! telafinin sonunda bütün kopya için `alarm_senkronu(&[])` ve `Degisim.tumu`.
 
-mod alarm;
+pub(crate) mod alarm;
 mod eslesme;
 mod islem;
 mod iyimser;
@@ -84,6 +84,8 @@ pub(crate) struct Motor {
     asama: Asama,
     /// Son kanal hatası (`error` çerçevesi, imza reddi, protokol hatası); `esitlendi`'de temizlenir.
     son_hata: Option<AjandaKanalHatasi>,
+    /// `son_hata` `protokol_uyumsuz` iken karşı tarafın hangi yönde farklı olduğu (v2); onunla temizlenir.
+    surum_uyusmazligi: Option<crate::kopru::tipler::SurumUyusmazligi>,
     /// Geçmiş önbelleği (`kayit_id` -> sayfa) ve yanıt bekleyen istekler (`istek_id` -> `kayit_id`).
     gecmis: BTreeMap<String, GecmisSayfasi>,
     gecmis_istekleri: BTreeMap<String, String>,
@@ -98,6 +100,7 @@ impl Motor {
             depo,
             asama: Asama::Kopuk,
             son_hata: None,
+            surum_uyusmazligi: None,
             gecmis: BTreeMap::new(),
             gecmis_istekleri: BTreeMap::new(),
         })

@@ -2,9 +2,10 @@
 
 Yalnız Android. İş mantığı Rust'ta (`cekirdek/`), ekranlar ve Android API'leri Kotlin'de
 (`android/`). Köprü: [UniFFI](https://mozilla.github.io/uniffi-rs/) 0.32 (proc-macro, Kotlin+JNA).
-Sözleşme: `apps/phone/docs/AJANDA.md`. **Mimari, iş bölümü ve ikinci dalganın iş parçaları: [MIMARI.md](MIMARI.md).**
+Sözleşme: `apps/phone/docs/AJANDA.md` (**sürüm 2**: saatsiz günde gün hatırlatması, gün bölümü; v1 servisle
+bağlanmaz, "güncelle" der). **Mimari, iş bölümü ve ikinci dalganın iş parçaları: [MIMARI.md](MIMARI.md).**
 
-Durum: Rust çekirdeği tam (ikinci dalga R1-R4): veri modeli ve şema, saf kurallar (vektörlerin tamamı
+Durum: sözleşme v2'ye uygun (vektörler 464 geçti, 0 kaldı; MIMARI.md "Sürüm 2"). Rust çekirdeği tam (ikinci dalga R1-R4): veri modeli ve şema, saf kurallar (vektörlerin tamamı
 geçiyor), hatırlatma planı ve alarm kayıtları, yerel depo ve eşitleme motoru (kanal durum makinesi,
 telafi, kalıcı kuyruk ve ret listesi, iyimser işlemler, sorgular). Köprüde `Yazilmadi` dönen motor
 yöntemi kalmadı. Kotlin: kimlik ve eşleştirme ekranı (K1), alarm, bildirim ve alıcılar (K3) yazıldı;
@@ -25,6 +26,7 @@ apps/ajanda/
     tests/vektorler.rs        dil bağımsız vektör düzeneği (kendi main'i)
     tests/uctan_uca.rs        köprü yüzeyi + sahte kabuklar + sahte PC servisi (tests/ortak/)
     tests/buyuk_kopya.rs      büyük kopyada eşitleme ve sorgu süreleri
+    tests/yukseltme.rs        sürüm 1 yerel veritabanından yükseltme + sürüm uyuşmazlığı (fikstür tests/veri/)
     uniffi.toml               Kotlin paketi: dev.eren.ajanda.cekirdek
   uniffi-bindgen/             bağlama üreticisi (çalışma alanının kendi ikilisi)
   android/                    Gradle projesi (AGP 8.13, Kotlin 2.2.20, Gradle 8.14)
@@ -56,6 +58,8 @@ Kotlin bağlamaları -> `android/app/build/generated/java/uniffi<Varyant>KotlinU
 cargo test -p ajanda-cekirdek
 cargo test -p ajanda-cekirdek --test vektorler     # yalnız vektörler
 cargo test -p ajanda-cekirdek --test uctan_uca     # yalnız uçtan uca senaryolar
+cargo test -p ajanda-cekirdek --test yukseltme     # v1 veritabanından yükseltme, sürüm uyuşmazlığı
+cargo clippy -p ajanda-cekirdek --all-targets      # uyarısız kalmalı
 # büyük kopya ölçümü (süreleri basar; adet varsayılan 5000)
 AJANDA_OLCUM_ADET=20000 cargo test --release -p ajanda-cekirdek --test buyuk_kopya -- --nocapture
 
@@ -71,7 +75,12 @@ adb shell am broadcast -f 0x20 -n dev.eren.ajanda/.KopruAlici   # logcat etiketi
 
 Köprü tanısı (`KopruKaniti`, salt okur) logcat'e şema, eşleşme/bağlantı durumu ve kayıt sayılarını basar,
 son satırı `KÖPRÜ TAMAM`. Android 15 x86_64 emülatörde (debug APK) hem `AnaEkran` hem `KopruAlici` yolunda
-denendi: çekirdek yüklendi, şema 3.
+denendi: çekirdek yüklendi, şema 3. v2 formu ve listesi de aynı emülatörde (Europe/Istanbul) denendi:
+saatsiz gün kayıtları AlarmManager'a gün hatırlatması saatinde kuruldu.
+
+Yükseltme: yeni APK eskisinin üstüne (aynı paket, aynı debug imzası) kurulur; göç yoktur, eşleşme ve kuyruk
+durur, alarmlar `MY_PACKAGE_REPLACED`'da yeni kurala göre yeniden kurulur. Servis henüz v1 ise uygulama
+"PC'yi güncelleyin" der ve 30 dk'da bir dener (kayıtlar ve hatırlatmalar telefonda çalışmaya devam eder).
 
 Vektör düzeneği her koşuda bölüm tablosu basar: GEÇTİ / KALDI / BEKLİYOR (yazılmamış kural ve sahibi).
 KALDI ya da vektör dosyasında tanınmayan bölüm varsa çıkış 1'dir.

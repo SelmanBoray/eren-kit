@@ -27,6 +27,8 @@ object EslestirmeMetinleri {
         VeriHatasi.ParmakIziUyusmuyor ->
             "Metindeki parmak izi verideki anahtarla tutmuyor: metin bozulmuş ya da iki çıktı karışmış. Çıktıyı yeniden kopyalayın."
         is VeriHatasi.GecersizAlan -> when (h.alan) {
+            // Sürüm 2: başka sürümün QR'ı (eski servisin açtığı pencere ya da daha yeni servis).
+            "v" -> "Eşleştirme verisi başka bir ajanda sürümünden. PC'deki eren ile bu uygulamayı aynı sürüme güncelleyip yeni kod alın."
             "host" -> "PC adresi bir Tailscale adresi değil (100.64.0.0/10). PC'de Tailscale'in açık olduğunu denetleyin."
             else -> "Eşleştirme verisi geçersiz (${h.alan}: ${h.neden})."
         }
