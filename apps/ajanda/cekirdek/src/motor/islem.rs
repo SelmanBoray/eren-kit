@@ -15,6 +15,7 @@
 use super::iyimser::{gorunen_yenile, iyimser_uygula};
 use super::{Etkiler, Motor, Ortam};
 use crate::hata::CekirdekHatasi;
+use crate::kopru::tipler::DuzenlemeTemeli;
 use crate::kural::metin::govdeyi_hazirla;
 use crate::kural::ornek::{OrnekDurumuSonucu, ajanda_ornek_durumu_uygula};
 use crate::model::{
@@ -30,8 +31,19 @@ fn uclu_fark<T: PartialEq + Clone>(eski: &Option<T>, yeni: &Option<T>) -> Alan<T
     }
 }
 
-/// Görünen kayıt ile formun tam gövdesinin farkı.
-fn govde_farki(k: &AjandaKaydi, g: &KayitGovdesi) -> AjandaDegisiklik {
+fn kaydin_govdesi(k: &AjandaKaydi) -> KayitGovdesi {
+    KayitGovdesi {
+        tur: k.tur,
+        baslik: k.baslik.clone(),
+        aciklama: k.aciklama.clone(),
+        zaman: k.zaman.clone(),
+        hatirlatmalar: k.hatirlatmalar.clone(),
+        tekrar: k.tekrar.clone(),
+    }
+}
+
+/// İki gövdenin farkı (`eski` -> `yeni`).
+fn govde_farki(k: &KayitGovdesi, g: &KayitGovdesi) -> AjandaDegisiklik {
     AjandaDegisiklik {
         tur: (g.tur != k.tur).then_some(g.tur),
         baslik: (g.baslik != k.baslik).then(|| g.baslik.clone()),
@@ -40,6 +52,30 @@ fn govde_farki(k: &AjandaKaydi, g: &KayitGovdesi) -> AjandaDegisiklik {
         hatirlatmalar: (g.hatirlatmalar != k.hatirlatmalar).then(|| g.hatirlatmalar.clone()),
         tekrar: uclu_fark(&k.tekrar, &g.tekrar),
     }
+}
+
+/// `d`'nin yalnız `maske`'de de değişen alanları (ikisi de aynı hedef gövdeye doğru olduğundan değerler
+/// aynıdır).
+fn yalniz_degisenler(mut d: AjandaDegisiklik, maske: &AjandaDegisiklik) -> AjandaDegisiklik {
+    if maske.tur.is_none() {
+        d.tur = None;
+    }
+    if maske.baslik.is_none() {
+        d.baslik = None;
+    }
+    if maske.aciklama.yok_mu() {
+        d.aciklama = Alan::Yok;
+    }
+    if maske.zaman.yok_mu() {
+        d.zaman = Alan::Yok;
+    }
+    if maske.hatirlatmalar.is_none() {
+        d.hatirlatmalar = None;
+    }
+    if maske.tekrar.yok_mu() {
+        d.tekrar = Alan::Yok;
+    }
+    d
 }
 
 impl Motor {
@@ -97,15 +133,34 @@ impl Motor {
         Ok(kayit_id)
     }
 
-    /// Formun tam gövdesi: görünen halle farkı `guncelle` işlemine çevrilir (fark yoksa hiçbir şey).
-    pub(crate) fn duzenle(&mut self, o: &Ortam, e: &mut Etkiler, kayit_id: &str, govde: KayitGovdesi) -> Result<(), CekirdekHatasi> {
+    /// Formun gövdesi `guncelle` işlemine çevrilir (fark yoksa hiçbir şey). `temel` verilirse yalnız
+    /// kullanıcının formun açıldığı halden değiştirdiği alanlar ve onlardan da yalnız görünen halden farklı
+    /// olanlar gider: form açıkken PC'den inen değişiklik, kullanıcının dokunmadığı alanda eski değere
+    /// dönmez (sözleşmenin alan alan birleşmesi; son varan yalnız kendi alanlarında kazanır). `temel` yoksa
+    /// gövdenin tamamı istenen haldir (ret listesinden düzeltme).
+    pub(crate) fn duzenle(
+        &mut self,
+        o: &Ortam,
+        e: &mut Etkiler,
+        kayit_id: &str,
+        temel: Option<DuzenlemeTemeli>,
+        govde: KayitGovdesi,
+    ) -> Result<(), CekirdekHatasi> {
         let govde = govdeyi_hazirla(govde)?;
         let k = self.gorunen_ya_da_hata(kayit_id, false)?;
-        let degisiklik = govde_farki(&k, &govde);
+        let gorunenden = govde_farki(&kaydin_govdesi(&k), &govde);
+        let (degisiklik, temel_revizyon) = match temel {
+            None => (gorunenden, k.revizyon),
+            Some(t) => {
+                // Temel kayıttan geldiği için hazırlıktan geçer; geçmezse (kural sonradan sıkılaştı) olduğu gibi.
+                let temel_govde = govdeyi_hazirla(t.govde.clone()).unwrap_or(t.govde);
+                (yalniz_degisenler(gorunenden, &govde_farki(&temel_govde, &govde)), t.revizyon)
+            }
+        };
         if degisiklik.bos_mu() {
             return Ok(());
         }
-        let islem = AjandaIslem::Guncelle { kayit_id: kayit_id.to_string(), temel_revizyon: k.revizyon, degisiklik };
+        let islem = AjandaIslem::Guncelle { kayit_id: kayit_id.to_string(), temel_revizyon, degisiklik };
         self.kuyruga_koy(o, e, islem, true)?;
         Ok(())
     }

@@ -167,11 +167,11 @@ fn cevrimdisi_islemler_baglaninca_sirayla_gider() {
     assert_eq!((g.kayit.revizyon, g.kayit.kaynak.device_id.as_deref()), (1, Some(CIHAZ)));
     assert_eq!(h.alarm.kurulular(), vec![(id.clone(), yarin(10))], "PC'siz kurulur");
 
-    h.c.duzenle(id.clone(), govde("Kuaför (saç)", Some(an("2026-11-26", "12:00")))).unwrap();
+    h.c.duzenle(id.clone(), None, govde("Kuaför (saç)", Some(an("2026-11-26", "12:00")))).unwrap();
     assert_eq!(h.c.kayit(id.clone()).unwrap().unwrap().kayit.baslik, "Kuaför (saç)");
     assert_eq!(h.alarm.kurulular(), vec![(id.clone(), yarin(11))]);
     // Fark yoksa düzenleme kuyruğa girmez.
-    h.c.duzenle(id.clone(), govde("Kuaför (saç)", Some(an("2026-11-26", "12:00")))).unwrap();
+    h.c.duzenle(id.clone(), None, govde("Kuaför (saç)", Some(an("2026-11-26", "12:00")))).unwrap();
 
     h.c.durum_degistir(id.clone(), KayitDurumu::Tamam, None).unwrap();
     assert!(h.alarm.kurulular().is_empty(), "tamamlanınca iptal");
@@ -268,7 +268,7 @@ fn kalici_ret_iyimser_degisikligi_geri_alir_kullaniciya_gorunur() {
     h.kopar();
     // PC'de silinirken telefon çevrimdışı düzenler.
     h.pc.disaridan_degistir("k_top", |k| k.silindi = true);
-    h.c.duzenle("k_top".into(), govde("Toplantı (ertelendi)", Some(an("2026-11-27", "15:00")))).unwrap();
+    h.c.duzenle("k_top".into(), None, govde("Toplantı (ertelendi)", Some(an("2026-11-27", "15:00")))).unwrap();
     assert_eq!(h.alarm.kurulular(), vec![("k_top".to_string(), yarin(14) + GUN)]);
     // Ayrıca reddedilecek bir ekleme.
     h.pc.ekle_reddi = Some(ajanda_cekirdek::model::AjandaRetNedeni::KayitSiniri);
@@ -319,7 +319,7 @@ fn yaniti_gelmeden_kopan_islem_kaybolmaz_cift_uygulanmaz() {
 
     // Tam telafi de yolda kalan işlemi atmaz: yeniden gider.
     h.pc.yanitsiz_kopar = 1;
-    h.c.duzenle(id.clone(), govde("Yolda (2)", None)).unwrap();
+    h.c.duzenle(id.clone(), None, govde("Yolda (2)", None)).unwrap();
     h.pompala();
     assert!(h.baglanti.is_none());
     h.pc.d.depo_id = "d_pc_yeni".into();
@@ -658,4 +658,120 @@ fn sorgular_motor_kilidini_beklemez() {
     let ikinci = yazan.join().unwrap();
     assert_eq!(c.liste(ListeSorgusu { sekme: Sekme::Tarihsiz, kapalilar_dahil: false }).unwrap().len(), 2);
     assert!(c.kayit(ikinci).unwrap().is_some());
+}
+
+/// Çerçeve işlenirken kabuk ya da depo hatası (Keystore'un geçici imza hatası, rastgele üretilemedi):
+/// işleyici aşamayı kapanıyora çevirmiş olsa da taşımaya kapat gider, aşama kopuk olur ve yeniden bağlanma
+/// normal yoldan sürer (soket açık ama işlemez kalmaz; PC'de eklenen kayıt iner).
+#[test]
+fn cerceve_islenirken_hata_baglantiyi_kapattirir_yeniden_baglanilir() {
+    use std::sync::atomic::Ordering;
+    let mut h = eslesmis("cerceve-hatasi");
+    h.kopar();
+    h.pc.disaridan_ekle("k_pc", &govde("PC'den", None), false);
+
+    // auth_challenge: imzala geçici hata.
+    h.kimlik.imza_hatasi.store(1, Ordering::SeqCst);
+    let t = std::sync::Arc::new(SahteTasima::default());
+    let nesil = h.c.baglanti_acildi(t.clone()).unwrap();
+    let mut pc = PcAsama::HelloBekliyor;
+    let hello = std::mem::take(&mut *t.giden.lock().unwrap());
+    let sinama = h.pc.isle(&mut pc, &hello[0]).cerceveler.remove(0);
+    assert!(h.c.cerceve_geldi(nesil, sinama).is_err());
+    assert!(t.kapatildi.lock().unwrap().is_some(), "taşıma kapattırıldı");
+    assert!(t.giden.lock().unwrap().is_empty(), "yanıt yollanmadı");
+    let d = h.c.baglanti_durumu().unwrap();
+    assert_eq!((d.asama, d.son_hata), (BaglantiAsamasi::Kopuk, Some(AjandaKanalHatasi::IcHata)));
+    // Kapanırken gelen çerçeve yok sayılır; Kotlin kapanışı bildirir, yeniden bağlanılır.
+    h.c.cerceve_geldi(nesil, asagi(ajanda_cekirdek::model::AjandaAsagi::Esitlendi { rev: 1 })).unwrap();
+    h.c.baglanti_kapandi(nesil).unwrap();
+    h.baglan();
+    assert!(h.canli_mi());
+    assert!(h.c.kayit("k_pc".into()).unwrap().is_some(), "PC'deki kayıt indi");
+    assert_eq!(h.c.baglanti_durumu().unwrap().son_hata, None);
+
+    // Eşleştirme sonucu: eşleşme yazıldı, ardından `hello` için rastgele üretilemedi.
+    let mut h = Hat::yeni("eslestirme-hatasi");
+    h.c.eslestirme_baslat(SahtePc::qr()).unwrap();
+    let t = std::sync::Arc::new(SahteTasima::default());
+    let nesil = h.c.baglanti_acildi(t.clone()).unwrap();
+    let mut pc = PcAsama::HelloBekliyor;
+    let istek = std::mem::take(&mut *t.giden.lock().unwrap());
+    let sonuc = h.pc.isle(&mut pc, &istek[0]).cerceveler.remove(0);
+    h.kimlik.rastgele_hatasi.store(1, Ordering::SeqCst);
+    assert!(h.c.cerceve_geldi(nesil, sonuc).is_err());
+    assert!(t.kapatildi.lock().unwrap().is_some(), "taşıma kapattırıldı");
+    assert_eq!(h.c.baglanti_durumu().unwrap().asama, BaglantiAsamasi::Kopuk);
+    h.c.baglanti_kapandi(nesil).unwrap();
+    assert!(matches!(h.c.eslesme_durumu().unwrap(), EslesmeDurumu::Eslesti { .. }), "eşleşme kalıcı");
+    h.baglan();
+    assert!(h.canli_mi());
+}
+
+fn govdesi(k: &ajanda_cekirdek::model::AjandaKaydi) -> KayitGovdesi {
+    KayitGovdesi {
+        tur: k.tur,
+        baslik: k.baslik.clone(),
+        aciklama: k.aciklama.clone(),
+        zaman: k.zaman.clone(),
+        hatirlatmalar: k.hatirlatmalar.clone(),
+        tekrar: k.tekrar.clone(),
+    }
+}
+
+/// Düzenleme formu açıkken asistan PC'de saati 15:00'ten 16:00'ya aldı ve bu telefona indi; kullanıcı
+/// yalnız açıklamayı değiştirip kaydetti. Giden işlem yalnız açıklamayı taşır: saat 16:00 kalır,
+/// hatırlatma yeni saate göre kurulu kalır. Kullanıcının değiştirdiği alan PC'dekinin üstüne yazılır.
+#[test]
+fn duzenleme_yalniz_kullanicinin_degistirdigi_alanlari_gonderir() {
+    use ajanda_cekirdek::kopru::tipler::DuzenlemeTemeli;
+    use ajanda_cekirdek::model::{AjandaDegisiklik, AjandaIslem, AjandaYukari, Alan, ajanda_yukari_coz};
+    let mut h = eslesmis("duzenleme-temel");
+    let k = h.pc.disaridan_ekle("k_dis", &govde("Dişçi", Some(an("2026-11-26", "15:00"))), false);
+    h.pc_degisti(k);
+    // Form açıldı.
+    let acilan = h.c.kayit("k_dis".into()).unwrap().unwrap().kayit;
+    let temel = DuzenlemeTemeli { revizyon: acilan.revizyon, govde: govdesi(&acilan) };
+    // Form açıkken PC saati değiştirdi, telefona indi.
+    let k = h.pc.disaridan_degistir("k_dis", |k| k.zaman = Some(an("2026-11-26", "16:00")));
+    h.pc_degisti(k);
+    assert_eq!(h.alarm.kurulular(), vec![("k_dis".to_string(), yarin(15))]);
+
+    // Dokunulmamış form: hiçbir şey gitmez (görünen hal PC'ninkiyle farklı olsa da).
+    h.c.duzenle("k_dis".into(), Some(temel.clone()), temel.govde.clone()).unwrap();
+    assert_eq!(h.c.baglanti_durumu().unwrap().kuyrukta, 0);
+
+    // Kullanıcı yalnız açıklamayı değiştirdi; form hâlâ 15:00 gösteriyor.
+    let mut yeni = temel.govde.clone();
+    yeni.aciklama = Some("Dolgu".into());
+    h.c.duzenle("k_dis".into(), Some(temel.clone()), yeni).unwrap();
+    let giden = std::mem::take(&mut *h.baglanti.as_ref().unwrap().tasima.giden.lock().unwrap());
+    assert_eq!(giden.len(), 1);
+    let Ok(AjandaYukari::Islem { islem: AjandaIslem::Guncelle { degisiklik, temel_revizyon, .. }, .. }) = ajanda_yukari_coz(&giden[0]) else {
+        panic!("guncelle bekleniyordu: {}", giden[0])
+    };
+    assert_eq!(degisiklik, AjandaDegisiklik { aciklama: Alan::Deger("Dolgu".into()), ..Default::default() });
+    assert_eq!(temel_revizyon, acilan.revizyon, "formun açıldığı revizyon");
+    // İyimser hal de PC'nin saatini korur.
+    let gorunen = h.c.kayit("k_dis".into()).unwrap().unwrap().kayit;
+    assert_eq!((gorunen.zaman.clone(), gorunen.aciklama.as_deref()), (Some(an("2026-11-26", "16:00")), Some("Dolgu")));
+    h.baglanti.as_ref().unwrap().tasima.giden.lock().unwrap().extend(giden);
+    h.pompala();
+    let pc = &h.pc.d.kayitlar["k_dis"];
+    assert_eq!((pc.zaman.clone(), pc.aciklama.as_deref()), (Some(an("2026-11-26", "16:00")), Some("Dolgu")));
+    assert_eq!(h.c.kayit("k_dis".into()).unwrap().unwrap().kayit, *pc, "telefon ile PC aynı");
+    assert_eq!(h.alarm.kurulular(), vec![("k_dis".to_string(), yarin(15))], "16:00'dan 1 saat önce");
+
+    // Kullanıcı saati de değiştirdiyse (17:00) onunki gider; başlık PC'de değiştiyse korunur.
+    let acilan = h.c.kayit("k_dis".into()).unwrap().unwrap().kayit;
+    let temel = DuzenlemeTemeli { revizyon: acilan.revizyon, govde: govdesi(&acilan) };
+    let k = h.pc.disaridan_degistir("k_dis", |k| k.baslik = "Dişçi (kontrol)".into());
+    h.pc_degisti(k);
+    let mut yeni = temel.govde.clone();
+    yeni.zaman = Some(an("2026-11-26", "17:00"));
+    h.c.duzenle("k_dis".into(), Some(temel), yeni).unwrap();
+    h.pompala();
+    let pc = &h.pc.d.kayitlar["k_dis"];
+    assert_eq!((pc.baslik.as_str(), pc.zaman.clone()), ("Dişçi (kontrol)", Some(an("2026-11-26", "17:00"))));
+    assert_eq!(h.alarm.kurulular(), vec![("k_dis".to_string(), yarin(16))]);
 }

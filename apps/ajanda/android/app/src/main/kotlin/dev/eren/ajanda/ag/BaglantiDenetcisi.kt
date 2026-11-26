@@ -64,6 +64,11 @@ class BaglantiDenetcisi(
         degerlendir(hemen = true)
     }
 
+    /** Talep sürüyorsa (arayüz görünür) ve kopuksa beklemeyi atlayıp hemen dener; talebi değiştirmez. */
+    fun hemenDene() = isle {
+        if (onPlanda) degerlendir(hemen = true)
+    }
+
     /** Arayüz görünmez oldu: kısa bekleme (ve gerekirse kuyruk boşaltma) sonra bağlantıyı bırak. */
     fun birak() = isle {
         if (!onPlanda) return@isle

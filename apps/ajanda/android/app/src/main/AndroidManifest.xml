@@ -17,7 +17,9 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- AjandaUygulamasi: ön plan bağlantısını etkinliklerin görünürlüğüne bağlar (ag/GorunurlukSayaci.kt). -->
     <application
+        android:name=".AjandaUygulamasi"
         android:allowBackup="false"
         android:icon="@android:drawable/ic_menu_agenda"
         android:label="Ajanda"

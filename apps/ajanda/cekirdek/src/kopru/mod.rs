@@ -23,7 +23,7 @@ use crate::motor::{Etkiler, Motor, Ortam};
 
 use kabuklar::{AlarmKabugu, Gozlemci, KimlikKabugu, Tasima, ZamanKabugu};
 use tipler::{
-    BaglantiDurumu, EslesmeDurumu, GecmisSayfasi, HatirlatmaBildirimi, KayitGorunumu, ListeSorgusu, RetGirdisi,
+    BaglantiDurumu, DuzenlemeTemeli, EslesmeDurumu, GecmisSayfasi, HatirlatmaBildirimi, KayitGorunumu, ListeSorgusu, RetGirdisi,
     YenidenKurmaNedeni,
 };
 
@@ -331,8 +331,11 @@ impl Cekirdek {
         self.calistir(|m, o, e| m.ekle(o, e, govde, girdi_yolu))
     }
 
-    pub fn duzenle(&self, kayit_id: String, govde: KayitGovdesi) -> Result<(), CekirdekHatasi> {
-        self.calistir(|m, o, e| m.duzenle(o, e, &kayit_id, govde))
+    /// Formun kaydı. `temel`: formun açıldığı hal; verilirse yalnız kullanıcının o halden değiştirdiği
+    /// alanlar gider (PC'nin bu arada yaptığı değişiklik öteki alanlarda korunur). `None`: gövdenin tamamı
+    /// istenen haldir (ret listesinden "düzelt"), görünen halle farkı gider.
+    pub fn duzenle(&self, kayit_id: String, temel: Option<DuzenlemeTemeli>, govde: KayitGovdesi) -> Result<(), CekirdekHatasi> {
+        self.calistir(|m, o, e| m.duzenle(o, e, &kayit_id, temel, govde))
     }
 
     /// Tamamla / geri al / iptal; `ornek_tarihi` verilirse tekrarın yalnız o örneği.
@@ -364,6 +367,7 @@ impl Cekirdek {
 
     /// Alarm alıcısı çağırır. `None`: gösterme (kayıt değişti ya da silindi).
     pub fn alarm_caldi(&self, alarm_no: i64) -> Result<Option<HatirlatmaBildirimi>, CekirdekHatasi> {
-        self.calistir(|m, o, e| m.alarm_caldi(o, e, alarm_no))
+        // Tek işlem: bütçede açılan yer ertelenen tetiklerle doldurulurken her kayıt ayrı fsync olmasın.
+        self.calistir(|m, o, e| m.alarm_isleminde(o, e, |m, o, e| m.alarm_caldi(o, e, alarm_no)))
     }
 }

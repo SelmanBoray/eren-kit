@@ -190,8 +190,11 @@ impl Motor {
             }
         };
         let sonuc = self.cerceveyi_isle(o, e, m);
-        if sonuc.is_err() && self.tur() != Tur::Kopuk {
-            // Depo ya da kabuk hatası: yarım kalan telafi/işlem sonraki bağlantıda baştan yapılır.
+        if sonuc.is_err() {
+            // Depo ya da kabuk hatası: yarım kalan telafi/işlem sonraki bağlantıda baştan yapılır. Aşama
+            // hangisi olursa olsun (işleyici hatadan önce `Kapaniyor`'a geçirmiş olabilir: o zaman taşımaya
+            // henüz kapat gitmemiştir) taşıma kapattırılır; yoksa soket açık ama işlemez kalır. Buraya
+            // girerken aşama `Kopuk`/`Kapaniyor` değildi (yukarıda dönülür), yani kapat bu çerçeveye aittir.
             self.kanal_hatasi(e, AjandaKanalHatasi::IcHata, "iç hata");
         }
         sonuc

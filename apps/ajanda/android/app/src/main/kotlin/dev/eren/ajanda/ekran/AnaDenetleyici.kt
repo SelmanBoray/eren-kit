@@ -157,13 +157,15 @@ class AnaDenetleyici(private val c: CekirdekYuzu, private val saat: () -> ZonedD
     fun model(): AnaModel {
         val simdi = saat()
         val liste = gorunum.sekme?.let { listeler[it] }
+        // Bağlantı ya da eşleşme değişince listeler yeniden sorgulanmaz; rozet burada yeniden hesaplanır.
+        val gonderim = Liste.Gonderim.hesapla(adresVar, baglanti?.asama)
         val ogeler = when (gorunum) {
-            Gorunum.TARIHLI -> liste?.let { Liste.tarihliler(it, simdi) }
-            Gorunum.TARIHSIZ -> liste?.let { Liste.tarihsizler(it, simdi) }
+            Gorunum.TARIHLI -> liste?.let { Liste.tarihliler(it, simdi, gonderim) }
+            Gorunum.TARIHSIZ -> liste?.let { Liste.tarihsizler(it, simdi, gonderim) }
             Gorunum.TASLAKLAR -> liste?.let {
-                Liste.duz(it, simdi, Liste.Grup.TASLAK, "Onay bekleyen taslak yok. Asistanın kendiliğinden eklediği kayıtlar burada onay bekler.")
+                Liste.duz(it, simdi, Liste.Grup.TASLAK, "Onay bekleyen taslak yok. Asistanın kendiliğinden eklediği kayıtlar burada onay bekler.", gonderim)
             }
-            Gorunum.SILINENLER -> liste?.let { Liste.duz(it, simdi, Liste.Grup.SILINEN, "Silinen kayıt yok.") }
+            Gorunum.SILINENLER -> liste?.let { Liste.duz(it, simdi, Liste.Grup.SILINEN, "Silinen kayıt yok.", gonderim) }
             Gorunum.RET -> emptyList()
         }
         val retler = ret.orEmpty()

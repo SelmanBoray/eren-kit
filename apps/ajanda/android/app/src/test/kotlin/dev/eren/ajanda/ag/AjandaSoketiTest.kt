@@ -114,6 +114,19 @@ class AjandaSoketiTest {
         assertTrue(gunluk.satirlar.none { it.contains("GIZLI") || it.contains("bozuk") || it.contains("192.0.2") })
     }
 
+    /** Çekirdek kapattırmadan atarsa soket yine kapanır, çekirdeğe kapanış gider (yeniden bağlanılır). */
+    @Test
+    fun cerceveKapattirmadanAtarsaSoketKapatilir() {
+        val (_, h) = yeni()
+        h.ac()
+        h.gelen("patla")
+        h.gelen("sonra")
+        zaman.bosalt()
+        assertEquals(listOf("acildi 1", "cerceve 1 patla", "kapandi 1"), cekirdek.olaylar)
+        assertEquals(listOf("acildi", "kapandi HATA"), haberler)
+        assertEquals(1000, h.kapatmaKodu)
+    }
+
     @Test
     fun cekirdekAcilistaReddederseKapanisBildirilmez() {
         cekirdek.acilisHatasi = CekirdekHatasi.Eslesme("eşleşme yok")

@@ -69,7 +69,9 @@ class GercekCekirdekTest {
             assertEquals(setOf(Sekme.TARIHLI), a.degisti(d))
             val s = satirlar(a).single()
             assertEquals("Örnek randevu" to id, s.baslik to s.kayitId)
-            assertTrue("gönderilmeyi bekliyor", Liste.Isaret.GONDERILIYOR in s.isaretler)
+            // Eşleşme yok: gönderilecek yer yok, gönderim iddiası da yok (bulgu 7).
+            assertTrue(s.isaretler.toString(), s.isaretler.none { it == Liste.Isaret.GONDERILIYOR || it == Liste.Isaret.BEKLIYOR })
+            assertFalse(s.aciklama.contains("gönderil"))
             assertFalse(Liste.Isaret.ASISTAN in s.isaretler)
             assertEquals("eşleşme yokken işlem kuyrukta bekler", 1, c.baglantiDurumu().kuyrukta)
 
@@ -148,6 +150,10 @@ class GercekCekirdekTest {
             val f = KayitFormu.yeni(KayitTuru.GOREV, null, "Europe/Istanbul", emptyList()).copy(baslik = "Reddedilecek")
             val ilkId = yuz.ekle(yuz.govdeyiHazirla(f.govde()))
             val islemId = Regex("\"islem_id\":\"([^\"]+)\"").find(soket.giden.last())!!.groupValues[1]
+            // Canlıyken yolda: "gönderiliyor" doğru.
+            a.gorunumSec(Gorunum.TARIHSIZ)
+            a.degisti(g.gelen.reduce { x, y -> Yenileme.birlestir(x, y) })
+            assertTrue(Liste.Isaret.GONDERILIYOR in satirlar(a).single { it.kayitId == ilkId }.isaretler)
             g.gelen.clear()
             c.cerceveGeldi(nesil, cerceve("islem_sonucu", ""","islem_id":"$islemId","ok":false,"code":"saat_dilimi_bilinmiyor""""))
             val d = g.gelen.reduce { x, y -> Yenileme.birlestir(x, y) }
@@ -173,6 +179,17 @@ class GercekCekirdekTest {
             assertEquals("Düzeltildi", c.kayit(yeniId)!!.kayit.baslik)
             a.degisti(g.gelen.reduce { x, y -> Yenileme.birlestir(x, y) })
             assertEquals(0, a.model().retSayisi)
+
+            // Bağlantı koptu: eşleşmiş ama çevrimdışı; yeni değişiklik "PC'yi bekliyor", gönderiliyor değil.
+            c.baglantiKapandi(nesil)
+            g.gelen.clear()
+            val bekleyenId = yuz.ekle(yuz.govdeyiHazirla(f.copy(baslik = "Bekleyen").govde()))
+            a.gorunumSec(Gorunum.TARIHSIZ)
+            a.degisti(g.gelen.reduce { x, y -> Yenileme.birlestir(x, y) })
+            val s = satirlar(a).single { it.kayitId == bekleyenId }
+            assertTrue(s.isaretler.toString(), Liste.Isaret.BEKLIYOR in s.isaretler)
+            assertFalse(Liste.Isaret.GONDERILIYOR in s.isaretler)
+            assertTrue(s.aciklama, s.aciklama.contains("gönderilmeyi bekliyor"))
         }
     }
 }

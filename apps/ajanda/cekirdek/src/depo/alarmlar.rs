@@ -65,6 +65,12 @@ impl Depo {
         self.alarm_sorgusu("teslim_ms IS NULL", [])
     }
 
+    /// Teslim edilmemiş (Android'de kurulu sayılan) satır sayısı: alarm bütçesi (`motor/alarm.rs`).
+    pub fn kurulu_alarm_sayisi(&self) -> Result<usize, CekirdekHatasi> {
+        let n: i64 = self.baglanti.query_row("SELECT COUNT(*) FROM kurulu_alarmlar WHERE teslim_ms IS NULL", [], |r| r.get(0))?;
+        Ok(usize::try_from(n).unwrap_or(0))
+    }
+
     /// Kaydın bütün alarm satırları, teslim edilmişler dahil (plan farkı bunlarla hesaplanır).
     pub fn kaydin_alarm_satirlari(&self, kayit_id: &str) -> Result<Vec<KuruluAlarm>, CekirdekHatasi> {
         self.alarm_sorgusu("kayit_id = ?1", [kayit_id])

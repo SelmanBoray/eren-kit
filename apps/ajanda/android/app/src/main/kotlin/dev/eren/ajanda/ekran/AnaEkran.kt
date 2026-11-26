@@ -161,8 +161,7 @@ class AnaEkran : Activity() {
             d.hepsiniOku()
             modeliGonder()
         }
-        // Bağlantı ana ekran görünürken açık kalır (K2); iskelette hiçbir şey yapmayabilir.
-        BaglantiYoneticisi.basla(applicationContext)
+        // Bağlantı herhangi bir ekran görünürken açıktır: kural tek yerde (`ag/GorunurlukSayaci.kt`).
         hatirlatmayiOku()
         dakikaSayaci.run()
         if (!izinIstendi && HatirlatmaDurumu.bildirimIzniIstenmeli(this)) {
@@ -178,7 +177,6 @@ class AnaEkran : Activity() {
             gozlemciNo = null
             CekirdekErisimi.al(applicationContext).gozlemciCikar(no)
         }
-        BaglantiYoneticisi.birak()
         super.onStop()
     }
 
@@ -210,7 +208,7 @@ class AnaEkran : Activity() {
                     denetleyiciAl().hepsiniOku()
                     modeliGonder()
                 }
-                if (resultCode == RESULT_OK) BaglantiYoneticisi.basla(applicationContext)
+                if (resultCode == RESULT_OK) BaglantiYoneticisi.simdiDene()
             }
         }
     }
@@ -903,6 +901,7 @@ class AnaEkran : Activity() {
             val ad = when (i) {
                 Liste.Isaret.ASISTAN -> "✦ Asistan"
                 Liste.Isaret.GONDERILIYOR -> "↑ Gönderiliyor"
+                Liste.Isaret.BEKLIYOR -> "⋯ PC'yi bekliyor"
                 Liste.Isaret.TEKRAR -> "↻ Tekrar"
                 else -> i.metin
             }

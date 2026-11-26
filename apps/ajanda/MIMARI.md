@@ -87,7 +87,15 @@ tests/ortak/        sahte kabuklar ve `/ajanda` konuşan sahte PC servisi       
 Kayıt, zaman, hatırlatma, tekrar ve kapalı listeler `uniffi::Record/Enum` türetir: Kotlin aynı tipi görür
 (`AjandaKaydi`, `AjandaZamani.An(tarih, saat, sureDk, saatDilimi, ifade)`, `KayitTuru.RANDEVU`...).
 `AjandaDegisiklik`/`AjandaParca` (üç halli alanlar) köprüye çıkmaz: arayüz tam gövde verir
-(`duzenle(kayitId, govde)`), fark Rust'ta hesaplanır.
+(`duzenle(kayitId, temel, govde)`), fark Rust'ta hesaplanır.
+
+**Düzenlemede yalnız değişen alanlar gider.** `temel: DuzenlemeTemeli?` (`revizyon` + formun açıldığı
+`govde`): verilirse `guncelle`'ye yalnız kullanıcının formda o halden değiştirdiği alanlar girer, onlardan
+da yalnız görünen halden farklı olanlar (`motor/islem.rs` `yalniz_degisenler`); `temel_revizyon` formun
+açıldığı revizyondur. Form açıkken PC'den inen değişiklik kullanıcının dokunmadığı alanda geri alınmaz
+(sözleşmenin alan alan birleşmesi). `None`: gövdenin tamamı istenen haldir (ret listesinden "düzelt").
+Kayıt ekranı temeli kaydedilmemiş formla birlikte saklar (`ekran/FormKaydi.kt`): süreç ölümünden sonra da
+aynı temelle kaydedilir.
 
 ## Kotlin: `android/app/src/main/kotlin/dev/eren/ajanda/`
 
@@ -109,26 +117,49 @@ boş depoda motor sorguları, eşleştirme akışı (`pair_request`, ret -> `Red
 `Bekliyor`, kaldırma -> `anahtariSil`), `JavaZaman` kuralı.
 Bağımlılık: JNA 5.17 (UniFFI), OkHttp 4.12 (K2). AndroidX yok (`android.useAndroidX=false`): ekranlar
 platform View'larıyla, iş JobScheduler'la, bildirim platform API'siyle. Kotlin paketleri birbirini
-yalnız şu noktalardan çağırır: `CekirdekErisimi.al`, `BaglantiYoneticisi.basla/birak`,
+yalnız şu noktalardan çağırır: `CekirdekErisimi.al`, `BaglantiYoneticisi.izle/simdiDene`,
 `AlarmAlici.ALARM_NO`; geri kalanı çekirdek üzerinden konuşur.
+
+**Ön plan bağlantısı ne zaman açık (tek kural, `ag/GorunurlukSayaci.kt`):** uygulamanın herhangi bir
+etkinliği başlamışken (`onStart`..`onStop`) açık, hiçbiri görünmezken `birakmaGecikmesiMs` (3 s) beklemesi
+ve gerekirse kuyruk boşaltması sonrası kapalı. `AjandaUygulamasi` (manifestte `android:name`)
+`BaglantiYoneticisi.izle` ile etkinlik yaşam döngüsü geri çağrısını sayaca bağlar; etkinlikler bağlantıyı
+kendileri açıp kapatmaz. Android ekran geçişinde önce yeni etkinliği başlatır, sonra eskisini durdurur:
+sayaç sıfıra inmez (ana ekran <-> kayıt ekranı geçişinde bağlantı düşmez, kayıt ekranının geçmişi canlı
+bağlantıyı bulur); döndürme/tema değişiminde bir an sıfıra iner, bekleme içinde yeniden başlar. Home ya da
+başka uygulama (eşleştirme ekranı dahil): bekleme sonrası kapanır, arka planda yeniden bağlanma döngüsü
+kalmaz. Eşleştirme ekranı yalnız `simdiDene` der (görünürken kopuksa beklemeden dene; talebi değiştirmez).
 
 ## Akışlar
 
 - **Eşleştirme (K1, R4):** metin (QR/JSON) -> `eslestirmeQrCoz` -> `cekirdek.eslestirmeBaslat(qr)` ->
-  `BaglantiYoneticisi.basla` -> soket açılınca motor `pair_request` (açık anahtar `KimlikKabugu`) ->
+  `BaglantiYoneticisi.simdiDene` -> soket açılınca motor `pair_request` (açık anahtar `KimlikKabugu`) ->
   `pair_result` -> eşleşme `meta`'ya, `eslesmeDurumu` `Eslesti`; gözlemciye `Degisim.eslesme`; aynı
   bağlantıda `hello` ile sürer (ret: `Reddedildi{kod}`, servis kapatır).
 - **Bağlantı (K2, R4):** `baglantiAdresi()` -> OkHttp -> `onOpen`: `baglantiAcildi(soket)` -> `hello`
   (alanlar `kural::esitleme::ajanda_hello_alanlari`'nın anlamıyla sunucu kopyasından) -> `auth_challenge`:
   PC imzası `dogrula`, telefon imzası `imzala` -> `welcome` -> telafi (`tam`'da ayrı tabloya topla) ->
   `esitlendi` -> kuyruk birer birer. `onClosed/onFailure`: `baglantiKapandi(nesil)` (tam telafi atılır,
-  yolda kalan işlem `Kopma`).
+  yolda kalan işlem `Kopma`). Çerçeve işlenirken herhangi bir hata (depo, Keystore imzası, rastgele),
+  işleyici aşamayı önce `Kapaniyor`'a çevirmiş olsa da, taşımaya `kapat` yollatır (`kanal.rs`
+  `cerceve_geldi`); Kotlin `AjandaSoketi` de atılan istisnada soketi ayrıca kapatır. Açık ama işlemez
+  soket kalmaz, yeniden bağlanma normal yoldan sürer.
 - **Elle ekleme (K4, R4, R1):** form -> `govdeyiHazirla` -> `ekle(govde, ELLE)` -> iyimser görünen kayıt +
   kuyruk (tek işlem) -> `alarm_senkronu` (R3, işlem kalıcı olduktan sonra) -> `Degisim.kayitlar` ->
   (canlıysa) `islem` çerçevesi -> `kayit` ve `islem_sonucu` gelince gerçek hal (sıra fark etmez).
 - **Alarm (K3, R3):** `Etkiler.alarm_kur` -> `AlarmPlanlayici.kur` -> çalınca `AlarmAlici` ->
   `alarmCaldi(no)` -> `HatirlatmaBildirimi?` -> bildirim. Açılış/saat/dilim -> `AcilisAlici` ->
   `alarmlariYenidenKur(neden)` -> kaçırılanlar tek özet (`kacirilanlariGoster`).
+  **Alarm ufku:** Android uygulama başına en çok 500 alarm tutar. Aynı anda en çok `ALARM_BUTCESI` (400;
+  pay: iptali/teslimi işlenmemiş satırlar) teslim edilmemiş satır kurulu olur: bütün gelecek tetikler
+  `(tetik_ms, kayit_id)` sırasıyla dizilir, en yakın 400'ü kurulur, en uzak kurulanın anahtarı
+  `meta.alarm_ufku`'dadır; ötesindekiler ertelenir (satır açılmaz). Tek kaydın senkronu yalnız ufuk
+  içini kurar, sonra bütçe denetlenir: aşıldıysa ya da ertelenen varken yer açıldıysa (alarm çaldı,
+  kayıt kapandı/silindi/taşındı) bütün plan yeniden dizilir (`motor/alarm.rs` `butceyi_denetle`).
+  `alarmCaldi` bu yüzden tek SQLite işlemindedir (`alarm_isleminde`).
+- **Rozet (K4):** kuyruktaki değişikliğin rozeti gerçek durumu söyler (`Liste.Gonderim`): eşleşme yoksa
+  (`baglantiAdresi() == null`) rozet ve gönderim iddiası yok, eşleşmiş ama canlı değilse "PC'yi bekliyor",
+  yalnız `CANLI`'da "Gönderiliyor".
 - **Arka plan (K2):** `EsitlemeIsi` -> bağlan -> `baglantiDurumu().asama == CANLI && kuyrukta == 0` -> kapat.
 
 ## Depo (SQLite, `depo/sema.rs`)
@@ -259,14 +290,14 @@ Ortak: Türkçe ad ve yorum; kişisel veri yok; her parça yalnız kendi dosyala
   `Gozlemci.degisti`, `Tasima.gonder/kapat`, `AlarmKabugu`) çekirdeğe eşzamanlı yeniden girme; işi başka iş
   parçacığına at. `KimlikKabugu` ve `ZamanKabugu` motor kilidi altında çağrılır (hızlı, kilitsiz olsun).
 - K1: `eslestirmeQrCoz` -> `eslestirmeBaslat(qr)` (açık bağlantı varsa çekirdek onu kapattırır:
-  `Tasima.kapat`) -> `BaglantiYoneticisi.basla`. Sonucu gözlemciden (`Degisim.eslesme`) sonra
+  `Tasima.kapat`) -> `BaglantiYoneticisi.simdiDene`. Sonucu gözlemciden (`Degisim.eslesme`) sonra
   `eslesmeDurumu()` ile oku: `Eslesti` ya da `Reddedildi{kod}` (yeni QR iste). `Bekliyor` > `Reddedildi` >
   `Eslesti` > `Yok` önceliği vardır: eski eşleşme dururken yeni QR reddedilirse `Reddedildi` görünür ama
   bağlantı eskisiyle sürer. `eslesmeyiKaldir` her şeyi (kopya, kuyruk, ret listesi, alarmlar) siler, açık
   bağlantıyı kapattırır ve `anahtariSil` çağırır.
 - K2: `baglantiAdresi()` `null` ise bağlanma. `onOpen` -> `baglantiAcildi(tasima)` (hata: eşleşme yok ya da
   kabuk hatası; soketi kapat, `baglantiKapandi` çağırma). Her `onMessage` -> `cerceveGeldi(nesil, metin)`
-  (hata atarsa çekirdek bağlantıyı zaten kapattırmıştır; günlüğe yaz, sürdür). `onClosed/onFailure` ->
+  (hata atarsa çekirdek bağlantıyı her aşamada kapattırmıştır; Kotlin de soketi kapatır, günlüğe yazar). `onClosed/onFailure` ->
   `baglantiKapandi(nesil)` (her zaman, `Tasima.kapat` sonrası da). Arka plan işi için tamam ölçütü
   `baglantiDurumu().asama == CANLI && kuyrukta == 0`. Geçici ret çekirdekte hemen yeniden denenir; yeniden
   bağlanma beklemesi K2'nindir.
@@ -280,6 +311,7 @@ Ortak: Türkçe ad ve yorum; kişisel veri yok; her parça yalnız kendi dosyala
   işlem `GecersizDurum`; serinin örneği olmayan `ornekTarihi` `GecersizGirdi{alan:"ornek_tarihi"}`.
   `KayitGorunumu.bekleyen`: sonucu gelmemiş işlemi var. Ret listesi: `govde` doluysa "düzelt" formu onunla
   açılır, kullanıcı `ekle` ile yeniden ekler (yeni kimlik) ve `retAt(islemId)`. `gecmisIste` yalnız canlıyken.
+  Düzenleme formu `duzenle(kayitId, DuzenlemeTemeli(açıldığı revizyon, açıldığı gövde), yeniGövde)` der.
 
 ### K1 — Kotlin kimlik ve eşleştirme
 - Dosyalar: `kimlik/KeystoreKimlik.kt`, `kimlik/EslestirmeEkrani.kt`, `src/test/.../kimlik/*`.
@@ -291,8 +323,8 @@ Ortak: Türkçe ad ve yorum; kişisel veri yok; her parça yalnız kendi dosyala
 - **Durum: yazıldı, birleşti (kapandı).** Mantık saf `EslestirmeMakinesi`'nde (birim testli); ekran yalnız
   çizer. Çekirdek çağrıları ekranın tek arka iş parçacığında; gözlemci yalnız okuma işini oraya atar.
   `eslestirmeBaslat` bitmeden okunan durum yok sayılır, sonra `eslesmeDurumu` + `baglantiDurumu` okunur (R4
-  sırası). Eşleştirme başlarken `BaglantiYoneticisi.basla(context)`'i ARKA iş parçacığından çağırır, `birak`
-  demez. Açmak: `EslestirmeEkrani.ac(context)` (yeni tamamlanınca `RESULT_OK`). Pencere `FLAG_SECURE`,
+  sırası). Eşleştirme başlarken `BaglantiYoneticisi.simdiDene()` der; bağlantının açık/kapalı olması
+  ekranın görünürlüğüne bağlıdır (`ag/GorunurlukSayaci.kt`), ekran `basla/birak` demez. Açmak: `EslestirmeEkrani.ac(context)` (yeni tamamlanınca `RESULT_OK`). Pencere `FLAG_SECURE`,
   `adjustResize` + kenardan kenara pay (manifest ve ekran).
 
 ### K2 — Kotlin ağ taşıması ve arka plan eşitlemesi
@@ -303,10 +335,11 @@ Ortak: Türkçe ad ve yorum; kişisel veri yok; her parça yalnız kendi dosyala
   (artan bekleme), ağ geri gelince deneme; ping aralığı; `EsitlemeIsi` (JobScheduler, ağ koşullu, periyodik;
   zamanlamayı K2 kurar; tamam ölçütü `asama == CANLI && kuyrukta == 0`; işin içinde ayrıca
   `alarm.AlarmYenidenKurma.simdi(context, YenidenKurmaNedeni.PERIYODIK)`).
-- Sabit arayüz (K4 ve K1 çağırır, imza değişmez): `object BaglantiYoneticisi { fun basla(context: Context); fun birak() }`.
-  İkisi de her iş parçacığından çağrılabilir, hemen döner (bloklamaz), tekrarlı çağrı zararsızdır; `basla`
-  eşleşme yokken (`baglantiAdresi() == null`) hiçbir şey açmaz. K1 `basla`'yı arka iş parçacığından çağırır,
-  K4 ana iş parçacığından (`onStart`) çağırabilir.
+- Arayüz: `object BaglantiYoneticisi { fun izle(uygulama: Application); fun simdiDene() }` (ilk dalganın
+  `basla/birak`'ı kaldırıldı: son çağrıyı tutan yüz, bırakılmayan eşleştirme ekranında bağlantıyı arka planda
+  süresiz tutuyor, ayrı etkinlik olan kayıt ekranında 3 s'de kapatıyordu). `izle` `AjandaUygulamasi`'ndan
+  bir kez; görünürlük kuralı `GorunurlukSayaci`'ndadır (Kotlin bölümü). İkisi de her iş parçacığından
+  çağrılabilir, hemen döner, tekrarlı çağrı zararsızdır; eşleşme yokken hiçbir şey açılmaz.
 - Geri çağrılar (`gonder`, `kapat`) çekirdeğin etki kilidi altında gelir: bloklama, çekirdeğe yeniden girme.
   Çekirdek çağrıları OkHttp iş parçacığında (ana iş parçacığı değil).
 - Hazır olan: OkHttp 4.12 Gradle'da; manifestte INTERNET, ACCESS_NETWORK_STATE, cleartext, `ag.EsitlemeIsi`
@@ -336,8 +369,9 @@ Ortak: Türkçe ad ve yorum; kişisel veri yok; her parça yalnız kendi dosyala
   `baglantiDurumu`, `eslesmeDurumu`, `gozlemciEkle/Cikar`, `varsayilanHatirlatmalar`, `metniTemizle`,
   `govdeyiHazirla`. İki ana sekme; taslak işareti ve onay; tamamla/geri al; ret listesi (düzelt -> form, at);
   metin düz gösterilir. Eşleşme yoksa `kimlik.EslestirmeEkrani.ac(context)`; açılışta
-  `alarm.AlarmYenidenKurma.arkaPlanda(context, UYGULAMA_ACILDI)`; görünürken `BaglantiYoneticisi.basla(context)`
-  (`onStart`), görünmezken `birak()` (`onStop`). K2'nin gövdesini bekleme: iskeletle de derlenir ve çalışır.
+  `alarm.AlarmYenidenKurma.arkaPlanda(context, UYGULAMA_ACILDI)`. Bağlantıyı ekranlar açıp kapatmaz
+  (`ag/GorunurlukSayaci.kt`). Kayıt formu kaydedilmemiş içeriği (bütün alanlar + düzenleme temeli)
+  `onSaveInstanceState`'te saklar (`FormKaydi`): döndürme, tema değişimi ve süreç ölümünden sonra geri gelir.
 - Bildirim izni (13+) ve hatırlatma sorunları: `HatirlatmaDurumu` (K3 bölümü). Bildirimden gelen niyette
   `Bildirimler.KAYIT_ID` varsa o kaydı aç. Android 15+ kenardan kenara: `WindowInsets` payını uygula.
 - `AnaEkran` bugün `KopruKaniti`'ni gösteriyor; K4 onu kendi ekranıyla değiştirir (`KopruKaniti` debug alıcısı
@@ -354,7 +388,7 @@ dahil), `android/build.gradle.kts`, `android/app/build.gradle.kts`, `gradle.prop
 `src/debug/**`, `KopruTest.kt`, `README.md`, bu belge. Kapanmış paketler de dondurulmuştur: `kimlik/` (K1),
 `alarm/` (K3) ve testleri; K2 ile K4 bunları yalnız çağırır.
 
-- K2 ile K4 birbirinin paketine yazmaz; aralarındaki tek sözleşme `BaglantiYoneticisi.basla/birak` imzasıdır.
+- K2 ile K4 birbirinin paketine yazmaz; aralarındaki tek sözleşme `BaglantiYoneticisi.izle/simdiDene` imzasıdır.
 - Yeni crate, Gradle bağımlılığı, izin, bileşen, köprü yöntemi, `CekirdekHatasi` değişkeni, model düzeltmesi
   ya da kapanmış pakette değişiklik gereken parça bunu raporunda (gerekçe + tam değişiklik) yazar, dosyaya
   dokunmaz; şef dalga sonunda tek tek uygular, her birinden sonra iki komut yeşil.

@@ -37,6 +37,9 @@ pub mod anahtar {
     pub const ESLESTIRME_QR: &str = "eslestirme_qr";
     /// Son eşleştirmenin reddi (`pair_result.code`).
     pub const ESLESME_REDDI: &str = "eslesme_reddi";
+    /// Alarm ufku (R3, `motor/alarm.rs`): bütçeyi aşan planda kurulan en uzak tetik (`"<tetik_ms> <kayit_id>"`);
+    /// yoksa bütün plan kurulu, ertelenen tetik yok.
+    pub const ALARM_UFKU: &str = "alarm_ufku";
 }
 
 pub struct Depo {

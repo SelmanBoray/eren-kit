@@ -13,7 +13,7 @@ import java.util.concurrent.Executors
 
 /**
  * Arka plan eşitlemesi (JobScheduler, ağ koşullu). İki iş aynı hizmette:
- * - [PERIYODIK_IS]: 15 dk'da bir (strateji `AgStratejisi.kt`); `BaglantiYoneticisi.basla` eşleşmeli
+ * - [PERIYODIK_IS]: 15 dk'da bir (strateji `AgStratejisi.kt`); ön plan bağlantısı eşleşmeli
  *   adres görünce kurar, kalıcıdır (yeniden başlatmada sürer).
  * - [KUYRUK_ISI]: arayüz kapanırken kuyrukta işlem kaldıysa ağ gelince bir kez.
  * Her çalışma: bağlan -> `CANLI && kuyrukta == 0` (ya da süre/deneme sınırı) -> kapat ->

@@ -3,6 +3,7 @@ package dev.eren.ajanda.ekran
 import dev.eren.ajanda.cekirdek.AjandaKaydi
 import dev.eren.ajanda.cekirdek.AjandaKaynagi
 import dev.eren.ajanda.cekirdek.AjandaZamani
+import dev.eren.ajanda.cekirdek.BaglantiAsamasi
 import dev.eren.ajanda.cekirdek.KayitDurumu
 import dev.eren.ajanda.cekirdek.KayitGorunumu
 import dev.eren.ajanda.cekirdek.KayitTuru
@@ -120,7 +121,7 @@ object Liste {
      * (yalnız kapalılar dahilken dolar). Grup içinde gün, sonra tüm gün olanlar, sonra saat; eşitlikte
      * çekirdeğin sırası. Geçmiş en yeni üstte.
      */
-    fun tarihliler(kayitlar: List<KayitGorunumu>, simdi: ZonedDateTime): List<Oge> {
+    fun tarihliler(kayitlar: List<KayitGorunumu>, simdi: ZonedDateTime, gonderim: Gonderim = Gonderim.GONDERILIYOR): List<Oge> {
         val bugun = simdi.toLocalDate()
         val cihaz = simdi.zone
         data class Yer(val g: KayitGorunumu, val konum: Konum, val grup: Grup, val gun: LocalDate, val sira: Int)
@@ -144,7 +145,7 @@ object Liste {
             // Bugünün tarihi üst çubukta yazar; yarınınki başlıkta.
             val ek = if (grup == Grup.YARIN) EkranMetinleri.uzunTarih(bugun.plusDays(1), bugun) else null
             cikti += Oge.Baslik(grup, bu.size, ek)
-            bu.forEach { cikti += Oge.Satir(satir(it.g, simdi, grup, it.konum)) }
+            bu.forEach { cikti += Oge.Satir(satir(it.g, simdi, grup, it.konum, gonderim)) }
         }
         return cikti
     }
@@ -153,14 +154,14 @@ object Liste {
      * Tarihsizler: açık görev ve randevular (Yapılacaklar), açık notlar (Notlar ve mevzular), sonra
      * kapalılar. Grup içinde çekirdeğin sırası (en yeni üstte).
      */
-    fun tarihsizler(kayitlar: List<KayitGorunumu>, simdi: ZonedDateTime): List<Oge> {
+    fun tarihsizler(kayitlar: List<KayitGorunumu>, simdi: ZonedDateTime, gonderim: Gonderim = Gonderim.GONDERILIYOR): List<Oge> {
         val (acikler, kapalilar) = kayitlar.partition { acik(it.kayit) }
         val (notlar, yapilacak) = acikler.partition { it.kayit.tur == KayitTuru.NOT }
         val cikti = mutableListOf<Oge>()
         fun ekle(grup: Grup, l: List<KayitGorunumu>) {
             if (l.isEmpty()) return
             cikti += Oge.Baslik(grup, l.size)
-            l.forEach { cikti += Oge.Satir(satir(it, simdi, grup, null)) }
+            l.forEach { cikti += Oge.Satir(satir(it, simdi, grup, null, gonderim)) }
         }
         ekle(Grup.YAPILACAK, yapilacak)
         ekle(Grup.NOTLAR, notlar)
@@ -170,10 +171,10 @@ object Liste {
     }
 
     /** Yardımcı görünümler (taslaklar, silinenler): tek grup, çekirdeğin sırası. */
-    fun duz(kayitlar: List<KayitGorunumu>, simdi: ZonedDateTime, grup: Grup, bosMetin: String): List<Oge> {
+    fun duz(kayitlar: List<KayitGorunumu>, simdi: ZonedDateTime, grup: Grup, bosMetin: String, gonderim: Gonderim = Gonderim.GONDERILIYOR): List<Oge> {
         if (kayitlar.isEmpty()) return listOf(Oge.Bos(bosMetin))
         return listOf(Oge.Baslik(grup, kayitlar.size)) +
-            kayitlar.map { Oge.Satir(satir(it, simdi, grup, konum(it.kayit.zaman, simdi.zone))) }
+            kayitlar.map { Oge.Satir(satir(it, simdi, grup, konum(it.kayit.zaman, simdi.zone), gonderim)) }
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -184,8 +185,35 @@ object Liste {
         TASLAK("Taslak"),
         ASISTAN("Asistan"),
         GONDERILIYOR("Gönderiliyor"),
+        /** Eşleşmiş ama PC'ye bağlı değil: değişiklik telefonda, bağlanınca gider. */
+        BEKLIYOR("PC'yi bekliyor"),
         TEKRAR("Tekrar"),
         SILINDI("Silindi"),
+    }
+
+    /**
+     * Kuyruktaki (henüz PC'ye ulaşmamış) değişikliğin gerçek durumu: rozet ve ekran okuyucu metni bunu
+     * söyler, gönderim iddiası yalnız gerçekten gönderilirken yapılır.
+     */
+    enum class Gonderim(val isaret: Isaret?, val okunus: String?) {
+        /** Eşleşme yok: gönderilecek yer yok; değişiklik yalnız bu telefonda (rozet yok). */
+        YEREL(null, null),
+
+        /** Eşleşmiş, PC'ye bağlı değil ya da bağlanıyor: bağlanınca gider. */
+        BEKLIYOR(Isaret.BEKLIYOR, "PC'ye gönderilmeyi bekliyor"),
+
+        /** PC'ye bağlı (canlı): kuyruk sırayla gidiyor. */
+        GONDERILIYOR(Isaret.GONDERILIYOR, "PC'ye gönderiliyor"),
+        ;
+
+        companion object {
+            /** [adresVar]: `baglantiAdresi() != null` (eşleşme ya da süren eşleştirme var). */
+            fun hesapla(adresVar: Boolean, asama: BaglantiAsamasi?): Gonderim = when {
+                !adresVar -> YEREL
+                asama == BaglantiAsamasi.CANLI -> GONDERILIYOR
+                else -> BEKLIYOR
+            }
+        }
     }
 
     fun otomatikMi(k: AjandaKaynagi) = k.yol != KaynakYolu.ELLE && k.yol != KaynakYolu.SESLI_NOT
@@ -220,13 +248,14 @@ object Liste {
         val aciklama: String,
     )
 
-    fun satir(g: KayitGorunumu, simdi: ZonedDateTime, grup: Grup, konum: Konum?): KayitSatiri {
+    fun satir(g: KayitGorunumu, simdi: ZonedDateTime, grup: Grup, konum: Konum?, gonderim: Gonderim = Gonderim.GONDERILIYOR): KayitSatiri {
+        val bekleyen = gonderim.isaret.takeIf { g.bekleyen }
         val k = g.kayit
         val bugun = simdi.toLocalDate()
         val isaretler = buildList {
             if (k.taslak) add(Isaret.TASLAK)
             if (otomatikMi(k.kaynak)) add(Isaret.ASISTAN)
-            if (g.bekleyen) add(Isaret.GONDERILIYOR)
+            bekleyen?.let { add(it) }
             if (k.tekrar != null) add(Isaret.TEKRAR)
             if (k.silindi) add(Isaret.SILINDI)
         }
@@ -246,7 +275,7 @@ object Liste {
             if (gecikmis) append(", gecikmiş")
             if (k.taslak) append(", taslak, onay bekliyor")
             if (otomatikMi(k.kaynak)) append(", asistan ekledi")
-            if (g.bekleyen) append(", PC'ye gönderiliyor")
+            if (g.bekleyen) gonderim.okunus?.let { append(", ").append(it) }
             if (k.silindi) append(", silindi")
         }
         return KayitSatiri(

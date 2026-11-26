@@ -9,7 +9,8 @@ import kotlin.math.pow
  * Telefon her zaman arayan taraftır; PC kapalı, Tailscale kopuk ya da telefon uykuda olabilir. PC'nin
  * telefonu uyandırma yolu yoktur (FCM yok, veri yalnız Tailscale'den geçer). Bu yüzden iki kip var:
  *
- * ÖN PLAN (`BaglantiYoneticisi.basla` .. `birak`): tek canlı WebSocket.
+ * ÖN PLAN (uygulamanın herhangi bir ekranı görünürken; kural `GorunurlukSayaci.kt`, denetçide
+ * `basla` .. `birak`): tek canlı WebSocket.
  * - Kopunca yeniden deneme: 1 s, 2 s, 4 s ... en çok 60 s, ±%20 sapma ([bekleme]). Sayaç bağlantı
  *   `CANLI`'ya ulaşınca sıfırlanır; yalnız açılmak yetmez: TCP'yi kabul edip el sıkışmayı reddeden ya da
  *   bozuk çerçeve yüzünden çekirdeğin kapattığı bağlantı sıkı döngü yaratmasın.

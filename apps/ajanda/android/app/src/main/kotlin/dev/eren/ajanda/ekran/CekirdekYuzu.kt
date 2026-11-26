@@ -5,6 +5,7 @@ import dev.eren.ajanda.cekirdek.AjandaZamani
 import dev.eren.ajanda.cekirdek.BaglantiDurumu
 import dev.eren.ajanda.cekirdek.Cekirdek
 import dev.eren.ajanda.cekirdek.Degisim
+import dev.eren.ajanda.cekirdek.DuzenlemeTemeli
 import dev.eren.ajanda.cekirdek.EslesmeDurumu
 import dev.eren.ajanda.cekirdek.GecmisSayfasi
 import dev.eren.ajanda.cekirdek.GirdiYolu
@@ -30,7 +31,8 @@ interface CekirdekYuzu {
     fun eslesmeDurumu(): EslesmeDurumu
     fun baglantiAdresi(): String?
     fun ekle(govde: KayitGovdesi): String
-    fun duzenle(kayitId: String, govde: KayitGovdesi)
+    /** [temel]: formun açıldığı hal (yalnız ondan değişen alanlar gider); `null`: gövdenin tamamı istenen hal. */
+    fun duzenle(kayitId: String, temel: DuzenlemeTemeli?, govde: KayitGovdesi)
     fun durumDegistir(kayitId: String, durum: KayitDurumu)
     fun onayla(kayitId: String)
     fun sil(kayitId: String)
@@ -49,7 +51,7 @@ interface CekirdekYuzu {
         override fun eslesmeDurumu() = c.eslesmeDurumu()
         override fun baglantiAdresi() = c.baglantiAdresi()
         override fun ekle(govde: KayitGovdesi) = c.ekle(govde, GirdiYolu.ELLE)
-        override fun duzenle(kayitId: String, govde: KayitGovdesi) = c.duzenle(kayitId, govde)
+        override fun duzenle(kayitId: String, temel: DuzenlemeTemeli?, govde: KayitGovdesi) = c.duzenle(kayitId, temel, govde)
         override fun durumDegistir(kayitId: String, durum: KayitDurumu) = c.durumDegistir(kayitId, durum, null)
         override fun onayla(kayitId: String) = c.onayla(kayitId)
         override fun sil(kayitId: String) = c.sil(kayitId)
@@ -187,7 +189,8 @@ object RetListesi {
         val id = when (val h = hedef(girdi, c.kayit(girdi.kayitId)?.kayit)) {
             is Hedef.YeniKayit -> c.ekle(govde)
             is Hedef.MevcutKayit -> {
-                c.duzenle(h.kayitId, govde)
+                // Ret girdisinin gövdesi istenen tam haldir: görünen halle farkı gider.
+                c.duzenle(h.kayitId, null, govde)
                 h.kayitId
             }
         }

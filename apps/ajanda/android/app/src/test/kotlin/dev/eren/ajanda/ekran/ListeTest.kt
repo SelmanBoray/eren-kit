@@ -1,6 +1,7 @@
 package dev.eren.ajanda.ekran
 
 import dev.eren.ajanda.cekirdek.AjandaZamani
+import dev.eren.ajanda.cekirdek.BaglantiAsamasi
 import dev.eren.ajanda.cekirdek.KayitDurumu
 import dev.eren.ajanda.cekirdek.KayitTuru
 import dev.eren.ajanda.cekirdek.KaynakYolu
@@ -202,6 +203,30 @@ class ListeTest {
         val silinen = Liste.satir(gor(kayit("x", silindi = true)), simdi, Liste.Grup.SILINEN, null)
         assertFalse(silinen.tamamlanabilir)
         assertTrue(silinen.aciklama.endsWith("silindi"))
+    }
+
+    /** Bekleyen değişikliğin rozeti gerçek durumu söyler (bulgu 7). */
+    @Test
+    fun gonderimRozetiGercekDurumuSoyler() {
+        val g = gor(kayit("b"), bekleyen = true)
+        fun s(d: Liste.Gonderim) = Liste.satir(g, simdi, Liste.Grup.YAPILACAK, null, d)
+        // Eşleşme yok: rozet yok, gönderim iddiası yok.
+        assertEquals(Liste.Gonderim.YEREL, Liste.Gonderim.hesapla(adresVar = false, asama = BaglantiAsamasi.KOPUK))
+        assertEquals(emptyList<Liste.Isaret>(), s(Liste.Gonderim.YEREL).isaretler)
+        assertFalse(s(Liste.Gonderim.YEREL).aciklama.contains("gönderil"))
+        // Eşleşmiş ama bağlı değil (ya da el sıkışıyor): bekliyor.
+        for (a in listOf(null, BaglantiAsamasi.KOPUK, BaglantiAsamasi.EL_SIKISMA, BaglantiAsamasi.TELAFI)) {
+            assertEquals("$a", Liste.Gonderim.BEKLIYOR, Liste.Gonderim.hesapla(adresVar = true, asama = a))
+        }
+        assertEquals(listOf(Liste.Isaret.BEKLIYOR), s(Liste.Gonderim.BEKLIYOR).isaretler)
+        assertTrue(s(Liste.Gonderim.BEKLIYOR).aciklama.contains("gönderilmeyi bekliyor"))
+        // Canlı: gerçekten gönderiliyor.
+        assertEquals(Liste.Gonderim.GONDERILIYOR, Liste.Gonderim.hesapla(adresVar = true, asama = BaglantiAsamasi.CANLI))
+        assertEquals(listOf(Liste.Isaret.GONDERILIYOR), s(Liste.Gonderim.GONDERILIYOR).isaretler)
+        // Bekleyen işlemi olmayan kayıtta hiçbir durumda rozet yok.
+        for (d in Liste.Gonderim.values()) {
+            assertEquals(emptyList<Liste.Isaret>(), Liste.satir(gor(kayit("c")), simdi, Liste.Grup.YAPILACAK, null, d).isaretler)
+        }
     }
 
     @Test

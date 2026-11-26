@@ -270,7 +270,7 @@ sealed interface Olay {
 
 /** Ekranın yürüteceği yan etkiler. Çekirdek çağrıları arka iş parçacığında, sonuçları olay olarak geri. */
 sealed interface Komut {
-    /** `eslestirmeBaslat(qr)`, sonra `BaglantiYoneticisi.basla`; sonuç `BaslatmaBitti`. */
+    /** `eslestirmeBaslat(qr)`, sonra `BaglantiYoneticisi.simdiDene`; sonuç `BaslatmaBitti`. */
     data class EslestirmeyiBaslat(val qr: AjandaEslestirmeQr) : Komut {
         override fun toString() = "EslestirmeyiBaslat(${qr.host}:${qr.port})"
     }

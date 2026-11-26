@@ -27,6 +27,7 @@ import dev.eren.ajanda.cekirdek.AjandaZamani
 import dev.eren.ajanda.cekirdek.BaglantiAsamasi
 import dev.eren.ajanda.cekirdek.CekirdekHatasi
 import dev.eren.ajanda.cekirdek.Degisim
+import dev.eren.ajanda.cekirdek.DuzenlemeTemeli
 import dev.eren.ajanda.cekirdek.GecmisSayfasi
 import dev.eren.ajanda.cekirdek.Gozlemci
 import dev.eren.ajanda.cekirdek.Hatirlatma
@@ -90,12 +91,14 @@ class KayitEkrani : Activity() {
 
     // Ana iş parçacığı durumu
     private var form: KayitFormu? = null
-    private var ozgunGovde: KayitGovdesi? = null
+    /** Düzenlemede formun açıldığı hal: yalnız kullanıcının ondan değiştirdiği alanlar gider. */
+    private var temel: DuzenlemeTemeli? = null
     private var kayit: KayitGorunumu? = null
     private var ret: RetGirdisi? = null
     private var sorunlar: List<FormSorunu> = emptyList()
     private var dilimTanindi = true
     private var canli = false
+    private var gonderim = Liste.Gonderim.YEREL
     private var gecmis: GecmisSayfasi? = null
     private var mesgul = false
     private val cihazDilimi: String = ZoneId.systemDefault().id
@@ -127,6 +130,7 @@ class KayitEkrani : Activity() {
             val id = kayitId ?: return
             if (degisim.tumu || id in degisim.kayitlar) arkada { kaydiYenidenOku(id) }
             if (id in degisim.gecmis) arkada { gecmisiOku(id) }
+            if (degisim.baglanti || degisim.eslesme || degisim.tumu) arkada { baglantiyiOku() }
         }
     }
 
@@ -146,7 +150,14 @@ class KayitEkrani : Activity() {
         kur()
         val tur = runCatching { KayitTuru.valueOf(intent.getStringExtra(TUR) ?: "") }.getOrDefault(KayitTuru.GOREV)
         val tarih = intent.getStringExtra(TARIH)?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
-        arkada { yukle(tur, tarih) }
+        // Kaydedilmemiş form (döndürme, tema değişimi, süreç ölümü) varsa o geri gelir.
+        val kayitli = FormKaydi.bundleOku(savedInstanceState)
+        arkada { yukle(tur, tarih, kayitli) }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        form?.let { FormKaydi.bundleYaz(outState, FormDurumu(it, temel, dilimTanindi)) }
     }
 
     override fun onStart() {
@@ -204,12 +215,12 @@ class KayitEkrani : Activity() {
         !e.alan.endsWith("saat_dilimi")
     }
 
-    private fun yukle(tur: KayitTuru, tarih: LocalDate?) {
+    /** [kayitli]: kaydedilmemiş form geri geliyor (yoksa formu kayıttan/varsayılandan kur). */
+    private fun yukle(tur: KayitTuru, tarih: LocalDate?, kayitli: FormDurumu?) {
         when (mod) {
             Mod.YENI -> {
-                val varsayilan = c().varsayilanHatirlatmalar()
-                val f = KayitFormu.yeni(tur, tarih, cihazDilimi, varsayilan)
-                val gecerli = dilimGecerli(cihazDilimi)
+                val f = kayitli?.form ?: KayitFormu.yeni(tur, tarih, cihazDilimi, c().varsayilanHatirlatmalar())
+                val gecerli = kayitli?.dilimTanindi ?: dilimGecerli(cihazDilimi)
                 anada {
                     dilimTanindi = gecerli
                     formuVer(f, null)
@@ -220,21 +231,25 @@ class KayitEkrani : Activity() {
             Mod.DUZENLE -> {
                 val id = kayitId ?: return
                 val g = c().kayit(id)
-                val bagli = runCatching { c().baglantiDurumu().asama == BaglantiAsamasi.CANLI }.getOrDefault(false)
+                baglantiyiOku()
                 anada {
-                    canli = bagli
                     if (g == null) {
                         bulunamadi("Kayıt bulunamadı; silinmiş ya da henüz eşitlenmemiş olabilir.")
                     } else {
                         kayit = g
-                        val f = KayitFormu.kayittan(g.kayit, cihazDilimi)
-                        formuVer(f, f.govde())
+                        if (kayitli != null) {
+                            dilimTanindi = kayitli.dilimTanindi
+                            formuVer(kayitli.form, kayitli.temel)
+                        } else {
+                            val f = KayitFormu.kayittan(g.kayit, cihazDilimi)
+                            formuVer(f, DuzenlemeTemeli(g.kayit.revizyon, f.govde()))
+                        }
                     }
                 }
             }
             Mod.RET -> {
                 val r = c().retListesi().firstOrNull { it.islemId == islemId }
-                val gecerli = dilimGecerli(cihazDilimi)
+                val gecerli = kayitli?.dilimTanindi ?: dilimGecerli(cihazDilimi)
                 anada {
                     dilimTanindi = gecerli
                     val govde = r?.govde
@@ -242,9 +257,23 @@ class KayitEkrani : Activity() {
                         bulunamadi("Bu değişiklik artık listede yok ya da içeriği okunamıyor.")
                     } else {
                         ret = r
-                        formuVer(KayitFormu.govdeden(govde, cihazDilimi), null)
+                        formuVer(kayitli?.form ?: KayitFormu.govdeden(govde, cihazDilimi), null)
                     }
                 }
+            }
+        }
+    }
+
+    /** Bağlantı ve eşleşme: geçmiş isteği ve "gönderiliyor/bekliyor" bilgisi için (arka iş parçacığı). */
+    private fun baglantiyiOku() {
+        val asama = runCatching { c().baglantiDurumu().asama }.getOrNull()
+        val adresVar = runCatching { c().baglantiAdresi() != null }.getOrDefault(false)
+        anada {
+            canli = asama == BaglantiAsamasi.CANLI
+            val yeni = Liste.Gonderim.hesapla(adresVar, asama)
+            if (yeni != gonderim) {
+                gonderim = yeni
+                if (::meta.isInitialized && form != null) metayiCiz()
             }
         }
     }
@@ -430,9 +459,9 @@ class KayitEkrani : Activity() {
         icerik.addView(t.anaDugme("Kapat") { finish() }, t.satirParam(ust = 16))
     }
 
-    private fun formuVer(f: KayitFormu, ozgun: KayitGovdesi?) {
+    private fun formuVer(f: KayitFormu, acilis: DuzenlemeTemeli?) {
         form = f
-        ozgunGovde = ozgun
+        temel = acilis
         yukleniyor.visibility = View.GONE
         form_.visibility = View.VISIBLE
         kaydetDugmesi.isEnabled = true
@@ -496,7 +525,8 @@ class KayitEkrani : Activity() {
             addView(t.yazi(Liste.kaynakMetni(k.kaynak), 14f, yazi, kalin = true))
             k.kaynak.alinti?.let { addView(t.yazi("“$it”", 15f, yazi, serif = true), t.satirParam(ust = 4)) }
             val zaman = EkranMetinleri.goreliAn(k.olusturmaMs, System.currentTimeMillis(), ZoneId.systemDefault())
-            addView(t.yazi("Eklendi: $zaman" + if (g.bekleyen) " · PC'ye gönderiliyor" else "", 13f, yazi), t.satirParam(ust = 4))
+            val gidis = if (g.bekleyen) gonderim.okunus?.let { " · $it" } ?: "" else ""
+            addView(t.yazi("Eklendi: $zaman$gidis", 13f, yazi), t.satirParam(ust = 4))
         })
         if (k.silindi) {
             meta.addView(kart(t.uyariZemin) {
@@ -762,17 +792,16 @@ class KayitEkrani : Activity() {
             return
         }
         mesgul = true
-        val ozgun = ozgunGovde
+        val acilan = temel
         arkada {
             val sorun = try {
                 val c = c()
                 val g = c.govdeyiHazirla(f.govde())
                 when (mod) {
                     Mod.YENI -> c.ekle(g)
-                    Mod.DUZENLE -> {
-                        // Değişmeyen form çekirdeğe gitmez (çekirdek de boş farkı yok sayar).
-                        if (ozgun == null || c.govdeyiHazirla(ozgun) != g) c.duzenle(kayitId!!, g)
-                    }
+                    // Yalnız kullanıcının formun açıldığı halden değiştirdiği alanlar gider (çekirdek hesaplar;
+                    // değişmeyen form hiçbir şey göndermez). Form açıkken PC'den inen değişiklik korunur.
+                    Mod.DUZENLE -> c.duzenle(kayitId!!, acilan, g)
                     Mod.RET -> RetListesi.duzelt(c, islemId!!, g)
                 }
                 sonra?.invoke(c)

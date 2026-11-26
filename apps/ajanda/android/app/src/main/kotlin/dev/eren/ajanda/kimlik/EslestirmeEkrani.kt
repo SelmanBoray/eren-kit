@@ -53,8 +53,9 @@ import java.util.concurrent.RejectedExecutionException
  * kişiselleştirilmiş klavye öğrenimine, otomatik doldurmaya ve kayıtlı örnek durumuna (Bundle) kapalı;
  * kod ve veri günlüğe yazılmaz. Panodan geçerli veri alınınca pano temizlenir (API 28+).
  *
- * Bağlantı yaşam döngüsü K2/K4'ündür: bu ekran yalnız eşleştirme başlarken `BaglantiYoneticisi.basla`
- * der, `birak` demez (ana ekran altta görünür kalır).
+ * Bağlantı yaşam döngüsü bu ekranın değildir (`ag/GorunurlukSayaci.kt`): ekran görünürken bağlantı açık,
+ * Home ya da başka uygulamaya geçince kısa bekleme sonrası kapalı. Bu ekran yalnız eşleştirme başlarken
+ * `BaglantiYoneticisi.simdiDene` der (kopuksa beklemeden dene).
  */
 class EslestirmeEkrani : Activity() {
 
@@ -178,7 +179,7 @@ class EslestirmeEkrani : Activity() {
                     // ve üretim, çekirdeğin motor kilidi altındaki `pair_request`'e kalmaz.
                     KeystoreKimlik(applicationContext).acikAnahtar()
                     cekirdekAl().eslestirmeBaslat(komut.qr)
-                    BaglantiYoneticisi.basla(applicationContext)
+                    BaglantiYoneticisi.simdiDene()
                     null
                 } catch (e: Exception) {
                     hataMetni(e)
@@ -187,7 +188,7 @@ class EslestirmeEkrani : Activity() {
             }
             is Komut.BaglantiyiBaslat -> arkada {
                 try {
-                    BaglantiYoneticisi.basla(applicationContext)
+                    BaglantiYoneticisi.simdiDene()
                 } catch (_: Exception) {
                     // Zaman aşımı sonucu gösterir.
                 }

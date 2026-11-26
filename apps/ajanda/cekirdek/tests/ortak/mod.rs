@@ -51,6 +51,22 @@ pub fn bugun(saat: i64, dk: i64) -> i64 {
 pub struct SahteKimlik {
     sayac: AtomicU64,
     pub silinen_anahtar: AtomicU64,
+    /// Sonraki bu kadar `imzala` geçici hata versin (Keystore'un geçici hatası gibi).
+    pub imza_hatasi: AtomicU64,
+    /// Sonraki bu kadar `rastgele` hata versin.
+    pub rastgele_hatasi: AtomicU64,
+}
+
+/// Sayaç sıfır değilse bir azaltır ve `true` döner.
+fn hata_sirasi(sayac: &AtomicU64) -> bool {
+    let mut n = sayac.load(Ordering::SeqCst);
+    while n > 0 {
+        match sayac.compare_exchange(n, n - 1, Ordering::SeqCst, Ordering::SeqCst) {
+            Ok(_) => return true,
+            Err(simdiki) => n = simdiki,
+        }
+    }
+    false
 }
 
 impl KimlikKabugu for SahteKimlik {
@@ -58,6 +74,9 @@ impl KimlikKabugu for SahteKimlik {
         Ok(vec![4; 65])
     }
     fn imzala(&self, mut veri: Vec<u8>) -> Result<Vec<u8>, KabukHatasi> {
+        if hata_sirasi(&self.imza_hatasi) {
+            return Err(KabukHatasi::Basarisiz { mesaj: "keystore geçici hata".into() });
+        }
         veri.reverse();
         Ok(veri)
     }
@@ -66,6 +85,9 @@ impl KimlikKabugu for SahteKimlik {
         Ok(veri == imza)
     }
     fn rastgele(&self, uzunluk: u32) -> Result<Vec<u8>, KabukHatasi> {
+        if hata_sirasi(&self.rastgele_hatasi) {
+            return Err(KabukHatasi::Basarisiz { mesaj: "rastgele üretilemedi".into() });
+        }
         let n = self.sayac.fetch_add(1, Ordering::SeqCst) + 1;
         Ok((0..uzunluk as usize).map(|i| n.to_be_bytes()[i % 8] ^ (i as u8)).collect())
     }

@@ -14,6 +14,16 @@ pub struct KayitGorunumu {
     pub bekleyen: bool,
 }
 
+/// Düzenleme formunun açıldığı hal (`duzenle`): yalnız bu halden farklı olan alanlar gönderilir; form
+/// açıkken PC'den gelen değişiklik kullanıcının dokunmadığı alanlarda korunur.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct DuzenlemeTemeli {
+    /// Formun yüklendiği görünen kaydın revizyonu (işlemin `temel_revizyon`'u; bilgi içindir).
+    pub revizyon: i64,
+    /// Formun yüklendiği gövde (formun kendi `govde()`'si, kullanıcı dokunmadan).
+    pub govde: KayitGovdesi,
+}
+
 /// Ana sekmeler ve yardımcı görünümler. Taslaklar tarihli/tarihsiz listelerde de (işaretli) görünür.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum Sekme {

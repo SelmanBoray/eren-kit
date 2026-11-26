@@ -145,8 +145,11 @@ class AjandaSoketi internal constructor(
         try {
             cekirdek.cerceveGeldi(n, metin)
         } catch (e: Exception) {
-            // Çekirdek bağlantıyı zaten kapattırdı (`kapat` geldi); sürdür.
+            // Çekirdek hatada bağlantıyı kendisi kapattırır (`kapat` hatadan önce geldi, ilk kapanış odur).
+            // Yine de kendimiz de kapatırız: işlenemeyen çerçeveden sonra açık kalan soket işlemez kalırdı
+            // (yeniden bağlanma olmaz). Kapanış zaten başladıysa bu çağrı etkisizdir.
             gunluk.uyari("çerçeve işlenemedi", e)
+            sonlandir(KapanisTuru.HATA, HamIslem.KAPAT, KOD_NORMAL)
         }
     }
 

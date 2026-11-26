@@ -161,6 +161,8 @@ class SahteCekirdek : KanalCekirdegi {
                 g.second.kapat("bozuk")
                 throw CekirdekHatasi.GecersizGirdi("cerceve", "bozuk")
             }
+            // Kapattırmadan atan çekirdek (beklenmeyen panik gibi).
+            "patla" -> throw CekirdekHatasi.KabukCagrisi("patladı")
             else -> yanit(metin).forEach { g.second.gonder(it) }
         }
     }

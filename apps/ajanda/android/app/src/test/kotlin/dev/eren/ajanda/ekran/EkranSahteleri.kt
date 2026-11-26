@@ -7,6 +7,7 @@ import dev.eren.ajanda.cekirdek.AlarmKabugu
 import dev.eren.ajanda.cekirdek.BaglantiAsamasi
 import dev.eren.ajanda.cekirdek.BaglantiDurumu
 import dev.eren.ajanda.cekirdek.CekirdekHatasi
+import dev.eren.ajanda.cekirdek.DuzenlemeTemeli
 import dev.eren.ajanda.cekirdek.EslesmeDurumu
 import dev.eren.ajanda.cekirdek.GecmisSayfasi
 import dev.eren.ajanda.cekirdek.Hatirlatma
@@ -119,8 +120,8 @@ class SahteYuz : CekirdekYuzu {
         return id
     }
 
-    override fun duzenle(kayitId: String, govde: KayitGovdesi) {
-        cagrilar += "duzenle:$kayitId"
+    override fun duzenle(kayitId: String, temel: DuzenlemeTemeli?, govde: KayitGovdesi) {
+        cagrilar += "duzenle:$kayitId" + if (temel == null) "" else ":temelli"
         val k = kayitlar[kayitId] ?: throw CekirdekHatasi.KayitYok(kayitId)
         kayitlar[kayitId] = k.copy(baslik = govde.baslik, zaman = govde.zaman)
     }

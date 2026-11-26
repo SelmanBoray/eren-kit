@@ -16,16 +16,38 @@
 //!
 //! Yazmalar kayıt başına tek savepoint'tir; etkiler yalnız savepoint bırakıldıktan sonra `Etkiler`'e
 //! yazılır (motorun etki kuralı). Çeviri hatası (bilinmeyen dilim) yalnız o hatırlatmayı düşürür.
+//!
+//! Alarm bütçesi ve ufuk: Android uygulama başına en çok 500 alarm tutar (aşılınca kurma reddedilir).
+//! Aynı anda en çok `ALARM_BUTCESI` teslim edilmemiş satır (= Android'de kurulu alarm) olur: bütün
+//! kayıtların gelecek tetikleri `(tetik_ms, kayit_id)` sırasıyla dizilir, en yakın `ALARM_BUTCESI`
+//! tanesi kurulur; en uzak kurulanın anahtarı `meta.alarm_ufku`'ya yazılır, ötesindekiler ertelenir
+//! (satırı açılmaz; kuruluysa iptal edilip silinir). Teslim edilmiş satırı olan tetik kurulmayacağı
+//! için bütçeden yer tutmaz. Tek kaydın senkronu yalnız ufkun içindeki tetikleri kurar; ardından
+//! bütçe denetlenir (`butceyi_denetle`): bütçe aşıldıysa ya da ertelenen varken yer açıldıysa (alarm
+//! çaldı, kayıt kapandı/silindi) bütün plan yeniden dizilir. Böylece en yakın hatırlatmalar hep
+//! kurulu kalır, uzaktakiler yaklaştıkça kurulur.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use super::{Etkiler, Motor, Ortam};
-use crate::depo::KuruluAlarm;
+use crate::depo::{KuruluAlarm, anahtar};
 use crate::hata::CekirdekHatasi;
 use crate::kopru::tipler::{HatirlatmaBildirimi, KacirilanBildirimi, KurulacakAlarm, YenidenKurmaNedeni};
 use crate::kural::AnCevirici;
 use crate::kural::hatirlatma::{HatirlatmaHali, KACIRILAN_PENCERE_MS, hatirlatma_hali, hatirlatma_kacirilanlari};
 use crate::model::AjandaKaydi;
+
+/// Aynı anda Android'e kurulu tutulan en çok alarm. Android'in uygulama başına sınırı 500'dür; pay:
+/// iptali henüz işlenmemiş ya da çalıp henüz teslim işaretlenmemiş satırlar, sayım farkları.
+pub const ALARM_BUTCESI: usize = 400;
+
+/// Ufkun anahtarı: önce tetik zamanı, eşitlikte kayıt kimliği (toplam sıra; bir kaydın aynı tetikli iki
+/// hatırlatması zaten tek alarmdır).
+type Ufuk = (i64, String);
+
+fn ufuk_icinde(tetik_ms: i64, kayit_id: &str, ufuk: Option<&Ufuk>) -> bool {
+    ufuk.is_none_or(|(t, k)| (tetik_ms, kayit_id) <= (*t, k.as_str()))
+}
 
 /// Bir kaydın şimdiki planı: gelecek tetikler ve kaçırılanlar (`tetik_ms -> ornek_tarihi`).
 /// Aynı tetikli iki hatırlatma tek alarmdır; örnek tarihi ilk hatırlatmanınkidir.
@@ -123,9 +145,26 @@ impl Motor {
             return self.hepsini_esitle(o, e, simdi, false);
         }
         let tekil: BTreeSet<&str> = kayitlar.iter().map(String::as_str).collect();
+        let ufuk = self.ufuk_oku()?;
         for kayit_id in tekil {
             let kayit = self.depo.gorunen_kayit(kayit_id)?.map(|g| g.kayit);
-            self.kaydi_esitle(o, e, kayit_id, kayit.as_ref(), simdi, false)?;
+            self.kaydi_esitle(o, e, kayit_id, kayit.as_ref(), simdi, false, ufuk.as_ref())?;
+        }
+        self.butceyi_denetle(o, e, simdi)
+    }
+
+    fn ufuk_oku(&self) -> Result<Option<Ufuk>, CekirdekHatasi> {
+        Ok(self.depo.meta_oku(anahtar::ALARM_UFKU)?.and_then(|s| {
+            let (t, k) = s.split_once(' ')?;
+            Some((t.parse().ok()?, k.to_string()))
+        }))
+    }
+
+    /// Bütçe aşıldıysa ya da ertelenen tetik varken yer açıldıysa bütün planı yeniden dizer.
+    fn butceyi_denetle(&mut self, o: &Ortam, e: &mut Etkiler, simdi: i64) -> Result<(), CekirdekHatasi> {
+        let sayi = self.depo.kurulu_alarm_sayisi()?;
+        if sayi > ALARM_BUTCESI || (sayi < ALARM_BUTCESI && self.ufuk_oku()?.is_some()) {
+            self.hepsini_esitle(o, e, simdi, false)?;
         }
         Ok(())
     }
@@ -171,7 +210,10 @@ impl Motor {
             _ => None,
         };
         // Geçersizse satır burada iptal edilip silinir; geçerliyse tekrarda sıradaki örnek kurulur.
-        self.kaydi_esitle(o, e, &satir.kayit_id, kayit.as_ref(), simdi, false)?;
+        let ufuk = self.ufuk_oku()?;
+        self.kaydi_esitle(o, e, &satir.kayit_id, kayit.as_ref(), simdi, false, ufuk.as_ref())?;
+        // Çalan alarm bütçede yer açtı: ertelenen varsa en yakını kurulur.
+        self.butceyi_denetle(o, e, simdi)?;
         Ok(sonuc)
     }
 
@@ -226,15 +268,43 @@ impl Motor {
                 yer.insert(kayit);
             }
         }
-        for (kayit_id, kayit) in &kayitlar {
-            self.kaydi_esitle(o, e, kayit_id, kayit.as_ref(), simdi, zorla)?;
+        let an = o.cevirici();
+        let mut hazir: Vec<(String, Option<AjandaKaydi>, Vec<KuruluAlarm>, KayitPlani)> = Vec::with_capacity(kayitlar.len());
+        for (kayit_id, kayit) in kayitlar {
+            let satirlar = self.depo.kaydin_alarm_satirlari(&kayit_id)?;
+            let plan = plan_hesapla(kayit.as_ref(), &satirlar, simdi, &an);
+            hazir.push((kayit_id, kayit, satirlar, plan));
         }
+        // Bütçe: kurulabilecek gelecek tetikler (teslim edilmiş satırı olan kurulmaz, yer tutmaz).
+        let ufuk: Option<Ufuk> = {
+            let mut adaylar: Vec<(i64, &str)> = hazir
+                .iter()
+                .flat_map(|(kayit_id, _, satirlar, plan)| {
+                    plan.gelecek
+                        .keys()
+                        .filter(|t| !satirlar.iter().any(|s| s.tetik_ms == **t && s.teslim_ms.is_some()))
+                        .map(move |t| (*t, kayit_id.as_str()))
+                })
+                .collect();
+            (adaylar.len() > ALARM_BUTCESI).then(|| {
+                let (_, sinir, _) = adaylar.select_nth_unstable(ALARM_BUTCESI - 1);
+                (sinir.0, sinir.1.to_string())
+            })
+        };
+        for (kayit_id, kayit, satirlar, mut plan) in hazir {
+            plan.gelecek.retain(|t, _| ufuk_icinde(*t, &kayit_id, ufuk.as_ref()));
+            self.plani_uygula(e, &kayit_id, kayit.as_ref(), &satirlar, &plan, simdi, zorla)?;
+        }
+        let ufuk_metni = ufuk.map(|(t, k)| format!("{t} {k}"));
+        self.depo.meta_yaz(anahtar::ALARM_UFKU, ufuk_metni.as_deref())?;
         self.depo.eski_teslimleri_sil(simdi - KACIRILAN_PENCERE_MS)?;
         Ok(())
     }
 
-    /// Bir kaydın planını kurulu satırlarıyla eşitler (dosya başındaki fark tablosu).
-    /// `kayit`: görünen hali (`None`: görünen kopyada yok). `zorla`: plandaki kurulu alarmları yeniden kur.
+    /// Bir kaydın planını kurulu satırlarıyla eşitler (dosya başındaki fark tablosu); yalnız `ufuk`
+    /// içindeki gelecek tetikler kurulur. `kayit`: görünen hali (`None`: görünen kopyada yok). `zorla`:
+    /// plandaki kurulu alarmları yeniden kur.
+    #[allow(clippy::too_many_arguments)]
     fn kaydi_esitle(
         &mut self,
         o: &Ortam,
@@ -243,9 +313,25 @@ impl Motor {
         kayit: Option<&AjandaKaydi>,
         simdi: i64,
         zorla: bool,
+        ufuk: Option<&Ufuk>,
     ) -> Result<(), CekirdekHatasi> {
         let satirlar = self.depo.kaydin_alarm_satirlari(kayit_id)?;
-        let plan = plan_hesapla(kayit, &satirlar, simdi, &o.cevirici());
+        let mut plan = plan_hesapla(kayit, &satirlar, simdi, &o.cevirici());
+        plan.gelecek.retain(|t, _| ufuk_icinde(*t, kayit_id, ufuk));
+        self.plani_uygula(e, kayit_id, kayit, &satirlar, &plan, simdi, zorla)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn plani_uygula(
+        &mut self,
+        e: &mut Etkiler,
+        kayit_id: &str,
+        kayit: Option<&AjandaKaydi>,
+        satirlar: &[KuruluAlarm],
+        plan: &KayitPlani,
+        simdi: i64,
+        zorla: bool,
+    ) -> Result<(), CekirdekHatasi> {
         if satirlar.is_empty() && plan.gelecek.is_empty() {
             return Ok(());
         }
@@ -254,7 +340,7 @@ impl Motor {
         let mut iptal: Vec<i64> = Vec::new();
         let mut kacirilan: Vec<KuruluAlarm> = Vec::new();
         self.depo.alarm_islemi(|d| {
-            for s in &satirlar {
+            for s in satirlar {
                 if s.teslim_ms.is_some() {
                     // Android'de artık yok; yalnız çift teslimi önlüyordu.
                     if etkin.is_none() || s.tetik_ms <= simdi - KACIRILAN_PENCERE_MS {
@@ -769,6 +855,78 @@ mod testler {
         d.motor.tum_alarmlari_kaldir(&mut e).unwrap();
         assert_eq!(e.alarm_iptal, nolar);
         assert!(d.motor.depo.alarmli_kayitlar().unwrap().is_empty());
+    }
+
+    /// `i` arttıkça tetiği sonraki: 26 Kasım'dan başlayarak günde 100 kayıt, 08:00'den 5'er dakika.
+    fn butce_kaydi(i: usize) -> AjandaKaydi {
+        let tarih = format!("2026-11-{:02}", 26 + i / 100);
+        let saat = format!("{:02}:{:02}", 8 + (i % 100) / 10, (i % 10) * 5);
+        kayit(&format!("k_{i:03}"), json!({"zaman": an(&tarih, &saat), "hatirlatmalar": [{"tur": "once", "dk": 0}]}))
+    }
+
+    fn kurulu_kayitlar(d: &Duzen) -> BTreeSet<String> {
+        d.kurulu().into_iter().map(|a| a.kayit_id).collect()
+    }
+
+    fn kurulu_no(d: &Duzen, kayit_id: &str) -> i64 {
+        d.kurulu().into_iter().find(|a| a.kayit_id == kayit_id).unwrap().alarm_no
+    }
+
+    /// Android'in 500 alarm sınırı: bütçeyi aşan planda en yakınlar kurulur, uzaktakiler yer açıldıkça.
+    #[test]
+    fn alarm_butcesi_en_yakinlari_kurar_uzaktakiler_yer_acildikca_kurulur() {
+        let mut d = Duzen::yeni();
+        let n = ALARM_BUTCESI + 10;
+        for i in 0..n {
+            d.yaz(&butce_kaydi(i));
+        }
+        let ilk: BTreeSet<String> = (0..ALARM_BUTCESI).map(|i| format!("k_{i:03}")).collect();
+        let e = d.senkron(&[]);
+        assert_eq!(e.alarm_kur.len(), ALARM_BUTCESI);
+        assert_eq!(kurulu_kayitlar(&d), ilk, "en yakın bütçe kadarı");
+
+        // Yeniden kurulum bütçeyi aşmaz, aynı kümeyi aynı numaralarla kurar.
+        let e = d.yeniden(YenidenKurmaNedeni::Acilis);
+        assert_eq!(e.alarm_kur.len(), ALARM_BUTCESI);
+        assert!(e.alarm_iptal.is_empty());
+
+        // Bugüne yeni kayıt: kurulur; en uzak kurulan (k_399) iptal edilir. Bütçe aşılmaz.
+        let son = kurulu_no(&d, "k_399");
+        d.yaz(&kayit("k_yakin", json!({"zaman": an("2026-11-25", "18:00"), "hatirlatmalar": [{"tur": "once", "dk": 0}]})));
+        let e = d.senkron(&["k_yakin"]);
+        assert_eq!(e.alarm_kur.iter().map(|a| a.kayit_id.as_str()).collect::<Vec<_>>(), vec!["k_yakin"]);
+        assert_eq!(e.alarm_iptal, vec![son]);
+        assert_eq!(d.kurulu().len(), ALARM_BUTCESI);
+
+        // Ufkun ötesine yeni kayıt: kurulmaz, hiçbir şey değişmez.
+        d.yaz(&kayit("k_uzak", json!({"zaman": an("2026-12-20", "10:00"), "hatirlatmalar": [{"tur": "once", "dk": 0}]})));
+        let e = d.senkron(&["k_uzak"]);
+        assert!(e.alarm_kur.is_empty() && e.alarm_iptal.is_empty());
+
+        // Alarm çalınca yer açılır: ertelenenlerin en yakını (k_399) kurulur.
+        let yakin = kurulu_no(&d, "k_yakin");
+        d.saat(bugun(18, 0));
+        let (b, e) = d.caldi(yakin);
+        assert!(b.is_some());
+        assert_eq!(e.alarm_kur.iter().map(|a| a.kayit_id.as_str()).collect::<Vec<_>>(), vec!["k_399"]);
+        assert_eq!(d.kurulu().len(), ALARM_BUTCESI);
+
+        // Kayıt silinince (görünen kopyadan düştü) yer açılır: sıradaki (k_400) kurulur.
+        let ilk_no = kurulu_no(&d, "k_000");
+        d.motor.depo.gorunen_sil("k_000").unwrap();
+        let e = d.senkron(&["k_000"]);
+        assert_eq!(e.alarm_iptal, vec![ilk_no]);
+        assert_eq!(e.alarm_kur.iter().map(|a| a.kayit_id.as_str()).collect::<Vec<_>>(), vec!["k_400"]);
+        assert_eq!(d.kurulu().len(), ALARM_BUTCESI);
+
+        // Plan bütçeye sığınca ufuk kalkar: hepsi kurulur.
+        for i in 1..60 {
+            d.motor.depo.gorunen_sil(&format!("k_{i:03}")).unwrap();
+        }
+        d.senkron(&[]);
+        assert_eq!(d.kurulu().len(), n + 1 - 60, "k_001..k_059 ve k_000 düştü, k_yakin teslim edildi, k_uzak eklendi");
+        assert!(kurulu_kayitlar(&d).contains("k_uzak"));
+        assert_eq!(d.motor.depo.meta_oku(anahtar::ALARM_UFKU).unwrap(), None);
     }
 
     fn gecici_yol(ad: &str) -> String {

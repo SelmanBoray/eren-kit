@@ -7,6 +7,7 @@ mod ortak;
 use std::time::Instant;
 
 use ajanda_cekirdek::kopru::tipler::{ListeSorgusu, Sekme};
+use ajanda_cekirdek::kural::AnCevirici;
 use ajanda_cekirdek::model::GirdiYolu;
 use ortak::*;
 
@@ -32,7 +33,18 @@ fn buyuk_kopyada_esitleme_ve_sorgu_sureleri() {
     let liste_suresi = t.elapsed();
     assert_eq!(l.len(), adet.div_ceil(2));
     assert_eq!(h.c.liste(tarihsiz).unwrap().len(), adet / 2);
-    assert_eq!(h.alarm.kurulular().len(), adet.div_ceil(2), "her tarihli kaydın alarmı");
+    // Her tarihli kaydın alarmı; Android'in uygulama başına sınırı yüzünden en çok bütçe kadarı (en yakınlar).
+    let kurulu = h.alarm.kurulular();
+    assert_eq!(kurulu.len(), adet.div_ceil(2).min(ajanda_cekirdek::ALARM_BUTCESI), "bütçe kadar alarm");
+    let en_uzak_kurulu = kurulu.iter().map(|(_, t)| *t).max().unwrap_or(0);
+    let kurulu_kayitlar: std::collections::HashSet<&str> = kurulu.iter().map(|(k, _)| k.as_str()).collect();
+    for g in &l {
+        let Some(ajanda_cekirdek::model::AjandaZamani::An { tarih, saat, saat_dilimi, .. }) = &g.kayit.zaman else { continue };
+        let tetik = cevirici().ana_cevir(tarih, saat, saat_dilimi).unwrap() - SAAT;
+        if tetik < en_uzak_kurulu {
+            assert!(kurulu_kayitlar.contains(g.kayit.kayit_id.as_str()), "daha yakın tetik kurulmadı: {}", g.kayit.kayit_id);
+        }
+    }
 
     let t = Instant::now();
     let k = h.c.kayit("k_000123".into()).unwrap();
