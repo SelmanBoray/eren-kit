@@ -36,7 +36,7 @@ Son güncelleme: 2026-11-27 (akşam).
 | Canlı servis ve telefon sürümleri | Canlı servis hâlâ PC oturumu yolunun kurulduğu sürümde; telefondaki uygulama takvim sekmeli sürümde. Sonraki canlı kurulum sözleşme v3 ile birlikte planlanıyor |
 | Dallarda süren işler | Kol C: sözleşme v3 (protokol, servis, asistan araçları, Rust model/kural katmanı) ve ek yedeği servis dilimi. Kol B: D2 gözden geçirme düzeltmeleri ve D3. Kol H: H1 (tasdik çerçevesi ve tasdikin oturuma bağlanması) |
 | Arayüz yönü | Üç yönlü prototipten kullanıcı "Sahne"yi seçti (bölüm 4A); Kol U başlıyor |
-| Bölge ölçüm uygulaması (`apps/ajanda-bolge-olcum`) | Ana dalda; telefona gönderildi (4 günlük kısa plan), rapor bekleniyor |
+| Bölge ölçüm uygulaması (`apps/ajanda-bolge-olcum`) | Ana dalda; telefonda kurulu (kullanıcı 2026-11-28'de teyit etti; 4 günlük kısa plan), rapor bekleniyor |
 | Alarm ölçüm uygulaması (`apps/ajanda-olcum`) | Telefonda kurulu; günlüğü bekleniyor |
 | Bağımsız kip, sürüm uyumu, bölge hatırlatması, yayın derlemesi | Tasarım bitti (bu belge); kod başlamadı |
 | Eren'in harness'tan bağımsızlığı | Yalnız yön kararı var; döküm ve tasarım yapılmadı |
@@ -67,16 +67,19 @@ Sürüm 2'den sürüm 1'e geri alma kısıtlıdır (`gun_bolumu` taşıyan kayı
 | 2026-11-27 | Kayıtlara ayrıntı metni, başlıklı bağlantılar, fotoğraf ve kaydın kendi çizimi/simgesi gelecek |
 | 2026-11-27 | Fotoğraflar bağlı kipte PC'de de yedeklenecek |
 | 2026-11-27 | Kolların sorduğu öteki sorularda önerilen varsayılanlar kabul edildi: içe aktarmada daha yeni güncellenen kalır ve önizleme gösterilir; klasöre otomatik dışa aktarma varsayılan kapalı; Android'in hesap yedeği kapalı; birleştirmede olası çiftler tutulur ve işaretlenir; ilk açılış doğrudan boş liste; bölgede her gün ilk girişte bir kez, çıkışta işaretlenmediyse ikinci hatırlatma, varış saatleri PC'ye gitmez; harness'ta önce bağlayıcı sonra sürücü, ikinci harness Codex CLI, etkileşimsiz ayrımının izin listesine çevrilmesi ayrı iş, bellek ve orkestra paketleri kapsam dışı |
-| 2026-11-27 | Açık kalan iki soru: başka harness'ta API anahtarına izin (sürücü aşamasında yeniden sorulacak); Codex ölçümü için güncel sürümün geçici dizine indirilmesi (onay bekliyor) |
+| 2026-11-27 | Açık kalan tek soru: başka harness'ta API anahtarına izin (sürücü aşamasında yeniden sorulacak). Codex ölçümü için güncel sürümün geçici dizine indirilmesi 2026-11-28'de onaylandı |
 | 2026-11-27 | Çalışma düzeni: kollar ayrı oturumlarda izin sormadan çalışır; kullanıcı yalnız koordinatörle konuşur; kollar soru ve karar isteklerini koordinatöre yazar |
 | 2026-11-27 | Varışlı kayıtta varsayılan zaman hatırlatması kaydın zamanına göre belirlenir: saatli ya da tarihli tek seferlik kayıtta bugünkü varsayılan kalır ve varış eklenir; zamansız kayıtta ve varışlı tekrarda yalnız varış |
+| 2026-11-28 | Sözleşme v3: üç bağımsız gözden geçirme temiz çıkarsa ana dala alınır; ayrıca sorulmaz. v3 araç alanları ayarla kapalı başlar |
+| 2026-11-28 | Codex ölçümü için güncel Codex sürümünün geçici dizine indirilmesi onaylandı (makine geneli kurulum yok) |
+| 2026-11-28 | Arayüz: biten kayıtlar varsayılan olarak görünür, solmuş ve listenin sonunda durur |
 
 Henüz kullanıcıya teyit ettirilmemiş varsayılanlar (bu belgedeki önerilerdir; kol uygulamadan önce
 koordinatör üzerinden teyit ister):
 
 - Gün hatırlatma saatleri: sabah 08:00, öğle 11:00, öğleden sonra 13:00, akşam 19:00, gece 20:00, bölümsüz 09:00.
 - 00:00–04:00 gece teyidi sorusu kalsın mı, yalnız gün mü adlandırılsın.
-- Arayüz: tamamlananlar varsayılan gizli mi; notlarda tamamlama halkası; kaydırarak silme.
+- Arayüz: notlarda tamamlama halkası; kaydırarak silme.
 - Eşleştirmede QR mı yapıştırma mı.
 - Bölüm 3 ve 4'ün sonundaki "sorulacak ürün kararları".
 

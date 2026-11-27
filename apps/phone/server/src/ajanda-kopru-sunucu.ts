@@ -99,6 +99,8 @@ interface Baglanti {
   kapali: boolean;
   /** Yalnız PC: reddedildi ya da anahtarı iptal edildi; kapanış bekleniyor (`gecikmeliKapat`). */
   dusuk: boolean;
+  /** `baslat`'ın PC kancası: köprü kapanışı `temizle`'de ona bildirilir. */
+  readonly pcKanca: PcKancaIsleyicileri | undefined;
 }
 
 /** `depo.ajandaJetonlariSil` ile aynı eşitlik: kapsamın bütün alanları. */
@@ -160,6 +162,14 @@ export const ajandaKopruSunucuKur: AjandaKopruSunucuFabrikasi = ({
       denetleyici.abort("baglanti_koptu" satisfies KopruIptalNedeni);
     }
     bag.suren.clear();
+    // Köprü kapandı (her kapanış yolu buradan, bir kez geçer): PC defteri bu bağlantının T5 bağını bırakır.
+    if (bag.kimlik?.tur === "pc" && bag.kimlik.rol === "pc_oturumu") {
+      try {
+        bag.pcKanca?.kopruKapandi?.(bag.kimlik.baglanti_id);
+      } catch {
+        gunluk.hata(MODUL, "isleyici_atti", { fiil: "kopruKapandi" });
+      }
+    }
   };
 
   const baglantiKapat = (bag: Baglanti): void => {
@@ -447,7 +457,7 @@ export const ajandaKopruSunucuKur: AjandaKopruSunucuFabrikasi = ({
       port.kapat();
       return;
     }
-    const bag: Baglanti = { port, kimlik: null, suren: new Map(), sureIptal: null, kapali: false, dusuk: false };
+    const bag: Baglanti = { port, kimlik: null, suren: new Map(), sureIptal: null, kapali: false, dusuk: false, pcKanca };
     baglantilar.add(bag);
     port.kapanisDinle(() => temizle(bag));
     port.satirDinle((satir) => satirIsle(bag, isleyiciler, pcKanca, satir));
