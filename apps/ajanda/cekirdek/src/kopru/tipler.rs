@@ -2,8 +2,8 @@
 //! tekrar ve kapalı listeler `model`'den doğrudan geçer. Bu dosya ilk dalgada dondurulur.
 
 use crate::model::{
-    AjandaKanalHatasi, AjandaKaydi, AjandaRetNedeni, AjandaYazar, AjandaZamani, IslemTuru, KayitGovdesi, KayitTuru,
-    KuyrukRetNedeni,
+    AjandaKanalHatasi, AjandaKaydi, AjandaRetNedeni, AjandaYazar, AjandaZamani, IslemTuru, KayitDurumu, KayitGovdesi,
+    KayitTuru, KuyrukRetNedeni,
 };
 
 /// Listede ve ayrıntıda gösterilen kayıt.
@@ -217,4 +217,78 @@ pub enum YenidenKurmaNedeni {
     PaketGuncellendi,
     /// Arka plan işi.
     Periyodik,
+}
+
+// -------------------------------------------------------------------------------------------------
+// Takvim sekmesi (yerel, salt okuma; kurallar `motor/takvim.rs` başında)
+// -------------------------------------------------------------------------------------------------
+
+/// Takvim ayı (`takvim_ayi`): ızgaranın her günü için özet ve ayla kesişen çok günlü öğelerin şeritleri.
+/// Günler cihazın şimdiki dilimindedir (Tarihli sekmesiyle aynı gün sınırı).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct TakvimAyi {
+    pub yil: i32,
+    /// 1-12.
+    pub ay: i32,
+    /// Ayın bütün günleri sırayla (1'den ayın son gününe; boş günler dahil, sayaçları sıfır).
+    pub gunler: Vec<TakvimGunOzeti>,
+    /// Ayla kesişen, birden çok güne yayılan öğeler (dönem; süresi gece yarısını aşan saatli kayıt ya da
+    /// örneği). İlk/son gün kırpılmamıştır (ay dışına taşabilir). Sıra: ilk gün artan, uzun olan önce.
+    pub seritler: Vec<TakvimSeridi>,
+}
+
+/// Bir günün ızgara özeti. Sayılar `takvim_gunu(tarih)`'nin döndürdüğü öğelerindir (aynı süzgeç):
+/// `toplam` onun uzunluğudur; çok günlü öğe kapsadığı her günde bir sayılır.
+#[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
+pub struct TakvimGunOzeti {
+    /// `YYYY-MM-DD`.
+    pub tarih: String,
+    pub toplam: i32,
+    /// Durumu `acik` olanlar (örnekte örneğin durumu).
+    pub acik: i32,
+    /// `tamam` ya da `iptal` olanlar (yalnız `kapalilar_dahil` iken sıfırdan büyük olabilir).
+    pub kapali: i32,
+    /// Taslaklar (onay bekleyen; `toplam`'ın içinde).
+    pub taslak: i32,
+    pub gorev: i32,
+    pub randevu: i32,
+    pub notlar: i32,
+    /// Günü kaplayan çok günlü öğe sayısı (`seritler`'den; `toplam`'ın içinde).
+    pub serit: i32,
+}
+
+/// Çok günlü öğe (ızgarada şerit). Tekrar eden kaydın örneğiyse `ornek_tarihi` doludur.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct TakvimSeridi {
+    pub kayit_id: String,
+    pub ornek_tarihi: Option<String>,
+    pub baslik: String,
+    pub tur: KayitTuru,
+    /// Öğenin durumu (`TakvimOgesi.durum` ile aynı kural).
+    pub durum: KayitDurumu,
+    pub taslak: bool,
+    /// İlk ve son gün (`YYYY-MM-DD`, ikisi dahil, cihaz diliminde; kırpılmamış).
+    pub ilk_gun: String,
+    pub son_gun: String,
+}
+
+/// Seçili günün bir öğesi (`takvim_gunu`). Sıra çekirdektedir (ürün kuralı, `motor/takvim.rs`).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct TakvimOgesi {
+    /// Kayıt olduğu gibi (tekrarlıda serinin kendisi: `zaman` çapanın günüdür, örneğin günü değil;
+    /// gösterimde `ilk_gun`/`saat` kullanılır, düzenleme formu kaydın kendisiyle açılır).
+    pub gorunum: KayitGorunumu,
+    /// Tekrar eden kaydın örneği: örneğin kaydın kendi takvimindeki günü (`durum_degistir`'in
+    /// `ornek_tarihi`'si). Dilim çevirisiyle cihazdaki günden farklı olabilir. Tekrarsızda yok.
+    pub ornek_tarihi: Option<String>,
+    /// Bu öğenin durumu: örnekte `ornekler` satırı, yoksa kaydın (serinin) durumu.
+    pub durum: KayitDurumu,
+    /// Öğenin ilk ve son günü (`YYYY-MM-DD`, ikisi dahil, cihaz diliminde). Tek günlükte ikisi aynı.
+    pub ilk_gun: String,
+    pub son_gun: String,
+    /// Saatli (`an`) öğe: başlangıcın cihaz dilimindeki saati (`HH:MM`, `ilk_gun`'de). Saatsizde yok.
+    pub saat: Option<String>,
+    /// Saatli ve süreli öğe: bitişin cihaz dilimindeki saati (`son_gun`'de; tam gece yarısında biten
+    /// öğede `00:00` ve `son_gun` önceki gündür).
+    pub bitis_saati: Option<String>,
 }

@@ -88,3 +88,64 @@ fn buyuk_kopyada_esitleme_ve_sorgu_sureleri() {
     );
     assert!(ilk.as_secs() < 120, "ilk eşitleme çok yavaş: {ilk:?}");
 }
+
+/// Takvim sekmesi büyük kopyada (`AJANDA_OLCUM_ADET`, varsayılan 5000): iki yıla yayılmış karışık kopya
+/// (saatli, süreli, saatsiz/bölümlü, dönem, %1 tekrar eden, %10 kapalı, %20 tarihsiz). Dolu ay, seçili gün
+/// ve adayların en kötü hali (verinin sonrasındaki boş ay: pencere öncesindeki her satır süzülür).
+#[test]
+fn buyuk_kopyada_takvim_sorgu_sureleri() {
+    use ajanda_cekirdek::model::{AjandaZamani, GunBolumu, KayitDurumu, Tekrar, TekrarSikligi};
+    let adet: usize = std::env::var("AJANDA_OLCUM_ADET").ok().and_then(|s| s.parse().ok()).unwrap_or(5_000);
+    let mut h = Hat::yeni("buyuk-takvim");
+    let bas = ajanda_cekirdek::model::takvim::tarih_gun_no("2025-12-01").unwrap();
+    for i in 0..adet {
+        let tarih = ajanda_cekirdek::model::takvim::gun_no_tarih(bas + (i as i64 * 7) % 730);
+        let saat = format!("{:02}:{:02}", 7 + i % 15, (i * 7) % 60);
+        let gun = |b| AjandaZamani::Gun { tarih: tarih.clone(), gun_bolumu: b, saat_dilimi: IST.into(), ifade: None };
+        let mut g = govde(&format!("Kayıt {i}"), None);
+        g.zaman = match i % 20 {
+            0..=9 => Some(an(&tarih, &saat)),
+            10 | 11 => Some(AjandaZamani::An { tarih: tarih.clone(), saat: "22:30".into(), sure_dk: Some(150), saat_dilimi: IST.into(), ifade: None }),
+            12 | 13 => Some(gun(None)),
+            14 => Some(gun(Some(GunBolumu::Aksam))),
+            15 => {
+                let son = ajanda_cekirdek::model::takvim::gun_no_tarih(bas + (i as i64 * 7) % 730 + 4);
+                Some(AjandaZamani::Donem { baslangic: tarih.clone(), bitis: son, saat_dilimi: IST.into(), ifade: None })
+            }
+            _ => None,
+        };
+        if i % 100 == 1 {
+            g.tekrar = Some(Tekrar { siklik: TekrarSikligi::Gunluk, aralik: 1 + (i % 3) as i32, gunler: None, bitis_tarihi: None, adet: None });
+        }
+        let id = format!("k_{i:06}");
+        h.pc.disaridan_ekle(&id, &g, false);
+        if i % 10 == 3 {
+            h.pc.disaridan_degistir(&id, |k| k.durum = KayitDurumu::Tamam);
+        }
+    }
+    h.eslestir();
+    assert!(h.canli_mi());
+
+    let olc = |f: &dyn Fn() -> usize| {
+        let _ = f(); // ısınma (deyim önbelleği, sayfa önbelleği)
+        let t = Instant::now();
+        let n = f();
+        (t.elapsed(), n)
+    };
+    let (dolu_ay, dolu_n) = olc(&|| h.c.takvim_ayi(2026, 12, false).unwrap().gunler.iter().map(|g| g.toplam as usize).sum());
+    let (dolu_ay_k, _) = olc(&|| h.c.takvim_ayi(2026, 12, true).unwrap().gunler.iter().map(|g| g.toplam as usize).sum());
+    let (gun, gun_n) = olc(&|| h.c.takvim_gunu("2026-12-15".into(), true).unwrap().len());
+    let (bos_ay, bos_n) = olc(&|| h.c.takvim_ayi(2031, 6, false).unwrap().gunler.iter().map(|g| g.toplam as usize).sum());
+    let (liste, liste_n) = olc(&|| h.c.liste(ListeSorgusu { sekme: Sekme::Tarihli, kapalilar_dahil: false }).unwrap().len());
+    assert!(dolu_n > 0 && gun_n > 0);
+    // Uzak ayda yalnız tekrar edenler görünür.
+    assert!(bos_n > 0);
+    // Özet gün listesiyle tutarlı.
+    let a = h.c.takvim_ayi(2026, 12, true).unwrap();
+    assert_eq!(a.gunler[14].toplam as usize, gun_n);
+    eprintln!(
+        "takvim ({adet} kayıt): ay (açıklar, {dolu_n} öğe-gün) {dolu_ay:?}, ay (kapalılar dahil) {dolu_ay_k:?}, \
+         gün ({gun_n} öğe) {gun:?}, boş uzak ay ({bos_n} öğe-gün, en kötü aday taraması) {bos_ay:?}; \
+         karşılaştırma: tarihli liste ({liste_n} satır) {liste:?}"
+    );
+}

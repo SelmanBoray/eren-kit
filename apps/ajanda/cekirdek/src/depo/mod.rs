@@ -16,7 +16,7 @@ mod kuyruk;
 mod sema;
 
 pub use alarmlar::KuruluAlarm;
-pub use gorunen::{GorunenKayit, GorunenSuzgec};
+pub use gorunen::{GorunenKayit, GorunenSuzgec, TakvimAdayAraligi};
 pub use kopya::KopyaTablosu;
 pub use kuyruk::{KuyrukSatiri, RetSatiri};
 

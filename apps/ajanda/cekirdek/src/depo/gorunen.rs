@@ -28,6 +28,21 @@ pub struct GorunenSuzgec {
     pub kapalilar_dahil: bool,
 }
 
+/// Takvim adaylarının aralığı (`gorunen_takvim_adaylari`). Tarihler `YYYY-MM-DD` metnidir ve sıra
+/// anahtarıyla (`tarih` + `T`/boşluk) metin olarak karşılaştırılır; yıl sınırı dışına taşabilir.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TakvimAdayAraligi {
+    /// İlk günü bundan önce olmayanlar (dahil).
+    pub alt: String,
+    /// İlk günü bundan önce olanlar (hariç).
+    pub ust: String,
+    /// `alt`'tan önce başlayan dönemler için en erken başlangıç (dahil).
+    pub donem_alt: String,
+    /// `alt`'tan önce başlayan dönemin bitişi bundan önce olmamalı (dahil).
+    pub donem_bitis_alt: String,
+    pub kapalilar_dahil: bool,
+}
+
 /// Tarihlilerin sırası: ilk gün, aynı günde gün boyu olan (`gun`, `donem`) önce, sonra saat.
 fn sira_anahtari(zaman: Option<&AjandaZamani>) -> (bool, String) {
     match zaman {
@@ -120,6 +135,29 @@ impl Depo {
         let sql = format!("SELECT json, bekleyen FROM gorunen WHERE {} ORDER BY {sira}, kayit_id", kosullar.join(" AND "));
         let mut sorgu = self.baglanti.prepare(&sql)?;
         let satirlar = sorgu.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, bool>(1)?)))?;
+        satirlar.map(|s| s.and_then(|(json, bekleyen)| satir_oku(&json, bekleyen))).collect()
+    }
+
+    /// Takvim penceresinin adayları (yerleştirme ve son süzme `motor/takvim.rs`'te): silinmemiş tarihli
+    /// kayıtlardan sıra anahtarı (ilk gün) `[alt, ust)` içinde olanlar, `donem_alt`'tan sonra başlayıp bitişi
+    /// `donem_bitis_alt`'tan önce olmayan dönemler ve ilk günü `ust`'ten önce olan bütün tekrar edenler.
+    /// `kapalilar_dahil` yanlışsa yalnız durumu `acik` olanlar. Sıra yoktur (çağıran sıralar). Göç
+    /// gerektirmez (şema 3 kalır): `gorunen_liste` dizinindeki sıra anahtarı aralığı + `json_extract`. Bedeli
+    /// `ust`'ten önceki her satırın okunmasıdır (20000 kayıtta ~20 ms, masaüstü); tekrar eden ve dönem satırları
+    /// için kısmi dizin bunu pencere kadarına indirir ama yeni göç ister (MIMARI.md "Takvim sekmesi").
+    pub fn gorunen_takvim_adaylari(&self, a: &TakvimAdayAraligi) -> rusqlite::Result<Vec<GorunenKayit>> {
+        let acik = if a.kapalilar_dahil { "" } else { "AND acik = 1" };
+        let sql = format!(
+            "SELECT json, bekleyen FROM gorunen
+             WHERE silindi = 0 AND tarihli = 1 {acik} AND sira_anahtari < ?1
+               AND (sira_anahtari >= ?2
+                    OR (sira_anahtari >= ?3 AND json_extract(json, '$.zaman.bitis') >= ?4)
+                    OR json_extract(json, '$.tekrar') IS NOT NULL)"
+        );
+        let mut sorgu = self.baglanti.prepare_cached(&sql)?;
+        let satirlar = sorgu.query_map(params![a.ust, a.alt, a.donem_alt, a.donem_bitis_alt], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, bool>(1)?))
+        })?;
         satirlar.map(|s| s.and_then(|(json, bekleyen)| satir_oku(&json, bekleyen))).collect()
     }
 

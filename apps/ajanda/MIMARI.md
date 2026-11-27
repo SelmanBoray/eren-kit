@@ -16,7 +16,7 @@ Her agent önce "İş bölümü"nü, sonra kendi bölümünü (R1..R4, K1..K4) v
 | Duvar saatinden ana çeviri | Kotlin `kabuk/JavaZaman.kt` (java.time), Rust'a `ZamanKabugu` | Sözleşme java.time'ı başvuru alır; telefonun kendi tz verisi. Rust kuralları `kural::AnCevirici` üzerinden çağırır; testler `SabitOfsetCevirici`. Reddedilen: Rust'a tz veritabanı (jiff/chrono-tz: yüzlerce KB ve ikinci doğruluk kaynağı). |
 | Alarm planı | Rust `kural/hatirlatma.rs` + `motor/alarm.rs` + `depo/alarmlar.rs` | Plan, kurulu alarm kimlikleri ve kaçırılan hesabı tek yerde, kalıcı. Android'e yalnız "kur(no, an) / iptal(no) / kaçırılanı göster" gider (`AlarmKabugu`). |
 | Alarm kurma stratejisi | Kotlin `alarm/AlarmPlanlayici.kt` (tek sınıf) | `apps/ajanda-olcum` sonucuna göre değişebilir (setAlarmClock / setExactAndAllowWhileIdle / muafiyet isteme). Başka hiçbir dosya AlarmManager çağırmaz. |
-| Arayüz verisi | Rust sorguları (`liste`, `kayit`, `retListesi`, `gecmis`) + `Gozlemci` | Arayüz çeker; değişiklikte `Gozlemci.degisti(Degisim)` gelir, arayüz kendi iş parçacığına geçip yeniden sorgular. |
+| Arayüz verisi | Rust sorguları (`liste`, `kayit`, `retListesi`, `gecmis`, takvim: `takvimAyi`, `takvimGunu`) + `Gozlemci` | Arayüz çeker; değişiklikte `Gozlemci.degisti(Degisim)` gelir, arayüz kendi iş parçacığına geçip yeniden sorgular. |
 | Alıcılar ve arka plan işi | Kotlin, `CekirdekErisimi.al(context)` | Aynı süreç içi tek çekirdek; arayüz gerekmez. Açılış/saat/dilim -> `alarmlariYenidenKur`; alarm -> `alarmCaldi`; periyodik iş -> kısa bağlantı oturumu. |
 
 **Etki kuralı.** `motor` yan etki yapmaz, `Etkiler`'e yazar (çerçeve, kapatma, alarm kur/iptal, kaçırılan,
@@ -71,6 +71,7 @@ motor/              iş mantığı, tek Mutex<Motor>
   kanal.rs          bağlantı durum makinesi, telafi, kuyruğun yollanması ve sonuçları   [R4]
   iyimser.rs        iyimser uygulama, görünen kopyanın hesabı                            [R4]
   islem.rs eslesme.rs sorgu.rs testler.rs                                       [R4]
+  takvim.rs         takvim sekmesi: ay özeti, gün listesi (+ takvim_testleri.rs) [takvim]
   alarm.rs                                                                      [R3]
 kopru/              Kotlin yüzeyi: #[uniffi::export] YALNIZ burada               [şef, dondurulmuş]
   mod.rs            Cekirdek nesnesi, serbest işlevler, etki uygulama
@@ -80,7 +81,8 @@ kopru/              Kotlin yüzeyi: #[uniffi::export] YALNIZ burada             
   sahte.rs          (yalnız test) sahte kabuklar: R3/R4 Motor ve Cekirdek testleri için
 tests/vektorler.rs  dil bağımsız vektör düzeneği (harness=false)               [şef, dondurulmuş]
 tests/uctan_uca.rs  köprü yüzeyi + sahte kabuklar + sahte PC ile senaryolar     [R4]
-tests/buyuk_kopya.rs  büyük kopyada süre ölçümü (AJANDA_OLCUM_ADET)            [R4]
+tests/buyuk_kopya.rs  büyük kopyada süre ölçümü (AJANDA_OLCUM_ADET; takvim dahil) [R4]
+tests/takvim.rs     takvim köprü yüzeyi uçtan uca (eşitlenen kopya, örnek durumu) [takvim]
 tests/yukseltme.rs  v1 yerel veritabanından yükseltme, sürüm uyuşmazlığı        [v2]
 tests/veri/v1_depo.sql  sürüm 1 kodunun ürettiği veritabanının dökümü (fikstür) [v2]
 tests/ortak/        sahte kabuklar ve `/ajanda` konuşan sahte PC servisi        [R4]
@@ -211,7 +213,7 @@ bölümde ve `surum` uyuşmazlığında çıkış 1 verir: sözleşmeye bölüm 
   `gece_teyidi_gerekli`; `AJANDA_SINIRLARI.GECE_ARALIGI_DK`; `AJANDA_SURUMU` = 2 (çerçeve, `pair_request`, QR).
   İmza öneki `eren-ajanda-auth-v1` sabit (sürümden türemez).
 - **Kural (`kural/hatirlatma.rs`).** `once` saatsiz gün kaydında gün hatırlatmasıdır:
-  `gun_hatirlatmasi_yereli(gün, dk, bölüm)` = gün `− ⌊dk/1440⌋`, saat `GunBolumu::hatirlatma_saati` (08/11/13/17/20)
+  `gun_hatirlatmasi_yereli(gün, dk, bölüm)` = gün `− ⌊dk/1440⌋`, saat `GunBolumu::hatirlatma_saati` (08/11/13/19/20; sözleşmenin `GUN_HATIRLATMA_SAATLERI`'si)
   ya da 09:00, kaydın diliminde `AnCevirici` ile. Haller ve kurulacaklar `gun_hatirlatmasi{tarih, saat}`,
   özet `gun_hatirlatmasi{tarih, saat, gecti}` taşır. Tetik her senkronda kaydın o anki zamanından
   hesaplandığı için gün/bölüm değişince alarm kendiliğinden taşınır (eski `(kayit_id, tetik_ms)` iptal),
@@ -242,6 +244,41 @@ bölümde ve `surum` uyuşmazlığında çıkış 1 verir: sözleşmeye bölüm 
   saatsiz gün saat sırasına girmez, günün başında bölüm sırasıyla, saat yerine bölüm etiketi ("Akşam",
   "Cumartesi · akşam"); hatırlatma saati listede yazılmaz (ayrıntı/form notunda). Bildirim saat uydurmaz:
   "Görev · bugün akşam".
+
+## Takvim sekmesi (yerel salt okuma; sözleşme değişmedi)
+
+Üçüncü sekme: ay ızgarası, altında seçili günün kayıtları. Kablo biçimi, `AJANDA_SURUMU`, eşitleme ve yerel
+şema (3) değişmedi; yalnız görünen kopyadan okuyan iki köprü yöntemi eklendi (mevcut imzalar aynı).
+
+- **Yüzey.** `takvimAyi(yil, ay, kapalilarDahil) -> TakvimAyi{yil, ay, gunler, seritler}`: `gunler` ayın bütün
+  günleri (boşlar dahil) `TakvimGunOzeti{tarih, toplam, acik, kapali, taslak, gorev, randevu, notlar, serit}`;
+  `seritler` ayla kesişen çok günlü öğeler `TakvimSeridi{kayitId, ornekTarihi?, baslik, tur, durum, taslak,
+  ilkGun, sonGun}` (kırpılmamış; ilk gün artan, uzun önce). `takvimGunu(tarih, kapalilarDahil) ->
+  List<TakvimOgesi{gorunum, ornekTarihi?, durum, ilkGun, sonGun, saat?, bitisSaati?}>`, sıralı. Özetin
+  `toplam`'ı o günün `takvimGunu` uzunluğudur. İkisi de motor kilidini almaz (okuma bağlantısı), cihaz
+  dilimini ve çeviriyi `ZamanKabugu`'ndan alır. Hata: `GecersizGirdi{alan: "yil"|"ay"|"tarih"}`.
+- **Gün ve dilim.** Gün sınırı cihazın şimdiki dilimidir (Tarihli sekmesiyle, `ekran/Liste.kt`, aynı): saatli
+  (`an`) kayıt kendi diliminden cihaz dilimine çevrilir (java.time; çevrilemezse duvar saati cihazınki), saatsiz
+  gün ve dönem takvim günüdür. Çekirdekte dilim veritabanı yok. Saatli öğe başına 2 (süreliyse 3)
+  `ZamanKabugu` çağrısı.
+- **Sıra.** Bölümsüz saatsizler (bölümsüz `gun`, `donem`), sonra bölümlüler bölüm sırasıyla, sonra saatliler
+  cihaz saatiyle; önceki günden süren saatli öğe saatlilerin başında; eşitlikte ilk gün, oluşturma, kimlik.
+  Saatten bölüm türetilmez.
+- **Çok günlü.** Dönem ve süresi gece yarısını aşan saatli kayıt kapsadığı her günde (ilk/son günüyle) ve
+  şeritte; tam gece yarısında biten ertesi günü kaplamaz.
+- **Tekrar.** `an`/`gun` + `tekrar` penceredeki örneklerine açılır (`tekrar_ornekleri`). Örneğin durumu
+  `ornekler` satırı, yoksa serinin durumu (kapalı seri bütün örnekleriyle kapalı). `ornekTarihi` örneğin kaydın
+  kendi takvimindeki günüdür (dilim çevirisiyle cihaz gününden farklı olabilir): örneği tamamlamak
+  `durumDegistir(kayitId, durum, ornekTarihi)`. `gorunum.kayit` serinin kendisidir (`zaman` çapa günü).
+- **Görünürlük (karar).** Tarihli sekmesiyle aynı: silinmiş hiç yok; taslak görünür (işaretli, özette
+  `taslak`); `tamam`/`iptal` (örnekte de) yalnız `kapalilarDahil` iken — ekran Tarihli sekmesinin
+  "kapalılar" seçimini paylaşabilir. Tamamlanan öğe öteki sekmelerdeki gibi görünümden çıkar.
+- **Hız** (`tests/buyuk_kopya.rs`, `--release`, masaüstü): 5000 kayıtta ay ~4,5 ms, gün ~3,7 ms; 20000'de
+  ay ~25 ms, gün ~20 ms (aynı koşuda Tarihli sekmesi 28 / 120 ms). Bedelin çoğu aday taramasıdır: göçsüz
+  sorgu pencereden önceki her satırın `json`'unu okur (tekrar edenler ve uzun dönemler sütunsuz bulunur).
+  Gerekirse yeni göç (tekrar ve dönem için kısmi dizin) bunu pencere kadarına indirir; şema sürümü artar
+  (`KopruTest` ve `tests/yukseltme.rs` 3 bekliyor).
+
 ## İkinci dalga iş parçaları
 
 Ortak: Türkçe ad ve yorum; kişisel veri yok; her parça yalnız kendi dosyalarına yazar; imzalar değişmez

@@ -24,7 +24,7 @@ use crate::motor::{Etkiler, Motor, Ortam};
 use kabuklar::{AlarmKabugu, Gozlemci, KimlikKabugu, Tasima, ZamanKabugu};
 use tipler::{
     BaglantiDurumu, DuzenlemeTemeli, EslesmeDurumu, GecmisSayfasi, HatirlatmaBildirimi, HatirlatmaOnizlemesi, KayitGorunumu,
-    ListeSorgusu, RetGirdisi, YenidenKurmaNedeni,
+    ListeSorgusu, RetGirdisi, TakvimAyi, TakvimOgesi, YenidenKurmaNedeni,
 };
 
 fn kilitle<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -331,6 +331,27 @@ impl Cekirdek {
 
     pub fn ret_listesi(&self) -> Result<Vec<RetGirdisi>, CekirdekHatasi> {
         self.oku(crate::motor::sorgu::ret_listesi)
+    }
+
+    // Takvim sekmesi (K4; yerel salt okuma, kurallar `motor/takvim.rs` başında)
+
+    /// Ay ızgarası: ayın her günü için özet (`TakvimGunOzeti`; boş günler dahil) ve ayla kesişen çok günlü
+    /// öğeler (`TakvimSeridi`). Günler cihazın şimdiki dilimindedir (`ZamanKabugu.cihazDilimi`; saatli kayıt
+    /// `yerelden_ana`/`andan_yerele` ile çevrilir). `kapalilar_dahil`: Tarihli sekmesindeki gibi `tamam`/`iptal`
+    /// da gelsin. Motor kilidini almaz. Hata: `GecersizGirdi{alan:"yil"|"ay"}`.
+    pub fn takvim_ayi(&self, yil: i32, ay: i32, kapalilar_dahil: bool) -> Result<TakvimAyi, CekirdekHatasi> {
+        let cihaz = self.zaman.cihaz_dilimi();
+        let cevirici = kabuklar::KabukCevirici(&*self.zaman);
+        self.oku(|d| crate::motor::takvim::takvim_ayi(d, &cevirici, &cihaz, yil, ay, kapalilar_dahil))
+    }
+
+    /// Seçili günün (`YYYY-MM-DD`, cihaz günü) öğeleri, ürün sırasıyla: bölümsüz saatsizler, bölümlüler bölüm
+    /// sırasıyla, saatliler saat sırasıyla. Çok günlü öğe kapsadığı her günde, tekrar eden kayıt örnek
+    /// olarak (`ornek_tarihi`, örneğin `durum`'u) gelir. Hata: `GecersizGirdi{alan:"tarih"}`.
+    pub fn takvim_gunu(&self, tarih: String, kapalilar_dahil: bool) -> Result<Vec<TakvimOgesi>, CekirdekHatasi> {
+        let cihaz = self.zaman.cihaz_dilimi();
+        let cevirici = kabuklar::KabukCevirici(&*self.zaman);
+        self.oku(|d| crate::motor::takvim::takvim_gunu(d, &cevirici, &cihaz, &tarih, kapalilar_dahil))
     }
 
     pub fn gecmis_iste(&self, kayit_id: String, once_rev: Option<i64>) -> Result<(), CekirdekHatasi> {

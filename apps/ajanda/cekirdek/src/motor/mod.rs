@@ -22,6 +22,7 @@ mod islem;
 mod iyimser;
 mod kanal;
 pub(crate) mod sorgu;
+pub(crate) mod takvim;
 
 use std::collections::BTreeMap;
 
