@@ -542,8 +542,13 @@ export function pcAnahtarMetni(
 
 /** Teşhiste gösterilen olaylar ve YALNIZ bu alanlar (izin listesi: başka alan hiç yazılmaz). */
 const TESHIS_ALANLARI: Readonly<Record<string, readonly string[]>> = {
-  pc_arac: ["alt_agent", "etkilesimsiz", "istem_kimligi"],
+  // Yeni alanlar (`uyarlayici` … `cerceve`) eski kayıtlarda yoktur; olmayan alan yazılmaz, eski satır aynı kalır.
+  // `surec_kimligi` kimliğin kendisi değil, yalnız `var`/`yok`'tur (ajanda-pc `varYok`).
+  pc_arac: ["alt_agent", "etkilesimsiz", "istem_kimligi", "uyarlayici", "aktor", "etkilesim", "surec_kimligi", "cerceve"],
   arac: ["fiil", "tur_kokeni", "pc_karar", "cagri_kimligi", "sonuc", "neden"],
+  // `tasdik_yok` kararının kanca kurulumu dışındaki nedenleri (ajanda-pc `kararVer`; `arac`'tan hemen önce yazılır).
+  pc_tasdik_yetersiz: ["neden", "uyarlayici", "surum"],
+  pc_oturum_uyusmuyor: ["surec_kimligi"],
   el_sikisma: ["rol"],
   el_sikisma_ret: ["rol", "code", "neden"],
 };
@@ -600,6 +605,61 @@ const kancaRetNedenleri = (olaylar: readonly TeshisOlayi[]): string[] =>
   [...new Set(olaylar.filter((o) => o.olay === "el_sikisma_ret" && o.alanlar["rol"] === "pc_kanca").map((o) => o.alanlar["neden"] ?? "bilinmiyor"))].map(
     (r) => `günlükte kanca reddi: ${KANCA_RET_NEDENI[r] ?? r}`,
   );
+
+/** Tasdik geldi ama karar yine `tasdik_yok`: servisin günlüğe yazdığı neden olayları (ajanda-pc `kararVer`). */
+const TASDIK_REDDI_OLAYLARI: ReadonlySet<string> = new Set(["pc_tasdik_yetersiz", "pc_oturum_uyusmuyor"]);
+
+/**
+ * Son `arac` olayının kendi neden olayları: bir önceki `arac`'tan sonra, sonuncudan önce yazılanlar (servis
+ * nedeni kararla aynı çağrıda, `arac`'tan hemen önce yazar). Kullanıcıya nedenleri (tekilleştirilmiş).
+ */
+function tasdikReddiNedenleri(olaylar: readonly TeshisOlayi[]): string[] {
+  let son = -1;
+  for (let i = olaylar.length - 1; i >= 0; i--) {
+    if (olaylar[i]?.olay === "arac") {
+      son = i;
+      break;
+    }
+  }
+  if (son < 0) return [];
+  let i = son - 1;
+  const bulunan: TeshisOlayi[] = [];
+  for (; i >= 0 && olaylar[i]?.olay !== "arac"; i--) {
+    const o = olaylar[i];
+    if (o !== undefined && TASDIK_REDDI_OLAYLARI.has(o.olay)) bulunan.unshift(o);
+  }
+  const metinler = bulunan.map((o) => {
+    if (o.olay === "pc_oturum_uyusmuyor") {
+      return (
+        "tasdik başka bir köprüye bağlı (pc_oturum_uyusmuyor): kanca bu çağrıyı bildirdi, ama tasdik onu bildiren " +
+        "Claude Code sürecine bağlı başka bir MCP köprüsünün; bu çağrıyı getiren köprü onu kullanamaz (tasdik silinmez). " +
+        "Olası: aynı Claude Code penceresinde MCP köprüsü yeniden başladı (/mcp ile yeniden bağlanma) ya da köprü başka " +
+        "bir Claude Code sürecinden açıldı. Claude Code penceresini kapatıp yeniden açın (köprü ve bağ yenilenir; servis " +
+        "yeniden başlayınca da bağlar sıfırlanır). Kanca kurulumu doğru, yeniden kurmak gerekmez."
+      );
+    }
+    const neden = o.alanlar["neden"];
+    if (neden === "uyarlayici") {
+      const ad = o.alanlar["uyarlayici"] ?? "?";
+      const surum = o.alanlar["surum"] ?? "?";
+      return (
+        `tasdik yetersiz (pc_tasdik_yetersiz): kanca tasdiki bu servisin tanımadığı bir uyarlayıcıyla ya da sürümle ` +
+        `gönderdi (uyarlayici=${ad} surum=${surum}). Kanca ile servis farklı sürümlerden: güncellemeden sonra servis ` +
+        "yeniden başlatılmadıysa yeniden başlatın; kanca komutu başka bir kurulumun (ör. geliştirme kopyası) dosyasını " +
+        "çalıştırıyorsa ayardaki yolu bu kuruluma çevirin."
+      );
+    }
+    if (neden === "aktor" || neden === "etkilesim") {
+      const ne = neden === "aktor" ? "çağrının ana ajandan mı alt agent'tan mı geldiğini (aktor)" : "oturumun etkileşimli olup olmadığını (etkilesim)";
+      return (
+        `tasdik yetersiz (pc_tasdik_yetersiz): kanca ${ne} "bilinmiyor" bildirdi; ajanın uyarlayıcısı bu bilgiyi ` +
+        "veremiyor, güvenli taraf taslaktır. Kanca kurulu ve çalışıyor; kayıtları uygulamadan onaylayın."
+      );
+    }
+    return "tasdik yetersiz (pc_tasdik_yetersiz): servis tasdiki yetersiz buldu; kanca kurulu ve çalışıyor, kayıtları uygulamadan onaylayın.";
+  });
+  return [...new Set(metinler)];
+}
 
 function tasdikYokNedenleri(olaylar: readonly TeshisOlayi[], kurulum: ClaudeCodeKancaDurumu): string[] {
   const nedenler: string[] = [];
@@ -719,9 +779,14 @@ export function pcTeshisMetni(
   const tasdikler = son.filter((o) => o.olay === "pc_arac");
   const evetHayir = (kosul: boolean, bos: boolean): string => (bos ? "olay yok" : kosul ? "evet" : "HAYIR");
   const sonKarar = araclar.at(-1)?.alanlar["pc_karar"];
+  // Tasdik geldi ama servis kullanmadı (başka köprüye bağlı ya da yetersiz): kanca kurulumu değil; "kurun" denmez.
+  const reddiNedenleri = sonKarar === "tasdik_yok" ? tasdikReddiNedenleri(olaylar) : [];
   // Ayarda kurulu ama tasdik gelmedi: genel metin ("kurulu değilse kurun") yanlış yere yollar; nedenler ayrı.
-  const kuruluAmaTasdiksiz = sonKarar === "tasdik_yok" && kurulum !== undefined && kurulum !== null && kurulum.arac === true;
-  const anlam = kuruluAmaTasdiksiz
+  const kuruluAmaTasdiksiz =
+    reddiNedenleri.length === 0 && sonKarar === "tasdik_yok" && kurulum !== undefined && kurulum !== null && kurulum.arac === true;
+  const anlam = reddiNedenleri.length > 0
+    ? " (kayıtlar TASLAK doğuyor: kanca bu çağrıyı bildirdi ama servis tasdiki kullanmadı; neden aşağıda)"
+    : kuruluAmaTasdiksiz
     ? " (kayıtlar TASLAK doğuyor: kanca ayarda kurulu görünüyor ama bu çağrıda tasdik gelmedi; olası nedenler aşağıda)"
     : sonKarar !== undefined && Object.hasOwn(TESHIS_KARAR_METNI, sonKarar)
       ? ` (${TESHIS_KARAR_METNI[sonKarar as PcTurKarari]})`
@@ -733,7 +798,10 @@ export function pcTeshisMetni(
     `  istem kimliği geliyor mu (araç öncesi): ${evetHayir(tasdikler.some((o) => o.alanlar["istem_kimligi"] === "var"), tasdikler.length === 0)}`,
     `  son PC araç kararı: ${sonKarar ?? "olay yok"}${anlam}`,
   ];
-  if (kuruluAmaTasdiksiz) {
+  if (reddiNedenleri.length > 0) {
+    ozet.push("Günlükte görülen neden (kanca çalışıyor; kurulum sorunu değil):");
+    for (const n of reddiNedenleri) ozet.push(`  - ${n}`);
+  } else if (kuruluAmaTasdiksiz) {
     ozet.push("Olası nedenler (kurulu görünüyor ama tasdik gelmedi):");
     for (const n of tasdikYokNedenleri(son, kurulum)) ozet.push(`  - ${n}`);
   } else if (sonKarar === "tasdik_yok" && kancaRetNedenleri(son).length > 0) {
