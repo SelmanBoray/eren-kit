@@ -755,7 +755,7 @@ describe("eslestir --pc-ajan: uyarlayıcı seçimi", () => {
         const m = pcTeshisMetni([tasdikYeni, uyusmuyor, arac("tasdik_yok")], z, k);
         assert.match(m, /son PC araç kararı: tasdik_yok \(kayıtlar TASLAK doğuyor: kanca bu çağrıyı bildirdi ama servis tasdiki kullanmadı; neden aşağıda\)/);
         assert.match(m, /Günlükte görülen neden \(kanca çalışıyor; kurulum sorunu değil\):\n {2}- tasdik başka bir köprüye bağlı \(pc_oturum_uyusmuyor\)/);
-        assert.match(m, /Claude Code penceresini kapatıp yeniden açın/);
+        assert.match(m, /Bir sonraki çağrıda kendiliğinden düzelir/);
         assert.equal(YANLIS_YON.test(ozetBolumu(m)), false, ozetBolumu(m));
         assert.match(m, new RegExp(`pc_oturum_uyusmuyor oturum=…${OTURUM.slice(-6)} surec_kimligi=var\\n`));
       }
@@ -879,7 +879,7 @@ describe("eslestir --pc-ajan: uyarlayıcı seçimi", () => {
           sinama +
           "  son PC araç kararı: tasdik_yok (kayıtlar TASLAK doğuyor: kanca bu çağrıyı bildirdi ama servis tasdiki kullanmadı; neden aşağıda)\n" +
           "Günlükte görülen neden (kanca çalışıyor; kurulum sorunu değil):\n" +
-          "  - tasdik başka bir köprüye bağlı (pc_oturum_uyusmuyor): kanca bu çağrıyı bildirdi, ama tasdik onu bildiren Claude Code sürecine bağlı başka bir MCP köprüsünün; bu çağrıyı getiren köprü onu kullanamaz (tasdik silinmez). Olası: aynı Claude Code penceresinde MCP köprüsü yeniden başladı (/mcp ile yeniden bağlanma) ya da köprü başka bir Claude Code sürecinden açıldı. Claude Code penceresini kapatıp yeniden açın (köprü ve bağ yenilenir; servis yeniden başlayınca da bağlar sıfırlanır). Kanca kurulumu doğru, yeniden kurmak gerekmez.\n",
+          "  - tasdik başka bir köprüye bağlı (pc_oturum_uyusmuyor): kanca bu çağrıyı bildirdi, ama tasdik onu bildiren Claude Code sürecine bağlı başka bir MCP köprüsünün; bu çağrıyı getiren köprü onu kullanamaz (bu çarpışma tasdiki silmez). Olası: aynı Claude Code sürecinde MCP köprüsü yeniden başladı (/mcp ile yeniden bağlanma) ya da köprü başka bir Claude Code sürecinden açıldı. Bir sonraki çağrıda kendiliğinden düzelir (köprü kapanınca o sürecin bağı bırakılır, yeni köprünün sonraki çağrısı doğrudan kayıt olur); sürerse ve iki köprü aynı anda açıksa Claude Code penceresini kapatıp yeniden açın. Kanca kurulumu doğru, yeniden kurmak gerekmez.\n",
       );
       assert.equal(
         pcTeshisMetni([tasdikYeni, uyusmuyor, tasdikYeni, arac("tasdik_yok")], z, kurulu),

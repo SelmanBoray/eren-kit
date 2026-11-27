@@ -664,10 +664,11 @@ function tasdikReddiNedenleri(zincir: TeshisZinciri): string[] {
     if (o.olay === "pc_oturum_uyusmuyor") {
       return (
         "tasdik başka bir köprüye bağlı (pc_oturum_uyusmuyor): kanca bu çağrıyı bildirdi, ama tasdik onu bildiren " +
-        "Claude Code sürecine bağlı başka bir MCP köprüsünün; bu çağrıyı getiren köprü onu kullanamaz (tasdik silinmez). " +
-        "Olası: aynı Claude Code penceresinde MCP köprüsü yeniden başladı (/mcp ile yeniden bağlanma) ya da köprü başka " +
-        "bir Claude Code sürecinden açıldı. Claude Code penceresini kapatıp yeniden açın (köprü ve bağ yenilenir; servis " +
-        "yeniden başlayınca da bağlar sıfırlanır). Kanca kurulumu doğru, yeniden kurmak gerekmez."
+        "Claude Code sürecine bağlı başka bir MCP köprüsünün; bu çağrıyı getiren köprü onu kullanamaz (bu çarpışma tasdiki silmez). " +
+        "Olası: aynı Claude Code sürecinde MCP köprüsü yeniden başladı (/mcp ile yeniden bağlanma) ya da köprü başka " +
+        "bir Claude Code sürecinden açıldı. Bir sonraki çağrıda kendiliğinden düzelir (köprü kapanınca o sürecin bağı " +
+        "bırakılır, yeni köprünün sonraki çağrısı doğrudan kayıt olur); sürerse ve iki köprü aynı anda açıksa Claude Code " +
+        "penceresini kapatıp yeniden açın. Kanca kurulumu doğru, yeniden kurmak gerekmez."
       );
     }
     const neden = o.alanlar["neden"];
