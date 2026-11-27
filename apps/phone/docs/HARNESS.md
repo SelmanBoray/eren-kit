@@ -294,6 +294,11 @@ yapılandırılabilir).
 | ACP | yok (dış uyarlayıcı) | `codex-acp` uyarlayıcısı | `gemini --acp` | `opencode acp` |
 | Yerleşik araç kısıtı (T8) | `--tools ""` + `--allowedTools` | doğrulanmadı | `excludeTools`/politika (doğrulanmadı) | doğrulanmadı |
 
+Güncelleme (2026-11-27, kaynak kodu okuması, ölçülmedi): Codex sütunu `HARNESS-H3-OLCUM.md` bölüm 1 ile
+düzeltilir. 0.172.0'da kanca MCP araçlarında da çalışır, MCP isteğinde `_meta.callId` vardır ve kancadaki
+`tool_use_id` ile aynı kaynaktan gelir. `agent_id`/`agent_type` yalnız bir alt agent türünde doludur;
+kancada etkileşim alanı yoktur. Bu makinedeki 0.120.0'da MCP araçları için kanca yoktur.
+
 Not: Gemini CLI belgeleri, bazı hesap türlerinde Gemini CLI'nin başka bir CLI ile değiştirildiğini söylüyor;
 ücretli/API yolunun durumu doğrulanmadı. Bu nedenle Gemini, ilk uyarlayıcı adayı değildir.
 
