@@ -156,6 +156,20 @@ impl Depo {
         satirlar.map(|j| kayit_json_oku(&j?)).collect()
     }
 
+    /// Süren tam telafinin sonunda PC'nin bu kayıtta geriye gitmiş olabileceği kayıtlar (`motor/yerel.rs`
+    /// `geri_donenleri_kuyruga_koy` kesin kararı verir): sunucu kopyasında olup toplananda olmayan, toplananda
+    /// revizyonu küçük ya da aynı revizyonda metni başka olanlar ve onaylanmış kuyruk satırı olanlar.
+    pub fn geri_donmus_adaylar(&self) -> Result<Vec<String>, CekirdekHatasi> {
+        let mut sorgu = self.baglanti.prepare(
+            "SELECT s.kayit_id FROM sunucu_kayitlari s LEFT JOIN telafi_kayitlari t ON t.kayit_id = s.kayit_id
+             WHERE t.kayit_id IS NULL OR t.revizyon < s.revizyon OR (t.revizyon = s.revizyon AND t.json != s.json)
+             UNION SELECT kayit_id FROM kuyruk WHERE bekledigi_rev IS NOT NULL
+             ORDER BY 1",
+        )?;
+        let satirlar = sorgu.query_map([], |s| s.get::<_, String>(0))?;
+        Ok(satirlar.collect::<rusqlite::Result<_>>()?)
+    }
+
     /// Görünen kopyada olup sunucu kopyasında ve kuyrukta olmayan kayıtları siler. Döner: silinenler.
     pub fn sahipsiz_gorunenleri_sil(&self) -> Result<Vec<String>, CekirdekHatasi> {
         let mut sorgu = self.baglanti.prepare(

@@ -44,10 +44,11 @@ fn kayit(h: &Hat, id: &str) -> AjandaKaydi {
     h.c.kayit(id.into()).unwrap().expect("kayıt").kayit
 }
 
-/// Değişmez: her yerel kayıt ya görünen kopyada durur ya da ret listesindedir.
+/// Değişmez: her canlı yerel kayıt ya görünen kopyada durur ya da ret listesindedir (PC'de hiç olmamış mezar
+/// taşı gönderilmez; mezar taşları ayrıca denetlenir).
 fn hicbiri_kaybolmadi(h: &Hat, yereller: &[AjandaKaydi]) {
     let ret = h.c.ret_listesi().unwrap();
-    for k in yereller {
+    for k in yereller.iter().filter(|k| !k.silindi) {
         assert!(
             h.c.kayit(k.kayit_id.clone()).unwrap().is_some() || ret.iter().any(|r| r.kayit_id == k.kayit_id),
             "{} sessizce kayboldu",
@@ -209,13 +210,14 @@ fn koparip_baska_servise_baglanma_kayit_kaybettirmez() {
     let d = h.c.baglanti_durumu().unwrap();
     assert_eq!((d.kuyrukta, d.ret_listesinde), (0, 0), "hiçbir işlem reddedilmedi");
     hicbiri_kaybolmadi(&h, &yereller);
-    for id in ["k_a", b.as_str(), c.as_str(), "k_x"] {
+    for id in ["k_a", c.as_str(), "k_x"] {
         assert_eq!(&kayit(&h, id), &h.pc.d.kayitlar[id], "{id}: telefon ile PC2 aynı");
     }
     // Görünen kopya PC2'nin kopyasıyla değiştirilmedi: telefonun hali PC2'ye gitti.
     let ka = &h.pc.d.kayitlar["k_a"];
     assert_eq!((ka.baslik.as_str(), &ka.zaman), ("A (telefon)", &Some(an("2026-11-26", "15:00"))));
-    assert!(h.pc.d.kayitlar[&b].silindi);
+    // PC2'de hiç olmamış mezar taşı gönderilmez.
+    assert!(!h.pc.d.kayitlar.contains_key(&b) && h.c.kayit(b.clone()).unwrap().is_none());
     assert_eq!(h.pc.d.kayitlar[&c].baslik, "C");
     assert_eq!(h.alarm.kurulular(), vec![("k_a".to_string(), yarin(14))]);
     assert_eq!(temel(&h).1.as_deref(), Some("d_pc2"));
@@ -281,8 +283,8 @@ fn ayni_servise_yeniden_baglanma_uc_yollu_birlesir_silinmis_kayit_ret_listesine_
     assert_eq!(ret.len(), 1);
     assert_eq!((ret[0].kayit_id.as_str(), ret[0].islem, ret[0].neden), ("k_p", IslemTuru::Guncelle, KuyrukRetNedeni::KayitSilinmis));
     assert_eq!(ret[0].govde.as_ref().unwrap().baslik, "P (telefon)");
-    assert!(h.pc.d.kayitlar[&n].silindi, "telefonda doğup silinen mezar taşı olarak gitti");
-    for id in ["k_a", "k_p", "k_o", n.as_str(), "k_y"] {
+    assert!(!h.pc.d.kayitlar.contains_key(&n) && h.c.kayit(n.clone()).unwrap().is_none(), "telefonda doğup silinen gönderilmedi");
+    for id in ["k_a", "k_p", "k_o", "k_y"] {
         assert_eq!(&kayit(&h, id), &h.pc.d.kayitlar[id], "{id}: telefon ile PC aynı");
     }
     assert_eq!(h.c.baglanti_durumu().unwrap().kuyrukta, 0);

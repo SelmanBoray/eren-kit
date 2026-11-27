@@ -289,24 +289,6 @@ impl Motor {
         })
     }
 
-    /// Eşleşme kaldırılınca (R4 `motor/eslesme.rs`): bütün alarmları iptal eder, satırları siler.
-    pub(crate) fn tum_alarmlari_kaldir(&mut self, e: &mut Etkiler) -> Result<(), CekirdekHatasi> {
-        let satirlar = self.depo.alarm_islemi(|d| {
-            let mut silinen = Vec::new();
-            for kayit_id in d.alarmli_kayitlar()? {
-                for s in d.kaydin_alarm_satirlari(&kayit_id)? {
-                    d.alarm_sil(s.alarm_no)?;
-                    silinen.push(s);
-                }
-            }
-            Ok(silinen)
-        })?;
-        for s in satirlar.into_iter().filter(|s| s.teslim_ms.is_none()) {
-            iptal_yaz(e, s.alarm_no);
-        }
-        Ok(())
-    }
-
     /// Etkin kayıtlar ve satırı olan her kayıt (görünen kopyadan düşmüş ya da kapanmış olanlar dahil).
     fn hepsini_esitle(&mut self, o: &Ortam, e: &mut Etkiler, simdi: i64, zorla: bool) -> Result<(), CekirdekHatasi> {
         let mut kayitlar: BTreeMap<String, Option<AjandaKaydi>> =
@@ -892,18 +874,6 @@ mod testler {
         assert!(d.caldi(no_b).0.is_some());
         d.motor.alarm_kurulamadi(no_b, "geç").unwrap();
         assert!(d.motor.depo.alarm_no_ile(no_b).unwrap().unwrap().teslim_ms.is_some());
-    }
-
-    #[test]
-    fn eslesme_kalkinca_hepsi_iptal() {
-        let mut d = Duzen::yeni();
-        d.yaz(&kayit("k_a", json!({"zaman": an("2026-11-25", "16:00")})));
-        d.yaz(&kayit("k_b", json!({"zaman": an("2026-11-25", "18:00")})));
-        let nolar: Vec<i64> = d.senkron(&[]).alarm_kur.iter().map(|a| a.alarm_no).collect();
-        let mut e = Etkiler::default();
-        d.motor.tum_alarmlari_kaldir(&mut e).unwrap();
-        assert_eq!(e.alarm_iptal, nolar);
-        assert!(d.motor.depo.alarmli_kayitlar().unwrap().is_empty());
     }
 
     /// `i` arttıkça tetiği sonraki: 26 Kasım'dan başlayarak günde 100 kayıt, 08:00'den 5'er dakika.

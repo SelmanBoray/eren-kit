@@ -6,7 +6,7 @@ mod ortak;
 
 use ajanda_cekirdek::CekirdekHatasi;
 use ajanda_cekirdek::depo::Depo;
-use ajanda_cekirdek::kopru::tipler::{BaglantiAsamasi, EslesmeDurumu, KayitGorunumu, ListeSorgusu, Sekme, YenidenKurmaNedeni};
+use ajanda_cekirdek::kopru::tipler::{BaglantiAsamasi, CalismaKipi, EslesmeDurumu, KayitGorunumu, ListeSorgusu, Sekme, YenidenKurmaNedeni};
 use ajanda_cekirdek::model::{
     AjandaKanalHatasi, AjandaZamani, GirdiYolu, Hatirlatma, IslemTuru, KayitDurumu, KayitGovdesi, KuyrukRetNedeni,
 };
@@ -373,13 +373,23 @@ fn yarida_kesilen_tam_esitleme_gorunen_kopyayi_ve_alarmlari_goturmez() {
     assert_eq!(liste(&h, Sekme::Tarihli, true), once_liste, "görünen kopya değişmedi");
     assert_eq!(h.alarm.kurulular(), once_alarm);
     assert_eq!(h.alarm.iptal_edilen.lock().unwrap().len(), iptal_once, "hiçbir alarm iptal edilmedi");
-    assert_eq!(Depo::ac(&h.yol).unwrap().hello_alanlari().unwrap(), once_hello, "sonraki hello eski kopyanın iziyle");
-    assert!(h.gozlemci.al().iter().all(|d| d.kayitlar.is_empty() && !d.tumu));
+    assert_eq!(Depo::ac(&h.yol).unwrap().hello_alanlari().unwrap(), once_hello, "PC temeli değişmedi");
+    // D2: başka depo görünen kopyayı ezemez; `welcome`'da kip yerele döndü (kayıt değişmedi, yalnız `tumu`).
+    assert_eq!(h.c.kip().unwrap(), CalismaKipi::Yerel);
+    assert!(h.gozlemci.al().iter().all(|d| d.kayitlar.is_empty()));
 
+    // Sonraki bağlantı yerel kipten bağlanmadır: B düşmez, telefonun hali yeni depoya gider (D1 fark temeli).
     h.baglan();
     assert!(h.canli_mi());
-    assert_eq!(basliklar(&liste(&h, Sekme::Tarihli, true)), vec!["A'", "C"]);
-    assert_eq!(h.alarm.kurulular(), vec![("k_a".to_string(), yarin(16)), ("k_c".to_string(), yarin(8) + GUN)]);
+    assert_eq!(h.c.kip().unwrap(), CalismaKipi::Bagli);
+    assert_eq!(basliklar(&liste(&h, Sekme::Tarihli, true)), vec!["A", "B", "C"]);
+    for id in ["k_a", "k_b", "k_c"] {
+        assert_eq!(h.c.kayit(id.into()).unwrap().unwrap().kayit, h.pc.d.kayitlar[id], "{id}: telefon ile PC aynı");
+    }
+    assert_eq!(
+        h.alarm.kurulular(),
+        vec![("k_a".to_string(), yarin(14)), ("k_b".to_string(), yarin(15)), ("k_c".to_string(), yarin(8) + GUN)]
+    );
     assert_eq!(kurulu_alarm_satirlari(&h), h.alarm.kurulular());
     assert!(h.gozlemci.al().iter().any(|d| d.tumu));
 }
@@ -400,9 +410,13 @@ fn pc_yedekten_geri_yuklenince_tam_esitleme() {
     h.pc.disaridan_ekle("k_c", &govde("C", None), false);
     h.baglan();
     assert_eq!(h.pc.son_welcome_tam, Some(true), "iz tutmuyor: tam");
+    // Aynı depo, tam telafi: PC'nin yitirdiği onaylı hal (k_b) PC'ye geri gider; PC'nin yeni kaydı gelir.
     let mut l = basliklar(&liste(&h, Sekme::Tarihsiz, true));
     l.sort();
-    assert_eq!(l, vec!["A", "C"], "telefon PC'nin kopyasına döndü");
+    assert_eq!(l, vec!["A", "B", "C"], "telefonun bildiği hal kaybolmadı");
+    assert_eq!(h.pc.d.kayitlar["k_b"].baslik, "B", "PC'nin yitirdiği kayıt geri gitti");
+    assert_eq!(h.c.kayit("k_b".into()).unwrap().unwrap().kayit, h.pc.d.kayitlar["k_b"]);
+    assert_eq!(h.c.baglanti_durumu().unwrap().kuyrukta, 0);
 }
 
 #[test]
@@ -536,8 +550,9 @@ fn kacirilan_ozeti_gosterilemezse_bilgi_kaybolmaz() {
     assert_eq!(h.alarm.kacirilan.lock().unwrap().len(), 1, "bir kez");
 }
 
+/// D2: bağlı kipte eşleşmeyi kaldırmak koparmadır; kayıtlar, alarmlar ve eşitlenme anı kalır, kip yerel olur.
 #[test]
-fn eslesme_kaldirilinca_her_sey_silinir() {
+fn eslesme_kaldirilinca_veri_kalir_kip_yerel_olur() {
     let mut h = eslesmis("kaldir");
     let a = h.pc.disaridan_ekle("k_a", &govde("A", Some(an("2026-11-26", "15:00"))), false);
     h.pc_degisti(a);
@@ -547,19 +562,24 @@ fn eslesme_kaldirilinca_her_sey_silinir() {
     h.pc.islem_yut = 1;
     h.c.ekle(govde("Yolda", None), GirdiYolu::Elle).unwrap();
     h.pompala();
+    let once: Vec<Vec<String>> =
+        [Sekme::Tarihli, Sekme::Tarihsiz, Sekme::Taslaklar, Sekme::Silinenler].map(|s| basliklar(&liste(&h, s, true))).to_vec();
+    assert_eq!(once[1].len(), 2);
+    let once_alarm = kurulu_alarm_satirlari(&h);
+    assert_eq!(once_alarm.len(), 1);
+    let son_esitlenme = h.c.baglanti_durumu().unwrap().son_esitlenme_ms;
     let tasima = h.baglanti.as_ref().unwrap().tasima.clone();
     h.c.eslesmeyi_kaldir().unwrap();
     assert!(tasima.kapatildi.lock().unwrap().is_some(), "açık bağlantı kapatılır");
     h.kopar();
     assert_eq!(h.c.eslesme_durumu().unwrap(), EslesmeDurumu::Yok);
     assert_eq!(h.c.baglanti_adresi().unwrap(), None);
-    for s in [Sekme::Tarihli, Sekme::Tarihsiz, Sekme::Taslaklar, Sekme::Silinenler] {
-        assert!(liste(&h, s, true).is_empty());
-    }
+    let sonra: Vec<Vec<String>> =
+        [Sekme::Tarihli, Sekme::Tarihsiz, Sekme::Taslaklar, Sekme::Silinenler].map(|s| basliklar(&liste(&h, s, true))).to_vec();
+    assert_eq!(sonra, once, "hiçbir kayıt silinmez");
     let d = h.c.baglanti_durumu().unwrap();
-    assert_eq!((d.kuyrukta, d.ret_listesinde, d.son_esitlenme_ms), (0, 0, None));
-    assert!(h.alarm.kurulular().is_empty());
-    assert!(kurulu_alarm_satirlari(&h).is_empty());
+    assert_eq!((d.kuyrukta, d.ret_listesinde, d.son_esitlenme_ms), (0, 0, son_esitlenme));
+    assert_eq!(kurulu_alarm_satirlari(&h), once_alarm);
     assert_eq!(h.kimlik.silinen_anahtar.load(std::sync::atomic::Ordering::SeqCst), 1);
     assert!(h.gozlemci.al().iter().any(|d| d.tumu && d.eslesme));
 }
