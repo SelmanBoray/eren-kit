@@ -5,6 +5,7 @@
  */
 import { File } from "expo-file-system";
 import * as ImagePicker from "expo-image-picker";
+import { MEDYA_SINIRLARI } from "@eren/protocol";
 import type { HamMedya, MedyaKaynagi, MedyaSecimSonucu, MedyaSeciciPortu } from "../cekirdek/sozlesme.ts";
 
 /**
@@ -119,25 +120,55 @@ const dosyaBoyutu = (uri: string): number | null => {
   }
 };
 
-export const medyaSeciciKur = (): MedyaSeciciPortu => ({
-  async sec(kaynak: MedyaKaynagi, kalan: number): Promise<MedyaSecimSonucu> {
-    const hak = Number.isFinite(kalan) ? Math.floor(kalan) : 0;
-    if (hak < 1) return { ok: true, ogeler: [] };
-    try {
-      let sonuc: ImagePicker.ImagePickerResult;
-      if (kaynak === "galeri") {
-        sonuc = await ImagePicker.launchImageLibraryAsync(seciciSecenekleri(kaynak, hak));
-      } else {
-        const izin = await ImagePicker.requestCameraPermissionsAsync();
-        if (!izin.granted) return { ok: false, neden: "izin_yok" };
-        sonuc = await ImagePicker.launchCameraAsync(seciciSecenekleri(kaynak, hak));
+/**
+ * Port + Android'e özgü kurtarma (U5b). Android seçici ya da kamera açıkken `MainActivity`'yi
+ * öldürürse sonuç kaybolur; uygulama yeniden açılınca `bekleyenSonuc` onu `getPendingResultAsync` ile
+ * alır. Süreç başına bir kez sorar (sonraki çağrılar `null`). `null`: bekleyen sonuç yok ya da
+ * kullanıcı vazgeçmişti. Kaynak bilinmez; en çok `EK_ADET` öğe döner (sınırları `ekleriDenetle` uygular).
+ * Söz hiç reddedilmez. Port arayüzü (`sozlesme.ts`) değişmez: ekran yöntemi isteğe bağlı sınar.
+ */
+export interface MedyaSecici extends MedyaSeciciPortu {
+  bekleyenSonuc(): Promise<MedyaSecimSonucu | null>;
+}
+
+export const medyaSeciciKur = (): MedyaSecici => {
+  let soruldu = false;
+  return {
+    sec: secimYap,
+    async bekleyenSonuc(): Promise<MedyaSecimSonucu | null> {
+      if (soruldu) return null;
+      soruldu = true;
+      try {
+        const r = await ImagePicker.getPendingResultAsync();
+        if (r === null || r === undefined) return null;
+        if ("code" in r) return { ok: false, neden: "hata" };
+        if (r.canceled || !Array.isArray(r.assets) || r.assets.length === 0) return null;
+        const ogeler = r.assets.slice(0, MEDYA_SINIRLARI.EK_ADET).map((o) => hamMedyaKur(o, dosyaBoyutu));
+        return { ok: true, ogeler };
+      } catch {
+        return null;
       }
-      if (sonuc.canceled || !Array.isArray(sonuc.assets)) return { ok: true, ogeler: [] };
-      // Kamera tek öğe verir; galeri `selectionLimit`'i her sağlayıcıda uygulamayabilir.
-      const ogeler = sonuc.assets.slice(0, kaynak === "galeri" ? hak : 1).map((o) => hamMedyaKur(o, dosyaBoyutu));
-      return { ok: true, ogeler };
-    } catch {
-      return { ok: false, neden: "hata" };
+    },
+  };
+};
+
+async function secimYap(kaynak: MedyaKaynagi, kalan: number): Promise<MedyaSecimSonucu> {
+  const hak = Number.isFinite(kalan) ? Math.floor(kalan) : 0;
+  if (hak < 1) return { ok: true, ogeler: [] };
+  try {
+    let sonuc: ImagePicker.ImagePickerResult;
+    if (kaynak === "galeri") {
+      sonuc = await ImagePicker.launchImageLibraryAsync(seciciSecenekleri(kaynak, hak));
+    } else {
+      const izin = await ImagePicker.requestCameraPermissionsAsync();
+      if (!izin.granted) return { ok: false, neden: "izin_yok" };
+      sonuc = await ImagePicker.launchCameraAsync(seciciSecenekleri(kaynak, hak));
     }
-  },
-});
+    if (sonuc.canceled || !Array.isArray(sonuc.assets)) return { ok: true, ogeler: [] };
+    // Kamera tek öğe verir; galeri `selectionLimit`'i her sağlayıcıda uygulamayabilir.
+    const ogeler = sonuc.assets.slice(0, kaynak === "galeri" ? hak : 1).map((o) => hamMedyaKur(o, dosyaBoyutu));
+    return { ok: true, ogeler };
+  } catch {
+    return { ok: false, neden: "hata" };
+  }
+}

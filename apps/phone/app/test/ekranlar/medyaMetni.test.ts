@@ -3,9 +3,16 @@ import { describe, it } from "node:test";
 import { MEDYA_SINIRLARI } from "@eren/protocol";
 import type { EkRedNedeni, GonderRedNedeni } from "../../src/cekirdek/sozlesme.ts";
 import {
+  EK_BEKLIYOR_METNI,
   EK_KAPALI_METNI,
   EK_SECENEKLERI,
   baytMetni,
+  bekleyenKaldirRedMetni,
+  ekBalonEtiketi,
+  ekYerelYokMetni,
+  gonderilemediBasligi,
+  secimRedNotu,
+  seritVideoMetni,
   ekIlerlemeMetni,
   ekRedMetni,
   ekSeritiEtiketi,
@@ -127,6 +134,14 @@ describe("mesajIlerlemeMetni", () => {
     assert.equal(mesajIlerlemeMetni([{ durum: "kabul", isleme: "isleniyor" }]), "PC'de işleniyor");
     assert.equal(mesajIlerlemeMetni([{ durum: "kabul", isleme: "hazir" }, null]), null);
   });
+  it("işleme hatası: işleniyor değil, başka bir şey sürmüyorsa söylenir", () => {
+    assert.equal(mesajIlerlemeMetni([{ durum: "kabul", isleme: "hata" }]), "PC eki işleyemedi");
+    assert.equal(
+      mesajIlerlemeMetni([{ durum: "kabul", isleme: "hata" }, { durum: "kabul", isleme: "isleniyor" }]),
+      "PC'de işleniyor",
+    );
+    assert.equal(mesajIlerlemeMetni([{ durum: "kabul", isleme: "hata" }, { durum: "bekliyor" }]), "Sırada");
+  });
 });
 
 describe("medyaHataMetni", () => {
@@ -166,5 +181,55 @@ describe("seçenekler ve etiketler", () => {
   it("şerit etiketi", () => {
     assert.equal(ekSeritiEtiketi("foto", 1, 2, null), "Fotoğraf 1 / 2");
     assert.equal(ekSeritiEtiketi("video", 2, 2, 42_000), "Video 2 / 2, 0:42");
+  });
+});
+
+describe("U5b ekran metinleri", () => {
+  it("geçmiş silme ek_bekliyor metni", () => {
+    assert.match(EK_BEKLIYOR_METNI, /bekleyen ek var/);
+    assert.match(EK_BEKLIYOR_METNI, /kaldır/);
+  });
+  it("bekleyen kaldırma retleri", () => {
+    for (const n of ["baslamadi", "kaldirilamaz", "depo_hatasi"] as const) assert.ok(bekleyenKaldirRedMetni(n).length > 5, n);
+  });
+  it("seçim ret notu: farklı nedenler bir kez, sırayla", () => {
+    assert.equal(secimRedNotu([]), null);
+    assert.equal(
+      secimRedNotu([
+        { uri: "a", neden: "ikinci_video" },
+        { uri: "b", neden: "ikinci_video" },
+      ]),
+      "Bir mesaja en çok bir video eklenebilir.",
+    );
+    assert.equal(
+      secimRedNotu([
+        { uri: "a", neden: "video_uzun" },
+        { uri: "b", neden: "adet_asildi" },
+      ]),
+      "Video 5 dakikadan uzun; en çok 5 dakikalık video eklenebilir. Bir mesaja en çok 4 ek eklenebilir.",
+    );
+  });
+  it("yer tutucu ve balon etiketi", () => {
+    assert.equal(ekYerelYokMetni("foto"), "Fotoğraf (bu cihazda yok)");
+    assert.equal(ekYerelYokMetni("video"), "Video (bu cihazda yok)");
+    assert.equal(ekBalonEtiketi("foto", 1, 1, null, true), "Fotoğraf 1 / 1");
+    assert.equal(ekBalonEtiketi("video", 2, 2, 42_000, false), "Video 2 / 2, 0:42, bu cihazda yok");
+  });
+  it("şerit video satırı", () => {
+    assert.equal(seritVideoMetni(42_000, 12 * 1024 * 1024), "0:42 · 12 MB");
+    assert.equal(seritVideoMetni(null, 850 * 1024), "850 KB");
+  });
+  it("gönderilemedi başlığı: eksizde bugünkü, eklide neden koddan ve özet", () => {
+    assert.equal(gonderilemediBasligi("gecersiz_mesaj", undefined), "Gönderilemedi (gecersiz_mesaj)");
+    assert.equal(gonderilemediBasligi("gecersiz_mesaj", []), "Gönderilemedi (gecersiz_mesaj)");
+    assert.equal(
+      gonderilemediBasligi("medya_reddedildi", [{ tur: "foto" }]),
+      "Gönderilemedi: PC eki kabul etmedi (medya_reddedildi) [1 fotoğraf]",
+    );
+    assert.equal(
+      gonderilemediBasligi("ek_bulunamadi", [{ tur: "foto" }, { tur: "video" }]),
+      "Gönderilemedi: Ek telefonda bulunamadı (ek_bulunamadi) [1 fotoğraf, 1 video]",
+    );
+    assert.equal(gonderilemediBasligi("baglanti_koptu", [{ tur: "video" }]), "Gönderilemedi (baglanti_koptu) [video]");
   });
 });

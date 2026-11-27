@@ -1,7 +1,8 @@
 // Sohbet ekranı (TASARIM.md 5, 6.1-6.4, 6.9-6.12, 6.15-6.16; app/TASARIM.md Dilim 2 E6): seçili
 // sohbetin üst çubuğu, zaman çizelgesi, "en alta in", giriş çubuğu ve çalışan işler katmanları.
 // Sohbet menüsü ve ad/geçmiş/silme diyalogları App'teki `SohbetYonetimi`'nde (`onSecenekler`).
-// Balonlar `Balonlar.tsx`'te, katmanlar `SohbetDiyaloglari.tsx`'te.
+// Balonlar `Balonlar.tsx`'te, katmanlar `SohbetDiyaloglari.tsx`'te. Medya (U5b): ek düğmesi, "Ek ekle"
+// alt sayfası ve ek şeridi `EkSeridi.tsx`'te, kararları `ekDurumu.ts`'te, metinleri `medyaMetni.ts`'te.
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { AppState, FlatList, Keyboard, Text, TextInput, View } from "react-native";
@@ -16,8 +17,14 @@ import type { GirdiYolu } from "@eren/protocol";
 import type {
   CalisanIs,
   Cekirdek,
+  EkGorunumu,
   GonderRedNedeni,
   GorunumOgesi,
+  MedyaId,
+  MedyaKaynagi,
+  MedyaSeciciPortu,
+  MedyaSecimSonucu,
+  SeciliEk,
   Sohbet,
   SohbetAcSonucu,
   SohbetDurumu,
@@ -25,6 +32,7 @@ import type {
   SohbetId,
   TuketimRaporu,
 } from "../cekirdek/index.ts";
+import { ekleriDenetle } from "../cekirdek/index.ts";
 import type { ErenCihaz } from "../cihaz/erenDevice.ts";
 import { AltaInDugmesi, useAltaIn } from "./AltaIn.tsx";
 import {
@@ -41,6 +49,17 @@ import {
 } from "./Balonlar.tsx";
 import { Dugme } from "./Bilesenler.tsx";
 import { CalisanIslerSayfasi, IsIptalOnayi, SohbetiSilOnayi } from "./SohbetDiyaloglari.tsx";
+import { EkDugmesi, EkSecenekleri, EkSeridi } from "./EkSeridi.tsx";
+import { bekleyenEkleri, bekleyenKaldirilabilir, ekDugmesi, gonderDolu, kalanEkHakki } from "./ekDurumu.ts";
+import {
+  BEKLEYEN_KALDIRILAMADI_METNI,
+  BEKLEYEN_KALDIR_METNI,
+  EKLI_YER_TUTUCU,
+  bekleyenKaldirRedMetni,
+  medyaGonderRedMetni,
+  secimHataMetni,
+  secimRedNotu,
+} from "./medyaMetni.ts";
 import { UstCubuk } from "./UstCubuk.tsx";
 import type { UstCubukProps } from "./UstCubuk.tsx";
 import { ASISTAN_ADI } from "../platform/asistanAdi.ts";
@@ -196,6 +215,8 @@ type OgeSatiriProps = {
   onIsler: () => void;
   /** Yalnız rapor kartı öğelerine verilir (diğerlerine `null`); değişimi `ogePropEsit` değerce karşılaştırır. */
   tuketimRaporu: TuketimRaporu | null;
+  /** Yalnız ekli kullanıcı balonuna verilir; `ogePropEsit` yalnız o balonun eklerinin görünümlerine bakar. */
+  ekGorunumleri: ReadonlyMap<MedyaId, EkGorunumu> | undefined;
 };
 
 const OgeSatiri = memo(function OgeSatiri(p: OgeSatiriProps): ReactNode {
@@ -206,7 +227,14 @@ const OgeSatiri = memo(function OgeSatiri(p: OgeSatiriProps): ReactNode {
           <ZamanAyraci ms={p.ayrac} />
         </View>
       )}
-      <ZamanCizelgesiOgesi oge={p.oge} sohbet={p.sohbet} cihaz={p.cihaz} onIsler={p.onIsler} tuketimRaporu={p.tuketimRaporu} />
+      <ZamanCizelgesiOgesi
+        oge={p.oge}
+        sohbet={p.sohbet}
+        cihaz={p.cihaz}
+        onIsler={p.onIsler}
+        tuketimRaporu={p.tuketimRaporu}
+        ekGorunumleri={p.ekGorunumleri}
+      />
     </View>
   );
 }, (a, b) => a.ust === b.ust && a.ayrac === b.ayrac && ogePropEsit(a, b));
@@ -269,7 +297,15 @@ export type SohbetEkraniProps = {
   onSecenekler: (id: SohbetId) => void;
   /** İsteğe bağlı: hata şeridindeki ve eşleşme yok durumundaki "Kurulum" düğmesi. Yoksa düğme gizli. */
   onKurulum?: () => void;
+  /** Medya: fotoğraf/video seçicisi (App bir kez kurar). Yoksa ek düğmesi gizli. */
+  secici?: EkSecici;
 };
+
+/**
+ * Medya seçicisi. `bekleyenSonuc` (isteğe bağlı, `platform/medyaSecici.ts`): Android seçici açıkken
+ * uygulamayı öldürdüyse kaybolan seçim; ekran açılınca bir kez sorulur ve şeride alınır.
+ */
+export type EkSecici = MedyaSeciciPortu & { bekleyenSonuc?: () => Promise<MedyaSecimSonucu | null> };
 
 /**
  * Sohbet değişince ekranın bütün yerel durumu (kaydırma, girdi taslağı, kesme, sayaçlar, açık
@@ -281,7 +317,7 @@ export function SohbetEkrani(p: SohbetEkraniProps): ReactNode {
 }
 
 function SohbetEkraniIc(p: SohbetEkraniProps): ReactNode {
-  const { cekirdek, sohbet, cihaz, onCekmece, onSecenekler, onKurulum } = p;
+  const { cekirdek, sohbet, cihaz, onCekmece, onSecenekler, onKurulum, secici } = p;
   const cd = useCekirdekDurumu(cekirdek);
   // Rapor kartlarındaki "Tüketim" satırı için eldeki rapor; kartlar çekirdeğe kendileri abone olmaz.
   const tuketimRaporu: TuketimRaporu | null = cd.tuketim.durum === "yok" ? null : cd.tuketim.rapor;
@@ -300,6 +336,17 @@ function SohbetEkraniIc(p: SohbetEkraniProps): ReactNode {
   const [islerAcik, setIslerAcik] = useState(false);
   const [iptalIs, setIptalIs] = useState<CalisanIs | null>(null);
   const [kaldirAcik, setKaldirAcik] = useState(false);
+  // Medya: şeritteki ekler (ref, seçici ve gönderim sonucunun güncel listeyle birleşmesi için), alt
+  // sayfa, gönderim sürüyor mu (ekli gönderimde hazırlama sürebilir: Gönder ve şerit kapalı).
+  const [ekler, setEkler] = useState<readonly SeciliEk[]>([]);
+  const eklerRef = useRef<readonly SeciliEk[]>(ekler);
+  const ekleriYaz = useCallback((l: readonly SeciliEk[]) => {
+    eklerRef.current = l;
+    setEkler(l);
+  }, []);
+  const [ekSayfasi, setEkSayfasi] = useState(false);
+  const [gonderimde, setGonderimde] = useState(false);
+  const seciliyor = useRef(false);
   const gonderiliyor = useRef(false);
   const dikteSuruyor = useRef(false);
   const yeniAciliyor = useRef(false);
@@ -489,25 +536,89 @@ function SohbetEkraniIc(p: SohbetEkraniProps): ReactNode {
 
   // ------------------------------------------------ Girdi (6.9)
 
+  // Ekli gönderim: girdi yolu her zaman "yazi" (çekirdek ekleri yalnız onunla kabul eder), metin boş
+  // olabilir. `ok` ise gönderilen ekler şeritten kalkar; değilse şerit kalır, neden not satırında.
   const yolla = async (): Promise<void> => {
     const t = metin.trim();
-    if (t === "" || gonderiliyor.current) return;
+    const giden = eklerRef.current;
+    if ((t === "" && giden.length === 0) || gonderiliyor.current) return;
     gonderiliyor.current = true;
+    setGonderimde(true);
     try {
-      const s = await sohbet.mesajYolla(t, yol);
+      const s = giden.length > 0 ? await sohbet.mesajYolla(t, "yazi", undefined, giden) : await sohbet.mesajYolla(t, yol);
       if (s.ok) {
         setMetin("");
         setYol("yazi");
+        if (giden.length > 0) ekleriYaz(eklerRef.current.filter((e) => !giden.includes(e)));
         setNot(null);
         sonaIn(!azHareket);
       } else {
-        setNot(hataNotu(GONDER_RED[s.neden] ?? "Mesaj kaydedilemedi."));
+        setNot(hataNotu(medyaGonderRedMetni(s.neden) ?? GONDER_RED[s.neden] ?? "Mesaj kaydedilemedi."));
       }
     } catch {
       setNot(hataNotu("Mesaj kaydedilemedi."));
     } finally {
       gonderiliyor.current = false;
+      setGonderimde(false);
     }
+  };
+
+  // ------------------------------------------------ Ekler (Medya, U5b)
+
+  // Seçicinin sonucu şeridin GÜNCEL haliyle denetlenir (seçici açıkken ek kaldırılmış olabilir).
+  const secimiIsle = useCallback(
+    (r: MedyaSecimSonucu): void => {
+      if (!r.ok) {
+        setNot(hataNotu(secimHataMetni(r.neden)));
+        return;
+      }
+      if (r.ogeler.length === 0) return;
+      const d = ekleriDenetle(eklerRef.current, r.ogeler);
+      ekleriYaz(d.ekler);
+      const red = secimRedNotu(d.reddedilenler);
+      setNot(red !== null ? hataNotu(red) : null);
+    },
+    [ekleriYaz],
+  );
+
+  const kaynakSec = (k: MedyaKaynagi): void => {
+    setEkSayfasi(false);
+    if (secici === undefined || seciliyor.current) return;
+    seciliyor.current = true;
+    secici
+      .sec(k, kalanEkHakki(eklerRef.current.length))
+      .then(secimiIsle, () => setNot(hataNotu(secimHataMetni("hata"))))
+      .finally(() => {
+        seciliyor.current = false;
+      });
+  };
+
+  // Android seçici/kamera açıkken uygulamayı öldürdüyse seçim kaybolur; açılışta bir kez kurtarılır
+  // (seçici süreç başına bir kez yanıt verir, sonra `null`). Sonuç ekran sökülse de işlenir: sökülen
+  // ekranın durumuna yazmak zararsızdır.
+  useEffect(() => {
+    if (secici?.bekleyenSonuc === undefined) return;
+    secici.bekleyenSonuc().then(
+      (r) => {
+        if (r !== null) secimiIsle(r);
+      },
+      () => {},
+    );
+  }, [secici, secimiIsle]);
+
+  const ekiKaldir = useCallback(
+    (uri: string): void => ekleriYaz(eklerRef.current.filter((e) => e.uri !== uri)),
+    [ekleriYaz],
+  );
+
+  // Henüz gitmemiş ekli mesajı ekleriyle birlikte kaldırır (çekirdek kayıtları ve yerel kopyaları siler).
+  const bekleyeniKaldir = (client_msg_id: string): void => {
+    sohbet.bekleyeniKaldir(client_msg_id).then(
+      (s) => {
+        if (!s.ok) setNot(hataNotu(bekleyenKaldirRedMetni(s.neden)));
+      },
+      () => setNot(hataNotu(BEKLEYEN_KALDIRILAMADI_METNI)),
+    );
   };
 
   const dikte = async (): Promise<void> => {
@@ -611,6 +722,7 @@ function SohbetEkraniIc(p: SohbetEkraniProps): ReactNode {
 
   // ------------------------------------------------ Liste
 
+  const ekGorunumleri = d.ekGorunumleri;
   const renderItem = useCallback(
     ({ item, index }: ListRenderItemInfo<GorunumOgesi>) => {
       const o = index > 0 ? ogeler[index - 1] : undefined;
@@ -625,10 +737,11 @@ function SohbetEkraniIc(p: SohbetEkraniProps): ReactNode {
           cihaz={cihaz}
           onIsler={isleriAc}
           tuketimRaporu={item.tur === "rapor" ? tuketimRaporu : null}
+          ekGorunumleri={item.tur === "kullanici" && item.ekler !== undefined ? ekGorunumleri : undefined}
         />
       );
     },
-    [ogeler, sohbet, cihaz, isleriAc, tuketimRaporu],
+    [ogeler, sohbet, cihaz, isleriAc, tuketimRaporu, ekGorunumleri],
   );
 
   // Liste sonu: süren tur, henüz olayı gelmemiş yukarı mesajlar, gönderilemeyenler.
@@ -651,12 +764,17 @@ function SohbetEkraniIc(p: SohbetEkraniProps): ReactNode {
   }
   for (const b of d.bekleyenler) {
     if (b.mesaj.type === "user_message") {
-      ekle(b.client_msg_id, "kullanici", (
+      const bEkler = bekleyenEkleri(b);
+      const id = b.client_msg_id;
+      ekle(id, "kullanici", (
       <KullaniciBalonu
         metin={b.mesaj.text}
         durum={b.durum}
         kisayol={b.mesaj.input === "kisayol"}
         baglam={b.mesaj.baglam}
+        ekler={bEkler.length > 0 ? bEkler : undefined}
+        gorunumler={bEkler.length > 0 ? ekGorunumleri : undefined}
+        onKaldir={bekleyenKaldirilabilir(b) ? () => bekleyeniKaldir(id) : undefined}
       />
     ));
     } else {
@@ -669,7 +787,12 @@ function SohbetEkraniIc(p: SohbetEkraniProps): ReactNode {
         // Kurulamayan sohbetin hatası kapanınca sohbet de silinir: menü yolundaki iki adımlı onay.
         <GonderilemediSeridi hata={h} kapatYazi="Kaldır" onKapat={() => setKaldirAcik(true)} />
       ) : (
-        <GonderilemediSeridi hata={h} onKapat={() => void sohbet.hataKapat(h.client_msg_id)} />
+        // Ekli mesajın hatası kapanınca ekleri de iptal edilir (yerel kopyalar silinir): "Kaldır".
+        <GonderilemediSeridi
+          hata={h}
+          kapatYazi={h.mesaj.type === "user_message" && (h.mesaj.ekler?.length ?? 0) > 0 ? BEKLEYEN_KALDIR_METNI : undefined}
+          onKapat={() => void sohbet.hataKapat(h.client_msg_id)}
+        />
       )
     ));
   }
@@ -701,15 +824,33 @@ function SohbetEkraniIc(p: SohbetEkraniProps): ReactNode {
 
   // Listede olmayan ya da PC'de kurulamamış sohbete yazılamaz (çekirdek `sohbet_bulunamadi` der).
   const yazilamaz = ozet === null || ozet.kurulum === "kurulamadi";
-  const dolu = metin.trim() !== "";
+  const dolu = gonderDolu(metin, ekler.length);
+  const ekDugmesiDurumu = ekDugmesi({
+    medyaDestekli: cd.medyaDestekli,
+    bagli,
+    yazilamaz,
+    seciciVar: secici !== undefined,
+    adet: ekler.length,
+  });
+  const ekDugmesineBas = (): void => {
+    if (ekDugmesiDurumu.durum === "kapali") {
+      setNot({ metin: ekDugmesiDurumu.neden, tur: "uyari" });
+      return;
+    }
+    if (ekDugmesiDurumu.durum !== "acik" || gonderimde || seciliyor.current) return;
+    Keyboard.dismiss();
+    setEkSayfasi(true);
+  };
   const yerTutucu =
     ozet === null
       ? "Bu sohbet artık yok"
       : ozet.kurulum === "kurulamadi"
         ? "Sohbet oluşturulamadı, yazılamaz"
-        : bagli
-          ? `${ASISTAN_ADI} ile konuş`
-          : `${ASISTAN_ADI} ile konuş, bağlanınca gider`;
+        : ekler.length > 0
+          ? EKLI_YER_TUTUCU
+          : bagli
+            ? `${ASISTAN_ADI} ile konuş`
+            : `${ASISTAN_ADI} ile konuş, bağlanınca gider`;
 
   return (
     <View style={stil.ekran}>
@@ -795,6 +936,8 @@ function SohbetEkraniIc(p: SohbetEkraniProps): ReactNode {
         </View>
       )}
 
+      {!yazilamaz && <EkSeridi ekler={ekler} kapali={gonderimde} onKaldir={ekiKaldir} />}
+
       <View
         style={{
           backgroundColor: renk.zemin,
@@ -807,6 +950,14 @@ function SohbetEkraniIc(p: SohbetEkraniProps): ReactNode {
           gap: bosluk[2],
         }}
       >
+        {ekDugmesiDurumu.durum !== "gizli" && (
+          <EkDugmesi
+            etiket={ekDugmesiDurumu.etiket}
+            kapali={ekDugmesiDurumu.durum === "kapali"}
+            neden={ekDugmesiDurumu.durum === "kapali" ? ekDugmesiDurumu.neden : undefined}
+            basinca={ekDugmesineBas}
+          />
+        )}
         <TextInput
           style={[
             yazi.govde,
@@ -842,7 +993,7 @@ function SohbetEkraniIc(p: SohbetEkraniProps): ReactNode {
         />
         {yazilamaz ? null : dolu ? (
           <View style={{ minWidth: olcu.eylemYuvasi }}>
-            <Dugme yazi="Gönder" basinca={() => void yolla()} />
+            <Dugme yazi="Gönder" kapali={gonderimde} basinca={() => void yolla()} />
           </View>
         ) : cihaz.desteklenir ? (
           <View style={{ minWidth: olcu.eylemYuvasi }}>
@@ -851,6 +1002,7 @@ function SohbetEkraniIc(p: SohbetEkraniProps): ReactNode {
         ) : null}
       </View>
 
+      <EkSecenekleri acik={ekSayfasi} onKapat={() => setEkSayfasi(false)} onSec={kaynakSec} />
       <CalisanIslerSayfasi
         acik={islerAcik}
         onKapat={() => setIslerAcik(false)}

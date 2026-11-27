@@ -2,9 +2,11 @@
  * Medya eklerinin kullanıcıya görünen Türkçe metinleri: saf işlevler (Expo/RN ve `Intl` yok; ondalık ayırıcı virgül).
  * Sınırlar `MEDYA_SINIRLARI`'ndan gelir; metindeki "5 dakika" ve "250 MB" onun türevidir (testte sabitlenir).
  */
-import { MEDYA_SINIRLARI, type MedyaTuru } from "@eren/protocol";
+import { MEDYA_SINIRLARI, ekOneki, type MedyaTuru } from "@eren/protocol";
 import type {
+  BekleyenKaldirSonucu,
   EkIlerlemesi,
+  EkRedi,
   EkRedNedeni,
   GidenHataKodu,
   GonderRedNedeni,
@@ -121,6 +123,7 @@ export const mesajIlerlemeMetni = (ler: readonly (EkIlerlemesi | null)[]): strin
   let yukleniyor = false;
   let bekliyor = false;
   let isleniyor = false;
+  let islenemedi = false;
   for (const i of ler) {
     if (i === null) continue;
     if (i.durum === "yukleniyor") {
@@ -128,11 +131,14 @@ export const mesajIlerlemeMetni = (ler: readonly (EkIlerlemesi | null)[]): strin
       alinan += i.alinan;
       boyut += i.boyut;
     } else if (i.durum === "bekliyor") bekliyor = true;
+    else if (i.durum === "kabul" && i.isleme === "hata") islenemedi = true;
     else if (i.durum === "kabul" && i.isleme !== "hazir" && i.isleme !== "kismi") isleniyor = true;
   }
   if (yukleniyor) return `%${yuzde(alinan, boyut)} yüklendi`;
   if (bekliyor) return "Sırada";
-  return isleniyor ? "PC'de işleniyor" : null;
+  if (isleniyor) return "PC'de işleniyor";
+  // İşleme hatası mesajı durdurmaz (mesaj yine gider); yalnız başka bir şey sürmüyorken söylenir.
+  return islenemedi ? "PC eki işleyemedi" : null;
 };
 
 /** Yeni `GonderRedNedeni`'ler için not satırı; eski nedenler başka yerde işlenir (`null`). */
@@ -153,3 +159,78 @@ export const medyaGonderRedMetni = (neden: GonderRedNedeni): string | null => {
 export const ekSeritiEtiketi = (tur: MedyaTuru, sira: number, toplam: number, sure_ms: number | null): string =>
   `${tur === "video" ? "Video" : "Fotoğraf"} ${sira} / ${toplam}${tur === "video" && sure_ms !== null ? `, ${sureMetni(sure_ms)}` : ""}`;
 export const EK_KALDIR_ETIKETI = "Eki kaldır";
+
+// ---------------------------------------------------------------- U5b: ekran metinleri
+
+/**
+ * Ek düğmesi kapalı, çünkü henüz bağlantı yok: `medyaDestekli` yalnız `welcome`'la öğrenilir, bu
+ * süreçte hiç bağlanılmadıysa eski servis mi bilinmez. Bağlıyken desteklenmiyorsa `EK_KAPALI_METNI`.
+ */
+export const EK_BAGLANTI_BEKLENIYOR_METNI = "Ek eklemek için PC'ye bağlanmayı bekle; servisin ek desteği bağlanınca anlaşılır.";
+
+/** "Geçmişi sil" `ek_bekliyor`: sohbette eki henüz gitmemiş mesaj var. */
+export const EK_BEKLIYOR_METNI = "Bu sohbette gönderilmeyi bekleyen ek var; önce gitmesini bekle ya da mesajı kaldır.";
+
+/** Bekleyen ekli mesajın "Kaldır" düğmesi. */
+export const BEKLEYEN_KALDIR_METNI = "Kaldır";
+export const BEKLEYEN_KALDIR_ETIKETI = "Gönderilmeyi bekleyen mesajı ekleriyle kaldır";
+export const BEKLEYEN_KALDIRILAMADI_METNI = "Mesaj kaldırılamadı.";
+
+/** Şeritte ek varken yazı alanının yer tutucusu: metin isteğe bağlı. */
+export const EKLI_YER_TUTUCU = "İstersen bir not yaz";
+
+/** `Sohbet.bekleyeniKaldir` başarısızlığı için not satırı. */
+export const bekleyenKaldirRedMetni = (neden: Extract<BekleyenKaldirSonucu, { ok: false }>["neden"]): string => {
+  switch (neden) {
+    case "baslamadi":
+      return "Uygulama henüz hazır değil, biraz sonra yeniden dene.";
+    case "kaldirilamaz":
+      return "Mesaj gönderilmeye başladı, artık kaldırılamaz.";
+    case "depo_hatasi":
+      return "Mesaj kaldırıldı ama telefona kaydedilemedi; uygulama yeniden açılınca geri gelebilir.";
+  }
+};
+
+/**
+ * Seçimde reddedilen eklerin not satırı: farklı nedenler sırasıyla, her biri bir kez. Hepsi aynı
+ * nedenle reddedildiyse tek cümle. Ret yoksa `null`.
+ */
+export const secimRedNotu = (reddedilenler: readonly EkRedi[]): string | null => {
+  const nedenler: EkRedi["neden"][] = [];
+  for (const r of reddedilenler) if (!nedenler.includes(r.neden)) nedenler.push(r.neden);
+  return nedenler.length === 0 ? null : nedenler.map(ekRedMetni).join(" ");
+};
+
+/** Balondaki ekin yerel görseli yok (başka cihaz, yeniden kurulum, silinmiş). */
+export const ekYerelYokMetni = (tur: MedyaTuru): string =>
+  tur === "video" ? "Video (bu cihazda yok)" : "Fotoğraf (bu cihazda yok)";
+
+/** Kapağı olmayan videonun yer tutucusundaki kısa etiket: video PC'de, telefonda oynatılmaz. */
+export const VIDEO_PCDE_METNI = "PC'de";
+
+/** Balondaki ek için ekran okuyucu etiketi. */
+export const ekBalonEtiketi = (
+  tur: MedyaTuru,
+  sira: number,
+  toplam: number,
+  sure_ms: number | null,
+  yerelVar: boolean,
+): string => `${ekSeritiEtiketi(tur, sira, toplam, sure_ms)}${yerelVar ? "" : ", bu cihazda yok"}`;
+export const EK_AC_IPUCU = "Fotoğrafı tam ekranda açar";
+export const ONIZLEME_KAPAT_ETIKETI = "Önizlemeyi kapat";
+
+/** Şeritteki video karosunun alt satırı: "0:42 · 12 MB"; süre bilinmiyorsa yalnız boyut. */
+export const seritVideoMetni = (sure_ms: number | null, bayt: number): string =>
+  sure_ms !== null ? `${sureMetni(sure_ms)} · ${baytMetni(bayt)}` : baytMetni(bayt);
+
+/**
+ * Gönderilemeyen mesaj satırının başı. Ekli mesajda nedeni `kod`'dan söyler (ek görünümüne güvenmez:
+ * yeniden açılışta o `bekliyor`'a dönebilir) ve eklerin özetini ekler: "Gönderilemedi: PC eki kabul
+ * etmedi (medya_reddedildi) [1 fotoğraf]". Eksiz mesajda bugünkü "Gönderilemedi (kod)".
+ */
+export const gonderilemediBasligi = (kod: GidenHataKodu, ekler: readonly { tur: MedyaTuru }[] | undefined): string => {
+  if (ekler === undefined || ekler.length === 0) return `Gönderilemedi (${kod})`;
+  const neden = medyaHataMetni(kod);
+  const ozet = ekOneki(ekler);
+  return `${neden !== null ? `Gönderilemedi: ${neden} (${kod})` : `Gönderilemedi (${kod})`} ${ozet}`;
+};
