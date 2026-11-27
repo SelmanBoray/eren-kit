@@ -7,7 +7,7 @@ import type { EkBilgisi } from "@eren/protocol";
 import { depoKur } from "../src/depo.ts";
 import type { CihazYonetimi } from "../src/depo.ts";
 import { gatewayKur } from "../src/gateway.ts";
-import { medyaIsterMi, welcomeYetenekleri } from "../src/gateway-medya.ts";
+import { YANITSIZ_PARCA, medyaIsterMi, welcomeYetenekleri } from "../src/gateway-medya.ts";
 import type { AnahtarPortu, GatewayBagimliliklari, MediaStateGovdesi } from "../src/sozlesme.ts";
 import { veriyoluKur } from "../src/veriyolu.ts";
 import { sahteGunluk, sahteMedyaYoneticisi, sahteRastgele, sahteWs, sahteZaman } from "./sahte.ts";
@@ -559,5 +559,149 @@ describe("gateway-medya: user_echo yansıtma (canlı ve telafi)", () => {
     const e = ist.ham.filter((k) => k.type === "event").map((k) => k.event).find((x) => x.type === "user_echo")!;
     assert.ok(!("ekler" in e));
     assert.equal(e.text, "[1 fotoğraf] x");
+  });
+});
+
+describe("gateway-medya: yanıtsız parça sınırı (geri basınç)", () => {
+  /** Yönetici parçaları elde tutar; `cevapla()` en eskisini yanıtlar (telefon gibi sırayla). */
+  const tutucu = (o: Awaited<ReturnType<typeof hazir>>) => {
+    const bekleyen: Array<{ ofset: number; r: (d: MediaStateGovdesi) => void; red: (e: unknown) => void }> = [];
+    let gelen = 0;
+    o.medya.parca = (_device_id: string, m: { medya_id: string; ofset: number }) =>
+      new Promise<MediaStateGovdesi>((r, red) => {
+        gelen++;
+        bekleyen.push({ ofset: m.ofset, r, red });
+      });
+    return {
+      get gelen() {
+        return gelen;
+      },
+      get bekleyen() {
+        return bekleyen.length;
+      },
+      cevapla: async (alinan?: number) => {
+        const e = bekleyen.shift()!;
+        e.r({ medya_id: "m-1", durum: "yukleniyor", alinan: alinan ?? e.ofset + 3 });
+        await bosalt();
+      },
+      reddet: async () => {
+        bekleyen.shift()!.red(new Error("beklenmedik"));
+        await bosalt();
+      },
+    };
+  };
+
+  const pompala = async (ist: Ist, n: number, ofset0 = 0): Promise<void> => {
+    for (let i = 0; i < n; i++) ist.c.mesajGonder(JSON.stringify(parca("m-1", ofset0 + 3 * i)));
+    await bosalt();
+  };
+
+  const sinirdaKapandi = (ist: Ist): void => {
+    assert.deepEqual(
+      ist.tur("error").map((e) => e.code),
+      ["gecersiz_mesaj"],
+    );
+    assert.equal(ist.c.kapanis?.kod, 1008);
+  };
+
+  it(`bağlantı başına ${YANITSIZ_PARCA.BAGLANTI} yanıtsız parça geçer; bir fazlası gecersiz_mesaj + 1008, yöneticiye gitmez`, async () => {
+    const o = await hazir();
+    const t = tutucu(o);
+    const ist = await o.giris();
+    await pompala(ist, YANITSIZ_PARCA.BAGLANTI);
+    assert.equal(t.gelen, YANITSIZ_PARCA.BAGLANTI);
+    assert.ok(!ist.kapali);
+    await pompala(ist, 1, 3 * YANITSIZ_PARCA.BAGLANTI);
+    assert.equal(t.gelen, YANITSIZ_PARCA.BAGLANTI, "sınırı aşan parça yöneticiye gitmemeli");
+    sinirdaKapandi(ist);
+    assert.equal(o.gunluk.girdiler.filter((g) => g.olay === "medya_parca_siniri").length, 1);
+    // Kapandıktan sonra gelen yanıtlar bu bağlantıya gitmez.
+    const once = ist.c.gonderilenler.length;
+    await t.cevapla();
+    assert.equal(ist.c.gonderilenler.length, once);
+  });
+
+  it("yağmur: yanıt beklemeden yollanan çok sayıda parçadan yalnız sınır kadarı yöneticiye ulaşır", async () => {
+    const o = await hazir();
+    const t = tutucu(o);
+    const ist = await o.giris();
+    await pompala(ist, 200);
+    assert.equal(t.gelen, YANITSIZ_PARCA.BAGLANTI);
+    sinirdaKapandi(ist);
+  });
+
+  it("meşru iki parçalık pencere: yanıt geldikçe sürer, sayaç düşer, bağlantı açık kalır", async () => {
+    const o = await hazir();
+    const t = tutucu(o);
+    const ist = await o.giris();
+    await ist.gonder(baslangic());
+    const ADET = 5 * YANITSIZ_PARCA.CIHAZ;
+    let yollanan = 0;
+    // Telefon: önce iki parça, sonra her yanıta bir yeni parça.
+    await pompala(ist, 2);
+    yollanan = 2;
+    for (let cevap = 0; cevap < ADET; cevap++) {
+      await t.cevapla();
+      if (yollanan < ADET) {
+        await pompala(ist, 1, 3 * yollanan);
+        yollanan++;
+      }
+      assert.ok(t.bekleyen <= 2);
+    }
+    assert.ok(!ist.kapali);
+    assert.equal(ist.tur("error").length, 0);
+    assert.equal(t.gelen, ADET);
+    assert.equal(ist.tur("media_state").length, ADET + 1);
+  });
+
+  it("ic_hata yanıtı da sayacı düşürür", async () => {
+    const o = await hazir();
+    const t = tutucu(o);
+    const ist = await o.giris();
+    await pompala(ist, YANITSIZ_PARCA.BAGLANTI);
+    await t.reddet();
+    assert.equal(ist.tur("media_state").at(-1)!.code, "ic_hata");
+    await pompala(ist, 1, 900);
+    assert.ok(!ist.kapali);
+    assert.equal(t.gelen, YANITSIZ_PARCA.BAGLANTI + 1);
+  });
+
+  it("kopup sürme: eski bağlantının yanıtsız parçaları sürerken yeni bağlantı iki parçalık pencereyle ilerler", async () => {
+    const o = await hazir();
+    const t = tutucu(o);
+    const eski = await o.giris();
+    await pompala(eski, 2);
+    eski.c.istemciKopar();
+    await bosalt();
+    const yeni = await o.giris();
+    await pompala(yeni, 2);
+    assert.ok(!yeni.kapali);
+    assert.equal(t.gelen, 4);
+    // Eski bağlantının yanıtları (yeniye gitmez) ve yeninin yanıtları sırayla döner.
+    for (let i = 0; i < 4; i++) await t.cevapla();
+    assert.equal(yeni.tur("media_state").length, 2);
+    await pompala(yeni, 2, 30);
+    assert.ok(!yeni.kapali);
+  });
+
+  it(`cihaz başına ${YANITSIZ_PARCA.CIHAZ}: aynı cihazın bağlantıları toplanır; başka cihaz etkilenmez`, async () => {
+    const o = await hazir();
+    const t = tutucu(o);
+    const baglantilar: Ist[] = [];
+    for (let i = 0; i < YANITSIZ_PARCA.CIHAZ / YANITSIZ_PARCA.BAGLANTI; i++) {
+      const ist = await o.giris();
+      await pompala(ist, YANITSIZ_PARCA.BAGLANTI);
+      assert.ok(!ist.kapali);
+      baglantilar.push(ist);
+    }
+    const fazla = await o.giris();
+    await pompala(fazla, 1);
+    sinirdaKapandi(fazla);
+    assert.equal(t.gelen, YANITSIZ_PARCA.CIHAZ);
+    for (const b of baglantilar) assert.ok(!b.kapali);
+    const baska = await o.giris([MEDYA1], TEL2);
+    await pompala(baska, 2);
+    assert.ok(!baska.kapali);
+    assert.equal(t.gelen, YANITSIZ_PARCA.CIHAZ + 2);
   });
 });

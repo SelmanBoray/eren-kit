@@ -6,6 +6,7 @@
  *
  * - `media_begin`/`media_chunk` → `GatewayMedyaYuzu` → dönen gövde YALNIZ isteyen bağlantıya
  *   `media_state`. Dönüş geldiğinde bağlantı kapanmış ya da yetkisi kalkmışsa (kümeden çıkmış) gitmez.
+ *   Yanıtsız `media_chunk` bağlantı ve cihaz başına sınırlıdır (`YANITSIZ_PARCA`); aşan bağlantı kapanır.
  * - `media_cancel` → `iptal`, yanıtsız.
  * - `veriyolu` `medya_durumu` → o `device_id`'nin bütün `medya1` bağlantılarına `media_state`; başka
  *   cihaza ve jetonsuz bağlantıya hiç gitmez.
@@ -32,9 +33,30 @@ export interface GatewayMedyaBagimliliklari {
   baglantilar: ReadonlySet<MedyaUcu>;
 }
 
+/**
+ * Geri basınç: yanıtı henüz dönmemiş `media_chunk` sınırı. `ws` gelen çerçevede geri basınç uygulamaz ve
+ * yönetici (`medya.ts` `sirayla`) her parçayı ~683 KiB'lık base64 dizgesini tutan bir kapanış olarak
+ * zincire alır; sınırsız bırakılırsa kimliği doğrulanmış bir cihaz yanıt beklemeden parça yağdırıp belleği
+ * şişirebilirdi. Parça şemaca en çok `PARCA_BASE64_AZAMI` karakterdir, o yüzden adet sınırı bayt sınırıdır
+ * (bağlantı başına ≈ 8 × 683 KiB ≈ 5,3 MiB, cihaz başına ≈ 10,7 MiB).
+ *
+ * Telefon (`app/src/cekirdek/medya.ts`, `PENCERE = 2`) bir kayıtta en çok iki yanıtsız parça tutar. Pay:
+ * aktif kayıt `kabul`/`reddedildi` alınca, silinince ya da yerel dosya bozulunca telefon pencereyi
+ * sıfırlayıp sıradaki kayda geçer; önceki kaydın yanıtı yoldaki parçaları serviste hâlâ sayılır. Servis
+ * sayacı yanıt yollanmadan hemen önce düşer, telefon ancak yanıtı alınca yeni parça yollar: servisin
+ * gördüğü sayı telefonunkini aşmaz. Cihaz sınırı aynı cihazın birden çok bağlantısını (kopup yeniden
+ * bağlanma: eski bağlantının yanıtları da sürüyor olabilir) toplar.
+ * `media_begin` sayılmaz: gövdesi küçük, şemaca sınırlı; `media_cancel` yanıtsızdır ve veri taşımaz.
+ */
+export const YANITSIZ_PARCA = { BAGLANTI: 8, CIHAZ: 16 } as const;
+
 export interface GatewayMedya {
-  /** Yalnız `medyaIster` bağlantının çerçevesi; ayrımı gateway yapar (jetonsuz bağlantı `yetkisiz`). */
-  cerceve(u: MedyaUcu, m: MedyaCercevesi): void;
+  /**
+   * Yalnız `medyaIster` bağlantının çerçevesi; ayrımı gateway yapar (jetonsuz bağlantı `yetkisiz`).
+   * `false`: `media_chunk` yanıtsız parça sınırını (`YANITSIZ_PARCA`) aştı, yöneticiye gitmedi; gateway
+   * bağlantıyı `gecersiz_mesaj` ile kapatır (telefon yeniden bağlanıp `alinan`'dan sürer).
+   */
+  cerceve(u: MedyaUcu, m: MedyaCercevesi): boolean;
   /** Ekli `user_message`'ın ön denetimi, olduğu gibi (eşzamanlı, yazmaz). */
   ekleriDenetle: GatewayMedyaYuzu["ekleriDenetle"];
   /** `veriyolu` `medya_durumu`. */
@@ -86,7 +108,13 @@ export function gatewayMedyaKur({ medya, gunluk, baglantilar }: GatewayMedyaBagi
 
   // Yönetici sözleşmece atmaz; yine de atarsa ya da reddederse telefon pencereyi sonsuza dek beklemesin:
   // o ek için `reddedildi{ic_hata}`. Çağrı eşzamanlı yapılır: çerçeveler geliş sırasıyla yöneticiye ulaşır.
-  const yanitla = (u: MedyaUcu, medya_id: string, is: () => Promise<MediaStateGovdesi>): void => {
+  // `bitince` yanıt (başarılı ya da `ic_hata`) yollanmadan hemen önce, her yolda bir kez çağrılır.
+  const yanitla = (
+    u: MedyaUcu,
+    medya_id: string,
+    is: () => Promise<MediaStateGovdesi>,
+    bitince?: () => void,
+  ): void => {
     let p: Promise<MediaStateGovdesi>;
     try {
       p = is();
@@ -94,12 +122,45 @@ export function gatewayMedyaKur({ medya, gunluk, baglantilar }: GatewayMedyaBagi
       p = Promise.reject(e);
     }
     p.then(
-      (d) => yolla(u, d),
+      (d) => {
+        bitince?.();
+        yolla(u, d);
+      },
       (e: unknown) => {
+        bitince?.();
         hataYaz("medya_hatasi", e);
         yolla(u, { medya_id, durum: "reddedildi", code: "ic_hata" });
       },
     ).catch((e: unknown) => hataYaz("medya_gonderim_hatasi", e));
+  };
+
+  // Yanıtsız parça sayaçları (`YANITSIZ_PARCA`). Bağlantınınki ucun kendisine bağlı (kapanan uç gidince
+  // kendiliğinden düşer); cihazınki sıfıra inince silinir.
+  const baglantiYuku = new WeakMap<MedyaUcu, number>();
+  const cihazYuku = new Map<string, number>();
+
+  const parcaYolla = (u: MedyaUcu, m: MediaChunk): boolean => {
+    const bu = baglantiYuku.get(u) ?? 0;
+    const cihaz = cihazYuku.get(u.device_id) ?? 0;
+    if (bu >= YANITSIZ_PARCA.BAGLANTI || cihaz >= YANITSIZ_PARCA.CIHAZ) {
+      gunluk.uyari("gateway", "medya_parca_siniri", {
+        device_id: u.device_id,
+        baglanti: bu,
+        cihaz,
+      });
+      return false;
+    }
+    baglantiYuku.set(u, bu + 1);
+    cihazYuku.set(u.device_id, cihaz + 1);
+    const birak = (): void => {
+      baglantiYuku.set(u, Math.max(0, (baglantiYuku.get(u) ?? 1) - 1));
+      const kalan = (cihazYuku.get(u.device_id) ?? 1) - 1;
+      if (kalan > 0) cihazYuku.set(u.device_id, kalan);
+      else cihazYuku.delete(u.device_id);
+    };
+    const { v: _v, type: _t, ...govde } = m;
+    yanitla(u, m.medya_id, () => medya.parca(u.device_id, govde), birak);
+    return true;
   };
 
   return {
@@ -107,19 +168,18 @@ export function gatewayMedyaKur({ medya, gunluk, baglantilar }: GatewayMedyaBagi
       switch (m.type) {
         case "media_begin": {
           const { v: _v, type: _t, ...govde } = m;
-          return yanitla(u, m.medya_id, () => medya.yuklemeBaslat(u.device_id, govde));
+          yanitla(u, m.medya_id, () => medya.yuklemeBaslat(u.device_id, govde));
+          return true;
         }
-        case "media_chunk": {
-          const { v: _v, type: _t, ...govde } = m;
-          return yanitla(u, m.medya_id, () => medya.parca(u.device_id, govde));
-        }
+        case "media_chunk":
+          return parcaYolla(u, m);
         case "media_cancel":
           try {
             medya.iptal(u.device_id, { medya_id: m.medya_id });
           } catch (e) {
             hataYaz("medya_hatasi", e);
           }
-          return;
+          return true;
       }
     },
     ekleriDenetle: (device_id, sohbet, ekler) => medya.ekleriDenetle(device_id, sohbet, ekler),

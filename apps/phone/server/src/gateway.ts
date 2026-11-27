@@ -891,7 +891,9 @@ export const gatewayKur: GatewayFabrikasi = ({
           case "media_chunk":
           case "media_cancel":
             if (medyaYolu === null || !asama.sohbet.medyaIster) return reddet(g, "yetkisiz");
-            return medyaYolu.cerceve(asama.sohbet, m);
+            // Yanıtsız parça sınırını aşan (pencereye uymayan) bağlantı kapanır; telefon yeniden bağlanıp sürer.
+            if (!medyaYolu.cerceve(asama.sohbet, m)) return reddet(g, "gecersiz_mesaj");
+            return;
           default:
             return reddet(g, "yetkisiz");
         }
