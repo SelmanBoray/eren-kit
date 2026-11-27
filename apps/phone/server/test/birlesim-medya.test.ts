@@ -532,13 +532,41 @@ describe("birleşim: medya (sahte işleyici)", () => {
     assert.equal(acik["dokum_vad"], false);
   });
 
-  it("kapanış: süren medya işi servisin kapanışını en çok sınır kadar tutar, depo yine kapanır", async () => {
+  it("kapanış: süren medya işi varken kapanış hemen döner, süren araç iptal edilir", async () => {
     let birak: () => void = () => {};
     const o = await ortamKur({
       tur: "sahte",
       isleyici: (i) => {
-        // Fotoğrafın doğrulaması (`gorselUret`) hiç bitmez: kapanışta süren araç.
+        // Süren araç: hiç bitmez, yalnız iptal sinyaliyle kesilir.
         i.bekletme = new Promise<void>((r) => (birak = r));
+      },
+    });
+    const { yeni } = await hazirla(o);
+    const bayt = sahteMedyaBaytlari("jpg", 4096);
+    await yeni.gonder({ v: SOHBET_SURUMU, type: "media_begin", sohbet_id: ANA_SOHBET_ID, medya_id: "m-kapanis", tur: "foto", mime: "image/jpeg", boyut: bayt.length });
+    await yeni.gonder({ v: SOHBET_SURUMU, type: "media_chunk", medya_id: "m-kapanis", ofset: 0, veri: Buffer.from(bayt).toString("base64") });
+    assert.equal(yeni.durum("m-kapanis")?.["durum"], "yukleniyor", "doğrulama sürmeli");
+
+    // Saat ilerletilmez: güvenlik ağı değil, iptal kapanışı bitirmeli.
+    await o.servis.kapat();
+    assert.ok(o.sahteIsleyici!.cagrilar.say("iptal") >= 1, "süren araç iptal edilmeli");
+    assert.ok(!o.gunlukSatirlari().some((s) => s["olay"] === "medya_kapanis_siniri"), "güvenlik ağı devreye girmemeli");
+    assert.ok(!o.gunlukSatirlari().some((s) => s["olay"] === "kapanis_hatasi"), "kapanış adımı düşmemeli");
+    birak();
+  });
+
+  it("kapanış: iptali yok sayan araç kapanışı en çok güvenlik ağı sınırı kadar tutar, sonra kapanış döner", async () => {
+    let birak: () => void = () => {};
+    const o = await ortamKur({
+      tur: "sahte",
+      isleyici: (i) => {
+        i.bekletme = new Promise<void>((r) => (birak = r));
+        // İptal sinyalini yok say: araç kesilemiyormuş gibi.
+        const { olc, gorselUret, kareUret, dokumUret } = i;
+        i.olc = (no, bicim) => olc(no, bicim, undefined);
+        i.gorselUret = (no, bicim) => gorselUret(no, bicim, undefined);
+        i.kareUret = (no, bicim, sira, zaman_ms) => kareUret(no, bicim, sira, zaman_ms, undefined);
+        i.dokumUret = (no, bicim, sure_ms) => dokumUret(no, bicim, sure_ms, undefined);
       },
     });
     const { yeni } = await hazirla(o);
@@ -550,7 +578,7 @@ describe("birleşim: medya (sahte işleyici)", () => {
     let bitti = false;
     const kapanis = o.servis.kapat().then(() => (bitti = true));
     await bosalt();
-    assert.equal(bitti, false, "kapanış medyayı beklemeli");
+    assert.equal(bitti, false, "iptal yok sayılırsa kapanış beklemeli");
     await o.ilerlet(9_000);
     assert.equal(bitti, false, "sınırdan önce bitmemeli");
     await o.ilerlet(2_000);

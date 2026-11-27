@@ -64,11 +64,12 @@ const GUNLUK_AZAMI_DOSYA = 5;
 /** Örneklerin `kapat`'ı `taskkill` bekler (en çok 15 sn): takılan kapanış süreci sonsuza dek tutmasın. */
 const KAPANIS_SINIRI_MS = 30_000;
 /**
- * Medya dalgası. `medya.kapat()` süren aracı bekler; araç kesilemez ve 5 dk videonun dökümü en çok 900 sn
- * sürebilir. Kapanış onu en çok bu kadar bekler, sonra sürer: `KAPANIS_SINIRI_MS` (ve bekçinin 40 sn'lik
- * `kapanmaBeklemeMs`'i) içinde kalmalı, `sohbetler` (en çok 15 sn `taskkill`) ile toplamı 30 sn'nin altında.
- * Bekleme kesilirse kayıt `kabul` + `isleniyor` kalır; süreç çıkınca araç libuv iş nesnesiyle ölür,
- * sonraki açılışta `medya.baslat()` o eki yeniden kuyruğa alır (iş kaybolmaz, yalnız yinelenir).
+ * Medya dalgası. `medya.kapat()` süren ffmpeg/whisper aracını iptal sinyaliyle keser (süreç ağacı öldürülür),
+ * bu yüzden çoğunlukla 1-2 sn'de döner; 5 dk videonun dökümü (en çok 900 sn) beklenmez. Bu sınır yalnız
+ * güvenlik ağıdır: iptal tutmazsa kapanış en çok bu kadar bekler, sonra sürer. `KAPANIS_SINIRI_MS` (ve bekçinin
+ * 40 sn'lik `kapanmaBeklemeMs`'i) içinde kalmalı, `sohbetler` (en çok 15 sn `taskkill`) ile toplamı 30 sn'nin altında.
+ * Kesilen iş (ve sınırda bırakılan) kayıt `kabul` + `isleniyor` kalır; sonraki açılışta `medya.baslat()` o eki
+ * yeniden kuyruğa alır (iş kaybolmaz, yalnız yinelenir).
  */
 const MEDYA_KAPANIS_SINIRI_MS = 10_000;
 const KAPANIS_SINYALLERI: readonly NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGBREAK", "SIGHUP"];
