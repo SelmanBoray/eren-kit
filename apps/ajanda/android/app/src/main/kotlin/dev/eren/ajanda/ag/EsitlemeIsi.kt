@@ -5,6 +5,7 @@ import android.app.job.JobParameters
 import android.app.job.JobService
 import android.content.ComponentName
 import android.content.Context
+import dev.eren.ajanda.aktarma.OtomatikYedek
 import dev.eren.ajanda.alarm.AlarmYenidenKurma
 import dev.eren.ajanda.cekirdek.YenidenKurmaNedeni
 import java.util.concurrent.ConcurrentHashMap
@@ -19,6 +20,8 @@ import java.util.concurrent.Executors
  * Her çalışma: bağlan -> `CANLI && kuyrukta == 0` (ya da süre/deneme sınırı) -> kapat ->
  * `AlarmYenidenKurma.simdi(PERIYODIK)` -> `jobFinished`. Yerel kipte (eşleşme olsa da) bağlanılmaz
  * (`ArkaPlanSonucu.YEREL_KIP`); alarmlar yine kurulur.
+ * - [YEDEK_ISI] (D6): otomatik yedek açıkken saatte bir, ağ koşulsuz; yalnız `OtomatikYedek.arkaPlanda`
+ *   (eşleşme, bağlantı ve eşitlemeden bağımsız; eşitleme işlerine dokunmaz). Kurup kaldıran `OtomatikYedek`.
  */
 class EsitlemeIsi : JobService() {
 
@@ -27,6 +30,13 @@ class EsitlemeIsi : JobService() {
     override fun onStartJob(params: JobParameters): Boolean {
         val uygulama = applicationContext
         val id = params.jobId
+        if (id == YEDEK_ISI) {
+            OtomatikYedek.arkaPlanda(uygulama) { sonuc ->
+                LogGunluk.bilgi("yedek işi bitti: ${sonuc.javaClass.simpleName}")
+                jobFinished(params, false)
+            }
+            return true
+        }
         val is_ = ArkaPlanEsitleme(
             oturumAc = { bitti -> BaglantiYoneticisi.arkaPlanOturumu(uygulama, bitti) },
             alarmlariKur = { AlarmYenidenKurma.simdi(uygulama, YenidenKurmaNedeni.PERIYODIK) },
@@ -51,6 +61,8 @@ class EsitlemeIsi : JobService() {
     companion object {
         const val PERIYODIK_IS = 7301
         const val KUYRUK_ISI = 7302
+        const val YEDEK_ISI = 7303
+        const val YEDEK_PERIYOT_MS = 60L * 60 * 1000
 
         /** Alarm yeniden kurulumu için (çekirdek çağrısı: ana iş parçacığı değil). */
         private val ISCI: Executor = Executors.newSingleThreadExecutor { r ->
@@ -68,6 +80,13 @@ class EsitlemeIsi : JobService() {
             JobInfo.Builder(KUYRUK_ISI, ComponentName(context, EsitlemeIsi::class.java))
                 .setPersisted(true)
                 .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
+                .build()
+
+        /** Otomatik yedek (D6): ağ koşulu yok; kalıcı. */
+        internal fun yedekIsi(context: Context): JobInfo =
+            JobInfo.Builder(YEDEK_ISI, ComponentName(context, EsitlemeIsi::class.java))
+                .setPeriodic(YEDEK_PERIYOT_MS)
+                .setPersisted(true)
                 .build()
     }
 }
