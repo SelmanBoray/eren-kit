@@ -695,9 +695,10 @@ export interface SohbetDurumu extends BaglantiOzeti {
    * dönerse anahtar yazılmaz (ekran "bu cihazda yok" yer tutucusunu gösterir). İçerik değişmedikçe aynı
    * nesne (ve aynı `EkGorunumu` nesneleri). Port yoksa boş.
    *
-   * `hatalar`'daki mesajın ekleri için `ilerleme` güvenilir değildir: yükleyici ilerlemeyi kalıcı tutmaz,
-   * yeniden açılışta `reddedildi`/`yerel_yok` kayıt `bekliyor`'dan başlar. Ekran hata satırında nedeni
-   * `GidenHatasi.kod`'dan (`medyaHataMetni`) gösterir, `ilerleme`'yi değil.
+   * Yükleyici yalnız sonlanmış durumu (`reddedildi` kodla, `yerel_yok`) kayıtta `son` alanıyla kalıcı
+   * tutar; yeniden açılışta bu durum geri gelir, ek yeniden yüklenmez ve bekleyen sayılmaz. Diğer
+   * ilerleme (yüzde vb.) yalnız canlıdır. Yine de ekran hata satırında nedeni `GidenHatasi.kod`'dan
+   * (`medyaHataMetni`) gösterir, `ilerleme`'yi değil.
    */
   ekGorunumleri: ReadonlyMap<MedyaId, EkGorunumu>;
 }
@@ -1111,8 +1112,8 @@ export interface YeniYukleme {
 }
 
 /**
- * Medya. Bir ekin ekrandaki durumu (yalnız canlı, kalıcı değil; yeniden açılışta kayıt `bekliyor`'dan
- * başlar).
+ * Medya. Bir ekin ekrandaki durumu. İlerleme canlıdır; yalnız sonlanmış durum (`reddedildi` kodla,
+ * `yerel_yok`) kayıtta `son` olarak kalıcıdır ve yeniden açılışta geri gelir (ek yeniden yüklenmez).
  * - `bekliyor`: sırada, ya da bağlantı veya `medya1` bekleniyor.
  * - `yukleniyor`: `alinan` servisin son bildirdiği bayt, `boyut` toplam.
  * - `kabul`: servis doğruladı; `isleme` son `media_state.isleme` (henüz gelmediyse `null`).
