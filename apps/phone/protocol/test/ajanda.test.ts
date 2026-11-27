@@ -183,6 +183,8 @@ test("uzunluk UTF-16 birimiyle ölçülür (emoji iki birim)", () => {
   assert.equal(yama("\uD83D"), false, "eşsiz vekil");
 });
 
+// v2 alanlarıyla. v3 alanlarıyla (kaçışlı metin, iki yanda örnekler) kayıt ve geçmiş boyu:
+// `ajanda-cerceve-boyu.test.ts`; orada tam v3 sayfası sınırı aşar, servis sayfayı boyla da keser.
 test("en büyük kayıt, geçmiş sayfası ve kimlik öncesi çerçeveler sınırlara sığar", () => {
   const kayit = enBuyukKayit();
   const kayitCercevesi = JSON.stringify({ v, type: "kayit", kayit });

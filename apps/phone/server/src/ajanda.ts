@@ -1,5 +1,8 @@
 import {
+  AJANDA_AZAMI_CERCEVE,
   AJANDA_SINIRLARI,
+  AJANDA_SURUMU,
+  type AjandaGecmisGirdisi,
   AjandaIslem,
   type AjandaKaydi,
   type AjandaYazar,
@@ -8,6 +11,7 @@ import {
   ajandaOrnekDurumuUygula,
   ajandaTelafiTamMi,
   type KayitDurumu,
+  SINIRLAR,
 } from "@eren/protocol";
 import { ajandaAraclariKur } from "./ajanda-araclar.ts";
 import { pcDefteriKur } from "./ajanda-pc.ts";
@@ -221,6 +225,30 @@ export const ajandaKur: AjandaFabrikasi = (b) => {
 
   const GECMIS_SAYFA = AJANDA_SINIRLARI.GECMIS_SAYFA;
 
+  /**
+   * Sayfanın çerçeve sınırına sığan öneki. `GECMIS_SAYFA` girdi v3 alanlarıyla `AJANDA_AZAMI_CERCEVE.KANAL`'ı
+   * aşabilir (her alanı değiştiren yirmi `guncelle`: ~2,2 M birim; protokol testi `ajanda-cerceve-boyu`),
+   * istemci de onu `mesaj_cok_buyuk` ile reddeder. Bu yüzden sayfa, `gecmis` çerçevesinin en uzun
+   * zarfıyla (`istek_id` `OPAK_ID` uzunlukta, `devami:true`) birlikte sınıra sığan kadar girdiyle kesilir;
+   * kalanı `devami:true` ile sonraki sayfaya kalır (sözleşme "en çok `GECMIS_SAYFA`" der, istemci
+   * `once_rev`'i son girdiden alır). Ölçü kablodaki gibi UTF-16 birimidir (`JSON.stringify(...).length`)
+   * ve v3 halidir: v2'ye uyarlama yalnız alan atar, kısaltır. İlk girdi her zaman girer: şemanın en büyük
+   * tek girdisi bile sınırın 1/16'sının altındadır (aynı test), boş sayfa `devami:true` ile istemciyi
+   * döngüye sokardı.
+   */
+  const boyaSigan = (kayit_id: string, adaylar: AjandaGecmisGirdisi[]): AjandaGecmisGirdisi[] => {
+    const zarf = { v: AJANDA_SURUMU, type: "gecmis", istek_id: "i".repeat(SINIRLAR.OPAK_ID), kayit_id, girdiler: [], devami: true };
+    let boy = JSON.stringify(zarf).length;
+    const sigan: AjandaGecmisGirdisi[] = [];
+    for (const g of adaylar) {
+      const ek = JSON.stringify(g).length + (sigan.length > 0 ? 1 : 0);
+      if (sigan.length > 0 && boy + ek > AJANDA_AZAMI_CERCEVE.KANAL) break;
+      sigan.push(g);
+      boy += ek;
+    }
+    return sigan;
+  };
+
   return {
     baslat() {
       depo.ajandaDepoKimligi(yeniDepoId);
@@ -264,7 +292,8 @@ export const ajandaKur: AjandaFabrikasi = (b) => {
         adet: GECMIS_SAYFA + 1,
         ...(once_rev === undefined ? {} : { once_rev }),
       });
-      return { kayit_id, girdiler: satirlar.slice(0, GECMIS_SAYFA), devami: satirlar.length > GECMIS_SAYFA };
+      const girdiler = boyaSigan(kayit_id, satirlar.slice(0, GECMIS_SAYFA));
+      return { kayit_id, girdiler, devami: satirlar.length > girdiler.length };
     },
 
     yetenekler,
