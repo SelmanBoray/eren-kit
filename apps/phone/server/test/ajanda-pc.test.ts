@@ -6,6 +6,7 @@
  * kullanıcı emri/otomasyon, dayanak (mesaj anı çağrının anı), gece kuralı ve tekilleştirme.
  */
 import assert from "node:assert/strict";
+import { randomBytes } from "node:crypto";
 import { afterEach, describe, it } from "node:test";
 import {
   AJANDA_ARACLARI,
@@ -17,9 +18,11 @@ import {
   PC_KANCA_ARACLARI,
   PC_TEKIL_KAPSAMI,
   type PcTurKarari,
+  sha256Hex,
+  utf8Bayt,
 } from "@eren/protocol";
 import { ajandaKur } from "../src/ajanda.ts";
-import { pcCagriIzi, pcDefteriKur } from "../src/ajanda-pc.ts";
+import { pcDefteriKur } from "../src/ajanda-pc.ts";
 import { depoAc } from "../src/depo.ts";
 import type { CihazYonetimliDepo } from "../src/depo.ts";
 import type { AjandaFiilCiktisi, AjandaFiilGirdisi, AjandaKopruBaglami, AjandaTurBaglami } from "../src/sozlesme.ts";
@@ -511,11 +514,10 @@ describe("PC oturumu, T5: tasdik onu tüketen köprüye bağlanır", () => {
     assert.equal(b.taslak, true);
     assert.equal(b.kaynak.oturum_id, B, "iz B'nin köprüsünün oturumu");
     const g = o.gunluk.girdiler as ReadonlyArray<{ olay: string; alanlar?: Record<string, unknown> }>;
-    assert.deepEqual(
-      g.filter((x) => x.olay === "pc_oturum_uyusmuyor").map((x) => x.alanlar),
-      // `cagri_izi`: çağrı kimliğinin kısaltılmış tek yönlü izi (teşhis nedeni çağrıya bununla bağlar).
-      [{ oturum_id: A, surec_kimligi: "var", cagri_izi: pcCagriIzi(id) }],
-    );
+    // `cagri_izi`: çağrının defter tuzlu izi; aynı çağrının `arac` olayı aynısını taşır (teşhis nedeni bununla bağlar).
+    const iz = g.filter((x) => x.olay === "arac").at(-1)?.alanlar?.["cagri_izi"];
+    assert.match(String(iz), /^[0-9a-f]{12}$/);
+    assert.deepEqual(g.filter((x) => x.olay === "pc_oturum_uyusmuyor").map((x) => x.alanlar), [{ oturum_id: A, surec_kimligi: "var", cagri_izi: iz }]);
     const a = o.kayit(kimlik(await o.ekle({ ...DISCI, baslik: "A2" }, o.pcBaglam(id, A, "pcb_a"))));
     assert.equal(o.karar(), "insan", "tasdik sahibine kaldı");
     assert.equal(a.taslak, false);
@@ -718,3 +720,76 @@ describe("PC oturumu, T5: kapanan köprünün bağı bırakılır (kopruKapandi)
     assert.equal(d.cagri(eski(A2), A3, "pcb_2"), "insan");
   });
 });
+
+describe("PC oturumu: çağrı izi tuzludur (servis süreci ömrüyle sınırlı)", () => {
+  /** Servisin gerçek rastgele kaynağı gibi (dis-dunya `opakId`); tuz parçalarını (`t` önekli) yakalar. */
+  const gercekRastgele = (tuzlar: string[]) => ({
+    opakId: (on: string): string => {
+      const v = on + randomBytes(9).toString("base64url");
+      if (on === "t") tuzlar.push(v);
+      return v;
+    },
+  });
+  /** Uyarlayıcısı tanınmayan tasdik: `pc_tasdik_yetersiz` (bağdan bağımsız, her defterde aynı yol). */
+  const reddedilen = (cagri_id: string) =>
+    PC_KANCA_ARACLARI.pc_arac.girdi.parse({
+      uyarlayici: { ad: "baska-ajan", surum: 3 },
+      cagri_id,
+      oturum_id: OTURUM,
+      istem_id: ISTEM,
+      aktor: "ana",
+      etkilesim: "etkilesimli",
+    });
+  const defterKur = () => {
+    const zaman = sahteZaman(T0);
+    const gunluk = sahteGunluk();
+    const tuzlar: string[] = [];
+    const pc = pcDefteriKur({ takvim: sahteTakvim(DILIM), saat: zaman.saat, rastgele: gercekRastgele(tuzlar), gunluk });
+    /** Tasdik, sonra köprü çağrısı: tur sonucu ve neden olayının izi. */
+    const cagir = (cagri_id: string) => {
+      pc.kanca.pc_arac(reddedilen(cagri_id));
+      const t = pc.tur({ rol: "pc_oturumu", baglanti_id: "pcb_1", arac_cagri_id: cagri_id, oturum_id: OTURUM }, zaman.simdi());
+      const neden = gunluk.girdiler.filter((g) => g.olay === "pc_tasdik_yetersiz").at(-1)?.alanlar?.["cagri_izi"];
+      return { t, neden };
+    };
+    return { pc, gunluk, tuzlar, cagir };
+  };
+  const ID = "toolu_01ABCDEFGHJKMNPQRSTVWXYZ";
+
+  it("aynı defterde aynı çağrının izi neden olayında ve tur sonucunda aynı; iki defter örneği aynı kimliğe farklı iz verir", () => {
+    const d1 = defterKur();
+    const d2 = defterKur();
+    const a = d1.cagir(ID);
+    const b = d2.cagir(ID);
+    assert.equal(a.t.karar, "tasdik_yok");
+    assert.match(String(a.t.cagri_izi), /^[0-9a-f]{12}$/);
+    assert.equal(a.neden, a.t.cagri_izi, "aynı süreçte aynı çağrının olayları eşleşir");
+    assert.equal(b.neden, b.t.cagri_izi);
+    assert.notEqual(a.t.cagri_izi, b.t.cagri_izi, "servis yeniden başlayınca (yeni defter) iz değişir");
+    // Aynı defterde başka çağrı başka iz; aynı kimlik yeniden gelirse (tasdik tüketildi) iz aynı.
+    assert.notEqual(d1.cagir("toolu_baska").t.cagri_izi, a.t.cagri_izi);
+    assert.equal(d1.pc.tur({ rol: "pc_oturumu", baglanti_id: "pcb_1", arac_cagri_id: ID }, T0).cagri_izi, a.t.cagri_izi);
+    // Tuz her defterde ayrı, iki parça (144 bit); kimlikten tuzsuz yeniden hesaplanamaz.
+    assert.equal(d1.tuzlar.length, 2);
+    assert.equal(new Set([...d1.tuzlar, ...d2.tuzlar]).size, 4);
+    assert.notEqual(a.t.cagri_izi, sha256Hex(utf8Bayt(`eren-pc-cagri-izi\u0000${ID}`)).slice(0, 12), "eski tuzsuz iz");
+    assert.equal(cagriKimligiyleIz(ID, a.t.cagri_izi), false);
+  });
+
+  it("tuz ve çağrı kimliği günlüğe ve tur sonucuna girmez; kimliksiz çağrıda iz yok", () => {
+    const d = defterKur();
+    const { t } = d.cagir(ID);
+    const metin = JSON.stringify(d.gunluk.girdiler) + JSON.stringify(t);
+    for (const gizli of [...d.tuzlar, ID]) assert.ok(!metin.includes(gizli), `sızdı: ${gizli}`);
+    assert.ok(!Object.keys(d.pc).some((k) => /tuz/i.test(k)), "tuz defterin yüzünde");
+    const kimliksiz = d.pc.tur({ rol: "pc_oturumu", baglanti_id: "pcb_1", oturum_id: OTURUM }, T0);
+    assert.equal(kimliksiz.karar, "cagri_kimligi_yok");
+    assert.equal("cagri_izi" in kimliksiz, false);
+  });
+});
+
+/** İz, kimliğin bilinen öneklerle tuzsuz ya da boş tuzlu özeti mi (transkriptten yeniden hesaplanabilir mi). */
+function cagriKimligiyleIz(id: string, iz: unknown): boolean {
+  const adaylar = [id, `eren-pc-cagri-izi\u0000${id}`, `eren-pc-cagri-izi\u0000\u0000${id}`];
+  return adaylar.some((a) => sha256Hex(utf8Bayt(a)).slice(0, 12) === iz);
+}

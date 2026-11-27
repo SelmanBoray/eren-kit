@@ -57,18 +57,15 @@ export interface PcTuru {
   /** Kararın nedeni: köprüye döner (modele sabit metin), günlüğe girer. */
   karar: PcTurKarari;
   /**
-   * Çağrı kimliği geldiyse çağrının izi (`pcCagriIzi`): defterin neden olayları (`pc_tasdik_yetersiz`,
-   * `pc_oturum_uyusmuyor`) aynı değeri `cagri_izi` alanında taşır. `arac` olayı bunu taşırsa teşhis nedeni
-   * sırayla değil izle bağlar (`eslestir` `tasdikReddiNedenleri`).
+   * Çağrı kimliği geldiyse çağrının izi (defterin tuzlu izi, `pcDefteriKur`): defterin neden olayları
+   * (`pc_tasdik_yetersiz`, `pc_oturum_uyusmuyor`) aynı değeri `cagri_izi` alanında taşır; araçlar bunu pc
+   * `arac` olayına koyar, teşhis nedeni sırayla değil izle bağlar (`eslestir` `tasdikReddiNedenleri`).
    */
   cagri_izi?: string;
 }
 
-/**
- * Çağrının günlük izi: çağrı kimliğinin (`tool_use_id`) alan ayrımlı SHA-256'sının ilk 12 onaltılığı.
- * Metin değildir, kimliğin kendisini vermez (tek yönlü, kısaltılmış); aynı çağrının olaylarını eşlemeye yeter.
- */
-export const pcCagriIzi = (arac_cagri_id: string): string => sha256Hex(utf8Bayt(`eren-pc-cagri-izi\u0000${arac_cagri_id}`)).slice(0, 12);
+/** Tuzun rastgele kaynağından alınan opak kimlik sayısı (her biri 9 bayt: toplam 144 bit). */
+const IZ_TUZU_PARCA = 2;
 
 export interface PcDefteri {
   /** Kanca işleyicisi; `kopruKapandi` alanı defterinkidir (boru sunucusu her köprü kapanışında çağırır). */
@@ -156,6 +153,16 @@ const varYok = (v: unknown): "var" | "yok" => (v === undefined ? "yok" : "var");
 
 export function pcDefteriKur(b: PcDefteriBagimliliklari): PcDefteri {
   const { takvim, saat, rastgele, gunluk } = b;
+  /**
+   * Çağrı izinin tuzu: defter kurulurken servisin rastgele kaynağından, yalnız bu kapanışta (bellek) durur;
+   * günlüğe, depoya, dönüşe girmez. Çağrı kimliği (Claude `tool_use_id`) harness transkriptinde açıktır: tuzsuz
+   * iz, transkripti olan birinin kimlikten yeniden hesaplayıp günlüğü transkriptle ilişkilendirmesine yeterdi.
+   * Tuzla iz kimlikten hesaplanamaz ve servis süreci ömrüyle sınırlıdır: yeniden başlayan servisin izleri
+   * eskilerle eşleşmez (teşhis o zaman nedensiz kalır, kurulum yönlendirmesine düşer).
+   */
+  const izTuzu = Array.from({ length: IZ_TUZU_PARCA }, () => rastgele.opakId("t")).join("");
+  /** Çağrının günlük izi: tuzlu, alan ayrımlı SHA-256'nın ilk 12 onaltılığı. Aynı süreçte aynı çağrının olaylarını eşler. */
+  const cagriIzi = (arac_cagri_id: string): string => sha256Hex(utf8Bayt(`eren-pc-cagri-izi\u0000${izTuzu}\u0000${arac_cagri_id}`)).slice(0, 12);
   const tasdikler = new Map<string, Tasdik>();
   /** T5 bağı: `s:<harness süreci>` (yoksa `o:<oturum>`) → onu tüketen köprünün kimliği ve bağlantıları. */
   const baglar = new Map<string, Bag>();
@@ -242,7 +249,7 @@ export function pcDefteriKur(b: PcDefteriBagimliliklari): PcDefteri {
     if (baglam.arac_cagri_id === undefined) return { karar: "cagri_kimligi_yok" };
     const id = baglam.arac_cagri_id;
     // Neden olaylarının çağrı izi (`PcTuru.cagri_izi`); kimliğin kendisi günlüğe girmez.
-    const iz = pcCagriIzi(id);
+    const iz = cagriIzi(id);
     const tasdik = tasdikler.get(id);
     if (tasdik === undefined || simdi - tasdik.ms > AJANDA_PC_SINIRLARI.TASDIK_OMRU_DK * DAKIKA || simdi < tasdik.ms) {
       tasdikler.delete(id);
@@ -276,7 +283,7 @@ export function pcDefteriKur(b: PcDefteriBagimliliklari): PcDefteri {
     // Bağlantı kimliği servisin; `b:` öneki hiçbir oturum kimliğiyle çakışmasın diye.
     const { karar, tasdik } = kararVer(baglam, simdi, bildirilen ?? `b:${baglam.baglanti_id}`);
     const oturum_id = tasdik?.oturum_id ?? bildirilen ?? baglam.baglanti_id;
-    const izi = baglam.arac_cagri_id === undefined ? {} : { cagri_izi: pcCagriIzi(baglam.arac_cagri_id) };
+    const izi = baglam.arac_cagri_id === undefined ? {} : { cagri_izi: cagriIzi(baglam.arac_cagri_id) };
     // Mesaj anı: çağrının servise varışı (yalın yolda mesajın geliş anı bilinmez).
     const mesaj_ani = takvim.yerelAn(simdi, takvim.kullaniciDilimi());
     if (karar !== "insan" || tasdik === undefined) {

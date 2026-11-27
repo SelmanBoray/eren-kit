@@ -836,6 +836,63 @@ describe("eslestir --pc-ajan: uyarlayıcı seçimi", () => {
       assert.match(kotu, /uyarlayici=\? surum=1\)/);
     });
 
+    it("çağrı izli günlük: neden yalnız aynı izli arac'a bağlanır (sıra ve süreden bağımsız); başka iz (başka çağrı, yeniden başlamış servis) bağlanmaz; iz gösterilmez", () => {
+      const izli = (satir: string, iz: string, ms?: number) => JSON.stringify({ ...(JSON.parse(satir) as object), cagri_izi: iz, ...(ms === undefined ? {} : { ts_ms: ms }) });
+      const IZ_A = "0123456789ab";
+      const IZ_B = "fedcba987654";
+      const NEDEN = /Günlükte görülen neden \(kanca çalışıyor; kurulum sorunu değil\):\n {2}- tasdik başka bir köprüye bağlı/;
+      const KURULUM = /Olası nedenler \(kurulu görünüyor ama tasdik gelmedi\):\n {2}- kanca öteki çağrılarda ulaşıyor/;
+      // Araya başka çağrının olayları girer, 9 sn geçer: neden yine kendi çağrısına.
+      const ara = [tasdikYeni, izli(arac("insan"), IZ_B, 5000)];
+      const m = pcTeshisMetni([tasdikYeni, izli(uyusmuyor, IZ_A, 1000), ...ara, izli(arac("tasdik_yok"), IZ_A, 10_000)], z, kurulu);
+      assert.match(m, NEDEN);
+      assert.equal(m.includes(IZ_A) || m.includes(IZ_B), false, "iz gösterildi");
+      // Bitişik ve 2 sn içinde ama başka iz: bağlanmaz (yeniden başlamış servisin yeni tuzu da böyle görünür).
+      for (const k of [kurulu, undefined]) {
+        const b = pcTeshisMetni([tasdikYeni, izli(uyusmuyor, IZ_A, 1000), izli(arac("tasdik_yok"), IZ_B, 1000)], z, k);
+        assert.equal(b.includes("Günlükte görülen neden"), false, b);
+        if (k !== undefined) assert.match(b, KURULUM);
+      }
+      // İzli arac izsiz nedeni saymaz; izsiz arac (eski sürüm) izli nedeni eski kuralla (bitişik, 2 sn) sayar.
+      assert.equal(pcTeshisMetni([tasdikYeni, uyusmuyor, izli(arac("tasdik_yok"), IZ_A)], z, kurulu).includes("Günlükte görülen neden"), false);
+      assert.match(pcTeshisMetni([tasdikYeni, izli(uyusmuyor, IZ_A), arac("tasdik_yok")], z, kurulu), NEDEN);
+      // Biçimsiz iz (12 onaltılık değil) izsiz sayılır: eski kural.
+      assert.match(pcTeshisMetni([tasdikYeni, izli(uyusmuyor, "x"), izli(arac("tasdik_yok"), "y")], z, kurulu), NEDEN);
+    });
+
+    it("izsiz günlükte neden bağlama çıktısı iz öncesi sürümle (c3e18d6^) bayt bayt aynı", () => {
+      const bas =
+        "Kurulum (x):\n  araç öncesi kanca (PreToolUse, mcp__eren-ajanda__.*): ayarda kurulu.\n\n" +
+        "Son PC olayları (en yeni sonda; metin ve kayıt alanı yazılmaz):\n" +
+        `  t1  pc_arac oturum=…${OTURUM.slice(-6)} alt_agent=hayir etkilesimsiz=hayir istem_kimligi=var uyarlayici=claude-code aktor=ana etkilesim=etkilesimli surec_kimligi=var cerceve=normal\n` +
+        `  t1  pc_oturum_uyusmuyor oturum=…${OTURUM.slice(-6)} surec_kimligi=var\n`;
+      const aracSatiri = `  t1  arac oturum=…${OTURUM.slice(-6)} fiil=ajanda_ekle tur_kokeni=sentetik pc_karar=tasdik_yok cagri_kimligi=var sonuc=eklendi\n\n`;
+      const sinama =
+        "Sınama (AJANDA.md \"Kurulumdan sonra sınama\"):\n" +
+        "  araç öncesi kanca servise ulaşıyor mu: evet\n" +
+        "  çağrı kimliği MCP isteğinde geliyor mu: evet\n" +
+        "  istem kimliği geliyor mu (araç öncesi): evet\n";
+      assert.equal(
+        pcTeshisMetni([tasdikYeni, uyusmuyor, arac("tasdik_yok")], z, kurulu),
+        bas +
+          aracSatiri +
+          sinama +
+          "  son PC araç kararı: tasdik_yok (kayıtlar TASLAK doğuyor: kanca bu çağrıyı bildirdi ama servis tasdiki kullanmadı; neden aşağıda)\n" +
+          "Günlükte görülen neden (kanca çalışıyor; kurulum sorunu değil):\n" +
+          "  - tasdik başka bir köprüye bağlı (pc_oturum_uyusmuyor): kanca bu çağrıyı bildirdi, ama tasdik onu bildiren Claude Code sürecine bağlı başka bir MCP köprüsünün; bu çağrıyı getiren köprü onu kullanamaz (tasdik silinmez). Olası: aynı Claude Code penceresinde MCP köprüsü yeniden başladı (/mcp ile yeniden bağlanma) ya da köprü başka bir Claude Code sürecinden açıldı. Claude Code penceresini kapatıp yeniden açın (köprü ve bağ yenilenir; servis yeniden başlayınca da bağlar sıfırlanır). Kanca kurulumu doğru, yeniden kurmak gerekmez.\n",
+      );
+      assert.equal(
+        pcTeshisMetni([tasdikYeni, uyusmuyor, tasdikYeni, arac("tasdik_yok")], z, kurulu),
+        bas +
+          `  t1  pc_arac oturum=…${OTURUM.slice(-6)} alt_agent=hayir etkilesimsiz=hayir istem_kimligi=var uyarlayici=claude-code aktor=ana etkilesim=etkilesimli surec_kimligi=var cerceve=normal\n` +
+          aracSatiri +
+          sinama +
+          "  son PC araç kararı: tasdik_yok (kayıtlar TASLAK doğuyor: kanca ayarda kurulu görünüyor ama bu çağrıda tasdik gelmedi; olası nedenler aşağıda)\n" +
+          "Olası nedenler (kurulu görünüyor ama tasdik gelmedi):\n" +
+          "  - kanca öteki çağrılarda ulaşıyor; bu çağrıda servis o an yanıt vermedi ya da arada yeniden başladı, ya da izin sorusu 10 dakikadan uzun bekledi\n",
+      );
+    });
+
     it("eski günlükle (yeni olay yok) çıktı bugünküyle bayt bayt aynı", () => {
       assert.equal(
         pcTeshisMetni([tasdikEski, arac("insan")], z, kurulu),

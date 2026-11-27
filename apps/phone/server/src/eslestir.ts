@@ -612,7 +612,11 @@ const TASDIK_REDDI_OLAYLARI: ReadonlySet<string> = new Set(["pc_tasdik_yetersiz"
 /** Neden olayı ile kendi `arac`'ı arasındaki en uzun süre (aynı eşzamanlı blok; `depo.islem` bekleyebilir). */
 const TASDIK_REDDI_ARALIK_MS = 2000;
 
-/** Çağrı izi (ajanda-pc `pcCagriIzi`: kısaltılmış tek yönlü özet). Yalnız eşlemede kullanılır, yazılmaz. */
+/**
+ * Çağrı izi (ajanda-pc defterinin tuzlu, kısaltılmış tek yönlü özeti). Teşhis onu hesaplamaz, yalnız eşitlik için
+ * karşılaştırır; yazmaz. Tuz servis süreci ömrüyle sınırlıdır: servis yeniden başladıysa eski izler yeni `arac`'la
+ * eşleşmez, neden sahipsiz kalır (güvenli taraf: kurulum yönlendirmesi, yanlış neden değil).
+ */
 const CAGRI_IZI = /^[0-9a-f]{12}$/;
 const cagriIzi = (v: unknown): string | null => (typeof v === "string" && CAGRI_IZI.test(v) ? v : null);
 
@@ -625,8 +629,8 @@ type TeshisZinciri = ReadonlyArray<(TeshisOlayi & { ts: number; iz?: string | nu
 /**
  * Son `arac` olayının kendi neden olayları. İzli günlük: son `arac` çağrı izi (`cagri_izi`) taşıyorsa nedenleri
  * yalnız aynı izi taşıyan, ondan önceki neden olaylarıdır; sıra ve süre aranmaz (araya başka çağrı girse de, blok
- * uzasa da), izsiz neden sayılmaz. İzsiz `arac` (eski günlük ya da izi yazmayan sürüm) için bugünkü kural: neden olayında
- * çağrı kimliği yoktur (`pc_tasdik_yetersiz` hiç
+ * uzasa da), izsiz ya da başka izli (başka çağrı, başka servis süreci) neden sayılmaz. İzsiz `arac` (eski günlük ya da
+ * izi yazmayan sürüm) için bugünkü kural: neden olayında çağrı kimliği yoktur (`pc_tasdik_yetersiz` hiç
  * kimlik taşımaz; `pc_oturum_uyusmuyor`'unki tasdikin oturumudur, `arac`'ınki köprününki), eşleme sırayladır:
  * servis nedeni kararla aynı eşzamanlı blokta, `arac`'tan HEMEN önce yazar (araya teşhis modüllerinden satır
  * giremez). Bu yüzden yalnız son `arac`'a bitişik neden olayları sayılır; araya başka herhangi bir satır
