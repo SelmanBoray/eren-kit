@@ -8,15 +8,33 @@
  * kimlik sonrası her çerçevede taze okuma); çözücü yalnız ajanda çerçevelerini tanır, `/sohbet` iş mesajı
  * burada `gecersiz_mesaj` + kapanıştır. Kayıt metni günlüğe yazılmaz (yalnız kimlik, revizyon, kod).
  * `gateway.ts` bağlantıyı buraya devreder ve ortak denetimleri (uzak adres, eşleştirme) verir.
+ *
+ * Sürüm uyumu (`apps/ajanda/YOL-HARITASI.md` 3.3): bağlantının sürümü ilk geçerli `hello` ya da
+ * `pair_request` ile o çerçevenin `v`'sine sabitlenir (`AJANDA_SURUMLERI`'nden biri); sonraki her
+ * çerçeve yalnız o sürümde çözülür. Servis içeride en yeni modelle (`AjandaAsagi`) çalışır, her aşağı
+ * çerçeve `ajandaAsagiSurume` ile bağlantı sürümüne uyarlanıp denetlenerek çıkar; uyarlanamayan çerçeve
+ * kabloya çıkmaz, bağlantı `ic_hata` ile kapanır. `protokol_uyumsuz` reddinin `v`'si her zaman
+ * `AJANDA_SURUMU`'dur (istemcinin geri düşüşü bunu okur, `ajandaGeriDusus`). Kod sürüm kümesine geneldir:
+ * yeni sürüm yalnız protokol paketinde eklenir.
  */
 import {
+  AJANDA_AZAMI_CERCEVE,
   AJANDA_SURUMU,
+  ajandaAsagiSurume,
   ajandaKimlikImzaMetni,
+  ajandaSurumuMu,
   ajandaYukariCoz,
   ESKI_CIHAZ_KAPSAMI,
   kanalKapsamdaMi,
 } from "@eren/protocol";
-import type { AjandaAsagi, AjandaKanalHatasi, AjandaKaydi, AjandaYukari, HataKodu } from "@eren/protocol";
+import type {
+  AjandaAsagi,
+  AjandaKanalHatasi,
+  AjandaKaydi,
+  AjandaSurumluYukari,
+  AjandaSurumNo,
+  HataKodu,
+} from "@eren/protocol";
 import type {
   AjandaGatewayYuzu,
   AjandaGecmisSayfasi,
@@ -36,10 +54,11 @@ import type {
 /** Telafide bir `telafiSayfasi` çağrısının en çok kayıt sayısı. */
 export const AJANDA_TELAFI_SAYFASI = 200;
 
-type Hello = Extract<AjandaYukari, { type: "hello" }>;
-type PairRequest = Extract<AjandaYukari, { type: "pair_request" }>;
-type IslemMesaji = Extract<AjandaYukari, { type: "islem" }>;
-type GecmisIste = Extract<AjandaYukari, { type: "gecmis_iste" }>;
+// Yukarı çerçeveler bağlantının sürümündedir (çözücü sonucu); gövdeleri bugün bütün sürümlerde aynı.
+type Hello = Extract<AjandaSurumluYukari, { type: "hello" }>;
+type PairRequest = Extract<AjandaSurumluYukari, { type: "pair_request" }>;
+type IslemMesaji = Extract<AjandaSurumluYukari, { type: "islem" }>;
+type GecmisIste = Extract<AjandaSurumluYukari, { type: "gecmis_iste" }>;
 
 /** `gateway.ts`'in ortak eşleştirmesinin sonucu (pencere, kod, adres sayaçları orada). */
 export type AjandaEslestirmeSonucu =
@@ -106,6 +125,11 @@ interface Kimlik {
 
 interface Baglanti {
   readonly b: WsBaglantisi;
+  /**
+   * Bağlantının sürümü: ilk geçerli `hello` ya da `pair_request`'in `v`'si, sonra değişmez. `null`:
+   * henüz sabitlenmedi (yalnız ret çerçevesi gidebilir, sürümü `retSurumu`).
+   */
+  surum: AjandaSurumNo | null;
   asama: Asama;
   sureIptal: IptalEt | null;
   kimlik: Kimlik | null;
@@ -118,6 +142,22 @@ const kapanisKodu = (code: HataKodu): number => {
   return 1008;
 };
 
+/**
+ * Ham çerçevenin `v`'si bu servisin sürüm kümesindeyse o; değilse (çok büyük, JSON değil, nesne değil,
+ * `v` yok ya da desteklenmiyor) `null`. Yalnız sürümü sabitlenmemiş bağlantının ret yolunda çağrılır.
+ */
+const hamSurumu = (ham: string): AjandaSurumNo | null => {
+  if (ham.length > AJANDA_AZAMI_CERCEVE.KANAL) return null;
+  let deger: unknown;
+  try {
+    deger = JSON.parse(ham);
+  } catch {
+    return null;
+  }
+  const v = typeof deger === "object" && deger !== null ? (deger as { v?: unknown }).v : undefined;
+  return ajandaSurumuMu(v) ? v : null;
+};
+
 export const ajandaKanaliKur = (d: AjandaKanaliBagimliliklari): AjandaKanali => {
   const { depo, ajanda, anahtar, rastgele, saat, zamanlayici, gunluk } = d;
   const baglantilar = new Set<Baglanti>();
@@ -127,8 +167,32 @@ export const ajandaKanaliKur = (d: AjandaKanaliBagimliliklari): AjandaKanali => 
     gunluk.hata("gateway", olay, { kanal: "ajanda", hata_turu: e instanceof Error ? e.name : typeof e });
   };
 
-  // `/ajanda`'ya giden her çerçeve `v` = `AJANDA_SURUMU`; tip `AjandaAsagi`'dır (öteki kanalın çerçevesi derlenmez).
-  const yolla = (b: WsBaglantisi, m: AjandaAsagi): void => b.gonder(JSON.stringify(m));
+  /**
+   * Çerçeveyi `v` sürümüne uyarlar, denetler ve yollar. Uyarlama ya da denetim tutmazsa çerçeve kabloya
+   * çıkmaz, `false`; günlüğe yalnız tür, sürüm ve alan yolları yazılır (değer değil). Bağlantıya dokunmaz.
+   */
+  const cerceveYaz = (g: Baglanti, m: AjandaAsagi, v: AjandaSurumNo): boolean => {
+    const u = ajandaAsagiSurume(m, v);
+    if (!u.ok) {
+      gunluk.hata("gateway", "asagi_uyarlama_hatasi", { kanal: "ajanda", type: m.type, v, code: u.kod, yollar: u.yollar.join(",") });
+      return false;
+    }
+    g.b.gonder(JSON.stringify(u.mesaj));
+    return true;
+  };
+
+  /**
+   * Kimlik ve iş çerçeveleri: model en yeni sürümdedir (`v: AJANDA_SURUMU`, tip `AjandaAsagi`; öteki
+   * kanalın çerçevesi derlenmez), kabloya bağlantı sürümünde çıkar. Yollanamadıysa bağlantı `ic_hata`
+   * ile kapanmıştır, `false`: çağıran durumu ilerletmeden döner.
+   */
+  const yolla = (g: Baglanti, m: AjandaAsagi): boolean => {
+    const v = g.surum;
+    if (v !== null && cerceveYaz(g, m, v)) return true;
+    if (v === null) gunluk.hata("gateway", "surumsuz_cerceve", { kanal: "ajanda", type: m.type });
+    reddet(g, "ic_hata");
+    return false;
+  };
 
   const birak = (g: Baglanti): void => {
     g.asama = { ad: "kapali" };
@@ -137,10 +201,21 @@ export const ajandaKanaliKur = (d: AjandaKanaliBagimliliklari): AjandaKanali => 
     baglantilar.delete(g);
   };
 
-  const reddet = (g: Baglanti, code: AjandaKanalHatasi): void => {
+  /**
+   * Ret çerçevesinin sürümü. `protokol_uyumsuz`: her zaman servisin en yüksek sürümü (istemcinin geri
+   * düşüşü buna dayanır). Öteki kodlar: sabit bağlantı sürümü; yoksa reddedilen çerçevenin desteklenen
+   * `v`'si (eski istemci kendi kodunu okusun); o da yoksa `AJANDA_SURUMU`.
+   */
+  const retSurumu = (g: Baglanti, code: AjandaKanalHatasi, cerceveSurumu: AjandaSurumNo | null): AjandaSurumNo => {
+    if (code === "protokol_uyumsuz") return AJANDA_SURUMU;
+    return g.surum ?? cerceveSurumu ?? AJANDA_SURUMU;
+  };
+
+  // Hata çerçevesi de uyarlanamazsa bağlantı çerçevesiz kapanır (`cerceveYaz`: özyineleme yok).
+  const reddet = (g: Baglanti, code: AjandaKanalHatasi, cerceveSurumu: AjandaSurumNo | null = null): void => {
     if (g.asama.ad === "kapali") return;
     gunluk.uyari("gateway", "baglanti_ret", { kanal: "ajanda", code });
-    yolla(g.b, { v: AJANDA_SURUMU, type: "error", code });
+    cerceveYaz(g, { v: AJANDA_SURUMU, type: "error", code }, retSurumu(g, code, cerceveSurumu));
     birak(g);
     g.b.kapat(kapanisKodu(code), code);
   };
@@ -163,7 +238,7 @@ export const ajandaKanaliKur = (d: AjandaKanaliBagimliliklari): AjandaKanali => 
 
   const kayitYolla = (g: Baglanti, o: Oturum, kayit: AjandaKaydi): void => {
     if (kayit.revizyon <= o.sonRev) return;
-    yolla(g.b, { v: AJANDA_SURUMU, type: "kayit", kayit });
+    if (!yolla(g, { v: AJANDA_SURUMU, type: "kayit", kayit })) return;
     o.sonRev = kayit.revizyon;
   };
 
@@ -202,12 +277,12 @@ export const ajandaKanaliKur = (d: AjandaKanaliBagimliliklari): AjandaKanali => 
       ...(hello.depo_id !== undefined && { depo_id: hello.depo_id }),
       ...(hello.son_rev_izi !== undefined && { son_rev_izi: hello.son_rev_izi }),
     });
-    yolla(g.b, { v: AJANDA_SURUMU, type: "welcome", depo_id: k.depo_id, bas_rev: k.bas_rev, tam: k.tam, server_time_ms: saat.simdiMs() });
+    if (!yolla(g, { v: AJANDA_SURUMU, type: "welcome", depo_id: k.depo_id, bas_rev: k.bas_rev, tam: k.tam, server_time_ms: saat.simdiMs() })) return;
     // `tam` değilse yalnız `son_rev`'ten sonrası; baştan ileri bir `son_rev` (servis `tam` demeliydi) canlıyı yutmasın.
     o.sonRev = k.tam ? 0 : Math.min(hello.son_rev, k.bas_rev);
     araligiYolla(g, o, k.bas_rev);
     if (!acik(g)) return;
-    yolla(g.b, { v: AJANDA_SURUMU, type: "esitlendi", rev: k.bas_rev });
+    if (!yolla(g, { v: AJANDA_SURUMU, type: "esitlendi", rev: k.bas_rev })) return;
     o.sonRev = Math.max(o.sonRev, k.bas_rev);
     o.telafide = false;
     gunluk.bilgi("gateway", "ajanda_esitlendi", { device_id: o.device_id, bas_rev: k.bas_rev, tam: k.tam });
@@ -250,7 +325,7 @@ export const ajandaKanaliKur = (d: AjandaKanaliBagimliliklari): AjandaKanali => 
     const server_signature = anahtar.imzala(
       ajandaKimlikImzaMetni({ rol: "pc", device_id: kayit.device_id, client_nonce: m.client_nonce, server_nonce }),
     );
-    yolla(g.b, { v: AJANDA_SURUMU, type: "auth_challenge", server_nonce, server_signature });
+    if (!yolla(g, { v: AJANDA_SURUMU, type: "auth_challenge", server_nonce, server_signature })) return;
     g.asama = { ad: "yanit_bekliyor", cihaz: kayit, hello: m, server_nonce };
   };
 
@@ -283,14 +358,14 @@ export const ajandaKanaliKur = (d: AjandaKanaliBagimliliklari): AjandaKanali => 
       : { ok: false, code: "ip_uyusmuyor" };
     if (!sonuc.ok) {
       gunluk.uyari("gateway", "eslestirme_ret", { kanal: "ajanda", code: sonuc.code });
-      yolla(g.b, { v: AJANDA_SURUMU, type: "pair_result", ok: false, code: sonuc.code });
+      if (!yolla(g, { v: AJANDA_SURUMU, type: "pair_result", ok: false, code: sonuc.code })) return;
       birak(g);
       g.b.kapat(kapanisKodu(sonuc.code), sonuc.code);
       return;
     }
     gunluk.bilgi("gateway", "eslestirme_tamam", { kanal: "ajanda", device_id: sonuc.deger, platform: m.platform });
     // Bağlantı açık kalır: uygulama aynı el sıkışma süresi içinde `hello` ile sürdürebilir.
-    yolla(g.b, {
+    yolla(g, {
       v: AJANDA_SURUMU,
       type: "pair_result",
       ok: true,
@@ -306,7 +381,7 @@ export const ajandaKanaliKur = (d: AjandaKanaliBagimliliklari): AjandaKanali => 
 
   // Yalnız protokolün alanları kablaya çıkar: yüzden fazla alan gelse de şema katı çerçeveyi bozmasın.
   const sonucYolla = (g: Baglanti, islem_id: string, s: AjandaIslemSonucuGovdesi): void => {
-    yolla(g.b, {
+    yolla(g, {
       v: AJANDA_SURUMU,
       type: "islem_sonucu",
       islem_id,
@@ -350,7 +425,7 @@ export const ajandaKanaliKur = (d: AjandaKanaliBagimliliklari): AjandaKanali => 
       hataYaz("gecmis_hatasi", e);
       s = { kayit_id: m.kayit_id, girdiler: [], devami: false, code: "ic_hata" };
     }
-    yolla(g.b, {
+    yolla(g, {
       v: AJANDA_SURUMU,
       type: "gecmis",
       istek_id: m.istek_id,
@@ -366,7 +441,8 @@ export const ajandaKanaliKur = (d: AjandaKanaliBagimliliklari): AjandaKanali => 
   // ------------------------------------------------------------------------------------------
 
   const cerceveIsle = (g: Baglanti, ham: string): void => {
-    const sonuc = ajandaYukariCoz(ham);
+    // Sabitlenmişse yalnız o sürüm (başka sayı `v` `protokol_uyumsuz`); değilse kümenin herhangi biri.
+    const sonuc = ajandaYukariCoz(ham, g.surum ?? undefined);
     const asama = g.asama;
     if (!sonuc.ok) {
       gunluk.uyari("gateway", "cozum_hatasi", { kanal: "ajanda", code: sonuc.kod, yollar: sonuc.yollar.join(",") });
@@ -375,14 +451,16 @@ export const ajandaKanaliKur = (d: AjandaKanaliBagimliliklari): AjandaKanali => 
         if (g.kimlik === null || !yetkiSuruyor(g.kimlik)) return reddet(g, "cihaz_bilinmiyor");
         return gecersizIslemAl(g, asama.oturum, sonuc.islem_id);
       }
-      return reddet(g, sonuc.kod);
+      return reddet(g, sonuc.kod, g.surum === null && sonuc.kod !== "protokol_uyumsuz" ? hamSurumu(ham) : null);
     }
     const m = sonuc.mesaj;
     switch (asama.ad) {
       case "hello_bekliyor":
+        // Sürüm burada sabitlenir; `pair_request` ardından aynı bağlantıdaki `hello` da bu sürümdedir.
+        if (m.type === "hello" || m.type === "pair_request") g.surum = m.v;
         if (m.type === "hello") return helloAl(g, m);
         if (m.type === "pair_request") return eslestirmeAl(g, m);
-        return reddet(g, "yetkisiz");
+        return reddet(g, "yetkisiz", m.v);
       case "yanit_bekliyor":
         if (m.type === "auth_response") return yanitAl(g, asama, m.signature);
         return reddet(g, "yetkisiz");
@@ -399,7 +477,7 @@ export const ajandaKanaliKur = (d: AjandaKanaliBagimliliklari): AjandaKanali => 
 
   return {
     baglantiAl: (b) => {
-      const g: Baglanti = { b, asama: { ad: "hello_bekliyor" }, sureIptal: null, kimlik: null };
+      const g: Baglanti = { b, surum: null, asama: { ad: "hello_bekliyor" }, sureIptal: null, kimlik: null };
       baglantilar.add(g);
       g.sureIptal = zamanlayici.sonra(d.elSikismaMs, () => reddet(g, "zaman_asimi"));
       b.kapanisDinle(() => birak(g));

@@ -14,7 +14,7 @@
 import {
   AJANDA_PC_MCP_ADI,
   AJANDA_PC_SINIRLARI,
-  AJANDA_SURUMU,
+  AJANDA_QR_SURUMU,
   AjandaEslestirmeQr as AjandaEslestirmeQrSemasi,
   ESKI_CIHAZ_KAPSAMI,
   EslestirmeQr as EslestirmeQrSemasi,
@@ -102,9 +102,9 @@ function pencereAc<Q>(
 export const eslestirmeBaslat: EslestirmeBaslatici = (b) =>
   pencereAc(b, (t) => EslestirmeQrSemasi.safeParse({ v: PROTOKOL_SURUMU, ...t }));
 
-/** `eslestir --ajanda`: aynı kod ve süre; QR `AjandaEslestirmeQr`, pencere `kapsam:"ajanda"`. */
+/** `eslestir --ajanda`: aynı kod ve süre; QR `AjandaEslestirmeQr` (`v` = `AJANDA_QR_SURUMU`, kanal sürümünden ayrı), pencere `kapsam:"ajanda"`. */
 export const ajandaEslestirmeBaslat: AjandaEslestirmeBaslatici = (b) =>
-  pencereAc(b, (t) => AjandaEslestirmeQrSemasi.safeParse({ v: AJANDA_SURUMU, ...t, kanal: "ajanda" }), "ajanda");
+  pencereAc(b, (t) => AjandaEslestirmeQrSemasi.safeParse({ v: AJANDA_QR_SURUMU, ...t, kanal: "ajanda" }), "ajanda");
 
 // ---------------------------------------------------------------------------------------------
 // Eşleşme yönetimi: saf parçalar (test edilir), komut satırı aşağıda.
