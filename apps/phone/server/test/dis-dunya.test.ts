@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { WebSocket } from "ws";
+import { SOHBET_SINIRLARI, YETENEK_JETONU_DESENI } from "@eren/protocol";
 import type { DisDunya, ErenYollari, SurecKaydi, SurecKimligi } from "../src/sozlesme.ts";
 import {
   canlilikIzleyicisiKur,
@@ -969,6 +970,23 @@ describe("yetenekleriCoz (adres sorgusu, port açmaz)", () => {
     const cok = Array.from({ length: 40 }, (_, i) => `j${i}`).join(",");
     assert.equal(yetenekleriCoz(`/sohbet?yetenek=${cok}`).size, 16);
     assert.deepEqual(coz(`/sohbet?yetenek=etkinlik1,${"x".repeat(300)}`), ["etkinlik1"]);
+  });
+
+  test("jeton biçimi ve adet sınırı protokolden gelir (yerel kopya yok)", () => {
+    assert.equal(SOHBET_SINIRLARI.YETENEK_ADET, 16);
+    assert.equal(SOHBET_SINIRLARI.YETENEK_JETONU, 32);
+    const cok = Array.from({ length: SOHBET_SINIRLARI.YETENEK_ADET + 5 }, (_, i) => `j${i}`).join(",");
+    assert.equal(yetenekleriCoz(`/sohbet?yetenek=${cok}`).size, SOHBET_SINIRLARI.YETENEK_ADET);
+    const sinirda = "a".repeat(SOHBET_SINIRLARI.YETENEK_JETONU);
+    assert.deepEqual(coz(`/sohbet?yetenek=${sinirda},b${sinirda}`), [sinirda]);
+    for (const j of yetenekleriCoz("/sohbet?yetenek=medya1,etkinlik1,a_b-9,Kotu,c%20d")) {
+      assert.match(j, YETENEK_JETONU_DESENI);
+    }
+    const kaynak = readFileSync(new URL("../src/dis-dunya.ts", import.meta.url), "utf8");
+    assert.match(kaynak, /YETENEK_JETONU_DESENI\.test\(/);
+    assert.match(kaynak, /SOHBET_SINIRLARI\.YETENEK_ADET/);
+    assert.doesNotMatch(kaynak, /\[a-z0-9_-\]\{1,32\}/, "yerel düzenli ifade kalmadı");
+    assert.doesNotMatch(kaynak, /AZAMI_YETENEK_ADEDI/, "yerel adet sabiti kalmadı");
   });
 });
 
