@@ -612,11 +612,21 @@ const TASDIK_REDDI_OLAYLARI: ReadonlySet<string> = new Set(["pc_tasdik_yetersiz"
 /** Neden olayı ile kendi `arac`'ı arasındaki en uzun süre (aynı eşzamanlı blok; `depo.islem` bekleyebilir). */
 const TASDIK_REDDI_ARALIK_MS = 2000;
 
-/** Teşhis modüllerinin günlük satırları sırasıyla: gösterilen olay ya da `null` (gösterilmeyen satır: `arac_hatasi`, `arac_girdisi_gecersiz`, sohbet `arac` …). */
-type TeshisZinciri = ReadonlyArray<(TeshisOlayi & { ts: number }) | null>;
+/** Çağrı izi (ajanda-pc `pcCagriIzi`: kısaltılmış tek yönlü özet). Yalnız eşlemede kullanılır, yazılmaz. */
+const CAGRI_IZI = /^[0-9a-f]{12}$/;
+const cagriIzi = (v: unknown): string | null => (typeof v === "string" && CAGRI_IZI.test(v) ? v : null);
 
 /**
- * Son `arac` olayının kendi neden olayları. Neden olayında çağrı kimliği yoktur (`pc_tasdik_yetersiz` hiç
+ * Teşhis modüllerinin günlük satırları sırasıyla: gösterilen olay ya da `null` (gösterilmeyen satır: `arac_hatasi`,
+ * `arac_girdisi_gecersiz`, sohbet `arac` …). `iz`: satırın çağrı izi (`cagri_izi`; eski satırda yok).
+ */
+type TeshisZinciri = ReadonlyArray<(TeshisOlayi & { ts: number; iz?: string | null }) | null>;
+
+/**
+ * Son `arac` olayının kendi neden olayları. İzli günlük: son `arac` çağrı izi (`cagri_izi`) taşıyorsa nedenleri
+ * yalnız aynı izi taşıyan, ondan önceki neden olaylarıdır; sıra ve süre aranmaz (araya başka çağrı girse de, blok
+ * uzasa da), izsiz neden sayılmaz. İzsiz `arac` (eski günlük ya da izi yazmayan sürüm) için bugünkü kural: neden olayında
+ * çağrı kimliği yoktur (`pc_tasdik_yetersiz` hiç
  * kimlik taşımaz; `pc_oturum_uyusmuyor`'unki tasdikin oturumudur, `arac`'ınki köprününki), eşleme sırayladır:
  * servis nedeni kararla aynı eşzamanlı blokta, `arac`'tan HEMEN önce yazar (araya teşhis modüllerinden satır
  * giremez). Bu yüzden yalnız son `arac`'a bitişik neden olayları sayılır; araya başka herhangi bir satır
@@ -635,7 +645,11 @@ function tasdikReddiNedenleri(zincir: TeshisZinciri): string[] {
   const sonArac = zincir[son];
   if (sonArac === null || sonArac === undefined) return [];
   const bulunan: TeshisOlayi[] = [];
-  for (let i = son - 1; i >= 0; i--) {
+  const iz = sonArac.iz ?? null;
+  if (iz !== null) {
+    for (const o of zincir.slice(0, son)) if (o !== null && o !== undefined && TASDIK_REDDI_OLAYLARI.has(o.olay) && o.iz === iz) bulunan.push(o);
+  }
+  for (let i = son - 1; iz === null && i >= 0; i--) {
     const o = zincir[i];
     if (o === null || o === undefined || !TASDIK_REDDI_OLAYLARI.has(o.olay)) break;
     const fark = sonArac.ts - o.ts;
@@ -753,7 +767,7 @@ export function pcTeshisMetni(
   ajan: PcAjanGorunumu = CLAUDE_CODE_GORUNUMU,
 ): string {
   const bas = kurulum === undefined ? "" : `${kurulumSatirlari(kurulum, ajan).join("\n")}\n\n`;
-  const olaylar: Array<{ ts: number; olay: string; alanlar: Record<string, string>; oturum: string | null }> = [];
+  const olaylar: Array<{ ts: number; olay: string; alanlar: Record<string, string>; oturum: string | null; iz: string | null }> = [];
   // Neden olaylarını kendi `arac`'ına bağlamak için teşhis modüllerinin bütün satırları (`tasdikReddiNedenleri`).
   const zincir: Array<(typeof olaylar)[number] | null> = [];
   for (const s of satirlar) {
@@ -782,7 +796,7 @@ export function pcTeshisMetni(
       const d = teshisDegeri(k[a]);
       if (d !== null) alanlar[a] = d;
     }
-    const o = { ts: typeof k["ts_ms"] === "number" ? k["ts_ms"] : 0, olay, alanlar, oturum: kisaOturum(k["oturum_id"]) };
+    const o = { ts: typeof k["ts_ms"] === "number" ? k["ts_ms"] : 0, olay, alanlar, oturum: kisaOturum(k["oturum_id"]), iz: cagriIzi(k["cagri_izi"]) };
     olaylar.push(o);
     zincir.push(o);
   }

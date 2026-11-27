@@ -19,7 +19,7 @@ import {
   type PcTurKarari,
 } from "@eren/protocol";
 import { ajandaKur } from "../src/ajanda.ts";
-import { pcDefteriKur } from "../src/ajanda-pc.ts";
+import { pcCagriIzi, pcDefteriKur } from "../src/ajanda-pc.ts";
 import { depoAc } from "../src/depo.ts";
 import type { CihazYonetimliDepo } from "../src/depo.ts";
 import type { AjandaFiilCiktisi, AjandaFiilGirdisi, AjandaKopruBaglami, AjandaTurBaglami } from "../src/sozlesme.ts";
@@ -513,7 +513,8 @@ describe("PC oturumu, T5: tasdik onu tüketen köprüye bağlanır", () => {
     const g = o.gunluk.girdiler as ReadonlyArray<{ olay: string; alanlar?: Record<string, unknown> }>;
     assert.deepEqual(
       g.filter((x) => x.olay === "pc_oturum_uyusmuyor").map((x) => x.alanlar),
-      [{ oturum_id: A, surec_kimligi: "var" }],
+      // `cagri_izi`: çağrı kimliğinin kısaltılmış tek yönlü izi (teşhis nedeni çağrıya bununla bağlar).
+      [{ oturum_id: A, surec_kimligi: "var", cagri_izi: pcCagriIzi(id) }],
     );
     const a = o.kayit(kimlik(await o.ekle({ ...DISCI, baslik: "A2" }, o.pcBaglam(id, A, "pcb_a"))));
     assert.equal(o.karar(), "insan", "tasdik sahibine kaldı");
@@ -698,7 +699,8 @@ describe("PC oturumu, T5: kapanan köprünün bağı bırakılır (kopruKapandi)
     d.pc.kopruKapandi("pcb_1");
     d.pc.kopruKapandi("pcb_1");
     assert.equal(d.cagri(d.tasdik(A3, "100"), A2, "pcb_2"), "insan");
-    assert.deepEqual(d.olaylar("pc_bag_birakildi"), [{ baglanti_id: "pcb_1", adet: 1 }]);
+    // pcb_2'nin kapanıştan önceki çağrısının tüketilmemiş tasdiki bağla birlikte silindi (`tasdik: 1`).
+    assert.deepEqual(d.olaylar("pc_bag_birakildi"), [{ baglanti_id: "pcb_1", adet: 1, tasdik: 1 }]);
   });
 
   it("eski çerçeve (T5 uygulanmaz) kapanıştan etkilenmez", () => {

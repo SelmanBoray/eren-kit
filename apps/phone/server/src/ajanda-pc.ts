@@ -7,6 +7,8 @@ import {
   type PcKancaGirdisi,
   type PcTurKarari,
   pcUyarlayiciTanindiMi,
+  sha256Hex,
+  utf8Bayt,
 } from "@eren/protocol";
 import { MODUL } from "./ajanda-ortak.ts";
 import type {
@@ -54,9 +56,22 @@ export interface PcTuru {
   oturum_id: string;
   /** Kararın nedeni: köprüye döner (modele sabit metin), günlüğe girer. */
   karar: PcTurKarari;
+  /**
+   * Çağrı kimliği geldiyse çağrının izi (`pcCagriIzi`): defterin neden olayları (`pc_tasdik_yetersiz`,
+   * `pc_oturum_uyusmuyor`) aynı değeri `cagri_izi` alanında taşır. `arac` olayı bunu taşırsa teşhis nedeni
+   * sırayla değil izle bağlar (`eslestir` `tasdikReddiNedenleri`).
+   */
+  cagri_izi?: string;
 }
 
+/**
+ * Çağrının günlük izi: çağrı kimliğinin (`tool_use_id`) alan ayrımlı SHA-256'sının ilk 12 onaltılığı.
+ * Metin değildir, kimliğin kendisini vermez (tek yönlü, kısaltılmış); aynı çağrının olaylarını eşlemeye yeter.
+ */
+export const pcCagriIzi = (arac_cagri_id: string): string => sha256Hex(utf8Bayt(`eren-pc-cagri-izi\u0000${arac_cagri_id}`)).slice(0, 12);
+
 export interface PcDefteri {
+  /** Kanca işleyicisi; `kopruKapandi` alanı defterinkidir (boru sunucusu her köprü kapanışında çağırır). */
   readonly kanca: PcKancaIsleyicileri;
   /** Hiç `null` dönmez. `simdi` çağrının servis anı. */
   tur(baglam: AjandaPcBaglami, simdi: number): PcTuru;
@@ -64,6 +79,8 @@ export interface PcDefteri {
    * Köprü bağlantısı kapandı (`AjandaPcBaglami.baglanti_id`; boru sunucusu bildirir, kapanış hangi
    * yönden olursa olsun). O bağlantının taşıdığı T5 bağları bırakılır: aynı köprü kimliğinin açık başka
    * bağlantısı bağı kullanmadıysa bağ silinir ve süreç bir sonraki tasdikinde yeniden ilk görüşle bağlanır.
+   * Bırakılan bağın bekleyen (tüketilmemiş) tasdikleri de silinir: kapanan köprü onları artık kullanamaz,
+   * bağ boşken başka bir köprü de ilk görüşle onları alamaz (yarış: kapanıştan önce gelen tasdik taslak olur).
    * Bilinmeyen kimlik ya da köprü olmayan bağlantı zararsızdır. Eşzamanlıdır, atmaz.
    */
   kopruKapandi(baglanti_id: string): void;
@@ -161,7 +178,11 @@ export function pcDefteriKur(b: PcDefteriBagimliliklari): PcDefteri {
       });
       return {};
     },
+    // Boru sunucusunun kapanış bildirimi (`PcKancaIsleyicileri.kopruKapandi`); çağrıldığında tanımlıdır.
+    kopruKapandi: (baglanti_id) => kopruKapandi(baglanti_id),
   };
+
+  const bagAnahtari = (t: Tasdik): string => (t.surec_id !== undefined ? `s:${t.surec_id}` : `o:${t.oturum_id}`);
 
   /**
    * T5: tasdik onu tüketen köprüye bağlanır. Köprünün kimliği bildirdiği oturumdur (Claude:
@@ -179,7 +200,7 @@ export function pcDefteriKur(b: PcDefteriBagimliliklari): PcDefteri {
    * köprüde A'nın tasdikini B'ninki tüketemez. Kapanış hiç gelmezse bağ kalır (eski davranış: taslak).
    */
   const bagla = (tasdik: Tasdik, kopru: string, baglanti_id: string): boolean => {
-    const anahtar = tasdik.surec_id !== undefined ? `s:${tasdik.surec_id}` : `o:${tasdik.oturum_id}`;
+    const anahtar = bagAnahtari(tasdik);
     const bagli = baglar.get(anahtar);
     if (tasdik.oturum_id !== kopru && bagli !== undefined && bagli.kopru !== kopru) return false;
     // Aynı köprü bağlantılarını biriktirir; devralan (tam eşleşen başka köprü) yeni kümeyle başlar.
@@ -196,13 +217,21 @@ export function pcDefteriKur(b: PcDefteriBagimliliklari): PcDefteri {
   };
 
   const kopruKapandi = (baglanti_id: string): void => {
-    let birakilan = 0;
+    const birakilan = new Set<string>();
     for (const [anahtar, bag] of baglar) {
       if (!bag.baglantilar.delete(baglanti_id) || bag.baglantilar.size > 0) continue;
       baglar.delete(anahtar);
-      birakilan++;
+      birakilan.add(anahtar);
     }
-    if (birakilan > 0) gunluk.bilgi(MODUL, "pc_bag_birakildi", { baglanti_id, adet: birakilan });
+    if (birakilan.size === 0) return;
+    // Bırakılan bağın bekleyen tasdikleri (eski çerçevede bağ yoktur, dokunulmaz).
+    let silinen = 0;
+    for (const [id, t] of tasdikler) {
+      if (t.eski || !birakilan.has(bagAnahtari(t))) continue;
+      tasdikler.delete(id);
+      silinen++;
+    }
+    gunluk.bilgi(MODUL, "pc_bag_birakildi", { baglanti_id, adet: birakilan.size, ...(silinen > 0 ? { tasdik: silinen } : {}) });
   };
 
   /**
@@ -212,6 +241,8 @@ export function pcDefteriKur(b: PcDefteriBagimliliklari): PcDefteri {
   const kararVer = (baglam: AjandaPcBaglami, simdi: number, kopru: string): { karar: PcTurKarari; tasdik?: Tasdik } => {
     if (baglam.arac_cagri_id === undefined) return { karar: "cagri_kimligi_yok" };
     const id = baglam.arac_cagri_id;
+    // Neden olaylarının çağrı izi (`PcTuru.cagri_izi`); kimliğin kendisi günlüğe girmez.
+    const iz = pcCagriIzi(id);
     const tasdik = tasdikler.get(id);
     if (tasdik === undefined || simdi - tasdik.ms > AJANDA_PC_SINIRLARI.TASDIK_OMRU_DK * DAKIKA || simdi < tasdik.ms) {
       tasdikler.delete(id);
@@ -219,22 +250,22 @@ export function pcDefteriKur(b: PcDefteriBagimliliklari): PcDefteri {
     }
     if (!pcUyarlayiciTanindiMi(tasdik.uyarlayici.ad, tasdik.uyarlayici.surum)) {
       tasdikler.delete(id);
-      gunluk.uyari(MODUL, "pc_tasdik_yetersiz", { neden: "uyarlayici", uyarlayici: tasdik.uyarlayici.ad, surum: tasdik.uyarlayici.surum });
+      gunluk.uyari(MODUL, "pc_tasdik_yetersiz", { neden: "uyarlayici", uyarlayici: tasdik.uyarlayici.ad, surum: tasdik.uyarlayici.surum, cagri_izi: iz });
       return { karar: "tasdik_yok" };
     }
     if (!tasdik.eski && !bagla(tasdik, kopru, baglam.baglanti_id)) {
-      gunluk.uyari(MODUL, "pc_oturum_uyusmuyor", { oturum_id: tasdik.oturum_id, surec_kimligi: varYok(tasdik.surec_id) });
+      gunluk.uyari(MODUL, "pc_oturum_uyusmuyor", { oturum_id: tasdik.oturum_id, surec_kimligi: varYok(tasdik.surec_id), cagri_izi: iz });
       return { karar: "tasdik_yok" };
     }
     tasdikler.delete(id);
     if (tasdik.aktor === "alt") return { karar: "alt_agent", tasdik };
     if (tasdik.aktor !== "ana") {
-      gunluk.uyari(MODUL, "pc_tasdik_yetersiz", { neden: "aktor" });
+      gunluk.uyari(MODUL, "pc_tasdik_yetersiz", { neden: "aktor", cagri_izi: iz });
       return { karar: "tasdik_yok", tasdik };
     }
     if (tasdik.etkilesim === "etkilesimsiz") return { karar: "etkilesimsiz", tasdik };
     if (tasdik.etkilesim !== "etkilesimli") {
-      gunluk.uyari(MODUL, "pc_tasdik_yetersiz", { neden: "etkilesim" });
+      gunluk.uyari(MODUL, "pc_tasdik_yetersiz", { neden: "etkilesim", cagri_izi: iz });
       return { karar: "tasdik_yok", tasdik };
     }
     return { karar: "insan", tasdik };
@@ -245,17 +276,18 @@ export function pcDefteriKur(b: PcDefteriBagimliliklari): PcDefteri {
     // Bağlantı kimliği servisin; `b:` öneki hiçbir oturum kimliğiyle çakışmasın diye.
     const { karar, tasdik } = kararVer(baglam, simdi, bildirilen ?? `b:${baglam.baglanti_id}`);
     const oturum_id = tasdik?.oturum_id ?? bildirilen ?? baglam.baglanti_id;
+    const izi = baglam.arac_cagri_id === undefined ? {} : { cagri_izi: pcCagriIzi(baglam.arac_cagri_id) };
     // Mesaj anı: çağrının servise varışı (yalın yolda mesajın geliş anı bilinmez).
     const mesaj_ani = takvim.yerelAn(simdi, takvim.kullaniciDilimi());
     if (karar !== "insan" || tasdik === undefined) {
-      return { tur: { tur_kokeni: "sentetik", turn_id: rastgele.opakId("pct"), mesaj_ani }, oturum_id, karar };
+      return { tur: { tur_kokeni: "sentetik", turn_id: rastgele.opakId("pct"), mesaj_ani }, oturum_id, karar, ...izi };
     }
     // İstem kimliği turun kimliğidir (aynı istemin çağrıları aynı tur); yoksa çağrı başına yeni.
     const turn_id = tasdik.istem_id === undefined ? rastgele.opakId("pct") : `pci:${tasdik.oturum_id}:${tasdik.istem_id}`;
     // Kullanıcının metni servise gelmez: alıntı saklanmaz (`insan_metni` boş).
     const insan: AjandaTurBaglami = { tur_kokeni: "insan", turn_id, mesaj_ani, insan_metni: "" };
     if (tasdik.istem_id !== undefined) insan.kaynak_msg_id = tasdik.istem_id;
-    return { tur: insan, oturum_id, karar };
+    return { tur: insan, oturum_id, karar, ...izi };
   };
 
   return { kanca, tur, kopruKapandi };

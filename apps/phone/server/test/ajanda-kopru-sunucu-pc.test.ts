@@ -14,6 +14,7 @@ import {
   sha256Hex,
 } from "@eren/protocol";
 import type { AjandaFiili, AjandaKopruAsagi } from "@eren/protocol";
+import { pcDefteriKur } from "../src/ajanda-pc.ts";
 import { ajandaKopruSunucuKur } from "../src/ajanda-kopru-sunucu.ts";
 import { depoKur } from "../src/depo.ts";
 import type {
@@ -24,7 +25,7 @@ import type {
   Depo,
   PcKancaIsleyicileri,
 } from "../src/sozlesme.ts";
-import { sahteBoru, sahteGunluk, sahteRastgele, sahteZaman } from "./sahte.ts";
+import { sahteBoru, sahteGunluk, sahteRastgele, sahteTakvim, sahteZaman } from "./sahte.ts";
 import type { SahteBoruBaglantisi } from "./sahte.ts";
 
 const acilanlar: Depo[] = [];
@@ -360,5 +361,323 @@ describe("ajanda borusu, PC rolleri: istekler", () => {
     k.sunucu.jetonlariniSil();
     assert.equal(k.depo.ajandaPcAnahtariGecerliMi(ozetle(PC_JETON)), true);
     assert.deepEqual(cikanlar(await baglan(k, "pc_oturumu")), [WELCOME("pc_oturumu")]);
+  });
+});
+
+/**
+ * Köprü kapanışı → PC defteri (`PcKancaIsleyicileri.kopruKapandi`, ajanda-pc `kopruKapandi`): gerçek defter,
+ * gerçek kapanış yolları. Kapanış bildirilmezse süreç ölü köprüye bağlı kalır ve servis yeniden başlayana
+ * dek her çağrısı taslak olurdu (canlı gerileme: /clear → /mcp → çağrısız /clear). Köprü portu sunucunun
+ * kendi kapatmasını geri yansıtmaz (bildirim `temizle`'den gelmeli, portun kapanış olayından değil);
+ * uzak uç kapanışı portun kapanış olayıdır.
+ */
+describe("ajanda borusu, PC: köprü kapanışı defterin T5 bağını bırakır (gerçek defter)", () => {
+  const A1 = OTURUM;
+  const A2 = "6e7f8091-2b3c-4d5e-9f0a-b1c2d3e4f506";
+  const A3 = "7f8091a2-3c4d-4e5f-8a1b-c2d3e4f50617";
+  const B = "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d";
+  const SUREC = "3060";
+  const YENI_JETON = "q".repeat(43);
+
+  const defterli = async () => {
+    const boru = sahteBoru();
+    const gunluk = sahteGunluk();
+    const zaman = sahteZaman();
+    const depo = depoKur({ yol: ":memory:", saat: zaman.saat, gunluk: sahteGunluk() });
+    acilanlar.push(depo);
+    depo.ajandaPcAnahtariYaz(ozetle(PC_JETON), 1);
+    const pc = pcDefteriKur({ takvim: sahteTakvim(IST), saat: zaman.saat, rastgele: sahteRastgele(5), gunluk });
+    // Gözlemci: bildirimleri sayar, defterin kendi işleyicisine aynen iletir (alanı yoksa bağ bırakılmaz, test düşer).
+    const kapananlar: string[] = [];
+    const kanca: PcKancaIsleyicileri = {
+      pc_arac: (g) => pc.kanca.pc_arac(g),
+      kopruKapandi: (id) => {
+        kapananlar.push(id);
+        pc.kanca.kopruKapandi?.(id);
+      },
+    };
+    const nesne: Record<string, unknown> = {};
+    for (const fiil of AJANDA_FIILLERI) {
+      nesne[fiil] = async (_g: unknown, baglam: AjandaKopruBaglami) =>
+        baglam.rol === "pc_oturumu" ? { ok: true, deger: LISTE, pc_karar: pc.tur(baglam, zaman.simdi()).karar } : { ok: true, deger: LISTE };
+    }
+    const sunucu = ajandaKopruSunucuKur({
+      boru,
+      depo,
+      rastgele: sahteRastgele(77),
+      anahtar: { sabitZamanEsit: (a: string, b: string) => a === b },
+      zamanlayici: zaman.zamanlayici,
+      gunluk,
+    });
+    await sunucu.baslat(nesne as unknown as AjandaFiilIsleyiciler, kanca);
+
+    let no = 0;
+    /** Claude Code'un araç öncesi kancası: kendi bağlantısı, tek tasdik, sonra kapanır (kanca kapanışı bağa dokunmaz). */
+    const tasdik = async (oturum: string, surec?: string, jeton = PC_JETON): Promise<string> => {
+      const cagri_id = `toolu_k${++no}`;
+      const b = boru.baglan(AJANDA_BORU_ADI);
+      gonder(b, hello("pc_kanca", jeton));
+      const girdi = {
+        uyarlayici: { ad: "claude-code", surum: 1 },
+        cagri_id,
+        oturum_id: oturum,
+        istem_id: "istem-1",
+        aktor: "ana",
+        etkilesim: "etkilesimli",
+        ...(surec === undefined ? {} : { surec_id: surec }),
+      };
+      gonder(b, istek(`k${no}`, "pc_arac", girdi));
+      await bosalt();
+      assert.deepEqual(cikanlar(b).at(-1), { v: PROTOKOL_SURUMU, type: "yanit", istek_id: `k${no}`, ok: true, sonuc: {} });
+      b.istemciKopar();
+      await bosalt();
+      return cagri_id;
+    };
+
+    /** Köprü bağlantısı. `kopar`: uzak uç kapandı; sunucunun `kapat`'ı yalnız işaretler (geri yansıtmaz). */
+    const kopru = async (jeton = PC_JETON) => {
+      const satirlar: Array<(s: string) => void> = [];
+      const kapanislar: Array<() => void> = [];
+      const yazilanlar: string[] = [];
+      const d = { kapandi: false, yazmaBozuk: false };
+      const sunucuIstegi = boru.istek(AJANDA_BORU_ADI);
+      assert.ok(sunucuIstegi !== null);
+      sunucuIstegi.baglanti({
+        satirYaz: (s) => {
+          if (d.yazmaBozuk) throw new Error("EPIPE");
+          if (!d.kapandi) yazilanlar.push(s);
+        },
+        kapat: () => {
+          d.kapandi = true;
+        },
+        satirDinle: (f) => void satirlar.push(f),
+        kapanisDinle: (f) => void kapanislar.push(f),
+      });
+      const gonderHam = (s: string): void => {
+        if (!d.kapandi) for (const f of [...satirlar]) f(s);
+      };
+      const cik = (): AjandaKopruAsagi[] =>
+        yazilanlar.map((s) => {
+          const c = ajandaKopruAsagiCoz(s);
+          assert.ok(c.ok, s);
+          return c.mesaj;
+        });
+      gonderHam(JSON.stringify(hello("pc_oturumu", jeton)));
+      await bosalt();
+      assert.deepEqual(cik(), [WELCOME("pc_oturumu")]);
+      const el = gunluk.girdiler.filter((g) => g.olay === "el_sikisma" && g.alanlar?.["rol"] === "pc_oturumu").at(-1);
+      return {
+        baglanti_id: String(el?.alanlar?.["baglanti_id"]),
+        d,
+        gonder: (m: unknown) => gonderHam(JSON.stringify(m)),
+        gonderHam,
+        cikanlar: cik,
+        kopar: () => {
+          d.kapandi = true;
+          for (const f of [...kapanislar]) f();
+        },
+      };
+    };
+    type Kopru = Awaited<ReturnType<typeof kopru>>;
+
+    let istekNo = 0;
+    /** Köprünün çağrısı (`oturum`: köprünün bildirdiği; yoksa bildirmez): defterin kararı. */
+    const cagri = async (u: Kopru, cagri_id: string, oturum: string | undefined): Promise<string> => {
+      const istek_id = `i${++istekNo}`;
+      u.gonder(istek(istek_id, "ajanda_listele", {}, { cagri: { arac_cagri_id: cagri_id, ...(oturum === undefined ? {} : { oturum_id: oturum }) } }));
+      await bosalt();
+      const y = u.cikanlar().at(-1) as { type: string; istek_id: string; ok: boolean; sonuc?: { karar: string } } | undefined;
+      assert.ok(y?.type === "yanit" && y.istek_id === istek_id && y.ok, JSON.stringify(y));
+      return y.sonuc?.karar ?? "?";
+    };
+    const olay = (ad: string) => gunluk.girdiler.filter((g) => g.olay === ad).map((g) => g.alanlar);
+    return { boru, gunluk, zaman, depo, sunucu, kapananlar, tasdik, kopru, cagri, olay };
+  };
+  type Kopru = Awaited<ReturnType<Awaited<ReturnType<typeof defterli>>["kopru"]>>;
+
+  /** Köprü kimliği değişen yollar: eski köprünün bildirdiği, yenisininki, yeni tasdiklerin oturumu. */
+  const KOPRULER: ReadonlyArray<{ ad: string; eski: string | undefined; yeni: string | undefined; oturum: string }> = [
+    { ad: "/clear → /mcp → çağrısız /clear (köprü oturum bildirir)", eski: A1, yeni: A2, oturum: A3 },
+    { ad: "oturum kimliği gelmedi (pck_bir → pck_iki)", eski: "pck_bir", yeni: "pck_iki", oturum: A1 },
+    { ad: "oturum bildirmeyen köprü, boruya yeniden bağlanma (b:<bağlantı>)", eski: undefined, yeni: undefined, oturum: A1 },
+  ];
+  const KAPANISLAR: ReadonlyArray<{ ad: string; kapat(u: Kopru): void }> = [
+    { ad: "uzak uç kapandı (köprü çöktü ya da /mcp)", kapat: (u) => u.kopar() },
+    { ad: "sunucu kapattı (ikinci hello)", kapat: (u) => u.gonder(hello("pc_oturumu", PC_JETON)) },
+    { ad: "sunucu kapattı (geçersiz çerçeve)", kapat: (u) => u.gonderHam("{bozuk") },
+    {
+      ad: "hata (yanıt yazılamadı)",
+      kapat: (u) => {
+        u.d.yazmaBozuk = true;
+        u.gonder(istek("iy", "ajanda_listele", {}));
+      },
+    },
+  ];
+
+  for (const kp of KOPRULER) {
+    for (const ks of KAPANISLAR) {
+      it(`${kp.ad}; ${ks.ad}: kapanıştan önce yeni köprü taslak, sonra her çağrısı insan`, async () => {
+        const k = await defterli();
+        const eski = await k.kopru();
+        assert.equal(await k.cagri(eski, await k.tasdik(A1, SUREC), kp.eski), "insan");
+        const yeni = await k.kopru();
+        assert.equal(await k.cagri(yeni, await k.tasdik(kp.oturum, SUREC), kp.yeni), "tasdik_yok", "kapanış gelmeden: süreç eski köprüye bağlı");
+        ks.kapat(eski);
+        await bosalt();
+        assert.equal(eski.d.kapandi, true);
+        assert.deepEqual(k.kapananlar, [eski.baglanti_id], "tek bildirim, yalnız eski köprü");
+        for (let i = 0; i < 3; i++) assert.equal(await k.cagri(yeni, await k.tasdik(kp.oturum, SUREC), kp.yeni), "insan", `çağrı ${i}`);
+        assert.equal(k.olay("pc_bag_birakildi").length, 1);
+      });
+    }
+  }
+
+  it("süre dolması: anahtarı düşen köprüyü servis PC_RET_KAPANIS_MS sonra kapatır; bağ bırakılır, yeni anahtarla yeni köprü insan", async () => {
+    const k = await defterli();
+    const eski = await k.kopru();
+    assert.equal(await k.cagri(eski, await k.tasdik(A1, SUREC), "pck_bir"), "insan");
+    k.depo.ajandaPcAnahtariYaz(ozetle(YENI_JETON), 2);
+    eski.gonder(istek("id", "ajanda_listele", {}));
+    await bosalt();
+    assert.deepEqual(eski.cikanlar().at(-1), { v: PROTOKOL_SURUMU, type: "yanit", istek_id: "id", ok: false, code: "jeton_gecersiz" });
+    assert.deepEqual(k.kapananlar, [], "kapanış bekleniyor");
+    k.zaman.ilerlet(2_000);
+    await bosalt();
+    assert.equal(eski.d.kapandi, true);
+    assert.deepEqual(k.kapananlar, [eski.baglanti_id]);
+    const yeni = await k.kopru(YENI_JETON);
+    assert.equal(await k.cagri(yeni, await k.tasdik(A1, SUREC, YENI_JETON), "pck_iki"), "insan");
+  });
+
+  it("servisin toplu kapatması (jetonlariniSil, kapat): her köprü bir kez bildirilir; yeniden bağlanan köprü insan", async () => {
+    const k = await defterli();
+    const a = await k.kopru();
+    const b = await k.kopru();
+    assert.equal(await k.cagri(a, await k.tasdik(A1, "100"), "pck_a"), "insan");
+    assert.equal(await k.cagri(b, await k.tasdik(B, "200"), "pck_b"), "insan");
+    k.sunucu.jetonlariniSil();
+    await bosalt();
+    assert.deepEqual([...k.kapananlar].sort(), [a.baglanti_id, b.baglanti_id].sort());
+    const a2 = await k.kopru();
+    assert.equal(await k.cagri(a2, await k.tasdik(A1, "100"), "pck_a2"), "insan");
+    await k.sunucu.kapat();
+    assert.equal(k.kapananlar.length, 3);
+    assert.equal(k.kapananlar.at(-1), a2.baglanti_id);
+  });
+
+  it("sunucunun kapatmasını port geri yansıtsa da (sahte boru) bildirim bir kez; kanca ve ana_oturum kapanışı bildirilmez", async () => {
+    const k = await defterli();
+    await k.tasdik(A1, SUREC);
+    const ana = k.boru.baglan(AJANDA_BORU_ADI);
+    gonder(ana, hello("ana_oturum", k.sunucu.jetonUret(KAPSAM)));
+    await bosalt();
+    ana.istemciKopar();
+    await bosalt();
+    assert.deepEqual(k.kapananlar, [], "kanca ve ana_oturum");
+    const b = k.boru.baglan(AJANDA_BORU_ADI);
+    gonder(b, hello("pc_oturumu", PC_JETON));
+    await bosalt();
+    gonder(b, hello("pc_oturumu", PC_JETON));
+    await bosalt();
+    assert.equal(b.kapandi, true);
+    b.istemciKopar();
+    await bosalt();
+    assert.equal(k.kapananlar.length, 1);
+  });
+
+  it("boruya yeniden bağlanma, aynı köprü kimliği: kapanıştan önce de insan; son bağlantı kapanınca bağ bırakılır", async () => {
+    const k = await defterli();
+    const eski = await k.kopru();
+    assert.equal(await k.cagri(eski, await k.tasdik(A1, SUREC), A1), "insan");
+    const yeni = await k.kopru();
+    assert.equal(await k.cagri(yeni, await k.tasdik(A2, SUREC), A1), "insan", "aynı köprü kimliği");
+    eski.kopar();
+    await bosalt();
+    assert.equal(k.olay("pc_bag_birakildi").length, 0, "bağ açık bağlantıda");
+    assert.equal(await k.cagri(yeni, await k.tasdik(A2, SUREC), A1), "insan");
+    yeni.kopar();
+    await bosalt();
+    assert.equal(k.olay("pc_bag_birakildi").length, 1);
+  });
+
+  it("kopruKapandi atarsa bağlantı yine temizlenir, sunucu sürer; alanı olmayan (eski) kanca işleyicisi zararsız", async () => {
+    const atan: PcKancaIsleyicileri = {
+      pc_arac: () => ({}),
+      kopruKapandi: () => {
+        throw new Error("x");
+      },
+    };
+    const eskiTip: PcKancaIsleyicileri = { pc_arac: () => ({}) };
+    for (const pcKanca of [atan, eskiTip]) {
+      const k = await kur({ pcKanca });
+      k.depo.ajandaPcAnahtariYaz(ozetle(PC_JETON), 1);
+      for (let i = 0; i < AJANDA_PC_SINIRLARI.BAGLANTI_ADET + 2; i++) {
+        const b = await baglan(k, "pc_oturumu");
+        assert.deepEqual(cikanlar(b), [WELCOME("pc_oturumu")], "sınır sızmadı");
+        b.istemciKopar();
+        await bosalt();
+      }
+      const atti = k.gunluk.girdiler.filter((g) => g.olay === "isleyici_atti");
+      assert.equal(atti.length, pcKanca === atan ? AJANDA_PC_SINIRLARI.BAGLANTI_ADET + 2 : 0);
+    }
+  });
+
+  describe("yarış: eski köprünün kapanışı ile yeni köprünün ilk çağrısı", () => {
+    it("kapanış önce, tasdik ve çağrı sonra: insan", async () => {
+      const k = await defterli();
+      const eski = await k.kopru();
+      assert.equal(await k.cagri(eski, await k.tasdik(A1, SUREC), A1), "insan");
+      const yeni = await k.kopru();
+      eski.kopar();
+      assert.equal(await k.cagri(yeni, await k.tasdik(A3, SUREC), A2), "insan");
+      assert.equal(await k.cagri(yeni, await k.tasdik(A3, SUREC), A2), "insan");
+    });
+
+    it("tasdik kapanıştan önce, çağrı sonra (aynı tikte): güvenli yönde taslak (tasdik bağla birlikte silinir); sonraki insan", async () => {
+      const k = await defterli();
+      const eski = await k.kopru();
+      assert.equal(await k.cagri(eski, await k.tasdik(A1, SUREC), A1), "insan");
+      const yeni = await k.kopru();
+      const id = await k.tasdik(A3, SUREC);
+      eski.kopar();
+      const karar = await k.cagri(yeni, id, A2);
+      assert.ok(karar === "insan" || karar === "tasdik_yok", karar);
+      assert.equal(karar, "tasdik_yok", "bugünkü davranış: bekleyen tasdik silinir");
+      assert.equal(await k.cagri(yeni, await k.tasdik(A3, SUREC), A2), "insan", "kilitlenmez");
+    });
+
+    it("çağrı kapanıştan önce: taslak; kapanışta bekleyen tasdik silinir, başka sürecin köprüsü onu tüketemez; sonraki insan", async () => {
+      const k = await defterli();
+      const eski = await k.kopru();
+      const baskasi = await k.kopru();
+      assert.equal(await k.cagri(eski, await k.tasdik(A1, "100"), A1), "insan");
+      assert.equal(await k.cagri(baskasi, await k.tasdik(B, "200"), B), "insan");
+      const yeni = await k.kopru();
+      const id = await k.tasdik(A3, "100");
+      assert.equal(await k.cagri(yeni, id, A2), "tasdik_yok");
+      eski.kopar();
+      await bosalt();
+      assert.deepEqual(k.olay("pc_bag_birakildi"), [{ baglanti_id: eski.baglanti_id, adet: 1, tasdik: 1 }]);
+      assert.equal(await k.cagri(baskasi, id, B), "tasdik_yok", "A'nın kalan tasdikini B'nin köprüsü alamaz");
+      assert.equal(await k.cagri(yeni, id, A2), "tasdik_yok", "silindi");
+      assert.equal(await k.cagri(yeni, await k.tasdik(A3, "100"), A2), "insan", "kilitlenmez");
+      assert.equal(await k.cagri(baskasi, await k.tasdik(A3, "100"), B), "tasdik_yok", "A artık yeni köprüye bağlı");
+      assert.equal(await k.cagri(baskasi, await k.tasdik(B, "200"), B), "insan", "B'nin bağı yerinde");
+    });
+  });
+
+  it("T5: aynı anda açık iki köprüde A'nın tasdikini B tüketemez; B'nin kapanışı A'nın bağını bırakmaz", async () => {
+    const k = await defterli();
+    const a = await k.kopru();
+    const b = await k.kopru();
+    assert.equal(await k.cagri(a, await k.tasdik(A1, "100"), A1), "insan");
+    assert.equal(await k.cagri(b, await k.tasdik(B, "200"), B), "insan");
+    const id = await k.tasdik(A3, "100");
+    assert.equal(await k.cagri(b, id, B), "tasdik_yok", "B'nin köprüsü A'nın tasdikini tüketemez");
+    b.kopar();
+    await bosalt();
+    const c = await k.kopru();
+    assert.equal(await k.cagri(c, id, "pck_c"), "tasdik_yok", "A'nın köprüsü açık: bağ yerinde, tasdik silinmedi");
+    assert.equal(await k.cagri(a, id, A1), "insan", "tasdik sahibine kaldı");
   });
 });

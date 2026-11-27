@@ -2391,6 +2391,13 @@ export type AjandaKopruBaglami = Readonly<AjandaJetonKapsami> | Readonly<AjandaP
  */
 export type PcKancaIsleyicileri = {
   readonly [F in PcKancaFiili]: (girdi: PcKancaGirdisi<F>) => PcKancaCiktisi<F>;
+} & {
+  /**
+   * `pc_oturumu` bağlantısı kapandı (`AjandaPcBaglami.baglanti_id`): boru sunucusu her kapanış yolunda
+   * (uzak uç, kendi kapatması, süre, hata) bir kez çağırır; PC defteri o köprünün T5 bağını bırakır
+   * (`ajanda-pc` `kopruKapandi`). Eşzamanlıdır, atmamalıdır. Yoksa bağ servis yeniden başlayana dek kalır.
+   */
+  kopruKapandi?(baglanti_id: string): void;
 };
 
 export interface AjandaJetonKaydi {
