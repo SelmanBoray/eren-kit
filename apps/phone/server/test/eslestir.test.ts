@@ -583,6 +583,15 @@ describe("eslestir --pc-ajan: argümanlar", () => {
     assert.ok(!ileti(["--pc-ajan", "claude-code", "x\u001b[2J"]).includes("\u001b"));
   });
 
+  it("--pc-ajan'dan hemen sonra gelen yardım seçeneği yardıma çözülür; diğer '-' değerleri ad sayılmaz", () => {
+    for (const argv of [["--pc-ajan", "-h"], ["--pc-ajan", "--yardim"], ["--pc-ajan", "--help"], ["--pc-ajan", "claude-code", "-h"], ["-h", "--pc-ajan"]]) {
+      assert.deepEqual(argumanCoz(argv), { tur: "yardim" }, JSON.stringify(argv));
+    }
+    for (const argv of [["--pc-ajan", "--liste"], ["--pc-ajan", "-x"], ["--pc-ajan", "--ajanda"], ["--pc-ajan", "--pc-ajan"], ["--claude-code", "--pc-ajan", "claude-code"]]) {
+      assert.equal(argumanCoz(argv).tur, "hata", JSON.stringify(argv));
+    }
+  });
+
   it("--claude-code hata iletileri bugünkü gibi", () => {
     const ileti = (argv: string[]): string => {
       const s = argumanCoz(argv);

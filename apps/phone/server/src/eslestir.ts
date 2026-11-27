@@ -192,6 +192,7 @@ function pcArgumanCoz(argv: readonly string[]): EslestirKomutu {
       if (gorulen.has(CLAUDE_CODE_SECENEGI)) return { tur: "hata", ileti: birlikte };
       if (gorulen.has(a)) return { tur: "hata", ileti: `${a} bir kez verilir` };
       const ad = argv[i + 1];
+      if (ad !== undefined && YARDIM_SECENEKLERI.includes(ad)) return { tur: "yardim" };
       if (ad === undefined || ad.trim() === "" || ad.startsWith("-")) {
         return { tur: "hata", ileti: `${PC_AJAN_SECENEGI} bir ajan adı ister (ör. ${PC_AJAN_SECENEGI} ${VARSAYILAN_PC_AJANI})` };
       }
