@@ -6,6 +6,7 @@
  */
 import { kanonikJson, planHash } from "@eren/protocol";
 import type {
+  EkBilgisi,
   GirdiYolu,
   IsBitisDurumu,
   IsProfili,
@@ -34,6 +35,11 @@ export interface KullaniciBalonu extends Ortak {
    * uygulama (`ad` ekranda gösterilir). Yoksa alan yoktur.
    */
   baglam?: KisayolBaglami;
+  /**
+   * Medya. Yalnız `user_echo` taşıyorsa: mesajın ekleri, olaydaki sırayla (görsel ve ilerleme
+   * `SohbetDurumu.ekGorunumleri[medya_id]`'den). Yoksa alan yoktur. Ekli balonun `metin`'i boş olabilir.
+   */
+  ekler?: readonly EkBilgisi[];
 }
 
 export interface AsistanBalonu extends Ortak {
@@ -197,6 +203,7 @@ export const olaylarKur: OlaylarFabrikasi = () => {
           input: o.input,
           metin: o.text,
           ...(o.baglam !== undefined ? { baglam: o.baglam } : {}),
+          ...(o.ekler !== undefined ? { ekler: o.ekler } : {}),
         });
         return;
 

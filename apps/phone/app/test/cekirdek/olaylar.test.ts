@@ -3,7 +3,16 @@ import { describe, it } from "node:test";
 import { Olay, Plan, planHash } from "@eren/protocol";
 import { olaylarKur } from "../../src/cekirdek/olaylar.ts";
 import type { KaliciOlay } from "../../src/cekirdek/sozlesme.ts";
-import { asistanOlayi, HASH_A, mezarTasiOlayi, ornekPlan, yankiOlayi } from "./sahte.ts";
+import {
+  asistanOlayi,
+  ekBilgisi,
+  ekliYankiOlayi,
+  HASH_A,
+  mezarTasiOlayi,
+  ornekPlan,
+  videoBilgisi,
+  yankiOlayi,
+} from "./sahte.ts";
 
 const olay = (ham: Record<string, unknown>): KaliciOlay => Olay.parse(ham);
 
@@ -173,5 +182,21 @@ describe("olaylar", () => {
     const balon = o.ogeler().find((x) => x.tur === "kullanici");
     assert.ok(balon !== undefined && balon.tur === "kullanici");
     assert.deepEqual(balon.baglam, baglam);
+  });
+
+  it("medya: ekli user_echo balona ekler olarak düşer (sıra aynı); metin boş olabilir; eksiz balonda alan yok", () => {
+    const o = olaylarKur();
+    const ekler = [ekBilgisi("m-a-1"), videoBilgisi("m-a-2")];
+    o.ekle(olay(ekliYankiOlayi(1, ekler, "k1", "")));
+    o.ekle(olay(ekliYankiOlayi(2, [ekBilgisi("m-a-3")], "k2", "bak")));
+    o.ekle(olay(yankiOlayi(3, "k3", "düz")));
+    const [a, b, c] = o.ogeler();
+    assert.ok(a?.tur === "kullanici" && b?.tur === "kullanici" && c?.tur === "kullanici");
+    assert.equal(a.metin, "");
+    assert.deepEqual(a.ekler, ekler);
+    assert.deepEqual(b.ekler?.map((e) => e.medya_id), ["m-a-3"]);
+    assert.equal(b.metin, "bak");
+    assert.equal("ekler" in c, false);
+    assert.equal(o.yankiVar("k1"), true);
   });
 });

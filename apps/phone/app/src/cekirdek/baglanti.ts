@@ -5,29 +5,45 @@
  * 1 sn'den 30 sn'ye ikiye katlanarak yeniden dener, `welcome` geri çekilmeyi sıfırlar.
  * TASARIM.md "JS modülleri"; protocol README `/sohbet` 2.
  */
-import { EslestirmeQr, SOHBET_SURUMU, SOHBET_YETENEK_PARAMETRESI, SOHBET_YETENEKLERI, sohbetAsagiCoz, SohbetYukari } from "@eren/protocol";
+import {
+  EslestirmeQr,
+  MEDYA_YUKARI_TURLERI,
+  SOHBET_SURUMU,
+  SOHBET_YETENEK_PARAMETRESI,
+  SOHBET_YETENEKLERI,
+  sohbetAsagiCoz,
+  SohbetYukari,
+} from "@eren/protocol";
 import type { HataKodu } from "@eren/protocol";
-
-/** İstenen yetenek jetonları (virgülle ayrılmış liste olarak sorguya gider). */
-const ISTENEN_YETENEKLER: readonly string[] = [SOHBET_YETENEKLERI.ETKINLIK];
-
-/** `ws://host:port/sohbet?yetenek=...`; adreste sorgu varsa `&` ile eklenir. */
-const sohbetAdresi = (host: string | number, port: string | number): string => {
-  const taban = `ws://${host}:${port}/sohbet`;
-  const ayirac = taban.includes("?") ? "&" : "?";
-  return `${taban}${ayirac}${SOHBET_YETENEK_PARAMETRESI}=${ISTENEN_YETENEKLER.join(",")}`;
-};
 import type {
   BaglantiDurumu,
   GelenCerceve,
   IptalEt,
   IsMesajiTuru,
   KimlikPortu,
+  MedyaYukari,
   SaatPortu,
   WsBaglantisi,
   WsDinleyici,
   WsPortu,
 } from "./sozlesme.ts";
+
+/**
+ * İstenen yetenek jetonları (virgülle ayrılmış liste olarak sorguya gider). `medya1` yalnız çekirdeğin
+ * medya portu varsa istenir (`BaglantiBagimliliklari.medya`): istemeyen bağlantıya servis ekli yankıyı
+ * metne önekli yollar, `media_*` çerçevelerini hiç yollamaz (bugünkü davranış).
+ */
+export const ISTENEN_YETENEKLER: readonly string[] = [SOHBET_YETENEKLERI.ETKINLIK];
+export const MEDYALI_YETENEKLER: readonly string[] = [...ISTENEN_YETENEKLER, SOHBET_YETENEKLERI.MEDYA];
+
+/** `ws://host:port/sohbet?yetenek=...`; adreste sorgu varsa `&` ile eklenir. */
+const sohbetAdresi = (host: string | number, port: string | number, yetenekler: readonly string[]): string => {
+  const taban = `ws://${host}:${port}/sohbet`;
+  const ayirac = taban.includes("?") ? "&" : "?";
+  return `${taban}${ayirac}${SOHBET_YETENEK_PARAMETRESI}=${yetenekler.join(",")}`;
+};
+
+const MEDYA_YUKARI: ReadonlySet<string> = new Set<string>(MEDYA_YUKARI_TURLERI);
 
 export const GERI_CEKILME = { ILK_MS: 1_000, AZAMI_MS: 30_000 } as const;
 /** Bağlantı açılışından `welcome`'a kadar. Servisin kendi el sıkışma süresi 10 sn'dir. */
@@ -56,6 +72,10 @@ export type UsageRequest = Extract<SohbetYukari, { type: "usage_request" }>;
 export type BaglantiHatasi =YerelBaglantiHatasi | HataKodu;
 
 export type WelcomeCercevesi = Extract<GelenCerceve, { type: "welcome" }>;
+
+/** Servis bu bağlantıda medya eklerini destekliyor mu: `welcome.yetenekler` `medya1` içeriyor (alan yoksa hayır). */
+export const welcomeMedyaDestekli = (w: WelcomeCercevesi): boolean =>
+  w.yetenekler?.includes(SOHBET_YETENEKLERI.MEDYA) ?? false;
 /** Kimlik sonrası dinleyiciye geçen çerçeveler; `error` `hata` ile gelir. */
 export type KimlikliCerceve = Exclude<
   GelenCerceve,
@@ -79,6 +99,8 @@ export interface BaglantiBagimliliklari {
   /** `hello.last_seq`: o anda kalıcı olan son olay. */
   sonSeq(): number;
   dinleyici: BaglantiDinleyicisi;
+  /** Medya portu var: sorguda `medya1` de istenir (`MEDYALI_YETENEKLER`). Verilmezse `false`. */
+  medya?: boolean;
 }
 
 /** `uzun`: bir sonraki deneme en uzun beklemeyle; kendiliğinden düzelmeyecek hatalar için. */
@@ -99,6 +121,13 @@ export interface Baglanti {
    * değilse hiçbir şey yapılmaz ve `false` döner. Yeniden denenmez.
    */
   sorguGonder(m: UsageRequest): boolean;
+  /**
+   * Medya yükleme çerçevesi (`media_begin`, `media_chunk`, `media_cancel`): `client_msg_id`'siz, `ack`siz,
+   * kuyruksuz. Yalnız `bagli` iken ve bu bağlantının `welcome.yetenekler`'i `medya1` içeriyorsa yazılır
+   * (jetonsuz bağlantıda servis `media_*`'ı `yetkisiz` ile kapatır); değilse hiçbir şey yapılmaz, `false`.
+   * Soket yazamazsa bağlantı kapanır, `false`.
+   */
+  medyaGonder(m: MedyaYukari): boolean;
   durum(): BaglantiDurumu;
   /** Bekleyen yeniden denemenin zamanı (`saat.simdiMs` cinsinden) ya da `null`. */
   sonrakiDenemeMs(): number | null;
@@ -134,9 +163,12 @@ interface Deneme {
   asama: Asama;
   oturum: string;
   sure: IptalEt | null;
+  /** `welcome.yetenekler` `medya1` içeriyordu. */
+  medya: boolean;
 }
 
-export const baglantiKur: BaglantiFabrikasi = ({ ws, kimlik, saat, sonSeq, dinleyici }) => {
+export const baglantiKur: BaglantiFabrikasi = ({ ws, kimlik, saat, sonSeq, dinleyici, medya = false }) => {
+  const yetenekler = medya ? MEDYALI_YETENEKLER : ISTENEN_YETENEKLER;
   let calisiyor = false;
   let deneme: Deneme | null = null;
   let gecikme: number = GERI_CEKILME.ILK_MS;
@@ -253,6 +285,7 @@ export const baglantiKur: BaglantiFabrikasi = ({ ws, kimlik, saat, sonSeq, dinle
       case "welcome_bekliyor":
         if (m.type === "welcome") {
           d.asama = "bagli";
+          d.medya = medya && welcomeMedyaDestekli(m);
           d.sure?.();
           d.sure = null;
           gecikme = GERI_CEKILME.ILK_MS;
@@ -310,7 +343,7 @@ export const baglantiKur: BaglantiFabrikasi = ({ ws, kimlik, saat, sonSeq, dinle
     d.asama = "aciliyor";
     let b: WsBaglantisi;
     try {
-      b = ws.ac(sohbetAdresi(host.data, port.data), dinleyiciKur(d));
+      b = ws.ac(sohbetAdresi(host.data, port.data, yetenekler), dinleyiciKur(d));
     } catch {
       return bitir(d, "baglanti_kapandi", "normal");
     }
@@ -328,7 +361,7 @@ export const baglantiKur: BaglantiFabrikasi = ({ ws, kimlik, saat, sonSeq, dinle
 
   const baglan = (): void => {
     if (!calisiyor || deneme !== null) return;
-    const d: Deneme = { b: null, asama: "eslesme", oturum: "", sure: null };
+    const d: Deneme = { b: null, asama: "eslesme", oturum: "", sure: null, medya: false };
     deneme = d;
     durumYap("baglaniyor");
     d.sure = saat.sonra(EL_SIKISMA_SURESI_MS, () => bitir(d, "el_sikisma_zaman_asimi", "normal"));
@@ -383,6 +416,18 @@ export const baglantiKur: BaglantiFabrikasi = ({ ws, kimlik, saat, sonSeq, dinle
     sorguGonder: (m) => {
       const d = deneme;
       if (d === null || d.asama !== "bagli" || d.b === null || m.type !== "usage_request") return false;
+      try {
+        d.b.gonder(JSON.stringify(m));
+        return true;
+      } catch {
+        bitir(d, null, "normal");
+        return false;
+      }
+    },
+
+    medyaGonder: (m) => {
+      const d = deneme;
+      if (d === null || d.asama !== "bagli" || d.b === null || !d.medya || !MEDYA_YUKARI.has(m.type)) return false;
       try {
         d.b.gonder(JSON.stringify(m));
         return true;

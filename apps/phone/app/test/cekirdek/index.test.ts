@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { Plan, planHash } from "@eren/protocol";
+import { Plan, planHash, SINIRLAR } from "@eren/protocol";
 import { BEKCI_SURELERI, cekirdekKur, GECMIS_SIL_SURESI_MS } from "../../src/cekirdek/index.ts";
 import type { CekirdekDurumu, SesPortu, SohbetDurumu, SohbetOzeti } from "../../src/cekirdek/index.ts";
 import { OUTBOX_ANAHTARI } from "../../src/cekirdek/outbox.ts";
@@ -16,19 +16,26 @@ import {
   mezarTasiOlayi,
   sunucuDurumu,
   delta,
+  ekliYankiOlayi,
   elSikis,
   HASH_A,
+  icerik,
+  mediaState,
   olayCercevesi,
   ornekPlan,
   SahteDepo,
   SahteKimlik,
+  SahteMedyaDosya,
   SahteSaat,
   SahteWs,
+  seciliFoto,
+  seciliVideo,
   snapshot,
   sohbetAcildiOlayi,
   sohbetSilindiOlayi,
   v,
   welcome,
+  welcomeMedyali,
   yankiOlayi,
 } from "./sahte.ts";
 
@@ -2489,5 +2496,387 @@ describe("çekirdek: asistan etkinliği", () => {
     assert.deepEqual(seslendirilenler, ["Tamam."]);
     assert.equal(s.durum().etkinlik, null);
     c.kapat();
+  });
+});
+
+// =============================================================================================
+// Medya (U3): yükleyici, outbox `hazirlik` ve ekli gönderimin bağlanması
+// =============================================================================================
+
+const kurM = (o: { depo?: SahteDepo; saat?: SahteSaat; dosya?: SahteMedyaDosya | null } = {}) => {
+  const ws = new SahteWs();
+  const kimlik = new SahteKimlik();
+  const depo = o.depo ?? new SahteDepo();
+  const saat = o.saat ?? new SahteSaat();
+  const dosya = o.dosya === undefined ? new SahteMedyaDosya() : o.dosya;
+  const c = cekirdekKur({ ws, kimlik, depo, saat, ...(dosya === null ? {} : { medya: dosya }) });
+  return { ws, kimlik, depo, saat, dosya, c, s: c.sohbet("ana") };
+};
+type KurulumM = ReturnType<typeof kurM>;
+
+const elSikisW = async (b: ReturnType<SahteWs["son"]>, w: unknown): Promise<void> => {
+  b.acildi();
+  await bosalt();
+  b.gel(challenge());
+  await bosalt();
+  b.gel(w);
+  await bosalt();
+};
+
+const baslatM = async (k: KurulumM, w: unknown = welcomeMedyali(0)): Promise<void> => {
+  await k.c.baslat();
+  await bosalt();
+  await elSikisW(k.ws.son(), w);
+};
+
+const medyaTurleri = (c: Giden): string[] => isTurleri(c).filter((t) => t.startsWith("media_"));
+const beginId = (c: Giden, i = 0): string => String(turdekiler(c, "media_begin")[i]?.["medya_id"]);
+const b64 = (n: number): string => Buffer.from(icerik(n)).toString("base64");
+const fotolar = (n: number, onek = "f"): ReturnType<typeof seciliFoto>[] =>
+  Array.from({ length: n }, (_, i) => seciliFoto({ uri: `content://ornek/${onek}-${i}` }));
+
+describe("medya: ekli gönderim", () => {
+  it("uçtan uca: media_begin → parça → kabul → user_message{ekler} → yankı → balon, önizleme, liste özeti", async () => {
+    const k = kurM();
+    await baslatM(k);
+    const b = k.ws.son();
+    const r = await k.s.mesajYolla("", "yazi", undefined, [seciliFoto()]);
+    assert.ok(r.ok);
+    await bosalt();
+    const id = beginId(b);
+    assert.match(id, /^m-/);
+    assert.deepEqual(turdekiler(b, "media_begin"), [
+      { v, type: "media_begin", sohbet_id: "ana", medya_id: id, tur: "foto", mime: "image/jpeg", boyut: 2048, genislik: 4000, yukseklik: 3000 },
+    ]);
+    assert.equal(turdekiler(b, "user_message").length, 0, "ek kabul almadan mesaj gitmez");
+    const uri = `file:///eren-medya/${id}.jpg`;
+    let d = k.s.durum();
+    assert.deepEqual(d.bekleyenler.map((x) => [x.client_msg_id, x.durum]), [[r.client_msg_id, "kuyrukta"]]);
+    assert.deepEqual(d.ekGorunumleri.get(id), { onizleme_uri: uri, ilerleme: { durum: "bekliyor" } });
+
+    b.gel(mediaState(id, "yukleniyor", { alinan: 0 }));
+    await bosalt();
+    assert.deepEqual(turdekiler(b, "media_chunk"), [{ v, type: "media_chunk", medya_id: id, ofset: 0, veri: b64(2048) }]);
+    assert.deepEqual(k.s.durum().ekGorunumleri.get(id)?.ilerleme, { durum: "yukleniyor", alinan: 0, boyut: 2048 });
+
+    // Son parçanın yanıtı `kabul`; aynı durum `medya_durumu` yayınıyla ikinci kez gelir: zararsız.
+    b.gel(mediaState(id, "kabul", { isleme: "isleniyor" }));
+    b.gel(mediaState(id, "kabul", { isleme: "isleniyor" }));
+    await bosalt();
+    const mesajlar = turdekiler(b, "user_message");
+    assert.equal(mesajlar.length, 1);
+    assert.equal(mesajlar[0]?.["client_msg_id"], r.client_msg_id);
+    assert.equal(mesajlar[0]?.["text"], "");
+    const bilgi = [{ medya_id: id, tur: "foto", mime: "image/jpeg", boyut: 2048, genislik: 4000, yukseklik: 3000 }];
+    assert.deepEqual(mesajlar[0]?.["ekler"], bilgi);
+    assert.equal(turdekiler(b, "media_chunk").length, 1);
+    const kabulde = k.s.durum();
+    assert.deepEqual(kabulde.ekGorunumleri.get(id)?.ilerleme, { durum: "kabul", isleme: "isleniyor" });
+    b.gel(mediaState(id, "kabul", { isleme: "isleniyor" }));
+    await bosalt();
+    assert.equal(k.s.durum().ekGorunumleri, kabulde.ekGorunumleri, "değişmeyen içerik aynı harita");
+    assert.equal(turdekiler(b, "user_message").length, 1, "yinelenen durum mesajı yinelemez");
+
+    b.gel(ack(r.client_msg_id, true, { seq: 1 }));
+    b.gel(olayCercevesi(ekliYankiOlayi(1, bilgi, r.client_msg_id, "")));
+    await bosalt();
+    d = k.s.durum();
+    assert.deepEqual(d.bekleyenler, []);
+    const balon = d.ogeler[0];
+    assert.ok(balon?.tur === "kullanici");
+    assert.deepEqual(balon.ekler, bilgi);
+    assert.deepEqual(d.ekGorunumleri.get(id), { onizleme_uri: uri, ilerleme: { durum: "kabul", isleme: "isleniyor" } });
+    assert.equal(k.dosya?.dosyalar.has(uri), true, "fotoğrafın kopyası önizleme olarak kalır");
+    assert.deepEqual(ozet(k, "ana")?.sonMesaj, { kim: "kullanici", metin: "📷 Fotoğraf" });
+
+    // Bağlandıktan sonra işleme bildirimi ve yinelenmesi.
+    b.gel(mediaState(id, "kabul", { isleme: "hazir" }));
+    await bosalt();
+    const hazirda = k.s.durum();
+    assert.deepEqual(hazirda.ekGorunumleri.get(id)?.ilerleme, { durum: "kabul", isleme: "hazir" });
+    b.gel(mediaState(id, "kabul", { isleme: "hazir" }));
+    await bosalt();
+    assert.equal(k.s.durum(), hazirda);
+    assert.deepEqual(medyaTurleri(b), ["media_begin", "media_chunk"]);
+  });
+
+  it("medyaDestekli: port yoksa hep false; port + yetenekler yok/boş false; medya1 ile true; kopukta korunur", async () => {
+    const p = kurM({ dosya: null });
+    await baslatM(p);
+    assert.equal(p.c.durum().medyaDestekli, false);
+    assert.equal(new URL(p.ws.son().url).searchParams.get("yetenek"), "etkinlik1");
+    assert.equal(p.s.durum().ekGorunumleri.size, 0);
+
+    const k = kurM();
+    assert.equal(k.c.durum().medyaDestekli, false);
+    await baslatM(k, welcome(0));
+    assert.equal(new URL(k.ws.son().url).searchParams.get("yetenek"), "etkinlik1,medya1");
+    assert.equal(k.c.durum().medyaDestekli, false);
+    k.ws.son().kopsun();
+    k.saat.ilerlet(1000);
+    await bosalt();
+    await elSikisW(k.ws.son(), welcomeMedyali(0));
+    assert.equal(k.c.durum().medyaDestekli, true);
+    k.ws.son().kopsun();
+    await bosalt();
+    assert.equal(k.c.durum().baglanti, "kapali");
+    assert.equal(k.c.durum().medyaDestekli, true, "kopukta son değer korunur");
+    k.saat.ilerlet(1000);
+    await bosalt();
+    await elSikisW(k.ws.son(), welcomeMedyali(0, []));
+    assert.equal(k.c.durum().medyaDestekli, false, "sonraki welcome yeniden yazar");
+  });
+
+  it("medya_desteklenmiyor: port yok ya da servis medya1 demedi; medya1'siz bağlantıya hiç media_* gitmez", async () => {
+    const p = kurM({ dosya: null });
+    await baslatM(p);
+    assert.deepEqual(await p.s.mesajYolla("x", "yazi", undefined, [seciliFoto()]), { ok: false, neden: "medya_desteklenmiyor" });
+    p.ws.son().gel(mediaState("m-a-1", "kabul"));
+    await bosalt();
+    const k = kurM();
+    await baslatM(k, welcome(0));
+    assert.deepEqual(await k.s.mesajYolla("x", "yazi", undefined, [seciliFoto()]), { ok: false, neden: "medya_desteklenmiyor" });
+    assert.equal(k.dosya?.hazirlamalar.length, 0);
+    assert.deepEqual(k.s.durum().bekleyenler, []);
+    // Eksiz (boş dizi) gönderim bugünkü gibi.
+    assert.equal((await k.s.mesajYolla("düz", "yazi", undefined, [])).ok, true);
+    await bosalt();
+    assert.deepEqual(kullaniciMetinleri(k.ws.son()), ["düz"]);
+    assert.equal("ekler" in (turdekiler(k.ws.son(), "user_message")[0] ?? {}), false);
+    assert.deepEqual(medyaTurleri(k.ws.son()), []);
+    assert.deepEqual(medyaTurleri(p.ws.son()), []);
+  });
+
+  it("ret nedenleri sırayla; hiçbirinde kopya, kuyruk ya da kablo yok; ek_siniri bekleyen kayıtları sayar", async () => {
+    const k = kurM();
+    const f = seciliFoto();
+    const gecersiz = { ok: false, neden: "gecersiz" };
+    assert.deepEqual(await k.s.mesajYolla("x", "dikte", undefined, [f]), gecersiz);
+    assert.deepEqual(await k.s.mesajYolla("x", "kisayol", { paket: "com.ornek", ad: "Ornek" }, [f]), gecersiz);
+    assert.deepEqual(await k.s.mesajYolla("x", "yazi", undefined, [f]), { ok: false, neden: "baslamadi" });
+    await baslatM(k);
+    const b = k.ws.son();
+    assert.deepEqual(await k.c.sohbet("s-yok-1").mesajYolla("x", "yazi", undefined, [f]), { ok: false, neden: "sohbet_bulunamadi" });
+    assert.deepEqual(await k.s.mesajYolla("x", "yazi", undefined, fotolar(5)), gecersiz);
+    assert.deepEqual(await k.s.mesajYolla("x", "yazi", undefined, [seciliVideo(), seciliVideo({ uri: "content://ornek/v-2" })]), gecersiz);
+    assert.deepEqual(await k.s.mesajYolla("x", "yazi", undefined, [f, f]), gecersiz);
+    assert.deepEqual(await k.s.mesajYolla("x".repeat(SINIRLAR.KULLANICI_METNI + 1), "yazi", undefined, [f]), gecersiz);
+    assert.equal(k.dosya?.hazirlamalar.length, 0);
+    assert.deepEqual(medyaTurleri(b), []);
+
+    assert.equal((await k.s.mesajYolla("a", "yazi", undefined, fotolar(4))).ok, true);
+    assert.equal((await k.s.mesajYolla("b", "yazi", undefined, fotolar(4, "g"))).ok, true);
+    assert.deepEqual(await k.s.mesajYolla("c", "yazi", undefined, fotolar(1, "h")), { ok: false, neden: "ek_siniri" });
+    assert.equal(k.dosya?.hazirlamalar.length, 8);
+    assert.equal(k.s.durum().bekleyenler.length, 2);
+  });
+
+  it("ek_hazirlanamadi: hazırlananlar silinir; depo_hatasi: kayıt yazılamaz, kopyalar silinir", async () => {
+    const k = kurM();
+    await baslatM(k);
+    const b = k.ws.son();
+    const d = k.dosya!;
+    d.hazirlaSonucu = (ek, id) => {
+      if (ek.uri.endsWith("bozuk")) return { ok: false, neden: "okunamadi" };
+      const uri = `file:///eren-medya/${id}.jpg`;
+      d.dosyalar.set(uri, icerik(ek.boyut));
+      return {
+        ok: true,
+        ek: { uri, mime: "image/jpeg", boyut: ek.boyut, genislik: null, yukseklik: null, sure_ms: null, onizleme_uri: uri },
+      };
+    };
+    const r = await k.s.mesajYolla("", "yazi", undefined, [seciliFoto(), seciliFoto({ uri: "content://ornek/bozuk" })]);
+    assert.deepEqual(r, { ok: false, neden: "ek_hazirlanamadi" });
+    assert.equal(d.hazirlamalar.length, 2);
+    assert.equal(d.dosyalar.size, 0, "hazırlanan kopya silindi");
+
+    k.depo.hata.yaz = true;
+    assert.deepEqual(await k.s.mesajYolla("", "yazi", undefined, [seciliFoto()]), { ok: false, neden: "depo_hatasi" });
+    k.depo.hata.yaz = false;
+    assert.equal(d.dosyalar.size, 0);
+    await bosalt();
+    assert.deepEqual(medyaTurleri(b), []);
+    assert.deepEqual(k.s.durum().bekleyenler, []);
+  });
+
+  it("reddedildi: mesaj kodla hatalara düşer, gitmez; hataKapat ekleri iptal eder (media_cancel, yerel silme)", async () => {
+    const k = kurM();
+    await baslatM(k);
+    const b = k.ws.son();
+    const r = await k.s.mesajYolla("bak", "yazi", undefined, [seciliVideo()]);
+    assert.ok(r.ok);
+    await bosalt();
+    const id = beginId(b);
+    assert.equal(k.dosya?.dosyalar.size, 2, "video kopyası ve kapağı");
+    b.gel(mediaState(id, "reddedildi", { code: "medya_reddedildi" }));
+    await bosalt();
+    const d = k.s.durum();
+    assert.deepEqual(d.bekleyenler, []);
+    assert.deepEqual(d.hatalar.map((h) => [h.client_msg_id, h.kod]), [[r.client_msg_id, "medya_reddedildi"]]);
+    assert.deepEqual(d.ekGorunumleri.get(id)?.ilerleme, { durum: "reddedildi", kod: "medya_reddedildi" });
+    assert.equal(turdekiler(b, "user_message").length, 0);
+    await k.s.hataKapat(r.client_msg_id);
+    await bosalt();
+    assert.deepEqual(k.s.durum().hatalar, []);
+    assert.equal(k.s.durum().ekGorunumleri.size, 0);
+    assert.deepEqual(turdekiler(b, "media_cancel"), [{ v, type: "media_cancel", medya_id: id }]);
+    assert.equal(k.dosya?.dosyalar.size, 0);
+  });
+
+  it("tıkalı sohbet: Geçmişi sil hemen ek_bekliyor (kuyruk, 20 sn, kopma yok); eski serviste Kaldır mesajı ve eklerini kaldırır, sıra yürür", { timeout: 10_000 }, async () => {
+    const k = kurM();
+    await baslatM(k);
+    let b = k.ws.son();
+    const ekli = await k.s.mesajYolla("", "yazi", undefined, [seciliFoto()]);
+    assert.ok(ekli.ok);
+    const duz = await k.s.mesajYolla("sonra", "yazi");
+    assert.ok(duz.ok);
+    await bosalt();
+    const id = beginId(b);
+    assert.deepEqual(kullaniciMetinleri(b), [], "tıkalı sohbette sonraki mesaj da bekler");
+
+    assert.deepEqual(await k.s.gecmisiSil(), { ok: false, kod: "ek_bekliyor" });
+    assert.equal(turdekiler(b, "chat_clear").length, 0);
+    assert.equal(k.saat.bekleyenler().includes(GECMIS_SIL_SURESI_MS), false, "silme süresi kurulmaz");
+    k.saat.ilerlet(GECMIS_SIL_SURESI_MS);
+    await bosalt();
+    assert.equal(k.ws.baglantilar.length, 1, "yükleme süren bağlantı yenilenmez");
+    assert.equal(k.c.durum().baglanti, "bagli");
+
+    // Eski servis (medya1 yok): yükleme durur, hiçbir media_* gitmez, mesajlar bekler.
+    b.kopsun();
+    k.saat.ilerlet(1000);
+    await bosalt();
+    b = k.ws.son();
+    await elSikisW(b, welcome(0));
+    assert.equal(k.c.durum().medyaDestekli, false);
+    assert.deepEqual(medyaTurleri(b), []);
+    assert.deepEqual(kullaniciMetinleri(b), []);
+    assert.deepEqual(await k.s.gecmisiSil(), { ok: false, kod: "ek_bekliyor" });
+
+    // Başka sohbetin tutamacı kaldıramaz.
+    assert.deepEqual(await k.c.sohbet("s-yok-1").bekleyeniKaldir(ekli.client_msg_id), { ok: false, neden: "kaldirilamaz" });
+    assert.deepEqual(await k.s.bekleyeniKaldir(ekli.client_msg_id), { ok: true });
+    await bosalt();
+    assert.deepEqual(kullaniciMetinleri(b), ["sonra"], "arkasındaki mesaj yürür");
+    assert.deepEqual(medyaTurleri(b), [], "medya1'siz bağlantıya media_cancel de gitmez");
+    assert.equal(k.dosya?.dosyalar.size, 0, "yerel kopya silindi");
+    const d = k.s.durum();
+    assert.equal(d.ekGorunumleri.has(id), false);
+    assert.deepEqual(d.bekleyenler.map((x) => x.client_msg_id), [duz.client_msg_id]);
+    assert.deepEqual(d.hatalar, []);
+    assert.deepEqual(await k.s.bekleyeniKaldir(ekli.client_msg_id), { ok: false, neden: "kaldirilamaz" });
+    assert.deepEqual(await k.s.bekleyeniKaldir(duz.client_msg_id), { ok: false, neden: "kaldirilamaz" }, "yollanmış mesaj kaldırılamaz");
+
+    // Tıkanma kalktı: geçmiş silme bugünkü gibi yollanır.
+    const p = k.s.gecmisiSil();
+    await bosalt();
+    const silme = turdekiler(b, "chat_clear");
+    assert.equal(silme.length, 1);
+    b.gel(ack(String(silme[0]?.["client_msg_id"]), true, { seq: 3 }));
+    await bosalt();
+    assert.deepEqual(await p, { ok: true });
+  });
+
+  it("medya1 bağlantısında Kaldır media_cancel yollar", async () => {
+    const k = kurM();
+    await baslatM(k);
+    const b = k.ws.son();
+    const r = await k.s.mesajYolla("", "yazi", undefined, [seciliFoto()]);
+    assert.ok(r.ok);
+    await bosalt();
+    const id = beginId(b);
+    assert.deepEqual(await k.s.bekleyeniKaldir(r.client_msg_id), { ok: true });
+    await bosalt();
+    assert.deepEqual(turdekiler(b, "media_cancel"), [{ v, type: "media_cancel", medya_id: id }]);
+    assert.deepEqual(k.s.durum().bekleyenler, []);
+  });
+
+  it("yerel silme: mezar taşı önizlemeyi, sohbet silme bağlanmamış kayıtları ve kopyalarını siler", async () => {
+    const k = kurM();
+    await baslatM(k);
+    const b = k.ws.son();
+    const r = await k.s.mesajYolla("", "yazi", undefined, [seciliFoto()]);
+    assert.ok(r.ok);
+    await bosalt();
+    const id = beginId(b);
+    b.gel(mediaState(id, "kabul"));
+    await bosalt();
+    const bilgi = turdekiler(b, "user_message")[0]?.["ekler"] as Record<string, unknown>[];
+    b.gel(ack(r.client_msg_id, true, { seq: 1 }));
+    b.gel(olayCercevesi(ekliYankiOlayi(1, bilgi, r.client_msg_id)));
+    await bosalt();
+    const uri = `file:///eren-medya/${id}.jpg`;
+    assert.equal(k.dosya?.dosyalar.has(uri), true);
+    assert.equal(k.s.durum().ekGorunumleri.has(id), true);
+    b.gel(olayCercevesi(mezarTasiOlayi(2, 1, "ana")));
+    await bosalt();
+    assert.equal(k.dosya?.dosyalar.has(uri), false);
+    assert.equal(k.s.durum().ekGorunumleri.size, 0);
+
+    b.gel(olayCercevesi(sohbetAcildiOlayi(3, "s-x-1")));
+    await bosalt();
+    const x = k.c.sohbet("s-x-1");
+    const rx = await x.mesajYolla("", "yazi", undefined, [seciliVideo()]);
+    assert.ok(rx.ok);
+    await bosalt();
+    const idx = beginId(b, 1);
+    assert.equal(turdekiler(b, "media_begin")[1]?.["sohbet_id"], "s-x-1");
+    assert.equal(x.durum().ekGorunumleri.has(idx), true);
+    assert.equal(turdekiler(b, "chat_rename").length, 0, "boş metinli ekli mesaj otomatik ad üretmez");
+    b.gel(olayCercevesi(sohbetSilindiOlayi(4, "s-x-1")));
+    await bosalt();
+    assert.deepEqual(turdekiler(b, "media_cancel").map((m) => m["medya_id"]), [idx]);
+    assert.equal(k.dosya?.dosyalar.size, 0, "video kopyası ve kapağı silindi");
+    assert.equal(kimlikler(k).includes("s-x-1"), false);
+    assert.equal(turdekiler(b, "user_message").length, 1);
+  });
+
+  it("açılış süpürmesi bitmeden ek hazırlanmaz: süpürme yeni kopyayı silmez, kaydı olmayan artığı siler", async () => {
+    let ac: () => void = () => undefined;
+    const kapi = new Promise<void>((r) => {
+      ac = r;
+    });
+    class KapiliDosya extends SahteMedyaDosya {
+      override async listele(): Promise<readonly string[]> {
+        await kapi;
+        return super.listele();
+      }
+    }
+    const dosya = new KapiliDosya();
+    dosya.dosyalar.set("file:///eren-medya/artik.jpg", icerik(4));
+    const k = kurM({ dosya });
+    await baslatM(k);
+    const p = k.s.mesajYolla("", "yazi", undefined, [seciliFoto()]);
+    await bosalt();
+    assert.equal(dosya.hazirlamalar.length, 0, "süpürme sürerken hazırlama başlamaz");
+    ac();
+    const r = await p;
+    assert.ok(r.ok);
+    await bosalt();
+    assert.deepEqual(dosya.silinenler, ["file:///eren-medya/artik.jpg"]);
+    assert.equal(dosya.dosyalar.size, 1);
+    assert.equal(turdekiler(k.ws.son(), "media_begin").length, 1);
+  });
+
+  it("yeniden açılış: bekleyen ekli mesaj ve kaydı diskten; medya1'e bağlanınca yeniden sorulur, kabulde gider", async () => {
+    const k = kurM();
+    await baslatM(k);
+    const r = await k.s.mesajYolla("not", "yazi", undefined, [seciliFoto()]);
+    assert.ok(r.ok);
+    await bosalt();
+    const id = beginId(k.ws.son());
+    k.c.kapat();
+    const y = kurM({ depo: k.depo, dosya: k.dosya });
+    await baslatM(y);
+    const b = y.ws.son();
+    assert.deepEqual(turdekiler(b, "media_begin").map((m) => m["medya_id"]), [id]);
+    assert.equal(y.dosya?.dosyalar.has(`file:///eren-medya/${id}.jpg`), true, "süpürme kaydı olan kopyayı silmez");
+    assert.equal(turdekiler(b, "user_message").length, 0);
+    assert.deepEqual(y.s.durum().ekGorunumleri.get(id)?.ilerleme, { durum: "bekliyor" });
+    b.gel(mediaState(id, "kabul"));
+    await bosalt();
+    assert.deepEqual(kullaniciMetinleri(b), ["not"]);
+    assert.equal(turdekiler(b, "user_message")[0]?.["client_msg_id"], r.client_msg_id);
   });
 });

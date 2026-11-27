@@ -353,16 +353,32 @@ export interface Outbox {
   /**
    * Medya (U2). Yeni ek kimliği `m-<donem>-<sayac+1>`: `sohbetIdUret` ile AYNI kalıcı sayaç ve aynı
    * kurallar (`yukle`'den sonra, eşzamanlı, öncesinde atar; sayaç sonraki yazımla diske girer). Bir
-   * cihazda bir kimlik iki eke verilmez. Medya dalgası boyunca isteğe bağlıdır (TASARIM.md "Medya"),
-   * `outboxKur` her zaman verir.
+   * cihazda bir kimlik iki eke verilmez.
    */
-  medyaIdUret?: () => MedyaId;
+  medyaIdUret: () => MedyaId;
   /**
    * Medya (U2). `hazirlik`'in sonucu değişmiş olabilir (yükleyici `degisti`): kimlik bitmişse
    * bekleyenler `kimlikTamam`'daki kurallarla yeniden denenir (zaten yollanmış öğe ikinci kez gitmez);
-   * değilse hiçbir şey yapmaz. Eşzamanlıdır. Medya dalgası boyunca isteğe bağlıdır, `outboxKur` her zaman verir.
+   * değilse hiçbir şey yapmaz. Eşzamanlıdır.
    */
-  hazirlikDegisti?(): void;
+  hazirlikDegisti(): void;
+  /**
+   * Medya (U2). Bu süreçte hiç yollanmamış bir `user_message`'ı kuyruktan kaldırır ("Kaldır": eki hazır
+   * olmayan ve sohbetini tıkayan mesaj); hatalara düşmez. Kaldırılan mesajı döner. Öğe yoksa, ileti
+   * `user_message` değilse ya da bu süreçte en az bir kez yollandıysa (servise ulaşmış olabilir, `ack`
+   * beklenir) `null` döner, hiçbir şey değişmez. Bellek ve `degisti` hemen; söz tek yazımı bekler,
+   * arkasında bekleyenler (bağlıysa) yazım bitince yollanır. Yazım başarısızsa bellekte yine
+   * kaldırılmıştır, söz reddedilir. Eklerin yükleyiciden iptali (`Yukleyici.iptal`) çağıranındır.
+   * Sınır: önceki süreçte yollanıp `ack`'i gelmemiş mesaj diskten "hiç yollanmamış" olarak döner;
+   * servis onu aldıysa yankısı telafiyle yine gelir.
+   */
+  bekleyeniKaldir(client_msg_id: string): Promise<IsMesaji | null>;
+  /**
+   * Medya (U2). Sohbette `hazirlik`'i `"bekliyor"` olan (eki hazır değil), bu süreçte hiç yollanmamış
+   * öğe var mı. Eşzamanlı; bağlantıdan bağımsız. Tıkalı sohbette `chat_clear` kuyrukta bekler; çekirdek
+   * bu yüzden tıkalı sohbette "Geçmişi sil"i hemen reddeder (`ek_bekliyor`). `hazirlik` verilmemişse hep `false`.
+   */
+  sohbetTikaliMi(sohbet_id: SohbetId): boolean;
 }
 
 export interface OutboxBagimliliklari {
@@ -375,9 +391,10 @@ export interface OutboxBagimliliklari {
    * Medya (U2 uygular, U3 verir). Yollanmamış her öğe yollanmadan hemen önce sorulur (eşzamanlı, atmaz).
    * Verilmezse her öğe `"hazir"` sayılır (bugünkü davranış).
    * - `"hazir"`: öğe yollanır.
-   * - `"bekliyor"`: öğe yollanmaz, kuyrukta kalır; aynı `sohbet_id`'nin SONRAKİ `user_message`'ları da bu
-   *   geçişte atlanır (sohbetin sırası korunur). Öteki sohbetler, sohbetsiz öğeler (`plan_decision`,
-   *   `question_answer`, `job_cancel`) ve aynı sohbetin `interrupt`/`chat_*` öğeleri yürür.
+   * - `"bekliyor"`: öğe yollanmaz, kuyrukta kalır; aynı `sohbet_id`'nin SONRAKİ `user_message`'ları ve
+   *   `chat_clear`'ı da bu geçişte atlanır (sohbetin sırası korunur: geçmiş silme kendisinden önce yazılmış
+   *   mesajı geçmez). Öteki sohbetler, sohbetsiz öğeler (`plan_decision`, `question_answer`, `job_cancel`)
+   *   ve aynı sohbetin `interrupt`/`chat_create`/`chat_rename`/`chat_delete` öğeleri yürür.
    * - `{ hata }`: öğe kuyruktan hatalara taşınır (`GidenHatasi.kod = hata`, kalıcı, yeniden yollanmaz);
    *   sohbet tıkanmaz, geçiş sürer.
    * Ek taşımayan öğe için gerçek bağımlılık hep `"hazir"` döner. `kalici`/`gecici` kuralları aynen.
@@ -438,7 +455,10 @@ export type SohbetDefteriFabrikasi = (anaAdi?: string) => SohbetDefteri;
  */
 export type SohbetKurulumu = "kuruldu" | "bekliyor" | "kurulamadi";
 
-/** Dilim 2. Listede önizleme: son kullanıcı ya da asistan balonunun ham metni (ekran kırpar). */
+/**
+ * Dilim 2. Listede önizleme: son kullanıcı ya da asistan balonunun ham metni (ekran kırpar). Medya:
+ * metni boş ekli kullanıcı balonunda ek özeti ("📷 Fotoğraf", "🎥 Video", `sohbetler.ts` `ekOnizlemeMetni`).
+ */
 export interface SonMesaj {
   kim: "kullanici" | "asistan";
   metin: string;
@@ -561,9 +581,10 @@ export interface CekirdekPortlari {
    */
   ses?: SesPortu;
   /**
-   * Medya. Verilirse yükleyici kurulur ve servis `medya1` dediğinde ekli gönderim açılır. Verilmezse
-   * `medyaDestekli` hep `false`, ekli `mesajYolla` `medya_desteklenmiyor` döner, `media_state` yok
-   * sayılır (özellik bayrağı: bugünkü davranış). Gerçeği `platform/medyaDosya.ts` (U4).
+   * Medya. Verilirse yükleyici kurulur, bağlantı `?yetenek=` sorgusunda `medya1`'i de ister ve servis
+   * `welcome.yetenekler`'de `medya1` dediğinde ekli gönderim açılır. Verilmezse `medya1` istenmez (servis
+   * ekli yankıyı metne önekli yollar), `medyaDestekli` hep `false`, ekli `mesajYolla` `medya_desteklenmiyor`
+   * döner, `media_state` yok sayılır (özellik bayrağı: bugünkü davranış). Gerçeği `platform/medyaDosya.ts` (U4).
    */
   medya?: MedyaDosyaPortu;
 }
@@ -626,7 +647,8 @@ export interface CekirdekDurumu extends BaglantiOzeti {
    * Medya. Ek düğmesi açık mı: `medya` portu verildi VE bu süreçte görülen son `welcome`'ın
    * `yetenekler`'inde `SOHBET_YETENEKLERI.MEDYA` var. İlk `welcome`'a dek `false`; bağlantı kopunca son
    * değer korunur (çevrimdışı ekli mesaj kuyruğa girebilir), sonraki `welcome` yeniden yazar. Eski servis
-   * alanı hiç yazmaz: `false`. Gerçek çekirdek her zaman yazar; isteğe bağlılık `seslendiriyor` gibidir.
+   * alanı hiç yazmaz: `false`. Gerçek çekirdek her zaman yazar; isteğe bağlılık `seslendiriyor` gibidir
+   * (elle kurulan durum nesneleri: `test/ekranlar/kisayol.test.ts`, `otoIzin.test.ts`). Ekran `=== true` sınar.
    */
   medyaDestekli?: boolean;
 }
@@ -671,9 +693,13 @@ export interface SohbetDurumu extends BaglantiOzeti {
    * Medya. Bu sohbetin `ogeler`'indeki `KullaniciBalonu.ekler`'inde, `bekleyenler`'inde ve `hatalar`'ındaki
    * `user_message.ekler`'de geçen her `medya_id` için yükleyicinin `gorunum`'ü; yükleyici `null`
    * dönerse anahtar yazılmaz (ekran "bu cihazda yok" yer tutucusunu gösterir). İçerik değişmedikçe aynı
-   * nesne. Gerçek çekirdek her zaman yazar (port yoksa boş); isteğe bağlılık `seslendiriyor` gibidir.
+   * nesne (ve aynı `EkGorunumu` nesneleri). Port yoksa boş.
+   *
+   * `hatalar`'daki mesajın ekleri için `ilerleme` güvenilir değildir: yükleyici ilerlemeyi kalıcı tutmaz,
+   * yeniden açılışta `reddedildi`/`yerel_yok` kayıt `bekliyor`'dan başlar. Ekran hata satırında nedeni
+   * `GidenHatasi.kod`'dan (`medyaHataMetni`) gösterir, `ilerleme`'yi değil.
    */
-  ekGorunumleri?: ReadonlyMap<MedyaId, EkGorunumu>;
+  ekGorunumleri: ReadonlyMap<MedyaId, EkGorunumu>;
 }
 
 export type GonderRedNedeni =
@@ -742,6 +768,12 @@ export type GecmisSilHatasi =
    */
   | "baglanti_koptu"
   /**
+   * Medya. Yalnız `gecmisiSil`: sohbette eki henüz yüklenmemiş (yollanamayan) bir mesaj var
+   * (`Outbox.sohbetTikaliMi`). `chat_clear` o mesajın arkasında süresiz beklerdi; istek kuyruğa girmez,
+   * hiçbir şey silinmedi. Ekran: yükleme bitince ya da bekleyen mesaj kaldırılınca yeniden dene.
+   */
+  | "ek_bekliyor"
+  /**
    * Servisin `ack.code`'u ya da yerel ret. `sohbet_mesgul`: o sohbette asistan konuşuyor ya da
    * devrediyor, iş çalışıyor ya da soru bekliyor; hiçbir şey silinmedi.
    */
@@ -760,6 +792,11 @@ export type SohbetSilSonucu = GecmisSilSonucu;
 export type SohbetAcSonucu =
   | { ok: true; sohbet_id: SohbetId }
   | { ok: false; neden: "baslamadi" | "gecersiz" | "sohbet_siniri" | "depo_hatasi" };
+
+/** Medya. `Sohbet.bekleyeniKaldir` sonucu. */
+export type BekleyenKaldirSonucu =
+  | { ok: true }
+  | { ok: false; neden: "baslamadi" | "kaldirilamaz" | "depo_hatasi" };
 
 /**
  * Dilim 2. Tek sohbetin tutamacı. `Cekirdek.sohbet(id)` aynı kimliğe hep aynı nesneyi verir; kimlik
@@ -783,11 +820,14 @@ export interface Sohbet {
    *
    * Medya (U3). `ekler` boş değilse: yalnız `input === "yazi"` ve `baglam` yokken (değilse `gecersiz`);
    * `metin` boş olabilir (otomatik ad o zaman üretilmez). Sıra, ilk tutmayan döner, hiçbir şey kuyruğa
-   * girmez: `gecersiz` (girdi yolu, bağlam) → `baslamadi` → `sohbet_bulunamadi` → `gecersiz` (adet,
-   * tekillik, tek video) → `medya_desteklenmiyor` → `ek_siniri` → her ek için `Outbox.medyaIdUret` + `MedyaDosyaPortu.hazirla`
-   * (biri düşerse hazırlananlar silinir, `ek_hazirlanamadi`) → `EkBilgisi` şeması (`gecersiz`) →
-   * `Yukleyici.ekle` (tek yazım; `depo_hatasi`) → `Outbox.ekle(user_message{ekler})` (düşerse
-   * `Yukleyici.iptal`). `ekler` boş ya da verilmemişse bugünkü davranış.
+   * girmez: `gecersiz` (girdi yolu, bağlam) → `baslamadi` → `sohbet_bulunamadi` → `gecersiz` (metin
+   * `KULLANICI_METNI`'nden uzun; `ekleriDenetle([], ekler)` bir eki reddediyor: adet, tekillik, tek video,
+   * tür, boyut, süre) → `medya_desteklenmiyor` → `ek_siniri` → açılış süpürmesi bitene dek beklenir
+   * (süpürme henüz kaydı olmayan yeni kopyayı silmesin) → her ek için sırayla `Outbox.medyaIdUret` +
+   * `MedyaDosyaPortu.hazirla` (biri düşerse hazırlananlar silinir, `ek_hazirlanamadi`) → `EkBilgisi`
+   * kopyanın `mime`/`boyut`'undan, aralık dışı beyan alanları (`genislik`, `yukseklik`, `sure_ms`) yazılmadan;
+   * şemadan geçmezse `gecersiz` → `Yukleyici.ekle` (tek yazım; `depo_hatasi`) → `Outbox.ekle(user_message{ekler})`
+   * (düşerse `Yukleyici.iptal`). `ekler` boş ya da verilmemişse bugünkü davranış (ek bekleme yok).
    */
   mesajYolla(
     metin: string,
@@ -806,7 +846,22 @@ export interface Sohbet {
    * Medya: `ekler`'li `user_message` hatasıysa eklerini `Yukleyici.iptal` eder ("Kaldır").
    */
   hataKapat(client_msg_id: string): Promise<void>;
-  /** `chat_clear{sohbet_id}`; Dilim 1 kuralları (yalnız bağlıyken, geçici, `ack`'le çözülür, 20 sn). */
+  /**
+   * Medya. Bu sohbetin `bekleyenler`'indeki, bu süreçte hiç yollanmamış bir `user_message`'ı kuyruktan
+   * kaldırır (eki yüklenemeyen ya da eski servise bağlıyken sohbeti süresiz tıkayan mesaj için "Kaldır"):
+   * `Outbox.bekleyeniKaldir`, mesajın ekleri varsa ardından `Yukleyici.iptal` (kayıtlar ve yerel kopyalar
+   * silinir, bağlıysa `media_cancel`). Hatalara düşmez; arkasında bekleyen mesajlar yürür. Ekli olmayan
+   * mesaj da kaldırılabilir. `kaldirilamaz`: öğe yok, bu sohbetin değil, `user_message` değil ya da
+   * yollandı (`ack` beklenir; ekran `durum === "kuyrukta"` olmayan bekleyende düğme göstermez, `kuyrukta`
+   * olan önceki bağlantıda yollanmışsa da bu döner). `depo_hatasi`: bellekte kaldırıldı ama diske
+   * yazılamadı (yeniden açılışta geri gelebilir); ekler iptal edilmez.
+   */
+  bekleyeniKaldir(client_msg_id: string): Promise<BekleyenKaldirSonucu>;
+  /**
+   * `chat_clear{sohbet_id}`; Dilim 1 kuralları (yalnız bağlıyken, geçici, `ack`'le çözülür, 20 sn).
+   * Medya: sohbet ekli mesaj yüzünden tıkalıysa (`Outbox.sohbetTikaliMi`) `ek_bekliyor`, hiçbir şey
+   * kuyruğa girmez (sıra: `baslamadi` → `sohbet_bulunamadi` → `bagli_degil` → `ek_bekliyor` → `zaten_yollandi`).
+   */
   gecmisiSil(): Promise<GecmisSilSonucu>;
   /** `chat_rename{sohbet_id, adHazirla(ad)}`; kuyrukta bekleyebilir. */
   adlandir(ad: string): Promise<AdlandirSonucu>;
@@ -864,10 +919,11 @@ export type CekirdekFabrikasi = (portlar: CekirdekPortlari, secenekler?: Cekirde
 // =============================================================================================
 // Medya dalgası: fotoğraf ve video ekleri. Kurallar, paketler (U1-U5b) ve dosya sahipliği:
 // ../../TASARIM.md "Medya". Kablo: `protocol/src/medya.ts` (yetenek `medya1`, `SOHBET_SURUMU` aynı),
-// sınırlar `MEDYA_SINIRLARI`. Var olan arayüzlere bu dalgada eklenen üyeler (`Outbox.medyaIdUret`,
-// `Outbox.hazirlikDegisti`, `OutboxBagimliliklari.hazirlik`, `CekirdekPortlari.medya`,
-// `CekirdekDurumu.medyaDestekli`, `SohbetDurumu.ekGorunumleri`) isteğe bağlıdır: ara commit'ler tip
-// denetiminden geçsin diye. Gerçekleyen her zaman verir; dalga bitince sözleşme sahibi zorunlu yapar.
+// sınırlar `MEDYA_SINIRLARI`. Var olan arayüzlere bu dalgada eklenen üyeler U3'ten beri zorunludur
+// (`Outbox.medyaIdUret`, `hazirlikDegisti`, `bekleyeniKaldir`, `sohbetTikaliMi`, `SohbetDurumu.ekGorunumleri`,
+// `Sohbet.bekleyeniKaldir`); isteğe bağlı kalanlar: `CekirdekPortlari.medya` (özellik bayrağı),
+// `OutboxBagimliliklari.hazirlik` (verilmezse her öğe hazır) ve `CekirdekDurumu.medyaDestekli`
+// (`seslendiriyor` gibi: ekran testleri durumu elle kurar; gerçek çekirdek her zaman yazar).
 // Akış: seçici (`MedyaSeciciPortu`, ekran) → `ekleriDenetle` (saf) → şerit (`SeciliEk`) →
 // `Sohbet.mesajYolla(..., ekler)` → `MedyaDosyaPortu.hazirla` → `Yukleyici.ekle` + `Outbox.ekle` →
 // yükleme (`media_*`) → `kabul` → outbox `hazirlik` `"hazir"` → `user_message{ekler}`.
