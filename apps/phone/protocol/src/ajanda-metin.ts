@@ -204,20 +204,33 @@ function geceNotu(an: AjandaYerelAn): string {
     ` Mesaj gece yarısından sonra yazıldı (${an.saat}): takvimde bugün ${tarihGunMetni(bugun)}, yarın ` +
     `${tarihGunMetni(yarin)}. Kullanıcı günü göreli söylediyse (yarın, bugün, bu akşam, bu gece) uyanınca ` +
     `başlayacak günü (${insanTarihi(bugun)}) kastediyor olabilir: kaydetmeden önce kısa bir soruyla hangi günü ` +
-    `kastettiğini sor (ör. "${insanTarihi(bugun)} ${soruEki(bugun)}, ${insanTarihi(yarin)} ${soruEki(yarin)}?"), cevabından sonra ` +
-    `dayanak.gece_teyidi:"soruldu" ile yeniden çağır. Günü tarihle ya da adıyla söylediyse ya da yalnız saati ` +
-    `göreliyse (1 saat sonra) soru sormadan dayanak.gece_teyidi:"gun_acik" ile yeniden çağır.`
+    `kastettiğini sor (ör. "${insanTarihi(bugun)} ${soruEki(bugun)}, ${insanTarihi(yarin)} ${soruEki(yarin)}?"). ` +
+    `Soruyu yanıtında sor ve bu turda yeniden çağırma: cevap kullanıcının sonraki mesajıyla gelir, o mesajın turunda ` +
+    `dayanak.gece_teyidi:"soruldu" ile çağır (bu turda verilen soruldu kabul edilmez). Günü tarihle ya da adıyla ` +
+    `söylediyse ya da yalnız saati göreliyse (1 saat sonra) soru sormadan dayanak.gece_teyidi:"gun_acik" ile yeniden çağır.`
   );
 }
 
-function retMetni(fiil: string, eylem: string, neden: string, an: AjandaYerelAn): string {
+/** Aynı turda gelen `soruldu` reddi (`ayni_tur`): soru bu turda sorulmalı, cevap beklenmeli. */
+function geceAyniTurNotu(an: AjandaYerelAn): string {
+  const bugun = an.tarih;
+  const yarin = gunNoTarih(tarihGunNo(bugun) + 1);
+  return (
+    ` Bu turda gece teyidi zaten istendi ve kullanıcı henüz cevap vermedi: soruldu ancak kullanıcının cevabı ` +
+    `olan sonraki mesajın turunda kabul edilir. Şimdi aracı yeniden çağırma; yanıtında hangi günü kastettiğini ` +
+    `sor (ör. "${insanTarihi(bugun)} ${soruEki(bugun)}, ${insanTarihi(yarin)} ${soruEki(yarin)}?") ve kaydetmediğini söyle; ` +
+    `cevap gelince o turda dayanak.gece_teyidi:"soruldu" ile çağır.`
+  );
+}
+
+function retMetni(fiil: string, eylem: string, neden: string, an: AjandaYerelAn, ayniTur = false): string {
   let ek = "";
   if (neden === "dayanak_uyusmuyor") {
     ek =
       " Dayanak bu turun mesaj anıyla uyuşmuyor: göreli zamanı kullanıcının mesajının ulaştığı ana " +
       "(aşağıdaki mesaj_ani; şimdiki saat değil) göre yeniden çöz, dayanak olarak onu ver ve yeniden dene.";
   } else if (neden === "gece_teyidi_gerekli") {
-    ek = geceNotu(an);
+    ek = ayniTur ? geceAyniTurNotu(an) : geceNotu(an);
   } else if (neden === "tutarsiz_kayit") {
     ek = " Değişiklik kaydın kurallarını bozuyor: tekrar eden kayıtta zaman an ya da gun olmalı, tekrar bitişi çapadan önce olamaz.";
   } else if (neden === "ic_hata") {
@@ -231,7 +244,7 @@ function uygulananMetni(alanlar: readonly string[]): string {
 }
 
 export function ajandaEkleMetni(c: AjandaEkleCikti): string {
-  if (c.sonuc === "ret") return retMetni("ajanda_ekle", "eklenmedi", c.neden, c.mesaj_ani);
+  if (c.sonuc === "ret") return retMetni("ajanda_ekle", "eklenmedi", c.neden, c.mesaj_ani, c.ayni_tur === true);
   const an = anMetni(c.mesaj_ani);
   if (c.sonuc === "eklendi") return `ajanda_ekle: eklendi ${ozetMetni(c.kayit, c.mesaj_ani)}${an}`;
   const uygulanan = uygulananMetni(c.uygulanan_alanlar);
@@ -245,14 +258,39 @@ export function ajandaEkleMetni(c: AjandaEkleCikti): string {
 }
 
 export function ajandaGuncelleMetni(c: AjandaGuncelleCikti): string {
-  if (c.sonuc === "ret") return retMetni("ajanda_guncelle", "uygulanmadı", c.neden, c.mesaj_ani);
+  if (c.sonuc === "ret") return retMetni("ajanda_guncelle", "uygulanmadı", c.neden, c.mesaj_ani, c.ayni_tur === true);
   const korunan =
     c.korunan_alanlar.length === 0
       ? ""
       : ` Şu alanları kullanıcı kendisi belirlemiş; bu tur kullanıcının mesajıyla başlamadığı için ` +
         `uygulanmadı: ${c.korunan_alanlar.join(",")}. Değişmesi gerekiyorsa kullanıcıya sor.`;
   const ozet = c.sonuc === "guncellendi" ? "güncellendi" : "değişiklik yok";
-  return `ajanda_guncelle: ${ozet} ${ozetMetni(c.kayit, c.mesaj_ani)}${korunan}${anMetni(c.mesaj_ani)}`;
+  const zaman = c.sonuc === "guncellendi" ? zamanDegisimiMetni(c) : "";
+  return `ajanda_guncelle: ${ozet} ${ozetMetni(c.kayit, c.mesaj_ani)}${zaman}${korunan}${anMetni(c.mesaj_ani)}`;
+}
+
+const KALDIRMA_YOLU: Readonly<Record<string, string>> = { saat: "saat:null", sure_dk: "sure_dk:null", gun_bolumu: "gun_bolumu:null" };
+
+/**
+ * Güncellemenin zaman notu (v2): eski zamandan korunan alanlar (kullanıcı yalnız günü değiştirdi) ve
+ * gün hatırlatmasının saati değiştiyse önceki ve yeni saat; model kullanıcıya söyler.
+ */
+function zamanDegisimiMetni(c: Extract<AjandaGuncelleCikti, { sonuc: "guncellendi" }>): string {
+  let metin = "";
+  const k = c.zamanda_korunan;
+  if (k !== undefined && k.length > 0) {
+    metin +=
+      ` Kaydın eski zamanından korunup yeni zamana taşınanlar: ${k.join(",")} (kullanıcı bunları söylemedi). ` +
+      `Kullanıcı bunları da kaldırmak istediyse ${k.map((a) => KALDIRMA_YOLU[a]).join(", ")} ile yeniden çağır.`;
+  }
+  const o = c.onceki_gun_hatirlatmasi;
+  if (o !== undefined) {
+    const yeni = c.kayit.hatirlatma.gun_hatirlatmasi;
+    metin +=
+      ` Hatırlatma saati değişti: önceden ${o.saat}${o.gecti ? " (geçmişti)" : ""}, şimdi ` +
+      `${yeni === undefined ? "gün hatırlatması yok" : `${yeni.saat}${yeni.gecti ? " (geçti)" : ""}`}; bunu kullanıcıya söyle.`;
+  }
+  return metin;
 }
 
 /**

@@ -27,8 +27,11 @@ import {
   AjandaMcpSonucu,
   ajandaZamanOzeti,
   AjandaZamanOzeti,
+  ajandaZamanDegisikligiCoz,
   AJANDA_ARAC_ACIKLAMALARI,
   GECE_TEYITLERI,
+  geceSorulduAyniTurdaMi,
+  geceTeyidiEksikMi,
   goreliGunMetni,
   gunHatirlatmaTablosuMetni,
   insanTarihi,
@@ -535,4 +538,138 @@ test("liste metni: kayıt metnindeki gizli karakter modele görünür gider", ()
   const emojili = ajandaKaydiSatiri(kayit({ baslik: "Kahve ☕️", aciklama: "Aile 👨‍👩‍👧" }));
   assert.ok(emojili.includes('baslik="Kahve ☕\\ufe0f"'));
   assert.ok(emojili.includes('aciklama="Aile 👨\\u200d👩\\u200d👧"'));
+});
+
+test("güncellemenin zamanı: verilmeyen saat, süre ve gün bölümü korunur, null kaldırır (ajandaZamanDegisikligiCoz)", () => {
+  const aksam = { kesinlik: "gun", tarih: "2026-11-27", gun_bolumu: "aksam", saat_dilimi: IST, ifade: "cuma akşamı" } as const;
+  const saatli = { kesinlik: "an", tarih: "2026-11-27", saat: "15:00", sure_dk: 30, saat_dilimi: IST } as const;
+  const coz = ajandaZamanDegisikligiCoz;
+  // Yalnız gün: bölüm korunur; eski ifade korunmaz (eski zamanın sözü), verilen ifade ve dilim geçer.
+  assert.deepEqual(coz(aksam, { kesinlik: "gun", tarih: "2026-11-28" }), {
+    zaman: { kesinlik: "gun", tarih: "2026-11-28", gun_bolumu: "aksam" },
+    korunan: ["gun_bolumu"],
+  });
+  assert.deepEqual(coz(aksam, { kesinlik: "gun", tarih: "2026-11-28", ifade: "cumartesiye", saat_dilimi: "UTC" }).zaman, {
+    kesinlik: "gun",
+    tarih: "2026-11-28",
+    gun_bolumu: "aksam",
+    saat_dilimi: "UTC",
+    ifade: "cumartesiye",
+  });
+  // Açık istekler: yeni bölüm, bölümü kaldırma.
+  assert.deepEqual(coz(aksam, { kesinlik: "gun", tarih: "2026-11-28", gun_bolumu: "sabah" }), {
+    zaman: { kesinlik: "gun", tarih: "2026-11-28", gun_bolumu: "sabah" },
+    korunan: [],
+  });
+  assert.deepEqual(coz(aksam, { kesinlik: "gun", tarih: "2026-11-28", gun_bolumu: null }), { zaman: { kesinlik: "gun", tarih: "2026-11-28" }, korunan: [] });
+  assert.deepEqual(coz(aksam, { kesinlik: "gun", tarih: "2026-11-28", saat: null }).korunan, ["gun_bolumu"], "saat:null bölümü silmez");
+  // Saatli kayıt: yalnız gün saati ve süreyi taşır; saat:null kaldırır; gun_bolumu:null saati silmez; yeni bölüm saati değiştirir.
+  assert.deepEqual(coz(saatli, { kesinlik: "gun", tarih: "2026-11-28" }), {
+    zaman: { kesinlik: "an", tarih: "2026-11-28", saat: "15:00", sure_dk: 30 },
+    korunan: ["saat", "sure_dk"],
+  });
+  assert.deepEqual(coz(saatli, { kesinlik: "gun", tarih: "2026-11-28", saat: null }), { zaman: { kesinlik: "gun", tarih: "2026-11-28" }, korunan: [] });
+  assert.deepEqual(coz(saatli, { kesinlik: "gun", tarih: "2026-11-28", gun_bolumu: null }).zaman.kesinlik, "an");
+  assert.deepEqual(coz(saatli, { kesinlik: "gun", tarih: "2026-11-28", gun_bolumu: "aksam" }), {
+    zaman: { kesinlik: "gun", tarih: "2026-11-28", gun_bolumu: "aksam" },
+    korunan: [],
+  });
+  const { sure_dk: _s, ...suresiz } = saatli;
+  assert.deepEqual(coz(suresiz, { kesinlik: "gun", tarih: "2026-11-28" }).korunan, ["saat"]);
+  // an: süre verilmezse korunur, null kaldırır, verilen geçer.
+  assert.deepEqual(coz(saatli, { kesinlik: "an", tarih: "2026-11-28", saat: "16:00" }), {
+    zaman: { kesinlik: "an", tarih: "2026-11-28", saat: "16:00", sure_dk: 30 },
+    korunan: ["sure_dk"],
+  });
+  assert.deepEqual(coz(saatli, { kesinlik: "an", tarih: "2026-11-28", saat: "16:00", sure_dk: null }).zaman, { kesinlik: "an", tarih: "2026-11-28", saat: "16:00" });
+  assert.deepEqual(coz(saatli, { kesinlik: "an", tarih: "2026-11-28", saat: "16:00", sure_dk: 45 }), {
+    zaman: { kesinlik: "an", tarih: "2026-11-28", saat: "16:00", sure_dk: 45 },
+    korunan: [],
+  });
+  assert.deepEqual(coz(aksam, { kesinlik: "an", tarih: "2026-11-28", saat: "16:00" }).korunan, [], "gün kaydının saati yok, süresi yok");
+  // Kayıtsız ya da korunacak bir şey yoksa girdi olduğu gibi; dönem ve belirsiz yerine geçer.
+  assert.deepEqual(coz(undefined, { kesinlik: "gun", tarih: "2026-11-28" }), { zaman: { kesinlik: "gun", tarih: "2026-11-28" }, korunan: [] });
+  const donem = { kesinlik: "donem", baslangic: "2026-11-30", bitis: "2026-12-06" } as const;
+  assert.deepEqual(coz(aksam, donem), { zaman: donem, korunan: [] });
+  assert.deepEqual(coz(saatli, { kesinlik: "belirsiz", ifade: "bir ara" }), { zaman: { kesinlik: "belirsiz", ifade: "bir ara" }, korunan: [] });
+});
+
+test("güncelleme girdisi null ile kaldırmayı taşır; ekleme girdisi taşımaz; tanım ve şema modeli yönlendirir", () => {
+  const guncelle = AJANDA_ARACLARI.ajanda_guncelle.girdi;
+  const g = (zaman: unknown) => guncelle.safeParse({ kayit_id: "k1", dayanak: DAYANAK, degisiklik: { zaman } }).success;
+  assert.equal(g({ kesinlik: "gun", tarih: "2026-11-28", gun_bolumu: null }), true);
+  assert.equal(g({ kesinlik: "gun", tarih: "2026-11-28", saat: null }), true);
+  assert.equal(g({ kesinlik: "gun", tarih: "2026-11-28", saat: "15:00" }), false, "gun biçiminde saat yalnız null");
+  assert.equal(g({ kesinlik: "an", tarih: "2026-11-28", saat: "15:00", sure_dk: null }), true);
+  assert.equal(g({ kesinlik: "an", tarih: "2026-11-28", saat: "15:00", gun_bolumu: null }), false);
+  assert.equal(g({ kesinlik: "gun", tarih: "2026-11-28", gun_bolumu: "ikindi" }), false);
+  assert.equal(g({ kesinlik: "donem", baslangic: "2026-12-06", bitis: "2026-11-30" }), false, "dönem kuralı aynı");
+  const ekle = AJANDA_ARACLARI.ajanda_ekle.girdi;
+  assert.equal(ekle.safeParse({ tur: "gorev", baslik: "x", zaman: { kesinlik: "gun", tarih: "2026-11-28", gun_bolumu: null }, dayanak: DAYANAK }).success, false);
+  assert.equal(ekle.safeParse({ tur: "gorev", baslik: "x", zaman: { kesinlik: "gun", tarih: "2026-11-28", saat: null }, dayanak: DAYANAK }).success, false);
+  assert.match(AJANDA_ARAC_ACIKLAMALARI.ajanda_guncelle, /yalnız gün değişiyorsa zaman\{kesinlik:gun, tarih\} yeter, kaydın saati, süresi ve gün bölümü korunur/);
+  assert.match(AJANDA_ARAC_ACIKLAMALARI.ajanda_guncelle, /gun_bolumu:null, saat:null, sure_dk:null/);
+  const props = (jsonSemasi(guncelle) as { properties: { degisiklik: { properties: Record<string, { description?: string }> } } }).properties;
+  assert.match(props.degisiklik.properties.zaman!.description ?? "", /söylenmeyen saati, süresi ve gün bölümü korunur/);
+  const sema = JSON.stringify(jsonSemasi(guncelle));
+  assert.match(sema, /"type":"null"/);
+});
+
+test("güncelleme çıktısı ve metni: korunan zaman alanları ve değişen hatırlatma saati modele söylenir", () => {
+  const cikti = AJANDA_ARACLARI.ajanda_guncelle.cikti;
+  const taban = { sonuc: "guncellendi" as const, mesaj_ani: GECE, kayit: GUN_OZETI, korunan_alanlar: [] };
+  assert.equal(cikti.safeParse({ ...taban, zamanda_korunan: ["gun_bolumu"] }).success, true);
+  assert.equal(cikti.safeParse({ ...taban, zamanda_korunan: [] }).success, false, "boşsa anahtar yok");
+  assert.equal(cikti.safeParse({ ...taban, zamanda_korunan: ["ifade"] }).success, false);
+  assert.equal(cikti.safeParse({ ...taban, sonuc: "degismedi", zamanda_korunan: ["gun_bolumu"] }).success, false);
+  const onceki = { tarih: "2026-11-27", saat: "19:00", gecti: false } as const;
+  assert.equal(cikti.safeParse({ ...taban, onceki_gun_hatirlatmasi: onceki }).success, true);
+  const korunan = ajandaGuncelleMetni({ ...taban, zamanda_korunan: ["gun_bolumu"] });
+  assert.match(korunan, /zaman=2026-11-27 Cuma saatsiz aksam/);
+  assert.match(korunan, /Kaydın eski zamanından korunup yeni zamana taşınanlar: gun_bolumu \(kullanıcı bunları söylemedi\)\. Kullanıcı bunları da kaldırmak istediyse gun_bolumu:null ile yeniden çağır\./);
+  const sabah = { ...GUN_OZETI, hatirlatma: { ...GUN_OZETI.hatirlatma, gun_hatirlatmasi: { tarih: "2026-11-27", saat: "08:00", gecti: false } } };
+  assert.match(ajandaGuncelleMetni({ ...taban, kayit: sabah, onceki_gun_hatirlatmasi: onceki }), /Hatırlatma saati değişti: önceden 19:00, şimdi 08:00; bunu kullanıcıya söyle\./);
+  const { gun_hatirlatmasi: _g, ...hatirlatmasiz } = GUN_OZETI.hatirlatma;
+  assert.match(ajandaGuncelleMetni({ ...taban, kayit: { ...GUN_OZETI, hatirlatma: hatirlatmasiz }, onceki_gun_hatirlatmasi: onceki }), /önceden 19:00, şimdi gün hatırlatması yok/);
+  const sade = ajandaGuncelleMetni(taban);
+  assert.equal(sade.includes("taşınanlar"), false);
+  assert.equal(sade.includes("Hatırlatma saati değişti"), false);
+});
+
+test("gece teyidinin aynı tur kuralı: ret verilen turda soruldu kabul edilmez, gun_acik edilir; ret metni soruyu şimdi sordurur", () => {
+  const g = (gece_teyidi?: "soruldu" | "gun_acik") => ({
+    zaman: { kesinlik: "gun", tarih: "2026-11-28" },
+    dayanak: { tarih: "2026-11-27", saat: "01:45", ...(gece_teyidi && { gece_teyidi }) },
+  });
+  assert.equal(geceSorulduAyniTurdaMi(g("soruldu"), GECE, "insan", true), true);
+  assert.equal(geceSorulduAyniTurdaMi(g("soruldu"), GECE, "insan", false), false, "ret almamış tur");
+  assert.equal(geceSorulduAyniTurdaMi(g("gun_acik"), GECE, "insan", true), false);
+  assert.equal(geceSorulduAyniTurdaMi(g("soruldu"), GECE, "sentetik", true), false);
+  assert.equal(geceSorulduAyniTurdaMi(g("soruldu"), { saat: "04:00" }, "insan", true), false, "gece dışı");
+  const dayanak = { tarih: "2026-11-27", saat: "01:45", gece_teyidi: "soruldu" } as const;
+  const baslikDegisikligi: { baslik: string; zaman?: undefined } = { baslik: "x" };
+  const gunDegisikligi = { zaman: { kesinlik: "gun", tarih: "2026-11-28" } };
+  assert.equal(geceSorulduAyniTurdaMi({ dayanak, degisiklik: baslikDegisikligi }, GECE, "insan", true), false, "takvime bağlı değil");
+  assert.equal(geceSorulduAyniTurdaMi({ dayanak, degisiklik: gunDegisikligi }, GECE, "insan", true), true);
+  // geceTeyidiEksikMi (uygulamanın aynaladığı kural) değişmedi: teyit varsa eksik değildir.
+  assert.equal(geceTeyidiEksikMi(g("soruldu"), GECE, "insan"), false);
+  assert.equal(geceTeyidiEksikMi(g(), GECE, "insan"), true);
+  // Çıktı: ayni_tur yalnız gece reddinde.
+  const ekle = AJANDA_ARACLARI.ajanda_ekle.cikti;
+  assert.equal(ekle.safeParse({ sonuc: "ret", mesaj_ani: GECE, neden: "gece_teyidi_gerekli", ayni_tur: true }).success, true);
+  assert.equal(ekle.safeParse({ sonuc: "ret", mesaj_ani: GECE, neden: "kayit_siniri", ayni_tur: true }).success, false);
+  assert.equal(AJANDA_ARACLARI.ajanda_guncelle.cikti.safeParse({ sonuc: "ret", mesaj_ani: GECE, neden: "gece_teyidi_gerekli", ayni_tur: true }).success, true);
+  // İlk ret: soruyu yanıtta sor, bu turda yeniden çağırma.
+  const ilk = ajandaEkleMetni({ sonuc: "ret", mesaj_ani: GECE, neden: "gece_teyidi_gerekli" });
+  assert.match(ilk, /Soruyu yanıtında sor ve bu turda yeniden çağırma: cevap kullanıcının sonraki mesajıyla gelir/);
+  assert.match(ilk, /bu turda verilen soruldu kabul edilmez/);
+  // Aynı turdaki kestirme: ayrı metin.
+  const ikinci = ajandaGuncelleMetni({ sonuc: "ret", mesaj_ani: GECE, neden: "gece_teyidi_gerekli", ayni_tur: true });
+  assert.match(ikinci, /^ajanda_guncelle: uygulanmadı, neden=gece_teyidi_gerekli\. Bu turda gece teyidi zaten istendi ve kullanıcı henüz cevap vermedi/);
+  assert.match(ikinci, /Şimdi aracı yeniden çağırma; yanıtında hangi günü kastettiğini sor \(ör\. "27 Kasım Cuma mı, 28 Kasım Cumartesi mi\?"\) ve kaydetmediğini söyle/);
+  assert.match(ikinci, /mesaj_ani=2026-11-27 Cuma 01:45 Europe\/Istanbul$/);
+  // Tanımlar da kuralı söyler.
+  assert.match(AJANDA_ARAC_ACIKLAMALARI.ajanda_ekle, /soruyu sorduğun turda kaydetme/);
+  const props = (jsonSemasi(AJANDA_ARACLARI.ajanda_ekle.girdi) as { properties: { dayanak: { properties: Record<string, { description?: string }> } } }).properties;
+  assert.match(props.dayanak.properties.gece_teyidi!.description ?? "", /soruyu sorduğun turda kabul edilmez/);
 });

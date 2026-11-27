@@ -13,11 +13,14 @@ import {
   ajandaEsDegisikligi,
   ajandaTekilAnahtari,
   ajandaTekilKarari,
+  ajandaZamanDegisikligiCoz,
   dayanakGecerliMi,
+  geceSorulduAyniTurdaMi,
   geceTeyidiEksikMi,
   kullaniciEmriMi,
   OpakId,
   tarihliGirdiMi,
+  type ZamandaKorunan,
 } from "@eren/protocol";
 import {
   degisiklikAni,
@@ -52,14 +55,19 @@ import type {
  * - Takvime bağlı girdi `dayanakGecerliMi(dayanak, mesaj_ani)` ister (`dayanak_uyusmuyor`); hemen
  *   ardından (v2) `geceTeyidiEksikMi(girdi, mesaj_ani, tur_kokeni)` doğruysa `gece_teyidi_gerekli`
  *   (insan turunda, mesaj anı 00:00-04:00, takvime bağlı ve `dayanak.gece_teyidi` yok; sentetik turda
- *   hiç); ikisi de kayda dokunmadan önce, güncellemede kayıt aranmadan önce. Dilimsiz
+ *   hiç); ikisi de kayda dokunmadan önce, güncellemede kayıt aranmadan önce. Servis reddi verdiği
+ *   turu sohbet başına bellekte tutar: aynı turda gelen `soruldu` da reddedilir (`geceSorulduAyniTurdaMi`,
+ *   çıktıda `ayni_tur:true`); `gun_acik` aynı turda geçerlidir. Dilimsiz
  *   zaman ve `mutlak` hatırlatma turun mesaj anının dilimini alır; dilim veritabanında yoksa
  *   `saat_dilimi_bilinmiyor`.
  * - Ekleme: tekil anahtar (`sohbet:<id>` kapsamı) → `ajandaTekilKarari`; emir olmayan turda taslak
  *   doğar; emirde açık eşe `ajandaEsDegisikligi` işlenir (eş taslaksa aynı yazımda onay). Emirle doğan
  *   kayıtta açıkça verilen alanlar `elle_alanlar`'a girer (varsayılan hatırlatma girmez).
  * - Güncelleme: sentetik turda taslak olmayan kayda değişiklik ya da herhangi bir onay
- *   `sentetik_turda_izinsiz`; elle alanlar korunur (`korunan_alanlar`).
+ *   `sentetik_turda_izinsiz`; elle alanlar korunur (`korunan_alanlar`). Zaman kaydın var olan
+ *   zamanıyla birleşir (`ajandaZamanDegisikligiCoz`: verilmeyen saat, süre, gün bölümü korunur, `null`
+ *   kaldırır); taşınanlar `zamanda_korunan`, gün hatırlatmasının saati değiştiyse eskisi
+ *   `onceki_gun_hatirlatmasi` ile döner.
  * - Her işleyici eşzamanlıdır (araya `await` girmez) ve tek `depo.islem` içinde yazar.
  */
 
@@ -151,12 +159,34 @@ export function ajandaAraclariKur(b: AjandaBagimliliklari): AjandaFiilIsleyicile
   const dayanakTutar = (g: Parameters<typeof tarihliGirdiMi>[0], dayanak: AjandaFiilGirdisi<"ajanda_ekle">["dayanak"], an: AjandaYerelAn) =>
     !tarihliGirdiMi(g) || (dayanak !== undefined && dayanakGecerliMi(dayanak, an));
 
+  /**
+   * Sohbet başına `gece_teyidi_gerekli` reddinin verildiği son tur (`turn_id`, rastgele ve tur başına
+   * tek). Yalnız bellekte: servis yeniden başlarsa tur da biter. Boyu sohbet sayısıyla sınırlı.
+   */
+  const geceReddiTuru = new Map<string, string>();
+
+  /** Gece aralığı kararı (dayanaktan sonra, kayda dokunmadan önce): ret ya da `null`. */
+  const geceReddi = (
+    g: Parameters<typeof geceTeyidiEksikMi>[0],
+    tur: AjandaTurBaglami,
+    baglam: AjandaKopruBaglami,
+  ): { neden: "gece_teyidi_gerekli"; ayni_tur?: true } | null => {
+    if (geceTeyidiEksikMi(g, tur.mesaj_ani, tur.tur_kokeni)) {
+      geceReddiTuru.set(baglam.sohbet_id, tur.turn_id);
+      return { neden: "gece_teyidi_gerekli" };
+    }
+    const istendi = geceReddiTuru.get(baglam.sohbet_id) === tur.turn_id;
+    if (geceSorulduAyniTurdaMi(g, tur.mesaj_ani, tur.tur_kokeni, istendi)) return { neden: "gece_teyidi_gerekli", ayni_tur: true };
+    return null;
+  };
+
   const ekle: Govde<"ajanda_ekle"> = (g, tur, baglam, simdi) => {
     const mesaj_ani = tur.mesaj_ani;
     const ret = (neden: Extract<Cikti<"ajanda_ekle">, { sonuc: "ret" }>["neden"]): Cikti<"ajanda_ekle"> => ({ sonuc: "ret", mesaj_ani, neden });
     if (!dayanakTutar(g, g.dayanak, mesaj_ani)) return ret("dayanak_uyusmuyor");
-    // v2: dayanaktan hemen sonra, kayda dokunmadan önce gece aralığı teyidi.
-    if (geceTeyidiEksikMi(g, mesaj_ani, tur.tur_kokeni)) return ret("gece_teyidi_gerekli");
+    // v2: dayanaktan hemen sonra, kayda dokunmadan önce gece aralığı teyidi (aynı turda soruldu da ret).
+    const gece = geceReddi(g, tur, baglam);
+    if (gece !== null) return { sonuc: "ret", mesaj_ani, ...gece };
     const yazar = yazarKur(tur, baglam);
     const emir = kullaniciEmriMi(yazar);
     const dilim = mesaj_ani.saat_dilimi;
@@ -225,7 +255,8 @@ export function ajandaAraclariKur(b: AjandaBagimliliklari): AjandaFiilIsleyicile
     const d = g.degisiklik;
     if (!dayanakTutar(d, g.dayanak, mesaj_ani)) return ret("dayanak_uyusmuyor");
     // v2: sıra dayanak → gece → kayıt (kayıt aranmadan önce; yoksa da teyit istenir).
-    if (geceTeyidiEksikMi(g, mesaj_ani, tur.tur_kokeni)) return ret("gece_teyidi_gerekli");
+    const gece = geceReddi(g, tur, baglam);
+    if (gece !== null) return { sonuc: "ret", mesaj_ani, ...gece };
     const k = depo.ajandaKaydiGetir(g.kayit_id);
     if (k === null) return ret("kayit_bulunamadi");
     if (k.silindi) return ret("kayit_silinmis");
@@ -239,7 +270,14 @@ export function ajandaAraclariKur(b: AjandaBagimliliklari): AjandaFiilIsleyicile
     if (d.tur !== undefined) degisiklik.tur = d.tur;
     if (d.baslik !== undefined) degisiklik.baslik = d.baslik;
     if (d.aciklama !== undefined) degisiklik.aciklama = d.aciklama;
-    if (d.zaman !== undefined) degisiklik.zaman = d.zaman === null ? null : zamanDoldur(d.zaman, dilim);
+    // v2: zaman kaydın var olan zamanıyla birleşir; verilmeyen saat, süre ve gün bölümü korunur.
+    let zamandaKorunan: ZamandaKorunan[] = [];
+    if (d.zaman === null) degisiklik.zaman = null;
+    else if (d.zaman !== undefined) {
+      const cozum = ajandaZamanDegisikligiCoz(k.zaman, d.zaman);
+      degisiklik.zaman = zamanDoldur(cozum.zaman, dilim);
+      zamandaKorunan = cozum.korunan;
+    }
     if (d.hatirlatmalar !== undefined) degisiklik.hatirlatmalar = d.hatirlatmalar.map((h) => hatirlatmaDoldur(h, dilim));
     if (d.durum !== undefined) degisiklik.durum = d.durum;
     if (!dilimlerBilinir(takvim, degisiklik.zaman, degisiklik.hatirlatmalar)) return ret("saat_dilimi_bilinmiyor");
@@ -261,7 +299,21 @@ export function ajandaAraclariKur(b: AjandaBagimliliklari): AjandaFiilIsleyicile
     };
     const yazim = dogrulaVeYaz(depo, yeni, k.revizyon, girdi, ts);
     if (!yazim.ok) return ret(yazim.neden);
-    return { sonuc: "guncellendi", mesaj_ani, kayit: ozet(yazim.deger, ts), korunan_alanlar: bir.korunan };
+    const sonOzet = ozet(yazim.deger, ts);
+    const cikti: Extract<Cikti<"ajanda_guncelle">, { sonuc: "guncellendi" }> = {
+      sonuc: "guncellendi",
+      mesaj_ani,
+      kayit: sonOzet,
+      korunan_alanlar: bir.korunan,
+    };
+    if (bir.uygulanan.includes("zaman")) {
+      if (zamandaKorunan.length > 0) cikti.zamanda_korunan = zamandaKorunan;
+      // Gün hatırlatmasının saati değiştiyse (ya da kalktıysa) eskisi: model kullanıcıya söyler.
+      const onceki = ozet(k, ts).hatirlatma.gun_hatirlatmasi;
+      const sonraki = sonOzet.hatirlatma.gun_hatirlatmasi;
+      if (onceki !== undefined && (sonraki === undefined || sonraki.saat !== onceki.saat)) cikti.onceki_gun_hatirlatmasi = onceki;
+    }
+    return cikti;
   };
 
   const listele: Govde<"ajanda_listele"> = (g, tur) => {

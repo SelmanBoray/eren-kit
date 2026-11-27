@@ -829,6 +829,66 @@ describe("birleşim: ajanda sürüm 2 (ilk gerçek kullanım: gece 01:45 'yarın
     for (const yasak of [YIKAMA, "cuma akşamı", "yarın akşama", "cumartesi akşamı"]) assert.ok(!gunluk.includes(yasak), `günlükte: ${yasak}`);
   });
 
+  it("gece reddinden sonra aynı turda sormadan gelen soruldu yazılmaz, kullanıcının sonraki mesajıyla gelen yazılır; 'cuma, akşam' kaydının yalnız günü değişince bölüm ve 19:00 hatırlatması korunur", async () => {
+    const o = await ortamKur({ baslangicMs: GECE_T0 });
+    const { eren, sohbet, ajanda, istemci } = await hazirla(o);
+    const takvim = o.servis.takvim!;
+
+    // 01:45: teyitsiz çağrı reddedilir; model AYNI turda sormadan soruldu ile yeniden çağırır: yine ret.
+    await o.kullaniciMesaji(sohbet, ISTEK);
+    const cumaAksam = { kesinlik: "gun", tarih: "2026-11-27", gun_bolumu: "aksam", ifade: "cuma akşamı" };
+    const girdi = (saat: string, gece_teyidi?: string): J => ({
+      tur: "gorev",
+      baslik: YIKAMA,
+      zaman: cumaAksam,
+      dayanak: { tarih: "2026-11-27", saat, ...(gece_teyidi !== undefined && { gece_teyidi }) },
+    });
+    const ret = await o.arac(istemci, "ajanda_ekle", girdi("01:45"));
+    assert.match(ret, /^ajanda_ekle: eklenmedi, neden=gece_teyidi_gerekli\./);
+    const kestirme = await o.arac(istemci, "ajanda_ekle", girdi("01:45", "soruldu"));
+    assert.equal(kestirme, ajandaEkleMetni({ sonuc: "ret", mesaj_ani: an("01:45"), neden: "gece_teyidi_gerekli", ayni_tur: true }));
+    assert.match(kestirme, /Bu turda gece teyidi zaten istendi .* Şimdi aracı yeniden çağırma; yanıtında hangi günü kastettiğini sor/);
+    assert.ok(!kestirme.includes(YIKAMA), "ret metni kayıt metni taşıdı");
+    assert.equal(ajanda.kayitlar().length, 0, "aynı turdaki soruldu kayıt yayınladı");
+    assert.equal(o.servis.depo.ajandaKayitSayisi(), 0);
+    await o.erenSatiri(eren, sonucSatiri(eren, "27 Kasım Cuma mı, 28 Kasım Cumartesi mi?"));
+
+    // 01:47 kullanıcının cevabı yeni turu açar: soruldu kabul edilir.
+    await o.ilerlet(2 * DAKIKA);
+    await o.kullaniciMesaji(sohbet, "cuma akşamı");
+    const tamam = await o.arac(istemci, "ajanda_ekle", girdi("01:47", "soruldu"));
+    assert.match(tamam, /^ajanda_ekle: eklendi /);
+    assert.equal(ajanda.kayitlar().length, 1);
+    const k = ajanda.kayitlar()[0]!;
+    assert.deepEqual(k.zaman, { ...cumaAksam, saat_dilimi: DILIM });
+    assert.deepEqual(kurulacakHatirlatmalar(k, o.d.saat.simdiMs(), takvim.anCevir).map((h) => h.tetik_ms), [takvim.anCevir("2026-11-27", "19:00", DILIM)]);
+    await o.erenSatiri(eren, sonucSatiri(eren, "27 Kasım Cuma akşamına ekledim, 19:00'da hatırlatırım."));
+
+    // 01:49 "araba yıkamayı cumartesiye al": model bölümü söylenmediği için yalnız yeni günü verir.
+    await o.ilerlet(2 * DAKIKA);
+    await o.kullaniciMesaji(sohbet, "araba yıkamayı cumartesiye al");
+    const g = await o.arac(istemci, "ajanda_guncelle", {
+      kayit_id: k.kayit_id,
+      degisiklik: { zaman: { kesinlik: "gun", tarih: "2026-11-28", ifade: "cumartesiye" } },
+      dayanak: { tarih: "2026-11-27", saat: "01:49", gece_teyidi: "gun_acik" },
+    });
+    assert.match(g, /^ajanda_guncelle: güncellendi /);
+    assert.match(g, /zaman=2026-11-28 Cumartesi saatsiz aksam Europe\/Istanbul \(mesaj anına göre yarın\)/);
+    assert.match(g, /gun_hatirlatmasi=2026-11-28 Cumartesi 19:00/);
+    assert.match(g, /korunup yeni zamana taşınanlar: gun_bolumu /);
+    assert.equal(g.includes("Hatırlatma saati değişti"), false);
+    assert.ok(!g.includes(YIKAMA) && !g.includes("cumartesiye"), "araç çıktısı kayıt metni taşıdı");
+    const son = ajanda.kayitlar().at(-1)!;
+    assert.equal(son.kayit_id, k.kayit_id);
+    assert.deepEqual(son.zaman, { kesinlik: "gun", tarih: "2026-11-28", gun_bolumu: "aksam", ifade: "cumartesiye", saat_dilimi: DILIM });
+    assert.deepEqual(son.hatirlatmalar, k.hatirlatmalar);
+    assert.deepEqual(kurulacakHatirlatmalar(son, o.d.saat.simdiMs(), takvim.anCevir).map((h) => h.tetik_ms), [takvim.anCevir("2026-11-28", "19:00", DILIM)]);
+
+    // Kayıt metni hiçbir günlük satırında yok.
+    const gunluk = o.d.kayit.satirlar.join("\n");
+    for (const yasak of [YIKAMA, "cuma akşamı", "cumartesiye"]) assert.ok(!gunluk.includes(yasak), `günlükte: ${yasak}`);
+  });
+
   it("gündüz (10:00) aynı istek teyit istemez: 'yarın' takvime göre Cumartesi, çıktı günü adıyla söyler", async () => {
     const o = await ortamKur({ baslangicMs: Date.UTC(2026, 10, 27, 7, 0, 0) });
     const { sohbet, ajanda, istemci } = await hazirla(o);
