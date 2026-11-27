@@ -436,6 +436,7 @@ const ekGocler = (anaAdi: string): readonly string[] => [
     olusturma_ms INTEGER NOT NULL,
     guncelleme_ms INTEGER NOT NULL,
     bagli_msg_id TEXT,
+    turetilen_bayt INTEGER NOT NULL DEFAULT 0,
     UNIQUE (device_id, medya_id)
   ) STRICT;
   CREATE INDEX IF NOT EXISTS medya_durum ON medya (durum);
@@ -707,6 +708,7 @@ const medyaSatiri = (r: Satir): MedyaKaydi => ({
   olusturma_ms: sayi(r.olusturma_ms),
   guncelleme_ms: sayi(r.guncelleme_ms),
   bagli_msg_id: metinVeyaNull(r.bagli_msg_id),
+  turetilen_bayt: sayi(r.turetilen_bayt),
 });
 
 /**
@@ -755,6 +757,7 @@ const MEDYA_GUNCELLEME: { readonly [A in keyof Required<MedyaAlanlari>]: (v: unk
   kare_adet: negatifOlmayan("kare_adet", true),
   guncelleme_ms: negatifOlmayan("guncelleme_ms", false),
   bagli_msg_id: (v) => (v === null ? null : OpakId.parse(v)),
+  turetilen_bayt: negatifOlmayan("turetilen_bayt", false),
 };
 
 /** Diskte yer tutan durumlar (`medyaDiskBayti`): `reddedildi`'nin dosyaları silinmiştir. */
@@ -2261,7 +2264,10 @@ export const depoAc = (b: DepoBagimliliklari): CihazYonetimliDepo => {
       return sayi(r.n);
     },
     medyaDiskBayti() {
-      return sayi((bir(`SELECT COALESCE(SUM(boyut), 0) AS t FROM medya WHERE durum IN ${MEDYA_DISKTE}`) as Satir).t);
+      // Asıl dosya + türetilenler (`gorsel.jpg`, kareler, döküm): kota gerçek disk kullanımına bakar.
+      return sayi(
+        (bir(`SELECT COALESCE(SUM(boyut + turetilen_bayt), 0) AS t FROM medya WHERE durum IN ${MEDYA_DISKTE}`) as Satir).t,
+      );
     },
     medyaTahliyeAdaylari() {
       // Gönderilmiş (bağlanmış, kuyruk satırı ana oturuma yazılıp silinmiş) kabul edilmiş kayıtlar, en eskiden.

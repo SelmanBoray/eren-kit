@@ -279,6 +279,51 @@ describe("dis-dunya", { skip: !win }, () => {
       assert.equal(r.zamanAsimi, true);
       assert.ok(Date.now() - t0 < 10000);
     });
+
+    test("iptal sinyali süreç ağacını öldürür, söz AbortError ile kısa sürede reddedilir", { timeout: 30_000 }, async () => {
+      const torun = yaz("iptal-torun.mjs", uyuBetik);
+      const pidDosyasi = join(kok, "iptal-pid.json");
+      const betik = yaz(
+        "iptal-ebeveyn.mjs",
+        `import { spawn } from "node:child_process";
+         import { writeFileSync } from "node:fs";
+         const t = spawn(process.execPath, [${JSON.stringify(torun)}], { stdio: "ignore", windowsHide: true });
+         writeFileSync(${JSON.stringify(pidDosyasi)}, JSON.stringify({ ebeveyn: process.pid, torun: t.pid }));
+         setInterval(() => {}, 1000);`,
+      );
+      const ac = new AbortController();
+      const p = d.surec.aracCalistir({ exe: process.execPath, argv: [betik], zamanAsimiMs: 60_000, iptal: ac.signal });
+      assert.ok(await kosulBekle(() => existsSync(pidDosyasi)), "betik başlamalı");
+      const pidler = JSON.parse(readFileSync(pidDosyasi, "utf8")) as { ebeveyn: number; torun: number };
+      baslatilanPidler.add(pidler.ebeveyn);
+      baslatilanPidler.add(pidler.torun);
+      const t0 = Date.now();
+      ac.abort();
+      await assert.rejects(p, (e: Error) => e.name === "AbortError");
+      assert.ok(Date.now() - t0 < 10_000, "zaman aşımını beklemez");
+      const yasiyor = (pid: number): boolean => {
+        try {
+          process.kill(pid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      };
+      assert.ok(await kosulBekle(() => !yasiyor(pidler.ebeveyn) && !yasiyor(pidler.torun)), "ağacın tamamı ölmeli");
+    });
+
+    test("önceden tetiklenmiş iptal sinyalinde süreç hiç başlatılmaz", async () => {
+      const isaret = join(kok, "iptal-erken.txt");
+      const betik = yaz("iptal-erken.mjs", `import { writeFileSync } from "node:fs"; writeFileSync(${JSON.stringify(isaret)}, "x");`);
+      const ac = new AbortController();
+      ac.abort();
+      await assert.rejects(
+        d.surec.aracCalistir({ exe: process.execPath, argv: [betik], zamanAsimiMs: 15_000, iptal: ac.signal }),
+        (e: Error) => e.name === "AbortError",
+      );
+      await bekle(1000);
+      assert.equal(existsSync(isaret), false);
+    });
   });
 
   describe("sistem", () => {

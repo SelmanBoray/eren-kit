@@ -255,6 +255,7 @@ describe("depo medya: kayıt", () => {
       olusturma_ms: 100,
       guncelleme_ms: 100,
       bagli_msg_id: null,
+      turetilen_bayt: 0,
     });
     assert.deepEqual(depo.medyaKaydiBul(TEL, "md1"), k);
     assert.deepEqual(depo.medyaKaydiGetir(1), k);
@@ -422,6 +423,24 @@ describe("depo medya: sorgular", () => {
     const red = depo.medyaKaydiAc(foto("r1", { boyut: 800 }));
     depo.medyaGuncelle(red.no, { durum: "reddedildi", red_kodu: "medya_siniri" });
     assert.equal(depo.medyaDiskBayti(), 700);
+  });
+
+  it("medyaDiskBayti türetilen dosyaları da sayar (turetilen_bayt); medyaGuncelle yazar ve denetler", () => {
+    const { depo } = kur();
+    const k = kabulAc(depo, foto("k1", { boyut: 200 }));
+    assert.equal(k.turetilen_bayt, 0);
+    depo.medyaGuncelle(k.no, { turetilen_bayt: 50 });
+    const sil = depo.medyaKaydiAc(foto("s1", { boyut: 400 }));
+    depo.medyaGuncelle(sil.no, { durum: "silinecek", turetilen_bayt: 7 });
+    // Reddedilenin dosyaları silinmiştir: türetileni de sayılmaz.
+    const red = depo.medyaKaydiAc(foto("r1", { boyut: 800 }));
+    depo.medyaGuncelle(red.no, { durum: "reddedildi", red_kodu: "medya_siniri", turetilen_bayt: 1000 });
+    assert.equal(depo.medyaDiskBayti(), 200 + 50 + 400 + 7);
+    assert.equal(depo.medyaKaydiGetir(k.no)?.turetilen_bayt, 50);
+    assert.throws(() => depo.medyaGuncelle(k.no, { turetilen_bayt: -1 }), /turetilen_bayt/);
+    assert.throws(() => depo.medyaGuncelle(k.no, { turetilen_bayt: 1.5 }), /turetilen_bayt/);
+    assert.throws(() => depo.medyaGuncelle(k.no, { turetilen_bayt: null as never }), /turetilen_bayt/);
+    assert.equal(depo.medyaKaydiGetir(k.no)?.turetilen_bayt, 50);
   });
 
   it("medyaDiskBayti 10 GB üstünü taşmadan toplar (kota: 10240 MiB)", () => {

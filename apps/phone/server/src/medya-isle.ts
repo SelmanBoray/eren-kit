@@ -502,10 +502,21 @@ const CIKTISIZ: AracCalismasi = { zamanAsimi: false };
 export const medyaIsleyiciKur: MedyaIsleyiciFabrikasi = (b) => {
   const s = b.ayar.sinirlar;
 
-  /** Yol kurma ya da başlatma hatası `null` (çıktı yok); hiç atmaz. */
-  const calistir = async (exe: string, argv: () => string[], zamanAsimiMs: number): Promise<AracSonucu | null> => {
+  /** Yol kurma, başlatma hatası ya da iptal `null` (çıktı yok); hiç atmaz. `iptal` aynen `AracIstegi`'ne gider. */
+  const calistir = async (
+    exe: string,
+    argv: () => string[],
+    zamanAsimiMs: number,
+    iptal: AbortSignal | undefined,
+  ): Promise<AracSonucu | null> => {
     try {
-      return await b.surec.aracCalistir({ exe, argv: argv(), cwd: b.veriKoku, zamanAsimiMs });
+      return await b.surec.aracCalistir({
+        exe,
+        argv: argv(),
+        cwd: b.veriKoku,
+        zamanAsimiMs,
+        ...(iptal !== undefined && { iptal }),
+      });
     } catch {
       return null;
     }
@@ -518,31 +529,33 @@ export const medyaIsleyiciKur: MedyaIsleyiciFabrikasi = (b) => {
     beyanaUyar,
     kareZamanlari: (sure_ms) => kareZamanlari(sure_ms, s),
 
-    olc: async (no, bicim) => {
-      const r = await calistir(b.ayar.ffprobe, () => olcumArgv(goreli(no, asil(bicim)), bicim), s.olcumZamanAsimiMs);
+    olc: async (no, bicim, iptal) => {
+      const r = await calistir(b.ayar.ffprobe, () => olcumArgv(goreli(no, asil(bicim)), bicim), s.olcumZamanAsimiMs, iptal);
       if (r === null || r.zamanAsimi) return null;
       return olcumCoz(r.stdout);
     },
 
-    gorselUret: async (no, bicim) =>
+    gorselUret: async (no, bicim, iptal) =>
       bitis(
         await calistir(
           b.ayar.ffmpeg,
           () => gorselArgv(goreli(no, asil(bicim)), goreli(no, "gorsel.jpg"), bicim, s),
           s.gorselZamanAsimiMs,
+          iptal,
         ),
       ),
 
-    kareUret: async (no, bicim, sira, zaman_ms) =>
+    kareUret: async (no, bicim, sira, zaman_ms, iptal) =>
       bitis(
         await calistir(
           b.ayar.ffmpeg,
           () => kareArgv(goreli(no, asil(bicim)), goreli(no, kareAdi(sira)), bicim, zaman_ms, s),
           s.kareZamanAsimiMs,
+          iptal,
         ),
       ),
 
-    dokumUret: async (no, bicim, sure_ms) => {
+    dokumUret: async (no, bicim, sure_ms, iptal) => {
       const model = b.ayar.dokumModeli;
       if (model === null) return CIKTISIZ;
       return bitis(
@@ -560,6 +573,7 @@ export const medyaIsleyiciKur: MedyaIsleyiciFabrikasi = (b) => {
               }),
             ),
           dokumZamanAsimiMs(sure_ms, s),
+          iptal,
         ),
       );
     },

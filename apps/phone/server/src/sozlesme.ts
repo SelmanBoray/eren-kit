@@ -261,6 +261,11 @@ export interface AracIstegi {
   cwd?: string;
   ortam?: Ortam;
   zamanAsimiMs: number;
+  /**
+   * Verilir ve tetiklenirse süreç ağacı öldürülür (Windows: `taskkill /T /F`), söz `name: "AbortError"`
+   * hatasıyla reddedilir (süreç kapanınca, en geç kısa bir sınırda). Önceden tetiklenmişse süreç hiç başlamaz.
+   */
+  iptal?: AbortSignal;
 }
 
 export interface AracSonucu {
@@ -2753,6 +2758,11 @@ export interface MedyaKaydi {
   guncelleme_ms: number;
   /** Bağlandığı mesajın `client_msg_id`'si; `null`: bağlanmamış. Bağlanmış kayıt bir daha bağlanmaz. */
   bagli_msg_id: string | null;
+  /**
+   * Türetilen dosyaların (`gorsel.jpg`, kareler, `dokum.srt`, `dokum.txt`) son ölçülen bayt toplamı; açılışta
+   * 0. `medya` doğrulama ve her işleme sonunda diskten ölçüp yazar (`guncelleme_ms`'e dokunmadan). Kota bunu da sayar.
+   */
+  turetilen_bayt: number;
 }
 
 /** `MedyaDeposu.medyaKayitlari` süzgeci; verilmeyen alan süzmez. */
@@ -2776,8 +2786,8 @@ export interface MedyaKayitSuzgeci {
 
 export interface MedyaDeposu {
   /**
-   * Yeni kayıt (`durum: "yukleniyor"`, `alinan: 0`, `guncelleme_ms = olusturma_ms`, öteki alanlar
-   * `null`); kaydı döner. `(device_id, medya_id)` zaten varsa (silinecek dahil) ATAR: idempotentlik
+   * Yeni kayıt (`durum: "yukleniyor"`, `alinan: 0`, `turetilen_bayt: 0`, `guncelleme_ms = olusturma_ms`,
+   * öteki alanlar `null`); kaydı döner. `(device_id, medya_id)` zaten varsa (silinecek dahil) ATAR: idempotentlik
    * çağıranın `medyaKaydiBul`'udur.
    */
   medyaKaydiAc(
@@ -2796,7 +2806,7 @@ export interface MedyaDeposu {
   medyaKayitlari(suzgec?: MedyaKayitSuzgeci): MedyaKaydi[];
   /** Cihazın bitmemiş kayıtları: `yukleniyor` + bağlanmamış `kabul` (`BEKLEYEN_YUKLEME` sınırı). */
   medyaBekleyenSayisi(device_id: string): number;
-  /** Diskte yer tutan kayıtların `boyut` toplamı: `yukleniyor`, `kabul`, `silinecek` (kota). Türev dosyalar sayılmaz. */
+  /** Diskte yer tutan kayıtların `boyut + turetilen_bayt` toplamı: `yukleniyor`, `kabul`, `silinecek` (kota). */
   medyaDiskBayti(): number;
   /**
    * Kota aşılınca silinecek adaylar (Selman kararı: en eski medya silinir): `kabul`, `bagli_msg_id` dolu
@@ -2840,7 +2850,11 @@ export type MedyaliDepoFabrikasi = (b: DepoBagimliliklari) => MedyaliDepo;
 export interface MedyaServisSinirlari {
   /** Yarım yükleme ve bağlanmamış `kabul` bu kadar `guncelleme_ms`'ten sonra silinir (24 saat). */
   yarimOmurMs: number;
-  /** Bir ekin işlemesinin toplam üst sınırı (10 dk); dolunca elde olanla `kismi`/`hata`. */
+  /**
+   * Bir ekin işlemesinin toplam üst sınırı (10 dk), işçi kaydı aldığı andan (sırada beklenen süre
+   * sayılmaz). Dolunca süren araç iptal edilir, kayıt elde olanla `kismi`/`hata` biter. Araç başına zaman
+   * aşımları bunun içinde kalır: dökümün etkin sınırı `min(dokum zaman aşımı, kalan süre)`.
+   */
   islemeAzamiMs: number;
   /** Nesil başına modele verilen görsel üst sınırı (öneri 60); aşacak satırdan önce devir. */
   gorselNesilSiniri: number;
@@ -2981,18 +2995,22 @@ export interface MedyaIsleyici {
   beyanaUyar(bicim: MedyaBicimi, tur: MedyaTuru, mime: MedyaMime): boolean;
   /** Saf. Kare zamanları (ms, artan): `N = clamp(ceil(sure / kareAraligiMs), kareEnAz, kareEnCok)`, `(i + 0,5) * sure / N`. */
   kareZamanlari(sure_ms: number): readonly number[];
-  /** `ffprobe` (`olcumZamanAsimiMs`); çözülemez ya da zaman aşımıysa `null`. */
-  olc(no: number, bicim: MedyaBicimi): Promise<MedyaOlcumu | null>;
+  /**
+   * Araç çağıran dört yöntemin son `iptal`'i `AracIstegi.iptal`'e aynen gider: tetiklenince araç öldürülür,
+   * yöntem atmadan çıktısız döner (`olc` `null`, ötekiler `{zamanAsimi:false}`). Sonucu çağıran yok sayar.
+   * `ffprobe` (`olcumZamanAsimiMs`); çözülemez ya da zaman aşımıysa `null`.
+   */
+  olc(no: number, bicim: MedyaBicimi, iptal?: AbortSignal): Promise<MedyaOlcumu | null>;
   /** `asil` → `gorsel.jpg`: uzun kenar ≤ `gorselUzunKenar`, alan ≤ `gorselPiksel`, tek kare, `-q:v 3`. */
-  gorselUret(no: number, bicim: MedyaBicimi): Promise<AracCalismasi>;
+  gorselUret(no: number, bicim: MedyaBicimi, iptal?: AbortSignal): Promise<AracCalismasi>;
   /** `-ss` girişten önce, uzun kenar `kareUzunKenar`, `-q:v 4` → `kare-0<sira>.jpg`. */
-  kareUret(no: number, bicim: MedyaBicimi, sira: KareSirasi, zaman_ms: number): Promise<AracCalismasi>;
+  kareUret(no: number, bicim: MedyaBicimi, sira: KareSirasi, zaman_ms: number, iptal?: AbortSignal): Promise<AracCalismasi>;
   /**
    * `-vn -af "aresample=16000,whisper=model=<göreli>:language=<dil>:queue=20:format=srt:destination=<göreli>
    * [:vad_model=...]" -f null -`, `cwd` = veri kökü, yollar `goreliYol` ile → `dokum.srt`. Yalnız
    * `dokumModeli` doluyken çağrılır (değilse çağıran `model_yok` der).
    */
-  dokumUret(no: number, bicim: MedyaBicimi, sure_ms: number): Promise<AracCalismasi>;
+  dokumUret(no: number, bicim: MedyaBicimi, sure_ms: number, iptal?: AbortSignal): Promise<AracCalismasi>;
   /** Saf. SRT → `DokumMetni` (bozuk satır atlanır, çok satırlı altyazı birleşir). */
   dokumMetni(srt: string): DokumMetni;
 }
@@ -3155,7 +3173,14 @@ export interface MedyaYoneticisi {
 
   /** Testler için: işleme kuyruğu ve arka silmeler boşalınca çözülür. Atmaz. */
   bekle(): Promise<void>;
-  /** Zamanlayıcıları durdurur, süren aracın bitmesini bekler; sonra yükleme ve parça `reddedildi{medya_yok}`, öteki çağrılar etkisiz. */
+  /**
+   * Zamanlayıcıları durdurur, süren aracı İPTAL eder (süreç ağacı öldürülür) ve dönmesini bekler; araç
+   * sırası bekleyen doğrulama araç çalıştırmadan döner. Kısa sürer (araç başına en çok `taskkill` + kapanış
+   * beklemesi). Kayıtlar uzlaştırılabilir kalır: işçinin kaydı `kabul` + `isleniyor` (açılışta yeniden
+   * kuyruğa), doğrulaması kesilen kayıt `yukleniyor` (açılışta `.part`'tan yeniden doğrulanır ya da `.part`
+   * taşınmışsa `alinan` 0'a iner, telefon baştan yükler); kapanış red sayılmaz. Sonra yükleme ve parça
+   * `reddedildi{medya_yok}`, öteki çağrılar etkisiz.
+   */
   kapat(): Promise<void>;
 }
 

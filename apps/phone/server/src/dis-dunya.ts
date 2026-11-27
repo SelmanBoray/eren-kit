@@ -288,13 +288,47 @@ interface KisaSonuc {
   kod: number | null;
 }
 
-/** Kısa ömürlü yardımcı: `windowsHide`, `detached` yok, kabuk yok. Başlatılamazsa atar. */
+/** İptalde süreç ağacı öldürüldükten sonra `close` için en çok bu kadar beklenir (sonra söz yine reddedilir). */
+const IPTAL_KAPANIS_BEKLEME_MS = 3_000;
+
+/** `AracIstegi.iptal` tetiklenince sözün reddedildiği hata (`name: "AbortError"`, iletisi sabit). */
+const iptalHatasi = (): Error => Object.assign(new Error("arac_iptal"), { name: "AbortError" });
+
+/**
+ * İptal: süreç ağacını öldürür. Windows'ta `taskkill /T /F` (`cocuk.kill()` yalnız kökü öldürür, torun yetim
+ * kalırdı); süreç o arada kendiliğinden çıktıysa PID'ye dokunulmaz. Sonra kök hâlâ duruyorsa `kill()`.
+ * `taskkill` kendisi iptalsiz `kisaCalistir`'le çalışır: özyineleme yok. Hiç atmaz.
+ */
+const agaciKes = async (cocuk: ChildProcess): Promise<void> => {
+  const canli = (): boolean => cocuk.exitCode === null && cocuk.signalCode === null;
+  if (process.platform === "win32" && cocuk.pid !== undefined && canli()) {
+    await taskkill(["/T", "/F", "/PID", String(cocuk.pid)]);
+  }
+  if (canli()) {
+    try {
+      cocuk.kill("SIGKILL");
+    } catch {
+      // süreç zaten bitmiş olabilir
+    }
+  }
+};
+
+/**
+ * Kısa ömürlü yardımcı: `windowsHide`, `detached` yok, kabuk yok. Başlatılamazsa atar. `iptal` tetiklenince
+ * süreç ağacı öldürülür ve söz `AbortError` ile reddedilir: süreç kapanınca (dosya tutamaçları bırakılmış
+ * olur), `close` gelmezse en geç `IPTAL_KAPANIS_BEKLEME_MS` sonra. Önceden tetiklenmişse süreç başlamaz.
+ */
 const kisaCalistir = (
   exe: string,
   argv: readonly string[],
-  secenekler: { cwd?: string; ortam?: Readonly<Record<string, string>>; zamanAsimiMs: number },
+  secenekler: { cwd?: string; ortam?: Readonly<Record<string, string>>; zamanAsimiMs: number; iptal?: AbortSignal },
 ): Promise<KisaSonuc> =>
   new Promise<KisaSonuc>((coz, reddet) => {
+    const iptal = secenekler.iptal;
+    if (iptal?.aborted === true) {
+      reddet(iptalHatasi());
+      return;
+    }
     const so: SpawnOptions = { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] };
     if (secenekler.cwd !== undefined) so.cwd = secenekler.cwd;
     if (secenekler.ortam !== undefined) so.env = { ...secenekler.ortam };
@@ -320,10 +354,21 @@ const kisaCalistir = (
     cocuk.stderr?.on("error", bos);
     let bitti = false;
     let zamanAsimi = false;
+    let iptalEdildi = false;
+    let iptalSiniri: ReturnType<typeof setTimeout> | undefined;
+    const temizle = (): void => {
+      clearTimeout(sayac);
+      clearTimeout(iptalSiniri);
+      iptal?.removeEventListener("abort", iptalEt);
+    };
     const bitir = (kod: number | null): void => {
       if (bitti) return;
       bitti = true;
-      clearTimeout(sayac);
+      temizle();
+      if (iptalEdildi) {
+        reddet(iptalHatasi());
+        return;
+      }
       coz({
         zamanAsimi,
         stdout: Buffer.concat(cikti.stdout).toString("utf8"),
@@ -331,6 +376,13 @@ const kisaCalistir = (
         kod,
       });
     };
+    function iptalEt(): void {
+      if (bitti || iptalEdildi) return;
+      iptalEdildi = true;
+      clearTimeout(sayac);
+      iptalSiniri = setTimeout(() => bitir(null), IPTAL_KAPANIS_BEKLEME_MS);
+      void agaciKes(cocuk);
+    }
     const sayac = setTimeout(() => {
       zamanAsimi = true;
       try {
@@ -340,11 +392,12 @@ const kisaCalistir = (
       }
       bitir(null);
     }, secenekler.zamanAsimiMs);
+    iptal?.addEventListener("abort", iptalEt, { once: true });
     cocuk.once("error", (e) => {
       if (bitti) return;
       bitti = true;
-      clearTimeout(sayac);
-      reddet(e);
+      temizle();
+      reddet(iptalEdildi ? iptalHatasi() : e);
     });
     cocuk.once("close", (kod) => bitir(kod));
   });
@@ -651,11 +704,12 @@ const ayrikBaslat = async (istek: AyrikSurecIstegi): Promise<AyrikSurec> => {
 };
 
 const aracCalistir = async (istek: AracIstegi): Promise<AracSonucu> => {
-  const secenek: { cwd?: string; ortam?: Readonly<Record<string, string>>; zamanAsimiMs: number } = {
+  const secenek: { cwd?: string; ortam?: Readonly<Record<string, string>>; zamanAsimiMs: number; iptal?: AbortSignal } = {
     zamanAsimiMs: istek.zamanAsimiMs,
   };
   if (istek.cwd !== undefined) secenek.cwd = istek.cwd;
   if (istek.ortam !== undefined) secenek.ortam = istek.ortam;
+  if (istek.iptal !== undefined) secenek.iptal = istek.iptal;
   const s = await kisaCalistir(istek.exe, istek.argv, secenek);
   return { zamanAsimi: s.zamanAsimi, stdout: s.stdout, stderr: s.stderr };
 };

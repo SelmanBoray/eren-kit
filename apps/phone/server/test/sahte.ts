@@ -1487,7 +1487,11 @@ export interface SahteMedyaIsleyici extends MedyaIsleyici {
   olcum: MedyaOlcumu | null | ((no: number, bicim: MedyaBicimi) => MedyaOlcumu | null);
   /** `dokumUret`'in yazdığı SRT. */
   srt: string;
-  /** Verilirse her araç adımı (olc, üretimler) önce bunu bekler: "süren işleme" sınamaları için. */
+  /**
+   * Verilirse her araç adımı (olc, üretimler) önce bunu bekler: "süren işleme" sınamaları için. Gerçek araç
+   * gibi `iptal` sinyali beklemeyi keser: iptal edilen adım çıktı yazmaz (`olc` `null`, üretim `{zamanAsimi:false}`)
+   * ve `cagrilar`'a `iptal` (adım adıyla) düşer.
+   */
   bekletme: Promise<void> | null;
   /** Adımın davranışı, değiştirilene dek kalıcı. Varsayılan hepsi `basarili`. `olc`'ta `bos`/`zaman_asimi` → `null`. */
   adimDavranisi(adim: MedyaAdimi, d: MedyaAdimDavranisi): void;
@@ -1502,11 +1506,22 @@ export function sahteMedyaIsleyici(dosya: SahteMedyaDosya, sinirlar: MedyaServis
   const cagrilar = new CagriDefteri();
   const davranis = new Map<MedyaAdimi, MedyaAdimDavranisi>();
   const jpeg = (): Uint8Array => sahteMedyaBaytlari("jpg", 64);
-  const bekle = async (): Promise<void> => {
-    if (i.bekletme !== null) await i.bekletme;
+  /** `true`: iptal edildi (bekleme sürerken ya da önceden). */
+  const bekle = async (adim: MedyaAdimi, iptal: AbortSignal | undefined): Promise<boolean> => {
+    if (i.bekletme !== null) {
+      const bekletme = i.bekletme;
+      await new Promise<void>((coz) => {
+        if (iptal?.aborted === true) return coz();
+        iptal?.addEventListener("abort", () => coz(), { once: true });
+        void bekletme.then(() => coz());
+      });
+    }
+    if (iptal?.aborted !== true) return false;
+    cagrilar.ekle("iptal", adim);
+    return true;
   };
-  const uret = async (adim: MedyaAdimi, yaz: () => void): Promise<AracCalismasi> => {
-    await bekle();
+  const uret = async (adim: MedyaAdimi, iptal: AbortSignal | undefined, yaz: () => void): Promise<AracCalismasi> => {
+    if (await bekle(adim, iptal)) return { zamanAsimi: false };
     const d = davranis.get(adim) ?? "basarili";
     if (d === "basarili") yaz();
     return { zamanAsimi: d === "zaman_asimi" };
@@ -1534,23 +1549,23 @@ export function sahteMedyaIsleyici(dosya: SahteMedyaDosya, sinirlar: MedyaServis
       const n = Math.min(sinirlar.kareEnCok, Math.max(sinirlar.kareEnAz, Math.ceil(sure_ms / sinirlar.kareAraligiMs)));
       return Array.from({ length: n }, (_, k) => Math.floor(((k + 0.5) * sure_ms) / n));
     },
-    olc: async (no, bicim) => {
+    olc: async (no, bicim, iptal) => {
       cagrilar.ekle("olc", no, bicim);
-      await bekle();
+      if (await bekle("olc", iptal)) return null;
       if ((davranis.get("olc") ?? "basarili") !== "basarili") return null;
       return typeof i.olcum === "function" ? i.olcum(no, bicim) : i.olcum;
     },
-    gorselUret: async (no, bicim) => {
+    gorselUret: async (no, bicim, iptal) => {
       cagrilar.ekle("gorselUret", no, bicim);
-      return uret("gorselUret", () => dosya.koy(no, "gorsel.jpg", jpeg()));
+      return uret("gorselUret", iptal, () => dosya.koy(no, "gorsel.jpg", jpeg()));
     },
-    kareUret: async (no, bicim, sira, zaman_ms) => {
+    kareUret: async (no, bicim, sira, zaman_ms, iptal) => {
       cagrilar.ekle("kareUret", no, bicim, sira, zaman_ms);
-      return uret("kareUret", () => dosya.koy(no, `kare-0${sira}.jpg`, jpeg()));
+      return uret("kareUret", iptal, () => dosya.koy(no, `kare-0${sira}.jpg`, jpeg()));
     },
-    dokumUret: async (no, bicim, sure_ms) => {
+    dokumUret: async (no, bicim, sure_ms, iptal) => {
       cagrilar.ekle("dokumUret", no, bicim, sure_ms);
-      return uret("dokumUret", () => dosya.koy(no, "dokum.srt", i.srt));
+      return uret("dokumUret", iptal, () => dosya.koy(no, "dokum.srt", i.srt));
     },
     dokumMetni: (srt): DokumMetni => {
       cagrilar.ekle("dokumMetni", srt.length);

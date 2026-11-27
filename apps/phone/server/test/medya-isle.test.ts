@@ -534,6 +534,28 @@ describe("medya-isle: işleyici (sahte süreç)", () => {
     for (const i of istekler) assert.equal(i.cwd, SAHTE_VERI_KOKU);
   });
 
+  it("iptal sinyali aracCalistir'e aynen iletilir; iptal edilen araç çıktısız döner, atmaz", async () => {
+    const iptalHatasi = Object.assign(new Error("iptal"), { name: "AbortError" });
+    const { isleyici, istekler } = kur(async (i) => {
+      if (i.iptal?.aborted === true) throw iptalHatasi;
+      return { zamanAsimi: false, stdout: "{}", stderr: "" };
+    });
+    const ac = new AbortController();
+    await isleyici.olc(1, "mp4", ac.signal);
+    await isleyici.gorselUret(1, "jpg", ac.signal);
+    await isleyici.kareUret(1, "mp4", 1, 0, ac.signal);
+    await isleyici.dokumUret(1, "mp4", 1000, ac.signal);
+    assert.equal(istekler.length, 4);
+    for (const i of istekler) assert.equal(i.iptal, ac.signal);
+    ac.abort();
+    assert.equal(await isleyici.olc(1, "mp4", ac.signal), null);
+    assert.deepEqual(await isleyici.gorselUret(1, "jpg", ac.signal), { zamanAsimi: false });
+    assert.deepEqual(await isleyici.dokumUret(1, "mp4", 1000, ac.signal), { zamanAsimi: false });
+    // Sinyalsiz çağrıda alan hiç yazılmaz.
+    await isleyici.kareUret(1, "mp4", 2, 0);
+    assert.equal(Object.hasOwn(istekler.at(-1) ?? {}, "iptal"), false);
+  });
+
   it("başlatılamayan araç ya da geçersiz sıra: { zamanAsimi: false }, atmaz", async () => {
     const k = kur(async () => Promise.reject(new Error("ENOENT")));
     assert.deepEqual(await k.isleyici.gorselUret(1, "jpg"), { zamanAsimi: false });

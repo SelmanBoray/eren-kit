@@ -153,6 +153,18 @@ const kapi = () => {
 const birkacTur = async (n = 20): Promise<void> => {
   for (let i = 0; i < n; i++) await new Promise<void>((r) => setImmediate(r));
 };
+/** Gerçek araç gibi yalnız iptal edilince biter (sinyal yoksa hiç). */
+const iptalBekle = (iptal?: AbortSignal): Promise<void> =>
+  new Promise<void>((r) => {
+    if (iptal === undefined) return;
+    if (iptal.aborted) return r();
+    iptal.addEventListener("abort", () => r(), { once: true });
+  });
+/** Koşul tutana dek olay döngüsünü döndürür (işçi bir kapıda beklerken `bekle()` kullanılamaz). */
+const kosulBekle = async (f: () => boolean, mesaj: string): Promise<void> => {
+  for (let i = 0; i < 200 && !f(); i++) await birkacTur(1);
+  assert.ok(f(), mesaj);
+};
 
 // ---------------------------------------------------------------------------------------------
 // Yükleme
@@ -359,7 +371,7 @@ describe("medya: kota ve tahliye", () => {
   };
 
   it("kotayı aşan begin en eski gönderilmiş medyayı siler, yetecek kadarını", async () => {
-    const t = kur({ kotaBayt: 3000 });
+    const t = kur({ kotaBayt: 3200 });
     await t.medya.baslat();
     const eski = await gonderilmis(t, "m-1", 1000);
     t.zaman.ilerlet(1000);
@@ -369,7 +381,8 @@ describe("medya: kota ve tahliye", () => {
     await yukle(t, "m-3", "jpg", 500);
     bagla(t, [ek("m-3", "jpg", 500)], "msg-3");
 
-    // 2500 + 1400 > 3000: yalnız en eski (1000) silinir → 1500 + 1400 ≤ 3000.
+    // Fotoğrafların gorsel.jpg'si (64 bayt) da sayılır: 2692 + 1400 > 3200; yalnız en eski (1064) silinir
+    // → 1628 + 1400 ≤ 3200.
     const r = await baslat(t, "m-yeni", "mp4", 1400);
     assert.equal(r.durum, "yukleniyor");
     await t.medya.bekle();
@@ -378,6 +391,36 @@ describe("medya: kota ve tahliye", () => {
     assert.equal(t.depo.medyaKaydiGetir(orta)?.durum, "kabul");
     assert.equal(kayit(t, "m-3").durum, "kabul");
     assert.ok(t.gunluk.bul("medya_tahliye").length === 1);
+  });
+
+  it("türetilen dosyalar (görsel, kareler, döküm) kotaya sayılır", async () => {
+    const t = kur();
+    await t.medya.baslat();
+    await yukle(t, "f-1", "jpg", 100);
+    await yukle(t, "m-1", "mp4", 1000);
+    await t.medya.bekle();
+    const boyu = (no: number, ad: Parameters<typeof t.dosya.icerik>[1]) => t.dosya.icerik(no, ad)?.length ?? 0;
+    const f = kayit(t, "f-1");
+    assert.ok(boyu(f.no, "gorsel.jpg") > 0);
+    assert.equal(f.turetilen_bayt, boyu(f.no, "gorsel.jpg"));
+    const v = kayit(t, "m-1");
+    const beklenen =
+      boyu(v.no, "kare-01.jpg") + boyu(v.no, "kare-02.jpg") + boyu(v.no, "kare-03.jpg") + boyu(v.no, "dokum.srt") + boyu(v.no, "dokum.txt");
+    assert.ok(boyu(v.no, "dokum.txt") > 0 && boyu(v.no, "kare-03.jpg") > 0);
+    assert.equal(v.turetilen_bayt, beklenen);
+    assert.equal(t.depo.medyaDiskBayti(), 1100 + f.turetilen_bayt + v.turetilen_bayt);
+  });
+
+  it("tahliye türetilen baytları da sayar", async () => {
+    // Asıl dosyalar 1000 + 1000 = 2000 sığardı; eskinin gorsel.jpg'si (64 bayt) ile 2064 > 2030.
+    const t = kur({ kotaBayt: 2030 });
+    await t.medya.baslat();
+    const eski = await gonderilmis(t, "m-1", 1000);
+    assert.ok((t.depo.medyaKaydiGetir(eski)?.turetilen_bayt ?? 0) > 30);
+    assert.equal((await baslat(t, "m-yeni", "jpg", 1000)).durum, "yukleniyor");
+    await t.medya.bekle();
+    assert.equal(t.depo.medyaKaydiGetir(eski), null, "en eski gönderilmiş tahliye edildi");
+    assert.ok(t.depo.medyaDiskBayti() <= 2030);
   });
 
   it("tahliye de yetmeyecekse hiçbir şey silinmez, medya_siniri", async () => {
@@ -642,6 +685,74 @@ describe("medya: işleme kuyruğu ve içerik", () => {
     assert.deepEqual(sira, [ilk, ilk, ilk, ilk, ikinci, ikinci, ikinci, ikinci]);
   });
 
+  it("bir anda tek araç: doğrulamadaki gorselUret ve olc işçinin araçlarıyla üst üste binmez", async () => {
+    const t = kur();
+    await t.medya.baslat();
+    let suren = 0;
+    let enCok = 0;
+    const sar = <A extends unknown[], R>(f: (...a: A) => Promise<R>) => async (...a: A): Promise<R> => {
+      suren++;
+      enCok = Math.max(enCok, suren);
+      await birkacTur(2);
+      try {
+        return await f(...a);
+      } finally {
+        suren--;
+      }
+    };
+    const i = t.isleyici;
+    i.olc = sar(i.olc);
+    i.gorselUret = sar(i.gorselUret);
+    i.kareUret = sar(i.kareUret);
+    i.dokumUret = sar(i.dokumUret);
+    await yukle(t, "m-v1", "mp4", 1000); // işçi çalışmaya başlar
+    const sonuclar = await Promise.all([
+      yukle(t, "f-1", "jpg", 100),
+      yukle(t, "f-2", "png", 100),
+      yukle(t, "f-3", "heic", 100),
+      yukle(t, "f-4", "webp", 100),
+      yukle(t, "m-v2", "webm", 1000),
+    ]);
+    await t.medya.bekle();
+    assert.equal(enCok, 1, "doğrulama ve işçi dahil bir anda tek araç");
+    for (const r of sonuclar.slice(0, 4)) assert.equal(r.isleme, "hazir");
+    assert.equal(kayit(t, "m-v1").isleme, "hazir");
+    assert.equal(kayit(t, "m-v2").isleme, "hazir");
+  });
+
+  it("fotoğraf doğrulaması süren adımı bekler, işçinin sıradaki adımından önce koşar", async () => {
+    const t = kur();
+    const kapisi = kapi();
+    const { kareUret } = t.isleyici;
+    let ilk = true;
+    t.isleyici.kareUret = async (...a) => {
+      if (ilk) {
+        ilk = false;
+        await kapisi.p;
+      }
+      return kareUret(...a);
+    };
+    await t.medya.baslat();
+    await yukle(t, "m-v", "mp4", 1000);
+    await birkacTur();
+    let foto: Awaited<ReturnType<typeof yukle>> | null = null;
+    const p = yukle(t, "f-1", "jpg", 100).then((r) => {
+      foto = r;
+    });
+    await birkacTur();
+    assert.equal(foto, null, "süren kare aracı bitmeden fotoğrafın aracı başlamaz");
+    assert.equal(t.isleyici.cagrilar.say("gorselUret"), 0);
+    kapisi.ac();
+    await p;
+    assert.deepEqual(foto, { medya_id: "f-1", durum: "kabul", isleme: "hazir" });
+    await t.medya.bekle();
+    const sira = t.isleyici.cagrilar.liste
+      .filter((c) => c.ad === "kareUret" || c.ad === "gorselUret" || c.ad === "dokumUret")
+      .map((c) => c.ad);
+    assert.deepEqual(sira, ["kareUret", "gorselUret", "kareUret", "kareUret", "dokumUret"]);
+    assert.equal(kayit(t, "m-v").isleme, "hazir");
+  });
+
   it("model yok, ses yok, RAM düşük: kismi ve neden; kare yok: hata", async () => {
     const durum = async (ayar: Partial<MedyaAyari>, hazirla: (t: Kurulum) => void) => {
       const t = kur(ayar);
@@ -750,24 +861,93 @@ describe("medya: işleme kuyruğu ve içerik", () => {
     assert.equal(t.dosya.icerik(k.no, "dokum.srt")?.length, 0);
   });
 
-  it("kuyrukta beklerken süresi dolan kayıt hata + zaman_asimi", async () => {
-    const t = kur();
-    const kapisi = kapi();
+  // Videonun doğrulaması (`olc`) da araç kilidini bekler: işçi bir kapıda dururken yapılan yükleme biter
+  // ancak kapı açılınca. Bu testler kapıları kare çağrısının sırasına koyar ve yüklemeyi beklemeden başlatır.
+  const kapiliKare = (t: Kurulum, kapilar: Readonly<Record<number, { p: Promise<void> }>>) => {
     const { kareUret } = t.isleyici;
-    t.isleyici.kareUret = async (...a) => {
-      await kapisi.p;
-      return kareUret(...a);
+    let cagri = 0;
+    t.isleyici.kareUret = async (no, bicim, sira, z) => {
+      await kapilar[++cagri]?.p;
+      return kareUret(no, bicim, sira, z);
+    };
+  };
+
+  it("kuyrukta bekleyen video işlenmeden kapanmaz: süre işçi kaydı aldığı an başlar", async () => {
+    const t = kur();
+    const S = SAHTE_MEDYA_SINIRLARI;
+    // 1: m-1 kare 1 (m-2'nin doğrulaması arkasında bekler), 2: m-1 kare 2, 4: m-2 kare 1.
+    const [a, b, c] = [kapi(), kapi(), kapi()];
+    kapiliKare(t, { 1: a, 2: b, 4: c });
+    await t.medya.baslat();
+    await yukle(t, "m-1", "mp4", 1000);
+    await birkacTur();
+    const y2 = yukle(t, "m-2", "mp4", 1000);
+    await birkacTur(); // m-2'nin doğrulaması araç sırasında
+    a.ac();
+    assert.equal((await y2).durum, "kabul");
+    // m-1 sürenin hemen öncesine dek sürer; m-2 o kadar sırada bekler.
+    t.zaman.ilerlet(S.islemeAzamiMs - 1000);
+    assert.equal(kayit(t, "m-2").isleme, null, "sırada bekleyen kayıt kapanmaz");
+    b.ac();
+    await kosulBekle(() => kayit(t, "m-1").isleme === "hazir", "m-1 bitmeli");
+    await kosulBekle(() => kayit(t, "m-2").isleme === "isleniyor", "m-2 başlamalı");
+    // Sıraya girişinden islemeAzamiMs geçti ama işlemesi yeni başladı: süresi dolmaz.
+    t.zaman.ilerlet(1000);
+    assert.equal(kayit(t, "m-2").isleme, "isleniyor");
+    c.ac();
+    await t.medya.bekle();
+    const k2 = kayit(t, "m-2");
+    assert.deepEqual([k2.isleme, k2.isleme_nedeni, k2.kare_adet], ["hazir", null, 3]);
+    assert.equal(kayit(t, "m-1").isleme, "hazir");
+  });
+
+  it("süre dolunca süren araç iptal edilir; işçi beklemeden sıradakine geçer", { timeout: 5000 }, async () => {
+    const t = kur();
+    const { kareUret } = t.isleyici;
+    let ilk = true;
+    let iptalEdilen = 0;
+    t.isleyici.kareUret = async (no, bicim, sira, z, iptal?: AbortSignal) => {
+      if (ilk) {
+        ilk = false;
+        await iptalBekle(iptal); // takılan araç: yalnız iptalle biter
+        iptalEdilen++;
+        return { zamanAsimi: false };
+      }
+      return kareUret(no, bicim, sira, z);
     };
     await t.medya.baslat();
     await yukle(t, "m-1", "mp4", 1000);
-    await yukle(t, "m-2", "mp4", 1000);
+    await birkacTur();
+    const y2 = yukle(t, "m-2", "mp4", 1000); // doğrulaması takılan aracın arkasında
+    await birkacTur();
     t.zaman.ilerlet(SAHTE_MEDYA_SINIRLARI.islemeAzamiMs);
-    assert.deepEqual([kayit(t, "m-2").isleme, kayit(t, "m-2").isleme_nedeni], ["hata", "zaman_asimi"]);
-    assert.equal(kayit(t, "m-1").isleme, "hata");
-    kapisi.ac();
+    const k1 = kayit(t, "m-1");
+    assert.deepEqual([k1.isleme, k1.isleme_nedeni, k1.kare_adet], ["hata", "zaman_asimi", 0]);
+    assert.equal((await y2).durum, "kabul");
     await t.medya.bekle();
-    assert.equal(kayit(t, "m-2").isleme, "hata");
-    assert.ok(!t.isleyici.cagrilar.hepsi("kareUret").some((c) => c.args[0] === kayit(t, "m-2").no));
+    assert.equal(iptalEdilen, 1);
+    assert.equal(kayit(t, "m-2").isleme, "hazir");
+    assert.equal(kayit(t, "m-1").isleme, "hata", "iptal edilen aracın dönüşü sonucu değiştirmez");
+  });
+
+  it("kuyruk başındaki mesajın eki işçide öne alınır", async () => {
+    const t = kur();
+    // 1: m-1 kare 1 (m-2 ve m-3'ün doğrulaması arkasında), 2: m-1 kare 2 (bağlama bu arada).
+    const [a, b] = [kapi(), kapi()];
+    kapiliKare(t, { 1: a, 2: b });
+    await t.medya.baslat();
+    await yukle(t, "m-1", "mp4", 1000);
+    await birkacTur();
+    const y = [yukle(t, "m-2", "mp4", 1000), yukle(t, "m-3", "mp4", 1000)]; // m-2 gönderilmeyecek
+    await birkacTur(); // doğrulamaları araç sırasında
+    a.ac();
+    for (const r of await Promise.all(y)) assert.equal(r.durum, "kabul");
+    const kuyruk_id = bagla(t, [ek("m-3", "mp4", 1000)]);
+    assert.equal(t.medya.icerik({ kuyruk_id, kullanici_metni: "bak" }).durum, "bekliyor");
+    b.ac();
+    await t.medya.bekle();
+    const nolar = [...new Set(t.isleyici.cagrilar.hepsi("kareUret").map((c) => c.args[0]))];
+    assert.deepEqual(nolar, [kayit(t, "m-1").no, kayit(t, "m-3").no, kayit(t, "m-2").no]);
   });
 });
 
@@ -882,26 +1062,24 @@ describe("medya: silme ve kapanış", () => {
     assert.equal(t.depo.medyaKaydiGetir(no), null);
   });
 
-  it("kapat süren aracı bekler; sonra yükleme ve parça medya_yok, öteki çağrılar etkisiz", async () => {
+  it("kapat süren aracı iptal eder, beklemeden döner; kayıt yeniden açılışta işlenir", { timeout: 5000 }, async () => {
     const t = kur();
-    const kapisi = kapi();
     const { kareUret } = t.isleyici;
-    t.isleyici.kareUret = async (...a) => {
-      await kapisi.p;
-      return kareUret(...a);
+    let iptalEdilen = 0;
+    t.isleyici.kareUret = async (_no, _bicim, _sira, _z, iptal?: AbortSignal) => {
+      await iptalBekle(iptal); // takılan araç: yalnız iptalle biter
+      iptalEdilen++;
+      return { zamanAsimi: false };
     };
     await t.medya.baslat();
     await yukle(t, "m-1", "mp4", 1000);
     await birkacTur();
-    let kapandi = false;
-    const k = t.medya.kapat().then(() => {
-      kapandi = true;
-    });
-    await birkacTur();
-    assert.equal(kapandi, false);
-    kapisi.ac();
-    await k;
-    assert.equal(kapandi, true);
+    await t.medya.kapat();
+    assert.equal(iptalEdilen, 1);
+    // Uzlaştırılabilir: kabul + isleniyor, yarım kare çıktısı yok.
+    const k1 = kayit(t, "m-1");
+    assert.deepEqual([k1.durum, k1.isleme], ["kabul", "isleniyor"]);
+    assert.equal(t.dosya.icerik(k1.no, "kare-01.jpg")?.length ?? 0, 0);
     assert.deepEqual(await baslat(t, "m-2", "jpg", 100), { medya_id: "m-2", durum: "reddedildi", code: "medya_yok" });
     assert.deepEqual(await parca(t, "m-1", 0, new Uint8Array(4)), { medya_id: "m-1", durum: "reddedildi", code: "medya_yok" });
     assert.deepEqual(t.medya.ekleriDenetle(TEL, A, [ek("m-1", "mp4", 1000)]), { ok: false, code: "medya_yok" });
@@ -909,5 +1087,70 @@ describe("medya: silme ve kapanış", () => {
     await t.medya.sohbetMedyasiniSil(A);
     assert.ok(t.depo.medyaKaydiBul(TEL, "m-1"));
     assert.equal(t.zaman.bekleyenSayisi(), 0, "zamanlayıcılar durdu");
+    // Yeniden açılış: kayıt kuyruğa döner ve baştan işlenir.
+    t.isleyici.kareUret = kareUret;
+    const m = t.yeni();
+    await m.baslat();
+    await m.bekle();
+    assert.deepEqual([kayit(t, "m-1").isleme, kayit(t, "m-1").kare_adet], ["hazir", 3]);
+  });
+
+  it("kapanışta araç sırası bekleyen fotoğraf: .part kalır, açılışta yeniden doğrulanır", { timeout: 5000 }, async () => {
+    const t = kur();
+    const { kareUret } = t.isleyici;
+    t.isleyici.kareUret = async (_no, _bicim, _sira, _z, iptal?: AbortSignal) => {
+      await iptalBekle(iptal);
+      return { zamanAsimi: false };
+    };
+    await t.medya.baslat();
+    await yukle(t, "m-v", "mp4", 1000);
+    await birkacTur();
+    const p = yukle(t, "f-1", "jpg", 100);
+    await birkacTur();
+    await t.medya.kapat();
+    assert.deepEqual(await p, { medya_id: "f-1", durum: "reddedildi", code: "medya_yok" });
+    const f = kayit(t, "f-1");
+    assert.deepEqual([f.durum, f.alinan], ["yukleniyor", 100]);
+    assert.equal(t.dosya.parcaIcerigi(f.no)?.length, 100, "dosya taşınmadı");
+    assert.equal(t.isleyici.cagrilar.say("gorselUret"), 0);
+    t.isleyici.kareUret = kareUret;
+    const m = t.yeni();
+    await m.baslat();
+    await m.bekle();
+    assert.deepEqual([kayit(t, "f-1").durum, kayit(t, "f-1").isleme], ["kabul", "hazir"]);
+    assert.equal(kayit(t, "m-v").isleme, "hazir");
+  });
+
+  it("kapanış fotoğrafın kendi aracını keserse kayıt reddedilmez; açılışta yükleme baştan sürer", { timeout: 5000 }, async () => {
+    const t = kur();
+    const { gorselUret } = t.isleyici;
+    t.isleyici.gorselUret = async (_no, _bicim, iptal?: AbortSignal) => {
+      await iptalBekle(iptal);
+      return { zamanAsimi: false };
+    };
+    await t.medya.baslat();
+    const p = yukle(t, "f-1", "jpg", 100);
+    await birkacTur();
+    await t.medya.kapat();
+    assert.deepEqual(await p, { medya_id: "f-1", durum: "reddedildi", code: "medya_yok" });
+    const no = kayit(t, "f-1").no;
+    assert.equal(kayit(t, "f-1").durum, "yukleniyor", "kapanış red sayılmaz");
+    t.isleyici.gorselUret = gorselUret;
+    const m = t.yeni();
+    await m.baslat();
+    // `.part` taşınmıştı: çökme sonrasıyla aynı uzlaştırma (alinan diskten 0, sahipsiz dizin silinir).
+    assert.deepEqual([kayit(t, "f-1").durum, kayit(t, "f-1").alinan], ["yukleniyor", 0]);
+    assert.equal(t.dosya.dizinVarMi(no), false);
+    const icerik = sahteMedyaBaytlari("jpg", 100);
+    assert.deepEqual(await m.yuklemeBaslat(TEL, { ...ek("f-1", "jpg", 100), sohbet_id: A_ID }), {
+      medya_id: "f-1",
+      durum: "yukleniyor",
+      alinan: 0,
+    });
+    assert.deepEqual(await m.parca(TEL, { medya_id: "f-1", ofset: 0, veri: b64(icerik) }), {
+      medya_id: "f-1",
+      durum: "kabul",
+      isleme: "hazir",
+    });
   });
 });

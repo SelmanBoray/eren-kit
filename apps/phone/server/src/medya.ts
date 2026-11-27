@@ -3,14 +3,23 @@
  * MODULLER.md "Medya dalgası" > "Akışlar" ve "S4 yönetici"; arayüz `sozlesme.ts` `MedyaYoneticisi`.
  *
  * - Yükleme: kayıt başına (`device_id` + `medya_id`) sıralı; yeni kayıt açılışı servis genelinde sıralı
- *   (bekleyen sınırı ve kota tek bakışta). Son parçada doğrulama: koklama + `beyanaUyar` → `tasi` →
- *   fotoğrafta `gorselUret`, videoda `olc`. Doğrulama parça yanıtını bekletir.
- * - İşleme: servis başına TEK işçi (bir anda tek araç, dolayısıyla tek döküm). Video: kareler, sonra
- *   döküm. Her adımın başarısı = araç zaman aşımına uğramadı VE çıktı var ve boyutu > 0. Adımdan önce o
- *   adımın eski çıktısı boşaltılır (eski bir çalışmanın dosyası başarı sayılmasın), başarısız ya da geç
- *   biten adımın yarım çıktısı da boşaltılır. Port tek dosya silmez; boş (0 bayt) dosya "çıktı yok"tur.
- * - `islemeAzamiMs` (ekin `kabul`'ünden ya da yeniden kuyruğa alınışından) dolunca kayıt elde olanla
- *   biter (`kismi`/`hata`, neden `zaman_asimi`); süren aracın çıktısı içeriğe alınmaz.
+ *   (bekleyen sınırı ve kota tek bakışta). Son parçada doğrulama: koklama + `beyanaUyar` → (araç sırası)
+ *   → `tasi` → fotoğrafta `gorselUret`, videoda `olc`. Doğrulama parça yanıtını bekletir.
+ * - Araç kilidi: servis genelinde bir anda TEK araç (ffmpeg/ffprobe), doğrulamanınkiler dahil (büyük
+ *   PNG/HEIC çözmek ~1 GB tutar; eşzamanlı fotoğraflar belleği katlamasın). Bekleyen doğrulama işçinin
+ *   sıradaki adımından önce alır, süren adımı kesmez. Sıra `.part` taşınmadan beklenir.
+ * - İşleme: servis başına TEK işçi. Video: kareler, sonra döküm. Her adımın başarısı = araç zaman
+ *   aşımına uğramadı VE çıktı var ve boyutu > 0. Adımdan önce o adımın eski çıktısı boşaltılır (eski bir
+ *   çalışmanın dosyası başarı sayılmasın), başarısız ya da geç biten adımın yarım çıktısı da boşaltılır.
+ *   Port tek dosya silmez; boş (0 bayt) dosya "çıktı yok"tur. Kuyruk başındaki mesajın ekleri (`icerik`)
+ *   sırada öne alınır: gönderilmemiş yüklemeler onu bekletmesin.
+ * - `islemeAzamiMs` işçi kaydı aldığı an başlar (sırada beklenen süre sayılmaz: sıradaki kayıt hiç
+ *   işlenmeden kapanmaz). Dolunca süren araç iptal edilir (işçi beklemeden sıradakine geçer) ve kayıt elde
+ *   olanla biter (`kismi`/`hata`, neden `zaman_asimi`); kesilen aracın çıktısı içeriğe alınmaz. Böylece
+ *   dökümün etkin sınırı `min(kendi zaman aşımı, kalan süre)` olur ve bir mesajın beklemesi sınırlıdır:
+ *   süren kaydın kalanı + kendi eklerinin işlemesi.
+ * - Kota: asıl dosya + türetilenler (`turetilen_bayt`, doğrulamada ve her işleme sonunda diskten ölçülür).
+ * - Kapanış: süren araç iptal edilir; kayıtlar uzlaştırılabilir kalır (`MedyaYoneticisi.kapat`).
  * - İçerik: `icerik` eşzamanlıdır; bloklar arkada portla okunur, bitince `medya_durumu` yayınlanır.
  * - Silme: süren işleme varsa bitince; silinemeyen satır kalır, süpürmede yeniden denenir.
  * Günlüğe yalnız `no`, `medya_id`, sayı ve kapalı liste değeri yazılır (yol, ad, içerik yok).
@@ -24,6 +33,7 @@ import type {
   MediaStateGovdesi,
   MedyaBaglamaHatasi,
   MedyaBaslangici,
+  MedyaBicimi,
   MedyaDosyaAdi,
   MedyaFabrikasi,
   MedyaHatasi,
@@ -47,6 +57,13 @@ const KARE_EN_COK = 8;
 const BITMIS_ISLEMELER: ReadonlySet<MedyaIslemeDurumu> = new Set<MedyaIslemeDurumu>(["hazir", "kismi", "hata"]);
 const bos = (): void => {};
 const kareAdi = (sira: number): MedyaDosyaAdi => `kare-0${sira as KareSirasi}.jpg`;
+/** Kotaya sayılan türetilen dosyalar (`turetilen_bayt`). */
+const TURETILENLER: readonly MedyaDosyaAdi[] = [
+  "gorsel.jpg",
+  ...Array.from({ length: KARE_EN_COK }, (_, i) => kareAdi(i + 1)),
+  "dokum.srt",
+  "dokum.txt",
+];
 const asilAdi = (k: MedyaKaydi): MedyaDosyaAdi | null => (k.bicim === null ? null : `asil.${k.bicim}`);
 
 /** İşçinin üzerinde çalıştığı kaydın bellekteki ilerlemesi (zaman aşımı elde olanla bitirmek için). */
@@ -56,7 +73,12 @@ interface Ilerleme {
   uretilen: number;
   /** Şu an çalışan aracın çıktısı; yoksa `null`. */
   adim: MedyaDosyaAdi | null;
+  /** Süre dolunca ya da kapanışta süren aracı keser (`MedyaIsleyici` yöntemlerinin `iptal`'i). */
+  iptal: AbortController;
 }
+
+/** Doğrulamanın araç kısmının sonucu. `kapandi`: kapanış kesti, red sayılmaz (kayıt `yukleniyor` kalır). */
+type Dogrulama = "kabul" | "red" | "kapandi";
 
 interface Onbellek {
   sohbet_id: string;
@@ -75,6 +97,8 @@ export const medyaKur: MedyaFabrikasi = (b): MedyaYoneticisi => {
 
   let kapali = false;
   let basladi = false;
+  /** Kapanışta doğrulamanın süren aracını keser (işçininkini `Ilerleme.iptal`). */
+  const kapanis = new AbortController();
   let supurmeIptal: IptalEt | null = null;
   let supuruyor: Promise<void> | null = null;
 
@@ -115,6 +139,26 @@ export const medyaKur: MedyaFabrikasi = (b): MedyaYoneticisi => {
     return sonuc;
   };
   const anahtar = (device_id: string, medya_id: string): string => `${device_id}\u0000${medya_id}`;
+
+  // ---- araç kilidi: servis genelinde bir anda tek araç (doğrulama dahil) ----
+  // Bırakılan kilit doğrudan sıradakine geçer (arada kimse kapmaz). Öncelikli: doğrulama (telefon parça
+  // yanıtını bekliyor); arka: işçinin adımları. Kapanışta bekleyenler sırayla uyanır, araç çalıştırmadan döner.
+  const aracSirasi = { oncelikli: [] as Array<() => void>, arka: [] as Array<() => void> };
+  let aracMesgul = false;
+  const aracBirak = (): void => {
+    const sonraki = aracSirasi.oncelikli.shift() ?? aracSirasi.arka.shift();
+    if (sonraki === undefined) aracMesgul = false;
+    else sonraki();
+  };
+  const aracla = async <T>(oncelikli: boolean, is: () => Promise<T>): Promise<T> => {
+    if (aracMesgul) await new Promise<void>((r) => (oncelikli ? aracSirasi.oncelikli : aracSirasi.arka).push(r));
+    else aracMesgul = true;
+    try {
+      return await is();
+    } finally {
+      aracBirak();
+    }
+  };
 
   // ---- kablo gövdeleri ----
   const red = (medya_id: string, code: MedyaHatasi): MediaStateGovdesi => ({ medya_id, durum: "reddedildi", code });
@@ -168,6 +212,18 @@ export const medyaKur: MedyaFabrikasi = (b): MedyaYoneticisi => {
       await dosya.yaz(no, ad, new Uint8Array(0));
     } catch (e) {
       hataYaz("cikti_bosaltilamadi", e, { no });
+    }
+  };
+  /** Türetilen dosyaların diskteki toplamını `turetilen_bayt`'a yazar (`guncelleme_ms`'e dokunmaz). Atmaz. */
+  const turetilenYaz = async (no: number): Promise<void> => {
+    let toplam = 0;
+    for (const ad of TURETILENLER) toplam += (await boyutOku(no, ad)) ?? 0;
+    try {
+      const k = depo.medyaKaydiGetir(no);
+      if (k === null || k.durum !== "kabul" || k.turetilen_bayt === toplam) return;
+      depo.medyaGuncelle(no, { turetilen_bayt: toplam });
+    } catch (e) {
+      hataYaz("turetilen_yazilamadi", e, { no });
     }
   };
   /** `.part` ve dizin; ikisi de gittiyse `true`. */
@@ -224,29 +280,34 @@ export const medyaKur: MedyaFabrikasi = (b): MedyaYoneticisi => {
     }
   };
 
+  /** Yalnız işçinin süren kaydı için kurulur (`calistir`): sıradaki kaydın süresi işlenmeden dolmaz. */
   const zamanAsimi = (no: number): void => {
     sonTarihler.delete(no);
-    if (aktif !== null && aktif.no === no) {
-      const il = aktif.ilerleme;
-      if (il.bitti) return;
-      il.bitti = true;
-      if (il.adim !== null) haric.add(`${no}/${il.adim}`);
-      const k = getir(no);
-      const video = k?.tur === "video";
-      bitir(no, video && il.uretilen > 0 ? "kismi" : "hata", "zaman_asimi", il.uretilen);
-      return;
-    }
-    const i = bekleyenler.indexOf(no);
-    if (i >= 0) {
-      bekleyenler.splice(i, 1);
-      bitir(no, "hata", "zaman_asimi", 0);
-    }
+    if (aktif === null || aktif.no !== no) return;
+    const il = aktif.ilerleme;
+    if (il.bitti) return;
+    il.bitti = true;
+    if (il.adim !== null) haric.add(`${no}/${il.adim}`);
+    const k = getir(no);
+    const video = k?.tur === "video";
+    bitir(no, video && il.uretilen > 0 ? "kismi" : "hata", "zaman_asimi", il.uretilen);
+    // Süren araç kesilir: işçi aracın kendi zaman aşımını (döküm 15 dk'ya dek) beklemeden sıradakine geçer.
+    il.iptal.abort();
   };
 
-  const kuyrugaAl = (no: number): void => {
-    if (kapali || bekleyenler.includes(no) || aktif?.no === no || siliniyor.has(no)) return;
-    bekleyenler.push(no);
-    if (!sonTarihler.has(no)) sonTarihler.set(no, zamanlayici.sonra(s.islemeAzamiMs, () => zamanAsimi(no)));
+  /** `one`: kuyruk başındaki mesajın eki; sırada en öne alınır (süren kaydı kesmez). */
+  const kuyrugaAl = (no: number, one = false): void => {
+    if (kapali || aktif?.no === no || siliniyor.has(no)) return;
+    const i = bekleyenler.indexOf(no);
+    if (i >= 0) {
+      if (one && i > 0) {
+        bekleyenler.splice(i, 1);
+        bekleyenler.unshift(no);
+      }
+      return;
+    }
+    if (one) bekleyenler.unshift(no);
+    else bekleyenler.push(no);
     calistir();
   };
 
@@ -254,9 +315,15 @@ export const medyaKur: MedyaFabrikasi = (b): MedyaYoneticisi => {
     if (aktif !== null || kapali) return;
     const no = bekleyenler.shift();
     if (no === undefined) return;
-    const ilerleme: Ilerleme = { bitti: false, uretilen: 0, adim: null };
-    const is = isle(no, ilerleme).catch((e: unknown) => hataYaz("isleme_hatasi", e, { no }));
+    const ilerleme: Ilerleme = { bitti: false, uretilen: 0, adim: null, iptal: new AbortController() };
+    // Süre işçi kaydı aldığı an başlar.
+    sonTarihIptal(no);
+    sonTarihler.set(no, zamanlayici.sonra(s.islemeAzamiMs, () => zamanAsimi(no)));
+    const is = isle(no, ilerleme)
+      .catch((e: unknown) => hataYaz("isleme_hatasi", e, { no }))
+      .then(() => (kapali ? undefined : turetilenYaz(no)));
     const promise = is.finally(() => {
+      sonTarihIptal(no);
       if (aktif?.no === no) aktif = null;
       calistir();
     });
@@ -270,23 +337,29 @@ export const medyaKur: MedyaFabrikasi = (b): MedyaYoneticisi => {
     return k !== null && k.durum === "kabul";
   };
 
-  /** Bir aracı çalıştırır; başarı = zaman aşımı yok VE çıktı boyutu > 0. Başarısız ya da geç çıktı boşaltılır. */
+  /**
+   * Bir aracı araç kilidiyle çalıştırır; başarı = zaman aşımı yok VE çıktı boyutu > 0. Başarısız ya da geç
+   * çıktı boşaltılır. Sıra beklerken süre dolduysa ya da servis kapandıysa araç hiç çalışmaz.
+   */
   const adim = async (
     no: number,
     il: Ilerleme,
     ad: MedyaDosyaAdi,
-    calis: () => Promise<{ zamanAsimi: boolean }>,
+    calis: (iptal: AbortSignal) => Promise<{ zamanAsimi: boolean }>,
   ): Promise<{ ok: boolean; zamanAsimi: boolean }> => {
     await bosalt(no, ad); // eski çalışmanın çıktısı başarı sayılmasın
-    il.adim = ad;
     let zamanAsimi = false;
-    try {
-      zamanAsimi = (await calis()).zamanAsimi;
-    } catch (e) {
-      hataYaz("arac_hatasi", e, { no });
-    }
-    il.adim = null;
-    const n = zamanAsimi ? null : await boyutOku(no, ad);
+    await aracla(false, async () => {
+      if (il.bitti || kapali) return;
+      il.adim = ad;
+      try {
+        zamanAsimi = (await calis(il.iptal.signal)).zamanAsimi;
+      } catch (e) {
+        hataYaz("arac_hatasi", e, { no });
+      }
+      il.adim = null;
+    });
+    const n = zamanAsimi || il.bitti ? null : await boyutOku(no, ad);
     const ok = !il.bitti && !zamanAsimi && n !== null && n > 0;
     if (!ok) await bosalt(no, ad);
     return { ok, zamanAsimi };
@@ -305,7 +378,7 @@ export const medyaKur: MedyaFabrikasi = (b): MedyaYoneticisi => {
 
     if (k.tur === "foto") {
       // Normalde fotoğraf doğrulamada `hazir` olur; buraya yalnız yarıda kalmış bir kayıt düşer.
-      const r = await adim(no, il, "gorsel.jpg", () => isleyici.gorselUret(no, bicim));
+      const r = await adim(no, il, "gorsel.jpg", (iptal) => isleyici.gorselUret(no, bicim, iptal));
       if (!devam(no, il)) return;
       bitir(no, r.ok ? "hazir" : "hata", r.zamanAsimi ? "zaman_asimi" : "hata", null);
       return;
@@ -316,7 +389,8 @@ export const medyaKur: MedyaFabrikasi = (b): MedyaYoneticisi => {
     for (let i = 0; i < zamanlar.length && i < KARE_EN_COK; i++) {
       if (!devam(no, il)) return;
       const sira = (i + 1) as KareSirasi;
-      const r = await adim(no, il, kareAdi(sira), () => isleyici.kareUret(no, bicim, sira, zamanlar[i] as number));
+      const z = zamanlar[i] as number;
+      const r = await adim(no, il, kareAdi(sira), (iptal) => isleyici.kareUret(no, bicim, sira, z, iptal));
       if (il.bitti) return;
       if (r.ok) il.uretilen += 1;
       else if (r.zamanAsimi) kareZamanAsimi = true;
@@ -330,11 +404,16 @@ export const medyaKur: MedyaFabrikasi = (b): MedyaYoneticisi => {
     // Döküm. Ses akışı doğrulamada ölçüldü; servis o arada yeniden başladıysa yeniden ölçülür.
     let ses = sesAkislari.get(no);
     if (ses === undefined) {
-      try {
-        ses = (await isleyici.olc(no, bicim))?.ses_akisi ?? true;
-      } catch {
-        ses = true;
-      }
+      let sesli = true;
+      await aracla(false, async () => {
+        if (il.bitti || kapali) return;
+        try {
+          sesli = (await isleyici.olc(no, bicim, il.iptal.signal))?.ses_akisi ?? true;
+        } catch {
+          sesli = true;
+        }
+      });
+      ses = sesli;
       if (!devam(no, il)) return;
     }
     if (!ses) return bitir(no, "kismi", "ses_yok", il.uretilen);
@@ -351,7 +430,7 @@ export const medyaKur: MedyaFabrikasi = (b): MedyaYoneticisi => {
     }
     await bosalt(no, "dokum.txt");
     const sure = k.sure_ms ?? 0;
-    const r = await adim(no, il, "dokum.srt", () => isleyici.dokumUret(no, bicim, sure));
+    const r = await adim(no, il, "dokum.srt", (iptal) => isleyici.dokumUret(no, bicim, sure, iptal));
     if (!devam(no, il)) return;
     if (!r.ok) return bitir(no, "kismi", r.zamanAsimi ? "zaman_asimi" : "hata", il.uretilen);
     try {
@@ -410,7 +489,7 @@ export const medyaKur: MedyaFabrikasi = (b): MedyaYoneticisi => {
     const kota = b.ayar.kotaBayt;
     if (depo.medyaDiskBayti() + boyut <= kota) return true;
     const adaylar = depo.medyaTahliyeAdaylari().filter((k) => aktif?.no !== k.no);
-    const serbest = adaylar.reduce((t, k) => t + k.boyut, 0);
+    const serbest = adaylar.reduce((t, k) => t + k.boyut + k.turetilen_bayt, 0);
     // Hepsini silmek de yetmeyecekse hiçbirine dokunulmaz.
     if (depo.medyaDiskBayti() - serbest + boyut > kota) return false;
     for (const k of adaylar) {
@@ -418,7 +497,7 @@ export const medyaKur: MedyaFabrikasi = (b): MedyaYoneticisi => {
       const guncel = getir(k.no);
       if (guncel === null || guncel.durum !== "kabul") continue;
       silinecekYap(guncel);
-      bilgi("medya_tahliye", { no: k.no, medya_id: k.medya_id, boyut: k.boyut });
+      bilgi("medya_tahliye", { no: k.no, medya_id: k.medya_id, boyut: k.boyut + k.turetilen_bayt });
       await kayitSil(k.no);
     }
     return depo.medyaDiskBayti() + boyut <= kota;
@@ -442,42 +521,63 @@ export const medyaKur: MedyaFabrikasi = (b): MedyaYoneticisi => {
     }
   };
 
-  /** `alinan == boyut`: koklama, taşıma, fotoğrafta `gorselUret`, videoda `olc`. */
+  /**
+   * Doğrulamanın araç kilidi altındaki kısmı: eski dizini temizler, `.part`'ı taşır, fotoğrafta `gorselUret`,
+   * videoda `olc`; geçerse `kabul` yazar. Kendisi reddetmez (`red`'de çağıran `reddet` der); atabilir.
+   */
+  const tasiVeSina = async (k: MedyaKaydi, bicim: MedyaBicimi): Promise<Dogrulama> => {
+    const no = k.no;
+    if (kapali) return "kapandi"; // sıra beklerken kapandı: `.part` yerinde, açılışta yeniden doğrulanır
+    // Yarıda kalmış eski bir doğrulamanın dizini (taşıma sonrası çökme) temizlenir.
+    if (!(await dosya.dizinSil(no))) return "red";
+    await dosya.tasi(no, bicim);
+    if (k.tur === "foto") {
+      const r = await isleyici.gorselUret(no, bicim, kapanis.signal);
+      if (kapali) return "kapandi";
+      const n = r.zamanAsimi ? null : await boyutOku(no, "gorsel.jpg");
+      if (n === null || n <= 0) return "red";
+      guncelle(no, { durum: "kabul", bicim, isleme: "hazir", isleme_nedeni: null, turetilen_bayt: n });
+      return "kabul";
+    }
+    const o = await isleyici.olc(no, bicim, kapanis.signal);
+    if (kapali) return "kapandi";
+    const azami = MEDYA_SINIRLARI.VIDEO_SURE_MS * (1 + s.videoSurePayi);
+    if (o === null || !o.video_akisi || o.sure_ms === null || o.sure_ms <= 0 || o.sure_ms > azami) return "red";
+    sesAkislari.set(no, o.ses_akisi);
+    guncelle(no, {
+      durum: "kabul",
+      bicim,
+      isleme: null,
+      isleme_nedeni: null,
+      sure_ms: o.sure_ms,
+      genislik: o.genislik,
+      yukseklik: o.yukseklik,
+    });
+    return "kabul";
+  };
+
+  /**
+   * `alinan == boyut`: koklama, (araç sırası) taşıma, fotoğrafta `gorselUret`, videoda `olc`. Kapanış
+   * keserse red sayılmaz: kayıt `yukleniyor` kalır (açılışta `.part` duruyorsa yeniden doğrulanır,
+   * taşınmışsa çökme sonrasıyla aynı: `alinan` 0'a iner), yanıt `reddedildi{medya_yok}` (kapanmış yönetici gibi).
+   */
   const dogrula = async (k: MedyaKaydi): Promise<MediaStateGovdesi> => {
     const no = k.no;
+    let sonuc: Dogrulama;
     try {
       const bas = await dosya.parcaOku(no, 0, KOKLAMA_BAYT);
       const bicim = isleyici.kokla(bas);
       if (bicim === null || !isleyici.beyanaUyar(bicim, k.tur, k.mime)) return await reddet(k, "medya_reddedildi");
-      // Yarıda kalmış eski bir doğrulamanın dizini (taşıma sonrası çökme) temizlenir.
-      if (!(await dosya.dizinSil(no))) return await reddet(k, "medya_reddedildi");
-      await dosya.tasi(no, bicim);
-      if (k.tur === "foto") {
-        const r = await isleyici.gorselUret(no, bicim);
-        const n = r.zamanAsimi ? null : await boyutOku(no, "gorsel.jpg");
-        if (n === null || n <= 0) return await reddet(k, "medya_reddedildi");
-        guncelle(no, { durum: "kabul", bicim, isleme: "hazir", isleme_nedeni: null });
-      } else {
-        const o = await isleyici.olc(no, bicim);
-        const azami = MEDYA_SINIRLARI.VIDEO_SURE_MS * (1 + s.videoSurePayi);
-        if (o === null || !o.video_akisi || o.sure_ms === null || o.sure_ms <= 0 || o.sure_ms > azami) {
-          return await reddet(k, "medya_reddedildi");
-        }
-        sesAkislari.set(no, o.ses_akisi);
-        guncelle(no, {
-          durum: "kabul",
-          bicim,
-          isleme: null,
-          isleme_nedeni: null,
-          sure_ms: o.sure_ms,
-          genislik: o.genislik,
-          yukseklik: o.yukseklik,
-        });
-      }
+      sonuc = await aracla(true, () => tasiVeSina(k, bicim));
     } catch (e) {
-      hataYaz("dogrulama_hatasi", e, { no });
-      return await reddet(k, "medya_reddedildi");
+      if (kapali) sonuc = "kapandi";
+      else {
+        hataYaz("dogrulama_hatasi", e, { no });
+        sonuc = "red";
+      }
     }
+    if (sonuc === "kapandi") return red(k.medya_id, "medya_yok");
+    if (sonuc === "red") return await reddet(k, "medya_reddedildi");
     const son = getir(no);
     if (son === null) return red(k.medya_id, "medya_yok");
     if (son.durum === "kabul") {
@@ -812,13 +912,11 @@ export const medyaKur: MedyaFabrikasi = (b): MedyaYoneticisi => {
       try {
         const kayitlar = depo.kuyrukMedyalari(kuyruk_id).filter((k) => k.durum === "kabul");
         if (kayitlar.length === 0) return { durum: "yok" };
-        let bekliyor = false;
-        for (const k of kayitlar) {
-          if (islemeBitti(k)) continue;
-          bekliyor = true;
-          kuyrugaAl(k.no); // işleme tetiği depodan (bağlama işlemi geri alınabilirdi)
-        }
-        if (bekliyor) return { durum: "bekliyor" };
+        // İşleme tetiği depodan (bağlama işlemi geri alınabilirdi). Kuyruk başındaki satırın ekleri sırada
+        // öne alınır, mesajdaki sırayla (sondan başa öne konur).
+        const bitmemis = kayitlar.filter((k) => !islemeBitti(k));
+        for (const k of [...bitmemis].reverse()) kuyrugaAl(k.no, true);
+        if (bitmemis.length > 0) return { durum: "bekliyor" };
         const imza = imzasi(kayitlar);
         const o = onbellek.get(kuyruk_id);
         if (o !== undefined && o.imza === imza) {
@@ -894,7 +992,11 @@ export const medyaKur: MedyaFabrikasi = (b): MedyaYoneticisi => {
       supurmeIptal = null;
       for (const no of [...sonTarihler.keys()]) sonTarihIptal(no);
       bekleyenler.length = 0;
-      // Süren araç, silmeler, okumalar ve kayıt sıraları biter; yenisi başlamaz.
+      // Süren araç (işçinin ya da doğrulamanın) kesilir: kapanış onun zaman aşımını beklemez. İşçinin
+      // kaydı `kabul` + `isleniyor` kalır (açılışta yeniden kuyruğa); araç sırası bekleyenler araçsız döner.
+      kapanis.abort();
+      aktif?.ilerleme.iptal.abort();
+      // Kesilen araç, silmeler, okumalar ve kayıt sıraları biter; yenisi başlamaz.
       for (let tur = 0; tur < 1000; tur++) {
         const sozler: Promise<unknown>[] = [
           ...(aktif === null ? [] : [aktif.promise]),
