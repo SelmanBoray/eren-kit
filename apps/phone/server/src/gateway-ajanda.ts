@@ -14,11 +14,15 @@
  * çerçeve yalnız o sürümde çözülür. Servis içeride en yeni modelle (`AjandaAsagi`) çalışır, her aşağı
  * çerçeve `ajandaAsagiSurume` ile bağlantı sürümüne uyarlanıp denetlenerek çıkar; uyarlanamayan çerçeve
  * kabloya çıkmaz, bağlantı `ic_hata` ile kapanır. `protokol_uyumsuz` reddinin `v`'si her zaman
- * `AJANDA_SURUMU`'dur (istemcinin geri düşüşü bunu okur, `ajandaGeriDusus`). Kod sürüm kümesine geneldir:
+ * `AJANDA_SURUMU`'dur (istemcinin geri düşüşü bunu okur, `ajandaGeriDusus`). Öteki retlerde sürüm
+ * sabit değilse ve çerçevede desteklenen `v` yoksa ret kümenin en küçük sürümüyle (`AJANDA_SURUMLERI[0]`)
+ * gider; çünkü yayınlanmış eski uygulama `v`'si farklı ret çerçevesini "uygulama eski" sayıp yeniden
+ * bağlanmayı bırakır. Kod sürüm kümesine geneldir:
  * yeni sürüm yalnız protokol paketinde eklenir.
  */
 import {
   AJANDA_AZAMI_CERCEVE,
+  AJANDA_SURUMLERI,
   AJANDA_SURUMU,
   ajandaAsagiSurume,
   ajandaKimlikImzaMetni,
@@ -204,11 +208,13 @@ export const ajandaKanaliKur = (d: AjandaKanaliBagimliliklari): AjandaKanali => 
   /**
    * Ret çerçevesinin sürümü. `protokol_uyumsuz`: her zaman servisin en yüksek sürümü (istemcinin geri
    * düşüşü buna dayanır). Öteki kodlar: sabit bağlantı sürümü; yoksa reddedilen çerçevenin desteklenen
-   * `v`'si (eski istemci kendi kodunu okusun); o da yoksa `AJANDA_SURUMU`.
+   * `v`'si (eski istemci kendi kodunu okusun); o da yoksa (zaman aşımı, bozuk JSON, çok büyük çerçeve)
+   * kümenin en küçük sürümü: yayınlanmış en eski uygulama `v`'si farklı ret çerçevesini "uygulama eski"
+   * sayıp yeniden bağlanmayı bıraktığından, sürümü bilinmeyen istemciye en eski sürümde yanıt verilir.
    */
   const retSurumu = (g: Baglanti, code: AjandaKanalHatasi, cerceveSurumu: AjandaSurumNo | null): AjandaSurumNo => {
     if (code === "protokol_uyumsuz") return AJANDA_SURUMU;
-    return g.surum ?? cerceveSurumu ?? AJANDA_SURUMU;
+    return g.surum ?? cerceveSurumu ?? AJANDA_SURUMLERI[0];
   };
 
   // Hata çerçevesi de uyarlanamazsa bağlantı çerçevesiz kapanır (`cerceveYaz`: özyineleme yok).

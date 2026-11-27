@@ -81,7 +81,7 @@ test("önceki kabuk biçimi tırnaklı ve ileri eğik çizgili; kendi kancamız 
   assert.equal(bizimKancaMi('node "C:/baska/kanca.ts" istem'), false);
   assert.equal(bizimKancaMi("node kopru.ts --rol eren"), false);
   assert.equal(bizimKancaMi(undefined), false);
-  assert.match(mcpEkleKomutu(Y), /^claude mcp add eren-ajanda -s user -- 'C:\\Program Files\\nodejs\\node\.exe' --disable-warning=ExperimentalWarning C:\\ornek\\Yerel\\eren-kit\\uygulama\\guncel\\server\\src\\kopru\.ts --rol pc_oturumu$/);
+  assert.match(mcpEkleKomutu(Y), /^claude mcp add eren-ajanda -s user '--' 'C:\\Program Files\\nodejs\\node\.exe' --disable-warning=ExperimentalWarning C:\\ornek\\Yerel\\eren-kit\\uygulama\\guncel\\server\\src\\kopru\.ts --rol pc_oturumu$/);
 });
 
 test("yalın yol: tek kanca, yalnız ajanda araçlarından önce (PreToolUse, eşleyici mcp__eren-ajanda__.*); istem ve tur sonu yok", () => {
