@@ -262,7 +262,12 @@ kullanıcısı olduğu sürece aynı kullanıcının iki dosyası arasında ger�
 ### 4.3 Kurulum
 
 - `kurulum/claude-code.ts` → `kurulum/harness/claude-code.ts`; ortak arayüz `kurulum/harness/tur.ts`:
-  `{ad, mcpKaydiYonergesi(kabuk), kancaDurumu, kancaKur, kancaKaldir, teshis}`. Güvenli JSON yazıcı
+  `{ad, mcpKaydiYonergesi(kabuk), kancaDurumu, kancaKur, kancaKaldir, teshis}`. **Uygulanan (H2):**
+  `PC_AJAN_ADLARI`, `pcAjani(ad)`; `PcAjani` = `ad`, `gorunenAd`, `mcpKaydiYonergesi(ortam, nodeExe, kabuk?)`,
+  `kayitYonergesi(ortam, nodeExe)`, `kancaDurumu(ortam)`, `kancaKur`, `kancaKaldir`. `teshis` alanı eklenmedi.
+  `eslestir --teshis` metinleri, kanca kurma komutu, olay adı ve MCP kaydını kaldırma satırı bugün Claude Code
+  için koddadır. Başka ajanlar için genel dille yazılır. İkinci uyarlayıcı (H3) bu alanları arayüze taşır.
+  `kurulum/claude-code.ts` eski adları ve CLI'yı yeniden dışa verir. Güvenli JSON yazıcı
   (`ayarCoz`/`ayarYaz`/`yedekAl`) ortak yardımcıya ayrılır; TOML gerektiren harness (Codex `config.toml`,
   doğrulanmadı) kendi yazıcısını getirir ya da yalnız yönerge yazdırır.
 - `eren eslestir --pc-ajan <ad>`; `--claude-code` takma ad olarak kalır (canlı kurulum ve belgeler bozulmaz).
