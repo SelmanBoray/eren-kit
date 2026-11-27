@@ -10,6 +10,8 @@ geçiyor), hatırlatma planı ve alarm kayıtları, yerel depo ve eşitleme moto
 telafi, kalıcı kuyruk ve ret listesi, iyimser işlemler, sorgular). Köprüde `Yazilmadi` dönen motor
 yöntemi kalmadı. Kotlin: kimlik ve eşleştirme ekranı (K1), alarm, bildirim ve alıcılar (K3) yazıldı;
 ağ taşıması (K2, `ag/`) ve ekranlar (K4, `ekran/`) iskelet — iş parçaları MIMARI.md'de.
+Ana ekranın üçüncü sekmesi **Takvim**: ay ızgarası + seçili günün kayıtları (`ekran/Takvim*.kt`; MIMARI.md
+"Takvim sekmesi").
 
 ## Klasör düzeni
 

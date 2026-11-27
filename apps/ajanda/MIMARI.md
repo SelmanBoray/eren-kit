@@ -278,6 +278,18 @@ bölümde ve `surum` uyuşmazlığında çıkış 1 verir: sözleşmeye bölüm 
   sorgu pencereden önceki her satırın `json`'unu okur (tekrar edenler ve uzun dönemler sütunsuz bulunur).
   Gerekirse yeni göç (tekrar ve dönem için kısmi dizin) bunu pencere kadarına indirir; şema sürümü artar
   (`KopruTest` ve `tests/yukseltme.rs` 3 bekliyor).
+- **Ekran (Kotlin, `ekran/`).** `Gorunum.TAKVIM` üçüncü ana sekmedir. `Takvim.kt` saf mantık: ızgara (pazartesi
+  başlar, ay dışı hücre boş, 4-6 hafta), şeritlerin haftalara bölünüp açgözlü sıraya yerleşmesi (en çok 2 sıra,
+  sığmayan gün başına "+N"), hücre noktaları (yalnız tek günlükler; açık dolu, taslak halka, kapalı soluk) ve
+  ekran okuyucu metni, seçili günün satırları (`Liste.satir`; yer, saat ve durum öğeden, tarih başlıkta) ve
+  `TakvimDurumu` (ay + seçili gün + "bugün"; gece yarısı bugünü seçili olanı yeni güne taşır; `metin()` ile
+  `onSaveInstanceState`'te). `TakvimDenetleyici` (yalnız arka iş parçacığı): son 7 ay + seçili gün önbelleği,
+  komşu aylar ay değişiminden önce okunur, kayıt değişiminde (`kayitlar`/`tumu`) önbellek atılır; "kapalılar"
+  seçimi `AnaDenetleyici`'ninkidir. `TakvimGorunumu` listenin ilk öğesidir (küçük ekranda günle birlikte kayar);
+  ızgara platform View'larıyla çizilir, her gün hücresi ayrı dokunulur görünümdür (TalkBack), yatay kaydırma
+  ayı değiştirir, uzun basma o güne kayıt açar. Örnek satırında tamamla/geri al `durumDegistir(…, ornekTarihi)`
+  ile yalnız o güne; düzenle/sil seriye ("Seriyi sil"). Testler: `TakvimTest`, `TakvimDenetleyiciTest`,
+  `TakvimGercekTest`.
 
 ## İkinci dalga iş parçaları
 

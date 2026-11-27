@@ -18,6 +18,8 @@ import dev.eren.ajanda.cekirdek.KayitGovdesi
 import dev.eren.ajanda.cekirdek.ListeSorgusu
 import dev.eren.ajanda.cekirdek.RetGirdisi
 import dev.eren.ajanda.cekirdek.Sekme
+import dev.eren.ajanda.cekirdek.TakvimAyi
+import dev.eren.ajanda.cekirdek.TakvimOgesi
 
 /**
  * Ekranların kullandığı çekirdek yüzü. Üretimde [Gercek] (UniFFI `Cekirdek`); testte sahtesi, böylece
@@ -34,7 +36,12 @@ interface CekirdekYuzu {
     fun ekle(govde: KayitGovdesi): String
     /** [temel]: formun açıldığı hal (yalnız ondan değişen alanlar gider); `null`: gövdenin tamamı istenen hal. */
     fun duzenle(kayitId: String, temel: DuzenlemeTemeli?, govde: KayitGovdesi)
-    fun durumDegistir(kayitId: String, durum: KayitDurumu)
+    /** [ornekTarihi]: tekrarın yalnız o örneği (takvim); `null`: kaydın kendisi. */
+    fun durumDegistir(kayitId: String, durum: KayitDurumu, ornekTarihi: String? = null)
+    /** Takvim ayı (gün özetleri + şeritler; cihaz günleri). Motor kilidini almaz. */
+    fun takvimAyi(yil: Int, ay: Int, kapalilarDahil: Boolean): TakvimAyi
+    /** Seçili günün öğeleri, çekirdeğin sırasıyla. */
+    fun takvimGunu(tarih: String, kapalilarDahil: Boolean): List<TakvimOgesi>
     fun onayla(kayitId: String)
     fun sil(kayitId: String)
     fun geriYukle(kayitId: String)
@@ -55,7 +62,9 @@ interface CekirdekYuzu {
         override fun baglantiAdresi() = c.baglantiAdresi()
         override fun ekle(govde: KayitGovdesi) = c.ekle(govde, GirdiYolu.ELLE)
         override fun duzenle(kayitId: String, temel: DuzenlemeTemeli?, govde: KayitGovdesi) = c.duzenle(kayitId, temel, govde)
-        override fun durumDegistir(kayitId: String, durum: KayitDurumu) = c.durumDegistir(kayitId, durum, null)
+        override fun durumDegistir(kayitId: String, durum: KayitDurumu, ornekTarihi: String?) = c.durumDegistir(kayitId, durum, ornekTarihi)
+        override fun takvimAyi(yil: Int, ay: Int, kapalilarDahil: Boolean) = c.takvimAyi(yil, ay, kapalilarDahil)
+        override fun takvimGunu(tarih: String, kapalilarDahil: Boolean) = c.takvimGunu(tarih, kapalilarDahil)
         override fun onayla(kayitId: String) = c.onayla(kayitId)
         override fun sil(kayitId: String) = c.sil(kayitId)
         override fun geriYukle(kayitId: String) = c.geriYukle(kayitId)

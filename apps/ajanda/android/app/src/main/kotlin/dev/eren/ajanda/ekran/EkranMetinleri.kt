@@ -43,6 +43,9 @@ object EkranMetinleri {
     /** "26 Kasım". */
     fun gunVeAy(t: LocalDate): String = "${t.dayOfMonth} ${AYLAR[t.monthValue - 1]}"
 
+    /** "Kasım 2026" (takvim ayının başlığı). */
+    fun ayVeYil(ay: java.time.YearMonth): String = "${AYLAR[ay.monthValue - 1]} ${ay.year}"
+
     /** "26 Kas" (yıl farklıysa "26 Kas 2027"). */
     fun kisaTarih(t: LocalDate, bugun: LocalDate): String {
         val yil = if (t.year != bugun.year) " ${t.year}" else ""
@@ -239,6 +242,7 @@ object EkranMetinleri {
     const val UYGULAMA = "Ajanda"
     const val TARIHLILER = "Tarihliler"
     const val TARIHSIZLER = "Tarihsizler"
+    const val TAKVIM = "Takvim"
     const val TASLAKLAR = "Taslaklar"
     const val SILINENLER = "Silinenler"
     const val GONDERILEMEYENLER = "Gönderilemeyenler"

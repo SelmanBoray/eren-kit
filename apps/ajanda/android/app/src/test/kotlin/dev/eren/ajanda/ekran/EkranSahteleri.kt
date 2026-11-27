@@ -23,6 +23,8 @@ import dev.eren.ajanda.cekirdek.KimlikKabugu
 import dev.eren.ajanda.cekirdek.KurulacakAlarm
 import dev.eren.ajanda.cekirdek.RetGirdisi
 import dev.eren.ajanda.cekirdek.Sekme
+import dev.eren.ajanda.cekirdek.TakvimAyi
+import dev.eren.ajanda.cekirdek.TakvimOgesi
 import dev.eren.ajanda.cekirdek.TurKokeni
 
 /** Örnek kayıt (kişisel veri yok). */
@@ -128,9 +130,32 @@ class SahteYuz : CekirdekYuzu {
         kayitlar[kayitId] = k.copy(baslik = govde.baslik, zaman = govde.zaman)
     }
 
-    override fun durumDegistir(kayitId: String, durum: KayitDurumu) {
+    override fun durumDegistir(kayitId: String, durum: KayitDurumu, ornekTarihi: String?) {
+        if (ornekTarihi != null) {
+            // Örnek: kaydın kendisi değişmez (takvim sahtesi örnek durumunu tutmaz).
+            cagrilar += "durum:$kayitId:$durum:$ornekTarihi"
+            return
+        }
         cagrilar += "durum:$kayitId:$durum"
         kayitlar[kayitId] = kayitlar.getValue(kayitId).copy(durum = durum)
+    }
+
+    /** Takvim: ay -> döndürülecek ay; gün -> öğeler. Tanımsızsa boş. */
+    val takvimAylari = mutableMapOf<String, TakvimAyi>()
+    val takvimGunleri = mutableMapOf<String, List<TakvimOgesi>>()
+    var takvimHatasi: Exception? = null
+
+    override fun takvimAyi(yil: Int, ay: Int, kapalilarDahil: Boolean): TakvimAyi {
+        val anahtar = String.format(java.util.Locale.ROOT, "%04d-%02d", yil, ay)
+        cagrilar += "takvimAyi:$anahtar" + if (kapalilarDahil) ":kapalilar" else ""
+        takvimHatasi?.let { throw it }
+        return takvimAylari[anahtar] ?: TakvimAyi(yil, ay, emptyList(), emptyList())
+    }
+
+    override fun takvimGunu(tarih: String, kapalilarDahil: Boolean): List<TakvimOgesi> {
+        cagrilar += "takvimGunu:$tarih" + if (kapalilarDahil) ":kapalilar" else ""
+        takvimHatasi?.let { throw it }
+        return takvimGunleri[tarih].orEmpty()
     }
 
     override fun onayla(kayitId: String) {

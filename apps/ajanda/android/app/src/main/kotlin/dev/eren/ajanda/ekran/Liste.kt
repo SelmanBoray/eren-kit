@@ -255,12 +255,26 @@ object Liste {
         val tamamlanabilir: Boolean,
         /** Ekran okuyucu için tam cümle. */
         val aciklama: String,
+        /** Takvimde tekrarın örneği: durum değişikliği yalnız bu örneğe (`durumDegistir(…, ornekTarihi)`). */
+        val ornekTarihi: String? = null,
     )
 
-    fun satir(g: KayitGorunumu, simdi: ZonedDateTime, grup: Grup, konum: Konum?, gonderim: Gonderim = Gonderim.GONDERILIYOR): KayitSatiri {
+    /**
+     * Kayıt satırı. [zaman] ve [gecikmis] öntanımlı olarak gruptan çıkar; takvim seçili günün bilgisiyle
+     * ikisini kendisi verir ([Takvim.satir]).
+     */
+    fun satir(
+        g: KayitGorunumu,
+        simdi: ZonedDateTime,
+        grup: Grup,
+        konum: Konum?,
+        gonderim: Gonderim = Gonderim.GONDERILIYOR,
+        zaman: String? = zamanMetni(g.kayit, konum, grup, simdi),
+        gecikmis: Boolean = grup == Grup.GECIKMIS,
+        ornekTarihi: String? = null,
+    ): KayitSatiri {
         val bekleyen = gonderim.isaret.takeIf { g.bekleyen }
         val k = g.kayit
-        val bugun = simdi.toLocalDate()
         val isaretler = buildList {
             if (k.taslak) add(Isaret.TASLAK)
             if (otomatikMi(k.kaynak)) add(Isaret.ASISTAN)
@@ -268,14 +282,13 @@ object Liste {
             if (k.tekrar != null) add(Isaret.TEKRAR)
             if (k.silindi) add(Isaret.SILINDI)
         }
-        val zamanMetni = zamanMetni(k, konum, grup, simdi)
+        val zamanMetni = zaman
         val alt = listOfNotNull(
             EkranMetinleri.tur(k.tur).takeIf { k.tur != KayitTuru.GOREV },
             zamanMetni,
             if (zamanMetni == null) ilkSatir(k.aciklama) else null,
         ).joinToString(" · ").ifEmpty { null }
         val kapali = k.durum != KayitDurumu.ACIK
-        val gecikmis = grup == Grup.GECIKMIS
         val aciklama = buildString {
             append(EkranMetinleri.tur(k.tur)).append(": ").append(k.baslik)
             zamanMetni?.let { append(", ").append(it) }
@@ -299,6 +312,7 @@ object Liste {
             silindi = k.silindi,
             tamamlanabilir = !k.silindi && k.tur != KayitTuru.NOT,
             aciklama = aciklama,
+            ornekTarihi = ornekTarihi,
         )
     }
 

@@ -47,7 +47,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
 
 /**
- * SAHİBİ: K4. Başlatıcı etkinlik: iki ana sekme (tarihliler, tarihsizler), yardımcı görünümler
+ * SAHİBİ: K4. Başlatıcı etkinlik: üç ana sekme (tarihliler, tarihsizler, takvim), yardımcı görünümler
  * (taslaklar, silinenler, gönderilemeyenler), PC bağlantı göstergesi, uyarı şeritleri, ekleme düğmesi
  * ve geri alma çubuğu. Mantık [AnaDenetleyici]'de ve saf nesnelerde ([Liste], [DurumGostergesi],
  * [HatirlatmaUyarilari], [RetListesi], [Yenileme]); bu sınıf yalnız çizer ve olayları iletir.
@@ -105,6 +105,10 @@ class AnaEkran : Activity() {
     private lateinit var sekmeler: LinearLayout
     private lateinit var sekmeTarihli: TextView
     private lateinit var sekmeTarihsiz: TextView
+    private lateinit var sekmeTakvim: TextView
+    private lateinit var takvimGorunumu: TakvimGorunumu
+    /** Döndürme/süreç ölümünden gelen takvim seçimi (model gelene dek kayıtta korunur). */
+    private var kayitliTakvim: TakvimDurumu? = null
     private lateinit var liste: ListView
     private lateinit var yukleniyor: ProgressBar
     private lateinit var ekleDugmesi: TextView
@@ -131,11 +135,15 @@ class AnaEkran : Activity() {
         } else {
             sonAnaGorunum = runCatching { Gorunum.valueOf(savedInstanceState.getString("gorunum") ?: "") }.getOrDefault(Gorunum.TARIHLI)
             izinIstendi = savedInstanceState.getBoolean("izin_istendi")
+            kayitliTakvim = TakvimDurumu.coz(savedInstanceState.getString("takvim"))
         }
         val kapalilar = tercih.getBoolean("kapalilar", false)
         val ilk = sonAnaGorunum
+        val takvim = kayitliTakvim
         arkada {
             val d = denetleyiciAl()
+            // Seçim önce: gün o arada değiştiyse model kuralı uygular (TakvimDurumu.bugunGuncelle).
+            takvim?.let { d.takvimGeriYukle(it) }
             d.kapalilariGoster(kapalilar)
             d.gorunumSec(ilk)
         }
@@ -145,6 +153,7 @@ class AnaEkran : Activity() {
         super.onSaveInstanceState(outState)
         outState.putString("gorunum", (model?.gorunum ?: sonAnaGorunum).name)
         outState.putBoolean("izin_istendi", izinIstendi)
+        (model?.takvimDurumu ?: kayitliTakvim)?.let { outState.putString("takvim", it.metin()) }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -335,16 +344,29 @@ class AnaEkran : Activity() {
         }
         dikey.addView(seritler)
 
-        // Sekmeler: iki eşit sekme, seçili olanın altı vurgu çizgili.
+        // Sekmeler: üç eşit sekme, seçili olanın altı vurgu çizgili.
         sekmeler = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(t.dp(12), t.dp(8), t.dp(12), 0)
         }
         sekmeTarihli = sekme(EkranMetinleri.TARIHLILER) { gorunumSec(Gorunum.TARIHLI) }
         sekmeTarihsiz = sekme(EkranMetinleri.TARIHSIZLER) { gorunumSec(Gorunum.TARIHSIZ) }
-        sekmeler.addView(sekmeTarihli, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        sekmeler.addView(sekmeTarihsiz, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        sekmeTakvim = sekme(EkranMetinleri.TAKVIM) { gorunumSec(Gorunum.TAKVIM) }
+        for (s in listOf(sekmeTarihli, sekmeTarihsiz, sekmeTakvim)) {
+            sekmeler.addView(s, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+        }
         dikey.addView(sekmeler)
+
+        takvimGorunumu = TakvimGorunumu(
+            this, t,
+            gunSec = { g -> arkada { denetleyiciAl().takvimGunSec(g); modeliGonder() } },
+            ayKaydir = { n ->
+                arkada { denetleyiciAl().takvimAyKaydir(n); modeliGonder() }
+                arkada { denetleyiciAl().takvimKomsulari() }
+            },
+            bugune = { arkada { denetleyiciAl().takvimBugune(); modeliGonder() } },
+            ekle = { g -> KayitEkrani.yeni(this, ISTEK_KAYIT, g, KayitTuru.GOREV) },
+        )
         dikey.addView(t.ayirici())
 
         val govde = FrameLayout(this)
@@ -410,6 +432,9 @@ class AnaEkran : Activity() {
     private fun sekme(ad: String, tik: () -> Unit) = t.yazi(ad, 16f, t.soluk, kalin = true).apply {
         gravity = Gravity.CENTER
         minHeight = t.dp(48)
+        // Büyük yazıda dar sekme iki satıra iner (kısaltılmaz); alt çizgi alta yaslıdır.
+        maxLines = 2
+        setPadding(t.dp(4), t.dp(6), t.dp(4), t.dp(8))
         isClickable = true
         isFocusable = true
         setOnClickListener { tik() }
@@ -417,7 +442,7 @@ class AnaEkran : Activity() {
 
     private fun sekmeleriCiz(g: Gorunum) {
         sekmeler.visibility = if (g.anaSekme) View.VISIBLE else View.GONE
-        for ((v, bu) in listOf(sekmeTarihli to Gorunum.TARIHLI, sekmeTarihsiz to Gorunum.TARIHSIZ)) {
+        for ((v, bu) in listOf(sekmeTarihli to Gorunum.TARIHLI, sekmeTarihsiz to Gorunum.TARIHSIZ, sekmeTakvim to Gorunum.TAKVIM)) {
             val secili = g == bu
             v.setTextColor(if (secili) t.murekkep else t.soluk)
             v.isSelected = secili
@@ -428,7 +453,13 @@ class AnaEkran : Activity() {
 
     private fun altCizgi() = android.graphics.drawable.LayerDrawable(
         arrayOf(GradientDrawable().apply { setColor(t.vurgu) }),
-    ).apply { setLayerInset(0, t.dp(28), t.dp(45), t.dp(28), 0) }
+    ).apply {
+        // Sekme yüksekliği yazı boyuyla değişir: çizgi sabit üst paya değil alta yaslı.
+        setLayerGravity(0, Gravity.BOTTOM or Gravity.FILL_HORIZONTAL)
+        setLayerHeight(0, t.dp(3))
+        setLayerInsetLeft(0, t.dp(20))
+        setLayerInsetRight(0, t.dp(20))
+    }
 
     private fun basligiYaz(g: Gorunum) {
         val bugun = LocalDate.now()
@@ -467,6 +498,10 @@ class AnaEkran : Activity() {
         yukleniyor.visibility = if (m.yuklendi) View.GONE else View.VISIBLE
         uyarlayici.ver(m)
         if (onceki?.gorunum != m.gorunum) liste.setSelection(0)
+        if (m.takvimDurumu != null) kayitliTakvim = m.takvimDurumu
+        ekleDugmesi.contentDescription = m.takvim?.let {
+            "Seçili güne yeni kayıt ekle: ${EkranMetinleri.uzunTarih(it.durum.secili, it.durum.bugun)}"
+        } ?: "Yeni kayıt ekle"
     }
 
     private fun gostergeyiCiz(g: DurumGostergesi.Gosterge) {
@@ -537,11 +572,18 @@ class AnaEkran : Activity() {
             denetleyiciAl().gorunumSec(g)
             modeliGonder()
         }
+        if (g == Gorunum.TAKVIM) arkada { denetleyiciAl().takvimKomsulari() }
     }
 
     private fun yeniKayit() {
         val g = model?.gorunum ?: sonAnaGorunum
-        KayitEkrani.yeni(this, ISTEK_KAYIT, if (g == Gorunum.TARIHSIZ) null else LocalDate.now(), KayitTuru.GOREV)
+        val tarih = when (g) {
+            Gorunum.TARIHSIZ -> null
+            // Takvimde form seçili günle açılır.
+            Gorunum.TAKVIM -> model?.takvimDurumu?.secili ?: LocalDate.now()
+            else -> LocalDate.now()
+        }
+        KayitEkrani.yeni(this, ISTEK_KAYIT, tarih, KayitTuru.GOREV)
     }
 
     private fun ogeMenusu(v: View, s: Liste.KayitSatiri): Boolean {
@@ -550,12 +592,14 @@ class AnaEkran : Activity() {
         if (s.silindi) {
             eylemler += "Geri yükle" to { islem { it.geriYukle(s.kayitId) } }
         } else {
+            // Takvimdeki tekrar örneğinde durum yalnız o güne; düzenleme ve silme serinin tamamına.
+            val o = s.ornekTarihi
             if (s.taslak) eylemler += "Onayla" to { islem { it.onayla(s.kayitId) } }
-            eylemler += if (s.kapali) "Yeniden aç" to { islem { it.durumDegistir(s.kayitId, KayitDurumu.ACIK) } }
-            else "Tamamlandı" to { islem { it.durumDegistir(s.kayitId, KayitDurumu.TAMAM) } }
-            eylemler += "Düzenle" to { KayitEkrani.duzenle(this, ISTEK_KAYIT, s.kayitId) }
-            if (!s.kapali) eylemler += "İptal et" to { islem { it.durumDegistir(s.kayitId, KayitDurumu.IPTAL) } }
-            eylemler += "Sil" to { islem { it.sil(s.kayitId) } }
+            eylemler += if (s.kapali) "Yeniden aç" to { islem { it.durumDegistir(s.kayitId, KayitDurumu.ACIK, o) } }
+            else "Tamamlandı" to { islem { it.durumDegistir(s.kayitId, KayitDurumu.TAMAM, o) } }
+            eylemler += (if (o != null) "Seriyi düzenle" else "Düzenle") to { KayitEkrani.duzenle(this, ISTEK_KAYIT, s.kayitId) }
+            if (!s.kapali) eylemler += "İptal et" to { islem { it.durumDegistir(s.kayitId, KayitDurumu.IPTAL, o) } }
+            eylemler += (if (o != null) "Seriyi sil" else "Sil") to { islem { it.sil(s.kayitId) } }
         }
         eylemler.forEachIndexed { i, (ad, _) -> m.menu.add(0, i, i, ad) }
         m.setOnMenuItemClickListener { eylemler[it.itemId].second(); true }
@@ -741,6 +785,8 @@ class AnaEkran : Activity() {
         data class Kayit(val oge: Liste.Oge.Satir) : Oge()
         data class Ret(val satir: RetListesi.RetSatiri) : Oge()
         data class Bilgi(val metin: String) : Oge()
+        /** Takvim sekmesinin üst bölümü (ızgara); altında seçili günün satırları. */
+        data class Takvim_(val model: TakvimModeli) : Oge()
     }
 
     private inner class Uyarlayici : BaseAdapter() {
@@ -752,7 +798,9 @@ class AnaEkran : Activity() {
                 else listOf(Oge.Bilgi("PC bu değişiklikleri kalıcı olarak reddetti. Düzeltip yeniden ekleyebilir ya da atabilirsiniz.")) +
                     m.retSatirlari.map { Oge.Ret(it) }
             } else {
-                m.ogeler.map { if (it is Liste.Oge.Satir) Oge.Kayit(it) else Oge.Liste_(it) }
+                val satirlar = m.ogeler.map { if (it is Liste.Oge.Satir) Oge.Kayit(it) else Oge.Liste_(it) }
+                // Takvim: ızgara listenin ilk öğesidir (küçük ekranda günün satırlarıyla birlikte kayar).
+                m.takvim?.let { tk -> takvimGorunumu.ver(tk); listOf(Oge.Takvim_(tk)) + satirlar } ?: satirlar
             }
             notifyDataSetChanged()
         }
@@ -762,12 +810,13 @@ class AnaEkran : Activity() {
         override fun getCount() = ogeler.size
         override fun getItem(position: Int): Any = ogeler[position]
         override fun getItemId(position: Int) = position.toLong()
-        override fun getViewTypeCount() = 4
+        override fun getViewTypeCount() = 5
         override fun getItemViewType(position: Int) = when (val o = ogeler[position]) {
             is Oge.Kayit -> 0
             is Oge.Liste_ -> if (o.oge is Liste.Oge.Baslik) 1 else 2
             is Oge.Bilgi -> 2
             is Oge.Ret -> 3
+            is Oge.Takvim_ -> 4
         }
 
         override fun isEnabled(position: Int) = when (ogeler[position]) {
@@ -784,6 +833,8 @@ class AnaEkran : Activity() {
             }
             is Oge.Bilgi -> bilgi(convertView as? TextView ?: t.yazi(), o.metin)
             is Oge.Ret -> retSatiri(convertView as? RetGorunumu ?: RetGorunumu(), o.satir)
+            // Tek örnek: [ver]'de güncellendi.
+            is Oge.Takvim_ -> takvimGorunumu
         }
     }
 
@@ -872,7 +923,7 @@ class AnaEkran : Activity() {
             }.let { d -> android.graphics.drawable.InsetDrawable(d, t.dp(10)) })
             halka.contentDescription = if (s.kapali) "Yeniden aç: ${s.baslik}" else "Tamamla: ${s.baslik}"
             halka.setOnClickListener {
-                islem { it.durumDegistir(s.kayitId, if (s.kapali) KayitDurumu.ACIK else KayitDurumu.TAMAM) }
+                islem { it.durumDegistir(s.kayitId, if (s.kapali) KayitDurumu.ACIK else KayitDurumu.TAMAM, s.ornekTarihi) }
             }
         } else {
             halka.visibility = if (s.silindi) View.GONE else View.VISIBLE
