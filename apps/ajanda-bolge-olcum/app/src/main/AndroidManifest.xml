@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- İnternet izni bilerek yok; bir kitaplık eklemeye kalkarsa birleştirmede silinir. -->
+    <uses-permission
+        android:name="android.permission.INTERNET"
+        tools:node="remove" />
+
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- Yalnız Wi-Fi bağlantı olayını dinlemek ve bağlı ağın adını okumak için; ağa erişim vermez. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+
+    <queries>
+        <!-- Play Hizmetleri sürümünü olgu olarak kaydetmek için. -->
+        <package android:name="com.google.android.gms" />
+    </queries>
+
+    <application
+        android:name=".Uygulama"
+        android:allowBackup="false"
+        android:fullBackupContent="false"
+        android:dataExtractionRules="@xml/veri_cikarma"
+        android:icon="@android:drawable/ic_dialog_map"
+        android:label="Bölge Ölçüm"
+        android:theme="@android:style/Theme.Material.Light.NoActionBar"
+        tools:ignore="MissingApplicationIcon">
+
+        <activity
+            android:name=".AnaEkran"
+            android:exported="true"
+            android:launchMode="singleTop">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".BolgeEkrani"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
+
+        <activity
+            android:name=".EtiketEkrani"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Material.Light.Dialog" />
+
+        <receiver
+            android:name=".GmsAlici"
+            android:exported="false" />
+        <receiver
+            android:name=".CerceveAlici"
+            android:exported="false" />
+        <receiver
+            android:name=".WifiAlici"
+            android:exported="false" />
+        <receiver
+            android:name=".EtiketAlici"
+            android:exported="false" />
+
+        <receiver
+            android:name=".SistemAlici"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="android.intent.action.ACTION_SHUTDOWN" />
+                <action android:name="android.intent.action.REBOOT" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.location.PROVIDERS_CHANGED" />
+                <action android:name="android.location.MODE_CHANGED" />
+            </intent-filter>
+        </receiver>
+
+        <service
+            android:name=".IsServisi"
+            android:exported="true"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
+
+        <provider
+            android:name=".PaylasimSaglayici"
+            android:authorities="${applicationId}.paylasim"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+    </application>
+</manifest>

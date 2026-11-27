@@ -1,0 +1,13 @@
+# Derleme çıktıları ve yerel ayarlar
+build/
+app/build/
+.gradle/
+.kotlin/
+local.properties
+.idea/
+*.iml
+captures/
+*.apk
+*.aab
+*.keystore
+*.jks
