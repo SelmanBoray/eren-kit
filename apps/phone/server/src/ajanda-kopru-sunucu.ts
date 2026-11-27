@@ -118,7 +118,9 @@ const hataYaniti = (istek_id: string, code: HataKodu): KopruYanit => ({
 /**
  * `null`: işleyici sözleşmeye uymadı, çağıran `ic_hata` yollar. `detail` hiç taşınmaz. `pc` (yalnız
  * `pc_oturumu` çağrısı): başarılı yanıtın `sonuc`'u `PcAracSonucu`'dur (çıktı + defterin kararı); karar
- * yoksa sözleşme bozuktur.
+ * yoksa sözleşme bozuktur. Gizlilik sınırı (v3): şemalar katıdır, liste kaydı `AjandaAracKaydi`'dır;
+ * `bolge_konumu` ya da `ekler` taşıyan çıktı (işleyici `ajandaAracKaydi` süzgecini atladıysa) burada
+ * reddedilir ve `ic_hata` olur: konum boruya hiçbir yoldan çıkmaz.
  */
 const sonucYaniti = (
   fiil: AjandaFiili,

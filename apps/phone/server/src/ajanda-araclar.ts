@@ -9,6 +9,11 @@ import {
   type AjandaYazar,
   type AjandaYerelAn,
   type AjandaZamani,
+  type AjandaAracKurali,
+  ajandaAracKaydi,
+  ajandaAracTekrari,
+  ajandaBolgeAnahtari,
+  AJANDA_ARAC_BOLGE_ADET,
   ajandaDegisikligiUygula,
   ajandaEsDegisikligi,
   ajandaTekilAnahtari,
@@ -77,6 +82,17 @@ import type {
  *   zamanıyla birleşir (`ajandaZamanDegisikligiCoz`: verilmeyen saat, süre, gün bölümü korunur, `null`
  *   kaldırır); taşınanlar `zamanda_korunan`, gün hatırlatmasının saati değiştiyse eskisi
  *   `onceki_gun_hatirlatmasi` ile döner.
+ * - Sürüm 3 (`docs/AJANDA.md` "Sürüm 3", "Araç yolu"): `simge`, `bolge` (yalnız ad), `varis`,
+ *   `baglantilar` ve dar `tekrar` (`ajandaAracTekrari`: günlük ya da haftalık, bitişsiz, yalnız varışlı
+ *   kayıtta) girer; `bolge_konumu` ve `ekler` araç girdisinde yoktur. Tekil anahtara bölge (varsa) girer.
+ *   Varışlı eklemede hatırlatma verilmezse saatle hatırlatma kurulmaz (`[]`): bildirim varıştan gelir.
+ *   Güncellemede birleşmiş kayıt araç kuralını bozarsa (`varis` bölgesiz; araç tekrarı varışsız)
+ *   `tutarsiz_kayit` + `kural`. Bir bölge adı veren başarılı çağrıda konumlu, silinmemiş, aynı eşleşme
+ *   anahtarlı hiçbir kayıt yoksa `bolge_yeni:true` (`bolgeYeniMi`). Sentetik turdaki varışlı ekleme de
+ *   taslak doğar (kural değişmedi).
+ * - Gizlilik: liste kayıtları YALNIZ `ajandaAracKaydi`'dan geçerek döner (konum düşer, ekler sayıya iner);
+ *   boru sınırı (`ajanda-kopru-sunucu.ts`) çıktıyı katı `AJANDA_ARACLARI[fiil].cikti` ile denetler, süzgeci
+ *   atlayan kayıt `ic_hata` olur, sızmaz. Günlüğe kayıt alanı (bölge adı, konum) girmez.
  * - Her işleyici eşzamanlıdır (araya `await` girmez) ve tek `depo.islem` içinde yazar.
  */
 
@@ -104,8 +120,20 @@ interface Cagri {
 
 type Govde<F extends AjandaFiili> = (girdi: AjandaFiilGirdisi<F>, c: Cagri, simdi: number) => Cikti<F>;
 
-/** Araçta modelin dokunabildiği alanlar (tekrar ve kaynak yok). */
-type AracAlanlari = Pick<AjandaAlanDegisikligi, "tur" | "baslik" | "aciklama" | "zaman" | "hatirlatmalar" | "durum">;
+/** Araçta modelin dokunabildiği alanlar (kaynak, konum ve ek yok; tekrar yalnız dar araç tekrarı). */
+type AracAlanlari = Pick<
+  AjandaAlanDegisikligi,
+  "tur" | "baslik" | "aciklama" | "zaman" | "hatirlatmalar" | "durum" | "tekrar" | "simge" | "bolge" | "varis" | "baglantilar"
+>;
+
+/** Tekrar bu değişiklikle kuruldu ya da varış kaldırıldı ve birleşmiş kayıtta tekrar varışsız kaldı. */
+function aracKuraliBozuk(k: AjandaKaydi, uygulanan: readonly string[]): AjandaAracKurali | null {
+  if (k.varis !== undefined && k.bolge === undefined) return "varis_bolge_ister";
+  if (k.tekrar !== undefined && k.varis === undefined && (uygulanan.includes("tekrar") || uygulanan.includes("varis"))) {
+    return "tekrar_varis_ister";
+  }
+  return null;
+}
 
 /** Büyük/küçük harf duyarsız arama katlaması (Türkçe I/İ/ı dahil). */
 const katla = (s: string): string => s.normalize("NFC").toLocaleLowerCase("tr").replaceAll("ı", "i");
@@ -127,6 +155,20 @@ function siraAnahtari(z: AjandaZamani | undefined): string | undefined {
 export function ajandaAraclariKur(b: AjandaBagimliliklari, pc?: PcDefteri): AjandaFiilIsleyiciler {
   const { depo, takvim, saat, rastgele, gunluk } = b;
   const ozet = (k: AjandaKaydi, simdi: number) => kayitOzeti(k, simdi, takvim);
+
+  /**
+   * `bolge_yeni`: kaydın bölgesinin konumu ajandada yok, yani konumu olan, silinmemiş, aynı eşleşme
+   * anahtarlı hiçbir kayıt yok (yazılan kayıt dahil; çağıran yazımdan sonra sorar). Yalnız çağrı bir bölge
+   * adı verdiyse ve kayıt silinmemişse sorulur. Konumun yalnız varlığına bakılır, değeri hiçbir yere çıkmaz.
+   */
+  const bolgeYeni = (verilen: string | null | undefined, k: AjandaKaydi): { bolge_yeni?: true } => {
+    if (verilen === undefined || verilen === null || k.bolge === undefined || k.silindi) return {};
+    const anahtar = ajandaBolgeAnahtari(k.bolge);
+    const konumlu = depo
+      .ajandaKayitlari()
+      .some((x) => x.bolge_konumu !== undefined && x.bolge !== undefined && ajandaBolgeAnahtari(x.bolge) === anahtar);
+    return konumlu ? {} : { bolge_yeni: true };
+  };
 
   /** Telefon sohbeti: tur `turBaglami`'ndan (jetonun sohbeti + nesli); yoksa `null` (`tur_gecersiz`). */
   const sohbetCagrisi = (fiil: AjandaFiili, baglam: Extract<AjandaKopruBaglami, { rol: "ana_oturum" }>): Cagri | null => {
@@ -249,26 +291,41 @@ export function ajandaAraclariKur(b: AjandaBagimliliklari, pc?: PcDefteri): Ajan
     const zaman = g.zaman === undefined ? undefined : zamanDoldur(g.zaman, dilim);
     const hatirlatmalar = g.hatirlatmalar?.map((h) => hatirlatmaDoldur(h, dilim));
     if (!dilimlerBilinir(takvim, zaman, hatirlatmalar)) return ret("saat_dilimi_bilinmiyor");
+    const tekrar = g.tekrar === undefined ? undefined : ajandaAracTekrari(g.tekrar);
 
-    const tekil_anahtar = ajandaTekilAnahtari({ kapsam: c.tekilKapsam, tur: g.tur, baslik: g.baslik, zaman });
+    const tekil_anahtar = ajandaTekilAnahtari({ kapsam: c.tekilKapsam, tur: g.tur, baslik: g.baslik, zaman, bolge: g.bolge });
     const esler = depo.ajandaTekilEsler(tekil_anahtar);
     const karar = ajandaTekilKarari(esler, yazar);
 
     if (karar.karar !== "ekle") {
       const es = esler[karar.sira] as AjandaKaydi;
       // Emir olmayan otomasyonda eş olduğu gibi kalır.
-      if (!emir) return { sonuc: "zaten_var", mesaj_ani, kayit: ozet(es, simdi), uygulanan_alanlar: [] };
-      const bir = ajandaDegisikligiUygula(es, ajandaEsDegisikligi(es, { aciklama: g.aciklama, zaman, hatirlatmalar }), yazar);
+      if (!emir) return { sonuc: "zaten_var", mesaj_ani, kayit: ozet(es, simdi), uygulanan_alanlar: [], ...bolgeYeni(g.bolge, es) };
+      // v3: kullanıcının bu turda söylediği simge, varış, tekrar ve bağlantılar da eşe işlenir (bölge anahtarda: aynı yer).
+      const esDegisikligi: AjandaAlanDegisikligi = {
+        ...ajandaEsDegisikligi(es, { aciklama: g.aciklama, zaman, hatirlatmalar }),
+        ...(g.simge !== undefined && { simge: g.simge }),
+        ...(g.varis !== undefined && { varis: g.varis }),
+        ...(tekrar !== undefined && { tekrar }),
+        ...(g.baglantilar !== undefined && { baglantilar: g.baglantilar }),
+      };
+      const bir = ajandaDegisikligiUygula(es, esDegisikligi, yazar);
       const onay = karar.karar === "onayla";
       if (!onay && bir.uygulanan.length === 0) {
-        return { sonuc: "zaten_var", mesaj_ani, kayit: ozet(es, simdi), uygulanan_alanlar: [] };
+        return { sonuc: "zaten_var", mesaj_ani, kayit: ozet(es, simdi), uygulanan_alanlar: [], ...bolgeYeni(g.bolge, es) };
       }
       const yeni: YeniHal = { ...govde(bir.kayit), ...(onay ? { taslak: false } : {}) };
       const ts = degisiklikAni(simdi, es);
       const { onceki, sonraki } = fark(govde(es), yeni);
       const yazim = dogrulaVeYaz(depo, yeni, es.revizyon, { islem: onay ? "onayla" : "guncelle", yazar, onceki, sonraki }, ts);
       if (!yazim.ok) return ret(yazim.neden);
-      return { sonuc: onay ? "onaylandi" : "zaten_var", mesaj_ani, kayit: ozet(yazim.deger, ts), uygulanan_alanlar: bir.uygulanan };
+      return {
+        sonuc: onay ? "onaylandi" : "zaten_var",
+        mesaj_ani,
+        kayit: ozet(yazim.deger, ts),
+        uygulanan_alanlar: bir.uygulanan,
+        ...bolgeYeni(g.bolge, yazim.deger),
+      };
     }
 
     if (depo.ajandaKayitSayisi() >= AJANDA_SINIRLARI.KAYIT_ADET) return ret("kayit_siniri");
@@ -278,13 +335,25 @@ export function ajandaAraclariKur(b: AjandaBagimliliklari, pc?: PcDefteri): Ajan
       // Alıntı yalnız turun insan mesajında birebir geçiyorsa saklanır.
       if (g.alinti !== undefined && tur.insan_metni.includes(g.alinti)) kaynak.alinti = g.alinti;
     }
-    const verilen = { tur: g.tur, baslik: g.baslik, aciklama: g.aciklama, zaman, hatirlatmalar };
+    const verilen = {
+      tur: g.tur,
+      baslik: g.baslik,
+      aciklama: g.aciklama,
+      zaman,
+      hatirlatmalar,
+      tekrar,
+      simge: g.simge,
+      bolge: g.bolge,
+      varis: g.varis,
+      baglantilar: g.baglantilar,
+    };
     const yeni: YeniHal = {
       kayit_id: yeniKayitId(),
       tur: g.tur,
       baslik: g.baslik,
-      // Verilmezse varsayılan (zaman kesinliği ne olursa olsun); `[]` hiç kurmaz.
-      hatirlatmalar: hatirlatmalar ?? AJANDA_VARSAYILAN_HATIRLATMALAR.map((h) => ({ ...h })),
+      // Verilmezse varsayılan (zaman kesinliği ne olursa olsun); `[]` hiç kurmaz. v3: varışlı kayıtta
+      // bildirim varıştan gelir, saatle hatırlatma yalnız verilirse.
+      hatirlatmalar: hatirlatmalar ?? (g.varis !== undefined ? [] : AJANDA_VARSAYILAN_HATIRLATMALAR.map((h) => ({ ...h }))),
       ornekler: [],
       durum: "acik",
       // İnsan kökenli olmayan turdan gelen ekleme taslak doğar.
@@ -296,18 +365,24 @@ export function ajandaAraclariKur(b: AjandaBagimliliklari, pc?: PcDefteri): Ajan
     };
     if (g.aciklama !== undefined) yeni.aciklama = g.aciklama;
     if (zaman !== undefined) yeni.zaman = zaman;
+    if (tekrar !== undefined) yeni.tekrar = tekrar;
+    if (g.simge !== undefined) yeni.simge = g.simge;
+    if (g.bolge !== undefined) yeni.bolge = g.bolge;
+    if (g.varis !== undefined) yeni.varis = g.varis;
+    if (g.baglantilar !== undefined) yeni.baglantilar = g.baglantilar;
     const yazim = dogrulaVeYaz(depo, yeni, 1, { islem: "ekle", yazar, onceki: {}, sonraki: dogumParcasi(yeni) }, simdi);
     if (!yazim.ok) return ret(yazim.neden);
-    return { sonuc: "eklendi", mesaj_ani, kayit: ozet(yazim.deger, simdi) };
+    return { sonuc: "eklendi", mesaj_ani, kayit: ozet(yazim.deger, simdi), ...bolgeYeni(g.bolge, yazim.deger) };
   };
 
   const guncelle: Govde<"ajanda_guncelle"> = (g, c, simdi) => {
     const tur = c.tur;
     const mesaj_ani = tur.mesaj_ani;
-    const ret = (neden: Extract<Cikti<"ajanda_guncelle">, { sonuc: "ret" }>["neden"]): Cikti<"ajanda_guncelle"> => ({
+    const ret = (neden: Extract<Cikti<"ajanda_guncelle">, { sonuc: "ret" }>["neden"], kural?: AjandaAracKurali): Cikti<"ajanda_guncelle"> => ({
       sonuc: "ret",
       mesaj_ani,
       neden,
+      ...(kural !== undefined && { kural }),
     });
     const d = g.degisiklik;
     if (!dayanakTutar(d, g.dayanak, mesaj_ani)) return ret("dayanak_uyusmuyor");
@@ -337,12 +412,20 @@ export function ajandaAraclariKur(b: AjandaBagimliliklari, pc?: PcDefteri): Ajan
     }
     if (d.hatirlatmalar !== undefined) degisiklik.hatirlatmalar = d.hatirlatmalar.map((h) => hatirlatmaDoldur(h, dilim));
     if (d.durum !== undefined) degisiklik.durum = d.durum;
+    // v3 (bölge konumu ve ekler araç girdisinde yok; bölge başka yere değişirse konumu birleştirme düşürür).
+    if (d.tekrar !== undefined) degisiklik.tekrar = d.tekrar === null ? null : ajandaAracTekrari(d.tekrar);
+    if (d.simge !== undefined) degisiklik.simge = d.simge;
+    if (d.bolge !== undefined) degisiklik.bolge = d.bolge;
+    if (d.varis !== undefined) degisiklik.varis = d.varis;
+    if (d.baglantilar !== undefined) degisiklik.baglantilar = d.baglantilar;
     if (!dilimlerBilinir(takvim, degisiklik.zaman, degisiklik.hatirlatmalar)) return ret("saat_dilimi_bilinmiyor");
 
     const bir = ajandaDegisikligiUygula(k, degisiklik, yazar);
+    const kural = aracKuraliBozuk(bir.kayit, bir.uygulanan);
+    if (kural !== null) return ret("tutarsiz_kayit", kural);
     const onay = d.onayla === true && k.taslak;
     if (bir.uygulanan.length === 0 && !onay) {
-      return { sonuc: "degismedi", mesaj_ani, kayit: ozet(k, simdi), korunan_alanlar: bir.korunan };
+      return { sonuc: "degismedi", mesaj_ani, kayit: ozet(k, simdi), korunan_alanlar: bir.korunan, ...bolgeYeni(d.bolge, k) };
     }
     const yeni: YeniHal = { ...govde(bir.kayit), ...(onay ? { taslak: false } : {}) };
     const ts = degisiklikAni(simdi, k);
@@ -370,12 +453,34 @@ export function ajandaAraclariKur(b: AjandaBagimliliklari, pc?: PcDefteri): Ajan
       const sonraki = sonOzet.hatirlatma.gun_hatirlatmasi;
       if (onceki !== undefined && (sonraki === undefined || sonraki.saat !== onceki.saat)) cikti.onceki_gun_hatirlatmasi = onceki;
     }
+    if (bolgeYeni(d.bolge, yazim.deger).bolge_yeni === true) cikti.bolge_yeni = true;
     return cikti;
+  };
+
+  /**
+   * Kullanılan bölge adları (v3): silinmemiş her kayıttan, eşleşme anahtarı başına bir ad (en son güncellenen
+   * kaydın yazılışı), en son kullanılan önce, en çok `AJANDA_ARAC_BOLGE_ADET`. Hiç yoksa alan yok.
+   */
+  const bolgeAdlari = (): { bolgeler?: string[] } => {
+    const enSon = new Map<string, { ad: string; ms: number }>();
+    for (const k of depo.ajandaKayitlari()) {
+      if (k.bolge === undefined) continue;
+      const anahtar = ajandaBolgeAnahtari(k.bolge);
+      const onceki = enSon.get(anahtar);
+      if (onceki === undefined || k.guncelleme_ms >= onceki.ms) enSon.set(anahtar, { ad: k.bolge, ms: k.guncelleme_ms });
+    }
+    if (enSon.size === 0) return {};
+    const sirali = [...enSon.entries()].sort(([a, x], [b, y]) => y.ms - x.ms || (a < b ? -1 : a > b ? 1 : 0));
+    return { bolgeler: sirali.slice(0, AJANDA_ARAC_BOLGE_ADET).map(([, v]) => v.ad) };
   };
 
   const listele: Govde<"ajanda_listele"> = (g, { tur }) => {
     // Silinmiş kayıt hiç listelenmez (depo varsayılanı).
     let liste = depo.ajandaKayitlari({ durumlar: g.durumlar ?? ["acik"], ...(g.turler === undefined ? {} : { turler: g.turler }) });
+    if (g.bolge !== undefined) {
+      const anahtar = ajandaBolgeAnahtari(g.bolge);
+      liste = liste.filter((k) => k.bolge !== undefined && ajandaBolgeAnahtari(k.bolge) === anahtar);
+    }
     if (g.baslangic !== undefined || g.bitis !== undefined) liste = liste.filter((k) => araligaDeger(k.zaman, g.baslangic, g.bitis));
     if (g.ara !== undefined) {
       const aranan = katla(g.ara);
@@ -393,8 +498,10 @@ export function ajandaAraclariKur(b: AjandaBagimliliklari, pc?: PcDefteri): Ajan
     const adet = Math.min(g.en_fazla ?? AJANDA_SINIRLARI.LISTE_VARSAYILAN, AJANDA_SINIRLARI.LISTE_ADET);
     return {
       mesaj_ani: tur.mesaj_ani,
-      kayitlar: sirali.slice(0, adet),
+      // Gizlilik süzgeci: kayıt araç yoluna yalnız buradan çıkar (`ajandaAracKaydi`: konum yok, ekler yalnız sayı).
+      kayitlar: sirali.slice(0, adet).map(ajandaAracKaydi),
       toplam: sirali.length,
+      ...bolgeAdlari(),
     };
   };
 
