@@ -340,13 +340,14 @@ function sahteServis(davranis: "yanit" | "sus" | "ret" | "yok" = "yanit") {
 
 const bag = (
   s: ReturnType<typeof sahteServis>,
-  sec: { jeton?: string | null; bekle?: PcKancaBagimliliklari["bekle"]; servisOturumu?: boolean; giris?: string } = {},
+  sec: { jeton?: string | null; bekle?: PcKancaBagimliliklari["bekle"]; servisOturumu?: boolean; giris?: string; surec?: string } = {},
 ): PcKancaBagimliliklari => ({
   baglan: s.baglan,
   jetonOku: () => (sec.jeton === undefined ? JETON : sec.jeton),
   bekle: sec.bekle ?? ((ms: number) => new Promise((r) => setTimeout(r, ms).unref())),
   servisOturumu: sec.servisOturumu ?? false,
   giris: sec.giris ?? "cli",
+  surec: sec.surec,
 });
 
 const girdisi = (s: ReturnType<typeof sahteServis>): unknown => (s.gelen[1] as Record<string, unknown>)["girdi"];
@@ -360,7 +361,14 @@ describe("kanca gövdesi (kanca.ts)", () => {
       ["kopru_hello", "istek"],
     );
     assert.deepEqual((s.gelen[0] as Record<string, unknown>)["rol"], "pc_kanca");
-    assert.deepEqual(girdisi(s), { oturum_id: OTURUM, istem_id: "p1", arac_cagri_id: "toolu_1", alt_agent: false, etkilesimsiz: false });
+    assert.deepEqual(girdisi(s), {
+      uyarlayici: { ad: "claude-code", surum: 1 },
+      cagri_id: "toolu_1",
+      oturum_id: OTURUM,
+      istem_id: "p1",
+      aktor: "ana",
+      etkilesim: "etkilesimli",
+    });
     assert.ok(!JSON.stringify(s.gelen).includes("GIZLI"), "araç girdisi servise gitti");
     assert.deepEqual(s.sayilar(), { baglanti: 1, kapanan: 1 });
   });
@@ -368,10 +376,14 @@ describe("kanca gövdesi (kanca.ts)", () => {
   it("alt agent ve etkileşimsiz oturum işaretlenir; başka araç tasdik edilmez", async () => {
     const alt = sahteServis();
     await pcKancaCalistir(JSON.stringify({ ...ARAC_GIRDISI, agent_id: "a-1", agent_type: "Explore" }), bag(alt));
-    assert.equal((girdisi(alt) as Record<string, unknown>)["alt_agent"], true);
+    assert.equal((girdisi(alt) as Record<string, unknown>)["aktor"], "alt");
     const p = sahteServis();
     await pcKancaCalistir(JSON.stringify(ARAC_GIRDISI), bag(p, { giris: "sdk-cli" }));
-    assert.equal((girdisi(p) as Record<string, unknown>)["etkilesimsiz"], true);
+    assert.equal((girdisi(p) as Record<string, unknown>)["etkilesim"], "etkilesimsiz");
+    // Claude Code süreç kimliği (kanca ortamının CLAUDE_PID'i) çerçeveye girer: T5 bağı.
+    const sur = sahteServis();
+    await pcKancaCalistir(JSON.stringify(ARAC_GIRDISI), bag(sur, { surec: "3060" }));
+    assert.equal((girdisi(sur) as Record<string, unknown>)["surec_id"], "3060");
     const baska = sahteServis();
     await pcKancaCalistir(JSON.stringify({ ...ARAC_GIRDISI, tool_name: "Bash" }), bag(baska));
     assert.equal(baska.sayilar().baglanti, 0);

@@ -291,10 +291,21 @@ describe("ajanda borusu, PC rolleri: istekler", () => {
     const kanca = await baglan(k, "pc_kanca");
     gonder(kanca, istek("i1", "pc_arac", TASDIK("toolu_01", { alt_agent: true, istem_id: "p-1" })));
     gonder(kanca, istek("i2", "pc_arac", TASDIK("toolu_02", { etkilesimsiz: true })));
+    // Normalize çerçeve (H1) de aynı borudan geçer; eski çerçeve (yukarıdakiler) de geçmeye devam eder.
+    const NORMAL = {
+      uyarlayici: { ad: "claude-code", surum: 1 },
+      cagri_id: "toolu_03",
+      oturum_id: OTURUM,
+      aktor: "ana",
+      etkilesim: "etkilesimli",
+      surec_id: "3060",
+    };
+    gonder(kanca, istek("i3", "pc_arac", NORMAL));
     await bosalt();
     assert.deepEqual(k.kancalar, [
       { fiil: "pc_arac", girdi: TASDIK("toolu_01", { alt_agent: true, istem_id: "p-1" }) },
       { fiil: "pc_arac", girdi: TASDIK("toolu_02", { etkilesimsiz: true }) },
+      { fiil: "pc_arac", girdi: NORMAL },
     ]);
     const yanitlar = cikanlar(kanca).filter((m) => m.type === "yanit");
     assert.deepEqual(
@@ -302,13 +313,14 @@ describe("ajanda borusu, PC rolleri: istekler", () => {
       [
         ["i1", true, {}],
         ["i2", true, {}],
+        ["i3", true, {}],
       ],
     );
     // Yalın yol: istem metni servise gelemez (eski kancanın çerçevesi geçersizdir, bağlantı kapanır).
     gonder(kanca, istek("i3", "pc_istem", { oturum_id: OTURUM, kaynak: "user", metin: "yarın 3'te dişçi" }));
     await bosalt();
     assert.equal(kanca.kapandi, true);
-    assert.equal(k.kancalar.length, 2);
+    assert.equal(k.kancalar.length, 3);
     assert.ok(!JSON.stringify(k.gunluk.girdiler).includes("dişçi"), "istem metni günlükte");
 
     const atan = await kur({

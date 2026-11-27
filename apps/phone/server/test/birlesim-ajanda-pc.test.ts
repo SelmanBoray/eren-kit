@@ -223,10 +223,10 @@ async function ortamKur(sec: { depoYolu?: string } = {}) {
       return jeton;
     },
     /** Kullanıcının Claude Code'una kayıtlı PC köprüsü: gerçek `kopru.ts`, model tarafı bellek içi MCP. */
-    pcKoprusu: async (): Promise<Client> => {
+    pcKoprusu: async (oturumId: string = OTURUM): Promise<Client> => {
       const [mcpKopru, mcpIstemci] = InMemoryTransport.createLinkedPair();
       const calisan = await ajandaKopruCalistir(
-        { rol: "pc_oturumu", jeton: "", boruAdi: AJANDA_BORU_ADI, jetonOku: () => dosya.anahtar, oturumId: OTURUM },
+        { rol: "pc_oturumu", jeton: "", boruAdi: AJANDA_BORU_ADI, jetonOku: () => dosya.anahtar, oturumId },
         { transport: mcpKopru, baglan, rastgele: sahteRastgele(901), gunluk: sahteGunluk(), bekle: (ms) => uyu(Math.min(ms, 20)) },
       );
       const istemci = new Client({ name: "sahte-claude-code", version: "0.0.0" }, { capabilities: {} });
@@ -238,13 +238,14 @@ async function ortamKur(sec: { depoYolu?: string } = {}) {
       return istemci;
     },
     /** Claude Code'un araç öncesi kancası (stdin JSON'u); `giris` kanca sürecinin `CLAUDE_CODE_ENTRYPOINT`'i. */
-    kanca: (girdi: J, giris = "cli"): Promise<void> =>
+    kanca: (girdi: J, giris = "cli", surec?: string): Promise<void> =>
       pcKancaCalistir(JSON.stringify(girdi), {
         baglan,
         jetonOku: () => dosya.anahtar,
         bekle: uyu,
         servisOturumu: false,
         giris,
+        surec,
       }),
     /** Modelin çağrısı; `aracId` Claude Code'un `_meta`'daki çağrı kimliği. Modele giden tek metin döner. */
     arac: async (istemci: Client, fiil: string, girdi: J, aracId?: string): Promise<{ metin: string; hata: boolean; meta: unknown }> => {
@@ -433,6 +434,35 @@ describe("birleşim: PC oturumu (araç öncesi kancalı Claude Code)", () => {
     assert.match(r.metin, /ajanda_ekle: eklendi/);
     assert.ok(!r.metin.includes("pc_tur:"));
     assert.equal(ajanda.kayitlar().at(-1)!.taslak, false, "kalan risk değişti: belgeyi güncelle (AJANDA.md Kalan açıklar)");
+  });
+
+  it("T5: iki Claude Code penceresi; B'nin köprüsü A'nın tasdikini tüketemez, A'nınki kullanır; /clear sonrası A sürer", async () => {
+    const o = await ortamKur();
+    const { ajanda, istemci: a } = await hazirla(o);
+    const OTURUM_B = "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d";
+    const b = await o.pcKoprusu(OTURUM_B);
+    const SUREC_A = "3060";
+    const simdi = disci({ tarih: "2026-11-25", saat: "14:30" });
+    // A'nın ilk çağrısı (kanca süreç kimliğiyle): A'nın Claude Code süreci A'nın köprüsüne bağlanır.
+    await o.kanca(aracGirdisi("ajanda_ekle", "toolu_t1", "istem-1"), "cli", SUREC_A);
+    const a1 = await o.arac(a, "ajanda_ekle", simdi, "toolu_t1");
+    assert.ok(!a1.metin.includes("pc_tur:"), a1.metin);
+    // A'nın sıradaki tasdiki B'nin köprüsünden sunulur: taslak, iz B'nin oturumu.
+    await o.kanca(aracGirdisi("ajanda_ekle", "toolu_t2", "istem-2"), "cli", SUREC_A);
+    const b1 = await o.arac(b, "ajanda_ekle", { ...simdi, baslik: "B'den" }, "toolu_t2");
+    assert.match(b1.metin, /pc_tur: sentetik \(tasdik_yok\)/);
+    const bk = ajanda.kayitlar().at(-1)!;
+    assert.equal(bk.taslak, true);
+    assert.equal(bk.kaynak.oturum_id, OTURUM_B);
+    const a2 = await o.arac(a, "ajanda_ekle", { ...simdi, baslik: "A'dan" }, "toolu_t2");
+    assert.ok(!a2.metin.includes("pc_tur:"), a2.metin);
+    assert.equal(ajanda.kayitlar().at(-1)!.taslak, false);
+    // /clear: kancanın oturumu yenilenir, köprününki (MCP sunucusu yeniden başlamaz) eskir.
+    const temiz = { ...aracGirdisi("ajanda_ekle", "toolu_t3", "istem-3"), session_id: "5d6e7f80-1a2b-4c3d-8e9f-a0b1c2d3e4f5" };
+    await o.kanca(temiz, "cli", SUREC_A);
+    const a3 = await o.arac(a, "ajanda_ekle", { ...simdi, baslik: "Temizden sonra" }, "toolu_t3");
+    assert.ok(!a3.metin.includes("pc_tur:"), a3.metin);
+    assert.equal(ajanda.kayitlar().at(-1)!.taslak, false);
   });
 });
 

@@ -17,10 +17,17 @@ import {
   ajandaPcRoluMu,
   AracCagriId,
   CLAUDE_CODE_GIRIS_ORTAMI,
+  CLAUDE_CODE_SUREC_ORTAMI,
   Jeton,
   KOPRU_FIILLERI,
   OpakId,
+  PC_AKTORLER,
+  PC_ETKILESIMLER,
   PC_ETKILESIMSIZ_GIRISLER,
+  PC_UYARLAYICILARI,
+  PC_VARSAYILAN_UYARLAYICI,
+  pcUyarlayiciAdiMi,
+  pcUyarlayiciTanindiMi,
   PC_KANCA_ARAC_FIILLERI,
   PC_KANCA_ARACLARI,
   PC_KANCA_FIILLERI,
@@ -125,13 +132,20 @@ test("araç öncesi kanca girdisi: servise yalnız gerekli alanlar; araç girdis
   const a0 = pcAracKancaGirdisi(ANA_ARAC, "cli");
   assert.deepEqual(a0, {
     fiil: "pc_arac",
-    girdi: { oturum_id: OTURUM, istem_id: ANA_ARAC.prompt_id, arac_cagri_id: ARAC_ID, alt_agent: false, etkilesimsiz: false },
+    girdi: {
+      uyarlayici: { ad: "claude-code", surum: 1 },
+      cagri_id: ARAC_ID,
+      oturum_id: OTURUM,
+      istem_id: ANA_ARAC.prompt_id,
+      aktor: "ana",
+      etkilesim: "etkilesimli",
+    },
   });
   assert.ok(a0 !== null && semadanGecer(a0));
   assert.ok(!kancaIstekSatiri("kanca_1", a0).includes("GIZLI"), "araç girdisi servise gitti");
   // Alt agent (ön plan ya da arka plan): `agent_id` ve `agent_type` dolu (ölçüldü).
   const alt = pcAracKancaGirdisi({ ...ANA_ARAC, agent_id: "a690393e919d1ad35", agent_type: "general-purpose" }, "cli");
-  assert.ok(alt !== null && alt.girdi.alt_agent === true && semadanGecer(alt));
+  assert.ok(alt !== null && alt.girdi.aktor === "alt" && semadanGecer(alt));
   // Beklenmeyen biçim güvenli tarafa düşer: iki alandan biri hangi değerle olursa olsun varsa alt agent.
   // (Ölçülen: ana ajanın girdisinde ikisi de hiç yoktur.)
   for (const ek of [
@@ -147,9 +161,9 @@ test("araç öncesi kanca girdisi: servise yalnız gerekli alanlar; araç girdis
     { agent_id: "", agent_type: null },
   ]) {
     const r = pcAracKancaGirdisi({ ...ANA_ARAC, ...ek }, "cli");
-    assert.ok(r !== null && r.girdi.alt_agent === true && semadanGecer(r), JSON.stringify(ek));
+    assert.ok(r !== null && r.girdi.aktor === "alt" && semadanGecer(r), JSON.stringify(ek));
   }
-  assert.equal(a0.girdi.alt_agent, false, "iki alan da yoksa ana ajan");
+  assert.equal(a0.girdi.aktor, "ana", "iki alan da yoksa ana ajan");
   // İstem kimliği yoksa ya da geçersizse düşer (tasdik yine gider).
   const { prompt_id: _p, ...kimliksiz } = ANA_ARAC;
   assert.equal(pcAracKancaGirdisi(kimliksiz, "cli")?.girdi.istem_id, undefined);
@@ -170,17 +184,103 @@ test("araç öncesi kanca girdisi: servise yalnız gerekli alanlar; araç girdis
   }
 });
 
+test("normalize tasdik çerçevesi: yeni ve eski çerçeve geçer, karışığı geçmez; bilinmiyor ve bilinmeyen uyarlayıcı biçimce geçer", () => {
+  const yeni = {
+    uyarlayici: { ad: "claude-code", surum: 1 },
+    cagri_id: ARAC_ID,
+    oturum_id: OTURUM,
+    aktor: "ana",
+    etkilesim: "etkilesimli",
+  };
+  const eski = { oturum_id: OTURUM, arac_cagri_id: ARAC_ID, alt_agent: false, etkilesimsiz: false };
+  const satir = (girdi: unknown) => JSON.stringify({ v, type: "istek", istek_id: "i1", fiil: "pc_arac", girdi });
+  assert.equal(pcKancaYukariCoz(satir(yeni)).ok, true);
+  assert.equal(pcKancaYukariCoz(satir({ ...yeni, istem_id: "p-1", surec_id: "3060" })).ok, true);
+  assert.equal(pcKancaYukariCoz(satir(eski)).ok, true, "eski kanca süreci");
+  // Karışık ya da eksik çerçeve, tur ilanı, kapalı listede olmayan aktör/etkileşim: geçmez (kanca bağlantısı kapanır → taslak).
+  for (const kotu of [
+    { ...yeni, alt_agent: false },
+    { ...eski, aktor: "ana" },
+    { ...yeni, tur_kokeni: "insan" },
+    { ...yeni, aktor: "insan" },
+    { ...yeni, etkilesim: "evet" },
+    { ...yeni, uyarlayici: "claude-code" },
+    { ...yeni, uyarlayici: { ad: "claude-code" } },
+    { ...yeni, uyarlayici: { ad: "claude-code", surum: 0 } },
+    { ...yeni, uyarlayici: { ad: "claude code", surum: 1 } },
+    { ...yeni, surec_id: "boş luk" },
+    (({ aktor: _a, ...r }) => r)(yeni),
+    (({ etkilesim: _e, ...r }) => r)(yeni),
+  ]) {
+    assert.equal(pcKancaYukariCoz(satir(kotu)).ok, false, JSON.stringify(kotu));
+  }
+  // `bilinmiyor` ve tanınmayan uyarlayıcı biçimce geçer; kararı servis verir (taslak).
+  for (const iyi of [{ ...yeni, aktor: "bilinmiyor" }, { ...yeni, etkilesim: "bilinmiyor" }, { ...yeni, uyarlayici: { ad: "baska-harness", surum: 3 } }]) {
+    assert.equal(pcKancaYukariCoz(satir(iyi)).ok, true, JSON.stringify(iyi));
+  }
+  assert.deepEqual([...PC_AKTORLER], ["ana", "alt", "bilinmiyor"]);
+  assert.deepEqual([...PC_ETKILESIMLER], ["etkilesimli", "etkilesimsiz", "bilinmiyor"]);
+});
+
+test("uyarlayıcılar kapalı listedir: varsayılan claude-code; bilinmeyen ad ya da daha yeni sürüm tanınmaz", () => {
+  assert.deepEqual(PC_UYARLAYICILARI, { "claude-code": 1 });
+  assert.equal(PC_VARSAYILAN_UYARLAYICI, "claude-code");
+  assert.equal(pcUyarlayiciTanindiMi("claude-code", 1), true);
+  for (const [ad, surum] of [
+    ["claude-code", 2],
+    ["claude-code", 0],
+    ["claude-code", 1.5],
+    ["claude-code", "1"],
+    ["codex", 1],
+    ["toString", 1],
+    ["__proto__", 1],
+    ["", 1],
+    [undefined, 1],
+  ] as const) {
+    assert.equal(pcUyarlayiciTanindiMi(ad, surum), false, `${String(ad)} ${String(surum)}`);
+  }
+  assert.equal(pcUyarlayiciAdiMi("claude-code"), true);
+  assert.equal(pcUyarlayiciAdiMi("hasOwnProperty"), false);
+});
+
+test("T1: tasdik alanlarını model ya da araç girdisi belirleyemez; süreç kimliği yalnız kanca ortamından", () => {
+  const temel = pcAracKancaGirdisi(ANA_ARAC, "cli");
+  // Kanca JSON'una eklenmiş normalize alan adları ve araç girdisindeki taklitler çerçeveyi değiştirmez.
+  const taklit = {
+    ...ANA_ARAC,
+    aktor: "ana",
+    etkilesim: "etkilesimli",
+    uyarlayici: { ad: "baska", surum: 9 },
+    cagri_id: "toolu_SAHTE",
+    surec_id: "1",
+    alt_agent: false,
+    etkilesimsiz: false,
+    tool_input: { session_id: "sahte-oturum", tool_use_id: "toolu_SAHTE", agent_id: "x", aktor: "ana", surec_id: "1" },
+  };
+  assert.deepEqual(pcAracKancaGirdisi(taklit, "cli"), temel);
+  // Alt agent'ın girdisindeki `aktor: ana` ana ajan yapmaz.
+  assert.equal(pcAracKancaGirdisi({ ...taklit, agent_id: "a-1" }, "cli")?.girdi.aktor, "alt");
+  // Süreç kimliği üçüncü argümandan (kanca sürecinin `CLAUDE_PID`'i); geçersizse çerçeveye girmez.
+  assert.equal(CLAUDE_CODE_SUREC_ORTAMI, "CLAUDE_PID");
+  const s = pcAracKancaGirdisi(ANA_ARAC, "cli", "3060");
+  assert.ok(s !== null && s.girdi.surec_id === "3060" && semadanGecer(s));
+  for (const kotu of [undefined, "", "boş luk", 3060, "x".repeat(65), {}]) {
+    const r = pcAracKancaGirdisi(ANA_ARAC, "cli", kotu);
+    assert.ok(r !== null && !("surec_id" in r.girdi), String(kotu));
+  }
+});
+
 test("etkileşimsiz giriş: yalnız -p ve Agent SDK; etkileşimli ve bilinmeyen değerler etkileşimli sayılır", () => {
   assert.equal(CLAUDE_CODE_GIRIS_ORTAMI, "CLAUDE_CODE_ENTRYPOINT");
   assert.deepEqual([...PC_ETKILESIMSIZ_GIRISLER], ["sdk-cli", "sdk-ts", "sdk-py"]);
   for (const g of ["sdk-cli", "sdk-ts", "sdk-py"]) {
     assert.equal(pcEtkilesimsizMi(g), true, g);
     const r = pcAracKancaGirdisi(ANA_ARAC, g);
-    assert.ok(r !== null && r.girdi.etkilesimsiz === true && semadanGecer(r), g);
+    assert.ok(r !== null && r.girdi.etkilesim === "etkilesimsiz" && semadanGecer(r), g);
   }
   for (const g of ["cli", "claude-desktop", "claude-vscode", "SDK-CLI", "", undefined, 3]) {
     assert.equal(pcEtkilesimsizMi(g), false, String(g));
-    assert.equal(pcAracKancaGirdisi(ANA_ARAC, g)?.girdi.etkilesimsiz, false, String(g));
+    assert.equal(pcAracKancaGirdisi(ANA_ARAC, g)?.girdi.etkilesim, "etkilesimli", String(g));
   }
 });
 

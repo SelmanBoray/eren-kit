@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { afterEach, describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {
@@ -22,7 +24,7 @@ import {
 import type { AjandaFiili } from "@eren/protocol";
 import { ajandaKopruSunucuKur } from "../src/ajanda-kopru-sunucu.ts";
 import { depoKur } from "../src/depo.ts";
-import { ajandaKopruCalistir, kopruCalistir } from "../src/kopru.ts";
+import { ajandaKopruCalistir, CLAUDE_CODE_ARAC_KIMLIGI, kopruCalistir, PC_KOPRU_UYARLAYICILARI, pcKopruUyarlayicisiSec } from "../src/kopru.ts";
 import type {
   AjandaFiilIsleyiciler,
   AjandaJetonKapsami,
@@ -761,5 +763,31 @@ describe("kopru ajanda kipi: uçtan uca (köprü → boru → ajanda-kopru-sunuc
     const r = await istemci.callTool({ name: "ajanda_listele", arguments: {} });
     assert.equal(metin(r), "hata: jeton_gecersiz\najanda: bu oturumun ajanda yetkisi yok.");
     assert.equal(u.cagrilar.length, 1);
+  });
+});
+
+describe("kopru PC köprüsü: uyarlayıcı (--uyarlayici)", () => {
+  it("bayrak yoksa claude-code (canlı kayıt bayraksız): çağrı kimliği claudecode/toolUseId, oturum CLAUDE_CODE_SESSION_ID", () => {
+    const varsayilan = pcKopruUyarlayicisiSec(["--rol", "pc_oturumu"]);
+    assert.deepEqual(varsayilan, { aracKimligiMeta: "claudecode/toolUseId", oturumOrtami: "CLAUDE_CODE_SESSION_ID" });
+    assert.equal(varsayilan?.aracKimligiMeta, CLAUDE_CODE_ARAC_KIMLIGI);
+    assert.deepEqual(pcKopruUyarlayicisiSec(["--rol", "pc_oturumu", "--uyarlayici", "claude-code"]), varsayilan);
+    assert.deepEqual(Object.keys(PC_KOPRU_UYARLAYICILARI), ["claude-code"]);
+  });
+
+  it("bilinmeyen ya da değersiz uyarlayıcı: kullanım hatası (null)", () => {
+    for (const a of [["--uyarlayici", "codex"], ["--uyarlayici"], ["--uyarlayici", "toString"], ["--uyarlayici", "--rol"]]) {
+      assert.equal(pcKopruUyarlayicisiSec(["--rol", "pc_oturumu", ...a]), null, a.join(" "));
+    }
+  });
+
+  it("süreç: --rol pc_oturumu --uyarlayici <bilinmeyen> 2 ile çıkar, boruya bağlanmaz", () => {
+    const r = spawnSync(
+      process.execPath,
+      ["--disable-warning=ExperimentalWarning", fileURLToPath(new URL("../src/kopru.ts", import.meta.url)), "--rol", "pc_oturumu", "--uyarlayici", "yok-boyle"],
+      { encoding: "utf8", timeout: 30_000, input: "" },
+    );
+    assert.equal(r.status, 2, r.stderr);
+    assert.match(r.stderr, /--uyarlayici claude-code/);
   });
 });

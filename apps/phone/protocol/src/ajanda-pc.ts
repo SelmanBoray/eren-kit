@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { AJANDA_ARAC_ACIKLAMALARI, AjandaKopruHello, AracCagriId, type AjandaFiili } from "./ajanda-arac.ts";
-import { AJANDA_PC_SINIRLARI } from "./ajanda-pc-kanca.ts";
+import { AJANDA_PC_SINIRLARI, PC_AKTORLER, PC_ETKILESIMLER } from "./ajanda-pc-kanca.ts";
 import { cozumle } from "./cozumle.ts";
 import { AJANDA_AZAMI_CERCEVE, PROTOKOL_SURUMU } from "./sinirlar.ts";
 import { mesaj, OpakId } from "./temel.ts";
@@ -28,14 +28,21 @@ export {
   AJANDA_PC_MCP_ADI,
   AJANDA_PC_SINIRLARI,
   CLAUDE_CODE_GIRIS_ORTAMI,
+  CLAUDE_CODE_SUREC_ORTAMI,
+  PC_AKTORLER,
+  PC_ETKILESIMLER,
   PC_ETKILESIMSIZ_GIRISLER,
   PC_KANCA_ARAC_FIILLERI,
   PC_KANCA_OLAYLARI,
   PC_SERVIS_OTURUMU_ORTAMI,
+  PC_UYARLAYICILARI,
+  PC_VARSAYILAN_UYARLAYICI,
   pcAracKancaGirdisi,
   pcEtkilesimsizMi,
+  pcUyarlayiciAdiMi,
+  pcUyarlayiciTanindiMi,
 } from "./ajanda-pc-kanca.ts";
-export type { PcKancaIstegi, PcKancaOlayi } from "./ajanda-pc-kanca.ts";
+export type { PcAktor, PcEtkilesim, PcKancaIstegi, PcKancaOlayi, PcUyarlayiciAdi } from "./ajanda-pc-kanca.ts";
 
 /**
  * PC yolundan doğan kayıtların tekilleştirme kapsamı (`ajandaTekilAnahtari` `kapsam`): bütün PC oturumları
@@ -73,17 +80,40 @@ export const AJANDA_PC_ARAC_ACIKLAMALARI: Readonly<Record<AjandaFiili, string>> 
 const OturumId = OpakId;
 
 /**
- * `PreToolUse` (yalnız ajanda araçları): bu çağrı kimliği bu oturumda; alt agent'tan mı (`agent_id`
- * dolu), etkileşimsiz oturumdan mı (`-p`/SDK: `PC_ETKILESIMSIZ_GIRISLER`). `istem_id` Claude Code'un
- * `prompt_id`'si (varsa): insan turunun kimliği (gece reddinin aynı tur kuralı, `kaynak_msg_id`).
+ * Normalize tasdik çerçevesi (`docs/HARNESS.md` 4.2; kanca çekirdeğindeki `PcAracKancaGirdisi`): araç
+ * öncesi noktada bu çağrı kimliği bu oturumda; kim çağırıyor (`aktor`), oturum etkileşimli mi
+ * (`etkilesim`). `istem_id` insan turunun kimliği (Claude: `prompt_id`; gece reddinin aynı tur kuralı,
+ * `kaynak_msg_id`). `surec_id` harness sürecinin kimliği (Claude: `CLAUDE_PID`), T5 bağı için. Uyarlayıcı
+ * adı kapalı listeye karşı serviste denetlenir (`pcUyarlayiciTanindiMi`); şema yalnız biçimi sınar.
+ * Kararı servis verir: `insan` yalnız tanınan uyarlayıcı + `ana` + `etkilesimli` + taze, tek kullanımlık,
+ * köprüye bağlanan tasdikle (`server/src/ajanda-pc.ts`); `bilinmiyor` her zaman sentetiktir.
  */
-export const PcAracGirdi = z.strictObject({
+export const PcTasdikGirdi = z.strictObject({
+  uyarlayici: z.strictObject({ ad: OpakId, surum: z.number().int().min(1).max(1_000_000) }),
+  cagri_id: AracCagriId,
+  oturum_id: OturumId,
+  istem_id: OpakId.optional(),
+  aktor: z.enum(PC_AKTORLER),
+  etkilesim: z.enum(PC_ETKILESIMLER),
+  surec_id: OpakId.optional(),
+});
+
+/**
+ * H1 öncesi çerçeve (Claude Code alanlarıyla: `agent_id` dolu → `alt_agent`, `-p`/SDK →
+ * `etkilesimsiz`). Güncellemeden önce başlamış kanca süreçleri için kabul edilir; servis onu
+ * `claude-code` uyarlayıcısının çerçevesi sayar ve bugünkü kararı verir (oturum bağı uygulanmaz: eski
+ * kanca süreç kimliğini vermez, `/clear` sonrası oturum köprününkinden ayrılır).
+ */
+export const PcEskiAracGirdi = z.strictObject({
   oturum_id: OturumId,
   istem_id: OpakId.optional(),
   arac_cagri_id: AracCagriId,
   alt_agent: z.boolean(),
   etkilesimsiz: z.boolean(),
 });
+
+/** `pc_arac` girdisi: normalize çerçeve ya da eski çerçeve (ikisi alan adlarıyla ayrılır, karışık olan geçmez). */
+export const PcAracGirdi = z.union([PcTasdikGirdi, PcEskiAracGirdi]);
 
 const BosCikti = z.strictObject({});
 
@@ -116,7 +146,11 @@ export const pcKancaYukariCoz = (ham: string) => cozumle(PcKancaYukari, ham, AJA
  *   bulamadı; çağrı hiçbir kanca tasdikiyle eşleşemez.
  * - `tasdik_yok`: bu çağrı kimliği için `PreToolUse` kancası gelmedi ya da geçerli değil (kanca kurulu
  *   değil ya da çalışmadı; servise ulaşamadı ya da süresi doldu; tasdik `TASDIK_OMRU_DK`'dan eski, zaten
- *   kullanıldı ya da servis arada yeniden başladı).
+ *   kullanıldı ya da servis arada yeniden başladı). Tasdik var ama bu köprünün oturumuna bağlanamıyorsa
+ *   (T5: başka bir köprüye bağlı harness sürecinin ya da oturumun tasdiki; tasdik tüketilmez, sahibi
+ *   kullanabilir) ya da insan turu için yeterli değilse (bilinmeyen uyarlayıcı ya da sürüm, `aktor` ya da
+ *   `etkilesim` `bilinmiyor`) de budur: yeni karar değeri eski köprünün şemasından geçmezdi. Neden
+ *   günlükte ayrıdır (`pc_oturum_uyusmuyor`, `pc_tasdik_yetersiz`).
  * - `alt_agent`: tasdik çağrının bir alt agent'tan geldiğini söylüyor.
  * - `etkilesimsiz`: tasdik çağrının etkileşimsiz bir oturumdan (`-p`, Agent SDK) geldiğini söylüyor.
  * - `insan`: tasdikli, ana ajanın, etkileşimli oturumun çağrısı.

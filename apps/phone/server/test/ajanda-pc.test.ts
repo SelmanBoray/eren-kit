@@ -80,9 +80,34 @@ const kur = (simdi = T0) => {
     return arac_cagri_id;
   };
 
-  const pcBaglam = (arac_cagri_id?: string, oturum_id?: string): AjandaKopruBaglami => ({
+  /** Normalize çerçeve (`PcTasdikGirdi`); `null` alan çerçeveye girmez. */
+  const tasdikNormal = (
+    sec: {
+      oturum_id?: string;
+      istem_id?: string | null;
+      surec_id?: string | null;
+      aktor?: string;
+      etkilesim?: string;
+      uyarlayici?: { ad: string; surum: number };
+    } = {},
+  ): string => {
+    const cagri_id = `toolu_${++aracNo}`;
+    const girdi = PC_KANCA_ARACLARI.pc_arac.girdi.parse({
+      uyarlayici: sec.uyarlayici ?? { ad: "claude-code", surum: 1 },
+      cagri_id,
+      oturum_id: sec.oturum_id ?? OTURUM,
+      ...(sec.istem_id === null ? {} : { istem_id: sec.istem_id ?? ISTEM }),
+      aktor: sec.aktor ?? "ana",
+      etkilesim: sec.etkilesim ?? "etkilesimli",
+      ...(sec.surec_id === null || sec.surec_id === undefined ? {} : { surec_id: sec.surec_id }),
+    });
+    PC_KANCA_ARACLARI.pc_arac.cikti.parse(ajanda.pcKanca.pc_arac(girdi));
+    return cagri_id;
+  };
+
+  const pcBaglam = (arac_cagri_id?: string, oturum_id?: string, baglanti_id = "pcb_baglanti1"): AjandaKopruBaglami => ({
     rol: "pc_oturumu",
-    baglanti_id: "pcb_baglanti1",
+    baglanti_id,
     ...(arac_cagri_id === undefined ? {} : { arac_cagri_id }),
     ...(oturum_id === undefined ? {} : { oturum_id }),
   });
@@ -109,8 +134,11 @@ const kur = (simdi = T0) => {
     return AjandaKaydiSemasi.parse(k);
   };
   const listele = (baglam: AjandaKopruBaglami) => cagir("ajanda_listele", { en_fazla: 1 }, baglam);
-  return { zaman, gunluk, depo, ajanda, telefonTuru, tasdik, pcBaglam, ekle, guncelle, listele, cagir, kayit, karar };
+  return { zaman, gunluk, depo, ajanda, telefonTuru, tasdik, tasdikNormal, pcBaglam, ekle, guncelle, listele, cagir, kayit, karar };
 };
+
+/** Eski (H1 öncesi) çerçevenin `pc_arac` günlüğüne eklenen alanlar. */
+const ESKI_GUNLUK = { uyarlayici: "claude-code", surec_kimligi: "yok", cerceve: "eski" } as const;
 
 const kimlik = (c: AjandaFiilCiktisi<"ajanda_ekle">): string => {
   assert.notEqual(c.sonuc, "ret", JSON.stringify(c));
@@ -391,8 +419,8 @@ describe("PC oturumu: tekilleştirme kapsamı ve telefon yolu", () => {
     assert.deepEqual(
       g.filter((x) => x.olay === "pc_arac").map((x) => x.alanlar),
       [
-        { oturum_id: OTURUM, alt_agent: false, etkilesimsiz: false, istem_kimligi: "var" },
-        { oturum_id: OTURUM, alt_agent: true, etkilesimsiz: false, istem_kimligi: "var" },
+        { ...ESKI_GUNLUK, oturum_id: OTURUM, alt_agent: false, etkilesimsiz: false, istem_kimligi: "var", aktor: "ana", etkilesim: "etkilesimli" },
+        { ...ESKI_GUNLUK, oturum_id: OTURUM, alt_agent: true, etkilesimsiz: false, istem_kimligi: "var", aktor: "alt", etkilesim: "etkilesimli" },
       ],
     );
     assert.deepEqual(
@@ -405,5 +433,143 @@ describe("PC oturumu: tekilleştirme kapsamı ve telefon yolu", () => {
     const satirlar = JSON.stringify(g);
     assert.ok(!satirlar.includes("GIZLI"), "günlükte metin ya da istem kimliği var");
     assert.ok(!satirlar.includes("Dişçi"), "günlükte başlık var");
+  });
+});
+
+describe("PC oturumu: normalize tasdik çerçevesi (harness'tan bağımsız karar)", () => {
+  it("eski çerçeve (H1 öncesi kanca) bugünkü kararı birebir verir: insan, cagri_kimligi_yok, tasdik_yok, alt_agent, etkilesimsiz; oturum bağı uygulanmaz", async () => {
+    const o = kur();
+    const kararlar: (PcTurKarari | undefined)[] = [];
+    const dene = async (baslik: string, baglam: AjandaKopruBaglami) => {
+      await o.ekle({ ...DISCI, baslik }, baglam);
+      kararlar.push(o.karar());
+    };
+    await dene("E1", o.pcBaglam(o.tasdik(), OTURUM));
+    await dene("E2", o.pcBaglam(undefined, OTURUM));
+    await dene("E3", o.pcBaglam("toolu_tasdiksiz", OTURUM));
+    await dene("E4", o.pcBaglam(o.tasdik({ alt_agent: true }), OTURUM));
+    await dene("E5", o.pcBaglam(o.tasdik({ etkilesimsiz: true }), OTURUM));
+    // Eski kanca süreç kimliği vermez ve `/clear` sonrası oturumu köprününkinden ayrılır: bugünkü gibi insan.
+    await dene("E6", o.pcBaglam(o.tasdik({ oturum_id: OTURUM_2 }), OTURUM));
+    await dene("E7", o.pcBaglam(o.tasdik(), "pck_rastgeleKopru"));
+    assert.deepEqual(kararlar, ["insan", "cagri_kimligi_yok", "tasdik_yok", "alt_agent", "etkilesimsiz", "insan", "insan"]);
+  });
+
+  it("normalize çerçeve aynı kararları verir: ana+etkileşimli insan, alt alt_agent, etkileşimsiz etkilesimsiz", async () => {
+    const o = kur();
+    await o.ekle({ ...DISCI, baslik: "N1" }, o.pcBaglam(o.tasdikNormal({ surec_id: "100" }), OTURUM));
+    assert.equal(o.karar(), "insan");
+    assert.equal(o.kayit(kimlik(await o.ekle({ ...DISCI, baslik: "N2" }, o.pcBaglam(o.tasdikNormal(), OTURUM)))).taslak, false);
+    await o.ekle({ ...DISCI, baslik: "N3" }, o.pcBaglam(o.tasdikNormal({ aktor: "alt" }), OTURUM));
+    assert.equal(o.karar(), "alt_agent");
+    await o.ekle({ ...DISCI, baslik: "N4" }, o.pcBaglam(o.tasdikNormal({ etkilesim: "etkilesimsiz" }), OTURUM));
+    assert.equal(o.karar(), "etkilesimsiz");
+    await o.ekle({ ...DISCI, baslik: "N5" }, o.pcBaglam(o.tasdikNormal({ aktor: "alt", etkilesim: "etkilesimsiz" }), OTURUM));
+    assert.equal(o.karar(), "alt_agent");
+  });
+
+  it("her bilinmiyor değeri, bilinmeyen uyarlayıcı ve daha yeni sürüm taslağa düşer (tasdik_yok); tasdik tüketilir", async () => {
+    const durumlar = [
+      { aktor: "bilinmiyor" },
+      { etkilesim: "bilinmiyor" },
+      { aktor: "bilinmiyor", etkilesim: "bilinmiyor" },
+      { aktor: "bilinmiyor", etkilesim: "etkilesimsiz" },
+      { uyarlayici: { ad: "baska-harness", surum: 1 } },
+      { uyarlayici: { ad: "claude-code", surum: 2 } },
+      { uyarlayici: { ad: "toString", surum: 1 } },
+    ];
+    for (const sec of durumlar) {
+      const o = kur();
+      const id = o.tasdikNormal(sec);
+      const k = o.kayit(kimlik(await o.ekle(DISCI, o.pcBaglam(id, OTURUM))));
+      assert.equal(o.karar(), "tasdik_yok", JSON.stringify(sec));
+      assert.equal(k.taslak, true, JSON.stringify(sec));
+      assert.equal(k.kaynak.tur_kokeni, "sentetik", JSON.stringify(sec));
+      await o.ekle({ ...DISCI, baslik: "Yine" }, o.pcBaglam(id, OTURUM));
+      assert.equal(o.karar(), "tasdik_yok", "tüketildi");
+      const g = o.gunluk.girdiler as ReadonlyArray<{ olay: string }>;
+      assert.ok(g.some((x) => x.olay === "pc_tasdik_yetersiz"), JSON.stringify(sec));
+    }
+  });
+});
+
+describe("PC oturumu, T5: tasdik onu tüketen köprüye bağlanır", () => {
+  const A = OTURUM;
+  const B = OTURUM_2;
+  /** A'nın `/clear` sonrası oturumu (köprünün ortamındaki oturum eskir). */
+  const A_TEMIZ = "5d6e7f80-1a2b-4c3d-8e9f-a0b1c2d3e4f5";
+
+  it("A'nın tasdikini B'nin köprüsü tüketemez: B'nin çağrısı taslak, tasdik kalır, A'nın köprüsü onu kullanır", async () => {
+    const o = kur();
+    // A ilk çağrısını yaptı: A'nın Claude Code süreci (100) A'nın köprüsüne bağlandı.
+    await o.ekle({ ...DISCI, baslik: "A1" }, o.pcBaglam(o.tasdikNormal({ oturum_id: A, surec_id: "100" }), A, "pcb_a"));
+    assert.equal(o.karar(), "insan");
+    const id = o.tasdikNormal({ oturum_id: A, surec_id: "100" });
+    const b = o.kayit(kimlik(await o.ekle({ ...DISCI, baslik: "B1" }, o.pcBaglam(id, B, "pcb_b"))));
+    assert.equal(o.karar(), "tasdik_yok");
+    assert.equal(b.taslak, true);
+    assert.equal(b.kaynak.oturum_id, B, "iz B'nin köprüsünün oturumu");
+    const g = o.gunluk.girdiler as ReadonlyArray<{ olay: string; alanlar?: Record<string, unknown> }>;
+    assert.deepEqual(
+      g.filter((x) => x.olay === "pc_oturum_uyusmuyor").map((x) => x.alanlar),
+      [{ oturum_id: A, surec_kimligi: "var" }],
+    );
+    const a = o.kayit(kimlik(await o.ekle({ ...DISCI, baslik: "A2" }, o.pcBaglam(id, A, "pcb_a"))));
+    assert.equal(o.karar(), "insan", "tasdik sahibine kaldı");
+    assert.equal(a.taslak, false);
+    await o.ekle({ ...DISCI, baslik: "A3" }, o.pcBaglam(id, A, "pcb_a"));
+    assert.equal(o.karar(), "tasdik_yok", "yine tek kullanımlık");
+  });
+
+  it("/clear: kancanın oturumu yenilenir, köprününki eskir; aynı Claude Code sürecinin tasdiki A'nın köprüsüne geçer, B'ninkine geçmez", async () => {
+    const o = kur();
+    await o.ekle({ ...DISCI, baslik: "A1" }, o.pcBaglam(o.tasdikNormal({ oturum_id: A, surec_id: "100" }), A, "pcb_a"));
+    assert.equal(o.karar(), "insan");
+    await o.ekle({ ...DISCI, baslik: "A2" }, o.pcBaglam(o.tasdikNormal({ oturum_id: A_TEMIZ, surec_id: "100" }), A, "pcb_a"));
+    assert.equal(o.karar(), "insan");
+    await o.ekle({ ...DISCI, baslik: "B1" }, o.pcBaglam(o.tasdikNormal({ oturum_id: A_TEMIZ, surec_id: "100" }), B, "pcb_b"));
+    assert.equal(o.karar(), "tasdik_yok");
+    // B'nin kendi süreci (200) kendi köprüsüne bağlanır.
+    await o.ekle({ ...DISCI, baslik: "B2" }, o.pcBaglam(o.tasdikNormal({ oturum_id: B, surec_id: "200" }), B, "pcb_b"));
+    assert.equal(o.karar(), "insan");
+    await o.ekle({ ...DISCI, baslik: "A3" }, o.pcBaglam(o.tasdikNormal({ oturum_id: B, surec_id: "200" }), A, "pcb_a"));
+    assert.equal(o.karar(), "tasdik_yok");
+  });
+
+  it("canlı kurulum bozulmaz: /clear'dan sonraki İLK çağrı, köprü oturumu bilmiyor (pck_) ya da bildirmiyor, yeniden bağlanma: hepsi insan", async () => {
+    const o = kur();
+    // Servis açıldıktan sonra bu süreçten ilk tasdik /clear sonrası: bağ henüz yok, ilk görüşte kurulur.
+    await o.ekle({ ...DISCI, baslik: "T1" }, o.pcBaglam(o.tasdikNormal({ oturum_id: A_TEMIZ, surec_id: "100" }), A, "pcb_a"));
+    assert.equal(o.karar(), "insan");
+    await o.ekle({ ...DISCI, baslik: "T2" }, o.pcBaglam(o.tasdikNormal({ oturum_id: A_TEMIZ, surec_id: "100" }), B, "pcb_b"));
+    assert.equal(o.karar(), "tasdik_yok", "bağ kurulduktan sonra başka köprü tüketemez");
+    // Köprü oturum kimliğini bilmiyor: kendi ürettiği `pck_` süreç boyunca aynıdır.
+    for (const baslik of ["T3", "T4"]) {
+      await o.ekle({ ...DISCI, baslik }, o.pcBaglam(o.tasdikNormal({ oturum_id: B, surec_id: "300" }), "pck_kopruC", "pcb_c"));
+      assert.equal(o.karar(), "insan", baslik);
+    }
+    // Köprü oturum bildirmiyor: bağlantı kimliği kullanılır.
+    await o.ekle({ ...DISCI, baslik: "T5" }, o.pcBaglam(o.tasdikNormal({ oturum_id: B, surec_id: "400" }), undefined, "pcb_d"));
+    assert.equal(o.karar(), "insan");
+    // Yeniden bağlanma (anahtar yenilendi): bağlantı kimliği değişir, köprünün oturumu değişmez.
+    await o.ekle({ ...DISCI, baslik: "T6" }, o.pcBaglam(o.tasdikNormal({ oturum_id: A_TEMIZ, surec_id: "100" }), A, "pcb_a2"));
+    assert.equal(o.karar(), "insan");
+  });
+
+  it("süreç kimliği yoksa bağ oturum düzeyindedir; oturumu tam eşleşen köprü her zaman kabul edilir ve bağı devralır", async () => {
+    const o = kur();
+    await o.ekle({ ...DISCI, baslik: "S1" }, o.pcBaglam(o.tasdikNormal({ oturum_id: A }), A, "pcb_a"));
+    assert.equal(o.karar(), "insan");
+    await o.ekle({ ...DISCI, baslik: "S2" }, o.pcBaglam(o.tasdikNormal({ oturum_id: A }), B, "pcb_b"));
+    assert.equal(o.karar(), "tasdik_yok");
+    // Süreç kimliği yeniden kullanıldı (eski köprü kapandı): tam eşleşen oturum bağı devralır.
+    await o.ekle({ ...DISCI, baslik: "S3" }, o.pcBaglam(o.tasdikNormal({ oturum_id: A, surec_id: "500" }), A, "pcb_a"));
+    assert.equal(o.karar(), "insan");
+    await o.ekle({ ...DISCI, baslik: "S4" }, o.pcBaglam(o.tasdikNormal({ oturum_id: B, surec_id: "500" }), B, "pcb_b"));
+    assert.equal(o.karar(), "insan", "tam eşleşme");
+    await o.ekle({ ...DISCI, baslik: "S5" }, o.pcBaglam(o.tasdikNormal({ oturum_id: A_TEMIZ, surec_id: "500" }), B, "pcb_b"));
+    assert.equal(o.karar(), "insan", "bağ B'ye geçti");
+    await o.ekle({ ...DISCI, baslik: "S6" }, o.pcBaglam(o.tasdikNormal({ oturum_id: A_TEMIZ, surec_id: "500" }), A, "pcb_a"));
+    assert.equal(o.karar(), "tasdik_yok");
   });
 });

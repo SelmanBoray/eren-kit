@@ -1,4 +1,13 @@
-import { AJANDA_PC_SINIRLARI, OpakId, type PcTurKarari } from "@eren/protocol";
+import {
+  AJANDA_PC_SINIRLARI,
+  OpakId,
+  PC_VARSAYILAN_UYARLAYICI,
+  type PcAktor,
+  type PcEtkilesim,
+  type PcKancaGirdisi,
+  type PcTurKarari,
+  pcUyarlayiciTanindiMi,
+} from "@eren/protocol";
 import { MODUL } from "./ajanda-ortak.ts";
 import type {
   AjandaPcBaglami,
@@ -18,9 +27,12 @@ import type {
  * mı alt agent'tan mı (`agent_id`), etkileşimli oturumdan mı (`CLAUDE_CODE_ENTRYPOINT`), hangi istemin
  * turunda (`prompt_id`, varsa).
  *
- * Köprünün çağrısı (`pc_oturumu`, `arac_cagri_id`) gelince `tur` kararı verir. İnsan turu YALNIZ: çağrı
- * kimliği var, aynı kimlik için tasdik var (en çok `TASDIK_OMRU_DK` önce, tek kullanımlık), alt agent
- * değil, etkileşimsiz değil. Bu durumda ana ajanın çağrısı kullanıcının emri sayılır (insan turunun bütün
+ * Tasdik çerçevesi harness'tan bağımsızdır (`PcTasdikGirdi`: uyarlayıcı, çağrı ve oturum kimliği, aktör,
+ * etkileşim, isteğe bağlı harness süreci; `docs/HARNESS.md` 4.2); H1 öncesi Claude çerçevesi de kabul edilir
+ * ve aynı karara çevrilir (`tasdikKur`). Köprünün çağrısı (`pc_oturumu`, `arac_cagri_id`) gelince `tur`
+ * kararı verir. İnsan turu YALNIZ: çağrı kimliği var, aynı kimlik için tasdik var (en çok `TASDIK_OMRU_DK`
+ * önce, tek kullanımlık), uyarlayıcı tanınıyor, tasdik bu köprüye bağlanıyor (T5, `bagla`; eski çerçevede
+ * uygulanmaz), aktör `ana`, etkileşim `etkilesimli`. Bu durumda ana ajanın çağrısı kullanıcının emri sayılır (insan turunun bütün
  * kuralları: taslaksız ekleme, onay, korunan alanlar, gece teyidi). Geri kalan her durum sentetiktir:
  * kayıt taslak doğar, taslak olmayan kayda dokunamaz; karar (`PcTurKarari`) köprüye döner, köprü nedenini
  * modele söyler. Alt agent'ın çağrısı hiçbir yoldan insan olamaz: tasdik alt agent diyorsa sentetik,
@@ -57,15 +69,42 @@ export interface PcDefteriBagimliliklari {
   gunluk: Gunluk;
 }
 
+/** Normalize tasdik (çerçeve hangisi olursa olsun). */
 interface Tasdik {
+  uyarlayici: { ad: string; surum: number };
+  /** H1 öncesi çerçeve (eski kanca süreci): oturum bağı (T5) uygulanmaz, karar bugünkü gibi. */
+  eski: boolean;
   oturum_id: string;
   istem_id?: string;
-  alt_agent: boolean;
-  etkilesimsiz: boolean;
+  aktor: PcAktor;
+  etkilesim: PcEtkilesim;
+  surec_id?: string;
   ms: number;
 }
 
 const DAKIKA = 60_000;
+/** Bellekteki oturum bağı sayısı (harness süreci ya da oturum → köprü); eskiler atılır. */
+const BAG_ADET = AJANDA_PC_SINIRLARI.TASDIK_ADET;
+
+/** Eski çerçeve `claude-code` uyarlayıcısının çerçevesidir; alanları birebir karşılığına çevrilir. */
+function tasdikKur(g: PcKancaGirdisi<"pc_arac">, ms: number): { cagri_id: string; tasdik: Tasdik } {
+  if ("arac_cagri_id" in g) {
+    const t: Tasdik = {
+      uyarlayici: { ad: PC_VARSAYILAN_UYARLAYICI, surum: 1 },
+      eski: true,
+      oturum_id: g.oturum_id,
+      aktor: g.alt_agent ? "alt" : "ana",
+      etkilesim: g.etkilesimsiz ? "etkilesimsiz" : "etkilesimli",
+      ms,
+    };
+    if (g.istem_id !== undefined) t.istem_id = g.istem_id;
+    return { cagri_id: g.arac_cagri_id, tasdik: t };
+  }
+  const t: Tasdik = { uyarlayici: g.uyarlayici, eski: false, oturum_id: g.oturum_id, aktor: g.aktor, etkilesim: g.etkilesim, ms };
+  if (g.istem_id !== undefined) t.istem_id = g.istem_id;
+  if (g.surec_id !== undefined) t.surec_id = g.surec_id;
+  return { cagri_id: g.cagri_id, tasdik: t };
+}
 
 /** Ekleme sırası en yeniyi sona alır; sınır aşılınca baştakiler (en eskiler) atılır. */
 function sinirliKoy<K, V>(m: Map<K, V>, k: K, v: V, sinir: number): void {
@@ -83,38 +122,85 @@ const varYok = (v: unknown): "var" | "yok" => (v === undefined ? "yok" : "var");
 export function pcDefteriKur(b: PcDefteriBagimliliklari): PcDefteri {
   const { takvim, saat, rastgele, gunluk } = b;
   const tasdikler = new Map<string, Tasdik>();
+  /** T5 bağı: `s:<harness süreci>` (yoksa `o:<oturum>`) → onu tüketen köprünün kimliği. */
+  const baglar = new Map<string, string>();
 
   const kanca: PcKancaIsleyicileri = {
     pc_arac(g) {
-      const t: Tasdik = { oturum_id: g.oturum_id, alt_agent: g.alt_agent, etkilesimsiz: g.etkilesimsiz, ms: saat.simdiMs() };
-      if (g.istem_id !== undefined) t.istem_id = g.istem_id;
-      sinirliKoy(tasdikler, g.arac_cagri_id, t, AJANDA_PC_SINIRLARI.TASDIK_ADET);
+      const { cagri_id, tasdik: t } = tasdikKur(g, saat.simdiMs());
+      sinirliKoy(tasdikler, cagri_id, t, AJANDA_PC_SINIRLARI.TASDIK_ADET);
+      // `alt_agent`/`etkilesimsiz` teşhisin okuduğu alanlardır (eslestir `TESHIS_ALANLARI`); adları kalır.
       gunluk.bilgi(MODUL, "pc_arac", {
-        oturum_id: g.oturum_id,
-        alt_agent: g.alt_agent,
-        etkilesimsiz: g.etkilesimsiz,
-        istem_kimligi: varYok(g.istem_id),
+        oturum_id: t.oturum_id,
+        alt_agent: t.aktor === "alt",
+        etkilesimsiz: t.etkilesim === "etkilesimsiz",
+        istem_kimligi: varYok(t.istem_id),
+        uyarlayici: t.uyarlayici.ad,
+        aktor: t.aktor,
+        etkilesim: t.etkilesim,
+        surec_kimligi: varYok(t.surec_id),
+        cerceve: t.eski ? "eski" : "normal",
       });
       return {};
     },
   };
 
-  /** Sıra `PC_TUR_KARARLARI` açıklamasıyla aynı. Tasdik bulunursa silinir (tek kullanımlık), eskiyse yok sayılır. */
-  const kararVer = (baglam: AjandaPcBaglami, simdi: number): { karar: PcTurKarari; tasdik?: Tasdik } => {
+  /**
+   * T5: tasdik onu tüketen köprüye bağlanır. Köprünün kimliği bildirdiği oturumdur (Claude:
+   * `CLAUDE_CODE_SESSION_ID`, köprü süreci açılırken; yoksa rastgele `pck_`), o da yoksa bağlantı.
+   * Eşleşir: tasdikin oturumu köprününkiyle aynı (kesin kanıt; bağ ona taşınır), ya da tasdikin harness
+   * süreci (yoksa oturumu) zaten bu köprüye bağlı, ya da henüz hiçbir köprüye bağlı değil (ilk görüş; bağ
+   * kurulur). Eşleşmez: başka bir köprüye bağlı. Neden oturum eşitliği yetmez: Claude Code `/clear`'da
+   * oturum kimliğini yeniler, MCP sunucusunu yeniden başlatmaz (2.1.332 ikili dosyası); köprünün oturumu
+   * eskir, kancanınki yenidir. Süreç kimliği `/clear`'da değişmez, iki Claude Code penceresinde ayrıdır.
+   */
+  const bagla = (tasdik: Tasdik, kopru: string): boolean => {
+    const anahtar = tasdik.surec_id !== undefined ? `s:${tasdik.surec_id}` : `o:${tasdik.oturum_id}`;
+    const bagli = baglar.get(anahtar);
+    if (tasdik.oturum_id !== kopru && bagli !== undefined && bagli !== kopru) return false;
+    sinirliKoy(baglar, anahtar, kopru, BAG_ADET);
+    return true;
+  };
+
+  /**
+   * Sıra `PC_TUR_KARARLARI` açıklamasıyla aynı. Tasdik eşleşince silinir (tek kullanımlık); eskiyse ya da
+   * tanınmayan uyarlayıcınınsa da silinir. Başka köprüye bağlıysa SİLİNMEZ: sahibi hâlâ kullanabilir.
+   */
+  const kararVer = (baglam: AjandaPcBaglami, simdi: number, kopru: string): { karar: PcTurKarari; tasdik?: Tasdik } => {
     if (baglam.arac_cagri_id === undefined) return { karar: "cagri_kimligi_yok" };
-    const tasdik = tasdikler.get(baglam.arac_cagri_id);
-    tasdikler.delete(baglam.arac_cagri_id);
+    const id = baglam.arac_cagri_id;
+    const tasdik = tasdikler.get(id);
     if (tasdik === undefined || simdi - tasdik.ms > AJANDA_PC_SINIRLARI.TASDIK_OMRU_DK * DAKIKA || simdi < tasdik.ms) {
+      tasdikler.delete(id);
       return { karar: "tasdik_yok" };
     }
-    if (tasdik.alt_agent) return { karar: "alt_agent", tasdik };
-    if (tasdik.etkilesimsiz) return { karar: "etkilesimsiz", tasdik };
+    if (!pcUyarlayiciTanindiMi(tasdik.uyarlayici.ad, tasdik.uyarlayici.surum)) {
+      tasdikler.delete(id);
+      gunluk.uyari(MODUL, "pc_tasdik_yetersiz", { neden: "uyarlayici", uyarlayici: tasdik.uyarlayici.ad, surum: tasdik.uyarlayici.surum });
+      return { karar: "tasdik_yok" };
+    }
+    if (!tasdik.eski && !bagla(tasdik, kopru)) {
+      gunluk.uyari(MODUL, "pc_oturum_uyusmuyor", { oturum_id: tasdik.oturum_id, surec_kimligi: varYok(tasdik.surec_id) });
+      return { karar: "tasdik_yok" };
+    }
+    tasdikler.delete(id);
+    if (tasdik.aktor === "alt") return { karar: "alt_agent", tasdik };
+    if (tasdik.aktor !== "ana") {
+      gunluk.uyari(MODUL, "pc_tasdik_yetersiz", { neden: "aktor" });
+      return { karar: "tasdik_yok", tasdik };
+    }
+    if (tasdik.etkilesim === "etkilesimsiz") return { karar: "etkilesimsiz", tasdik };
+    if (tasdik.etkilesim !== "etkilesimli") {
+      gunluk.uyari(MODUL, "pc_tasdik_yetersiz", { neden: "etkilesim" });
+      return { karar: "tasdik_yok", tasdik };
+    }
     return { karar: "insan", tasdik };
   };
 
   const tur = (baglam: AjandaPcBaglami, simdi: number): PcTuru => {
-    const { karar, tasdik } = kararVer(baglam, simdi);
     const bildirilen = baglam.oturum_id !== undefined && OpakId.safeParse(baglam.oturum_id).success ? baglam.oturum_id : undefined;
+    // Bağlantı kimliği servisin; `b:` öneki hiçbir oturum kimliğiyle çakışmasın diye.
+    const { karar, tasdik } = kararVer(baglam, simdi, bildirilen ?? `b:${baglam.baglanti_id}`);
     const oturum_id = tasdik?.oturum_id ?? bildirilen ?? baglam.baglanti_id;
     // Mesaj anı: çağrının servise varışı (yalın yolda mesajın geliş anı bilinmez).
     const mesaj_ani = takvim.yerelAn(simdi, takvim.kullaniciDilimi());

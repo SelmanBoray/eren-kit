@@ -38,8 +38,11 @@ import {
   SORU_ARACLARI,
   TELEFON_ARACLARI,
   UygulamalarCikti,
+  PC_VARSAYILAN_UYARLAYICI,
+  pcUyarlayiciAdiMi,
 } from "@eren/protocol";
 import type {
+  PcUyarlayiciAdi,
   AjandaAracCiktisi,
   AjandaFiili,
   AjandaKopruAsagi,
@@ -740,6 +743,30 @@ const AJANDA_KOPUK_SONUCU = (): CallToolResult =>
 
 /** Claude Code'un MCP `tools/call` isteğinde çağrı kimliğini taşıyan `_meta` anahtarı (kancadaki `tool_use_id`). */
 export const CLAUDE_CODE_ARAC_KIMLIGI = "claudecode/toolUseId";
+
+/**
+ * Köprü tarafı uyarlayıcılar (`docs/HARNESS.md` 4.2): çağrı kimliği MCP isteğinin hangi `_meta`
+ * anahtarında, köprünün oturum kimliği hangi ortam değişkeninde. Köprü `--uyarlayici <ad>` alır;
+ * bayrak yoksa `PC_VARSAYILAN_UYARLAYICI` (`claude-code`; canlı kayıt bayraksızdır). Claude Code MCP
+ * sunucusunu `CLAUDE_CODE_SESSION_ID` ile başlatır (2.1.332 ikili dosyası: stdio sunucusunun ortamı
+ * `CLAUDE_CODE_SESSION_ID: <o anki oturum>`); `/clear` sonrası bu değer eskir (servis bunu bilir, T5).
+ */
+export interface PcKopruUyarlayicisi {
+  aracKimligiMeta: string;
+  oturumOrtami: string;
+}
+export const PC_KOPRU_UYARLAYICILARI: Readonly<Record<PcUyarlayiciAdi, PcKopruUyarlayicisi>> = {
+  "claude-code": { aracKimligiMeta: CLAUDE_CODE_ARAC_KIMLIGI, oturumOrtami: "CLAUDE_CODE_SESSION_ID" },
+};
+
+/** `--uyarlayici` argümanı: bayrak yoksa varsayılan; bilinmeyen ad ya da değersiz bayrak `null` (kullanım hatası). */
+export function pcKopruUyarlayicisiSec(argumanlar: readonly string[]): PcKopruUyarlayicisi | null {
+  const i = argumanlar.indexOf("--uyarlayici");
+  if (i < 0) return PC_KOPRU_UYARLAYICILARI[PC_VARSAYILAN_UYARLAYICI];
+  const ad = argumanlar[i + 1];
+  return pcUyarlayiciAdiMi(ad) ? PC_KOPRU_UYARLAYICILARI[ad] : null;
+}
+
 /** Boru hazır değilken çağrının yeniden bağlanmayı beklediği en uzun süre (servis yeniden başlıyor olabilir). */
 export const PC_BAGLANTI_BEKLEME_MS = 3_000;
 /** O bekleme içinde boru yokken iki deneme arası. */
@@ -771,6 +798,7 @@ export const PC_ANAHTAR_GECERSIZ_METNI =
 export async function ajandaKopruCalistir(
   ayar: AjandaKopruIstemciAyari,
   b: KopruBagimliliklari,
+  uyarlayici: PcKopruUyarlayicisi = PC_KOPRU_UYARLAYICILARI[PC_VARSAYILAN_UYARLAYICI],
 ): Promise<KopruCalisani> {
   const { gunluk, rastgele } = b;
   const boru = boruIstemciKur(ayar, b, ajandaKopruAsagiCoz);
@@ -784,9 +812,9 @@ export async function ajandaKopruCalistir(
   }));
   const oturumId = ayar.oturumId !== undefined && OpakId.safeParse(ayar.oturumId).success ? ayar.oturumId : undefined;
 
-  /** PC: `cagri` zarfı. Çağrı kimliği Claude Code'un `_meta`'sından; geçersizse yok (tur sentetik olur). */
+  /** PC: `cagri` zarfı. Çağrı kimliği uyarlayıcının `_meta` anahtarından; geçersizse yok (tur sentetik olur). */
   const pcCagri = (meta: unknown): Record<string, unknown> => {
-    const id = typeof meta === "object" && meta !== null ? (meta as Record<string, unknown>)[CLAUDE_CODE_ARAC_KIMLIGI] : undefined;
+    const id = typeof meta === "object" && meta !== null ? (meta as Record<string, unknown>)[uyarlayici.aracKimligiMeta] : undefined;
     const r = AracCagriId.safeParse(id);
     const cagri: AjandaPcCagri = {};
     if (r.success) cagri.arac_cagri_id = r.data;
@@ -974,6 +1002,12 @@ async function giris(): Promise<void> {
   const rol = KopruRolu.safeParse(rolArgumani);
   const ajandaRol = AjandaKopruRolu.safeParse(rolArgumani);
   const pcKoprusu = ajandaRol.success && ajandaRol.data === "pc_oturumu";
+  const uyarlayici = pcKopruUyarlayicisiSec(argumanlar);
+  if (pcKoprusu && uyarlayici === null) {
+    process.stderr.write(`kullanim: kopru --rol pc_oturumu [--uyarlayici ${Object.keys(PC_KOPRU_UYARLAYICILARI).join("|")}]\n`);
+    process.exitCode = 2;
+    return;
+  }
   // PC köprüsünün jetonu ortamdan değil anahtar dosyasından gelir (her denemede yeniden okunur).
   const jeton = pcKoprusu ? { success: true as const, data: "" } : Jeton.safeParse(process.env.EREN_KOPRU_JETON);
   if (!jeton.success || (!rol.success && !ajandaRol.success) || (ajandaRol.success && ajandaRol.data === "pc_kanca")) {
@@ -1006,10 +1040,11 @@ async function giris(): Promise<void> {
                 jeton: "",
                 boruAdi: AJANDA_BORU_ADI,
                 jetonOku: pcAnahtariOku,
-                oturumId: process.env.CLAUDE_CODE_SESSION_ID ?? `pck_${randomBytes(16).toString("base64url")}`,
+                oturumId: (uyarlayici !== null ? process.env[uyarlayici.oturumOrtami] : undefined) ?? `pck_${randomBytes(16).toString("base64url")}`,
               }
             : { rol: ajandaRol.data, jeton: jeton.data, boruAdi: AJANDA_BORU_ADI },
           ortak((ad) => boruyaBaglan(ad, AJANDA_AZAMI_CERCEVE.BORU)),
+          uyarlayici ?? undefined,
         )
       : null;
   if (calisan === null) return;
