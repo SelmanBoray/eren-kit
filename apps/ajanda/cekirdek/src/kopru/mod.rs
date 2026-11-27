@@ -23,7 +23,7 @@ use crate::motor::{Etkiler, Motor, Ortam};
 
 use kabuklar::{AlarmKabugu, Gozlemci, KimlikKabugu, Tasima, ZamanKabugu};
 use tipler::{
-    BaglantiDurumu, CalismaKipi, DuzenlemeTemeli, EslesmeDurumu, GecisOzeti, GecmisSayfasi, HatirlatmaBildirimi, HatirlatmaOnizlemesi, KayitGorunumu,
+    BaglantiDurumu, BaglantiYetenekleri, CalismaKipi, DuzenlemeTemeli, EslesmeDurumu, GecisOzeti, GecmisSayfasi, HatirlatmaBildirimi, HatirlatmaOnizlemesi, KayitGorunumu,
     KoparmaSonucu, ListeSorgusu, RetGirdisi, TakvimAyi, TakvimOgesi, YenidenKurmaNedeni,
 };
 
@@ -337,6 +337,14 @@ impl Cekirdek {
 
     pub fn baglanti_durumu(&self) -> Result<BaglantiDurumu, CekirdekHatasi> {
         self.calistir(|m, _, _| m.baglanti_durumu())
+    }
+
+    /// Arayüzün bağlantıya göre açacakları (`BaglantiYetenekleri`): kip (yerel / bağlı değil / bağlı),
+    /// bağlantının sürümü, v3 alanlarının servise hemen gidip gitmediği, `welcome` yetenekleri ve ertelenen v3
+    /// değişikliği sayısı (eski servise bağlıyken; "servis güncellenince eşitlenecek"). Değişince gözlemciye
+    /// `Degisim.baglanti`.
+    pub fn baglanti_yetenekleri(&self) -> Result<BaglantiYetenekleri, CekirdekHatasi> {
+        self.calistir(|m, _, _| m.baglanti_yetenekleri())
     }
 
     /// Gövdenin hatırlatmaları şimdi kaydedilse ne zaman çalar (v2; form ve ayrıntı): saatsiz gün kaydında

@@ -72,8 +72,14 @@ pub struct GecisOzeti {
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct KayitGorunumu {
     pub kayit: AjandaKaydi,
-    /// Kuyrukta sonucu gelmemiş işlemi var (iyimser hal; arayüz "gönderiliyor" gösterebilir).
+    /// Kuyrukta sonucu gelmemiş işlemi var (iyimser hal; arayüz "gönderiliyor" gösterebilir). Yalnız
+    /// ertelenmiş işlemi olan kayıtta yanlıştır (o işlem bu serviste gitmez; `ertelenen`).
     pub bekleyen: bool,
+    /// Ertelenen v3 değişikliği var: eski (v2) servise bağlıyken v3 alanlarına yapılan değişiklik telefonda
+    /// bekliyor, kayıt onunla görünüyor; servis güncellenince kendiliğinden eşitlenir ("servis güncellenince
+    /// eşitlenecek"). Yerel kipte ve v3 serviste hep yanlış.
+    #[uniffi(default)]
+    pub ertelenen: bool,
 }
 
 /// Düzenleme formunun açıldığı hal (`duzenle`): yalnız bu halden farklı olan alanlar gönderilir; form
@@ -179,7 +185,8 @@ pub enum BaglantiAsamasi {
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct BaglantiDurumu {
     pub asama: BaglantiAsamasi,
-    /// Kuyrukta sonucu gelmemiş işlem sayısı.
+    /// Kuyrukta sonucu gelmemiş işlem sayısı. Eski (v2) servise bağlıyken bütünüyle ertelenmiş (yalnız v3
+    /// alanı değiştiren) işlemler sayılmaz: bu serviste gitmezler (`BaglantiYetenekleri.ertelenen`).
     pub kuyrukta: i32,
     pub ret_listesinde: i32,
     pub son_esitlenme_ms: Option<i64>,
@@ -200,6 +207,36 @@ pub enum SurumUyusmazligi {
     UygulamaEski,
     /// Yön bilinmiyor (`error{protokol_uyumsuz}` ya da yalnız kapanış 1002): eski olan güncellenmeli.
     Bilinmiyor,
+}
+
+/// `BaglantiYetenekleri.kip`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum BaglantiKipi {
+    /// Yerel kip (`CalismaKipi::Yerel`; süren bağlanma dahil): servis yok, v3 alanları kısıtsız.
+    Yerel,
+    /// Bağlı kip, açık bir bağlantının `welcome`'u yok (kopuk ya da el sıkışma sürüyor).
+    BagliDegil,
+    /// Bağlı kip, bağlantının `welcome`'u geldi (telafi ya da canlı): sürüm ve yetenekler bu bağlantınındır.
+    Bagli,
+}
+
+/// `Cekirdek::baglanti_yetenekleri`: arayüzün bağlantıya göre açacakları. Değişince gözlemciye
+/// `Degisim.baglanti` gider.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct BaglantiYetenekleri {
+    pub kip: BaglantiKipi,
+    /// `Bagli`'da bağlantının sürümü (2 ya da 3); öteki kiplerde yok.
+    pub surum: Option<i32>,
+    /// v3 alanlarındaki değişiklik servise hemen gider mi: yerel kipte ve v3 bağlantıda doğru, v2 bağlantıda
+    /// yanlış (yine düzenlenebilir: değişiklik ertelenir, `ertelenen`). `BagliDegil`'de bilinen son servis
+    /// sürümüne göre (bilinmiyorsa doğru).
+    pub v3_alanlari: bool,
+    /// Bağlantının `welcome.yetenekler`'i (istenenlerle sunulanların kesişimi); `Bagli` dışında boş.
+    pub yetenekler: Vec<String>,
+    /// Ertelenen v3 değişikliği taşıyan kuyruk işlemi sayısı: eski servise bağlıyken v3 alanlarına yapılan
+    /// değişiklikler; servisle v3 konuşulan ilk bağlantıda kendiliğinden giderler ("servis güncellenince
+    /// eşitlenecek"). Yerel kipte 0.
+    pub ertelenen: i32,
 }
 
 /// Saatsiz gün kaydının gün hatırlatması (v2): kaydın diliminde yerel gün ve saat; `gecti`: tetiği geçti,

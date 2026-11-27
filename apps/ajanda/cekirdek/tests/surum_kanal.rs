@@ -9,8 +9,7 @@
 //!   fikstürü): veri, kuyruk ve alarmlar korunur.
 //! - Çerçevesiz 1002: bir alt sürüme düşülür; en alttaysa yön bilinmez.
 //! - Sürüm sabitlenmeden gelen başka sürümlü ret (`zaman_asimi`) kodun kendisidir, geri düşüş değil.
-//! - v2 bağlantıda v3 alanlı kuyruk işlemi: v2 kısmı gider, v3 kalanı ret listesine (içeriğiyle) düşer,
-//!   kuyruk tıkanmaz, sıra korunur.
+//! - v2 bağlantıda v3 alanlı kuyruk işlemi: v2 kısmı gider, v3 kalanı ertelenir (`tests/erteleme.rs`).
 //! - v2 döneminin kopyası (v3 alanları süzülmüş temel) aynı revizyonlu v3 alanlı PC kaydıyla karşılaşınca
 //!   (v3'teki ilk bağlantının tam telafisi: yedekten dönme denetimi; yerel kipten bağlanma: fark hesabı)
 //!   PC'deki v3 alanları silinmez. Birleştirme önizlemesi (D4) henüz yok: sınanacak yolu yoktur.
@@ -23,7 +22,7 @@ use ajanda_cekirdek::depo::Depo;
 use ajanda_cekirdek::kopru::tipler::{BaglantiAsamasi, CalismaKipi, SurumUyusmazligi, YenidenKurmaNedeni};
 use ajanda_cekirdek::model::{
     AjandaBolgeKonumu, AjandaDegisiklik, AjandaIslem, AjandaKanalHatasi, AjandaKaydi, AjandaVaris, Alan, GirdiYolu,
-    IslemTuru, KuyrukRetNedeni, Surum, SurumBolumu, V3Alanlari, V3Degisikligi,
+    Surum, SurumBolumu, V3Alanlari, V3Degisikligi,
 };
 use ortak::*;
 
@@ -272,67 +271,6 @@ fn surum_sabitlenmeden_gelen_zaman_asimi_kodun_kendisidir() {
     h.baglan();
     assert!(h.canli_mi());
     assert_eq!(h.pc.acilislar.last(), Some(&("hello", 3)));
-}
-
-/// Servis v2'ye geri alındı (ya da güncellenmedi) ve kuyrukta v3 alanlı işlemler var: v2 kısmı gider (satır
-/// aynı `islem_id` ve sırayla), v3 kalanı ret listesine içeriğiyle düşer, yalnız v3 alanı değiştiren işlem
-/// bütünüyle ret listesine; arkasındakiler tıkanmaz.
-#[test]
-fn v2_baglantida_v3_alanli_kuyruk_islemi_bolunur_kalani_ret_listesine() {
-    let mut h = Hat::yeni("surum-v2-kuyruk");
-    h.eslestir();
-    let a = h.c.ekle(govde("A", None), GirdiYolu::Elle).unwrap();
-    h.pompala();
-    assert!(h.pc.d.kayitlar.contains_key(&a));
-    h.kopar();
-    let simge = V3Degisikligi { simge: Alan::Deger("ev".into()), ..Default::default() };
-    let bolge = V3Degisikligi { bolge: Alan::Deger("Ev".into()), ..Default::default() };
-    kuyruga_yaz(&h, "i_karma", &guncelle(&a, AjandaDegisiklik { baslik: Some("A2".into()), v3: simge, ..Default::default() }));
-    kuyruga_yaz(&h, "i_yalniz_v3", &guncelle(&a, AjandaDegisiklik { v3: bolge, ..Default::default() }));
-    let ekle = AjandaIslem::Ekle {
-        kayit_id: "k_yeni".into(),
-        govde: govde("Yeni", None),
-        v3: V3Alanlari { simge: Some("is".into()), ..Default::default() },
-        girdi_yolu: GirdiYolu::Elle,
-    };
-    kuyruga_yaz(&h, "i_ekle", &ekle);
-    kuyruga_yaz(&h, "i_duz", &guncelle(&a, AjandaDegisiklik { aciklama: Alan::Deger("not".into()), ..Default::default() }));
-    h.sureci_oldur_ve_ac();
-    assert_eq!(h.c.baglanti_durumu().unwrap().kuyrukta, 4);
-
-    h.pc.surum_kumesi(&[2]);
-    h.baglan();
-    h.baglan();
-    assert!(h.canli_mi());
-    assert_eq!(h.pc.acilislar.last(), Some(&("hello", 2)));
-    // Sırası ve kimliğiyle v2 kısımları gitti; yalnız v3 olan gitmedi.
-    let uygulanan: Vec<&str> = h.pc.uygulanan.iter().map(String::as_str).collect();
-    assert_eq!(uygulanan[uygulanan.len() - 3..], ["i_karma", "i_ekle", "i_duz"]);
-    let pc_a = &h.pc.d.kayitlar[&a];
-    assert_eq!((pc_a.baslik.as_str(), pc_a.aciklama.as_deref()), ("A2", Some("not")));
-    assert!(pc_a.v3.bos_mu() && h.pc.d.kayitlar["k_yeni"].v3.bos_mu(), "v2 servise v3 alanı gitmedi");
-    assert_eq!(h.pc.d.kayitlar["k_yeni"].baslik, "Yeni");
-    let d = h.c.baglanti_durumu().unwrap();
-    assert_eq!((d.kuyrukta, d.ret_listesinde, d.son_hata), (0, 3, None), "kuyruk tıkanmadı, kullanıcıya üç ret görünür");
-
-    // Ret listesi: hepsi `gecersiz_islem`, `guncelle`; v3 içerikleri satırların işleminde duruyor.
-    let ret = h.c.ret_listesi().unwrap();
-    assert!(ret.iter().all(|r| r.neden == KuyrukRetNedeni::GecersizIslem && r.islem == IslemTuru::Guncelle), "{ret:?}");
-    let satirlar = depo(&h).ret_listesi().unwrap();
-    let islem = |kayit_id: &str, alan: &str| -> AjandaIslem {
-        let s = satirlar.iter().find(|s| s.kayit_id == kayit_id && s.islem_json.contains(alan)).unwrap_or_else(|| panic!("{alan}"));
-        AjandaIslem::oku(&serde_json::from_str(&s.islem_json).unwrap(), "").unwrap()
-    };
-    let simge_kalan = islem(&a, "\"simge\"");
-    assert_eq!(simge_kalan, guncelle(&a, AjandaDegisiklik { v3: V3Degisikligi { simge: Alan::Deger("ev".into()), ..Default::default() }, ..Default::default() }));
-    assert!(satirlar.iter().any(|s| s.islem_id == "i_yalniz_v3" && s.islem_json.contains("\"bolge\":\"Ev\"")), "yalnız v3 olan bütünüyle");
-    let ekle_kalan = islem("k_yeni", "\"simge\"");
-    assert_eq!(ekle_kalan, guncelle("k_yeni", AjandaDegisiklik { v3: V3Degisikligi { simge: Alan::Deger("is".into()), ..Default::default() }, ..Default::default() }));
-    // Düzeltme formu özgün işlemin istediği hal: başlık görünür.
-    assert!(ret.iter().any(|r| r.kayit_id == "k_yeni" && r.govde.as_ref().is_some_and(|g| g.baslik == "Yeni")));
-    // Görünen kopya PC ile aynı (v3 kalanları kuyrukta değil, ret listesinde).
-    assert_eq!(&kayit(&h, &a), pc_a);
-    assert_eq!(&kayit(&h, "k_yeni"), &h.pc.d.kayitlar["k_yeni"]);
 }
 
 /// v2 döneminin kopyası: servis v3 alanlı kaydı tutuyor ama telefon v2'de bağlı (v3 alanları süzülerek gelir;
