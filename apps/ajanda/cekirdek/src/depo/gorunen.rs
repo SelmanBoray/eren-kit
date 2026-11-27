@@ -1,5 +1,7 @@
 //! SAHİBİ: R4. Görünen kopya (`gorunen` tablosu): sunucu kopyası + kuyruktaki işlemlerin iyimser
 //! uygulaması. Arayüz sorguları ve alarm planı (R3) yalnız bunu okur; tam telafi sürerken değişmez.
+//! Yerel kipte (göç 4, `depo/yerel.rs`) türetme değil doğruluk kaynağıdır: yerel yazar doğrudan yazar,
+//! `bekleyen` hep yanlıştır.
 //! Okuma imzaları (`gorunen_kayit`, `gorunen_liste`, `etkin_kayitlar`) R3 ve köprü için sabittir.
 //!
 //! Satırdaki kayıt şemadan geçmiş `AjandaKaydi`'dir. Henüz servise ulaşmamış `ekle`'nin iyimser hali de

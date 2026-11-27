@@ -6,6 +6,7 @@ import dev.eren.ajanda.cekirdek.AjandaZamani
 import dev.eren.ajanda.cekirdek.AlarmKabugu
 import dev.eren.ajanda.cekirdek.BaglantiAsamasi
 import dev.eren.ajanda.cekirdek.BaglantiDurumu
+import dev.eren.ajanda.cekirdek.CalismaKipi
 import dev.eren.ajanda.cekirdek.CekirdekHatasi
 import dev.eren.ajanda.cekirdek.DuzenlemeTemeli
 import dev.eren.ajanda.cekirdek.EslesmeDurumu
@@ -105,6 +106,8 @@ class SahteYuz : CekirdekYuzu {
         cagrilar += "baglantiDurumu"
         return BaglantiDurumu(BaglantiAsamasi.KOPUK, 0, ret.size, null, null, null)
     }
+
+    override fun kip(): CalismaKipi = CalismaKipi.BAGLI
 
     override fun eslesmeDurumu(): EslesmeDurumu {
         cagrilar += "eslesmeDurumu"

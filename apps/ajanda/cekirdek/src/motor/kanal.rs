@@ -24,6 +24,10 @@
 //!   kopya yeniden hesaplanır (kuyruk taze kopya üstüne yeniden uygulanır), sonra bütün alarmlar
 //!   (`alarm_senkronu(&[])`) ve `Degisim.tumu`. Kopmada toplanan atılır.
 //! - Canlı `kayit` hemen (tek işlem) uygulanır.
+//! - Yerel kipte (bağlanma sürüyor, `yerel.rs` "Geçişler"): `hello` boş kopya gibi gider, telafi hep tam
+//!   sayılıp toplanır; `esitlendi`'de `yereli_kuyruga_dok` yerel kayıtları kuyruğa döker ve kip `bagli` olur.
+//! - Bağlı kipte `welcome` saklı `depo_id`'den farklı `depo_id` getirirse (D2) önce `depo_degisti` kipi
+//!   yerele çevirir (veri kalır, eşleşme kalır); bağlantı yukarıdaki yerel kip yolundan sürer.
 //!
 //! Kuyruk (`kural::kuyruk::ajanda_kuyruk_karari`): yalnız `Canli`'da, en çok bir işlem yolda. Yollanan satır
 //! kalıcı olarak `yollandi` işaretlenir; sonucu gelmeden bağlantı biterse (ya da süreç ölürse: sonraki
@@ -40,6 +44,7 @@ use super::{Etkiler, Motor, Ortam, TELAFI_TAMPONU};
 use crate::depo::{KopyaTablosu, KuyrukSatiri, RetSatiri, anahtar};
 use crate::hata::CekirdekHatasi;
 use crate::kopru::tipler::{BaglantiAsamasi, BaglantiDurumu, GecmisSatiri, GecmisSayfasi, SurumUyusmazligi};
+use crate::kural::esitleme::HelloAlanlari;
 use crate::model::sinirlar::AJANDA_SURUMU;
 use crate::kural::kuyruk::{KuyrukKarari, KuyrukOlayi, ajanda_kuyruk_karari};
 use crate::model::json::Yazici;
@@ -108,7 +113,7 @@ enum Tur {
     Canli,
 }
 
-fn gecmis_satiri(g: AjandaGecmisGirdisi) -> GecmisSatiri {
+pub(super) fn gecmis_satiri(g: AjandaGecmisGirdisi) -> GecmisSatiri {
     let onceki = g.onceki.json();
     let sonraki = g.sonraki.json();
     let mut alanlar: BTreeSet<String> = BTreeSet::new();
@@ -187,7 +192,13 @@ impl Motor {
 
     fn hello_yolla(&mut self, o: &Ortam, e: &mut Etkiler, eslesme: Eslesme) -> Result<(), CekirdekHatasi> {
         let client_nonce = base64_yaz(&o.kimlik.rastgele(32)?);
-        let h = self.depo.hello_alanlari()?;
+        // Yerel kipte boş kopya gibi (`son_rev` 0, `depo_id` yok): servis hep tam telafi yapar, koparma
+        // anındaki PC temeli artımlı telafiyle ezilmez (`yerel.rs` "Geçişler").
+        let h = if self.yerel_mi()? {
+            HelloAlanlari { son_rev: 0, depo_id: None, son_rev_izi: None }
+        } else {
+            self.depo.hello_alanlari()?
+        };
         e.gonderilecek.push(
             AjandaYukari::Hello {
                 device_id: eslesme.device_id.clone(),
@@ -259,9 +270,21 @@ impl Motor {
                 self.sinamayi_yanitla(o, e, &eslesme, &client_nonce, &server_nonce, &server_signature)
             }
             (Tur::Yanit, AjandaAsagi::Welcome { depo_id, tam, .. }) => {
+                // D2, kesin kural: bağlı kipte saklı `depo_id`'den farklı depo (başka servisle yeni eşleşme ya
+                // da sıfırdan kurulmuş servis) görünen kopyayı tam telafisiyle ezemez. Önce koparmanın veri
+                // kısmı (`depo_degisti`, eşleşme kalır), sonra bu bağlantı aşağıda yerel kipten bağlanma
+                // olarak sürer. Saklı `depo_id` yoksa (ilk `welcome`) bugünkü gibi.
+                if !self.yerel_mi()?
+                    && let Some(eski) = self.depo.depo_id()?
+                    && eski != depo_id
+                {
+                    self.depo_degisti(o, e, &depo_id)?;
+                }
                 // Tam telafi kuyruğa dokunmaz (`ajanda_kuyruk_karari(TamTelafi)` = `Bekle`, deneme aynı):
                 // işlemler `esitlendi`'de taze kopya üstüne yeniden uygulanır ve sırayla yeniden gider.
-                let tam = if tam {
+                // Yerel kipte telafi hep toplanır (servis boş `hello`'ya zaten tam der): PC temeli bağlanma
+                // bitene dek koparma anındaki haliyle kalmalı.
+                let tam = if tam || self.yerel_mi()? {
                     self.depo.telafiyi_sil()?;
                     Some((depo_id, 0))
                 } else {
@@ -387,9 +410,23 @@ impl Motor {
         let cevirici = o.cevirici();
         let b = self.iyimser_baglam(o, &cevirici)?;
         let simdi = o.simdi_ms().to_string();
+        // Yerel kipte bağlanma burada biter: servisin tam kopyası elde edildi; tek işlemde yerel kayıtlar
+        // kuyruğa dökülür ve kip `bagli` olur (`yerel.rs` `yereli_kuyruga_dok`). Yerel kipte telafi hep tamdır.
+        let yerel = self.yerel_mi()?;
         match t.tam {
+            Some((depo_id, son_rev)) if yerel => {
+                let ret = self.depo.yazma(|d| {
+                    let ret = super::yerel::yereli_kuyruga_dok(d, o, &b, &depo_id, son_rev)?;
+                    d.meta_yaz(anahtar::SON_ESITLENME_MS, Some(&simdi))?;
+                    Ok(ret)
+                })?;
+                self.yerelden_baglandi(e, ret);
+                self.hepsi_degisti(o, e);
+            }
             Some((depo_id, son_rev)) => {
                 self.depo.yazma(|d| {
+                    // Aynı depo (servis yedekten dönmüş): PC'nin yitirdiği onaylı haller kuyruğa (`yerel.rs`).
+                    super::yerel::geri_donenleri_kuyruga_koy(d, o, &b, &depo_id)?;
                     d.telafiyi_sunucuya_gecir()?;
                     d.depo_id_yaz(&depo_id)?;
                     d.son_rev_yaz(son_rev)?;
@@ -570,9 +607,11 @@ impl Motor {
     }
 
     pub(crate) fn baglanti_durumu(&self) -> Result<BaglantiDurumu, CekirdekHatasi> {
+        // Yerel kipte kuyruk yoktur (göç 4 toplar, yerel yazar kullanmaz): gönderilecek iş sıfırdır.
+        let kuyrukta = if self.yerel_mi()? { 0 } else { self.depo.kuyruk_sayisi()? };
         Ok(BaglantiDurumu {
             asama: self.asama.disari(),
-            kuyrukta: i32::try_from(self.depo.kuyruk_sayisi()?).unwrap_or(i32::MAX),
+            kuyrukta: i32::try_from(kuyrukta).unwrap_or(i32::MAX),
             ret_listesinde: i32::try_from(self.depo.ret_sayisi()?).unwrap_or(i32::MAX),
             son_esitlenme_ms: self.depo.meta_oku(anahtar::SON_ESITLENME_MS)?.and_then(|s| s.parse().ok()),
             son_hata: self.son_hata,

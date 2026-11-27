@@ -23,8 +23,8 @@ use crate::motor::{Etkiler, Motor, Ortam};
 
 use kabuklar::{AlarmKabugu, Gozlemci, KimlikKabugu, Tasima, ZamanKabugu};
 use tipler::{
-    BaglantiDurumu, DuzenlemeTemeli, EslesmeDurumu, GecmisSayfasi, HatirlatmaBildirimi, HatirlatmaOnizlemesi, KayitGorunumu,
-    ListeSorgusu, RetGirdisi, TakvimAyi, TakvimOgesi, YenidenKurmaNedeni,
+    BaglantiDurumu, CalismaKipi, DuzenlemeTemeli, EslesmeDurumu, GecisOzeti, GecmisSayfasi, HatirlatmaBildirimi, HatirlatmaOnizlemesi, KayitGorunumu,
+    KoparmaSonucu, ListeSorgusu, RetGirdisi, TakvimAyi, TakvimOgesi, YenidenKurmaNedeni,
 };
 
 fn kilitle<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -210,7 +210,9 @@ impl Cekirdek {
         zaman: Arc<dyn ZamanKabugu>,
         alarm: Arc<dyn AlarmKabugu>,
     ) -> Result<Arc<Self>, CekirdekHatasi> {
-        let motor = Motor::ac(&veritabani_yolu)?;
+        let mut motor = Motor::ac(&veritabani_yolu)?;
+        // Bağlı kip + eşleşme yok çıkışsızdır: veri kaybısız yerel kipe (`motor/yerel.rs`).
+        motor.cikissiz_bagli_kipi_onar(&Ortam { kimlik: &*kimlik, zaman: &*zaman })?;
         let okuyucu = crate::depo::Depo::okuyucu_ac(&veritabani_yolu)?.map(Mutex::new);
         Ok(Arc::new(Cekirdek {
             motor: Mutex::new(motor),
@@ -228,6 +230,12 @@ impl Cekirdek {
 
     pub fn sema_surumu(&self) -> Result<i64, CekirdekHatasi> {
         kilitle(&self.motor).sema_surumu()
+    }
+
+    /// Çalışma kipi (D1): `Yerel` ya da `Bagli` (`CalismaKipi`). Kip değişince (yerelde bağlanma servisin
+    /// tam kopyasıyla bitti ya da `baglantiyi_kopar`) gözlemciye `Degisim.tumu` ve `Degisim.baglanti` gider.
+    pub fn kip(&self) -> Result<CalismaKipi, CekirdekHatasi> {
+        self.calistir(|m, _, _| m.kip())
     }
 
     // Gözlemci (K4)
@@ -253,8 +261,29 @@ impl Cekirdek {
         self.calistir(|m, _, _| m.eslesme_durumu())
     }
 
+    /// Eşleşme bilgisini ve cihaz anahtarını siler, açık bağlantıyı kapatır. Kayıt silmez (D2): bağlı kipte
+    /// `baglantiyi_kopar` ile aynıdır (kip `Yerel` olur; sayılar `son_gecis`'te, neden `EslesmeKaldirildi`),
+    /// yerel kipte süren bağlanmayı ya da bekleyen eşleştirmeyi iptal eder.
     pub fn eslesmeyi_kaldir(&self) -> Result<(), CekirdekHatasi> {
         self.calistir(|m, o, e| m.eslesmeyi_kaldir(o, e))
+    }
+
+    /// Bağlı kipten yerel kipe son geçişin özeti (D2; kalıcı, sonraki geçiş üstüne yazar); hiç olmadıysa
+    /// `None`. Nedenler: `baglantiyi_kopar`, `eslesmeyi_kaldir`, bağlantıda servisin farklı `depo_id`
+    /// getirmesi (`DepoDegisti`: gözlemciye `tumu` ve `baglanti` gider, kip `Yerel` olur ve bağlanma sürer;
+    /// servisin tam kopyası gelince kip `Bagli` olur). Arayüz kullanıcıya ne olduğunu bununla söyler.
+    pub fn son_gecis(&self) -> Result<Option<GecisOzeti>, CekirdekHatasi> {
+        self.calistir(|m, _, _| m.son_gecis())
+    }
+
+    /// Koparma (D1): bağlı kipten yerel kipe, veri kaybı olmadan. Görünen kopya o anki haliyle (bekleyen
+    /// işlemler dahil) telefonun gerçeği olur; kuyruk atılır, ret listesi, PC temeli ve alarmlar kalır;
+    /// eşleşme bilgisi ve cihaz anahtarı silinir, açık bağlantı kapanır. Döner: kullanıcıya söylenecek
+    /// sayılar (`KoparmaSonucu`). Yerel kipte süren bağlanmayı ya da bekleyen eşleştirmeyi iptal eder,
+    /// kayıtlara dokunmaz; ikisi de yoksa etkisizdir. Gözlemciye: bağlı kipten `tumu`, `eslesme`, `baglanti`
+    /// (ve açık geçmiş sayfaları `gecmis`: önbellek atıldı, yeniden istenmeli).
+    pub fn baglantiyi_kopar(&self) -> Result<KoparmaSonucu, CekirdekHatasi> {
+        self.calistir(|m, o, e| m.baglantiyi_kopar(o, e))
     }
 
     /// Açılacak WebSocket adresi; `None`: eşleşme yok, bağlanma.
@@ -354,6 +383,8 @@ impl Cekirdek {
         self.oku(|d| crate::motor::takvim::takvim_gunu(d, &cevirici, &cihaz, &tarih, kapalilar_dahil))
     }
 
+    /// Bağlı kipte canlı bağlantıda servise sorar (yanıt `Degisim.gecmis` ile); yerel kipte yerel geçmişten
+    /// hemen yükler (bağlantı gerekmez). Sonuç `gecmis` ile okunur.
     pub fn gecmis_iste(&self, kayit_id: String, once_rev: Option<i64>) -> Result<(), CekirdekHatasi> {
         self.calistir(|m, o, e| m.gecmis_iste(o, e, &kayit_id, once_rev))
     }

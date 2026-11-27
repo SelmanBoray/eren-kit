@@ -137,6 +137,21 @@ impl Depo {
         Ok(n > 0)
     }
 
+    /// Kaydın bütün satırlarını siler (aynı depo tam telafisinde satırlar yeniden dizilir: `motor/yerel.rs`).
+    pub fn kaydin_kuyrugunu_sil(&self, kayit_id: &str) -> Result<(), CekirdekHatasi> {
+        self.baglanti.execute("DELETE FROM kuyruk WHERE kayit_id = ?1", [kayit_id])?;
+        Ok(())
+    }
+
+    /// Satırı aynı `islem_id`, deneme ve anla kuyruğun sonuna yeniden koyar (yeni `sira`, bekliyor hali).
+    pub fn kuyruga_yeniden_ekle(&self, s: &KuyrukSatiri) -> Result<(), CekirdekHatasi> {
+        self.baglanti.execute(
+            "INSERT INTO kuyruk (islem_id, kayit_id, islem_json, deneme, olusturma_ms) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![s.islem_id, s.kayit_id, s.islem_json, s.deneme, s.olusturma_ms],
+        )?;
+        Ok(())
+    }
+
     /// Telafi bitti: bütün onaylanmış satırlar gereksizdir (sunucu kopyası onları kapsar). Döner: kayıtları.
     pub fn butun_onaylananlari_sil(&self) -> Result<Vec<String>, CekirdekHatasi> {
         let mut sorgu =

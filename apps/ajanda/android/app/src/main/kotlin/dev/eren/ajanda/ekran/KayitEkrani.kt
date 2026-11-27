@@ -25,6 +25,7 @@ import dev.eren.ajanda.CekirdekErisimi
 import dev.eren.ajanda.R
 import dev.eren.ajanda.cekirdek.AjandaZamani
 import dev.eren.ajanda.cekirdek.BaglantiAsamasi
+import dev.eren.ajanda.cekirdek.CalismaKipi
 import dev.eren.ajanda.cekirdek.CekirdekHatasi
 import dev.eren.ajanda.cekirdek.Degisim
 import dev.eren.ajanda.cekirdek.DuzenlemeTemeli
@@ -809,7 +810,9 @@ class KayitEkrani : Activity() {
 
     private fun gecmisIste(id: String, onceRev: Long?) {
         arkada {
-            val bagli = runCatching { c().baglantiDurumu().asama == BaglantiAsamasi.CANLI }.getOrDefault(false)
+            val bagli = runCatching {
+                c().kip() == CalismaKipi.YEREL || c().baglantiDurumu().asama == BaglantiAsamasi.CANLI
+            }.getOrDefault(false)
             if (!bagli) {
                 anada { genelSorunGoster("Değişiklik geçmişi PC'de durur; PC'ye bağlıyken görüntülenebilir.") }
                 return@arkada

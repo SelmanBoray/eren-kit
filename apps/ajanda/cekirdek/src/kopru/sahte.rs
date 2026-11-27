@@ -146,7 +146,8 @@ mod testler {
             Arc::new(SahteAlarm::default()),
         )
         .unwrap();
-        assert_eq!(c.sema_surumu().unwrap(), 3);
+        assert_eq!(c.sema_surumu().unwrap(), 4);
+        assert_eq!(c.kip().unwrap(), crate::kopru::tipler::CalismaKipi::Yerel, "yeni kurulum yerel kipte açılır");
         let t = Arc::new(SahteTasima::default());
         assert!(matches!(c.baglanti_acildi(t.clone()), Err(crate::CekirdekHatasi::Eslesme { .. })));
         assert!(t.giden.lock().unwrap().is_empty());

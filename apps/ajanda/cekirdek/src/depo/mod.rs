@@ -4,6 +4,7 @@
 //! - `kopya.rs` (R4): sunucu kopyası, süren tam telafinin toplananları, `depo_id`/`son_rev`, `hello` alanları.
 //! - `kuyruk.rs` (R4): kalıcı işlem kuyruğu ve kullanıcının ret listesi.
 //! - `alarmlar.rs` (R3): kurulu alarmlar.
+//! - `yerel.rs` (D1): kip durumu, yerel revizyon sayacı, yerel geçmiş.
 //!
 //! Yazma kuralı: motor birden çok tabloya dokunan her değişikliği `yazma` ile tek SQLite işleminde yapar
 //! (hata ya da panikte hiçbiri kalmaz); etkiler (`motor::Etkiler`) ancak işlem kalıcı olduktan sonra
@@ -14,11 +15,13 @@ mod gorunen;
 mod kopya;
 mod kuyruk;
 mod sema;
+mod yerel;
 
 pub use alarmlar::KuruluAlarm;
 pub use gorunen::{GorunenKayit, GorunenSuzgec, TakvimAdayAraligi};
 pub use kopya::KopyaTablosu;
 pub use kuyruk::{KuyrukSatiri, RetSatiri};
+pub use yerel::{KIP_BAGLI, KIP_YEREL};
 
 use crate::hata::CekirdekHatasi;
 use rusqlite::Connection;
@@ -40,6 +43,12 @@ pub mod anahtar {
     /// Alarm ufku (R3, `motor/alarm.rs`): bütçeyi aşan planda kurulan en uzak tetik (`"<tetik_ms> <kayit_id>"`);
     /// yoksa bütün plan kurulu, ertelenen tetik yok.
     pub const ALARM_UFKU: &str = "alarm_ufku";
+    /// Çalışma kipi (göç 4): `yerel` ya da `bagli` (`depo/yerel.rs`).
+    pub const KIP: &str = "kip";
+    /// Yerel kipte son verilen revizyon (`depo/yerel.rs`, `yerel_rev_sonraki`).
+    pub const YEREL_REV: &str = "yerel_rev";
+    /// Bağlı kipten yerel kipe son geçişin özeti (D2, JSON; `motor/yerel.rs` `gecis_json`).
+    pub const SON_GECIS: &str = "son_gecis";
 }
 
 pub struct Depo {
@@ -161,16 +170,6 @@ impl Depo {
             )?,
             None => self.baglanti.execute("DELETE FROM meta WHERE anahtar = ?1", [anahtar])?,
         };
-        Ok(())
-    }
-
-    /// Eşleşme kaldırılınca: eşleşmeye bağlı her şey (meta, sunucu kopyası, telafi, kuyruk, ret listesi,
-    /// görünen kopya). Kurulu alarmlara dokunmaz: onları R3 `tum_alarmlari_kaldir` iptal edip siler.
-    pub fn eslesmeye_bagli_her_seyi_sil(&self) -> Result<(), CekirdekHatasi> {
-        self.baglanti.execute_batch(
-            "DELETE FROM meta; DELETE FROM sunucu_kayitlari; DELETE FROM telafi_kayitlari;
-             DELETE FROM kuyruk; DELETE FROM ret_listesi; DELETE FROM gorunen;",
-        )?;
         Ok(())
     }
 }

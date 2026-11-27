@@ -135,14 +135,29 @@ export const AZAMI_CERCEVE = {
 } as const;
 
 /**
- * `/ajanda` kanalının sürümü (ajanda uygulaması, eşleştirmesi ve QR'ı dahil). Öteki iki sabitten
- * bağımsızdır: `/sohbet`, `/cihaz`, boru ve `eren-auth-v1` baytları bundan etkilenmez; ajanda imza
- * metninin öneki de (`eren-ajanda-auth-v1`) bu sayıdan türemez. Kural README "Sürümleme" ile aynıdır:
- * mesaj, alan, kapalı liste öğesi eklemek ya da sınır değiştirmek artıştır.
+ * `/ajanda` kanalının en yüksek sürümü (ajanda uygulaması ve eşleştirmesi; QR'ın kendi sürümü var:
+ * `AJANDA_QR_SURUMU`). Öteki iki sabitten bağımsızdır: `/sohbet`, `/cihaz`, boru ve `eren-auth-v1`
+ * baytları bundan etkilenmez; ajanda imza metninin öneki de (`eren-ajanda-auth-v1`) bu sayıdan türemez.
+ * Kural README "Sürümleme" ile aynıdır: mesaj, alan, kapalı liste öğesi eklemek ya da sınır
+ * değiştirmek artıştır.
  * 1: ilk dilim. 2: saatsiz gün kaydında gün hatırlatması ve `gun_bolumu`, `gece_teyidi_gerekli`
  * (`docs/AJANDA.md` "Sürüm 2").
  */
 export const AJANDA_SURUMU = 2 as const;
+
+/**
+ * Bir tarafın aynı anda konuştuğu `/ajanda` sürümleri: artan, bitişik, en büyüğü `AJANDA_SURUMU`. Her
+ * sürüm o sürümün bütün çerçevelerinin kesin şeklidir; bağlantının sürümü ilk yukarı çerçeveyle
+ * sabitlenir. Sürüm eklemek iki tarafta ayrı kodlayıcı yüküdür: yalnız müzakere için eklenmez.
+ */
+export const AJANDA_SURUMLERI = [2] as const;
+export type AjandaSurumNo = (typeof AJANDA_SURUMLERI)[number];
+
+/**
+ * Ajanda eşleştirme QR'ının sürümü. Kanal sürümünden bilerek ayrıdır ve dondurulmuştur (imza öneki
+ * gibi): QR'ın şekli değişmedikçe artmaz, böylece yeni servisin QR'ını eski uygulama da okur.
+ */
+export const AJANDA_QR_SURUMU = 2 as const;
 
 /**
  * Yalnız ajanda alanlarının sınırları (`docs/AJANDA.md`). `SINIRLAR`'a eklenmez (Kotlin o bloğun
