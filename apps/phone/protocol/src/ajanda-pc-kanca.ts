@@ -109,8 +109,10 @@ export interface PcAracKancaGirdisi {
   surec_id?: string;
 }
 /**
- * H1 öncesi çerçeve (Claude Code alanlarıyla). Servis bunu da kabul eder: güncellemeden önce başlamış
- * kanca süreci onu yollayabilir; kararı bugünkü gibidir (`PcEskiAracGirdi`). Kanca artık yollamaz.
+ * H1 öncesi çerçeve (Claude Code alanlarıyla). Servis bunu da kabul eder: kanca uzun ömürlü değildir (her
+ * araç çağrısında `guncel` yolundan yeniden başlar), bu yüzden kabul geri alma içindir: junction eski
+ * sürüme döner, servis bir süre yeni kalır, eski kanca eski çerçeveyi yollar. Kararı bugünkü gibidir
+ * (`PcEskiAracGirdi`). Kanca artık yollamaz.
  */
 export interface PcEskiAracKancaGirdisi {
   oturum_id: string;
