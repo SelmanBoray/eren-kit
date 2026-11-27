@@ -761,6 +761,47 @@ describe("eslestir --pc-ajan: uyarlayıcı seçimi", () => {
       }
     });
 
+    it("pc_surec_uyusmuyor (süreç eşitliği): adıyla ve anlamıyla söyler, 'köprünün ebeveyni harness süreci değil'; sarmalayıcıyı anar; eski köprünün ilk görüşü ayrı metin", () => {
+      const surecUyusmuyor = (kopru_surec?: string) =>
+        s({ modul: "ajanda", olay: "pc_surec_uyusmuyor", seviye: "uyari", oturum_id: OTURUM, ...(kopru_surec === undefined ? {} : { kopru_surec }), surec_id: SUREC });
+      for (const k of [kurulu, undefined, { ...kurulu, arac: false }]) {
+        for (const tur of ["bildirildi", undefined]) {
+          const m = pcTeshisMetni([tasdikYeni, surecUyusmuyor(tur), arac("tasdik_yok")], z, k);
+          assert.match(m, /son PC araç kararı: tasdik_yok \(kayıtlar TASLAK doğuyor: kanca bu çağrıyı bildirdi ama servis tasdiki kullanmadı; neden aşağıda\)/);
+          assert.match(m, /Günlükte görülen neden \(kanca çalışıyor; kurulum sorunu değil\):\n {2}- köprünün ebeveyni harness süreci değil \(pc_surec_uyusmuyor\)/);
+          assert.match(m, /sarmalayıcıyla başlatılıyor \(cmd \/c, npx, sh -c\)/);
+          assert.match(m, /bütün kayıtları taslak doğar \(güvenli taraf\)/);
+          assert.equal(YANLIS_YON.test(ozetBolumu(m)), false, ozetBolumu(m));
+          assert.ok(!m.includes(SUREC), "süreç kimliği sızdı");
+        }
+        const ilk = pcTeshisMetni([tasdikYeni, surecUyusmuyor("ilk_gorus"), arac("tasdik_yok")], z, k);
+        assert.match(ilk, /- eski köprü başka bir Claude Code sürecine bağlı \(pc_surec_uyusmuyor, ilk_gorus\)/);
+        assert.match(ilk, /Claude Code oturumunu yeniden açın/);
+        assert.equal(ilk.includes("köprünün ebeveyni harness süreci değil"), false);
+      }
+      // Olay satırı: yalnız izinli alan (kopru_surec), kısa oturum.
+      assert.match(pcTeshisMetni([tasdikYeni, surecUyusmuyor("bildirildi"), arac("tasdik_yok")], z, kurulu), new RegExp(`pc_surec_uyusmuyor oturum=…${OTURUM.slice(-6)} kopru_surec=bildirildi\\n`));
+      // İzli günlükte de kendi çağrısına bağlanır; izsizde eski sıra kuralıyla.
+      const izli = (satir: string, iz: string) => JSON.stringify({ ...(JSON.parse(satir) as object), cagri_izi: iz });
+      const izliM = pcTeshisMetni([tasdikYeni, izli(surecUyusmuyor("bildirildi"), "0123456789ab"), tasdikYeni, izli(arac("tasdik_yok"), "0123456789ab")], z, kurulu);
+      assert.match(izliM, /- köprünün ebeveyni harness süreci değil \(pc_surec_uyusmuyor\)/);
+    });
+
+    it("kaldırılan olaylar (pc_bag_birakildi, pc_bag_katildi) eski günlükte görünürse gösterilmez, çıktı onlarsız günlükle aynı", () => {
+      const birakildi = s({ modul: "ajanda", olay: "pc_bag_birakildi", baglanti_id: "pcb_1", adet: 1, tasdik: 1 });
+      const katildi = s({ modul: "ajanda", olay: "pc_bag_katildi", yol: "kanit" });
+      for (const son of [arac("insan"), arac("tasdik_yok")]) {
+        for (const k of [kurulu, undefined]) {
+          const temiz = pcTeshisMetni([tasdikYeni, arac("insan"), tasdikYeni, son], z, k);
+          const eski = pcTeshisMetni([birakildi, tasdikYeni, katildi, arac("insan"), birakildi, tasdikYeni, son], z, k);
+          assert.equal(eski, temiz);
+          assert.equal(/pc_bag_/.test(eski), false);
+        }
+      }
+      // Eski T5 olayının (pc_oturum_uyusmuyor) gösterimi aynı kalır (yukarıdaki bayt bayt testler de sınar).
+      assert.match(pcTeshisMetni([tasdikYeni, uyusmuyor, arac("tasdik_yok")], z, kurulu), /- tasdik başka bir köprüye bağlı \(pc_oturum_uyusmuyor\)/);
+    });
+
     it("pc_tasdik_yetersiz: uyarlayıcı/sürüm, aktor, etkilesim ayrı ayrı adıyla", () => {
       const uy = pcTeshisMetni([tasdikYeni, yetersiz({ neden: "uyarlayici", uyarlayici: "baska-ajan", surum: 3 }), arac("tasdik_yok")], z, kurulu);
       assert.match(uy, /- tasdik yetersiz \(pc_tasdik_yetersiz\): kanca tasdiki bu servisin tanımadığı bir uyarlayıcıyla ya da sürümle gönderdi \(uyarlayici=baska-ajan surum=3\)/);

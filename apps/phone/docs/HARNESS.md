@@ -247,25 +247,56 @@ eşleşiyor (T5) ∧ `aktor = ana` ∧ `etkilesim = etkilesimli`. Diğer her şe
   - Uzun ömürlü köprüler başladıkları sürümde kalır; eski köprü ile yeni servis birlikte çalışır.
 - Yeni karar değeri eklenmedi. Eski köprüler `PcAracSonucu`'yu kendi şemasıyla çözer. Yetersiz tasdik (bilinmeyen
   uyarlayıcı ya da sürüm, `bilinmiyor`) ve T5 reddi `tasdik_yok` olur. Nedenleri günlükte durur:
-  `pc_tasdik_yetersiz`, `pc_oturum_uyusmuyor`.
-- **T5 oturum kimliğiyle değil, süreçle kurulur.** Claude Code 2.1.332 ikili dosyası okundu; canlı ölçüm yapılmadı.
-  MCP sunucusunun `CLAUDE_CODE_SESSION_ID`'si açılış anının değeridir. `/clear` oturum kimliğini yeniler ama
-  MCP sürecini yeniden başlatmaz; köprünün değeri eskir, kancanınki yenilenir. Düz karşılaştırma `/clear`
-  sonrası her kaydı taslağa düşürürdü.
-- Bu yüzden kanca `CLAUDE_PID`'i `surec_id` olarak gönderir. Servis süreç anahtarını (yoksa oturum anahtarını)
-  ilk tüketen köprünün kimliğine bağlar. Bağ başka bir köprüdeyse tasdik tüketilemez ve sahibine kalır; tam
-  oturum eşleşmesi bağı o köprüye taşır.
-- Açıklar:
-  - İlk tüketimde, bağ kurulmadan önce kısa bir yarış penceresi var.
-  - PID yeniden kullanılıp ilk çağrı `/clear` sonrası gelirse ya da süreç kimliği olmayan kancada başka
-    pencereden `/resume` yapılırsa nadir bir yanlış ret olabilir.
-  - `/resume`, `--resume`, agent teams ve eski sürümlerde `CLAUDE_PID` ölçülmedi.
-  - Tam oturum eşleşmesi istisnası köprünün kendi beyanına dayanır. Köprü `oturum_id`'yi hello'da kendisi
-    bildirir; tam oturum kimliği günlükte ve harness transkript dosya adlarında açıktır. Anahtarı olan bir
-    istemci başka bir oturumu beyan ederek T5'i aşabilir ve bağı kendine çekebilir. Bu, bugünkü güven modelinin
+  `pc_tasdik_yetersiz`, `pc_surec_uyusmuyor`.
+- **T5 süreç eşitliğiyle kurulur (durumsuz).** Oturum kimliği kullanılmaz: MCP sunucusunun `CLAUDE_CODE_SESSION_ID`'si
+  açılış anının değeridir; `/clear` oturum kimliğini yeniler ama MCP sürecini yeniden başlatmaz, `--continue`'da
+  köprünün değeri yeni ve geçicidir, kancanın `session_id`'si devam edilen kimliktir. Kural:
+  - Kanca `CLAUDE_PID`'i tasdike `surec_id` olarak koyar. Yeni köprü `pc_oturumu` hello'sunda kendi ebeveynini bildirir
+    (`surec_id = process.ppid`; şema alanı yalnız bu rolde kabul eder). Servis onu bağlantıya yazar
+    (`AjandaPcBaglami.kopru_surec_id`). Tasdikin süreci bağlantınınkine eşitse tüketilir. Eşit değilse karar
+    `tasdik_yok` olur, tasdik sahibine kalır, günlüğe `pc_surec_uyusmuyor{kopru_surec: bildirildi}` yazılır.
+  - Eski köprü (hello'da süreç yok): bağlantı başına ilk görüş. Bağlantı ilk tükettiği tasdikin sürecine bağlanır,
+    sonra yalnız onu tüketir (ret `pc_surec_uyusmuyor{kopru_surec: ilk_gorus}`). Bağ bağlantıyla ölür (`kopruKapandi`
+    yalnız bu durumu siler).
+  - Tasdikte süreç yoksa (eski çerçeve ya da `CLAUDE_PID` yok) T5 uygulanmaz. Süreç kimliği olmayan yeni çerçeve de
+    aynı kuralı alır: karşılaştırılacak süreç yoktur ve oturuma dayanan her bağ `/clear` ya da `--continue`'da kilitlenir.
+  - Bağlantılar arası paylaşılan durum yoktur. Kaldırılanlar: süreç bağı, üyelik, aday ve kanıtla katılım, tam oturum
+    istisnası, 2 sn eşiği; olaylar `pc_oturum_uyusmuyor`, `pc_bag_birakildi`, `pc_bag_katildi` artık yazılmaz (eski
+    günlükte görünürlerse teşhis çıktısı değişmez).
+  - Sürüm uyumu: alanı tanımayan eski servis zengin hello'yu katı şemasıyla reddeder (`yetkisiz`, ret satırı kapanışla
+    düşebilir). Köprü beklemeden bir kez düz hello ile yeniden dener; düz hello hemen yeniden denemeye yol açmaz, gerçek
+    bir ret döngüye girmez. Bu düşüş isteğe bağlı bütün hello alanlarının ortak yoludur (`kopru.ts` `helloEki`). Yeni
+    alan `cagri`'ya konmaz: eski servisin `AjandaPcCagri`'sı katıdır. Eski köprünün düz hello'su yeni serviste geçer.
+  - Sarmalayıcı: köprüyü `cmd /c`, `npx` ya da `sh -c` başlatırsa ebeveyn harness olmaz ve o pencerenin kayıtları hep
+    taslak doğar. Bu güvenli yöndür. `--teshis` bunu `pc_surec_uyusmuyor` adıyla "köprünün ebeveyni harness süreci
+    değil" diye söyler; kurulum köprüyü sarmalayıcısız kaydeder (`mcpEkleArgumanlari`, testle). Ata yürüyüşü
+    (ebeveynin ebeveynine çıkmak) yapılmaz; yalnız ölçüm gerektirirse yedektir.
+- **Ölçüm** (Claude Code 2.1.332, Windows):
+  - Etkileşimsiz `claude -p`, yalıtımlı (`--strict-mcp-config`, `--setting-sources ""`, kaydedici MCP ve kanca),
+    6 koşu: yeni oturum, `--resume <id>`, `--continue`, her biri 2 kez. MCP sunucusunun `process.ppid`'i kancanın
+    `CLAUDE_PID`'ine 6/6 eşit; ebeveyn doğrudan claude.exe. Kancanın kendi ppid'i de `CLAUDE_PID`'e eşit. MCP
+    ortamında `CLAUDE_PID` yoktur (değeri yalnız kancaya konur): köprünün ppid kullanması bu yüzdendir. `--resume`'da
+    MCP ortamındaki `CLAUDE_CODE_SESSION_ID` ile kancanın `session_id`'si aynı eski kimliktir; `--continue`'da farklıdır.
+  - Canlı etkileşimli 7 `pc_oturumu` köprüsü: 7/7 ebeveyni doğrudan claude.exe (oturumlar pwsh ve cmd'den açılmış);
+    bir oturumun `CLAUDE_PID`'i kendi köprüsünün ebeveyniyle aynı.
+  - Gerçek `kopru.ts` süreci (yalıtılmış, `kopru-ajanda.test.ts`): hello'daki süreç köprünün doğrudan ebeveyni;
+    araya Node sarmalayıcısı girince sarmalayıcının kimliği.
+  - Ölçülmeyenler: etkileşimli `/resume`, masaüstü uygulaması, VS Code uzantısı, alt agent'lar, agent teams,
+    macOS/Linux kabuk sarmalayıcısı, eski Claude Code sürümlerinde `CLAUDE_PID`.
+- Önceki açıklardan kapananlar:
+  - Bağ makinesinin kilit yolları (ör. ikinci pencerede `--resume` ve ilk çağrıdan önce `/clear`; yetim köprü; `/mcp`
+    sonrası ilk çağrı): bağ yoktur, kilit yoktur.
+  - Tam oturum eşleşmesi istisnası (köprünün beyan ettiği oturumla bağı kendine çekmek) kaldırıldı.
+  - PID yeniden kullanılıp ilk çağrı `/clear` sonrası gelirse yanlış ret: kural geçmişe bakmaz, kapandı. Süreç kimliği
+    olmayan kancada başka pencereden `/resume` yanlış reddi: o kancada T5 uygulanmaz, kapandı.
+- Kalan açıklar:
+  - Eski köprünün ilk görüşünde kısa bir yarış penceresi var (bağlantının ilk tükettiği tasdik onu bağlar). Yeni köprüde
+    yoktur.
+  - Süreç beyanı köprünündür. Anahtarı olan bir istemci başka bir süreci beyan edebilir. Bu, bugünkü güven modelinin
     (sınır işletim sistemi kullanıcısı, `GUVENLIK.md`) içindedir. T5 kötü niyetli anahtar sahibine karşı değil,
-    oturumlar arası karışmaya karşı bir bağdır. Daha güçlü bağ (kanca ile köprüyü aynı sürece bağlayan
-    doğrulanmış işaret) harness'ın böyle bir işaret vermesini ister.
+    süreçler arası karışmaya karşı bir bağdır. Aynı süreçteki oturumlar (aynı `CLAUDE_PID`) birbirinden ayrılmaz.
+  - PID yeniden kullanımı: eski sürecin kapanmamış tasdiki, aynı PID'li yeni sürecin köprüsünce en çok tasdik ömrü
+    (`TASDIK_OMRU_DK`) içinde tüketilebilir; çağrı kimliği yine de o köprünün kendi isteğinden gelmelidir.
 - Köprü `--uyarlayici <ad>` alır; varsayılan `claude-code`. Bilinmeyen ad 2 ile çıkar.
 
 **İkinci uyarlayıcı için sonuç:** T5 her harness'ta kancayla köprüyü aynı sürece bağlayan, model dışı bir işaret

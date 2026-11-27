@@ -233,12 +233,17 @@ async function ortamKur(sec: { depoYolu?: string } = {}) {
       dosya.anahtar = jeton;
       return jeton;
     },
-    /** Kullanıcının Claude Code'una kayıtlı PC köprüsü: gerçek `kopru.ts`, model tarafı bellek içi MCP. */
-    pcKoprusu: async (oturumId: string = OTURUM): Promise<Client> => {
+    /**
+     * Kullanıcının Claude Code'una kayıtlı PC köprüsü: gerçek `kopru.ts`, model tarafı bellek içi MCP. `surecId`:
+     * köprünün ebeveyni (hello'da bildirir, `giris`'teki `process.ppid`); verilmezse süreç bildirmez (eski köprü gibi).
+     */
+    pcKoprusu: async (oturumId: string = OTURUM, surecId?: string): Promise<Client> => {
       const [mcpKopru, mcpIstemci] = InMemoryTransport.createLinkedPair();
       const calisan = await ajandaKopruCalistir(
         { rol: "pc_oturumu", jeton: "", boruAdi: AJANDA_BORU_ADI, jetonOku: () => dosya.anahtar, oturumId },
         { transport: mcpKopru, baglan, rastgele: sahteRastgele(901), gunluk: sahteGunluk(), bekle: (ms) => uyu(Math.min(ms, 20)) },
+        undefined,
+        surecId,
       );
       const istemci = new Client({ name: "sahte-claude-code", version: "0.0.0" }, { capabilities: {} });
       await istemci.connect(mcpIstemci);
@@ -447,12 +452,15 @@ describe("birleşim: PC oturumu (araç öncesi kancalı Claude Code)", () => {
     assert.equal(ajanda.kayitlar().at(-1)!.taslak, false, "kalan risk değişti: belgeyi güncelle (AJANDA.md Kalan açıklar)");
   });
 
-  it("T5: iki Claude Code penceresi; B'nin köprüsü A'nın tasdikini tüketemez, A'nınki kullanır; /clear sonrası A sürer", async () => {
+  it("T5: iki Claude Code penceresi (gerçek köprü hello'da süreci bildirir); B'nin köprüsü A'nın tasdikini tüketemez, A'nınki kullanır; /clear sonrası A sürer", async () => {
     const o = await ortamKur();
-    const { ajanda, istemci: a } = await hazirla(o);
+    await o.baslat();
+    const ajanda = await o.ajandaUygulamasi();
+    o.anahtarUret();
     const OTURUM_B = "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d";
-    const b = await o.pcKoprusu(OTURUM_B);
     const SUREC_A = "3060";
+    const a = await o.pcKoprusu(OTURUM, SUREC_A);
+    const b = await o.pcKoprusu(OTURUM_B, "4170");
     const simdi = disci({ tarih: "2026-11-25", saat: "14:30" });
     // A'nın ilk çağrısı (kanca süreç kimliğiyle): A'nın Claude Code süreci A'nın köprüsüne bağlanır.
     await o.kanca(aracGirdisi("ajanda_ekle", "toolu_t1", "istem-1"), "cli", SUREC_A);
@@ -544,7 +552,7 @@ describe("birleşim: çağrı izi (teşhis nedeni kendi çağrısına izle bağl
   const KURULU = { ayarYolu: "x", arac: true, eski: 0, kabuk: 0, kapatan: [] as string[] };
   const z = (ms: number) => `t${ms}`;
   const IZ = /^[0-9a-f]{12}$/;
-  const NEDEN = /Günlükte görülen neden \(kanca çalışıyor; kurulum sorunu değil\):\n {2}- tasdik başka bir köprüye bağlı \(pc_oturum_uyusmuyor\)/;
+  const NEDEN = /Günlükte görülen neden \(kanca çalışıyor; kurulum sorunu değil\):\n {2}- köprünün ebeveyni harness süreci değil \(pc_surec_uyusmuyor\)/;
   const KURULUM_YONU = /Olası nedenler \(kurulu görünüyor ama tasdik gelmedi\):\n {2}- kanca öteki çağrılarda ulaşıyor; bu çağrıda servis o an yanıt vermedi ya da arada yeniden başladı/;
   const simdi = disci({ tarih: "2026-11-25", saat: "14:30" });
 
@@ -572,13 +580,14 @@ describe("birleşim: çağrı izi (teşhis nedeni kendi çağrısına izle bağl
     const r = await o.arac(b, "ajanda_ekle", { ...simdi, baslik: "B'den" }, "toolu_t2");
     assert.match(r.metin, /pc_tur: sentetik \(tasdik_yok\)/);
     const blok = satirlar(o, bas);
-    return { once: satirlar(o).slice(0, bas), blok, neden: bul(blok, "pc_oturum_uyusmuyor"), arac: bul(blok, "arac") };
+    return { once: satirlar(o).slice(0, bas), blok, neden: bul(blok, "pc_surec_uyusmuyor"), arac: bul(blok, "arac") };
   }
 
   it("gerçek defter + araçlar + günlük: pc arac olayı neden olayıyla aynı izi taşır; teşhis nedeni araya çağrı girse ve 2 sn aşılsa da doğru çağrıya bağlar", async () => {
     const o = await ortamKur();
     const { istemci: a } = await hazirla(o);
-    const b = await o.pcKoprusu(OTURUM_B);
+    // B'nin köprüsü (yeni köprü) kendi sürecini bildirir; A'nınki süreç bildirmez (eski köprü, ilk görüş).
+    const b = await o.pcKoprusu(OTURUM_B, "4170");
     const t2 = await t5Reddi(o, a, b);
     assert.match(String(t2.neden["cagri_izi"]), IZ);
     assert.equal(t2.arac["cagri_izi"], t2.neden["cagri_izi"], "arac olayı neden olayının izini taşımıyor");
@@ -598,7 +607,7 @@ describe("birleşim: çağrı izi (teşhis nedeni kendi çağrısına izle bağl
     const t4 = satirlar(o, bas);
     const t3Arac = bul(t3, "arac");
     const t4Arac = bul(t4, "arac");
-    assert.equal(t4.some((x) => x["olay"] === "pc_oturum_uyusmuyor" || x["olay"] === "pc_tasdik_yetersiz"), false);
+    assert.equal(t4.some((x) => x["olay"] === "pc_surec_uyusmuyor" || x["olay"] === "pc_tasdik_yetersiz"), false);
     assert.equal(new Set([t2.arac["cagri_izi"], t3Arac["cagri_izi"], t4Arac["cagri_izi"]]).size, 3, "her çağrının izi ayrı");
     for (const x of [t3Arac, t4Arac]) assert.match(String(x["cagri_izi"]), IZ);
 
@@ -629,7 +638,8 @@ describe("birleşim: çağrı izi (teşhis nedeni kendi çağrısına izle bağl
     temizlikler.unshift(() => rmSync(dizin, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
     const o = await ortamKur({ depoYolu: join(dizin, "eren.db") });
     const { istemci: a } = await hazirla(o);
-    const b = await o.pcKoprusu(OTURUM_B);
+    // B'nin köprüsü (yeni köprü) kendi sürecini bildirir; A'nınki süreç bildirmez (eski köprü, ilk görüş).
+    const b = await o.pcKoprusu(OTURUM_B, "4170");
     const t2 = await t5Reddi(o, a, b);
     assert.equal(o.tuzlar.length, 2, "tuz defter kurulurken alındı");
 

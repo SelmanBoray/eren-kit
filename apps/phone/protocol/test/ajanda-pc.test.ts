@@ -398,3 +398,31 @@ test("yükseltme penceresi: yeni kancanın çerçevesi H1 öncesi servisin şema
   assert.equal(eskiServisCoz(eskiCerceve).ok, true, "eski kopya her şeyi reddediyor");
   assert.equal(pcKancaYukariCoz(eskiCerceve).ok, true, "geri alma penceresi: yeni servis eski kancayı kabul eder");
 });
+
+/**
+ * T5 (`docs/HARNESS.md` 4.2): köprünün hello'su isteğe bağlı `surec_id` taşır (köprünün harness süreci; Claude:
+ * `process.ppid`), YALNIZ `pc_oturumu` rolünde. Bu değişiklikten hemen önceki servisin hello şeması
+ * (`git show 55948ea:apps/phone/protocol/src/ajanda-arac.ts`, `AjandaKopruHello`: rol + jeton, katı) alanı
+ * geçirmez: köprü o serviste bir kez düz hello'ya düşer (`server/test/kopru-ajanda.test.ts` sınar). İstek
+ * çerçevesinin `cagri`'sı değişmedi: süreç orada taşınamaz.
+ */
+test("kopru_hello surec_id: yalnız pc_oturumu, OpakId biçiminde; 55948ea şeması reddeder; cagri süreç taşımaz", () => {
+  const JETON = "p".repeat(43);
+  const hello = (rol: string, ek: Record<string, unknown> = {}) => JSON.stringify({ v, type: "kopru_hello", rol, jeton: JETON, ...ek });
+  assert.equal(ajandaKopruYukariCoz(hello("pc_oturumu", { surec_id: "3060" })).ok, true);
+  assert.equal(ajandaKopruYukariCoz(hello("pc_oturumu")).ok, true, "düz hello (eski köprü) geçer");
+  for (const rol of ["pc_kanca", "ana_oturum"]) {
+    assert.equal(ajandaKopruYukariCoz(hello(rol, { surec_id: "3060" })).ok, false, rol);
+    assert.equal(ajandaKopruYukariCoz(hello(rol)).ok, true, rol);
+  }
+  assert.equal(pcKancaYukariCoz(hello("pc_kanca", { surec_id: "3060" })).ok, false, "kanca hello'su süreç taşımaz");
+  for (const kotu of ["", "12 34", 3060, "a".repeat(65), null]) {
+    assert.equal(ajandaKopruYukariCoz(hello("pc_oturumu", { surec_id: kotu })).ok, false, String(kotu));
+  }
+  const EskiHello = mesaj("kopru_hello", { rol: z.enum(["ana_oturum", "pc_oturumu", "pc_kanca"]), jeton: Jeton });
+  const eskiCoz = (s: string) => cozumle(z.discriminatedUnion("type", [EskiHello, AjandaKopruIstek]), s, AJANDA_AZAMI_CERCEVE.BORU, v);
+  assert.equal(eskiCoz(hello("pc_oturumu", { surec_id: "3060" })).ok, false, "55948ea servisi zengin hello'yu reddeder");
+  assert.equal(eskiCoz(hello("pc_oturumu")).ok, true);
+  const istek = { v, type: "istek", istek_id: "i1", fiil: "ajanda_listele", girdi: {}, cagri: { arac_cagri_id: "toolu_1", surec_id: "3060" } };
+  assert.equal(ajandaKopruYukariCoz(JSON.stringify(istek)).ok, false, "cagri'da süreç yok");
+});

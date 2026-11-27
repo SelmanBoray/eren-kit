@@ -548,7 +548,9 @@ const TESHIS_ALANLARI: Readonly<Record<string, readonly string[]>> = {
   arac: ["fiil", "tur_kokeni", "pc_karar", "cagri_kimligi", "sonuc", "neden"],
   // `tasdik_yok` kararının kanca kurulumu dışındaki nedenleri (ajanda-pc `kararVer`; `arac`'tan hemen önce yazılır).
   pc_tasdik_yetersiz: ["neden", "uyarlayici", "surum"],
+  // `pc_oturum_uyusmuyor`: eski servis sürümünün T5 olayı (eski günlükte görünür, gösterimi değişmedi).
   pc_oturum_uyusmuyor: ["surec_kimligi"],
+  pc_surec_uyusmuyor: ["kopru_surec"],
   el_sikisma: ["rol"],
   el_sikisma_ret: ["rol", "code", "neden"],
 };
@@ -607,7 +609,7 @@ const kancaRetNedenleri = (olaylar: readonly TeshisOlayi[]): string[] =>
   );
 
 /** Tasdik geldi ama karar yine `tasdik_yok`: servisin günlüğe yazdığı neden olayları (ajanda-pc `kararVer`). */
-const TASDIK_REDDI_OLAYLARI: ReadonlySet<string> = new Set(["pc_tasdik_yetersiz", "pc_oturum_uyusmuyor"]);
+const TASDIK_REDDI_OLAYLARI: ReadonlySet<string> = new Set(["pc_tasdik_yetersiz", "pc_oturum_uyusmuyor", "pc_surec_uyusmuyor"]);
 
 /** Neden olayı ile kendi `arac`'ı arasındaki en uzun süre (aynı eşzamanlı blok; `depo.islem` bekleyebilir). */
 const TASDIK_REDDI_ARALIK_MS = 2000;
@@ -675,6 +677,23 @@ function tasdikReddiNedenleri(zincir: TeshisZinciri): string[] {
         "bir Claude Code sürecinden açıldı. Bir sonraki çağrıda kendiliğinden düzelir (köprü kapanınca o sürecin bağı " +
         "bırakılır, yeni köprünün sonraki çağrısı doğrudan kayıt olur); sürerse ve iki köprü aynı anda açıksa Claude Code " +
         "penceresini kapatıp yeniden açın. Kanca kurulumu doğru, yeniden kurmak gerekmez."
+      );
+    }
+    if (o.olay === "pc_surec_uyusmuyor") {
+      if (o.alanlar["kopru_surec"] === "ilk_gorus") {
+        return (
+          "eski köprü başka bir Claude Code sürecine bağlı (pc_surec_uyusmuyor, ilk_gorus): bu çağrıyı getiren MCP köprüsü " +
+          "sürecini bildirmeyen eski bir sürüm; bağlantısı ilk tükettiği tasdikin Claude Code sürecine bağlandı, bu tasdik " +
+          "başka bir süreçten (tasdik silinmez, sahibine kalır). Claude Code oturumunu yeniden açın: yeni köprü sürecini " +
+          "kendisi bildirir. Kanca kurulumu doğru, yeniden kurmak gerekmez."
+        );
+      }
+      return (
+        "köprünün ebeveyni harness süreci değil (pc_surec_uyusmuyor): kanca bu çağrıyı bildirdi, ama çağrıyı getiren MCP " +
+        "köprüsünün ebeveyni (hello'da bildirdiği süreç) tasdiki veren Claude Code süreci değil; tasdik kullanılmadı " +
+        "(silinmez, sahibine kalır). Olası: köprü bir sarmalayıcıyla başlatılıyor (cmd /c, npx, sh -c): MCP kaydını " +
+        "sarmalayıcısız yapın (kurulum\\claude-code.ts goster); ya da köprü başka bir Claude Code sürecinin. Sarmalayıcı " +
+        "durdukça bu pencerenin bütün kayıtları taslak doğar (güvenli taraf). Kanca kurulumu doğru, yeniden kurmak gerekmez."
       );
     }
     const neden = o.alanlar["neden"];

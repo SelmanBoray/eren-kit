@@ -527,8 +527,15 @@ export const AjandaKopruIstek = z.discriminatedUnion("fiil", [
 ]);
 export type AjandaKopruIstek = z.infer<typeof AjandaKopruIstek>;
 
-/** İlk mesaj. Rol, sohbet ve nesil yalnız jetondan türer. */
-export const AjandaKopruHello = mesaj("kopru_hello", { rol: AjandaKopruRolu, jeton: Jeton });
+/**
+ * İlk mesaj. Rol, sohbet ve nesil yalnız jetondan türer. `surec_id` (isteğe bağlı, YALNIZ `pc_oturumu`): köprünün
+ * harness süreci (Claude: köprünün `process.ppid`'i); servis onu bağlantıya yazar, T5 tasdikin `surec_id`'siyle
+ * karşılaştırır. Öbür rollerde alan şemadan geçmez. Alanı tanımayan eski servis hello'yu reddeder; köprü bir kez
+ * alansız hello'ya düşer (`server/src/kopru.ts`).
+ */
+export const AjandaKopruHello = mesaj("kopru_hello", { rol: AjandaKopruRolu, jeton: Jeton, surec_id: OpakId.optional() }).superRefine((m, ctx) => {
+  if (m.surec_id !== undefined && m.rol !== "pc_oturumu") ctx.addIssue({ code: "custom", path: ["surec_id"], message: "surec_id yalnız pc_oturumu hello'sunda" });
+});
 export const AjandaKopruWelcome = mesaj("kopru_welcome", { rol: AjandaKopruRolu });
 
 export const AjandaKopruYukari = z.discriminatedUnion("type", [AjandaKopruHello, AjandaKopruIstek, KopruIptal]);
