@@ -233,6 +233,31 @@ Servisin tasdik defteri, karar sırası ve taslak tabanı zaten harness'tan bağ
 Karar (servis, harness'tan bağımsız): `insan` ⇔ çerçeve geçerli ∧ tek kullanımlık ∧ taze ∧ köprü bağlantısıyla
 eşleşiyor (T5) ∧ `aktor = ana` ∧ `etkilesim = etkilesimli`. Diğer her şey sentetik (T2, T3).
 
+**Uygulanan (H1, 2026-11-27):**
+- Çerçeve `PcTasdikGirdi` adını aldı ve bir alan eklendi: isteğe bağlı `surec_id` (harness sürecinin kimliği).
+  Kapalı uyarlayıcı listesi `PC_UYARLAYICILARI`; bugün yalnız `claude-code` v1.
+- Eski çerçeve kabul edilir ve bugünkü kararı alır. Eski çerçeveye T5 uygulanmaz; güncellemeden sonra açık
+  kalan eski kanca süreçleri bunu gönderir.
+- Yeni karar değeri eklenmedi. Eski köprüler `PcAracSonucu`'yu kendi şemasıyla çözer. Yetersiz tasdik (bilinmeyen
+  uyarlayıcı ya da sürüm, `bilinmiyor`) ve T5 reddi `tasdik_yok` olur. Nedenleri günlükte durur:
+  `pc_tasdik_yetersiz`, `pc_oturum_uyusmuyor`.
+- **T5 oturum kimliğiyle değil, süreçle kurulur.** Claude Code 2.1.332 ikili dosyası okundu; canlı ölçüm yapılmadı.
+  MCP sunucusunun `CLAUDE_CODE_SESSION_ID`'si açılış anının değeridir. `/clear` oturum kimliğini yeniler ama
+  MCP sürecini yeniden başlatmaz; köprünün değeri eskir, kancanınki yenilenir. Düz karşılaştırma `/clear`
+  sonrası her kaydı taslağa düşürürdü.
+- Bu yüzden kanca `CLAUDE_PID`'i `surec_id` olarak gönderir. Servis süreç anahtarını (yoksa oturum anahtarını)
+  ilk tüketen köprünün kimliğine bağlar. Bağ başka bir köprüdeyse tasdik tüketilemez ve sahibine kalır; tam
+  oturum eşleşmesi bağı o köprüye taşır.
+- Açıklar:
+  - İlk tüketimde, bağ kurulmadan önce kısa bir yarış penceresi var.
+  - PID yeniden kullanılıp ilk çağrı `/clear` sonrası gelirse ya da süreç kimliği olmayan kancada başka
+    pencereden `/resume` yapılırsa nadir bir yanlış ret olabilir.
+  - `/resume`, `--resume`, agent teams ve eski sürümlerde `CLAUDE_PID` ölçülmedi.
+- Köprü `--uyarlayici <ad>` alır; varsayılan `claude-code`. Bilinmeyen ad 2 ile çıkar.
+
+**İkinci uyarlayıcı için sonuç:** T5 her harness'ta kancayla köprüyü aynı sürece bağlayan, model dışı bir işaret
+ister. Codex için bu da ölçülür (`HARNESS-H3-OLCUM.md` Ö3).
+
 **Uyarlayıcının görevleri** (harness başına küçük bir modül, ikisi de model dışında çalışır):
 
 1. *Kanca tarafı*: harness'ın araç öncesi noktasının girdisini normalize çerçeveye çevirir. Claude
