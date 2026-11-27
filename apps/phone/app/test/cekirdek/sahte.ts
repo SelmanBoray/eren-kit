@@ -1,11 +1,18 @@
 /** JS çekirdeği testlerinin sahte portları ve çerçeve kurucuları. Gerçek ağ, saat, disk yok. */
-import { PROTOKOL_SURUMU, SOHBET_SURUMU } from "@eren/protocol";
+import { PROTOKOL_SURUMU, SOHBET_SURUMU, SOHBET_YETENEKLERI } from "@eren/protocol";
 import type {
   DepoPortu,
   EslesmeBilgisi,
+  HamMedya,
+  HazirlaSonucu,
   IptalEt,
   KimlikPortu,
+  MedyaDosyaPortu,
+  MedyaKaynagi,
+  MedyaSeciciPortu,
+  MedyaSecimSonucu,
   SaatPortu,
+  SeciliEk,
   SohbetImzaSonucu,
   SohbetKimlikBaslangici,
   WsBaglantisi,
@@ -326,3 +333,217 @@ export const elSikis = async (b: SahteBaglanti, head_seq = 0): Promise<void> => 
   b.gel(welcome(head_seq));
   await bosalt();
 };
+
+// =============================================================================================
+// Medya dalgası (TASARIM.md "Medya"). Yerel URI'ler uydurmadır: `content://ornek/...` seçici,
+// `file:///eren-medya/...` uygulama klasörü.
+// =============================================================================================
+
+/** Belirlenimci içerik: `i`. bayt `(i * 31 + 7) & 0xff`. Parça sınırlarının doğruluğunu sınamak için. */
+export const icerik = (n: number, tohum = 0): Uint8Array => {
+  const b = new Uint8Array(n);
+  for (let i = 0; i < n; i++) b[i] = ((i + tohum) * 31 + 7) & 0xff;
+  return b;
+};
+
+const UZANTI: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+  "image/heic": "heic",
+  "image/heif": "heif",
+  "video/mp4": "mp4",
+  "video/quicktime": "mov",
+  "video/3gpp": "3gp",
+  "video/webm": "webm",
+};
+
+export interface DosyaOkumasi {
+  uri: string;
+  ofset: number;
+  uzunluk: number;
+}
+
+/**
+ * `MedyaDosyaPortu` sahtesi: dosyalar bellekte. Varsayılan `hazirla` başarılıdır: fotoğraf
+ * `file:///eren-medya/<id>.jpg` (`image/jpeg`, önizleme kendisi), video `<id>.<uzantı>` + kapak
+ * `<id>.kapak.jpg`; içerik `icerik(ek.boyut)`. Testte büyük `boyut` kullanma (bellekte ayrılır).
+ */
+export class SahteMedyaDosya implements MedyaDosyaPortu {
+  dosyalar = new Map<string, Uint8Array>();
+  hazirlamalar: { ek: SeciliEk; medya_id: string }[] = [];
+  okumalar: DosyaOkumasi[] = [];
+  silinenler: string[] = [];
+  /** Verilirse `hazirla` bunu döner ve dosya yazmaz (başarı sonucunun dosyasını test kendisi koyar). */
+  hazirlaSonucu: ((ek: SeciliEk, medya_id: string) => HazirlaSonucu) | null = null;
+  /** Kapak alınamıyor: video önizlemesi `null`. */
+  kapakYok = false;
+  hata: { oku?: boolean; sil?: boolean; listele?: boolean } = {};
+
+  hazirla(ek: SeciliEk, medya_id: string): Promise<HazirlaSonucu> {
+    this.hazirlamalar.push({ ek, medya_id });
+    if (this.hazirlaSonucu !== null) return Promise.resolve(this.hazirlaSonucu(ek, medya_id));
+    const foto = ek.tur === "foto";
+    const mime = foto ? "image/jpeg" : ek.mime;
+    const uri = `file:///eren-medya/${medya_id}.${UZANTI[mime] ?? "bin"}`;
+    this.dosyalar.set(uri, icerik(ek.boyut));
+    let onizleme_uri: string | null = foto ? uri : null;
+    if (!foto && !this.kapakYok) {
+      onizleme_uri = `file:///eren-medya/${medya_id}.kapak.jpg`;
+      this.dosyalar.set(onizleme_uri, icerik(16));
+    }
+    return Promise.resolve({
+      ok: true,
+      ek: {
+        uri,
+        mime,
+        boyut: ek.boyut,
+        genislik: ek.genislik,
+        yukseklik: ek.yukseklik,
+        sure_ms: foto ? null : ek.sure_ms,
+        onizleme_uri,
+      },
+    });
+  }
+  boyut(uri: string): Promise<number | null> {
+    return Promise.resolve(this.dosyalar.get(uri)?.length ?? null);
+  }
+  oku(uri: string, ofset: number, uzunluk: number): Promise<Uint8Array> {
+    this.okumalar.push({ uri, ofset, uzunluk });
+    const d = this.dosyalar.get(uri);
+    if (this.hata.oku || d === undefined) return Promise.reject(new Error("oku"));
+    return Promise.resolve(d.slice(ofset, ofset + uzunluk));
+  }
+  sil(uri: string): Promise<void> {
+    if (this.hata.sil) return Promise.reject(new Error("sil"));
+    this.silinenler.push(uri);
+    this.dosyalar.delete(uri);
+    return Promise.resolve();
+  }
+  listele(): Promise<readonly string[]> {
+    if (this.hata.listele) return Promise.reject(new Error("listele"));
+    return Promise.resolve([...this.dosyalar.keys()]);
+  }
+}
+
+/** `MedyaSeciciPortu` sahtesi: `sonuclar` sırayla döner; bitince boş seçim (vazgeçti). */
+export class SahteMedyaSecici implements MedyaSeciciPortu {
+  sonuclar: MedyaSecimSonucu[] = [];
+  cagrilar: { kaynak: MedyaKaynagi; kalan: number }[] = [];
+  sec(kaynak: MedyaKaynagi, kalan: number): Promise<MedyaSecimSonucu> {
+    this.cagrilar.push({ kaynak, kalan });
+    return Promise.resolve(this.sonuclar.shift() ?? { ok: true, ogeler: [] });
+  }
+}
+
+/** Seçicinin ham fotoğrafı (beyan). */
+export const hamFoto = (extra: Partial<HamMedya> = {}): HamMedya => ({
+  uri: "content://ornek/foto-1",
+  tur: "foto",
+  mime: "image/jpeg",
+  boyut: 2048,
+  sure_ms: null,
+  genislik: 4000,
+  yukseklik: 3000,
+  ...extra,
+});
+
+/** Seçicinin ham videosu (beyan): 20 sn. */
+export const hamVideo = (extra: Partial<HamMedya> = {}): HamMedya => ({
+  uri: "content://ornek/video-1",
+  tur: "video",
+  mime: "video/mp4",
+  boyut: 4096,
+  sure_ms: 20_000,
+  genislik: 1280,
+  yukseklik: 720,
+  ...extra,
+});
+
+/** Şeritteki fotoğraf. */
+export const seciliFoto = (extra: Partial<SeciliEk> = {}): SeciliEk => ({
+  uri: "content://ornek/foto-1",
+  tur: "foto",
+  mime: "image/jpeg",
+  boyut: 2048,
+  sure_ms: null,
+  genislik: 4000,
+  yukseklik: 3000,
+  ...extra,
+});
+
+/** Şeritteki video. */
+export const seciliVideo = (extra: Partial<SeciliEk> = {}): SeciliEk => ({
+  uri: "content://ornek/video-1",
+  tur: "video",
+  mime: "video/mp4",
+  boyut: 4096,
+  sure_ms: 20_000,
+  genislik: 1280,
+  yukseklik: 720,
+  ...extra,
+});
+
+/** Kablo `EkBilgisi` (fotoğraf). */
+export const ekBilgisi = (medya_id: string, extra: Record<string, unknown> = {}) => ({
+  medya_id,
+  tur: "foto",
+  mime: "image/jpeg",
+  boyut: 2048,
+  ...extra,
+});
+
+/** Kablo `EkBilgisi` (video, 20 sn). */
+export const videoBilgisi = (medya_id: string, extra: Record<string, unknown> = {}) => ({
+  medya_id,
+  tur: "video",
+  mime: "video/mp4",
+  boyut: 4096,
+  sure_ms: 20_000,
+  ...extra,
+});
+
+/** `medya1` destekleyen servisin `welcome`'ı. */
+export const welcomeMedyali = (head_seq: number, yetenekler: string[] = [SOHBET_YETENEKLERI.MEDYA]) => ({
+  ...welcome(head_seq),
+  yetenekler,
+});
+
+/**
+ * Servis -> telefon `media_state`. Varsayılanlar şemayı tutturur: `yukleniyor` -> `alinan: 0`,
+ * `reddedildi` -> `code: "medya_reddedildi"`; `extra` bunları ezer.
+ */
+export const mediaState = (
+  medya_id: string,
+  durum: "yukleniyor" | "kabul" | "reddedildi",
+  extra: Record<string, unknown> = {},
+) => ({
+  v,
+  type: "media_state",
+  medya_id,
+  durum,
+  ...(durum === "yukleniyor" ? { alinan: 0 } : {}),
+  ...(durum === "reddedildi" ? { code: "medya_reddedildi" } : {}),
+  ...extra,
+});
+
+/** Ekli `user_echo` olayı (`input: "yazi"`, metin boş olabilir). */
+export const ekliYankiOlayi = (
+  seq: number,
+  ekler: Record<string, unknown>[],
+  client_msg_id = `m${seq}`,
+  text = "",
+  sohbet_id?: string,
+) => ({
+  ...yankiOlayi(seq, client_msg_id, text, sohbet_id),
+  ekler,
+});
+
+/** Telefon -> servis `media_chunk` beklenen biçimi (ayrıştırılmış giden çerçeveyle karşılaştırmak için). */
+export const mediaChunk = (medya_id: string, ofset: number, veri: string) => ({
+  v,
+  type: "media_chunk",
+  medya_id,
+  ofset,
+  veri,
+});

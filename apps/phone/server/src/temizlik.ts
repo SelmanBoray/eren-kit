@@ -17,6 +17,14 @@
  * `ack`'i dönüşe göre hemen yazar, kuyruk sonucu sonraya bırakır ve bu imzaya sığmaz; telefon
  * `sohbet_mesgul`'u zaten tanır, kullanıcı yeniden basabilir. `bekle` ve `kapat` bütün arka işleri bekler.
  *
+ * Medya dalgası (S7; MODULLER "Medya dalgası" > "Silme", "S7 temizlik"): `medya` verildiyse iki işleyici
+ * de başarılı depo işleminden sonra (satırlar o işlemde `silinecek` olmuştur, `silinecek_medya`), dönüşten
+ * önce `medya.sohbetMedyasiniSil(sohbet)`'i çağırır; söz beklenmez (`ack` gecikmez), reddi yakalanır ve
+ * `bekle`/`kapat` onu beklemez (süren işlemenin bitmesini bekleyebilir; kapanışı `medya.kapat` yönetir).
+ * Çağrı `silinecek_medya` 0 olsa da yapılır: önceki silmede silinemeyen satırlar böylece yeniden denenir.
+ * Yeniden deneme ve kota tahliyesi yöneticinindir (S4). Ön koşullara yeni madde yoktur. `medya` yoksa çağrı
+ * da günlük satırı da yoktur: davranış medya öncesiyle aynı.
+ *
  * Günlüğe yalnız `sohbet_id` (opak kimlik), sayılar ve kapalı liste değerleri yazılır: sohbet adı,
  * oturum kimliği, yol, metin yazılmaz.
  */
@@ -59,6 +67,7 @@ export const temizlikKur: TemizlikFabrikasi = ({
   transkript,
   saat,
   gunluk,
+  medya,
 }) => {
   let kapali = false;
   /** Eşzamanlı bölüm sürüyor: işlem içinden yeniden girişe karşı (hangi sohbet olursa olsun). */
@@ -186,6 +195,23 @@ export const temizlikKur: TemizlikFabrikasi = ({
     await transkriptTemizle(sohbet_id, son);
   };
 
+  /**
+   * Medya dizinlerinin silinmesini başlatır; beklenmez, hiç atmaz. Yalnız başarılı depo işleminden sonra.
+   * `silinecek_medya`: depo sayısı (S1 öncesi depoda yok).
+   */
+  const medyaSil = (sohbet: SohbetSecimi, silinecek_medya: number | undefined): void => {
+    if (medya === undefined) return;
+    const sohbet_id = sohbet.sohbet_id;
+    yaz("bilgi", "medya_silme", silinecek_medya === undefined ? { sohbet_id } : { sohbet_id, silinecek_medya });
+    try {
+      medya.sohbetMedyasiniSil(sohbet).catch((e: unknown) => {
+        yaz("hata", "medya_silme_hata", { sohbet_id, hata_turu: hataTuru(e) });
+      });
+    } catch (e) {
+      yaz("hata", "medya_silme_hata", { sohbet_id, hata_turu: hataTuru(e) });
+    }
+  };
+
   /** Arka işi bu sohbetin yuvasına koyar. `f`'nin ilk `await`'e kadarki kısmı burada, eşzamanlı koşar. */
   const arkaBaslat = (sohbet_id: string, f: () => Promise<void>): void => {
     const is: Promise<void> = f()
@@ -245,7 +271,8 @@ export const temizlikKur: TemizlikFabrikasi = ({
       sinir_seq,
     });
 
-    // 4. Arkada: yeni sayfa (çağrı burada, eşzamanlı) ve transkript silme.
+    // 4. Medya dizinleri (beklenmez); sonra arkada yeni sayfa (çağrı burada, eşzamanlı) ve transkript silme.
+    medyaSil(sohbet, sonuc.silinecek_medya);
     const o = ornek;
     arkaBaslat(sohbet_id, () => yeniSayfaArka(sohbet_id, o));
     return { ok: true, deger: { mezar_seq, sinir_seq } };
@@ -312,7 +339,10 @@ export const temizlikKur: TemizlikFabrikasi = ({
       ornek_kaldirildi: kaldirilan !== null,
     });
 
-    // 6. Arkada: sonlandırma (çağrı burada, eşzamanlı), transkript ve oturum kaydı silme.
+    // 6. Medya dizinleri (beklenmez; `kaldir` atsa da sohbet silinmiştir).
+    medyaSil(sohbet, sonuc.silinecek_medya);
+
+    // 7. Arkada: sonlandırma (çağrı burada, eşzamanlı), transkript ve oturum kaydı silme.
     if (kaldirilan !== null) {
       const k = kaldirilan;
       arkaBaslat(sohbet_id, () => sonlandirArka(sohbet_id, k));

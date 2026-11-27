@@ -16,24 +16,32 @@
  * (servisin `assistant_activity.kaynak_msg_id` ile bildirdiği tur-mesaj bağı), okuma `seslendirici.ts`;
  * `CekirdekDurumu.seslendiriyor`, `sustur()`.
  *
+ * Medya (portlar.medya verildiyse): yükleyici (`medya.ts`) outbox `hazirlik`'ine bağlanır, `media_state`
+ * ona gider, ekli yankı kaydı önizlemeye çevirir, silmeler yerel kopyaları siler; ekli gönderim
+ * `Sohbet.mesajYolla(..., ekler)`, bekleyen ekli mesajı kaldırma `Sohbet.bekleyeniKaldir`. TASARIM.md "Medya".
+ *
  * Davranış: TASARIM.md "Dilim 2: çoklu sohbet" (Olay yönlendirme, Sohbet listesi 6, Okunmamış,
  * Seçili sohbet, Mezar taşı ve silinen sohbet, Yönetim işlemleri) ve Ç6. İmzalar: sozlesme.ts.
  */
 import {
   ANA_SOHBET_ID,
+  EkBilgisi,
+  MEDYA_SINIRLARI,
+  SINIRLAR,
   SOHBET_SINIRLARI,
   SOHBET_SURUMU,
   SOHBET_YASAM_OLAYLARI,
   VARSAYILAN_SOHBET_ADI,
   sohbetAnahtari,
 } from "@eren/protocol";
-import type { SohbetAdi, SohbetId } from "@eren/protocol";
+import type { GirdiYolu, MedyaId, SohbetAdi, SohbetId } from "@eren/protocol";
 import { akisKur } from "./akis.ts";
 import type { Akis } from "./akis.ts";
-import { baglantiKur } from "./baglanti.ts";
+import { baglantiKur, welcomeMedyaDestekli } from "./baglanti.ts";
 import type { KimlikliCerceve, WelcomeCercevesi } from "./baglanti.ts";
 import { etkinlikKur } from "./etkinlik.ts";
 import type { Etkinlik } from "./etkinlik.ts";
+import { ekleriDenetle, yukleyiciKur } from "./medya.ts";
 import { olaylarKur } from "./olaylar.ts";
 import type { GorunumOgesi, IsKarti, Olaylar } from "./olaylar.ts";
 import { outboxKur } from "./outbox.ts";
@@ -51,16 +59,21 @@ import type {
   CalisanIs,
   CekirdekDurumu,
   CekirdekFabrikasi,
+  EkGorunumu,
+  EkIlerlemesi,
   GeciciIsTuru,
   GecmisSilSonucu,
   GidenGovde,
   GidenHatasi,
   GonderSonucu,
+  HazirEk,
   IptalEt,
   IsMesaji,
   KaliciOlay,
+  MesajBaglami,
   MezarTasi,
   OutboxOgesi,
+  SeciliEk,
   Sohbet,
   SohbetDurumu,
   SohbetHatasi,
@@ -69,6 +82,8 @@ import type {
   SohbetYonetimMesaji,
   SunucuDurumu,
   TuketimDurumu,
+  Yukleyici,
+  YeniYukleme,
 } from "./sozlesme.ts";
 
 // Ekran yüzeyi: tipler sözleşmededir, ekranlar onları buradan alır.
@@ -78,12 +93,19 @@ export type {
   BaglantiDurumu,
   BaglantiOzeti,
   BekleyenDurumu,
+  BekleyenKaldirSonucu,
   BekleyenOge,
   CalisanIs,
   Cekirdek,
   CekirdekDurumu,
   CekirdekPortlari,
   CekirdekSecenekleri,
+  EkDenetimi,
+  EkGorunumu,
+  EkIlerlemesi,
+  EkRedi,
+  EkRedNedeni,
+  EkleriDenetle,
   EtkinlikDurumu,
   GecmisSilHatasi,
   GecmisSilSonucu,
@@ -92,10 +114,16 @@ export type {
   GidenHatasi,
   GonderRedNedeni,
   GonderSonucu,
+  HamMedya,
   IptalEt,
   IsMesaji,
+  MedyaDosyaPortu,
+  MedyaKaynagi,
+  MedyaSeciciPortu,
+  MedyaSecimSonucu,
   MesajBaglami,
   PlanKarari,
+  SeciliEk,
   SesPortu,
   Sohbet,
   SohbetAcSonucu,
@@ -110,7 +138,8 @@ export type {
   TuketimDurumu,
   TuketimRaporu,
 } from "./sozlesme.ts";
-export type { ServisBilgisi, SohbetAdi, SohbetErenDurumu, SohbetId } from "@eren/protocol";
+export type { EkBilgisi, MedyaId, MedyaTuru, ServisBilgisi, SohbetAdi, SohbetErenDurumu, SohbetId } from "@eren/protocol";
+export { ekleriDenetle } from "./medya.ts";
 export type { BaglantiHatasi, YerelBaglantiHatasi } from "./baglanti.ts";
 export type {
   AsistanBalonu,
@@ -138,6 +167,8 @@ const IS_BITTI_TUKETIM_MS = 3_000;
 /**
  * `gecmisiSil` ve `sil`: bu sürede `ack` gelmezse `zaman_asimi` döner ve bağlantı yenilenir (yol
  * sessizce ölmüş olabilir). Silme servise ulaştıysa olayı yeniden bağlanınca telafiyle gelir.
+ * Süre istek kuyruğa girince başlar; `chat_clear`'ı ekli mesaj yüzünden bekletecek tıkalı sohbette
+ * istek hiç kuyruğa girmez (`ek_bekliyor`), böylece süre hep hemen yollanan bir isteği ölçer.
  */
 export const GECMIS_SIL_SURESI_MS = 20_000;
 
@@ -260,7 +291,58 @@ const ozetEsit = (a: SohbetOzeti, b: SohbetOzeti): boolean => {
   return x === y || (x !== null && y !== null && x.kim === y.kim && x.metin === y.metin);
 };
 
-export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat, ses }, secenekler = {}) => {
+// --- Medya yardımcıları (saf) -------------------------------------------------------------------
+
+const BOS_EK_GORUNUMLERI: ReadonlyMap<MedyaId, EkGorunumu> = new Map();
+const BOS_IDLER: readonly MedyaId[] = [];
+
+/** Ekli `user_message`'ın ek kimlikleri; başka mesajda boş. */
+const ekIdleri = (m: IsMesaji): readonly MedyaId[] =>
+  m.type === "user_message" && m.ekler !== undefined ? m.ekler.map((e) => e.medya_id) : BOS_IDLER;
+
+const ilerlemeEsit = (a: EkIlerlemesi | null, b: EkIlerlemesi | null): boolean =>
+  a === b || (a !== null && b !== null && sigEsit(a, b));
+
+const ekGorunumuEsit = (a: EkGorunumu, b: EkGorunumu): boolean =>
+  a.onizleme_uri === b.onizleme_uri && ilerlemeEsit(a.ilerleme, b.ilerleme);
+
+/** Görünüm dizisindeki balonların ek kimlikleri (dizi kimliğine bağlı önbellek: dizi değişmedikçe yeniden taranmaz). */
+const balonEkIdleri = new WeakMap<readonly GorunumOgesi[], readonly MedyaId[]>();
+const balonEkleriAl = (ogeler: readonly GorunumOgesi[]): readonly MedyaId[] => {
+  let idler = balonEkIdleri.get(ogeler);
+  if (idler === undefined) {
+    const yeni: MedyaId[] = [];
+    for (const o of ogeler) {
+      if (o.tur === "kullanici" && o.ekler !== undefined) for (const e of o.ekler) yeni.push(e.medya_id);
+    }
+    idler = yeni.length === 0 ? BOS_IDLER : yeni;
+    balonEkIdleri.set(ogeler, idler);
+  }
+  return idler;
+};
+
+/** Beyan alanı tam sayı ve aralıkta değilse yazılmaz (beyan hiçbir karara girmez; PC ölçer). */
+const aralikta = (x: number | null, azami: number): number | undefined =>
+  x !== null && Number.isSafeInteger(x) && x >= 1 && x <= azami ? x : undefined;
+
+/** Kablo `EkBilgisi`: tür seçimden, `mime`/`boyut` kopyadan; şemadan geçmezse `null`. */
+const ekBilgisiKur = (medya_id: MedyaId, ek: SeciliEk, h: HazirEk): EkBilgisi | null => {
+  const sure_ms = ek.tur === "video" ? aralikta(h.sure_ms, MEDYA_SINIRLARI.VIDEO_SURE_MS) : undefined;
+  const genislik = aralikta(h.genislik, MEDYA_SINIRLARI.BOYUT_KENAR);
+  const yukseklik = aralikta(h.yukseklik, MEDYA_SINIRLARI.BOYUT_KENAR);
+  const s = EkBilgisi.safeParse({
+    medya_id,
+    tur: ek.tur,
+    mime: h.mime,
+    boyut: h.boyut,
+    ...(sure_ms !== undefined ? { sure_ms } : {}),
+    ...(genislik !== undefined ? { genislik } : {}),
+    ...(yukseklik !== undefined ? { yukseklik } : {}),
+  });
+  return s.success ? s.data : null;
+};
+
+export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat, ses, medya }, secenekler = {}) => {
   const dinleyiciler = new Set<(durum: CekirdekDurumu) => void>();
   let onbellek: CekirdekDurumu | null = null;
   let kirli = true;
@@ -585,12 +667,44 @@ export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat, ses }, 
     yoklamaMs = null;
   };
 
+  // --- Medya (TASARIM.md "Medya") ----------------------------------------------------------------
+  // Yükleyici yalnız port verildiyse. `degisti`: ilerleme ya da `hazirlik` değişti; outbox bekleyen
+  // ekli mesajı yeniden dener, ekranlar yenilenir.
+  const yukleyici: Yukleyici | null =
+    medya === undefined
+      ? null
+      : yukleyiciKur({
+          depo,
+          dosya: medya,
+          degisti: () => {
+            outbox.hazirlikDegisti();
+            bildir();
+          },
+        });
+  // Bu süreçte görülen son `welcome`'ın `medya1`'i (kopukta korunur).
+  let medyaDestekli = false;
+  // Açılış süpürmesi (`Yukleyici.yukle` sıraya koyar): yeni ek bu bitmeden hazırlanmaz, yoksa
+  // süpürme henüz kaydı olmayan kopyayı silebilirdi (`hazirla` ile `Yukleyici.ekle` arası).
+  let supurme: Promise<void> = Promise.resolve();
+
+  /** Ekli mesajın eklerini yükleyiciden kaldırır (kayıt, yerel kopya, bağlıysa `media_cancel`). */
+  const ekleriIptal = async (m: IsMesaji): Promise<void> => {
+    const idler = ekIdleri(m);
+    if (yukleyici === null || idler.length === 0) return;
+    await yukleyici.iptal(idler).catch(() => undefined);
+  };
+
   const outbox = outboxKur({
     depo,
     saat,
     degisti: () => {
       bekciDenetle();
       bildir();
+    },
+    // Ekli `user_message` eklerinin hepsi `kabul` alınca gider; öteki öğeler hep hazır.
+    hazirlik: (m) => {
+      const idler = ekIdleri(m);
+      return yukleyici === null || idler.length === 0 ? "hazir" : yukleyici.hazirlik(idler);
     },
   });
 
@@ -630,10 +744,13 @@ export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat, ses }, 
     for (const [client_msg_id, mesaj] of kullaniciTeslimleri) {
       if (sohbetAnahtari(mesaj) === sohbet_id) kullaniciTeslimleri.delete(client_msg_id);
     }
+    // Önizlemeler her uygulamada (yüklemede de): silme bitmeden süreç öldüyse yeniden denenir.
+    yukleyici?.sohbetiTemizle(sohbet_id, o.sinir_seq).catch(() => undefined);
     if (kapanacak === null) return;
     for (const h of kapanacak) {
       silinenHatalar.add(h.client_msg_id);
       outbox.hataKapat(h.client_msg_id).catch(() => undefined);
+      void ekleriIptal(h.mesaj);
     }
     hataOnbellek = null;
   };
@@ -642,6 +759,9 @@ export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat, ses }, 
   const sohbetSilindi = (sohbet_id: SohbetId, canli: boolean): void => {
     // Örnek kalkmadan önce: plan/soru/iş kararlarının sohbeti kart dururken bulunur.
     if (canli && yuklendi) outbox.kaldir((m) => mesajSohbeti(m) === sohbet_id).catch(() => undefined);
+    // Yerel medya: önizlemeler ve bağlanmamış kayıtlar (kaldırılan mesajların ekleri). Yüklemede de: arada
+    // ölen silme yeniden denenir; silinmiş sohbetin kaydı kalmadıysa hiçbir şey yapmaz.
+    yukleyici?.sohbetSilindi(sohbet_id).catch(() => undefined);
     ornekler.delete(sohbet_id);
     sinirlar.delete(sohbet_id);
     for (const [client_msg_id, mesaj] of kullaniciTeslimleri) {
@@ -677,7 +797,13 @@ export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat, ses }, 
     ornek.olaylar.ekle(o);
     ornek.akis.olay(o);
     ornek.etkinlik.olay(o);
-    if (o.type === "user_echo") kullaniciTeslimleri.delete(o.client_msg_id);
+    if (o.type === "user_echo") {
+      kullaniciTeslimleri.delete(o.client_msg_id);
+      // Ekli yankı (canlı ve yüklemede; bilinmeyen kimlik yok sayılır): kayıt önizlemeye döner.
+      if (yukleyici !== null && o.ekler !== undefined) {
+        for (const e of o.ekler) yukleyici.mesajaBaglandi(e.medya_id, o.seq).catch(() => undefined);
+      }
+    }
     if (o.type === "chat_cleared") mezarTasiUygula(o, sohbet_id, kapanacak);
   };
 
@@ -714,6 +840,8 @@ export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat, ses }, 
     alinanSeq = 0;
     // Geçmiş baştan çekilir, `seq`'ler yeniden başlar: eski sesli kayıtlar eşleşmesin, okunan yinelenmesin.
     sesli?.yanit.sifirla();
+    // Önizleme dizini eski `seq`'lere bağlı: silinir; bağlanmamış kayıtlar (bekleyen ekli mesajlar) kalır.
+    yukleyici?.sifirla().catch(() => undefined);
     // Bellekten düşen teslimlerin disk kopyası da gider: sonraki açılışta sohbet geri gelmesin.
     const tutulan = new Set(kurulumTeslimleri.map((t) => t.mesaj.client_msg_id));
     if (tutulan.size > 0) kurulumBirak((m) => tutulan.has(m.client_msg_id));
@@ -913,11 +1041,18 @@ export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat, ses }, 
       case "usage_report":
         tuketim.rapor(c);
         return;
+      case "media_state":
+        // Kalıcı değil, sohbet denetimi yok (kimlik bu cihazın). Aynı durumun ikinci kez gelmesi (istek
+        // yanıtı ve `medya_durumu` yayını) zararsızdır: `kabul`/`reddedildi` yeniden yazılır, yollanmış
+        // mesaj yinelenmez. Yükleyici `degisti` ile bildirir.
+        yukleyici?.durum(c);
+        return;
     }
   };
 
   const kimlikTamam = (w: WelcomeCercevesi): void => {
     hata = null;
+    medyaDestekli = yukleyici !== null && welcomeMedyaDestekli(w);
     canliEsikSeq = w.head_seq;
     if (telafi.welcome(w.head_seq) === "geride") {
       // Bilgisayarın geçmişi telefondakinin gerisinde (veritabanı yenilenmiş): yeni olaylar eski
@@ -934,6 +1069,11 @@ export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat, ses }, 
       secimYaz();
     }
     outbox.kimlikTamam((m) => baglanti.gonder(m));
+    // `media_*` yalnız `medya1` bağlantısında (jetonsuz bağlantıda servis `yetkisiz` ile kapatır).
+    if (yukleyici !== null) {
+      if (medyaDestekli) yukleyici.baglandi((m) => baglanti.medyaGonder(m));
+      else yukleyici.koptu();
+    }
     bildir();
     tuketim.iste();
   };
@@ -943,6 +1083,7 @@ export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat, ses }, 
     kimlik,
     saat,
     sonSeq: () => telafi.sonSeq(),
+    medya: yukleyici !== null,
     dinleyici: {
       durumDegisti: bildir,
       hata: (h) => {
@@ -953,6 +1094,8 @@ export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat, ses }, 
       cerceve: cerceveAl,
       koptu: () => {
         bekciDurdur();
+        // Yükleme durur; kayıtlar ve `kabul` korunur, yeniden bağlanınca `media_begin` ile sorulur.
+        yukleyici?.koptu();
         // Geçici silme istekleri kuyruktan hatalara düştü: yeniden yollanmaz, sonucu belirsizdir.
         outbox.koptu();
         silmeHatalariniKapat();
@@ -1016,6 +1159,7 @@ export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat, ses }, 
       calisanIsler: calisanIslerAl(),
       tuketim: tuketimDurumu,
       seslendiriyor: sesli?.okuyucu.konusuyor() ?? false,
+      medyaDestekli,
     };
     if (onbellek !== null && sigEsit(onbellek, yeni)) return onbellek;
     onbellek = yeni;
@@ -1052,6 +1196,8 @@ export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat, ses }, 
   /** Kurulamamış sohbetin bütün yerel artıkları (kuyruk ve hatalar) ve okunmuş girdisi. */
   const yerelKaldir = async (sohbet_id: SohbetId): Promise<void> => {
     okunduSil(sohbet_id);
+    // Kaldırılan ekli mesajların kayıtları ve yerel kopyaları da gider (PC'de sohbet hiç oluşmadı).
+    yukleyici?.sohbetSilindi(sohbet_id).catch(() => undefined);
     await outbox.kaldir((m) => mesajSohbeti(m) === sohbet_id);
   };
 
@@ -1101,10 +1247,46 @@ export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat, ses }, 
     return sonuc.length === 0 ? BOS_BEKLEYENLER : sonuc;
   };
 
+  /**
+   * `SohbetDurumu.ekGorunumleri`: balonların, bekleyenlerin ve hataların eklerinin yükleyici görünümü.
+   * İçerik değişmediyse eski harita, değişmeyen girdide eski `EkGorunumu` nesnesi döner.
+   */
+  const ekGorunumleriKur = (
+    eski: ReadonlyMap<MedyaId, EkGorunumu>,
+    ogeler: readonly GorunumOgesi[],
+    bekleyenler: readonly BekleyenOge[],
+    hatalar: readonly GidenHatasi[],
+  ): ReadonlyMap<MedyaId, EkGorunumu> => {
+    if (yukleyici === null) return BOS_EK_GORUNUMLERI;
+    const yeni = new Map<MedyaId, EkGorunumu>();
+    let ayni = true;
+    const ekle = (idler: readonly MedyaId[]): void => {
+      for (const id of idler) {
+        if (yeni.has(id)) continue;
+        const g = yukleyici.gorunum(id);
+        if (g === null) continue;
+        const e = eski.get(id);
+        if (e !== undefined && ekGorunumuEsit(e, g)) {
+          yeni.set(id, e);
+        } else {
+          yeni.set(id, g);
+          ayni = false;
+        }
+      }
+    };
+    ekle(balonEkleriAl(ogeler));
+    for (const b of bekleyenler) ekle(ekIdleri(b.mesaj));
+    for (const h of hatalar) ekle(ekIdleri(h.mesaj));
+    // Her girdi eskiden alındı ve sayı aynı: anahtar kümesi de aynıdır.
+    if (ayni && yeni.size === eski.size) return eski;
+    return yeni.size === 0 ? BOS_EK_GORUNUMLERI : yeni;
+  };
+
   const tutamacKur = (sohbet_id: SohbetId): Tutamac => {
     let onbellekS: SohbetDurumu | null = null;
     let bekleyenler: readonly BekleyenOge[] = BOS_BEKLEYENLER;
     let hatalar: readonly GidenHatasi[] = BOS_HATALAR;
+    let ekGorunumleri: ReadonlyMap<MedyaId, EkGorunumu> = BOS_EK_GORUNUMLERI;
 
     const durumS = (): SohbetDurumu => {
       if (!t.kirli && onbellekS !== null) return onbellekS;
@@ -1116,6 +1298,8 @@ export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat, ses }, 
         gorunurHatalar().filter((h) => mesajSohbeti(h.mesaj) === sohbet_id),
         ayni,
       );
+      const ogeler = ornek?.olaylar.ogeler() ?? BOS_OGELER;
+      ekGorunumleri = ekGorunumleriKur(ekGorunumleri, ogeler, bekleyenler, hatalar);
       const yeni: SohbetDurumu = {
         baglanti: baglanti.durum(),
         sonrakiDenemeMs: baglanti.sonrakiDenemeMs(),
@@ -1124,15 +1308,99 @@ export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat, ses }, 
         sunucu,
         sohbet_id,
         ozet: ozetBul(sohbet_id),
-        ogeler: ornek?.olaylar.ogeler() ?? BOS_OGELER,
+        ogeler,
         akis: ornek?.akis.durum() ?? null,
         etkinlik: ornek?.etkinlik.durum() ?? null,
         bekleyenler,
         hatalar,
+        ekGorunumleri,
       };
       if (onbellekS !== null && sigEsit(onbellekS, yeni)) return onbellekS;
       onbellekS = yeni;
       return yeni;
+    };
+
+    /** Ekli `mesajYolla` (sıra ve ret nedenleri: sozlesme.ts `Sohbet.mesajYolla`). */
+    const ekliMesajYolla = async (
+      metin: string,
+      input: GirdiYolu,
+      baglam: MesajBaglami | undefined,
+      ekler: readonly SeciliEk[],
+    ): Promise<GonderSonucu> => {
+      if (input !== "yazi" || baglam !== undefined) return { ok: false, neden: "gecersiz" };
+      if (!(await hazirMi())) return { ok: false, neden: "baslamadi" };
+      const oz = ozetBul(sohbet_id);
+      if (oz === null || oz.kurulum === "kurulamadi") return { ok: false, neden: "sohbet_bulunamadi" };
+      // Ağır hazırlamadan önce kablo kuralları: metin uzunluğu, adet, tekillik, tek video, tür, sınırlar.
+      if (metin.length > SINIRLAR.KULLANICI_METNI || ekleriDenetle([], ekler).reddedilenler.length > 0) {
+        return { ok: false, neden: "gecersiz" };
+      }
+      if (yukleyici === null || medya === undefined || !medyaDestekli) return { ok: false, neden: "medya_desteklenmiyor" };
+      if (yukleyici.bekleyenSayisi() + ekler.length > MEDYA_SINIRLARI.BEKLEYEN_YUKLEME) {
+        return { ok: false, neden: "ek_siniri" };
+      }
+      const otomatik = !oz.ana && oz.ad === VARSAYILAN_SOHBET_ADI && !kullaniciMesajiVar(sohbet_id);
+      await supurme;
+
+      const hazirlar: HazirEk[] = [];
+      const yeniler: YeniYukleme[] = [];
+      const kopyalariSil = async (): Promise<void> => {
+        for (const h of hazirlar) {
+          await medya.sil(h.uri).catch(() => undefined);
+          if (h.onizleme_uri !== null && h.onizleme_uri !== h.uri) await medya.sil(h.onizleme_uri).catch(() => undefined);
+        }
+      };
+      for (const ek of ekler) {
+        const medya_id = outbox.medyaIdUret();
+        let s: Awaited<ReturnType<typeof medya.hazirla>>;
+        try {
+          s = await medya.hazirla(ek, medya_id);
+        } catch {
+          s = { ok: false, neden: "hata" };
+        }
+        if (!s.ok) {
+          await kopyalariSil();
+          return { ok: false, neden: "ek_hazirlanamadi" };
+        }
+        hazirlar.push(s.ek);
+        const bilgi = ekBilgisiKur(medya_id, ek, s.ek);
+        if (bilgi === null) {
+          await kopyalariSil();
+          return { ok: false, neden: "gecersiz" };
+        }
+        yeniler.push({ sohbet_id, bilgi, uri: s.ek.uri, onizleme_uri: s.ek.onizleme_uri });
+      }
+      try {
+        await yukleyici.ekle(yeniler);
+      } catch {
+        await kopyalariSil();
+        return { ok: false, neden: "depo_hatasi" };
+      }
+      const s = await yolla({
+        type: "user_message",
+        sohbet_id,
+        input,
+        text: metin,
+        ekler: yeniler.map((y) => y.bilgi),
+      });
+      if (!s.ok) {
+        await yukleyici.iptal(yeniler.map((y) => y.bilgi.medya_id)).catch(() => undefined);
+        return s;
+      }
+      // Herhangi bir yolla yeni mesaj süren okumayı keser.
+      sesli?.okuyucu.durdur();
+      // Metin boşsa `otomatikAd` `null` döner: ad yazılmaz.
+      if (otomatik && ozetBul(sohbet_id)?.ad === VARSAYILAN_SOHBET_ADI) {
+        const ad = otomatikAd(metin);
+        if (ad !== null) {
+          try {
+            await outbox.ekle({ type: "chat_rename", sohbet_id, ad });
+          } catch {
+            // Otomatik adın sonucu yutulur.
+          }
+        }
+      }
+      return s;
     };
 
     const sohbet: Sohbet = {
@@ -1152,7 +1420,8 @@ export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat, ses }, 
         };
       },
 
-      mesajYolla: async (metin, input, baglam) => {
+      mesajYolla: async (metin, input, baglam, ekler) => {
+        if (ekler !== undefined && ekler.length > 0) return ekliMesajYolla(metin, input, baglam, ekler);
         // Bağlam yalnız kısayolla: başka yolla gelmişse çağıranın hatasıdır, hiçbir şey yazılmaz.
         if (baglam !== undefined && input !== "kisayol") return { ok: false, neden: "gecersiz" };
         if (!(await hazirMi())) return { ok: false, neden: "baslamadi" };
@@ -1245,11 +1514,36 @@ export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat, ses }, 
           }
         }
         await outbox.hataKapat(client_msg_id);
+        // "Kaldır": hatalı ekli mesajın kayıtları ve yerel kopyaları da gider.
+        if (h !== undefined) await ekleriIptal(h.mesaj);
+      },
+
+      bekleyeniKaldir: async (client_msg_id) => {
+        if (!(await hazirMi())) return { ok: false, neden: "baslamadi" };
+        const g = outbox.ogeler().find((x) => x.client_msg_id === client_msg_id);
+        if (g === undefined || g.mesaj.type !== "user_message" || sohbetAnahtari(g.mesaj) !== sohbet_id) {
+          return { ok: false, neden: "kaldirilamaz" };
+        }
+        let m: IsMesaji | null;
+        try {
+          m = await outbox.bekleyeniKaldir(client_msg_id);
+        } catch {
+          // Bellekte kalktı, diske yazılamadı: yeniden açılışta geri gelebilir, ekleri o zaman gerekir.
+          return { ok: false, neden: "depo_hatasi" };
+        }
+        if (m === null) return { ok: false, neden: "kaldirilamaz" };
+        sesli?.yanit.unut(client_msg_id);
+        await ekleriIptal(m);
+        return { ok: true };
       },
 
       gecmisiSil: async () => {
         if (!(await hazirMi())) return { ok: false, kod: "baslamadi" };
         if (!kullanilirMi(sohbet_id)) return { ok: false, kod: "sohbet_bulunamadi" };
+        if (baglanti.durum() !== "bagli") return { ok: false, kod: "bagli_degil" };
+        // Tıkalı sohbette `chat_clear` ekli mesajın arkasında (yükleme bitene dek, belki hiç) beklerdi ve
+        // 20 sn'de yanıltıcı `zaman_asimi` + bağlantı yenilemesi (yüklemeyi de keserek) olurdu: hemen ret.
+        if (outbox.sohbetTikaliMi(sohbet_id)) return { ok: false, kod: "ek_bekliyor" };
         return silmeYolla({ type: "chat_clear", sohbet_id });
       },
 
@@ -1300,6 +1594,11 @@ export const cekirdekKur: CekirdekFabrikasi = ({ ws, kimlik, depo, saat, ses }, 
   const yukle = async (): Promise<void> => {
     const gecmis = await telafi.yukle();
     await outbox.yukle();
+    // Yükleyici olaylardan önce: yankılar (`mesajaBaglandi`) ve silmeler kayıtları bulsun.
+    if (yukleyici !== null) {
+      await yukleyici.yukle();
+      supurme = yukleyici.bosalt();
+    }
     const kayit = await secimDeposu.yukle();
     okundu = new Map(kayit === null ? [] : Object.entries(kayit.okundu));
     const okunduOnce = okundu.size;

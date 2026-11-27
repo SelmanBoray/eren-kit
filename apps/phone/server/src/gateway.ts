@@ -5,6 +5,9 @@
  * Ajanda dalgası: `/ajanda` yalnız `ajanda` bağımlılığı verilmişse dinlenir ve `gateway-ajanda.ts`'e
  * devredilir; kapsam denetimi (`kanalKapsamdaMi`) `hello`'da her yolda, eşleştirme penceresinin kapsamı
  * eşleştirme yolunun kapsamı olmalı (`KAPSAM_ESLESTIRME_KANALI`).
+ * Medya dalgası (S5): `medya` verilirse `medya1` isteyen bağlantının `media_*` çerçeveleri
+ * `gateway-medya.ts`'e gider; `user_message.ekler` `ekleriDenetle` ile ön denetlenir; her olay gönderimi
+ * (canlı ve telafi) `olayiYetenegeGoreYansit`'ten geçer. `medya` yoksa davranış medya öncesiyle aynı.
  */
 import {
   AJANDA_AZAMI_CERCEVE,
@@ -15,6 +18,7 @@ import {
   KAPSAM_ESLESTIRME_KANALI,
   kanalKapsamdaMi,
   kimlikImzaMetni,
+  olayiYetenegeGoreYansit,
   PROTOKOL_SURUMU,
   sha256Hex,
   SOHBET_SINIRLARI,
@@ -37,6 +41,8 @@ import type {
 } from "@eren/protocol";
 import { ajandaKanaliKur } from "./gateway-ajanda.ts";
 import type { AjandaEslestirmeIstegi, AjandaKanali } from "./gateway-ajanda.ts";
+import { gatewayMedyaKur, medyaIsterMi, welcomeYetenekleri } from "./gateway-medya.ts";
+import type { GatewayMedya } from "./gateway-medya.ts";
 import type {
   AckGovdesi,
   AktifTur,
@@ -93,6 +99,7 @@ const TELAFI_PARTISI = 200;
 const YETKI_YOKLAMA_MS = 2_000;
 const IC_HATA_ACK: AckGovdesi = { ok: false, code: "ic_hata" };
 const BULUNAMADI_ACK: AckGovdesi = { ok: false, code: "sohbet_bulunamadi" };
+const GECERSIZ_ACK: AckGovdesi = { ok: false, code: "gecersiz_mesaj" };
 
 type Gelen = SohbetYukari | CihazYukari;
 type Hello = Extract<Gelen, { type: "hello" }>;
@@ -115,6 +122,12 @@ interface SohbetBaglantisi {
    * buna gider. Bildirmeyen (eski APK) çerçeveyi çözemez ve bağlantıyı düşürür; ona hiç gönderilmez.
    */
   readonly etkinlikIster: boolean;
+  /**
+   * Medya dalgası. Bağlantı `medya1` istedi VE `medya` bağımlılığı var (`medyaIsterMi`). Yalnız buna
+   * `media_state` gider; `media_*` ve `ekler` yalnız bundan kabul edilir; `user_echo.ekler` yalnız buna
+   * olduğu gibi gider (ötekine `olayiYetenegeGoreYansit` ile önekli metin).
+   */
+  readonly medyaIster: boolean;
 }
 
 type Asama =
@@ -233,6 +246,7 @@ export const gatewayKur: GatewayFabrikasi = ({
   isler,
   temizlik,
   ajanda,
+  medya,
   cihaz,
   kilit,
   sistem,
@@ -361,9 +375,11 @@ export const gatewayKur: GatewayFabrikasi = ({
   // Olaylar ve telafi
   // ------------------------------------------------------------------------------------------
 
+  // Medya dalgası: canlı olay da telafi de bu tek noktadan geçer; `medya1`'siz bağlantı `ekler`'siz,
+  // önekli metinle alır (`olayiYetenegeGoreYansit`).
   const olayYolla = (s: SohbetBaglantisi, olay: Olay): void => {
     if (olay.seq <= s.sonSeq) return;
-    sohbetYolla(s.b, { v: SOHBET_SURUMU, type: "event", event: olay });
+    sohbetYolla(s.b, { v: SOHBET_SURUMU, type: "event", event: olayiYetenegeGoreYansit(olay, s.medyaIster) });
     s.sonSeq = olay.seq;
   };
 
@@ -448,7 +464,14 @@ export const gatewayKur: GatewayFabrikasi = ({
 
   const telafiYap = (s: SohbetBaglantisi, last_seq: number): void => {
     const head_seq = depo.basSeq();
-    sohbetYolla(s.b, { v: SOHBET_SURUMU, type: "welcome", head_seq, server_time_ms: saat.simdiMs() });
+    // Medya dalgası: `yetenekler` yalnız `medya1` isteyen bağlantıya (`welcomeYetenekleri`).
+    sohbetYolla(s.b, {
+      v: SOHBET_SURUMU,
+      type: "welcome",
+      head_seq,
+      server_time_ms: saat.simdiMs(),
+      ...welcomeYetenekleri(s.b.yetenekler, medya !== undefined),
+    });
     // Baştan ileri bir `last_seq` kabul edilseydi bağlantı canlı olayların hepsini atlardı.
     s.sonSeq = Math.min(last_seq, head_seq);
     eksikleriYolla(s);
@@ -549,6 +572,7 @@ export const gatewayKur: GatewayFabrikasi = ({
       olayAcik: false,
       akisAcik: false,
       etkinlikIster: g.b.yetenekler.has(SOHBET_YETENEKLERI.ETKINLIK),
+      medyaIster: medyaIsterMi(g.b.yetenekler, medya !== undefined),
     };
     g.asama = { ad: "sohbette", sohbet };
     sohbetBaglantilari.add(sohbet);
@@ -642,6 +666,10 @@ export const gatewayKur: GatewayFabrikasi = ({
           eslestir: (uzakIp, m) => eslestir(uzakIp, m, "ajanda"),
         });
 
+  // Medya dalgası: `medya` yoksa hiç kurulmaz; o zaman `media_*` `yetkisiz`, `ekler` `gecersiz_mesaj` olur.
+  const medyaYolu: GatewayMedya | null =
+    medya === undefined ? null : gatewayMedyaKur({ medya, gunluk, baglantilar: sohbetBaglantilari });
+
   // ------------------------------------------------------------------------------------------
   // Kimlik sonrası mesajlar
   // ------------------------------------------------------------------------------------------
@@ -651,11 +679,20 @@ export const gatewayKur: GatewayFabrikasi = ({
   };
 
   // Bilinmeyen ya da silinmiş sohbet: örnek yok, `sohbet_bulunamadi`; insan mesajı hiçbir yere yazılmaz.
-  const kisaIsYap = (device_id: string, m: KisaIs): AckGovdesi => {
+  const kisaIsYap = (s: SohbetBaglantisi, m: KisaIs): AckGovdesi => {
+    const { device_id } = s;
     switch (m.type) {
       case "user_message": {
+        // Medya dalgası: `ekler` yalnız `medya1` bağlantısında yaşar (MODULLER.md "Gönderme").
+        if (m.ekler !== undefined && (!s.medyaIster || medyaYolu === null)) return GECERSIZ_ACK;
         const ornek = sohbetler.konusma({ sohbet_id: m.sohbet_id });
         if (ornek === null) return BULUNAMADI_ACK;
+        // Ön denetim `insanMesajiAl`'dan hemen önce, aynı eşzamanlı akışta: kod buradan döner ve `ack`
+        // öteki ret kodları gibi saklanır. `konusma`'daki `ekleriBagla` denetimi yalnız savunmadır.
+        if (m.ekler !== undefined && medyaYolu !== null) {
+          const denetim = medyaYolu.ekleriDenetle(device_id, { sohbet_id: m.sohbet_id }, m.ekler);
+          if (!denetim.ok) return { ok: false, code: denetim.code };
+        }
         // `DogrulanmisInsanMesaji` yalnız burada üretilir: kimliği bitmiş `/sohbet` bağlantısı. v4: `baglam`
         // yalnız `input:"kisayol"` ile şemadan geçer (`yalnizKisayolda`); yoksa alan hiç konmaz.
         const { seq } = ornek.insanMesajiAl({
@@ -665,6 +702,8 @@ export const gatewayKur: GatewayFabrikasi = ({
           input: m.input,
           text: m.text,
           ...(m.baglam !== undefined && { baglam: { paket: m.baglam.paket, ad: m.baglam.ad } }),
+          // Yalnız ön denetimden geçtiyse buraya varılır; eksiz mesajda alan hiç konmaz.
+          ...(m.ekler !== undefined && { ekler: m.ekler }),
         } as DogrulanmisInsanMesaji);
         return { ok: true, seq };
       }
@@ -773,7 +812,7 @@ export const gatewayKur: GatewayFabrikasi = ({
     try {
       // İş ve `ack` tek işlemde: kabul edilip `ack`'i kaybolan mesaj yeniden gelince ikinci kez işlenirdi.
       ack = depo.islem(() => {
-        const sonuc = kisaIsYap(device_id, m);
+        const sonuc = kisaIsYap(s, m);
         depo.ackYaz(device_id, client_msg_id, sonuc);
         return sonuc;
       });
@@ -847,6 +886,14 @@ export const gatewayKur: GatewayFabrikasi = ({
             return isMesajiAl(asama.sohbet, m);
           case "usage_request":
             return tuketimYanitla(asama.sohbet.b, m.istek_id);
+          // Medya dalgası: jetonsuz bağlantı (ya da medya yok) bugünkü bilinmeyen tür kuralıyla kapanır.
+          case "media_begin":
+          case "media_chunk":
+          case "media_cancel":
+            if (medyaYolu === null || !asama.sohbet.medyaIster) return reddet(g, "yetkisiz");
+            // Yanıtsız parça sınırını aşan (pencereye uymayan) bağlantı kapanır; telefon yeniden bağlanıp sürer.
+            if (!medyaYolu.cerceve(asama.sohbet, m)) return reddet(g, "gecersiz_mesaj");
+            return;
           default:
             return reddet(g, "yetkisiz");
         }
@@ -945,6 +992,10 @@ export const gatewayKur: GatewayFabrikasi = ({
           sonDoluluk = doluluk;
         }),
       );
+      if (medyaYolu !== null) {
+        const y = medyaYolu;
+        veriyoluIptalleri.push(veriyolu.dinle("medya_durumu", (e) => y.durumYay(e)));
+      }
       if (ajandaKanali !== null) {
         const k = ajandaKanali;
         veriyoluIptalleri.push(veriyolu.dinle("ajanda_kayit_yazildi", ({ kayit }) => k.kayitYazildi(kayit)));

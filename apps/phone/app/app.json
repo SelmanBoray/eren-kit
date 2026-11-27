@@ -2,7 +2,7 @@
   "expo": {
     "name": "eren-kit",
     "slug": "eren-kit",
-    "version": "0.6.0",
+    "version": "0.7.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -19,15 +19,19 @@
       "predictiveBackGestureEnabled": false,
       "softwareKeyboardLayoutMode": "resize",
       "package": "dev.eren.app",
-      "versionCode": 9,
+      "versionCode": 10,
       "backgroundColor": "#101A1E",
       "blockedPermissions": [
         "android.permission.SYSTEM_ALERT_WINDOW",
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.WRITE_EXTERNAL_STORAGE",
-        "android.permission.VIBRATE"
+        "android.permission.VIBRATE",
+        "android.permission.RECORD_AUDIO"
       ],
-      "allowBackup": false
+      "allowBackup": false,
+      "permissions": [
+        "android.permission.CAMERA"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -36,7 +40,15 @@
       "./plugins/with-gradle-memory.js",
       "./plugins/with-min-sdk.js",
       "./plugins/with-splash-zemin.js",
-      "./plugins/with-release-imza.js"
+      "./plugins/with-release-imza.js",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Eren, sohbete eklemen için fotoğraf ve videolarını seçmene izin ister.",
+          "cameraPermission": "Eren, sohbete eklemen için fotoğraf ve video çekmene izin ister.",
+          "microphonePermission": false
+        }
+      ]
     ]
   }
 }

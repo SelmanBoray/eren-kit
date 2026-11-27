@@ -15,9 +15,15 @@
  * Hata vermek için: d.surec.sonrakiBaslatmaHatasi(new Error("x")), d.dosya.hataVer("oku", err), d.http.hataVer(err).
  * Ajanda dalgası: d.boru.baglan(AJANDA_BORU_ADI) (iki adlı boru), d.takvim (sabit ofsetli `TakvimPortu`;
  * `d.takvim.dilim = "Asia/Tokyo"` kullanıcının dilimini değiştirir; `DisDunya`'da değildir).
+ * Medya dalgası: d.medyaDosya (bellek içi `MedyaDosyaPortu`; `DisDunya`'da değildir), sahteMedyaIsleyici(d.medyaDosya)
+ * (araç çıktısını sahte dosyaya yazar), sahteMedyaYoneticisi() (S5/S6/S7 yüzleri), sahteMedyaAyari(),
+ * sahteMedyaBaytlari("mp4", 4096) (koklamadan geçen baş baytlı içerik).
  */
+import { base64BaytUzunlugu, mimeTuru } from "@eren/protocol";
+import type { EkBilgisi, EkListesi, MedyaTuru, SohbetId } from "@eren/protocol";
 import type {
   AnahtarPortu,
+  AracCalismasi,
   AracIstegi,
   AracSonucu,
   AyrikSurec,
@@ -28,18 +34,32 @@ import type {
   BoruSunucuIstegi,
   BoruSunucuPortu,
   DisDunya,
+  DokumMetni,
   DosyaPortu,
   Gunluk,
   GunlukAlanlari,
   HttpPortu,
   IptalEt,
   KapatilabilirSunucu,
+  KareSirasi,
   KayitPortu,
   MasaustuDurumu,
+  MediaStateGovdesi,
+  MedyaAyari,
+  MedyaBaglamaHatasi,
+  MedyaBicimi,
+  MedyaDosyaAdi,
+  MedyaDosyaPortu,
+  MedyaIcerigiDurumu,
+  MedyaIsleyici,
+  MedyaOlcumu,
+  MedyaServisSinirlari,
+  MedyaYoneticisi,
   RamOkumasi,
   RastgelePortu,
   SaatPortu,
   SistemPortu,
+  Sonuc,
   SohbetSecimi,
   SurecKaydi,
   SurecKapisi,
@@ -1166,6 +1186,552 @@ export function sahteTakvim(dilim = "Europe/Istanbul", ofsetler: Readonly<Record
 }
 
 // ---------------------------------------------------------------------------------------------
+// Medya dalgası: ayar, dosya portu, işleyici, yönetici yüzü
+// ---------------------------------------------------------------------------------------------
+
+/** `MedyaServisSinirlari`'nın test değerleri: MODULLER.md "Medya dalgası" > S8'deki sabitlerle aynı. */
+export const SAHTE_MEDYA_SINIRLARI: MedyaServisSinirlari = {
+  yarimOmurMs: 24 * 3_600_000,
+  islemeAzamiMs: 600_000,
+  gorselNesilSiniri: 60,
+  dokumMetni: 20_000,
+  gorselUzunKenar: 1568,
+  gorselPiksel: 1_150_000,
+  gorselAzamiBayt: 3_750_000,
+  kareUzunKenar: 768,
+  kareEnAz: 3,
+  kareEnCok: 8,
+  kareAraligiMs: 10_000,
+  videoSurePayi: 0.1,
+  olcumZamanAsimiMs: 30_000,
+  gorselZamanAsimiMs: 30_000,
+  kareZamanAsimiMs: 30_000,
+  dokumZamanAsimiEnAzMs: 120_000,
+  dokumZamanAsimiKat: 3,
+  supurmeAraligiMs: 600_000,
+};
+
+/** Sahte veri kökü (kişisel yol yok). `sahteMedyaAyari().kok` bunun `\medya`'sıdır. */
+export const SAHTE_VERI_KOKU = "C:\\ornek\\eren-kit";
+
+/** Medya açık bir `MedyaAyari`; `ust` alanları üzerine yazar. */
+export function sahteMedyaAyari(ust: Partial<MedyaAyari> = {}): MedyaAyari {
+  return {
+    kok: `${SAHTE_VERI_KOKU}\\medya`,
+    ffmpeg: "C:\\ornek\\ffmpeg\\bin\\ffmpeg.exe",
+    ffprobe: "C:\\ornek\\ffmpeg\\bin\\ffprobe.exe",
+    dokumModeli: "modeller/ggml-large-v3-turbo-q5_0.bin",
+    dokumVadModeli: null,
+    dokumDili: "auto",
+    kotaBayt: 10240 * 1024 * 1024,
+    sinirlar: SAHTE_MEDYA_SINIRLARI,
+    ...ust,
+  };
+}
+
+export const SAHTE_MEDYA_BICIMLERI: readonly MedyaBicimi[] = ["jpg", "png", "webp", "heic", "mp4", "mov", "3gp", "webm"];
+const KARE_SIRALARI: readonly KareSirasi[] = [1, 2, 3, 4, 5, 6, 7, 8];
+
+/** `MedyaDosyaAdi`'nın çalışma anı listesi: sahte port da gerçeği gibi listede olmayan adı reddeder. */
+export const SAHTE_MEDYA_DOSYA_ADLARI: ReadonlySet<string> = new Set<string>([
+  ...SAHTE_MEDYA_BICIMLERI.map((b) => `asil.${b}`),
+  "gorsel.jpg",
+  ...KARE_SIRALARI.map((i) => `kare-0${i}.jpg`),
+  "dokum.srt",
+  "dokum.txt",
+]);
+
+const FOTO_BICIMLERI: ReadonlySet<MedyaBicimi> = new Set<MedyaBicimi>(["jpg", "png", "webp", "heic"]);
+const bicimTuru = (b: MedyaBicimi): MedyaTuru => (FOTO_BICIMLERI.has(b) ? "foto" : "video");
+
+const ascii = (s: string): number[] => Array.from(s, (c) => c.charCodeAt(0));
+/** Biçim başına baş baytlar (tasarım 2.4 koklama tablosu); `sahteMedyaBaytlari` ve sahte `kokla` bunu kullanır. */
+const BAS_BAYTLARI: Readonly<Record<MedyaBicimi, readonly number[]>> = {
+  jpg: [0xff, 0xd8, 0xff, 0xe0],
+  png: [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
+  webp: [...ascii("RIFF"), 0, 0, 0, 0, ...ascii("WEBP")],
+  heic: [0, 0, 0, 0x18, ...ascii("ftypheic")],
+  mp4: [0, 0, 0, 0x18, ...ascii("ftypisom")],
+  mov: [0, 0, 0, 0x14, ...ascii("ftypqt  ")],
+  "3gp": [0, 0, 0, 0x18, ...ascii("ftyp3gp4")],
+  webm: [0x1a, 0x45, 0xdf, 0xa3],
+};
+
+/** `boyut` baytlık içerik: başı biçimin baş baytları, gerisi sabit dolgu (`0x2a`). */
+export function sahteMedyaBaytlari(bicim: MedyaBicimi, boyut: number): Uint8Array {
+  const b = new Uint8Array(boyut).fill(0x2a);
+  b.set(BAS_BAYTLARI[bicim].slice(0, boyut));
+  return b;
+}
+
+const FTYP_MARKALARI: Readonly<Record<string, MedyaBicimi>> = {
+  heic: "heic",
+  heix: "heic",
+  mif1: "heic",
+  msf1: "heic",
+  isom: "mp4",
+  iso2: "mp4",
+  mp41: "mp4",
+  mp42: "mp4",
+  avc1: "mp4",
+  "qt  ": "mov",
+  "3gp4": "3gp",
+  "3gp5": "3gp",
+  "3gp6": "3gp",
+};
+
+/** Tasarım 2.4'teki koklama tablosunun sahte karşılığı. Gerçek tablo S3a'nındır; bu yalnız test içindir. */
+function sahteKokla(bas: Uint8Array): MedyaBicimi | null {
+  const m = (i: number, d: readonly number[]): boolean => d.every((x, k) => bas[i + k] === x);
+  const metin = (i: number, n: number): string => String.fromCharCode(...bas.slice(i, i + n));
+  if (m(0, [0xff, 0xd8, 0xff])) return "jpg";
+  if (m(0, [0x89, 0x50, 0x4e, 0x47])) return "png";
+  if (bas.length >= 12 && metin(0, 4) === "RIFF" && metin(8, 4) === "WEBP") return "webp";
+  if (bas.length >= 12 && metin(4, 4) === "ftyp") return FTYP_MARKALARI[metin(8, 4)] ?? null;
+  if (m(0, [0x1a, 0x45, 0xdf, 0xa3])) return "webm";
+  return null;
+}
+
+export type MedyaDosyaIslemi =
+  | "parcaEkle"
+  | "parcaBoyutu"
+  | "parcaOku"
+  | "parcaSil"
+  | "tasi"
+  | "parcalar"
+  | "boyut"
+  | "oku"
+  | "yaz"
+  | "dizinSil"
+  | "dizinler";
+
+export interface SahteMedyaDosya extends MedyaDosyaPortu {
+  cagrilar: CagriDefteri;
+  readonly kok: string;
+  /** Testten `gelen\<no>.part` koyar (portu çağırmaz, kaydetmez). */
+  parcaKoy(no: number, bayt: Uint8Array): void;
+  /** `.part` içeriği; yoksa `null`. */
+  parcaIcerigi(no: number): Uint8Array | null;
+  /** Testten dizine dosya koyar, dizini de kurar (portu çağırmaz). Metin UTF-8 yazılır. */
+  koy(no: number, ad: MedyaDosyaAdi, icerik: Uint8Array | string): void;
+  /** Dosya içeriği; yoksa `null`. */
+  icerik(no: number, ad: MedyaDosyaAdi): Uint8Array | null;
+  /** Testten boş dizin kurar (sahipsiz dizin süpürmesi için). */
+  dizinKoy(no: number): void;
+  dizinVarMi(no: number): boolean;
+  /** Dizindeki dosya adları; dizin yoksa boş. */
+  dosyaAdlari(no: number): string[];
+  /** `true`: `dizinSil(no)` `false` döner ve dokunmaz (Windows kilidi). */
+  kilitle(no: number, kilitli?: boolean): void;
+  /** Verilen işlemin bir sonraki çağrısı atar (bir kez). `dizinSil` atmaz, `false` döner (port sözü). */
+  hataVer(islem: MedyaDosyaIslemi, hata: Error): void;
+}
+
+/** Bellek içi `MedyaDosyaPortu`. `no` ve `ad` denetimi gerçeğiyle aynı: geçersizde atar. */
+export function sahteMedyaDosya(kok = `${SAHTE_VERI_KOKU}\\medya`): SahteMedyaDosya {
+  const cagrilar = new CagriDefteri();
+  const parcaHaritasi = new Map<number, Uint8Array>();
+  const dizinHaritasi = new Map<number, Map<string, Uint8Array>>();
+  const kilitliler = new Set<number>();
+  const hatalar = new Map<MedyaDosyaIslemi, Error[]>();
+  const enc = new TextEncoder();
+
+  const kontrol = (islem: MedyaDosyaIslemi, ...args: unknown[]): void => {
+    cagrilar.ekle(islem, ...args);
+    const h = hatalar.get(islem)?.shift();
+    if (h) throw h;
+  };
+  const noDenetle = (no: number): void => {
+    if (!Number.isSafeInteger(no) || no <= 0) throw new RangeError(`sahte medya dosya: geçersiz no ${String(no)}`);
+  };
+  const adDenetle = (ad: string): void => {
+    if (!SAHTE_MEDYA_DOSYA_ADLARI.has(ad)) throw new RangeError(`sahte medya dosya: geçersiz ad ${ad}`);
+  };
+  const dizin = (no: number): Map<string, Uint8Array> => {
+    let d = dizinHaritasi.get(no);
+    if (d === undefined) {
+      d = new Map();
+      dizinHaritasi.set(no, d);
+    }
+    return d;
+  };
+  const sirali = (l: Iterable<number>): number[] => [...l].sort((a, b) => a - b);
+
+  return {
+    cagrilar,
+    kok,
+    yol: (no, ad) => {
+      noDenetle(no);
+      adDenetle(ad);
+      return `${kok}\\${no}\\${ad}`;
+    },
+    dizinYolu: (no) => {
+      noDenetle(no);
+      return `${kok}\\${no}`;
+    },
+    goreliYol: (no, ad) => {
+      noDenetle(no);
+      adDenetle(ad);
+      return `medya/${no}/${ad}`;
+    },
+    parcaEkle: async (no, ofset, bayt) => {
+      kontrol("parcaEkle", no, ofset, bayt.length);
+      noDenetle(no);
+      const eski = parcaHaritasi.get(no) ?? new Uint8Array(0);
+      if (eski.length !== ofset) throw new Error(`sahte medya dosya: ofset ${ofset}, dosya boyu ${eski.length}`);
+      const yeni = new Uint8Array(eski.length + bayt.length);
+      yeni.set(eski);
+      yeni.set(bayt, eski.length);
+      parcaHaritasi.set(no, yeni);
+      return yeni.length;
+    },
+    parcaBoyutu: async (no) => {
+      kontrol("parcaBoyutu", no);
+      noDenetle(no);
+      return parcaHaritasi.get(no)?.length ?? null;
+    },
+    parcaOku: async (no, ofset, azamiBayt) => {
+      kontrol("parcaOku", no, ofset, azamiBayt);
+      noDenetle(no);
+      return parcaHaritasi.get(no)?.slice(ofset, ofset + azamiBayt) ?? new Uint8Array(0);
+    },
+    parcaSil: async (no) => {
+      kontrol("parcaSil", no);
+      noDenetle(no);
+      parcaHaritasi.delete(no);
+    },
+    tasi: async (no, bicim) => {
+      kontrol("tasi", no, bicim);
+      noDenetle(no);
+      const ad = `asil.${bicim}`;
+      adDenetle(ad);
+      const p = parcaHaritasi.get(no);
+      if (p === undefined) throw new Error(`sahte medya dosya: ${no}.part yok`);
+      const d = dizin(no);
+      if (d.has(ad)) throw new Error(`sahte medya dosya: ${no}\\${ad} zaten var`);
+      d.set(ad, p);
+      parcaHaritasi.delete(no);
+    },
+    parcalar: async () => {
+      kontrol("parcalar");
+      return sirali(parcaHaritasi.keys());
+    },
+    boyut: async (no, ad) => {
+      kontrol("boyut", no, ad);
+      noDenetle(no);
+      adDenetle(ad);
+      return dizinHaritasi.get(no)?.get(ad)?.length ?? null;
+    },
+    oku: async (no, ad, azamiBayt) => {
+      kontrol("oku", no, ad, azamiBayt);
+      noDenetle(no);
+      adDenetle(ad);
+      const b = dizinHaritasi.get(no)?.get(ad);
+      if (b === undefined) return null;
+      if (b.length > azamiBayt) throw new RangeError(`sahte medya dosya: ${ad} ${b.length} > ${azamiBayt}`);
+      return b.slice();
+    },
+    yaz: async (no, ad, bayt) => {
+      kontrol("yaz", no, ad, bayt.length);
+      noDenetle(no);
+      adDenetle(ad);
+      const d = dizinHaritasi.get(no);
+      if (d === undefined) throw new Error(`sahte medya dosya: ${no} dizini yok`);
+      d.set(ad, bayt.slice());
+    },
+    dizinSil: async (no) => {
+      try {
+        kontrol("dizinSil", no);
+        noDenetle(no);
+      } catch {
+        return false;
+      }
+      if (kilitliler.has(no)) return false;
+      dizinHaritasi.delete(no);
+      return true;
+    },
+    dizinler: async () => {
+      kontrol("dizinler");
+      return sirali(dizinHaritasi.keys());
+    },
+    parcaKoy: (no, bayt) => void parcaHaritasi.set(no, bayt.slice()),
+    parcaIcerigi: (no) => parcaHaritasi.get(no)?.slice() ?? null,
+    koy: (no, ad, icerik) => {
+      adDenetle(ad);
+      dizin(no).set(ad, typeof icerik === "string" ? enc.encode(icerik) : icerik.slice());
+    },
+    icerik: (no, ad) => dizinHaritasi.get(no)?.get(ad)?.slice() ?? null,
+    dizinKoy: (no) => void dizin(no),
+    dizinVarMi: (no) => dizinHaritasi.has(no),
+    dosyaAdlari: (no) => [...(dizinHaritasi.get(no)?.keys() ?? [])].sort(),
+    kilitle: (no, kilitli = true) => {
+      if (kilitli) kilitliler.add(no);
+      else kilitliler.delete(no);
+    },
+    hataVer: (islem, hata) => {
+      const l = hatalar.get(islem) ?? [];
+      l.push(hata);
+      hatalar.set(islem, l);
+    },
+  };
+}
+
+/** Sahte işleyicinin araç adımları. */
+export type MedyaAdimi = "olc" | "gorselUret" | "kareUret" | "dokumUret";
+/** `basarili`: çıktı yazılır; `bos`: araç bitti ama çıktı yok (çözülemedi); `zaman_asimi`: çıktı yok, `zamanAsimi: true`. */
+export type MedyaAdimDavranisi = "basarili" | "bos" | "zaman_asimi";
+
+export interface SahteMedyaIsleyici extends MedyaIsleyici {
+  cagrilar: CagriDefteri;
+  /** `olc` cevabı; işlevse kayda göre. Varsayılan: videoda 20 sn 1280x720 sesli, fotoğrafta 1600x1200. */
+  olcum: MedyaOlcumu | null | ((no: number, bicim: MedyaBicimi) => MedyaOlcumu | null);
+  /** `dokumUret`'in yazdığı SRT. */
+  srt: string;
+  /**
+   * Verilirse her araç adımı (olc, üretimler) önce bunu bekler: "süren işleme" sınamaları için. Gerçek araç
+   * gibi `iptal` sinyali beklemeyi keser: iptal edilen adım çıktı yazmaz (`olc` `null`, üretim `{zamanAsimi:false}`)
+   * ve `cagrilar`'a `iptal` (adım adıyla) düşer.
+   */
+  bekletme: Promise<void> | null;
+  /** Adımın davranışı, değiştirilene dek kalıcı. Varsayılan hepsi `basarili`. `olc`'ta `bos`/`zaman_asimi` → `null`. */
+  adimDavranisi(adim: MedyaAdimi, d: MedyaAdimDavranisi): void;
+}
+
+/**
+ * `MedyaIsleyici` sahtesi: araç çıktısını `dosya`'ya yazar (gerçek ffmpeg gibi `boyut > 0` dosya), böylece
+ * S4 başarıyı port üzerinden sınar. `kokla` tasarım tablosunun sahtesi, `beyanaUyar` gevşek (yalnız tür
+ * ailesi: biçimin türü = `tur` = `mimeTuru(mime)`), `kareZamanlari` tasarım formülü, `dokumMetni` basit SRT.
+ */
+export function sahteMedyaIsleyici(dosya: SahteMedyaDosya, sinirlar: MedyaServisSinirlari = SAHTE_MEDYA_SINIRLARI): SahteMedyaIsleyici {
+  const cagrilar = new CagriDefteri();
+  const davranis = new Map<MedyaAdimi, MedyaAdimDavranisi>();
+  const jpeg = (): Uint8Array => sahteMedyaBaytlari("jpg", 64);
+  /** `true`: iptal edildi (bekleme sürerken ya da önceden). */
+  const bekle = async (adim: MedyaAdimi, iptal: AbortSignal | undefined): Promise<boolean> => {
+    if (i.bekletme !== null) {
+      const bekletme = i.bekletme;
+      await new Promise<void>((coz) => {
+        if (iptal?.aborted === true) return coz();
+        iptal?.addEventListener("abort", () => coz(), { once: true });
+        void bekletme.then(() => coz());
+      });
+    }
+    if (iptal?.aborted !== true) return false;
+    cagrilar.ekle("iptal", adim);
+    return true;
+  };
+  const uret = async (adim: MedyaAdimi, iptal: AbortSignal | undefined, yaz: () => void): Promise<AracCalismasi> => {
+    if (await bekle(adim, iptal)) return { zamanAsimi: false };
+    const d = davranis.get(adim) ?? "basarili";
+    if (d === "basarili") yaz();
+    return { zamanAsimi: d === "zaman_asimi" };
+  };
+
+  const i: SahteMedyaIsleyici = {
+    cagrilar,
+    olcum: (_no, bicim) =>
+      bicimTuru(bicim) === "video"
+        ? { sure_ms: 20_000, genislik: 1280, yukseklik: 720, video_akisi: true, ses_akisi: true }
+        : { sure_ms: null, genislik: 1600, yukseklik: 1200, video_akisi: true, ses_akisi: false },
+    srt: "1\n00:00:01,000 --> 00:00:03,000\nmerhaba\n\n2\n00:00:04,500 --> 00:00:06,000\nnasılsın\n",
+    bekletme: null,
+    adimDavranisi: (adim, d) => void davranis.set(adim, d),
+    kokla: (bas) => {
+      cagrilar.ekle("kokla", bas.length);
+      return sahteKokla(bas.slice(0, 64));
+    },
+    beyanaUyar: (bicim, tur, mime) => {
+      cagrilar.ekle("beyanaUyar", bicim, tur, mime);
+      return bicimTuru(bicim) === tur && mimeTuru(mime) === tur;
+    },
+    kareZamanlari: (sure_ms) => {
+      cagrilar.ekle("kareZamanlari", sure_ms);
+      const n = Math.min(sinirlar.kareEnCok, Math.max(sinirlar.kareEnAz, Math.ceil(sure_ms / sinirlar.kareAraligiMs)));
+      return Array.from({ length: n }, (_, k) => Math.floor(((k + 0.5) * sure_ms) / n));
+    },
+    olc: async (no, bicim, iptal) => {
+      cagrilar.ekle("olc", no, bicim);
+      if (await bekle("olc", iptal)) return null;
+      if ((davranis.get("olc") ?? "basarili") !== "basarili") return null;
+      return typeof i.olcum === "function" ? i.olcum(no, bicim) : i.olcum;
+    },
+    gorselUret: async (no, bicim, iptal) => {
+      cagrilar.ekle("gorselUret", no, bicim);
+      return uret("gorselUret", iptal, () => dosya.koy(no, "gorsel.jpg", jpeg()));
+    },
+    kareUret: async (no, bicim, sira, zaman_ms, iptal) => {
+      cagrilar.ekle("kareUret", no, bicim, sira, zaman_ms);
+      return uret("kareUret", iptal, () => dosya.koy(no, `kare-0${sira}.jpg`, jpeg()));
+    },
+    dokumUret: async (no, bicim, sure_ms, iptal) => {
+      cagrilar.ekle("dokumUret", no, bicim, sure_ms);
+      return uret("dokumUret", iptal, () => dosya.koy(no, "dokum.srt", i.srt));
+    },
+    dokumMetni: (srt): DokumMetni => {
+      cagrilar.ekle("dokumMetni", srt.length);
+      const satirlar: string[] = [];
+      for (const blok of srt.replaceAll("\r\n", "\n").split(/\n\s*\n/)) {
+        const l = blok.split("\n").filter((s) => s.trim() !== "");
+        const z = l.findIndex((s) => s.includes("-->"));
+        if (z < 0) continue;
+        const m = /^(\d+):(\d{2}):(\d{2})/.exec(l[z]!.trim());
+        const metin = l.slice(z + 1).join(" ").trim();
+        if (m === null || metin === "") continue;
+        const sa = Number(m[1]);
+        const damga = sa > 0 ? `${sa}:${m[2]}:${m[3]}` : `${m[2]}:${m[3]}`;
+        satirlar.push(`[${damga}] ${metin}`);
+      }
+      const tam = satirlar.join("\n");
+      const kirpildi = tam.length > sinirlar.dokumMetni;
+      return { metin: kirpildi ? tam.slice(0, sinirlar.dokumMetni) : tam, kirpildi };
+    },
+  };
+  return i;
+}
+
+/** Sahte yöneticinin bildiği ek kaydı (testten `ekKoy` ile). */
+export interface SahteMedyaEki {
+  no: number;
+  device_id: string;
+  sohbet_id: SohbetId;
+  ek: EkBilgisi;
+  durum: "yukleniyor" | "kabul" | "reddedildi" | "silinecek";
+  /** Bağlandığı kuyruk satırı; `null`: bağlanmamış. */
+  kuyruk_id: number | null;
+}
+
+export interface SahteMedyaYoneticisi extends MedyaYoneticisi {
+  cagrilar: CagriDefteri;
+  /** Testten ek koyar (varsayılan `kabul`, bağlanmamış). `ekleriDenetle`/`ekleriBagla`/`ekDizinleri` buna bakar. */
+  ekKoy(device_id: string, sohbet_id: SohbetId, ek: EkBilgisi, durum?: SahteMedyaEki["durum"]): SahteMedyaEki;
+  /** `(device_id, medya_id)` kaydı; yoksa `undefined`. */
+  ek(device_id: string, medya_id: string): SahteMedyaEki | undefined;
+  /** Kuyruk satırına bağlı eklerin `medya_id`'leri, bağlama sırasıyla. */
+  bagliEkler(kuyruk_id: number): readonly string[];
+  /** Bağlı satırın `icerik` cevabı; verilmezse bağlı satır `bekliyor`, bağsız satır `yok`. */
+  icerikAyarla(kuyruk_id: number, d: MedyaIcerigiDurumu): void;
+  /** Sıradaki `yuklemeBaslat` ya da `parca` cevabı (bir kez, sırayla). Yoksa varsayılan `yukleniyor`. */
+  sonrakiDurum(d: MediaStateGovdesi): void;
+  /** `nesil` → görsel sayısı. */
+  readonly nesilGorselleri: Map<number, number>;
+  /** `sohbetMedyasiniSil` çağrılan sohbetler, sırayla. */
+  readonly silinenSohbetler: SohbetId[];
+}
+
+/**
+ * Yönetici yüzlerinin (gateway, konuşma, temizlik) programlanabilir sahtesi; S4'ün gerçek davranışı DEĞİL.
+ * `ekleriDenetle` ve `ekleriBagla` sözleşmedeki sırayla sınar (yok/`yukleniyor` → `medya_yok`, `reddedildi` →
+ * `medya_reddedildi`, başka sohbet, bağlı, `tur`/`mime`/`boyut` farkı → `medya_yok`); `ekleriBagla` tutmazsa atar.
+ * `yuklemeBaslat` varsayılanı `yukleniyor{alinan:0}`, `parca` varsayılanı `yukleniyor{alinan: ofset + bayt}`.
+ */
+export function sahteMedyaYoneticisi(kok = `${SAHTE_VERI_KOKU}\\medya`): SahteMedyaYoneticisi {
+  const cagrilar = new CagriDefteri();
+  const ekler = new Map<string, SahteMedyaEki>();
+  const baglar = new Map<number, string[]>();
+  const icerikler = new Map<number, MedyaIcerigiDurumu>();
+  const durumlar: MediaStateGovdesi[] = [];
+  let sayac = 0;
+  const anahtar = (device_id: string, medya_id: string): string => `${device_id}\u0000${medya_id}`;
+
+  const denetle = (device_id: string, sohbet: SohbetSecimi, l: EkListesi): Sonuc<void, MedyaBaglamaHatasi> => {
+    for (const e of l) {
+      const k = ekler.get(anahtar(device_id, e.medya_id));
+      if (k === undefined) return { ok: false, code: "medya_yok" };
+      if (k.durum === "reddedildi") return { ok: false, code: "medya_reddedildi" };
+      if (k.durum !== "kabul" || k.sohbet_id !== sohbet.sohbet_id || k.kuyruk_id !== null) return { ok: false, code: "medya_yok" };
+      if (k.ek.tur !== e.tur || k.ek.mime !== e.mime || k.ek.boyut !== e.boyut) return { ok: false, code: "medya_yok" };
+    }
+    return { ok: true, deger: undefined };
+  };
+
+  const y: SahteMedyaYoneticisi = {
+    cagrilar,
+    nesilGorselleri: new Map(),
+    silinenSohbetler: [],
+    ekKoy: (device_id, sohbet_id, ek, durum = "kabul") => {
+      const k: SahteMedyaEki = { no: ++sayac, device_id, sohbet_id, ek, durum, kuyruk_id: null };
+      ekler.set(anahtar(device_id, ek.medya_id), k);
+      return k;
+    },
+    ek: (device_id, medya_id) => ekler.get(anahtar(device_id, medya_id)),
+    bagliEkler: (kuyruk_id) => [...(baglar.get(kuyruk_id) ?? [])],
+    icerikAyarla: (kuyruk_id, d) => void icerikler.set(kuyruk_id, d),
+    sonrakiDurum: (d) => void durumlar.push(d),
+    baslat: async () => {
+      cagrilar.ekle("baslat");
+    },
+    yuklemeBaslat: async (device_id, m) => {
+      cagrilar.ekle("yuklemeBaslat", device_id, m);
+      return durumlar.shift() ?? { medya_id: m.medya_id, durum: "yukleniyor", alinan: 0 };
+    },
+    parca: async (device_id, m) => {
+      cagrilar.ekle("parca", device_id, m.medya_id, m.ofset);
+      return durumlar.shift() ?? { medya_id: m.medya_id, durum: "yukleniyor", alinan: m.ofset + base64BaytUzunlugu(m.veri) };
+    },
+    iptal: (device_id, m) => {
+      cagrilar.ekle("iptal", device_id, m.medya_id);
+    },
+    ekleriDenetle: (device_id, sohbet, l) => {
+      cagrilar.ekle("ekleriDenetle", device_id, sohbet.sohbet_id, l.map((e) => e.medya_id));
+      return denetle(device_id, sohbet, l);
+    },
+    ekleriBagla: (g) => {
+      cagrilar.ekle("ekleriBagla", g.device_id, g.sohbet.sohbet_id, g.kuyruk_id, g.client_msg_id);
+      const s = denetle(g.device_id, g.sohbet, g.ekler);
+      if (!s.ok) throw new Error(`sahte medya: bağlanamadı (${s.code})`);
+      const l = baglar.get(g.kuyruk_id) ?? [];
+      for (const e of g.ekler) {
+        ekler.get(anahtar(g.device_id, e.medya_id))!.kuyruk_id = g.kuyruk_id;
+        l.push(e.medya_id);
+      }
+      baglar.set(g.kuyruk_id, l);
+    },
+    icerik: (g) => {
+      cagrilar.ekle("icerik", g.kuyruk_id);
+      if (!baglar.has(g.kuyruk_id)) return { durum: "yok" };
+      return icerikler.get(g.kuyruk_id) ?? { durum: "bekliyor" };
+    },
+    icerikBirak: (kuyruk_id) => {
+      cagrilar.ekle("icerikBirak", kuyruk_id);
+      icerikler.delete(kuyruk_id);
+    },
+    nesilGorselSayisi: (nesil) => {
+      cagrilar.ekle("nesilGorselSayisi", nesil);
+      return y.nesilGorselleri.get(nesil) ?? 0;
+    },
+    nesilGorselEkle: (nesil, adet) => {
+      cagrilar.ekle("nesilGorselEkle", nesil, adet);
+      y.nesilGorselleri.set(nesil, (y.nesilGorselleri.get(nesil) ?? 0) + adet);
+    },
+    ekDizinleri: (sohbet, medya_idler) => {
+      cagrilar.ekle("ekDizinleri", sohbet.sohbet_id, [...medya_idler]);
+      const sonuc: string[] = [];
+      for (const id of medya_idler) {
+        for (const k of ekler.values()) {
+          if (k.ek.medya_id === id && k.sohbet_id === sohbet.sohbet_id && k.kuyruk_id !== null && k.durum !== "silinecek") {
+            sonuc.push(`${kok}\\${k.no}`);
+            break;
+          }
+        }
+      }
+      return sonuc;
+    },
+    sohbetMedyasiniSil: async (sohbet) => {
+      cagrilar.ekle("sohbetMedyasiniSil", sohbet.sohbet_id);
+      y.silinenSohbetler.push(sohbet.sohbet_id);
+      for (const k of ekler.values()) if (k.sohbet_id === sohbet.sohbet_id) k.durum = "silinecek";
+    },
+    bekle: async () => {
+      cagrilar.ekle("bekle");
+    },
+    kapat: async () => {
+      cagrilar.ekle("kapat");
+    },
+  };
+  return y;
+}
+
+// ---------------------------------------------------------------------------------------------
 // Hepsi bir arada
 // ---------------------------------------------------------------------------------------------
 
@@ -1196,6 +1762,8 @@ export interface SahteDunya {
   gunluk: SahteGunluk;
   /** Ajanda dalgası. `DisDunya`'da DEĞİL (`TakvimPortu` `ana`'da `takvimKur` ile kurulur); varsayılan `Europe/Istanbul`. */
   takvim: SahteTakvim;
+  /** Medya dalgası. `DisDunya`'da DEĞİL (`ana` `medyaDosyaKur({kok})` ile kurar); kök `sahteMedyaAyari().kok`. */
+  medyaDosya: SahteMedyaDosya;
 }
 
 export function sahteDunya(sec: SahteDunyaSecenekleri = {}): SahteDunya {
@@ -1244,5 +1812,6 @@ export function sahteDunya(sec: SahteDunyaSecenekleri = {}): SahteDunya {
     transkript,
     gunluk,
     takvim: sahteTakvim(),
+    medyaDosya: sahteMedyaDosya(),
   };
 }

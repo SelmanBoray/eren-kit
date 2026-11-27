@@ -4,6 +4,7 @@ export * from "./kanonik.ts";
 export * from "./temel.ts";
 export * from "./plan.ts";
 export * from "./rapor.ts";
+export * from "./medya.ts";
 export * from "./sohbet.ts";
 export * from "./cihaz.ts";
 export * from "./cihaz-metin.ts";

@@ -36,6 +36,7 @@ import type {
   CMD_ARG_SEMALARI,
   DeviceState,
   DevirOzetiCikti,
+  EkListesi,
   ErenDurumu as KabloErenDurumu,
   EslestirmeQr,
   GirdiYolu,
@@ -56,6 +57,14 @@ import type {
   KopruRolu,
   KullaniciyaSorCikti,
   McpProfili,
+  MediaBegin,
+  MediaCancel,
+  MediaChunk,
+  MediaState,
+  MedyaId,
+  MedyaIslemeDurumu,
+  MedyaMime,
+  MedyaTuru,
   Notify,
   Olay,
   OturumDurdurCikti,
@@ -252,6 +261,11 @@ export interface AracIstegi {
   cwd?: string;
   ortam?: Ortam;
   zamanAsimiMs: number;
+  /**
+   * Verilir ve tetiklenirse süreç ağacı öldürülür (Windows: `taskkill /T /F`), söz `name: "AbortError"`
+   * hatasıyla reddedilir (süreç kapanınca, en geç kısa bir sınırda). Önceden tetiklenmişse süreç hiç başlamaz.
+   */
+  iptal?: AbortSignal;
 }
 
 export interface AracSonucu {
@@ -570,6 +584,12 @@ export interface Ayar {
    * (geliştirme kopyası). `baslangic_ms`: `AyarBagimliliklari.baslangicMs`. Kurulumda bir kez okunur.
    */
   readonly servis: ServisBilgisi;
+  /**
+   * Medya dalgası. Uygulama: ayar.ts (S8). `null`: medya kapalı (ffmpeg ya da ffprobe bulunamadı); alan
+   * YOKSA (eski test sahteleri) de kapalıdır. Kapalıyken `ana` medya yöneticisini kurmaz, `welcome`'da
+   * `medya1` ilan edilmez ve davranış medya öncesiyle bayt bayt aynıdır. Kurulumda bir kez okunur.
+   */
+  readonly medya?: MedyaAyari | null;
 }
 
 export interface TelegramAyari {
@@ -713,6 +733,14 @@ export interface ServisOlaylari {
    * `kayit` çerçevesi). Kayıt metni taşır: günlüğe yazılmaz.
    */
   ajanda_kayit_yazildi: { kayit: AjandaKaydi };
+  /**
+   * Medya dalgası. Kalıcı değil. Yalnız `medya` (S4) yayınlar: bir kaydın kablo durumu değişti (`kabul`,
+   * `reddedildi`, `isleme` değişimi) ya da bağlı bir kuyruk satırının içeriği `bekliyor`dan çıktı
+   * (önbelleğe yüklendi, işleme süresi doldu). Dinleyenler: `gateway` (`durum`'u yalnız `device_id`'nin
+   * `medya1` bağlantılarına `media_state` olarak yollar), `konusma` (yalnız kendi `sohbet_id`'sinde
+   * `pompala`). Yol, ad, içerik taşımaz.
+   */
+  medya_durumu: { device_id: string; sohbet_id: SohbetId; durum: MediaStateGovdesi };
 }
 
 export type ServisOlayAdi = keyof ServisOlaylari;
@@ -1014,6 +1042,11 @@ export interface KonusmaSatiri {
   ts_ms: number;
   /** Yalnız kısayol kökenli kullanıcı satırında: ana oturuma önekli gitmişti (`input:"kisayol"`, `baglam` varsa). */
   kisayol?: { baglam?: { paket: string; ad: string } };
+  /**
+   * Medya dalgası. Uygulama: depo.ts (S1), `user_echo.ekler`'den aynen. Yalnız ekli kullanıcı satırında;
+   * devir notu ve "son konuşma" satırı bunu `[ek: ...]` önekine çevirir (S6), görsel yeniden gitmez.
+   */
+  ekler?: EkListesi;
 }
 
 /**
@@ -1060,6 +1093,8 @@ export interface GecmisTemizlemeSonucu {
   bosaltilan_tur: number;
   /** Silinen kuyruk satırı sayısı: o sohbetin `eren_kuyrugu` satırlarının tamamı (insan ve sentetik). */
   silinen_kuyruk: number;
+  /** Medya dalgası (S1). Bu işlemde `silinecek` yapılan medya satırı sayısı; medya öncesi depoda alan yok. */
+  silinecek_medya?: number;
 }
 
 /** Dilim 2. `Depo.sohbetiSil` sonucu. Günlüğe yalnız sayılar yazılır. */
@@ -1069,6 +1104,8 @@ export interface SohbetSilmeSonucu {
   silinen_olay: number;
   bosaltilan_tur: number;
   silinen_kuyruk: number;
+  /** Medya dalgası (S1). `GecmisTemizlemeSonucu.silinecek_medya` ile aynı. */
+  silinecek_medya?: number;
 }
 
 /** Dilim 2. `sohbetler` tablosunun satırı (ek göç 3). `ad` kullanıcı metnidir: günlüğe yazılmaz. */
@@ -1210,7 +1247,10 @@ export interface Depo {
   kuyrukBasi(sohbet: SohbetSecimi): ErenKuyrukSatiri | null;
   /** Bastan gelen ardışık `sentetik` satırlar: tek satırda birleştirmek için. Yalnız o sohbetin. */
   kuyrukSentetikBasi(adet: number, sohbet: SohbetSecimi): ErenKuyrukSatiri[];
-  /** Ajanda dalgası: satırların ekleri (`kuyruk_ekleri`) de silinir. */
+  /**
+   * Ajanda dalgası: satırların ekleri (`kuyruk_ekleri`) de silinir. Medya dalgası (S1): satırların
+   * `kuyruk_medyalari` bağları da silinir; medya satırı kalır (`bagli_msg_id` dolu: gönderilmiş ek).
+   */
   kuyruktanSil(idler: readonly number[]): void;
   /**
    * Ajanda dalgası (ek göç 6). Satırın ekini yazar; `kuyrugaEkle` ile AYNI `islem` içinde, hemen ardından
@@ -1271,6 +1311,9 @@ export interface Depo {
    * kirli_okumalar, eren_oturumlari, sohbetler` tablolarına, ajanda dalgasında hiçbir `ajanda_*` tablosuna
    * dokunulmaz (`sohbetiSil` de). `seq` AUTOINCREMENT olduğu için mezar taşı her
    * zaman en yenidir, `head_seq` gerilemez. Hata atarsa işlem geri alınır, hiçbir şey silinmez.
+   * Medya dalgası (S1): aynı işlemde o sohbetin `silinecek` olmayan bütün `medya` satırları `silinecek`
+   * olur (`silinecek_medya`) ve o sohbetin kuyruk satırlarının `kuyruk_medyalari` bağları silinir. Dizinleri
+   * işlemden sonra `MedyaYoneticisi.sohbetMedyasiniSil` siler; satır ancak dizini gidince kalkar.
    */
   gecmisiTemizle(sohbet: SohbetSecimi): GecmisTemizlemeSonucu;
   /**
@@ -1327,6 +1370,7 @@ export interface Depo {
    * (6) `olayEkle({type:"chat_deleted", sohbet_id})`. `chat_cleared` YAZILMAZ. `isler, planlar,
    * sorular, nesiller, kirli_okumalar, eren_oturumlari` satırları kalır (iş kaydı ilkesi; oturum
    * kayıtları transkript silinince `temizlik` siler). Hata atarsa işlem geri alınır.
+   * Medya dalgası (S1): `gecmisiTemizle`'deki medya adımı aynen (`silinecek_medya`).
    */
   sohbetiSil(sohbet: SohbetSecimi, ms: number): SohbetSilmeSonucu;
 
@@ -1815,6 +1859,11 @@ export type DogrulanmisInsanMesaji = Markali<
      * iken geçirir; kısayolda da yokluğu geçerlidir. `user_echo`'ya aynen yazılır, ana oturuma önek olur.
      */
     baglam?: KisayolBaglami;
+    /**
+     * Medya dalgası. `user_message.ekler` aynen; yalnız `input:"yazi"` ile ve yalnız gateway
+     * `GatewayMedyaYuzu.ekleriDenetle`'den `ok` aldıktan sonra konur. Yoksa alan hiç yazılmaz.
+     */
+    ekler?: EkListesi;
   },
   "dogrulanmis-insan"
 >;
@@ -1943,6 +1992,11 @@ export interface Konusma {
    * uyuyor ya da sıradayken de kabul eder; süreç yoksa ardından `uyandir()`. Dilim 2: `mesaj.sohbet_id`
    * bu örneğinkinden farklıysa atar, hiçbir şey yazmaz. Dilim 3b (v4): `user_echo` öneksiz metni ve
    * `baglam`'ı taşır; `input:"kisayol"` ise kuyruk satırına (yalnız ana oturuma) `[telefon kısayolu...]` öneki konur.
+   * Medya dalgası (S6): `mesaj.ekler` varsa AYNI işlemde `user_echo{..., ekler}`, kuyruk satırı (metni
+   * kullanıcının öneksiz metni), `kuyrukEkiYaz` ve hemen ardından `medya.ekleriBagla({kuyruk_id, ...})`.
+   * `ekleriBagla` atarsa (ya da `medya` bağımlılığı yokken `ekler` geldiyse) işlem geri alınır ve bu
+   * yöntem ATAR: hiçbir şey yazılmaz. Dönüş tipi bilerek değişmedi: doğru hata kodu gateway'in ön
+   * denetimindedir (`ekleriDenetle`, aynı eşzamanlı akışta), buradaki atış yalnız savunmadır.
    */
   insanMesajiAl(mesaj: DogrulanmisInsanMesaji): { seq: number };
   kes(turn_id?: string): Sonuc<void, KesmeHatasi>;
@@ -2020,6 +2074,12 @@ export interface KonusmaBagimliliklari {
    * her yerde bu da iptal edilir. `takvim` ile birlikte verilir; yoksa ajanda köprüsü yok.
    */
   ajandaKopru?: Pick<AjandaKopruSunucu, "jetonUret" | "jetonlariIptalEt">;
+  /**
+   * Medya dalgası (S6). Ekli insan mesajının bağlanması, kuyruk başının içeriği ve görsel bütçesi.
+   * Yokluğu "medya kapalı" demektir: davranış medya öncesiyle bayt bayt aynı, `ekler`'li mesaj atar.
+   * `sohbetler` örneklere aynen geçirir (verilmezse anahtar hiç eklenmez).
+   */
+  medya?: KonusmaMedyaYuzu;
 }
 
 /** Dilim 2. Bütün örneklerin ortak bağımlılıkları: `sohbetler` bunlara sohbete özgü üçünü ekleyip `konusmaKur`'a verir. */
@@ -2178,6 +2238,12 @@ export interface TemizlikBagimliliklari {
   /** Dilim 2: `sohbetiSil`'in `silinme_ms`'i. */
   saat: SaatPortu;
   gunluk: Gunluk;
+  /**
+   * Medya dalgası (S7). `gecmisiSil`/`sohbetiSil`'in depo işlemi başarıyla bittikten sonra, işlem dışında
+   * `medya.sohbetMedyasiniSil(sohbet)` çağrılır ve BEKLENMEZ (`ack` gecikmez; reddi yakalanır, yalnız
+   * günlüğe). Ön koşula yeni madde yok: süren işleme silmeyi engellemez. Yokluğu: çağrı yok, bugünkü gibi.
+   */
+  medya?: TemizlikMedyaYuzu;
 }
 
 export type TemizlikFabrikasi = (b: TemizlikBagimliliklari) => Temizlik;
@@ -2242,6 +2308,15 @@ export interface GatewayBagimliliklari {
    * (`azamiCerceve["/ajanda"]` verilmez). Canlı kayıtlar `veriyolu` `ajanda_kayit_yazildi`'dan.
    */
   ajanda?: AjandaGatewayYuzu;
+  /**
+   * Medya dalgası (S5). Verilirse `/sohbet`'te `medya1` desteklenir: `?yetenek=` ile `medya1` isteyen
+   * bağlantıya `welcome.yetenekler: ["medya1"]`, `media_*` çerçeveleri ve `ekler`. Yoksa (ya da bağlantı
+   * istemediyse) bağlantı jetonsuz sayılır: `media_*` → `yetkisiz` kapanış, `ekler`'li `user_message` →
+   * `gecersiz_mesaj`, `user_echo` `olayiYetenegeGoreYansit(olay, false)` ile gider; `medya1` isteyen
+   * bağlantının `welcome`'ına `yetenekler: []` (protokol `Welcome`), istemeyeninki bugünkü gibi alansız.
+   * Canlı `media_state` `veriyolu` `medya_durumu`'ndan.
+   */
+  medya?: GatewayMedyaYuzu;
   cihaz: Pick<CihazYoneticisi, "baglandi">;
   kilit: Pick<LimitKilidi, "durum">;
   sistem: Pick<SistemPortu, "tailscaleAdresi">;
@@ -2587,3 +2662,552 @@ export type AjandaGatewayYuzu = Pick<
   AjandaYoneticisi,
   "islemUygula" | "gecersizIslem" | "karsila" | "telafiSayfasi" | "gecmis"
 >;
+
+// =============================================================================================
+// MEDYA DALGASI. Fotoğraf ve video ekleri, yetenek `medya1`. Kablo `protocol/src/medya.ts` (+ `sohbet.ts`
+// `ekler`, `olayiYetenegeGoreYansit`; `sinirlar.ts` `MEDYA_SINIRLARI`; `hatalar.ts` `MEDYA_HATA_KODLARI`).
+// Paket başına dosya sahipliği ve kurallar MODULLER.md "Medya dalgası". Aşağıdakiler servis içi yüzeydir.
+// Bütün bağımlılıklar İSTEĞE BAĞLIDIR (`Ayar.medya`, `KonusmaBagimliliklari.medya`,
+// `GatewayBagimliliklari.medya`, `TemizlikBagimliliklari.medya`): verilmezse servis bugünkü gibi çalışır.
+// =============================================================================================
+
+// ---------------------------------------------------------------------------------------------
+// Ortak medya tipleri
+// ---------------------------------------------------------------------------------------------
+
+/** `media_state`'in zarfsız gövdesi: yönetici üretir, gateway `{v: SOHBET_SURUMU, type:"media_state", ...}` yollar. */
+export type MediaStateGovdesi = Omit<MediaState, "v" | "type">;
+/** `media_begin`'in zarfsız gövdesi (gateway çözülmüş mesajı olduğu gibi verebilir). */
+export type MedyaBaslangici = Omit<MediaBegin, "v" | "type">;
+/** `media_chunk`'ın zarfsız gövdesi. */
+export type MedyaParcasi = Omit<MediaChunk, "v" | "type">;
+/** `media_cancel`'ın zarfsız gövdesi. */
+export type MedyaIptali = Omit<MediaCancel, "v" | "type">;
+
+/** Medya yolunun dönebileceği kodlar (`MEDYA_HATA_KODLARI`). Yalnız `medya1` bağlantısına gider. */
+export type MedyaHatasi = Extract<HataKodu, "medya_yok" | "medya_reddedildi" | "medya_siniri">;
+/**
+ * Ekli `user_message`'ın ön denetim kodları. `medya_yok`: kayıt yok, bitmemiş (`yukleniyor`), başka
+ * cihazın ya da sohbetin, zaten bağlı, `silinecek`, ya da `EkBilgisi`'nin `tur`/`mime`/`boyut`'u kayıtla
+ * uyuşmuyor. `medya_reddedildi`: kayıt `reddedildi`.
+ */
+export type MedyaBaglamaHatasi = Extract<HataKodu, "medya_yok" | "medya_reddedildi">;
+
+/**
+ * Koklanan dosya biçimi; değer aynı zamanda özgün dosyanın uzantısıdır (`asil.<bicim>`). Kapalı liste:
+ * istemciden gelen hiçbir dizge yola girmez. `heic` HEIC/HEIF'in ikisi, `mp4` ISO tabanlı MP4 markaları,
+ * `mov` `qt  `, `3gp` `3gp4|3gp5|3gp6`. Hangi baş baytın hangi değere düştüğü S3a'nın koklama tablosudur.
+ */
+export type MedyaBicimi = "jpg" | "png" | "webp" | "heic" | "mp4" | "mov" | "3gp" | "webm";
+/** Video karesinin sırası; `MedyaServisSinirlari.kareEnCok` 8'dir. */
+export type KareSirasi = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
+/**
+ * Kabul edilmiş bir ekin dizinindeki (`<kök>\<no>\`) dosyaların kapalı listesi. Port (S2) bunu çalışma
+ * anında da denetler; listede olmayan ad ATAR.
+ */
+export type MedyaDosyaAdi =
+  | `asil.${MedyaBicimi}`
+  | "gorsel.jpg"
+  | `kare-0${KareSirasi}.jpg`
+  | "dokum.srt"
+  | "dokum.txt";
+
+/**
+ * Depodaki kaydın durumu (kablodaki `MedyaDurumu`'nun üst kümesi):
+ * - `yukleniyor`: `.part` büyüyor; `alinan == boyut` olunca doğrulama (koklama, fotoğrafta `gorsel.jpg`
+ *   üretimi, videoda `ffprobe`). Doğrulama sürerken de `yukleniyor` kalır (kabloda `alinan: boyut`).
+ * - `kabul`: `asil.<bicim>` dizinde; mesaja bağlanabilir; `isleme` ilerler.
+ * - `reddedildi`: dosyaları silinmiş; satır, aynı `media_begin`'e aynı `red_kodu`'yla cevap için kalır.
+ * - `silinecek`: hiçbir yoldan modele ya da telefona gitmez; dizini silinince satır kalkar.
+ */
+export type MedyaKayitDurumu = "yukleniyor" | "kabul" | "reddedildi" | "silinecek";
+/** `isleme` `kismi` ya da `hata` iken neden (kapalı liste). `ses_yok`: ses akışı yok ya da döküm boş. */
+export type MedyaIslemeNedeni = "model_yok" | "ses_yok" | "zaman_asimi" | "hata";
+
+/**
+ * `medya` tablosunun satırı (ek göç 8, S1). `UNIQUE(device_id, medya_id)`. Telefonun beyanı (`mime`,
+ * `boyut`) karşılaştırma içindir; `sure_ms`, `genislik`, `yukseklik` PC'nin ÖLÇÜMÜDÜR (beyan yazılmaz).
+ */
+export interface MedyaKaydi {
+  /** Servisin ürettiği tam sayı (`AUTOINCREMENT`): dizin adı `<kök>\<no>`, `gelen\<no>.part`. */
+  no: number;
+  device_id: string;
+  medya_id: MedyaId;
+  sohbet_id: SohbetId;
+  tur: MedyaTuru;
+  mime: MedyaMime;
+  boyut: number;
+  /** Diskteki `.part` boyu; açılışta diskten düzeltilir (doğruluk kaynağı disktir). */
+  alinan: number;
+  durum: MedyaKayitDurumu;
+  /** Yalnız `reddedildi`. */
+  red_kodu: MedyaHatasi | null;
+  /** Koklamadan; `kabul` ve sonrasında dolu. */
+  bicim: MedyaBicimi | null;
+  /** Yalnız `kabul` (ve onun `silinecek`'e dönmüş hali); `null`: işleme başlamadı. */
+  isleme: MedyaIslemeDurumu | null;
+  /** Yalnız `isleme` `kismi`/`hata`. */
+  isleme_nedeni: MedyaIslemeNedeni | null;
+  sure_ms: number | null;
+  genislik: number | null;
+  yukseklik: number | null;
+  /** Yalnız video, işleme bitince: üretilen kare sayısı (`kare-01`..). */
+  kare_adet: number | null;
+  olusturma_ms: number;
+  /** Son parça ya da son durum değişimi: `yarimOmurMs` süresi buna göre. */
+  guncelleme_ms: number;
+  /** Bağlandığı mesajın `client_msg_id`'si; `null`: bağlanmamış. Bağlanmış kayıt bir daha bağlanmaz. */
+  bagli_msg_id: string | null;
+  /**
+   * Türetilen dosyaların (`gorsel.jpg`, kareler, `dokum.srt`, `dokum.txt`) son ölçülen bayt toplamı; açılışta
+   * 0. `medya` doğrulama ve her işleme sonunda diskten ölçüp yazar (`guncelleme_ms`'e dokunmadan). Kota bunu da sayar.
+   */
+  turetilen_bayt: number;
+}
+
+/** `MedyaDeposu.medyaKayitlari` süzgeci; verilmeyen alan süzmez. */
+export interface MedyaKayitSuzgeci {
+  durumlar?: readonly MedyaKayitDurumu[];
+  sohbet?: SohbetSecimi;
+  device_id?: string;
+  /** `true`: yalnız `bagli_msg_id` dolu; `false`: yalnız boş. */
+  bagli?: boolean;
+  /** Yalnız `guncelleme_ms < guncellemeOnce`. */
+  guncellemeOnce?: number;
+}
+
+// ---------------------------------------------------------------------------------------------
+// depo medya yüzeyi (S1). Uygulama: depo.ts, test/depo-medya.test.ts (gerçek `:memory:`).
+// Ek göç 8, yalnız yeni tablolar (`ALTER` yok, `user_version` 1): `medya`, `kuyruk_medyalari(kuyruk_id,
+// sira, medya_no, PK(kuyruk_id, sira))`, `nesil_gorselleri(nesil PK, adet)`. Bu yüzeyi YALNIZ `medya.ts`
+// (S4) çağırır; `gecmisiTemizle`/`sohbetiSil`/`kuyruktanSil`'in medya adımları depo içindedir.
+// Hepsi eşzamanlı; `islem` içinden çağrılabilir.
+// ---------------------------------------------------------------------------------------------
+
+export interface MedyaDeposu {
+  /**
+   * Yeni kayıt (`durum: "yukleniyor"`, `alinan: 0`, `turetilen_bayt: 0`, `guncelleme_ms = olusturma_ms`,
+   * öteki alanlar `null`); kaydı döner. `(device_id, medya_id)` zaten varsa (silinecek dahil) ATAR: idempotentlik
+   * çağıranın `medyaKaydiBul`'udur.
+   */
+  medyaKaydiAc(
+    k: Pick<MedyaKaydi, "device_id" | "medya_id" | "sohbet_id" | "tur" | "mime" | "boyut" | "olusturma_ms">,
+  ): MedyaKaydi;
+  medyaKaydiBul(device_id: string, medya_id: string): MedyaKaydi | null;
+  medyaKaydiGetir(no: number): MedyaKaydi | null;
+  /** Kimlik ve beyan alanları değişmez; olmayan `no`'da ATAR. `guncelleme_ms`'i çağıran verir. */
+  medyaGuncelle(
+    no: number,
+    alanlar: Partial<
+      Omit<MedyaKaydi, "no" | "device_id" | "medya_id" | "sohbet_id" | "tur" | "mime" | "boyut" | "olusturma_ms">
+    >,
+  ): void;
+  /** Süzgece uyanlar, `no` artan. */
+  medyaKayitlari(suzgec?: MedyaKayitSuzgeci): MedyaKaydi[];
+  /** Cihazın bitmemiş kayıtları: `yukleniyor` + bağlanmamış `kabul` (`BEKLEYEN_YUKLEME` sınırı). */
+  medyaBekleyenSayisi(device_id: string): number;
+  /** Diskte yer tutan kayıtların `boyut + turetilen_bayt` toplamı: `yukleniyor`, `kabul`, `silinecek` (kota). */
+  medyaDiskBayti(): number;
+  /**
+   * Kota aşılınca silinecek adaylar (Selman kararı: en eski medya silinir): `kabul`, `bagli_msg_id` dolu
+   * ve hiçbir `kuyruk_medyalari` bağı olmayan (satırı ana oturuma gitmiş) kayıtlar, `olusturma_ms` artan.
+   */
+  medyaTahliyeAdaylari(): MedyaKaydi[];
+  /**
+   * Tek işlemde: her `no` `kabul`, `bagli_msg_id` boş ve `sohbet_id`'si kuyruk satırınınki olmalı; değilse
+   * ATAR, hiçbir şey yazılmaz. `kuyruk_medyalari(kuyruk_id, sira = dizideki sıra, no)` + `bagli_msg_id`
+   * + `guncelleme_ms = ms`. Kuyruk satırı yoksa ATAR.
+   */
+  medyaKuyrugaBagla(g: { kuyruk_id: number; client_msg_id: string; nolar: readonly number[]; ms: number }): void;
+  /** Kuyruk satırının kayıtları, `sira` artan; bağ yoksa boş. */
+  kuyrukMedyalari(kuyruk_id: number): MedyaKaydi[];
+  /** Kuyruk satırı artık olmayan `kuyruk_medyalari` bağlarını siler (açılış); silinen sayısı. */
+  medyaYetimBaglariSil(): number;
+  /** Satırı bağlarıyla birlikte siler (yalnız dizini ve `.part`'ı gittikten sonra çağrılır). Yoksa sessiz. */
+  medyaKaydiSil(no: number): void;
+  /** Bu nesilde modele verilen görsel sayısı; yoksa 0. */
+  nesilGorselSayisi(nesil: number): number;
+  /** `adet` kadar artırır (satır yoksa açar). */
+  nesilGorselEkle(nesil: number, adet: number): void;
+}
+
+/**
+ * S1 `depoKur`'un tipini buna çevirir (`depoKur: MedyaliDepoFabrikasi`): `MedyaliDepo` bir `Depo`dur,
+ * `Depo` bekleyen her yer değişmeden derlenir. Medya tabloları medya bağımlılığından bağımsız her zaman kurulur.
+ */
+export interface MedyaliDepo extends Depo, MedyaDeposu {}
+export type MedyaliDepoFabrikasi = (b: DepoBagimliliklari) => MedyaliDepo;
+
+// ---------------------------------------------------------------------------------------------
+// ayar medya alanları (S8). Uygulama: ayar.ts, test/ayar.test.ts. `ayar.local.json` anahtarları:
+// `ffmpeg_yolu`, `ffprobe_yolu`, `dokum_modeli`, `dokum_vad_modeli`, `dokum_dili`, `medya_kota_mb`.
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Sabit servis sınırları (ayar dosyasından okunmaz; `Sureler` gibi `ayar.ts`'te sabit). Kablo sınırları
+ * `MEDYA_SINIRLARI`'ndadır, burada tekrarlanmaz. Değerler MODULLER.md "Medya dalgası" > "S8".
+ */
+export interface MedyaServisSinirlari {
+  /** Yarım yükleme ve bağlanmamış `kabul` bu kadar `guncelleme_ms`'ten sonra silinir (24 saat). */
+  yarimOmurMs: number;
+  /**
+   * Bir ekin işlemesinin toplam üst sınırı (10 dk), işçi kaydı aldığı andan (sırada beklenen süre
+   * sayılmaz). Dolunca süren araç iptal edilir, kayıt elde olanla `kismi`/`hata` biter. Araç başına zaman
+   * aşımları bunun içinde kalır: dökümün etkin sınırı `min(dokum zaman aşımı, kalan süre)`.
+   */
+  islemeAzamiMs: number;
+  /** Nesil başına modele verilen görsel üst sınırı (öneri 60); aşacak satırdan önce devir. */
+  gorselNesilSiniri: number;
+  /** `dokum.txt`'nin en çok UTF-16 birimi; kırpılırsa not düşülür. */
+  dokumMetni: number;
+  /** PC'nin ürettiği `gorsel.jpg`: uzun kenar ve piksel alanı üst sınırı. */
+  gorselUzunKenar: number;
+  gorselPiksel: number;
+  /** Modele okunacak tek görsel dosyasının (`gorsel.jpg`, kare) en çok baytı. */
+  gorselAzamiBayt: number;
+  /** Video karesinin uzun kenarı. */
+  kareUzunKenar: number;
+  /** Kare sayısı `clamp(ceil(sure / kareAraligiMs), kareEnAz, kareEnCok)`. */
+  kareEnAz: number;
+  kareEnCok: number;
+  kareAraligiMs: number;
+  /** `ffprobe` süresi `VIDEO_SURE_MS * (1 + videoSurePayi)`'nı aşarsa red. */
+  videoSurePayi: number;
+  /** Araç başına zaman aşımı: ölçüm (`ffprobe`), fotoğraf normalleştirme, kare başına. */
+  olcumZamanAsimiMs: number;
+  gorselZamanAsimiMs: number;
+  kareZamanAsimiMs: number;
+  /** Döküm: `max(dokumZamanAsimiEnAzMs, dokumZamanAsimiKat * sure_ms)`. */
+  dokumZamanAsimiEnAzMs: number;
+  dokumZamanAsimiKat: number;
+  /** Süre dolumu, silme yeniden denemesi ve kota süpürmesinin aralığı. */
+  supurmeAraligiMs: number;
+}
+
+export interface MedyaAyari {
+  /** `<veri kökü>\medya`. Medya dosya portunun sabit kökü. */
+  readonly kok: string;
+  /** Mutlak yollar. Biri bulunamazsa `Ayar.medya` `null`'dır, bu nesne hiç kurulmaz. */
+  readonly ffmpeg: string;
+  readonly ffprobe: string;
+  /**
+   * whisper ggml modeli, VERİ KÖKÜNE göreli, `/` ile (`modeller/ggml-large-v3-turbo-q5_0.bin`): süzgeç
+   * çizgesinde Windows yolundaki `:` kaçış ister, bu yüzden araç `cwd` = veri kökü ile çağrılır.
+   * `null`: döküm yok (`kismi` + `model_yok`).
+   */
+  readonly dokumModeli: string | null;
+  /** İsteğe bağlı Silero VAD ggml modeli; `dokumModeli` gibi. */
+  readonly dokumVadModeli: string | null;
+  readonly dokumDili: "auto" | "tr";
+  /** `medya_kota_mb * 1024 * 1024`; varsayılan 10240 MB (Selman kararı). */
+  readonly kotaBayt: number;
+  readonly sinirlar: MedyaServisSinirlari;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Medya dosya portu (S2). Gerçek: dis-dunya.ts `medyaDosyaKur` (`MedyaDosyaPortuFabrikasi`),
+// test/dis-dunya-medya.test.ts (geçici dizin). Sahte: test/sahte.ts `sahteMedyaDosya`. `DisDunya`'da
+// DEĞİL (`ana` `Ayar.medya.kok` ile kurar). `TranskriptPortu` darlığında: kök sabit, dizin adı yalnız tam
+// sayı, dosya adı yalnız `MedyaDosyaAdi`; bağ (junction, sembolik) izlenmez; kökün dışına çıkan yol ATAR.
+// ---------------------------------------------------------------------------------------------
+
+export interface MedyaDosyaPortu {
+  /**
+   * Saf (dosyaya dokunmaz). `<kök>\<no>\<ad>`, mutlak. `no` pozitif güvenli tam sayı değilse ya da `ad`
+   * kapalı listede değilse ATAR. Model metnindeki ve ffmpeg argv'sindeki yollar yalnız buradan.
+   */
+  yol(no: number, ad: MedyaDosyaAdi): string;
+  /** Saf. `<kök>\<no>`, mutlak (devir notu, "dosya:" satırı). */
+  dizinYolu(no: number): string;
+  /** Saf. Veri köküne göreli, `/` ile: `medya/<no>/<ad>` (whisper süzgeci, `cwd` = veri kökü). */
+  goreliYol(no: number, ad: MedyaDosyaAdi): string;
+
+  /**
+   * `<kök>\gelen\<no>.part` sonuna `bayt` yazar ve yeni boyu döner. Dosyanın boyu `ofset` değilse
+   * (yoksa 0 sayılır) HİÇ yazmaz ve ATAR. Gerekirse `gelen\` dizinini kurar.
+   */
+  parcaEkle(no: number, ofset: number, bayt: Uint8Array): Promise<number>;
+  /** `.part` boyu; yoksa `null`. */
+  parcaBoyutu(no: number): Promise<number | null>;
+  /** `.part`'tan `ofset`'ten en çok `azamiBayt` (koklama). Yoksa boş dizi. */
+  parcaOku(no: number, ofset: number, azamiBayt: number): Promise<Uint8Array>;
+  /** Yoksa sessiz. */
+  parcaSil(no: number): Promise<void>;
+  /** `gelen\<no>.part` → `<no>\asil.<bicim>`; dizin yoksa kurar. Kaynak yoksa ya da hedef varsa ATAR. */
+  tasi(no: number, bicim: MedyaBicimi): Promise<void>;
+  /** `gelen\` altındaki `<tam sayı>.part` adlarının numaraları; başka adlar yok sayılır. */
+  parcalar(): Promise<readonly number[]>;
+
+  /** Dosya boyu; yoksa `null`. Araç başarısı çıktının var olması ve boyutuyla sınanır (çıkış kodu yok). */
+  boyut(no: number, ad: MedyaDosyaAdi): Promise<number | null>;
+  /** Bütün dosya; yoksa `null`; `azamiBayt`'tan büyükse ATAR. */
+  oku(no: number, ad: MedyaDosyaAdi, azamiBayt: number): Promise<Uint8Array | null>;
+  /** Geçici dosya + yeniden adlandırma (`dokum.txt`). Dizin yoksa ATAR. */
+  yaz(no: number, ad: MedyaDosyaAdi, bayt: Uint8Array): Promise<void>;
+  /**
+   * `<kök>\<no>\` dizinini içeriğiyle siler (`lstat`; bağın hedefine dokunmaz, yalnız bağın kendisini
+   * kaldırır). `true`: dizin artık yok (hiç yoktu dahil). `false`: bir kısmı silinemedi (kilitli, erişim
+   * yok); çağıran sonra yeniden dener. Başka hatada da atmaz, `false`.
+   */
+  dizinSil(no: number): Promise<boolean>;
+  /** Kökün doğrudan altındaki tam sayı adlı dizinlerin numaraları (`gelen` ve başka adlar yok sayılır). */
+  dizinler(): Promise<readonly number[]>;
+}
+
+export type MedyaDosyaPortuFabrikasi = (g: { kok: string }) => MedyaDosyaPortu;
+
+// ---------------------------------------------------------------------------------------------
+// Medya işleyici (S3a). Uygulama: medya-isle.ts (`medyaIsleyiciKur`; kararı veren saf işlevler ayrıca
+// dışa açık), test/medya-isle.test.ts (saf), test/medya-ffmpeg.test.ts (gerçek ffmpeg, yoksa atlanır).
+// Sahte: test/sahte.ts `sahteMedyaIsleyici`. Dosyaya kendisi dokunmaz: araç yazar, başarıyı S4 portla sınar.
+// ---------------------------------------------------------------------------------------------
+
+/** `ffprobe` JSON'undan. Alan okunamazsa `null`/`false`. */
+export interface MedyaOlcumu {
+  sure_ms: number | null;
+  genislik: number | null;
+  yukseklik: number | null;
+  video_akisi: boolean;
+  ses_akisi: boolean;
+}
+
+/** Aracın bitişi. Çıkış kodu bilerek yok (`AracSonucu` gibi); başarı = çıktı dosyası var ve boyutu > 0. */
+export interface AracCalismasi {
+  zamanAsimi: boolean;
+}
+
+/** `dokum.srt`'den saf ayrıştırıcıyla `[mm:ss] metin` satırları (bir saati aşan videoda `[s:mm:ss]`). */
+export interface DokumMetni {
+  metin: string;
+  /** `MedyaServisSinirlari.dokumMetni`'ne kırpıldı. */
+  kirpildi: boolean;
+}
+
+/**
+ * Bütün ffmpeg/ffprobe çağrıları `SurecPortu.aracCalistir` ile: `-nostdin -hide_banner -loglevel error`,
+ * koklanan biçimin demuxer'ı açıkça `-f`, `-protocol_whitelist file`, çıktıda `-map_metadata -1`, `-y`.
+ * Girdi her zaman `asil.<bicim>`'dir. Hiçbiri atmaz (araç başlatılamazsa `{zamanAsimi:false}` döner, çıktı yok).
+ */
+export interface MedyaIsleyici {
+  /** Saf. Baş baytlardan biçim; tanınmazsa (metin, HLS/concat listesi, boş, kısa) `null`. En çok 64 bayt okunur. */
+  kokla(bas: Uint8Array): MedyaBicimi | null;
+  /** Saf. Koklanan biçim beyan edilen `tur` ile ve `mime` ailesiyle uyuşuyor mu. */
+  beyanaUyar(bicim: MedyaBicimi, tur: MedyaTuru, mime: MedyaMime): boolean;
+  /** Saf. Kare zamanları (ms, artan): `N = clamp(ceil(sure / kareAraligiMs), kareEnAz, kareEnCok)`, `(i + 0,5) * sure / N`. */
+  kareZamanlari(sure_ms: number): readonly number[];
+  /**
+   * Araç çağıran dört yöntemin son `iptal`'i `AracIstegi.iptal`'e aynen gider: tetiklenince araç öldürülür,
+   * yöntem atmadan çıktısız döner (`olc` `null`, ötekiler `{zamanAsimi:false}`). Sonucu çağıran yok sayar.
+   * `ffprobe` (`olcumZamanAsimiMs`); çözülemez ya da zaman aşımıysa `null`.
+   */
+  olc(no: number, bicim: MedyaBicimi, iptal?: AbortSignal): Promise<MedyaOlcumu | null>;
+  /** `asil` → `gorsel.jpg`: uzun kenar ≤ `gorselUzunKenar`, alan ≤ `gorselPiksel`, tek kare, `-q:v 3`. */
+  gorselUret(no: number, bicim: MedyaBicimi, iptal?: AbortSignal): Promise<AracCalismasi>;
+  /** `-ss` girişten önce, uzun kenar `kareUzunKenar`, `-q:v 4` → `kare-0<sira>.jpg`. */
+  kareUret(no: number, bicim: MedyaBicimi, sira: KareSirasi, zaman_ms: number, iptal?: AbortSignal): Promise<AracCalismasi>;
+  /**
+   * `-vn -af "aresample=16000,whisper=model=<göreli>:language=<dil>:queue=20:format=srt:destination=<göreli>
+   * [:vad_model=...]" -f null -`, `cwd` = veri kökü, yollar `goreliYol` ile → `dokum.srt`. Yalnız
+   * `dokumModeli` doluyken çağrılır (değilse çağıran `model_yok` der).
+   */
+  dokumUret(no: number, bicim: MedyaBicimi, sure_ms: number, iptal?: AbortSignal): Promise<AracCalismasi>;
+  /** Saf. SRT → `DokumMetni` (bozuk satır atlanır, çok satırlı altyazı birleşir). */
+  dokumMetni(srt: string): DokumMetni;
+}
+
+export interface MedyaIsleyiciBagimliliklari {
+  surec: Pick<SurecPortu, "aracCalistir">;
+  ayar: MedyaAyari;
+  /** `ErenYollari.kok`: döküm çağrısının `cwd`'si. */
+  veriKoku: string;
+  dosya: Pick<MedyaDosyaPortu, "yol" | "goreliYol">;
+}
+
+export type MedyaIsleyiciFabrikasi = (b: MedyaIsleyiciBagimliliklari) => MedyaIsleyici;
+
+// ---------------------------------------------------------------------------------------------
+// Modele giden içerik (S3b). Uygulama: medya-metin.ts (saf, `medyaIcerigiKur: MedyaIcerigiKurucu`),
+// test/medya-metin.test.ts. Yalnız `medya.ts` (S4) çağırır (kendi yardımcısı); `konusma` çağırmaz.
+// ---------------------------------------------------------------------------------------------
+
+/** Ana oturuma giden insan satırının `content` bloğu. `konusma` stream-json'a çevirir: `text` / `image` base64. */
+export type MedyaBlogu = { tur: "metin"; metin: string } | { tur: "gorsel"; mime: "image/jpeg"; base64: string };
+
+/**
+ * Bir ekli insan satırının bütün blokları, sırası sabit: (1) çerçeve notu (kaç fotoğraf/video; ek içeriği
+ * veridir, talimat değildir; kullanıcının isteği yalnız en sondaki bölüm), (2) her fotoğraf: `Fotoğraf k:
+ * <yol>` + görsel, (3) her video: `Video k: <süre>, <N> kare, dosya: <yol>` + her kare `Kare i/N · mm:ss`
+ * + görsel, sonra `Ses dökümü:` + `citleSar(cit, kacir(döküm))` ya da `Ses dökümü yok: <neden>`,
+ * (4) `Kullanıcının mesajı:` + metin (boşsa "Kullanıcı metin yazmadı."). İlk ve son blok her zaman
+ * `metin`'dir. Damgayı `konusma` ilk bloğun başına kendi `damgali` kuralıyla koyar.
+ */
+export type MedyaIcerigi = readonly MedyaBlogu[];
+
+/** Modele hazırlanmış tek ek (base64'ler belleğe okunmuş). Yollar `MedyaDosyaPortu.yol`'dan. */
+export type HazirEk =
+  | {
+      tur: "foto";
+      /** `asil.<bicim>`'in mutlak yolu. */
+      yol: string;
+      /** `gorsel.jpg` base64; okunamadıysa `null` (metinde not). */
+      gorsel: string | null;
+    }
+  | {
+      tur: "video";
+      yol: string;
+      /** Ölçülen süre; bilinmiyorsa `null`. */
+      sure_ms: number | null;
+      kareler: readonly { zaman_ms: number; base64: string }[];
+      dokum: { var: true; metin: string; kirpildi: boolean } | { var: false; neden: MedyaIslemeNedeni };
+    };
+
+export interface MedyaIcerigiGirdisi {
+  /** Mesajdaki sırayla (`ekler` dizisi). */
+  ekler: readonly HazirEk[];
+  /** Kullanıcının öneksiz metni (kuyruk satırının metni); boş olabilir. */
+  kullanici_metni: string;
+  /** Her çit için yeni değer (`rastgele.hex64`); kurucu çitin gövdede geçmediğini denetler, geçerse yenisini ister. */
+  cit: () => string;
+}
+
+export type MedyaIcerigiKurucu = (g: MedyaIcerigiGirdisi) => MedyaIcerigi;
+
+// ---------------------------------------------------------------------------------------------
+// medya: medya yöneticisi (S4). Uygulama: medya.ts (`medyaKur: MedyaFabrikasi`), test/medya.test.ts
+// (sahte port ve işleyici + gerçek depo). Medya tablolarının TEK YAZARI. Sahte yüz: test/sahte.ts
+// `sahteMedyaYoneticisi` (S5, S6, S7 testleri için).
+// ---------------------------------------------------------------------------------------------
+
+/** Kuyruk satırının içerik durumu (`MedyaYoneticisi.icerik`). */
+export type MedyaIcerigiDurumu =
+  /** Satırın eki yok: `konusma` bugünkü düz metin satırını yazar. */
+  | { durum: "yok" }
+  /** İşleme ya da önbelleğe okuma sürüyor: `konusma` tur AÇMAZ; hazır olunca `medya_durumu` gelir. */
+  | { durum: "bekliyor" }
+  /** `gorsel_adet`: `icerik`'teki görsel bloğu sayısı (görsel bütçesi). */
+  | { durum: "hazir"; icerik: MedyaIcerigi; gorsel_adet: number };
+
+export interface MedyaYoneticisi {
+  /**
+   * Açılış uzlaştırması, depo kurulduktan sonra, `sohbetler.baslat()` ve `gateway.baslat()`'tan ÖNCE (ilk
+   * `icerik` ve ilk `media_*` çağrısından önce), bir kez: `medyaYetimBaglariSil`;
+   * `yukleniyor` kayıtlarda `alinan` = disk boyu (`.part` yoksa 0); `alinan == boyut` olanlar yeniden
+   * doğrulanır; `kabul` + `isleme` `null`/`isleniyor` olanlar yeniden kuyruğa; `silinecek`'lerin silmesi
+   * yeniden denenir; satırı olmayan dizinler ve `.part`'lar silinir; süpürme zamanlayıcısı kurulur.
+   */
+  baslat(): Promise<void>;
+
+  // Gateway yüzü (S5). Yalnız `medya1` bağlantısından, `sohbette` aşamasında, `yetkiSuruyor`'dan sonra.
+
+  /**
+   * `media_begin`. `(device_id, medya_id)` ile idempotent: kayıt varsa güncel durumu döner (`yukleniyor`
+   * için diskten `alinan`); aynı kimlik farklı `sohbet_id`/`tur`/`mime`/`boyut` ile gelirse
+   * `reddedildi{medya_reddedildi}` (kayda dokunmaz). Yoksa: sohbet bilinmiyor ya da silinmişse
+   * `reddedildi{medya_yok}`; `medyaBekleyenSayisi >= BEKLEYEN_YUKLEME` ise `medya_siniri`;
+   * `medyaDiskBayti + boyut > kotaBayt` ise önce `medyaTahliyeAdaylari`'nı en eskiden `silinecek` yapar,
+   * yine sığmıyorsa `medya_siniri`; sonra `medyaKaydiAc` → `yukleniyor{alinan: 0}`. Hiç atmaz
+   * (beklenmedik hata `reddedildi{medya_reddedildi}`).
+   */
+  yuklemeBaslat(device_id: string, m: MedyaBaslangici): Promise<MediaStateGovdesi>;
+  /**
+   * `media_chunk`. Kayıt başına sıralı (aynı kaydın iki parçası üst üste yazılmaz). Kayıt yoksa ya da
+   * `yukleniyor` değilse güncel durum (`reddedildi{medya_yok}` / `kabul` / `reddedildi`). `ofset != alinan`:
+   * yazmaz, `yukleniyor{alinan}`. `ofset + base64BaytUzunlugu(veri) > boyut`: kayıt
+   * `reddedildi{medya_reddedildi}`, `.part` silinir. Disk yazma hatası da `medya_reddedildi`. `alinan ==
+   * boyut` olunca doğrulama (koklama + `beyanaUyar` → `tasi` → fotoğrafta `gorselUret`, videoda `olc`);
+   * dönen gövde o anki durumdur (doğrulamayı bekleyebilir). Hiç atmaz.
+   */
+  parca(device_id: string, m: MedyaParcasi): Promise<MediaStateGovdesi>;
+  /** `media_cancel`. Yanıtsız; yarım ya da bağlanmamış kaydı siler; bilinmeyen ya da bağlı kimlikte sessiz. */
+  iptal(device_id: string, m: MedyaIptali): void;
+  /**
+   * Eşzamanlı, yazmaz. Ekli `user_message`'ın ön denetimi (gateway, `insanMesajiAl`'dan hemen önce, aynı
+   * eşzamanlı akışta): her ek için `(device_id, medya_id)` kaydı var, `kabul`, `sohbet_id` aynı,
+   * bağlanmamış, `tur`/`mime`/`boyut` beyanla aynı. İlk tutmayan ekin kodunu döner (`MedyaBaglamaHatasi`).
+   */
+  ekleriDenetle(device_id: string, sohbet: SohbetSecimi, ekler: EkListesi): Sonuc<void, MedyaBaglamaHatasi>;
+
+  // Konuşma yüzü (S6).
+
+  /**
+   * Eşzamanlı. `konusma.insanMesajiAl`'ın `depo.islem`'i İÇİNDEN, kuyruk satırı yazıldıktan sonra:
+   * `ekleriDenetle`'nin koşullarını yeniden sınar, tutmazsa ATAR (işlem geri alınır); tutarsa
+   * `medyaKuyrugaBagla`. Belleğe yazmaz (işlem geri alınabilir): önbellek ve işleme tetiği bir sonraki
+   * `icerik` çağrısında depodan okunarak kurulur.
+   */
+  ekleriBagla(g: {
+    device_id: string;
+    sohbet: SohbetSecimi;
+    ekler: EkListesi;
+    kuyruk_id: number;
+    client_msg_id: string;
+  }): void;
+  /**
+   * Eşzamanlı, hiç atmaz. Kuyruk başındaki insan satırı için: bağ yoksa `yok`; eklerden biri işleniyorsa
+   * ya da bloklar henüz belleğe okunmadıysa `bekliyor` (okumayı başlatır; bitince `medya_durumu`); hepsi
+   * bitmişse (ya da `islemeAzamiMs` dolmuşsa elde olanla) `hazir` (`medyaIcerigiKur` ile, son blok
+   * `kullanici_metni`). Kullanıcı mesajı hiçbir durumda düşmez.
+   */
+  icerik(g: { kuyruk_id: number; kullanici_metni: string }): MedyaIcerigiDurumu;
+  /** Satır ana oturuma yazıldıktan sonra: o satırın önbelleğini bırakır. Bilinmeyen satırda sessiz. */
+  icerikBirak(kuyruk_id: number): void;
+  /** `MedyaDeposu.nesilGorselSayisi`. */
+  nesilGorselSayisi(nesil: number): number;
+  /** `MedyaDeposu.nesilGorselEkle`; `konusma` görselli satırı yazdığı an çağırır. */
+  nesilGorselEkle(nesil: number, adet: number): void;
+  /**
+   * Eşzamanlı. Devir notu ve "son konuşma" için: o sohbette bağlanmış, `silinecek` olmayan kayıtların
+   * dizin yolları (`dizinYolu`), verilen `medya_id` sırasıyla; bulunamayan atlanır.
+   */
+  ekDizinleri(sohbet: SohbetSecimi, medya_idler: readonly string[]): readonly string[];
+
+  // Temizlik yüzü (S7).
+
+  /**
+   * `gecmisiTemizle`/`sohbetiSil` işlemi bittikten sonra (satırlar zaten `silinecek`): o sohbetin
+   * önbelleğini bırakır, süren işlemesi varsa bitince, yoksa hemen dizinlerini ve `.part`'larını siler,
+   * silinenin satırını kaldırır. Silinemeyen satır kalır, süpürmede ve sonraki silmede yeniden denenir.
+   * Hiç reddetmez.
+   */
+  sohbetMedyasiniSil(sohbet: SohbetSecimi): Promise<void>;
+
+  /** Testler için: işleme kuyruğu ve arka silmeler boşalınca çözülür. Atmaz. */
+  bekle(): Promise<void>;
+  /**
+   * Zamanlayıcıları durdurur, süren aracı İPTAL eder (süreç ağacı öldürülür) ve dönmesini bekler; araç
+   * sırası bekleyen doğrulama araç çalıştırmadan döner. Kısa sürer (araç başına en çok `taskkill` + kapanış
+   * beklemesi). Kayıtlar uzlaştırılabilir kalır: işçinin kaydı `kabul` + `isleniyor` (açılışta yeniden
+   * kuyruğa), doğrulaması kesilen kayıt `yukleniyor` (açılışta `.part`'tan yeniden doğrulanır ya da `.part`
+   * taşınmışsa `alinan` 0'a iner, telefon baştan yükler); kapanış red sayılmaz. Sonra yükleme ve parça
+   * `reddedildi{medya_yok}`, öteki çağrılar etkisiz.
+   */
+  kapat(): Promise<void>;
+}
+
+export interface MedyaBagimliliklari {
+  ayar: MedyaAyari;
+  /** `ram_dusuk` kuralı: `sistem.ramOku().bosMb < ramDusukMb` iken döküm atlanır (`kismi`, neden `hata`); kareler yapılır. */
+  ramDusukMb: number;
+  /** `sohbetGetir`: `media_begin`'in sohbeti var ve silinmemiş mi. */
+  depo: MedyaDeposu & Pick<Depo, "islem" | "sohbetGetir">;
+  dosya: MedyaDosyaPortu;
+  isleyici: MedyaIsleyici;
+  saat: SaatPortu;
+  zamanlayici: ZamanlayiciPortu;
+  rastgele: Pick<RastgelePortu, "hex64">;
+  sistem: Pick<SistemPortu, "ramOku">;
+  veriyolu: Veriyolu;
+  gunluk: Gunluk;
+}
+
+export type MedyaFabrikasi = (b: MedyaBagimliliklari) => MedyaYoneticisi;
+
+/** `gateway`'in medya yöneticisinden gördüğü yüz (S5). */
+export type GatewayMedyaYuzu = Pick<MedyaYoneticisi, "yuklemeBaslat" | "parca" | "iptal" | "ekleriDenetle">;
+/** `konusma`'nın (ve `sohbetler` üzerinden örneklerin) gördüğü yüz (S6). */
+export type KonusmaMedyaYuzu = Pick<
+  MedyaYoneticisi,
+  "ekleriBagla" | "icerik" | "icerikBirak" | "nesilGorselSayisi" | "nesilGorselEkle" | "ekDizinleri"
+>;
+/** `temizlik`'in gördüğü yüz (S7). */
+export type TemizlikMedyaYuzu = Pick<MedyaYoneticisi, "sohbetMedyasiniSil">;

@@ -75,7 +75,7 @@ gerekçe: `docs/GUVENLIK.md` "Denetimde kapatılan bulgular"). `[guvenlik]`
 | `modules/eren-device/cekirdek/src/test/kotlin/.../SozlesmeTest.kt` | Duman testi: tipler derlenir; kapalı listeler ve `Sinirlar` protocol ile aynı. |
 | `modules/eren-device/cekirdek/{settings,build}.gradle.kts`, `gradle.properties`, `gradle/wrapper/*`, `gradlew*` | Saf Kotlin JVM projesi (Gradle 8.14, Kotlin 2.2.20, JUnit Jupiter 6.1.3, Java 17). |
 | `modules/eren-device/src/ErenDevice.types.ts` | Köprü API'sinin TS tipleri. |
-| `app/src/cekirdek/sozlesme.ts` | JS çekirdeği portları (`WsPortu`, `KimlikPortu`, `DepoPortu`, `SaatPortu`) ve dışa açık tipler. Dilim 2'den beri modüller arası değişen yüzeyler de burada: `Outbox`, `SohbetDefteri`, `SecimDeposu`, ekran yüzeyi `Cekirdek`/`Sohbet` (aşağıda "Dilim 2"). |
+| `app/src/cekirdek/sozlesme.ts` | JS çekirdeği portları (`WsPortu`, `KimlikPortu`, `DepoPortu`, `SaatPortu`) ve dışa açık tipler. Dilim 2'den beri modüller arası değişen yüzeyler de burada: `Outbox`, `SohbetDefteri`, `SecimDeposu`, ekran yüzeyi `Cekirdek`/`Sohbet` (aşağıda "Dilim 2"). Medya dalgasının portları ve yükleyicisi dosyanın sonundaki "Medya" bloğunda (aşağıda "Medya"). |
 | `app/TASARIM.md` | Bu belge. |
 
 `Sozlesme.kt` `Cmd`/`Karar`/`IzinKaydi` ve bütün kapalı listeleri **tanımlar**; hiçbir davranış dosyası
@@ -1041,3 +1041,90 @@ Tur sürerken "yazıyor" yerine asistanın o anki işi görünür. Telefon `/soh
 - **Metinsiz balon (`SohbetEkrani.tsx`):** metin gelmeden önce de gösterilecek bir etkinlik varsa metinsiz akış balonu çizilir: üç nokta + etiket + "Turu kes". Akış yokken "Turu kes" turu etkinlikten alır (`sohbet.kes(tur)`).
 - **Sayaç (`SohbetEkrani.tsx` `useSaniyeSaati`):** saniyelik saat yalnız süreli etkinlik gösterilirken ve uygulama ön plandayken çalışır; tur bitince ya da ekran kapanınca durur. Saat kaynağı `Date.now()`'dır (çekirdeğin saat portuyla aynı).
 - **Testler:** `etkinlik.test.ts`, `etkinlikMetni.test.ts`, `baglantiDurumu.test.ts`, `baglanti.test.ts`, `index.test.ts`.
+
+## Medya: fotoğraf ve video ekleri
+
+Kullanıcı sohbete galeriden ya da kameradan fotoğraf ve video ekler; ekler mevcut `/sohbet` WebSocket'i üzerinden parça parça PC'ye yüklenir, mesaj yükleme bitince gider. Kablo `protocol/src/medya.ts` (yetenek jetonu `medya1`, `SOHBET_SURUMU` 5 kalır), sınırlar `MEDYA_SINIRLARI`. Kotlin, eşleştirme ve `/cihaz` değişmez; yerel modüller (`expo-image-picker`, `expo-image-manipulator`, `expo-video-thumbnails`) yüzünden yeni APK şarttır. İmzalar `cekirdek/sozlesme.ts` "Medya" bloğundadır; bu bölüm davranışı ve sahipliği verir.
+
+Kararlar (Selman, 2026-11-27) `[karar]`: kaynak galeri + kamera; mesaj başına en çok 4 ek, en çok biri video; video en çok 5 dk / 250 MiB; video kapağı `expo-video-thumbnails`; ek varken metin boş olabilir; servis `medya1` demiyorsa (eski servis) ek düğmesi kapalıdır.
+
+### Akış
+
+1. **Seçim (ekran).** "Ekle" → `AltSayfa`: "Galeriden seç" / "Fotoğraf çek" / "Video çek" → `MedyaSeciciPortu.sec(kaynak, kalan)`, `kalan = EK_ADET - şerit`. Kamera videosu 295 sn'de kesilir (`KAMERA_VIDEO_AZAMI_SN`; protokol 300 000 ms'yi aşan `sure_ms`'i reddeder, kamera birkaç ms taşabilir).
+2. **Denetim (saf).** `ekleriDenetle(şerit, ham)`; reddedilen her öğe için not satırı (`ekRedMetni`), ör. galeriden 5 dk'yı aşan video: "Video 5 dakikadan uzun; en çok 5 dakikalık video eklenebilir."
+3. **Şerit.** Giriş çubuğunun üstünde `SeciliEk`'ler (küçük resim, video için süre ve MB, "x" ile çıkar). Gönder metin ya da ek varsa açık.
+4. **Gönderim.** `Sohbet.mesajYolla(metin, "yazi", undefined, ekler)`; sıra ve ret nedenleri `sozlesme.ts`'teki belgede. Her ek `Outbox.medyaIdUret()` (`m-<donem>-<sayac>`) ile kimlik alır, `MedyaDosyaPortu.hazirla` ile `Paths.document/eren-medya/` altına kopyalanır (fotoğraf küçültülüp JPEG'e çevrilir), `EkBilgisi` kopyanın gerçek `mime`/`boyut`'undan kurulur. Önce `Yukleyici.ekle` (tek yazım), sonra `Outbox.ekle(user_message{ekler})`; outbox yazımı düşerse `iptal`.
+5. **Yükleme.** `medya1` bağlantısında yükleyici kayıt başına `media_begin`, `yukleniyor{alinan}`'dan sonra pencere 2 ile `media_chunk`'lar; `kabul` gelince outbox `hazirlik` `"hazir"` olur ve `user_message` gider. `reddedildi` → mesaj `code` ile hatalara düşer.
+6. **Balon.** `user_echo.ekler` → `KullaniciBalonu.ekler`; görsel ve ilerleme `SohbetDurumu.ekGorunumleri`'nden. Yankı görülünce video kopyası silinir, fotoğrafın küçültülmüş kopyası ve video kapağı önizleme olarak kalır.
+
+### Değişmezler
+
+- `cekirdek/**` Expo/RN içe aktarmaz (Genel kural 3). `expo-image-picker`, `expo-image-manipulator`, `expo-video-thumbnails` ve medya için `expo-file-system` yalnız `platform/medyaSecici.ts` ve `platform/medyaDosya.ts`'tedir. `[karar]`
+- `media_*` çerçeveleri yalnız `welcome.yetenekler` `medya1` içeren bağlantıda yollanır: jetonsuz bağlantıda servis bağlantıyı `yetkisiz` ile kapatır. `Yukleyici.baglandi` yalnız o zaman çağrılır. `[protocol]`
+- Telefonun beyanı (`mime`, `sure_ms`, en/boy) hiçbir karara tek başına girmez; PC koklar ve ölçer. Telefon yine de protokol sınırlarını önceden uygular ki kullanıcı nedeni yerelde görsün. `[protocol]`
+- Tıkanma: hazır olmayan ekli mesaj yalnız kendi sohbetinin sonraki `user_message`'larını ve `chat_clear`'ını bekletir (geçmiş silme kendisinden önce yazılmış mesajı geçmez); öteki sohbetler, sohbetsiz kararlar, `interrupt`, `chat_create`, `chat_rename` ve `chat_delete` yürür (`OutboxBagimliliklari.hazirlik`, U2). Tıkalı sohbette "Geçmişi sil" kuyruğa hiç girmez, hemen `ek_bekliyor` döner (U3; aşağıda "Açık konular 4"). Hiçbir yerel durumda kullanıcı mesajı sessizce düşmez: ya gider ya `hatalar`'a girer ya da kullanıcı "Kaldır" der (`Sohbet.bekleyeniKaldir`). `[bu-belge]`
+- Günlüğe, denetime ve hata metnine içerik, adres, dosya adı yazılmaz; yalnız kimlik ve kapalı liste değeri. Fotoğrafın EXIF/GPS'i telefondan çıkmadan düşer (küçültme yeniden kodlar); video özgün haliyle gider (PC güven bölgesi). `[guvenlik]`
+- Yerel medya yalnız `eren-medya/` altındadır. Silme: `chat_cleared` → `sohbetiTemizle(sohbet, sinir_seq)`; `chat_deleted` → `sohbetSilindi`; yerel sıfırlama → `sifirla`; "Kaldır" → `iptal`. Açılışta kaydı olmayan dosya silinir. `[bu-belge]`
+
+### Paketler ve sahiplik
+
+Her paket yalnız "Sahip" sütunundaki dosyalara yazar; `sozlesme.ts`, `test/cekirdek/sahte.ts`, bu belge ve `protocol/` herkes için salt okunurdur (A0'ın). Sözleşme değişikliği gerekirse yazım durur, A0 değiştirir, herkes yeniden okur.
+
+| Paket | Sahip | Uyacağı arayüz (`sozlesme.ts`) | Bağımlılık |
+|---|---|---|---|
+| **U1 yükleyici** | `src/cekirdek/base64.ts`, `src/cekirdek/medya.ts`, `test/cekirdek/base64.test.ts`, `test/cekirdek/medya.test.ts` | `base64Kodla: Base64Kodla`; `ekleriDenetle: EkleriDenetle`; `yukleyiciKur: YukleyiciFabrikasi` (`Yukleyici`, `YeniYukleme`, `EkIlerlemesi`, `EkGorunumu`, `MesajHazirligi`, `MedyaYukari`; `MedyaDosyaPortu`'nu tüketir) | A0 |
+| **U2 outbox** | `src/cekirdek/outbox.ts`, `test/cekirdek/outbox.test.ts` | `OutboxBagimliliklari.hazirlik`, `Outbox.medyaIdUret`, `Outbox.hazirlikDegisti`, `GidenHataKodu` (`ek_bulunamadi`) | A0 |
+| **U3 çekirdek bağlama** | `src/cekirdek/index.ts`, `src/cekirdek/baglanti.ts`, `src/cekirdek/olaylar.ts`, `test/cekirdek/index.test.ts`, `test/cekirdek/baglanti-sorgu.test.ts`, `test/cekirdek/olaylar.test.ts` | `CekirdekPortlari.medya`, `CekirdekDurumu.medyaDestekli`, `SohbetDurumu.ekGorunumleri`, `Sohbet.mesajYolla(…, ekler)`, `GonderRedNedeni` (üç yeni), `Sohbet.hataKapat` (ekli) | U1, U2 |
+| **U4 platform** | `src/platform/medyaSecici.ts`, `src/platform/medyaDosya.ts` | `medyaSeciciKur(): MedyaSeciciPortu` + `KAMERA_VIDEO_AZAMI_SN = 295`; `medyaDosyaKur(): MedyaDosyaPortu` (`HazirEk`, `HazirlaSonucu`) | A0, B0 |
+| **U5a metinler** | `src/ekranlar/medyaMetni.ts`, `test/ekranlar/medyaMetni.test.ts` | `EkRedNedeni`, `EkIlerlemesi`, `GonderRedNedeni`, `GidenHataKodu`, `MedyaSecimSonucu` (aşağıdaki işlevler) | A0 |
+| **U5b ekranlar** | `src/ekranlar/SohbetEkrani.tsx`, `src/ekranlar/EkSeridi.tsx` (yeni), `src/ekranlar/Balonlar.tsx`, `src/ekranlar/Ikonlar.tsx`, `App.tsx` | `MedyaSeciciPortu`, `SeciliEk`, `EkleriDenetle` (index'ten), `EkGorunumu`, `CekirdekDurumu.medyaDestekli`, `KullaniciBalonu.ekler` | A0; U4, U5a; tip denetimi U3'ten sonra temiz |
+
+#### U1 `cekirdek/base64.ts`, `cekirdek/medya.ts`
+
+- `base64Kodla`: standart alfabe, dolgulu; `Buffer`/`btoa` ve düzenli ifade kullanmaz; çıktı `parcaVerisiGecerliMi`'den geçer.
+- `ekleriDenetle`: kural sırası `EkRedNedeni` belgesindeki sırayla; saf.
+- `yukleyiciKur`: `Yukleyici` belgesindeki kurallar. Kalıcı biçim U1'indir, `v` alanı taşır; tanınmayan ya da bozuk kayıt atılır. Parça döngüsü: `media_begin` → `yukleniyor{alinan}` → `alinan`'dan en çok iki yanıtsız parça; her `yukleniyor` yanıtı bir yanıtsız parçayı kapatır; `alinan` beklenenden farklıysa yanıtsız parçalar unutulur ve `alinan`'dan sürülür; `kabul`/`reddedildi` kaydın yüklemesini kapatır, sıradaki eke geçilir. `oku` reddederse kayıt `yerel_yok`. Kayıt `kabul`'de kalır; kalkması `mesajaBaglandi` ya da `iptal` iledir.
+- Testler (`SahteDepo`, `SahteMedyaDosya`, `mediaState`, `icerik`): base64'ün `Buffer` ile 0-5 bayt, 512 KiB ve rastgele girdide eşitliği; pencere (üçüncü parça yanıtsız gitmez); kopup sürme (`alinan`'dan); servis sıfırlaması (`alinan: 0`); `reddedildi` → `hazirlik` `{hata}`; `yerel_yok` → `ek_bulunamadi` + `media_cancel`; `baglandi` çağrılmadıkça hiçbir şey yollanmaz; yeniden açılışta kayıt diskten; bozuk kayıt; `mesajaBaglandi` video kopyasını siler, fotoğrafınkini tutar; `sohbetiTemizle` `seq` sınırı; `ekleriDenetle` her ret nedeni ve sırası.
+
+#### U2 `cekirdek/outbox.ts`
+
+- `hazirlik` kuralları `OutboxBagimliliklari` belgesinde. `{hata}` öğesi kalıcı hata olur (`GidenHatasi`), kuyruktan kalkar.
+- `medyaIdUret`: `sohbetIdUret` ile aynı sayaç; `m-<donem>-<sayac>`.
+- `hazirlikDegisti`: kimlik bitmişse bekleyenleri yeniden dener.
+- `hataKoduCoz` `ek_bulunamadi`'yı tanır. Disk biçimi ve sürümü değişmez (`user_message.ekler` kablo şemasından geçer).
+- Testler: sohbet başına tıkanma; aynı sohbetin `interrupt`/`chat_*`'ı ve sohbetsiz öğe geçer; başka sohbet geçer; `chat_create` → ekli `user_message` sırası korunur; `{hata}` öğesi hatalara ve diske; `hazirlikDegisti` bağlı değilken bir şey yollamaz, bağlıyken bekleyeni yollar, yollanmışı yinelemez; `medyaIdUret` ile `sohbetIdUret`/`client_msg_id` aynı sayaçtan, yeniden açılışta yinelenmez; `hazirlik` verilmezse bugünkü davranış.
+
+#### U3 `cekirdek/index.ts`, `baglanti.ts`, `olaylar.ts`
+
+- `baglanti.ts`: `medya1` yalnız medya portu varken istenir (`BaglantiBagimliliklari.medya`, `MEDYALI_YETENEKLER` = `etkinlik1,medya1`); port yoksa sorgu bugünkü `etkinlik1` kalır (özellik bayrağı; servis ekli yankıyı metne önekli yollar; `baglanti.test.ts`'in adres iddiaları değişmez). `Baglanti`'ya `medyaGonder(m: MedyaYukari): boolean` (`sorguGonder` gibi yalnız `bagli` aşamada, ayrıca yalnız o bağlantının `welcome.yetenekler`'i `medya1` içeriyorsa; yalnız `media_*` türleri). `welcomeMedyaDestekli(w)` saf yardımcı.
+- `olaylar.ts`: `KullaniciBalonu.ekler?: readonly EkBilgisi[]` (`user_echo.ekler` aynen, yoksa alan yok); boş metinli balon geçerlidir.
+- `index.ts`: `portlar.medya` varsa `yukleyiciKur({depo, dosya, degisti})` ve `outboxKur({..., hazirlik})` (`user_message.ekler` → `yukleyici.hazirlik(id'ler)`, öteki öğeler `"hazir"`); `baslat` yükleyiciyi outbox'la birlikte yükler; yükleyici `degisti` → `outbox.hazirlikDegisti` + durum yenileme. `kimlikTamam`: `medyaDestekli` hesaplanır; doğruysa `yukleyici.baglandi(m => baglanti.medyaGonder(m))`, değilse `koptu()`. Kopmada `koptu()`. `media_state` → `yukleyici.durum` (sohbet denetimi yok). Ekli her `user_echo` (canlı ve telafi) → her ek için `mesajaBaglandi(medya_id, seq)`. Silme ve sıfırlama "Değişmezler"deki gibi; `hataKapat` ve `Outbox.kaldir` ile kalkan ekli `user_message`'ın ekleri `iptal`. `mesajYolla` sırası `sozlesme.ts`'te; ekli gönderim açılış süpürmesinin bitmesini bekler (`Yukleyici.bosalt()` `yukle`'den hemen sonra alınır), böylece süpürme `hazirla` ile `Yukleyici.ekle` arasındaki kaydı olmayan kopyayı silemez. Aynı `media_state`'in iki kez gelmesi (istek yanıtı + `medya_durumu` yayını; servis yayında yalnız `kabul`/`reddedildi`/`isleme` yollar) zararsızdır: durum yeniden yazılır, `ekGorunumleri` aynı nesne kalır, mesaj yinelenmez. `gecmisiSil`: tıkalı sohbette (`Outbox.sohbetTikaliMi`) `ek_bekliyor`. `Sohbet.bekleyeniKaldir(client_msg_id)`: `Outbox.bekleyeniKaldir` + `Yukleyici.iptal`. Liste önizlemesi: metni boş ekli balonda `sohbetler.ts` `ekOnizlemeMetni` ("📷 Fotoğraf", "🎥 Video", "📎 1 fotoğraf, 1 video"). `ekleriDenetle` ve medya tipleri index'ten yeniden dışa açılır.
+- Testler: `baglanti-sorgu.test.ts` sorguda `etkinlik1,medya1`; `olaylar.test.ts` ekli ve boş metinli balon; `index.test.ts`: `medyaDestekli` (port yok / `yetenekler` yok / `medya1` var / kopukta korunur), ekli gönderim uçtan uca (`SahteMedyaDosya` + `welcomeMedyali` + `mediaState`: `media_begin` → parçalar → `kabul` → `user_message{ekler}`), her yeni ret nedeni, `medya1`'siz bağlantıda hiç `media_*` gitmez, `reddedildi` → hata satırı, "Kaldır" → `media_cancel` ve yerel silme, mezar taşı ve sohbet silmede yerel silme, `ekGorunumleri`.
+
+#### U4 `platform/medyaSecici.ts`, `platform/medyaDosya.ts`
+
+- `medyaSecici.ts`: `MedyaSeciciPortu` belgesi. Galeri `launchImageLibraryAsync({mediaTypes: ['images','videos'], allowsMultipleSelection: true, selectionLimit: kalan, exif: false, base64: false})`; kamera `requestCameraPermissionsAsync` sonra `launchCameraAsync` (video: `videoMaxDuration: KAMERA_VIDEO_AZAMI_SN`). Varlıktan `HamMedya` (`type` → `tur`, `mimeType` yoksa uzantıdan, `fileSize` yoksa `expo-file-system` ile, `duration` ms'ye yuvarlanır).
+- `medyaDosya.ts`: `MedyaDosyaPortu` belgesi. Klasör `Paths.document/eren-medya`, adlar `<medya_id>.<uzantı>` ve `<medya_id>.kapak.jpg` (uzantı `mime`'dan, kaynaktan değil). Fotoğraf: `expo-image-manipulator` ile uzun kenar ≤ `FOTO_UZUN_KENAR`, JPEG 0,8; düşerse özgün kopya (`FOTO_BAYT`). Video: kopya + `expo-video-thumbnails` kapağı (düşerse `onizleme_uri: null`). Geçici dosyalar silinir. `oku`: `File.open()` + `offset` + `readBytes`. `medya_id` dışında hiçbir girdi dosya adına girmez.
+- Testi yok (Expo); `tsc` ve cihazda elle.
+
+#### U5a `ekranlar/medyaMetni.ts` (saf)
+
+Yüz (U5b buna göre yazar): `baytMetni(bayt)` ("850 KB", "3,4 MB"; ondalık virgül, `Intl` yok); `sureMetni(ms)` ("0:42", "4:05"); `ekRedMetni(neden: EkRedNedeni)` (her neden için tek cümle; `video_uzun` "Video 5 dakikadan uzun; en çok 5 dakikalık video eklenebilir.", `cok_buyuk` "Video 250 MB'tan büyük; eklenemez."); `secimHataMetni(neden)` (`izin_yok` "Kamera izni verilmedi. Galeriden seçebilirsin."); `ekIlerlemeMetni(i: EkIlerlemesi | null)` (`bekliyor` "Sırada", `yukleniyor` "Yükleniyor %42", `kabul` + `isleniyor` "PC'de işleniyor", `hazir`/`kismi`/`null` → `null`, `reddedildi` → kod metni, `yerel_yok` "Ek telefonda bulunamadı"); `mesajIlerlemeMetni(ler: readonly (EkIlerlemesi | null)[])` (bayt ağırlıklı toplam yüzde ya da ilk hata); `medyaHataMetni(kod: GidenHataKodu)` (`medya_yok` "Ek PC'de bulunamadı", `medya_reddedildi` "PC eki kabul etmedi", `medya_siniri` "PC'de ek sınırı doldu", `ek_bulunamadi` "Ek telefonda bulunamadı"; başka kod `null`); `medyaGonderRedMetni(neden)` (üç yeni `GonderRedNedeni`); `EK_KAPALI_METNI` ("Bu PC servisi ek desteklemiyor; servisi güncelle."). Test: her kapalı liste değerinin metni var, sınır değerleri. Salt okunur: `protocol/`, `cekirdek/sozlesme.ts`.
+
+#### U5b ekranlar ve `App.tsx`
+
+- `App.tsx`: `cekirdekKur({..., medya: medyaDosyaKur()})`; `medyaSeciciKur()` bir kez kurulur ve `SohbetEkrani`'ya prop olarak geçer.
+- `SohbetEkrani.tsx`: "Ekle" (ataç) düğmesi; `medyaDestekli !== true` ise kapalı ve dokununca `EK_KAPALI_METNI`; `AltSayfa` üç seçenek; şerit en çok `EK_ADET`, dolunca düğme kapalı; gönderimde `ok` ise şerit boşalır, değilse kalır ve not satırı; gönderim sürerken Gönder kapalı (hazırlama sürebilir).
+- `EkSeridi.tsx`: şerit bileşeni (küçük resim, video süre + MB, "x").
+- `Balonlar.tsx`: `KullaniciBalonu` metnin üstünde ek ızgarası (`ekGorunumleri`); fotoğraf önizlemesi dokununca tam ekran; video kapağı ya da yer tutucu (oynat simgesi, süre, "PC'de"); `ekGorunumleri`'nde yoksa ya da `onizleme_uri` `null` ise "Fotoğraf (bu cihazda yok)"; bekleyen balonda `mesajIlerlemeMetni`; boş metinli balonda metin satırı çizilmez.
+- `Ikonlar.tsx`: ataç, kamera, oynat.
+
+### Açık konular
+
+1. U3'te zorunlu yapıldı: `Outbox.medyaIdUret`, `hazirlikDegisti`, `bekleyeniKaldir`, `sohbetTikaliMi`, `SohbetDurumu.ekGorunumleri`, `Sohbet.bekleyeniKaldir`. İsteğe bağlı kalan: `CekirdekPortlari.medya` (özellik bayrağı), `OutboxBagimliliklari.hazirlik` (verilmezse her öğe hazır), `CekirdekDurumu.medyaDestekli` (`test/ekranlar/kisayol.test.ts` ve `otoIzin.test.ts` durumu elle kurar; zorunlu olunca onlar kırılır, sahibi düzeltirse zorunlu yapılabilir).
+2. Çözüldü (U3): boş metinli ekli mesajın liste önizlemesi `ekOnizlemeMetni`. `medyaMetni.ts`'te uygun işlev yoktu ve çekirdek `ekranlar/`'ı içe aktarmaz; metin `sohbetler.ts`'te.
+3. Çözüldü (U3): `Sohbet.bekleyeniKaldir`. Ekran yalnız `bekleyenler`'de `durum === "kuyrukta"` olan `user_message`'ta "Kaldır" gösterir; önceki bağlantıda yollanmış öğe `kaldirilamaz` döner.
+4. U2'nin gerçek davranışı: tıkalı sohbette `chat_clear` bekler (sıra korunur), yürümez. 20 sn'lik `GECMIS_SIL_SURESI_MS` istek kuyruğa girince başladığından uzun yüklemede "Geçmişi sil" yanıltıcı `zaman_asimi` alır ve bağlantıyı (yüklemeyi de) yenilerdi; kuyrukta süresiz bekleyen silme ayrıca "bilinmeyen bir anda gelecekteki geçmişi silme" kuralına aykırıdır. U3 kararı: tıkalı sohbette `gecmisiSil` hemen `ek_bekliyor` döner, hiçbir şey kuyruğa girmez. `SohbetDiyaloglari.tsx` bu kodu şimdilik genel "Silinemedi (ek_bekliyor)." ile gösterir; U5b metin ekler (öneri: "Bu sohbette yüklenmeyi bekleyen bir ek var. Yükleme bitince ya da mesajı kaldırınca yeniden dene.").
+5. Galeride "5:00" görünen ama 300 000 ms'yi birkaç ms aşan video reddedilir (protokol sınırı); metin sınırı açıkça söyler.
+6. Cihazda ölçülecek: HEIC galeri öğesinin küçültme sonrası JPEG olması, `videoMaxDuration`'ın kamera uygulamasında uygulanması, izinsiz `launchCameraAsync` davranışı, 100 MB yüklemede JS takılması.
+7. Yükleyici sonlanmış durumu (`reddedildi` kodla, `yerel_yok`) kayıtta isteğe bağlı `son` alanıyla kalıcı tutar; yeniden açılışta bu durum geri gelir, ek yeniden yüklenmez ve bekleyen sayılmaz (c8295cd). Diğer ilerleme (yüzde vb.) yalnız canlıdır. Mesaj ayrıca kodla `hatalar`'dadır (kalıcı) ve yeniden yollanmaz. Ekran hata satırında nedeni `GidenHatasi.kod`'dan göstermeli (sözleşmede yazılı).

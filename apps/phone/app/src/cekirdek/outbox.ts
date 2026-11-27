@@ -11,16 +11,24 @@
  * Yeniden yüklemede kuyruğa döner ve aynı kimlikle yeniden yollanır; servis aynı `ack`'i döner.
  * TASARIM.md "Outbox v2 → v3" (Dilim 3: v3 → v4, 0.5.0: v4 → v5 aynı kalıpla); protocol README `/sohbet`; tipler
  * sozlesme.ts "Dilim 2".
+ * Medya (U2): yollanmamış her öğe yollanmadan önce `hazirlik`'e sorulur. `"bekliyor"` olan öğe yalnız
+ * kendi sohbetini tıkar: o sohbetin sonraki `user_message`'ları ve `chat_clear`'ı bekler (geçmiş silme,
+ * kendisinden önce yazılmış mesajı geçmesin); öteki sohbetler, sohbetsiz öğeler, aynı sohbetin
+ * `interrupt`/`chat_create`/`chat_rename`/`chat_delete`'i yürür. `{hata}` öğesi kuyruktan hatalara taşınır.
+ * Henüz hiç yollanmamış `user_message` `bekleyeniKaldir` ile kuyruktan kaldırılabilir (eski servise
+ * bağlıyken sonsuza dek bekleyen ekli mesaj). TASARIM.md "Medya".
  */
 import { ANA_SOHBET_ID, HataKodu, SOHBET_SURUMU, SohbetYukari } from "@eren/protocol";
+import type { MedyaId, SohbetId } from "@eren/protocol";
 import type {
   GeciciIsTuru,
   GidenHataKodu,
   GidenHatasi,
   IsMesaji,
   IsMesajiTuru,
+  MesajHazirligi,
   Outbox,
-  OutboxFabrikasi,
+  OutboxBagimliliklari,
   OutboxOgesi,
 } from "./sozlesme.ts";
 
@@ -42,6 +50,32 @@ export type {
 
 export const OUTBOX_ANAHTARI = "sohbet_outbox";
 
+/**
+ * Medya (U2). `Outbox`'a ek olarak `outboxKur`'un verdiği üyeler (sözleşmede henüz yok; çağıran
+ * `outboxKur`'un dönüş tipinden görür).
+ */
+export interface MedyaliOutbox extends Outbox {
+  medyaIdUret: () => MedyaId;
+  hazirlikDegisti(): void;
+  /**
+   * Bu süreçte hiç yollanmamış bir `user_message`'ı kuyruktan kaldırır (ör. eki hazır olmayan ve
+   * sohbetini tıkayan mesaj için "Kaldır"); hatalara düşmez. Kaldırılan mesajı döner. Öğe yoksa, ileti
+   * `user_message` değilse ya da bu süreçte en az bir kez yollandıysa (servise ulaşmış olabilir, `ack`
+   * beklenir) `null` döner, hiçbir şey değişmez. Bellek ve `degisti` hemen; söz tek yazımı bekler,
+   * arkasında bekleyenler (bağlıysa) yazım bitince yollanır. Yazım başarısızsa bellekte yine
+   * kaldırılmıştır, söz reddedilir. Eklerin yükleyiciden iptali (`Yukleyici.iptal`) çağıranındır.
+   * Sınır: önceki süreçte yollanıp `ack`'i gelmemiş mesaj diskten "hiç yollanmamış" olarak döner;
+   * servis onu aldıysa yankısı telafiyle yine gelir.
+   */
+  bekleyeniKaldir(client_msg_id: string): Promise<IsMesaji | null>;
+  /**
+   * Sohbette `hazirlik`'i `"bekliyor"` olan (eki hazır değil), bu süreçte hiç yollanmamış öğe var mı.
+   * Eşzamanlı; bağlantıdan bağımsız. Tıkalı sohbette `chat_clear` kuyrukta bekler: çağıran (ör. "Geçmişi
+   * sil" süresi) bunu bilmek isteyebilir. `hazirlik` verilmemişse hep `false`.
+   */
+  sohbetTikaliMi(sohbet_id: SohbetId): boolean;
+}
+
 // Kayıt biçimi kümenin eksiksizliğini tipe bağlar: `IsMesajiTuru`'na tür eklenirse `tsc` kırılır.
 const IS_TURU_KAYDI: Record<IsMesajiTuru, true> = {
   user_message: true,
@@ -55,6 +89,16 @@ const IS_TURU_KAYDI: Record<IsMesajiTuru, true> = {
   chat_delete: true,
 };
 const IS_TURLERI: ReadonlySet<string> = new Set(Object.keys(IS_TURU_KAYDI));
+
+/**
+ * Medya. Sohbeti tıkalıyken bekleyen türler. `chat_clear` da bekler: önce yazılmış ekli mesaj silmeden
+ * sonra gitseydi sıra tersine dönerdi. `chat_delete` beklemez: sohbet silinince bekleyen mesajı
+ * çekirdek `kaldir`'la atar, eklerini iptal eder.
+ */
+const TIKANAN_TURLER: ReadonlySet<string> = new Set<IsMesajiTuru>(["user_message", "chat_clear"]);
+
+const mesajinSohbeti = (m: IsMesaji): string | null =>
+  "sohbet_id" in m && typeof m.sohbet_id === "string" ? m.sohbet_id : null;
 
 const GECICI_TUR_KAYDI: Record<GeciciIsTuru, true> = { chat_clear: true, chat_delete: true };
 const GECICI_TURLER: ReadonlySet<string> = new Set(Object.keys(GECICI_TUR_KAYDI));
@@ -81,6 +125,8 @@ interface Oge {
   kalici: boolean;
   /** Bu bağlantıda yollandı. */
   yollandi: boolean;
+  /** Bu süreçte en az bir kez yollandı (servise ulaşmış olabilir). */
+  denendi: boolean;
 }
 
 interface Kayit {
@@ -149,12 +195,12 @@ const hamKayitCoz = (ham: string | null): HamKayit => {
 const diziMi = (ham: unknown): readonly unknown[] => (Array.isArray(ham) ? ham : []);
 
 const hataKoduCoz = (ham: unknown): GidenHataKodu | null => {
-  if (ham === "baglanti_koptu") return ham;
+  if (ham === "baglanti_koptu" || ham === "ek_bulunamadi") return ham;
   const c = HataKodu.safeParse(ham);
   return c.success ? c.data : null;
 };
 
-export const outboxKur: OutboxFabrikasi = ({ depo, saat, degisti }) => {
+export const outboxKur = ({ depo, saat, degisti, hazirlik }: OutboxBagimliliklari): MedyaliOutbox => {
   // Kimlik `<donem>-<sayac>`, sohbet kimliği `s-<donem>-<sayac>` (aynı sayaç). Dönem ilk açılışın
   // zamanıdır: kayıt kaybolup sayaç sıfırlansa da aynı cihazda eski bir kimlik yeniden üretilmez.
   let donem = "";
@@ -208,13 +254,39 @@ export const outboxKur: OutboxFabrikasi = ({ depo, saat, degisti }) => {
     hataListesi = [...hataListesi, h].slice(-AZAMI_HATA);
   };
 
+  // Bağımlılık atmamalı; atarsa öğe kaybolmasın diye beklemede kalır.
+  const hazirlikSor = (m: IsMesaji): MesajHazirligi => {
+    if (hazirlik === undefined) return "hazir";
+    try {
+      return hazirlik(m);
+    } catch {
+      return "bekliyor";
+    }
+  };
+
   const gonderBekleyenler = (): void => {
     if (gonder === null) return;
     let yollanan = false;
-    for (const o of liste) {
+    const tikali = new Set<string>();
+    const hatali = new Set<Oge>();
+    // Anlık kopya: `{hata}` öğeleri döngüden sonra listeden çıkar.
+    for (const o of liste.slice()) {
       // Sıra: kalıcı olmayanın ardındakiler de bekler.
       if (!o.kalici) break;
       if (o.yollandi) continue;
+      const sohbet = mesajinSohbeti(o.mesaj);
+      // Tıkalı sohbetin sırası: sonraki mesaj ve geçmiş silme önündekini geçmez (sorulmaz bile).
+      if (sohbet !== null && tikali.has(sohbet) && TIKANAN_TURLER.has(o.mesaj.type)) continue;
+      const h = hazirlikSor(o.mesaj);
+      if (h === "bekliyor") {
+        if (sohbet !== null) tikali.add(sohbet);
+        continue;
+      }
+      if (h !== "hazir") {
+        hatali.add(o);
+        hataEkle({ client_msg_id: o.mesaj.client_msg_id, mesaj: o.mesaj, kod: h.hata });
+        continue;
+      }
       let tamam = false;
       try {
         tamam = gonder(o.mesaj);
@@ -223,12 +295,25 @@ export const outboxKur: OutboxFabrikasi = ({ depo, saat, degisti }) => {
       }
       if (!tamam) break;
       o.yollandi = true;
+      o.denendi = true;
       yollanan = true;
     }
-    if (yollanan) bildir(true, false);
+    if (hatali.size > 0) {
+      liste = liste.filter((o) => !hatali.has(o));
+      arkadanKaydet();
+      bildir(true, true);
+    } else if (yollanan) bildir(true, false);
   };
 
-  const outbox: Outbox = {
+  const sayacKimligi = (onek: string, ad: string): string => {
+    if (!yuklendi) throw new Error(`outbox: ${ad} yukle'den önce çağrıldı`);
+    // Sayaç diske ardından gelen `ekle`'nin yazımıyla girer; yazım olmadan süreç ölürse kimlik
+    // hiçbir yere yazılmamıştır, yeniden üretilmesi zararsızdır.
+    sayac++;
+    return `${onek}-${donem}-${sayac}`;
+  };
+
+  const outbox: MedyaliOutbox = {
     yukle: async () => {
       const ham = await depo.oku(OUTBOX_ANAHTARI);
       const kayit = hamKayitCoz(ham);
@@ -280,7 +365,7 @@ export const outboxKur: OutboxFabrikasi = ({ depo, saat, degisti }) => {
           hataEkle({ client_msg_id: mesaj.client_msg_id, mesaj, kod: "baglanti_koptu" });
           continue;
         }
-        liste.push({ mesaj, gecici: false, kalici: true, yollandi: false });
+        liste.push({ mesaj, gecici: false, kalici: true, yollandi: false, denendi: false });
       }
       for (const h of diziMi(kayit.hatalar)) {
         if (typeof h !== "object" || h === null) {
@@ -311,7 +396,7 @@ export const outboxKur: OutboxFabrikasi = ({ depo, saat, degisti }) => {
       // silme sonradan yazılanı da silerdi. Kimliği yine diske yazılır; aynı kimlik başka mesaja
       // verilmesin.
       const gecici = secenek?.gecici === true || geciciTurMu(mesaj);
-      const oge: Oge = { mesaj, gecici, kalici: false, yollandi: false };
+      const oge: Oge = { mesaj, gecici, kalici: false, yollandi: false, denendi: false };
       liste.push(oge);
       bildir(true, false);
       try {
@@ -391,13 +476,34 @@ export const outboxKur: OutboxFabrikasi = ({ depo, saat, degisti }) => {
       await kaydet().catch(() => undefined);
     },
 
-    sohbetIdUret: () => {
-      if (!yuklendi) throw new Error("outbox: sohbetIdUret yukle'den önce çağrıldı");
-      // Sayaç diske ardından gelen `ekle`'nin yazımıyla girer; yazım olmadan süreç ölürse kimlik
-      // hiçbir yere yazılmamıştır, yeniden üretilmesi zararsızdır.
-      sayac++;
-      return `s-${donem}-${sayac}`;
+    sohbetIdUret: () => sayacKimligi("s", "sohbetIdUret"),
+
+    medyaIdUret: () => sayacKimligi("m", "medyaIdUret"),
+
+    // Bağlı değilken `gonderBekleyenler` hiçbir şey yapmaz; yollanmış öğe atlanır.
+    hazirlikDegisti: () => {
+      gonderBekleyenler();
     },
+
+    bekleyeniKaldir: async (client_msg_id) => {
+      const oge = liste.find((o) => o.mesaj.client_msg_id === client_msg_id);
+      if (oge === undefined || oge.mesaj.type !== "user_message" || oge.yollandi || oge.denendi) return null;
+      liste = liste.filter((o) => o !== oge);
+      bildir(true, false);
+      try {
+        await kaydet();
+      } finally {
+        // Arkasında bekleyenler (aynı sohbetin mesajları, geçmiş silme) artık yürüyebilir; kaldırma
+        // diske ulaşmadan yollanmazlar (çökmede kaldırılan mesaj onların arkasına düşmesin).
+        gonderBekleyenler();
+      }
+      return oge.mesaj;
+    },
+
+    sohbetTikaliMi: (sohbet_id) =>
+      liste.some(
+        (o) => !o.denendi && mesajinSohbeti(o.mesaj) === sohbet_id && hazirlikSor(o.mesaj) === "bekliyor",
+      ),
 
     // `async` gövdesi ilk `await`'e kadar eşzamanlı koşar: koşul çağrı anında değerlendirilir,
     // listeler hemen değişir; söz yalnız yazımı bekler.
@@ -416,7 +522,12 @@ export const outboxKur: OutboxFabrikasi = ({ depo, saat, degisti }) => {
       tutulanlar = kalanTutulanlar;
       // Tutulanlar görünür listelerde değil: yalnız onlar kalktıysa bildirim yok.
       if (ogeSayisi + hataSayisi > 0) bildir(ogeSayisi > 0, hataSayisi > 0);
-      await kaydet();
+      try {
+        await kaydet();
+      } finally {
+        // Medya: kaldırılan öğe bir sohbeti tıkıyor olabilir; arkasındakiler yürüsün.
+        if (ogeSayisi > 0) gonderBekleyenler();
+      }
       return ogeSayisi + hataSayisi + tutulanSayisi;
     },
 

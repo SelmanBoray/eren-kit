@@ -1,0 +1,208 @@
+package dev.eren.ajanda.aktarma
+
+import dev.eren.ajanda.cekirdek.CalismaKipi
+import dev.eren.ajanda.cekirdek.CekirdekHatasi
+import dev.eren.ajanda.cekirdek.DisaAktarma
+import dev.eren.ajanda.cekirdek.IceAktarmaOnizlemesi
+import dev.eren.ajanda.cekirdek.IceAktarmaSonucu
+import dev.eren.ajanda.ekran.SahteYuz
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.io.IOException
+import java.io.OutputStream
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.ZonedDateTime
+
+/** Akış denetleyicisi sahte çekirdek yüzüyle: adımlar, metinler, yeniden önizleme dalı, hatalar. */
+class AktarmaAkisiTest {
+    private val dilim = ZoneId.of("Europe/Istanbul")
+    private val metinler = AktarmaMetinleri(dilim)
+    private val yuz = SahteYuz()
+    private val akis = AktarmaAkisi(yuz, metinler)
+
+    /** İçerik: metinlere ve günlüğe girmemesi gereken başlık. */
+    private val gizli = "Gizli doktor randevusu"
+    private val belge = """{"bicim":"eren_ajanda_yedegi","kayitlar":[{"baslik":"$gizli"}]}"""
+    private val anMs = ZonedDateTime.of(2026, 11, 27, 14, 5, 0, 0, dilim).toInstant().toEpochMilli()
+
+    private fun plan(
+        yeni: Int = 2,
+        guncellenecek: Int = 1,
+        kip: CalismaKipi = CalismaKipi.YEREL,
+        iz: String = "iz1",
+        islem: Int = 0,
+        gonderilmeyecek: Int = 0,
+    ) = IceAktarmaOnizlemesi(
+        kip = kip, disaAktarmaMs = anMs, toplam = 10, silinmis = 1, yeni = yeni, guncellenecek = guncellenecek,
+        ayni = 4, atlanacak = 1, gecersiz = 1, sinirAsan = 0, gonderilmeyecek = gonderilmeyecek,
+        kuyrugaGirecekIslem = islem, gecersizler = emptyList(), ekler = emptyList(), iz = iz,
+    )
+
+    private fun kap(b: String = belge): ByteArray {
+        val c = ByteArrayOutputStream()
+        YedekKabi.yaz(c, yuz.bicim, DisaAktarma(b, 1, 0, 0, 0, CalismaKipi.YEREL, emptyList()), EkDeposu.Yok)
+        return c.toByteArray()
+    }
+
+    private fun AktarmaAkisi.Adim.hepsi() = "$baslik\n$metin"
+
+    private fun temiz(a: AktarmaAkisi.Adim) {
+        val t = a.hepsi()
+        assertFalse(t, t.contains(gizli))
+        assertFalse(t, Regex("\\bPC\\b").containsMatchIn(t))
+    }
+
+    @Test
+    fun disaAktarKabaYazarVeSonucuSoyler() {
+        yuz.disa = DisaAktarma(belge, 3, 1, 0, 2, CalismaKipi.BAGLI, emptyList())
+        val cikti = ByteArrayOutputStream()
+        val a = akis.disaAktar({ cikti })
+        assertTrue(a is AktarmaAkisi.Adim.Bilgi)
+        assertEquals(
+            "3 kayıt yedeğe yazıldı (1 silinmiş kayıt dahil).\n" +
+                "Eren servisine henüz gitmemiş değişiklikler de yedekte.\n" +
+                "Gönderilemeyenler listesindeki 2 değişiklik yedeğe girmedi; önce onları düzeltin ya da atın.",
+            a.metin,
+        )
+        assertEquals(belge, YedekKabi.oku(ByteArrayInputStream(cikti.toByteArray()), yuz.bicim).belge)
+        temiz(a)
+    }
+
+    @Test
+    fun disaAktarYazilamazsaYarimDosyaSilinir() {
+        yuz.disa = DisaAktarma(belge, 1, 0, 0, 0, CalismaKipi.YEREL, emptyList())
+        var silindi = false
+        val bozuk = object : OutputStream() {
+            override fun write(b: Int) = throw IOException("disk dolu")
+        }
+        val a = akis.disaAktar({ bozuk }) { silindi = true }
+        assertTrue(a is AktarmaAkisi.Adim.Hata)
+        assertEquals("Dosya yazılamadı. Başka bir yer seçip yeniden deneyin.", a.metin)
+        assertTrue(silindi)
+    }
+
+    @Test
+    fun iceAktarmaOnizlemeOnayVeSonuc() {
+        yuz.onizlemeler += plan()
+        yuz.iceSonuclari += IceAktarmaSonucu(true, plan())
+        val o = akis.dosyaOku { ByteArrayInputStream(kap()) }
+        assertTrue(o.toString(), o is AktarmaAkisi.Adim.Onay)
+        assertEquals("İçe aktarılsın mı?", o.baslik)
+        assertEquals(
+            "27 Kasım 2026 14:05 tarihli yedek: 10 kayıt.\n" +
+                "• 2 yeni kayıt eklenecek\n" +
+                "• 1 kayıt güncellenecek (yedekteki daha yeni)\n" +
+                "• 4 kayıt telefondakiyle aynı\n" +
+                "• 1 kayıt atlanacak (telefondaki daha yeni)\n" +
+                "• 1 kayıt okunamadı, alınmayacak\n" +
+                "Kayıtlar bu telefona yazılacak.",
+            o.metin,
+        )
+        assertTrue(akis.onayBekliyor)
+        temiz(o)
+
+        val s = akis.onayla()
+        assertTrue(s is AktarmaAkisi.Adim.Bilgi)
+        assertEquals("2 yeni kayıt eklendi, 1 kayıt güncellendi.\n1 kayıt okunamadığı için alınmadı.", s.metin)
+        assertEquals(listOf("iceAktarmaOnizlemesi", "iceAktar:iz1"), yuz.cagrilar)
+        assertEquals(listOf(belge), yuz.iceBelgeleri)
+        assertFalse(akis.onayBekliyor)
+        temiz(s)
+    }
+
+    @Test
+    fun uygulanmadiysaYeniPlanGosterilirYeniIzleUygulanir() {
+        yuz.onizlemeler += plan(iz = "iz1")
+        yuz.iceSonuclari += IceAktarmaSonucu(false, plan(yeni = 1, iz = "iz2"))
+        yuz.iceSonuclari += IceAktarmaSonucu(true, plan(yeni = 1, iz = "iz2"))
+        assertTrue(akis.dosyaOku { ByteArrayInputStream(kap()) } is AktarmaAkisi.Adim.Onay)
+
+        val yeniden = akis.onayla()
+        assertTrue(yeniden is AktarmaAkisi.Adim.Onay)
+        assertEquals("Telefon bu arada değişti", yeniden.baslik)
+        assertTrue(yeniden.metin, yeniden.metin.startsWith("Önizlemeden sonra telefondaki kayıtlar değişti; plan yenilendi.\n"))
+        assertTrue(yeniden.metin, yeniden.metin.contains("• 1 yeni kayıt eklenecek"))
+
+        val s = akis.onayla()
+        assertTrue(s is AktarmaAkisi.Adim.Bilgi)
+        assertEquals(listOf("iceAktarmaOnizlemesi", "iceAktar:iz1", "iceAktar:iz2"), yuz.cagrilar)
+    }
+
+    @Test
+    fun bagliKipteEdenServisineGidecekIslemSayisi() {
+        yuz.onizlemeler += plan(kip = CalismaKipi.BAGLI, islem = 7, gonderilmeyecek = 2)
+        yuz.iceSonuclari += IceAktarmaSonucu(true, plan(kip = CalismaKipi.BAGLI, islem = 7))
+        val o = akis.dosyaOku { ByteArrayInputStream(kap()) }
+        assertTrue(o.metin, o.metin.contains("• 2 silinmiş kayıt Eren servisine gönderilmeyecek"))
+        assertTrue(o.metin, o.metin.contains("Değişiklikler Eren servisine 7 işlem olarak gönderilecek"))
+        temiz(o)
+        val s = akis.onayla()
+        assertTrue(s.metin, s.metin.contains("7 işlem Eren servisine gönderilmek üzere sıraya alındı."))
+        temiz(s)
+    }
+
+    @Test
+    fun yapilacakBirSeyYoksaOnayIstenmez() {
+        yuz.onizlemeler += plan(yeni = 0, guncellenecek = 0)
+        val o = akis.dosyaOku { ByteArrayInputStream(kap()) }
+        assertTrue(o is AktarmaAkisi.Adim.Bilgi)
+        assertTrue(o.metin, o.metin.endsWith("Telefona eklenecek ya da güncellenecek kayıt yok."))
+        assertFalse(akis.onayBekliyor)
+        assertTrue(akis.onayla() is AktarmaAkisi.Adim.Hata)
+        assertFalse(yuz.cagrilar.any { it.startsWith("iceAktar:") })
+    }
+
+    @Test
+    fun vazgecilenDosyaUygulanmaz() {
+        yuz.onizlemeler += plan()
+        akis.dosyaOku { ByteArrayInputStream(kap()) }
+        akis.vazgec()
+        assertEquals(metinler.bekleyenYok, akis.onayla().metin)
+        assertFalse(yuz.cagrilar.any { it.startsWith("iceAktar:") })
+    }
+
+    @Test
+    fun hataMetinleri() {
+        val gecersiz = "Bu dosya bir ajanda yedeği değil ya da bozuk."
+        val dahaYeni = "Bu yedek uygulamanın daha yeni bir sürümüyle yapılmış. İçe aktarmak için uygulamayı güncelleyin."
+        val buyuk = "Dosya çok büyük; bir ajanda yedeği bu kadar büyük olamaz."
+
+        // Zip değil.
+        assertEquals(gecersiz, akis.dosyaOku { ByteArrayInputStream("düz metin".toByteArray()) }.metin)
+        // Kap fazla büyük (sahte biçimin sınırı 1 MiB).
+        val iri = ByteArrayOutputStream().also {
+            YedekKabi.yaz(it, yuz.bicim.copy(belgeAzamiBayt = 1uL shl 30), DisaAktarma("x".repeat(2 shl 20), 1, 0, 0, 0, CalismaKipi.YEREL, emptyList()), EkDeposu.Yok)
+        }.toByteArray()
+        assertEquals(buyuk, akis.dosyaOku { ByteArrayInputStream(iri) }.metin)
+
+        // Çekirdeğin belge hataları.
+        val durumlar = listOf(
+            CekirdekHatasi.GecersizGirdi("bicim_surumu", "daha yeni bir biçim: uygulamayı güncelleyin") to dahaYeni,
+            CekirdekHatasi.GecersizGirdi("sozlesme_surumu", "daha yeni bir sözleşme: uygulamayı güncelleyin") to dahaYeni,
+            CekirdekHatasi.GecersizGirdi("bicim", "ajanda yedeği değil") to gecersiz,
+            CekirdekHatasi.GecersizGirdi("belge", "JSON değil (satır 1, sütun 2)") to gecersiz,
+            CekirdekHatasi.GecersizGirdi("belge", "çok büyük") to buyuk,
+            CekirdekHatasi.Depo(gizli) to "Telefondaki kayıt deposu kullanılamadı. Yeniden deneyin.",
+        )
+        for ((h, beklenen) in durumlar) {
+            yuz.onizlemeler += h
+            val a = akis.dosyaOku { ByteArrayInputStream(kap()) }
+            assertTrue(a is AktarmaAkisi.Adim.Hata)
+            assertEquals("İçe aktarılamadı", a.baslik)
+            assertEquals(beklenen, a.metin)
+            temiz(a)
+        }
+        // Okuma hatası.
+        assertEquals("Dosya okunamadı. Yeniden deneyin.", akis.dosyaOku { throw IOException("izin yok") }.metin)
+    }
+
+    @Test
+    fun onerilenAdTarihli() {
+        assertEquals("ajanda-yedegi-2026-11-27.zip", AktarmaAkisi.onerilenAd(LocalDate.of(2026, 11, 27)))
+    }
+}
