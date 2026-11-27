@@ -2,6 +2,7 @@ package dev.eren.ajanda.ekran
 
 import dev.eren.ajanda.KopruKaniti
 import dev.eren.ajanda.cekirdek.BaglantiAsamasi
+import dev.eren.ajanda.cekirdek.CalismaKipi
 import dev.eren.ajanda.cekirdek.Cekirdek
 import dev.eren.ajanda.cekirdek.Degisim
 import dev.eren.ajanda.cekirdek.Gozlemci
@@ -73,7 +74,9 @@ class GercekCekirdekTest {
             assertTrue(s.isaretler.toString(), s.isaretler.none { it == Liste.Isaret.GONDERILIYOR || it == Liste.Isaret.BEKLIYOR })
             assertFalse(s.aciklama.contains("gönderil"))
             assertFalse(Liste.Isaret.ASISTAN in s.isaretler)
-            assertEquals("eşleşme yokken işlem kuyrukta bekler", 1, c.baglantiDurumu().kuyrukta)
+            assertEquals("eşleşme yokken işlem kuyruğa girmez", 0, c.baglantiDurumu().kuyrukta)
+            assertEquals(CalismaKipi.YEREL, c.kip())
+            assertFalse(yuz.kayit(id)!!.bekleyen)
 
             // Tamamla -> listeden çıkar (kapalılar gizli) -> geri al -> geri gelir.
             g.gelen.clear()
@@ -103,12 +106,13 @@ class GercekCekirdekTest {
             a.gorunumSec(Gorunum.TARIHLI)
             assertEquals(listOf(id), satirlar(a).map { it.kayitId })
         }
-        // Süreç öldü, uygulama yeniden açıldı: kayıt ve kuyruktaki işlemler durur.
+        // Süreç öldü, uygulama yeniden açıldı: kayıt durur; yerel kipte kuyruk yoktur.
         ac(yol).use { c ->
             val a = AnaDenetleyici(CekirdekYuzu.Gercek(c), simdi)
             a.hepsiniOku()
             assertEquals(listOf("Örnek randevu"), satirlar(a).map { it.baslik })
-            assertTrue(c.baglantiDurumu().kuyrukta >= 1)
+            assertEquals(0, c.baglantiDurumu().kuyrukta)
+            assertEquals(CalismaKipi.YEREL, c.kip())
         }
     }
 

@@ -4,6 +4,7 @@ import dev.eren.ajanda.cekirdek.AjandaKanalHatasi
 import dev.eren.ajanda.cekirdek.AjandaZamani
 import dev.eren.ajanda.cekirdek.AlarmKabugu
 import dev.eren.ajanda.cekirdek.BaglantiAsamasi
+import dev.eren.ajanda.cekirdek.CalismaKipi
 import dev.eren.ajanda.cekirdek.Cekirdek
 import dev.eren.ajanda.cekirdek.CekirdekHatasi
 import dev.eren.ajanda.cekirdek.Degisim
@@ -27,6 +28,7 @@ import dev.eren.ajanda.cekirdek.metniTemizle
 import dev.eren.ajanda.cekirdek.varsayilanHatirlatmalar
 import dev.eren.ajanda.kabuk.JavaZaman
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -93,7 +95,8 @@ class KopruTest {
     @Test
     fun acilirSemaKurulurTaniCalisir() {
         ac().use { c ->
-            assertEquals(3L, c.semaSurumu())
+            assertEquals(4L, c.semaSurumu())
+            assertEquals(CalismaKipi.YEREL, c.kip())
             val rapor = KopruKaniti.calistir(c)
             assertTrue(rapor, rapor.endsWith(KopruKaniti.TAMAM))
             assertTrue(rapor, rapor.contains("eşleşme yok, bağlantı KOPUK, kuyrukta 0"))
@@ -127,10 +130,10 @@ class KopruTest {
             val id = c.ekle(govde, GirdiYolu.ELLE)
             assertTrue(id, id.startsWith("k_"))
             val g = c.kayit(id) ?: error("eklenen kayıt okunamadı")
-            assertTrue(g.bekleyen)
+            assertFalse("eşleşmesiz kurulumda işlem kuyruğa girmez", g.bekleyen)
             assertEquals(Triple("Dişçi ☕️", KayitTuru.RANDEVU, zaman), Triple(g.kayit.baslik, g.kayit.tur, g.kayit.zaman))
             assertEquals(listOf(id), c.liste(ListeSorgusu(Sekme.TARIHLI, false)).map { it.kayit.kayitId })
-            assertEquals(1, c.baglantiDurumu().kuyrukta)
+            assertEquals(0, c.baglantiDurumu().kuyrukta)
 
             // Alarm: 60 dk önce, Rust java.time'la (ZamanKabugu) çevirip AlarmKabugu'na kurdurdu (UTC+3).
             val kurulan = alarm.kurulan.single()

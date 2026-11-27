@@ -3,6 +3,7 @@ package dev.eren.ajanda.ekran
 import dev.eren.ajanda.cekirdek.AjandaKaydi
 import dev.eren.ajanda.cekirdek.AjandaZamani
 import dev.eren.ajanda.cekirdek.BaglantiDurumu
+import dev.eren.ajanda.cekirdek.CalismaKipi
 import dev.eren.ajanda.cekirdek.Cekirdek
 import dev.eren.ajanda.cekirdek.Degisim
 import dev.eren.ajanda.cekirdek.DuzenlemeTemeli
@@ -31,6 +32,7 @@ interface CekirdekYuzu {
     fun kayit(kayitId: String): KayitGorunumu?
     fun retListesi(): List<RetGirdisi>
     fun baglantiDurumu(): BaglantiDurumu
+    fun kip(): CalismaKipi
     fun eslesmeDurumu(): EslesmeDurumu
     fun baglantiAdresi(): String?
     fun ekle(govde: KayitGovdesi): String
@@ -58,6 +60,7 @@ interface CekirdekYuzu {
         override fun kayit(kayitId: String) = c.kayit(kayitId)
         override fun retListesi() = c.retListesi()
         override fun baglantiDurumu() = c.baglantiDurumu()
+        override fun kip() = c.kip()
         override fun eslesmeDurumu() = c.eslesmeDurumu()
         override fun baglantiAdresi() = c.baglantiAdresi()
         override fun ekle(govde: KayitGovdesi) = c.ekle(govde, GirdiYolu.ELLE)
