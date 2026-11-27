@@ -4,6 +4,7 @@ import { OUTBOX_ANAHTARI, outboxKur } from "../../src/cekirdek/outbox.ts";
 import type { Outbox } from "../../src/cekirdek/outbox.ts";
 import type { SohbetYukari } from "@eren/protocol";
 import { SOHBET_SURUMU } from "@eren/protocol";
+import type { EkleSonucu, GidenGovde, IsMesaji, MesajHazirligi } from "../../src/cekirdek/sozlesme.ts";
 import { ack, bosalt, HASH_A, SahteDepo, SahteSaat } from "./sahte.ts";
 
 const kur = (depo = new SahteDepo(), saat = new SahteSaat()) => {
@@ -914,5 +915,381 @@ describe("outbox", () => {
         assert.equal(o.hatalar().length, 1);
       });
     });
+  });
+});
+
+// =============================================================================================
+// Medya (U2): `hazirlik`, sohbet başına tıkanma, `medyaIdUret`, `hazirlikDegisti`, `bekleyeniKaldir`.
+// =============================================================================================
+
+/**
+ * `hazirlik` sahtesi: ekli `user_message`'ın kararı ilk ekinin `medya_id`'sinden (kayıt yoksa `"bekliyor"`);
+ * eksiz öğe `"hazir"`. `atsin` yalnız ekli mesajda atar.
+ */
+const medyaKur = (depo = new SahteDepo(), saat = new SahteSaat()) => {
+  const durum = new Map<string, MesajHazirligi>();
+  const sorulan: string[] = [];
+  let atsin = false;
+  const o = outboxKur({
+    depo,
+    saat,
+    degisti: () => undefined,
+    hazirlik: (m: IsMesaji): MesajHazirligi => {
+      sorulan.push(m.client_msg_id);
+      if (m.type !== "user_message" || m.ekler === undefined) return "hazir";
+      if (atsin) throw new Error("hazirlik");
+      return durum.get(m.ekler[0]!.medya_id) ?? "bekliyor";
+    },
+  });
+  return {
+    o,
+    depo,
+    saat,
+    durum,
+    sorulan,
+    atsin: (a: boolean) => {
+      atsin = a;
+    },
+  };
+};
+
+const ekli = (text: string, medya_id: string, sohbet_id = "ana"): GidenGovde => ({
+  type: "user_message",
+  sohbet_id,
+  input: "yazi",
+  text,
+  ekler: [{ medya_id, tur: "foto", mime: "image/jpeg", boyut: 2048 }],
+});
+
+/** `kablo`'nun metinleri, öteki türler için `tür:sohbet`. */
+const ozet = (yollanan: readonly SohbetYukari[]) =>
+  yollanan.map((m) =>
+    m.type === "user_message" ? m.text : "sohbet_id" in m ? `${m.type}:${String(m.sohbet_id)}` : m.type,
+  );
+
+const kimlik = (r: EkleSonucu): string => {
+  assert.ok(r.ok);
+  return r.client_msg_id;
+};
+
+describe("outbox medya (U2)", () => {
+  it("eki hazır olmayan mesaj yalnız kendi sohbetinin sonraki mesajlarını bekletir", async () => {
+    const { o, durum } = medyaKur();
+    await o.yukle();
+    const id1 = o.medyaIdUret();
+    await o.ekle(ekli("A-ekli", id1, "s-a"));
+    await o.ekle(yazi("A-sonra", "s-a"));
+    await o.ekle(yazi("B", "s-b"));
+    await o.ekle({ type: "plan_decision", plan_id: "p1", plan_hash: HASH_A, karar: "onay" });
+    await o.ekle({ type: "question_answer", soru_id: "q", cevap: "evet" });
+    await o.ekle({ type: "job_cancel", is_id: 5 });
+    await o.ekle({ type: "interrupt", sohbet_id: "s-a" });
+    await o.ekle({ type: "chat_rename", sohbet_id: "s-a", ad: "Yeni ad" });
+    await o.ekle(yazi("ana", "ana"));
+
+    const k = kablo();
+    o.kimlikTamam(k.gonder);
+    assert.deepEqual(ozet(k.yollanan), [
+      "B",
+      "plan_decision",
+      "question_answer",
+      "job_cancel",
+      "interrupt:s-a",
+      "chat_rename:s-a",
+      "ana",
+    ]);
+    assert.deepEqual(
+      o.ogeler().filter((g) => !g.yollandi).map((g) => (g.mesaj.type === "user_message" ? g.mesaj.text : "")),
+      ["A-ekli", "A-sonra"],
+    );
+    assert.equal(o.sohbetTikaliMi("s-a"), true);
+    assert.equal(o.sohbetTikaliMi("s-b"), false);
+
+    durum.set(id1, "hazir");
+    o.hazirlikDegisti();
+    assert.deepEqual(ozet(k.yollanan).slice(-2), ["A-ekli", "A-sonra"]);
+    assert.ok(o.ogeler().every((g) => g.yollandi));
+    assert.equal(o.sohbetTikaliMi("s-a"), false);
+  });
+
+  it("tıkalı sohbetin sonraki mesajı hazirlik'e sorulmaz; önceki öğe hazırsa sırayla gider", async () => {
+    const { o, durum, sorulan } = medyaKur();
+    await o.yukle();
+    const id1 = o.medyaIdUret();
+    const id2 = o.medyaIdUret();
+    durum.set(id2, "hazir");
+    const a = kimlik(await o.ekle(ekli("bir", id1)));
+    const b = kimlik(await o.ekle(ekli("iki", id2)));
+    const k = kablo();
+    o.kimlikTamam(k.gonder);
+    assert.deepEqual(k.metinler(), []);
+    assert.deepEqual(sorulan, [a]);
+    assert.ok(!sorulan.includes(b));
+    durum.set(id1, "hazir");
+    o.hazirlikDegisti();
+    assert.deepEqual(k.metinler(), ["bir", "iki"]);
+  });
+
+  it("chat_create → ekli user_message sırası korunur; sohbet kurulmadan mesaj gitmez", async () => {
+    const { o, durum } = medyaKur();
+    await o.yukle();
+    const sohbet = o.sohbetIdUret();
+    const id = o.medyaIdUret();
+    await o.ekle({ type: "chat_create", sohbet_id: sohbet, ad: "Yeni" });
+    await o.ekle(ekli("foto", id, sohbet));
+    const k = kablo();
+    o.kimlikTamam(k.gonder);
+    assert.deepEqual(ozet(k.yollanan), [`chat_create:${sohbet}`]);
+    durum.set(id, "hazir");
+    o.hazirlikDegisti();
+    assert.deepEqual(ozet(k.yollanan), [`chat_create:${sohbet}`, "foto"]);
+  });
+
+  it("{hata} öğesi hatalara ve diske taşınır, sohbeti tıkamaz, yeniden yüklemede tanınır", async () => {
+    const { o, depo, durum } = medyaKur();
+    await o.yukle();
+    const id1 = o.medyaIdUret();
+    durum.set(id1, { hata: "ek_bulunamadi" });
+    const a = kimlik(await o.ekle(ekli("kayip", id1)));
+    await o.ekle(yazi("sonra"));
+    const id2 = o.medyaIdUret();
+    durum.set(id2, { hata: "medya_reddedildi" });
+    const c = kimlik(await o.ekle(ekli("red", id2, "s-b")));
+    const k = kablo();
+    o.kimlikTamam(k.gonder);
+    assert.deepEqual(k.metinler(), ["sonra"]);
+    assert.deepEqual(o.hatalar().map((h) => [h.client_msg_id, h.kod]), [
+      [a, "ek_bulunamadi"],
+      [c, "medya_reddedildi"],
+    ]);
+    assert.deepEqual(o.ogeler().map((g) => (g.mesaj.type === "user_message" ? g.mesaj.text : "")), ["sonra"]);
+    await o.bosalt();
+
+    // Hata yeniden yollanmaz; disk hatayı taşır, yeniden açılışta kod tanınır.
+    o.koptu();
+    const k2 = kablo();
+    o.kimlikTamam(k2.gonder);
+    assert.deepEqual(k2.metinler(), ["sonra"]);
+    const yeni = medyaKur(depo);
+    const ozetY = await yeni.o.yukle();
+    assert.equal(ozetY.atilan, 0);
+    assert.deepEqual(yeni.o.hatalar().map((h) => [h.client_msg_id, h.kod]), [
+      [a, "ek_bulunamadi"],
+      [c, "medya_reddedildi"],
+    ]);
+  });
+
+  it("hazirlikDegisti bağlı değilken bir şey yollamaz, bağlıyken bekleyeni yollar, yollanmışı yinelemez", async () => {
+    const { o, durum } = medyaKur();
+    await o.yukle();
+    const id = o.medyaIdUret();
+    await o.ekle(yazi("once"));
+    await o.ekle(ekli("ekli", id));
+    durum.set(id, "hazir");
+    o.hazirlikDegisti(); // hiç bağlanmadı
+    assert.ok(o.ogeler().every((g) => !g.yollandi));
+
+    durum.set(id, "bekliyor");
+    const k = kablo();
+    o.kimlikTamam(k.gonder);
+    assert.deepEqual(k.metinler(), ["once"]);
+    o.hazirlikDegisti(); // değişiklik yok
+    assert.deepEqual(k.metinler(), ["once"]);
+    durum.set(id, "hazir");
+    o.hazirlikDegisti();
+    o.hazirlikDegisti();
+    assert.deepEqual(k.metinler(), ["once", "ekli"]);
+
+    // Koptuktan sonra çağrı yine bir şey yollamaz.
+    o.koptu();
+    o.hazirlikDegisti();
+    assert.deepEqual(k.metinler(), ["once", "ekli"]);
+  });
+
+  it("medyaIdUret client_msg_id ve sohbetIdUret ile aynı sayaçtan; yeniden açılışta yinelenmez", async () => {
+    const { o, depo } = medyaKur();
+    assert.throws(() => o.medyaIdUret());
+    await o.yukle();
+    const r1 = kimlik(await o.ekle(yazi("x")));
+    const donem = r1.split("-")[0]!;
+    const m = o.medyaIdUret();
+    const s = o.sohbetIdUret();
+    const m2 = o.medyaIdUret();
+    const r2 = kimlik(await o.ekle(ekli("y", m)));
+    assert.deepEqual([r1, m, s, m2, r2], [`${donem}-1`, `m-${donem}-2`, `s-${donem}-3`, `m-${donem}-4`, `${donem}-5`]);
+    await o.bosalt();
+
+    const yeni = medyaKur(depo);
+    await yeni.o.yukle();
+    assert.equal(yeni.o.medyaIdUret(), `m-${donem}-6`);
+  });
+
+  it("hazirlik verilmezse bugünkü davranış: ekli mesaj da hemen gider", async () => {
+    const { o } = kur();
+    await o.yukle();
+    const mo = o as ReturnType<typeof outboxKur>;
+    const id = mo.medyaIdUret();
+    await o.ekle(ekli("ekli", id));
+    await o.ekle(yazi("sonra"));
+    const k = kablo();
+    o.kimlikTamam(k.gonder);
+    assert.deepEqual(k.metinler(), ["ekli", "sonra"]);
+    assert.equal(mo.sohbetTikaliMi("ana"), false);
+  });
+
+  it("hazirlik atarsa öğe kaybolmaz, bekler ve sohbeti tıkar", async () => {
+    const { o, atsin } = medyaKur();
+    await o.yukle();
+    const id = o.medyaIdUret();
+    await o.ekle(ekli("ekli", id));
+    await o.ekle(yazi("sonra"));
+    await o.ekle(yazi("baska", "s-b"));
+    atsin(true);
+    const k = kablo();
+    o.kimlikTamam(k.gonder);
+    assert.deepEqual(k.metinler(), ["baska"]);
+    assert.equal(o.ogeler().length, 3);
+    assert.equal(o.hatalar().length, 0);
+  });
+
+  describe("tıkalı sohbette geçmiş silme (chat_clear)", () => {
+    it("önceki ekli mesajı beklerken kuyrukta kalır, mesajdan sonra gider; başka sohbetinki hemen gider", async () => {
+      const { o, durum } = medyaKur();
+      await o.yukle();
+      const id = o.medyaIdUret();
+      await o.ekle(ekli("ekli", id));
+      const k = kablo();
+      o.kimlikTamam(k.gonder);
+      await o.ekle({ type: "chat_clear", sohbet_id: "ana" }, { gecici: true });
+      await o.ekle({ type: "chat_clear", sohbet_id: "s-b" }, { gecici: true });
+      await o.ekle(yazi("silmeden-sonra"));
+      assert.deepEqual(ozet(k.yollanan), ["chat_clear:s-b"]);
+
+      durum.set(id, "hazir");
+      o.hazirlikDegisti();
+      assert.deepEqual(ozet(k.yollanan), ["chat_clear:s-b", "ekli", "chat_clear:ana", "silmeden-sonra"]);
+    });
+
+    it("bekleyen ekli mesaj reddedilirse aynı geçişte silme yürür", async () => {
+      const { o, durum } = medyaKur();
+      await o.yukle();
+      const id = o.medyaIdUret();
+      await o.ekle(ekli("ekli", id));
+      const k = kablo();
+      o.kimlikTamam(k.gonder);
+      await o.ekle({ type: "chat_clear", sohbet_id: "ana" }, { gecici: true });
+      assert.deepEqual(ozet(k.yollanan), []);
+      durum.set(id, { hata: "medya_reddedildi" });
+      o.hazirlikDegisti();
+      assert.deepEqual(ozet(k.yollanan), ["chat_clear:ana"]);
+      assert.deepEqual(o.hatalar().map((h) => h.kod), ["medya_reddedildi"]);
+    });
+
+    it("kopmada bekleyen silme her geçici gibi baglanti_koptu olur, ekli mesaj kuyrukta kalır", async () => {
+      const { o } = medyaKur();
+      await o.yukle();
+      const id = o.medyaIdUret();
+      await o.ekle(ekli("ekli", id));
+      o.kimlikTamam(kablo().gonder);
+      const sil = kimlik(await o.ekle({ type: "chat_clear", sohbet_id: "ana" }, { gecici: true }));
+      o.koptu();
+      assert.deepEqual(o.hatalar().map((h) => [h.client_msg_id, h.kod]), [[sil, "baglanti_koptu"]]);
+      assert.deepEqual(o.ogeler().map((g) => g.mesaj.type), ["user_message"]);
+    });
+
+    it("tıkalı sohbette chat_delete beklemez", async () => {
+      const { o } = medyaKur();
+      await o.yukle();
+      await o.ekle(ekli("ekli", o.medyaIdUret(), "s-a"));
+      const k = kablo();
+      o.kimlikTamam(k.gonder);
+      await o.ekle({ type: "chat_delete", sohbet_id: "s-a" });
+      assert.deepEqual(ozet(k.yollanan), ["chat_delete:s-a"]);
+    });
+  });
+
+  describe("bekleyeniKaldir", () => {
+    it("hiç yollanmamış ekli mesajı kaldırır, diske yazar; arkasındakiler yazımdan sonra yürür", async () => {
+      const { o, depo } = medyaKur();
+      await o.yukle();
+      const a = kimlik(await o.ekle(ekli("ekli", o.medyaIdUret())));
+      const k = kablo();
+      o.kimlikTamam(k.gonder);
+      await o.ekle(yazi("sonra"));
+      await o.ekle({ type: "chat_clear", sohbet_id: "ana" }, { gecici: true });
+      assert.deepEqual(k.metinler(), []);
+      assert.equal(o.sohbetTikaliMi("ana"), true);
+
+      const soz = o.bekleyeniKaldir(a);
+      // Bellek hemen değişir; yollama yazımı bekler.
+      assert.ok(!o.ogeler().some((g) => g.client_msg_id === a));
+      assert.equal(k.yollanan.length, 0);
+      const kaldirilan = await soz;
+      assert.ok(kaldirilan !== null && kaldirilan.type === "user_message");
+      assert.equal(kaldirilan.client_msg_id, a);
+      assert.ok(!(depo.kv.get(OUTBOX_ANAHTARI) ?? "").includes(a));
+      assert.deepEqual(k.metinler(), ["sonra", "chat_clear"]);
+      assert.equal(o.hatalar().length, 0);
+      assert.equal(o.sohbetTikaliMi("ana"), false);
+
+      const yeni = medyaKur(depo);
+      await yeni.o.yukle();
+      assert.ok(!yeni.o.ogeler().some((g) => g.client_msg_id === a));
+    });
+
+    it("bağlı değilken de kaldırır", async () => {
+      const { o } = medyaKur();
+      await o.yukle();
+      const a = kimlik(await o.ekle(ekli("ekli", o.medyaIdUret())));
+      await o.ekle(yazi("sonra"));
+      assert.notEqual(await o.bekleyeniKaldir(a), null);
+      const k = kablo();
+      o.kimlikTamam(k.gonder);
+      assert.deepEqual(k.metinler(), ["sonra"]);
+    });
+
+    it("bilinmeyen, user_message olmayan ya da bu süreçte yollanmış öğe için null ve değişiklik yok", async () => {
+      const { o } = medyaKur();
+      await o.yukle();
+      const plan = kimlik(await o.ekle({ type: "plan_decision", plan_id: "p1", plan_hash: HASH_A, karar: "onay" }));
+      const yollanan = kimlik(await o.ekle(yazi("gitti")));
+      const k = kablo();
+      o.kimlikTamam(k.gonder);
+      assert.equal(await o.bekleyeniKaldir("yok-1"), null);
+      assert.equal(await o.bekleyeniKaldir(plan), null);
+      assert.equal(await o.bekleyeniKaldir(yollanan), null);
+      // Kopunca `yollandi` sıfırlanır ama servise ulaşmış olabilir: yine kaldırılmaz.
+      o.koptu();
+      assert.equal(o.ogeler().find((g) => g.client_msg_id === yollanan)?.yollandi, false);
+      assert.equal(await o.bekleyeniKaldir(yollanan), null);
+      assert.equal(o.ogeler().length, 2);
+    });
+
+    it("yazım başarısızsa bellekte kalkmıştır, söz reddedilir, arkasındakiler yine yürür", async () => {
+      const { o, depo } = medyaKur();
+      await o.yukle();
+      const a = kimlik(await o.ekle(ekli("ekli", o.medyaIdUret())));
+      await o.ekle(yazi("sonra"));
+      const k = kablo();
+      o.kimlikTamam(k.gonder);
+      depo.hata.yaz = true;
+      await assert.rejects(o.bekleyeniKaldir(a));
+      assert.ok(!o.ogeler().some((g) => g.client_msg_id === a));
+      assert.deepEqual(k.metinler(), ["sonra"]);
+    });
+  });
+});
+
+describe("outbox medya (U2): kaldir", () => {
+  it("tıkayan ekli mesaj kaldir ile kalkınca aynı sohbetin arkasındakiler yazımdan sonra yürür", async () => {
+    const { o } = medyaKur();
+    await o.yukle();
+    const a = kimlik(await o.ekle(ekli("ekli", o.medyaIdUret())));
+    await o.ekle(yazi("sonra"));
+    const k = kablo();
+    o.kimlikTamam(k.gonder);
+    assert.deepEqual(k.metinler(), []);
+    assert.equal(await o.kaldir((m) => m.client_msg_id === a), 1);
+    assert.deepEqual(k.metinler(), ["sonra"]);
   });
 });
