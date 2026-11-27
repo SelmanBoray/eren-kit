@@ -236,8 +236,15 @@ eşleşiyor (T5) ∧ `aktor = ana` ∧ `etkilesim = etkilesimli`. Diğer her şe
 **Uygulanan (H1, 2026-11-27):**
 - Çerçeve `PcTasdikGirdi` adını aldı ve bir alan eklendi: isteğe bağlı `surec_id` (harness sürecinin kimliği).
   Kapalı uyarlayıcı listesi `PC_UYARLAYICILARI`; bugün yalnız `claude-code` v1.
-- Eski çerçeve kabul edilir ve bugünkü kararı alır. Eski çerçeveye T5 uygulanmaz; güncellemeden sonra açık
-  kalan eski kanca süreçleri bunu gönderir.
+- Eski çerçeve kabul edilir ve bugünkü kararı alır. Eski çerçeveye T5 uygulanmaz.
+  - Kanca kısa ömürlüdür: her çağrıda `guncel` yolundan yeniden başlar. Eski çerçeve yalnız geri almada gelir:
+    junction eski sürüme döner, servis bir süre yeni kalır.
+  - Gerçek yükseltme penceresi ters yöndedir: yeni kanca eski servise gider. `kur.ts` önce junction'ı çevirir,
+    sonra servisi yeniden başlatır. Bu arada yeni çerçeve eski servisin katı şemasından geçmez ve çağrı taslak
+    doğar; bu güvenli taraf, testle gösterilir.
+  - Sırayı değiştirmek pencereyi kapatmaz: servis dururken boru kapalıdır ve çağrı yine taslak olur. Değiştirmek
+    kurtarma akışını da karmaşıklaştırır. Bu yüzden sıra değişmedi.
+  - Uzun ömürlü köprüler başladıkları sürümde kalır; eski köprü ile yeni servis birlikte çalışır.
 - Yeni karar değeri eklenmedi. Eski köprüler `PcAracSonucu`'yu kendi şemasıyla çözer. Yetersiz tasdik (bilinmeyen
   uyarlayıcı ya da sürüm, `bilinmiyor`) ve T5 reddi `tasdik_yok` olur. Nedenleri günlükte durur:
   `pc_tasdik_yetersiz`, `pc_oturum_uyusmuyor`.
