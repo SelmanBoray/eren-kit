@@ -412,16 +412,15 @@ impl Motor {
         let simdi = o.simdi_ms().to_string();
         // Yerel kipte bağlanma burada biter: servisin tam kopyası elde edildi; tek işlemde yerel kayıtlar
         // kuyruğa dökülür ve kip `bagli` olur (`yerel.rs` `yereli_kuyruga_dok`). Yerel kipte telafi hep tamdır.
+        // D4: gidecek bir şey varsa önce kullanıcının onayı (`birlestirme.rs`); beklerken telafi aşamasında
+        // kalınır (canlı `kayit`'ler toplanan kopyaya), onay bağlantıyı canlıya geçirir.
         let yerel = self.yerel_mi()?;
         match t.tam {
             Some((depo_id, son_rev)) if yerel => {
-                let ret = self.depo.yazma(|d| {
-                    let ret = super::yerel::yereli_kuyruga_dok(d, o, &b, &depo_id, son_rev)?;
-                    d.meta_yaz(anahtar::SON_ESITLENME_MS, Some(&simdi))?;
-                    Ok(ret)
-                })?;
-                self.yerelden_baglandi(e, ret);
-                self.hepsi_degisti(o, e);
+                if !self.yerelden_baglan(o, e, &b, &depo_id, son_rev)? {
+                    self.asama = Asama::Telafi(Telafi { tam: Some((depo_id, son_rev)), tampon: Vec::new() });
+                    return Ok(());
+                }
             }
             Some((depo_id, son_rev)) => {
                 self.depo.yazma(|d| {

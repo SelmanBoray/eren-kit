@@ -23,7 +23,7 @@ use crate::motor::{Etkiler, Motor, Ortam};
 
 use kabuklar::{AlarmKabugu, Gozlemci, KimlikKabugu, Tasima, ZamanKabugu};
 use tipler::{
-    AktarmaBicimi, BaglantiDurumu, CalismaKipi, DisaAktarma, DuzenlemeTemeli, EslesmeDurumu, GecisOzeti, GecmisSayfasi, HatirlatmaBildirimi,
+    AktarmaBicimi, BaglantiDurumu, BirlestirmeOnizlemesi, BirlestirmeSonucu, OlasiCift, CalismaKipi, DisaAktarma, DuzenlemeTemeli, EslesmeDurumu, GecisOzeti, GecmisSayfasi, HatirlatmaBildirimi,
     HatirlatmaOnizlemesi, IceAktarmaOnizlemesi, IceAktarmaSonucu, KayitGorunumu, KoparmaSonucu, ListeSorgusu, RetGirdisi, TakvimAyi, TakvimOgesi,
     YenidenKurmaNedeni,
 };
@@ -459,6 +459,42 @@ impl Cekirdek {
     /// kipte işlemler kuyruğa girer (servis yazar). Gözlemciye `kayitlar` (çoksa `tumu`), bağlı kipte `baglanti`.
     pub fn ice_aktar(&self, belge: String, iz: Option<String>) -> Result<IceAktarmaSonucu, CekirdekHatasi> {
         self.calistir(|m, o, e| m.ice_aktar(o, e, &belge, iz.as_deref()))
+    }
+
+    // Birleştirme önizlemesi (D4; kurallar `motor/birlestirme.rs` başında)
+
+    /// Yerel kipten servise bağlanmada onay bekleyen birleştirmenin önizlemesi; bekleyen yoksa `None`.
+    /// Servisin tam kopyası gelince (gidecek bir şey varsa) bağlantı `Telafi` aşamasında bekler ve gözlemciye
+    /// `Degisim.baglanti` gider: arayüz bunu sorar. Bekleme sırasında yerel yazmalar sürer; plan değiştiyse
+    /// (`Degisim.kayitlar`/`tumu` sonrası) yeniden sorulabilir, onay zaten `iz` ile denetler. Kayıtlara dokunmaz.
+    pub fn birlestirme_onizlemesi(&self) -> Result<Option<BirlestirmeOnizlemesi>, CekirdekHatasi> {
+        self.calistir(|m, o, e| m.birlestirme_onizlemesi(o, e))
+    }
+
+    /// Onay: tek işlemde dökme (D2 kuralları), olası çiftler kaydedilir, kip `Bagli`, kuyruk yollanır.
+    /// `iz`: önizlemenin `iz`'i; plan bu arada değiştiyse hiçbir şey yazılmaz, `uygulandi` yanlış ve `plan` yeni
+    /// önizlemedir (yeniden gösterilip yeni `iz`'le onaylanır). Bekleyen yoksa (bağlantı koptu: sonraki
+    /// bağlantıda yeniden sorulur) `uygulandi` yanlış, `plan` `None`. Gözlemciye `tumu`, `baglanti`.
+    pub fn birlestirmeyi_onayla(&self, iz: Option<String>) -> Result<BirlestirmeSonucu, CekirdekHatasi> {
+        self.calistir(|m, o, e| m.birlestirmeyi_onayla(o, e, iz.as_deref()))
+    }
+
+    /// Vazgeç: yerel kipte süren bağlanmayı iptal eder (`baglantiyi_kopar`'ın yerel kip yolu): eşleşme bilgisi
+    /// ve cihaz anahtarı silinir, bağlantı kapanır, hiçbir kayıt değişmez; yeniden bağlanmak için QR yeniden
+    /// okutulur. Bağlı kipte `GecersizDurum`.
+    pub fn birlestirmeden_vazgec(&self) -> Result<KoparmaSonucu, CekirdekHatasi> {
+        self.calistir(|m, o, e| m.birlestirmeden_vazgec(o, e))
+    }
+
+    /// Onaylanmış birleştirmelerin olası çiftleri (ikisi de görünen kopyada canlı olanlar). Liste ekranı bir
+    /// kez okuyup işaretler. Motor kilidini almaz.
+    pub fn olasi_ciftler(&self) -> Result<Vec<OlasiCift>, CekirdekHatasi> {
+        self.oku(crate::motor::birlestirme::olasi_ciftler)
+    }
+
+    /// Bir kaydın olası çiftlerinin kimlikleri (yoksa boş; ayrıntı ekranı).
+    pub fn olasi_ciftleri(&self, kayit_id: String) -> Result<Vec<String>, CekirdekHatasi> {
+        self.oku(|d| crate::motor::birlestirme::olasi_ciftleri(d, &kayit_id))
     }
 
     // Alarmlar (K3)

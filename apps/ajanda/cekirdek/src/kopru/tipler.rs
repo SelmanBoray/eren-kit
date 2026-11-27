@@ -464,3 +464,71 @@ pub struct IceAktarmaSonucu {
     /// Uygulanan (ya da `uygulandi` yanlışsa uygulanacak) planın sayıları.
     pub plan: IceAktarmaOnizlemesi,
 }
+
+// -------------------------------------------------------------------------------------------------
+// Birleştirme önizlemesi (D4; kurallar `motor/birlestirme.rs` başında)
+// -------------------------------------------------------------------------------------------------
+
+/// Yerel kipten servise bağlanmanın önizlemesi (`birlestirme_onizlemesi`; onay `birlestirmeyi_onayla`).
+/// Servisin tam kopyası elde edildi; telefonun kayıtları henüz hiçbir yere gitmedi. Sayılar telefonun görünen
+/// kopyasının (mezar taşları dahil) sınıflarıdır; toplamları telefondaki satır sayısıdır.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct BirlestirmeOnizlemesi {
+    /// Servisin `depo_id`'si.
+    pub depo_id: String,
+    /// Telefonun PC temeli bu servisten (aynı servise dönüş; `false`: yeni servis ya da sıfırdan kurulmuş).
+    pub ayni_depo: bool,
+    /// Serviste yok, Eren servisine yeni kayıt olarak gidecek.
+    pub yeni: i32,
+    /// Serviste var, telefonun değişikliği gidecek (`cakisanlar` bunların içindedir).
+    pub degisen: i32,
+    /// `degisen`'lerden iki tarafın da aynı alanı değiştirdiği kayıtlar: telefonun değeri kazanacak (PC'nin
+    /// değeri PC geçmişinde kalır).
+    pub cakisanlar: Vec<CakisanKayit>,
+    /// Serviste silinmiş ama telefonda değişmiş kayıtlar (`kayit_id`): değişiklikleri gider, servis reddeder,
+    /// ret listesine düşer (düzeltip yeni kayıt olarak eklenebilir).
+    pub pc_silmisler: Vec<String>,
+    /// Dökmede hemen ret listesine düşecek kayıtlar (`kayit_id`; okunamayan satır ya da birleşemeyen hal).
+    pub ret_listesine: Vec<String>,
+    /// Telefonda silinmiş, serviste hiç olmamış: gönderilmez, Silinenler'den düşer.
+    pub dusecek_mezar: i32,
+    /// Gidecek bir şey yok (serviste aynı ya da yalnız servis ilerlemiş: servisin hali görünür).
+    pub ayni: i32,
+    /// Yalnız serviste olan canlı kayıtlar: telefona gelecek.
+    pub servisten_gelecek: i32,
+    /// Kuyruğa girecek işlem sayısı.
+    pub islem: i32,
+    /// Olası çiftler (ikisi de tutulur, otomatik birleştirme yok). Onaydan sonra `olasi_ciftler` ile okunur.
+    pub olasi_ciftler: Vec<OlasiCift>,
+    /// Planın izi: `birlestirmeyi_onayla`'ya verilir; plan bu arada değiştiyse uygulanmaz.
+    pub iz: String,
+}
+
+/// İki tarafın da değiştirdiği alanları olan kayıt.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct CakisanKayit {
+    pub kayit_id: String,
+    /// Kayıt JSON'unun alan adları (`baslik`, `zaman`, `ornekler`...).
+    pub alanlar: Vec<String>,
+}
+
+/// Olası çift: tekil anahtarı (tür, başlık, zaman çekirdeği) aynı, kimlikleri farklı iki kayıt; biri
+/// telefonda doğmuş (servise yeni gidecek), öteki serviste olup telefonda olmayan. İkisi de tutulur.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct OlasiCift {
+    /// Telefondan gelen kayıt.
+    pub telefondaki: String,
+    /// Servisten gelen kayıt (önizlemede henüz telefonda yok: `kayit` ile okunamaz).
+    pub servisteki: String,
+}
+
+/// `Cekirdek::birlestirmeyi_onayla`'nın sonucu.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct BirlestirmeSonucu {
+    /// Yanlışsa hiçbir şey yazılmadı.
+    pub uygulandi: bool,
+    /// Uygulanan plan; `uygulandi` yanlışsa: `Some` plan önizlemeden sonra değişti (yeni plan, yeni `iz`'le
+    /// yeniden onaylanır), `None` onay bekleyen birleştirme yok (bağlantı koptu: sonraki bağlantıda yeniden
+    /// sorulur; ya da kip zaten bağlı).
+    pub plan: Option<BirlestirmeOnizlemesi>,
+}

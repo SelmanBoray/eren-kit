@@ -691,6 +691,9 @@ pub struct Hat {
     pub gozlemci: Arc<SahteGozlemci>,
     pub pc: SahtePc,
     pub baglanti: Option<Baglanti>,
+    /// D4: trafik durulunca onay bekleyen birleştirme kendiliğinden onaylanır (`pompala`). Yerel kipten
+    /// bağlanmanın sonucunu (D1, D2 kuralları) sınayan testler için; önizleme testleri kapatır.
+    pub otomatik_onay: bool,
     /// Son alan: çekirdek kapandıktan sonra düşer ve dosyaları siler.
     _dosya: GeciciDosya,
 }
@@ -726,7 +729,7 @@ impl Hat {
         let c = Cekirdek::ac(yol.clone(), kimlik.clone(), zaman.clone(), alarm.clone()).unwrap();
         c.gozlemci_ekle(gozlemci.clone());
         let pc = SahtePc::yeni("d_pc1", zaman.clone());
-        Hat { c, yol: yol.clone(), kimlik, zaman, alarm, gozlemci, pc, baglanti: None, _dosya: GeciciDosya(yol) }
+        Hat { c, yol: yol.clone(), kimlik, zaman, alarm, gozlemci, pc, baglanti: None, otomatik_onay: true, _dosya: GeciciDosya(yol) }
     }
 
     /// Var olan bir yerel veritabanının üstüne (yükseltme): `sql` dosyaya yazılır, sonra çekirdek açılır.
@@ -741,7 +744,7 @@ impl Hat {
         let c = Cekirdek::ac(yol.clone(), kimlik.clone(), zaman.clone(), alarm.clone()).unwrap();
         c.gozlemci_ekle(gozlemci.clone());
         let pc = SahtePc::yeni("d_pc1", zaman.clone());
-        Hat { c, yol, kimlik, zaman, alarm, gozlemci, pc, baglanti: None, _dosya: dosya }
+        Hat { c, yol, kimlik, zaman, alarm, gozlemci, pc, baglanti: None, otomatik_onay: true, _dosya: dosya }
     }
 
     /// Süreç öldü ve yeniden açıldı: bağlantı kapanış haberi verilmeden çekirdek düşer. Android'in
@@ -784,6 +787,10 @@ impl Hat {
             }
             let giden: Vec<String> = std::mem::take(&mut *b.tasima.giden.lock().unwrap());
             if giden.is_empty() {
+                if self.otomatik_onay && self.c.birlestirme_onizlemesi().unwrap().is_some() {
+                    assert!(self.c.birlestirmeyi_onayla(None).unwrap().uygulandi);
+                    continue;
+                }
                 return;
             }
             for f in giden {
