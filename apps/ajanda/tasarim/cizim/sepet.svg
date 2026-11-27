@@ -1,0 +1,13 @@
+<!-- Ajanda / Sahne çizimi "sepet". Kaynak: parca/50-ortak.js RESIM.sepet.
+     Varsayılan takım: hardal (levha zemini b=#F2B632; çizimin kendisi zemin içermez).
+     data-rol: f=figür, l=açık ayrıntı, d=koyu ayrıntı, b=zemin rengi; renk çalışma anında takımdan gelir.
+     Karakalem ve canlanan parçalar için SAHNE.md "Çizimler" bölümüne bakın. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 160" width="240" height="160">
+  <path id="pl_1" data-rol="l" d="M101 28h0a9 9 0 0 1 9 9v54a9 9 0 0 1 -9 9h-0a9 9 0 0 1 -9 -9v-54a9 9 0 0 1 9 -9z" fill="#FFF4D2" transform="rotate(-14 101 64)" />
+  <path id="pd_1" data-rol="d" d="M132 88V52q0-6 4-9v-10h10v10q4 3 4 9v36z" fill="#3B2A05" />
+  <path id="pl_2" data-rol="l" d="M155 72a13 13 0 1 0 26 0a13 13 0 1 0 -26 0z" fill="#FFF4D2" />
+  <path id="ps2_1" data-rol="d" d="M82 84q38-60 76 0" fill="none" stroke="#3B2A05" stroke-width="7" stroke-linecap="round" />
+  <path id="pf_1" data-rol="f" d="M62 84h116l-11 46q-2 10-12 10H85q-10 0-12-10z" fill="#D8432B" />
+  <path id="pd_2" data-rol="d" d="M62.5 78h115a6.5 6.5 0 0 1 6.5 6.5v0a6.5 6.5 0 0 1 -6.5 6.5h-115a6.5 6.5 0 0 1 -6.5 -6.5v-0a6.5 6.5 0 0 1 6.5 -6.5z" fill="#3B2A05" />
+  <path id="ps3_1" data-rol="l" d="M96 102v26M120 102v26M144 102v26" fill="none" stroke="#FFF4D2" stroke-width="4" stroke-linecap="round" stroke-opacity=".55" />
+</svg>

@@ -1,0 +1,8 @@
+<!-- Ajanda / Sahne çizimi "fatura". Kaynak: parca/50-ortak.js RESIM.fatura.
+     Varsayılan takım: gece (levha zemini b=#1E2A3A; çizimin kendisi zemin içermez).
+     data-rol: f=figür, l=açık ayrıntı, d=koyu ayrıntı, b=zemin rengi; renk çalışma anında takımdan gelir.
+     Karakalem ve canlanan parçalar için SAHNE.md "Çizimler" bölümüne bakın. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 160" width="240" height="160">
+  <path id="pl_1" data-rol="l" d="M78 18h84v122l-14-9-14 9-14-9-14 9-14-9-14 9z" fill="#C9D6E8" />
+  <path id="pf_1" data-rol="f" d="M127 40l-24 36h17l-9 32 28-40h-17z" fill="#F2B632" />
+</svg>
