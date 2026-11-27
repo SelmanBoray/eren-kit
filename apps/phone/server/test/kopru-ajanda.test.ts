@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -25,6 +28,7 @@ import type { AjandaFiili } from "@eren/protocol";
 import { ajandaKopruSunucuKur } from "../src/ajanda-kopru-sunucu.ts";
 import { depoKur } from "../src/depo.ts";
 import { ajandaKopruCalistir, CLAUDE_CODE_ARAC_KIMLIGI, kopruCalistir, PC_KOPRU_UYARLAYICILARI, pcKopruUyarlayicisiSec } from "../src/kopru.ts";
+import { ajandaPcAnahtarYolu } from "../src/veri-koku.ts";
 import type {
   AjandaFiilIsleyiciler,
   AjandaJetonKapsami,
@@ -781,13 +785,49 @@ describe("kopru PC köprüsü: uyarlayıcı (--uyarlayici)", () => {
     }
   });
 
+  /**
+   * Gerçek `kopru.ts` süreci, canlı veri köküne ve canlı boruya hiçbir koşulda ulaşamayacak ortamda. Boru adı
+   * sabittir (`AJANDA_BORU_ADI`); PC köprüsü yalnız anahtar dosyası okunabilirse bağlanmayı dener, o da veri
+   * kökündedir. Ortam devralınmaz: veri kökü ve onu türetebilecek her klasör boş geçici dizindir, anahtar
+   * yoktur; `EREN_KOPRU_JETON`, `CLAUDE_CODE_SESSION_ID`, `NODE_OPTIONS` taşınmaz. Yalnız `SystemRoot`
+   * geçer (Windows'ta Node'un kripto ve soketi için; veri yolu değildir). Stdin boştur.
+   */
+  const yalitilmisKopru = (argumanlar: string[]) => {
+    const kok = mkdtempSync(join(tmpdir(), "eren-kopru-yalitim-"));
+    try {
+      const ortam: Record<string, string> = {
+        EREN_KIT_DATA_DIR: kok,
+        LOCALAPPDATA: kok,
+        APPDATA: kok,
+        USERPROFILE: kok,
+        HOME: kok,
+        TEMP: kok,
+        TMP: kok,
+      };
+      const sistem = process.env.SystemRoot;
+      if (sistem !== undefined) ortam.SystemRoot = sistem;
+      assert.equal(existsSync(ajandaPcAnahtarYolu(kok)), false, "sahte kökte anahtar yok");
+      const r = spawnSync(
+        process.execPath,
+        ["--disable-warning=ExperimentalWarning", fileURLToPath(new URL("../src/kopru.ts", import.meta.url)), ...argumanlar],
+        { encoding: "utf8", timeout: 30_000, input: "", env: ortam, cwd: kok },
+      );
+      assert.deepEqual(readdirSync(kok), [], "süreç sahte köke bir şey yazmadı");
+      return r;
+    } finally {
+      rmSync(kok, { recursive: true, force: true });
+    }
+  };
+
   it("süreç: --rol pc_oturumu --uyarlayici <bilinmeyen> 2 ile çıkar, boruya bağlanmaz", () => {
-    const r = spawnSync(
-      process.execPath,
-      ["--disable-warning=ExperimentalWarning", fileURLToPath(new URL("../src/kopru.ts", import.meta.url)), "--rol", "pc_oturumu", "--uyarlayici", "yok-boyle"],
-      { encoding: "utf8", timeout: 30_000, input: "" },
-    );
+    const r = yalitilmisKopru(["--rol", "pc_oturumu", "--uyarlayici", "yok-boyle"]);
     assert.equal(r.status, 2, r.stderr);
     assert.match(r.stderr, /--uyarlayici claude-code/);
+  });
+
+  it("yalıtım, denetim gerilemiş gibi: geçerli uyarlayıcıyla aynı ortamda köprü anahtar bulamaz, bağlanmaz, stdin bitince çıkar", () => {
+    const r = yalitilmisKopru(["--rol", "pc_oturumu", "--uyarlayici", "claude-code"]);
+    assert.equal(r.error, undefined, String(r.error));
+    assert.equal(r.status, 0, r.stderr);
   });
 });

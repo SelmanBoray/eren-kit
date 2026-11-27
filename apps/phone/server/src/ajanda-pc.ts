@@ -60,6 +60,13 @@ export interface PcDefteri {
   readonly kanca: PcKancaIsleyicileri;
   /** Hiç `null` dönmez. `simdi` çağrının servis anı. */
   tur(baglam: AjandaPcBaglami, simdi: number): PcTuru;
+  /**
+   * Köprü bağlantısı kapandı (`AjandaPcBaglami.baglanti_id`; boru sunucusu bildirir, kapanış hangi
+   * yönden olursa olsun). O bağlantının taşıdığı T5 bağları bırakılır: aynı köprü kimliğinin açık başka
+   * bağlantısı bağı kullanmadıysa bağ silinir ve süreç bir sonraki tasdikinde yeniden ilk görüşle bağlanır.
+   * Bilinmeyen kimlik ya da köprü olmayan bağlantı zararsızdır. Eşzamanlıdır, atmaz.
+   */
+  kopruKapandi(baglanti_id: string): void;
 }
 
 export interface PcDefteriBagimliliklari {
@@ -85,6 +92,17 @@ interface Tasdik {
 const DAKIKA = 60_000;
 /** Bellekteki oturum bağı sayısı (harness süreci ya da oturum → köprü); eskiler atılır. */
 const BAG_ADET = AJANDA_PC_SINIRLARI.TASDIK_ADET;
+/**
+ * Bir bağın hatırladığı köprü bağlantısı sayısı. Aynı anda en çok bu kadar köprü bağlantısı açık olur;
+ * fazlası kapanışı gelmemiş bağlantılardır, en eskiler atılır.
+ */
+const BAG_BAGLANTI_ADET = AJANDA_PC_SINIRLARI.BAGLANTI_ADET;
+
+/** T5 bağı: köprünün kimliği ve bağı kullanan (tasdik tüketen) bağlantıları. */
+interface Bag {
+  kopru: string;
+  baglantilar: Set<string>;
+}
 
 /** Eski çerçeve `claude-code` uyarlayıcısının çerçevesidir; alanları birebir karşılığına çevrilir. */
 function tasdikKur(g: PcKancaGirdisi<"pc_arac">, ms: number): { cagri_id: string; tasdik: Tasdik } {
@@ -122,8 +140,8 @@ const varYok = (v: unknown): "var" | "yok" => (v === undefined ? "yok" : "var");
 export function pcDefteriKur(b: PcDefteriBagimliliklari): PcDefteri {
   const { takvim, saat, rastgele, gunluk } = b;
   const tasdikler = new Map<string, Tasdik>();
-  /** T5 bağı: `s:<harness süreci>` (yoksa `o:<oturum>`) → onu tüketen köprünün kimliği. */
-  const baglar = new Map<string, string>();
+  /** T5 bağı: `s:<harness süreci>` (yoksa `o:<oturum>`) → onu tüketen köprünün kimliği ve bağlantıları. */
+  const baglar = new Map<string, Bag>();
 
   const kanca: PcKancaIsleyicileri = {
     pc_arac(g) {
@@ -153,13 +171,38 @@ export function pcDefteriKur(b: PcDefteriBagimliliklari): PcDefteri {
    * kurulur). Eşleşmez: başka bir köprüye bağlı. Neden oturum eşitliği yetmez: Claude Code `/clear`'da
    * oturum kimliğini yeniler, MCP sunucusunu yeniden başlatmaz (2.1.332 ikili dosyası); köprünün oturumu
    * eskir, kancanınki yenidir. Süreç kimliği `/clear`'da değişmez, iki Claude Code penceresinde ayrıdır.
+   *
+   * Bağ, onu kullanan köprü bağlantılarının hepsi kapanınca bırakılır (`kopruKapandi`). Neden gerekir:
+   * `/mcp` yeniden bağlanması, oturum bildirmeyen (`pck_`) ya da hiç bildirmeyen (`b:`) köprünün yeniden
+   * açılışı köprünün kimliğini değiştirir; ölü köprüye bağlı kalan süreç, sonraki `/clear`'dan sonra tam
+   * eşleşme de bulamaz ve her çağrısı taslak olurdu. Açık köprünün bağı bırakılmaz: aynı anda açık iki
+   * köprüde A'nın tasdikini B'ninki tüketemez. Kapanış hiç gelmezse bağ kalır (eski davranış: taslak).
    */
-  const bagla = (tasdik: Tasdik, kopru: string): boolean => {
+  const bagla = (tasdik: Tasdik, kopru: string, baglanti_id: string): boolean => {
     const anahtar = tasdik.surec_id !== undefined ? `s:${tasdik.surec_id}` : `o:${tasdik.oturum_id}`;
     const bagli = baglar.get(anahtar);
-    if (tasdik.oturum_id !== kopru && bagli !== undefined && bagli !== kopru) return false;
-    sinirliKoy(baglar, anahtar, kopru, BAG_ADET);
+    if (tasdik.oturum_id !== kopru && bagli !== undefined && bagli.kopru !== kopru) return false;
+    // Aynı köprü bağlantılarını biriktirir; devralan (tam eşleşen başka köprü) yeni kümeyle başlar.
+    const baglantilar = bagli !== undefined && bagli.kopru === kopru ? bagli.baglantilar : new Set<string>();
+    baglantilar.delete(baglanti_id);
+    baglantilar.add(baglanti_id);
+    while (baglantilar.size > BAG_BAGLANTI_ADET) {
+      const ilk = baglantilar.values().next();
+      if (ilk.done === true) break;
+      baglantilar.delete(ilk.value);
+    }
+    sinirliKoy(baglar, anahtar, { kopru, baglantilar }, BAG_ADET);
     return true;
+  };
+
+  const kopruKapandi = (baglanti_id: string): void => {
+    let birakilan = 0;
+    for (const [anahtar, bag] of baglar) {
+      if (!bag.baglantilar.delete(baglanti_id) || bag.baglantilar.size > 0) continue;
+      baglar.delete(anahtar);
+      birakilan++;
+    }
+    if (birakilan > 0) gunluk.bilgi(MODUL, "pc_bag_birakildi", { baglanti_id, adet: birakilan });
   };
 
   /**
@@ -179,7 +222,7 @@ export function pcDefteriKur(b: PcDefteriBagimliliklari): PcDefteri {
       gunluk.uyari(MODUL, "pc_tasdik_yetersiz", { neden: "uyarlayici", uyarlayici: tasdik.uyarlayici.ad, surum: tasdik.uyarlayici.surum });
       return { karar: "tasdik_yok" };
     }
-    if (!tasdik.eski && !bagla(tasdik, kopru)) {
+    if (!tasdik.eski && !bagla(tasdik, kopru, baglam.baglanti_id)) {
       gunluk.uyari(MODUL, "pc_oturum_uyusmuyor", { oturum_id: tasdik.oturum_id, surec_kimligi: varYok(tasdik.surec_id) });
       return { karar: "tasdik_yok" };
     }
@@ -215,5 +258,5 @@ export function pcDefteriKur(b: PcDefteriBagimliliklari): PcDefteri {
     return { tur: insan, oturum_id, karar };
   };
 
-  return { kanca, tur };
+  return { kanca, tur, kopruKapandi };
 }
