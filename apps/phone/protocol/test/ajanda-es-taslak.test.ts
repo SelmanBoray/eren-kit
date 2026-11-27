@@ -221,3 +221,29 @@ test("olağan eşte varsayılan hatırlatma tutarlı: varsayılanlı eşe varı�
   const ozel = esKaydi(imza, { taslak: false, hatirlatmalar: [{ tur: "once", dk: 15 }] });
   assert.deepEqual(ajandaAracEsBirlesimi(ozel, imza, pcInsan(OT_A)).kayit.hatirlatmalar, [{ tur: "once", dk: 15 }]);
 });
+
+test("başka oturumun taslağı: kullanıcının elle kaydettiği konum, bölgesiz eklemede bölgesiyle birlikte kalır (S5)", () => {
+  // Taslak bölgesiz doğdu (anahtarda bölge yok); otomasyon bölge ve varış ekledi (elle değil); kullanıcı
+  // telefonda o yerin konumunu kaydetti (elle). Başka oturumda insan aynı kaydı bölgesiz ister.
+  const girdi: AjandaAracEsGirdisi = { tur: "gorev", baslik: "Süt al" };
+  const KONUM = { enlem_e6: 41_000_000, boylam_e6: 29_000_000, yaricap_m: 150 };
+  const es = esKaydi(girdi, { bolge: "market", varis: {}, simge: "market", bolge_konumu: KONUM, elle_alanlar: ["bolge_konumu"] });
+  const s = ajandaAracEsBirlesimi(es, girdi, pcInsan(OT_B));
+  assert.equal(s.baska_baglam, true);
+  assert.deepEqual(s.kayit.bolge_konumu, KONUM, "elle konum düşmez");
+  assert.equal(s.kayit.bolge, "market", "konumun bağlı olduğu bölge de kalır");
+  assert.equal(s.kayit.varis, undefined, "elle olmayan varış taşınmaz");
+  assert.equal(s.kayit.simge, undefined);
+  assert.equal(AjandaKaydi.safeParse({ ...s.kayit, taslak: false }).success, true);
+  assert.deepEqual(s.kayit.elle_alanlar, ["tur", "baslik", "bolge_konumu"], "bölge insanın sözü değildir, elle_alanlar'a girmez");
+  assert.deepEqual(s.tasinmayan, ["hatirlatmalar", "simge", "varis"]);
+  assert.equal(s.uygulanan.includes("bolge") || s.uygulanan.includes("bolge_konumu"), false);
+  // Konum elle değilse bugünkü kural: bölge de konum da taşınmaz.
+  const s2 = ajandaAracEsBirlesimi(esKaydi(girdi, { bolge: "market", bolge_konumu: KONUM }), girdi, pcInsan(OT_B));
+  assert.equal(s2.kayit.bolge, undefined);
+  assert.equal(s2.kayit.bolge_konumu, undefined);
+  // İnsan başka bir yer söylerse (aynı anahtar olamaz ama birleşim saf kural): emir, yer değişir, konum düşer.
+  const s3 = ajandaAracEsBirlesimi(es, { ...girdi, bolge: "eczane" }, pcInsan(OT_B));
+  assert.equal(s3.kayit.bolge, "eczane");
+  assert.equal(s3.kayit.bolge_konumu, undefined);
+});

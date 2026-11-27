@@ -324,6 +324,23 @@ test("ret: v3 kural ayrıntısı yalnız tutarsiz_kayit ile; metin çözümü s�
   assert.match(ajandaEkleMetni({ sonuc: "ret", mesaj_ani: AN, neden: "tutarsiz_kayit", kural: "tekrar_varis_ister" }), /^ajanda_ekle: eklenmedi, neden=tutarsiz_kayit\. Değişiklik kaydın kurallarını bozuyor\. Asistanın/);
 });
 
+test("ret: tekrar kuralları modeli seriyi kendiliğinden kaldırmaya yönlendirmez; kullanıcının tekrarı telefondan değişir (S1)", () => {
+  const c = AJANDA_ARACLARI.ajanda_guncelle.cikti;
+  assert.equal(c.safeParse({ sonuc: "ret", mesaj_ani: AN, neden: "tutarsiz_kayit", kural: "tekrar_kullanicinin" }).success, true);
+  assert.equal(AJANDA_ARACLARI.ajanda_ekle.cikti.safeParse({ sonuc: "ret", mesaj_ani: AN, neden: "tutarsiz_kayit", kural: "tekrar_kullanicinin" }).success, true);
+  const kullanicinin = ajandaGuncelleMetni({ sonuc: "ret", mesaj_ani: AN, neden: "tutarsiz_kayit", kural: "tekrar_kullanicinin" });
+  assert.match(kullanicinin, /tekrarını kullanıcı kendisi kurmuş; asistan onu değiştiremez ve kaldıramaz/);
+  assert.match(kullanicinin, /telefondaki ajanda uygulamasından/);
+  const asistanin = ajandaGuncelleMetni({ sonuc: "ret", mesaj_ani: AN, neden: "tutarsiz_kayit", kural: "tekrar_varis_ister" });
+  assert.match(asistanin, /tekrarı kendiliğinden kaldırma/);
+  for (const m of [kullanicinin, asistanin]) assert.equal(m.includes("tekrar:null"), false, m);
+  // Alan açıklamaları: varışı kaldırmak tekrara dokunmaz; tekrar:null yalnız asistanın tekrarında.
+  const sema = JSON.stringify(jsonSemasi(AJANDA_ARACLARI.ajanda_guncelle.girdi));
+  assert.equal(sema.includes("tekrar eden kayıtta tekrar:null da ver"), false);
+  assert.match(sema, /null varış hatırlatmasını kaldırır; tekrar ve örnekleri yerinde kalır/);
+  assert.match(sema, /Yalnız asistanın kurduğu tekrar değiştirilip kaldırılabilir/);
+});
+
 test("araç tanımları: varışlı kayıtta varsayılan hatırlatma kaydın zamanına göre (telefon ve PC ekleme tanımı, alan açıklaması)", () => {
   const kural = /Varışlı kayıtta hatirlatmalar verilmezse varsayılan kaydın zamanına göredir: saatli ya da tarihli tek seferlik kayıtta saatle hatırlatma da kurulur ve varış ona eklenir/;
   assert.match(AJANDA_ARAC_ACIKLAMALARI.ajanda_ekle, kural);

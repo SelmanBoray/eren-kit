@@ -105,3 +105,65 @@ describe("v3 kapalı: varışlı kayıtta yanlış 'bildirim yok' iddiası yok",
     assert.deepEqual((cikti.kayit as { hatirlatma: unknown }).hatirlatma, { toplam: 1, kurulacak: 0, saatsiz: 0, gecmis: 1 });
   });
 });
+
+/**
+ * S4(c): kapalı yüzün özeti ile `onceki_gun_hatirlatmasi` aynı yüzden hesaplanır. Varışlı kayıtta hiçbir zaman
+ * hatırlatması kurulmayacaksa özet "hatirlatma=yok" der (yanlış "bildirim gelmeyecek" iddiası yerine; v2 yüzü
+ * varışı söyleyemez); gün hatırlatmasının değişim notu da bu yüze göredir: önce görünen hatırlatma artık
+ * görünmüyorsa not verilir, iki yanda da görünmüyorsa (gerçek saat değişse de) verilmez. Varışsız kayıt ve
+ * açık yüz gerçek özetle hesaplar (bugünkü kural, baytlar değişmez).
+ */
+describe("v3 kapalı: varışlı kayıtta gün hatırlatması notu özetle çelişmez", () => {
+  const DAYANAK = { tarih: "2026-11-25", saat: "14:30" };
+  /** Saatsiz gün kaydı (gün hatırlatması 09:00), bir `once` hatırlatmalı. */
+  const gunKaydi = (tarih: string, varisli: boolean): AjandaIslem =>
+    ({
+      islem: "ekle",
+      kayit_id: "k_gun",
+      tur: "gorev",
+      baslik: "Fatura",
+      zaman: { kesinlik: "gun", tarih, saat_dilimi: DILIM },
+      hatirlatmalar: [{ tur: "once", dk: 60 }],
+      girdi_yolu: "elle",
+      ...(varisli ? { bolge: "banka", varis: {} } : {}),
+    }) as AjandaIslem;
+  const tasi = (zaman: Record<string, unknown>) => ({ kayit_id: "k_gun", dayanak: DAYANAK, degisiklik: { zaman: { kesinlik: "gun", ...zaman } } });
+
+  it("yarından bugüne (aynı saat, artık geçti): görünen hatırlatma kalktı, not verilir", async () => {
+    const o = kur();
+    o.islem(gunKaydi("2026-11-26", true));
+    const { cikti, metin } = await o.cagir("ajanda_guncelle", tasi({ tarih: "2026-11-25" }));
+    assert.equal(cikti.sonuc, "guncellendi");
+    assert.match(metin, / hatirlatma=yok\. /);
+    assert.deepEqual(cikti.onceki_gun_hatirlatmasi, { tarih: "2026-11-26", saat: "09:00", gecti: false });
+    assert.match(metin, /Hatırlatma saati değişti: önceden 09:00, şimdi gün hatırlatması yok/);
+    assert.equal(metin.includes(BILDIRIM_YOK), false);
+  });
+
+  it("geçmiş hatırlatmanın saati değişti (iki yanda da görünmüyor): not yok", async () => {
+    const o = kur();
+    o.islem(gunKaydi("2026-11-25", true));
+    const { cikti, metin } = await o.cagir("ajanda_guncelle", tasi({ tarih: "2026-11-25", gun_bolumu: "ogle" }));
+    assert.equal(cikti.sonuc, "guncellendi");
+    assert.match(metin, / hatirlatma=yok\. /);
+    assert.equal("onceki_gun_hatirlatmasi" in cikti, false, metin);
+    assert.equal(metin.includes("Hatırlatma saati değişti"), false);
+  });
+
+  it("varışsız aynı kayıtlar ve açık yüz: gerçek özetle bugünkü kural", async () => {
+    const yarindan = kur();
+    yarindan.islem(gunKaydi("2026-11-26", false));
+    const a = await yarindan.cagir("ajanda_guncelle", tasi({ tarih: "2026-11-25" }));
+    assert.equal("onceki_gun_hatirlatmasi" in a.cikti, false, "saat aynı: not yok");
+    assert.match(a.metin, /gun_hatirlatmasi=2026-11-25 Çarşamba 09:00 \(geçti\)/);
+    const ogle = kur();
+    ogle.islem(gunKaydi("2026-11-25", false));
+    const b = await ogle.cagir("ajanda_guncelle", tasi({ tarih: "2026-11-25", gun_bolumu: "ogle" }));
+    assert.deepEqual(b.cikti.onceki_gun_hatirlatmasi, { tarih: "2026-11-25", saat: "09:00", gecti: true });
+    const v3 = kur(true);
+    v3.islem(gunKaydi("2026-11-25", true));
+    const c = await v3.cagir("ajanda_guncelle", tasi({ tarih: "2026-11-25", gun_bolumu: "ogle" }));
+    assert.deepEqual(c.cikti.onceki_gun_hatirlatmasi, { tarih: "2026-11-25", saat: "09:00", gecti: true });
+    assert.match(c.metin, /gun_hatirlatmasi=2026-11-25 Çarşamba 11:00 \(geçti\)/);
+  });
+});

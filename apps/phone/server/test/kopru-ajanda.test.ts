@@ -221,8 +221,10 @@ class SahteAjandaServisi {
   baglanDenemesi = 0;
   davranis: Davranis = () => {};
   ret: string | null = null;
-  /** Servisin v3 araç yüzü (`kopru_welcome.arac_v3`); bu dosyanın bugünkü testleri açık yüzle. */
+  /** Servisin v3 araç yüzü (`kopru_welcome.arac_v3`, yalnız hello'da isteyene); bu dosyanın bugünkü testleri açık yüzle. */
   aracV3 = true;
+  /** v3 öncesi servis: katı hello şeması, fazladan alanlı hello `kopru_ret{yetkisiz}` alır ve kapanır. */
+  eskiServis = false;
 
   get son(): SatirBaglantisi {
     const b = this.baglantilar.at(-1);
@@ -267,8 +269,11 @@ class SahteAjandaServisi {
         bag.gelen.push(m);
         queueMicrotask(() => {
           if (m["type"] === "kopru_hello") {
-            if (this.ret) bag.yolla({ type: "kopru_ret", code: this.ret });
-            else bag.yolla({ type: "kopru_welcome", rol: m["rol"], ...(this.aracV3 ? { arac_v3: true } : {}) });
+            if (this.eskiServis && Object.keys(m).some((k) => !["v", "type", "rol", "jeton"].includes(k))) {
+              bag.yolla({ type: "kopru_ret", code: "yetkisiz" });
+              bag.kapat();
+            } else if (this.ret) bag.yolla({ type: "kopru_ret", code: this.ret });
+            else bag.yolla({ type: "kopru_welcome", rol: m["rol"], ...(this.aracV3 && m["arac_v3"] === true ? { arac_v3: true } : {}) });
             return;
           }
           this.davranis(m, bag);
@@ -336,7 +341,7 @@ describe("kopru ajanda kipi: araç listesi ve el sıkışma", () => {
   it("hello ajanda borusuna ana_oturum rolü ve EREN_KOPRU_JETON ile gider", async () => {
     const { servis } = await sahteKur();
     await bekleKosul(() => servis.baglantilar.length > 0 && servis.son.gelen.length > 0);
-    assert.deepEqual(servis.son.gelen[0], { v: 1, type: "kopru_hello", rol: "ana_oturum", jeton: JETON });
+    assert.deepEqual(servis.son.gelen[0], { v: 1, type: "kopru_hello", rol: "ana_oturum", jeton: JETON, arac_v3: true });
   });
 
   it("eski kipler değişmedi: eren rolünde ajanda aracı yayınlanmaz", async () => {
@@ -838,7 +843,8 @@ describe("kopru ajanda kipi: v3 araç yüzü kapalı", () => {
       s.aracV3 = false;
       s.yanitla({ ok: true, sonuc: EKLE_CIKTI });
     });
-    assert.equal(istemci.getServerCapabilities()?.tools?.listChanged, true);
+    // v3 öncesi gibi: yüz kapalı bilindi, `listChanged` ilan edilmez.
+    assert.deepEqual(istemci.getServerCapabilities()?.tools, {});
     v2YuzuMu((await istemci.listTools()).tools);
     // Bugünkü v2'deki gibi: katı şemanın bilinmeyen anahtarı, alan başına bir satır (değer yazılmaz).
     for (const [fiil, girdi, beklenen] of [
@@ -916,18 +922,101 @@ describe("kopru ajanda kipi: v3 araç yüzü kapalı", () => {
     assert.equal(degisti, 2);
   });
 
-  it("servis: kapalıyken welcome bugünkü bayt (arac_v3 yok), açıkken arac_v3:true", async () => {
-    for (const v3 of [false, true]) {
+  it("servis: kapalıyken welcome bugünkü bayt (arac_v3 yok), açıkken yalnız hello'da isteyene arac_v3:true", async () => {
+    for (const [v3, iste] of [[false, false], [false, true], [true, false], [true, true]] as const) {
       const u = await ucKur({}, v3);
       const satirlar: string[] = [];
       const bag = await u.boru.baglan(AJANDA_BORU_ADI);
       bag.satirDinle((s) => void satirlar.push(s));
-      bag.satirYaz(JSON.stringify({ v: 1, type: "kopru_hello", rol: "ana_oturum", jeton: JETON }));
+      bag.satirYaz(JSON.stringify({ v: 1, type: "kopru_hello", rol: "ana_oturum", jeton: JETON, ...(iste ? { arac_v3: true } : {}) }));
       await bekleKosul(() => satirlar.length > 0, "welcome");
-      assert.equal(satirlar[0], v3 ? '{"v":1,"type":"kopru_welcome","rol":"ana_oturum","arac_v3":true}' : '{"v":1,"type":"kopru_welcome","rol":"ana_oturum"}');
+      assert.equal(
+        satirlar[0],
+        v3 && iste ? '{"v":1,"type":"kopru_welcome","rol":"ana_oturum","arac_v3":true}' : '{"v":1,"type":"kopru_welcome","rol":"ana_oturum"}',
+        `ayar=${v3} iste=${iste}`,
+      );
       bag.kapat();
       await bosalt();
     }
+  });
+
+  it("kapalıyken açılan oturum: listChanged yok; ayar sonra açılsa da köprü v3 istemez, yüz v2 kalır, bildirim gitmez", async () => {
+    const u = await ucKur({}, false);
+    const { istemci } = await kopruAc(u.boru.baglan);
+    let degisti = 0;
+    istemci.setNotificationHandler(ToolListChangedNotificationSchema, () => {
+      degisti += 1;
+    });
+    assert.deepEqual(istemci.getServerCapabilities()?.tools, {});
+    v2YuzuMu((await istemci.listTools()).tools);
+    await u.sunucu.kapat();
+    u.sunucu = await u.sunucuAc(true);
+    await bekleKosul(() => u.boru.baglantiSayisi() === 2, "yeniden bağlanma");
+    await bosalt(20);
+    assert.equal(degisti, 0);
+    v2YuzuMu((await istemci.listTools()).tools);
+    const r = await istemci.callTool({ name: "ajanda_ekle", arguments: V3_EKLE });
+    assert.equal(metin(r), "hata: gecersiz_mesaj\nbolge: bilinmeyen alan, kaldır\nvaris: bilinmeyen alan, kaldır");
+    // v2 çağrısı açık serviste çalışır, çıktı v2 yüzünde.
+    const v2 = await istemci.callTool({ name: "ajanda_ekle", arguments: EKLE_GIRDI });
+    assert.equal(metin(v2), ajandaEkleMetni(EKLE_CIKTI));
+  });
+
+  it("v3 öncesi servis (katı hello): alanlı hello reddedilir, köprü beklemeden alansız yeniden dener, v2 ile çalışır", async () => {
+    const { servis, istemci, bekleme } = await sahteKur((s) => {
+      s.eskiServis = true;
+      s.yanitla({ ok: true, sonuc: EKLE_CIKTI });
+    });
+    assert.equal(servis.baglantilar.length, 2);
+    assert.equal(servis.baglantilar[0]!.gelen[0]!["arac_v3"], true);
+    assert.equal("arac_v3" in servis.baglantilar[1]!.gelen[0]!, false);
+    assert.deepEqual(bekleme, [], "yeniden deneme beklemeden");
+    assert.deepEqual(istemci.getServerCapabilities()?.tools, {});
+    v2YuzuMu((await istemci.listTools()).tools);
+    const r = await istemci.callTool({ name: "ajanda_ekle", arguments: EKLE_GIRDI });
+    assert.equal(metin(r), ajandaEkleMetni(EKLE_CIKTI));
+  });
+});
+
+describe("ajanda-kopru-sunucu: v3 öncesi köprü (hello'da arac_v3 yok) açık serviste", () => {
+  /** v3 öncesi köprünün yaptığı: alansız hello, sonra ham istek; yanıt satırı döner. */
+  const eskiKopru = async (u: UcDuzenek, fiil: AjandaFiili, girdi: unknown): Promise<Record<string, unknown>> => {
+    const satirlar: string[] = [];
+    const bag = await u.boru.baglan(AJANDA_BORU_ADI);
+    bag.satirDinle((s) => void satirlar.push(s));
+    bag.satirYaz(JSON.stringify({ v: 1, type: "kopru_hello", rol: "ana_oturum", jeton: JETON }));
+    await bekleKosul(() => satirlar.length > 0, "welcome");
+    assert.equal(satirlar[0], '{"v":1,"type":"kopru_welcome","rol":"ana_oturum"}');
+    bag.satirYaz(JSON.stringify({ v: 1, type: "istek", istek_id: "i1", fiil, girdi }));
+    await bekleKosul(() => satirlar.length > 1, "yanit");
+    bag.kapat();
+    await bosalt();
+    return JSON.parse(satirlar[1]!) as Record<string, unknown>;
+  };
+
+  it("v3 alanlı çıktı v2 yüzüne iner (bolge_yeni, özette varis, liste bolgeler ve kayıt bölgesi düşer)", async () => {
+    for (const [fiil, sonuc, girdi, beklenen] of [
+      ["ajanda_ekle", { ...EKLE_CIKTI, bolge_yeni: true }, EKLE_GIRDI, EKLE_CIKTI],
+      ["ajanda_ekle", { ...EKLE_CIKTI, kayit: { ...OZET, varis: {} } }, EKLE_GIRDI, EKLE_CIKTI],
+      ["ajanda_listele", { ...LISTE_CIKTI, bolgeler: ["market"] }, {}, LISTE_CIKTI],
+    ] as const) {
+      const u = await ucKur({ [fiil]: { ok: true, deger: sonuc } }, true);
+      const y = await eskiKopru(u, fiil, girdi);
+      assert.equal(y["ok"], true, fiil);
+      assert.deepEqual(y["sonuc"], JSON.parse(JSON.stringify(beklenen)), fiil);
+      assert.equal(ajandaAraclari(false)[fiil].cikti.safeParse(y["sonuc"]).success, true, fiil);
+    }
+    const u = await ucKur({ ajanda_listele: { ok: true, deger: { ...LISTE_CIKTI, kayitlar: [{ ...kayit(), bolge: "market" }] } } }, true);
+    const y = await eskiKopru(u, "ajanda_listele", {});
+    assert.equal(y["ok"], true);
+    assert.equal(ajandaAraclari(false).ajanda_listele.cikti.safeParse(y["sonuc"]).success, true);
+    assert.equal(JSON.stringify(y).includes("market"), false);
+  });
+
+  it("v3 şemasına da uymayan çıktı (konum sızıntısı) yine ic_hata", async () => {
+    const u = await ucKur({ ajanda_listele: { ok: true, deger: { ...LISTE_CIKTI, kayitlar: [{ ...kayit(), bolge_konumu: { enlem: 41, boylam: 29 } }] } } }, true);
+    const y = await eskiKopru(u, "ajanda_listele", {});
+    assert.deepEqual([y["ok"], y["code"]], [false, "ic_hata"]);
   });
 });
 

@@ -297,7 +297,13 @@ function geceAyniTurNotu(an: AjandaYerelAn): string {
 const KURAL_METNI: Readonly<Record<AjandaAracKurali, string>> = {
   varis_bolge_ister: " Varış hatırlatması bölge ister: bölgeyi kaldırırken varis:null da ver ya da bölgeyi bırak.",
   tekrar_varis_ister:
-    " Asistanın kurduğu tekrar yalnız varışlı kayıtta olur: tekrar için bolge ve varis de ver; varışı kaldırırken tekrar:null da ver.",
+    " Asistanın kurduğu tekrar yalnız varışlı kayıtta olur: tekrar için bolge ve varis de ver. Bu kayıttan varışı " +
+    "kaldırmak seriyi (yinelenmeyi ve işaretlenmiş günlerini) de kaldırır: tekrarı kendiliğinden kaldırma; " +
+    "kullanıcıya bunu söyle, yalnız kullanıcı seriyi de kaldırmayı açıkça isterse tekrarı da kaldırarak yeniden çağır.",
+  tekrar_kullanicinin:
+    " Bu kaydın tekrarını kullanıcı kendisi kurmuş; asistan onu değiştiremez ve kaldıramaz. Tekrara dokunmadan " +
+    "yeniden çağır (varış ve bölge tekrara dokunmadan kaldırılabilir); tekrarın değişmesi gerekiyorsa kullanıcıya " +
+    "bunu telefondaki ajanda uygulamasından yapmasını söyle.",
 };
 
 function retMetni(fiil: string, eylem: string, neden: string, an: AjandaYerelAn, ayniTur = false, kural?: AjandaAracKurali): string {

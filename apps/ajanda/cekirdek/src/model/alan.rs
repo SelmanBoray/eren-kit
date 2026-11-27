@@ -210,8 +210,13 @@ impl AjandaVaris {
 /// RFC 3986'nın izin vermediği, tarayıcıların farklı yorumladığı yazdırılabilir ASCII karakterler.
 const URL_YASAK: &[u8] = b"\"<>\\^`{|}";
 
+/// 1..63 tane `A-Za-z0-9_-`; ilk ve son karakteri harf ya da rakam.
 fn etiket_mi(e: &str) -> bool {
-    (1..=63).contains(&e.len()) && e.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-')
+    let b = e.as_bytes();
+    (1..=63).contains(&b.len())
+        && b.iter().all(|c| c.is_ascii_alphanumeric() || *c == b'_' || *c == b'-')
+        && b[0].is_ascii_alphanumeric()
+        && b[b.len() - 1].is_ascii_alphanumeric()
 }
 
 /// `^[1-9][0-9]{0,4}$` ve değeri en çok 65535.
@@ -230,7 +235,9 @@ fn port_mu(p: &str) -> bool {
 /// 3. Yetki: önekten sonra ilk `/`, `?` ya da `#`'e (yoksa sona) kadar; içinde `@` yok.
 /// 4. `[` ile başlıyorsa IPv6 (`[` + 2..45 tane `0-9A-Fa-f:.` + `]`, içinde `:`), sonrası boş ya da `:port`;
 ///    değilse ilk `:`'a kadar ana bilgisayar adı (en çok 253, `.` ile ayrılmış 1..63'lük `A-Za-z0-9_-`
-///    etiketleri), `:` varsa sonrası port.
+///    etiketleri; her etiket harf ya da rakamla başlar ve biter), `:` varsa sonrası port.
+///
+/// Yerel ve özel adresler (`127.0.0.1`, `[::1]`, `localhost`) bilinçli olarak geçer (gerekçe TS'de).
 /// 5. Port: baştaki sıfırsız 1..5 rakam, değeri 1..65535.
 pub fn ajanda_url_alan_adi(url: &str) -> Option<String> {
     if url.is_empty() || utf16_uzunluk(url) > BAGLANTI_URL {

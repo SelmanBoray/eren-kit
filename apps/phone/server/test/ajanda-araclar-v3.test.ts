@@ -386,7 +386,7 @@ describe("ajanda araçları v3: gizlilik (konum ve ek üstverisi)", () => {
     const bosalt = async () => {
       for (let i = 0; i < 8; i++) await new Promise<void>((r) => setImmediate(r));
     };
-    b.satirGonder(JSON.stringify({ v: PROTOKOL_SURUMU, type: "kopru_hello", rol: "ana_oturum", jeton }));
+    b.satirGonder(JSON.stringify({ v: PROTOKOL_SURUMU, type: "kopru_hello", rol: "ana_oturum", jeton, arac_v3: true }));
     await bosalt();
 
     konumluKayit(o);
@@ -455,7 +455,7 @@ describe("ajanda araçları v3: gizlilik (konum ve ek üstverisi)", () => {
     await sunucu.baslat(isleyiciler as unknown as typeof o.ajanda.araclar);
     const jeton = sunucu.jetonUret({ rol: "ana_oturum", sohbet_id: "ana", nesil: 3 });
     const b = boru.baglan(AJANDA_BORU_ADI);
-    b.satirGonder(JSON.stringify({ v: PROTOKOL_SURUMU, type: "kopru_hello", rol: "ana_oturum", jeton }));
+    b.satirGonder(JSON.stringify({ v: PROTOKOL_SURUMU, type: "kopru_hello", rol: "ana_oturum", jeton, arac_v3: true }));
     for (let i = 0; i < 5; i++) await new Promise<void>((r) => setImmediate(r));
     b.satirGonder(JSON.stringify({ v: PROTOKOL_SURUMU, type: "istek", istek_id: "i1", fiil: "ajanda_listele", girdi: {} }));
     for (let i = 0; i < 8; i++) await new Promise<void>((r) => setImmediate(r));
@@ -463,5 +463,118 @@ describe("ajanda araçları v3: gizlilik (konum ve ek üstverisi)", () => {
     assert.deepEqual(JSON.parse(satir), { v: PROTOKOL_SURUMU, type: "yanit", istek_id: "i1", ok: false, code: "ic_hata" });
     sizmaz(b.yazilanlar.join("\n") + JSON.stringify(o.gunluk.girdiler), "sınır");
     await sunucu.kapat();
+  });
+});
+
+describe("ajanda araçları v3: asistan kendisinin kurmadığı tekrara dokunamaz (S1)", () => {
+  /** Kullanıcının telefonda (elle) kurduğu "her ay kira": aylık tekrar, banka varışı, bir örnek satırı. */
+  const kiraKaydi = (o: ReturnType<typeof kur>, kayit_id = "k_kira") => {
+    o.islem({
+      islem: "ekle",
+      kayit_id,
+      tur: "gorev",
+      baslik: "Kira",
+      zaman: { kesinlik: "gun", tarih: "2026-12-01", saat_dilimi: DILIM },
+      tekrar: { siklik: "aylik", aralik: 1 },
+      hatirlatmalar: [{ tur: "once", dk: 60 }],
+      girdi_yolu: "elle",
+      bolge: "banka",
+      varis: {},
+    });
+    o.islem({ islem: "durum", kayit_id, durum: "tamam", ornek_tarihi: "2026-12-01" });
+    return kayit_id;
+  };
+  const AYLIK = { siklik: "aylik", aralik: 1 };
+
+  it("telefonda kurulmuş seriden varış kaldırılır; seri, örnekleri ve hatırlatmaları bozulmaz", async () => {
+    const o = kur();
+    const id = kiraKaydi(o);
+    o.durum.tur = insanTuru("bankaya varınca hatırlatmayı kaldır");
+    const r = await o.guncelle({ kayit_id: id, degisiklik: { varis: null } });
+    assert.equal(r.sonuc, "guncellendi", JSON.stringify(r));
+    const k = o.kayit(id);
+    assert.equal(k.varis, undefined);
+    assert.deepEqual(k.tekrar, AYLIK);
+    assert.deepEqual(k.ornekler, [{ tarih: "2026-12-01", durum: "tamam" }]);
+    assert.deepEqual(k.hatirlatmalar, [{ tur: "once", dk: 60 }]);
+    assert.equal(k.bolge, "banka");
+    // Bölge de kaldırılabilir; seri yine kalır.
+    const b = await o.guncelle({ kayit_id: id, degisiklik: { bolge: null } });
+    assert.equal(b.sonuc, "guncellendi", JSON.stringify(b));
+    assert.deepEqual(o.kayit(id).tekrar, AYLIK);
+  });
+
+  it("telefonda kurulmuş tekrar araçla kaldırılamaz ve değiştirilemez: tutarsiz_kayit + tekrar_kullanicinin; kayıt değişmez", async () => {
+    const o = kur();
+    const id = kiraKaydi(o);
+    const once = o.kayit(id);
+    for (const degisiklik of [
+      { tekrar: null },
+      { varis: null, tekrar: null },
+      { tekrar: { siklik: "gunluk" as const } },
+      { baslik: "Kira öde", tekrar: null },
+    ]) {
+      const r = await o.guncelle({ kayit_id: id, degisiklik });
+      assert.deepEqual(r, { sonuc: "ret", mesaj_ani: MESAJ_ANI, neden: "tutarsiz_kayit", kural: "tekrar_kullanicinin" }, JSON.stringify(degisiklik));
+      const m = ajandaGuncelleMetni(r);
+      assert.match(m, /kullanıcı kendisi kurmuş/);
+      assert.match(m, /telefondaki ajanda uygulamasından/);
+      assert.equal(m.includes("tekrar:null"), false, "ret metni tekrarı kaldırmaya yönlendirmez");
+    }
+    assert.deepEqual(o.kayit(id), once);
+  });
+
+  it("asistanın kurduğu tekrarda varış kaldırma reddi seriyi kendiliğinden kaldırmaya yönlendirmez", async () => {
+    const o = kur();
+    const id = kimlik(await o.ekle(IMZA));
+    const r = await o.guncelle({ kayit_id: id, degisiklik: { varis: null } });
+    assert.ok(r.sonuc === "ret" && r.kural === "tekrar_varis_ister", JSON.stringify(r));
+    const m = ajandaGuncelleMetni(r);
+    assert.equal(m.includes("varışı kaldırırken tekrar:null da ver"), false);
+    assert.match(m, /yalnız kullanıcı seriyi de kaldırmayı açıkça isterse/);
+    // Kullanıcı seriyi de kaldırmayı isterse birlikte olur (asistanın kendi tekrarı).
+    const g = await o.guncelle({ kayit_id: id, degisiklik: { varis: null, tekrar: null } });
+    assert.equal(g.sonuc, "guncellendi");
+    assert.equal(o.kayit(id).tekrar, undefined);
+  });
+
+  it("tekrarın sahibi onu son yazan: telefonda değişen tekrar kullanıcınındır; telefonda başka alan değişince asistanınki kalır", async () => {
+    const o = kur();
+    const id = kimlik(await o.ekle(IMZA));
+    // Telefonda yalnız başlık değişti: tekrar hâlâ asistanın.
+    o.islem({ islem: "guncelle", kayit_id: id, temel_revizyon: o.kayit(id).revizyon, degisiklik: { baslik: "İmza at" } });
+    const t = await o.guncelle({ kayit_id: id, degisiklik: { tekrar: { siklik: "gunluk" } } });
+    assert.equal(t.sonuc, "guncellendi", JSON.stringify(t));
+    // Telefonda tekrar değişti: artık kullanıcının.
+    o.islem({ islem: "guncelle", kayit_id: id, temel_revizyon: o.kayit(id).revizyon, degisiklik: { tekrar: { siklik: "haftalik", aralik: 2, gunler: ["pzt"] } } });
+    const r = await o.guncelle({ kayit_id: id, degisiklik: { tekrar: null, varis: null } });
+    assert.ok(r.sonuc === "ret" && r.kural === "tekrar_kullanicinin", JSON.stringify(r));
+    // Varışı tek başına kaldırmak olur, seri kalır.
+    const v = await o.guncelle({ kayit_id: id, degisiklik: { varis: null } });
+    assert.equal(v.sonuc, "guncellendi", JSON.stringify(v));
+    assert.deepEqual(o.kayit(id).tekrar, { siklik: "haftalik", aralik: 2, gunler: ["pzt"] });
+  });
+
+  it("eşe ekleme de kullanıcının tekrarını değiştiremez; aynı tekrarı söylemek değişiklik değildir", async () => {
+    const o = kur();
+    const id = kimlik(await o.ekle(IMZA));
+    const KULLANICININ = { siklik: "haftalik", aralik: 1, gunler: ["pzt", "car", "cum"] } as const;
+    o.islem({ islem: "guncelle", kayit_id: id, temel_revizyon: o.kayit(id).revizyon, degisiklik: { tekrar: { ...KULLANICININ, gunler: [...KULLANICININ.gunler] } } });
+    const once = o.kayit(id);
+    const r = await o.ekle({ ...IMZA, tekrar: { siklik: "gunluk" } });
+    assert.deepEqual(r, { sonuc: "ret", mesaj_ani: MESAJ_ANI, neden: "tutarsiz_kayit", kural: "tekrar_kullanicinin" });
+    assert.deepEqual(o.kayit(id), once);
+    const ayni = await o.ekle({ ...IMZA, tekrar: { siklik: "haftalik", gunler: ["pzt", "car", "cum"] } });
+    assert.equal(ayni.sonuc, "zaten_var", JSON.stringify(ayni));
+  });
+
+  it("sentetik turda kullanıcının tekrarı korunur (bugünkü korunan_alanlar yolu)", async () => {
+    const o = kur();
+    const id = kimlik(await o.ekle(IMZA));
+    o.islem({ islem: "guncelle", kayit_id: id, temel_revizyon: o.kayit(id).revizyon, degisiklik: { tekrar: { siklik: "gunluk", aralik: 1 } } });
+    o.durum.tur = sentetikTur();
+    const r = await o.guncelle({ kayit_id: id, degisiklik: { tekrar: null } });
+    assert.equal(r.sonuc, "ret");
+    assert.ok(r.sonuc === "ret" && r.neden === "sentetik_turda_izinsiz");
   });
 });

@@ -432,6 +432,72 @@
    "alan_adi": null
   },
   {
+   "ad": "yalnız tire",
+   "url": "http://-",
+   "gecerli": false,
+   "alan_adi": null
+  },
+  {
+   "ad": "yalnız alt çizgi",
+   "url": "http://_",
+   "gecerli": false,
+   "alan_adi": null
+  },
+  {
+   "ad": "tireyle başlayan etiket",
+   "url": "https://-ornek.com",
+   "gecerli": false,
+   "alan_adi": null
+  },
+  {
+   "ad": "tireyle biten etiket",
+   "url": "https://ornek-.com",
+   "gecerli": false,
+   "alan_adi": null
+  },
+  {
+   "ad": "alt çizgiyle başlayan etiket",
+   "url": "https://_dmarc.ornek.com",
+   "gecerli": false,
+   "alan_adi": null
+  },
+  {
+   "ad": "alt çizgiyle biten etiket",
+   "url": "https://ornek_.com",
+   "gecerli": false,
+   "alan_adi": null
+  },
+  {
+   "ad": "tek harf etiket",
+   "url": "http://a",
+   "gecerli": true,
+   "alan_adi": "a"
+  },
+  {
+   "ad": "içte alt çizgi ve çift tire",
+   "url": "https://a_b.c--d.e",
+   "gecerli": true,
+   "alan_adi": "a_b.c--d.e"
+  },
+  {
+   "ad": "geri döngü IPv4 (bilinçli geçer)",
+   "url": "https://127.0.0.1",
+   "gecerli": true,
+   "alan_adi": "127.0.0.1"
+  },
+  {
+   "ad": "geri döngü IPv6 (bilinçli geçer)",
+   "url": "http://[::1]",
+   "gecerli": true,
+   "alan_adi": "[::1]"
+  },
+  {
+   "ad": "localhost portlu (bilinçli geçer)",
+   "url": "http://localhost:8080/",
+   "gecerli": true,
+   "alan_adi": "localhost"
+  },
+  {
    "ad": "64 karakter etiket",
    "url": "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com",
    "gecerli": false,

@@ -158,7 +158,8 @@ export type AjandaVaris = z.infer<typeof AjandaVaris>;
 
 /** RFC 3986'nın izin vermediği, tarayıcıların farklı yorumladığı yazdırılabilir ASCII karakterler. */
 const URL_YASAK = '"<>\\^`{|}';
-const ETIKET_DESENI = /^[A-Za-z0-9_-]{1,63}$/;
+/** 1..63 karakter; harf ya da rakamla başlar ve biter, içte `_` ve `-` serbest. */
+const ETIKET_DESENI = /^[A-Za-z0-9](?:[A-Za-z0-9_-]{0,61}[A-Za-z0-9])?$/;
 const IPV6_DESENI = /^\[[0-9A-Fa-f:.]{2,45}\]$/;
 const PORT_DESENI = /^[1-9][0-9]{0,4}$/;
 
@@ -172,9 +173,15 @@ const PORT_DESENI = /^[1-9][0-9]{0,4}$/;
  * 4. Yetkide `@` yok (kullanıcı bilgisi yok).
  * 5. Yetki `[`...`]` ile başlıyorsa IPv6 (`[` + 2..45 tane `0-9A-Fa-f:.` + `]`, içinde `:`), sonrası boş
  *    ya da `:port`. Değilse ilk `:`'a kadar ana bilgisayar adı: en çok 253, `.` ile ayrılmış etiketler,
- *    her etiket 1..63 tane `A-Za-z0-9_-`; `:` varsa sonrası port.
+ *    her etiket 1..63 tane `A-Za-z0-9_-`, ilk ve son karakteri harf ya da rakam (`http://-`, `http://_`,
+ *    `-a.com`, `a_.com` geçmez); `:` varsa sonrası port.
  * 6. Port: baştaki sıfırsız 1..5 rakam, değeri 1..65535.
  * Yolun, sorgunun ve parçanın içeriği 1. adımdan başka denetlenmez.
+ *
+ * Yerel ve özel adresler (`127.0.0.1`, `[::1]`, `localhost`, `192.168.x.x`) bilinçli olarak geçer: bağlantı
+ * eylemsizdir, telefon yalnız kullanıcı dokununca sistem tarayıcısında açar ve alan adını gösterir; ev ağındaki
+ * cihaz ya da geliştirme sunucusu meşru bir nottur. Metinsel yasak listesi güvenlik de vermezdi: tarayıcı
+ * `http://2130706433` ya da `http://0x7f.1`'i de `127.0.0.1` diye çözer (tam WHATWG IPv4 çözümlemesi gerekirdi).
  */
 export function ajandaUrlAlanAdi(url: string): string | null {
   if (url.length < 1 || url.length > AJANDA_SINIRLARI.BAGLANTI_URL) return null;

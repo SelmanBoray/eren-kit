@@ -1316,7 +1316,9 @@ const kanonikSirada = (l: readonly AjandaAlani[]): AjandaAlani[] => AJANDA_ALANL
  *   kayıt, insanın çağrısı tek başına ne doğuracaksa odur: verilen her alan verilen değeri alır (`zaman`
  *   kullanıcının `ifade`'siyle, `bolge` onun yazılışıyla), verilmeyen alan kalkar, `hatirlatmalar` verilmediyse
  *   varsayılana (`ajandaAracVarsayilanHatirlatmalari`) döner; `elle_alanlar` doğan kaydınkidir (verilen
- *   alanlar). İstisna: eşin `elle_alanlar`'ındaki alan (bir kullanıcı emri ya da uygulama koymuştur) kalır.
+ *   alanlar). İstisna: eşin `elle_alanlar`'ındaki alan (bir kullanıcı emri ya da uygulama koymuştur) kalır;
+ *   elle konum (`bolge_konumu`) kalınca insan bölge vermediyse konumun bölgesi de kalır (konum bölgesiz
+ *   duramaz; bölge bu yüzden `elle_alanlar`'a girmez).
  *   Kimlik, kaynak izi, oluşturma anı ve geçmiş korunur; taşınmayanlar geçmiş satırında öncesiyle ve
  *   sonrasıyla (kalkan alan `null`) görünür.
  * - Varsayılan hatırlatma iki yolda da tutarlıdır: `hatirlatmalar` verilmediyse ve eşin `elle_alanlar`'ında
@@ -1332,10 +1334,14 @@ export function ajandaAracEsBirlesimi(es: AjandaKaydi, girdi: AjandaAracEsGirdis
     Object.assign(d, ajandaEsDegisikligi(es, girdi));
     for (const alan of ["simge", "varis", "tekrar", "baglantilar"] as const) if (verilen[alan] !== undefined) d[alan] = verilen[alan];
   } else {
+    // Kullanıcının elle koyduğu konum kalır; konum bölgesiz duramaz, o yüzden bağlı olduğu bölge de kalır
+    // (insan bölge vermediyse; verdiyse emirdir, `ajandaDegisikligiUygula` yer değişince konumu düşürür).
+    const konumElle = es.bolge_konumu !== undefined && es.elle_alanlar.includes("bolge_konumu");
+    const kalir = (alan: AjandaAlani): boolean => es.elle_alanlar.includes(alan) || (alan === "bolge" && konumElle);
     for (const alan of AJANDA_ALANLARI) {
       if (alan === "durum" || alan === "hatirlatmalar") continue;
       if (verilen[alan] !== undefined) d[alan] = verilen[alan];
-      else if (es[alan] !== undefined && !es.elle_alanlar.includes(alan)) {
+      else if (es[alan] !== undefined && !kalir(alan)) {
         d[alan] = null;
         tasinmayan.push(alan);
       }

@@ -3,11 +3,13 @@ import {
   type AjandaAlanDegisikligi,
   type AjandaFiili,
   type AjandaKaydi,
+  type AjandaKayitOzeti,
   type AjandaKaynagi,
   type AjandaYazar,
   type AjandaYerelAn,
   type AjandaZamani,
   type AjandaAracKurali,
+  ARAC_YOLLARI,
   ajandaAracCiktisiV2,
   ajandaAracEsBirlesimi,
   ajandaAracKaydi,
@@ -91,8 +93,13 @@ import type {
  *   Hatırlatma verilmezse varsayılan kaydın zamanına göredir (`ajandaAracVarsayilanHatirlatmalari`): saatli
  *   ya da tarihli tek seferlik varışlı kayıtta olağan varsayılan (varış ona eklenir), zamansız varışlı
  *   kayıtta ve tekrarda `[]` (bildirim yalnız varıştan).
- *   Güncellemede birleşmiş kayıt araç kuralını bozarsa (`varis` bölgesiz; araç tekrarı varışsız)
- *   `tutarsiz_kayit` + `kural`. Bir bölge adı veren başarılı çağrıda konumlu, silinmemiş, aynı eşleşme
+ *   Güncellemede birleşmiş kayıt araç kuralını bozarsa (`varis` bölgesiz; asistanın kurduğu tekrar
+ *   varışsız; asistanın kurmadığı tekrar değişiyor) `tutarsiz_kayit` + `kural` (`aracKuraliBozuk`).
+ *   Tekrarın sahibi onu son yazan geçmiş satırıdır (`tekrarAracinMi`): yazarı asistan aracı yolu
+ *   (`ARAC_YOLLARI`) değilse (kullanıcı telefonda kurdu) araç o tekrarı ne değiştirir ne kaldırır
+ *   (`tekrar_kullanicinin`; eşe eklemede de); "yalnız varışlı" kuralı ona uygulanmaz, varış ve bölge
+ *   seriye dokunmadan kalkar. v3 öncesinde araç tekrara hiç dokunamıyordu: güvenlik çizgisi budur.
+ *   Bir bölge adı veren başarılı çağrıda konumlu, silinmemiş, aynı eşleşme
  *   anahtarlı hiçbir kayıt yoksa `bolge_yeni:true` (`bolgeYeniMi`). Sentetik turdaki varışlı ekleme de
  *   taslak doğar (kural değişmedi).
  * - Gizlilik: liste kayıtları YALNIZ `ajandaAracKaydi`'dan geçerek döner (konum düşer, ekler sayıya iner);
@@ -137,10 +144,24 @@ type AracAlanlari = Pick<
   "tur" | "baslik" | "aciklama" | "zaman" | "hatirlatmalar" | "durum" | "tekrar" | "simge" | "bolge" | "varis" | "baglantilar"
 >;
 
-/** Tekrar bu değişiklikle kuruldu ya da varış kaldırıldı ve birleşmiş kayıtta tekrar varışsız kaldı. */
-function aracKuraliBozuk(k: AjandaKaydi, uygulanan: readonly string[]): AjandaAracKurali | null {
+/**
+ * Birleşmiş kaydın araç kuralları (güncelleme). `onceki`: değişiklikten önceki kayıt; `aracinTekrari`: onun
+ * tekrarını asistan mı kurdu (`tekrarAracinMi`; tekrarsızda önemsiz).
+ * - `tekrar_kullanicinin`: asistanın kurmadığı tekrar bu değişiklikle değişiyor ya da kalkıyor.
+ * - `varis_bolge_ister`: varış bölgesiz kaldı.
+ * - `tekrar_varis_ister`: birleşmiş kayıtta varışsız kalan tekrar asistanınki (bu değişiklikle kuruldu ya da
+ *   asistanın kurduğu tekrardan varış kalktı). Kullanıcının tekrarı varışsız kalabilir: kural ona uygulanmaz.
+ */
+function aracKuraliBozuk(
+  onceki: AjandaKaydi,
+  k: AjandaKaydi,
+  uygulanan: readonly string[],
+  aracinTekrari: () => boolean,
+): AjandaAracKurali | null {
+  const tekrarDegisti = uygulanan.includes("tekrar");
+  if (tekrarDegisti && onceki.tekrar !== undefined && !aracinTekrari()) return "tekrar_kullanicinin";
   if (k.varis !== undefined && k.bolge === undefined) return "varis_bolge_ister";
-  if (k.tekrar !== undefined && k.varis === undefined && (uygulanan.includes("tekrar") || uygulanan.includes("varis"))) {
+  if (k.tekrar !== undefined && k.varis === undefined && (tekrarDegisti || (uygulanan.includes("varis") && aracinTekrari()))) {
     return "tekrar_varis_ister";
   }
   return null;
@@ -163,18 +184,30 @@ function siraAnahtari(z: AjandaZamani | undefined): string | undefined {
   return `${z.kesinlik === "donem" ? z.baslangic : z.tarih} `;
 }
 
+/** Hatırlatması olmayan özetin hatırlatma hali (`v2Yuzu`). */
+const BOS_HATIRLATMA = { toplam: 0, kurulacak: 0, saatsiz: 0, gecmis: 0 } as const;
+
+/**
+ * v3 kapalıyken özet boş hatırlatmaya iner mi: varışlı kayıtta zaman hatırlatmalarından hiçbiri kurulmayacaksa
+ * (`ajandaBildirimYokMu`). v2 yüzü varışı söyleyemez; gerçek sayılarla v2 metni "hiçbir bildirim gelmeyecek"
+ * derdi, oysa telefon varışta bildirim verir. Bu yanlış iddia kullanıcıya yanlış bir şey söyletir; boş hatırlatma
+ * ("hatirlatma=yok") ise etkide doğrudur (zamandan bildirim gelmeyecek) ve v2 şemasında söylenebilen tek doğru
+ * haldir. Bilinen bedel: hatırlatmalar geçmişte dursa da kapalı yüz onları göstermez (açık yüz gösterir).
+ */
+const v2HatirlatmasizMi = (o: AjandaKayitOzeti): boolean => o.varis !== undefined && ajandaBildirimYokMu(o);
+
 /**
  * v3 kapalıyken çıktının v2 yüzü (`ajandaAracCiktisiV2`). v3 telefonun yazdığı varışlı kayıtta özetten
- * `varis` düşer; zaman hatırlatmalarından hiçbiri kurulmayacaksa (`ajandaBildirimYokMu`) v2 metni "hiçbir
- * bildirim gelmeyecek" derdi, oysa telefon varışta bildirim verir. Yalnız o durumda özetin hatırlatması boş
- * hatırlatmaya iner (metin `hatirlatma=yok.` der, bildirim iddiası ve v3 alanı taşımaz). Varışsız kayıtta
- * ve öteki hallerde çıktı `ajandaAracCiktisiV2`'ninkidir, baytları değişmez.
+ * `varis` düşer; `v2HatirlatmasizMi` ise özetin hatırlatması boş hatırlatmaya iner (metin `hatirlatma=yok.`
+ * der, bildirim iddiası ve v3 alanı taşımaz). Güncellemenin `onceki_gun_hatirlatmasi`'sı aynı yüzden
+ * hesaplanır (`guncelle`): not özetle çelişmez. Varışsız kayıtta ve öteki hallerde çıktı
+ * `ajandaAracCiktisiV2`'ninkidir, baytları değişmez.
  */
 function v2Yuzu(fiil: AjandaFiili, ham: unknown): unknown {
-  const v2 = ajandaAracCiktisiV2({ fiil, cikti: ham } as never).cikti as { kayit?: Parameters<typeof ajandaBildirimYokMu>[0] };
-  const varisli = (ham as { kayit?: { varis?: unknown } }).kayit?.varis !== undefined;
-  if (varisli && v2.kayit !== undefined && ajandaBildirimYokMu(v2.kayit)) {
-    v2.kayit = { ...v2.kayit, hatirlatma: { toplam: 0, kurulacak: 0, saatsiz: 0, gecmis: 0 } };
+  const v2 = ajandaAracCiktisiV2({ fiil, cikti: ham } as never).cikti as { kayit?: unknown };
+  const kayit = (ham as { kayit?: AjandaKayitOzeti }).kayit;
+  if (kayit !== undefined && v2.kayit !== undefined && v2HatirlatmasizMi(kayit)) {
+    v2.kayit = { ...(v2.kayit as object), hatirlatma: { ...BOS_HATIRLATMA } };
   }
   return v2;
 }
@@ -184,6 +217,24 @@ export function ajandaAraclariKur(b: AjandaBagimliliklari, pc?: PcDefteri): Ajan
   const v3 = b.aracV3 === true;
   const araclar = ajandaAraclari(v3);
   const ozet = (k: AjandaKaydi, simdi: number) => kayitOzeti(k, simdi, takvim);
+
+  /**
+   * Kaydın şimdiki tekrarını asistan aracı mı kurdu: tekrarı son yazan (ekleme ya da tekrarı değiştiren)
+   * geçmiş satırının yazarı `ARAC_YOLLARI`'nda mı. Tekrar yoksa ya da geçmişte böyle bir satır bulunmazsa
+   * hayır (bilinmeyen sahip kullanıcınındır: araç dokunmaz). Geçmiş `rev` azalan, sayfa sayfa okunur.
+   */
+  const tekrarAracinMi = (k: AjandaKaydi): boolean => {
+    if (k.tekrar === undefined) return false;
+    const SAYFA = 100;
+    let once_rev: number | undefined;
+    for (;;) {
+      const sayfa = depo.ajandaGecmisi({ kayit_id: k.kayit_id, adet: SAYFA, ...(once_rev === undefined ? {} : { once_rev }) });
+      const satir = sayfa.find((g) => g.sonraki.tekrar !== undefined);
+      if (satir !== undefined) return (ARAC_YOLLARI as readonly string[]).includes(satir.yazar.yol);
+      if (sayfa.length < SAYFA) return false;
+      once_rev = sayfa[sayfa.length - 1]!.rev;
+    }
+  };
 
   /**
    * `bolge_yeni`: kaydın bölgesinin konumu ajandada yok, yani konumu olan, silinmemiş, aynı eşleşme
@@ -312,7 +363,12 @@ export function ajandaAraclariKur(b: AjandaBagimliliklari, pc?: PcDefteri): Ajan
   const ekle: Govde<"ajanda_ekle"> = (g, c, simdi) => {
     const tur = c.tur;
     const mesaj_ani = tur.mesaj_ani;
-    const ret = (neden: Extract<Cikti<"ajanda_ekle">, { sonuc: "ret" }>["neden"]): Cikti<"ajanda_ekle"> => ({ sonuc: "ret", mesaj_ani, neden });
+    const ret = (neden: Extract<Cikti<"ajanda_ekle">, { sonuc: "ret" }>["neden"], kural?: AjandaAracKurali): Cikti<"ajanda_ekle"> => ({
+      sonuc: "ret",
+      mesaj_ani,
+      neden,
+      ...(kural !== undefined && { kural }),
+    });
     if (!dayanakTutar(g, g.dayanak, mesaj_ani)) return ret("dayanak_uyusmuyor");
     // v2: dayanaktan hemen sonra, kayda dokunmadan önce gece aralığı teyidi (aynı turda soruldu da ret).
     const gece = geceReddi(g, c);
@@ -350,6 +406,10 @@ export function ajandaAraclariKur(b: AjandaBagimliliklari, pc?: PcDefteri): Ajan
       // bir konuşma bağlamının taslağıysa (PC'de başka oturum) taslağın alanları taşınmaz: kayıt insanın
       // çağrısının doğuracağı haldir (`ajandaAracEsBirlesimi`); varsayılan hatırlatma iki yolda da aynı kural.
       const bir = ajandaAracEsBirlesimi(es, verilen, yazar);
+      // Asistanın kurmadığı tekrar eşe eklemeyle de değişmez (aynı tekrarı söylemek değişiklik değildir).
+      if (g.tekrar !== undefined && es.tekrar !== undefined && bir.uygulanan.includes("tekrar") && !tekrarAracinMi(es)) {
+        return ret("tutarsiz_kayit", "tekrar_kullanicinin");
+      }
       const onay = karar.karar === "onayla";
       if (!onay && bir.uygulanan.length === 0) {
         return { sonuc: "zaten_var", mesaj_ani, kayit: ozet(es, simdi), uygulanan_alanlar: [], ...bolgeYeni(g.bolge, es) };
@@ -450,7 +510,8 @@ export function ajandaAraclariKur(b: AjandaBagimliliklari, pc?: PcDefteri): Ajan
     if (!dilimlerBilinir(takvim, degisiklik.zaman, degisiklik.hatirlatmalar)) return ret("saat_dilimi_bilinmiyor");
 
     const bir = ajandaDegisikligiUygula(k, degisiklik, yazar);
-    const kural = aracKuraliBozuk(bir.kayit, bir.uygulanan);
+    let aracin: boolean | undefined;
+    const kural = aracKuraliBozuk(k, bir.kayit, bir.uygulanan, () => (aracin ??= tekrarAracinMi(k)));
     if (kural !== null) return ret("tutarsiz_kayit", kural);
     const onay = d.onayla === true && k.taslak;
     if (bir.uygulanan.length === 0 && !onay) {
@@ -477,9 +538,11 @@ export function ajandaAraclariKur(b: AjandaBagimliliklari, pc?: PcDefteri): Ajan
     };
     if (bir.uygulanan.includes("zaman")) {
       if (zamandaKorunan.length > 0) cikti.zamanda_korunan = zamandaKorunan;
-      // Gün hatırlatmasının saati değiştiyse (ya da kalktıysa) eskisi: model kullanıcıya söyler.
-      const onceki = ozet(k, ts).hatirlatma.gun_hatirlatmasi;
-      const sonraki = sonOzet.hatirlatma.gun_hatirlatmasi;
+      // Gün hatırlatmasının saati değiştiyse (ya da kalktıysa) eskisi: model kullanıcıya söyler. Modelin gördüğü
+      // yüzden (kapalıyken `v2HatirlatmasizMi` özeti boşaltır): not özetle çelişmez.
+      const gorunen = (o: AjandaKayitOzeti) => (!v3 && v2HatirlatmasizMi(o) ? undefined : o.hatirlatma.gun_hatirlatmasi);
+      const onceki = gorunen(ozet(k, ts));
+      const sonraki = gorunen(sonOzet);
       if (onceki !== undefined && (sonraki === undefined || sonraki.saat !== onceki.saat)) cikti.onceki_gun_hatirlatmasi = onceki;
     }
     if (bolgeYeni(d.bolge, yazim.deger).bolge_yeni === true) cikti.bolge_yeni = true;

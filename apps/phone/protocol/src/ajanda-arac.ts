@@ -366,10 +366,13 @@ const BolgeYeni = z.literal(true).optional();
 /**
  * Ret metninin v3 kural ayrıntısı (yalnız `tutarsiz_kayit` ile): güncellenmiş kayıt bir araç kuralını
  * bozuyor. `varis_bolge_ister`: varışlı kayıttan bölge kaldırıldı (`varis:null` da verilmeli).
- * `tekrar_varis_ister`: araç tekrarı yalnız varışlı kayıtta (tekrar kurulurken varış yok ya da varış
- * kaldırılırken tekrar duruyor).
+ * `tekrar_varis_ister`: asistanın kurduğu tekrar yalnız varışlı kayıtta (tekrar kurulurken varış yok ya da
+ * varış kaldırılırken asistanın kurduğu tekrar duruyor). `tekrar_kullanicinin`: kaydın tekrarını asistan
+ * kurmadı (onu son yazan geçmiş satırı bir asistan aracı yolu değil: kullanıcı telefonda ya da başka bir yolla
+ * kurdu); araç o tekrarı değiştiremez ve kaldıramaz (v3 öncesinde araç tekrara hiç dokunamıyordu: güvenlik
+ * çizgisi). Bu kayıtta varış ve bölge tekrara dokunmadan kaldırılabilir.
  */
-export const AJANDA_ARAC_KURALLARI = ["varis_bolge_ister", "tekrar_varis_ister"] as const;
+export const AJANDA_ARAC_KURALLARI = ["varis_bolge_ister", "tekrar_varis_ister", "tekrar_kullanicinin"] as const;
 export const AjandaAracKurali = z.enum(AJANDA_ARAC_KURALLARI);
 export type AjandaAracKurali = z.infer<typeof AjandaAracKurali>;
 
@@ -518,8 +521,8 @@ export function ajandaZamanDegisikligiCoz(
  * kaydın var olan zamanına göre yorumlanır (`AjandaZamanDegisikligi`). v3: `simge`, `bolge`, `varis`,
  * `tekrar` (`AjandaAracTekrari`), `baglantilar`; `bolge_konumu` ve `ekler` yoktur. Aynı değişiklik
  * içindeki çelişki (bölge ya da varış kaldırılırken varış ya da tekrar kurmak) şemada reddedilir;
- * birleşmiş kaydın kuralı (`varis` bölge, araç tekrarı varış ister) serviste `tutarsiz_kayit` +
- * `kural`'dır.
+ * birleşmiş kaydın kuralı (`varis` bölge, asistanın kurduğu tekrar varış ister; asistanın kurmadığı tekrar
+ * değişmez) serviste `tutarsiz_kayit` + `kural`'dır.
  */
 export const AjandaAracDegisikligi = z
   .strictObject({
@@ -537,10 +540,16 @@ export const AjandaAracDegisikligi = z
       .optional()
       .describe(
         VARIS_ACIKLAMASI +
-          " Varış eklemek ya da kaldırmak kaydın hatırlatmalarını değiştirmez. null varış hatırlatmasını kaldırır " +
-          "(tekrar eden kayıtta tekrar:null da ver).",
+          " Varış eklemek ya da kaldırmak kaydın hatırlatmalarını değiştirmez. null varış hatırlatmasını kaldırır; " +
+          "tekrar ve örnekleri yerinde kalır (tekrarı yalnız kullanıcı seriyi de kaldırmayı açıkça isterse kaldır).",
       ),
-    tekrar: AjandaAracTekrari.nullable().optional().describe(TEKRAR_ACIKLAMASI + " null tekrarı kaldırır."),
+    tekrar: AjandaAracTekrari.nullable()
+      .optional()
+      .describe(
+        TEKRAR_ACIKLAMASI +
+          " null tekrarı kaldırır. Yalnız asistanın kurduğu tekrar değiştirilip kaldırılabilir; kullanıcının " +
+          "telefonda kurduğu tekrara dokunulmaz (ret döner, kullanıcı telefondan değiştirir).",
+      ),
     baglantilar: AjandaBaglantilar.nullable()
       .optional()
       .describe(BAGLANTI_ACIKLAMASI + " Liste bütün olarak yerine geçer: eklerken var olanları da ver; null hepsini kaldırır."),
@@ -926,12 +935,19 @@ export const AjandaKopruIstek = z.discriminatedUnion("fiil", [
 ]);
 export type AjandaKopruIstek = z.infer<typeof AjandaKopruIstek>;
 
-/** İlk mesaj. Rol, sohbet ve nesil yalnız jetondan türer. */
-export const AjandaKopruHello = mesaj("kopru_hello", { rol: AjandaKopruRolu, jeton: Jeton });
 /**
- * `arac_v3` (yalnız `true`, yalnız araç rollerinde): servisin v3 araç yüzü açık (ayar `ajanda_arac_v3`).
- * Yoksa köprü v2 yüzünü yayınlar ve girdiyi v2 şemasıyla denetler (`ajandaAraclari(false)`). Kapalı serviste
- * alan hiç yazılmaz: çerçeve baytları v3 araç yüzü öncesiyle aynıdır.
+ * İlk mesaj. Rol, sohbet ve nesil yalnız jetondan türer. `arac_v3` (yalnız `true`): köprü v3 araç yüzünü
+ * ister ve `kopru_welcome.arac_v3`'ü çözebilir. Bunu yollamayan köprü (v3 öncesi kod, katı şema) alanlı
+ * karşılamayı çözemez, bağlantıyı kapatıp sonsuza dek yeniden dener (ölçüldü); servis ona alanı hiç yazmaz
+ * ve o bağlantıyı v2 yüzüyle sürer. v3 öncesi servis alanlı hello'yu `kopru_ret{yetkisiz}` ile reddeder;
+ * köprü hemen alansız hello ile yeniden dener.
+ */
+export const AjandaKopruHello = mesaj("kopru_hello", { rol: AjandaKopruRolu, jeton: Jeton, arac_v3: z.literal(true).optional() });
+/**
+ * `arac_v3` (yalnız `true`, yalnız araç rollerinde): servisin v3 araç yüzü açık (ayar `ajanda_arac_v3`) VE
+ * köprü hello'da `arac_v3` istedi. Yoksa köprü v2 yüzünü yayınlar ve girdiyi v2 şemasıyla denetler
+ * (`ajandaAraclari(false)`). Kapalı serviste ya da istemeyen köprüye alan hiç yazılmaz: çerçeve baytları v3
+ * araç yüzü öncesiyle aynıdır.
  */
 export const AjandaKopruWelcome = mesaj("kopru_welcome", { rol: AjandaKopruRolu, arac_v3: z.literal(true).optional() });
 

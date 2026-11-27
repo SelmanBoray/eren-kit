@@ -370,7 +370,8 @@ describe("ayar → servis: ajanda_arac_v3 (giris'in yolu: ayarKur → servisKur)
   const CLAUDE_EXE = "C:\\ornek\\bin\\claude.exe";
 
   /** Ayar dosyasıyla servisi kurar, ajanda borusuna `ana_oturum` olarak bağlanır; ilk satır (welcome) ve günlük. */
-  const kurVeKarsilan = async (yerel: Record<string, unknown>) => {
+  /** `iste`: köprü hello'da `arac_v3` ister (bugünkü köprü); yanlışsa v3 öncesi köprü. */
+  const kurVeKarsilan = async (yerel: Record<string, unknown>, iste = true) => {
     const d = sahteDunya({ baslangicMs: T0, servisPid: 4100 });
     d.dosya.yaz(CLAUDE_EXE, "");
     d.dosya.yaz(`${YEREL}\\eren-kit\\ayar.local.json`, JSON.stringify({ claude_exe: CLAUDE_EXE, ...yerel }));
@@ -394,7 +395,7 @@ describe("ayar → servis: ajanda_arac_v3 (giris'in yolu: ayarKur → servisKur)
         kapanisDinle: () => {},
       });
       const jeton = servis.ajandaKopru!.jetonUret({ rol: "ana_oturum", sohbet_id: "ana", nesil: 1 });
-      dinleyici!(JSON.stringify({ v: PROTOKOL_SURUMU, type: "kopru_hello", rol: "ana_oturum", jeton }));
+      dinleyici!(JSON.stringify({ v: PROTOKOL_SURUMU, type: "kopru_hello", rol: "ana_oturum", jeton, ...(iste ? { arac_v3: true } : {}) }));
       for (let i = 0; i < 8 && gelen.length === 0; i++) await new Promise<void>((r) => setImmediate(r));
       const satirlar = d.kayit.satirlar.map((x) => JSON.parse(x) as Record<string, unknown>);
       const yuz = satirlar.filter((x) => x["modul"] === "ana" && x["olay"] === "ajanda_arac_yuzu").map((x) => x["arac_v3"]);
@@ -412,6 +413,9 @@ describe("ayar → servis: ajanda_arac_v3 (giris'in yolu: ayarKur → servisKur)
     const acikS = await kurVeKarsilan({ ajanda_arac_v3: true });
     assert.equal(acikS.welcome, `{"v":${PROTOKOL_SURUMU},"type":"kopru_welcome","rol":"ana_oturum","arac_v3":true}`);
     assert.deepEqual(acikS.yuz, [true]);
+    // v3 öncesi köprü (hello'da istemez) açık serviste de alansız karşılama alır: katı şeması çözer.
+    const eskiKopru = await kurVeKarsilan({ ajanda_arac_v3: true }, false);
+    assert.equal(eskiKopru.welcome, `{"v":${PROTOKOL_SURUMU},"type":"kopru_welcome","rol":"ana_oturum"}`);
     const yanlis = await kurVeKarsilan({ ajanda_arac_v3: false });
     assert.equal(yanlis.welcome, `{"v":${PROTOKOL_SURUMU},"type":"kopru_welcome","rol":"ana_oturum"}`);
   });
