@@ -10,14 +10,15 @@
 //! etkileri yine uygulanır, o yüzden hatadan önce yazılmış etki gerçek olmalıdır.
 //!
 //! Dosyalar: `kanal.rs` (bağlantı, telafi, kuyruğun yollanması ve sonuçları), `islem.rs` (kullanıcı
-//! işlemleri), `iyimser.rs` (görünen kopyanın hesabı), `yerel.rs` (yerel kipin yazarı ve geçmişi),
-//! `eslesme.rs`, `sorgu.rs`, `alarm.rs` (R3).
+//! işlemleri), `iyimser.rs` (görünen kopyanın hesabı), `yerel.rs` (yerel kipin yazarı ve geçmişi), `aktarma.rs`
+//! (D3 dışa ve içe aktarma), `eslesme.rs`, `sorgu.rs`, `alarm.rs` (R3).
 //!
 //! Değişiklik yayma kuralı (`gorunenler_degisti`): görünen kopyası değişen kayıtlar, yazan SQLite işlemi
 //! kalıcı olduktan SONRA R3'ün `alarm_senkronu`'na verilir ve `Degisim.kayitlar`'a bir kez girer. Tam
 //! telafinin sonunda bütün kopya için `alarm_senkronu(&[])` ve `Degisim.tumu`.
 
 pub(crate) mod alarm;
+mod aktarma;
 mod eslesme;
 mod islem;
 mod iyimser;
@@ -36,6 +37,7 @@ use crate::model::AjandaKanalHatasi;
 use crate::model::kanonik::base64url_yaz;
 
 pub use alarm::ALARM_BUTCESI;
+pub(crate) use aktarma::aktarma_bicimi;
 pub(crate) use kanal::Asama;
 
 /// Kotlin'in eşzamanlı sağladığı platform hizmetleri (motor kilidi altında çağrılabilir).

@@ -104,7 +104,7 @@ fn parca_alani<T: Clone>(v: &Option<T>) -> Alan<T> {
 
 /// Servisin `fark`'ı: izlenen alanlardan (kayıt alanları, `taslak`, `silindi`) yalnız değişenlerin öncesi ve
 /// sonrası; `ornekler` değiştiyse iki tam liste.
-fn fark(o: &AjandaKaydi, s: &AjandaKaydi) -> (AjandaParca, AjandaParca) {
+pub(super) fn fark(o: &AjandaKaydi, s: &AjandaKaydi) -> (AjandaParca, AjandaParca) {
     let mut a = AjandaParca::default();
     let mut b = AjandaParca::default();
     if o.tur != s.tur {
@@ -141,7 +141,7 @@ fn fark(o: &AjandaKaydi, s: &AjandaKaydi) -> (AjandaParca, AjandaParca) {
 }
 
 /// Servisin `dogumParcasi`'ı: kaydın var olan alanları, durum ve taslak.
-fn dogum_parcasi(k: &AjandaKaydi) -> AjandaParca {
+pub(super) fn dogum_parcasi(k: &AjandaKaydi) -> AjandaParca {
     AjandaParca {
         tur: Some(k.tur),
         baslik: Some(k.baslik.clone()),
@@ -298,7 +298,7 @@ impl Motor {
 /// işlem `kayit_silinmis` alırdı). `geri_yukle_izni` yanlışsa temelde silinmiş kayıt geri yüklenmez (temel
 /// servisin kendi kopyasıyken PC'nin silmesi meşrudur); öteki farklar yine gider ve servis onları
 /// `kayit_silinmis` ile reddeder: telefonun hali düzeltme gövdesiyle ret listesine düşer.
-fn kuyruga_islemler(temel: Option<&AjandaKaydi>, k: &AjandaKaydi, geri_yukle_izni: bool) -> Vec<(AjandaIslem, i64)> {
+pub(super) fn kuyruga_islemler(temel: Option<&AjandaKaydi>, k: &AjandaKaydi, geri_yukle_izni: bool) -> Vec<(AjandaIslem, i64)> {
     let kayit_id = || k.kayit_id.clone();
     let mut l = Vec::new();
     let ts = k.guncelleme_ms;
@@ -348,7 +348,7 @@ fn kuyruga_islemler(temel: Option<&AjandaKaydi>, k: &AjandaKaydi, geri_yukle_izn
 
 /// İki hal PC'ye gidecek her alanda aynı mı (gövde, durum, örnekler, taslak, silindi; revizyon, zaman
 /// damgaları ve kaynak sayılmaz).
-fn icerik_ayni(a: &AjandaKaydi, b: &AjandaKaydi) -> bool {
+pub(super) fn icerik_ayni(a: &AjandaKaydi, b: &AjandaKaydi) -> bool {
     kayittan_govde(a) == kayittan_govde(b)
         && a.durum == b.durum
         && a.ornekler == b.ornekler
@@ -399,7 +399,7 @@ fn fark_temeli(d: &Depo, ayni_depo: bool, kayit_id: &str) -> Result<(Option<Ajan
 }
 
 /// Görünen satırın kaydı (`kopya::kayit_json_oku` gibi); okunamazsa `None`.
-fn kayit_coz(json: &str) -> Option<AjandaKaydi> {
+pub(super) fn kayit_coz(json: &str) -> Option<AjandaKaydi> {
     let v: serde_json::Value = serde_json::from_str(json).ok()?;
     AjandaKaydi::oku(&v, "").ok()
 }
