@@ -695,17 +695,104 @@ data class CizimParca(
 
 SVG dosyalarının boyu 1–3 KB; on çizim toplam ~20 KB. Gömülü varlık sorunu yok.
 
-### 7.5 Yeni çizimler için kurallar [Ö]
+### 7.5 Yeni çizimler için kurallar
 
-Prototipteki on çizimden çıkarılmıştır:
+Prototipteki on çizimden çıkarıldı. Android'deki çizim takımı (`android/.../ekran/sahne/cizim/`) bu
+kuralları uygular; `CizimKurallariTest` ölçülebilir olanları denetler. Bir çizimi çizen kişi yalnız bu
+bölümü okuyarak takımla tutarlı çizebilmelidir.
 
-- viewBox 240 × 160; asıl şekil yaklaşık x 20–220, y 10–148 arasında; zemin çizgisi varsa y ≈ 132–144.
-- Yalnız dört renk rolü (`f`, `l`, `d`, `b`) ve üç çizgi rolü; düz renk, degrade yok, gölge yok.
-- Ana gövde `f`; `l` ve `d` ayrıntı; parça sayısı 2–12.
-- Karakalem hâlinde de okunur olmalı: çok küçük parçalar (< 6 birim) karakalemde kesik çizgiye
-  boğulur; kaçınılmalı.
-- Canlanan parça isteğe bağlıdır; en çok bir tür (köpük, buhar, pırıltı ya da bir kez çizilen çizgi).
-  Parçalar `<g id="<tür>_n">` ile gruplanır.
+**Nereye yazılır.** Her simge anahtarının kendi dosyası vardır: `cizim/takim/<Anahtar>Cizimi.kt`. Dosya
+adı anahtarın deve biçimidir (`dogum_gunu` → `DogumGunuCizimi.kt`, değer adı `DogumGunuCizimi`). Çizimi
+henüz yapılmamış anahtarın dosyasında `yerTutucu("banka", LevhaRengi.CAM)` yazar; bu satır
+`cizim("banka", LevhaRengi.CAM) { … }` ile değiştirilir. Kayıt (`CizimKaydi.kt`) ve öteki dosyalar
+değişmez. Anahtar listesi sözleşmedir (Kol C v3 `simge`); yeni anahtar eklemek çizim işi değildir.
+`tasarim/cizim/` altında SVG kopyası tutmak isteğe bağlıdır; kaynak Kotlin dosyasıdır.
+
+**Ölçek ve yerleşim.**
+- Tuval 240 × 160 birimdir (3:2). Çizim zemin çizmez; levhanın `b` zemini üstüne konur ve levhadaki
+  alana ortalanarak sığdırılır (`contain`). Büyük levhada 1 birim ≈ 1.2 dp, kare levhada ≈ 0.6 dp,
+  takvim şeridinde ≈ 0.3 dp: çizim en küçük boyunda da tanınmalıdır.
+- Şekil kenarlardan en az 4 birim içeride kalır (çizgi kalınlığı dahil; testte denetlenir). Asıl kütle
+  x 30–210, y 15–145 arasındadır: ortalanmış tek bir nesne ya da nesne + tek bir eşlikçi (araba + köpük,
+  fincan + buhar, pano + kalem). Zemin çizgisi varsa y 132–144 arasında, `zemin` ya da `pd` ile.
+- Bakış düz önden ya da yandan; derinlik gerekiyorsa yalnız basit eş ölçülü kutu (`kargo`). Perspektif
+  kaçışı, ufuk, sahne yok.
+
+**Renk rolleri.** Parça rengini taşımaz, rolünü taşır; renk kaydın takımından gelir (§1.2). Yazıcıdaki
+işlev adları prototipin sınıf adlarıdır (§7.2):
+
+| İşlev | Boyalı hâl | Ne için |
+|---|---|---|
+| `pf` | dolgu `f` | ana gövde; her çizimde en az bir tane (testte denetlenir) |
+| `pl` | dolgu `l` | cam, ışık, iç yüzey, ikinci nesne |
+| `pd(alfa = …)` | dolgu `d`; saydamlık 1, .8, .5, .28 ya da .16 | teker, kıskaç, gölge yüzü, bant |
+| `pb2` | dolgu `b`, %45 | figürün üstünde "oyulmuş" satırlar (pano yazısı) |
+| `zemin` | dolgu `d`, %28 | yer gölgesi çizgisi |
+| `ps` | çizgi `d`, 4 birim, %22 | figür üstünde ince gölge, kıvrım |
+| `ps2` | çizgi `d`, 7 birim | sap, kulp, ışın, buhar |
+| `ps3` | çizgi `l`, 4 birim, %55 | figür üstünde açık çizgi (sepet örgüsü) |
+| `kopuk` | dolgu `l`, %92 | canlı köpük |
+| `imza` | çizgi `d`, 4 birim | bir kez çizilen çizgi |
+
+- Yalnız bu roller. Düz renk; degrade, gölge efekti, kontur (dış çizgi) yok: biçimler dolgu lekeleridir,
+  çizgi yalnız `ps*` ve `imza` rolünde. Çizgi kalınlığı yalnız 4 ya da 7 (testte denetlenir); uçlar ve
+  köşeler yuvarlak.
+- Anlamı taşıyan parça `f` ya da `d` ile çizilir. `l` bazı takımlarda zemine çok yakındır (gökte `l`
+  beyaz, `b` açık mavi; kumda `l` beyaz, `b` bej): `l` parçası `f` ya da `d` parçasının **üstünde**
+  durmalı, levha zemininde tek başına anlam taşımamalı (köpük ve süs hariç). Çizim sekiz takımın hepsinde
+  ve koyu temada okunur olmalı; katalog görüntüsüne bakılarak denetlenir.
+- Varsayılan takım dosyadaki `LevhaRengi`'dir. Konunun gerçek rengine değil, takımın `f` rengine bakarak
+  seçilir (kobalt takımında figür sarıdır: araba sarı). Bir günde yan yana gelen işler aynı takıma
+  yığılmasın diye mevcut dağılıma bakılır (katalogda görülür).
+
+**Biçim dili.** Hazır simge seti gibi durmaması için:
+- Afiş gibi: büyük, tok, iki üç ana leke; ayrıntı az, ama bir tane **niyetli** ayrıntı olsun (arabanın
+  köpükleri, fincanın buharı, panodaki imza, faturadaki şimşek, dişin pırıltısı). Nesneyi değil işin
+  anını çiz: "araba" değil, "yıkanan araba".
+- Köşeler yuvarlatılır (`q` eğrisi ya da 2–12 birim yarıçap); keskin köşe yalnız biçim gerektiriyorsa
+  (çadır, şimşek, koli).
+- Yazı, harf, rakam, logo, marka, yüz ve ifade (göz, ağız) yok; emoji gibi durmasın.
+- Simge kütüphanesinden, yazı tipinden ya da başka bir çizimden yol kopyalanmaz; her yol bu projede
+  elle yazılır. Yardımcılar: `daire(cx, cy, r)` ve `kutu(x, y, g, h, r)` SVG `circle`/`rect` karşılığı
+  yol üretir; döndürülmüş parça grubu `donuk(aci, cx, cy) { … }`.
+
+**Parça sayısı ve küçük parçalar.** 2–16 parça (canlı tekrarlar dahil; araba 16). Her parçanın uzun
+kenarı en az 6 birim (testte denetlenir): daha küçüğü karakalemde kesik çizgiye boğulur, kare levhada
+3–4 dp'ye düşer. Yazılış sırası çizim sırasıdır: arkadaki önce.
+
+**Karakalem hâli nasıl türer.** Ayrıca çizilmez; boyalı tanımdan kendiliğinden türer (§7.3): her parça,
+dolgulu olanlar da, `s-ink` renginde, 2 birim kalınlıkta, 5/5 kesikli çizgiyle yolunun çevresinden
+çizilir; dolgu ve rol saydamlığı yok sayılır. Bu yüzden:
+- Üst üste binen parçaların hepsinin çevresi görünür. Boyalıda tamamen örtülen arka parça koyma;
+  karakalemde boş yere çizgi yığar.
+- Bir yolun içindeki alt yollar (`M … z M … z`) karakalemde ayrı ayrı görünür; bunu bilerek kullan.
+- Onay geçişinde (`ilerleme` 0 → 1) dolgu `rol saydamlığı × ilerleme`, karakalem `1 − ilerleme`
+  saydamlığıyla birlikte çizilir; çizim dosyasında bunun için bir şey yapılmaz.
+
+**Canlı parçalar (isteğe bağlı).** En çok bir tür (testte denetlenir); imza ile kalem birlikte tek tür
+sayılır ve kalem imzasız olmaz. Değerler §5.15'tedir ve takımda sabittir; çizim yalnız hangi parçanın
+canlı olduğunu söyler:
+
+| Tür | Nasıl yazılır | Kural |
+|---|---|---|
+| köpük | `kopuk(yol)` (daire) | 3–6 küçük daire (r 4–9) figürün çevresinde; sıra kaydırması kendiliğinden |
+| buhar | `ps2(yol, canli = Canlanma.BUHAR)` | figürün üstünde 1–2 kıvrık çizgi; 6 birim yükselir, üstte pay bırak |
+| pırıltı | `pf(yol, canli = Canlanma.PIRILTI)` | 1–2 dört köşeli yıldız ya da artı; kendi merkezinde döner |
+| bir kez çizilen çizgi | `imza(yol)` + isteğe bağlı `pd(yol, canli = Canlanma.KALEM)` | tek parça çizgi, baştan sona çizilir; kalem çizginin bitişinde durur |
+
+- Canlı parça süstür: dinlenme karesinde de çizim tamamlanmış görünmelidir. Hareket azaltılınca, ekranda
+  değilken ve uygulama arka plandayken parçalar dinlenme karesinde durur, imza tamamen çizili gelir;
+  bunu `KayitCizimi` yapar, çizim dosyası bir şey yapmaz.
+- Yeni bir canlanma türü (ör. alev titremesi) `Canlanma` ve `CizimHareketi` dosyalarına eklenir; bu çizim
+  dosyası dışında bir değişikliktir ve ayrı iş olarak yapılır.
+
+**Bitirme denetimi.** Çizim dosyası değişince:
+1. `gradlew testDebugUnitTest --tests "dev.eren.ajanda.ekran.sahne.cizim.*"`: kurallar ve kayıt;
+   `herAnahtarCizilir` yer tutucusu kalkan çizimin `genel`den farklı göründüğünü denetler.
+2. `gradlew recordRoborazziDebug --tests "dev.eren.ajanda.ekran.sahne.cizim.CizimGoruntuTest"` ile
+   `app/src/test/screenshots/sahne/cizim_katalog.png` yeniden kaydedilir ve bakılır: açık ve koyu;
+   karakalem, yarı geçiş, boyalı; katalog hücresi (≈ 100 dp) kare levha boyuna yakındır, çizim orada
+   tanınmalı.
 
 ## 8. Etkileşimler
 
