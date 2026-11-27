@@ -158,9 +158,12 @@ test("gövde şemaları sürüme bağlı: v2 şeması v3 alanını ve alan adın
 test("v3 sınırları, simge, yetenek ve ret kodu tabloları vektörle birebir", () => {
   for (const [k, deger] of Object.entries(v3.sinirlar)) assert.equal((AJANDA_SINIRLARI as Record<string, number>)[k], deger, k);
   assert.deepEqual([...AJANDA_SIMGELERI], v3.simgeler);
-  assert.deepEqual([...AJANDA_SIMGELERI].sort(), [...AJANDA_SIMGELERI], "ASCII sırası");
+  assert.equal(AJANDA_SIMGELERI[0], "genel", "genel başta");
+  const ilk21 = AJANDA_SIMGELERI.slice(1, 22);
+  assert.deepEqual([...ilk21].sort(), [...ilk21], "bugünkü 21 anahtar ASCII sırasında");
+  assert.equal(new Set(AJANDA_SIMGELERI).size, AJANDA_SIMGELERI.length, "tekil");
   for (const s of AJANDA_SIMGELERI) assert.match(s, SIMGE_DESENI);
-  assert.ok(AJANDA_SIMGELERI.length >= 18 && AJANDA_SIMGELERI.length <= 24);
+  assert.ok(AJANDA_SIMGELERI.length === 29);
   assert.deepEqual([...AJANDA_YETENEKLERI], v3.yetenekler);
   for (const y of AJANDA_YETENEKLERI) assert.match(y, YETENEK_DESENI);
   assert.equal(AjandaYetenekler.safeParse([...AJANDA_YETENEKLERI]).success, true);

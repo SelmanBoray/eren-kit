@@ -22,8 +22,9 @@ export const SIMGE_DESENI = /^[a-z][a-z0-9_]{0,31}$/;
 export const AjandaSimge = z.string().max(AJANDA_SINIRLARI.SIMGE).regex(SIMGE_DESENI);
 export type AjandaSimge = z.infer<typeof AjandaSimge>;
 
-/** Önerilen simge anahtarları (genel, kişisel değil; ASCII sırasıyla). Uygulama bunlara simge çizer. */
+/** Önerilen simge anahtarları (genel, kişisel değil). `genel` varsayılan çizimdir: bilinmeyen anahtarda ve eşleşme yokken gösterilir. Bugünkü 21 anahtar ASCII sırasıyla, ardından sonradan eklenenler. */
 export const AJANDA_SIMGELERI = [
+  "genel",
   "araba",
   "banka",
   "dis",
@@ -45,6 +46,13 @@ export const AJANDA_SIMGELERI = [
   "temizlik",
   "toplanti",
   "yemek",
+  "kamp",
+  "evcil",
+  "bitki",
+  "tamir",
+  "camasir",
+  "eglence",
+  "mektup",
 ] as const;
 
 // Bölge

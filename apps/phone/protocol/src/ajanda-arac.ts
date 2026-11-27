@@ -203,7 +203,13 @@ const dayanakIster = (g: Parameters<typeof tarihliGirdiMi>[0], dayanak: unknown,
 
 const SIMGE_ACIKLAMASI =
   `Kaydın simgesi (isteğe bağlı, yalnız görünüm). Önerilen anahtarlar: ${AJANDA_SIMGELERI.join(", ")}. ` +
-  "Kayda açıkça uyan biri varsa seçebilirsin; uymuyorsa verme, kümede olmayan anahtar uydurma.";
+  "İpuçları: araba (araç, oto, yıkama), banka (kart, havale), dis (dişçi), dogum_gunu (yıldönümü, pasta), " +
+  "doktor (hastane, tahlil, aşı), fatura (kira, aidat, vergi), ilac (eczane, vitamin), kargo (paket, hediye), " +
+  "market (alışveriş, bakkal), sac (kuaför, berber), seyahat (tatil, bilet, otel), spor (yürüyüş, maç), " +
+  "temizlik (çöp, bulaşık), toplanti (görüşme, sunum), yemek (restoran, tarif), kamp (çadır, piknik), " +
+  "evcil (veteriner, kedi, köpek), bitki (çiçek, bahçe), tamir (usta, arıza, tesisat), camasir (ütü), " +
+  "eglence (sinema, konser, düğün), mektup (posta, e-posta, evrak). " +
+  "Kayda açıkça uyan biri varsa seçebilirsin; uymuyorsa boş bırak, telefon genel'e düşer; kümede olmayan anahtar uydurma.";
 const BOLGE_ACIKLAMASI =
   "Kullanıcının adıyla söylediği yer (market, iş yeri, okul). Yalnız ad: konum, adres ya da koordinat " +
   "verme ve sorma; yerin konumunu kullanıcı telefonda kaydeder. ajanda_listele çıktısındaki bolgeler " +

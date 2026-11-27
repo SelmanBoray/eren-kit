@@ -20,10 +20,11 @@ use serde_json::Value;
 
 // Simge
 
-/// Önerilen simge anahtarları (`AJANDA_SIMGELERI`; öneri, doğrulama değil; ASCII sırasıyla).
-pub const AJANDA_SIMGELERI: [&str; 21] = [
-    "araba", "banka", "dis", "dogum_gunu", "doktor", "ev", "fatura", "ilac", "is", "kahve", "kargo", "kitap", "market",
-    "okul", "sac", "seyahat", "spor", "telefon", "temizlik", "toplanti", "yemek",
+/// Önerilen simge anahtarları (`AJANDA_SIMGELERI`; öneri, doğrulama değil; `genel` varsayılan çizim, ilk 21 ASCII sırasıyla).
+pub const AJANDA_SIMGELERI: [&str; 29] = [
+    "genel", "araba", "banka", "dis", "dogum_gunu", "doktor", "ev", "fatura", "ilac", "is", "kahve", "kargo",
+    "kitap", "market", "okul", "sac", "seyahat", "spor", "telefon", "temizlik", "toplanti", "yemek", "kamp",
+    "evcil", "bitki", "tamir", "camasir", "eglence", "mektup",
 ];
 
 /// `^[a-z][a-z0-9_]{en..=boy-1}$` (yalnız ASCII): simge ve yetenek adı deseni.
@@ -666,7 +667,12 @@ mod testler {
         for s in AJANDA_SIMGELERI {
             assert!(simge_oku(&json!(s), "").is_ok(), "{s}");
         }
-        assert!(AJANDA_SIMGELERI.windows(2).all(|w| w[0] < w[1]));
+        assert_eq!(AJANDA_SIMGELERI[0], "genel");
+        assert!(AJANDA_SIMGELERI[1..21].windows(2).all(|w| w[0] < w[1]), "bugünkü 21 anahtar ASCII sırasında");
+        let mut tekil = AJANDA_SIMGELERI.to_vec();
+        tekil.sort_unstable();
+        tekil.dedup();
+        assert_eq!(tekil.len(), AJANDA_SIMGELERI.len());
         assert!(simge_oku(&json!("a"), "").is_ok(), "tek harf simge olur");
         assert!(simge_oku(&json!("a".repeat(32)), "").is_ok());
         assert!(simge_oku(&json!("a".repeat(33)), "").is_err());

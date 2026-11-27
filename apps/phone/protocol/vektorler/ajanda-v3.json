@@ -21,6 +21,7 @@
   "YETENEK_ADI": 32
  },
  "simgeler": [
+  "genel",
   "araba",
   "banka",
   "dis",
@@ -41,7 +42,14 @@
   "telefon",
   "temizlik",
   "toplanti",
-  "yemek"
+  "yemek",
+  "kamp",
+  "evcil",
+  "bitki",
+  "tamir",
+  "camasir",
+  "eglence",
+  "mektup"
  ],
  "yetenekler": [
   "ek_yedegi",
