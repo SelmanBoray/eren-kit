@@ -25,8 +25,16 @@ import {
   VARSAYILAN_IS_PROFILI,
   ajandaRetGeciciMi,
   kanonikJson,
+  EkListesi,
+  MEDYA_ISLEME_DURUMLARI,
+  MEDYA_SINIRLARI,
+  MedyaId,
+  MedyaMime,
+  MedyaTuru,
+  mimeTuru,
+  turBaytSiniri,
 } from "@eren/protocol";
-import type { CihazKapsami, TuketimIkilisi, TuketimToplami } from "@eren/protocol";
+import type { CihazKapsami, MedyaIslemeDurumu, TuketimIkilisi, TuketimToplami } from "@eren/protocol";
 import { anaSohbetAdiUret } from "./ana-sohbet-adi.ts";
 import type {
   AckGovdesi,
@@ -38,7 +46,6 @@ import type {
   CihazKaydi,
   Depo,
   DepoBagimliliklari,
-  DepoFabrikasi,
   ErenKuyrukKaynagi,
   ErenKuyrukSatiri,
   GecmisTemizlemeSonucu,
@@ -51,6 +58,14 @@ import type {
   KirliOkumaKaydi,
   KonusmaSatiri,
   KuyrukSatirEki,
+  MedyaBicimi,
+  MedyaHatasi,
+  MedyaIslemeNedeni,
+  MedyaKaydi,
+  MedyaKayitDurumu,
+  MedyaKayitSuzgeci,
+  MedyaliDepo,
+  MedyaliDepoFabrikasi,
   MezarTasiOlayi,
   NesilKaydi,
   OlayGirdisi,
@@ -392,6 +407,51 @@ const ekGocler = (anaAdi: string): readonly string[] => [
     iptal_ms INTEGER
   ) STRICT;
   `,
+  // 8: medya ekleri (MODULLER.md "Medya dalgası" > "S1 depo"). YALNIZ yeni tablo ve dizin: var olan
+  // hiçbir tabloya dokunmaz (`ALTER` yok), eski kod (geri alma) tabloları görmez; eski kodun "geçmişi
+  // sil"i medya satırlarını `silinecek` yapamaz ama içerik dosyadadır, satır yalnız kimlik ve sayı taşır
+  // (yol ve dosya adı yazılmaz). Kapalı liste değerleri (`durum`, `tur`, `bicim`...) bilerek `CHECK`'siz:
+  // ileri sürümün eklediği değer tabloyu yeniden kurmadan yazılabilsin; denetim yazarken JS'tedir.
+  // `kuyruk_medyalari.medya_no` tekil: bir kayıt tek kuyruk satırına bağlanır. `no` AUTOINCREMENT: dizin
+  // adı (`<kök>\<no>`) bir daha verilmez. `IF NOT EXISTS`: sayacı geri kalmış dosyada yeniden uygulanabilir.
+  `
+  CREATE TABLE IF NOT EXISTS medya (
+    no INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_id TEXT NOT NULL,
+    medya_id TEXT NOT NULL,
+    sohbet_id TEXT NOT NULL,
+    tur TEXT NOT NULL,
+    mime TEXT NOT NULL,
+    boyut INTEGER NOT NULL,
+    alinan INTEGER NOT NULL,
+    durum TEXT NOT NULL,
+    red_kodu TEXT,
+    bicim TEXT,
+    isleme TEXT,
+    isleme_nedeni TEXT,
+    sure_ms INTEGER,
+    genislik INTEGER,
+    yukseklik INTEGER,
+    kare_adet INTEGER,
+    olusturma_ms INTEGER NOT NULL,
+    guncelleme_ms INTEGER NOT NULL,
+    bagli_msg_id TEXT,
+    UNIQUE (device_id, medya_id)
+  ) STRICT;
+  CREATE INDEX IF NOT EXISTS medya_durum ON medya (durum);
+  CREATE INDEX IF NOT EXISTS medya_sohbet ON medya (sohbet_id, no);
+  CREATE TABLE IF NOT EXISTS kuyruk_medyalari (
+    kuyruk_id INTEGER NOT NULL,
+    sira INTEGER NOT NULL,
+    medya_no INTEGER NOT NULL,
+    PRIMARY KEY (kuyruk_id, sira)
+  ) STRICT;
+  CREATE UNIQUE INDEX IF NOT EXISTS kuyruk_medyalari_medya ON kuyruk_medyalari (medya_no);
+  CREATE TABLE IF NOT EXISTS nesil_gorselleri (
+    nesil INTEGER PRIMARY KEY,
+    adet INTEGER NOT NULL
+  ) STRICT;
+  `,
 ];
 
 /** Mezar taşının olay türü. Silinmeyenler listesi ayrıca `SILINMEZ_OLAY_TURLERI`'nden okunur. */
@@ -598,6 +658,108 @@ const KUYRUK_SECIMI = `SELECT q.id, q.sohbet_id, q.kaynak, q.metin, q.olusturma_
   e.mesaj_ani AS ek_mesaj_ani, e.kaynak_msg_id AS ek_kaynak_msg_id
   FROM eren_kuyrugu q LEFT JOIN kuyruk_ekleri e ON e.kuyruk_id = q.id`;
 
+// --- Medya (ek göç 8) ---
+
+/** Kapalı listeler: `Record` tamlığı derleyicide sabitler (sözleşmeye değer eklenirse burası derlenmez). */
+const MEDYA_KAYIT_DURUMLARI: Record<MedyaKayitDurumu, true> = {
+  yukleniyor: true,
+  kabul: true,
+  reddedildi: true,
+  silinecek: true,
+};
+const MEDYA_RED_KODLARI: Record<MedyaHatasi, true> = { medya_yok: true, medya_reddedildi: true, medya_siniri: true };
+const MEDYA_BICIMLERI: Record<MedyaBicimi, true> = {
+  jpg: true,
+  png: true,
+  webp: true,
+  heic: true,
+  mp4: true,
+  mov: true,
+  "3gp": true,
+  webm: true,
+};
+const MEDYA_ISLEME_NEDENLERI: Record<MedyaIslemeNedeni, true> = {
+  model_yok: true,
+  ses_yok: true,
+  zaman_asimi: true,
+  hata: true,
+};
+const MEDYA_ISLEMELERI: ReadonlySet<string> = new Set<MedyaIslemeDurumu>(MEDYA_ISLEME_DURUMLARI);
+
+const medyaSatiri = (r: Satir): MedyaKaydi => ({
+  no: sayi(r.no),
+  device_id: String(r.device_id),
+  medya_id: String(r.medya_id),
+  sohbet_id: String(r.sohbet_id),
+  tur: String(r.tur) as MedyaKaydi["tur"],
+  mime: String(r.mime) as MedyaKaydi["mime"],
+  boyut: sayi(r.boyut),
+  alinan: sayi(r.alinan),
+  durum: String(r.durum) as MedyaKayitDurumu,
+  red_kodu: metinVeyaNull(r.red_kodu) as MedyaHatasi | null,
+  bicim: metinVeyaNull(r.bicim) as MedyaBicimi | null,
+  isleme: metinVeyaNull(r.isleme) as MedyaIslemeDurumu | null,
+  isleme_nedeni: metinVeyaNull(r.isleme_nedeni) as MedyaIslemeNedeni | null,
+  sure_ms: sayiVeyaNull(r.sure_ms),
+  genislik: sayiVeyaNull(r.genislik),
+  yukseklik: sayiVeyaNull(r.yukseklik),
+  kare_adet: sayiVeyaNull(r.kare_adet),
+  olusturma_ms: sayi(r.olusturma_ms),
+  guncelleme_ms: sayi(r.guncelleme_ms),
+  bagli_msg_id: metinVeyaNull(r.bagli_msg_id),
+});
+
+/**
+ * `sonKonusma`: `user_echo.ekler` (`json_extract` JSON metni) → `{ekler}` ya da `{}`. Olay yazılırken
+ * şemadan geçti; yine de okunamayan ek satırı düşürmez, yalnız alan yazılmaz.
+ */
+const ekleriOku = (ham: unknown): { ekler?: EkListesi } => {
+  if (typeof ham !== "string") return {};
+  try {
+    const l = EkListesi.safeParse(JSON.parse(ham));
+    return l.success ? { ekler: l.data } : {};
+  } catch {
+    return {};
+  }
+};
+
+type MedyaAlanlari = Parameters<MedyaliDepo["medyaGuncelle"]>[1];
+
+const kapaliListe =
+  (ad: string, kume: Readonly<Record<string, true>> | ReadonlySet<string>, nullOlur: boolean) =>
+  (v: unknown): SQLInputValue => {
+    if (v === null && nullOlur) return null;
+    const var_ = typeof v === "string" && (kume instanceof Set ? kume.has(v) : Object.hasOwn(kume, v));
+    if (!var_) throw new Error(`depo: medya ${ad} geçersiz`);
+    return v as string;
+  };
+const negatifOlmayan =
+  (ad: string, nullOlur: boolean) =>
+  (v: unknown): SQLInputValue => {
+    if (v === null && nullOlur) return null;
+    if (typeof v !== "number" || !Number.isSafeInteger(v) || v < 0) throw new Error(`depo: medya ${ad} geçersiz`);
+    return v;
+  };
+
+/** `medyaGuncelle`'nin yazabildiği alanlar ve denetimleri; kimlik ve beyan alanları burada yok (yazılırsa atar). */
+const MEDYA_GUNCELLEME: { readonly [A in keyof Required<MedyaAlanlari>]: (v: unknown) => SQLInputValue } = {
+  alinan: negatifOlmayan("alinan", false),
+  durum: kapaliListe("durum", MEDYA_KAYIT_DURUMLARI, false),
+  red_kodu: kapaliListe("red_kodu", MEDYA_RED_KODLARI, true),
+  bicim: kapaliListe("bicim", MEDYA_BICIMLERI, true),
+  isleme: kapaliListe("isleme", MEDYA_ISLEMELERI, true),
+  isleme_nedeni: kapaliListe("isleme_nedeni", MEDYA_ISLEME_NEDENLERI, true),
+  sure_ms: negatifOlmayan("sure_ms", true),
+  genislik: negatifOlmayan("genislik", true),
+  yukseklik: negatifOlmayan("yukseklik", true),
+  kare_adet: negatifOlmayan("kare_adet", true),
+  guncelleme_ms: negatifOlmayan("guncelleme_ms", false),
+  bagli_msg_id: (v) => (v === null ? null : OpakId.parse(v)),
+};
+
+/** Diskte yer tutan durumlar (`medyaDiskBayti`): `reddedildi`'nin dosyaları silinmiştir. */
+const MEDYA_DISKTE = "('yukleniyor', 'kabul', 'silinecek')";
+
 // --- Ajanda (ek göç 6) ---
 
 /** Ajanda kaydı satırından: `veri` tam `AjandaKaydi` JSON'udur (yazarken şemadan geçti). */
@@ -761,7 +923,8 @@ export interface CihazYonetimi {
   cihazKaldir(device_id: string): CihazKaldirmaSonucu;
 }
 
-export type CihazYonetimliDepo = Depo & CihazYonetimi;
+/** Medya dalgası: `MedyaliDepo` bir `Depo`dur; eşleşme yönetimi yerel komutlar içindir. */
+export type CihazYonetimliDepo = MedyaliDepo & CihazYonetimi;
 
 /** Kaldırılmış kimlik süzgeci: `cihazlar` satırı ancak iptal kaydı yoksa geçerlidir (savunma). */
 const IPTAL_EDILMEMIS = "NOT EXISTS (SELECT 1 FROM cihaz_iptalleri i WHERE i.device_id = cihazlar.device_id)";
@@ -769,7 +932,7 @@ const IPTAL_EDILMEMIS = "NOT EXISTS (SELECT 1 FROM cihaz_iptalleri i WHERE i.dev
 const AJANDA_IPTAL_EDILMEMIS =
   "NOT EXISTS (SELECT 1 FROM cihaz_iptalleri i WHERE i.device_id = ajanda_cihazlari.device_id)";
 
-export const depoKur: DepoFabrikasi = (b) => depoAc(b);
+export const depoKur: MedyaliDepoFabrikasi = (b) => depoAc(b);
 
 export const depoAc = (b: DepoBagimliliklari): CihazYonetimliDepo => {
   const EK_GOCLER = ekGocler(anaSohbetAdiUret(b.anaSohbetAdi));
@@ -971,7 +1134,8 @@ export const depoAc = (b: DepoBagimliliklari): CihazYonetimliDepo => {
   const sohbetIceriginiSil = (
     sohbet_id: string,
     sinir_seq: number | null,
-  ): { silinen_olay: number; bosaltilan_tur: number; silinen_kuyruk: number } => {
+    ms: number,
+  ): { silinen_olay: number; bosaltilan_tur: number; silinen_kuyruk: number; silinecek_medya: number } => {
     const seqKosulu = sinir_seq === null ? "" : "seq <= ? AND ";
     const seqDegeri: SQLInputValue[] = sinir_seq === null ? [] : [sinir_seq];
     const silinen_olay = calistir(
@@ -986,8 +1150,20 @@ export const depoAc = (b: DepoBagimliliklari): CihazYonetimliDepo => {
     ).changes;
     // Ajanda dalgası: ekler satırlarla birlikte gider. Ajanda tablolarına DOKUNULMAZ.
     calistir("DELETE FROM kuyruk_ekleri WHERE kuyruk_id IN (SELECT id FROM eren_kuyrugu WHERE sohbet_id = ?)", sohbet_id);
+    // Medya dalgası: o sohbetin kuyruk bağları satırlarla gider; o sohbetin bütün medyası (bitmemiş
+    // yükleme dahil) `silinecek` olur ve artık hiçbir yoldan modele ya da telefona gitmez. Dizinleri
+    // işlemden sonra `MedyaYoneticisi.sohbetMedyasiniSil` siler. Başka sohbetin satırına dokunulmaz.
+    calistir(
+      "DELETE FROM kuyruk_medyalari WHERE kuyruk_id IN (SELECT id FROM eren_kuyrugu WHERE sohbet_id = ?)",
+      sohbet_id,
+    );
+    const silinecek_medya = calistir(
+      "UPDATE medya SET durum = 'silinecek', guncelleme_ms = ? WHERE sohbet_id = ? AND durum <> 'silinecek'",
+      ms,
+      sohbet_id,
+    ).changes;
     const silinen_kuyruk = calistir("DELETE FROM eren_kuyrugu WHERE sohbet_id = ?", sohbet_id).changes;
-    return { silinen_olay, bosaltilan_tur, silinen_kuyruk };
+    return { silinen_olay, bosaltilan_tur, silinen_kuyruk, silinecek_medya };
   };
 
   /** Ajanda cihazı mı (iptal süzgeçsiz: kimlik tek kapsamdadır kuralı için). */
@@ -1041,7 +1217,8 @@ export const depoAc = (b: DepoBagimliliklari): CihazYonetimliDepo => {
         // `+type`: `events_tur` dizini kullanılmasın; `events_sohbet (sohbet_id, seq)` ile o sohbetin
         // satırları sondan taranıp `adet` satırda durulur.
         `SELECT type, ts_ms, json_extract(veri, '$.text') AS metin, json_extract(veri, '$.input') AS girdi,
-                json_extract(veri, '$.baglam.paket') AS paket, json_extract(veri, '$.baglam.ad') AS ad FROM events
+                json_extract(veri, '$.baglam.paket') AS paket, json_extract(veri, '$.baglam.ad') AS ad,
+                json_extract(veri, '$.ekler') AS ekler FROM events
          WHERE sohbet_id = ? AND +type IN ('user_echo', 'assistant_message') ORDER BY seq DESC LIMIT ?`,
         sohbet.sohbet_id,
         adet,
@@ -1054,6 +1231,7 @@ export const depoAc = (b: DepoBagimliliklari): CihazYonetimliDepo => {
           r.girdi === "kisayol" && {
             kisayol: r.paket === null || r.ad === null ? {} : { baglam: { paket: String(r.paket), ad: String(r.ad) } },
           }),
+        ...(r.type === "user_echo" && ekleriOku(r.ekler)),
       }));
     },
 
@@ -1317,6 +1495,8 @@ export const depoAc = (b: DepoBagimliliklari): CihazYonetimliDepo => {
       islem(() => {
         for (const id of idler) {
           calistir("DELETE FROM kuyruk_ekleri WHERE kuyruk_id = ?", id);
+          // Medya dalgası: bağ gider, kayıt kalır (`bagli_msg_id` dolu: gönderilmiş, tahliye adayı).
+          calistir("DELETE FROM kuyruk_medyalari WHERE kuyruk_id = ?", id);
           calistir("DELETE FROM eren_kuyrugu WHERE id = ?", id);
         }
       });
@@ -1548,7 +1728,7 @@ export const depoAc = (b: DepoBagimliliklari): CihazYonetimliDepo => {
         kayitNoktasinda("gecmisi_temizle", () => {
           // `seq` AUTOINCREMENT: silinen en büyük numara bir daha verilmez, mezar taşı en yeni olur.
           const sinir_seq = depo.basSeq();
-          const sayilar = sohbetIceriginiSil(sohbet_id, sinir_seq);
+          const sayilar = sohbetIceriginiSil(sohbet_id, sinir_seq, b.saat.simdiMs());
           const mezar = depo.olayEkle({ type: MEZAR_TASI_TURU, sohbet_id, sinir_seq }) as MezarTasiOlayi;
           if (!(mezar.seq > sinir_seq)) throw new Error("depo: mezar taşı en yeni olay değil");
           return { mezar, ...sayilar };
@@ -1687,7 +1867,7 @@ export const depoAc = (b: DepoBagimliliklari): CihazYonetimliDepo => {
           if (kayit === null) throw new Error(`depo: silinecek sohbet yok (${sohbet_id})`);
           if (kayit.silinme_ms !== null) throw new Error(`depo: sohbet zaten silinmiş (${sohbet_id})`);
           // Sınırsız: o sohbetin silinebilir bütün olayları (`ana` olmadığı için NULL satır söz konusu değil).
-          const sayilar = sohbetIceriginiSil(sohbet_id, null);
+          const sayilar = sohbetIceriginiSil(sohbet_id, null, ms);
           calistir("UPDATE sohbetler SET silinme_ms = ? WHERE sohbet_id = ?", ms, sohbet_id);
           // Tür zorlaması: `protocol` `olay()` zarfındaki isteğe bağlı `sohbet_id` ile yaşam döngüsü
           // olaylarının zorunlu `sohbet_id`'si tip düzeyinde `undefined`'a çöküyor (çalışma anında şema
@@ -1978,6 +2158,179 @@ export const depoAc = (b: DepoBagimliliklari): CihazYonetimliDepo => {
         olusturma_ms: sayi(r.olusturma_ms),
         iptal_ms: r.iptal_ms === null ? null : sayi(r.iptal_ms),
       }));
+    },
+
+    // --- Medya (ek göç 8). Yalnız `medya.ts` (S4) çağırır; temizlik/silme adımları `sohbetIceriginiSil`'de. ---
+
+    medyaKaydiAc(k) {
+      // Beyan denetimi (savunma: S4 kablo şemasından geçirmiştir). Hiçbir şey yazılmadan atar.
+      const medya_id = MedyaId.parse(k.medya_id);
+      const tur = MedyaTuru.parse(k.tur);
+      const mime = MedyaMime.parse(k.mime);
+      if (mimeTuru(mime) !== tur) throw new Error("depo: medya mime türle uyuşmuyor");
+      if (!Number.isSafeInteger(k.boyut) || k.boyut < 1 || k.boyut > turBaytSiniri(tur)) {
+        throw new Error("depo: medya boyutu geçersiz");
+      }
+      if (!Number.isSafeInteger(k.olusturma_ms) || k.olusturma_ms < 0) throw new Error("depo: medya zamanı geçersiz");
+      if (typeof k.device_id !== "string" || k.device_id.length === 0) throw new Error("depo: medya cihazı geçersiz");
+      if (typeof k.sohbet_id !== "string" || k.sohbet_id.length === 0) throw new Error("depo: medya sohbeti geçersiz");
+      const no = islem(() => {
+        if (depo.medyaKaydiBul(k.device_id, medya_id) !== null) throw new Error("depo: medya kaydı zaten var");
+        return calistir(
+          `INSERT INTO medya (device_id, medya_id, sohbet_id, tur, mime, boyut, alinan, durum, olusturma_ms, guncelleme_ms)
+           VALUES (?, ?, ?, ?, ?, ?, 0, 'yukleniyor', ?, ?)`,
+          k.device_id,
+          medya_id,
+          k.sohbet_id,
+          tur,
+          mime,
+          k.boyut,
+          k.olusturma_ms,
+          k.olusturma_ms,
+        ).kimlik;
+      });
+      return depo.medyaKaydiGetir(no) as MedyaKaydi;
+    },
+    medyaKaydiBul(device_id, medya_id) {
+      const r = bir("SELECT * FROM medya WHERE device_id = ? AND medya_id = ?", device_id, medya_id);
+      return r === null ? null : medyaSatiri(r);
+    },
+    medyaKaydiGetir(no) {
+      const r = bir("SELECT * FROM medya WHERE no = ?", no);
+      return r === null ? null : medyaSatiri(r);
+    },
+    medyaGuncelle(no, alanlar) {
+      const atamalar: string[] = [];
+      const degerler: SQLInputValue[] = [];
+      // Hepsi yazmadan önce denetlenir: bilinmeyen alan (kimlik ve beyan dahil) ya da geçersiz değer atar.
+      const yazilacak: Array<[string, unknown]> = Object.entries(alanlar).filter(([, v]) => v !== undefined);
+      for (const [ad, v] of yazilacak) {
+        const denetle = (MEDYA_GUNCELLEME as Record<string, ((v: unknown) => SQLInputValue) | undefined>)[ad];
+        if (denetle === undefined || !Object.hasOwn(MEDYA_GUNCELLEME, ad)) {
+          throw new Error(`depo: medya için yazılamaz alan ${ad}`);
+        }
+        atamalar.push(ad);
+        degerler.push(denetle(v));
+      }
+      islem(() => {
+        const kayit = depo.medyaKaydiGetir(no);
+        if (kayit === null) throw new Error(`depo: medya kaydı yok (${no})`);
+        if (atamalar.length === 0) return;
+        // `silinecek` geri dönmez: işlem sürerken sohbet silinmiş olabilir; geç gelen "kabul" silinmiş
+        // sohbetin medyasını diriltmesin. Öteki alanlar yazılır.
+        const i = atamalar.indexOf("durum");
+        if (kayit.durum === "silinecek" && i >= 0 && degerler[i] !== "silinecek") {
+          atamalar.splice(i, 1);
+          degerler.splice(i, 1);
+          b.gunluk.uyari("depo", "silinecek_medya_durumu_korundu", { no });
+          if (atamalar.length === 0) return;
+        }
+        calistir(`UPDATE medya SET ${atamalar.map((a) => `${a} = ?`).join(", ")} WHERE no = ?`, ...degerler, no);
+      });
+    },
+    medyaKayitlari(suzgec: MedyaKayitSuzgeci = {}) {
+      const kosullar: string[] = [];
+      const degerler: SQLInputValue[] = [];
+      if (suzgec.durumlar !== undefined) {
+        if (suzgec.durumlar.length === 0) return [];
+        kosullar.push(`durum IN (${suzgec.durumlar.map(() => "?").join(", ")})`);
+        degerler.push(...suzgec.durumlar);
+      }
+      if (suzgec.sohbet !== undefined) {
+        kosullar.push("sohbet_id = ?");
+        degerler.push(suzgec.sohbet.sohbet_id);
+      }
+      if (suzgec.device_id !== undefined) {
+        kosullar.push("device_id = ?");
+        degerler.push(suzgec.device_id);
+      }
+      if (suzgec.bagli !== undefined) kosullar.push(suzgec.bagli ? "bagli_msg_id IS NOT NULL" : "bagli_msg_id IS NULL");
+      if (suzgec.guncellemeOnce !== undefined) {
+        kosullar.push("guncelleme_ms < ?");
+        degerler.push(suzgec.guncellemeOnce);
+      }
+      const nerede = kosullar.length === 0 ? "" : ` WHERE ${kosullar.join(" AND ")}`;
+      return hepsi(`SELECT * FROM medya${nerede} ORDER BY no`, ...degerler).map(medyaSatiri);
+    },
+    medyaBekleyenSayisi(device_id) {
+      const r = bir(
+        `SELECT COUNT(*) AS n FROM medya WHERE device_id = ?
+           AND (durum = 'yukleniyor' OR (durum = 'kabul' AND bagli_msg_id IS NULL))`,
+        device_id,
+      ) as Satir;
+      return sayi(r.n);
+    },
+    medyaDiskBayti() {
+      return sayi((bir(`SELECT COALESCE(SUM(boyut), 0) AS t FROM medya WHERE durum IN ${MEDYA_DISKTE}`) as Satir).t);
+    },
+    medyaTahliyeAdaylari() {
+      // Gönderilmiş (bağlanmış, kuyruk satırı ana oturuma yazılıp silinmiş) kabul edilmiş kayıtlar, en eskiden.
+      // Kuyrukta bekleyen (bağı duran), bağlanmamış, yarım ve `silinecek` kayıt aday değildir.
+      return hepsi(
+        `SELECT * FROM medya m WHERE m.durum = 'kabul' AND m.bagli_msg_id IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM kuyruk_medyalari k WHERE k.medya_no = m.no)
+         ORDER BY m.olusturma_ms, m.no`,
+      ).map(medyaSatiri);
+    },
+    medyaKuyrugaBagla({ kuyruk_id, client_msg_id, nolar, ms }) {
+      const msg = OpakId.parse(client_msg_id);
+      if (nolar.length === 0 || nolar.length > MEDYA_SINIRLARI.EK_ADET) throw new Error("depo: bağlanacak medya sayısı geçersiz");
+      if (new Set(nolar).size !== nolar.length) throw new Error("depo: bağlanacak medya yinelenmiş");
+      if (!Number.isSafeInteger(ms) || ms < 0) throw new Error("depo: bağlama zamanı geçersiz");
+      islem(() =>
+        kayitNoktasinda("medya_bagla", () => {
+          const satir = bir("SELECT sohbet_id FROM eren_kuyrugu WHERE id = ?", kuyruk_id);
+          if (satir === null) throw new Error("depo: medyanın bağlanacağı kuyruk satırı yok");
+          if (bir("SELECT 1 AS var FROM kuyruk_medyalari WHERE kuyruk_id = ? LIMIT 1", kuyruk_id) !== null) {
+            throw new Error("depo: kuyruk satırının medyası zaten bağlı");
+          }
+          // Önce hepsi denetlenir, sonra yazılır; kayıt noktası yine de yarım yazımı geri alır.
+          for (const no of nolar) {
+            const k = depo.medyaKaydiGetir(no);
+            if (k === null) throw new Error(`depo: bağlanacak medya yok (${no})`);
+            if (k.durum !== "kabul") throw new Error(`depo: bağlanacak medya kabul değil (${no})`);
+            if (k.bagli_msg_id !== null) throw new Error(`depo: medya zaten bağlı (${no})`);
+            if (k.sohbet_id !== String(satir.sohbet_id)) throw new Error(`depo: medya başka sohbetin (${no})`);
+          }
+          nolar.forEach((no, sira) => {
+            calistir("INSERT INTO kuyruk_medyalari (kuyruk_id, sira, medya_no) VALUES (?, ?, ?)", kuyruk_id, sira, no);
+            calistir("UPDATE medya SET bagli_msg_id = ?, guncelleme_ms = ? WHERE no = ?", msg, ms, no);
+          });
+        }),
+      );
+    },
+    kuyrukMedyalari(kuyruk_id) {
+      return hepsi(
+        "SELECT m.* FROM kuyruk_medyalari k JOIN medya m ON m.no = k.medya_no WHERE k.kuyruk_id = ? ORDER BY k.sira",
+        kuyruk_id,
+      ).map(medyaSatiri);
+    },
+    medyaYetimBaglariSil() {
+      // Kuyruk satırı (geri alınmış eski kodun silmesi) ya da medya kaydı gitmiş bağlar.
+      return calistir(
+        `DELETE FROM kuyruk_medyalari WHERE kuyruk_id NOT IN (SELECT id FROM eren_kuyrugu)
+           OR medya_no NOT IN (SELECT no FROM medya)`,
+      ).changes;
+    },
+    medyaKaydiSil(no) {
+      islem(() => {
+        calistir("DELETE FROM kuyruk_medyalari WHERE medya_no = ?", no);
+        calistir("DELETE FROM medya WHERE no = ?", no);
+      });
+    },
+    nesilGorselSayisi(nesil) {
+      const r = bir("SELECT adet FROM nesil_gorselleri WHERE nesil = ?", nesil);
+      return r === null ? 0 : sayi(r.adet);
+    },
+    nesilGorselEkle(nesil, adet) {
+      if (!Number.isSafeInteger(nesil)) throw new Error("depo: nesil geçersiz");
+      if (!Number.isSafeInteger(adet) || adet < 0) throw new Error("depo: görsel adedi geçersiz");
+      calistir(
+        `INSERT INTO nesil_gorselleri (nesil, adet) VALUES (?, ?)
+         ON CONFLICT (nesil) DO UPDATE SET adet = adet + excluded.adet`,
+        nesil,
+        adet,
+      );
     },
   };
   return depo;
