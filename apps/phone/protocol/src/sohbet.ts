@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { HataKodu, HataKoduV1 } from "./hatalar.ts";
+import { EkListesi, ekOneki, MediaBegin, MediaCancel, MediaChunk, MediaState } from "./medya.ts";
 import { IsProfili, Plan } from "./plan.ts";
 import { IsRaporu } from "./rapor.ts";
 import { PROTOKOL_SURUMU, SINIRLAR, SOHBET_SINIRLARI, SOHBET_SURUMU } from "./sinirlar.ts";
@@ -120,6 +121,17 @@ function yalnizKisayolda(s: { input: string; baglam?: unknown }): boolean {
   return s.baglam === undefined || s.input === "kisayol";
 }
 
+/** Medya eki (yetenek `medya1`) yalnız yazılı mesajda: dikte ve kısayol ek taşımaz. */
+const EK_KURALI = { message: "ekler yalnız input yazi iken geçerli", path: ["ekler"] };
+function yalnizYazida(s: { input: string; ekler?: unknown }): boolean {
+  return s.ekler === undefined || s.input === "yazi";
+}
+/** `user_message`: metin boş olabilir ama yalnız ek varsa (eki olmayan mesaj en az bir birim metin taşır). */
+const METIN_KURALI = { message: "metin boş ve ek yok", path: ["text"] };
+function metinYaDaEk(s: { text: string; ekler?: readonly unknown[] | undefined }): boolean {
+  return s.text.length > 0 || (s.ekler !== undefined && s.ekler.length > 0);
+}
+
 /** Eşleştirme kısa kodu. `/ajanda` eşleştirmesi de aynı kuralı kullanır. */
 export const EslestirmeKodu = z
   .string()
@@ -161,14 +173,26 @@ export const PairRequest = mesaj("pair_request", {
 });
 /** `/sohbet` kimlik yanıtı (`SOHBET_SURUMU`). `/cihaz`'ınki ayrıdır: `CihazAuthResponse` (v1). */
 export const AuthResponse = sohbetMesaj("auth_response", { signature: Imza });
-/** v3: `sohbet_id` zorunlu. v4: `input:"kisayol"` ile isteğe bağlı `baglam`. Sohbet yoksa ya da silinmişse `ack{ok:false, code:"sohbet_bulunamadi"}`. */
+/**
+ * v3: `sohbet_id` zorunlu. v4: `input:"kisayol"` ile isteğe bağlı `baglam`. Sohbet yoksa ya da silinmişse
+ * `ack{ok:false, code:"sohbet_bulunamadi"}`.
+ *
+ * Yetenek `medya1` (sürüm artmadan): isteğe bağlı `ekler` (`EkListesi`: 1..`EK_ADET`, `medya_id` tekil,
+ * en çok bir video), yalnız `input:"yazi"` ile. Ek varsa `text` boş olabilir; ek yoksa en az bir birim.
+ * Her ek bu cihazın, aynı sohbetin, `kabul` almış ve başka mesaja bağlanmamış kaydı olmalıdır; değilse
+ * `ack{ok:false, code:"medya_yok"}`. `medya1` istemeyen bağlantıdan `ekler`'li mesaj `gecersiz_mesaj` alır.
+ */
 export const UserMessage = sohbetMesaj("user_message", {
   client_msg_id: OpakId,
   sohbet_id: SohbetId,
   input: GirdiYolu,
-  text: z.string().min(1).max(SINIRLAR.KULLANICI_METNI),
+  text: z.string().max(SINIRLAR.KULLANICI_METNI),
   baglam: KisayolBaglami.optional(),
-}).refine(yalnizKisayolda, BAGLAM_KURALI);
+  ekler: EkListesi.optional(),
+})
+  .refine(yalnizKisayolda, BAGLAM_KURALI)
+  .refine(yalnizYazida, EK_KURALI)
+  .refine(metinYaDaEk, METIN_KURALI);
 /** v3: `sohbet_id` zorunlu; yalnız o sohbetin ana oturumu kesilir. */
 export const Interrupt = sohbetMesaj("interrupt", {
   client_msg_id: OpakId,
@@ -235,6 +259,10 @@ export const ChatDelete = sohbetMesaj("chat_delete", { client_msg_id: OpakId, so
  */
 export const UsageRequest = sohbetMesaj("usage_request", { istek_id: OpakId });
 
+/**
+ * `SohbetYukari`'nın son üç üyesi medya yüklemesidir (`medya.ts`: `media_begin`, `media_chunk`,
+ * `media_cancel`; yetenek `medya1`, `MEDYA_YUKARI_TURLERI`).
+ */
 export const SohbetYukari = z.discriminatedUnion("type", [
   Hello,
   PairRequest,
@@ -249,6 +277,9 @@ export const SohbetYukari = z.discriminatedUnion("type", [
   ChatRename,
   ChatDelete,
   UsageRequest,
+  MediaBegin,
+  MediaChunk,
+  MediaCancel,
 ]);
 export type SohbetYukari = z.infer<typeof SohbetYukari>;
 
@@ -305,12 +336,20 @@ export const SILINMEZ_OLAY_TURLERI = ["chat_cleared", "chat_created", "chat_rena
 export const SOHBET_YASAM_OLAYLARI = ["chat_created", "chat_renamed", "chat_deleted"] as const;
 
 export const Olay = z.discriminatedUnion("type", [
+  /**
+   * `ekler` (yetenek `medya1`): `user_message.ekler`'in aynısı, aynı kurallarla (yalnız `input:"yazi"`).
+   * Kalıcıdır ve telafiyle gelir; ama yalnız `medya1` bağlantısına `ekler`'iyle gider, jetonsuz bağlantıya
+   * `olayiYetenegeGoreYansit` ile ekleri metne önek olarak düşürülmüş gider.
+   */
   olay("user_echo", {
     client_msg_id: OpakId,
     input: GirdiYolu,
     text: z.string().max(SINIRLAR.KULLANICI_METNI),
     baglam: KisayolBaglami.optional(),
-  }).refine(yalnizKisayolda, BAGLAM_KURALI),
+    ekler: EkListesi.optional(),
+  })
+    .refine(yalnizKisayolda, BAGLAM_KURALI)
+    .refine(yalnizYazida, EK_KURALI),
   olay("assistant_message", {
     turn_id: OpakId,
     text: z.string().max(SINIRLAR.ASISTAN_METNI),
@@ -406,6 +445,28 @@ export const Olay = z.discriminatedUnion("type", [
 ]);
 export type Olay = z.infer<typeof Olay>;
 
+/** UTF-16 birimine kırpar; kesim bir vekil çiftini bölecekse yarım çifti de atar. */
+function birimKirp(metin: string, sinir: number): string {
+  if (metin.length <= sinir) return metin;
+  const son = metin.charCodeAt(sinir - 1);
+  return metin.slice(0, son >= 0xd800 && son <= 0xdbff ? sinir - 1 : sinir);
+}
+
+/**
+ * Olayı bağlantının yeteneğine göre yansıtır (saf). `medya` doğruysa ya da olay `ekler`'li bir
+ * `user_echo` değilse olayın kendisini (aynı nesne) döner. Değilse `ekler` atılır, metnin başına
+ * `ekOneki` (`[2 fotoğraf]`, `[video]`, `[1 fotoğraf, 1 video]`) ve bir boşluk konur (metin boşsa yalnız
+ * önek), sonuç `KULLANICI_METNI` UTF-16 birimine kırpılır. Sonuç `ekler` alanını hiç taşımaz: eski APK'nın
+ * şemasından geçer. Servis her olay gönderiminde (canlı ve telafi) bunu bağlantının `medya1`'iyle çağırır.
+ */
+export function olayiYetenegeGoreYansit(olay: Olay, medya: boolean): Olay {
+  if (medya || olay.type !== "user_echo" || olay.ekler === undefined) return olay;
+  const { ekler, ...kalan } = olay;
+  const onek = ekOneki(ekler);
+  const metin = kalan.text.length > 0 ? `${onek} ${kalan.text}` : onek;
+  return { ...kalan, text: birimKirp(metin, SINIRLAR.KULLANICI_METNI) };
+}
+
 // Aşağı: bilgisayar -> telefon
 
 /** `/sohbet` sınaması (`SOHBET_SURUMU`). `/cihaz`'ınki ayrıdır: `CihazAuthChallenge` (v1). */
@@ -414,7 +475,34 @@ export const AuthChallenge = sohbetMesaj("auth_challenge", {
   /** Bilgisayarın `kimlikImzaMetni({ rol: "pc", ... })` imzası. */
   server_signature: Imza,
 });
-export const Welcome = sohbetMesaj("welcome", { head_seq: SeqNo, server_time_ms: ZamanMs });
+/**
+ * Yetenek jetonunun biçimi: küçük harf, rakam, `_`, `-`; 1-`YETENEK_JETONU` (32) karakter. Servisin
+ * `?yetenek=` okuyucusu bu biçime uymayan jetonu yok sayar.
+ */
+export const YETENEK_JETONU_DESENI = /^[a-z0-9_-]{1,32}$/;
+export const YetenekJetonu = z
+  .string()
+  .max(SOHBET_SINIRLARI.YETENEK_JETONU)
+  .regex(YETENEK_JETONU_DESENI);
+export type YetenekJetonu = z.infer<typeof YetenekJetonu>;
+
+/**
+ * `yetenekler` (yetenek `medya1` ile geldi, sürüm artmadan): servisin bu bağlantıda desteklediği
+ * jetonlar, en çok `YETENEK_ADET`, tekil, sırası anlamsız. Alan yalnız `medya1` isteyen bağlantının
+ * `welcome`'ına yazılır (jetonsuz ya da yalnız `etkinlik1` isteyen eski APK alanı hiç görmez); servis
+ * yalnız gerçekten desteklediği jetonları yazar (bugün en çok `["medya1"]`; `etkinlik1` geriye uyum için
+ * yazılmaz). ffmpeg yoksa `medya1` yazılmaz, dizi boş olabilir. Telefon `medya1`'i görmezse ek düğmesini
+ * kapatır; eski servis alanı hiç yazmaz, bu da "desteklemiyor" demektir.
+ */
+export const Welcome = sohbetMesaj("welcome", {
+  head_seq: SeqNo,
+  server_time_ms: ZamanMs,
+  yetenekler: z
+    .array(YetenekJetonu)
+    .max(SOHBET_SINIRLARI.YETENEK_ADET)
+    .refine((l) => new Set(l).size === l.length, { message: "yinelenen jeton" })
+    .optional(),
+});
 /** v1: Kotlin `v == 1` ve alan kümesiyle doğrular. Kod kümesi de v1'dir. */
 export const PairResult = mesaj("pair_result", {
   ok: z.boolean(),
@@ -481,7 +569,12 @@ export type AkisEtkinligi = z.infer<typeof AkisEtkinligi>;
  * listesidir. Sürüm artmaz: jetonu istemeyen bağlantıya ilgili çerçeve hiç gönderilmez.
  */
 export const SOHBET_YETENEK_PARAMETRESI = "yetenek";
-export const SOHBET_YETENEKLERI = { ETKINLIK: "etkinlik1" } as const;
+/**
+ * `ETKINLIK`: `assistant_activity`, `assistant_activity_end`. `MEDYA`: medya eki (`medya.ts`):
+ * `media_begin`, `media_chunk`, `media_cancel` ↑, `media_state` ↓, `user_message.ekler`,
+ * `user_echo.ekler`, `welcome.yetenekler`, `MEDYA_HATA_KODLARI`. Medya sınırını değiştirmek `medya2` ister.
+ */
+export const SOHBET_YETENEKLERI = { ETKINLIK: "etkinlik1", MEDYA: "medya1" } as const;
 
 /**
  * Tur sürerken asistanın ne yaptığı (kalıcı değil). Yalnız `yetenek=etkinlik1` isteyen bağlantıya gider.
@@ -630,5 +723,6 @@ export const SohbetAsagi = z.discriminatedUnion("type", [
   ServerStatus,
   ErrorMesaji,
   UsageReport,
+  MediaState,
 ]);
 export type SohbetAsagi = z.infer<typeof SohbetAsagi>;

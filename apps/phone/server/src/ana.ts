@@ -11,11 +11,11 @@ import type { AjandaEkDiski, AjandaEkleri } from "./ajanda-ekler.ts";
 import { ajandaKopruSunucuKur } from "./ajanda-kopru-sunucu.ts";
 import { AJANDA_SUNULAN_YETENEKLER, ajandaKur } from "./ajanda.ts";
 import { akisKur } from "./akis.ts";
-import { AyarHatasi, ayarKur, yollariUret } from "./ayar.ts";
+import { AyarHatasi, ayarKur, medyaKapaliNedeni, yollariUret } from "./ayar.ts";
 import { bildirimKur } from "./bildirim.ts";
 import { cihazKur } from "./cihaz.ts";
 import { depoKur } from "./depo.ts";
-import { ajandaEkDiskiKur, disDunyaKur, dosyaPortuKur, veriKokuIzniHazirla } from "./dis-dunya.ts";
+import { ajandaEkDiskiKur, disDunyaKur, dosyaPortuKur, medyaDosyaKur, veriKokuIzniHazirla } from "./dis-dunya.ts";
 import { gatewayKur } from "./gateway.ts";
 import { ajandaEkliYuz } from "./gateway-ajanda.ts";
 import { gunlukKur } from "./gunluk.ts";
@@ -24,6 +24,8 @@ import { kilitKur } from "./kilit.ts";
 import { kokIzniHataMetni } from "./kok-izni.ts";
 import { konusmaKur } from "./konusma.ts";
 import { kopruSunucuKur } from "./kopru-sunucu.ts";
+import { medyaIsleyiciKur } from "./medya-isle.ts";
+import { medyaKur } from "./medya.ts";
 import { planlarKur } from "./planlar.ts";
 import { sohbetlerKur } from "./sohbetler.ts";
 import { takvimKur } from "./takvim.ts";
@@ -46,6 +48,10 @@ import type {
   KopruBaglami,
   KopruSunucu,
   LimitKilidi,
+  MedyaAyari,
+  MedyaDosyaPortu,
+  MedyaIsleyici,
+  MedyaYoneticisi,
   Ortam,
   PlanYoneticisi,
   SohbetYoneticisi,
@@ -60,6 +66,15 @@ const GUNLUK_AZAMI_BAYT = 10 * 1024 * 1024;
 const GUNLUK_AZAMI_DOSYA = 5;
 /** Örneklerin `kapat`'ı `taskkill` bekler (en çok 15 sn): takılan kapanış süreci sonsuza dek tutmasın. */
 const KAPANIS_SINIRI_MS = 30_000;
+/**
+ * Medya dalgası. `medya.kapat()` süren ffmpeg/whisper aracını iptal sinyaliyle keser (süreç ağacı öldürülür),
+ * bu yüzden çoğunlukla 1-2 sn'de döner; 5 dk videonun dökümü (en çok 900 sn) beklenmez. Bu sınır yalnız
+ * güvenlik ağıdır: iptal tutmazsa kapanış en çok bu kadar bekler, sonra sürer. `KAPANIS_SINIRI_MS` (ve bekçinin
+ * 40 sn'lik `kapanmaBeklemeMs`'i) içinde kalmalı, `sohbetler` (en çok 15 sn `taskkill`) ile toplamı 30 sn'nin altında.
+ * Kesilen iş (ve sınırda bırakılan) kayıt `kabul` + `isleniyor` kalır; sonraki açılışta `medya.baslat()` o eki
+ * yeniden kuyruğa alır (iş kaybolmaz, yalnız yinelenir).
+ */
+const MEDYA_KAPANIS_SINIRI_MS = 10_000;
 const KAPANIS_SINYALLERI: readonly NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGBREAK", "SIGHUP"];
 
 const ROL_HATASI = { ok: false, code: "rol_fiil_izinsiz" } as const;
@@ -86,6 +101,13 @@ export interface ServisGirdisi {
   ajandaEkDiski?: AjandaEkDiski;
   /** Ek yedeği kotası, bayt (`giris` `ayar.ts` `ajandaEkKotaBayt`'tan verir). Verilmezse `EK_TOPLAM_BAYT`. */
   ajandaEkKotaBayt?: number;
+  /**
+   * Medya dalgası (MODULLER.md "Medya dalgası" > S9). Yalnız `ayar.medya` doluyken okunur; `ayar.medya`
+   * `null`/yoksa medya hiç kurulmaz, bu alan yok sayılır. Verilmezse (`giris` hep böyle) gerçekleri kurulur:
+   * `medyaDosyaKur({kok: ayar.medya.kok})` ve `dunya.surec` ile `medyaIsleyiciKur`. Testler sahte ya da
+   * geçici dizinli port ve işleyici verir (sahte dünyanın süreci `aracCalistir` çalıştırmaz).
+   */
+  medya?: { dosya: MedyaDosyaPortu; isleyici: MedyaIsleyici };
 }
 
 export interface Servis {
@@ -110,6 +132,8 @@ export interface Servis {
   ajandaKopru: AjandaKopruSunucu | null;
   /** Ek yedeği; `ServisGirdisi.ajandaEkDiski` yoksa ya da ajanda kapalıysa `null`. */
   ajandaEkleri: AjandaEkleri | null;
+  /** Medya dalgası; `ayar.medya` `null` ise `null` (yüzler hiçbir modüle verilmez). */
+  medya: MedyaYoneticisi | null;
   baslat(): Promise<void>;
   kapat(): Promise<void>;
 }
@@ -194,13 +218,57 @@ const fiilleriKur = ({ ayar, planlar, isler, cihaz, sohbetler }: FiilModulleri):
   };
 };
 
-export function servisKur({ dunya, ayar, depoYolu, ajanda: ajandaSecenegi, ajandaEkDiski, ajandaEkKotaBayt }: ServisGirdisi): Servis {
+export function servisKur({
+  dunya,
+  ayar,
+  depoYolu,
+  ajanda: ajandaSecenegi,
+  ajandaEkDiski,
+  ajandaEkKotaBayt,
+  medya: medyaSecenegi,
+}: ServisGirdisi): Servis {
   const { saat, zamanlayici, rastgele, dosya, surec, sistem, ws, boru, http, anahtar, transkript } = dunya;
   const gunluk = gunlukYap(dunya);
 
   const veriyolu = veriyoluKur({ gunluk });
   const depo = depoKur({ yol: depoYolu, saat, veriyolu, gunluk, anaSohbetAdi: ayar.asistanAdi });
   const kilit = kilitKur({ ayar, depo, dosya, saat, zamanlayici, veriyolu, gunluk });
+
+  // Medya dalgası (MODULLER.md "Medya dalgası" > "Akışlar" > "Açılış"). Yalnız `ayar.medya` doluyken kurulur
+  // ve o zaman yüzleri `sohbetler`, `temizlik`, `gateway`'e verilir; yoksa hiçbirine anahtar eklenmez ve
+  // davranış medya öncesiyle aynıdır (M0.1). Kapalı nedeni `ayarKur`'un bulduğudur (arama yinelenmez).
+  const medyaAyari = ayar.medya ?? null;
+  const medya: MedyaYoneticisi | null = medyaAyari === null ? null : medyaYoneticisiKur(medyaAyari);
+  function medyaYoneticisiKur(m: MedyaAyari): MedyaYoneticisi {
+    const medyaDosya = medyaSecenegi?.dosya ?? medyaDosyaKur({ kok: m.kok });
+    const isleyici =
+      medyaSecenegi?.isleyici ?? medyaIsleyiciKur({ surec, ayar: m, veriKoku: ayar.yollar.kok, dosya: medyaDosya });
+    return medyaKur({
+      ayar: m,
+      ramDusukMb: ayar.ramDusukMb,
+      depo,
+      dosya: medyaDosya,
+      isleyici,
+      saat,
+      zamanlayici,
+      rastgele,
+      sistem,
+      veriyolu,
+      gunluk,
+    });
+  }
+  if (medyaAyari === null) {
+    const neden = medyaKapaliNedeni(ayar);
+    if (neden !== null) gunluk.uyari(MODUL, "medya_kapali", { neden });
+  } else {
+    // Yol yazılmaz (M0.4): yalnız modelin bulunup bulunmadığı.
+    gunluk.bilgi(MODUL, "medya_acik", {
+      dokum_modeli: medyaAyari.dokumModeli !== null,
+      dokum_vad: medyaAyari.dokumVadModeli !== null,
+      dokum_dili: medyaAyari.dokumDili,
+      kota_mb: Math.round(medyaAyari.kotaBayt / (1024 * 1024)),
+    });
+  }
 
   const akis = akisKur();
   const kopru = kopruSunucuKur({ boru, depo, rastgele, anahtar, zamanlayici, gunluk });
@@ -287,10 +355,22 @@ export function servisKur({ dunya, ayar, depoYolu, ajanda: ajandaSecenegi, ajand
     sistem,
     // A0.6: ikisi birlikte verilir ya da hiçbiri; yoksa örnekler ajanda öncesi gibi kurulur.
     ...(takvim !== null && ajandaKopru !== null && { takvim, ajandaKopru }),
+    // Medya dalgası (S6): örneklere aynen geçer (ekli insan satırı, kuyruk başının içeriği, görsel bütçesi).
+    ...(medya !== null && { medya }),
   });
   // `sohbetler`'den sonra, `gateway`'den önce. Transkript portu yalnız buraya bağlanır: dar porttur,
   // yalnız ana oturum nesillerinin oturum kimliklerini alır.
-  const temizlik = temizlikKur({ depo, sohbetler, isler, planlar, transkript, saat, gunluk });
+  const temizlik = temizlikKur({
+    depo,
+    sohbetler,
+    isler,
+    planlar,
+    transkript,
+    saat,
+    gunluk,
+    // Medya dalgası (S7): silme işleminden sonra o sohbetin medya dizinleri (beklenmez).
+    ...(medya !== null && { medya }),
+  });
   const bildirim = bildirimKur({ ayar, cihaz, http, zamanlayici, veriyolu, gunluk });
   const gateway = gatewayKur({
     ayar,
@@ -311,10 +391,31 @@ export function servisKur({ dunya, ayar, depoYolu, ajanda: ajandaSecenegi, ajand
     gunluk,
     // `/ajanda` yolu, dinleme sınırı, kayıt yayını aboneliği, yetki yoklaması ve kanal kapanışı gateway'de.
     ...(ajanda !== null && { ajanda: ajandaEkleri === null ? ajanda : ajandaEkliYuz(ajanda, ajandaEkleri) }),
+    // Medya dalgası (S5): `medya1` bağlantılarında `media_*`, `ekler` ön denetimi, `media_state` yayını.
+    ...(medya !== null && { medya }),
   });
 
   const fiiller = fiilleriKur({ ayar, planlar, isler, cihaz, sohbetler });
   let kapanis: Promise<void> | null = null;
+
+  /** `medya.kapat()`, en çok `MEDYA_KAPANIS_SINIRI_MS`; sınır dolarsa uyarı yazar ve kapanış sürer. */
+  const medyaKapat = async (): Promise<void> => {
+    if (medya === null) return;
+    const bitti = await new Promise<boolean>((coz, reddet) => {
+      const iptal = zamanlayici.sonra(MEDYA_KAPANIS_SINIRI_MS, () => coz(false));
+      medya.kapat().then(
+        () => {
+          iptal();
+          coz(true);
+        },
+        (e: unknown) => {
+          iptal();
+          reddet(e);
+        },
+      );
+    });
+    if (!bitti) gunluk.uyari(MODUL, "medya_kapanis_siniri", { sinir_ms: MEDYA_KAPANIS_SINIRI_MS });
+  };
 
   return {
     fiiller,
@@ -334,6 +435,7 @@ export function servisKur({ dunya, ayar, depoYolu, ajanda: ajandaSecenegi, ajand
     ajanda,
     ajandaKopru,
     ajandaEkleri,
+    medya,
 
     async baslat() {
       const adimlar: ReadonlyArray<() => unknown> = [
@@ -367,6 +469,10 @@ export function servisKur({ dunya, ayar, depoYolu, ajanda: ajandaSecenegi, ajand
           });
         },
         () => bildirim.baslat(),
+        // Medya dalgası: açılış uzlaştırması (yetim bağlar, `alinan` diskten, yarım işlemenin yeniden
+        // kuyruğu, silinecekler, sahipsiz dizinler) ilk `media_*` (`gateway`) ve ilk `icerik`
+        // (`sohbetler`) çağrısından ÖNCE biter. Hiç atmaz; hatası `medya` günlüğündedir.
+        () => medya?.baslat(),
         () => gateway.baslat(),
         // Ana oturum jetonlarını siler, örnekleri kurar ve kurtarır, açılış sırasıyla uyandırır (süreç
         // açılışı arkada sürer). `ana` bunları ayrıca yapmaz.
@@ -404,6 +510,9 @@ export function servisKur({ dunya, ayar, depoYolu, ajanda: ajandaSecenegi, ajand
           ["gateway", () => gateway.kapat()],
           // Bağlantılar kapandıktan sonra, depodan önce: süren ek yazımı ve temizlik turu bitsin.
           ["ajandaEkleri", () => ajandaEkleri?.kapat()],
+          // `gateway`'den sonra: kapanan yönetici `media_*`'ya `reddedildi{medya_yok}` döner, telefon bunu
+          // kalıcı ret sayar; bağlantılar önce kapanmalı. `depo`'dan önce. Bekleme sınırlıdır (yukarıdaki not).
+          ["medya", () => medyaKapat()],
           ["kopru", () => kopru.kapat()],
           ["ajandaKopru", () => ajandaKopru?.kapat()],
           ["depo", () => depo.kapat()],

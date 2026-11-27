@@ -18,6 +18,8 @@ import type {
   IsNo,
   IsYollari,
   McpSunucuTanimi,
+  MedyaAyari,
+  MedyaServisSinirlari,
   Ortam,
   Sureler,
   TelegramAyari,
@@ -92,11 +94,50 @@ const IZINLI_ANAHTARLAR = new Set([
   "eren_canli_azami",
   "eren_bosta_kapat_dk",
   "tam_yetki",
+  "ffmpeg_yolu",
+  "ffprobe_yolu",
+  "dokum_modeli",
+  "dokum_vad_modeli",
+  "dokum_dili",
+  "medya_kota_mb",
   "telegram",
   "computer_use",
   "rea",
   "ajanda_ek_kota_mb",
 ]);
+
+const VARSAYILAN_MEDYA_KOTA_MB = 10240;
+const VARSAYILAN_DOKUM_MODELI = "modeller/ggml-large-v3-turbo-q5_0.bin";
+/*
+ * `dokum_vad_modeli`'nin varsayılanı BİLEREK yok (yalnız anahtar verilirse denenir). Ölçüm (2026-11-27,
+ * ffmpeg 8.1 `whisper` süzgeci, large-v3-turbo-q5_0, `modeller/ggml-silero-v5.1.2.bin`): süzgeç VAD'ı
+ * yalnız kuyruğu bölmek için kullanır, kalan tamponu yine döker; sessiz ve gürültülü kuyrukta "Thank you."
+ * VAD'la da çıktı (15 sn sessizlik, 15 sn pembe gürültü, 8 sn gürültü + konuşma + 12 sn gürültü), süre
+ * ise 7,3 → 27,1 sn, 7,3 → 32,3 sn, 13,6 → 46,8 sn oldu. Yarar yok, döküm üç kat yavaşlıyor. Ayrıntı
+ * `docs/SERVIS.md` "Medya".
+ */
+
+/** Sabit medya servis sınırları (`SAHTE_MEDYA_SINIRLARI` ile aynı; MODULLER.md "Medya dalgası" > S8). */
+export const MEDYA_SERVIS_SINIRLARI: MedyaServisSinirlari = Object.freeze({
+  yarimOmurMs: 24 * 3_600_000,
+  islemeAzamiMs: 600_000,
+  gorselNesilSiniri: 60,
+  dokumMetni: 20_000,
+  gorselUzunKenar: 1568,
+  gorselPiksel: 1_150_000,
+  gorselAzamiBayt: 3_750_000,
+  kareUzunKenar: 768,
+  kareEnAz: 3,
+  kareEnCok: 8,
+  kareAraligiMs: 10_000,
+  videoSurePayi: 0.1,
+  olcumZamanAsimiMs: 30_000,
+  gorselZamanAsimiMs: 30_000,
+  kareZamanAsimiMs: 30_000,
+  dokumZamanAsimiEnAzMs: 120_000,
+  dokumZamanAsimiKat: 3,
+  supurmeAraligiMs: 600_000,
+});
 
 const nesneMi = (x: unknown): x is Record<string, unknown> =>
   typeof x === "object" && x !== null && !Array.isArray(x);
@@ -247,6 +288,99 @@ async function claudeExeBul(
   throw new AyarHatasi("claude.exe bulunamadı (claude_exe, PATH ve npm yolu denendi)");
 }
 
+function dokumDiliAlani(o: Record<string, unknown>): "auto" | "tr" {
+  const v = o["dokum_dili"];
+  if (v === undefined) return "auto";
+  if (v !== "auto" && v !== "tr") throw new AyarHatasi('ayar.local.json: dokum_dili "auto" ya da "tr" olmalı');
+  return v;
+}
+
+/** Veri köküne göreli yol: `/` ile, `..`, sürücü, mutlak ve boş parça yok. Aksi `AyarHatasi`. */
+function goreliYolAlani(o: Record<string, unknown>, ad: string): string | undefined {
+  const v = metinAlani(o, ad);
+  if (v === undefined) return undefined;
+  const parcalar = v.replaceAll("\\", "/").split("/");
+  if (v.startsWith("/") || v.startsWith("\\") || parcalar.some((p) => p === "" || p === "." || p === ".." || p.includes(":"))) {
+    throw new AyarHatasi(`ayar.local.json: ${ad} veri köküne göreli bir yol olmalı (.., sürücü ve mutlak yol olmaz)`);
+  }
+  return parcalar.join("/");
+}
+
+async function varMi(dosya: DosyaPortu, yol: string): Promise<boolean> {
+  try {
+    return (await dosya.boyut(yol)) !== null;
+  } catch {
+    return false;
+  }
+}
+
+async function aracBul(dosya: DosyaPortu, ortam: Ortam, belirtilen: string | undefined, exeAdi: string): Promise<string | null> {
+  if (belirtilen !== undefined) return (await varMi(dosya, belirtilen)) ? belirtilen : null;
+  const path = ortamDegeri(ortam, "PATH");
+  if (path === undefined) return null;
+  for (const ham of path.split(";")) {
+    const d = ham.trim().replace(/^"(.*)"$/, "$1");
+    if (d === "" || !win32.isAbsolute(d)) continue;
+    const aday = win32.join(d, exeAdi);
+    if (await varMi(dosya, aday)) return aday;
+  }
+  return null;
+}
+
+export interface MedyaCozumu {
+  readonly medya: MedyaAyari | null;
+  /** `medya` null ise kısa neden (değer ve yol içermez); `ana` günlüğe yazar. */
+  readonly kapaliNedeni: string | null;
+}
+
+/**
+ * `ayarKur`'un kurduğu her `Ayar` için `medyaCoz`'un kapalı nedeni (`Ayar.medya` `null` iken). `Ayar`
+ * sözleşmesi değişmeden `ana` nedeni günlüğe yazabilsin, dosya araması ikinci kez yapılmasın diye.
+ */
+const medyaKapaliNedenleri = new WeakMap<Ayar, string>();
+
+/** `ayarKur`'un bu `Ayar` için bulduğu medya kapalı nedeni; medya açıksa ya da `Ayar` `ayarKur`'dan değilse `null`. */
+export function medyaKapaliNedeni(ayar: Ayar): string | null {
+  return medyaKapaliNedenleri.get(ayar) ?? null;
+}
+
+/** Medya ayarlarını çözer. Dosya varlığı açılışta bir kez denetlenir; araç yoksa medya kapalıdır. */
+export async function medyaCoz(dosya: DosyaPortu, ortam: Ortam, yerel: Record<string, unknown>, kok: string): Promise<MedyaCozumu> {
+  const ffmpegBelirtilen = metinAlani(yerel, "ffmpeg_yolu");
+  const ffprobeBelirtilen = metinAlani(yerel, "ffprobe_yolu");
+  for (const [ad, v] of [["ffmpeg_yolu", ffmpegBelirtilen], ["ffprobe_yolu", ffprobeBelirtilen]] as const) {
+    if (v !== undefined && !win32.isAbsolute(v)) throw new AyarHatasi(`ayar.local.json: ${ad} mutlak yol olmalı`);
+  }
+  const modelIstek = goreliYolAlani(yerel, "dokum_modeli");
+  const vadIstek = goreliYolAlani(yerel, "dokum_vad_modeli");
+  const dokumDili = dokumDiliAlani(yerel);
+  const kotaMb = tamSayiAlani(yerel, "medya_kota_mb", 100, 1_048_576) ?? VARSAYILAN_MEDYA_KOTA_MB;
+
+  const ffmpeg = await aracBul(dosya, ortam, ffmpegBelirtilen, "ffmpeg.exe");
+  const ffprobe = await aracBul(dosya, ortam, ffprobeBelirtilen, "ffprobe.exe");
+  if (ffmpeg === null || ffprobe === null) {
+    const eksik = [ffmpeg === null ? "ffmpeg" : null, ffprobe === null ? "ffprobe" : null].filter((x) => x !== null).join(" ve ");
+    return { medya: null, kapaliNedeni: `${eksik} bulunamadı (ayar yolu ve PATH denendi); medya kapalı` };
+  }
+  const modelVar = async (rel: string | undefined): Promise<string | null> =>
+    rel !== undefined && (await varMi(dosya, win32.join(kok, ...rel.split("/")))) ? rel : null;
+  const dokumModeli = await modelVar(modelIstek ?? VARSAYILAN_DOKUM_MODELI);
+  const dokumVadModeli = await modelVar(vadIstek);
+  return {
+    medya: {
+      kok: win32.join(kok, "medya"),
+      ffmpeg,
+      ffprobe,
+      dokumModeli,
+      dokumVadModeli,
+      dokumDili,
+      kotaBayt: kotaMb * 1024 * 1024,
+      sinirlar: MEDYA_SERVIS_SINIRLARI,
+    },
+    kapaliNedeni: null,
+  };
+}
+
 /** kur.ts `SHA_DESENI` ile aynı: kurulumdaki sürüm adı. */
 const SURUM_DESENI = /^[0-9A-Za-z][0-9A-Za-z-]{0,63}$/;
 
@@ -326,6 +460,7 @@ export const ayarKur = (async (b: AyarBagimliliklari): Promise<Ayar & ServisEkAy
   const rea = mcpTanimi(yerel, "rea");
   const telegram = telegramTanimi(yerel);
   const claudeExe = await claudeExeBul(b.dosya, b.ortam, metinAlani(yerel, "claude_exe"));
+  const { medya, kapaliNedeni } = await medyaCoz(b.dosya, b.ortam, yerel, yollar.kok);
 
   if (!bosMetinDegil(b.execPath)) throw new AyarHatasi("execPath boş olamaz");
 
@@ -336,7 +471,7 @@ export const ayarKur = (async (b: AyarBagimliliklari): Promise<Ayar & ServisEkAy
 
   const kapatmali = (): Ortam => ({ ...claudeSil(ortamKopyasi), ...KAPATMA_ANAHTARLARI });
 
-  return {
+  const ayar: Ayar & ServisEkAyari = {
     yollar,
     servis,
     isYollari(is_id: IsNo): IsYollari {
@@ -369,6 +504,7 @@ export const ayarKur = (async (b: AyarBagimliliklari): Promise<Ayar & ServisEkAy
     kullaniciAdi,
     asistanAdi,
     tamYetki,
+    medya,
     computerUse,
     mcpProfilSunucusu(profil: McpProfili): McpSunucuTanimi | null {
       return profil === "rea" ? rea : null;
@@ -397,4 +533,6 @@ export const ayarKur = (async (b: AyarBagimliliklari): Promise<Ayar & ServisEkAy
     },
     ajandaEkKotaBayt: ekKotaMb === undefined ? AJANDA_SINIRLARI.EK_TOPLAM_BAYT : ekKotaMb * MIB,
   };
+  if (kapaliNedeni !== null) medyaKapaliNedenleri.set(ayar, kapaliNedeni);
+  return ayar;
 }) satisfies AyarFabrikasi;

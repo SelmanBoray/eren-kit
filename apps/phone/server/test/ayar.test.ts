@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import win32 from "node:path/win32";
 import { AJANDA_SINIRLARI } from "@eren/protocol";
-import { asistanAdiUret, ayarKur, AyarHatasi, yollariUret } from "../src/ayar.ts";
+import { asistanAdiUret, ayarKur, AyarHatasi, medyaKapaliNedeni, yollariUret } from "../src/ayar.ts";
 import type { Ayar, Ortam } from "../src/sozlesme.ts";
 import { sahteDosya } from "./sahte.ts";
 import type { SahteDosya } from "./sahte.ts";
@@ -702,5 +702,113 @@ describe("ayar: eren-kit asistan adı ve veri kökü", () => {
       baslangicMs: BASLANGIC,
     });
     assert.equal(b.wsPort, 50001);
+  });
+});
+
+describe("ayar: medya", () => {
+  const FF = "C:\\ornek\\ffmpeg\\bin";
+  const MODEL = `${KOK}\\modeller\\ggml-large-v3-turbo-q5_0.bin`;
+  const VAD = `${KOK}\\modeller\\ggml-silero-v5.1.2.bin`;
+  const araclarla = (yerel?: unknown): Kurulum => {
+    const k = hazir(yerel, { PATH: `C:\\ornek\\arac;${FF}` });
+    k.dosya.yaz(`${FF}\\ffmpeg.exe`, "x");
+    k.dosya.yaz(`${FF}\\ffprobe.exe`, "x");
+    return k;
+  };
+
+  it("araçlar PATH'te yoksa medya null", async () => {
+    assert.equal((await kur(hazir())).medya, null);
+    const k = hazir({ claude_exe: EXE }, { PATH: FF });
+    k.dosya.yaz(`${FF}\\ffmpeg.exe`, "x");
+    assert.equal((await kur(k)).medya, null);
+  });
+
+  it("PATH'ten bulur; varsayılanlar; model yoksa null", async () => {
+    const m = (await kur(araclarla())).medya;
+    assert.ok(m);
+    assert.equal(m.ffmpeg, `${FF}\\ffmpeg.exe`);
+    assert.equal(m.ffprobe, `${FF}\\ffprobe.exe`);
+    assert.equal(m.kok, `${KOK}\\medya`);
+    assert.equal(m.dokumModeli, null);
+    assert.equal(m.dokumVadModeli, null);
+    assert.equal(m.dokumDili, "auto");
+    assert.equal(m.kotaBayt, 10240 * 1024 * 1024);
+    assert.equal(m.sinirlar.gorselNesilSiniri, 60);
+    assert.equal(m.sinirlar.supurmeAraligiMs, 600_000);
+  });
+
+  it("varsayılan model dosyası varsa açık", async () => {
+    const k = araclarla();
+    k.dosya.yaz(MODEL, "x");
+    assert.equal((await kur(k)).medya?.dokumModeli, "modeller/ggml-large-v3-turbo-q5_0.bin");
+  });
+
+  it("VAD varsayılanı yok: Silero dosyası diskte olsa da anahtarsız null (ölçüm: süzgeçte yararı yok, 3 kat yavaş)", async () => {
+    const k = araclarla();
+    k.dosya.yaz(VAD, "x");
+    assert.equal((await kur(k)).medya?.dokumVadModeli, null);
+  });
+
+  it("dokum_vad_modeli verilirse o dosya denenir; yoksa null", async () => {
+    const k = araclarla({ dokum_vad_modeli: "modeller/ggml-silero-v5.1.2.bin" });
+    assert.equal((await kur(k)).medya?.dokumVadModeli, null);
+    k.dosya.yaz(VAD, "x");
+    assert.equal((await kur(k)).medya?.dokumVadModeli, "modeller/ggml-silero-v5.1.2.bin");
+  });
+
+  it("kapalı nedeni ayara bağlı okunur; açıkken ve başka nesnede null", async () => {
+    const kapali = await kur(hazir());
+    assert.equal(kapali.medya, null);
+    const neden = medyaKapaliNedeni(kapali);
+    assert.ok(neden !== null && neden.includes("ffmpeg ve ffprobe"), String(neden));
+    assert.ok(!neden.includes("\\"), "neden yol taşımamalı");
+    const yalnizProbe = hazir({ claude_exe: EXE }, { PATH: FF });
+    yalnizProbe.dosya.yaz(`${FF}\\ffmpeg.exe`, "x");
+    assert.match(medyaKapaliNedeni(await kur(yalnizProbe)) ?? "", /^ffprobe bulunamadı/);
+    assert.equal(medyaKapaliNedeni(await kur(araclarla())), null);
+    assert.equal(medyaKapaliNedeni({ ...kapali }), null);
+  });
+
+  it("açık yollar, vad, dil, kota", async () => {
+    const k = hazir({
+      ffmpeg_yolu: "D:\\a\\ffmpeg.exe",
+      ffprobe_yolu: "D:\\a\\ffprobe.exe",
+      dokum_modeli: "modeller\\o.bin",
+      dokum_vad_modeli: "modeller/v.bin",
+      dokum_dili: "tr",
+      medya_kota_mb: 500,
+    });
+    k.dosya.yaz("D:\\a\\ffmpeg.exe", "x");
+    k.dosya.yaz("D:\\a\\ffprobe.exe", "x");
+    k.dosya.yaz(`${KOK}\\modeller\\o.bin`, "x");
+    const m = (await kur(k)).medya;
+    assert.ok(m);
+    assert.equal(m.ffmpeg, "D:\\a\\ffmpeg.exe");
+    assert.equal(m.dokumModeli, "modeller/o.bin");
+    assert.equal(m.dokumVadModeli, null);
+    assert.equal(m.dokumDili, "tr");
+    assert.equal(m.kotaBayt, 500 * 1024 * 1024);
+  });
+
+  it("belirtilen ffmpeg yolu yoksa medya null (PATH'e düşmez)", async () => {
+    const k = araclarla({ ffmpeg_yolu: "D:\\yok\\ffmpeg.exe" });
+    assert.equal((await kur(k)).medya, null);
+  });
+
+  it("geçersiz değerler AyarHatasi", async () => {
+    for (const yerel of [
+      { ffmpeg_yolu: "ffmpeg.exe" },
+      { dokum_modeli: "..\\x.bin" },
+      { dokum_modeli: "a/../../x.bin" },
+      { dokum_modeli: "C:\\x.bin" },
+      { dokum_vad_modeli: "/x.bin" },
+      { dokum_dili: "en" },
+      { medya_kota_mb: 99 },
+      { medya_kota_mb: 1.5 },
+      { medya_kota_mb: "10" },
+    ]) {
+      const e = await hataAl(() => kur(araclarla(yerel)));
+      assert.ok(e instanceof AyarHatasi, JSON.stringify(yerel));
+    }
   });
 });

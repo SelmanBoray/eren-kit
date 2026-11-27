@@ -26,15 +26,16 @@ import {
   rmSync,
   statSync,
 } from "node:fs";
-import type { Dirent } from "node:fs";
+import type { BigIntStats, Dirent } from "node:fs";
 import { lstat, mkdir, open, readdir, readFile, rename, rmdir, stat, truncate, unlink, writeFile } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 import { createServer as httpSunucusu } from "node:http";
 import { createServer as boruSunucusu } from "node:net";
 import type { Server as NetSunucusu, Socket } from "node:net";
 import { freemem, networkInterfaces, totalmem } from "node:os";
 import { dirname, join, win32 } from "node:path";
 import { StringDecoder } from "node:string_decoder";
-import { SOHBET_YETENEK_PARAMETRESI } from "@eren/protocol";
+import { SOHBET_SINIRLARI, SOHBET_YETENEK_PARAMETRESI, YETENEK_JETONU_DESENI } from "@eren/protocol";
 import {
   izinBetigi,
   izinCiktisiCoz,
@@ -65,7 +66,12 @@ import type {
   IptalEt,
   KapatilabilirSunucu,
   KayitPortu,
+  KareSirasi,
   MasaustuDurumu,
+  MedyaBicimi,
+  MedyaDosyaAdi,
+  MedyaDosyaPortu,
+  MedyaDosyaPortuFabrikasi,
   RamOkumasi,
   RastgelePortu,
   SaatPortu,
@@ -284,13 +290,47 @@ interface KisaSonuc {
   kod: number | null;
 }
 
-/** Kısa ömürlü yardımcı: `windowsHide`, `detached` yok, kabuk yok. Başlatılamazsa atar. */
+/** İptalde süreç ağacı öldürüldükten sonra `close` için en çok bu kadar beklenir (sonra söz yine reddedilir). */
+const IPTAL_KAPANIS_BEKLEME_MS = 3_000;
+
+/** `AracIstegi.iptal` tetiklenince sözün reddedildiği hata (`name: "AbortError"`, iletisi sabit). */
+const iptalHatasi = (): Error => Object.assign(new Error("arac_iptal"), { name: "AbortError" });
+
+/**
+ * İptal: süreç ağacını öldürür. Windows'ta `taskkill /T /F` (`cocuk.kill()` yalnız kökü öldürür, torun yetim
+ * kalırdı); süreç o arada kendiliğinden çıktıysa PID'ye dokunulmaz. Sonra kök hâlâ duruyorsa `kill()`.
+ * `taskkill` kendisi iptalsiz `kisaCalistir`'le çalışır: özyineleme yok. Hiç atmaz.
+ */
+const agaciKes = async (cocuk: ChildProcess): Promise<void> => {
+  const canli = (): boolean => cocuk.exitCode === null && cocuk.signalCode === null;
+  if (process.platform === "win32" && cocuk.pid !== undefined && canli()) {
+    await taskkill(["/T", "/F", "/PID", String(cocuk.pid)]);
+  }
+  if (canli()) {
+    try {
+      cocuk.kill("SIGKILL");
+    } catch {
+      // süreç zaten bitmiş olabilir
+    }
+  }
+};
+
+/**
+ * Kısa ömürlü yardımcı: `windowsHide`, `detached` yok, kabuk yok. Başlatılamazsa atar. `iptal` tetiklenince
+ * süreç ağacı öldürülür ve söz `AbortError` ile reddedilir: süreç kapanınca (dosya tutamaçları bırakılmış
+ * olur), `close` gelmezse en geç `IPTAL_KAPANIS_BEKLEME_MS` sonra. Önceden tetiklenmişse süreç başlamaz.
+ */
 const kisaCalistir = (
   exe: string,
   argv: readonly string[],
-  secenekler: { cwd?: string; ortam?: Readonly<Record<string, string>>; zamanAsimiMs: number },
+  secenekler: { cwd?: string; ortam?: Readonly<Record<string, string>>; zamanAsimiMs: number; iptal?: AbortSignal },
 ): Promise<KisaSonuc> =>
   new Promise<KisaSonuc>((coz, reddet) => {
+    const iptal = secenekler.iptal;
+    if (iptal?.aborted === true) {
+      reddet(iptalHatasi());
+      return;
+    }
     const so: SpawnOptions = { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] };
     if (secenekler.cwd !== undefined) so.cwd = secenekler.cwd;
     if (secenekler.ortam !== undefined) so.env = { ...secenekler.ortam };
@@ -316,10 +356,21 @@ const kisaCalistir = (
     cocuk.stderr?.on("error", bos);
     let bitti = false;
     let zamanAsimi = false;
+    let iptalEdildi = false;
+    let iptalSiniri: ReturnType<typeof setTimeout> | undefined;
+    const temizle = (): void => {
+      clearTimeout(sayac);
+      clearTimeout(iptalSiniri);
+      iptal?.removeEventListener("abort", iptalEt);
+    };
     const bitir = (kod: number | null): void => {
       if (bitti) return;
       bitti = true;
-      clearTimeout(sayac);
+      temizle();
+      if (iptalEdildi) {
+        reddet(iptalHatasi());
+        return;
+      }
       coz({
         zamanAsimi,
         stdout: Buffer.concat(cikti.stdout).toString("utf8"),
@@ -327,6 +378,13 @@ const kisaCalistir = (
         kod,
       });
     };
+    function iptalEt(): void {
+      if (bitti || iptalEdildi) return;
+      iptalEdildi = true;
+      clearTimeout(sayac);
+      iptalSiniri = setTimeout(() => bitir(null), IPTAL_KAPANIS_BEKLEME_MS);
+      void agaciKes(cocuk);
+    }
     const sayac = setTimeout(() => {
       zamanAsimi = true;
       try {
@@ -336,11 +394,12 @@ const kisaCalistir = (
       }
       bitir(null);
     }, secenekler.zamanAsimiMs);
+    iptal?.addEventListener("abort", iptalEt, { once: true });
     cocuk.once("error", (e) => {
       if (bitti) return;
       bitti = true;
-      clearTimeout(sayac);
-      reddet(e);
+      temizle();
+      reddet(iptalEdildi ? iptalHatasi() : e);
     });
     cocuk.once("close", (kod) => bitir(kod));
   });
@@ -647,11 +706,12 @@ const ayrikBaslat = async (istek: AyrikSurecIstegi): Promise<AyrikSurec> => {
 };
 
 const aracCalistir = async (istek: AracIstegi): Promise<AracSonucu> => {
-  const secenek: { cwd?: string; ortam?: Readonly<Record<string, string>>; zamanAsimiMs: number } = {
+  const secenek: { cwd?: string; ortam?: Readonly<Record<string, string>>; zamanAsimiMs: number; iptal?: AbortSignal } = {
     zamanAsimiMs: istek.zamanAsimiMs,
   };
   if (istek.cwd !== undefined) secenek.cwd = istek.cwd;
   if (istek.ortam !== undefined) secenek.ortam = istek.ortam;
+  if (istek.iptal !== undefined) secenek.iptal = istek.iptal;
   const s = await kisaCalistir(istek.exe, istek.argv, secenek);
   return { zamanAsimi: s.zamanAsimi, stdout: s.stdout, stderr: s.stderr };
 };
@@ -979,11 +1039,11 @@ const yolCoz = (url: string | undefined): WsYolu | null => {
   return WS_YOLLARI.find((y) => y === yol) ?? null;
 };
 
-/** Yetenek değerinden okunan en çok uzunluk ve jeton adedi: fazlası sessizce atılır, bağlantı düşmez. */
+/**
+ * Yetenek değerinden okunan en çok uzunluk: fazlası sessizce atılır, bağlantı düşmez. Jeton adedi
+ * (`SOHBET_SINIRLARI.YETENEK_ADET`) ve biçimi (`YETENEK_JETONU_DESENI`, uymayan yok sayılır) protokolden.
+ */
 const AZAMI_YETENEK_METNI = 256;
-const AZAMI_YETENEK_ADEDI = 16;
-/** Bu biçime uymayan jeton yok sayılır. Protokolün jetonları (`etkinlik1`) uyar. */
-const YETENEK_JETONU = /^[a-z0-9_-]{1,32}$/;
 const BOS_YETENEKLER: ReadonlySet<string> = new Set();
 
 /**
@@ -1005,9 +1065,9 @@ export const yetenekleriCoz = (url: string | undefined): ReadonlySet<string> => 
       deger = son < 0 ? "" : deger.slice(0, son);
     }
     for (const parca of deger.split(",")) {
-      if (yetenekler.size >= AZAMI_YETENEK_ADEDI) return yetenekler;
+      if (yetenekler.size >= SOHBET_SINIRLARI.YETENEK_ADET) return yetenekler;
       const jeton = parca.trim();
-      if (YETENEK_JETONU.test(jeton)) yetenekler.add(jeton);
+      if (YETENEK_JETONU_DESENI.test(jeton)) yetenekler.add(jeton);
     }
   }
   return yetenekler;
@@ -1719,6 +1779,389 @@ export const ajandaEkDiskiKur = (kok: string): AjandaEkDiski => {
       for (const ozet of [...isaretler.keys()].sort()) nesne[ozetli(ozet)] = isaretler.get(ozet) as number;
       await ekDizinHazirla(kok);
       await ekAtomikYaz(join(kok, EK_ISARET_DOSYASI), JSON.stringify(nesne));
+    },
+  };
+};
+
+// ---------------------------------------------------------------------------------------------
+// Medya dosya portu (S2; `DisDunya`'da değil, `ana` kurar)
+// ---------------------------------------------------------------------------------------------
+
+/** `satisfies`: `MedyaBicimi`'ne biçim eklenir ya da çıkarsa burası derlenmez. */
+const MEDYA_BICIMLERI = Object.keys({
+  jpg: 1,
+  png: 1,
+  webp: 1,
+  heic: 1,
+  mp4: 1,
+  mov: 1,
+  "3gp": 1,
+  webm: 1,
+} satisfies Record<MedyaBicimi, 1>) as MedyaBicimi[];
+const KARE_SIRALARI = Object.keys({ 1: 1, 2: 1, 3: 1, 4: 1, 5: 1, 6: 1, 7: 1, 8: 1 } satisfies Record<KareSirasi, 1>);
+
+/** `MedyaDosyaAdi`'nın çalışma anı karşılığı; listede olmayan ad ATAR. */
+const MEDYA_DOSYA_ADLARI: ReadonlySet<string> = new Set<string>([
+  ...MEDYA_BICIMLERI.map((b) => `asil.${b}`),
+  "gorsel.jpg",
+  ...KARE_SIRALARI.map((i) => `kare-0${i}.jpg`),
+  "dokum.srt",
+  "dokum.txt",
+]);
+const MEDYA_DIZIN_ADI = /^[1-9][0-9]*$/;
+const MEDYA_PARCA_ADI = /^([1-9][0-9]*)\.part$/i;
+
+const medyaNoDenetle = (no: number): void => {
+  if (!Number.isSafeInteger(no) || no <= 0) throw new RangeError("medya_dosya: geçersiz no");
+};
+function medyaAdDenetle(ad: string): asserts ad is MedyaDosyaAdi {
+  if (!MEDYA_DOSYA_ADLARI.has(ad)) throw new RangeError("medya_dosya: geçersiz ad");
+}
+const negatifOlmayanDenetle = (n: number): void => {
+  if (!Number.isSafeInteger(n) || n < 0) throw new RangeError("medya_dosya: geçersiz sayı");
+};
+const bagHatasi = (): Error => new Error("medya_dosya: bağ izlenmez");
+
+/** Dizin yoksa `null`; bağ (junction, sembolik) ya da dizin değilse ATAR. */
+const medyaDizinDurumu = async (yol: string): Promise<BigIntStats | null> => {
+  let d: BigIntStats;
+  try {
+    d = await lstat(yol, { bigint: true });
+  } catch (e) {
+    if (hataKodu(e) === "ENOENT") return null;
+    throw e;
+  }
+  if (d.isSymbolicLink()) throw bagHatasi();
+  if (!d.isDirectory()) throw new Error("medya_dosya: dizin değil");
+  return d;
+};
+
+/** Dosya yoksa `null`; bağsa, sabit bağı (nlink > 1) varsa ya da düz dosya değilse ATAR. */
+const medyaDosyaDurumu = async (yol: string): Promise<BigIntStats | null> => {
+  let d: BigIntStats;
+  try {
+    d = await lstat(yol, { bigint: true });
+  } catch (e) {
+    if (hataKodu(e) === "ENOENT") return null;
+    throw e;
+  }
+  if (d.isSymbolicLink()) throw bagHatasi();
+  if (!d.isFile()) throw new Error("medya_dosya: düz dosya değil");
+  if (d.nlink !== 1n) throw bagHatasi();
+  return d;
+};
+
+const ayniDugum = (a: BigIntStats, b: BigIntStats): boolean => a.dev === b.dev && a.ino === b.ino;
+
+/**
+ * Açılan tutamaç sınamadan sonra değişmiş yolu göstermesin: dosyanın `lstat`'ı ile tutamacın `stat`'ı
+ * aynı düğüm, dizin açıştan sonra da aynı ve bağsız olmalı. Değilse tutamaç kapanır ve ATAR.
+ */
+const tutamaciDogrula = async (
+  h: FileHandle,
+  dizin: string,
+  dizinOnce: BigIntStats,
+  dosyaOnce: BigIntStats | null,
+): Promise<void> => {
+  try {
+    const f = await h.stat({ bigint: true });
+    const d = await medyaDizinDurumu(dizin);
+    if (d === null || !ayniDugum(d, dizinOnce) || !f.isFile() || f.nlink !== 1n) throw bagHatasi();
+    if (dosyaOnce !== null && !ayniDugum(f, dosyaOnce)) throw bagHatasi();
+  } catch (e) {
+    await h.close().catch(bos);
+    throw e;
+  }
+};
+
+/** Dizin ya da dosya yoksa `null`. */
+const medyaDosyasiniAc = async (dizin: string, yol: string, bayrak: "r" | "r+"): Promise<FileHandle | null> => {
+  const d = await medyaDizinDurumu(dizin);
+  if (d === null) return null;
+  const f = await medyaDosyaDurumu(yol);
+  if (f === null) return null;
+  let h: FileHandle;
+  try {
+    h = await open(yol, bayrak);
+  } catch (e) {
+    if (hataKodu(e) === "ENOENT") return null;
+    throw e;
+  }
+  await tutamaciDogrula(h, dizin, d, f);
+  return h;
+};
+
+const hepsiniYaz = async (h: FileHandle, bayt: Uint8Array, konum: number): Promise<void> => {
+  let yazilan = 0;
+  while (yazilan < bayt.length) {
+    const { bytesWritten } = await h.write(bayt, yazilan, bayt.length - yazilan, konum + yazilan);
+    yazilan += bytesWritten;
+  }
+};
+
+const hepsiniOku = async (h: FileHandle, adet: number, konum: number): Promise<Uint8Array> => {
+  const tampon = Buffer.alloc(adet);
+  let okunan = 0;
+  while (okunan < adet) {
+    const { bytesRead } = await h.read(tampon, okunan, adet - okunan, konum + okunan);
+    if (bytesRead === 0) break;
+    okunan += bytesRead;
+  }
+  return new Uint8Array(tampon.buffer, tampon.byteOffset, okunan);
+};
+
+/** Windows'ta virüs tarayıcısı ya da dizinleyici dosyayı o an tutuyorsa kısa yeniden deneme. */
+const yenidenAdlandir = async (kaynak: string, hedef: string): Promise<void> => {
+  for (let deneme = 0; ; deneme += 1) {
+    try {
+      await rename(kaynak, hedef);
+      return;
+    } catch (e) {
+      const k = hataKodu(e);
+      if (deneme >= 5 || (k !== "EPERM" && k !== "EBUSY" && k !== "EACCES")) throw e;
+      await new Promise<void>((coz) => setTimeout(coz, 20 * (deneme + 1)));
+    }
+  }
+};
+
+/**
+ * `MedyaDosyaPortu`'nun gerçeği. Kök mutlak olmalı ve adı `medya` olmalı (`goreliYol` veri köküne
+ * göredir); değilse kurulumda ATAR. Kökün altındaki her bileşen `lstat`'la sınanır: bağ, sabit bağ ya da
+ * beklenmeyen tür ATAR (yalnız `dizinSil` atmaz). Kökün kendisi yapılandırmadır, bağ olabilir. Aynı `no`
+ * üzerindeki yazan işlemler (parça, taşıma, yazma, silme) süreç içinde sıraya girer.
+ */
+export const medyaDosyaKur: MedyaDosyaPortuFabrikasi = ({ kok: verilen }): MedyaDosyaPortu => {
+  if (!win32.isAbsolute(verilen)) throw new RangeError("medya_dosya: kök mutlak değil");
+  const kok = win32.resolve(verilen);
+  if (win32.basename(kok).toLowerCase() !== "medya") throw new RangeError("medya_dosya: kök adı medya değil");
+  const gelen = win32.join(kok, "gelen");
+
+  const icinde = (yol: string): string => {
+    const g = win32.relative(kok, yol);
+    if (g === "" || g.startsWith("..") || win32.isAbsolute(g)) throw new RangeError("medya_dosya: kök dışı yol");
+    return yol;
+  };
+  const dizinYolu = (no: number): string => {
+    medyaNoDenetle(no);
+    return icinde(win32.join(kok, String(no)));
+  };
+  const dosyaYolu = (no: number, ad: string): string => {
+    medyaAdDenetle(ad);
+    return icinde(win32.join(dizinYolu(no), ad));
+  };
+  const parcaYolu = (no: number): string => {
+    medyaNoDenetle(no);
+    return icinde(win32.join(gelen, `${no}.part`));
+  };
+
+  /** `kok\<ad>` dizinini kurar (yoksa); bağsa ya da dizin değilse ATAR. */
+  const altDizinKur = async (yol: string): Promise<BigIntStats> => {
+    await mkdir(kok, { recursive: true });
+    try {
+      await mkdir(yol);
+    } catch (e) {
+      if (hataKodu(e) !== "EEXIST") throw e;
+    }
+    const d = await medyaDizinDurumu(yol);
+    if (d === null) throw new Error("medya_dosya: dizin kurulamadı");
+    return d;
+  };
+
+  const kuyruklar = new Map<number, Promise<void>>();
+  const sirali = <T>(no: number, is: () => Promise<T>): Promise<T> => {
+    const once = kuyruklar.get(no) ?? Promise.resolve();
+    const sonuc = once.then(is);
+    const kuyruk = sonuc.then(bos, bos);
+    kuyruklar.set(no, kuyruk);
+    void kuyruk.then(() => {
+      if (kuyruklar.get(no) === kuyruk) kuyruklar.delete(no);
+    });
+    return sonuc;
+  };
+
+  let geciciSayac = 0;
+
+  return {
+    yol: (no, ad) => dosyaYolu(no, ad),
+    dizinYolu,
+    goreliYol: (no, ad) => {
+      dosyaYolu(no, ad);
+      return `medya/${no}/${ad}`;
+    },
+
+    parcaEkle: async (no, ofset, bayt) => {
+      const yol = parcaYolu(no);
+      negatifOlmayanDenetle(ofset);
+      return sirali(no, async () => {
+        const dizin = await altDizinKur(gelen);
+        const once = await medyaDosyaDurumu(yol);
+        let h: FileHandle;
+        if (once === null) {
+          if (ofset !== 0) throw new Error("medya_dosya: ofset dosya boyuyla uyuşmuyor");
+          h = await open(yol, "wx"); // arada biri kurduysa EEXIST atar
+          await tutamaciDogrula(h, gelen, dizin, null);
+        } else {
+          const acilan = await medyaDosyasiniAc(gelen, yol, "r+");
+          if (acilan === null) throw new Error("medya_dosya: parça kayboldu");
+          h = acilan;
+        }
+        try {
+          const boy = (await h.stat({ bigint: true })).size;
+          if (boy !== BigInt(ofset)) throw new Error("medya_dosya: ofset dosya boyuyla uyuşmuyor");
+          await hepsiniYaz(h, bayt, ofset);
+          return ofset + bayt.length;
+        } finally {
+          await h.close().catch(bos);
+        }
+      });
+    },
+
+    parcaBoyutu: async (no) => {
+      const yol = parcaYolu(no);
+      if ((await medyaDizinDurumu(gelen)) === null) return null;
+      const d = await medyaDosyaDurumu(yol);
+      return d === null ? null : Number(d.size);
+    },
+
+    parcaOku: async (no, ofset, azamiBayt) => {
+      const yol = parcaYolu(no);
+      negatifOlmayanDenetle(ofset);
+      negatifOlmayanDenetle(azamiBayt);
+      const h = await medyaDosyasiniAc(gelen, yol, "r");
+      if (h === null) return new Uint8Array(0);
+      try {
+        const boy = Number((await h.stat({ bigint: true })).size);
+        return await hepsiniOku(h, Math.max(0, Math.min(azamiBayt, boy - ofset)), ofset);
+      } finally {
+        await h.close().catch(bos);
+      }
+    },
+
+    parcaSil: async (no) => {
+      const yol = parcaYolu(no);
+      await sirali(no, async () => {
+        if ((await medyaDizinDurumu(gelen)) === null) return;
+        let d;
+        try {
+          d = await lstat(yol);
+        } catch (e) {
+          if (hataKodu(e) === "ENOENT") return;
+          throw e;
+        }
+        if (!d.isFile() && !d.isSymbolicLink()) throw new Error("medya_dosya: düz dosya değil");
+        try {
+          await unlink(yol); // bağsa yalnız bağ kalkar
+        } catch (e) {
+          if (hataKodu(e) === "ENOENT") return;
+          if (!d.isSymbolicLink()) throw e;
+          await rmdir(yol); // dizine işaret eden bağ (junction)
+        }
+      });
+    },
+
+    tasi: async (no, bicim) => {
+      const kaynak = parcaYolu(no);
+      const hedef = dosyaYolu(no, `asil.${bicim}`);
+      await sirali(no, async () => {
+        if ((await medyaDizinDurumu(gelen)) === null || (await medyaDosyaDurumu(kaynak)) === null) {
+          throw new Error("medya_dosya: parça yok");
+        }
+        await altDizinKur(dizinYolu(no));
+        const varMi = await lstat(hedef).then(
+          () => true,
+          (e: unknown) => {
+            if (hataKodu(e) === "ENOENT") return false;
+            throw e;
+          },
+        );
+        if (varMi) throw new Error("medya_dosya: hedef zaten var");
+        await yenidenAdlandir(kaynak, hedef);
+      });
+    },
+
+    parcalar: async () => {
+      if ((await medyaDizinDurumu(gelen)) === null) return [];
+      const sonuc: number[] = [];
+      for (const d of await readdir(gelen, { withFileTypes: true })) {
+        const m = MEDYA_PARCA_ADI.exec(d.name);
+        if (m === null || !d.isFile()) continue;
+        const no = Number(m[1]);
+        if (Number.isSafeInteger(no)) sonuc.push(no);
+      }
+      return sonuc.sort((a, b) => a - b);
+    },
+
+    boyut: async (no, ad) => {
+      const yol = dosyaYolu(no, ad);
+      if ((await medyaDizinDurumu(dizinYolu(no))) === null) return null;
+      const d = await medyaDosyaDurumu(yol);
+      return d === null ? null : Number(d.size);
+    },
+
+    oku: async (no, ad, azamiBayt) => {
+      const yol = dosyaYolu(no, ad);
+      negatifOlmayanDenetle(azamiBayt);
+      const h = await medyaDosyasiniAc(dizinYolu(no), yol, "r");
+      if (h === null) return null;
+      try {
+        const boy = (await h.stat({ bigint: true })).size;
+        if (boy > BigInt(azamiBayt)) throw new RangeError("medya_dosya: dosya sınırdan büyük");
+        return await hepsiniOku(h, Number(boy), 0);
+      } finally {
+        await h.close().catch(bos);
+      }
+    },
+
+    yaz: async (no, ad, bayt) => {
+      const hedef = dosyaYolu(no, ad);
+      const dizin = dizinYolu(no);
+      await sirali(no, async () => {
+        const d = await medyaDizinDurumu(dizin);
+        if (d === null) throw new Error("medya_dosya: dizin yok");
+        await medyaDosyaDurumu(hedef); // var olan hedef bağsa ya da dosya değilse atar
+        geciciSayac += 1;
+        const gecici = icinde(
+          win32.join(dizin, `.${ad}.${process.pid}.${geciciSayac}.${randomBytes(4).toString("hex")}.tmp`),
+        );
+        const h = await open(gecici, "wx");
+        try {
+          await tutamaciDogrula(h, dizin, d, null);
+          await hepsiniYaz(h, bayt, 0);
+          await h.close();
+          await yenidenAdlandir(gecici, hedef);
+        } catch (e) {
+          await h.close().catch(bos);
+          await unlink(gecici).catch(bos);
+          throw e;
+        }
+      });
+    },
+
+    dizinSil: async (no) => {
+      let dizin: string;
+      try {
+        dizin = dizinYolu(no);
+      } catch {
+        return false;
+      }
+      return sirali(no, () => agaciBagIzlemedenSil(dizin)).catch(() => false);
+    },
+
+    dizinler: async () => {
+      let girdiler;
+      try {
+        girdiler = await readdir(kok, { withFileTypes: true });
+      } catch (e) {
+        if (hataKodu(e) === "ENOENT") return [];
+        throw e;
+      }
+      const sonuc: number[] = [];
+      for (const d of girdiler) {
+        if (!d.isDirectory() || d.isSymbolicLink() || !MEDYA_DIZIN_ADI.test(d.name)) continue;
+        const no = Number(d.name);
+        if (Number.isSafeInteger(no)) sonuc.push(no);
+      }
+      return sonuc.sort((a, b) => a - b);
     },
   };
 };

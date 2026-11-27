@@ -22,6 +22,7 @@ import { isTuruMetni, profilMetni } from "./Balonlar.tsx";
 import { Dugme } from "./Bilesenler.tsx";
 import { Diyalog } from "./Diyalog.tsx";
 import { useSohbetDurumu } from "./baglam.ts";
+import { EK_BEKLIYOR_METNI } from "./medyaMetni.ts";
 import { bosluk, cizgi, olcu, renk, yaricap, yazi } from "./tema.ts";
 
 /** Bileşen söküldükten sonra gelen sözün sonucu durum yazmasın. */
@@ -225,6 +226,8 @@ function silHataGovdesi(s: GecmisSilSonucu | null, kapsam: SilKapsami): string {
       return "Silinemedi: telefonda kayıt hatası.";
     case "baslamadi":
       return "Uygulama henüz hazır değil, biraz sonra yeniden dene.";
+    case "ek_bekliyor":
+      return EK_BEKLIYOR_METNI;
     default:
       return `Silinemedi (${s.kod}).`;
   }

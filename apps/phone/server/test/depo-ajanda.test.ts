@@ -198,17 +198,17 @@ const ESKI = {
 // ---------------------------------------------------------------------------------------------
 
 describe("depo ajanda: göç (ek göç 6)", () => {
-  it("boş dosya: ek_surum 7, bütün ajanda tabloları STRICT, ikinci açılış yinelemez", () => {
+  it("boş dosya: ek_surum 8, bütün ajanda tabloları STRICT, ikinci açılış yinelemez", () => {
     const yol = yeniYol();
     const a = kur(yol).depo;
-    assert.deepEqual(a.semaBilgisi(), { user_version: 1, ek_surum: 7 });
+    assert.deepEqual(a.semaBilgisi(), { user_version: 1, ek_surum: 8 });
     a.kapat();
     hamAc(yol, (h) => {
       const tablolar = h.prepare("PRAGMA table_list").all() as Array<{ name: string; strict: number }>;
       for (const t of AJANDA_TABLOLARI) assert.equal(tablolar.find((x) => x.name === t)?.strict, 1, t);
     });
     const b = kur(yol).depo;
-    assert.deepEqual(b.semaBilgisi(), { user_version: 1, ek_surum: 7 });
+    assert.deepEqual(b.semaBilgisi(), { user_version: 1, ek_surum: 8 });
   });
 
   it("ek sürüm 5 dosyası: göç bir kez uygulanır, eski veri durur, ajanda yazılabilir", () => {
@@ -222,7 +222,7 @@ describe("depo ajanda: göç (ek göç 6)", () => {
     hamAc(yol, (h) => assert.equal(h.prepare("SELECT name FROM sqlite_master WHERE name = 'ajanda_kayitlari'").get(), undefined));
 
     const b = kur(yol).depo;
-    assert.deepEqual(b.semaBilgisi(), { user_version: 1, ek_surum: 7 });
+    assert.deepEqual(b.semaBilgisi(), { user_version: 1, ek_surum: 8 });
     assert.equal(b.cihazGetir("tel-eski")?.device_id, "tel-eski");
     assert.equal(b.kapsamliCihazGetir("tel-eski")?.kapsam, undefined, "eski cihaz sohbet kapsamında");
     assert.deepEqual(b.eslestirmeOku(), { kod_ozeti: "oz", son_ms: 9000, yanlis_deneme: 1 }, "eski pencere sohbet");
@@ -244,7 +244,7 @@ describe("depo ajanda: göç (ek göç 6)", () => {
     const once = ajandaDokumu(yol);
     hamAc(yol, (h) => h.exec("UPDATE sema_ek SET deger = 4 WHERE anahtar = 'ek_surum'"));
     const b = kur(yol).depo;
-    assert.deepEqual(b.semaBilgisi(), { user_version: 1, ek_surum: 7 });
+    assert.deepEqual(b.semaBilgisi(), { user_version: 1, ek_surum: 8 });
     b.kapat();
     assert.deepEqual(ajandaDokumu(yol), once);
   });

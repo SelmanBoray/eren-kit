@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { WebSocket } from "ws";
+import { SOHBET_SINIRLARI, YETENEK_JETONU_DESENI } from "@eren/protocol";
 import type { DisDunya, ErenYollari, SurecKaydi, SurecKimligi } from "../src/sozlesme.ts";
 import {
   canlilikIzleyicisiKur,
@@ -277,6 +278,51 @@ describe("dis-dunya", { skip: !win }, () => {
       const r = await d.surec.aracCalistir({ exe: process.execPath, argv: [betik], zamanAsimiMs: 500 });
       assert.equal(r.zamanAsimi, true);
       assert.ok(Date.now() - t0 < 10000);
+    });
+
+    test("iptal sinyali süreç ağacını öldürür, söz AbortError ile kısa sürede reddedilir", { timeout: 30_000 }, async () => {
+      const torun = yaz("iptal-torun.mjs", uyuBetik);
+      const pidDosyasi = join(kok, "iptal-pid.json");
+      const betik = yaz(
+        "iptal-ebeveyn.mjs",
+        `import { spawn } from "node:child_process";
+         import { writeFileSync } from "node:fs";
+         const t = spawn(process.execPath, [${JSON.stringify(torun)}], { stdio: "ignore", windowsHide: true });
+         writeFileSync(${JSON.stringify(pidDosyasi)}, JSON.stringify({ ebeveyn: process.pid, torun: t.pid }));
+         setInterval(() => {}, 1000);`,
+      );
+      const ac = new AbortController();
+      const p = d.surec.aracCalistir({ exe: process.execPath, argv: [betik], zamanAsimiMs: 60_000, iptal: ac.signal });
+      assert.ok(await kosulBekle(() => existsSync(pidDosyasi)), "betik başlamalı");
+      const pidler = JSON.parse(readFileSync(pidDosyasi, "utf8")) as { ebeveyn: number; torun: number };
+      baslatilanPidler.add(pidler.ebeveyn);
+      baslatilanPidler.add(pidler.torun);
+      const t0 = Date.now();
+      ac.abort();
+      await assert.rejects(p, (e: Error) => e.name === "AbortError");
+      assert.ok(Date.now() - t0 < 10_000, "zaman aşımını beklemez");
+      const yasiyor = (pid: number): boolean => {
+        try {
+          process.kill(pid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      };
+      assert.ok(await kosulBekle(() => !yasiyor(pidler.ebeveyn) && !yasiyor(pidler.torun)), "ağacın tamamı ölmeli");
+    });
+
+    test("önceden tetiklenmiş iptal sinyalinde süreç hiç başlatılmaz", async () => {
+      const isaret = join(kok, "iptal-erken.txt");
+      const betik = yaz("iptal-erken.mjs", `import { writeFileSync } from "node:fs"; writeFileSync(${JSON.stringify(isaret)}, "x");`);
+      const ac = new AbortController();
+      ac.abort();
+      await assert.rejects(
+        d.surec.aracCalistir({ exe: process.execPath, argv: [betik], zamanAsimiMs: 15_000, iptal: ac.signal }),
+        (e: Error) => e.name === "AbortError",
+      );
+      await bekle(1000);
+      assert.equal(existsSync(isaret), false);
     });
   });
 
@@ -969,6 +1015,23 @@ describe("yetenekleriCoz (adres sorgusu, port açmaz)", () => {
     const cok = Array.from({ length: 40 }, (_, i) => `j${i}`).join(",");
     assert.equal(yetenekleriCoz(`/sohbet?yetenek=${cok}`).size, 16);
     assert.deepEqual(coz(`/sohbet?yetenek=etkinlik1,${"x".repeat(300)}`), ["etkinlik1"]);
+  });
+
+  test("jeton biçimi ve adet sınırı protokolden gelir (yerel kopya yok)", () => {
+    assert.equal(SOHBET_SINIRLARI.YETENEK_ADET, 16);
+    assert.equal(SOHBET_SINIRLARI.YETENEK_JETONU, 32);
+    const cok = Array.from({ length: SOHBET_SINIRLARI.YETENEK_ADET + 5 }, (_, i) => `j${i}`).join(",");
+    assert.equal(yetenekleriCoz(`/sohbet?yetenek=${cok}`).size, SOHBET_SINIRLARI.YETENEK_ADET);
+    const sinirda = "a".repeat(SOHBET_SINIRLARI.YETENEK_JETONU);
+    assert.deepEqual(coz(`/sohbet?yetenek=${sinirda},b${sinirda}`), [sinirda]);
+    for (const j of yetenekleriCoz("/sohbet?yetenek=medya1,etkinlik1,a_b-9,Kotu,c%20d")) {
+      assert.match(j, YETENEK_JETONU_DESENI);
+    }
+    const kaynak = readFileSync(new URL("../src/dis-dunya.ts", import.meta.url), "utf8");
+    assert.match(kaynak, /YETENEK_JETONU_DESENI\.test\(/);
+    assert.match(kaynak, /SOHBET_SINIRLARI\.YETENEK_ADET/);
+    assert.doesNotMatch(kaynak, /\[a-z0-9_-\]\{1,32\}/, "yerel düzenli ifade kalmadı");
+    assert.doesNotMatch(kaynak, /AZAMI_YETENEK_ADEDI/, "yerel adet sabiti kalmadı");
   });
 });
 
