@@ -1343,17 +1343,18 @@ describe("gateway /ajanda: sürüm uyumu (D5: bağlantı sürümü, aşağı uya
     assert.equal(ist.hataKodu, "yetkisiz");
   });
 
-  it("ret sürümü sabitlenmemiş bağlantıda: çerçevenin desteklenen v'si; v yok, sayı değil, bozuk JSON, çok büyük ve zaman aşımı AJANDA_SURUMU", async () => {
+  it("ret sürümü sabitlenmemiş bağlantıda: çerçevenin desteklenen v'si; v yok, sayı değil, bozuk JSON, çok büyük ve zaman aşımı kümenin en küçük sürümü (AJANDA_SURUMLERI[0])", async () => {
     const o = await hazir();
+    const ES = AJANDA_SURUMLERI[0];
     const durumlar: Array<[string | object, number, string, number]> = [
       [{ v: AV, type: "hello", device_id: "aj-1", client_nonce: NONCE }, AV, "gecersiz_mesaj", 1008],
       [{ v: AV, type: "auth_response", signature: "AAAA" }, AV, "yetkisiz", 1008],
       [{ v: AV, type: "islem", islem_id: "i-1", islem: { islem: "ekle" } }, AV, "gecersiz_mesaj", 1008],
-      [{ type: "hello", device_id: "aj-1", son_rev: 0, client_nonce: NONCE }, AJANDA_SURUMU, "gecersiz_mesaj", 1008],
-      [{ v: String(AV), type: "hello", device_id: "aj-1", son_rev: 0, client_nonce: NONCE }, AJANDA_SURUMU, "gecersiz_mesaj", 1008],
-      ["{", AJANDA_SURUMU, "gecersiz_mesaj", 1008],
-      ["[2]", AJANDA_SURUMU, "gecersiz_mesaj", 1008],
-      [JSON.stringify({ v: AV, type: "hello", d: "x".repeat(AJANDA_AZAMI_CERCEVE.KANAL) }), AJANDA_SURUMU, "mesaj_cok_buyuk", 1009],
+      [{ type: "hello", device_id: "aj-1", son_rev: 0, client_nonce: NONCE }, ES, "gecersiz_mesaj", 1008],
+      [{ v: String(AV), type: "hello", device_id: "aj-1", son_rev: 0, client_nonce: NONCE }, ES, "gecersiz_mesaj", 1008],
+      ["{", ES, "gecersiz_mesaj", 1008],
+      ["[2]", ES, "gecersiz_mesaj", 1008],
+      [JSON.stringify({ v: AV, type: "hello", d: "x".repeat(AJANDA_AZAMI_CERCEVE.KANAL) }), ES, "mesaj_cok_buyuk", 1009],
     ];
     for (const [cerceve, v, code, kod] of durumlar) {
       const ist = o.bagla("/ajanda");
@@ -1364,7 +1365,7 @@ describe("gateway /ajanda: sürüm uyumu (D5: bağlantı sürümü, aşağı uya
     const sessiz = o.bagla("/ajanda");
     o.zaman.ilerlet(10_000);
     await bosalt();
-    assert.deepEqual(sessiz.c.gonderilenler, [hata(AJANDA_SURUMU, "zaman_asimi")]);
+    assert.deepEqual(sessiz.c.gonderilenler, [hata(ES, "zaman_asimi")]);
   });
 
   it("telafide denetimi tutmayan kayıt kabloya çıkmaz: ic_hata (1011), esitlendi yok; günlükte tür var, değer yok", async () => {
