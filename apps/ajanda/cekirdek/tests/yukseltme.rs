@@ -9,7 +9,10 @@
 //!
 //! Göç 4 (yerel kip, D1): eşleşmiş kurulum `bagli` sınıflanır ve hiçbir satırı değişmez; eşleşmesiz ve
 //! kuyruklu kurulum (`tests/veri/v3_eslesmesiz_kuyruklu.sql`, şema 3 kodunun ürettiği) `yerel` olur, kuyruk
-//! yerele toplanır.
+//! yerele toplanır. Zengin fikstür (`tests/veri/v3_eslesmis_zengin.sql`, şema 3 kodunun ürettiği; yalnız
+//! `alarm_ufku` satırı el ile): ret satırı, mezar taşı, tekrar ve örnek durumu, onaylanmış, yollanmış ve
+//! bekleyen kuyruk satırı, teslim edilmiş alarm. Eşleşmiş haliyle göç 4 yalnız `kip` satırını ekler;
+//! `eslesme` satırı silinmiş haliyle hepsini yerele toplar.
 
 mod ortak;
 
@@ -285,4 +288,109 @@ fn goc_4_eslesmesiz_kuyruklu_kurulumu_yerele_toplar() {
     assert_eq!(h.c.kayit(DISCI.into()).unwrap().unwrap().kayit.baslik, "Dişçi (dolgu)");
     assert_eq!(h.c.baglanti_durumu().unwrap().kuyrukta, 0);
     assert!(ajanda_cekirdek::depo::Depo::ac(&h.yol).unwrap().kuyruk().unwrap().is_empty());
+}
+
+/// Şema 3 kodunun ürettiği zengin eşleşmiş kurulum (`v3_eslesmis_zengin.sql` başı; `alarm_ufku` el ile).
+const V3_ZENGIN: &str = include_str!("veri/v3_eslesmis_zengin.sql");
+const ZENGIN_FATURA: &str = "k_AAECAwQFBg8ICQoLDA0OBw";
+
+/// Fikstür gerçekten bu durumları taşıyor: ret satırı, mezar taşı, tekrar + örnek durumu, onaylanmış,
+/// yollanmış ve bekleyen kuyruk satırı, teslim edilmiş alarm, alarm ufku.
+fn zengin_fikstur_dogrula(t: &std::collections::BTreeMap<String, Vec<String>>) {
+    assert_eq!(t["ret_listesi"].len(), 1);
+    assert!(t["gorunen"].iter().any(|s| s.starts_with("'k_eski'") && s.contains(r#""silindi":true"#)));
+    assert!(t["gorunen"].iter().any(|s| s.contains(r#""ornekler":[{"durum":"tamam","tarih":"2026-11-24"}]"#) && s.contains(r#""tekrar""#)));
+    let kuyruk = &t["kuyruk"];
+    assert_eq!(kuyruk.len(), 3);
+    assert!(kuyruk.iter().any(|s| s.ends_with(",0,0,1795607460000,7")), "onaylanmış: {kuyruk:?}");
+    assert!(kuyruk.iter().any(|s| s.ends_with(",0,1,1795607460000,NULL")), "yollanmış: {kuyruk:?}");
+    assert!(kuyruk.iter().any(|s| s.contains("'k_AAECAwQFBg8ICQoLDA0OBw'") && s.ends_with(",0,0,1795607460000,NULL")));
+    assert!(t["kurulu_alarmlar"].iter().any(|s| s.starts_with("2,'k_kargo'") && !s.ends_with("NULL")), "teslim edilmiş alarm");
+    assert!(t["meta"].iter().any(|s| s.starts_with("'alarm_ufku',")));
+}
+
+/// PC'yi zengin fikstürün haline getirir: sunucu kopyası + onaylanmış satırın PC'de uygulanmış hali (rev 7).
+fn pc_zengin_gibi(h: &mut Hat) {
+    pc_fikstur_gibi(h);
+    h.pc.disaridan_degistir("k_disci", |k| k.baslik = "Dişçi (kontrol)".into());
+}
+
+#[test]
+fn goc_4_zengin_eslesmis_kurulumda_yalniz_kip_satiri_eklenir_baglanti_artimli() {
+    let once = fikstur_tablolari(V3_ZENGIN);
+    zengin_fikstur_dogrula(&once);
+    let mut h = Hat::sql_depoyla("goc4-zengin-bagli", V3_ZENGIN);
+    let mut sonra = tablolar(&rusqlite::Connection::open(&h.yol).unwrap());
+    assert_eq!(sonra.remove("yerel_gecmis"), Some(vec![]));
+    let meta = sonra.get_mut("meta").unwrap();
+    let kip = meta.iter().position(|s| s.starts_with("'kip',")).expect("kip yazıldı");
+    assert_eq!(meta.remove(kip), "'kip','bagli'");
+    assert_eq!(once, sonra, "kip satırı dışında hiçbir satır değişmedi (açılış onarımı da dokunmadı)");
+    assert_eq!(h.c.kip().unwrap(), CalismaKipi::Bagli);
+    assert_eq!(h.c.son_gecis().unwrap(), None);
+    let d = h.c.baglanti_durumu().unwrap();
+    assert_eq!((d.kuyrukta, d.ret_listesinde), (2, 1), "onaylanmış satır sayılmaz");
+    assert_eq!(h.c.kayit("k_disci".into()).unwrap().unwrap().kayit.baslik, "Dişçi (kontrol)");
+
+    // Aynı servis: artımlı; yollanmış satır kopma sayılıp yeniden gider, onaylanmışın kaydı gelir.
+    pc_zengin_gibi(&mut h);
+    h.baglan();
+    assert!(h.canli_mi());
+    assert_eq!(h.pc.son_welcome_tam, Some(false));
+    let d = h.c.baglanti_durumu().unwrap();
+    assert_eq!((h.c.kip().unwrap(), d.kuyrukta, d.ret_listesinde), (CalismaKipi::Bagli, 0, 1));
+    for id in ["k_disci", "k_spor", "k_eski", "k_kargo", ZENGIN_FATURA] {
+        assert_eq!(h.c.kayit(id.into()).unwrap().unwrap().kayit, h.pc.d.kayitlar[id], "{id}");
+    }
+    assert_eq!(h.pc.d.kayitlar["k_spor"].baslik, "Spor (koşu)");
+    assert!(ajanda_cekirdek::depo::Depo::ac(&h.yol).unwrap().kuyruk().unwrap().is_empty());
+}
+
+#[test]
+fn goc_4_zengin_eslesmesiz_kurulumu_yerele_toplar() {
+    let sql = format!("{V3_ZENGIN}\nDELETE FROM meta WHERE anahtar = 'eslesme';");
+    let once = fikstur_tablolari(&sql);
+    zengin_fikstur_dogrula(&once);
+    let mut h = Hat::sql_depoyla("goc4-zengin-yerel", &sql);
+    assert_eq!(h.c.kip().unwrap(), CalismaKipi::Yerel);
+    let mut sonra = tablolar(&rusqlite::Connection::open(&h.yol).unwrap());
+    assert_eq!(sonra.remove("yerel_gecmis"), Some(vec![]));
+    assert!(sonra["kuyruk"].is_empty(), "onaylanmış, yollanmış, bekleyen: hepsi yerele toplandı");
+    let mut meta = once["meta"].clone();
+    meta.push("'kip','yerel'".into());
+    meta.sort();
+    assert_eq!(sonra["meta"], meta, "alarm ufku, depo_id, son_rev kalır");
+    for t in ["ret_listesi", "sunucu_kayitlari", "kurulu_alarmlar", "telafi_kayitlari"] {
+        assert_eq!(sonra[t], once[t], "{t} aynı");
+    }
+    let bekleyensiz: Vec<String> = once["gorunen"]
+        .iter()
+        .map(|s| {
+            let (bas, olusturma) = s.rsplit_once(',').unwrap();
+            let (bas, _) = bas.rsplit_once(',').unwrap();
+            format!("{bas},0,{olusturma}")
+        })
+        .collect();
+    assert_eq!(sonra["gorunen"], bekleyensiz, "görünen kopya metni aynı, bekleyen düştü");
+    assert_eq!(h.c.son_gecis().unwrap(), None);
+    let d = h.c.baglanti_durumu().unwrap();
+    assert_eq!((d.kuyrukta, d.ret_listesinde), (0, 1));
+    let k = |id: &str| h.c.kayit(id.into()).unwrap().unwrap();
+    assert_eq!(k("k_disci").kayit.baslik, "Dişçi (kontrol)", "onaylanmış hal");
+    assert_eq!((k("k_spor").kayit.baslik.as_str(), k("k_spor").kayit.ornekler.len()), ("Spor (koşu)", 1), "yollanmış hal");
+    assert!(k("k_eski").kayit.silindi);
+    assert!(!k(ZENGIN_FATURA).bekleyen);
+    let silinenler = h.c.liste(ListeSorgusu { sekme: Sekme::Silinenler, kapalilar_dahil: true }).unwrap();
+    assert_eq!(silinenler.iter().map(|g| g.kayit.kayit_id.as_str()).collect::<Vec<_>>(), vec!["k_eski"]);
+
+    // Aynı servise eşleşince toplanan hal kaybolmadan gider (üç yollu; iki tarafta silinmiş mezar taşına işlem yok).
+    pc_zengin_gibi(&mut h);
+    h.eslestir();
+    assert!(h.canli_mi());
+    let d = h.c.baglanti_durumu().unwrap();
+    assert_eq!((h.c.kip().unwrap(), d.kuyrukta, d.ret_listesinde), (CalismaKipi::Bagli, 0, 1));
+    for id in ["k_disci", "k_spor", "k_eski", "k_kargo", ZENGIN_FATURA] {
+        assert_eq!(h.c.kayit(id.into()).unwrap().unwrap().kayit, h.pc.d.kayitlar[id], "{id}");
+    }
+    assert_eq!((h.pc.d.kayitlar["k_spor"].baslik.as_str(), h.pc.d.kayitlar[ZENGIN_FATURA].baslik.as_str()), ("Spor (koşu)", "Fatura öde"));
 }

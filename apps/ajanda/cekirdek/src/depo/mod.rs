@@ -47,6 +47,8 @@ pub mod anahtar {
     pub const KIP: &str = "kip";
     /// Yerel kipte son verilen revizyon (`depo/yerel.rs`, `yerel_rev_sonraki`).
     pub const YEREL_REV: &str = "yerel_rev";
+    /// Bağlı kipten yerel kipe son geçişin özeti (D2, JSON; `motor/yerel.rs` `gecis_json`).
+    pub const SON_GECIS: &str = "son_gecis";
 }
 
 pub struct Depo {
@@ -168,17 +170,6 @@ impl Depo {
             )?,
             None => self.baglanti.execute("DELETE FROM meta WHERE anahtar = ?1", [anahtar])?,
         };
-        Ok(())
-    }
-
-    /// Bağlı kipte eşleşme kaldırılınca: eşleşmeye bağlı her şey (meta, sunucu kopyası, telafi, kuyruk, ret
-    /// listesi, görünen kopya, yerel geçmiş). Kip (`meta.kip`) kalır: bağlı kip eşleşmesiz de bugünkü gibi
-    /// kuyrukla sürer. Kurulu alarmlara dokunmaz: onları R3 `tum_alarmlari_kaldir` iptal edip siler.
-    pub fn eslesmeye_bagli_her_seyi_sil(&self) -> Result<(), CekirdekHatasi> {
-        self.baglanti.execute_batch(
-            "DELETE FROM meta WHERE anahtar <> 'kip'; DELETE FROM sunucu_kayitlari; DELETE FROM telafi_kayitlari;
-             DELETE FROM kuyruk; DELETE FROM ret_listesi; DELETE FROM gorunen; DELETE FROM yerel_gecmis;",
-        )?;
         Ok(())
     }
 }
