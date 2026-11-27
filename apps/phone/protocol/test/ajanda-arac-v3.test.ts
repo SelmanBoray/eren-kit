@@ -323,3 +323,23 @@ test("ret: v3 kural ayrıntısı yalnız tutarsiz_kayit ile; metin çözümü s�
   assert.match(ajandaGuncelleMetni({ sonuc: "ret", mesaj_ani: AN, neden: "tutarsiz_kayit", kural: "tekrar_varis_ister" }), /tekrar yalnız varışlı kayıtta olur/);
   assert.match(ajandaEkleMetni({ sonuc: "ret", mesaj_ani: AN, neden: "tutarsiz_kayit", kural: "tekrar_varis_ister" }), /^ajanda_ekle: eklenmedi, neden=tutarsiz_kayit\. Değişiklik kaydın kurallarını bozuyor\. Asistanın/);
 });
+
+test("araç tanımları: varışlı kayıtta varsayılan hatırlatma kaydın zamanına göre (telefon ve PC ekleme tanımı, alan açıklaması)", () => {
+  const kural = /Varışlı kayıtta hatirlatmalar verilmezse varsayılan kaydın zamanına göredir: saatli ya da tarihli tek seferlik kayıtta saatle hatırlatma da kurulur ve varış ona eklenir/;
+  assert.match(AJANDA_ARAC_ACIKLAMALARI.ajanda_ekle, kural);
+  assert.match(AJANDA_ARAC_ACIKLAMALARI.ajanda_ekle, /zamansız kayıtta \(markete gidince süt al\) ve tekrarda yalnız varış/);
+  assert.match(AJANDA_ARAC_ACIKLAMALARI.ajanda_ekle, /açıkça yalnız varınca hatırlatılmak isterse hatirlatmalar \[\] ver/);
+  // PC tanımı telefonunkinin devamı: kural aynı, PC eki sonda birebir.
+  assert.ok(AJANDA_PC_ARAC_ACIKLAMALARI.ajanda_ekle.startsWith(AJANDA_ARAC_ACIKLAMALARI.ajanda_ekle));
+  assert.match(AJANDA_PC_ARAC_ACIKLAMALARI.ajanda_ekle, kural);
+  const props = (jsonSemasi(ekle) as { properties: Record<string, { description?: string }> }).properties;
+  assert.match(props.varis!.description ?? "", kural);
+  // Eski kural ("varışlıda saatle hatırlatma kurulmaz") hiçbir tanımda kalmadı; güncelleme hatırlatmalara dokunmaz.
+  for (const f of ["ajanda_ekle", "ajanda_guncelle"] as const) {
+    assert.equal(JSON.stringify(jsonSemasi(AJANDA_ARACLARI[f].girdi)).includes("saatle hatırlatma kurulmaz"), false, f);
+    assert.equal(AJANDA_PC_ARAC_ACIKLAMALARI[f].includes("saatle hatırlatma kurulmaz"), false, f);
+  }
+  const gprops = (jsonSemasi(AJANDA_ARACLARI.ajanda_guncelle.girdi) as { properties: { degisiklik: { properties: Record<string, { description?: string }> } } }).properties;
+  assert.match(gprops.degisiklik.properties.varis!.description ?? "", /Varış eklemek ya da kaldırmak kaydın hatırlatmalarını değiştirmez/);
+  assert.equal(AJANDA_ARAC_ACIKLAMALARI.ajanda_guncelle.includes("varsayılan kaydın zamanına"), false);
+});

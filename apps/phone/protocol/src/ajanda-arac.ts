@@ -209,8 +209,16 @@ const VARIS_ACIKLAMASI =
   "bolge ile ver. {}: kayıt açıkken bölgeye girişte bir kez (tarihli kayıtta yalnız o gün, tekrar eden " +
   "kayıtta her örnek günü). pencere{bas,bit}: yalnız bu yerel saatler arasındaki girişte; yalnız kullanıcı " +
   "saat aralığı söylediyse. cikista:true: çıkışta iş hâlâ bitmediyse ikinci hatırlatma; yalnız kullanıcı " +
-  "isterse. Varışlı kayıtta hatirlatmalar verilmezse saatle hatırlatma kurulmaz; kullanıcı saatle de " +
-  "hatırlatılmak isterse hatirlatmalar ver.";
+  "isterse.";
+/**
+ * Eklemede varışlı kaydın varsayılan hatırlatması (`ajandaAracVarsayilanHatirlatmalari`): kaydın zamanına
+ * göre. Yalnız eklemede (güncelleme hatırlatmalara kendiliğinden dokunmaz).
+ */
+const VARIS_VARSAYILAN_ACIKLAMASI =
+  "hatirlatmalar verilmezse varsayılan kaydın zamanına göredir: saatli ya da tarihli tek seferlik kayıtta " +
+  "saatle hatırlatma da kurulur ve varış ona eklenir (1'de iş yerinde ol: önceden bildirim ve varınca " +
+  "hatırlatma); zamansız kayıtta (markete gidince süt al) ve tekrarda yalnız varış. Kullanıcı açıkça yalnız " +
+  "varınca hatırlatılmak isterse hatirlatmalar [] ver.";
 const TEKRAR_ACIKLAMASI =
   "Yalnız varışlı kayıtta (bolge ve varis ile) ve yalnız kullanıcı her gün ya da belirli hafta günlerinde " +
   "yinelenen bir yer kuralı isterse: her gün için siklik gunluk; her iş günü için siklik haftalik, gunler " +
@@ -273,7 +281,7 @@ export const AjandaEkleGirdi = z
     hatirlatmalar: HatirlatmaGirdileri.optional().describe(HATIRLATMA_ACIKLAMASI),
     simge: AjandaSimge.optional().describe(SIMGE_ACIKLAMASI),
     bolge: AjandaBolge.optional().describe(BOLGE_ACIKLAMASI),
-    varis: AjandaVaris.optional().describe(VARIS_ACIKLAMASI),
+    varis: AjandaVaris.optional().describe(VARIS_ACIKLAMASI + " Varışlı kayıtta " + VARIS_VARSAYILAN_ACIKLAMASI),
     tekrar: AjandaAracTekrari.optional().describe(TEKRAR_ACIKLAMASI),
     baglantilar: AjandaBaglantilar.optional().describe(BAGLANTI_ACIKLAMASI),
     alinti: AjandaAlinti.optional().describe(ALINTI_ACIKLAMASI),
@@ -517,7 +525,11 @@ export const AjandaAracDegisikligi = z
       .describe(BOLGE_ACIKLAMASI + " null bölgeyi kaldırır (varışlı kayıtta varis:null da ver)."),
     varis: AjandaVaris.nullable()
       .optional()
-      .describe(VARIS_ACIKLAMASI + " null varış hatırlatmasını kaldırır (tekrar eden kayıtta tekrar:null da ver)."),
+      .describe(
+        VARIS_ACIKLAMASI +
+          " Varış eklemek ya da kaldırmak kaydın hatırlatmalarını değiştirmez. null varış hatırlatmasını kaldırır " +
+          "(tekrar eden kayıtta tekrar:null da ver).",
+      ),
     tekrar: AjandaAracTekrari.nullable().optional().describe(TEKRAR_ACIKLAMASI + " null tekrarı kaldırır."),
     baglantilar: AjandaBaglantilar.nullable()
       .optional()
@@ -686,7 +698,9 @@ export const AJANDA_ARAC_ACIKLAMALARI: Readonly<Record<AjandaFiili, string>> = {
     "kaydetme, cevabı kullanıcının sonraki mesajında gelir. Kaydettikten sonra yanıtında " +
     "kaydın gününü adıyla ve tarihiyle söyle (ör. 27 Kasım Cuma) ve hatırlatmanın ne zaman geleceğini ya da " +
     "gelmeyeceğini çıktıdaki gibi aktar." +
-    V3_YAZAN_EKI,
+    V3_YAZAN_EKI +
+    " Varışlı kayıtta " +
+    VARIS_VARSAYILAN_ACIKLAMASI,
   ajanda_guncelle:
     "Ajandadaki bir kaydı değiştirir (başlık, zaman, hatırlatma, durum, yer ve varış, bağlantı, simge) ya da " +
     "taslağı onaylar. Silme yoktur; " +

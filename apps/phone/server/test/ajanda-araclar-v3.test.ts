@@ -244,6 +244,94 @@ describe("ajanda araçları v3: yazma", () => {
   });
 });
 
+describe("ajanda araçları v3: varışlı kayıtta varsayılan hatırlatma kaydın zamanına göre", () => {
+  const VARSAYILAN = [{ tur: "once", dk: 60 }];
+
+  it("saatli kayıt + varış (1'de iş yerinde): saatle hatırlatma da kurulur, varış ona eklenir; varsayılan elle_alanlar'a girmez", async () => {
+    const o = kur();
+    o.durum.tur = insanTuru("1'de iş yerinde olmak lazım; önceden bildir, varınca imza hatırlat");
+    // Mesaj anı 25 Kasım 14:30: "yarın 1'de".
+    const d = await o.ekle({
+      tur: "randevu",
+      baslik: "İş yeri",
+      zaman: { kesinlik: "an", tarih: "2026-11-26", saat: "13:00" },
+      bolge: "iş yeri",
+      varis: {},
+      dayanak: DAYANAK,
+    });
+    const k = o.kayit(kimlik(d));
+    assert.deepEqual(k.hatirlatmalar, VARSAYILAN);
+    assert.deepEqual(k.varis, {});
+    assert.deepEqual(k.elle_alanlar, ["tur", "baslik", "zaman", "bolge", "varis"]);
+    assert.ok(d.sonuc === "eklendi" && d.kayit.hatirlatma.kurulacak === 1, JSON.stringify(d));
+  });
+
+  it("saatsiz tarihli tek seferlik + varış: olağan varsayılan (gün hatırlatması)", async () => {
+    const o = kur();
+    const c = await o.ekle({ tur: "gorev", baslik: "İmza", zaman: { kesinlik: "gun", tarih: "2026-11-30" }, bolge: "iş yeri", varis: {}, dayanak: DAYANAK });
+    const k = o.kayit(kimlik(c));
+    assert.deepEqual(k.hatirlatmalar, VARSAYILAN);
+    assert.ok(c.sonuc === "eklendi" && c.kayit.hatirlatma.gun_hatirlatmasi !== undefined, JSON.stringify(c));
+  });
+
+  it("zamansız + varış ve varışlı tekrar: []; kullanıcı açıkça istemezse verilen [] yazılır; varışsız kayıt değişmedi", async () => {
+    const o = kur();
+    const sut = o.kayit(kimlik(await o.ekle({ tur: "gorev", baslik: "Süt al", bolge: "market", varis: {} })));
+    assert.deepEqual(sut.hatirlatmalar, []);
+    const imza = o.kayit(kimlik(await o.ekle(IMZA)));
+    assert.deepEqual(imza.hatirlatmalar, [], "her iş günü: her sabah zaman bildirimi yok");
+    const yalnizVaris = o.kayit(
+      kimlik(await o.ekle({ tur: "gorev", baslik: "Yalnız varınca", zaman: { kesinlik: "gun", tarih: "2026-11-30" }, bolge: "iş yeri", varis: {}, hatirlatmalar: [], dayanak: DAYANAK })),
+    );
+    assert.deepEqual(yalnizVaris.hatirlatmalar, []);
+    assert.ok(yalnizVaris.elle_alanlar.includes("hatirlatmalar"));
+    const varissiz = o.kayit(kimlik(await o.ekle({ tur: "gorev", baslik: "Zamansız varışsız" })));
+    assert.deepEqual(varissiz.hatirlatmalar, VARSAYILAN);
+  });
+
+  it("eşe işlenen değişiklikte aynı kural: varsayılanlı tarihli eşe varış ve tekrar → []; saatli eşe varış → varsayılan kalır", async () => {
+    const o = kur();
+    const temel = { tur: "gorev" as const, baslik: "İmza", zaman: { kesinlik: "gun" as const, tarih: "2026-11-30" }, bolge: "iş yeri", dayanak: DAYANAK };
+    const id = kimlik(await o.ekle(temel));
+    assert.deepEqual(o.kayit(id).hatirlatmalar, VARSAYILAN);
+    const es = await o.ekle({ ...temel, varis: {}, tekrar: { siklik: "haftalik", gunler: ["pzt", "sal", "car", "per", "cum"] } });
+    assert.ok(es.sonuc === "zaten_var", JSON.stringify(es));
+    assert.deepEqual(es.uygulanan_alanlar, ["tekrar", "varis"], "varsayılan söylenen alan değildir");
+    const k = o.kayit(id);
+    assert.deepEqual(k.hatirlatmalar, []);
+    assert.equal(k.elle_alanlar.includes("hatirlatmalar"), false);
+    const g = o.depo.ajandaGecmisi({ kayit_id: id, adet: 1 })[0];
+    assert.deepEqual(g?.onceki.hatirlatmalar, VARSAYILAN);
+    assert.deepEqual(g?.sonraki.hatirlatmalar, []);
+
+    const saatli = { tur: "randevu" as const, baslik: "Toplantı", zaman: { kesinlik: "an" as const, tarih: "2026-11-26", saat: "13:00" }, bolge: "iş yeri", dayanak: DAYANAK };
+    const sid = kimlik(await o.ekle(saatli));
+    const s2 = await o.ekle({ ...saatli, varis: {} });
+    assert.ok(s2.sonuc === "zaten_var" && s2.uygulanan_alanlar.join() === "varis", JSON.stringify(s2));
+    assert.deepEqual(o.kayit(sid).hatirlatmalar, VARSAYILAN);
+  });
+});
+
+describe("ajanda araçları v3: telefon sohbetinde eş taslak", () => {
+  it("aynı sohbetin sentetik taslağı insanın eklemesiyle onaylanır ve alanlarını taşır (davranış değişmedi)", async () => {
+    const o = kur();
+    o.durum.tur = sentetikTur();
+    const temel = { tur: "gorev" as const, baslik: "Süt al", bolge: "market" };
+    const id = kimlik(await o.ekle({ ...temel, aciklama: "taslak açıklaması", varis: {}, simge: "market", hatirlatmalar: [{ tur: "once", dk: 5 }] }));
+    o.durum.tur = insanTuru("markete gidince süt al");
+    const c = await o.ekle(temel);
+    assert.equal(c.sonuc, "onaylandi");
+    assert.ok(c.sonuc === "onaylandi" && c.uygulanan_alanlar.length === 0);
+    const k = o.kayit(id);
+    assert.equal(k.taslak, false);
+    assert.equal(k.aciklama, "taslak açıklaması");
+    assert.deepEqual(k.varis, {});
+    assert.equal(k.simge, "market");
+    assert.deepEqual(k.hatirlatmalar, [{ tur: "once", dk: 5 }]);
+    assert.deepEqual(o.depo.ajandaGecmisi({ kayit_id: id, adet: 1 })[0]?.sonraki, { taslak: false });
+  });
+});
+
 describe("ajanda araçları v3: liste", () => {
   it("bölge süzgeci eşleşme anahtarıyla; bölge adları en son kullanılan önce, anahtar başına bir ad", async () => {
     const o = kur();

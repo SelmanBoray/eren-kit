@@ -19,6 +19,7 @@ import {
   type AjandaEki,
 } from "./ajanda-alan.ts";
 import {
+  AJANDA_VARSAYILAN_HATIRLATMALAR,
   ajandaMetni,
   ajandaSatiri,
   AjandaZamani,
@@ -1215,6 +1216,8 @@ export function ajandaTekilAnahtari(girdi: {
  *   işlenir. Eşin `ifade`'si (kaydı doğuran söz) korunur.
  * Servis sonucu `ajandaDegisikligiUygula(es, degisiklik, yazar)` ile uygular (boşsa değişiklik yok);
  * eş taslaksa aynı işlemde onaylar. Emir olmayan otomasyonda çağrılmaz: eş olduğu gibi kalır.
+ * Asistan aracının eş yolu bunu `ajandaAracEsBirlesimi` içinden kullanır (v3 alanları, varsayılan
+ * hatırlatma ve başka bağlamın taslağı orada); bu işlevin sonucu ve vektörü (`es_degisikligi`) değişmedi.
  */
 export function ajandaEsDegisikligi(
   es: Pick<AjandaKaydi, "zaman">,
@@ -1227,4 +1230,142 @@ export function ajandaEsDegisikligi(
   const sure = girdi.zaman?.kesinlik === "an" ? girdi.zaman.sure_dk : undefined;
   if (z?.kesinlik === "an" && sure !== undefined && sure !== z.sure_dk) degisiklik.zaman = { ...z, sure_dk: sure };
   return degisiklik;
+}
+
+/**
+ * Asistan aracıyla (`ajanda_ekle`) doğan kaydın varsayılan hatırlatması: araç `hatirlatmalar` vermediyse
+ * kurulan liste. Varsayılan kaydın ZAMANINA göredir, varışın varlığına göre değil:
+ * - varışsız kayıt: olağan varsayılan (`AJANDA_VARSAYILAN_HATIRLATMALAR`, zaman kesinliği ne olursa olsun);
+ * - varışlı, takvime oturan tek seferlik kayıt (`an`, `gun`, `donem`): yine olağan varsayılan, varış ona
+ *   eklenir ("1'de iş yerinde olmak lazım": önceden bildirim de, bölgeye girişte hatırlatma da);
+ * - varışlı ama zamansız (zaman yok ya da `belirsiz`: "markete gidince süt al") ya da tekrar eden kayıt
+ *   ("her iş günü imza"): `[]`, bildirim yalnız varıştan gelir (yoksa her örnek günü zaman bildirimi gelirdi).
+ * Kullanıcı açıkça hatırlatma istemezse model `[]` verir; verilen liste her zaman olduğu gibi yazılır.
+ */
+export function ajandaAracVarsayilanHatirlatmalari(k: {
+  zaman?: AjandaZamani | undefined;
+  tekrar?: Tekrar | undefined;
+  varis?: AjandaVaris | undefined;
+}): Hatirlatma[] {
+  const yalnizVaris = k.varis !== undefined && (k.tekrar !== undefined || k.zaman === undefined || k.zaman.kesinlik === "belirsiz");
+  return yalnizVaris ? [] : AJANDA_VARSAYILAN_HATIRLATMALAR.map((h) => ({ ...h }));
+}
+
+/** Yazar ve kaynak izinin bağlam alanları (`AjandaYazar`, `AjandaKaynagi` ikisi de uyar). */
+type BaglamIzi = { yol: KaynakYolu; tur_kokeni: TurKokeni; sohbet_id?: string | undefined; oturum_id?: string | undefined };
+
+/**
+ * Eş taslak başka bir konuşma bağlamının otomasyonundan mı (`ajandaAracEsBirlesimi`). Doğru yalnız:
+ * eş taslaksa, taslağı doğuran (`kaynak`) kullanıcı emri değilse (sentetik tur, arka plan) ve kaynağın
+ * bağlamı yazarınkinden farklıysa. Bağlam yazarın kendi kimliğidir: PC'de `oturum_id` (Claude Code
+ * oturumu; aynı oturumdaki ana ajan ile kendi alt agent'ı aynı bağlamdır), telefon sohbetinde
+ * `sohbet_id`. Telefonun tekil kapsamı sohbettir (`sohbet:<id>`): aynı anahtarlı eş aynı sohbettendir,
+ * sonuç orada hep yanlıştır (davranış değişmez). Kimliği olmayan yazar (uygulama) için yanlış.
+ * Vakalar: `test/ajanda-es-taslak.test.ts`.
+ */
+export function ajandaEsBaskaBaglamdanMi(es: { taslak: boolean; kaynak: BaglamIzi }, yazar: BaglamIzi): boolean {
+  if (!es.taslak || kullaniciEmriMi(es.kaynak)) return false;
+  if (yazar.oturum_id !== undefined) return es.kaynak.oturum_id !== yazar.oturum_id;
+  if (yazar.sohbet_id !== undefined) return es.kaynak.sohbet_id !== yazar.sohbet_id;
+  return false;
+}
+
+/**
+ * Asistan aracının eklemede verdiği alanlar, saklanacak halde (dilim doldurulmuş, tekrar kablo biçiminde:
+ * `ajandaAracTekrari`). `durum` yoktur (araçla doğan kayıt açıktır).
+ */
+export type AjandaAracEsGirdisi = {
+  tur: KayitTuru;
+  baslik: string;
+  aciklama?: string | undefined;
+  zaman?: AjandaZamani | undefined;
+  hatirlatmalar?: Hatirlatma[] | undefined;
+  tekrar?: Tekrar | undefined;
+  simge?: string | undefined;
+  bolge?: string | undefined;
+  varis?: AjandaVaris | undefined;
+  baglantilar?: AjandaBaglanti[] | undefined;
+};
+
+export type AjandaAracEsBirlesimi = AjandaBirlesimi & {
+  /** Kullanıcının bu çağrıda söylediği ve eşte değişen alanlar, kanonik sırada (çıktının `uygulanan_alanlar`'ı). */
+  soylenen: AjandaAlani[];
+  /** Başka bağlamın taslağından taşınmayan alanlar, kanonik sırada: kalktı ya da (`hatirlatmalar`) varsayılana döndü. */
+  tasinmayan: AjandaAlani[];
+  /** `ajandaEsBaskaBaglamdanMi`. */
+  baska_baglam: boolean;
+};
+
+/** Değişiklik uygulanınca alanın alacağı değer (`null` kaldırır, verilmeyen kalır). */
+function sonrakiDeger<A extends "zaman" | "tekrar" | "varis">(es: AjandaKaydi, d: AjandaAlanDegisikligi, alan: A): AjandaKaydi[A] {
+  const v = d[alan];
+  return (v === undefined ? es[alan] : v === null ? undefined : v) as AjandaKaydi[A];
+}
+
+const kanonikSirada = (l: readonly AjandaAlani[]): AjandaAlani[] => AJANDA_ALANLARI.filter((a) => l.includes(a));
+
+/**
+ * Kullanıcı emriyle gelen eklemenin açık eşe (`ajandaTekilKarari`: `onayla` ya da `zaten_var`) birleşmesi,
+ * asistan aracı yolunda. Sonuç `ajandaDegisikligiUygula`'nınkidir (`kayit`, `uygulanan`, `korunan`,
+ * `budanan_ornekler`); çağıran onayda `taslak:false` yapar ve geçmişi `fark` ile yazar. Yalnız emirde çağrılır.
+ *
+ * - Olağan eş (taslak olmayan ya da aynı bağlamın taslağı): `ajandaEsDegisikligi` (verilen `aciklama`,
+ *   `hatirlatmalar`, yeni `sure_dk`) ve verilen `simge`, `varis`, `tekrar`, `baglantilar` eşe işlenir; eşin
+ *   öteki alanları kalır (aynı sohbette onay taslağın alanlarını taşır; telefon yolu bugünkü gibi).
+ * - Başka bağlamın taslağı (`ajandaEsBaskaBaglamdanMi`): insanın bu çağrıda vermediği alan taşınmaz. Sonuç
+ *   kayıt, insanın çağrısı tek başına ne doğuracaksa odur: verilen her alan verilen değeri alır (`zaman`
+ *   kullanıcının `ifade`'siyle, `bolge` onun yazılışıyla), verilmeyen alan kalkar, `hatirlatmalar` verilmediyse
+ *   varsayılana (`ajandaAracVarsayilanHatirlatmalari`) döner; `elle_alanlar` doğan kaydınkidir (verilen
+ *   alanlar). İstisna: eşin `elle_alanlar`'ındaki alan (bir kullanıcı emri ya da uygulama koymuştur) kalır.
+ *   Kimlik, kaynak izi, oluşturma anı ve geçmiş korunur; taşınmayanlar geçmiş satırında öncesiyle ve
+ *   sonrasıyla (kalkan alan `null`) görünür.
+ * - Varsayılan hatırlatma iki yolda da tutarlıdır: `hatirlatmalar` verilmediyse ve eşin `elle_alanlar`'ında
+ *   değilse, eşin listesi kendi hali için varsayılansa (başka bağlamda her zaman) birleşmiş halin varsayılanına
+ *   geçer (ör. tarihli eşe varış ve tekrar işlenince `[]`). Varsayılan `elle_alanlar`'a ve `soylenen`'e girmez.
+ */
+export function ajandaAracEsBirlesimi(es: AjandaKaydi, girdi: AjandaAracEsGirdisi, yazar: BaglamIzi): AjandaAracEsBirlesimi {
+  const baska_baglam = ajandaEsBaskaBaglamdanMi(es, yazar);
+  const verilen = girdi as Partial<Record<AjandaAlani, unknown>>;
+  const d: Record<string, unknown> = {};
+  const tasinmayan: AjandaAlani[] = [];
+  if (!baska_baglam) {
+    Object.assign(d, ajandaEsDegisikligi(es, girdi));
+    for (const alan of ["simge", "varis", "tekrar", "baglantilar"] as const) if (verilen[alan] !== undefined) d[alan] = verilen[alan];
+  } else {
+    for (const alan of AJANDA_ALANLARI) {
+      if (alan === "durum" || alan === "hatirlatmalar") continue;
+      if (verilen[alan] !== undefined) d[alan] = verilen[alan];
+      else if (es[alan] !== undefined && !es.elle_alanlar.includes(alan)) {
+        d[alan] = null;
+        tasinmayan.push(alan);
+      }
+    }
+    if (girdi.hatirlatmalar !== undefined) d.hatirlatmalar = girdi.hatirlatmalar;
+  }
+  const degisiklik = d as AjandaAlanDegisikligi;
+  let varsayilan = false;
+  if (girdi.hatirlatmalar === undefined && !es.elle_alanlar.includes("hatirlatmalar")) {
+    const esVarsayilani = kanonikJson(es.hatirlatmalar) === kanonikJson(ajandaAracVarsayilanHatirlatmalari(es));
+    const hedef = ajandaAracVarsayilanHatirlatmalari({
+      zaman: sonrakiDeger(es, degisiklik, "zaman"),
+      tekrar: sonrakiDeger(es, degisiklik, "tekrar"),
+      varis: sonrakiDeger(es, degisiklik, "varis"),
+    });
+    if ((baska_baglam || esVarsayilani) && kanonikJson(hedef) !== kanonikJson(es.hatirlatmalar)) {
+      degisiklik.hatirlatmalar = hedef;
+      varsayilan = true;
+      if (baska_baglam) tasinmayan.push("hatirlatmalar");
+    }
+  }
+  const bir = ajandaDegisikligiUygula(es, degisiklik, yazar);
+  const elle_alanlar = baska_baglam
+    ? AJANDA_ALANLARI.filter((a) => es.elle_alanlar.includes(a) || (a !== "durum" && verilen[a] !== undefined))
+    : bir.kayit.elle_alanlar.filter((a) => a !== "hatirlatmalar" || !varsayilan || es.elle_alanlar.includes(a));
+  return {
+    ...bir,
+    kayit: { ...bir.kayit, elle_alanlar },
+    soylenen: bir.uygulanan.filter((a) => !tasinmayan.includes(a) && !(varsayilan && a === "hatirlatmalar")),
+    tasinmayan: kanonikSirada(tasinmayan).filter((a) => bir.uygulanan.includes(a)),
+    baska_baglam,
+  };
 }

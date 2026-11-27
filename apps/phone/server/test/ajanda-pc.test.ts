@@ -407,3 +407,99 @@ describe("PC oturumu: tekilleştirme kapsamı ve telefon yolu", () => {
     assert.ok(!satirlar.includes("Dişçi"), "günlükte başlık var");
   });
 });
+
+describe("PC oturumu: başka oturumun eş taslağı (oturumlar arası tekilleştirme)", () => {
+  /** Alt agent'ın taslağı: insanın görmediği açıklama, hatırlatma, bağlantı, simge, varış. */
+  const ALT_EKI = {
+    aciklama: "ALT-AGENT-ACIKLAMASI",
+    hatirlatmalar: [{ tur: "once" as const, dk: 15 }],
+    baglantilar: [{ url: "https://alt-agent.example/x" }],
+    simge: "is",
+    bolge: "İŞ YERİ",
+    varis: { cikista: true as const },
+  };
+  const INSAN: AjandaFiilGirdisi<"ajanda_ekle"> = { ...DISCI, bolge: "iş yeri", zaman: { ...DISCI.zaman!, ifade: "26'sı 15:00" } as typeof DISCI.zaman };
+
+  it("başka oturumun ana ajanı onaylar ama taslağın alanları taşınmaz: kayıt insanın çağrısının doğuracağı hal; kimlik ve geçmiş korunur", async () => {
+    const o = kur();
+    const taslakC = await o.ekle({ ...DISCI, ...ALT_EKI }, o.pcBaglam(o.tasdik({ alt_agent: true })));
+    const id = kimlik(taslakC);
+    const taslak = o.kayit(id);
+    assert.equal(taslak.taslak, true);
+
+    const c = await o.ekle(INSAN, o.pcBaglam(o.tasdik({ oturum_id: OTURUM_2, istem_id: "istem-b" })));
+    assert.equal(c.sonuc, "onaylandi");
+    assert.equal(kimlik(c), id, "aynı kayıt");
+    assert.ok(c.sonuc === "onaylandi");
+    assert.deepEqual(c.uygulanan_alanlar, ["zaman", "bolge"], "yalnız insanın söylediği");
+    const k = o.kayit(id);
+    // İnsanın çağrısı tek başına ne doğuracaksa (yeni bir depoda aynı çağrı).
+    const tek = kur();
+    const tekK = tek.kayit(kimlik(await tek.ekle(INSAN, tek.pcBaglam(tek.tasdik({ oturum_id: OTURUM_2, istem_id: "istem-b" })))));
+    for (const a of ["tur", "baslik", "aciklama", "zaman", "hatirlatmalar", "tekrar", "simge", "bolge", "bolge_konumu", "varis", "baglantilar", "ekler", "durum", "elle_alanlar", "ornekler"] as const) {
+      assert.deepEqual(k[a], tekK[a], a);
+    }
+    assert.equal(k.taslak, false);
+    assert.deepEqual(k.hatirlatmalar, [{ tur: "once", dk: 60 }]);
+    assert.equal(k.aciklama, undefined);
+    // Kimlik, kaynak izi (taslağı doğuran alt agent) ve oluşturma anı korunur.
+    assert.deepEqual(k.kaynak, taslak.kaynak);
+    assert.equal(k.olusturma_ms, taslak.olusturma_ms);
+    // Geçmiş: doğum satırı yerinde; onay satırı taşınmayanları öncesi ve sonrasıyla (kalkan null) gösterir.
+    const g = o.depo.ajandaGecmisi({ kayit_id: id, adet: 5 });
+    assert.equal(g.length, 2);
+    const onay = g.find((x) => x.islem === "onayla");
+    assert.ok(onay !== undefined);
+    assert.deepEqual(onay.yazar, { yol: "pc_araci", tur_kokeni: "insan", oturum_id: OTURUM_2 });
+    assert.deepEqual(onay.onceki, {
+      aciklama: "ALT-AGENT-ACIKLAMASI",
+      zaman: taslak.zaman,
+      hatirlatmalar: [{ tur: "once", dk: 15 }],
+      simge: "is",
+      bolge: "İŞ YERİ",
+      varis: { cikista: true },
+      baglantilar: [{ url: "https://alt-agent.example/x" }],
+      taslak: true,
+    });
+    assert.deepEqual(onay.sonraki, {
+      aciklama: null,
+      zaman: k.zaman,
+      hatirlatmalar: [{ tur: "once", dk: 60 }],
+      simge: null,
+      bolge: "iş yeri",
+      varis: null,
+      baglantilar: null,
+      taslak: false,
+    });
+    assert.ok(g.some((x) => x.islem === "ekle" && x.yazar.tur_kokeni === "sentetik" && x.yazar.oturum_id === OTURUM));
+  });
+
+  it("aynı oturumun ana ajanı kendi alt agent'ının taslağını onaylayınca alanlar taşınır (bugünkü kural)", async () => {
+    const o = kur();
+    const id = kimlik(await o.ekle({ ...DISCI, ...ALT_EKI }, o.pcBaglam(o.tasdik({ alt_agent: true }))));
+    const c = await o.ekle(INSAN, o.pcBaglam(o.tasdik()));
+    assert.equal(c.sonuc, "onaylandi");
+    assert.ok(c.sonuc === "onaylandi");
+    assert.deepEqual(c.uygulanan_alanlar, []);
+    const k = o.kayit(id);
+    assert.equal(k.taslak, false);
+    assert.equal(k.aciklama, "ALT-AGENT-ACIKLAMASI");
+    assert.deepEqual(k.hatirlatmalar, [{ tur: "once", dk: 15 }]);
+    assert.deepEqual(k.varis, { cikista: true });
+    assert.equal(k.bolge, "İŞ YERİ", "aynı yer, taslağın yazılışı");
+    assert.equal(k.zaman?.kesinlik === "an" && k.zaman.ifade, "yarın 3'te", "eşin sözü korunur");
+  });
+
+  it("başka oturumun tasdiksiz (sentetik) taslağı da: insan hatırlatma verirse o yazılır; varışlıda varsayılan zamana göre", async () => {
+    const o = kur();
+    const sut = { tur: "gorev" as const, baslik: "Süt al", bolge: "market" };
+    const id = kimlik(await o.ekle({ ...sut, aciklama: "taslak", varis: {}, hatirlatmalar: [{ tur: "once", dk: 5 }] }, o.pcBaglam(undefined, OTURUM)));
+    assert.equal(o.karar(), "cagri_kimligi_yok");
+    const c = await o.ekle({ ...sut, varis: {} }, o.pcBaglam(o.tasdik({ oturum_id: OTURUM_2 })));
+    assert.equal(c.sonuc, "onaylandi");
+    const k = o.kayit(id);
+    assert.deepEqual(k.hatirlatmalar, [], "zamansız varışlı: varsayılan []");
+    assert.equal(k.aciklama, undefined);
+    assert.deepEqual(k.elle_alanlar, ["tur", "baslik", "bolge", "varis"]);
+  });
+});

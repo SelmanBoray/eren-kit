@@ -1,7 +1,6 @@
 import {
   AJANDA_ARACLARI,
   AJANDA_SINIRLARI,
-  AJANDA_VARSAYILAN_HATIRLATMALAR,
   type AjandaAlanDegisikligi,
   type AjandaFiili,
   type AjandaKaydi,
@@ -10,12 +9,13 @@ import {
   type AjandaYerelAn,
   type AjandaZamani,
   type AjandaAracKurali,
+  ajandaAracEsBirlesimi,
   ajandaAracKaydi,
   ajandaAracTekrari,
+  ajandaAracVarsayilanHatirlatmalari,
   ajandaBolgeAnahtari,
   AJANDA_ARAC_BOLGE_ADET,
   ajandaDegisikligiUygula,
-  ajandaEsDegisikligi,
   ajandaTekilAnahtari,
   ajandaTekilKarari,
   ajandaZamanDegisikligiCoz,
@@ -75,7 +75,8 @@ import type {
  *   zaman ve `mutlak` hatırlatma turun mesaj anının dilimini alır; dilim veritabanında yoksa
  *   `saat_dilimi_bilinmiyor`.
  * - Ekleme: tekil anahtar (`sohbet:<id>` kapsamı) → `ajandaTekilKarari`; emir olmayan turda taslak
- *   doğar; emirde açık eşe `ajandaEsDegisikligi` işlenir (eş taslaksa aynı yazımda onay). Emirle doğan
+ *   doğar; emirde açık eşe `ajandaAracEsBirlesimi` işlenir (eş taslaksa aynı yazımda onay; eş başka bir
+ *   konuşma bağlamının taslağıysa, PC'de başka oturum, insanın vermediği alan taşınmaz). Emirle doğan
  *   kayıtta açıkça verilen alanlar `elle_alanlar`'a girer (varsayılan hatırlatma girmez).
  * - Güncelleme: sentetik turda taslak olmayan kayda değişiklik ya da herhangi bir onay
  *   `sentetik_turda_izinsiz`; elle alanlar korunur (`korunan_alanlar`). Zaman kaydın var olan
@@ -85,7 +86,9 @@ import type {
  * - Sürüm 3 (`docs/AJANDA.md` "Sürüm 3", "Araç yolu"): `simge`, `bolge` (yalnız ad), `varis`,
  *   `baglantilar` ve dar `tekrar` (`ajandaAracTekrari`: günlük ya da haftalık, bitişsiz, yalnız varışlı
  *   kayıtta) girer; `bolge_konumu` ve `ekler` araç girdisinde yoktur. Tekil anahtara bölge (varsa) girer.
- *   Varışlı eklemede hatırlatma verilmezse saatle hatırlatma kurulmaz (`[]`): bildirim varıştan gelir.
+ *   Hatırlatma verilmezse varsayılan kaydın zamanına göredir (`ajandaAracVarsayilanHatirlatmalari`): saatli
+ *   ya da tarihli tek seferlik varışlı kayıtta olağan varsayılan (varış ona eklenir), zamansız varışlı
+ *   kayıtta ve tekrarda `[]` (bildirim yalnız varıştan).
  *   Güncellemede birleşmiş kayıt araç kuralını bozarsa (`varis` bölgesiz; araç tekrarı varışsız)
  *   `tutarsiz_kayit` + `kural`. Bir bölge adı veren başarılı çağrıda konumlu, silinmemiş, aynı eşleşme
  *   anahtarlı hiçbir kayıt yoksa `bolge_yeni:true` (`bolgeYeniMi`). Sentetik turdaki varışlı ekleme de
@@ -292,6 +295,19 @@ export function ajandaAraclariKur(b: AjandaBagimliliklari, pc?: PcDefteri): Ajan
     const hatirlatmalar = g.hatirlatmalar?.map((h) => hatirlatmaDoldur(h, dilim));
     if (!dilimlerBilinir(takvim, zaman, hatirlatmalar)) return ret("saat_dilimi_bilinmiyor");
     const tekrar = g.tekrar === undefined ? undefined : ajandaAracTekrari(g.tekrar);
+    // Çağrının verdiği alanlar, saklanacak halde (eşe birleşme ve doğan kaydın `elle_alanlar`'ı).
+    const verilen = {
+      tur: g.tur,
+      baslik: g.baslik,
+      aciklama: g.aciklama,
+      zaman,
+      hatirlatmalar,
+      tekrar,
+      simge: g.simge,
+      bolge: g.bolge,
+      varis: g.varis,
+      baglantilar: g.baglantilar,
+    };
 
     const tekil_anahtar = ajandaTekilAnahtari({ kapsam: c.tekilKapsam, tur: g.tur, baslik: g.baslik, zaman, bolge: g.bolge });
     const esler = depo.ajandaTekilEsler(tekil_anahtar);
@@ -301,15 +317,10 @@ export function ajandaAraclariKur(b: AjandaBagimliliklari, pc?: PcDefteri): Ajan
       const es = esler[karar.sira] as AjandaKaydi;
       // Emir olmayan otomasyonda eş olduğu gibi kalır.
       if (!emir) return { sonuc: "zaten_var", mesaj_ani, kayit: ozet(es, simdi), uygulanan_alanlar: [], ...bolgeYeni(g.bolge, es) };
-      // v3: kullanıcının bu turda söylediği simge, varış, tekrar ve bağlantılar da eşe işlenir (bölge anahtarda: aynı yer).
-      const esDegisikligi: AjandaAlanDegisikligi = {
-        ...ajandaEsDegisikligi(es, { aciklama: g.aciklama, zaman, hatirlatmalar }),
-        ...(g.simge !== undefined && { simge: g.simge }),
-        ...(g.varis !== undefined && { varis: g.varis }),
-        ...(tekrar !== undefined && { tekrar }),
-        ...(g.baglantilar !== undefined && { baglantilar: g.baglantilar }),
-      };
-      const bir = ajandaDegisikligiUygula(es, esDegisikligi, yazar);
+      // Kullanıcının bu turda söylediği eşe işlenir (v3 alanları dahil; bölge anahtarda: aynı yer). Eş başka
+      // bir konuşma bağlamının taslağıysa (PC'de başka oturum) taslağın alanları taşınmaz: kayıt insanın
+      // çağrısının doğuracağı haldir (`ajandaAracEsBirlesimi`); varsayılan hatırlatma iki yolda da aynı kural.
+      const bir = ajandaAracEsBirlesimi(es, verilen, yazar);
       const onay = karar.karar === "onayla";
       if (!onay && bir.uygulanan.length === 0) {
         return { sonuc: "zaten_var", mesaj_ani, kayit: ozet(es, simdi), uygulanan_alanlar: [], ...bolgeYeni(g.bolge, es) };
@@ -323,7 +334,7 @@ export function ajandaAraclariKur(b: AjandaBagimliliklari, pc?: PcDefteri): Ajan
         sonuc: onay ? "onaylandi" : "zaten_var",
         mesaj_ani,
         kayit: ozet(yazim.deger, ts),
-        uygulanan_alanlar: bir.uygulanan,
+        uygulanan_alanlar: bir.soylenen,
         ...bolgeYeni(g.bolge, yazim.deger),
       };
     }
@@ -335,25 +346,14 @@ export function ajandaAraclariKur(b: AjandaBagimliliklari, pc?: PcDefteri): Ajan
       // Alıntı yalnız turun insan mesajında birebir geçiyorsa saklanır.
       if (g.alinti !== undefined && tur.insan_metni.includes(g.alinti)) kaynak.alinti = g.alinti;
     }
-    const verilen = {
-      tur: g.tur,
-      baslik: g.baslik,
-      aciklama: g.aciklama,
-      zaman,
-      hatirlatmalar,
-      tekrar,
-      simge: g.simge,
-      bolge: g.bolge,
-      varis: g.varis,
-      baglantilar: g.baglantilar,
-    };
     const yeni: YeniHal = {
       kayit_id: yeniKayitId(),
       tur: g.tur,
       baslik: g.baslik,
-      // Verilmezse varsayılan (zaman kesinliği ne olursa olsun); `[]` hiç kurmaz. v3: varışlı kayıtta
-      // bildirim varıştan gelir, saatle hatırlatma yalnız verilirse.
-      hatirlatmalar: hatirlatmalar ?? (g.varis !== undefined ? [] : AJANDA_VARSAYILAN_HATIRLATMALAR.map((h) => ({ ...h }))),
+      // Verilmezse varsayılan, kaydın zamanına göre (`ajandaAracVarsayilanHatirlatmalari`): varışsız ya da
+      // takvime oturan tek seferlik varışlı kayıtta olağan varsayılan; zamansız varışlı kayıtta ve tekrarda `[]`.
+      // Verilen `[]` hiç kurmaz.
+      hatirlatmalar: hatirlatmalar ?? ajandaAracVarsayilanHatirlatmalari({ zaman, tekrar, varis: g.varis }),
       ornekler: [],
       durum: "acik",
       // İnsan kökenli olmayan turdan gelen ekleme taslak doğar.
