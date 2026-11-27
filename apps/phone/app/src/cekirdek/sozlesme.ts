@@ -12,11 +12,23 @@
  * Bu dosya yalnız iki modülden tip alır ve onları dondurulmuş sayar: `baglanti.ts`'ten
  * `BaglantiHatasi`, `olaylar.ts`'ten görünüm öğeleri (`GorunumOgesi` ailesi). Dilim 2'de ikisi de
  * değişmez; değişmesi gerekirse bu sözleşme yeniden dondurulur.
+ *
+ * Medya dalgası (fotoğraf/video ekleri, yetenek `medya1`): yeni portlar ve yükleyici dosyanın sonundaki
+ * "Medya" bloğundadır (TASARIM.md "Medya"). Bu dalgada `olaylar.ts`'in `KullaniciBalonu`'na tek alan
+ * eklenir (`ekler?`, U3); `GorunumOgesi` ailesinin geri kalanı ve `BaglantiHatasi` değişmez.
  */
 import type {
+  EkBilgisi,
   GirdiYolu,
   HataKodu,
   KisayolBaglami,
+  MediaBegin,
+  MediaCancel,
+  MediaChunk,
+  MedyaId,
+  MedyaIslemeDurumu,
+  MedyaMime,
+  MedyaTuru,
   Olay,
   SohbetAdi,
   SohbetAsagi,
@@ -254,8 +266,12 @@ export interface OutboxOgesi extends GidenOgesi {
   mesaj: IsMesaji;
 }
 
-/** `baglanti_koptu`: geçici öğe yollanamadan ya da `ack` gelmeden bağlantı gitti. */
-export type GidenHataKodu = HataKodu | "baglanti_koptu";
+/**
+ * `baglanti_koptu`: geçici öğe yollanamadan ya da `ack` gelmeden bağlantı gitti.
+ * `ek_bulunamadi` (Medya): mesajın bir ekinin yerel kopyası telefonda yok (silinmiş, okunamıyor);
+ * outbox öğeyi `hazirlik` sonucuyla hatalara taşır, yeniden yollanmaz. Diske yazılır ve yüklemede tanınır.
+ */
+export type GidenHataKodu = HataKodu | "baglanti_koptu" | "ek_bulunamadi";
 
 export interface GidenHatasi {
   client_msg_id: string;
@@ -334,6 +350,19 @@ export interface Outbox {
    */
   kaldir(kosul: (m: IsMesaji) => boolean): Promise<number>;
   bosalt(): Promise<void>;
+  /**
+   * Medya (U2). Yeni ek kimliği `m-<donem>-<sayac+1>`: `sohbetIdUret` ile AYNI kalıcı sayaç ve aynı
+   * kurallar (`yukle`'den sonra, eşzamanlı, öncesinde atar; sayaç sonraki yazımla diske girer). Bir
+   * cihazda bir kimlik iki eke verilmez. Medya dalgası boyunca isteğe bağlıdır (TASARIM.md "Medya"),
+   * `outboxKur` her zaman verir.
+   */
+  medyaIdUret?: () => MedyaId;
+  /**
+   * Medya (U2). `hazirlik`'in sonucu değişmiş olabilir (yükleyici `degisti`): kimlik bitmişse
+   * bekleyenler `kimlikTamam`'daki kurallarla yeniden denenir (zaten yollanmış öğe ikinci kez gitmez);
+   * değilse hiçbir şey yapmaz. Eşzamanlıdır. Medya dalgası boyunca isteğe bağlıdır, `outboxKur` her zaman verir.
+   */
+  hazirlikDegisti?(): void;
 }
 
 export interface OutboxBagimliliklari {
@@ -342,6 +371,18 @@ export interface OutboxBagimliliklari {
   saat: SaatPortu;
   /** `ogeler` ya da `hatalar` değişti. */
   degisti(): void;
+  /**
+   * Medya (U2 uygular, U3 verir). Yollanmamış her öğe yollanmadan hemen önce sorulur (eşzamanlı, atmaz).
+   * Verilmezse her öğe `"hazir"` sayılır (bugünkü davranış).
+   * - `"hazir"`: öğe yollanır.
+   * - `"bekliyor"`: öğe yollanmaz, kuyrukta kalır; aynı `sohbet_id`'nin SONRAKİ `user_message`'ları da bu
+   *   geçişte atlanır (sohbetin sırası korunur). Öteki sohbetler, sohbetsiz öğeler (`plan_decision`,
+   *   `question_answer`, `job_cancel`) ve aynı sohbetin `interrupt`/`chat_*` öğeleri yürür.
+   * - `{ hata }`: öğe kuyruktan hatalara taşınır (`GidenHatasi.kod = hata`, kalıcı, yeniden yollanmaz);
+   *   sohbet tıkanmaz, geçiş sürer.
+   * Ek taşımayan öğe için gerçek bağımlılık hep `"hazir"` döner. `kalici`/`gecici` kuralları aynen.
+   */
+  hazirlik?(m: IsMesaji): MesajHazirligi;
 }
 
 export type OutboxFabrikasi = (b: OutboxBagimliliklari) => Outbox;
@@ -519,6 +560,12 @@ export interface CekirdekPortlari {
    * okunur (`sesliYanit.ts`); herhangi bir yolla yeni mesaj gönderilince süren okuma kesilir.
    */
   ses?: SesPortu;
+  /**
+   * Medya. Verilirse yükleyici kurulur ve servis `medya1` dediğinde ekli gönderim açılır. Verilmezse
+   * `medyaDestekli` hep `false`, ekli `mesajYolla` `medya_desteklenmiyor` döner, `media_state` yok
+   * sayılır (özellik bayrağı: bugünkü davranış). Gerçeği `platform/medyaDosya.ts` (U4).
+   */
+  medya?: MedyaDosyaPortu;
 }
 
 /** Son `server_status`, `v`/`type` olmadan. Dilim 2: `eren` yok, `sohbetler` var. Bağlantı yokken `null`. */
@@ -575,6 +622,13 @@ export interface CekirdekDurumu extends BaglantiOzeti {
    * her zaman yazar (port yoksa `false`); isteğe bağlılık yalnız elle kurulan durum nesneleri içindir.
    */
   seslendiriyor?: boolean;
+  /**
+   * Medya. Ek düğmesi açık mı: `medya` portu verildi VE bu süreçte görülen son `welcome`'ın
+   * `yetenekler`'inde `SOHBET_YETENEKLERI.MEDYA` var. İlk `welcome`'a dek `false`; bağlantı kopunca son
+   * değer korunur (çevrimdışı ekli mesaj kuyruğa girebilir), sonraki `welcome` yeniden yazar. Eski servis
+   * alanı hiç yazmaz: `false`. Gerçek çekirdek her zaman yazar; isteğe bağlılık `seslendiriyor` gibidir.
+   */
+  medyaDestekli?: boolean;
 }
 
 /**
@@ -613,6 +667,13 @@ export interface SohbetDurumu extends BaglantiOzeti {
    * `plan_decision` + `izin_bekleniyor` hata değildir: karar alındı, telefon izni bekleniyor.
    */
   hatalar: readonly GidenHatasi[];
+  /**
+   * Medya. Bu sohbetin `ogeler`'indeki `KullaniciBalonu.ekler`'inde, `bekleyenler`'inde ve `hatalar`'ındaki
+   * `user_message.ekler`'de geçen her `medya_id` için yükleyicinin `gorunum`'ü; yükleyici `null`
+   * dönerse anahtar yazılmaz (ekran "bu cihazda yok" yer tutucusunu gösterir). İçerik değişmedikçe aynı
+   * nesne. Gerçek çekirdek her zaman yazar (port yoksa boş); isteğe bağlılık `seslendiriyor` gibidir.
+   */
+  ekGorunumleri?: ReadonlyMap<MedyaId, EkGorunumu>;
 }
 
 export type GonderRedNedeni =
@@ -633,7 +694,13 @@ export type GonderRedNedeni =
   /** Hedef turu bilinmeyen kesme yalnız bağlıyken yollanır. */
   | "bagli_degil"
   /** Dilim 2. Sohbet listede yok ya da `kurulamadi`: hiçbir şey kuyruğa girmez. */
-  | "sohbet_bulunamadi";
+  | "sohbet_bulunamadi"
+  /** Medya. Ek verildi ama `medyaDestekli` değil (port yok ya da servis `medya1` demedi). */
+  | "medya_desteklenmiyor"
+  /** Medya. Bir ek kopyalanamadı/küçültülemedi ya da hazırlanınca türünün bayt sınırını aştı. */
+  | "ek_hazirlanamadi"
+  /** Medya. Yükleyicideki bekleyen ekler + yeniler `MEDYA_SINIRLARI.BEKLEYEN_YUKLEME`'yi aşıyor. */
+  | "ek_siniri";
 
 export type GonderSonucu =
   | { ok: true; client_msg_id: string }
@@ -713,15 +780,31 @@ export interface Sohbet {
    * kabul edilir ve `user_message.baglam` olarak gider; başka girdi yoluyla verilirse ya da
    * `KisayolBaglami` şemasından geçmezse hiçbir şey kuyruğa girmez, `gecersiz` döner. Kısayolda da
    * isteğe bağlıdır.
+   *
+   * Medya (U3). `ekler` boş değilse: yalnız `input === "yazi"` ve `baglam` yokken (değilse `gecersiz`);
+   * `metin` boş olabilir (otomatik ad o zaman üretilmez). Sıra, ilk tutmayan döner, hiçbir şey kuyruğa
+   * girmez: `gecersiz` (girdi yolu, bağlam) → `baslamadi` → `sohbet_bulunamadi` → `gecersiz` (adet,
+   * tekillik, tek video) → `medya_desteklenmiyor` → `ek_siniri` → her ek için `Outbox.medyaIdUret` + `MedyaDosyaPortu.hazirla`
+   * (biri düşerse hazırlananlar silinir, `ek_hazirlanamadi`) → `EkBilgisi` şeması (`gecersiz`) →
+   * `Yukleyici.ekle` (tek yazım; `depo_hatasi`) → `Outbox.ekle(user_message{ekler})` (düşerse
+   * `Yukleyici.iptal`). `ekler` boş ya da verilmemişse bugünkü davranış.
    */
-  mesajYolla(metin: string, input: GirdiYolu, baglam?: MesajBaglami): Promise<GonderSonucu>;
+  mesajYolla(
+    metin: string,
+    input: GirdiYolu,
+    baglam?: MesajBaglami,
+    ekler?: readonly SeciliEk[],
+  ): Promise<GonderSonucu>;
   /** Yalnız bu sohbetin, özeti doğrulanmış, sonuçlanmamış plan kartı için. */
   planKarari(plan_id: string, plan_hash: string, karar: PlanKarari): Promise<GonderSonucu>;
   soruCevapla(soru_id: string, cevap: string): Promise<GonderSonucu>;
   isIptal(is_id: number): Promise<GonderSonucu>;
   /** `interrupt{sohbet_id}`. `turn_id` verilmezse bu sohbetin akışının turu; o da yoksa hedefsiz, yalnız bağlıyken. */
   kes(turn_id?: string): Promise<GonderSonucu>;
-  /** Hata satırını kaldırır. `chat_create` hatasıysa sohbetin bütün yerel artıklarını da (`sil` gibi). */
+  /**
+   * Hata satırını kaldırır. `chat_create` hatasıysa sohbetin bütün yerel artıklarını da (`sil` gibi).
+   * Medya: `ekler`'li `user_message` hatasıysa eklerini `Yukleyici.iptal` eder ("Kaldır").
+   */
   hataKapat(client_msg_id: string): Promise<void>;
   /** `chat_clear{sohbet_id}`; Dilim 1 kuralları (yalnız bağlıyken, geçici, `ack`'le çözülür, 20 sn). */
   gecmisiSil(): Promise<GecmisSilSonucu>;
@@ -777,3 +860,284 @@ export interface CekirdekSecenekleri {
 }
 
 export type CekirdekFabrikasi = (portlar: CekirdekPortlari, secenekler?: CekirdekSecenekleri) => Cekirdek;
+
+// =============================================================================================
+// Medya dalgası: fotoğraf ve video ekleri. Kurallar, paketler (U1-U5b) ve dosya sahipliği:
+// ../../TASARIM.md "Medya". Kablo: `protocol/src/medya.ts` (yetenek `medya1`, `SOHBET_SURUMU` aynı),
+// sınırlar `MEDYA_SINIRLARI`. Var olan arayüzlere bu dalgada eklenen üyeler (`Outbox.medyaIdUret`,
+// `Outbox.hazirlikDegisti`, `OutboxBagimliliklari.hazirlik`, `CekirdekPortlari.medya`,
+// `CekirdekDurumu.medyaDestekli`, `SohbetDurumu.ekGorunumleri`) isteğe bağlıdır: ara commit'ler tip
+// denetiminden geçsin diye. Gerçekleyen her zaman verir; dalga bitince sözleşme sahibi zorunlu yapar.
+// Akış: seçici (`MedyaSeciciPortu`, ekran) → `ekleriDenetle` (saf) → şerit (`SeciliEk`) →
+// `Sohbet.mesajYolla(..., ekler)` → `MedyaDosyaPortu.hazirla` → `Yukleyici.ekle` + `Outbox.ekle` →
+// yükleme (`media_*`) → `kabul` → outbox `hazirlik` `"hazir"` → `user_message{ekler}`.
+// =============================================================================================
+
+// ---------------------------------------------------------------------------------------------
+// Seçim (ekran tarafı). Çekirdek seçiciyi çağırmaz; `SohbetEkrani` çağırır, sonucu `ekleriDenetle`'den
+// geçirir ve şeritte tutar.
+// ---------------------------------------------------------------------------------------------
+
+/** Medya. Ekin kaynağı ("Ekle" alt sayfasının üç seçeneği). */
+export type MedyaKaynagi = "galeri" | "foto_cek" | "video_cek";
+
+/**
+ * Medya. Seçicinin döndürdüğü bir öğe: beyan, doğrulanmamış. Bilinmeyen alan `null`. Platform
+ * `boyut`'u seçici vermezse dosyadan okur; `sure_ms`'i tam sayı ms'ye yuvarlar (0 ya da yoksa `null`);
+ * `mime`'ı seçici vermezse uzantıdan çıkarır, yine bilinmiyorsa `null`. `tur` seçicinin `image`/`video`
+ * türüdür, başka bir şeyse `null`.
+ */
+export interface HamMedya {
+  /** Seçici önbelleğindeki yerel adres. Silinebilir: gönderimde `hazirla` kopyalar. */
+  uri: string;
+  tur: MedyaTuru | null;
+  mime: string | null;
+  boyut: number | null;
+  sure_ms: number | null;
+  genislik: number | null;
+  yukseklik: number | null;
+}
+
+/**
+ * Medya. `ok: true` + boş `ogeler`: kullanıcı vazgeçti. `izin_yok`: kamera izni verilmedi (galeri yolu
+ * çalışmaya devam eder). `hata`: seçici açılamadı ya da düştü.
+ */
+export type MedyaSecimSonucu =
+  | { ok: true; ogeler: readonly HamMedya[] }
+  | { ok: false; neden: "izin_yok" | "hata" };
+
+/**
+ * Medya (U4 gerçekler: `platform/medyaSecici.ts`, `expo-image-picker`; sahtesi `SahteMedyaSecici`).
+ * - `galeri`: Android Photo Picker (depolama izni istemez); fotoğraf ve video, çoklu seçim, en çok
+ *   `kalan` öğe; EXIF ve base64 istenmez.
+ * - `foto_cek`: kamera, tek fotoğraf. `video_cek`: kamera, tek video; kayıt üst sınırı
+ *   `KAMERA_VIDEO_AZAMI_SN` = 295 sn (`medyaSecici.ts`'te tanımlanır): `MEDYA_SINIRLARI.VIDEO_SURE_MS`
+ *   (300 sn) kameranın birkaç ms taşmasıyla aşılmasın diye 5 sn altında.
+ * - Kamera izni yalnız kamera kaynağında, çalışma anında istenir; reddedilirse `izin_yok`.
+ * Sınır denetimi yapmaz: her öğe `ekleriDenetle`'den geçer (galeriden gelen 5 dk'yı aşan video orada
+ * `video_uzun` ile reddedilir). Söz hiç reddedilmez. `kalan < 1` ise seçici açılmaz, boş döner.
+ */
+export interface MedyaSeciciPortu {
+  sec(kaynak: MedyaKaynagi, kalan: number): Promise<MedyaSecimSonucu>;
+}
+
+/**
+ * Medya. `ekleriDenetle`'den geçmiş, şeritteki ek. Henüz kopyalanmadı, `medya_id`'si yok. `mime`
+ * `MEDYA_MIME[tur]` içindedir; `sure_ms` yalnız videoda olabilir (fotoğrafta hep `null`).
+ */
+export interface SeciliEk {
+  /** Seçicinin adresi; şeritte anahtar (aynı adres iki kez eklenmez) ve şeritteki küçük resim. */
+  uri: string;
+  tur: MedyaTuru;
+  mime: MedyaMime;
+  /** Seçilen dosyanın baytı (fotoğrafta özgün; hazırlama küçültür). */
+  boyut: number;
+  sure_ms: number | null;
+  genislik: number | null;
+  yukseklik: number | null;
+}
+
+/**
+ * Medya. Seçimde ekin reddedilme nedeni (ekran metni U5a `medyaMetni.ts`). Kural sırası `EkleriDenetle`'de.
+ * - `tur_desteklenmiyor`: `tur` ya da `mime` yok, `mime` `MEDYA_MIME[tur]`'da değil.
+ * - `okunamadi`: `boyut` bilinmiyor ya da 1'den küçük.
+ * - `zaten_ekli`: aynı `uri` şeritte (ya da bu çağrıda daha önce) var.
+ * - `video_uzun`: `sure_ms > MEDYA_SINIRLARI.VIDEO_SURE_MS` (süre bilinmiyorsa geçer; PC ölçer).
+ * - `cok_buyuk`: video `boyut > VIDEO_BAYT`. Fotoğrafın seçimde bayt denetimi yoktur (küçültülür;
+ *   hazırlama sonrası `FOTO_BAYT`'ı aşarsa gönderim `ek_hazirlanamadi` alır).
+ * - `ikinci_video`: şeritte zaten bir video var (mesaj başına en çok bir video).
+ * - `adet_asildi`: şerit `EK_ADET`'e ulaştı.
+ */
+export type EkRedNedeni =
+  | "tur_desteklenmiyor"
+  | "okunamadi"
+  | "zaten_ekli"
+  | "video_uzun"
+  | "cok_buyuk"
+  | "ikinci_video"
+  | "adet_asildi";
+
+export interface EkRedi {
+  uri: string;
+  neden: EkRedNedeni;
+}
+
+/** `ekler`: `mevcut` aynen ve sırasıyla, ardından kabul edilen yeniler geliş sırasıyla. */
+export interface EkDenetimi {
+  ekler: readonly SeciliEk[];
+  reddedilenler: readonly EkRedi[];
+}
+
+/**
+ * Medya. Saf (U1 `cekirdek/medya.ts` `ekleriDenetle`; U3 `index.ts` yeniden dışa açar, ekran oradan
+ * alır). `yeni` sırayla denenir, her öğede `EkRedNedeni`'ndeki sırayla ilk tutmayan kural reddeder;
+ * kabul edilen öğe sonraki öğelerin `zaten_ekli`/`ikinci_video`/`adet_asildi` denetimine girer. Fotoğrafın
+ * `sure_ms`'i `null` yapılır. Girdiyi değiştirmez, atmaz.
+ */
+export type EkleriDenetle = (mevcut: readonly SeciliEk[], yeni: readonly HamMedya[]) => EkDenetimi;
+
+// ---------------------------------------------------------------------------------------------
+// Dosya portu (çekirdek): hazırlama, parça okuma, silme. Gerçeği `platform/medyaDosya.ts` (U4,
+// `expo-file-system`, `expo-image-manipulator`, `expo-video-thumbnails`), sahtesi `SahteMedyaDosya`.
+// Adresler opaktır: çekirdek yalnız saklar ve porta geri verir, hiçbir zaman kurmaz ya da ayrıştırmaz.
+// ---------------------------------------------------------------------------------------------
+
+/** Medya. Uygulama klasörüne alınmış, yüklenmeye hazır ek. */
+export interface HazirEk {
+  /** Yüklenecek kopya: `Paths.document/eren-medya/<medya_id>.<uzantı>`. */
+  uri: string;
+  /** Kopyanın gerçek türü: küçültülen fotoğraf `image/jpeg`; video ve düşen küçültmede seçicinin `mime`'ı. */
+  mime: MedyaMime;
+  /** Kopyanın gerçek bayt sayısı (1..türün sınırı). */
+  boyut: number;
+  /** Fotoğrafta küçültme sonrası piksel; videoda seçicinin beyanı; bilinmiyorsa `null`. */
+  genislik: number | null;
+  yukseklik: number | null;
+  /** Yalnız video: seçicinin beyanı; fotoğrafta `null`. */
+  sure_ms: number | null;
+  /**
+   * Balondaki yerel görsel: fotoğrafta kopyanın kendisi (`uri` ile aynı), videoda kapak
+   * (`expo-video-thumbnails`, `eren-medya/<medya_id>.kapak.jpg`). Kapak alınamadıysa `null` (hata değil).
+   */
+  onizleme_uri: string | null;
+}
+
+export type HazirlaSonucu =
+  | { ok: true; ek: HazirEk }
+  /** `okunamadi`: kaynak yok/okunamıyor. `cok_buyuk`: kopya türün bayt sınırını aşıyor. `hata`: yer yok, yazılamadı. */
+  | { ok: false; neden: "okunamadi" | "cok_buyuk" | "hata" };
+
+/**
+ * Medya (U4 gerçekler; U1 ve U3 kullanır). Hiçbir yöntem kişisel içerik ya da adres günlüğe yazmaz.
+ */
+export interface MedyaDosyaPortu {
+  /**
+   * Seçilen eki uygulama klasörüne alır. Fotoğraf: uzun kenar `FOTO_UZUN_KENAR`'ı aşıyorsa küçültülür,
+   * JPEG kalite 0,8 ile yeniden kodlanır (EXIF/GPS düşer, yön piksele işlenir); küçültücü düşerse özgün
+   * dosya kopyalanır (`FOTO_BAYT` sınırıyla). Video: olduğu gibi kopyalanır, kapak alınmaya çalışılır.
+   * Başarısızlıkta yarım dosya bırakmaz. Söz hiç reddedilmez.
+   */
+  hazirla(ek: SeciliEk, medya_id: MedyaId): Promise<HazirlaSonucu>;
+  /** Dosyanın bayt sayısı; yoksa ya da okunamıyorsa `null`. Hiç reddetmez. */
+  boyut(uri: string): Promise<number | null>;
+  /**
+   * `ofset`'ten en çok `uzunluk` bayt (dosya sonunda daha kısa, sonrasında boş dizi). Dosya yoksa ya da
+   * okunamıyorsa reddeder. Çağıran `uzunluk`'u `PARCA_BAYT` ile sınırlar.
+   */
+  oku(uri: string, ofset: number, uzunluk: number): Promise<Uint8Array>;
+  /** Siler; yoksa sessizce çözülür. Silinemezse reddeder. */
+  sil(uri: string): Promise<void>;
+  /** `eren-medya` altındaki bütün dosyaların adresleri (açılış süpürmesi: kaydı olmayan dosya silinir). */
+  listele(): Promise<readonly string[]>;
+}
+
+/** Medya. Saf (U1 `cekirdek/base64.ts`): baytları standart base64'e (dolgulu, `+` `/`) çevirir. Hermes'te `Buffer` yok. */
+export type Base64Kodla = (baytlar: Uint8Array) => string;
+
+// ---------------------------------------------------------------------------------------------
+// Yükleyici (U1 `cekirdek/medya.ts` `yukleyiciKur`). Platformsuz: dosyayı porttan, kaydı `DepoPortu`'ndan
+// okur. Kalıcı anahtarlar: `medya_yuklemeleri` (bağlanmamış kayıtlar) ve `medya_onizlemeleri`
+// (mesaja bağlanmış eklerin önizleme dizini). İkisi de yalnız kimlik, tür, boyut ve opak adres taşır.
+// ---------------------------------------------------------------------------------------------
+
+/** Medya. Yükleyicinin yolladığı çerçeveler (`client_msg_id` yok, `ack` yok, outbox'a girmez). */
+export type MedyaYukari = MediaBegin | MediaChunk | MediaCancel;
+
+/** Medya. `Yukleyici.ekle` girdisi: hazırlanmış bir ek ve kablo bilgisi. */
+export interface YeniYukleme {
+  sohbet_id: SohbetId;
+  /** `user_message.ekler`'e giden bilginin aynısı; `media_begin` bunun alanlarıyla kurulur. */
+  bilgi: EkBilgisi;
+  /** `HazirEk.uri`. */
+  uri: string;
+  /** `HazirEk.onizleme_uri`. */
+  onizleme_uri: string | null;
+}
+
+/**
+ * Medya. Bir ekin ekrandaki durumu (yalnız canlı, kalıcı değil; yeniden açılışta kayıt `bekliyor`'dan
+ * başlar).
+ * - `bekliyor`: sırada, ya da bağlantı veya `medya1` bekleniyor.
+ * - `yukleniyor`: `alinan` servisin son bildirdiği bayt, `boyut` toplam.
+ * - `kabul`: servis doğruladı; `isleme` son `media_state.isleme` (henüz gelmediyse `null`).
+ * - `reddedildi`: `kod` `media_state.code`.
+ * - `yerel_yok`: yerel kopya okunamadı ("Ek telefonda bulunamadı").
+ */
+export type EkIlerlemesi =
+  | { durum: "bekliyor" }
+  | { durum: "yukleniyor"; alinan: number; boyut: number }
+  | { durum: "kabul"; isleme: MedyaIslemeDurumu | null }
+  | { durum: "reddedildi"; kod: HataKodu }
+  | { durum: "yerel_yok" };
+
+/** Medya. Balonun bir ek için gösterdiği. */
+export interface EkGorunumu {
+  /** `HazirEk.onizleme_uri`; yoksa `null` (video yer tutucusu ya da "bu cihazda yok"). */
+  onizleme_uri: string | null;
+  /** Yükleme ya da işleme durumu; bilinmiyorsa (mesaja bağlanmış, işleme bildirimi gelmemiş) `null`. */
+  ilerleme: EkIlerlemesi | null;
+}
+
+/** Medya. `OutboxBagimliliklari.hazirlik` sonucu. */
+export type MesajHazirligi = "hazir" | "bekliyor" | { hata: GidenHataKodu };
+
+/**
+ * Medya (U1). Kurallar:
+ * - Kayıtlar `ekle` sırasıyla yüklenir; aynı anda tek ek; parça en çok `PARCA_BAYT` ham bayt
+ *   (`Base64Kodla` ile), pencere 2 parça (yanıtsız üçüncü parça yollanmaz). Servis yalnız
+ *   `ofset == alinan` parçayı yazar; yükleyici her zaman son `alinan`'dan sürer.
+ * - `baglandi`'dan sonra `reddedildi`/`yerel_yok` olmayan bütün bağlanmamış kayıtlar (`kabul` dahil) için
+ *   `media_begin` yollanır; servis güncel durumu döner (sildiyse `alinan: 0`, baştan yüklenir).
+ * - Yerel kopya okunamazsa kayıt `yerel_yok` olur, bağlıysa `media_cancel` gider.
+ * - Kalıcı yazım atomiktir (`DepoPortu.yaz`); bozuk kayıt yüklemede atılır, atmaz.
+ * - Her ilerleme ya da durum değişikliğinde `degisti` çağrılır.
+ */
+export interface Yukleyici {
+  /** Kalıcı kayıtları okur. Başka çağrıdan önce bir kez; okunamazsa reddeder. Kaydı olmayan dosyaları arkadan siler. */
+  yukle(): Promise<void>;
+  /**
+   * Kayıtları tek yazımla diske ekler (hepsi ya da hiçbiri; yazılamazsa reddeder, bellek değişmez).
+   * Bağlıysa yüklemeye hemen başlayabilir. Aynı `medya_id` ikinci kez eklenmez (yok sayılır).
+   */
+  ekle(kayitlar: readonly YeniYukleme[]): Promise<void>;
+  /** Kimliği bitmiş, `medya1` desteklenen bağlantı. `gonder` yazamazsa `false` döner (yükleme durur, kopma beklenir). */
+  baglandi(gonder: (m: MedyaYukari) => boolean): void;
+  /** Bağlantı gitti ya da `medya1` desteklenmiyor: yükleme durur, yanıtsız parçalar unutulur. */
+  koptu(): void;
+  /** Aşağı `media_state`. Bilinmeyen `medya_id`'nin yalnız `isleme`'si bellekte tutulur (en çok 64). */
+  durum(s: Extract<GelenCerceve, { type: "media_state" }>): void;
+  /**
+   * Mesajın eklerine göre outbox kararı (eşzamanlı): hepsi `kabul` ise `"hazir"`; biri `reddedildi` ise
+   * `{hata: kod}`; biri `yerel_yok` ise `{hata: "ek_bulunamadi"}`; değilse `"bekliyor"`. Kaydı olmayan
+   * (mesaja zaten bağlanmış ya da hiç bilinmeyen) kimlik `"hazir"` sayılır: son söz servisindir (`medya_yok`).
+   */
+  hazirlik(medya_idler: readonly MedyaId[]): MesajHazirligi;
+  /**
+   * Bu cihazın `user_echo`'su ekiyle görüldü (`seq` olayınki): kayıt kalkar, önizleme dizinine
+   * `{sohbet_id, seq, onizleme_uri}` girer, `uri` önizleme değilse (video kopyası) silinir. Bilinmeyen kimlik yok sayılır.
+   */
+  mesajaBaglandi(medya_id: MedyaId, seq: number): Promise<void>;
+  /** "Kaldır": kayıtlar ve yerel dosyaları silinir; bağlıysa her biri için `media_cancel`. Bilinmeyen kimlik yok sayılır. */
+  iptal(medya_idler: readonly MedyaId[]): Promise<void>;
+  /** Mezar taşı: o sohbetin `seq <= sinir_seq` önizlemeleri ve dosyaları silinir; bağlanmamış kayıtlar kalır. */
+  sohbetiTemizle(sohbet_id: SohbetId, sinir_seq: number): Promise<void>;
+  /** Sohbet silindi: o sohbetin bütün önizlemeleri silinir, bağlanmamış kayıtları `iptal` edilir. */
+  sohbetSilindi(sohbet_id: SohbetId): Promise<void>;
+  /** Yerel geçmiş sıfırlandı: bütün önizlemeler silinir; bağlanmamış kayıtlar kalır. */
+  sifirla(): Promise<void>;
+  /** Eşzamanlı; kayıt da önizleme de, canlı işleme bilgisi de yoksa `null`. */
+  gorunum(medya_id: MedyaId): EkGorunumu | null;
+  /** Bağlanmamış ve `reddedildi`/`yerel_yok` olmayan kayıt sayısı (`ek_siniri` denetimi). */
+  bekleyenSayisi(): number;
+  /** Sıradaki kalıcı yazımlar bitince çözülür. */
+  bosalt(): Promise<void>;
+}
+
+export interface YukleyiciBagimliliklari {
+  depo: DepoPortu;
+  dosya: MedyaDosyaPortu;
+  /** Herhangi bir ilerleme, durum ya da `hazirlik` değişikliği. */
+  degisti(): void;
+}
+
+export type YukleyiciFabrikasi = (b: YukleyiciBagimliliklari) => Yukleyici;
