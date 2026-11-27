@@ -16,10 +16,13 @@
  * jetonun kapsamıdır). `pc_kanca` bağlantısı yalnız kanca isteğini (`pc_arac`, `pcKancaYukariCoz`) alır.
  * `pc_oturumu` başarılı yanıtının `sonuc`'u `PcAracSonucu{cikti, karar}`'dır (PC defterinin tur kararı;
  * köprü sentetik kararın nedenini modele söyler); `ana_oturum` yanıtı bugünkü gibi yalnız çıktıdır.
+ *
+ * v3 araç yüzü (`aracV3`, ayar `ajanda_arac_v3`): açıksa araç rollerinin (`ana_oturum`, `pc_oturumu`)
+ * `kopru_welcome`'ı `arac_v3:true` taşır (köprü v3 şemalarını ve tanımlarını yayınlar); kapalıyken alan yazılmaz
+ * (çerçeve bugünkü baytlarla) ve çıktı v2 şemasıyla denetlenir: v3 alanı taşıyan çıktı `ic_hata` olur.
  */
 import { z } from "zod";
 import {
-  AJANDA_ARACLARI,
   AJANDA_AZAMI_CERCEVE,
   AJANDA_BORU_ADI,
   AJANDA_PC_SINIRLARI,
@@ -27,6 +30,7 @@ import {
   PC_KANCA_ARACLARI,
   PcAracSonucu,
   PROTOKOL_SURUMU,
+  ajandaAraclari,
   ajandaFiilRoldeIzinliMi,
   ajandaKopruYukariCoz,
   ajandaPcRoluMu,
@@ -127,9 +131,10 @@ const sonucYaniti = (
   istek_id: string,
   sonuc: Sonuc<unknown, HataKodu> & { pc_karar?: unknown },
   pc: boolean,
+  v3: boolean,
 ): KopruYanit | null => {
   if (sonuc.ok === true) {
-    const sema: z.ZodType = AJANDA_ARACLARI[fiil].cikti;
+    const sema: z.ZodType = ajandaAraclari(v3)[fiil].cikti;
     const cikti = sema.safeParse(sonuc.deger);
     if (!cikti.success) return null;
     if (!pc) return { v: PROTOKOL_SURUMU, type: "yanit", istek_id, ok: true, sonuc: cikti.data };
@@ -148,8 +153,14 @@ export const ajandaKopruSunucuKur: AjandaKopruSunucuFabrikasi = ({
   anahtar,
   zamanlayici,
   gunluk,
+  aracV3 = false,
 }) => {
   const baglantilar = new Set<Baglanti>();
+  /** Araç rollerinin karşılaması: v3 yüzü açıksa `arac_v3:true`, değilse bugünkü çerçeve. */
+  const karsilama = (rol: AjandaKopruRolu): AjandaKopruAsagi =>
+    aracV3 && rol !== "pc_kanca"
+      ? { v: PROTOKOL_SURUMU, type: "kopru_welcome", rol, arac_v3: true }
+      : { v: PROTOKOL_SURUMU, type: "kopru_welcome", rol };
   let sunucu: KapatilabilirSunucu | null = null;
   let acik = false;
 
@@ -244,7 +255,7 @@ export const ajandaKopruSunucuKur: AjandaKopruSunucuFabrikasi = ({
       const baglanti_id = rastgele.opakId("pcb");
       bag.kimlik = { tur: "pc", rol: m.rol, ozet, baglanti_id };
       gunluk.bilgi(MODUL, "el_sikisma", { rol: m.rol, baglanti_id });
-      yaz(bag, { v: PROTOKOL_SURUMU, type: "kopru_welcome", rol: m.rol });
+      yaz(bag, karsilama(m.rol));
       return;
     }
     const kayit = depo.ajandaJetonBul(ozet);
@@ -266,7 +277,7 @@ export const ajandaKopruSunucuKur: AjandaKopruSunucuFabrikasi = ({
     const baglam = Object.freeze({ ...kayit.kapsam });
     bag.kimlik = { tur: "ana", baglam };
     gunluk.bilgi(MODUL, "el_sikisma", { rol: baglam.rol, sohbet_id: baglam.sohbet_id });
-    yaz(bag, { v: PROTOKOL_SURUMU, type: "kopru_welcome", rol: baglam.rol });
+    yaz(bag, karsilama(baglam.rol));
   };
 
   /** Hiç reddetmez: atan ya da sözleşmeye uymayan işleyici `ic_hata`dır, `detail` taşımaz. */
@@ -279,7 +290,7 @@ export const ajandaKopruSunucuKur: AjandaKopruSunucuFabrikasi = ({
     try {
       const isleyici = isleyiciler[istek.fiil] as unknown as GenelIsleyici;
       const sonuc = await isleyici(istek.girdi, baglam, sinyal);
-      const yanit = sonucYaniti(istek.fiil, istek.istek_id, sonuc, baglam.rol === "pc_oturumu");
+      const yanit = sonucYaniti(istek.fiil, istek.istek_id, sonuc, baglam.rol === "pc_oturumu", aracV3);
       if (yanit !== null) return yanit;
       gunluk.hata(MODUL, "sonuc_gecersiz", { fiil: istek.fiil });
     } catch {

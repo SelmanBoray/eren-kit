@@ -25,7 +25,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {
   ANA_SOHBET_ID,
-  AJANDA_ARAC_ACIKLAMALARI,
+  AJANDA_ARAC_ACIKLAMALARI_V2,
   AJANDA_BORU_ADI,
   AJANDA_ROL_FIILLERI,
   AJANDA_QR_SURUMU,
@@ -743,9 +743,9 @@ describe("birleşim: ajanda sürüm 2 (ilk gerçek kullanım: gece 01:45 'yarın
     const o = await ortamKur({ baslangicMs: GECE_T0 });
     const { eren, sohbet, ajanda, istemci } = await hazirla(o, { ajandaSurumu: 2 });
 
-    // Araç tanımları sözleşmeden birebir (köprü kendi metnini koymaz).
+    // Araç tanımları sözleşmeden birebir (köprü kendi metnini koymaz). Ayar `ajanda_arac_v3` verilmedi: v2 yüzü.
     const { tools } = await istemci.listTools();
-    for (const t of tools) assert.equal(t.description, AJANDA_ARAC_ACIKLAMALARI[t.name as keyof typeof AJANDA_ARAC_ACIKLAMALARI], t.name);
+    for (const t of tools) assert.equal(t.description, AJANDA_ARAC_ACIKLAMALARI_V2[t.name as keyof typeof AJANDA_ARAC_ACIKLAMALARI_V2], t.name);
 
     // 01:45: damga gün adını taşır.
     await o.kullaniciMesaji(sohbet, ISTEK);

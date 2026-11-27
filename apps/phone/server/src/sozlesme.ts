@@ -2529,6 +2529,12 @@ export interface AjandaKopruSunucuBagimliliklari {
   anahtar: Pick<AnahtarPortu, "sabitZamanEsit">;
   zamanlayici: Pick<ZamanlayiciPortu, "sonra">;
   gunluk: Gunluk;
+  /**
+   * Ayar `ajanda_arac_v3` (`ayar.ts`, açılışta okunur; verilmezse kapalı). Açıksa araç rollerinin
+   * (`ana_oturum`, `pc_oturumu`) `kopru_welcome`'ı `arac_v3:true` taşır, köprü v3 araç yüzünü yayınlar;
+   * kapalıyken çıktı v2 şemasıyla denetlenir (`ajandaAraclari`).
+   */
+  aracV3?: boolean;
 }
 
 export type AjandaKopruSunucuFabrikasi = (b: AjandaKopruSunucuBagimliliklari) => AjandaKopruSunucu;
@@ -2665,6 +2671,12 @@ export interface AjandaBagimliliklari {
    * `ek_yedegi`: ek baytlarını saklama; ayrı dilim). `ana` bağlar (`AJANDA_SUNULAN_YETENEKLER`).
    */
   yetenekler?: readonly string[];
+  /**
+   * Ayar `ajanda_arac_v3` (verilmezse kapalı). Kapalıyken araç işleyicileri (`ajanda-araclar.ts`) girdiyi
+   * v2 şemasıyla denetler ve çıktıyı v2 yüzüne indirir (`ajandaAracCiktisiV2`): araçla v3 alanlı kayıt
+   * doğmaz, model v3 alanı görmez. Kanal (`/ajanda`) bundan etkilenmez.
+   */
+  aracV3?: boolean;
 }
 
 export type AjandaFabrikasi = (b: AjandaBagimliliklari) => AjandaYoneticisi;

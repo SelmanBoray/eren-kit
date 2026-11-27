@@ -67,6 +67,8 @@ const kur = () => {
     rastgele: sahteRastgele(),
     gunluk,
     turBaglami: () => durum.tur,
+    // Bu dosya v3 araç yüzünü sınar (ayar `ajanda_arac_v3` açık); kapalı yüz `ajanda-araclar-v2-yuz.test.ts`.
+    aracV3: true,
   });
   ajanda.baslat();
   const cagir = async <F extends AjandaFiili>(fiil: F, girdi: AjandaFiilGirdisi<F>): Promise<AjandaFiilCiktisi<F>> => {
@@ -376,6 +378,7 @@ describe("ajanda araçları v3: gizlilik (konum ve ek üstverisi)", () => {
       anahtar: { sabitZamanEsit: (a: string, b: string) => a === b },
       zamanlayici: o.zaman.zamanlayici,
       gunluk: o.gunluk,
+      aracV3: true,
     });
     await sunucu.baslat(o.ajanda.araclar);
     const jeton = sunucu.jetonUret({ rol: "ana_oturum", sohbet_id: "ana", nesil: 3 });
@@ -445,6 +448,7 @@ describe("ajanda araçları v3: gizlilik (konum ve ek üstverisi)", () => {
       anahtar: { sabitZamanEsit: (a: string, b: string) => a === b },
       zamanlayici: o.zaman.zamanlayici,
       gunluk: o.gunluk,
+      aracV3: true,
     });
     // Süzgeçsiz (eski) bir işleyici: tam kaydı döner.
     const isleyiciler = { ...o.ajanda.araclar, ajanda_listele: async () => ({ ok: true, deger: { mesaj_ani: MESAJ_ANI, kayitlar: [ham], toplam: 1 } }) };

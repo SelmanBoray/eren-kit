@@ -104,6 +104,7 @@ const IZINLI_ANAHTARLAR = new Set([
   "computer_use",
   "rea",
   "ajanda_ek_kota_mb",
+  "ajanda_arac_v3",
 ]);
 
 const VARSAYILAN_MEDYA_KOTA_MB = 10240;
@@ -439,6 +440,13 @@ export function yollariUret(ortam: Ortam): ErenYollari {
 export interface ServisEkAyari {
   /** Ek yedeği kotası, bayt (`ajanda_ek_kota_mb` × 1 MiB; yoksa `EK_TOPLAM_BAYT`). */
   readonly ajandaEkKotaBayt: number;
+  /**
+   * `ajanda_arac_v3` (true ya da false; yoksa false): asistan araçlarının sözleşme 3 alanları (bölge, varış,
+   * bağlantılar, simge, dar tekrar, `bolge_yeni`, listede bölge süzgeci, `bolgeler`, `ek_sayisi`). Kapalıyken
+   * araç yüzü v3 öncesiyle bayt bayt aynıdır (`docs/SERVIS.md` "Ayar"). Açılışta okunur; değişince servis
+   * yeniden başlatılır.
+   */
+  readonly ajandaAracV3: boolean;
 }
 
 export const ayarKur = (async (b: AyarBagimliliklari): Promise<Ayar & ServisEkAyari> => {
@@ -456,6 +464,7 @@ export const ayarKur = (async (b: AyarBagimliliklari): Promise<Ayar & ServisEkAy
   const pcIsModeli = modelAlani(yerel, "pc_is_modeli") ?? null;
   const telefonIsModeli = modelAlani(yerel, "telefon_is_modeli") ?? VARSAYILAN_TELEFON_IS_MODELI;
   const tamYetki = mantikAlani(yerel, "tam_yetki") ?? true;
+  const ajandaAracV3 = mantikAlani(yerel, "ajanda_arac_v3") ?? false;
   const computerUse = mcpTanimi(yerel, "computer_use");
   const rea = mcpTanimi(yerel, "rea");
   const telegram = telegramTanimi(yerel);
@@ -532,6 +541,7 @@ export const ayarKur = (async (b: AyarBagimliliklari): Promise<Ayar & ServisEkAy
       return telegram === null ? null : { ...telegram };
     },
     ajandaEkKotaBayt: ekKotaMb === undefined ? AJANDA_SINIRLARI.EK_TOPLAM_BAYT : ekKotaMb * MIB,
+    ajandaAracV3,
   };
   if (kapaliNedeni !== null) medyaKapaliNedenleri.set(ayar, kapaliNedeni);
   return ayar;

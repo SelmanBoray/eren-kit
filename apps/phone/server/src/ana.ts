@@ -102,6 +102,12 @@ export interface ServisGirdisi {
   /** Ek yedeği kotası, bayt (`giris` `ayar.ts` `ajandaEkKotaBayt`'tan verir). Verilmezse `EK_TOPLAM_BAYT`. */
   ajandaEkKotaBayt?: number;
   /**
+   * Asistan araçlarının sözleşme 3 alanları (`giris` `ayar.ts` `ajandaAracV3`'ten, ayar `ajanda_arac_v3`).
+   * Verilmezse kapalı: araç yüzü (şema, tanım, çıktı) v3 öncesiyle aynı, araçla v3 alanlı kayıt doğmaz.
+   * Telefon sohbeti ve PC oturumu aynı değeri alır; kanal (`/ajanda`) etkilenmez.
+   */
+  ajandaAracV3?: boolean;
+  /**
    * Medya dalgası (MODULLER.md "Medya dalgası" > S9). Yalnız `ayar.medya` doluyken okunur; `ayar.medya`
    * `null`/yoksa medya hiç kurulmaz, bu alan yok sayılır. Verilmezse (`giris` hep böyle) gerçekleri kurulur:
    * `medyaDosyaKur({kok: ayar.medya.kok})` ve `dunya.surec` ile `medyaIsleyiciKur`. Testler sahte ya da
@@ -225,6 +231,7 @@ export function servisKur({
   ajanda: ajandaSecenegi,
   ajandaEkDiski,
   ajandaEkKotaBayt,
+  ajandaAracV3 = false,
   medya: medyaSecenegi,
 }: ServisGirdisi): Servis {
   const { saat, zamanlayici, rastgele, dosya, surec, sistem, ws, boru, http, anahtar, transkript } = dunya;
@@ -301,8 +308,12 @@ export function servisKur({
           turBaglami: (sohbet, nesil) => sohbetler.konusma(sohbet)?.turBaglami?.(nesil) ?? null,
           // `/ajanda` yetenekleri: motordan bağımsız, servisin uyguladığı davranışlar (ek modülü kuruluysa `ek_yedegi`).
           yetenekler: ajandaEkleri === null ? AJANDA_SUNULAN_YETENEKLER : [...AJANDA_SUNULAN_YETENEKLER, AJANDA_EK_YETENEGI],
+          aracV3: ajandaAracV3,
         });
-  const ajandaKopru = ajanda === null ? null : ajandaKopruSunucuKur({ boru, depo, rastgele, anahtar, zamanlayici, gunluk });
+  // Araç yüzü (v2 ya da v3) iki yerde aynı değerden: işleyiciler (girdi ve çıktı) ve boru (welcome, çıktı denetimi).
+  const ajandaKopru =
+    ajanda === null ? null : ajandaKopruSunucuKur({ boru, depo, rastgele, anahtar, zamanlayici, gunluk, aracV3: ajandaAracV3 });
+  if (ajanda !== null) gunluk.bilgi(MODUL, "ajanda_arac_yuzu", { arac_v3: ajandaAracV3 });
   const cihaz = cihazKur({ ayar, saat, zamanlayici, rastgele, veriyolu, depo, gunluk });
   const isler = islerKur({
     ayar,
@@ -608,6 +619,7 @@ const giris = async (): Promise<void> => {
       depoYolu: vt,
       ajandaEkDiski: ajandaEkDiskiKur(win32.join(kok, AJANDA_EK_KLASORU)),
       ajandaEkKotaBayt: ayar.ajandaEkKotaBayt,
+      ajandaAracV3: ayar.ajandaAracV3,
     });
     let kapaniyor = false;
     // Sinyal ve IPC aynı nazik yolu kullanır: 30 sn sınırı, kapanış sonrası `exit(0)`, takılırsa `exit(1)`.

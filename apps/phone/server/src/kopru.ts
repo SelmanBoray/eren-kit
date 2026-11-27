@@ -8,19 +8,19 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 import {
-  AJANDA_ARAC_ACIKLAMALARI,
-  AJANDA_ARACLARI,
   AJANDA_AZAMI_CERCEVE,
   AJANDA_BORU_ADI,
-  AJANDA_PC_ARAC_ACIKLAMALARI,
   AJANDA_ROL_FIILLERI,
   AracCagriId,
   OpakId,
   PcAracSonucu,
   pcTurNotu,
+  ajandaAracAciklamalari,
+  ajandaAraclari,
   ajandaKopruAsagiCoz,
   AjandaKopruRolu,
   ajandaMcpSonucu,
+  ajandaPcAracAciklamalari,
   AjandaMcpSonucu,
   AZAMI_CERCEVE,
   CmdAdi,
@@ -165,10 +165,15 @@ interface BoruIstemci {
 /** Borunun aşağı çözücüsü: `eren` borusunda `kopruAsagiCoz`, ajanda borusunda `ajandaKopruAsagiCoz`. */
 type AsagiCozucu = (satir: string) => CozumSonucu<KopruAsagi | AjandaKopruAsagi>;
 
+/**
+ * `aracV3Dinle` (yalnız ajanda kipi): her `kopru_welcome`'da servisin v3 araç yüzü açık mı (`arac_v3`),
+ * bekleyenler uyanmadan önce çağrılır.
+ */
 function boruIstemciKur(
   ayar: KopruIstemciAyari | AjandaKopruIstemciAyari,
   b: KopruBagimliliklari,
   asagiCoz: AsagiCozucu = kopruAsagiCoz,
+  aracV3Dinle?: (acik: boolean) => void,
 ): BoruIstemci {
   const { gunluk, rastgele } = b;
   let acik: BoruBaglantisi | null = null;
@@ -241,6 +246,7 @@ function boruIstemciKur(
           if (karsilandi) return;
           karsilandi = true;
           clearTimeout(elSikisma);
+          aracV3Dinle?.((m as { arac_v3?: unknown }).arac_v3 === true);
           hazir = bag;
           denemede = false;
           sonEngel = null;
@@ -678,17 +684,37 @@ ${govde}`,
   return mcpBaslat(`eren-${ayar.rol}`, tools, aracCagir, boru, b);
 }
 
+/**
+ * Araç listesi bağlantıya göre değişen kip (ajanda: servisin v3 araç yüzü). `listele` `tools/list`'te
+ * çağrılır; `degisince` listenin değiştiğini bildirecek işlevi alır (`notifications/tools/list_changed`).
+ */
+interface DegisenAraclar {
+  listele(): Promise<Tool[]>;
+  degisince(bildir: () => void): void;
+}
+
 /** MCP sunucusunu kurar, boru döngüsünü başlatır; iki kip (`eren|soru|telefon` ve ajanda) için aynı. */
 async function mcpBaslat(
   ad: string,
-  tools: Tool[],
+  tools: Tool[] | DegisenAraclar,
   aracCagir: (ad: string, ham: unknown, sinyal: AbortSignal, meta: unknown) => Promise<CallToolResult>,
   boru: BoruIstemci,
   b: KopruBagimliliklari,
 ): Promise<KopruCalisani> {
   const { gunluk } = b;
-  const server = new Server({ name: ad, version: "1.0.0" }, { capabilities: { tools: {} } });
-  server.setRequestHandler(ListToolsRequestSchema, () => ({ tools }));
+  const sabit = Array.isArray(tools);
+  const server = new Server(
+    { name: ad, version: "1.0.0" },
+    { capabilities: { tools: sabit ? {} : { listChanged: true } } },
+  );
+  if (Array.isArray(tools)) {
+    server.setRequestHandler(ListToolsRequestSchema, () => ({ tools }));
+  } else {
+    server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: await tools.listele() }));
+    tools.degisince(() => {
+      server.sendToolListChanged().catch(() => gunluk.uyari(MODUL, "arac_listesi_bildirilemedi"));
+    });
+  }
   // `notifications/cancelled` SDK'da `ekstra.signal`'i keser, oradan `iptal` çerçevesi çıkar.
   // `_meta` yalnız PC köprüsünde okunur (Claude Code'un çağrı kimliği); öteki kipler yok sayar.
   server.setRequestHandler(CallToolRequestSchema, (istek, ekstra) =>
@@ -760,28 +786,76 @@ export const PC_ANAHTAR_GECERSIZ_METNI =
   "yeni anahtar `eren eslestir --claude-code` ile üretilir.";
 
 /**
+ * İlk `tools/list`'in süren bağlantı denemesinin karşılamasını en çok bekleyeceği süre (servis açıksa
+ * milisaniyeler sürer); dolarsa ya da deneme yoksa v2 araç yüzü yayınlanır.
+ */
+export const ARAC_LISTESI_BEKLEME_MS = 3_000;
+
+/**
  * Stdio köprünün ajanda kipi: `AJANDA_BORU_ADI`'na `ana_oturum` jetonuyla bağlanır, yalnız
- * `AJANDA_ROL_FIILLERI[rol]` araçlarını `jsonSemasi(AJANDA_ARACLARI[fiil].girdi)` ile yayınlar
- * (`outputSchema` yok); `description` sözleşmedeki `AJANDA_ARAC_ACIKLAMALARI[fiil]`'dir, birebir (v2:
- * gece sorusu ve günü adıyla söyleme kuralı orada durur, köprüde ayrı metin yoktur). Girdi boruya çıkmadan şemayla denetlenir; sonuç `AJANDA_ARACLARI[fiil].cikti`
+ * `AJANDA_ROL_FIILLERI[rol]` araçlarını `jsonSemasi(ajandaAraclari(v3)[fiil].girdi)` ile yayınlar
+ * (`outputSchema` yok); `description` sözleşmedeki `ajandaAracAciklamalari(v3)[fiil]`'dir (PC'de
+ * `ajandaPcAracAciklamalari`), birebir (v2: gece sorusu ve günü adıyla söyleme kuralı orada durur, köprüde
+ * ayrı metin yoktur). Girdi boruya çıkmadan şemayla denetlenir; sonuç `ajandaAraclari(v3)[fiil].cikti`
  * ile yeniden doğrulanır ve modele YALNIZ `ajandaMcpSonucu`'nun tek metin içeriği gider (çit her
  * çağrıda güvenli üreteçten, 128 bit). Bir kez gider, yeniden denenmez. Boru koparsa `eren` kipiyle
  * aynı aralıkla yeniden bağlanır.
+ *
+ * Araç yüzü (v2 ya da v3) servisin ayarıdır (`ajanda_arac_v3`), köprü onu her `kopru_welcome`'dan öğrenir
+ * (`arac_v3`); hiç karşılanmadıysa v2. İlk `tools/list` süren denemenin karşılamasını bekler
+ * (`ARAC_LISTESI_BEKLEME_MS`); yüz sonra değişirse (servis başka ayarla yeniden başladı)
+ * `notifications/tools/list_changed` gider. Girdi ve çıktı her çağrıda o anki yüzün şemasıyla denetlenir:
+ * eski listeye güvenip v3 alanı veren çağrı kapalı serviste "bilinmeyen alan" alır.
  */
 export async function ajandaKopruCalistir(
   ayar: AjandaKopruIstemciAyari,
   b: KopruBagimliliklari,
 ): Promise<KopruCalisani> {
   const { gunluk, rastgele } = b;
-  const boru = boruIstemciKur(ayar, b, ajandaKopruAsagiCoz);
   const pc = ayar.rol === "pc_oturumu";
   const fiiller: readonly AjandaFiili[] = AJANDA_ROL_FIILLERI[ayar.rol];
-  const aciklamalar = pc ? AJANDA_PC_ARAC_ACIKLAMALARI : AJANDA_ARAC_ACIKLAMALARI;
-  const tools: Tool[] = fiiller.map((fiil) => ({
-    name: fiil,
-    description: aciklamalar[fiil],
-    inputSchema: jsonSemasi(AJANDA_ARACLARI[fiil].girdi) as Tool["inputSchema"],
-  }));
+  const yuzKur = (acik: boolean): Tool[] => {
+    const aciklamalar = pc ? ajandaPcAracAciklamalari(acik) : ajandaAracAciklamalari(acik);
+    return fiiller.map((fiil) => ({
+      name: fiil,
+      description: aciklamalar[fiil],
+      inputSchema: jsonSemasi(ajandaAraclari(acik)[fiil].girdi) as Tool["inputSchema"],
+    }));
+  };
+  const yuzler = { v2: yuzKur(false), v3: yuzKur(true) };
+  /** Son `kopru_welcome`'ın `arac_v3`'ü; hiç karşılanmadıysa `null` (v2 sayılır). */
+  let v3: boolean | null = null;
+  /** Modele en son verilen listenin yüzü; `null`: henüz listelenmedi. */
+  let listelenen: boolean | null = null;
+  let listeDegisti: (() => void) | null = null;
+  const boru = boruIstemciKur(ayar, b, ajandaKopruAsagiCoz, (acik) => {
+    v3 = acik;
+    if (listelenen !== null && listelenen !== acik) {
+      listelenen = acik;
+      gunluk.bilgi(MODUL, "arac_yuzu_degisti", { arac_v3: acik });
+      listeDegisti?.();
+    }
+  });
+  const yuzAcik = (): boolean => v3 === true;
+  const araclar = (): ReturnType<typeof ajandaAraclari> => ajandaAraclari(yuzAcik());
+  const degisenAraclar = {
+    listele: async (): Promise<Tool[]> => {
+      if (v3 === null) {
+        const sure = new AbortController();
+        const zaman = setTimeout(() => sure.abort(), ARAC_LISTESI_BEKLEME_MS);
+        try {
+          await boru.hazirBekle(sure.signal, false);
+        } finally {
+          clearTimeout(zaman);
+        }
+      }
+      listelenen = yuzAcik();
+      return listelenen ? yuzler.v3 : yuzler.v2;
+    },
+    degisince: (bildir: () => void): void => {
+      listeDegisti = bildir;
+    },
+  };
   const oturumId = ayar.oturumId !== undefined && OpakId.safeParse(ayar.oturumId).success ? ayar.oturumId : undefined;
 
   /** PC: `cagri` zarfı. Çağrı kimliği Claude Code'un `_meta`'sından; geçersizse yok (tur sentetik olur). */
@@ -847,7 +921,7 @@ export async function ajandaKopruCalistir(
       govde = s.data.cikti;
       if (fiil !== "ajanda_listele") not = pcTurNotu(s.data.karar);
     }
-    const sema: z.ZodType = AJANDA_ARACLARI[fiil].cikti;
+    const sema: z.ZodType = araclar()[fiil].cikti;
     const r = sema.safeParse(govde);
     if (!r.success) return icHata(fiil);
     const mcp = AjandaMcpSonucu.parse(ajandaMcpSonucu({ fiil, cikti: r.data } as AjandaAracCiktisi, citUret));
@@ -858,15 +932,21 @@ export async function ajandaKopruCalistir(
   const aracCagir = async (ad: string, ham: unknown, sinyal: AbortSignal, meta: unknown): Promise<CallToolResult> => {
     const fiil = fiiller.find((f) => f === ad);
     if (fiil === undefined) return hataSonucu("rol_fiil_izinsiz");
-    // Servis şemaya uymayan çerçevede boruyu kapatır: bozuk girdi boruya çıkmamalı.
-    const sema: z.ZodType = AJANDA_ARACLARI[fiil].girdi;
-    const girdi = sema.safeParse(ham ?? {});
+    // Servis şemaya uymayan çerçevede boruyu kapatır: bozuk girdi boruya çıkmamalı. Şema o anki yüzün.
+    const denetle = () => (araclar()[fiil].girdi as z.ZodType).safeParse(ham ?? {});
+    let girdi = denetle();
     if (!girdi.success) return hataSonucu("gecersiz_mesaj", semaHatasiMetni(girdi.error.issues));
     const kopuk = pc ? pcKopukSonucu : AJANDA_KOPUK_SONUCU;
     try {
+      const once = yuzAcik();
       const engel = pc ? await pcHazirBekle(sinyal) : await boru.hazirBekle(sinyal, false);
       if (pc && sinyal.aborted) return iptalSonucu();
       if (engel !== null) return engel === "kopuk" ? kopuk() : ajandaHataSonucu(engel);
+      // Beklerken yeniden karşılandı ve yüz değişti: yeni yüzün şemasıyla yeniden denetlenir.
+      if (yuzAcik() !== once) {
+        girdi = denetle();
+        if (!girdi.success) return hataSonucu("gecersiz_mesaj", semaHatasiMetni(girdi.error.issues));
+      }
       const y = await boru.istekYolla(fiil, girdi.data, sinyal, pc ? pcCagri(meta) : undefined);
       switch (y.tur) {
         case "basari":
@@ -886,7 +966,7 @@ export async function ajandaKopruCalistir(
     }
   };
 
-  return mcpBaslat(AJANDA_MCP_SUNUCU_ADI, tools, aracCagir, boru, b);
+  return mcpBaslat(AJANDA_MCP_SUNUCU_ADI, degisenAraclar, aracCagir, boru, b);
 }
 
 function soketBaglantisi(soket: Socket, azamiSatir: number = AZAMI_CERCEVE.KOPRU): BoruBaglantisi {

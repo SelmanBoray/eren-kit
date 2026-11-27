@@ -387,6 +387,24 @@ describe("ayar: eksik ve bozuk dosyalar", () => {
     }
   });
 
+  it("ajanda_arac_v3: yoksa false; true ve false okunur; başka her değer AyarHatasi (alan adıyla, değersiz)", async () => {
+    const v3 = async (yerel?: unknown): Promise<boolean> =>
+      (await ayarKur({ dosya: hazir(yerel).dosya, ortam: hazir(yerel).ortam, execPath: NODE, baslangicMs: BASLANGIC })).ajandaAracV3;
+    assert.equal(await v3(), false);
+    assert.equal(await v3({}), false);
+    assert.equal(await v3({ ajanda_arac_v3: false }), false);
+    assert.equal(await v3({ ajanda_arac_v3: true }), true);
+    for (const y of ["true", "acik", 1, 0, null, [], {}]) {
+      const h = await hataAl(() => kur(hazir({ ajanda_arac_v3: y })));
+      assert.ok(h instanceof AyarHatasi, JSON.stringify(y));
+      assert.equal(h.message, "ayar.local.json: ajanda_arac_v3 true ya da false olmalı");
+    }
+    // Yanlış yazılmış anahtar bilinmeyen alandır (sessizce kapalı kalmaz).
+    const h = await hataAl(() => kur(hazir({ ajanda_arac_v3s: true })));
+    assert.ok(h instanceof AyarHatasi);
+    assert.equal(h.message, "ayar.local.json: ajanda_arac_v3s bilinmeyen alan");
+  });
+
   it("dosya portu okuma hatası başlangıçta yayılır", async () => {
     const k = hazir();
     k.dosya.hataVer("oku", new Error("disk"));

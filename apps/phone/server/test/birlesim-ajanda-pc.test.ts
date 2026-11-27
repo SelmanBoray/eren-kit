@@ -18,7 +18,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {
   AJANDA_BORU_ADI,
-  AJANDA_PC_ARAC_ACIKLAMALARI,
+  AJANDA_PC_ARAC_ACIKLAMALARI_V2,
   AJANDA_ROL_FIILLERI,
   AJANDA_SURUMU,
   AjandaKaydi,
@@ -331,8 +331,9 @@ describe("birleşim: PC oturumu (araç öncesi kancalı Claude Code)", () => {
 
     const { tools } = await istemci.listTools();
     assert.deepEqual(tools.map((t) => t.name).sort(), [...AJANDA_ROL_FIILLERI.pc_oturumu].sort());
+    // Ayar `ajanda_arac_v3` verilmedi: PC tanımları v2 yüzünün (v3 öncesi metin + PC eki).
     for (const t of tools) {
-      assert.equal(t.description, AJANDA_PC_ARAC_ACIKLAMALARI[t.name as keyof typeof AJANDA_PC_ARAC_ACIKLAMALARI]);
+      assert.equal(t.description, AJANDA_PC_ARAC_ACIKLAMALARI_V2[t.name as keyof typeof AJANDA_PC_ARAC_ACIKLAMALARI_V2]);
       assert.equal(t.outputSchema, undefined);
     }
 

@@ -1,5 +1,4 @@
 import {
-  AJANDA_ARACLARI,
   AJANDA_SINIRLARI,
   type AjandaAlanDegisikligi,
   type AjandaFiili,
@@ -9,8 +8,10 @@ import {
   type AjandaYerelAn,
   type AjandaZamani,
   type AjandaAracKurali,
+  ajandaAracCiktisiV2,
   ajandaAracEsBirlesimi,
   ajandaAracKaydi,
+  ajandaAraclari,
   ajandaAracTekrari,
   ajandaAracVarsayilanHatirlatmalari,
   ajandaBolgeAnahtari,
@@ -96,6 +97,11 @@ import type {
  * - Gizlilik: liste kayıtları YALNIZ `ajandaAracKaydi`'dan geçerek döner (konum düşer, ekler sayıya iner);
  *   boru sınırı (`ajanda-kopru-sunucu.ts`) çıktıyı katı `AJANDA_ARACLARI[fiil].cikti` ile denetler, süzgeci
  *   atlayan kayıt `ic_hata` olur, sızmaz. Günlüğe kayıt alanı (bölge adı, konum) girmez.
+ * - v3 araç yüzü (`b.aracV3`, ayar `ajanda_arac_v3`; verilmezse kapalı): kapalıyken girdi v2 şemasıyla
+ *   denetlenir (`ajandaAraclari(false)`: v3 alanı geçmez, araçla v3 alanlı kayıt doğmaz) ve her çıktı v2
+ *   yüzüne iner (`ajandaAracCiktisiV2`: özet `varis`, `bolge_yeni`, `kural`, `bolgeler` yok; liste kaydı v2
+ *   görünümü). v3 telefonun yazdığı v3 alanları kayıtta kalır; eş birleşmesi ve güncelleme onlara dokunmaz.
+ *   Telefon sohbeti ve PC oturumu aynı yüzü görür.
  * - Her işleyici eşzamanlıdır (araya `await` girmez) ve tek `depo.islem` içinde yazar.
  */
 
@@ -157,6 +163,8 @@ function siraAnahtari(z: AjandaZamani | undefined): string | undefined {
 
 export function ajandaAraclariKur(b: AjandaBagimliliklari, pc?: PcDefteri): AjandaFiilIsleyiciler {
   const { depo, takvim, saat, rastgele, gunluk } = b;
+  const v3 = b.aracV3 === true;
+  const araclar = ajandaAraclari(v3);
   const ozet = (k: AjandaKaydi, simdi: number) => kayitOzeti(k, simdi, takvim);
 
   /**
@@ -225,7 +233,8 @@ export function ajandaAraclariKur(b: AjandaBagimliliklari, pc?: PcDefteri): Ajan
       const simdi = saat.simdiMs();
       const cagri = baglam.rol === "pc_oturumu" ? pcCagrisi(fiil, baglam, simdi) : sohbetCagrisi(fiil, baglam);
       if (cagri === null) return { ok: false, code: "tur_gecersiz" };
-      const semasi = AJANDA_ARACLARI[fiil].girdi as unknown as { safeParse(g: unknown): { success: boolean; data?: unknown } };
+      // v3 kapalıyken v2 şeması: köprü atlanırsa da v3 alanı işleyiciye geçmez.
+      const semasi = araclar[fiil].girdi as unknown as { safeParse(g: unknown): { success: boolean; data?: unknown } };
       const p = semasi.safeParse(girdi);
       if (!p.success) {
         gunluk.uyari(MODUL, "arac_girdisi_gecersiz", { fiil });
@@ -233,7 +242,9 @@ export function ajandaAraclariKur(b: AjandaBagimliliklari, pc?: PcDefteri): Ajan
       }
       const t = cagri.tur;
       try {
-        const cikti = depo.islem(() => f(p.data as AjandaFiilGirdisi<F>, cagri, simdi));
+        const ham = depo.islem(() => f(p.data as AjandaFiilGirdisi<F>, cagri, simdi));
+        // v3 kapalıyken çıktı v2 yüzüne iner (v3 telefonun yazdığı kaydın alanları modele çıkmaz).
+        const cikti = (v3 ? ham : ajandaAracCiktisiV2({ fiil, cikti: ham } as never).cikti) as Cikti<F>;
         const c = cikti as { sonuc?: string; neden?: string; kayit?: { kayit_id: string; revizyon: number } };
         gunluk.bilgi(MODUL, "arac", {
           fiil,
@@ -501,7 +512,7 @@ export function ajandaAraclariKur(b: AjandaBagimliliklari, pc?: PcDefteri): Ajan
       // Gizlilik süzgeci: kayıt araç yoluna yalnız buradan çıkar (`ajandaAracKaydi`: konum yok, ekler yalnız sayı).
       kayitlar: sirali.slice(0, adet).map(ajandaAracKaydi),
       toplam: sirali.length,
-      ...bolgeAdlari(),
+      ...(v3 ? bolgeAdlari() : {}),
     };
   };
 

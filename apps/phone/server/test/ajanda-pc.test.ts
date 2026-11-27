@@ -8,8 +8,8 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 import {
-  AJANDA_ARACLARI,
   AJANDA_PC_SINIRLARI,
+  ajandaAraclari,
   type AjandaFiili,
   type AjandaKaydi,
   AjandaKaydi as AjandaKaydiSemasi,
@@ -49,7 +49,8 @@ const DISCI: AjandaFiilGirdisi<"ajanda_ekle"> = {
 
 let aracNo = 0;
 
-const kur = (simdi = T0) => {
+/** `aracV3`: ayar `ajanda_arac_v3` (bu dosyanın testleri bugünkü v3 yüzüyle; kapalı yüz ayrıca sınanır). */
+const kur = (simdi = T0, aracV3 = true) => {
   const zaman = sahteZaman(simdi);
   const gunluk = sahteGunluk();
   const depo = depoAc({ yol: ":memory:", saat: zaman.saat, gunluk });
@@ -62,6 +63,7 @@ const kur = (simdi = T0) => {
     rastgele: sahteRastgele(),
     gunluk,
     turBaglami: () => telefonTuru.tur,
+    aracV3,
   });
   ajanda.baslat();
 
@@ -94,7 +96,7 @@ const kur = (simdi = T0) => {
     >;
     const s = await isleyici(girdi, baglam, new AbortController().signal);
     assert.ok(s.ok, `boru hatası: ${s.ok ? "" : s.code}`);
-    AJANDA_ARACLARI[fiil].cikti.parse(s.deger);
+    ajandaAraclari(aracV3)[fiil].cikti.parse(s.deger);
     // PC çağrısında karar her zaman döner; telefon çağrısında hiç dönmez.
     assert.equal(s.pc_karar === undefined, baglam.rol !== "pc_oturumu");
     sonKarar = s.pc_karar;
@@ -501,5 +503,48 @@ describe("PC oturumu: başka oturumun eş taslağı (oturumlar arası tekilleşt
     assert.deepEqual(k.hatirlatmalar, [], "zamansız varışlı: varsayılan []");
     assert.equal(k.aciklama, undefined);
     assert.deepEqual(k.elle_alanlar, ["tur", "baslik", "bolge", "varis"]);
+  });
+});
+
+describe("PC oturumu: v3 araç yüzü kapalı (ayar ajanda_arac_v3 verilmedi)", () => {
+  /** Alt agent'ın v2 taslağı: insanın görmediği açıklama ve hatırlatma. */
+  const ALT_V2 = { aciklama: "ALT-AGENT-ACIKLAMASI", hatirlatmalar: [{ tur: "once" as const, dk: 15 }] };
+  const INSAN: AjandaFiilGirdisi<"ajanda_ekle"> = { ...DISCI, zaman: { ...DISCI.zaman!, ifade: "26'sı 15:00" } as typeof DISCI.zaman };
+
+  it("ana ajanın v3 alanlı çağrısı (bölge, varış, simge, bağlantı) işleyiciye geçmez, kayıt doğmaz", async () => {
+    const o = kur(T0, false);
+    for (const g of [
+      { ...DISCI, bolge: "iş yeri", varis: {} },
+      { ...DISCI, simge: "saglik" },
+      { ...DISCI, baglantilar: [{ url: "https://ornek.com" }] },
+    ]) {
+      const isleyici = o.ajanda.araclar.ajanda_ekle as (g: unknown, b: AjandaKopruBaglami, s: AbortSignal) => Promise<unknown>;
+      assert.deepEqual(await isleyici(g, o.pcBaglam(o.tasdik()), new AbortController().signal), { ok: false, code: "ic_hata" });
+    }
+    assert.equal(o.depo.ajandaKayitlari({}).length, 0);
+    const c = await o.ekle(DISCI, o.pcBaglam(o.tasdik()));
+    assert.equal(c.sonuc, "eklendi");
+    assert.equal(o.karar(), "insan");
+    assert.equal("bolge_yeni" in c, false);
+  });
+
+  it("başka oturumun eş taslağı (9b85b09) kapalıyken de: insanın vermediği alan taşınmaz, varsayılan hatırlatma yazılır", async () => {
+    const o = kur(T0, false);
+    const id = kimlik(await o.ekle({ ...DISCI, ...ALT_V2 }, o.pcBaglam(o.tasdik({ alt_agent: true }))));
+    assert.equal(o.kayit(id).taslak, true);
+    const c = await o.ekle(INSAN, o.pcBaglam(o.tasdik({ oturum_id: OTURUM_2, istem_id: "istem-b" })));
+    assert.equal(c.sonuc, "onaylandi");
+    assert.ok(c.sonuc === "onaylandi");
+    assert.deepEqual(c.uygulanan_alanlar, ["zaman"]);
+    const k = o.kayit(id);
+    assert.equal(k.taslak, false);
+    assert.equal(k.aciklama, undefined);
+    assert.deepEqual(k.hatirlatmalar, [{ tur: "once", dk: 60 }]);
+    // Aynı oturumun ana ajanı onaylarsa taslağın alanları taşınır (bugünkü kural).
+    const p = kur(T0, false);
+    const id2 = kimlik(await p.ekle({ ...DISCI, ...ALT_V2 }, p.pcBaglam(p.tasdik({ alt_agent: true }))));
+    assert.equal((await p.ekle(INSAN, p.pcBaglam(p.tasdik()))).sonuc, "onaylandi");
+    assert.equal(p.kayit(id2).aciklama, "ALT-AGENT-ACIKLAMASI");
+    assert.deepEqual(p.kayit(id2).hatirlatmalar, [{ tur: "once", dk: 15 }]);
   });
 });
