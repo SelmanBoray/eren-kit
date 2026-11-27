@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { AJANDA_SURUMU, AjandaEslestirmeQr, EslestirmeQr, sha256Hex, SINIRLAR, utf8Bayt } from "@eren/protocol";
+import { AJANDA_QR_SURUMU, AjandaEslestirmeQr, EslestirmeQr, sha256Hex, SINIRLAR, utf8Bayt } from "@eren/protocol";
 import { createHash, generateKeyPairSync } from "node:crypto";
 import { depoAc, depoKur } from "../src/depo.ts";
 import {
@@ -296,7 +296,7 @@ describe("eslestir --ajanda: pencere ve QR", () => {
     assert.equal(a.ok, true);
     if (!a.ok) return;
     assert.deepEqual(a.deger.qr, {
-      v: AJANDA_SURUMU,
+      v: AJANDA_QR_SURUMU,
       host: "100.64.0.10",
       port: 8123,
       kod: a.deger.kod,
@@ -421,7 +421,7 @@ describe("eslestir --ajanda: kod çıktısı", () => {
   });
 
   it("ajanda: ilk satır şemadan geçen JSON, sonda kapsam satırı; açık sohbet penceresi kapandıysa not", () => {
-    const qr = { ...sohbetQr, v: AJANDA_SURUMU, kanal: "ajanda" as const };
+    const qr = { ...sohbetQr, v: AJANDA_QR_SURUMU, kanal: "ajanda" as const };
     const metin = kodMetni({ ...temel, qr }, { simdiMs: 1000, kapsam: "ajanda", oncekiPencere: { son_ms: 5000 } });
     const satirlar = metin.split("\n");
     assert.equal(AjandaEslestirmeQr.safeParse(JSON.parse(satirlar[0] ?? "")).success, true);
