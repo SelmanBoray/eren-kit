@@ -13,10 +13,18 @@ import {
   zamanCekirdegi,
   zamanKurallari,
 } from "./ajanda-zaman.ts";
-import { cozumle, type CozumSonucu } from "./cozumle.ts";
+import { type CozumSonucu, semaylaDenetle, surumluCozumle } from "./cozumle.ts";
 import { HataKodu } from "./hatalar.ts";
 import { kanonikJson, sha256Hex, utf8Bayt } from "./kanonik.ts";
-import { AJANDA_AZAMI_CERCEVE, AJANDA_SINIRLARI, AJANDA_SURUMU, SINIRLAR } from "./sinirlar.ts";
+import {
+  AJANDA_AZAMI_CERCEVE,
+  AJANDA_QR_SURUMU,
+  AJANDA_SINIRLARI,
+  AJANDA_SURUMLERI,
+  AJANDA_SURUMU,
+  type AjandaSurumNo,
+  SINIRLAR,
+} from "./sinirlar.ts";
 import { EslestirmeKodu, EslestirmeQr, SohbetId } from "./sohbet.ts";
 import { AcikAnahtar, Imza, type ImzaRolu, type Kanal, Nonce, OpakId, ZamanMs } from "./temel.ts";
 
@@ -27,9 +35,16 @@ import { AcikAnahtar, Imza, type ImzaRolu, type Kanal, Nonce, OpakId, ZamanMs } 
 
 export const AjandaSurum = z.literal(AJANDA_SURUMU);
 
-/** `/ajanda` mesaj kurucusu: `v` = `AJANDA_SURUMU`, bilinmeyen alan hata. */
-export function ajandaMesaj<T extends string, S extends z.ZodRawShape>(type: T, alanlar: S) {
-  return z.strictObject({ v: AjandaSurum, type: z.literal(type), ...alanlar });
+/**
+ * `/ajanda` mesaj kurucusu: `v` = verilen sürüm (varsayılan `AJANDA_SURUMU`), bilinmeyen alan hata.
+ * Sürümün bütün çerçeveleri `ajandaCerceveSemalari`'nda kurulur.
+ */
+export function ajandaMesaj<T extends string, S extends z.ZodRawShape, V extends AjandaSurumNo = typeof AJANDA_SURUMU>(
+  type: T,
+  alanlar: S,
+  v: V = AJANDA_SURUMU as V,
+) {
+  return z.strictObject({ v: z.literal(v), type: z.literal(type), ...alanlar });
 }
 
 // Kapsam
@@ -95,11 +110,12 @@ export function ajandaKimlikImzaMetni(girdi: {
 
 /**
  * Ajanda eşleştirme QR'ı. `EslestirmeQr` alanları + `kanal:"ajanda"`: eski uygulama bu QR'ı (fazla
- * alan) reddeder, ajanda uygulaması eski QR'ı (`kanal` yok) reddeder.
+ * alan) reddeder, ajanda uygulaması eski QR'ı (`kanal` yok) reddeder. `v` kanal sürümü değil
+ * `AJANDA_QR_SURUMU`'dur: kanal sürümü artınca da her sürümün uygulaması bu QR'ı okur.
  */
 export const AjandaEslestirmeQr = z.strictObject({
   ...EslestirmeQr.shape,
-  v: AjandaSurum,
+  v: z.literal(AJANDA_QR_SURUMU),
   kanal: z.literal("ajanda"),
 });
 export type AjandaEslestirmeQr = z.infer<typeof AjandaEslestirmeQr>;
@@ -444,16 +460,8 @@ export const AjandaGecmisGirdisi = z.strictObject({
 });
 export type AjandaGecmisGirdisi = z.infer<typeof AjandaGecmisGirdisi>;
 
-// Yukarı: ajanda uygulaması -> PC
+// Çerçeveler: sürüme göre kurulur
 
-/** Kapsam alanı yoktur: kapsamı PC'deki eşleştirme penceresi belirler. */
-export const AjandaPairRequest = ajandaMesaj("pair_request", {
-  kod: EslestirmeKodu,
-  public_key: AcikAnahtar,
-  platform: z.literal("android"),
-  /** Yalnız listede ayırt etmek için. Güvenilmez etiket, hiçbir karara girmez. */
-  etiket: z.string().max(SINIRLAR.CIHAZ_ETIKETI).optional(),
-});
 /**
  * Telafi izi: uygulamanın sunucu kopyasında revizyonu `son_rev` olan kaydın kimliği ve
  * `guncelleme_ms`'i. Servis kendi geçmişindeki `son_rev` satırıyla karşılaştırır; tutmazsa (yedekten
@@ -463,118 +471,192 @@ export const AjandaRevIzi = z.strictObject({ kayit_id: KayitId, guncelleme_ms: Z
 export type AjandaRevIzi = z.infer<typeof AjandaRevIzi>;
 
 /**
- * `son_rev`: uygulamanın uyguladığı en büyük revizyon. `depo_id`: en son `welcome`'daki.
- * `son_rev_izi`: `son_rev` > 0 iken yollanır; yoksa servis `tam` telafi yapar.
+ * Bir sürümün bütün `/ajanda` çerçeveleri. Her sürüm kendi içinde katıdır (bilinmeyen alan hata) ve
+ * yalnız kendi `v`'sini kabul eder. Sürüme bağlı alan burada `v`'ye göre eklenir (ör.
+ * `...(v >= 3 ? { alan: ... } : {})`); gövde şemaları (`AjandaKaydi`, `AjandaIslem`) bugün bütün
+ * sürümlerde aynıdır, bir sürüm onları değiştirirse onlar da `v` alan kuruculara döner.
  */
-export const AjandaHello = ajandaMesaj("hello", {
-  device_id: OpakId,
-  son_rev: SonRevizyon,
-  depo_id: DepoId.optional(),
-  son_rev_izi: AjandaRevIzi.optional(),
-  client_nonce: Nonce,
-});
-export const AjandaAuthResponse = ajandaMesaj("auth_response", { signature: Imza });
-/**
- * Kimlik sonrası. Aynı `islem_id` yeniden gelirse aynı `islem_sonucu` döner, ikinci kez uygulanmaz.
- * Gövdesi geçersiz işlem `gecersiz_islem` alır, bağlantı kapanmaz (`ajandaYukariCoz`).
- */
-export const AjandaIslemMesaji = ajandaMesaj("islem", { islem_id: OpakId, islem: AjandaIslem });
-/** Bir kaydın geçmişi, en yeniden geriye sayfa sayfa. `once_rev`: bu revizyondan küçükler. */
-export const AjandaGecmisIste = ajandaMesaj("gecmis_iste", {
-  istek_id: OpakId,
-  kayit_id: KayitId,
-  once_rev: Revizyon.optional(),
-});
+function ajandaCerceveSemalari<V extends AjandaSurumNo>(v: V) {
+  const mesaj = <T extends string, S extends z.ZodRawShape>(type: T, alanlar: S) => ajandaMesaj(type, alanlar, v);
 
-export const AjandaYukari = z.discriminatedUnion("type", [
-  AjandaPairRequest,
-  AjandaHello,
-  AjandaAuthResponse,
-  AjandaIslemMesaji,
-  AjandaGecmisIste,
-]);
+  // Yukarı: ajanda uygulaması -> PC
+
+  /** Kapsam alanı yoktur: kapsamı PC'deki eşleştirme penceresi belirler. */
+  const PairRequest = mesaj("pair_request", {
+    kod: EslestirmeKodu,
+    public_key: AcikAnahtar,
+    platform: z.literal("android"),
+    /** Yalnız listede ayırt etmek için. Güvenilmez etiket, hiçbir karara girmez. */
+    etiket: z.string().max(SINIRLAR.CIHAZ_ETIKETI).optional(),
+  });
+  /**
+   * `son_rev`: uygulamanın uyguladığı en büyük revizyon. `depo_id`: en son `welcome`'daki.
+   * `son_rev_izi`: `son_rev` > 0 iken yollanır; yoksa servis `tam` telafi yapar.
+   */
+  const Hello = mesaj("hello", {
+    device_id: OpakId,
+    son_rev: SonRevizyon,
+    depo_id: DepoId.optional(),
+    son_rev_izi: AjandaRevIzi.optional(),
+    client_nonce: Nonce,
+  });
+  const AuthResponse = mesaj("auth_response", { signature: Imza });
+  /**
+   * Kimlik sonrası. Aynı `islem_id` yeniden gelirse aynı `islem_sonucu` döner, ikinci kez uygulanmaz.
+   * Gövdesi geçersiz işlem `gecersiz_islem` alır, bağlantı kapanmaz (`ajandaYukariCoz`).
+   */
+  const IslemMesaji = mesaj("islem", { islem_id: OpakId, islem: AjandaIslem });
+  /** Bir kaydın geçmişi, en yeniden geriye sayfa sayfa. `once_rev`: bu revizyondan küçükler. */
+  const GecmisIste = mesaj("gecmis_iste", {
+    istek_id: OpakId,
+    kayit_id: KayitId,
+    once_rev: Revizyon.optional(),
+  });
+
+  const Yukari = z.discriminatedUnion("type", [PairRequest, Hello, AuthResponse, IslemMesaji, GecmisIste]);
+
+  // Aşağı: PC -> ajanda uygulaması
+
+  const PairResult = mesaj("pair_result", {
+    ok: z.boolean(),
+    device_id: OpakId.optional(),
+    server_public_key: AcikAnahtar.optional(),
+    kapsam: z.literal("ajanda").optional(),
+    code: AjandaKanalHatasi.optional(),
+  }).refine(
+    (s) =>
+      s.ok
+        ? s.device_id !== undefined && s.server_public_key !== undefined && s.kapsam !== undefined && s.code === undefined
+        : s.code !== undefined && s.device_id === undefined && s.server_public_key === undefined && s.kapsam === undefined,
+    { message: "ok ile alanlar uyuşmuyor" },
+  );
+  /** `server_signature` = `ajandaKimlikImzaMetni({ rol: "pc", ... })` imzası. */
+  const AuthChallenge = mesaj("auth_challenge", { server_nonce: Nonce, server_signature: Imza });
+  /**
+   * `tam` (`ajandaTelafiTamMi`): 0'dan bütün kayıtlar gelir. Uygulama bunları ayrı toplar; görünen
+   * kopya, kurulu alarmlar, `son_rev` ve `depo_id` `esitlendi`'ye kadar değişmez, `esitlendi`'de
+   * toplanan kopyanın yerine geçer, kopmada atılır (`ajandaEsitlemeAdimi`). Sonucu gelmemiş işlem
+   * kuyruğu her durumda korunur. Değilse `son_rev`'ten büyük revizyonlu kayıtlar gelir.
+   */
+  const Welcome = mesaj("welcome", {
+    depo_id: DepoId,
+    bas_rev: SonRevizyon,
+    tam: z.boolean(),
+    server_time_ms: ZamanMs,
+  });
+  /** Bir kaydın güncel hali. Telafide ve canlıda revizyon kesin artan sırayla gelir. */
+  const KayitMesaji = mesaj("kayit", { kayit: AjandaKaydi });
+  /** Telafi bitti; `rev` o anki `bas_rev`. Sonrası canlıdır. */
+  const Esitlendi = mesaj("esitlendi", { rev: SonRevizyon });
+  /**
+   * `islem`'in sonucu. `ok` ve `rev`: değişikliğin revizyonu; yan etkisiz `ok`'ta (aynı değer, zaten
+   * silinmiş) `rev` yok. `korunan_alanlar` yalnız emir olmayan otomasyonda dolabilir, uygulamaya hep boş/yok.
+   * Uygulamanın kuyruktaki işlemle ne yapacağı `ajandaKuyrukKarari`'dır (geçici ret ve kopmada deneme
+   * sınırı, kalıcı retle ret listesi).
+   */
+  const IslemSonucu = mesaj("islem_sonucu", {
+    islem_id: OpakId,
+    ok: z.boolean(),
+    kayit_id: KayitId.optional(),
+    rev: Revizyon.optional(),
+    korunan_alanlar: AlanListesi.optional(),
+    code: AjandaRetNedeni.optional(),
+  }).refine((s) => (s.ok ? s.code === undefined : s.code !== undefined && s.rev === undefined), {
+    message: "ok, rev ve code tutarsız",
+  });
+  const Gecmis = mesaj("gecmis", {
+    istek_id: OpakId,
+    kayit_id: KayitId,
+    girdiler: z
+      .array(AjandaGecmisGirdisi)
+      .max(AJANDA_SINIRLARI.GECMIS_SAYFA)
+      .refine((l) => l.every((g, i) => i === 0 || l[i - 1]!.rev > g.rev), { message: "rev kesin azalan olmalı" }),
+    devami: z.boolean(),
+    code: AjandaRetNedeni.optional(),
+  }).refine((s) => s.code === undefined || (s.girdiler.length === 0 && !s.devami), {
+    message: "code ile girdi olmaz",
+  });
+  /** Zarfı bütün sürümlerde dondurulmuştur (`ajandaRetSurumuOku`); kod kümesi sürümündür. */
+  const ErrorMesaji = mesaj("error", {
+    code: AjandaKanalHatasi,
+    detail: z.string().max(SINIRLAR.HATA_DETAYI).optional(),
+  });
+
+  const Asagi = z.discriminatedUnion("type", [
+    PairResult,
+    AuthChallenge,
+    Welcome,
+    KayitMesaji,
+    Esitlendi,
+    IslemSonucu,
+    Gecmis,
+    ErrorMesaji,
+  ]);
+
+  /** `islem` çerçevesinin zarfı: gövdeye bakmadan `islem_id`'yi okumak için. */
+  const IslemZarfi = mesaj("islem", { islem_id: OpakId, islem: z.unknown().optional() });
+
+  return {
+    PairRequest,
+    Hello,
+    AuthResponse,
+    IslemMesaji,
+    GecmisIste,
+    Yukari,
+    PairResult,
+    AuthChallenge,
+    Welcome,
+    KayitMesaji,
+    Esitlendi,
+    IslemSonucu,
+    Gecmis,
+    ErrorMesaji,
+    Asagi,
+    IslemZarfi,
+  };
+}
+
+/**
+ * Sürüm tablosu: `AJANDA_SURUMLERI`'nin her sürümü için o sürümün çerçeve şemaları. Yeni sürüm
+ * buraya bir satır ve `ajandaCerceveSemalari`'na sürüme bağlı alanlar olarak eklenir; aşağı
+ * uyarlaması `ASAGI_UYARLAMALARI`'na.
+ */
+export const AJANDA_CERCEVE_SEMALARI = {
+  2: ajandaCerceveSemalari(2),
+} as const satisfies { [V in AjandaSurumNo]: ReturnType<typeof ajandaCerceveSemalari<V>> };
+
+/** `v` bu tarafın sürüm kümesinde mi. Tabloyu güvenilmez değerle indekslemeden önce sorulur. */
+export function ajandaSurumuMu(v: unknown): v is AjandaSurumNo {
+  return (AJANDA_SURUMLERI as readonly unknown[]).includes(v);
+}
+
+const semalar = (v: AjandaSurumNo) => AJANDA_CERCEVE_SEMALARI[v];
+
+/** En yeni sürüm (`AJANDA_SURUMU`): servis içeride bununla çalışır; adlar ve açıklamalar bunundur. */
+const YENI = semalar(AJANDA_SURUMU);
+
+export const AjandaPairRequest = YENI.PairRequest;
+export const AjandaHello = YENI.Hello;
+export const AjandaAuthResponse = YENI.AuthResponse;
+export const AjandaIslemMesaji = YENI.IslemMesaji;
+export const AjandaGecmisIste = YENI.GecmisIste;
+export const AjandaYukari = YENI.Yukari;
 export type AjandaYukari = z.infer<typeof AjandaYukari>;
 
-// Aşağı: PC -> ajanda uygulaması
-
-export const AjandaPairResult = ajandaMesaj("pair_result", {
-  ok: z.boolean(),
-  device_id: OpakId.optional(),
-  server_public_key: AcikAnahtar.optional(),
-  kapsam: z.literal("ajanda").optional(),
-  code: AjandaKanalHatasi.optional(),
-}).refine(
-  (s) =>
-    s.ok
-      ? s.device_id !== undefined && s.server_public_key !== undefined && s.kapsam !== undefined && s.code === undefined
-      : s.code !== undefined && s.device_id === undefined && s.server_public_key === undefined && s.kapsam === undefined,
-  { message: "ok ile alanlar uyuşmuyor" },
-);
-/** `server_signature` = `ajandaKimlikImzaMetni({ rol: "pc", ... })` imzası. */
-export const AjandaAuthChallenge = ajandaMesaj("auth_challenge", { server_nonce: Nonce, server_signature: Imza });
-/**
- * `tam` (`ajandaTelafiTamMi`): 0'dan bütün kayıtlar gelir. Uygulama bunları ayrı toplar; görünen
- * kopya, kurulu alarmlar, `son_rev` ve `depo_id` `esitlendi`'ye kadar değişmez, `esitlendi`'de
- * toplanan kopyanın yerine geçer, kopmada atılır (`ajandaEsitlemeAdimi`). Sonucu gelmemiş işlem
- * kuyruğu her durumda korunur. Değilse `son_rev`'ten büyük revizyonlu kayıtlar gelir.
- */
-export const AjandaWelcome = ajandaMesaj("welcome", {
-  depo_id: DepoId,
-  bas_rev: SonRevizyon,
-  tam: z.boolean(),
-  server_time_ms: ZamanMs,
-});
-/** Bir kaydın güncel hali. Telafide ve canlıda revizyon kesin artan sırayla gelir. */
-export const AjandaKayitMesaji = ajandaMesaj("kayit", { kayit: AjandaKaydi });
-/** Telafi bitti; `rev` o anki `bas_rev`. Sonrası canlıdır. */
-export const AjandaEsitlendi = ajandaMesaj("esitlendi", { rev: SonRevizyon });
-/**
- * `islem`'in sonucu. `ok` ve `rev`: değişikliğin revizyonu; yan etkisiz `ok`'ta (aynı değer, zaten
- * silinmiş) `rev` yok. `korunan_alanlar` yalnız emir olmayan otomasyonda dolabilir, uygulamaya hep boş/yok.
- * Uygulamanın kuyruktaki işlemle ne yapacağı `ajandaKuyrukKarari`'dır (geçici ret ve kopmada deneme
- * sınırı, kalıcı retle ret listesi).
- */
-export const AjandaIslemSonucu = ajandaMesaj("islem_sonucu", {
-  islem_id: OpakId,
-  ok: z.boolean(),
-  kayit_id: KayitId.optional(),
-  rev: Revizyon.optional(),
-  korunan_alanlar: AlanListesi.optional(),
-  code: AjandaRetNedeni.optional(),
-}).refine((s) => (s.ok ? s.code === undefined : s.code !== undefined && s.rev === undefined), {
-  message: "ok, rev ve code tutarsız",
-});
-export const AjandaGecmis = ajandaMesaj("gecmis", {
-  istek_id: OpakId,
-  kayit_id: KayitId,
-  girdiler: z
-    .array(AjandaGecmisGirdisi)
-    .max(AJANDA_SINIRLARI.GECMIS_SAYFA)
-    .refine((l) => l.every((g, i) => i === 0 || l[i - 1]!.rev > g.rev), { message: "rev kesin azalan olmalı" }),
-  devami: z.boolean(),
-  code: AjandaRetNedeni.optional(),
-}).refine((s) => s.code === undefined || (s.girdiler.length === 0 && !s.devami), {
-  message: "code ile girdi olmaz",
-});
-export const AjandaErrorMesaji = ajandaMesaj("error", {
-  code: AjandaKanalHatasi,
-  detail: z.string().max(SINIRLAR.HATA_DETAYI).optional(),
-});
-
-export const AjandaAsagi = z.discriminatedUnion("type", [
-  AjandaPairResult,
-  AjandaAuthChallenge,
-  AjandaWelcome,
-  AjandaKayitMesaji,
-  AjandaEsitlendi,
-  AjandaIslemSonucu,
-  AjandaGecmis,
-  AjandaErrorMesaji,
-]);
+export const AjandaPairResult = YENI.PairResult;
+export const AjandaAuthChallenge = YENI.AuthChallenge;
+export const AjandaWelcome = YENI.Welcome;
+export const AjandaKayitMesaji = YENI.KayitMesaji;
+export const AjandaEsitlendi = YENI.Esitlendi;
+export const AjandaIslemSonucu = YENI.IslemSonucu;
+export const AjandaGecmis = YENI.Gecmis;
+export const AjandaErrorMesaji = YENI.ErrorMesaji;
+export const AjandaAsagi = YENI.Asagi;
 export type AjandaAsagi = z.infer<typeof AjandaAsagi>;
 
-/** `islem` çerçevesinin zarfı: gövdeye bakmadan `islem_id`'yi okumak için. */
-const AjandaIslemZarfi = ajandaMesaj("islem", { islem_id: OpakId, islem: z.unknown().optional() });
+/** Herhangi bir desteklenen sürümün çerçevesi (çözücü sonucu; sürümü `v`'sidir). */
+export type AjandaSurumluYukari = z.infer<(typeof AJANDA_CERCEVE_SEMALARI)[AjandaSurumNo]["Yukari"]>;
+export type AjandaSurumluAsagi = z.infer<(typeof AJANDA_CERCEVE_SEMALARI)[AjandaSurumNo]["Asagi"]>;
 
 /**
  * `ajandaYukariCoz` sonucu. `islem_id` yalnız şu halde vardır: çerçeve `gecersiz_mesaj`, ama zarfı
@@ -583,11 +665,21 @@ const AjandaIslemZarfi = ajandaMesaj("islem", { islem_id: OpakId, islem: z.unkno
  * code:"gecersiz_islem"}` döner ve tekrarsızlık kaydına yazar: iki taraftaki doğrulama bir yerde
  * ayrışsa da tek işlem kuyruğu tıkayamaz, kullanıcının ret listesine düşer.
  */
-export type AjandaYukariCozumu = CozumSonucu<AjandaYukari> & { islem_id?: string };
+export type AjandaYukariCozumu = CozumSonucu<AjandaSurumluYukari> & { islem_id?: string };
 
-/** `/ajanda` çözücüleri: tek sürüm `AJANDA_SURUMU`, sınır `AJANDA_AZAMI_CERCEVE.KANAL`. */
-export function ajandaYukariCoz(ham: string): AjandaYukariCozumu {
-  const sonuc = cozumle(AjandaYukari, ham, AJANDA_AZAMI_CERCEVE.KANAL, AJANDA_SURUMU);
+const kabulKumesi = (baglanti: AjandaSurumNo | undefined): readonly number[] =>
+  baglanti === undefined ? AJANDA_SURUMLERI : [baglanti];
+
+/**
+ * `/ajanda` çözücüleri, sınır `AJANDA_AZAMI_CERCEVE.KANAL`. `baglanti`: bağlantının sabitlenmiş sürümü.
+ * Verilirse yalnız o sürüm kabul edilir (başka sayı `v` `protokol_uyumsuz`); verilmezse (ilk yukarı
+ * çerçeve, sürüm henüz sabitlenmedi) `AJANDA_SURUMLERI`'nden herhangi biri, sabitlenecek sürüm
+ * `mesaj.v`'dir. Çerçeve her halde yalnız kendi sürümünün şemasıyla denetlenir.
+ */
+export function ajandaYukariCoz(ham: string, baglanti?: AjandaSurumNo): AjandaYukariCozumu {
+  const sonuc = surumluCozumle<AjandaSurumluYukari>(ham, AJANDA_AZAMI_CERCEVE.KANAL, kabulKumesi(baglanti), (v) =>
+    semalar(v as AjandaSurumNo).Yukari,
+  );
   if (sonuc.ok || sonuc.kod !== "gecersiz_mesaj") return sonuc;
   let deger: unknown;
   try {
@@ -595,10 +687,100 @@ export function ajandaYukariCoz(ham: string): AjandaYukariCozumu {
   } catch {
     return sonuc;
   }
-  const zarf = AjandaIslemZarfi.safeParse(deger);
+  // `gecersiz_mesaj` ile gelen sayı `v` kabul kümesindedir; değilse zarf zaten tutmaz.
+  const v = typeof deger === "object" && deger !== null ? (deger as { v?: unknown }).v : undefined;
+  const zarf = (ajandaSurumuMu(v) ? semalar(v) : YENI).IslemZarfi.safeParse(deger);
   return zarf.success ? { ...sonuc, islem_id: zarf.data.islem_id } : sonuc;
 }
-export const ajandaAsagiCoz = (ham: string) => cozumle(AjandaAsagi, ham, AJANDA_AZAMI_CERCEVE.KANAL, AJANDA_SURUMU);
+export const ajandaAsagiCoz = (ham: string, baglanti?: AjandaSurumNo): CozumSonucu<AjandaSurumluAsagi> =>
+  surumluCozumle<AjandaSurumluAsagi>(ham, AJANDA_AZAMI_CERCEVE.KANAL, kabulKumesi(baglanti), (v) =>
+    semalar(v as AjandaSurumNo).Asagi,
+  );
+
+// Sürüm uyumu (`docs/AJANDA.md` "Kanal akışı")
+
+/**
+ * En yeni modelden sürümün çerçevesine: o sürümün bilmediği alanları ve kapalı liste öğelerini
+ * çıkarır. En yeni sürümde kimliktir; `v`'yi `ajandaAsagiSurume` yazar.
+ */
+const ASAGI_UYARLAMALARI: { [V in AjandaSurumNo]: (m: AjandaAsagi) => Record<string, unknown> } = {
+  2: (m) => m,
+};
+
+/**
+ * Servisin yollayacağı çerçeveyi bağlantı sürümüne uyarlar ve o sürümün şemasıyla denetler. Servis
+ * içeride en yeni modelle (`AjandaAsagi`) çalışır; her aşağı çerçeve yollanmadan önce buradan geçer.
+ * Başarıda `mesaj` uyarlanan nesnedir (alan sırası girdininki: kimlikte JSON baytları değişmez).
+ * `ok:false` servisin hatasıdır, çerçeve yollanmaz; `yollar` değeri içermez.
+ */
+export function ajandaAsagiSurume(m: AjandaAsagi, v: AjandaSurumNo): CozumSonucu<AjandaSurumluAsagi> {
+  if (!ajandaSurumuMu(v)) return { ok: false, kod: "protokol_uyumsuz", yollar: ["v"] };
+  const aday = { ...ASAGI_UYARLAMALARI[v](m), v };
+  const denetim = semaylaDenetle(semalar(v).Asagi, aday);
+  return denetim.ok ? { ok: true, mesaj: aday as AjandaSurumluAsagi } : denetim;
+}
+
+/**
+ * `error` zarfı bütün sürümlerde dondurulmuştur: `{v, type:"error", code, detail?}`. İstemci kendi
+ * kümesinde olmayan sürümün ret çerçevesini de bununla okur; `code` herhangi bir metindir (başka
+ * sürümün kod kümesi), `detail` yalnız biçimce denetlenir. Üst sınır çerçeve sınırıdır.
+ */
+const AjandaDonmusHata = z.strictObject({
+  v: z.number().int().min(1),
+  type: z.literal("error"),
+  code: z.string(),
+  detail: z.string().optional(),
+});
+
+/**
+ * Ret sürümü: ham çerçeve dondurulmuş `error` zarfına uyuyor ve `code` `protokol_uyumsuz` ise `v`'si
+ * (servisin en yüksek sürümü); değilse `null` (JSON değil, çok büyük, başka tür ya da kod, `v` yok ya
+ * da tam sayı değil, fazla alan). Sürüm kümesinden bağımsızdır. Vektör `ajanda-surum.json` `ret_surumu`.
+ */
+export function ajandaRetSurumuOku(ham: string): number | null {
+  if (ham.length > AJANDA_AZAMI_CERCEVE.KANAL) return null;
+  let deger: unknown;
+  try {
+    deger = JSON.parse(ham);
+  } catch {
+    return null;
+  }
+  const zarf = AjandaDonmusHata.safeParse(deger);
+  return zarf.success && zarf.data.code === "protokol_uyumsuz" ? zarf.data.v : null;
+}
+
+/** `protokol_uyumsuz` sonrası istemcinin kararı: bir alt sürümle yeniden dene ya da uyuşmazlığın yönü. */
+export type AjandaGeriDususu =
+  | { karar: "yeniden_dene"; surum: number }
+  | { karar: "uygulama_eski" }
+  | { karar: "servis_eski" }
+  | { karar: "bilinmiyor" };
+
+/**
+ * İstemcinin geri düşüş kuralı (uygulama aynısını uygular; vektör `ajanda-surum.json` `geri_dusus`).
+ * `denenen`: bağlantının açıldığı sürüm. `ret`: ret çerçevesinden `ajandaRetSurumuOku` ile okunan
+ * sürüm; çerçeve yok ya da okunamadıysa (yalnız kapanış 1002) `null`. `kume`: istemcinin sürümleri.
+ * - `ret` okunduysa: kümede ve denenenden küçükse onunla yeniden; kümenin en büyüğünden büyükse
+ *   uygulama eski; en küçüğünden küçükse servis eski; başka hal (denenenle aynı ya da büyük) bilinmiyor.
+ * - `null`: kümede denenenden küçük en büyük sürümle yeniden; yoksa bilinmiyor.
+ * Her yeniden deneme denenenden kesin küçüktür: zincir kümenin boyundan kısa biter. İlk bağlantı
+ * kümenin en büyüğüyle açılır; düşülen sürüm süreç boyunca tutulur (çağıranın işi).
+ */
+export function ajandaGeriDusus(
+  denenen: number,
+  ret: number | null,
+  kume: readonly number[] = AJANDA_SURUMLERI,
+): AjandaGeriDususu {
+  if (kume.length === 0) return { karar: "bilinmiyor" };
+  if (ret === null) {
+    const alt = kume.filter((s) => s < denenen);
+    return alt.length > 0 ? { karar: "yeniden_dene", surum: Math.max(...alt) } : { karar: "bilinmiyor" };
+  }
+  if (ret < denenen && kume.includes(ret)) return { karar: "yeniden_dene", surum: ret };
+  if (ret > Math.max(...kume)) return { karar: "uygulama_eski" };
+  if (ret < Math.min(...kume)) return { karar: "servis_eski" };
+  return { karar: "bilinmiyor" };
+}
 
 // Saf yardımcılar (servis ve uygulama aynı sonucu versin)
 
