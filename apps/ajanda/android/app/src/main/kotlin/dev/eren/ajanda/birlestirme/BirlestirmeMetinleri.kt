@@ -44,6 +44,18 @@ class BirlestirmeMetinleri {
             }
             if (p.retListesine.isNotEmpty()) add("${p.retListesine.size} kayıt birleşemiyor: gönderilemeyenler listesine düşecek")
             if (p.dusecekMezar > 0) add("Telefonda silinmiş ${p.dusecekMezar} kayıt gönderilmeyecek, Silinenler'den kalkacak")
+            if (p.taslaklar.isNotEmpty()) {
+                add(
+                    "${p.taslaklar.size} taslak Eren servisine gönderilmeyecek: gönderilemeyenler listesine düşecek, " +
+                        "oradan düzeltilip eklenebilir",
+                )
+            }
+            if (p.okunamayanPcTemeli > 0) {
+                add(
+                    "${p.okunamayanPcTemeli} kaydın Eren servisindeki önceki hali okunamıyor: " +
+                        "telefondaki farklı her alan Eren servisine gidecek",
+                )
+            }
             if (p.ayni > 0) add("${p.ayni} kayıt Eren servisindekiyle aynı")
             if (p.servistenGelecek > 0) add("${p.servistenGelecek} kayıt Eren servisinden telefona gelecek")
             if (p.olasiCiftler.isNotEmpty()) {

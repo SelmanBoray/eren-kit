@@ -56,6 +56,8 @@ class BirlestirmeAkisiTest {
         islem: Int = 5,
         ayniDepo: Boolean = false,
         cift: Int = 1,
+        taslak: Int = 0,
+        okunamayanTemel: Int = 0,
     ) = BirlestirmeOnizlemesi(
         depoId = "depo_ornek",
         ayniDepo = ayniDepo,
@@ -70,6 +72,8 @@ class BirlestirmeAkisiTest {
         islem = islem,
         olasiCiftler = List(cift) { OlasiCift("k_gizli_tel_$it", "k_gizli_srv_$it") },
         iz = iz,
+        taslaklar = List(taslak) { "k_gizli_taslak_$it" },
+        okunamayanPcTemeli = okunamayanTemel,
     )
 
     private fun temiz(a: BirlestirmeAkisi.Adim) {
@@ -80,10 +84,27 @@ class BirlestirmeAkisiTest {
     }
 
     @Test
+    fun taslakVeOkunamayanTemelCumleleriYalnizSifirDegilse() {
+        yuz.onizlemeler += plan(taslak = 2, okunamayanTemel = 3)
+        val o = akis.denetle()!!
+        assertTrue(o.metin, o.metin.contains("• 2 taslak Eren servisine gönderilmeyecek: gönderilemeyenler listesine düşecek, oradan düzeltilip eklenebilir"))
+        assertTrue(o.metin, o.metin.contains("• 3 kaydın Eren servisindeki önceki hali okunamıyor: telefondaki farklı her alan Eren servisine gidecek"))
+        temiz(o)
+    }
+
+    @Test
+    fun taslakVeOkunamayanTemelSifirsaCumleYok() {
+        yuz.onizlemeler += plan()
+        val o = akis.denetle()!!
+        assertFalse(o.metin, o.metin.contains("taslak"))
+        assertFalse(o.metin, o.metin.contains("okunamıyor"))
+    }
+
+    @Test
     fun onizlemeSorulurOnaylaninceSonucGelir() {
         yuz.onizlemeler += plan()
         yuz.onaySonuclari += BirlestirmeSonucu(true, plan())
-        val o = akis.denetle()
+        val o = akis.denetle()!!
         assertTrue(o.toString(), o is BirlestirmeAkisi.Adim.Onay)
         o as BirlestirmeAkisi.Adim.Onay
         assertEquals("Kayıtlar Eren servisiyle birleştirilsin mi?", o.baslik)

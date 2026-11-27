@@ -47,7 +47,14 @@ class AktarmaMetinleri(private val dilim: ZoneId) {
             if (p.ayni > 0) add("${p.ayni} kayıt telefondakiyle aynı")
             if (p.atlanacak > 0) add("${p.atlanacak} kayıt atlanacak (telefondaki daha yeni)")
             if (p.sinirAsan > 0) add("${p.sinirAsan} kayıt sınır dolduğu için eklenemeyecek")
+            if (p.silinecek > 0) {
+                add("${p.silinecek} kayıt silinecek (telefondaki kayıt, yedekteki daha yeni silinmiş haliyle değişecek)")
+            }
+            if (p.geriYuklenecek > 0) {
+                add("${p.geriYuklenecek} kayıt geri yüklenecek (telefonda silinmiş, yedekteki daha yeni haliyle geri gelecek)")
+            }
             if (p.gecersiz > 0) add("${p.gecersiz} kayıt okunamadı, alınmayacak")
+            if (p.taslakGonderilmeyecek > 0) add("${p.taslakGonderilmeyecek} taslak Eren servisine gönderilmeyecek")
             if (p.gonderilmeyecek > 0) add("${p.gonderilmeyecek} silinmiş kayıt Eren servisine gönderilmeyecek")
         }
         satirlar.forEach { add("• $it") }

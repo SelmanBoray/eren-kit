@@ -17,7 +17,8 @@ class GecisMetinleriTest {
         yanitsiz: Int = 0,
         ret: Int = 0,
         iptal: Boolean = false,
-    ) = KoparmaSonucu(kip, kayit, islem, yanitsiz, ret, iptal)
+        okunamayanTemel: Int = 0,
+    ) = KoparmaSonucu(kip, kayit, islem, yanitsiz, ret, iptal, okunamayanTemel)
 
     private fun ozet(neden: GecisNedeni, s: KoparmaSonucu = sonuc(), ts: Long = 1_000) =
         GecisOzeti(neden, ts, s, "depo-a", if (neden == GecisNedeni.DEPO_DEGISTI) "depo-b" else null)
@@ -53,6 +54,15 @@ class GecisMetinleriTest {
         assertTrue(kismi.govde, kismi.govde.contains("Gönderilemeyenler listesindeki 2 değişiklik yerinde duruyor."))
         val hepsi = GecisMetinleri.koparma(sonuc(kayit = 2, islem = 2, yanitsiz = 2))
         assertTrue(hepsi.govde, hepsi.govde.contains("Bunlar gönderilmişti ama yanıtı gelmedi"))
+    }
+
+    @Test
+    fun okunamayanTemelYalnizSifirDegilseSoylenir() {
+        val var_ = GecisMetinleri.koparma(sonuc(okunamayanTemel = 3))
+        assertTrue(var_.govde, var_.govde.contains("3 kaydın Eren servisindeki hali okunamadı; yeniden bağlanınca telefondaki farklı her alan servise gönderilir."))
+        assertFalse(var_.hepsi(), Regex("\bPC\b").containsMatchIn(var_.hepsi()))
+        val yok = GecisMetinleri.koparma(sonuc())
+        assertFalse(yok.govde, yok.govde.contains("okunamadı"))
     }
 
     @Test

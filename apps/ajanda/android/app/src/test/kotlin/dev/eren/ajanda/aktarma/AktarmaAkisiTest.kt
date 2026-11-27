@@ -38,10 +38,14 @@ class AktarmaAkisiTest {
         iz: String = "iz1",
         islem: Int = 0,
         gonderilmeyecek: Int = 0,
+        silinecek: Int = 0,
+        geriYuklenecek: Int = 0,
+        taslak: Int = 0,
     ) = IceAktarmaOnizlemesi(
         kip = kip, disaAktarmaMs = anMs, toplam = 10, silinmis = 1, yeni = yeni, guncellenecek = guncellenecek,
         ayni = 4, atlanacak = 1, gecersiz = 1, sinirAsan = 0, gonderilmeyecek = gonderilmeyecek,
         kuyrugaGirecekIslem = islem, gecersizler = emptyList(), ekler = emptyList(), iz = iz,
+        silinecek = silinecek, geriYuklenecek = geriYuklenecek, taslakGonderilmeyecek = taslak,
     )
 
     private fun kap(b: String = belge): ByteArray {
@@ -145,6 +149,25 @@ class AktarmaAkisiTest {
         val s = akis.onayla()
         assertTrue(s.metin, s.metin.contains("7 işlem Eren servisine gönderilmek üzere sıraya alındı."))
         temiz(s)
+    }
+
+    @Test
+    fun silinecekGeriYuklenecekVeTaslakSatirlari() {
+        yuz.onizlemeler += plan(kip = CalismaKipi.BAGLI, islem = 3, silinecek = 2, geriYuklenecek = 1, taslak = 4)
+        val o = akis.dosyaOku { ByteArrayInputStream(kap()) }
+        assertTrue(o.metin, o.metin.contains("• 2 kayıt silinecek (telefondaki kayıt, yedekteki daha yeni silinmiş haliyle değişecek)"))
+        assertTrue(o.metin, o.metin.contains("• 1 kayıt geri yüklenecek (telefonda silinmiş, yedekteki daha yeni haliyle geri gelecek)"))
+        assertTrue(o.metin, o.metin.contains("• 4 taslak Eren servisine gönderilmeyecek"))
+        temiz(o)
+    }
+
+    @Test
+    fun sifirsaSilinecekGeriYuklenecekVeTaslakSatiriYok() {
+        yuz.onizlemeler += plan()
+        val o = akis.dosyaOku { ByteArrayInputStream(kap()) }
+        assertFalse(o.metin, o.metin.contains("silinecek"))
+        assertFalse(o.metin, o.metin.contains("geri yüklenecek"))
+        assertFalse(o.metin, o.metin.contains("taslak"))
     }
 
     @Test

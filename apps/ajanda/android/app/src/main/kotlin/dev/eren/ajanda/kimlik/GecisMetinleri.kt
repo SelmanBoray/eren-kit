@@ -69,6 +69,7 @@ object GecisMetinleri {
         yanitsiz(s)?.let(::add)
         add(YEDEK_DURUYOR)
         ret(s)?.let(::add)
+        okunamayan(s)?.let(::add)
     }
 
     private fun depoDegistiSatirlari(s: KoparmaSonucu): List<String> = buildList {
@@ -77,6 +78,7 @@ object GecisMetinleri {
         yanitsiz(s, "önceki Eren servisine")?.let(::add)
         add("Önceki Eren servisindeki kopya olduğu gibi duruyor. Ona yeniden bağlanırsanız bu telefondaki kayıtlar, yeni servisten gelenler dahil, oraya da gönderilir.")
         ret(s)?.let(::add)
+        okunamayan(s)?.let(::add)
     }
 
     /** "N değişiklik" ya da "N değişiklik (M kayıtta)"; hiç yoksa `null`. */
@@ -99,6 +101,11 @@ object GecisMetinleri {
             else -> "Bunlardan $n tanesi gönderilmişti ama yanıtı gelmedi; $servise ulaşmış olabilir."
         }
     }
+
+    private fun okunamayan(s: KoparmaSonucu): String? =
+        if (s.okunamayanPcTemeli > 0) {
+            "${s.okunamayanPcTemeli} kaydın Eren servisindeki hali okunamadı; yeniden bağlanınca telefondaki farklı her alan servise gönderilir."
+        } else null
 
     private fun ret(s: KoparmaSonucu): String? =
         if (s.retListesinde > 0) "Gönderilemeyenler listesindeki ${s.retListesinde} değişiklik yerinde duruyor." else null
