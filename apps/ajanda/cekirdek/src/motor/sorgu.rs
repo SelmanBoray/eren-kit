@@ -70,7 +70,8 @@ pub(crate) fn ret_listesi(d: &Depo) -> Result<Vec<RetGirdisi>, CekirdekHatasi> {
 }
 
 impl Motor {
-    /// Canlıysa `gecmis_iste` yollar (yoksa `GecersizDurum`); yanıt `gecmis` çerçevesiyle gelir,
+    /// Yerel kipte geçmiş yerel tablodan hemen yüklenir (bağlantı gerekmez; `motor/yerel.rs`).
+    /// Bağlı kipte canlıysa `gecmis_iste` yollar (yoksa `GecersizDurum`); yanıt `gecmis` çerçevesiyle gelir,
     /// önbelleğe yazılır, gözlemciye `Degisim.gecmis` ile haber verilir. `once_rev` yoksa önbellekteki
     /// sayfalar atılır (baştan yükleme); varsa yanıt öncekilerin arkasına eklenir.
     pub(crate) fn gecmis_iste(&mut self, o: &Ortam, e: &mut Etkiler, kayit_id: &str, once_rev: Option<i64>) -> Result<(), CekirdekHatasi> {
@@ -79,6 +80,9 @@ impl Motor {
         }
         if once_rev.is_some_and(|r| r < 1) {
             return Err(CekirdekHatasi::GecersizGirdi { alan: "once_rev".into(), neden: "revizyon 1'den küçük".into() });
+        }
+        if self.yerel_mi()? {
+            return self.yerel_gecmis_iste(e, kayit_id, once_rev);
         }
         if !self.canli_mi() {
             return Err(CekirdekHatasi::GecersizDurum { mesaj: "bağlantı canlı değil".into() });

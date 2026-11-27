@@ -11,6 +11,8 @@
 //!   `onayla`) kuyruğa girmez: servis yan etkisiz bulurdu. `duzenle` farkı boşsa da girmez.
 //! - Yerelde kesin geçersiz olan reddedilir, kuyruğa girmez: form sorunu (`GecersizGirdi`), olmayan kayıt
 //!   (`KayitYok`), mezar taşına `geri_yukle` dışında işlem (`GecersizDurum`), serinin örneği olmayan tarih.
+//! - Yerel kipte (`motor/yerel.rs`) işlem kuyruğa girmez: aynı denetimlerden sonra servis kurallarıyla
+//!   doğrudan ve kalıcı uygulanır (yerel revizyon, yerel geçmiş); yukarıdaki kurallar aynen geçerlidir.
 
 use super::iyimser::{gorunen_yenile, iyimser_uygula};
 use super::{Etkiler, Motor, Ortam};
@@ -43,7 +45,7 @@ fn kaydin_govdesi(k: &AjandaKaydi) -> KayitGovdesi {
 }
 
 /// İki gövdenin farkı (`eski` -> `yeni`).
-fn govde_farki(k: &KayitGovdesi, g: &KayitGovdesi) -> AjandaDegisiklik {
+pub(super) fn govde_farki(k: &KayitGovdesi, g: &KayitGovdesi) -> AjandaDegisiklik {
     AjandaDegisiklik {
         tur: (g.tur != k.tur).then_some(g.tur),
         baslik: (g.baslik != k.baslik).then(|| g.baslik.clone()),
@@ -95,6 +97,9 @@ impl Motor {
     /// İşlemi kuyruğa koyar ve iyimser uygular. `zorla` değilse görünen hali değiştirmeyecek işlem atlanır.
     /// Döner: kuyruğa girdi mi.
     fn kuyruga_koy(&mut self, o: &Ortam, e: &mut Etkiler, islem: AjandaIslem, zorla: bool) -> Result<bool, CekirdekHatasi> {
+        if self.yerel_mi()? {
+            return self.yerel_yaz(o, e, islem);
+        }
         let cevirici = o.cevirici();
         let b = self.iyimser_baglam(o, &cevirici)?;
         let kayit_id = islem.kayit_id().to_string();

@@ -26,6 +26,8 @@ impl Duzen {
         let m = Motor::ac(":memory:").unwrap();
         let e = json!({"device_id": "c_t", "host": "100.64.0.1", "port": 8787, "server_public_key": base64_yaz(&[9; 4])});
         m.depo.meta_yaz(anahtar::ESLESME, Some(&e.to_string())).unwrap();
+        // Eşleşmiş kurulum bağlı kiptedir (göç 4 eşleşmesiz yeni veritabanını yerel sınıflar).
+        m.depo.kip_yaz(false).unwrap();
         Duzen { m, kimlik: SahteKimlik::default(), zaman: SahteZaman::yeni(SIMDI) }
     }
 
@@ -210,4 +212,65 @@ fn artimli_telafi_tamponlu_yazilir_kopmada_ilerleme_kalir() {
     d.kopar();
     assert_eq!(d.m.depo.son_rev().unwrap(), 450, "kopmada tampon yazıldı");
     assert_eq!(d.m.depo.sunucu_kaydi_sayisi().unwrap(), 450);
+}
+
+/// Yerel kipte bağlanma (eşleşme kayıtlı, kip yerel): `hello` boş kopya gibi gider; servis artımlı dese de
+/// telafi toplanır ve `esitlendi`'ye dek görünen kopya, PC temeli (`sunucu_kayitlari`, `depo_id`, `son_rev`)
+/// ve alarmlar değişmez. `esitlendi`'de tek işlemde yerel kayıtlar fark olarak kuyruğa dökülür, kip bağlı
+/// olur, kuyruk yollanmaya başlar.
+#[test]
+fn yerel_kipte_baglanma_temeli_korur_esitlendide_doker() {
+    let mut d = Duzen::yeni();
+    d.m.depo.kip_yaz(true).unwrap();
+    let yerel = kayit("k_yerel", 3, 3);
+    let temel = kayit("k_ortak", 2, 2);
+    let ortak = AjandaKaydi { baslik: "telefonda".into(), revizyon: 3, ..temel.clone() };
+    d.m.depo
+        .yazma(|depo| {
+            depo.gorunen_yaz(&yerel, false)?;
+            depo.gorunen_yaz(&ortak, false)?;
+            depo.kopya_kaydi_uygula(crate::depo::KopyaTablosu::Sunucu, &temel)?;
+            depo.depo_id_yaz("d_a")?;
+            depo.son_rev_yaz(2)?;
+            Ok(())
+        })
+        .unwrap();
+    let (r, e) = d.calistir(|m, o, e| m.baglanti_acildi(o, e));
+    r.unwrap();
+    let Ok(AjandaYukari::Hello { son_rev, depo_id, son_rev_izi, .. }) = ajanda_yukari_coz(&e.gonderilecek[0]) else { panic!("hello") };
+    assert_eq!((son_rev, depo_id, son_rev_izi), (0, None, None), "yerel kipte boş kopya gibi");
+    d.kopar();
+    d.el_sikis();
+    // Servis artımlı dese de toplanır: temel ezilmez.
+    d.cerceve(AjandaAsagi::Welcome { depo_id: "d_a".into(), bas_rev: 5, tam: false, server_time_ms: SIMDI });
+    let pc_ortak = AjandaKaydi { aciklama: Some("PC'de".into()), ..kayit("k_ortak", 4, 4) };
+    for k in [pc_ortak.clone(), kayit("k_pc", 5, 5)] {
+        let e = d.cerceve(AjandaAsagi::Kayit { kayit: k });
+        assert!(e.degisim.bos_mu() && e.alarm_kur.is_empty());
+    }
+    d.m.telafi_tamponunu_yaz(&Ortam { kimlik: &d.kimlik, zaman: &d.zaman }, &mut Etkiler::default()).unwrap();
+    assert!(d.m.tam_telafi_suruyor());
+    assert_eq!(d.m.depo.sunucu_kayitlari().unwrap(), vec![temel.clone()], "temel koparma anındaki gibi");
+    assert_eq!((d.m.depo.son_rev().unwrap(), d.m.depo.depo_id().unwrap().as_deref()), (2, Some("d_a")));
+    assert!(d.m.yerel_mi().unwrap());
+    assert!(d.m.depo.kuyruk().unwrap().is_empty());
+    assert_eq!(d.m.depo.gorunen_kayit("k_ortak").unwrap().unwrap().kayit, ortak);
+
+    let e = d.cerceve(AjandaAsagi::Esitlendi { rev: 5 });
+    assert!(d.m.canli_mi() && !d.m.yerel_mi().unwrap());
+    assert!(e.degisim.tumu && e.degisim.baglanti);
+    assert_eq!((d.m.depo.son_rev().unwrap(), d.m.depo.depo_id().unwrap().as_deref()), (5, Some("d_a")));
+    assert_eq!(d.m.depo.sunucu_kayitlari().unwrap().len(), 2, "temel servisin kopyası oldu");
+    let kuyruk: Vec<Value> = d.m.depo.kuyruk().unwrap().iter().map(|s| serde_json::from_str(&s.islem_json).unwrap()).collect();
+    // Aynı depo: `k_ortak`'ın farkı eski temele göre (yalnız başlık; PC'nin açıklaması kalır); `k_yerel` ekle.
+    assert_eq!(kuyruk.len(), 2);
+    assert_eq!((kuyruk[1]["islem"].as_str(), kuyruk[1]["kayit_id"].as_str()), (Some("ekle"), Some("k_yerel")));
+    assert_eq!(kuyruk[0], json!({"islem": "guncelle", "kayit_id": "k_ortak", "temel_revizyon": 2, "degisiklik": {"baslik": "telefonda"}}));
+    let g = d.m.depo.gorunen_kayit("k_ortak").unwrap().unwrap();
+    assert!(g.bekleyen);
+    assert_eq!((g.kayit.baslik.as_str(), g.kayit.aciklama.as_deref()), ("telefonda", Some("PC'de")));
+    assert_eq!(d.m.depo.gorunen_kayit("k_yerel").unwrap().unwrap().kayit.baslik, "x");
+    assert!(d.m.depo.gorunen_kayit("k_pc").unwrap().is_some(), "PC'de olan eklendi");
+    // Kuyruğun başı yollandı.
+    assert!(matches!(ajanda_yukari_coz(&e.gonderilecek[0]), Ok(AjandaYukari::Islem { .. })));
 }

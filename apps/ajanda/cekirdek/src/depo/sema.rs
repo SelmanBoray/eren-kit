@@ -5,7 +5,7 @@
 //! `kurulu_alarmlar` tablosunu R3 (`depo/alarmlar.rs`) kullanır; sütun değişikliği R3 ile birlikte.
 //!
 //! Not: 2. göç ilk dalganın debug APK'larıyla cihazlara gitmiş olabileceği için yerinde değiştirilmedi;
-//! R4'ün eklediği sütunlar 3. göçtedir.
+//! R4'ün eklediği sütunlar 3. göçtedir. 4. göç yerel kiptir (D1); numaralar `YOL-HARITASI.md` 7.3'te sabittir.
 
 pub const GOCLER: &[&str] = &[
     // 1: iskelet tablosu (köprü kanıtı). Yayımlanmış iskelet APK'sı açabilsin diye durur, 2. göç siler.
@@ -97,4 +97,22 @@ pub const GOCLER: &[&str] = &[
     "ALTER TABLE kuyruk ADD COLUMN bekledigi_rev INTEGER;
     ALTER TABLE ret_listesi ADD COLUMN govde_json TEXT;
     ALTER TABLE ret_listesi ADD COLUMN sira INTEGER NOT NULL DEFAULT 0;",
+    // 4: yerel kip (D1, `YOL-HARITASI.md` 3.3). `meta.kip`: `yerel` (doğruluk kaynağı telefonun görünen
+    // kopyası, yazar `motor/yerel.rs`) ya da `bagli` (servis yazar; bugünkü kurulum). Mevcut kurulum şöyle
+    // sınıflanır: eşleşme (`meta.eslesme`) varsa `bagli` ve hiçbir satır değişmez; yoksa `yerel` ve kuyruk
+    // yerele toplanır: görünen kopya zaten sunucu kopyası + kuyruğun iyimser halidir, o hal yerel gerçek olur,
+    // kuyruk atılır, `bekleyen` düşer. Ret listesi, alarmlar ve PC temeli (`sunucu_kayitlari`, `depo_id`,
+    // `son_rev`) kalır. `yerel_gecmis`: yerel kipteki her yazmanın geçmiş satırı (`AjandaGecmisGirdisi`
+    // JSON'u, sözleşme biçimi); `rev` yerel revizyondur (`meta.yerel_rev`, ilk yerel yazmada kurulur).
+    "CREATE TABLE yerel_gecmis (
+        kayit_id TEXT NOT NULL,
+        rev      INTEGER NOT NULL,
+        ts_ms    INTEGER NOT NULL,
+        json     TEXT NOT NULL,
+        PRIMARY KEY (kayit_id, rev)
+    ) WITHOUT ROWID;
+    INSERT INTO meta (anahtar, deger)
+        SELECT 'kip', CASE WHEN EXISTS (SELECT 1 FROM meta WHERE anahtar = 'eslesme') THEN 'bagli' ELSE 'yerel' END;
+    UPDATE gorunen SET bekleyen = 0 WHERE (SELECT deger FROM meta WHERE anahtar = 'kip') = 'yerel';
+    DELETE FROM kuyruk WHERE (SELECT deger FROM meta WHERE anahtar = 'kip') = 'yerel';",
 ];
