@@ -192,7 +192,7 @@ fn tek_kayit_siniri_yalniz_o_kaydi_dusurur() {
 }
 
 /// Kayıtlar dışı: ek dizini en çok 10 000 öğe, kayıtlar dışındaki sözcükler en çok 100 000, iç içelik en
-/// çok 128. Hepsi ağaç kurulmadan ya da üst düzey okunurken açık hatayla reddedilir.
+/// çok 127 (serde_json'unki). Hepsi ağaç kurulmadan ya da üst düzey okunurken açık hatayla reddedilir.
 #[test]
 fn kayitlar_disi_sinirlar() {
     let h = Hat::yeni("guven-dis");
@@ -204,7 +204,7 @@ fn kayitlar_disi_sinirlar() {
     let derin = belge_metni(&format!("{}{}", "[".repeat(200), "]".repeat(200)));
     let (alan, neden) = red(&h, &derin);
     assert!(alan == "belge" && neden.contains("çok derin"), "{alan}: {neden}");
-    // 128'in altındaki iç içelik kaydı yalnız geçersiz kılar.
+    // Sınırın altındaki iç içelik kaydı yalnız geçersiz kılar.
     let p = onizle(&h, &belge_metni(&format!("{}{}", "[".repeat(100), "]".repeat(100))));
     assert_eq!((p.toplam, p.gecersiz), (1, 1));
 }
@@ -753,4 +753,66 @@ fn ice_aktarmadan_sonraki_kuyruk_hatasi_uygulamayi_bozmaz() {
     h.kopar();
     h.baglan();
     assert_eq!(h.pc.d.kayitlar["k_x"].baslik, "X (dosya)");
+}
+
+/// Köprünün bayt eşleri (`ice_aktarma_onizlemesi_bayt`, `ice_aktar_bayt`; Kotlin `ByteArray`): `String`
+/// sürümleriyle aynı önizleme, aynı hata ve aynı iz (iki yol karışık kullanılabilir). UTF-8 olmayan bayt
+/// yalnız konumla reddedilir, hiçbir şey yazılmaz.
+#[test]
+fn bayt_esleri_metin_surumleriyle_ayni() {
+    let a = Hat::yeni("guven-bayt-a");
+    let x = a.c.ekle(govde("Örnek ğüşiöç €", Some(an("2026-11-26", "10:00"))), GirdiYolu::Elle).unwrap();
+    a.c.ekle(govde("İkinci", None), GirdiYolu::Elle).unwrap();
+    a.c.sil(x).unwrap();
+    let gecerli = belge(&a);
+    let k = ornek_kayit();
+    let belgeler = [
+        gecerli.clone(),
+        belge_metni(&format!("{k},0,{{}}")),
+        belge_metni(&format!(":{k}")),
+        belge_metni(&vec!["0"; DIZI_AZAMI + 1].join(",")),
+        gecerli.replace("eren_ajanda_yedegi", "baska"),
+        gecerli.replacen(&format!("\"sozlesme_surumu\":{AJANDA_SURUMU}"), "\"sozlesme_surumu\":999", 1),
+        "{".to_string(),
+        String::new(),
+    ];
+    let b = Hat::yeni("guven-bayt-b");
+    for m in &belgeler {
+        let metin = b.c.ice_aktarma_onizlemesi(m.clone());
+        let bayt = b.c.ice_aktarma_onizlemesi_bayt(m.as_bytes().to_vec());
+        assert_eq!(format!("{metin:?}"), format!("{bayt:?}"), "önizleme");
+        let metin = b.c.ice_aktar(m.clone(), None);
+        let bayt = b.c.ice_aktar_bayt(m.as_bytes().to_vec(), None);
+        assert_eq!(format!("{metin:?}"), format!("{bayt:?}"), "izsiz uygulama");
+    }
+    assert_eq!(b.c.disa_aktar().unwrap().kayit, 0, "izsiz ve bozuk belge hiçbir şey yazmadı");
+
+    // UTF-8 değil: geçerli belgenin içine yarım bir çok baytlı karakter; konum taşır, içerik taşımaz.
+    let mut bozuk = gecerli.clone().into_bytes();
+    let yer = gecerli.find("ğ").unwrap();
+    bozuk.truncate(yer + 1);
+    bozuk.extend_from_slice(&gecerli.as_bytes()[yer + 2..]);
+    for s in [b.c.ice_aktarma_onizlemesi_bayt(bozuk.clone()).map(|_| ()), b.c.ice_aktar_bayt(bozuk.clone(), Some("0".repeat(16))).map(|_| ())] {
+        match s {
+            Err(CekirdekHatasi::GecersizGirdi { alan, neden }) => assert_eq!((alan, neden), ("belge".to_string(), format!("UTF-8 değil (bayt {yer})"))),
+            s => panic!("reddedilmedi: {s:?}"),
+        }
+    }
+    // Baştaki BOM ayıklanmaz (`String` yolundaki gibi): JSON değil.
+    let bom = [b"\xef\xbb\xbf".as_slice(), gecerli.as_bytes()].concat();
+    assert_eq!(
+        format!("{:?}", b.c.ice_aktarma_onizlemesi_bayt(bom)),
+        format!("{:?}", b.c.ice_aktarma_onizlemesi(format!("\u{feff}{gecerli}")))
+    );
+
+    // Karışık yol: metinle önizleme, baytla uygulama (ve tersi) aynı izle uygulanır.
+    let on = b.c.ice_aktarma_onizlemesi(gecerli.clone()).unwrap();
+    assert_eq!((on.yeni, on.silinmis), (2, 1));
+    let s = b.c.ice_aktar_bayt(gecerli.clone().into_bytes(), Some(on.iz)).unwrap();
+    assert!(s.uygulandi);
+    assert_eq!(b.c.disa_aktar().unwrap().kayit, 2);
+    let c = Hat::yeni("guven-bayt-c");
+    let on = c.c.ice_aktarma_onizlemesi_bayt(gecerli.clone().into_bytes()).unwrap();
+    assert!(c.c.ice_aktar(gecerli.clone(), Some(on.iz)).unwrap().uygulandi);
+    assert_eq!(c.c.disa_aktar().unwrap().kayit, 2);
 }

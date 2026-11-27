@@ -464,6 +464,21 @@ impl Cekirdek {
         self.calistir(|m, o, e| m.ice_aktar(o, e, &belge, iz.as_deref()))
     }
 
+    /// `ice_aktarma_onizlemesi`, belge kaptan okunduğu gibi UTF-8 baytlarıyla (Kotlin `ByteArray`): Kotlin
+    /// belgeyi UTF-16 `String`'e çevirip tutmaz, köprü de yeniden UTF-8'e kodlamaz (tepe yığın belge boyunun
+    /// birkaç katı yerine yaklaşık bir katı). Sonuç, hatalar ve `iz` `String` sürümüyle aynıdır (iki yol
+    /// karışık kullanılabilir); ek hata: UTF-8 değilse `GecersizGirdi{alan: "belge", neden: "UTF-8 değil
+    /// (bayt N)"}`. Sınır yine `belge_azami_bayt`.
+    pub fn ice_aktarma_onizlemesi_bayt(&self, belge: Vec<u8>) -> Result<IceAktarmaOnizlemesi, CekirdekHatasi> {
+        self.calistir(|m, o, _| m.ice_aktarma_onizlemesi(o, Motor::belge_utf8(&belge)?))
+    }
+
+    /// `ice_aktar`, belge UTF-8 baytlarıyla (`ice_aktarma_onizlemesi_bayt`'a bakın); kurallar `ice_aktar`'ınkiyle
+    /// aynıdır.
+    pub fn ice_aktar_bayt(&self, belge: Vec<u8>, iz: Option<String>) -> Result<IceAktarmaSonucu, CekirdekHatasi> {
+        self.calistir(|m, o, e| m.ice_aktar(o, e, Motor::belge_utf8(&belge)?, iz.as_deref()))
+    }
+
     // Birleştirme önizlemesi (D4; kurallar `motor/birlestirme.rs` başında)
 
     /// Yerel kipten servise bağlanmada onay bekleyen birleştirmenin önizlemesi; bekleyen yoksa `None`.

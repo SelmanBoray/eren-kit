@@ -28,10 +28,11 @@
 //! tarama durur), kayıtlar dışındaki sözcükler (anahtar ya da değer) `DIS_SOZCUK_AZAMI`, iç içelik
 //! `DERINLIK_AZAMI`. Üst düzey `kayitlar` boşaltılmış metinden okunur; kayıtlar `plan_kur`'da tek tek
 //! çözülür (bir öğe en çok `KAYIT_AZAMI_BAYT`; büyüğü yalnız o kaydı geçersiz kılar). Bellek: belge metni +
-//! öğe aralıkları + o anki tek kaydın ağacı (+ yazılacak kayıtlar). Öğenin içindeki sözdizimi hatası da
-//! bütün belgeyi reddeder (eski davranış: dosya bozuk); çok büyük öğenin sözdizimini ağaç kurmayan
-//! `sozdizimi_denetle` denetler. Taramanın, boşaltılmış metnin ve öğelerin birlikte kabul ettiği her metin
-//! serde_json'un da bütün belge olarak kabul ettiği metindir (testli: elle bozulmuş örnekler ve bulanıklaştırma).
+//! öğe aralıkları + o anki tek kaydın ağacı (yalnız uygulamada + yazılacak kayıtlar; önizleme onları
+//! tutmaz). Öğenin içindeki sözdizimi hatası da bütün belgeyi reddeder (eski davranış: dosya bozuk); çok
+//! büyük öğenin sözdizimini ağaç kurmayan `sozdizimi_denetle` denetler. Taramanın, boşaltılmış metnin ve
+//! öğelerin birlikte kabul ettiği her metin serde_json'un da bütün belge olarak kabul ettiği metindir
+//! (testli: elle bozulmuş örnekler, bulanıklaştırma ve iç içelik sınırının iki yanı).
 //!
 //! Sınırların tutarlılığı: dışa aktarmanın yazdığı belge içe aktarmada boyutla reddedilmez. Geçerli bir
 //! kaydın sıkışık JSON'u en çok `KAYIT_EN_BUYUK_BAYT`'tır (modelin metin ve adet sınırlarından hesaplanır,
@@ -156,8 +157,10 @@ const _: () = assert!(BELGE_AZAMI_BAYT <= i32::MAX as usize - 8);
 const DIS_SOZCUK_AZAMI: usize = 100_000;
 /// Ek dizininin öğe sınırı (Kotlin `YedekKabi.AZAMI_EK_SAYISI`).
 const EK_AZAMI_ADET: usize = 10_000;
-/// İç içeliğin sınırı (serde_json'un da sınırı 128'dir).
-const DERINLIK_AZAMI: usize = 128;
+/// İç içeliğin sınırı: serde_json'unki (özyineleme sayacı 128'den başlar, 128. düzeyde reddeder; en çok 127).
+/// Bütün belgede sayılır (kökteki nesne ve `kayitlar` dizisi dahil): çekirdeğin kabul ettiği belgeyi
+/// serde_json da bütünüyle kabul eder (`derinlik_siniri_serde_json_ile_ayni`).
+const DERINLIK_AZAMI: usize = 127;
 /// Kaydın `guncelleme_ms`'inin şimdinin ötesinde kabul edilen payı: 1 gün. Cihaz saatleri arasındaki olağan
 /// kayma ve yanlış dilimle elle kurulmuş saat (en çok ~14 saat) geçer; daha ilerisi bozuk saat ya da
 /// düzenlenmiş dosyadır.
@@ -278,6 +281,10 @@ fn ofset(metin_: &str, satir: usize, sutun: usize) -> usize {
 fn json_degil(metin_: &str, ofset_: usize) -> CekirdekHatasi {
     let (satir, sutun) = konum(metin_, ofset_);
     belge_hatasi("belge", &format!("JSON değil (satır {satir}, sütun {sutun})"))
+}
+
+fn cok_buyuk(azami: usize) -> CekirdekHatasi {
+    belge_hatasi("belge", &format!("çok büyük (en çok {} MiB)", azami / (1024 * 1024)))
 }
 
 fn cok_fazla(alan: &str, azami: usize) -> CekirdekHatasi {
@@ -624,7 +631,7 @@ fn belge_coz(metin_: &str) -> Result<Belge<'_>, CekirdekHatasi> {
 /// `belge_coz`, belge sınırı verilerek (sınırın kendisi testte küçük sınırla sınanır: gerçeği ~1,77 GiB).
 fn belge_coz_sinirla(metin_: &str, azami: usize) -> Result<Belge<'_>, CekirdekHatasi> {
     if metin_.len() > azami {
-        return Err(belge_hatasi("belge", &format!("çok büyük (en çok {} MiB)", azami / (1024 * 1024))));
+        return Err(cok_buyuk(azami));
     }
     let tarama = yapi_tara(metin_)?;
     // `kayitlar` dizisi boşaltılmış metin (ağaç yalnız üst düzey için kurulur); hata konumu asıl metne çevrilir.
@@ -767,8 +774,19 @@ fn dilim_sorunu(k: &AjandaKaydi, bilinir: &mut impl FnMut(&str) -> bool) -> Opti
     None
 }
 
-/// Telefonun şimdiki haline göre planı kurar (salt okur). `yerel`: çalışma kipi.
-fn plan_kur(d: &Depo, o: &Ortam, belge: Belge, yerel: bool) -> Result<Plan, CekirdekHatasi> {
+/// Planın kullanımı: önizleme yalnız sayıları ve izi ister; uygulama yazılacak kayıtları da.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PlanKullanimi {
+    /// Yazılacaklar tutulmaz (`Plan.yazilacaklar` boş): her kayıt sınıflanıp sayıldıktan sonra bırakılır.
+    /// Bellek: belge metni + öğe aralıkları + kimlik kümesi + o anki tek kayıt (`tests/aktarma_bellek.rs`).
+    Onizleme,
+    /// Yazılacaklar tutulur (bellek: yazılacak kayıtların çözülmüş hali de).
+    Uygulama,
+}
+
+/// Telefonun şimdiki haline göre planı kurar (salt okur). `yerel`: çalışma kipi. Önizleme ve uygulama aynı
+/// sınıflamayı, sayıları ve izi verir; ayrım yalnız yazılacakların tutulmasıdır (`PlanKullanimi`).
+fn plan_kur(d: &Depo, o: &Ortam, belge: Belge, yerel: bool, kullanim: PlanKullanimi) -> Result<Plan, CekirdekHatasi> {
     let telefondaki: HashMap<String, String> = d.gorunen_ham_hepsi()?.into_iter().collect();
     let mut kalan_yer = (KAYIT_ADET as i64 - telefondaki.len() as i64).max(0);
     let mut dilimler: HashMap<String, bool> = HashMap::new();
@@ -912,7 +930,9 @@ fn plan_kur(d: &Depo, o: &Ortam, belge: Belge, yerel: bool) -> Result<Plan, Ceki
                 p.taslak_onaylanacak += 1;
             }
             p.kuyruga_girecek_islem += sayi(y.islemler.len());
-            yazilacaklar.push(y);
+            if kullanim == PlanKullanimi::Uygulama {
+                yazilacaklar.push(y);
+            }
         }
     }
     p.iz = format!("{:016x}", iz.0);
@@ -956,6 +976,16 @@ fn sayi(n: usize) -> i32 {
 }
 
 impl Motor {
+    /// Bayt olarak verilen belgenin metni (köprünün `_bayt` eşleri; kopyasız). Önce boyut (`belge_coz`'unkiyle
+    /// aynı hata), sonra UTF-8: değilse `GecersizGirdi{alan: "belge", neden: "UTF-8 değil (bayt N)"}` (yalnız
+    /// konum). Baştaki BOM ayıklanmaz: `String` yolundaki gibi JSON değildir.
+    pub(crate) fn belge_utf8(baytlar: &[u8]) -> Result<&str, CekirdekHatasi> {
+        if baytlar.len() > BELGE_AZAMI_BAYT {
+            return Err(cok_buyuk(BELGE_AZAMI_BAYT));
+        }
+        std::str::from_utf8(baytlar).map_err(|e| belge_hatasi("belge", &format!("UTF-8 değil (bayt {})", e.valid_up_to())))
+    }
+
     /// Dışa aktarma: görünen kopyanın bütün satırları (mezar taşları dahil; bağlı kipte gönderilmemiş
     /// değişiklikler dahil). Okunamayan satır kaybolmaz: JSON'u olduğu gibi (o da değilse metni) belgeye
     /// girer ve sayılır. Hiçbir şey yazmaz.
@@ -1028,7 +1058,7 @@ impl Motor {
     /// İçe aktarmanın önizlemesi (hiçbir şey yazmaz). Belge bütünüyle okunamazsa `GecersizGirdi`.
     pub(crate) fn ice_aktarma_onizlemesi(&self, o: &Ortam, belge: &str) -> Result<IceAktarmaOnizlemesi, CekirdekHatasi> {
         let belge = belge_coz(belge)?;
-        Ok(plan_kur(&self.depo, o, belge, self.yerel_mi()?)?.onizleme)
+        Ok(plan_kur(&self.depo, o, belge, self.yerel_mi()?, PlanKullanimi::Onizleme)?.onizleme)
     }
 
     /// İçe aktarma, tek SQLite işleminde (ya hepsi ya hiçbiri). Plan işlemin içinde yeniden kurulur; `iz`
@@ -1049,7 +1079,7 @@ impl Motor {
         };
         let ts_ms = o.simdi_ms();
         let (plan, degisenler, girdiler) = self.depo.yazma(|d| {
-            let Plan { onizleme, yazilacaklar } = plan_kur(d, o, belge, yerel)?;
+            let Plan { onizleme, yazilacaklar } = plan_kur(d, o, belge, yerel, PlanKullanimi::Uygulama)?;
             // İz zorunlu: kullanıcının görmediği plan uygulanmaz.
             if iz != Some(onizleme.iz.as_str()) {
                 return Ok((IceAktarmaSonucu { uygulandi: false, plan: onizleme }, Vec::new(), Vec::new()));
@@ -1150,7 +1180,6 @@ mod testler {
         let n = k.json().to_string().len();
         assert!(n <= KAYIT_EN_BUYUK_BAYT, "{n} > {KAYIT_EN_BUYUK_BAYT}");
         assert!(n * 10 >= KAYIT_EN_BUYUK_BAYT * 9, "sınır gevşek: {n} / {KAYIT_EN_BUYUK_BAYT}");
-        assert!(KAYIT_EN_BUYUK_BAYT <= KAYIT_AZAMI_BAYT);
         let ek = ek_json(&ek_dosyasi("f".repeat(64), EK_AZAMI_BAYT, format!("a/{}", "b".repeat(125)))).to_string();
         assert!(ek.len() < EK_OGESI_AZAMI_BAYT, "{}", ek.len());
         assert_eq!(BELGE_AZAMI_BAYT, 1_900_614_096);
@@ -1287,6 +1316,24 @@ mod testler {
                 let ham = &m[b..s];
                 if ham.len() > azami { sozdizimi_denetle(ham).is_ok() } else { serde_json::from_str::<Value>(ham).is_ok() }
             })
+    }
+
+    /// İç içelik sınırı serde_json'unkiyle aynıdır, bütün belgede ve tek değerde: bulanıklaştırma bu derinliğe
+    /// ulaşmaz, sınırın iki yanı burada denenir.
+    #[test]
+    fn derinlik_siniri_serde_json_ile_ayni() {
+        for n in [DERINLIK_AZAMI - 2, DERINLIK_AZAMI - 1, DERINLIK_AZAMI, DERINLIK_AZAMI + 1] {
+            let deger = format!("{}{}", "[".repeat(n), "]".repeat(n));
+            let serde = serde_json::from_str::<Value>(&deger).is_ok();
+            assert_eq!(sozdizimi_denetle(&deger).is_ok(), serde, "değer, derinlik {n}");
+            // Kökteki nesne ve `kayitlar` dizisi iki düzeydir: öğenin içi `n - 2`.
+            let ic = format!("{}{}", "[".repeat(n - 2), "]".repeat(n - 2));
+            let belge = format!(r#"{{"kayitlar":[{ic}]}}"#);
+            let serde = serde_json::from_str::<Value>(&belge).is_ok();
+            for azami in [KAYIT_AZAMI_BAYT, 0] {
+                assert_eq!(sozdizimi_kabul(&belge, azami), serde, "belge, derinlik {n}, öğe sınırı {azami}");
+            }
+        }
     }
 
     #[test]

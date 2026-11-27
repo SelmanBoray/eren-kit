@@ -89,8 +89,15 @@ fn aktarma_belgeyi_agaca_cevirmez() {
     let girdi = belge.clone();
     let (on, on_tepe) = tepe(move || b.c.ice_aktarma_onizlemesi(girdi).unwrap());
     assert_eq!(on.yeni, adet);
-    // Ağaç kurulsaydı tepe belgenin birkaç katı olurdu; ağaçsız: öğe aralıkları, kimlik kümesi, tek kaydın ağacı.
+    // Ağaç kurulsaydı tepe belgenin birkaç katı olurdu (ölçü: ~6,9 kat).
     assert!(agac_tepe > 2 * belge.len(), "ağaç {agac_tepe}, belge {}", belge.len());
+    // Önizleme kayıtları tutmaz (`PlanKullanimi::Onizleme`); kalan, kayıt başına sabit bir paydır, kaydın
+    // içeriğinden bağımsız: öğe aralığı (16 bayt; `Vec` büyürken eski ve yeni tampon birlikte, ~40) ve
+    // görülen kimlik kümesi (`String` + kova; büyürken iki tablo, ~70 + kimliğin kendisi). Kayıt başına 128
+    // bayt + tek kaydın ağacı ve küçük haritalar için 256 KiB bu payı taşır; çözülmüş kaydı tutan önizleme
+    // (eski hal: 42 MB, kayıt başına ~2 KB) ikisini de aşar. Ölçü (2026-11-28): 1,85 MB, belge 13,6 MB.
+    let pay = adet as usize * 128 + 256 * 1024;
+    assert!(on_tepe < pay, "önizleme tepesi {on_tepe}, kayıt başına pay {pay}");
     assert!(on_tepe * 5 < belge.len(), "önizleme tepesi {on_tepe}, belge {}", belge.len());
 
     // Dışa aktarma: satırlar + belge (+ tek kaydın ağacı); ağaçlı yazım bütün kayıtların ağacını tutardı.
