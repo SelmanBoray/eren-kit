@@ -11,6 +11,7 @@ import {
   AJANDA_KANAL_HATALARI,
   AJANDA_RET_NEDENLERI,
   AJANDA_SINIRLARI,
+  AJANDA_QR_SURUMU,
   AJANDA_SURUMU,
   AjandaAsagi,
   ajandaAsagiCoz,
@@ -95,7 +96,8 @@ test("sürüm sabitleri bağımsız; mevcutlar değişmedi", () => {
   assert.equal(PROTOKOL_SURUMU, 1);
   assert.equal(SOHBET_SURUMU, 5);
   // v2: saatsiz gün kaydında gün hatırlatması ve gun_bolumu, gece_teyidi_gerekli (docs/AJANDA.md "Sürüm 2").
-  assert.equal(AJANDA_SURUMU, 2);
+  // v3: bölge, varış, bağlantılar, ek üstverisi, simge; yetenekler; ek yedeği çerçeveleri.
+  assert.equal(AJANDA_SURUMU, 3);
 });
 
 test("v2: imza öneki kanal sürümünden türemez; eski sürümlü çerçeve protokol_uyumsuz", () => {
@@ -156,7 +158,7 @@ test("QR: eski ve ajanda QR'ı birbirinin şemasına uymaz", () => {
   const eski = { v: 1, host: "100.64.0.1", port: 1, kod: "ABCD2345", server_public_key: ANAHTAR };
   assert.equal(EslestirmeQr.safeParse(eski).success, true);
   assert.equal(AjandaEslestirmeQr.safeParse(eski).success, false);
-  const ajanda = { ...eski, v: AJANDA_SURUMU, kanal: "ajanda" };
+  const ajanda = { ...eski, v: AJANDA_QR_SURUMU, kanal: "ajanda" };
   assert.equal(AjandaEslestirmeQr.safeParse(ajanda).success, true);
   assert.equal(EslestirmeQr.safeParse(ajanda).success, false);
   assert.equal(AjandaEslestirmeQr.safeParse({ ...ajanda, v: 1 }).success, false, "v1 ajanda QR'ı (eski servis) reddedilir");

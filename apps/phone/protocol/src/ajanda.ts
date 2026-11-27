@@ -1,5 +1,24 @@
 import { z } from "zod";
 import {
+  AjandaBaglantilar,
+  AjandaBolge,
+  AjandaBolgeKonumu,
+  ajandaBolgeAnahtari,
+  ajandaBolgeYeriDegisirMi,
+  AjandaEkBayti,
+  AjandaEkler,
+  AjandaEkOzeti,
+  AjandaEkRetKodu,
+  AjandaEkVerisi,
+  ajandaBase64Bayti,
+  AjandaSimge,
+  AjandaVaris,
+  AjandaYetenekler,
+  v3AlanKurallari,
+  type AjandaBaglanti,
+  type AjandaEki,
+} from "./ajanda-alan.ts";
+import {
   ajandaMetni,
   ajandaSatiri,
   AjandaZamani,
@@ -226,17 +245,35 @@ export const TUR_KOKENLERI = ["insan", "sentetik"] as const;
 export const TurKokeni = z.enum(TUR_KOKENLERI);
 export type TurKokeni = z.infer<typeof TurKokeni>;
 
-/** Alan izi ve değişikliklerin alan kümesi, sırası kanoniktir. */
-export const AJANDA_ALANLARI = ["tur", "baslik", "aciklama", "zaman", "hatirlatmalar", "tekrar", "durum"] as const;
+/** v2'nin alan kümesi (dondurulmuş). */
+const AJANDA_ALANLARI_V2 = ["tur", "baslik", "aciklama", "zaman", "hatirlatmalar", "tekrar", "durum"] as const;
+
+/** v3'te eklenen kayıt alanları (hepsi isteğe bağlı, `ajanda-alan.ts`). */
+export const AJANDA_V3_ALANLARI = ["simge", "bolge", "bolge_konumu", "varis", "baglantilar", "ekler"] as const;
+
+/**
+ * Alan izi ve değişikliklerin alan kümesi (en yeni sürüm), sırası kanoniktir. Yeni sürümün alanları
+ * sona eklenir: her eski sürümün kümesi bunun önekidir, süzülen liste o sürümde de kanoniktir.
+ */
+export const AJANDA_ALANLARI = [...AJANDA_ALANLARI_V2, ...AJANDA_V3_ALANLARI] as const;
 export const AjandaAlani = z.enum(AJANDA_ALANLARI);
 export type AjandaAlani = z.infer<typeof AjandaAlani>;
 
-const AlanListesi = z
-  .array(AjandaAlani)
-  .max(AJANDA_ALANLARI.length)
-  .refine((l) => l.every((a, i) => i === 0 || AJANDA_ALANLARI.indexOf(l[i - 1]!) < AJANDA_ALANLARI.indexOf(a)), {
-    message: "alanlar kanonik sırada ve tekil",
-  });
+/** Sürümün alan kümesi (`AJANDA_ALANLARI`'nın öneki). */
+export const AJANDA_SURUM_ALANLARI = {
+  2: AJANDA_ALANLARI_V2,
+  3: AJANDA_ALANLARI,
+} as const satisfies { [V in AjandaSurumNo]: readonly AjandaAlani[] };
+
+/** Sürümün alan listesi şeması (`elle_alanlar`, `korunan_alanlar`): kanonik sırada ve tekil. */
+function alanListesi<A extends readonly [string, ...string[]]>(alanlar: A) {
+  return z
+    .array(z.enum(alanlar))
+    .max(alanlar.length)
+    .refine((l) => l.every((a, i) => i === 0 || alanlar.indexOf(l[i - 1]!) < alanlar.indexOf(a)), {
+      message: "alanlar kanonik sırada ve tekil",
+    });
+}
 
 export const KayitId = OpakId;
 /** Servisin ajanda deposunun kimliği; depo yeniden kurulunca değişir. */
@@ -316,149 +353,227 @@ const GOVDE_ALANLARI = {
   tekrar: Tekrar.optional(),
 };
 
-/**
- * Kaydın PC'deki güncel hali; `/ajanda` `kayit` çerçevesi bunu taşır. Eylemsiz veridir: URL, intent,
- * komut alanı yoktur; metinler düz metin gösterilir. Kurallar: `zamanKurallari`; `ornekler` yalnız
- * tekrarda, tarih sırasıyla tekil ve her biri serinin örnek günü (`ornekGunuMu`); `elle_alanlar`
- * kanonik sırada. `guncelleme_ms`, kaydın güncel revizyonunu yazan geçmiş satırının `ts_ms`'idir
- * (telafi izi bu eşitliğe dayanır: `ajandaTelafiTamMi`).
- * - `taslak`: insan kökenli olmayan turda doğdu; kullanıcı `onayla`yana kadar hatırlatma kurulmaz.
- * - `silindi`: mezar taşı; içerik `geri_yukle` için durur, hatırlatma kurulmaz.
- * - `elle_alanlar`: kullanıcının emriyle (uygulamadan ya da insan turundaki araçla) değişen alanlar;
- *   emir olmayan otomasyon (sentetik tur, arka plan) bunları değiştiremez.
- */
-export const AjandaKaydi = z
-  .strictObject({
-    kayit_id: KayitId,
-    revizyon: Revizyon,
-    ...GOVDE_ALANLARI,
-    ornekler: z.array(AjandaOrnegi).max(AJANDA_SINIRLARI.ORNEK_ADET),
-    durum: KayitDurumu,
-    taslak: z.boolean(),
-    silindi: z.boolean(),
-    elle_alanlar: AlanListesi,
-    kaynak: AjandaKaynagi,
-    olusturma_ms: ZamanMs,
-    guncelleme_ms: ZamanMs,
-  })
-  .superRefine((k, ctx) => {
-    zamanKurallari(k, ctx);
-    if (k.ornekler.length > 0) {
-      if (k.tekrar === undefined) {
-        ctx.addIssue({ code: "custom", path: ["ornekler"], message: "ornekler yalnız tekrar eden kayıtta" });
-      } else if (!k.ornekler.every((o, i) => i === 0 || k.ornekler[i - 1]!.tarih < o.tarih)) {
-        ctx.addIssue({ code: "custom", path: ["ornekler"], message: "ornekler tarih sırasıyla ve tekil" });
-      } else if (k.zaman !== undefined && "tarih" in k.zaman && k.ornekler[0]!.tarih < k.zaman.tarih) {
-        ctx.addIssue({ code: "custom", path: ["ornekler"], message: "örnek çapadan önce" });
-      } else if (
-        k.zaman !== undefined &&
-        "tarih" in k.zaman &&
-        gercekTarihMi(k.zaman.tarih) &&
-        Tekrar.safeParse(k.tekrar).success &&
-        k.ornekler.every((o) => gercekTarihMi(o.tarih)) &&
-        !ornekGunleriMi(k.zaman.tarih, k.tekrar, k.ornekler.map((o) => o.tarih))
-      ) {
-        ctx.addIssue({ code: "custom", path: ["ornekler"], message: "örnek serinin günü değil" });
-      }
-    }
-    if (k.guncelleme_ms < k.olusturma_ms) {
-      ctx.addIssue({ code: "custom", path: ["guncelleme_ms"], message: "güncelleme oluşturmadan önce" });
-    }
-  });
-export type AjandaKaydi = z.infer<typeof AjandaKaydi>;
+/** v3 kayıt ve `ekle` alanları: hepsi isteğe bağlı, üst düzey (`ajanda-alan.ts`). */
+const V3_GOVDE_ALANLARI = {
+  simge: AjandaSimge.optional(),
+  bolge: AjandaBolge.optional(),
+  bolge_konumu: AjandaBolgeKonumu.optional(),
+  varis: AjandaVaris.optional(),
+  baglantilar: AjandaBaglantilar.optional(),
+  ekler: AjandaEkler.optional(),
+};
 
-/** Telefon hatırlatmayı yalnız buna göre kurar (örnek başına `ornekler` durumu ayrıca atlanır). */
-export function hatirlatmaEtkinMi(kayit: Pick<AjandaKaydi, "taslak" | "silindi" | "durum">): boolean {
-  return !kayit.taslak && !kayit.silindi && kayit.durum === "acik";
+/** v3 değişiklik ve geçmiş parçası alanları: `null` kaldırır. */
+const V3_DEGISIKLIK_ALANLARI = {
+  simge: AjandaSimge.nullable().optional(),
+  bolge: AjandaBolge.nullable().optional(),
+  bolge_konumu: AjandaBolgeKonumu.nullable().optional(),
+  varis: AjandaVaris.nullable().optional(),
+  baglantilar: AjandaBaglantilar.nullable().optional(),
+  ekler: AjandaEkler.nullable().optional(),
+};
+
+/**
+ * Sürüm başına gövde eklemeleri. Yeni sürüm buraya bir satır ekler (önceki sürümün alanları + yenileri);
+ * kurallar (`kayitKurallari`, `v3AlanKurallari`) bütün sürümlerde aynı işlevdir, yeni alan yoksa boş geçer.
+ */
+const SURUM_GOVDE_EKLERI = {
+  2: { govde: {}, degisiklik: {} },
+  3: { govde: V3_GOVDE_ALANLARI, degisiklik: V3_DEGISIKLIK_ALANLARI },
+} as const satisfies { [V in AjandaSurumNo]: { govde: z.ZodRawShape; degisiklik: z.ZodRawShape } };
+
+/** Kayıt kurallarının baktığı alanlar (her sürümün kaydı buna uyar). */
+type KayitKuralGirdisi = {
+  zaman?: AjandaZamani | undefined;
+  tekrar?: Tekrar | undefined;
+  ornekler: { tarih: string; durum: string }[];
+  olusturma_ms: number;
+  guncelleme_ms: number;
+  bolge?: unknown;
+  bolge_konumu?: unknown;
+  varis?: unknown;
+};
+
+function kayitKurallari(k: KayitKuralGirdisi, ctx: z.RefinementCtx): void {
+  zamanKurallari(k, ctx);
+  v3AlanKurallari(k, ctx);
+  if (k.ornekler.length > 0) {
+    if (k.tekrar === undefined) {
+      ctx.addIssue({ code: "custom", path: ["ornekler"], message: "ornekler yalnız tekrar eden kayıtta" });
+    } else if (!k.ornekler.every((o, i) => i === 0 || k.ornekler[i - 1]!.tarih < o.tarih)) {
+      ctx.addIssue({ code: "custom", path: ["ornekler"], message: "ornekler tarih sırasıyla ve tekil" });
+    } else if (k.zaman !== undefined && "tarih" in k.zaman && k.ornekler[0]!.tarih < k.zaman.tarih) {
+      ctx.addIssue({ code: "custom", path: ["ornekler"], message: "örnek çapadan önce" });
+    } else if (
+      k.zaman !== undefined &&
+      "tarih" in k.zaman &&
+      gercekTarihMi(k.zaman.tarih) &&
+      Tekrar.safeParse(k.tekrar).success &&
+      k.ornekler.every((o) => gercekTarihMi(o.tarih)) &&
+      !ornekGunleriMi(k.zaman.tarih, k.tekrar, k.ornekler.map((o) => o.tarih))
+    ) {
+      ctx.addIssue({ code: "custom", path: ["ornekler"], message: "örnek serinin günü değil" });
+    }
+  }
+  if (k.guncelleme_ms < k.olusturma_ms) {
+    ctx.addIssue({ code: "custom", path: ["guncelleme_ms"], message: "güncelleme oluşturmadan önce" });
+  }
 }
 
-// İşlemler (telefon -> PC)
+export const AJANDA_ISLEMLERI = ["ekle", "guncelle", "durum", "onayla", "sil", "geri_yukle"] as const;
 
 /**
- * Kısmi değişiklik. Verilmeyen alan değişmez; `null` alanı kaldırır. Durum ayrı işlemdir (`durum`).
- * Kurallar birleşmiş kayıt üzerinde servis tarafından denetlenir (`tutarsiz_kayit`).
+ * Bir sürümün gövde şemaları: kayıt, değişiklik, işlem, geçmiş parçası ve girdisi, alan listesi. Her
+ * sürüm kendi içinde katıdır; v3 şemaları v2'ninkilerin üstüne yalnız isteğe bağlı alan ekler. Dışa
+ * verilen adlar (`AjandaKaydi`, `AjandaIslem`, ...) en yeni sürümündür: servis içeride bununla çalışır,
+ * eski sürüme `ajandaAsagiSurume` uyarlar.
  */
-export const AjandaDegisiklik = z
-  .strictObject({
+function ajandaGovdeSemalari<A extends readonly [string, ...string[]], G extends z.ZodRawShape, D extends z.ZodRawShape>(
+  alanlar: A,
+  ek: { govde: G; degisiklik: D },
+) {
+  const AlanListesi = alanListesi(alanlar);
+
+  /**
+   * Kaydın PC'deki güncel hali; `/ajanda` `kayit` çerçevesi bunu taşır. Eylemsiz veridir: intent ya da
+   * komut alanı yoktur; metinler düz metin gösterilir, bağlantılar (v3) yalnız kullanıcı dokununca açılır.
+   * Kurallar: `zamanKurallari`; `ornekler` yalnız tekrarda, tarih sırasıyla tekil ve her biri serinin
+   * örnek günü (`ornekGunuMu`); `elle_alanlar` kanonik sırada; v3'te `bolge_konumu` ve `varis` yalnız
+   * `bolge` varken (`v3AlanKurallari`). `guncelleme_ms`, kaydın güncel revizyonunu yazan geçmiş
+   * satırının `ts_ms`'idir (telafi izi bu eşitliğe dayanır: `ajandaTelafiTamMi`).
+   * - `taslak`: insan kökenli olmayan turda doğdu; kullanıcı `onayla`yana kadar hatırlatma kurulmaz.
+   * - `silindi`: mezar taşı; içerik `geri_yukle` için durur, hatırlatma kurulmaz.
+   * - `elle_alanlar`: kullanıcının emriyle (uygulamadan ya da insan turundaki araçla) değişen alanlar;
+   *   emir olmayan otomasyon (sentetik tur, arka plan) bunları değiştiremez.
+   */
+  const Kaydi = z
+    .strictObject({
+      kayit_id: KayitId,
+      revizyon: Revizyon,
+      ...GOVDE_ALANLARI,
+      ...ek.govde,
+      ornekler: z.array(AjandaOrnegi).max(AJANDA_SINIRLARI.ORNEK_ADET),
+      durum: KayitDurumu,
+      taslak: z.boolean(),
+      silindi: z.boolean(),
+      elle_alanlar: AlanListesi,
+      kaynak: AjandaKaynagi,
+      olusturma_ms: ZamanMs,
+      guncelleme_ms: ZamanMs,
+    })
+    .superRefine((k, ctx) => kayitKurallari(k as KayitKuralGirdisi, ctx));
+
+  /**
+   * Kısmi değişiklik. Verilmeyen alan değişmez; `null` alanı kaldırır. Durum ayrı işlemdir (`durum`).
+   * Kurallar birleşmiş kayıt üzerinde servis tarafından denetlenir (`tutarsiz_kayit`).
+   */
+  const Degisiklik = z
+    .strictObject({
+      tur: KayitTuru.optional(),
+      baslik: AjandaBaslik.optional(),
+      aciklama: AjandaAciklama.nullable().optional(),
+      zaman: AjandaZamani.nullable().optional(),
+      hatirlatmalar: Hatirlatmalar.optional(),
+      tekrar: Tekrar.nullable().optional(),
+      ...ek.degisiklik,
+    })
+    .refine((d) => Object.values(d).some((x) => x !== undefined), { message: "boş değişiklik" });
+
+  /** Uygulamanın yolladığı işlemler. Hepsi idempotenttir (`islem_id`); her başarılı değişiklik bir revizyon. */
+  const Islem = z.discriminatedUnion("islem", [
+    /** Kimliği uygulama üretir (çevrimdışı kuyrukta bekleyebilsin). */
+    z
+      .strictObject({
+        islem: z.literal("ekle"),
+        kayit_id: KayitId,
+        ...GOVDE_ALANLARI,
+        ...ek.govde,
+        girdi_yolu: z.enum(INSAN_YOLLARI),
+      })
+      .superRefine((g, ctx) => {
+        const girdi = g as Parameters<typeof zamanKurallari>[0] & Parameters<typeof v3AlanKurallari>[0];
+        zamanKurallari(girdi, ctx);
+        v3AlanKurallari(girdi, ctx);
+      }),
+    /** `temel_revizyon`: kullanıcının düzenlediği hal. Reddetmez (varış sırası kazanır), geçmişe yazılır. */
+    z.strictObject({
+      islem: z.literal("guncelle"),
+      kayit_id: KayitId,
+      temel_revizyon: Revizyon,
+      degisiklik: Degisiklik,
+    }),
+    /** `ornek_tarihi` verilirse yalnız o örnek (`acik` örnek satırını kaldırır); yoksa kaydın kendisi. */
+    z.strictObject({
+      islem: z.literal("durum"),
+      kayit_id: KayitId,
+      durum: KayitDurumu,
+      ornek_tarihi: Tarih.optional(),
+    }),
+    /** Taslağı kesinleştirir: hatırlatmalar bundan sonra kurulur. */
+    z.strictObject({ islem: z.literal("onayla"), kayit_id: KayitId }),
+    /** Yumuşak silme. */
+    z.strictObject({ islem: z.literal("sil"), kayit_id: KayitId }),
+    z.strictObject({ islem: z.literal("geri_yukle"), kayit_id: KayitId }),
+  ]);
+
+  /** Değişikliğin öncesi ya da sonrası: yalnız değişen alanlar. `null`: alan yoktu / kaldırıldı. */
+  const Parca = z.strictObject({
     tur: KayitTuru.optional(),
     baslik: AjandaBaslik.optional(),
     aciklama: AjandaAciklama.nullable().optional(),
     zaman: AjandaZamani.nullable().optional(),
     hatirlatmalar: Hatirlatmalar.optional(),
     tekrar: Tekrar.nullable().optional(),
-  })
-  .refine((d) => Object.values(d).some((v) => v !== undefined), { message: "boş değişiklik" });
-export type AjandaDegisiklik = z.infer<typeof AjandaDegisiklik>;
+    ...ek.degisiklik,
+    durum: KayitDurumu.optional(),
+    taslak: z.boolean().optional(),
+    silindi: z.boolean().optional(),
+    /** Yalnız `ornek_tarihi`'li girdide: o örneğin durumu, `null` açık. */
+    ornek_durumu: OrnekDurumu.nullable().optional(),
+    /** Tekrar ya da çapa değişince budanan, ya da `ORNEK_ADET` için atılan örnek satırları: tam liste. */
+    ornekler: z.array(AjandaOrnegi).max(AJANDA_SINIRLARI.ORNEK_ADET).optional(),
+  });
 
-/** Uygulamanın yolladığı işlemler. Hepsi idempotenttir (`islem_id`); her başarılı değişiklik bir revizyon. */
-export const AjandaIslem = z.discriminatedUnion("islem", [
-  /** Kimliği uygulama üretir (çevrimdışı kuyrukta bekleyebilsin). */
-  z
-    .strictObject({
-      islem: z.literal("ekle"),
-      kayit_id: KayitId,
-      ...GOVDE_ALANLARI,
-      girdi_yolu: z.enum(INSAN_YOLLARI),
-    })
-    .superRefine(zamanKurallari),
-  /** `temel_revizyon`: kullanıcının düzenlediği hal. Reddetmez (varış sırası kazanır), geçmişe yazılır. */
-  z.strictObject({
-    islem: z.literal("guncelle"),
-    kayit_id: KayitId,
-    temel_revizyon: Revizyon,
-    degisiklik: AjandaDegisiklik,
-  }),
-  /** `ornek_tarihi` verilirse yalnız o örnek (`acik` örnek satırını kaldırır); yoksa kaydın kendisi. */
-  z.strictObject({
-    islem: z.literal("durum"),
-    kayit_id: KayitId,
-    durum: KayitDurumu,
+  const GecmisGirdisi = z.strictObject({
+    rev: Revizyon,
+    ts_ms: ZamanMs,
+    islem: z.enum(AJANDA_ISLEMLERI),
+    yazar: AjandaYazar,
+    /** `guncelle`'de kullanıcının düzenlediği hal. */
+    temel_revizyon: Revizyon.optional(),
+    /** Otomasyonun değiştiremediği alanlar. */
+    korunan_alanlar: AlanListesi.optional(),
     ornek_tarihi: Tarih.optional(),
-  }),
-  /** Taslağı kesinleştirir: hatırlatmalar bundan sonra kurulur. */
-  z.strictObject({ islem: z.literal("onayla"), kayit_id: KayitId }),
-  /** Yumuşak silme. */
-  z.strictObject({ islem: z.literal("sil"), kayit_id: KayitId }),
-  z.strictObject({ islem: z.literal("geri_yukle"), kayit_id: KayitId }),
-]);
+    onceki: Parca,
+    sonraki: Parca,
+  });
+
+  return { AlanListesi, Kaydi, Degisiklik, Islem, Parca, GecmisGirdisi };
+}
+
+/** Sürüm başına gövde şemaları (`AJANDA_SURUMLERI` ile birebir). */
+export const AJANDA_GOVDE_SEMALARI = {
+  2: ajandaGovdeSemalari(AJANDA_SURUM_ALANLARI[2], SURUM_GOVDE_EKLERI[2]),
+  3: ajandaGovdeSemalari(AJANDA_SURUM_ALANLARI[3], SURUM_GOVDE_EKLERI[3]),
+} as const;
+
+const YENI_GOVDE = AJANDA_GOVDE_SEMALARI[AJANDA_SURUMU];
+
+export const AjandaKaydi = YENI_GOVDE.Kaydi;
+export type AjandaKaydi = z.infer<typeof AjandaKaydi>;
+export const AjandaDegisiklik = YENI_GOVDE.Degisiklik;
+export type AjandaDegisiklik = z.infer<typeof AjandaDegisiklik>;
+export const AjandaIslem = YENI_GOVDE.Islem;
 export type AjandaIslem = z.infer<typeof AjandaIslem>;
-
-export const AJANDA_ISLEMLERI = ["ekle", "guncelle", "durum", "onayla", "sil", "geri_yukle"] as const;
-
-// Geçmiş
-
-/** Değişikliğin öncesi ya da sonrası: yalnız değişen alanlar. `null`: alan yoktu / kaldırıldı. */
-export const AjandaParca = z.strictObject({
-  tur: KayitTuru.optional(),
-  baslik: AjandaBaslik.optional(),
-  aciklama: AjandaAciklama.nullable().optional(),
-  zaman: AjandaZamani.nullable().optional(),
-  hatirlatmalar: Hatirlatmalar.optional(),
-  tekrar: Tekrar.nullable().optional(),
-  durum: KayitDurumu.optional(),
-  taslak: z.boolean().optional(),
-  silindi: z.boolean().optional(),
-  /** Yalnız `ornek_tarihi`'li girdide: o örneğin durumu, `null` açık. */
-  ornek_durumu: OrnekDurumu.nullable().optional(),
-  /** Tekrar ya da çapa değişince budanan, ya da `ORNEK_ADET` için atılan örnek satırları: tam liste. */
-  ornekler: z.array(AjandaOrnegi).max(AJANDA_SINIRLARI.ORNEK_ADET).optional(),
-});
+export const AjandaParca = YENI_GOVDE.Parca;
 export type AjandaParca = z.infer<typeof AjandaParca>;
-
-export const AjandaGecmisGirdisi = z.strictObject({
-  rev: Revizyon,
-  ts_ms: ZamanMs,
-  islem: z.enum(AJANDA_ISLEMLERI),
-  yazar: AjandaYazar,
-  /** `guncelle`'de kullanıcının düzenlediği hal. */
-  temel_revizyon: Revizyon.optional(),
-  /** Otomasyonun değiştiremediği alanlar. */
-  korunan_alanlar: AlanListesi.optional(),
-  ornek_tarihi: Tarih.optional(),
-  onceki: AjandaParca,
-  sonraki: AjandaParca,
-});
+export const AjandaGecmisGirdisi = YENI_GOVDE.GecmisGirdisi;
 export type AjandaGecmisGirdisi = z.infer<typeof AjandaGecmisGirdisi>;
+
+/** Telefon hatırlatmayı yalnız buna göre kurar (örnek başına `ornekler` durumu ayrıca atlanır). */
+export function hatirlatmaEtkinMi(kayit: Pick<AjandaKaydi, "taslak" | "silindi" | "durum">): boolean {
+  return !kayit.taslak && !kayit.silindi && kayit.durum === "acik";
+}
 
 // Çerçeveler: sürüme göre kurulur
 
@@ -471,12 +586,30 @@ export const AjandaRevIzi = z.strictObject({ kayit_id: KayitId, guncelleme_ms: Z
 export type AjandaRevIzi = z.infer<typeof AjandaRevIzi>;
 
 /**
- * Bir sürümün bütün `/ajanda` çerçeveleri. Her sürüm kendi içinde katıdır (bilinmeyen alan hata) ve
- * yalnız kendi `v`'sini kabul eder. Sürüme bağlı alan burada `v`'ye göre eklenir (ör.
- * `...(v >= 3 ? { alan: ... } : {})`); gövde şemaları (`AjandaKaydi`, `AjandaIslem`) bugün bütün
- * sürümlerde aynıdır, bir sürüm onları değiştirirse onlar da `v` alan kuruculara döner.
+ * Sürüm başına `hello` ve `welcome` eklemeleri. v3: `yetenekler` (açık küme, biçim katı;
+ * `ajanda-alan.ts`). `hello.yetenekler` istemcinin istedikleri (yoksa hiç), `welcome.yetenekler`
+ * kesişimdir (`ajandaYetenekKesisimi`), v3'te her zaman yollanır.
  */
-function ajandaCerceveSemalari<V extends AjandaSurumNo>(v: V) {
+const SURUM_CERCEVE_EKLERI = {
+  2: { hello: {}, welcome: {} },
+  3: { hello: { yetenekler: AjandaYetenekler.optional() }, welcome: { yetenekler: AjandaYetenekler } },
+} as const satisfies { [V in AjandaSurumNo]: { hello: z.ZodRawShape; welcome: z.ZodRawShape } };
+
+/**
+ * Bir sürümün bütün sürümlerde bulunan `/ajanda` çerçeveleri. Her sürüm kendi içinde katıdır (bilinmeyen
+ * alan hata) ve yalnız kendi `v`'sini kabul eder. Sürüme bağlı alan `SURUM_CERCEVE_EKLERI`'nden, gövde
+ * şemaları `AJANDA_GOVDE_SEMALARI`'ndan gelir; yalnız bir sürümden itibaren var olan çerçeveler (v3: ek
+ * yedeği, `ajandaEkCerceveleri`) birleşimlere `AJANDA_CERCEVE_SEMALARI`'nda eklenir.
+ */
+function ajandaCerceveSemalari<
+  V extends AjandaSurumNo,
+  I extends z.ZodType,
+  K extends z.ZodType,
+  L extends z.ZodType<readonly string[]>,
+  GG extends z.ZodType<{ rev: number }>,
+  H extends z.ZodRawShape,
+  W extends z.ZodRawShape,
+>(v: V, G: { Islem: I; Kaydi: K; AlanListesi: L; GecmisGirdisi: GG }, ek: { hello: H; welcome: W }) {
   const mesaj = <T extends string, S extends z.ZodRawShape>(type: T, alanlar: S) => ajandaMesaj(type, alanlar, v);
 
   // Yukarı: ajanda uygulaması -> PC
@@ -499,21 +632,20 @@ function ajandaCerceveSemalari<V extends AjandaSurumNo>(v: V) {
     depo_id: DepoId.optional(),
     son_rev_izi: AjandaRevIzi.optional(),
     client_nonce: Nonce,
+    ...ek.hello,
   });
   const AuthResponse = mesaj("auth_response", { signature: Imza });
   /**
    * Kimlik sonrası. Aynı `islem_id` yeniden gelirse aynı `islem_sonucu` döner, ikinci kez uygulanmaz.
    * Gövdesi geçersiz işlem `gecersiz_islem` alır, bağlantı kapanmaz (`ajandaYukariCoz`).
    */
-  const IslemMesaji = mesaj("islem", { islem_id: OpakId, islem: AjandaIslem });
+  const IslemMesaji = mesaj("islem", { islem_id: OpakId, islem: G.Islem });
   /** Bir kaydın geçmişi, en yeniden geriye sayfa sayfa. `once_rev`: bu revizyondan küçükler. */
   const GecmisIste = mesaj("gecmis_iste", {
     istek_id: OpakId,
     kayit_id: KayitId,
     once_rev: Revizyon.optional(),
   });
-
-  const Yukari = z.discriminatedUnion("type", [PairRequest, Hello, AuthResponse, IslemMesaji, GecmisIste]);
 
   // Aşağı: PC -> ajanda uygulaması
 
@@ -543,9 +675,10 @@ function ajandaCerceveSemalari<V extends AjandaSurumNo>(v: V) {
     bas_rev: SonRevizyon,
     tam: z.boolean(),
     server_time_ms: ZamanMs,
+    ...ek.welcome,
   });
   /** Bir kaydın güncel hali. Telafide ve canlıda revizyon kesin artan sırayla gelir. */
-  const KayitMesaji = mesaj("kayit", { kayit: AjandaKaydi });
+  const KayitMesaji = mesaj("kayit", { kayit: G.Kaydi });
   /** Telafi bitti; `rev` o anki `bas_rev`. Sonrası canlıdır. */
   const Esitlendi = mesaj("esitlendi", { rev: SonRevizyon });
   /**
@@ -559,7 +692,7 @@ function ajandaCerceveSemalari<V extends AjandaSurumNo>(v: V) {
     ok: z.boolean(),
     kayit_id: KayitId.optional(),
     rev: Revizyon.optional(),
-    korunan_alanlar: AlanListesi.optional(),
+    korunan_alanlar: G.AlanListesi.optional(),
     code: AjandaRetNedeni.optional(),
   }).refine((s) => (s.ok ? s.code === undefined : s.code !== undefined && s.rev === undefined), {
     message: "ok, rev ve code tutarsız",
@@ -568,7 +701,7 @@ function ajandaCerceveSemalari<V extends AjandaSurumNo>(v: V) {
     istek_id: OpakId,
     kayit_id: KayitId,
     girdiler: z
-      .array(AjandaGecmisGirdisi)
+      .array(G.GecmisGirdisi)
       .max(AJANDA_SINIRLARI.GECMIS_SAYFA)
       .refine((l) => l.every((g, i) => i === 0 || l[i - 1]!.rev > g.rev), { message: "rev kesin azalan olmalı" }),
     devami: z.boolean(),
@@ -576,22 +709,11 @@ function ajandaCerceveSemalari<V extends AjandaSurumNo>(v: V) {
   }).refine((s) => s.code === undefined || (s.girdiler.length === 0 && !s.devami), {
     message: "code ile girdi olmaz",
   });
-  /** Zarfı bütün sürümlerde dondurulmuştur (`ajandaRetSurumuOku`); kod kümesi sürümündür. */
+  /** Zarfı bütün sürümlerde dondurulmuştur (`ajandaDonmusHataOku`); kod kümesi sürümündür. */
   const ErrorMesaji = mesaj("error", {
     code: AjandaKanalHatasi,
     detail: z.string().max(SINIRLAR.HATA_DETAYI).optional(),
   });
-
-  const Asagi = z.discriminatedUnion("type", [
-    PairResult,
-    AuthChallenge,
-    Welcome,
-    KayitMesaji,
-    Esitlendi,
-    IslemSonucu,
-    Gecmis,
-    ErrorMesaji,
-  ]);
 
   /** `islem` çerçevesinin zarfı: gövdeye bakmadan `islem_id`'yi okumak için. */
   const IslemZarfi = mesaj("islem", { islem_id: OpakId, islem: z.unknown().optional() });
@@ -602,7 +724,6 @@ function ajandaCerceveSemalari<V extends AjandaSurumNo>(v: V) {
     AuthResponse,
     IslemMesaji,
     GecmisIste,
-    Yukari,
     PairResult,
     AuthChallenge,
     Welcome,
@@ -611,19 +732,98 @@ function ajandaCerceveSemalari<V extends AjandaSurumNo>(v: V) {
     IslemSonucu,
     Gecmis,
     ErrorMesaji,
-    Asagi,
     IslemZarfi,
+    /** Birleşimlerin ortak üyeleri (sürüme özgü çerçeveler `AJANDA_CERCEVE_SEMALARI`'nda eklenir). */
+    yukari: [PairRequest, Hello, AuthResponse, IslemMesaji, GecmisIste] as const,
+    asagi: [PairResult, AuthChallenge, Welcome, KayitMesaji, Esitlendi, IslemSonucu, Gecmis, ErrorMesaji] as const,
   };
 }
 
 /**
- * Sürüm tablosu: `AJANDA_SURUMLERI`'nin her sürümü için o sürümün çerçeve şemaları. Yeni sürüm
- * buraya bir satır ve `ajandaCerceveSemalari`'na sürüme bağlı alanlar olarak eklenir; aşağı
- * uyarlaması `ASAGI_UYARLAMALARI`'na.
+ * Ek yedeği çerçeveleri (v3'ten; `docs/AJANDA.md` "Ek yedeği"). Şema şimdiden tanımlıdır, davranış
+ * `ek_yedegi` yeteneğine bağlıdır: servis saklamayı uygulayınca yeteneği ilan eder; kesişimde yoksa
+ * uygulama yüklemez, indirmez. İkili veri yalnız bir kaydın `ekler`'inde aynı `ek_id`, `ozet` ve `bayt`
+ * ile geçiyorsa kabul edilir. Retler `ek_ret` ile, bağlantı kapanmaz.
+ * - Yükleme (dur-bekle): `ek_yukle` → `ek_durum{alinan}`; sonra her `ek_parca` (yukarı) → `ek_durum`.
+ *   Servis yalnız `ofset == alinan` ise yazar; yanlış ofsete de `ek_durum` döner, istemci oradan sürer.
+ * - İndirme: `ek_iste{ofset}` → en çok `EK_PENCERE` `ek_parca` (aşağı), sonra `ek_durum{gonderilen}`.
+ */
+function ajandaEkCerceveleri<V extends AjandaSurumNo>(v: V) {
+  const mesaj = <T extends string, S extends z.ZodRawShape>(type: T, alanlar: S) => ajandaMesaj(type, alanlar, v);
+  const Ofset = z.number().int().min(0).max(AJANDA_SINIRLARI.EK_BAYT);
+
+  const EkYukle = mesaj("ek_yukle", {
+    istek_id: OpakId,
+    kayit_id: KayitId,
+    ek_id: OpakId,
+    ozet: AjandaEkOzeti,
+    bayt: AjandaEkBayti,
+  });
+  /** İki yönde aynı şekil. `veri` 1..`EK_PARCA` bayt kanonik base64; parça `EK_BAYT`'ı aşmaz. */
+  const EkParca = mesaj("ek_parca", {
+    ek_id: OpakId,
+    ofset: Ofset,
+    veri: AjandaEkVerisi,
+  }).refine((p) => p.ofset + ajandaBase64Bayti(p.veri) <= AJANDA_SINIRLARI.EK_BAYT, {
+    message: "parça ek sınırını aşıyor",
+    path: ["ofset"],
+  });
+  const EkIste = mesaj("ek_iste", {
+    istek_id: OpakId,
+    ek_id: OpakId,
+    ozet: AjandaEkOzeti,
+    ofset: Ofset,
+  });
+  /**
+   * Yüklemede `alinan` (serviste o `ozet` için kalıcı olarak alınmış bayt), indirmede `gonderilen`:
+   * tam biri. `tamam`: dosya bütün ve özeti doğrulanmış.
+   */
+  const EkDurum = mesaj("ek_durum", {
+    ek_id: OpakId,
+    alinan: Ofset.optional(),
+    gonderilen: Ofset.optional(),
+    tamam: z.boolean(),
+  }).refine((d) => (d.alinan === undefined) !== (d.gonderilen === undefined), {
+    message: "alinan ya da gonderilen: tam biri",
+  });
+  const EkRet = mesaj("ek_ret", { ek_id: OpakId, code: AjandaEkRetKodu });
+
+  return { EkYukle, EkParca, EkIste, EkDurum, EkRet };
+}
+
+const V2_CERCEVELERI = ajandaCerceveSemalari(2, AJANDA_GOVDE_SEMALARI[2], SURUM_CERCEVE_EKLERI[2]);
+const V3_CERCEVELERI = ajandaCerceveSemalari(3, AJANDA_GOVDE_SEMALARI[3], SURUM_CERCEVE_EKLERI[3]);
+const V3_EK_CERCEVELERI = ajandaEkCerceveleri(3);
+
+/**
+ * Sürüm tablosu: `AJANDA_SURUMLERI`'nin her sürümü için o sürümün çerçeve şemaları ve birleşimleri.
+ * Yeni sürüm buraya bir satır (önceki sürümün sürüme özgü çerçeveleri + kendi yenileri), gövde eklemesi
+ * `SURUM_GOVDE_EKLERI`'ne, alan eklemesi `SURUM_CERCEVE_EKLERI`'ne, aşağı uyarlaması
+ * `ASAGI_UYARLAMALARI`'na eklenir.
  */
 export const AJANDA_CERCEVE_SEMALARI = {
-  2: ajandaCerceveSemalari(2),
-} as const satisfies { [V in AjandaSurumNo]: ReturnType<typeof ajandaCerceveSemalari<V>> };
+  2: {
+    ...V2_CERCEVELERI,
+    Yukari: z.discriminatedUnion("type", [...V2_CERCEVELERI.yukari]),
+    Asagi: z.discriminatedUnion("type", [...V2_CERCEVELERI.asagi]),
+  },
+  3: {
+    ...V3_CERCEVELERI,
+    ...V3_EK_CERCEVELERI,
+    Yukari: z.discriminatedUnion("type", [
+      ...V3_CERCEVELERI.yukari,
+      V3_EK_CERCEVELERI.EkYukle,
+      V3_EK_CERCEVELERI.EkParca,
+      V3_EK_CERCEVELERI.EkIste,
+    ]),
+    Asagi: z.discriminatedUnion("type", [
+      ...V3_CERCEVELERI.asagi,
+      V3_EK_CERCEVELERI.EkDurum,
+      V3_EK_CERCEVELERI.EkParca,
+      V3_EK_CERCEVELERI.EkRet,
+    ]),
+  },
+} as const;
 
 /** `v` bu tarafın sürüm kümesinde mi. Tabloyu güvenilmez değerle indekslemeden önce sorulur. */
 export function ajandaSurumuMu(v: unknown): v is AjandaSurumNo {
@@ -633,13 +833,16 @@ export function ajandaSurumuMu(v: unknown): v is AjandaSurumNo {
 const semalar = (v: AjandaSurumNo) => AJANDA_CERCEVE_SEMALARI[v];
 
 /** En yeni sürüm (`AJANDA_SURUMU`): servis içeride bununla çalışır; adlar ve açıklamalar bunundur. */
-const YENI = semalar(AJANDA_SURUMU);
+const YENI = AJANDA_CERCEVE_SEMALARI[AJANDA_SURUMU];
 
 export const AjandaPairRequest = YENI.PairRequest;
 export const AjandaHello = YENI.Hello;
 export const AjandaAuthResponse = YENI.AuthResponse;
 export const AjandaIslemMesaji = YENI.IslemMesaji;
 export const AjandaGecmisIste = YENI.GecmisIste;
+export const AjandaEkYukle = YENI.EkYukle;
+export const AjandaEkParca = YENI.EkParca;
+export const AjandaEkIste = YENI.EkIste;
 export const AjandaYukari = YENI.Yukari;
 export type AjandaYukari = z.infer<typeof AjandaYukari>;
 
@@ -651,6 +854,8 @@ export const AjandaEsitlendi = YENI.Esitlendi;
 export const AjandaIslemSonucu = YENI.IslemSonucu;
 export const AjandaGecmis = YENI.Gecmis;
 export const AjandaErrorMesaji = YENI.ErrorMesaji;
+export const AjandaEkDurum = YENI.EkDurum;
+export const AjandaEkRet = YENI.EkRet;
 export const AjandaAsagi = YENI.Asagi;
 export type AjandaAsagi = z.infer<typeof AjandaAsagi>;
 
@@ -699,23 +904,77 @@ export const ajandaAsagiCoz = (ham: string, baglanti?: AjandaSurumNo): CozumSonu
 
 // Sürüm uyumu (`docs/AJANDA.md` "Kanal akışı")
 
+/** Nesneden verilen anahtarları atar; kalanların sırası korunur (uyarlanan baytlar öngörülebilir). */
+function alanlariAt<T extends object>(o: T, atilan: ReadonlySet<string>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(o).filter(([k]) => !atilan.has(k)));
+}
+
+const V3_ALAN_KUMESI: ReadonlySet<string> = new Set(AJANDA_V3_ALANLARI);
+
+/**
+ * Alan listesini (`elle_alanlar`, `korunan_alanlar`) eski sürümün kümesine süzer. Genişleme kuralı 1'in
+ * bilinçli istisnasıdır: bu listeleri yalnız servis yazar, istemci hiç yazmaz (`guncelle` onları
+ * taşımaz), bu yüzden eski sürüme süzülmüş liste geri yazılıp servisteki tam listeyi silemez. Kanonik
+ * sıra korunur (eski küme yeninin önekidir).
+ */
+function alanListesiniSuz(l: readonly AjandaAlani[], kume: readonly string[]): AjandaAlani[] {
+  return l.filter((a) => kume.includes(a));
+}
+
+/** v3 → v2: kayıttan, alan listelerinden ve geçmiş parçalarından v3 alanları; `welcome`'dan `yetenekler`. */
+function v3tenV2ye(m: AjandaAsagi): Record<string, unknown> | null {
+  const v2 = AJANDA_SURUM_ALANLARI[2];
+  const kayit = (k: AjandaKaydi) => ({ ...alanlariAt(k, V3_ALAN_KUMESI), elle_alanlar: alanListesiniSuz(k.elle_alanlar, v2) });
+  const girdi = (g: AjandaGecmisGirdisi) => {
+    const yeni: Record<string, unknown> = { ...g, onceki: alanlariAt(g.onceki, V3_ALAN_KUMESI), sonraki: alanlariAt(g.sonraki, V3_ALAN_KUMESI) };
+    if (g.korunan_alanlar !== undefined) yeni.korunan_alanlar = alanListesiniSuz(g.korunan_alanlar, v2);
+    return yeni;
+  };
+  switch (m.type) {
+    case "welcome":
+      return alanlariAt(m, new Set(["yetenekler"]));
+    case "kayit":
+      return { ...m, kayit: kayit(m.kayit) };
+    case "islem_sonucu":
+      return m.korunan_alanlar === undefined ? m : { ...m, korunan_alanlar: alanListesiniSuz(m.korunan_alanlar, v2) };
+    case "gecmis":
+      return { ...m, girdiler: m.girdiler.map(girdi) };
+    // v2'de karşılığı yok: ek yedeği yalnız v3 bağlantıda (`ek_yedegi` yeteneği de yalnız v3'te ilan edilir).
+    case "ek_durum":
+    case "ek_parca":
+    case "ek_ret":
+      return null;
+    default:
+      return m;
+  }
+}
+
 /**
  * En yeni modelden sürümün çerçevesine: o sürümün bilmediği alanları ve kapalı liste öğelerini
- * çıkarır. En yeni sürümde kimliktir; `v`'yi `ajandaAsagiSurume` yazar.
+ * çıkarır; o sürümde karşılığı olmayan çerçevede `null`. En yeni sürümde kimliktir; `v`'yi
+ * `ajandaAsagiSurume` yazar. Ret nedeni ve kanal hata kodu kümeleri v2'den beri değişmedi (v3 yeni öğe
+ * eklemez; ek çerçevelerinin kendi `ek_ret` kümesi vardır); yeni sürüm bu kümelere öğe eklerse onu
+ * burada eski sürümün bir öğesine eşlemelidir, yoksa `islem_sonucu`/`gecmis` eski sürümün şemasından
+ * geçmez ve kuyruk tıkanır (test: "her ret nedeni ve kanal hata kodu eski her sürüme uyarlanır").
  */
-const ASAGI_UYARLAMALARI: { [V in AjandaSurumNo]: (m: AjandaAsagi) => Record<string, unknown> } = {
-  2: (m) => m,
+const ASAGI_UYARLAMALARI: { [V in AjandaSurumNo]: (m: AjandaAsagi) => Record<string, unknown> | null } = {
+  2: v3tenV2ye,
+  3: (m) => m,
 };
 
 /**
  * Servisin yollayacağı çerçeveyi bağlantı sürümüne uyarlar ve o sürümün şemasıyla denetler. Servis
  * içeride en yeni modelle (`AjandaAsagi`) çalışır; her aşağı çerçeve yollanmadan önce buradan geçer.
- * Başarıda `mesaj` uyarlanan nesnedir (alan sırası girdininki: kimlikte JSON baytları değişmez).
- * `ok:false` servisin hatasıdır, çerçeve yollanmaz; `yollar` değeri içermez.
+ * Başarıda `mesaj` uyarlanan nesnedir (alan sırası girdininki: kimlikte JSON baytları değişmez; eski
+ * sürümde yalnız atılan alanlar eksilir). Girdi değişmez. `ok:false` servisin hatasıdır, çerçeve
+ * yollanmaz; `yollar` değeri içermez. O sürümde karşılığı olmayan çerçeve (v2'de `ek_*`)
+ * `protokol_uyumsuz` + `yollar:["type"]`: servis o çerçeveyi o bağlantıya hiç üretmemelidir.
  */
 export function ajandaAsagiSurume(m: AjandaAsagi, v: AjandaSurumNo): CozumSonucu<AjandaSurumluAsagi> {
   if (!ajandaSurumuMu(v)) return { ok: false, kod: "protokol_uyumsuz", yollar: ["v"] };
-  const aday = { ...ASAGI_UYARLAMALARI[v](m), v };
+  const uyarlanan = ASAGI_UYARLAMALARI[v](m);
+  if (uyarlanan === null) return { ok: false, kod: "protokol_uyumsuz", yollar: ["type"] };
+  const aday = { ...uyarlanan, v };
   const denetim = semaylaDenetle(semalar(v).Asagi, aday);
   return denetim.ok ? { ok: true, mesaj: aday as AjandaSurumluAsagi } : denetim;
 }
@@ -731,13 +990,16 @@ const AjandaDonmusHata = z.strictObject({
   code: z.string(),
   detail: z.string().optional(),
 });
+export type AjandaDonmusHata = { v: number; code: string; detail?: string };
 
 /**
- * Ret sürümü: ham çerçeve dondurulmuş `error` zarfına uyuyor ve `code` `protokol_uyumsuz` ise `v`'si
- * (servisin en yüksek sürümü); değilse `null` (JSON değil, çok büyük, başka tür ya da kod, `v` yok ya
- * da tam sayı değil, fazla alan). Sürüm kümesinden bağımsızdır. Vektör `ajanda-surum.json` `ret_surumu`.
+ * Dondurulmuş `error` zarfını sürüm kümesinden bağımsız okur: uyuyorsa `{v, code, detail?}`, değilse
+ * (JSON değil, çok büyük, başka tür, `v` yok ya da 1'den küçük tam sayı değil, `code` metin değil, fazla
+ * alan) `null`. Sürümü henüz sabitlenmemiş bağlantıda istemci başka bir sürümün `v`'siyle gelen hatayı
+ * (`zaman_asimi`, `gecersiz_mesaj`, ...) geri düşüş değil o kodun kendisi olarak bununla okur; yalnız
+ * `protokol_uyumsuz` geri düşüştür (`ajandaRetSurumuOku`). Vektör `ajanda-surum.json` `donmus_hata`.
  */
-export function ajandaRetSurumuOku(ham: string): number | null {
+export function ajandaDonmusHataOku(ham: string): AjandaDonmusHata | null {
   if (ham.length > AJANDA_AZAMI_CERCEVE.KANAL) return null;
   let deger: unknown;
   try {
@@ -746,7 +1008,19 @@ export function ajandaRetSurumuOku(ham: string): number | null {
     return null;
   }
   const zarf = AjandaDonmusHata.safeParse(deger);
-  return zarf.success && zarf.data.code === "protokol_uyumsuz" ? zarf.data.v : null;
+  if (!zarf.success) return null;
+  const { v, code, detail } = zarf.data;
+  return detail === undefined ? { v, code } : { v, code, detail };
+}
+
+/**
+ * Ret sürümü: ham çerçeve dondurulmuş `error` zarfına uyuyor (`ajandaDonmusHataOku`) ve `code`
+ * `protokol_uyumsuz` ise `v`'si (servisin en yüksek sürümü); değilse `null`. Sürüm kümesinden
+ * bağımsızdır. Vektör `ajanda-surum.json` `ret_surumu`.
+ */
+export function ajandaRetSurumuOku(ham: string): number | null {
+  const hata = ajandaDonmusHataOku(ham);
+  return hata !== null && hata.code === "protokol_uyumsuz" ? hata.v : null;
 }
 
 /** `protokol_uyumsuz` sonrası istemcinin kararı: bir alt sürümle yeniden dene ya da uyuşmazlığın yönü. */
@@ -793,11 +1067,19 @@ export type AjandaAlanDegisikligi = {
   hatirlatmalar?: Hatirlatma[] | undefined;
   tekrar?: Tekrar | null | undefined;
   durum?: KayitDurumu | undefined;
+  // v3
+  simge?: string | null | undefined;
+  bolge?: string | null | undefined;
+  bolge_konumu?: AjandaBolgeKonumu | null | undefined;
+  varis?: AjandaVaris | null | undefined;
+  baglantilar?: AjandaBaglanti[] | null | undefined;
+  ekler?: AjandaEki[] | null | undefined;
 };
 
 export type AjandaBirlesimi = {
   /** Yeni hal; `revizyon`, `guncelleme_ms` çağıranındır. Şemadan geçirilmemiştir. */
   kayit: AjandaKaydi;
+  /** Değişen alanlar, kanonik sırada (bölge yüzünden düşen `bolge_konumu` dahil). */
   uygulanan: AjandaAlani[];
   korunan: AjandaAlani[];
   /** Tekrar kalktığı, çapa ya da kural değiştiği için atılan örnek satırları (geçmişe `ornekler` olarak yazılır). */
@@ -837,8 +1119,18 @@ export function kullaniciEmriMi(yazar: { yol: KaynakYolu; tur_kokeni: TurKokeni 
  * korunur. `tekrar` ya da `zaman` uygulanınca seriye ait olmayan örnek satırları budanır (tekrar
  * kaldırılabilir, çapa ileri alınabilir). Zaman (gün, gün bölümü, kesinlik) değişince hatırlatma
  * listesine dokunulmaz: `once` kaydın o anki zamanından hesaplanır (`hatirlatmaHalleri`), gün değişince
- * gün hatırlatması yeni güne gider, saat gelince saatli kurala geçer. Silinmiş kayıt, sentetik tur ve revizyon kararları
- * çağıranındır; sonuç `AjandaKaydi` ile doğrulanmalıdır.
+ * gün hatırlatması yeni güne gider, saat gelince saatli kurala geçer.
+ *
+ * Bölge ve konum (v3): `bolge` başka bir yere (`ajandaBolgeYeriDegisirMi`: eşleşme anahtarı farklı) değişir
+ * ya da kaldırılırsa ve aynı değişiklikte `bolge_konumu` verilmediyse konum da kalkar (`uygulanan`'a girer:
+ * geçmişe yazılır, emirde `elle_alanlar`'a eklenir). Yalnız yazılışı değişen ad (büyük/küçük harf, boşluk)
+ * aynı yerdir, konum kalır. Emir olmayan otomasyonda `bolge_konumu` korunuyorsa (`elle_alanlar`) ve kayıtta
+ * konum varsa, konumu düşürecek `bolge` değişikliği de korunur: kullanıcının koyduğu konum otomasyonla
+ * kaybolmaz. `varis` bölgeye bağlıdır ama kendiliğinden kalkmaz: `bolge` kaldırılıp `varis` bırakılırsa
+ * sonuç `tutarsiz_kayit`'tır.
+ *
+ * Silinmiş kayıt, sentetik tur ve revizyon kararları çağıranındır; sonuç `AjandaKaydi` ile doğrulanmalıdır.
+ * Vektörler: `ajanda-kurallar.json` `birlestirme`, `ajanda-v3.json` `bolge_konumu`.
  */
 export function ajandaDegisikligiUygula(
   kayit: AjandaKaydi,
@@ -849,13 +1141,15 @@ export function ajandaDegisikligiUygula(
   const yeni: Record<string, unknown> = { ...kayit };
   const uygulanan: AjandaAlani[] = [];
   const korunan: AjandaAlani[] = [];
+  const konumKorunur = otomasyon && kayit.bolge_konumu !== undefined && kayit.elle_alanlar.includes("bolge_konumu");
   for (const alan of AJANDA_ALANLARI) {
     const deger = degisiklik[alan];
     if (deger === undefined) continue;
     const simdiki = kayit[alan];
     const ayni = deger === null ? simdiki === undefined : simdiki !== undefined && kanonikJson(deger) === kanonikJson(simdiki);
     if (ayni) continue;
-    if (otomasyon && kayit.elle_alanlar.includes(alan)) {
+    const konumuDusurur = alan === "bolge" && ajandaBolgeYeriDegisirMi(kayit.bolge, deger === null ? undefined : (deger as string));
+    if (otomasyon && (kayit.elle_alanlar.includes(alan) || (konumuDusurur && konumKorunur))) {
       korunan.push(alan);
       continue;
     }
@@ -863,6 +1157,16 @@ export function ajandaDegisikligiUygula(
     else yeni[alan] = deger;
     uygulanan.push(alan);
   }
+  if (
+    uygulanan.includes("bolge") &&
+    degisiklik.bolge_konumu === undefined &&
+    yeni.bolge_konumu !== undefined &&
+    ajandaBolgeYeriDegisirMi(kayit.bolge, yeni.bolge as string | undefined)
+  ) {
+    delete yeni.bolge_konumu;
+    uygulanan.push("bolge_konumu");
+  }
+  uygulanan.sort((a, b) => AJANDA_ALANLARI.indexOf(a) - AJANDA_ALANLARI.indexOf(b));
   const elle_alanlar = otomasyon
     ? [...kayit.elle_alanlar]
     : AJANDA_ALANLARI.filter((a) => kayit.elle_alanlar.includes(a) || uygulanan.includes(a));
@@ -883,17 +1187,21 @@ export function ajandaDegisikligiUygula(
  * "yarın 3'te" ile "bugün 3'te" aynı güne çözüldüyse aynı kayıttır. Girdi saklanacak haldir: servis
  * dilimi doldurduktan sonra hesaplar (`AjandaZamani`, dilim zorunlu). Anahtar kayıt doğarken
  * `kaynak.tekil_anahtar`'a yazılır, sonra değişmez; eşler aynı anahtarı saklayan kayıtlardır.
- * `"t1:" + sha256(kanonik JSON {kapsam, tur, baslik, zaman: çekirdek | null})`. Eşin eklemeyi
- * engelleyip engellemediği `ajandaTekilKarari`'dır. Anahtar tekil indeks değildir.
+ * `"t1:" + sha256(kanonik JSON {kapsam, tur, baslik, zaman: çekirdek | null[, bolge]})`. v3: `bolge`
+ * yalnız verilmişse, eşleşme anahtarıyla (`ajandaBolgeAnahtari`) girer; yoksa baytlar v2 ile aynıdır.
+ * Öteki v3 alanları girmez. Eşin eklemeyi engelleyip engellemediği `ajandaTekilKarari`'dır. Anahtar
+ * tekil indeks değildir.
  */
 export function ajandaTekilAnahtari(girdi: {
   kapsam: string;
   tur: KayitTuru;
   baslik: string;
   zaman?: AjandaZamani | undefined;
+  bolge?: string | undefined;
 }): string {
   const zaman = girdi.zaman === undefined ? null : zamanCekirdegi(girdi.zaman);
-  const govde = { kapsam: girdi.kapsam, tur: girdi.tur, baslik: girdi.baslik, zaman };
+  const govde: Record<string, unknown> = { kapsam: girdi.kapsam, tur: girdi.tur, baslik: girdi.baslik, zaman };
+  if (girdi.bolge !== undefined) govde.bolge = ajandaBolgeAnahtari(girdi.bolge);
   return "t1:" + sha256Hex(utf8Bayt(kanonikJson(govde)));
 }
 

@@ -112,16 +112,17 @@ export const AZAMI_CERCEVE = {
  * Kural README "Sürümleme" ile aynıdır: mesaj, alan, kapalı liste öğesi eklemek ya da sınır
  * değiştirmek artıştır.
  * 1: ilk dilim. 2: saatsiz gün kaydında gün hatırlatması ve `gun_bolumu`, `gece_teyidi_gerekli`
- * (`docs/AJANDA.md` "Sürüm 2").
+ * (`docs/AJANDA.md` "Sürüm 2"). 3: kayıtta `simge`, `bolge`, `bolge_konumu`, `varis`, `baglantilar`,
+ * `ekler`; `hello`/`welcome` `yetenekler`; ek yedeği çerçeveleri (`ek_*`).
  */
-export const AJANDA_SURUMU = 2 as const;
+export const AJANDA_SURUMU = 3 as const;
 
 /**
  * Bir tarafın aynı anda konuştuğu `/ajanda` sürümleri: artan, bitişik, en büyüğü `AJANDA_SURUMU`. Her
  * sürüm o sürümün bütün çerçevelerinin kesin şeklidir; bağlantının sürümü ilk yukarı çerçeveyle
  * sabitlenir. Sürüm eklemek iki tarafta ayrı kodlayıcı yüküdür: yalnız müzakere için eklenmez.
  */
-export const AJANDA_SURUMLERI = [2] as const;
+export const AJANDA_SURUMLERI = [2, 3] as const;
 export type AjandaSurumNo = (typeof AJANDA_SURUMLERI)[number];
 
 /**
@@ -188,6 +189,40 @@ export const AJANDA_SINIRLARI = {
    * (`geceTeyidiEksikMi`, `gece_teyidi_gerekli`).
    */
   GECE_ARALIGI_DK: 240,
+
+  // v3 (genişleme kuralı 5: bu sınırlar büyütülmez)
+
+  /** `simge` anahtarı, ASCII. */
+  SIMGE: 32,
+  /** `bolge` adı: tek satır. */
+  BOLGE: 60,
+  /** `bolge_konumu.yaricap_m`, metre, iki uç dahil. */
+  BOLGE_YARICAP_MIN: 50,
+  BOLGE_YARICAP_MAX: 1_000,
+  KAYIT_BAGLANTI_ADET: 10,
+  /** `baglantilar[].url`: yazdırılabilir ASCII (`ajandaUrlGecerliMi`). */
+  BAGLANTI_URL: 2_000,
+  /** `baglantilar[].baslik`: tek satır. */
+  BAGLANTI_BASLIK: 120,
+  /** Kayıt başına ek üstverisi. */
+  EK_ADET: 8,
+  /** Bir ekin (küçültülmüş dosyanın) bayt üst sınırı: 4 MiB. */
+  EK_BAYT: 4 * 1024 * 1024,
+  /** `ekler[].genislik`/`yukseklik`, piksel. */
+  EK_KENAR: 65_535,
+  /** `ekler[].mime`, ASCII. */
+  EK_MIME: 127,
+  /** `ek_parca.veri`'nin ham bayt üst sınırı (256 KiB; base64 hali `ajandaBase64Boyu(EK_PARCA)`). */
+  EK_PARCA: 256 * 1024,
+  /** İndirmede bir `ek_iste`'ye en çok bu kadar `ek_parca`, sonra `ek_durum`. */
+  EK_PENCERE: 4,
+  /** Servisin bütün eklere ayırdığı varsayılan alan (2 GiB). Kablo sınırı değildir, ayarla değişir (`kota_asildi`). */
+  EK_TOPLAM_BAYT: 2 * 1024 * 1024 * 1024,
+  /** Hiçbir silinmemiş kayıtta geçmeyen ekin servisteki dosyasının silindiği gün. Kablo sınırı değildir. */
+  EK_SAKLAMA_GUN: 30,
+  /** `yetenekler` listesi ve bir yetenek adı. */
+  YETENEK_ADET: 32,
+  YETENEK_ADI: 32,
 } as const;
 
 /** `/ajanda` çerçevesinin ve ajanda borusunun ayrıştırma öncesi üst sınırı (UTF-16 birimi). */
