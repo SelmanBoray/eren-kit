@@ -91,6 +91,9 @@ tests/yerel_kip.rs  yerel yazar, kip geçişleri, göç 4 sınıflaması        
 tests/yerel_vektorler.rs  yerel yazarın servis vektörleriyle karşılaştırılması     [D1]
 tests/koparma.rs    koparma ve yerel kipten bağlanma (veri kaybı yok senaryoları)  [D1]
 tests/veri/v3_eslesmesiz_kuyruklu.sql  şema 3, eşleşmesiz ama kuyruklu veritabanı (fikstür) [D1]
+tests/veri_koruma.rs  veri koruması: temel kuralı, başka depo, yedekten dönen PC, kayıt başına denetim [D2]
+tests/gecis_guvenligi.rs  geçiş güvenliği: temelsiz mezar taşı, bozuk kayıt, açılış onarımı, `son_gecis` [D2]
+tests/veri/v3_eslesmis_zengin.sql  şema 3, eşleşmiş, zengin (PC temeli, kuyruk, ret) veritabanı (fikstür) [D2]
 tests/ortak/        sahte kabuklar ve `/ajanda` konuşan sahte PC servisi        [R4]
 ```
 *Model hatası bulunursa düzeltme şefin sırasıyla yapılır (aşağı bak); model tipleri köprüden de geçer.
@@ -184,7 +187,7 @@ kodu; teslim edilene dek). Göç 1 iskeletin tablosu, göç 2 bunlar, göç 3 R4
 `govde_json`, `sira`; 2. göç debug APK'larıyla cihaza gitmiş olabileceği için yerinde değişmedi).
 **Göç 4 (D1, şema 4):** `meta.kip` (`yerel` | `bagli`), `meta.yerel_rev` (yerel revizyon sayacı; ilk yerel
 yazmada kurulur) ve `yerel_gecmis` tablosu (yerel kipteki her yazmanın `AjandaGecmisGirdisi` JSON'u, `rev`
-yerel revizyon). Göç mevcut kurulumu şöyle sınıflar: `meta.eslesme` varsa `bagli`, hiçbir satır değişmez;
+yerel revizyon). Göç mevcut kurulumu şöyle sınıflar: `meta.eslesme` varsa `bagli`, kip satırı dışında hiçbir satır değişmez;
 yoksa `yerel`: kuyruk silinir ve `gorunen.bekleyen` sıfırlanır (görünen kopya zaten sunucu kopyası + kuyruğun
 iyimser hali olduğundan o hal yerel gerçek olur; sunucu kopyası, `depo_id`, `son_rev` kalır). `kip` satırı
 yoksa (elle silinmiş meta) `bagli` sayılır.
@@ -303,7 +306,7 @@ bölümde ve `surum` uyuşmazlığında çıkış 1 verir: sözleşmeye bölüm 
   ile yalnız o güne; düzenle/sil seriye ("Seriyi sil"). Testler: `TakvimTest`, `TakvimDenetleyiciTest`,
   `TakvimGercekTest`.
 
-## Yerel kip (D1)
+## Yerel kip ve veri koruması (D1, D2)
 
 - **İki kip.** `CalismaKipi`: `Yerel` (doğruluk kaynağı telefonun görünen kopyası; yazan `motor/yerel.rs`) ve `Bagli`
   (servis yazar; kullanıcı işlemleri kuyruğa girer). Kip `meta.kip`'tedir, `Cekirdek::kip()` sorar.
@@ -320,27 +323,46 @@ bölümde ve `surum` uyuşmazlığında çıkış 1 verir: sözleşmeye bölüm 
   `kayit`'i gelmemiş (onaylanmış) satırlar önce PC temeline katılır (sonraki bağlanmada fark olarak yeniden
   gitmesin). `KoparmaSonucu`: `onceki_kip`, `gonderilmeyen_kayit`, `gonderilmeyen_islem`, `yanitsiz_islem`
   (yollanmış ama yanıtsız: PC'ye ulaşmış olabilir), `ret_listesinde`, `baglanma_iptal`. Yerel kipte çağrı süren
-  bağlanmayı ya da bekleyen eşleştirmeyi iptal eder, kayda dokunmaz.
+  bağlanmayı ya da bekleyen eşleştirmeyi iptal eder, kayda dokunmaz. (D2) Bağlı kipte `eslesmeyiKaldir` de
+  koparmadır (`GecisNedeni.EslesmeKaldirildi`): veri kalır, eşleşme ve cihaz anahtarı silinir.
 - **Yerel kipten bağlanma.** QR ile eşleşince kip, servisin tam kopyası elde edilene dek `Yerel` kalır ve yerel
   yazmalar sürer. `hello` boş kopya gibi gider (`son_rev` 0, `depo_id` yok), bu yüzden telafi hep tamdır ve
   gelenler yalnız `telafi_kayitlari`'na toplanır; görünen kopya, alarmlar ve PC temeli değişmez. Kopmada toplanan
-  atılır, sonraki bağlantı baştan dener. `esitlendi`'de tek işlemde `yereli_kuyruga_dok`: her yerel kayıt için
+  atılır, sonraki bağlantı baştan dener. (D2) Bağlı kipte `welcome` saklı `depo_id`'den farklı bir `depo_id`
+  getirirse (yeni QR ile başka servis ya da servis sıfırdan kuruldu) görünen kopya ezilmez: kip `Yerel` olur,
+  eşleşme kalır, bağlantı bu yoldan sürer (`GecisNedeni.DepoDegisti`). QR reddedilirse eski eşleşme korunur.
+  `esitlendi`'de tek işlemde `yereli_kuyruga_dok`: her yerel kayıt için
   fark temeli seçilir, fark kuyruğa girer, toplanan kopya sunucu kopyasının yerine geçer, kip `Bagli` olur,
-  görünen kopya yeniden hesaplanır. **Fark temeli kuralı** (`fark_temeli`): servisin kopyasında kayıt yoksa
-  temel yok (kayıt `ekle` ile gider). Varsa ve yeni kopya koparma anındaki PC temeliyle aynı `depo_id`'ye aitse
-  (ve temel kaydı biliyorsa) temel eski PC temelidir (üç yollu: yalnız telefonda değişen alanlar gider, PC'de
-  değişenler korunur); değilse servisin kendi kopyasıdır. **Değişmez: hiçbir yerel kayıt sessizce kaybolmaz.**
-  Her yerel kayıt ya görünen kopyada kalır ya da servis işlemi reddedince ret listesine düşer; görünen kopya
-  başka bir `depo_id`'nin tam telafisiyle değiştirilmez.
+  görünen kopya yeniden hesaplanır. **Fark temeli kuralı** (`fark_temeli`): servisin
+  kopyasında kayıt yoksa temel yok (kayıt `ekle` ile gider). Varsa ve yeni kopya koparma anındaki PC temeliyle
+  aynı `depo_id`'ye aitse ve temel kaydı biliyorsa temel eski PC temelidir (üç yollu: yalnız telefonda değişen
+  alanlar gider, PC'de değişenler korunur); değilse (başka depo ya da temel kaydı bilmiyor) servisin kendi
+  kopyasıdır. `geri_yukle` yalnız aynı depo temeliyle verilir; başka depoda PC'de silinmiş kayıt diriltilmez.
+  Aynı depoda kayıt başına "PC yedekten dönmüş" denetimi (`geri_dondu`) yapılır: kayıt servis kopyasında yok,
+  revizyonu temelden küçük ya da aynı revizyonda içerik başka. Dönmüşse temel servisin kopyası olur ve
+  `geri_yukle` izniyle telefonun hali (PC'nin yitirdiği onaylı hal + yerel değişiklikler) fark olarak gider;
+  PC revizyonu büyükse meşru ilerlemedir, üç yollu kural sürer. Temelsiz mezar taşı (PC'de hiç olmamış silinmiş
+  kayıt) gönderilmez; telefonda da servisin kopyasında da silinmişse hiçbir işlem gitmez. Okunamayan görünen
+  kayıt `tutarsiz_kayit` nedeniyle ret listesine düşer, geçiş sürer. Açılışta "bağlı kip + eşleşme yok" (çıkışsız)
+  durum yerel kipe çevrilir (`cikissiz_bagli_kipi_onar`, veri kaybı yok). **Değişmez: hiçbir yerel kayıt sessizce
+  kaybolmaz.** Her yerel kayıt ya görünen kopyada kalır ya da servis işlemi reddedince ret listesine düşer;
+  görünen kopya başka bir `depo_id`'nin tam telafisiyle değiştirilmez.
 - **Kotlin'in bilmesi gerekenler.** Yeni yüzey: `kip()` ve `baglantiyiKopar()`. Bağlanma sürerken `kip()` hâlâ
   `Yerel` döner (`Bagli` yalnız `esitlendi` sonrası). Gözlemci: kip değişince `Degisim.tumu` ve
-  `Degisim.baglanti`; `baglantiyiKopar` bağlı kipten `tumu`, `eslesme`, `baglanti` (ve açık geçmiş sayfaları için
+  `Degisim.baglanti`; `sonGecis()` (`GecisOzeti`: `GecisNedeni` `Koparma`, `EslesmeKaldirildi`, `DepoDegisti`, `KoparmaSonucu` sayıları, eski/yeni `depo_id`; kalıcı, sonraki geçiş üstüne yazar) arayüze ne olduğunu söyletir; `baglantiyiKopar` bağlı kipten `tumu`, `eslesme`, `baglanti` (ve açık geçmiş sayfaları için
   `gecmis`: önbellek atıldı, yeniden istenmeli) gönderir. `KoparmaSonucu`'ndaki sayılar kullanıcıya
   söylenecek metindir. Kotlin tarafı `d274ebe`'de şema 4'e ve kuyruksuz `ekle`'ye uydu.
 - **Bilinen sınırlar.** (1) Taslak işareti ve kaynak izi `ekle` ile düşer. (2) Her yerel kipten bağlanma bir
   tam telafidir. (3) PC'de silinmiş ama telefonda düzenlenmiş kayıt ret listesine düşer. (4) Önizlemeli
-  birleştirme D4'tedir. (5) Bağlı kipte `eslesmeyiKaldir` hâlâ her şeyi siler; D2'de koparmaya dönecek (yeni
-  QR'ın koparmaya dönmesi de D2'de).
+  birleştirme D4'tedir. (5) Temel servis kopyasıyken (ör. A'ya bağlı, kopar, B, kopar, A) iki tarafta canlı ve
+  farklı kayıtta telefonun değeri PC'nin değerini ezer; PC'nin değeri PC geçmişinde kalır; önizleme ve seçim
+  D4'tedir. (6) Göç 4, eşleşmesiz kurulumda onaylanmış kuyruk satırlarını PC temeline katmaz; sonradan aynı
+  değerle yeniden giderler (zararsız).
+- **Geri alma kısıtı.** Şema 4'e geçmiş eşleşmesiz kurulumda şema 3 APK'sına dönülürse eski kod kipi bilmez;
+  ilk eşleşmede tam telafi yerel kayıtları siler. Şema 4'ten geri dönülmemeli; dönülecekse önce dışa aktarma
+  (D3) alınmalı.
+- **Kotlin notu.** `kimlik/EslestirmeEkrani.kt` içindeki "kopya ve hatırlatmalar silinir" onay metni artık
+  yanlış (`eslesmeyiKaldir` koparmadır); D6'da `sonGecis` sayılarıyla değişecek.
 
 ## İkinci dalga iş parçaları
 
@@ -438,7 +460,7 @@ Ortak: Türkçe ad ve yorum; kişisel veri yok; her parça yalnız kendi dosyala
   `Tasima.kapat`) -> `BaglantiYoneticisi.simdiDene`. Sonucu gözlemciden (`Degisim.eslesme`) sonra
   `eslesmeDurumu()` ile oku: `Eslesti` ya da `Reddedildi{kod}` (yeni QR iste). `Bekliyor` > `Reddedildi` >
   `Eslesti` > `Yok` önceliği vardır: eski eşleşme dururken yeni QR reddedilirse `Reddedildi` görünür ama
-  bağlantı eskisiyle sürer. `eslesmeyiKaldir` her şeyi (kopya, kuyruk, ret listesi, alarmlar) siler (bağlı kipte; yerel kipte yalnız eşleşme bilgisi ve anahtar), açık
+  bağlantı eskisiyle sürer. `eslesmeyiKaldir` (D2) koparmadır: kopya, ret listesi ve alarmlar kalır, kuyruk, eşleşme bilgisi ve anahtar silinir (yerel kipte yalnız eşleşme bilgisi ve anahtar), açık
   bağlantıyı kapattırır ve `anahtariSil` çağırır.
 - K2: `baglantiAdresi()` `null` ise bağlanma. `onOpen` -> `baglantiAcildi(tasima)` (hata: eşleşme yok ya da
   kabuk hatası; soketi kapat, `baglantiKapandi` çağırma). Her `onMessage` -> `cerceveGeldi(nesil, metin)`
