@@ -56,6 +56,9 @@ impl Motor {
     }
 
     /// `pair_result{ok}`: QR'ın yerine eşleşme yazılır (eski eşleşmenin yerine geçer), ret silinir.
+    ///
+    /// Yerel kipte kip burada değişmez: yerel kayıtlar servisin tam kopyası gelince (`esitlendi`) kuyruğa
+    /// dökülür ve kip o anda `bagli` olur (`yerel.rs` "Geçişler"; birleştirme önizlemesi D4'ün işidir).
     pub(crate) fn eslesme_kaydet(&mut self, qr: &AjandaEslestirmeQr, device_id: &str) -> Result<Eslesme, CekirdekHatasi> {
         let eslesme = Eslesme {
             device_id: device_id.to_string(),
@@ -111,10 +114,31 @@ impl Motor {
         })
     }
 
-    /// Eşleşmeyi, sunucu kopyasını, kuyruğu, ret listesini, görünen kopyayı ve alarmları siler; cihaz
-    /// anahtarını `anahtari_sil` ile siler. Açık bağlantı kapatılır. Anahtar silinemezse hata döner ama
-    /// yerel veriler silinmiş, etkiler uygulanmıştır (sonraki eşleştirme yine `acik_anahtar` ister).
+    /// Bağlı kipte eşleşmeyi, sunucu kopyasını, kuyruğu, ret listesini, görünen kopyayı ve alarmları siler
+    /// (kip `bagli` kalır); cihaz anahtarını `anahtari_sil` ile siler. Açık bağlantı kapatılır. Anahtar
+    /// silinemezse hata döner ama yerel veriler silinmiş, etkiler uygulanmıştır (sonraki eşleştirme yine
+    /// `acik_anahtar` ister).
+    ///
+    /// Yerel kipte kayıtların tek kopyası telefondadır: yalnız eşleşme bilgisi (eşleşme, bekleyen QR, son
+    /// ret) ve cihaz anahtarı silinir; görünen kopya, yerel geçmiş, ret listesi, alarmlar ve PC temeli kalır.
     pub(crate) fn eslesmeyi_kaldir(&mut self, o: &Ortam, e: &mut Etkiler) -> Result<(), CekirdekHatasi> {
+        if self.yerel_mi()? {
+            self.depo.yazma(|d| {
+                for a in [anahtar::ESLESME, anahtar::ESLESTIRME_QR, anahtar::ESLESME_REDDI] {
+                    d.meta_yaz(a, None)?;
+                }
+                Ok(())
+            })?;
+            self.son_hata = None;
+            self.surum_uyusmazligi = None;
+            if !matches!(self.asama, Asama::Kopuk | Asama::Kapaniyor) {
+                self.kapat(e, "eşleşme kaldırıldı");
+            }
+            e.degisim.eslesme = true;
+            e.degisim.baglanti = true;
+            o.kimlik.anahtari_sil()?;
+            return Ok(());
+        }
         self.depo.yazma(|d| d.eslesmeye_bagli_her_seyi_sil())?;
         self.gecmis.clear();
         self.gecmis_istekleri.clear();

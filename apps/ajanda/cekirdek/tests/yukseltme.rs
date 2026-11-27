@@ -6,11 +6,15 @@
 //! veritabanının dökümü. Beş sunucu kaydı (iki saatli randevu, iki saatsiz gün, bir zamansız görev),
 //! kuyrukta bir çevrimdışı saatsiz ekleme, iki kurulu alarm (telefondaki gerçek durumun biçimi). Kişisel
 //! veri yoktur.
+//!
+//! Göç 4 (yerel kip, D1): eşleşmiş kurulum `bagli` sınıflanır ve hiçbir satırı değişmez; eşleşmesiz ve
+//! kuyruklu kurulum (`tests/veri/v3_eslesmesiz_kuyruklu.sql`, şema 3 kodunun ürettiği) `yerel` olur, kuyruk
+//! yerele toplanır.
 
 mod ortak;
 
 use ajanda_cekirdek::kopru::tipler::{
-    BaglantiAsamasi, EslesmeDurumu, KurulacakAlarm, ListeSorgusu, Sekme, SurumUyusmazligi, YenidenKurmaNedeni,
+    BaglantiAsamasi, CalismaKipi, EslesmeDurumu, KurulacakAlarm, ListeSorgusu, Sekme, SurumUyusmazligi, YenidenKurmaNedeni,
 };
 use ajanda_cekirdek::model::kanonik::base64_yaz;
 use ajanda_cekirdek::model::{AjandaKanalHatasi, AjandaKaydi, AjandaZamani};
@@ -52,8 +56,10 @@ fn v1_yerel_veritabani_yeni_kodla_acilir_veri_kuyruk_eslesme_korunur_alarmlar_ye
     let mut h = Hat::sql_depoyla("yukseltme", V1_DEPO);
     v1_alarmlari(&h);
 
-    // Göç yok: şema aynı, eşleşme aynı (yeniden eşleştirme gerekmez), kayıtlar ve kuyruk aynı.
-    assert_eq!(h.c.sema_surumu().unwrap(), 3);
+    // Tek göç (4: yerel kip) eşleşmiş kurulumu bağlı bırakır: eşleşme aynı (yeniden eşleştirme gerekmez),
+    // kayıtlar ve kuyruk aynı.
+    assert_eq!(h.c.sema_surumu().unwrap(), 4);
+    assert_eq!(h.c.kip().unwrap(), CalismaKipi::Bagli);
     assert_eq!(
         h.c.eslesme_durumu().unwrap(),
         EslesmeDurumu::Eslesti { device_id: CIHAZ.into(), host: "100.64.0.1".into(), port: 8787 }
@@ -162,4 +168,121 @@ fn surum_uyusmazligi_temiz_durumdur_yonu_bilinir_veri_dokunulmaz() {
     let d = h.c.baglanti_durumu().unwrap();
     assert_eq!((d.asama, d.son_hata, d.surum_uyusmazligi, d.kuyrukta), (BaglantiAsamasi::Canli, None, None, 0));
     assert_eq!(h.pc.uygulanan, vec![KUYRUK_ISLEMI.to_string()]);
+}
+
+const V3_ESLESMESIZ: &str = include_str!("veri/v3_eslesmesiz_kuyruklu.sql");
+/// Fikstürdeki kayıtlar (`v3_eslesmesiz_kuyruklu.sql` başı).
+const DISCI: &str = "k_AAECAwQFBgYICQoLDA0ODg";
+const FATURA: &str = "k_AAECAwQFBgQICQoLDA0ODA";
+const SILINECEK: &str = "k_AAECAwQFBgIICQoLDA0OCg";
+const SPOR: &str = "k_AAECAwQFBgAICQoLDA0OCA";
+
+/// Bir veritabanının bütün tabloları satır satır (her değer `quote()` ile), tablo adıyla.
+fn tablolar(db: &rusqlite::Connection) -> std::collections::BTreeMap<String, Vec<String>> {
+    let mut s = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").unwrap();
+    let adlar: Vec<String> = s.query_map([], |r| r.get(0)).unwrap().map(|x| x.unwrap()).collect();
+    let mut sonuc = std::collections::BTreeMap::new();
+    for ad in adlar {
+        let sutunlar: Vec<String> = db
+            .prepare(&format!("SELECT name FROM pragma_table_info('{ad}')"))
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .map(|x| x.unwrap())
+            .collect();
+        let ifade = sutunlar.iter().map(|c| format!("quote(\"{c}\")")).collect::<Vec<_>>().join(" || ',' || ");
+        let mut satirlar: Vec<String> = db
+            .prepare(&format!("SELECT {ifade} FROM \"{ad}\""))
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .map(|x| x.unwrap())
+            .collect();
+        satirlar.sort();
+        sonuc.insert(ad, satirlar);
+    }
+    sonuc
+}
+
+fn fikstur_tablolari(sql: &str) -> std::collections::BTreeMap<String, Vec<String>> {
+    let db = rusqlite::Connection::open_in_memory().unwrap();
+    db.execute_batch(sql).unwrap();
+    tablolar(&db)
+}
+
+#[test]
+fn goc_4_eslesmis_kurulumda_hicbir_satiri_degistirmez_bagli_kip_aynen_calisir() {
+    let once = fikstur_tablolari(V1_DEPO);
+    let mut h = Hat::sql_depoyla("goc4-bagli", V1_DEPO);
+    let mut sonra = tablolar(&rusqlite::Connection::open(&h.yol).unwrap());
+    assert_eq!(sonra.remove("yerel_gecmis"), Some(vec![]), "yeni tablo boş");
+    let meta = sonra.get_mut("meta").unwrap();
+    let kip = meta.iter().position(|s| s.starts_with("'kip',")).expect("kip yazıldı");
+    assert_eq!(meta.remove(kip), "'kip','bagli'");
+    assert_eq!(once, sonra, "eşleşmiş kurulumda kip satırı dışında hiçbir satır değişmez");
+    assert_eq!(h.c.kip().unwrap(), CalismaKipi::Bagli);
+
+    // Bağlı kip bugünkü gibi: çevrimdışı işlem kuyruğa girer, bekleyen görünür, yerel geçmiş yazılmaz.
+    let id = h.c.ekle(govde("Bağlıda", None), ajanda_cekirdek::model::GirdiYolu::Elle).unwrap();
+    let g = h.c.kayit(id.clone()).unwrap().unwrap();
+    assert!(g.bekleyen);
+    assert_eq!(g.kayit.revizyon, 1, "iyimser ekle: revizyonu servis verir");
+    assert_eq!(h.c.baglanti_durumu().unwrap().kuyrukta, 2);
+    assert_eq!(ajanda_cekirdek::depo::Depo::ac(&h.yol).unwrap().yerel_gecmis_sayisi(&id).unwrap(), 0);
+    assert!(matches!(h.c.gecmis_iste(id.clone(), None), Err(ajanda_cekirdek::CekirdekHatasi::GecersizDurum { .. })));
+    pc_fikstur_gibi(&mut h);
+    h.baglan();
+    assert!(h.canli_mi());
+    assert_eq!(h.pc.uygulanan.len(), 2, "fikstürün kuyruğu ve yeni ekleme gider");
+    assert_eq!(h.c.kayit(id.clone()).unwrap().unwrap().kayit, h.pc.d.kayitlar[&id]);
+}
+
+#[test]
+fn goc_4_eslesmesiz_kuyruklu_kurulumu_yerele_toplar() {
+    let once = fikstur_tablolari(V3_ESLESMESIZ);
+    assert_eq!(once["kuyruk"].len(), 8);
+    assert!(once["gorunen"].iter().all(|s| s.ends_with(&format!(",1,{}", s.rsplit(',').next().unwrap()))), "fikstürde hepsi bekleyen");
+    let mut h = Hat::sql_depoyla("goc4-yerel", V3_ESLESMESIZ);
+    assert_eq!(h.c.sema_surumu().unwrap(), 4);
+    assert_eq!(h.c.kip().unwrap(), CalismaKipi::Yerel);
+    let sonra = tablolar(&rusqlite::Connection::open(&h.yol).unwrap());
+    assert!(sonra["kuyruk"].is_empty(), "kuyruk atıldı");
+    assert_eq!(sonra["meta"], vec!["'kip','yerel'".to_string()]);
+    assert_eq!(sonra["kurulu_alarmlar"], once["kurulu_alarmlar"], "alarmlara dokunulmaz");
+    assert_eq!(sonra["ret_listesi"], once["ret_listesi"]);
+    // Görünen kayıtlar aynı (kayıt metni birebir), yalnız `bekleyen` düştü.
+    let bekleyensiz: Vec<String> = once["gorunen"]
+        .iter()
+        .map(|s| {
+            let (bas, olusturma) = s.rsplit_once(',').unwrap();
+            let (bas, bekleyen) = bas.rsplit_once(',').unwrap();
+            assert_eq!(bekleyen, "1");
+            format!("{bas},0,{olusturma}")
+        })
+        .collect();
+    assert_eq!(sonra["gorunen"], bekleyensiz);
+    let d = h.c.baglanti_durumu().unwrap();
+    assert_eq!((d.kuyrukta, d.ret_listesinde), (0, 0));
+    for s in [Sekme::Tarihli, Sekme::Tarihsiz, Sekme::Silinenler] {
+        assert!(h.c.liste(ListeSorgusu { sekme: s, kapalilar_dahil: true }).unwrap().iter().all(|g| !g.bekleyen));
+    }
+    let disci = h.c.kayit(DISCI.into()).unwrap().unwrap().kayit;
+    assert_eq!((disci.baslik.as_str(), disci.revizyon), ("Dişçi (kontrol)", 1));
+    assert_eq!(h.c.kayit(FATURA.into()).unwrap().unwrap().kayit.durum, ajanda_cekirdek::model::KayitDurumu::Tamam);
+    assert!(h.c.kayit(SILINECEK.into()).unwrap().unwrap().kayit.silindi);
+    assert_eq!(h.c.kayit(SPOR.into()).unwrap().unwrap().kayit.ornekler.len(), 1);
+
+    // Alarm planı aynı: yeniden kurulunca fikstürün iki alarmı aynı istek koduyla kurulur.
+    h.c.alarmlari_yeniden_kur(YenidenKurmaNedeni::PaketGuncellendi).unwrap();
+    assert_eq!(h.alarm.kurulular(), vec![(SPOR.to_string(), 1_795_662_000_000), (DISCI.to_string(), 1_795_694_400_000)]);
+    assert_eq!(h.alarm.kurulu_nolar(), vec![3, 4]);
+
+    // Toplanan hal yerel gerçektir: üstüne yerel yazma kalıcıdır, revizyon var olanların üstünden başlar.
+    h.c.duzenle(DISCI.into(), None, govde("Dişçi (dolgu)", Some(an("2026-11-26", "16:00")))).unwrap();
+    let k = h.c.kayit(DISCI.into()).unwrap().unwrap();
+    assert_eq!((k.kayit.baslik.as_str(), k.kayit.revizyon, k.bekleyen), ("Dişçi (dolgu)", 2, false));
+    h.sureci_oldur_ve_ac();
+    assert_eq!(h.c.kayit(DISCI.into()).unwrap().unwrap().kayit.baslik, "Dişçi (dolgu)");
+    assert_eq!(h.c.baglanti_durumu().unwrap().kuyrukta, 0);
+    assert!(ajanda_cekirdek::depo::Depo::ac(&h.yol).unwrap().kuyruk().unwrap().is_empty());
 }

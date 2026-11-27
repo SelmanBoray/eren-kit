@@ -61,7 +61,8 @@ kural/              saf kurallar
   hatirlatma.rs                                                                 [R3]
 depo/               SQLite (yazan bağlantı motorda; arayüz sorguları için ayrı okuma bağlantısı)
   mod.rs            Depo, `yazma` (tek işlem), meta anahtarları, okuma bağlantısı          [R4]
-  sema.rs           göçler (3: R4 sütunları)                                             [R4]
+  sema.rs           göçler (3: R4 sütunları, 4: yerel kip)                               [R4, D1]
+  yerel.rs          kip (`meta.kip`), yerel revizyon sayacı, yerel geçmiş                [D1]
   gorunen.rs        görünen kopya (arayüz ve alarmlar yalnız bunu okur)                  [R4]
   kopya.rs          sunucu kopyası, tam telafi tablosu, depo_id/son_rev, hello alanları  [R4]
   kuyruk.rs         işlem kuyruğu, ret listesi                                           [R4]
@@ -70,6 +71,7 @@ motor/              iş mantığı, tek Mutex<Motor>
   mod.rs            Motor, Ortam, Etkiler, değişiklik yayma, `alarm_isleminde`           [R4]
   kanal.rs          bağlantı durum makinesi, telafi, kuyruğun yollanması ve sonuçları   [R4]
   iyimser.rs        iyimser uygulama, görünen kopyanın hesabı                            [R4]
+  yerel.rs          yerel yazar, koparma, yerel kipten bağlanma (`yereli_kuyruga_dok`)   [D1]
   islem.rs eslesme.rs sorgu.rs testler.rs                                       [R4]
   takvim.rs         takvim sekmesi: ay özeti, gün listesi (+ takvim_testleri.rs) [takvim]
   alarm.rs                                                                      [R3]
@@ -85,6 +87,10 @@ tests/buyuk_kopya.rs  büyük kopyada süre ölçümü (AJANDA_OLCUM_ADET; takvi
 tests/takvim.rs     takvim köprü yüzeyi uçtan uca (eşitlenen kopya, örnek durumu) [takvim]
 tests/yukseltme.rs  v1 yerel veritabanından yükseltme, sürüm uyuşmazlığı        [v2]
 tests/veri/v1_depo.sql  sürüm 1 kodunun ürettiği veritabanının dökümü (fikstür) [v2]
+tests/yerel_kip.rs  yerel yazar, kip geçişleri, göç 4 sınıflaması                [D1]
+tests/yerel_vektorler.rs  yerel yazarın servis vektörleriyle karşılaştırılması     [D1]
+tests/koparma.rs    koparma ve yerel kipten bağlanma (veri kaybı yok senaryoları)  [D1]
+tests/veri/v3_eslesmesiz_kuyruklu.sql  şema 3, eşleşmesiz ama kuyruklu veritabanı (fikstür) [D1]
 tests/ortak/        sahte kabuklar ve `/ajanda` konuşan sahte PC servisi        [R4]
 ```
 *Model hatası bulunursa düzeltme şefin sırasıyla yapılır (aşağı bak); model tipleri köprüden de geçer.
@@ -176,6 +182,12 @@ kalmaz. Eşleştirme ekranı yalnız `simdiDene` der (görünürken kopuksa bekl
 okur; tam telafi sürerken sunucu tarafından değişmez), `kurulu_alarmlar` (`alarm_no` = PendingIntent istek
 kodu; teslim edilene dek). Göç 1 iskeletin tablosu, göç 2 bunlar, göç 3 R4'ün sütunları (`bekledigi_rev`,
 `govde_json`, `sira`; 2. göç debug APK'larıyla cihaza gitmiş olabileceği için yerinde değişmedi).
+**Göç 4 (D1, şema 4):** `meta.kip` (`yerel` | `bagli`), `meta.yerel_rev` (yerel revizyon sayacı; ilk yerel
+yazmada kurulur) ve `yerel_gecmis` tablosu (yerel kipteki her yazmanın `AjandaGecmisGirdisi` JSON'u, `rev`
+yerel revizyon). Göç mevcut kurulumu şöyle sınıflar: `meta.eslesme` varsa `bagli`, hiçbir satır değişmez;
+yoksa `yerel`: kuyruk silinir ve `gorunen.bekleyen` sıfırlanır (görünen kopya zaten sunucu kopyası + kuyruğun
+iyimser hali olduğundan o hal yerel gerçek olur; sunucu kopyası, `depo_id`, `son_rev` kalır). `kip` satırı
+yoksa (elle silinmiş meta) `bagli` sayılır.
 İyimser `ekle`'nin görünen hali geçerli bir `AjandaKaydi`'dir (revizyon 1, kaynak
 `{yol: girdi_yolu, tur_kokeni: insan, device_id}`, `elle_alanlar` verilen alanlar, zamanlar kuyruğa giriş
 anı) ve `bekleyen` doğrudur.
@@ -210,7 +222,7 @@ bölümde ve `surum` uyuşmazlığında çıkış 1 verir: sözleşmeye bölüm 
 
 - **Model.** `AjandaZamani::Gun.gun_bolumu: Option<GunBolumu>` (kapalı liste; `an`/`donem`'de şema reddeder;
   yoksa JSON v1 ile bayt bayt aynı, tekil anahtar değişmez). `AjandaRetNedeni` ve `KuyrukRetNedeni`'ne
-  `gece_teyidi_gerekli`; `AJANDA_SINIRLARI.GECE_ARALIGI_DK`; `AJANDA_SURUMU` = 2 (çerçeve, `pair_request`, QR).
+  `gece_teyidi_gerekli`; `AJANDA_SINIRLARI.GECE_ARALIGI_DK`; `AJANDA_SURUMU` = 2 (çerçeve, `pair_request`). QR sürümü protokolde ayrı bir sabittir (`AJANDA_QR_SURUMU`, bugün 2; `apps/phone/protocol/src/sinirlar.ts`): QR'ın şekli değişmedikçe artmaz; uygulama ileride v3'e geçerken v2 servisin QR'ını reddetmemelidir. **Bilinen açık:** uygulama kodu hâlâ QR'ın `v`'sini `AJANDA_SURUMU` ile denetler ve yazar (`model/eslesme.rs`); `AJANDA_SURUMU` 3 olunca v2 servisin QR'ı yanlışlıkla reddedilir. v3 geçişinden önce kodda ayrı bir QR sabiti kullanılmalıdır.
   İmza öneki `eren-ajanda-auth-v1` sabit (sürümden türemez).
 - **Kural (`kural/hatirlatma.rs`).** `once` saatsiz gün kaydında gün hatırlatmasıdır:
   `gun_hatirlatmasi_yereli(gün, dk, bölüm)` = gün `− ⌊dk/1440⌋`, saat `GunBolumu::hatirlatma_saati` (08/11/13/19/20; sözleşmenin `GUN_HATIRLATMA_SAATLERI`'si)
@@ -290,6 +302,45 @@ bölümde ve `surum` uyuşmazlığında çıkış 1 verir: sözleşmeye bölüm 
   ayı değiştirir, uzun basma o güne kayıt açar. Örnek satırında tamamla/geri al `durumDegistir(…, ornekTarihi)`
   ile yalnız o güne; düzenle/sil seriye ("Seriyi sil"). Testler: `TakvimTest`, `TakvimDenetleyiciTest`,
   `TakvimGercekTest`.
+
+## Yerel kip (D1)
+
+- **İki kip.** `CalismaKipi`: `Yerel` (doğruluk kaynağı telefonun görünen kopyası; yazan `motor/yerel.rs`) ve `Bagli`
+  (servis yazar; kullanıcı işlemleri kuyruğa girer). Kip `meta.kip`'tedir, `Cekirdek::kip()` sorar.
+- **Yerel yazar.** İşlem kuyruğa girmez: servisin `islemCalistir` kurallarıyla (`iyimser::islem_uygula`) tek
+  SQLite işleminde görünen satır (`bekleyen` yanlış), yerel revizyon (`depo/yerel.rs`, monoton, PC revizyonlarının
+  altına inmez) ve `yerel_gecmis` satırı yazılır; kalıcı olunca alarm senkronu ve `Degisim.kayitlar`. Yan etkisiz
+  işlem hiçbir şey yazmaz. Servisin yerelde de yapılan denetimleri: `ekle`'de `KAYIT_ADET` (mezar taşları dahil)
+  ve saat dilimi (`saat_dilimi_bilinmiyor`, `ZamanKabugu.andan_yerele` ile); ret köprü hatası olarak döner
+  (yerelde kuyruk ve ret listesi yoktur). Yerelde yalnız insan yazar; taslak ve sentetik tur kuralları yoktur
+  (bağlantıdan kalan taslak onaylanabilir). Yerel kipte geçmiş `yerel_gecmis`'ten gelir.
+- **Koparma** (`baglantiyiKopar()`, `Motor::baglantiyi_kopar`): bağlı kipten yerele. Kalır: görünen kopya o
+  anki haliyle (bekleyen işlemler dahil), ret listesi, PC temeli (`sunucu_kayitlari`, `depo_id`, `son_rev`),
+  alarmlar. Silinir: kuyruk, eşleşme bilgisi ve cihaz anahtarı; açık bağlantı kapanır. Servisin kabul ettiği ama
+  `kayit`'i gelmemiş (onaylanmış) satırlar önce PC temeline katılır (sonraki bağlanmada fark olarak yeniden
+  gitmesin). `KoparmaSonucu`: `onceki_kip`, `gonderilmeyen_kayit`, `gonderilmeyen_islem`, `yanitsiz_islem`
+  (yollanmış ama yanıtsız: PC'ye ulaşmış olabilir), `ret_listesinde`, `baglanma_iptal`. Yerel kipte çağrı süren
+  bağlanmayı ya da bekleyen eşleştirmeyi iptal eder, kayda dokunmaz.
+- **Yerel kipten bağlanma.** QR ile eşleşince kip, servisin tam kopyası elde edilene dek `Yerel` kalır ve yerel
+  yazmalar sürer. `hello` boş kopya gibi gider (`son_rev` 0, `depo_id` yok), bu yüzden telafi hep tamdır ve
+  gelenler yalnız `telafi_kayitlari`'na toplanır; görünen kopya, alarmlar ve PC temeli değişmez. Kopmada toplanan
+  atılır, sonraki bağlantı baştan dener. `esitlendi`'de tek işlemde `yereli_kuyruga_dok`: her yerel kayıt için
+  fark temeli seçilir, fark kuyruğa girer, toplanan kopya sunucu kopyasının yerine geçer, kip `Bagli` olur,
+  görünen kopya yeniden hesaplanır. **Fark temeli kuralı** (`fark_temeli`): servisin kopyasında kayıt yoksa
+  temel yok (kayıt `ekle` ile gider). Varsa ve yeni kopya koparma anındaki PC temeliyle aynı `depo_id`'ye aitse
+  (ve temel kaydı biliyorsa) temel eski PC temelidir (üç yollu: yalnız telefonda değişen alanlar gider, PC'de
+  değişenler korunur); değilse servisin kendi kopyasıdır. **Değişmez: hiçbir yerel kayıt sessizce kaybolmaz.**
+  Her yerel kayıt ya görünen kopyada kalır ya da servis işlemi reddedince ret listesine düşer; görünen kopya
+  başka bir `depo_id`'nin tam telafisiyle değiştirilmez.
+- **Kotlin'in bilmesi gerekenler.** Yeni yüzey: `kip()` ve `baglantiyiKopar()`. Bağlanma sürerken `kip()` hâlâ
+  `Yerel` döner (`Bagli` yalnız `esitlendi` sonrası). Gözlemci: kip değişince `Degisim.tumu` ve
+  `Degisim.baglanti`; `baglantiyiKopar` bağlı kipten `tumu`, `eslesme`, `baglanti` (ve açık geçmiş sayfaları için
+  `gecmis`: önbellek atıldı, yeniden istenmeli) gönderir. `KoparmaSonucu`'ndaki sayılar kullanıcıya
+  söylenecek metindir. Kotlin tarafı `d274ebe`'de şema 4'e ve kuyruksuz `ekle`'ye uydu.
+- **Bilinen sınırlar.** (1) Taslak işareti ve kaynak izi `ekle` ile düşer. (2) Her yerel kipten bağlanma bir
+  tam telafidir. (3) PC'de silinmiş ama telefonda düzenlenmiş kayıt ret listesine düşer. (4) Önizlemeli
+  birleştirme D4'tedir. (5) Bağlı kipte `eslesmeyiKaldir` hâlâ her şeyi siler; D2'de koparmaya dönecek (yeni
+  QR'ın koparmaya dönmesi de D2'de).
 
 ## İkinci dalga iş parçaları
 
@@ -387,7 +438,7 @@ Ortak: Türkçe ad ve yorum; kişisel veri yok; her parça yalnız kendi dosyala
   `Tasima.kapat`) -> `BaglantiYoneticisi.simdiDene`. Sonucu gözlemciden (`Degisim.eslesme`) sonra
   `eslesmeDurumu()` ile oku: `Eslesti` ya da `Reddedildi{kod}` (yeni QR iste). `Bekliyor` > `Reddedildi` >
   `Eslesti` > `Yok` önceliği vardır: eski eşleşme dururken yeni QR reddedilirse `Reddedildi` görünür ama
-  bağlantı eskisiyle sürer. `eslesmeyiKaldir` her şeyi (kopya, kuyruk, ret listesi, alarmlar) siler, açık
+  bağlantı eskisiyle sürer. `eslesmeyiKaldir` her şeyi (kopya, kuyruk, ret listesi, alarmlar) siler (bağlı kipte; yerel kipte yalnız eşleşme bilgisi ve anahtar), açık
   bağlantıyı kapattırır ve `anahtariSil` çağırır.
 - K2: `baglantiAdresi()` `null` ise bağlanma. `onOpen` -> `baglantiAcildi(tasima)` (hata: eşleşme yok ya da
   kabuk hatası; soketi kapat, `baglantiKapandi` çağırma). Her `onMessage` -> `cerceveGeldi(nesil, metin)`

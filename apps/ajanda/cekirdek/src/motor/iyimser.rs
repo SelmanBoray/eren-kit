@@ -17,7 +17,7 @@ use crate::kural::AnCevirici;
 use crate::kural::birlesim::ajanda_degisikligi_uygula;
 use crate::kural::ornek::{OrnekDurumuSonucu, ajanda_ornek_durumu_uygula};
 use crate::model::{
-    AjandaAlani, AjandaIslem, AjandaKaydi, AjandaKaynagi, AjandaZamani, AlanDegisikligi, KayitDurumu, KayitGovdesi,
+    AjandaAlani, AjandaIslem, AjandaRetNedeni, AjandaKaydi, AjandaKaynagi, AjandaZamani, AlanDegisikligi, KayitDurumu, KayitGovdesi,
     KaynakYolu, TurKokeni, YazarKimligi,
 };
 
@@ -65,7 +65,7 @@ pub(crate) fn kayittan_govde(k: &AjandaKaydi) -> KayitGovdesi {
 }
 
 /// Uygulamadan gelen değişikliğin yazarı (servis: `ekle`'de `girdi_yolu`, ötekilerde `elle`).
-fn yazar(islem: &AjandaIslem) -> YazarKimligi {
+pub(crate) fn yazar(islem: &AjandaIslem) -> YazarKimligi {
     let yol = match islem {
         AjandaIslem::Ekle { girdi_yolu, .. } => girdi_yolu.yol(),
         _ => KaynakYolu::Elle,
@@ -115,26 +115,37 @@ fn eklenen_kayit(kayit_id: &str, govde: &KayitGovdesi, yol: KaynakYolu, ts: i64,
     }
 }
 
-/// Bir işlemin `onceki` hale iyimser uygulanması (`ts`: işlemin kuyruğa giriş anı). Döner: yeni hal
-/// (`None`: kayıt yok). Servisin reddedeceği ya da yan etkisiz bulacağı işlemde `onceki` aynen döner.
-pub(crate) fn iyimser_uygula(onceki: Option<&AjandaKaydi>, islem: &AjandaIslem, ts: i64, b: &IyimserBaglam) -> Option<AjandaKaydi> {
+/// Bir işlemin servis kurallarıyla (`islemCalistir`) sonucu: yeni hal, yan etkisiz (servis `ok`, revizyon
+/// vermez) ya da ret (servisin nedeni). İyimser uygulama (`iyimser_uygula`) ve yerel kipin yazarı
+/// (`motor/yerel.rs`) bunu paylaşır. Dilim ve kayıt adedi denetimi burada değildir (yerel yazar yapar).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Uygulama {
+    /// Kutulu: kayıt büyük, öteki değişkenler küçük.
+    Yeni(Box<AjandaKaydi>),
+    Etkisiz,
+    Ret(AjandaRetNedeni),
+}
+
+/// İşlemi `onceki` hale servis kurallarıyla uygular (`ts`: işlemin anı). Yeni halin revizyonu değişmez
+/// (servis ya da yerel yazar verir); `guncelleme_ms` `degisiklikAni` kuralıyla ilerler.
+pub(crate) fn islem_uygula(onceki: Option<&AjandaKaydi>, islem: &AjandaIslem, ts: i64, b: &IyimserBaglam) -> Uygulama {
     if let AjandaIslem::Ekle { kayit_id, govde, girdi_yolu } = islem {
         return match onceki {
             // Servis zaten uyguladı (kayıt sonuçtan önce geldi) ya da kimlik çakışıyor: gerçek olan kalır.
-            Some(k) => Some(k.clone()),
+            Some(_) => Uygulama::Ret(AjandaRetNedeni::KimlikCakisiyor),
             None => {
                 let k = eklenen_kayit(kayit_id, govde, girdi_yolu.yol(), ts, b);
-                k.gecerli_mi().is_ok().then_some(k)
+                if k.gecerli_mi().is_ok() { Uygulama::Yeni(Box::new(k)) } else { Uygulama::Ret(AjandaRetNedeni::TutarsizKayit) }
             }
         };
     }
-    let k = onceki?;
+    let Some(k) = onceki else { return Uygulama::Ret(AjandaRetNedeni::KayitBulunamadi) };
     let yeni: Option<AjandaKaydi> = match islem {
         AjandaIslem::Ekle { .. } => unreachable!(),
         AjandaIslem::Sil { .. } => (!k.silindi).then(|| AjandaKaydi { silindi: true, ..k.clone() }),
         AjandaIslem::GeriYukle { .. } => k.silindi.then(|| AjandaKaydi { silindi: false, ..k.clone() }),
         // Mezar taşına `geri_yukle` dışında her işlem `kayit_silinmis`.
-        _ if k.silindi => None,
+        _ if k.silindi => return Uygulama::Ret(AjandaRetNedeni::KayitSilinmis),
         AjandaIslem::Onayla { .. } => k.taslak.then(|| AjandaKaydi { taslak: false, ..k.clone() }),
         AjandaIslem::Guncelle { degisiklik, .. } => {
             let bir = ajanda_degisikligi_uygula(k, &AlanDegisikligi::from(degisiklik.clone()), yazar(islem));
@@ -146,20 +157,32 @@ pub(crate) fn iyimser_uygula(onceki: Option<&AjandaKaydi>, islem: &AjandaIslem, 
             (!bir.uygulanan.is_empty()).then_some(bir.kayit)
         }
         AjandaIslem::Durum { durum, ornek_tarihi: Some(tarih), .. } => {
-            let bugun = b.bugun(k)?;
+            let Some(bugun) = b.bugun(k) else { return Uygulama::Ret(AjandaRetNedeni::SaatDilimiBilinmiyor) };
             match ajanda_ornek_durumu_uygula(k, tarih, *durum, &bugun) {
                 OrnekDurumuSonucu::Tamam { ornekler, degisti: true, .. } => Some(AjandaKaydi { ornekler, ..k.clone() }),
-                _ => None,
+                OrnekDurumuSonucu::Tamam { degisti: false, .. } => None,
+                OrnekDurumuSonucu::Gecersiz => return Uygulama::Ret(AjandaRetNedeni::OrnekGecersiz),
             }
         }
     };
     match yeni {
         Some(mut y) => {
             y.guncelleme_ms = k.guncelleme_ms.max(ts);
-            // Servis bozuk sonucu `tutarsiz_kayit` ile reddeder: görünen hal değişmez.
-            Some(if y.gecerli_mi().is_ok() { y } else { k.clone() })
+            // Servis bozuk sonucu `tutarsiz_kayit` ile reddeder.
+            if y.gecerli_mi().is_ok() { Uygulama::Yeni(Box::new(y)) } else { Uygulama::Ret(AjandaRetNedeni::TutarsizKayit) }
         }
-        None => Some(k.clone()),
+        None => Uygulama::Etkisiz,
+    }
+}
+
+/// Bir işlemin `onceki` hale iyimser uygulanması (`ts`: işlemin kuyruğa giriş anı). Döner: yeni hal
+/// (`None`: kayıt yok). Servisin reddedeceği ya da yan etkisiz bulacağı işlemde `onceki` aynen döner.
+pub(crate) fn iyimser_uygula(onceki: Option<&AjandaKaydi>, islem: &AjandaIslem, ts: i64, b: &IyimserBaglam) -> Option<AjandaKaydi> {
+    match islem_uygula(onceki, islem, ts, b) {
+        Uygulama::Yeni(k) => Some(*k),
+        // Örneğin yerel günü bulunamadı (dilim çevrilemedi): önceki sürümdeki gibi iyimser hal yoktur.
+        Uygulama::Ret(AjandaRetNedeni::SaatDilimiBilinmiyor) => None,
+        Uygulama::Etkisiz | Uygulama::Ret(_) => onceki.cloned(),
     }
 }
 
@@ -203,8 +226,12 @@ pub(crate) fn istenen_govde(
 }
 
 /// Kaydın görünen satırını yeniden hesaplar ve gerekirse yazar/siler. Döner: görünen hal değişti mi
-/// (kayıt metni ya da `bekleyen`). Açık bir `Depo::yazma` içinde çağrılır.
+/// (kayıt metni ya da `bekleyen`). Açık bir `Depo::yazma` içinde çağrılır. Yerel kipte hiçbir şey yapmaz.
 pub(crate) fn gorunen_yenile(d: &Depo, b: &IyimserBaglam, kayit_id: &str) -> Result<bool, CekirdekHatasi> {
+    // Yerel kipte görünen kopya türetme değil, doğruluk kaynağıdır: sunucu + kuyruktan yeniden hesap onu ezmez.
+    if d.yerel_kip_mi()? {
+        return Ok(false);
+    }
     let (hal, bekleyen) = iyimser_hal(d, b, kayit_id, None)?;
     let eski = d.gorunen_ham(kayit_id)?;
     match (hal, eski) {
