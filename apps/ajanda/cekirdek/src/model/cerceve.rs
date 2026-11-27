@@ -4,8 +4,8 @@
 //! kodlar; yukarı çözücü vektör eşliği ve kendi çıktısını denetlemek içindir, aşağı uyarlama servisin
 //! kuralıdır (uygulamada vektör eşliği için).
 //!
-//! Geçiş: sürümsüz `json`/`kodla`/`ajanda_asagi_coz`/`ajanda_yukari_coz` bugünkü kanalın sürümüyle
-//! (`surum::KANAL_SURUMU`, v2) çalışır; `motor/kanal.rs` bunlarla değişmeden derlenir ve aynı davranır.
+//! Sürümsüz çözücü ya da yazıcı yoktur: kanal (`motor/kanal.rs`) bağlantının sürümünü durumunda tutar ve
+//! her çerçeveyi onunla çözer ve yazar (`ajanda_asagi_coz_surum`, `kodla_surum`).
 //!
 //! Bilinen ayrışmalar (vektörlerde yok; ikisi de çerçeveyi reddeder ya da bağlantıyı kapatır):
 //! - JSON'da eşsiz vekil kaçışı (`"\ud800"`): JS ayrıştırır, şema yalnız metin kuralı olan alanlarda
@@ -26,7 +26,7 @@ use super::kayit::{
 };
 use super::metin::{base64_oku, desenli_oku, opak_id_oku, utf16_uzunluk};
 use super::sinirlar::{AZAMI_CERCEVE_KANAL, ajanda::{EK_BAYT, GECMIS_SAYFA}, genel};
-use super::surum::{KANAL_SURUMU, Surum};
+use super::surum::Surum;
 use serde_json::Value;
 
 /// `pair_request` ve QR'daki eşleştirme kodu: 6-32, `^[A-Z0-9]+$`.
@@ -80,24 +80,15 @@ impl AjandaRevIzi {
 pub enum AjandaYukari {
     /// Kapsam alanı yoktur: kapsamı PC'deki eşleştirme penceresi belirler. `platform` hep `android`.
     PairRequest { kod: String, public_key: String, etiket: Option<String> },
-    /// `yetenekler` alanı olmayan `hello` (her sürümde).
+    /// `yetenekler` (v3, isteğe bağlı): istemcinin istedikleri; boş liste de geçerlidir. v2'de okunmaz
+    /// (`None`) ve yazılmaz.
     Hello {
         device_id: String,
         son_rev: i64,
         depo_id: Option<String>,
         son_rev_izi: Option<AjandaRevIzi>,
         client_nonce: String,
-    },
-    /// v3 `hello`, `yetenekler` ile (istemcinin istedikleri; boş liste de geçerlidir). `Hello`'dan ayrı
-    /// değişkendir çünkü `motor/kanal.rs` `Hello`'yu alan alan kurar; kanal aşaması ikisini birleştirebilir.
-    /// v2'ye yazılırken `yetenekler` yazılmaz.
-    HelloYetenekli {
-        device_id: String,
-        son_rev: i64,
-        depo_id: Option<String>,
-        son_rev_izi: Option<AjandaRevIzi>,
-        client_nonce: String,
-        yetenekler: Vec<String>,
+        yetenekler: Option<Vec<String>>,
     },
     AuthResponse { signature: String },
     Islem { islem_id: String, islem: AjandaIslem },
@@ -246,26 +237,11 @@ fn ek_parca_kurali(ofset: i64, veri: &str) -> Sonuc<()> {
     if ofset + ajanda_base64_bayti(veri) <= EK_BAYT { Ok(()) } else { hata("ofset", "parça ek sınırını aşıyor") }
 }
 
-fn hello_yaz(
-    y: Yazici,
-    device_id: &str,
-    son_rev: i64,
-    depo_id: &Option<String>,
-    son_rev_izi: &Option<AjandaRevIzi>,
-    client_nonce: &str,
-) -> Yazici {
-    y.alan("device_id", device_id)
-        .alan("son_rev", son_rev)
-        .varsa("depo_id", depo_id.clone())
-        .varsa("son_rev_izi", son_rev_izi.as_ref().map(AjandaRevIzi::json))
-        .alan("client_nonce", client_nonce)
-}
-
 impl AjandaYukari {
     pub fn tur(&self) -> &'static str {
         match self {
             AjandaYukari::PairRequest { .. } => "pair_request",
-            AjandaYukari::Hello { .. } | AjandaYukari::HelloYetenekli { .. } => "hello",
+            AjandaYukari::Hello { .. } => "hello",
             AjandaYukari::AuthResponse { .. } => "auth_response",
             AjandaYukari::Islem { .. } => "islem",
             AjandaYukari::GecmisIste { .. } => "gecmis_iste",
@@ -297,12 +273,7 @@ impl AjandaYukari {
                 let son_rev_izi = n.istege_bagli("son_rev_izi", AjandaRevIzi::oku)?;
                 let client_nonce = n.zorunlu("client_nonce", nonce_oku)?;
                 let yetenekler = if s.v3_mu() { n.istege_bagli("yetenekler", yetenekler_oku)? } else { None };
-                match yetenekler {
-                    None => AjandaYukari::Hello { device_id, son_rev, depo_id, son_rev_izi, client_nonce },
-                    Some(yetenekler) => {
-                        AjandaYukari::HelloYetenekli { device_id, son_rev, depo_id, son_rev_izi, client_nonce, yetenekler }
-                    }
-                }
+                AjandaYukari::Hello { device_id, son_rev, depo_id, son_rev_izi, client_nonce, yetenekler }
             }
             "auth_response" => AjandaYukari::AuthResponse { signature: n.zorunlu("signature", imza_oku)? },
             "islem" => AjandaYukari::Islem {
@@ -346,11 +317,6 @@ impl AjandaYukari {
         Ok(m)
     }
 
-    /// Bugünkü kanalın sürümüyle (`KANAL_SURUMU`).
-    pub fn json(&self) -> Value {
-        self.json_surum(KANAL_SURUMU)
-    }
-
     /// Sürümün biçimi (`v` dahil). O sürümde olmayan alanlar yazılmaz (v2'de `yetenekler`, gövdelerin v3
     /// alanları); o sürümde olmayan çerçeve (v2'de `ek_*`) yine yazılır ama o sürümün şemasından geçmez.
     pub fn json_surum(&self, s: Surum) -> Value {
@@ -361,13 +327,13 @@ impl AjandaYukari {
                 .alan("public_key", public_key.as_str())
                 .alan("platform", "android")
                 .varsa("etiket", etiket.clone()),
-            AjandaYukari::Hello { device_id, son_rev, depo_id, son_rev_izi, client_nonce } => {
-                hello_yaz(y, device_id, *son_rev, depo_id, son_rev_izi, client_nonce)
-            }
-            AjandaYukari::HelloYetenekli { device_id, son_rev, depo_id, son_rev_izi, client_nonce, yetenekler } => {
-                hello_yaz(y, device_id, *son_rev, depo_id, son_rev_izi, client_nonce)
-                    .varsa("yetenekler", s.v3_mu().then(|| yetenekler_yaz(yetenekler)))
-            }
+            AjandaYukari::Hello { device_id, son_rev, depo_id, son_rev_izi, client_nonce, yetenekler } => y
+                .alan("device_id", device_id.as_str())
+                .alan("son_rev", *son_rev)
+                .varsa("depo_id", depo_id.clone())
+                .varsa("son_rev_izi", son_rev_izi.as_ref().map(AjandaRevIzi::json))
+                .alan("client_nonce", client_nonce.as_str())
+                .varsa("yetenekler", yetenekler.as_deref().filter(|_| s.v3_mu()).map(yetenekler_yaz)),
             AjandaYukari::AuthResponse { signature } => y.alan("signature", signature.as_str()),
             AjandaYukari::Islem { islem_id, islem } => y.alan("islem_id", islem_id.as_str()).alan("islem", islem.json_surum(s)),
             AjandaYukari::GecmisIste { istek_id, kayit_id, once_rev } => y
@@ -392,11 +358,7 @@ impl AjandaYukari {
         .bitir()
     }
 
-    /// Kablo metni, bugünkü kanalın sürümüyle. Uygulamanın yolladığı her çerçeve bundan geçer.
-    pub fn kodla(&self) -> String {
-        self.json().to_string()
-    }
-
+    /// Kablo metni, bağlantının sürümüyle. Uygulamanın yolladığı her çerçeve bundan geçer.
     pub fn kodla_surum(&self, s: Surum) -> String {
         self.json_surum(s).to_string()
     }
@@ -524,11 +486,6 @@ impl AjandaAsagi {
         Ok(m)
     }
 
-    /// Bugünkü kanalın sürümüyle (`KANAL_SURUMU`).
-    pub fn json(&self) -> Value {
-        self.json_surum(KANAL_SURUMU)
-    }
-
     /// Sürümün biçimi (`v` dahil): o sürümün bilmediği alanlar yazılmaz, alan listeleri o sürümün
     /// kümesine süzülür. Bu, servisin aşağı uyarlamasının (`v3tenV2ye`) yazma yarısıdır; şema denetimi
     /// ve karşılığı olmayan çerçeve `ajanda_asagi_surume`'dedir.
@@ -579,11 +536,7 @@ impl AjandaAsagi {
         .bitir()
     }
 
-    /// Kablo metni, bugünkü kanalın sürümüyle.
-    pub fn kodla(&self) -> String {
-        self.json().to_string()
-    }
-
+    /// Kablo metni, bağlantının sürümüyle.
     pub fn kodla_surum(&self, s: Surum) -> String {
         self.json_surum(s).to_string()
     }
@@ -607,17 +560,6 @@ pub fn ajanda_yukari_coz_surum(ham: &str, baglanti: Option<Surum>) -> Result<(Su
         }
         (sonuc, _) => sonuc,
     }
-}
-
-/// Bugünkü kanal (v2 bağlantı): `ajanda_asagi_coz_surum(ham, Some(KANAL_SURUMU))`. Uygulamanın gelen
-/// her çerçevesi buradan geçer.
-pub fn ajanda_asagi_coz(ham: &str) -> Result<AjandaAsagi, CozumHatasi> {
-    ajanda_asagi_coz_surum(ham, Some(KANAL_SURUMU)).map(|(_, m)| m)
-}
-
-/// Bugünkü kanal (v2 bağlantı): `ajanda_yukari_coz_surum(ham, Some(KANAL_SURUMU))`.
-pub fn ajanda_yukari_coz(ham: &str) -> Result<AjandaYukari, CozumHatasi> {
-    ajanda_yukari_coz_surum(ham, Some(KANAL_SURUMU)).map(|(_, m)| m)
 }
 
 /// `AjandaIslemZarfi`: `{v, type:"islem", islem_id, islem?: unknown}`, katı; `v` çerçevenin kendi
@@ -657,15 +599,16 @@ mod testler {
     const HELLO_V2: &str = r#"{"v":2,"type":"hello","device_id":"d1","son_rev":0,"client_nonce":"QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVowMTIzNA=="}"#;
 
     #[test]
-    fn sarmalayicilar_bugunku_kanal_surumunde() {
-        // Sürümsüz çözücü v2 bağlantıdır: v3 çerçeve `protokol_uyumsuz`, v2 çerçeve geçer.
-        assert!(matches!(ajanda_yukari_coz(HELLO_V2), Ok(AjandaYukari::Hello { .. })));
+    fn sabitlenmis_baglanti_yalniz_kendi_surumunu_kabul_eder() {
+        // v2 bağlantıda v3 çerçeve `protokol_uyumsuz`, v3 bağlantıda v2 çerçeve de.
+        assert!(matches!(ajanda_yukari_coz_surum(HELLO_V2, Some(Surum::V2)), Ok((Surum::V2, AjandaYukari::Hello { .. }))));
         let v3 = HELLO_V2.replace("\"v\":2", "\"v\":3");
-        assert_eq!(ajanda_yukari_coz(&v3).unwrap_err().kod, CozumKodu::ProtokolUyumsuz);
-        assert_eq!(ajanda_asagi_coz(r#"{"v":3,"type":"esitlendi","rev":1}"#).unwrap_err().kod, CozumKodu::ProtokolUyumsuz);
-        // Sürümsüz yazıcı v2 yazar.
+        assert_eq!(ajanda_yukari_coz_surum(&v3, Some(Surum::V2)).unwrap_err().kod, CozumKodu::ProtokolUyumsuz);
+        assert_eq!(ajanda_yukari_coz_surum(HELLO_V2, Some(Surum::V3)).unwrap_err().kod, CozumKodu::ProtokolUyumsuz);
+        let esitlendi = r#"{"v":2,"type":"esitlendi","rev":1}"#;
+        assert_eq!(ajanda_asagi_coz_surum(esitlendi, Some(Surum::V3)).unwrap_err().kod, CozumKodu::ProtokolUyumsuz);
         let m = AjandaAsagi::Esitlendi { rev: 1 };
-        assert_eq!(m.kodla(), r#"{"rev":1,"type":"esitlendi","v":2}"#);
+        assert_eq!(m.kodla_surum(Surum::V2), r#"{"rev":1,"type":"esitlendi","v":2}"#);
         assert_eq!(m.kodla_surum(Surum::V3), r#"{"rev":1,"type":"esitlendi","v":3}"#);
     }
 
@@ -676,26 +619,31 @@ mod testler {
         let v3 = HELLO_V2.replace("\"v\":2", "\"v\":3.0");
         let (s, m) = ajanda_yukari_coz_surum(&v3, None).unwrap();
         assert_eq!(s, Surum::V3);
-        assert!(matches!(m, AjandaYukari::Hello { .. }), "yeteneksiz v3 hello");
+        assert!(matches!(m, AjandaYukari::Hello { yetenekler: None, .. }), "yeteneksiz v3 hello");
         // Metin `v`: en büyük sürümün şemasında `gecersiz_mesaj`.
         let metin_v = HELLO_V2.replace("\"v\":2", "\"v\":\"2\"");
         assert_eq!(ajanda_yukari_coz_surum(&metin_v, None).unwrap_err().kod, CozumKodu::GecersizMesaj);
     }
 
     #[test]
-    fn hello_yetenekli_v2ye_yeteneksiz_yazilir() {
-        let m = AjandaYukari::HelloYetenekli {
+    fn hello_yetenekleri_v2ye_yazilmaz() {
+        let hello = |yetenekler: Option<Vec<String>>| AjandaYukari::Hello {
             device_id: "d1".into(),
             son_rev: 0,
             depo_id: None,
             son_rev_izi: None,
             client_nonce: "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVowMTIzNA==".into(),
-            yetenekler: vec!["ek_yedegi".into()],
+            yetenekler,
         };
+        let m = hello(Some(vec!["ek_yedegi".into()]));
         let v2 = m.json_surum(Surum::V2);
         assert!(v2.get("yetenekler").is_none());
-        assert!(matches!(AjandaYukari::oku(&v2, Surum::V2), Ok(AjandaYukari::Hello { .. })));
+        assert!(matches!(AjandaYukari::oku(&v2, Surum::V2), Ok(AjandaYukari::Hello { yetenekler: None, .. })));
         assert_eq!(AjandaYukari::oku(&m.json_surum(Surum::V3), Surum::V3).unwrap(), m);
+        // Boş istek listesi v3'te yazılır; alansız `hello` da geçerlidir ve `None` okunur.
+        let bos = hello(Some(vec![]));
+        assert_eq!(bos.json_surum(Surum::V3)["yetenekler"], serde_json::json!([]));
+        assert_eq!(AjandaYukari::oku(&bos.json_surum(Surum::V3), Surum::V3).unwrap(), bos);
     }
 
     #[test]

@@ -9,11 +9,17 @@ use crate::depo::anahtar;
 use crate::kopru::sahte::{SahteKimlik, SahteZaman};
 use crate::model::kanonik::{base64_yaz, base64url_yaz};
 use crate::model::{
-    AjandaAsagi, AjandaKaydi, AjandaYukari, ImzaRolu, KuyrukRetNedeni, ajanda_kimlik_imza_metni, ajanda_yukari_coz,
+    AjandaAsagi, AjandaKaydi, AjandaYukari, CozumHatasi, ImzaRolu, KuyrukRetNedeni, Surum, ajanda_kimlik_imza_metni,
+    ajanda_yukari_coz_surum,
 };
 use serde_json::{Value, json};
 
 const SIMDI: i64 = 1_795_606_200_000;
+
+/// Bu testlerin bağlantısı hep en yeni sürümdedir (geri düşüş yok): giden çerçeve onunla çözülür.
+fn ajanda_yukari_coz(ham: &str) -> Result<AjandaYukari, CozumHatasi> {
+    ajanda_yukari_coz_surum(ham, Some(Surum::EN_YENI)).map(|(_, m)| m)
+}
 
 struct Duzen {
     m: Motor,
@@ -38,8 +44,15 @@ impl Duzen {
         (t, e)
     }
 
+    /// Servisin çerçevesi, bağlantının sürümüyle (v3 `welcome` `yetenekler`'i zorunlu taşır: verilmediyse boş).
     fn cerceve(&mut self, m: AjandaAsagi) -> Etkiler {
-        let metin = m.kodla();
+        let m = match m {
+            AjandaAsagi::Welcome { depo_id, bas_rev, tam, server_time_ms, yetenekler: None } => {
+                AjandaAsagi::Welcome { depo_id, bas_rev, tam, server_time_ms, yetenekler: Some(vec![]) }
+            }
+            m => m,
+        };
+        let metin = m.kodla_surum(self.m.baglanti_surumu());
         let (r, e) = self.calistir(|m, o, e| m.cerceve_geldi(o, e, &metin));
         r.unwrap();
         e
@@ -274,4 +287,22 @@ fn yerel_kipte_baglanma_temeli_korur_esitlendide_doker() {
     assert!(d.m.depo.gorunen_kayit("k_pc").unwrap().is_some(), "PC'de olan eklendi");
     // Kuyruğun başı yollandı.
     assert!(matches!(ajanda_yukari_coz(&e.gonderilecek[0]), Ok(AjandaYukari::Islem { .. })));
+}
+
+/// v3 `hello` istemcinin (bugün boş) yetenek listesini taşır; `welcome.yetenekler` bağlantının durumunda
+/// saklanır ve bağlantı kapanınca düşer.
+#[test]
+fn welcome_yetenekleri_baglantida_saklanir() {
+    let mut d = Duzen::yeni();
+    let (r, e) = d.calistir(|m, o, e| m.baglanti_acildi(o, e));
+    r.unwrap();
+    let Ok(AjandaYukari::Hello { yetenekler, .. }) = ajanda_yukari_coz(&e.gonderilecek[0]) else { panic!("hello") };
+    assert_eq!(yetenekler, Some(vec![]), "v3 hello yetenek listesini yollar (bugün boş)");
+    d.kopar();
+    d.el_sikis();
+    let y = vec!["ek_yedegi".to_string()];
+    d.cerceve(AjandaAsagi::Welcome { depo_id: "d_a".into(), bas_rev: 0, tam: true, server_time_ms: SIMDI, yetenekler: Some(y) });
+    assert!(d.m.kanal_yetenegi("ek_yedegi") && !d.m.kanal_yetenegi("ice_aktar"));
+    d.kopar();
+    assert!(!d.m.kanal_yetenegi("ek_yedegi"), "bağlantı kapanınca düşer");
 }

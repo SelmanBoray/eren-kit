@@ -592,6 +592,24 @@ impl V3Alanlari {
     pub fn kurallar(&self) -> Result<(), (&'static str, &'static str)> {
         v3_alan_kurallari(self.bolge.is_some(), self.bolge_konumu.is_some(), self.varis.is_some())
     }
+
+    /// Var olan alanları koyan değişiklik (olmayanlara dokunmaz): `ekle`'nin v3 kalanı `guncelle` olarak.
+    pub fn degisiklik(&self) -> V3Degisikligi {
+        fn alan<T: Clone>(d: &Option<T>) -> Alan<T> {
+            d.clone().map_or(Alan::Yok, Alan::Deger)
+        }
+        fn liste<T: Clone>(l: &[T]) -> Alan<Vec<T>> {
+            if l.is_empty() { Alan::Yok } else { Alan::Deger(l.to_vec()) }
+        }
+        V3Degisikligi {
+            simge: alan(&self.simge),
+            bolge: alan(&self.bolge),
+            bolge_konumu: alan(&self.bolge_konumu),
+            varis: alan(&self.varis),
+            baglantilar: liste(&self.baglantilar),
+            ekler: liste(&self.ekler),
+        }
+    }
 }
 
 /// Değişikliğin ve geçmiş parçasının v3 alanları (`V3_DEGISIKLIK_ALANLARI`): `Kaldir` (`null`) kaldırır.

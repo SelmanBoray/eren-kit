@@ -1,11 +1,7 @@
 //! Sözleşmenin sabitleri (`protocol/src/sinirlar.ts`): yalnız ajandanın kullandıkları, birebir.
 //! Karakter sınırları UTF-16 birimi, adet sınırları öğe sayısıdır.
 
-/// Geçiş sarmalayıcısı: bugünkü kanalın bağlandığı sürüm (`surum::KANAL_SURUMU`, 2). Sözleşmenin
-/// `AJANDA_SURUMU`'su (en yüksek sürüm, 3) `surum::AJANDA_SURUMU`'dur. Bu ad yalnız `motor/kanal.rs`'in
-/// sürüm yönü karşılaştırması (`surum_yonu`) değişmeden kalsın diye durur: kanal aşaması geri düşüşü
-/// (`surum::ajanda_geri_dusus`) yazınca kalkar. Yeni kod bunu kullanmaz.
-pub const AJANDA_SURUMU: i64 = super::surum::KANAL_SURUMU.no();
+// `AJANDA_SURUMU` ve `AJANDA_SURUMLERI` `surum.rs`'tedir (bağlantı sürümü kanalın durumundadır).
 
 /// `/ajanda` çerçevesinin ayrıştırma öncesi üst sınırı (UTF-16 birimi): `AJANDA_AZAMI_CERCEVE.KANAL`.
 pub const AZAMI_CERCEVE_KANAL: usize = 2 * 1024 * 1024;

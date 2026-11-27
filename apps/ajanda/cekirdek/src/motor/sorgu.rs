@@ -102,7 +102,7 @@ impl Motor {
         }
         sayfa.yukleniyor = true;
         sayfa.hata = None;
-        e.gonderilecek.push(AjandaYukari::GecmisIste { istek_id, kayit_id: kayit_id.to_string(), once_rev }.kodla());
+        e.gonderilecek.push(AjandaYukari::GecmisIste { istek_id, kayit_id: kayit_id.to_string(), once_rev }.kodla_surum(self.baglanti_surumu()));
         e.degisim.gecmis.push(kayit_id.to_string());
         Ok(())
     }

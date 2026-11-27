@@ -1,5 +1,5 @@
 //! Sürüm uyumu (D5) ve sürüm 3 modelinin kenar durumları (vektörlerin dışında kalanlar): her sürüm kendi
-//! içinde katıdır, eski sürüme yazarken yeni alanlar düşer, bugünkü kanalın sarmalayıcıları v2'dedir,
+//! içinde katıdır, eski sürüme yazarken yeni alanlar düşer, tek sürüm sabiti vardır (sarmalayıcı yok),
 //! v3 alan kuralları birleştirme sonucunda da (yerel yazar ve iyimser uygulama bunu kullanır) geçerlidir.
 
 use ajanda_cekirdek::kural::birlesim::ajanda_degisikligi_uygula;
@@ -107,15 +107,14 @@ fn gecmis_parcasi_ve_korunan_alanlar_v2ye_suzulur() {
 }
 
 #[test]
-fn bugunku_kanal_v2_qr_ayri_surumde() {
-    // `sinirlar::AJANDA_SURUMU` geçiş sabitidir: kanalın sürüm yönü karşılaştırması bugünkü gibi 2'ye göre.
-    assert_eq!(model::sinirlar::AJANDA_SURUMU, 2);
+fn tek_surum_sabiti_v2_baglanti_v3_alanlarini_tasimaz_qr_ayri_surumde() {
+    // Tek sürüm sabiti: en yüksek sürüm 3; bağlantının sürümü kanalın durumundadır.
     assert_eq!(model::AJANDA_SURUMU, 3);
-    assert_eq!(model::KANAL_SURUMU, Surum::V2);
+    assert_eq!(Surum::EN_YENI.no(), model::AJANDA_SURUMU);
     let w = AjandaAsagi::Welcome { depo_id: "d".into(), bas_rev: 0, tam: false, server_time_ms: 1, yetenekler: Some(vec!["ek_yedegi".into()]) };
-    let ham = w.kodla();
+    let ham = w.kodla_surum(Surum::V2);
     assert!(ham.contains("\"v\":2") && !ham.contains("yetenekler"), "{ham}");
-    assert!(matches!(model::ajanda_asagi_coz(&ham), Ok(AjandaAsagi::Welcome { yetenekler: None, .. })));
+    assert!(matches!(model::ajanda_asagi_coz_surum(&ham, Some(Surum::V2)), Ok((Surum::V2, AjandaAsagi::Welcome { yetenekler: None, .. }))));
     // QR'ın `v`'si kanal sürümünden bağımsız: 2.
     let qr = AjandaEslestirmeQr { host: "100.64.0.1".into(), port: 8443, kod: "ABC123".into(), server_public_key: "QUJD".into() };
     assert_eq!(qr.json()["v"], json!(model::AJANDA_QR_SURUMU));
@@ -126,9 +125,9 @@ fn bugunku_kanal_v2_qr_ayri_surumde() {
         temel_revizyon: 1,
         degisiklik: AjandaDegisiklik { baslik: Some("y".into()), v3: model::V3Degisikligi { simge: Alan::Deger("ev".into()), ..Default::default() }, ..Default::default() },
     };
-    let giden = AjandaYukari::Islem { islem_id: "i1".into(), islem }.kodla();
+    let giden = AjandaYukari::Islem { islem_id: "i1".into(), islem }.kodla_surum(Surum::V2);
     assert!(!giden.contains("simge"), "{giden}");
-    assert!(model::ajanda_yukari_coz(&giden).is_ok());
+    assert!(model::ajanda_yukari_coz_surum(&giden, Some(Surum::V2)).is_ok());
 }
 
 #[test]

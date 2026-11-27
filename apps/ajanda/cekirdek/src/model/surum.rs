@@ -31,11 +31,6 @@ pub enum Surum {
     V3,
 }
 
-/// Bugünkü kanalın bağlandığı sürüm. Geçiş sabitidir: kanal (`motor/kanal.rs`) geri düşüşü yazana dek
-/// uygulama v2 ile bağlanır; çerçevelerin sürümsüz `json`/`kodla`/`ajanda_*_coz` sarmalayıcıları bunu
-/// kullanır. Kanal aşamasında kalkar (bağlantı sürümü bağlantının durumuna geçer).
-pub const KANAL_SURUMU: Surum = Surum::V2;
-
 impl Surum {
     /// `AJANDA_SURUMLERI` sırasıyla.
     pub const HEPSI: [Surum; 2] = [Surum::V2, Surum::V3];
@@ -150,7 +145,6 @@ mod testler {
         assert_eq!(Surum::EN_YENI.no(), AJANDA_SURUMU);
         assert_eq!(*AJANDA_SURUMLERI.last().unwrap(), AJANDA_SURUMU);
         assert!(AJANDA_SURUMLERI.windows(2).all(|w| w[1] == w[0] + 1), "bitişik");
-        assert_eq!(KANAL_SURUMU, Surum::V2, "kanal aşamasına dek bugünkü bağlantı");
         assert_eq!(Surum::V2.alanlar().len(), 7);
         assert_eq!(Surum::V3.alanlar().len(), 13);
         assert_eq!(&Surum::V3.alanlar()[..7], Surum::V2.alanlar(), "eski küme yeninin öneki");

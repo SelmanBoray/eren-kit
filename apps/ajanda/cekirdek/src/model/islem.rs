@@ -351,6 +351,49 @@ impl AjandaIslem {
         self.json_surum(Surum::EN_YENI)
     }
 
+    /// İşlemi bir bağlantı sürümüne böler. v3'te (ya da v3 alanı yoksa) işlem olduğu gibi gider. v2'de v3
+    /// alanları gidemez (`json_surum` onları sessizce düşürürdü): `ekle`'nin v3 alanları ve `guncelle`'nin
+    /// v3 değişiklikleri ayrı bir `guncelle` kalanına çıkar (aynı `kayit_id`; `ekle` kalanının
+    /// `temel_revizyon`'u eklemenin revizyonudur, 1). Yalnız v3 alanı değiştiren `guncelle`'nin v2'de
+    /// gidecek kısmı yoktur. Kullanımı: `motor/kanal.rs` kuyruğu yollarken.
+    pub fn surume_bol(&self, s: Surum) -> SurumBolumu {
+        let butun = || SurumBolumu { gidecek: Some(self.clone()), kalan: None };
+        if s.v3_mu() {
+            return butun();
+        }
+        match self {
+            AjandaIslem::Ekle { kayit_id, govde, v3, girdi_yolu } if !v3.bos_mu() => SurumBolumu {
+                gidecek: Some(AjandaIslem::Ekle {
+                    kayit_id: kayit_id.clone(),
+                    govde: govde.clone(),
+                    v3: V3Alanlari::default(),
+                    girdi_yolu: *girdi_yolu,
+                }),
+                kalan: Some(AjandaIslem::Guncelle {
+                    kayit_id: kayit_id.clone(),
+                    temel_revizyon: 1,
+                    degisiklik: AjandaDegisiklik { v3: v3.degisiklik(), ..Default::default() },
+                }),
+            },
+            AjandaIslem::Guncelle { kayit_id, temel_revizyon, degisiklik } if !degisiklik.v3.bos_mu() => {
+                let v2 = AjandaDegisiklik { v3: V3Degisikligi::default(), ..degisiklik.clone() };
+                SurumBolumu {
+                    gidecek: (!v2.bos_mu()).then(|| AjandaIslem::Guncelle {
+                        kayit_id: kayit_id.clone(),
+                        temel_revizyon: *temel_revizyon,
+                        degisiklik: v2,
+                    }),
+                    kalan: Some(AjandaIslem::Guncelle {
+                        kayit_id: kayit_id.clone(),
+                        temel_revizyon: *temel_revizyon,
+                        degisiklik: AjandaDegisiklik { v3: degisiklik.v3.clone(), ..Default::default() },
+                    }),
+                }
+            }
+            _ => butun(),
+        }
+    }
+
     /// Sürümün biçimi: v2'de v3 alanları yazılmaz.
     pub fn json_surum(&self, s: Surum) -> Value {
         let y = Yazici::yeni().alan("islem", self.tur().json()).alan("kayit_id", self.kayit_id());
@@ -368,6 +411,16 @@ impl AjandaIslem {
         }
         .bitir()
     }
+}
+
+/// Bir işlemin bir bağlantı sürümünde nasıl gideceği (`AjandaIslem::surume_bol`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SurumBolumu {
+    /// O sürümde yollanabilen kısım (`json_surum` ile aynı alanlar); `None`: o sürümde gidecek bir şey yok
+    /// (yalnız v3 alanı taşıyan `guncelle` v2'de boş değişiklik olurdu).
+    pub gidecek: Option<AjandaIslem>,
+    /// O sürümün taşıyamadığı kalan, kendi başına geçerli bir `guncelle` olarak; `None`: kalan yok.
+    pub kalan: Option<AjandaIslem>,
 }
 
 /// Değişikliğin öncesi ya da sonrası (`AjandaParca`): yalnız değişen alanlar.

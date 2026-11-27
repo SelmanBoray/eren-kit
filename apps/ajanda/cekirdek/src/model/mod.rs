@@ -8,8 +8,8 @@
 //!
 //! Sürümler (`surum`): her sürüm kendi içinde katıdır; çözme ve yazma bağlantı sürümünü değişken olarak
 //! alır (`oku_surum`/`json_surum`, çerçevelerde `oku(v, surum)`). Gövde tiplerinin sürümsüz `oku`/`json`'ı
-//! en yeni sürümdür (depo, kuyruk); çerçevelerin sürümsüz `json`/`kodla`/`ajanda_*_coz`'u bugünkü kanalın
-//! sürümüdür (`surum::KANAL_SURUMU`, v2).
+//! en yeni sürümdür (depo, kuyruk); çerçevelerin sürümsüz çözücüsü ve yazıcısı yoktur: kanal bağlantının
+//! sürümünü durumunda tutar (`motor/kanal.rs`).
 
 pub mod json;
 
@@ -32,17 +32,17 @@ pub use alan::{
     ajanda_yetenek_kesisimi,
 };
 pub use cerceve::{
-    AjandaAsagi, AjandaRevIzi, AjandaYukari, CozumHatasi, CozumKodu, ajanda_asagi_coz, ajanda_asagi_coz_surum,
-    ajanda_asagi_surume, ajanda_yukari_coz, ajanda_yukari_coz_surum,
+    AjandaAsagi, AjandaRevIzi, AjandaYukari, CozumHatasi, CozumKodu, ajanda_asagi_coz_surum, ajanda_asagi_surume,
+    ajanda_yukari_coz_surum,
 };
 pub use eslesme::{AjandaEslestirmeQr, ImzaRolu, ajanda_kimlik_imza_metni, kanal_kapsamda_mi};
 pub use islem::{
     AjandaDegisiklik, AjandaGecmisGirdisi, AjandaIslem, AjandaKanalHatasi, AjandaParca, AjandaRetNedeni,
-    AlanDegisikligi, IslemTuru, KayitGovdesi, KuyrukRetNedeni,
+    AlanDegisikligi, IslemTuru, KayitGovdesi, KuyrukRetNedeni, SurumBolumu,
 };
 pub use json::{Alan, SemaHatasi};
 pub use surum::{
-    AJANDA_QR_SURUMU, AJANDA_SURUMLERI, AJANDA_SURUMU, DonmusHata, GeriDusus, KANAL_SURUMU, Surum, ajanda_donmus_hata_oku,
+    AJANDA_QR_SURUMU, AJANDA_SURUMLERI, AJANDA_SURUMU, DonmusHata, GeriDusus, Surum, ajanda_donmus_hata_oku,
     ajanda_geri_dusus, ajanda_ret_surumu_oku,
 };
 pub use kayit::{
