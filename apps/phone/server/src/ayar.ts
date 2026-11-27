@@ -100,6 +100,14 @@ const IZINLI_ANAHTARLAR = new Set([
 
 const VARSAYILAN_MEDYA_KOTA_MB = 10240;
 const VARSAYILAN_DOKUM_MODELI = "modeller/ggml-large-v3-turbo-q5_0.bin";
+/*
+ * `dokum_vad_modeli`'nin varsayılanı BİLEREK yok (yalnız anahtar verilirse denenir). Ölçüm (2026-11-27,
+ * ffmpeg 8.1 `whisper` süzgeci, large-v3-turbo-q5_0, `modeller/ggml-silero-v5.1.2.bin`): süzgeç VAD'ı
+ * yalnız kuyruğu bölmek için kullanır, kalan tamponu yine döker; sessiz ve gürültülü kuyrukta "Thank you."
+ * VAD'la da çıktı (15 sn sessizlik, 15 sn pembe gürültü, 8 sn gürültü + konuşma + 12 sn gürültü), süre
+ * ise 7,3 → 27,1 sn, 7,3 → 32,3 sn, 13,6 → 46,8 sn oldu. Yarar yok, döküm üç kat yavaşlıyor. Ayrıntı
+ * `docs/SERVIS.md` "Medya".
+ */
 
 /** Sabit medya servis sınırları (`SAHTE_MEDYA_SINIRLARI` ile aynı; MODULLER.md "Medya dalgası" > S8). */
 export const MEDYA_SERVIS_SINIRLARI: MedyaServisSinirlari = Object.freeze({
@@ -317,6 +325,17 @@ export interface MedyaCozumu {
   readonly kapaliNedeni: string | null;
 }
 
+/**
+ * `ayarKur`'un kurduğu her `Ayar` için `medyaCoz`'un kapalı nedeni (`Ayar.medya` `null` iken). `Ayar`
+ * sözleşmesi değişmeden `ana` nedeni günlüğe yazabilsin, dosya araması ikinci kez yapılmasın diye.
+ */
+const medyaKapaliNedenleri = new WeakMap<Ayar, string>();
+
+/** `ayarKur`'un bu `Ayar` için bulduğu medya kapalı nedeni; medya açıksa ya da `Ayar` `ayarKur`'dan değilse `null`. */
+export function medyaKapaliNedeni(ayar: Ayar): string | null {
+  return medyaKapaliNedenleri.get(ayar) ?? null;
+}
+
 /** Medya ayarlarını çözer. Dosya varlığı açılışta bir kez denetlenir; araç yoksa medya kapalıdır. */
 export async function medyaCoz(dosya: DosyaPortu, ortam: Ortam, yerel: Record<string, unknown>, kok: string): Promise<MedyaCozumu> {
   const ffmpegBelirtilen = metinAlani(yerel, "ffmpeg_yolu");
@@ -423,7 +442,7 @@ export const ayarKur: AyarFabrikasi = async (b: AyarBagimliliklari): Promise<Aya
   const rea = mcpTanimi(yerel, "rea");
   const telegram = telegramTanimi(yerel);
   const claudeExe = await claudeExeBul(b.dosya, b.ortam, metinAlani(yerel, "claude_exe"));
-  const medya = (await medyaCoz(b.dosya, b.ortam, yerel, yollar.kok)).medya;
+  const { medya, kapaliNedeni } = await medyaCoz(b.dosya, b.ortam, yerel, yollar.kok);
 
   if (!bosMetinDegil(b.execPath)) throw new AyarHatasi("execPath boş olamaz");
 
@@ -434,7 +453,7 @@ export const ayarKur: AyarFabrikasi = async (b: AyarBagimliliklari): Promise<Aya
 
   const kapatmali = (): Ortam => ({ ...claudeSil(ortamKopyasi), ...KAPATMA_ANAHTARLARI });
 
-  return {
+  const ayar: Ayar = {
     yollar,
     servis,
     isYollari(is_id: IsNo): IsYollari {
@@ -495,4 +514,6 @@ export const ayarKur: AyarFabrikasi = async (b: AyarBagimliliklari): Promise<Aya
       return telegram === null ? null : { ...telegram };
     },
   };
+  if (kapaliNedeni !== null) medyaKapaliNedenleri.set(ayar, kapaliNedeni);
+  return ayar;
 };

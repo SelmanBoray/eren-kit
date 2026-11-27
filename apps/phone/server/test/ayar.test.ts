@@ -2,7 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import win32 from "node:path/win32";
-import { asistanAdiUret, ayarKur, AyarHatasi, yollariUret } from "../src/ayar.ts";
+import { asistanAdiUret, ayarKur, AyarHatasi, medyaKapaliNedeni, yollariUret } from "../src/ayar.ts";
 import type { Ayar, Ortam } from "../src/sozlesme.ts";
 import { sahteDosya } from "./sahte.ts";
 import type { SahteDosya } from "./sahte.ts";
@@ -693,6 +693,7 @@ describe("ayar: eren-kit asistan adı ve veri kökü", () => {
 describe("ayar: medya", () => {
   const FF = "C:\\ornek\\ffmpeg\\bin";
   const MODEL = `${KOK}\\modeller\\ggml-large-v3-turbo-q5_0.bin`;
+  const VAD = `${KOK}\\modeller\\ggml-silero-v5.1.2.bin`;
   const araclarla = (yerel?: unknown): Kurulum => {
     const k = hazir(yerel, { PATH: `C:\\ornek\\arac;${FF}` });
     k.dosya.yaz(`${FF}\\ffmpeg.exe`, "x");
@@ -725,6 +726,32 @@ describe("ayar: medya", () => {
     const k = araclarla();
     k.dosya.yaz(MODEL, "x");
     assert.equal((await kur(k)).medya?.dokumModeli, "modeller/ggml-large-v3-turbo-q5_0.bin");
+  });
+
+  it("VAD varsayılanı yok: Silero dosyası diskte olsa da anahtarsız null (ölçüm: süzgeçte yararı yok, 3 kat yavaş)", async () => {
+    const k = araclarla();
+    k.dosya.yaz(VAD, "x");
+    assert.equal((await kur(k)).medya?.dokumVadModeli, null);
+  });
+
+  it("dokum_vad_modeli verilirse o dosya denenir; yoksa null", async () => {
+    const k = araclarla({ dokum_vad_modeli: "modeller/ggml-silero-v5.1.2.bin" });
+    assert.equal((await kur(k)).medya?.dokumVadModeli, null);
+    k.dosya.yaz(VAD, "x");
+    assert.equal((await kur(k)).medya?.dokumVadModeli, "modeller/ggml-silero-v5.1.2.bin");
+  });
+
+  it("kapalı nedeni ayara bağlı okunur; açıkken ve başka nesnede null", async () => {
+    const kapali = await kur(hazir());
+    assert.equal(kapali.medya, null);
+    const neden = medyaKapaliNedeni(kapali);
+    assert.ok(neden !== null && neden.includes("ffmpeg ve ffprobe"), String(neden));
+    assert.ok(!neden.includes("\\"), "neden yol taşımamalı");
+    const yalnizProbe = hazir({ claude_exe: EXE }, { PATH: FF });
+    yalnizProbe.dosya.yaz(`${FF}\\ffmpeg.exe`, "x");
+    assert.match(medyaKapaliNedeni(await kur(yalnizProbe)) ?? "", /^ffprobe bulunamadı/);
+    assert.equal(medyaKapaliNedeni(await kur(araclarla())), null);
+    assert.equal(medyaKapaliNedeni({ ...kapali }), null);
   });
 
   it("açık yollar, vad, dil, kota", async () => {
