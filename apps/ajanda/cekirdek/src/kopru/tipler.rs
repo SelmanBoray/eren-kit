@@ -36,6 +36,11 @@ pub struct KoparmaSonucu {
     pub ret_listesinde: i32,
     /// Yerel kipte çağrıldıysa: bir eşleşme ya da bekleyen eşleştirme (süren bağlanma) iptal edildi mi.
     pub baglanma_iptal: bool,
+    /// Geçişte PC temelinin (koparma anındaki PC kopyası) okunamayan satırları. Bu kayıtların PC'deki son
+    /// hali bilinmez: sonraki bağlanmada telefonun PC'den farklı her alanı gider (PC'nin değeri PC
+    /// geçmişinde kalır). Yerel kipte hep 0.
+    #[uniffi(default = 0)]
+    pub okunamayan_pc_temeli: i32,
 }
 
 /// Bağlı kipten yerel kipe son geçişin nedeni (D2).
@@ -421,7 +426,8 @@ pub struct GecersizKayit {
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct IceAktarmaOnizlemesi {
     /// Uygulanacağı kip. `Yerel`: kayıtlar alanlarıyla doğrudan yazılır. `Bagli`: servise kuyrukla
-    /// gider (servis yazar; kaynak izi, taslak işareti, zamanlar servisin olur).
+    /// gider (servis yazar; kaynak izi ve zamanlar servisin olur; telefonda olmayan taslak gitmez:
+    /// `taslak_gonderilmeyecek`).
     pub kip: CalismaKipi,
     /// Dosyanın dışa aktarıldığı an (ms).
     pub disa_aktarma_ms: i64,
@@ -437,7 +443,8 @@ pub struct IceAktarmaOnizlemesi {
     pub ayni: i32,
     /// Telefondaki daha yeni (ya da aynı anlı): telefondaki kalır.
     pub atlanacak: i32,
-    /// Şemadan ya da kurallardan geçmeyen, dosyada yinelenen ya da dilimi bilinmeyen: uygulanmaz.
+    /// Şemadan ya da kurallardan geçmeyen, dosyada yinelenen, dilimi bilinmeyen, çok büyük (256 KiB üstü) ya
+    /// da gelecek tarihli (`guncelleme_ms` şimdi + 1 günden büyük): uygulanmaz.
     pub gecersiz: i32,
     /// Kayıt sınırı (`KAYIT_ADET`, mezar taşları dahil) dolduğu için eklenemeyecek yeniler.
     pub sinir_asan: i32,
@@ -453,6 +460,16 @@ pub struct IceAktarmaOnizlemesi {
     pub ekler: Vec<EkDosyasi>,
     /// Planın izi: `ice_aktar`'a verilirse telefon bu arada plan değişecek kadar değiştiyse uygulanmaz.
     pub iz: String,
+    /// `guncellenecek`'lerden telefonda canlı olup dosyadaki daha yeni mezar taşıyla silinecekler.
+    #[uniffi(default = 0)]
+    pub silinecek: i32,
+    /// `guncellenecek`'lerden telefonda silinmiş olup dosyadaki daha yeni canlı halle geri yüklenecekler.
+    #[uniffi(default = 0)]
+    pub geri_yuklenecek: i32,
+    /// Bağlı kipte: telefonda olmayan taslaklar. Servis kaydı taslak olarak alamaz (`ekle` onaylanmış kayıt
+    /// doğurur): gönderilmez. Yerel kipte hep 0 (taslak taslak olarak yazılır).
+    #[uniffi(default = 0)]
+    pub taslak_gonderilmeyecek: i32,
 }
 
 /// `Cekirdek::ice_aktar`'ın sonucu.
@@ -502,6 +519,15 @@ pub struct BirlestirmeOnizlemesi {
     pub olasi_ciftler: Vec<OlasiCift>,
     /// Planın izi: `birlestirmeyi_onayla`'ya verilir; plan bu arada değiştiyse uygulanmaz.
     pub iz: String,
+    /// Serviste olmayan taslaklar (`kayit_id`): servis kaydı taslak olarak alamaz (`ekle` onaylanmış kayıt
+    /// doğurur). Gönderilmez; ret listesine düşer, görünen kopyadan çıkar (düzeltilirse yeni, onaylı kayıt
+    /// olarak eklenir; atılırsa gider).
+    #[uniffi(default)]
+    pub taslaklar: Vec<String>,
+    /// Telefon kayıtlarından PC temeli satırı okunamayanlar: temel bilinmiyor sayılır, telefonun servistekinden
+    /// farklı her alanı gider (`degisen` ya da `pc_silmisler` içindedir).
+    #[uniffi(default = 0)]
+    pub okunamayan_pc_temeli: i32,
 }
 
 /// İki tarafın da değiştirdiği alanları olan kayıt.

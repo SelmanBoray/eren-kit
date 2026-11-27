@@ -464,13 +464,18 @@ impl DonusAnalizi {
         DonusAnalizi { son_rev, donmus: kayip_alt != i64::MAX, korunan_ust }
     }
 
-    fn durum(&self, o: &AjandaKaydi, n: &AjandaKaydi) -> PcDurumu {
-        let iyimser = o.revizyon > self.son_rev;
-        let eksik = match soy((o.revizyon, o.guncelleme_ms), iyimser, Some((n.revizyon, n.guncelleme_ms))) {
+    /// Telefonun bildiği yazım `o` PC'nin yeni kopyasında (`n`; yoksa kayıt PC'de yok) yitirilmiş mi.
+    fn eksik(&self, o: Iz, n: Option<Iz>) -> bool {
+        match soy(o, o.0 > self.son_rev, n) {
             Soy::Ayni => false,
             Soy::Kayip => true,
-            Soy::Ileride => self.donmus && o.revizyon > self.korunan_ust,
-        };
+            Soy::Ileride => self.donmus && o.0 > self.korunan_ust,
+        }
+    }
+
+    fn durum(&self, o: &AjandaKaydi, n: &AjandaKaydi) -> PcDurumu {
+        let iyimser = o.revizyon > self.son_rev;
+        let eksik = self.eksik((o.revizyon, o.guncelleme_ms), Some((n.revizyon, n.guncelleme_ms)));
         PcDurumu { eksik, eskimis: !iyimser && n.guncelleme_ms < o.guncelleme_ms }
     }
 }
@@ -606,9 +611,18 @@ fn birlesme_islemleri(o: Option<&AjandaKaydi>, p: &AjandaKaydi, n: &AjandaKaydi,
     Birlesme::Islemler(l)
 }
 
-/// Satırı okunamayan PC temeli (bozuk satır) bilinmiyor sayılır: tek kaydın sorunu geçişi kilitlemez.
-fn sunucu_kaydi_ya_da_yok(d: &Depo, kayit_id: &str) -> Option<AjandaKaydi> {
-    d.sunucu_kaydi(kayit_id).ok().flatten()
+/// PC temelindeki kaydın hali. Satırı okunamayan temel (bozuk satır) bilinmiyor sayılır (`Err(())`, çağıran
+/// sayar): tek kaydın sorunu geçişi kilitlemez. Depo hatası yukarı gider.
+fn sunucu_temeli(d: &Depo, kayit_id: &str) -> Result<Result<Option<AjandaKaydi>, ()>, CekirdekHatasi> {
+    Ok(match d.sunucu_ham(kayit_id)? {
+        None => Ok(None),
+        Some(json) => kayit_coz(&json).map(Some).ok_or(()),
+    })
+}
+
+/// PC temelinin (sunucu kopyası) okunamayan satır sayısı.
+fn okunamayan_temel_sayisi(d: &Depo) -> Result<usize, CekirdekHatasi> {
+    Ok(d.kopya_satirlari(KopyaTablosu::Sunucu)?.iter().filter(|s| kayit_coz(&s.json).is_none()).count())
 }
 
 /// Okunamayan görünen satırın içerik alanları PC'deki kaydınkilerle aynı mı (yokluk Kol C kuralıyla): öyleyse
@@ -665,6 +679,11 @@ pub(crate) enum DokmeSinifi {
     /// Telefonda silinmiş, servisin kopyasında yok (temelsiz mezar taşı): gönderilmez, görünen kopyadan
     /// (Silinenler) düşer.
     DusecekMezar,
+    /// Taslak, servisin kopyasında yok (bağlantıdan kalan öneri başka servise ya da PC'nin yitirdiği öneri):
+    /// servis kaydı taslak olarak alamaz (`ekle` onaylanmış kayıt doğurur). Gönderilmez, kullanıcının
+    /// onaylamadığı öneri onaylanmış sayılmaz; kaybolmaz da: ret listesine düşer (düzeltme yeni, onaylı kayıt
+    /// ekler), görünen kopyadan çıkar (bağlı kipte sunucusuz ve kuyruksuz satır sahipsizdir).
+    Taslak,
 }
 
 /// `dokme_plani`'nın bir kaydı.
@@ -689,6 +708,9 @@ pub(crate) struct DokmePlani {
     /// Servisin `depo_id`'si telefonun PC temelininkiyle aynı (aynı servise dönüş).
     pub ayni_depo: bool,
     pub kayitlar: Vec<KayitPlani>,
+    /// Servisin kopyasında olan telefon kayıtlarından PC temeli satırı okunamayanlar (temel bilinmiyor
+    /// sayıldı: telefonun servistekinden farklı her alanı gider).
+    pub okunamayan_temel: usize,
 }
 
 /// Okunan JSON nesnesi (değilse boş).
@@ -748,6 +770,7 @@ pub(crate) fn dokme_plani(d: &Depo, depo_id: &str) -> Result<DokmePlani, Cekirde
         None
     };
     let mut kayitlar = Vec::new();
+    let mut okunamayan_temel = 0;
     for (kayit_id, json) in d.gorunen_ham_hepsi()? {
         let mut p = KayitPlani {
             kayit_id: kayit_id.clone(),
@@ -775,12 +798,20 @@ pub(crate) fn dokme_plani(d: &Depo, depo_id: &str) -> Result<DokmePlani, Cekirde
                 p.sinif = DokmeSinifi::DusecekMezar;
                 p.cikar = true;
             }
+            None if k.taslak => {
+                p.sinif = DokmeSinifi::Taslak;
+                p.ret_json = Some(k.json().to_string());
+                p.cikar = true;
+            }
             None => {
                 p.sinif = DokmeSinifi::Yeni;
                 p.islemler = kuyruga_islemler(None, &k, false);
             }
             Some(n) => {
-                let temel = sunucu_kaydi_ya_da_yok(d, &kayit_id);
+                let temel = sunucu_temeli(d, &kayit_id)?.unwrap_or_else(|()| {
+                    okunamayan_temel += 1;
+                    None
+                });
                 let pc = match (&analiz, &temel) {
                     (Some(a), Some(t)) => a.durum(t, &n),
                     _ => PcDurumu::default(),
@@ -808,7 +839,7 @@ pub(crate) fn dokme_plani(d: &Depo, depo_id: &str) -> Result<DokmePlani, Cekirde
         p.telefon = Some(k);
         kayitlar.push(p);
     }
-    Ok(DokmePlani { ayni_depo, kayitlar })
+    Ok(DokmePlani { ayni_depo, kayitlar, okunamayan_temel })
 }
 
 /// Yerel kipten bağlı kipe: `dokme_plani`'nın uygulanması, çağıranın tek işleminde (`birlestirme.rs`: soru
@@ -819,10 +850,10 @@ pub(crate) fn dokme_plani(d: &Depo, depo_id: &str) -> Result<DokmePlani, Cekirde
 /// olanlar eklenir). İşlemler bugünkü kuyruğa koyma yoluyla (`kuyruga_ekle`) girer.
 ///
 /// Değişmez: her canlı yerel kayıt ya görünen kopyada kalır (kuyruktaki işlemi iyimser görünür ya da kayıt
-/// servisin kopyasında vardır) ya da ret listesine düşer (servis işlemi reddetti, satır okunamadı ya da PC
-/// yitirmiş ama birleşen hal geçerli değil). Kuyruğa hiçbir işlemi girmeyen kayıt servisin kopyasındadır
-/// (temelsiz canlı kayıt hep `ekle` alır). Görünen kopyadan yalnız PC'de olmayan mezar taşları ve PC'de
-/// olmayan okunamayan satırlar çıkar. Döner: ret listesine satır eklendi mi.
+/// servisin kopyasında vardır) ya da ret listesine düşer (servis işlemi reddetti, satır okunamadı, PC
+/// yitirmiş ama birleşen hal geçerli değil ya da serviste olmayan taslak). Kuyruğa hiçbir işlemi girmeyen
+/// kayıt servisin kopyasındadır (temelsiz canlı onaylı kayıt hep `ekle` alır). Görünen kopyadan yalnız PC'de
+/// olmayan mezar taşları, taslaklar ve okunamayan satırlar çıkar. Döner: ret listesine satır eklendi mi.
 pub(crate) fn yereli_kuyruga_dok(
     d: &Depo,
     o: &Ortam,
@@ -874,7 +905,8 @@ pub(crate) fn yereli_kuyruga_dok(
 /// onaylanmışlar farkın içindedir; birleşen hal geçerli değilse fark yerine onaylı hal ret listesine).
 /// Yitirmemişse kayda dokunulmaz: bekleyen satırlar taze kopya üstüne yeniden uygulanır (PC'de ilerlemiş
 /// alanlar ezilmez). Saklı `depo_id` yoksa ya da başkaysa hiçbir şey yapmaz (başka depo `welcome`'da yerel
-/// kip yoluna döner).
+/// kip yoluna döner). PC'nin yitirdiği taslak `ekle` ile gitmez, onaylı hali ret listesine düşer; okunamayan
+/// PC temeli satırı yazım kimliğiyle (sütunlar) denetlenir, PC o yazımı yitirmişse metni ret listesine düşer.
 pub(crate) fn geri_donenleri_kuyruga_koy(d: &Depo, o: &Ortam, b: &IyimserBaglam, depo_id: &str) -> Result<(), CekirdekHatasi> {
     if d.depo_id()?.as_deref() != Some(depo_id) {
         return Ok(());
@@ -884,8 +916,18 @@ pub(crate) fn geri_donenleri_kuyruga_koy(d: &Depo, o: &Ortam, b: &IyimserBaglam,
     let sunucu_satirlari = d.kopya_satirlari(KopyaTablosu::Sunucu)?;
     let sunucu = izler(&sunucu_satirlari);
     let yeni = izler(&d.kopya_satirlari(KopyaTablosu::Telafi)?);
-    let mut onaylilar: BTreeMap<String, AjandaKaydi> =
-        sunucu_satirlari.iter().filter_map(|s| Some((s.kayit_id.clone(), kayit_coz(&s.json)?))).collect();
+    // Okunamayan PC temeli satırının hali bilinmez ama yazım kimliği (sütunlar) bilinir: kanıta girer,
+    // aşağıda ayrıca denetlenir (sessizce atlanmaz).
+    let mut onaylilar: BTreeMap<String, AjandaKaydi> = BTreeMap::new();
+    let mut okunamayanlar: Vec<&KopyaSatiri> = Vec::new();
+    for s in &sunucu_satirlari {
+        match kayit_coz(&s.json) {
+            Some(k) => {
+                onaylilar.insert(s.kayit_id.clone(), k);
+            }
+            None => okunamayanlar.push(s),
+        }
+    }
     let mut onaylananlar: BTreeMap<String, Vec<KuyrukSatiri>> = BTreeMap::new();
     for s in d.kuyruk()?.into_iter().filter(|s| s.bekledigi_rev.is_some()) {
         onaylananlar.entry(s.kayit_id.clone()).or_default().push(s);
@@ -904,10 +946,24 @@ pub(crate) fn geri_donenleri_kuyruga_koy(d: &Depo, o: &Ortam, b: &IyimserBaglam,
             onaylilar.insert(kayit_id, k);
         }
     }
-    let temeller: BTreeMap<String, Iz> = onaylilar.iter().map(|(id, k)| (id.clone(), (k.revizyon, k.guncelleme_ms))).collect();
+    okunamayanlar.retain(|s| !onaylilar.contains_key(&s.kayit_id));
+    let mut temeller: BTreeMap<String, Iz> = onaylilar.iter().map(|(id, k)| (id.clone(), (k.revizyon, k.guncelleme_ms))).collect();
+    temeller.extend(okunamayanlar.iter().map(|s| (s.kayit_id.clone(), (s.revizyon, s.guncelleme_ms))));
     let analiz = DonusAnalizi::kur(&temeller, &sunucu, &yeni, son_rev, iz_kaybi);
+    // Okunamayan temel: PC o yazımı yitirmişse telefonun bildiği hal (satırın metni) ret listesine düşer
+    // (D2'nin okunamayan görünen satır kuralı); yitirmemişse PC'nin hali yerine geçer, bir şey kaybolmaz.
+    for s in &okunamayanlar {
+        if analiz.eksik((s.revizyon, s.guncelleme_ms), yeni.get(&s.kayit_id).copied()) {
+            kaydi_ret_listesine(d, o, &s.kayit_id, &s.json, o.simdi_ms())?;
+        }
+    }
     for (kayit_id, onayli) in &onaylilar {
         let islemler = match d.telafi_kaydi(kayit_id)? {
+            // PC'nin yitirdiği taslak `ekle` ile onaylanmış gitmez: onaylı hal ret listesine (`DokmeSinifi::Taslak`).
+            None if onayli.taslak && !onayli.silindi => {
+                kaydi_ret_listesine(d, o, kayit_id, &onayli.json().to_string(), o.simdi_ms())?;
+                Vec::new()
+            }
             None => kuyruga_islemler(None, onayli, true),
             Some(n) => {
                 let pc = analiz.durum(onayli, &n);
@@ -946,7 +1002,8 @@ fn onaylananlari_temele_kat(d: &Depo, b: &IyimserBaglam, kuyruk: &[KuyrukSatiri]
         kayitlar.entry(s.kayit_id.as_str()).or_default().push(s);
     }
     for (kayit_id, satirlar) in kayitlar {
-        let mut hal = d.sunucu_kaydi(kayit_id)?;
+        // Okunamayan temel satırı olduğu gibi kalır (koparmayı düşürmez; `KoparmaSonucu.okunamayan_pc_temeli`).
+        let Ok(mut hal) = sunucu_temeli(d, kayit_id)? else { continue };
         let mut rev = 0;
         for s in satirlar {
             if let Some(islem) = islem_coz(&s.islem_json) {
@@ -980,6 +1037,7 @@ fn bagli_kipten_cik(d: &Depo, b: &IyimserBaglam) -> Result<KoparmaSonucu, Cekird
         yanitsiz_islem: sayi(gonderilmeyen.iter().filter(|s| s.yollandi).count() as i64),
         ret_listesinde: sayi(d.ret_sayisi()?),
         baglanma_iptal: false,
+        okunamayan_pc_temeli: sayi(okunamayan_temel_sayisi(d)? as i64),
     };
     onaylananlari_temele_kat(d, b, &kuyruk)?;
     d.kuyrugu_bosalt()?;
@@ -998,6 +1056,7 @@ fn neden_adi(n: GecisNedeni) -> &'static str {
 }
 
 /// `meta.son_gecis`'in JSON'u (`GecisOzeti`; `onceki_kip` ve `baglanma_iptal` yazılmaz: hep `Bagli`, yanlış).
+/// `okunamayan_pc_temeli` sonradan eklendi: eski özette yoksa 0 okunur.
 fn gecis_json(g: &GecisOzeti) -> String {
     let k = &g.koparma;
     serde_json::json!({
@@ -1007,6 +1066,7 @@ fn gecis_json(g: &GecisOzeti) -> String {
         "gonderilmeyen_islem": k.gonderilmeyen_islem,
         "yanitsiz_islem": k.yanitsiz_islem,
         "ret_listesinde": k.ret_listesinde,
+        "okunamayan_pc_temeli": k.okunamayan_pc_temeli,
         "eski_depo_id": g.eski_depo_id,
         "yeni_depo_id": g.yeni_depo_id,
     })
@@ -1031,6 +1091,8 @@ fn gecis_coz(metin: &str) -> Option<GecisOzeti> {
             yanitsiz_islem: sayi_al("yanitsiz_islem")?,
             ret_listesinde: sayi_al("ret_listesinde")?,
             baglanma_iptal: false,
+            // Bu alandan önce yazılmış özette yoktur.
+            okunamayan_pc_temeli: sayi_al("okunamayan_pc_temeli").unwrap_or(0),
         },
         eski_depo_id: metin_al("eski_depo_id"),
         yeni_depo_id: metin_al("yeni_depo_id"),
@@ -1162,6 +1224,7 @@ impl Motor {
                 yanitsiz_islem: 0,
                 ret_listesinde: sayi(self.depo.ret_sayisi()?),
                 baglanma_iptal: iptal,
+                okunamayan_pc_temeli: 0,
             }
         } else {
             let cevirici = o.cevirici();

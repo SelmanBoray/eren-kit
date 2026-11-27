@@ -76,6 +76,14 @@ impl Depo {
         json.map(|j| kayit_json_oku(&j)).transpose()
     }
 
+    /// Sunucu kopyasındaki satırın metni, çözülmeden (okunamayan satırı depo hatasından ayırmak için).
+    pub fn sunucu_ham(&self, kayit_id: &str) -> Result<Option<String>, CekirdekHatasi> {
+        Ok(self
+            .baglanti
+            .query_row("SELECT json FROM sunucu_kayitlari WHERE kayit_id = ?1", [kayit_id], |s| s.get(0))
+            .optional()?)
+    }
+
     pub fn sunucu_revizyonu(&self, kayit_id: &str) -> Result<Option<i64>, CekirdekHatasi> {
         Ok(self
             .baglanti

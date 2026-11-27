@@ -22,17 +22,35 @@
 //! "sozlesme_surumu", neden:"daha yeni..."}`): okuyamayacağı alanları sessizce atmasın. Daha eski sözleşme
 //! sürümleri okunur (yeni alanlar isteğe bağlıdır). Kendi sürümünde şema katıdır (bilinmeyen alan reddedilir).
 //!
+//! Bellek (başkasından gelen dosya): belge bütünüyle bir JSON ağacına çevrilmez. Önce `yapi_tara` metni
+//! ağaç kurmadan bir kez geçer (parantez dengesi, dizgiler, kökteki `kayitlar` dizisinin öğe aralıkları) ve
+//! sınırları uygular: belge `BELGE_AZAMI_BAYT`, `kayitlar` en çok `KAYIT_DIZISI_AZAMI` öğe (sayım aşınca
+//! tarama durur), kayıtlar dışındaki sözcükler (anahtar ya da değer) `DIS_SOZCUK_AZAMI`, iç içelik
+//! `DERINLIK_AZAMI`. Üst düzey `kayitlar` boşaltılmış metinden okunur; kayıtlar `plan_kur`'da tek tek
+//! çözülür (bir öğe en çok `KAYIT_AZAMI_BAYT`; büyüğü yalnız o kaydı geçersiz kılar). Bellek: belge metni +
+//! öğe aralıkları + o anki tek kaydın ağacı (+ yazılacak kayıtlar). Öğenin içindeki sözdizimi hatası da
+//! bütün belgeyi reddeder (eski davranış: dosya bozuk).
+//!
 //! İçe aktarma (`plan_kur`): her kayıt ayrı sınıflanır; tek bozuk kayıt bütün aktarmayı düşürmez.
 //! - geçersiz: modelin okuyucusundan ya da kurallarından geçmeyen, dosyada yinelenen `kayit_id`, dilimi
-//!   bilinmeyen (`ZamanKabugu.andan_yerele`; yerel yazarın `ekle` denetimi);
+//!   bilinmeyen (`ZamanKabugu.andan_yerele`; yerel yazarın `ekle` denetimi), çok büyük öğe ve gelecek
+//!   tarihli: `guncelleme_ms` şimdi + `GELECEK_TOLERANSI_MS`'ten büyük (model `olusturma_ms <=
+//!   guncelleme_ms` ister, o da sınırlanmış olur). Gelecekteki an kırpılmaz, reddedilir: "daha yeni kazanır"
+//!   kuralı bu anı her yerel kayda üstün sayar (9e15'li mezar taşı telefonu siler) ve servisin
+//!   `max(önceki, şimdi)` kuralı onu yapışkan kılar; kırpılmış an da (şimdi) o anki her kaydı yenerdi ve
+//!   dosyanın gerçek sırası zaten bilinemez;
 //! - yeni: telefonda yok. Kayıt sınırı (`KAYIT_ADET`, mezar taşları dahil) dolunca `sinir_asan`;
 //! - aynı: yerelde revizyon ve güncelleme anı dışında her alan eşit; bağlı kipte servise gidecek alanlar
 //!   eşit (`icerik_ayni`) ya da gidecek işlem yok;
 //! - güncellenecek: dosyadaki `guncelleme_ms` büyük; atlanacak: telefondaki büyük ya da eşit (telefon kalır).
-//!   Telefondaki satır okunamıyorsa yerelde dosyadaki yazılır (onarır), bağlı kipte atlanır.
+//!   Telefondaki satır okunamıyorsa yerelde dosyadaki yazılır (onarır), bağlı kipte atlanır. Güncellemenin
+//!   içindeki silme (`silinecek`: canlı kayıt yerine daha yeni mezar taşı) ve geri yükleme
+//!   (`geri_yuklenecek`) ayrıca sayılır.
 //!
 //! Uygulama (`ice_aktar`) tek SQLite işlemidir: plan işlemin içinde yeniden kurulur, `iz` verildiyse ve
-//! şimdiki planınkiyle tutmazsa hiçbir şey yazılmaz (`uygulandi` yanlış, yeni plan döner).
+//! şimdiki planınkiyle tutmazsa hiçbir şey yazılmaz (`uygulandi` yanlış, yeni plan döner). İz: kip, ek
+//! dizini, her öğenin metni ve sınıfı, güncellenecek kaydın telefondaki satırı (içerik ve yazım kimliği):
+//! başka bir dosya ya da önizlemeden sonra değişen telefon kaydı eski izle uygulanmaz.
 //! - Yerel kip: kayıt alanları korunur (oluşturma ve güncelleme anı, kaynak izi, elle alanlar, örnekler,
 //!   durum, taslak, silindi), revizyon yerel sayaçtan, yerel geçmişe bir satır (yeni: doğum parçası,
 //!   güncelleme: fark; yazar insan elle, an içe aktarma anı); kalıcı olunca alarm senkronu.
@@ -40,8 +58,10 @@
 //!   arasındaki işlemler kuyruğa girer (yeni: aynı kimlikle `ekle`, sonra durum, örnekler, `sil`; güncelleme:
 //!   `geri_yukle`, `guncelle`, `durum`, örnekler, `onayla`, `sil`). Kaybolanlar: kaynak izi (servis
 //!   `ekle`'yi bu telefonun elle/sesli not yazması sayar), oluşturma ve güncelleme anı (servisin), `elle_alanlar`
-//!   (servis hesaplar), yeni kaydın taslak işareti ve taslak olmayan kaydı taslağa döndürme, telefonda olmayan
-//!   mezar taşları (`gonderilmeyecek`). Servisin reddettiği işlem bugünkü gibi ret listesine düşer.
+//!   (servis hesaplar), taslak olmayan kaydı taslağa döndürme, telefonda olmayan mezar taşları
+//!   (`gonderilmeyecek`). Telefonda olmayan taslak gönderilmez (`taslak_gonderilmeyecek`): servis `ekle`'si
+//!   onaylanmış kayıt doğurur, kullanıcının onaylamadığı öneri onaylanmış gibi gitmesin (dosyada kalır,
+//!   yerel kipte taslak olarak alınabilir). Servisin reddettiği işlem bugünkü gibi ret listesine düşer.
 //!
 //! Kuyruk ve ret listesi belgeye girmez: kuyruğun etkisi görünen kopyadadır (bağlı kipte iyimser hal
 //! aktarılır); ret girdisi kayıt değil, belli bir servise ve revizyona bağlı reddedilmiş istektir, başka
@@ -75,8 +95,27 @@ pub(crate) const BELGE_ADI: &str = "ajanda.json";
 pub(crate) const EKLER_DIZINI: &str = "ekler/";
 pub(crate) const BICIM: &str = "eren_ajanda_yedegi";
 pub(crate) const BICIM_SURUMU: i64 = 1;
-/// Belgenin üst sınırı (UTF-8 bayt). 5000 kayıt ~2,5 MB; sınır yalnız kötü dosyaya karşı bekçidir.
-pub(crate) const BELGE_AZAMI_BAYT: usize = 256 * 1024 * 1024;
+/// Belgenin üst sınırı (UTF-8 bayt): 32 MiB. Ölçü: olağan kayıt ~500 bayt (5000 kayıt ~2,5 MB), dolu
+/// telefon (`KAYIT_ADET` = 50 000, mezar taşları dahil) ~25 MB; sınır onu taşır. Çekirdek bu metni bir kez
+/// tutar, ağacı tek kayıt için kurar (`yapi_tara`); Kotlin kabı açarken de bu sınırla sayar. Daha büyük
+/// belge açık hatayla reddedilir (ürün sınırıdır: dolu bir telefonun yedeği sığar).
+pub(crate) const BELGE_AZAMI_BAYT: usize = 32 * 1024 * 1024;
+/// `kayitlar` dizisinin öğe sınırı: `KAYIT_ADET`'in iki katı (telefon en çok `KAYIT_ADET` satır yazar;
+/// yinelenen ya da bozuk öğelere pay). Aşan belge, dizi ağaca çevrilmeden reddedilir.
+pub(crate) const KAYIT_DIZISI_AZAMI: usize = 2 * KAYIT_ADET;
+/// Tek kayıt öğesinin metin sınırı: 256 KiB. Sözleşme sınırlarıyla en büyük kayıt ~50 KB (açıklama 4000
+/// birim, en kötü kaçışla 24 KB; 500 örnek ~20 KB); girintili yazıma pay. Aşan öğe geçersiz sayılır.
+pub(crate) const KAYIT_AZAMI_BAYT: usize = 256 * 1024;
+/// `kayitlar` dışındaki sözcüklerin (anahtar ya da değer) sınırı: `EK_AZAMI_ADET` ek × 7 sözcük + pay.
+const DIS_SOZCUK_AZAMI: usize = 100_000;
+/// Ek dizininin öğe sınırı (Kotlin `YedekKabi.AZAMI_EK_SAYISI`).
+const EK_AZAMI_ADET: usize = 10_000;
+/// İç içeliğin sınırı (serde_json'un da sınırı 128'dir).
+const DERINLIK_AZAMI: usize = 128;
+/// Kaydın `guncelleme_ms`'inin şimdinin ötesinde kabul edilen payı: 1 gün. Cihaz saatleri arasındaki olağan
+/// kayma ve yanlış dilimle elle kurulmuş saat (en çok ~14 saat) geçer; daha ilerisi bozuk saat ya da
+/// düzenlenmiş dosyadır.
+pub(crate) const GELECEK_TOLERANSI_MS: i64 = 24 * 60 * 60 * 1000;
 /// Bir ekin tam boyunun üst sınırı (v3 taslağı: 4 MiB).
 pub(crate) const EK_AZAMI_BAYT: i64 = 4 * 1024 * 1024;
 /// Önizlemede konumu verilen geçersiz kayıt sayısı.
@@ -164,20 +203,211 @@ fn kip_adi(yerel: bool) -> &'static str {
     if yerel { "yerel" } else { "bagli" }
 }
 
-/// Çözülmüş belge: kayıt öğeleri henüz okunmamıştır (her biri `plan_kur`'da ayrı ayrı).
-struct Belge {
+/// Çözülmüş belge: kayıt öğeleri henüz okunmamıştır (her biri `plan_kur`'da ayrı ayrı, metin aralığından).
+struct Belge<'a> {
+    metin: &'a str,
     olusturma_ms: i64,
-    kayitlar: Vec<Value>,
+    /// `kayitlar` öğelerinin `metin`'deki (baş, son) aralıkları.
+    kayitlar: Vec<(usize, usize)>,
     ekler: Vec<EkDosyasi>,
 }
 
-/// Belgenin üst düzeyini okur (kayıtlar ayrı ayrı `plan_kur`'da). Hata: `GecersizGirdi{alan, neden}`.
-fn belge_coz(metin_: &str) -> Result<Belge, CekirdekHatasi> {
-    if metin_.len() > BELGE_AZAMI_BAYT {
-        return Err(belge_hatasi("belge", "çok büyük"));
+/// `ofset`'teki konum, serde_json'un sayışıyla (satır 1'den, sütun satırdaki bayt sayısı).
+fn konum(metin_: &str, ofset: usize) -> (usize, usize) {
+    let on = &metin_.as_bytes()[..ofset.min(metin_.len())];
+    (1 + on.iter().filter(|&&b| b == b'\n').count(), on.iter().rev().take_while(|&&b| b != b'\n').count())
+}
+
+/// serde_json konumunun (satır, sütun) `metin`'deki ofseti (`konum`'un tersi).
+fn ofset(metin_: &str, satir: usize, sutun: usize) -> usize {
+    let bas = if satir <= 1 {
+        0
+    } else {
+        metin_.bytes().enumerate().filter(|(_, b)| *b == b'\n').nth(satir - 2).map_or(metin_.len(), |(i, _)| i + 1)
+    };
+    (bas + sutun).min(metin_.len())
+}
+
+/// Sözdizimi hatası: yalnız satır ve sütun (içerik yok).
+fn json_degil(metin_: &str, ofset_: usize) -> CekirdekHatasi {
+    let (satir, sutun) = konum(metin_, ofset_);
+    belge_hatasi("belge", &format!("JSON değil (satır {satir}, sütun {sutun})"))
+}
+
+fn cok_fazla(alan: &str, azami: usize) -> CekirdekHatasi {
+    belge_hatasi(alan, &format!("çok fazla öğe (en çok {azami})"))
+}
+
+/// `yapi_tara`'nın sonucu.
+#[derive(Debug, Default, PartialEq)]
+struct Tarama {
+    /// Kökteki `kayitlar` dizisinin `[`'ından `]`'ının ardına (`kayitlar` dizi değilse ya da yoksa `None`).
+    dizi: Option<(usize, usize)>,
+    /// Öğelerin (baş, son) aralıkları; baştaki ve sondaki boşluk dışarıda.
+    ogeler: Vec<(usize, usize)>,
+}
+
+fn bosluk(b: u8) -> bool {
+    matches!(b, b' ' | b'\t' | b'\n' | b'\r')
+}
+
+/// Metni ağaç kurmadan bir kez geçer: parantez dengesi, dizgilerin sonu, kökteki `kayitlar` dizisinin öğe
+/// aralıkları ve sınırlar (`KAYIT_DIZISI_AZAMI`: sayım aşınca hemen durur; `DIS_SOZCUK_AZAMI`,
+/// `DERINLIK_AZAMI`). Sayılar, sabitler ve nesnelerin iç dizilişi burada denetlenmez: kayıtlar dışını ve her
+/// öğeyi serde_json okur. Bellek: parantez yığını (en çok `DERINLIK_AZAMI`) ve öğe aralıkları.
+fn yapi_tara(metin_: &str) -> Result<Tarama, CekirdekHatasi> {
+    let b = metin_.as_bytes();
+    let mut t = Tarama::default();
+    let mut yigin: Vec<u8> = Vec::new();
+    let mut dis_sozcuk = 0usize;
+    // Kök nesnede: sıradaki dizgi anahtar mı; son anahtar `kayitlar` mıydı; o anahtar görüldü mü.
+    let (mut anahtar_bekleniyor, mut kayitlar_anahtari, mut kayitlar_goruldu) = (false, false, false);
+    // `kayitlar` dizisinin içinde mi; dizinin başı; süren öğenin başı; son ayraç virgül müydü.
+    let (mut dizide, mut dizi_basi, mut oge_basi, mut virgulden_sonra) = (false, 0usize, None::<usize>, false);
+    let mut i = 0;
+    while i < b.len() {
+        let c = b[i];
+        if bosluk(c) {
+            i += 1;
+            continue;
+        }
+        // Bir değer (ya da kök dışında anahtar) başlıyor mu: kapanış ve ayraçlar dışında her sözcük.
+        let anahtar = c == b'"' && anahtar_bekleniyor && yigin.len() == 1;
+        if !matches!(c, b'}' | b']' | b',' | b':') && !anahtar {
+            if dizide && yigin.len() == 2 {
+                if oge_basi.is_some() {
+                    return Err(json_degil(metin_, i + 1));
+                }
+                if t.ogeler.len() >= KAYIT_DIZISI_AZAMI {
+                    return Err(cok_fazla("kayitlar", KAYIT_DIZISI_AZAMI));
+                }
+                oge_basi = Some(i);
+                virgulden_sonra = false;
+            } else if !dizide {
+                dis_sozcuk += 1;
+            }
+        }
+        if anahtar {
+            dis_sozcuk += 1;
+        }
+        if dis_sozcuk > DIS_SOZCUK_AZAMI {
+            return Err(cok_fazla("belge", DIS_SOZCUK_AZAMI));
+        }
+        match c {
+            b'{' | b'[' => {
+                if c == b'[' && kayitlar_anahtari && yigin.len() == 1 {
+                    dizide = true;
+                    dizi_basi = i;
+                }
+                kayitlar_anahtari = false;
+                yigin.push(c);
+                if yigin.len() > DERINLIK_AZAMI {
+                    return Err(belge_hatasi("belge", &format!("çok derin (en çok {DERINLIK_AZAMI})")));
+                }
+                anahtar_bekleniyor = yigin.len() == 1 && c == b'{';
+                i += 1;
+            }
+            b'}' | b']' => {
+                let ac = if c == b'}' { b'{' } else { b'[' };
+                if yigin.pop() != Some(ac) {
+                    return Err(json_degil(metin_, i + 1));
+                }
+                if dizide && yigin.len() == 1 {
+                    // `kayitlar`'ın kapanışı: süren öğe biter; boş öğe (`[1,]`) sözdizimi hatası.
+                    match oge_basi.take() {
+                        Some(bas) => t.ogeler.push((bas, oge_sonu(b, bas, i))),
+                        None if virgulden_sonra => return Err(json_degil(metin_, i + 1)),
+                        None => {}
+                    }
+                    dizide = false;
+                    t.dizi = Some((dizi_basi, i + 1));
+                }
+                i += 1;
+            }
+            b',' => {
+                if dizide && yigin.len() == 2 {
+                    let Some(bas) = oge_basi.take() else { return Err(json_degil(metin_, i + 1)) };
+                    t.ogeler.push((bas, oge_sonu(b, bas, i)));
+                    virgulden_sonra = true;
+                }
+                if yigin.len() == 1 && yigin[0] == b'{' {
+                    anahtar_bekleniyor = true;
+                }
+                kayitlar_anahtari = false;
+                i += 1;
+            }
+            b':' => i += 1,
+            b'"' => {
+                let bas = i;
+                i = dizgi_sonu(b, i).ok_or_else(|| json_degil(metin_, b.len()))?;
+                kayitlar_anahtari = false;
+                if anahtar {
+                    anahtar_bekleniyor = false;
+                    let ham = &metin_[bas..i];
+                    // Kaçışlı anahtar (bir harfi `\u` kaçışıyla yazılmış) çözülür: serde_json onu da `kayitlar` okur.
+                    let ad = if ham.contains('\\') { serde_json::from_str::<String>(ham).ok() } else { Some(ham[1..ham.len() - 1].to_string()) };
+                    if ad.as_deref() == Some("kayitlar") {
+                        if kayitlar_goruldu {
+                            return Err(belge_hatasi("kayitlar", "yinelenen alan"));
+                        }
+                        kayitlar_goruldu = true;
+                        kayitlar_anahtari = true;
+                    }
+                }
+            }
+            _ => {
+                kayitlar_anahtari = false;
+                while i < b.len() && !bosluk(b[i]) && !matches!(b[i], b',' | b':' | b'{' | b'[' | b'}' | b']' | b'"') {
+                    i += 1;
+                }
+            }
+        }
     }
-    let mut v: Value = serde_json::from_str(metin_)
-        .map_err(|e| belge_hatasi("belge", &format!("JSON değil (satır {}, sütun {})", e.line(), e.column())))?;
+    if !yigin.is_empty() {
+        return Err(json_degil(metin_, b.len()));
+    }
+    Ok(t)
+}
+
+/// Dizginin kapanış tırnağının ardı (`i` açılış tırnağı); kapanmamışsa `None`.
+fn dizgi_sonu(b: &[u8], mut i: usize) -> Option<usize> {
+    i += 1;
+    while i < b.len() {
+        match b[i] {
+            b'"' => return Some(i + 1),
+            b'\\' => i += 2,
+            _ => i += 1,
+        }
+    }
+    None
+}
+
+/// `bas`'ta başlayıp `ayrac`'ta biten öğenin sonu (sondaki boşluk dışarıda).
+fn oge_sonu(b: &[u8], bas: usize, ayrac: usize) -> usize {
+    let mut son = ayrac;
+    while son > bas && bosluk(b[son - 1]) {
+        son -= 1;
+    }
+    son
+}
+
+/// Belgenin üst düzeyini okur (kayıtlar ayrı ayrı `plan_kur`'da). Hata: `GecersizGirdi{alan, neden}`.
+fn belge_coz(metin_: &str) -> Result<Belge<'_>, CekirdekHatasi> {
+    if metin_.len() > BELGE_AZAMI_BAYT {
+        return Err(belge_hatasi("belge", &format!("çok büyük (en çok {} MiB)", BELGE_AZAMI_BAYT / (1024 * 1024))));
+    }
+    let tarama = yapi_tara(metin_)?;
+    // `kayitlar` dizisi boşaltılmış metin (ağaç yalnız üst düzey için kurulur); hata konumu asıl metne çevrilir.
+    let mut v: Value = match tarama.dizi {
+        None => serde_json::from_str(metin_).map_err(|e| json_degil(metin_, ofset(metin_, e.line(), e.column()))),
+        Some((bas, son)) => {
+            let kirpik = format!("{}[]{}", &metin_[..bas], &metin_[son..]);
+            serde_json::from_str(&kirpik).map_err(|e| {
+                let o = ofset(&kirpik, e.line(), e.column());
+                json_degil(metin_, if o > bas + 1 { o + (son - bas - 2) } else { o })
+            })
+        }
+    }?;
     let Value::Object(harita) = &mut v else { return Err(belge_hatasi("belge", "nesne değil")) };
     if harita.get("bicim").and_then(Value::as_str) != Some(BICIM) {
         return Err(belge_hatasi("bicim", "ajanda yedeği değil"));
@@ -200,10 +430,14 @@ fn belge_coz(metin_: &str) -> Result<Belge, CekirdekHatasi> {
         Some(_) => Err(belge_hatasi(ad, "dizi değil")),
         None => Err(belge_hatasi(ad, "zorunlu alan yok")),
     };
-    let kayitlar = dizi("kayitlar")?;
+    // `kayitlar` dizi ise tarama boşaltmıştır; öğeleri taramanın aralıklarıdır.
+    dizi("kayitlar")?;
     let ek_ogeleri = dizi("ekler")?;
     if !dizi("bolgeler")?.is_empty() {
         return Err(belge_hatasi("bolgeler", "bu biçim sürümünde bölge öğesi tanımsız"));
+    }
+    if ek_ogeleri.len() > EK_AZAMI_ADET {
+        return Err(cok_fazla("ekler", EK_AZAMI_ADET));
     }
     let mut ekler = Vec::with_capacity(ek_ogeleri.len());
     let mut ozetler = HashSet::new();
@@ -231,7 +465,7 @@ fn belge_coz(metin_: &str) -> Result<Belge, CekirdekHatasi> {
     })
     .map_err(sema_hatasi)?;
     n.bitir().map_err(sema_hatasi)?;
-    Ok(Belge { olusturma_ms, kayitlar, ekler })
+    Ok(Belge { metin: metin_, olusturma_ms, kayitlar: tarama.ogeler, ekler })
 }
 
 /// Bir kaydın sınıfı (`plan_kur`).
@@ -244,6 +478,8 @@ enum Sinif {
     Gecersiz,
     SinirAsan,
     Gonderilmeyecek,
+    /// Bağlı kipte telefonda olmayan taslak: servis taslak olarak alamaz, gönderilmez.
+    Taslak,
 }
 
 /// Yazılacak kayıt: dosyadaki hal, telefondaki önceki hal (okunabildiyse) ve bağlı kipte kuyruğa girecek
@@ -308,7 +544,13 @@ fn plan_kur(d: &Depo, o: &Ortam, belge: Belge, yerel: bool) -> Result<Plan, Ceki
     let mut bilinir = |dilim: &str| {
         *dilimler.entry(dilim.to_string()).or_insert_with(|| o.zaman.andan_yerele(simdi, dilim.to_string()).is_ok())
     };
+    let gelecek_siniri = simdi.saturating_add(GELECEK_TOLERANSI_MS);
     let mut gorulen: HashSet<String> = HashSet::new();
+    let mut iz = Iz::yeni();
+    iz.kat(kip_adi(yerel).as_bytes());
+    for e in &belge.ekler {
+        iz.kat(ek_json(e).to_string().as_bytes());
+    }
     let mut p = IceAktarmaOnizlemesi {
         kip: if yerel { CalismaKipi::Yerel } else { CalismaKipi::Bagli },
         disa_aktarma_ms: belge.olusturma_ms,
@@ -325,24 +567,36 @@ fn plan_kur(d: &Depo, o: &Ortam, belge: Belge, yerel: bool) -> Result<Plan, Ceki
         gecersizler: Vec::new(),
         ekler: belge.ekler,
         iz: String::new(),
+        silinecek: 0,
+        geri_yuklenecek: 0,
+        taslak_gonderilmeyecek: 0,
     };
-    let mut iz = Iz::yeni();
-    iz.kat(kip_adi(yerel).as_bytes());
     let mut yazilacaklar = Vec::new();
-    for (i, v) in belge.kayitlar.iter().enumerate() {
+    for (i, &(bas, son)) in belge.kayitlar.iter().enumerate() {
+        let ham = &belge.metin[bas..son];
+        // Dosyadaki içerik ize girer: aynı sınıflı başka bir dosya eski izle uygulanmaz.
+        iz.kat(ham.as_bytes());
         let kok = format!("kayitlar.{i}");
         let gecersiz = |alan: String, neden: &str| GecersizKayit { sira: sayi(i), alan, neden: neden.to_string() };
-        let sonuc: Result<AjandaKaydi, GecersizKayit> = AjandaKaydi::oku(v, &kok)
-            .map_err(|h| gecersiz(guvenli_yol(&h.yol), h.neden))
-            .and_then(|k| {
+        let sonuc: Result<AjandaKaydi, GecersizKayit> = if ham.len() > KAYIT_AZAMI_BAYT {
+            Err(gecersiz(kok.clone(), "kayıt çok büyük"))
+        } else {
+            // Öğenin içindeki sözdizimi hatası bütün belgeyi reddeder (dosya bozuk); konum asıl metinde.
+            let v: Value = serde_json::from_str(ham).map_err(|e| json_degil(belge.metin, bas + ofset(ham, e.line(), e.column())))?;
+            AjandaKaydi::oku(&v, &kok).map_err(|h| gecersiz(guvenli_yol(&h.yol), h.neden)).and_then(|k| {
                 if gorulen.contains(&k.kayit_id) {
                     return Err(gecersiz(format!("{kok}.kayit_id"), "dosyada yinelenen kayit_id"));
+                }
+                // `olusturma_ms <= guncelleme_ms` modelce zorunlu: ikisi de sınırlanır.
+                if k.guncelleme_ms > gelecek_siniri {
+                    return Err(gecersiz(format!("{kok}.guncelleme_ms"), "gelecekte (saat ileri ya da dosya bozuk)"));
                 }
                 match dilim_sorunu(&k, &mut bilinir) {
                     Some(alan) => Err(gecersiz(format!("{kok}.{alan}"), "saat dilimi bilinmiyor")),
                     None => Ok(k),
                 }
-            });
+            })
+        };
         let k = match sonuc {
             Ok(k) => k,
             Err(g) => {
@@ -361,6 +615,8 @@ fn plan_kur(d: &Depo, o: &Ortam, belge: Belge, yerel: bool) -> Result<Plan, Ceki
         let ayni = |t: &AjandaKaydi| if yerel { yerelde_ayni(t, &k) } else { icerik_ayni(t, &k) };
         let (sinif, yazilacak) = match telefondaki.get(&k.kayit_id) {
             None if !yerel && k.silindi => (Sinif::Gonderilmeyecek, None),
+            // Servis `ekle`'si onaylanmış kayıt doğurur: onaylanmamış öneri onaylanmış gibi gitmez.
+            None if !yerel && k.taslak => (Sinif::Taslak, None),
             None if kalan_yer <= 0 => (Sinif::SinirAsan, None),
             None => {
                 kalan_yer -= 1;
@@ -392,11 +648,22 @@ fn plan_kur(d: &Depo, o: &Ortam, belge: Belge, yerel: bool) -> Result<Plan, Ceki
             Sinif::Atlanacak => p.atlanacak += 1,
             Sinif::SinirAsan => p.sinir_asan += 1,
             Sinif::Gonderilmeyecek => p.gonderilmeyecek += 1,
+            Sinif::Taslak => p.taslak_gonderilmeyecek += 1,
             Sinif::Gecersiz => unreachable!(),
         }
         iz.kat(&[sinif as u8]);
         iz.kat(k.kayit_id.as_bytes());
         if let Some(y) = yazilacak {
+            // Etkilenecek kaydın telefondaki satırı (içerik ve yazım kimliği) ize girer: önizlemeden sonra
+            // sınıfı değiştirmeden değişen telefon kaydı eski izle ezilmez.
+            if let Some(json) = telefondaki.get(&k.kayit_id) {
+                iz.kat(json.as_bytes());
+            }
+            match &y.onceki {
+                Some(t) if !t.silindi && k.silindi => p.silinecek += 1,
+                Some(t) if t.silindi && !k.silindi => p.geri_yuklenecek += 1,
+                _ => {}
+            }
             p.kuyruga_girecek_islem += sayi(y.islemler.len());
             yazilacaklar.push(y);
         }
@@ -576,6 +843,32 @@ mod testler {
         assert_eq!(guvenli_yol("kayitlar.3.zaman.gizli.baslik"), "kayitlar.3.zaman");
         assert_eq!(guvenli_yol("gizli"), "belge");
         assert_eq!(guvenli_yol(""), "belge");
+    }
+
+    /// Tarama kökteki `kayitlar`'ın öğe aralıklarını verir: dizgideki ayraç ve parantez, kaçış, iç içe dizi
+    /// ve başka anahtardaki `kayitlar` dizgisi yanıltmaz.
+    #[test]
+    fn tarama_kayit_ogelerini_ayirir() {
+        let m = r#"{"a":"kayitlar","b":{"kayitlar":[9]}, "kayitlar" : [ {"x":"],\"["} , [1,[2]] ,3 ],"c":[]}"#;
+        let t = yapi_tara(m).unwrap();
+        let ogeler: Vec<&str> = t.ogeler.iter().map(|&(b, s)| &m[b..s]).collect();
+        assert_eq!(ogeler, [r#"{"x":"],\"["}"#, "[1,[2]]", "3"]);
+        let (b, s) = t.dizi.unwrap();
+        assert_eq!(&m[b..s], r#"[ {"x":"],\"["} , [1,[2]] ,3 ]"#);
+        assert_eq!(yapi_tara(r#"{"kayitlar":[]}"#).unwrap().ogeler, []);
+        assert_eq!(yapi_tara(r#"{"kayitlar":{"a":[1]}}"#).unwrap(), Tarama::default());
+        for bozuk in [r#"{"kayitlar":[1,]}"#, r#"{"kayitlar":[,1]}"#, r#"{"kayitlar":[1 2]}"#, r#"{"a":[}"#, r#"{"a":"#, r#"{"a":"x"#] {
+            assert!(yapi_tara(bozuk).is_err(), "{bozuk}");
+        }
+    }
+
+    #[test]
+    fn konum_ve_ofset_birbirinin_tersi() {
+        let m = "ab\ncde\n\nf";
+        for o in 0..=m.len() {
+            let (satir, sutun) = konum(m, o);
+            assert_eq!(ofset(m, satir, sutun), o, "{o}");
+        }
     }
 
     #[test]

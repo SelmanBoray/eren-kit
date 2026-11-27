@@ -33,6 +33,15 @@
 //! tamam), `ifade`, süre, açıklama ve hatırlatmalar anahtara girmez. İkisi de tutulur, birleştirilmez;
 //! onayda `meta.olasi_ciftler`'e yazılır, `olasi_ciftler()` yalnız ikisi de görünen kopyada canlı olanları
 //! döndürür (biri silinir ya da `ekle`'si reddedilirse işaret kendiliğinden düşer).
+//!
+//! Taslak (`DokmeSinifi::Taslak`, önizlemede `taslaklar`): servisin kopyasında olmayan yerel taslak (bağlı
+//! kipten kalan öneri başka servise bağlanırken) `ekle` ile gitmez: servis kaydı taslak olarak alamaz,
+//! `ekle` kullanıcının onaylamadığı öneriyi onaylanmış kayıt yapardı. Kaybolmaz: ret listesine düşer, görünen
+//! kopyadan çıkar; kullanıcı düzeltirse yeni (onaylı) kayıt olur, atarsa gider. Servisin kopyasında olan
+//! taslak alan alan birleşir (`yerel.rs` `taraf_sec`).
+//!
+//! İz: sınıflar, işlemler (içerikleriyle), ret metinleri, çakışan alanlar, telefonun her kaydının hali,
+//! okunamayan PC temeli sayısı, servisten gelecekler ve olası çiftler.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
@@ -106,13 +115,21 @@ fn onizleme_kur(d: &Depo, depo_id: &str, plan: &DokmePlani) -> Result<Birlestirm
         islem: 0,
         olasi_ciftler: Vec::new(),
         iz: String::new(),
+        taslaklar: Vec::new(),
+        okunamayan_pc_temeli: sayi(plan.okunamayan_temel),
     };
     let mut iz = Iz::yeni();
     iz.kat(depo_id.as_bytes());
     iz.kat(&[u8::from(plan.ayni_depo)]);
+    iz.kat(&plan.okunamayan_temel.to_le_bytes());
     let mut islem = 0;
     for k in &plan.kayitlar {
         let id = || k.kayit_id.clone();
+        // Telefonun hali (içerik ve yazım kimliği) ize girer, sınıf `Ayni` olsa da: işlemler zaten
+        // içeriği taşır, bu da işlemi olmayan sınıflarda önizlemeden sonraki telefon değişikliğini yakalar.
+        if let Some(t) = &k.telefon {
+            iz.kat(t.json().to_string().as_bytes());
+        }
         match k.sinif {
             DokmeSinifi::Yeni => o.yeni += 1,
             DokmeSinifi::Degisen => {
@@ -123,6 +140,7 @@ fn onizleme_kur(d: &Depo, depo_id: &str, plan: &DokmePlani) -> Result<Birlestirm
             }
             DokmeSinifi::PcSilmis => o.pc_silmisler.push(id()),
             DokmeSinifi::RetListesine => o.ret_listesine.push(id()),
+            DokmeSinifi::Taslak => o.taslaklar.push(id()),
             DokmeSinifi::DusecekMezar => o.dusecek_mezar += 1,
             DokmeSinifi::Ayni => {
                 o.ayni += 1;

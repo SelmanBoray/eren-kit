@@ -289,11 +289,12 @@ fn acilis_onariminin_hatasi_cekirdegi_dusurmez() {
     h.kopar();
     h.c.duzenle("k_a".into(), None, govde("A (telefon)", None)).unwrap();
     let db = rusqlite::Connection::open(&h.yol).unwrap();
-    let saglam: String = db.query_row("SELECT json FROM sunucu_kayitlari WHERE kayit_id = 'k_a'", [], |s| s.get(0)).unwrap();
-    // Onaylanmış satır ve okunamayan PC temeli: onarım (onaylananları temele katma) hata verir.
+    let saglam: i64 = db.query_row("SELECT guncelleme_ms FROM sunucu_kayitlari WHERE kayit_id = 'k_a'", [], |s| s.get(0)).unwrap();
+    // Onaylanmış satır ve PC temelinin sütunu okunamıyor (depo hatası): onarım hata verir. (Okunamayan kayıt
+    // metni artık onarımı düşürmez: `okunamayan_pc_temeli_sayilir_gecisi_dusurmez`.)
     db.execute_batch(
         "UPDATE kuyruk SET bekledigi_rev = 9;
-         UPDATE sunucu_kayitlari SET json = '{bozuk' WHERE kayit_id = 'k_a';
+         UPDATE sunucu_kayitlari SET guncelleme_ms = 'bozuk' WHERE kayit_id = 'k_a';
          DELETE FROM meta WHERE anahtar = 'eslesme';",
     )
     .unwrap();
@@ -303,10 +304,10 @@ fn acilis_onariminin_hatasi_cekirdegi_dusurmez() {
     assert_eq!(kayit(&h, "k_a").baslik, "A (telefon)", "veri yerinde");
     let iz = depo(&h).meta_oku("onarim_hatasi").unwrap().expect("iz");
     let iz: serde_json::Value = serde_json::from_str(&iz).unwrap();
-    assert!(iz["mesaj"].as_str().unwrap().contains("şemadan geçmedi") || iz["mesaj"].as_str().unwrap().contains("bozuk"), "{iz}");
+    assert!(iz["mesaj"].as_str().unwrap().contains("guncelleme_ms"), "{iz}");
     assert_eq!(iz["ts_ms"].as_i64(), Some(h.zaman.simdi.load(std::sync::atomic::Ordering::SeqCst)));
 
-    rusqlite::Connection::open(&h.yol).unwrap().execute("UPDATE sunucu_kayitlari SET json = ?1 WHERE kayit_id = 'k_a'", [&saglam]).unwrap();
+    rusqlite::Connection::open(&h.yol).unwrap().execute("UPDATE sunucu_kayitlari SET guncelleme_ms = ?1 WHERE kayit_id = 'k_a'", [saglam]).unwrap();
     h.sureci_oldur_ve_ac();
     assert_eq!(h.c.kip().unwrap(), CalismaKipi::Yerel);
     assert_eq!(kayit(&h, "k_a").baslik, "A (telefon)");
