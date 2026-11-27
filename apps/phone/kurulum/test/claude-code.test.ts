@@ -124,6 +124,23 @@ test("kabuk biçimli araç kancası kurulu sayılır ama ayrıca bildirilir; kan
   assert.deepEqual(kancaDurumuCoz(yeni), { arac: true, eski: 0, kabuk: 0 });
 });
 
+test("kabuk biçimli eski kanca dosyada: kanca-ekle yazar ve yedek alır", () => {
+  const dizin = mkdtempSync(join(tmpdir(), "eren-claude-code-kabuk-"));
+  try {
+    const yol = join(dizin, "settings.json");
+    const kabuk = { type: "command", command: kabukBicimiKomutu(Y, "arac"), timeout: 10 };
+    const ozgun = JSON.stringify({ hooks: { PreToolUse: [{ matcher: ARAC_ESLESTIRICI, hooks: [kabuk] }] } });
+    writeFileSync(yol, ozgun, "utf8");
+    assert.equal(calis(["kanca-ekle", "--ayar", yol], ORTAM, NODE), 0);
+    assert.notEqual(readFileSync(yol, "utf8"), ozgun);
+    const yedekler = readdirSync(dizin).filter((d) => d.includes(".yedek-"));
+    assert.equal(yedekler.length, 1);
+    assert.equal(readFileSync(join(dizin, yedekler[0]!), "utf8"), ozgun);
+  } finally {
+    rmSync(dizin, { recursive: true, force: true });
+  }
+});
+
 test("önceki kurulumdan geçiş: kanca-ekle eski istem ve tur sonu kancalarını çıkarır, yalnız araç öncesini bırakır", () => {
   const baska = { type: "command", command: "echo x" };
   const onceki = {
@@ -254,6 +271,21 @@ test("komut satırı: kanca-ekle yedekler ve yazar, kanca-kaldir geri alır; boz
     assert.equal(eklendi["model"], "opus");
     assert.deepEqual(Object.keys(eklendi["hooks"] as object), ["PreToolUse"]);
     assert.equal(readdirSync(dizin).filter((d) => d.includes(".yedek-")).length, 1);
+    // Kanca güncelken yine 0: dosya bayt bayt ve mtime aynı, yeni yedek yok, tek satır yazılır.
+    const once = readFileSync(yol, "utf8");
+    const mtime = statSync(yol).mtimeMs;
+    const satirlar: string[] = [];
+    const log = console.log;
+    console.log = (...a: unknown[]) => void satirlar.push(a.join(" "));
+    try {
+      assert.equal(calis(["kanca-ekle", "--ayar", yol], ORTAM, NODE), 0);
+    } finally {
+      console.log = log;
+    }
+    assert.deepEqual(satirlar, [`Araç öncesi kanca zaten kurulu: ${yol}; hiçbir şey değişmedi.`]);
+    assert.equal(readFileSync(yol, "utf8"), once);
+    assert.equal(statSync(yol).mtimeMs, mtime);
+    assert.equal(readdirSync(dizin).filter((d) => d.includes(".yedek-")).length, 1, "güncelken yeni yedek yok");
     assert.equal(calis(["kanca-kaldir", "--ayar", yol], ORTAM, NODE), 0);
     assert.deepEqual(JSON.parse(readFileSync(yol, "utf8")), { model: "opus" });
     assert.equal(calis(["kanca-kaldir", "--ayar", yol], ORTAM, NODE), 0, "ikinci kaldırma");

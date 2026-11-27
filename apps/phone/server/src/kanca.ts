@@ -1,8 +1,9 @@
 /**
  * PC'deki Claude Code oturumlarının kancası (`docs/AJANDA.md` "PC oturumları", MODULLER.md "PC
  * oturumları"): `node kanca.ts arac`, girdi stdin'de (Claude Code'un `PreToolUse` JSON'u; eşleyici
- * `mcp__eren-ajanda__.*`, yani yalnız ajanda araçlarından önce). Servise `pc_arac` tasdiki gider (çağrı
- * kimliği, alt agent mı, etkileşimsiz oturum mu, istem kimliği); stdout boştur (izin akışına karışmaz).
+ * `mcp__eren-ajanda__.*`, yani yalnız ajanda araçlarından önce). Servise `pc_arac` tasdiki gider (normalize
+ * çerçeve, uyarlayıcı `claude-code`: çağrı kimliği, aktör, etkileşim, istem kimliği, Claude Code süreç
+ * kimliği `CLAUDE_PID`); stdout boştur (izin akışına karışmaz).
  * İstem ve tur sonu kancası yoktur (yalın yol): eski kurulumun `istem`/`tur_sonu` olayıyla çağrılırsa
  * stdin'i okumadan hiçbir şey yapmadan çıkar (`kanca-ekle` o girdileri temizler).
  *
@@ -23,6 +24,7 @@ import {
   AJANDA_BORU_ADI,
   AJANDA_PC_SINIRLARI,
   CLAUDE_CODE_GIRIS_ORTAMI,
+  CLAUDE_CODE_SUREC_ORTAMI,
   KANCA_AZAMI_SATIR,
   PC_KANCA_OLAYLARI,
   PC_SERVIS_OTURUMU_ORTAMI,
@@ -46,6 +48,8 @@ export interface PcKancaBagimliliklari {
   servisOturumu: boolean;
   /** Kanca sürecinin `CLAUDE_CODE_ENTRYPOINT`'i (`cli`, `sdk-cli`, ...; yoksa `undefined`). */
   giris: string | undefined;
+  /** Kanca sürecinin `CLAUDE_PID`'i (Claude Code sürecinin kimliği; T5 bağı). Yoksa çerçeveye girmez. */
+  surec?: string | undefined;
 }
 
 /** Tek bağlantıdaki tek isteğin kimliği. */
@@ -64,7 +68,7 @@ export async function pcKancaCalistir(hamGirdi: string, b: PcKancaBagimliliklari
   } catch {
     ham = null;
   }
-  const istek = pcAracKancaGirdisi(ham, b.giris);
+  const istek = pcAracKancaGirdisi(ham, b.giris, b.surec);
   if (istek === null) return;
   let jeton: string | null = null;
   try {
@@ -189,6 +193,7 @@ async function kancaGirisi(olayArgumani: string | undefined): Promise<void> {
         bekle: (ms) => new Promise((r) => setTimeout(r, ms).unref()),
         servisOturumu,
         giris: process.env[CLAUDE_CODE_GIRIS_ORTAMI],
+        surec: process.env[CLAUDE_CODE_SUREC_ORTAMI],
       });
     }
   } catch {

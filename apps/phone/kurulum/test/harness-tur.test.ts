@@ -132,13 +132,12 @@ test("canlı kurulum korunur: kurulu kanca tanınır, kanca-ekle iki kez çalı�
     const r = pcAjani("claude-code")!.kancaKur(ortam, NODE);
     assert.equal(r.ayarYolu, yol);
     assert.equal(r.degisti, false, "kanca zaten güncel: içerik değişmedi");
-    assert.equal(typeof r.yedek, "string", "CLI ile aynı: yine yedeklenip yazılır");
+    assert.equal(r.yedek, null, "güncel kanca: yedek alınmaz");
+    assert.deepEqual(r.satirlar, [`Araç öncesi kanca zaten kurulu: ${yol}; hiçbir şey değişmedi.`]);
     assert.equal(readFileSync(yol, "utf8"), CANLI_METIN, "uyarlayıcı üzerinden: değişmedi");
     assert.deepEqual(giris.kancaDurumu(ortam), beklenen);
-    // Yedekler özgün içeriği tutar.
-    const yedekler = readdirSync(join(dizin, ".claude")).filter((d) => d.includes(".yedek-"));
-    assert.equal(yedekler.length, 3);
-    for (const y of yedekler) assert.equal(readFileSync(join(dizin, ".claude", y), "utf8"), CANLI_METIN);
+    // Hiçbiri değiştirmediği için hiç yedek kalmaz.
+    assert.equal(readdirSync(join(dizin, ".claude")).filter((d) => d.includes(".yedek-")).length, 0);
     // Kaldır ve geri kur: başkalarının kancası yerinde; bizimki yine PreToolUse'un sonunda, aynı metin.
     const k = pcAjani("claude-code")!.kancaKaldir(ortam);
     assert.equal(k.degisti, true);
@@ -164,14 +163,17 @@ test("degisti yalnız ayar içeriği değişince true: dosya yok, kancasız ayar
     assert.deepEqual([ilk.degisti, ilk.yedek], [true, null], "dosya yok: oluşturuldu");
     const ikinci = a.kancaKur(ortam, NODE, { ...secenek, simdiMs: 2 });
     assert.equal(ikinci.degisti, false, "güncel kanca");
-    // Kullanıcıya yazılan satırlar degisti'den etkilenmez (yalnız yedek eklenir); yazma ve yedek sürer.
-    assert.equal(typeof ikinci.yedek, "string");
-    assert.deepEqual(ikinci.satirlar, [`${ilk.satirlar[0]} (yedek: ${ikinci.yedek})`, ...ilk.satirlar.slice(1)]);
+    // Güncel kancada yazma ve yedek yok, tek satır yazılır.
+    assert.equal(ikinci.yedek, null);
+    assert.deepEqual(ikinci.satirlar, [`Araç öncesi kanca zaten kurulu: ${yol}; hiçbir şey değişmedi.`]);
+    assert.equal(readdirSync(join(dizin, ".claude")).filter((d) => d.includes(".yedek-")).length, 0);
     assert.equal(a.kancaKaldir(ortam, secenek).degisti, true, "kaldırma");
     assert.equal(a.kancaKaldir(ortam, secenek).degisti, false, "ikinci kaldırma");
     writeFileSync(yol, '{\n  "model": "opus"\n}\n', "utf8");
     const kancasiz = a.kancaKur(ortam, NODE, { ...secenek, simdiMs: 3 });
     assert.equal(kancasiz.degisti, true, "kancasız ayara ekleme");
+    assert.equal(typeof kancasiz.yedek, "string", "kancasız ayar: yedek alınır");
+    assert.match(kancasiz.satirlar[0]!, /^Araç öncesi kanca eklendi: .* \(yedek: /);
     assert.equal(a.kancaKur(ortam, NODE, { ...secenek, simdiMs: 4 }).degisti, false);
   } finally {
     rmSync(dizin, { recursive: true, force: true });
