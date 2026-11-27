@@ -212,6 +212,19 @@ const bolgeYeniMetni = (c: { bolge_yeni?: true | undefined }): string => (c.bolg
 const BILDIRIM_YOK_NOTU =
   " Bu kayıt için şu an hiçbir bildirim gelmeyecek; bunu kullanıcıya söyle (isterse saat ya da hatırlatma verebilir).";
 
+/**
+ * Özet metni "hiçbir bildirim gelmeyecek" uyarısını taşır mı (varışa bakmadan): günü belli (an, gun), açık,
+ * taslak ve silinmiş olmayan kayıtta hatırlatma var ama hiçbiri kurulmayacak. Yalnız günü belli kayıtta:
+ * orada hatırlatma beklenir; dönem, belirsiz ve zamansızda bekleyen yeter. Varışlı kayıtta (v3) bildirim
+ * varıştan gelir: `ozetMetni` uyarıyı orada vermez. Servis, v3 kapalıyken özetten `varis` düşünce aynı
+ * yanlış uyarının doğmaması için de buna bakar (`ajanda-araclar.ts` `v2Yuzu`).
+ */
+export function ajandaBildirimYokMu(k: Pick<AjandaKayitOzeti, "zaman" | "hatirlatma" | "taslak" | "silindi" | "durum">): boolean {
+  const z = k.zaman;
+  const gunlu = z !== undefined && (z.kesinlik === "an" || z.kesinlik === "gun");
+  return gunlu && !k.taslak && !k.silindi && k.durum === "acik" && k.hatirlatma.toplam > 0 && k.hatirlatma.kurulacak === 0;
+}
+
 /** Kaydın gününün kullanıcıya söylenecek hali: `27 Kasım Cuma`, dönemde `30 Kasım Pazartesi - 6 Aralık Pazar`. */
 function insanZamani(z: AjandaZamanOzeti): string | undefined {
   if (z.kesinlik === "an" || z.kesinlik === "gun") return insanTarihi(z.tarih);
@@ -242,10 +255,8 @@ function ozetMetni(k: AjandaKayitOzeti, an: AjandaYerelAn): string {
       metin += g.gecti ? " (geçti)" : " (saatsiz kayıt: günün yaklaşık saatinde)";
     }
     metin += ".";
-    // Yalnız günü belli kayıtta (an, gun): orada hatırlatma beklenir; dönem, belirsiz ve zamansızda bekleyen yeter.
     // Varışlı kayıtta (v3) bildirim varıştan gelir: uyarı yok.
-    const gunlu = z !== undefined && (z.kesinlik === "an" || z.kesinlik === "gun");
-    if (gunlu && k.varis === undefined && !k.taslak && !k.silindi && k.durum === "acik" && h.kurulacak === 0) metin += BILDIRIM_YOK_NOTU;
+    if (k.varis === undefined && ajandaBildirimYokMu(k)) metin += BILDIRIM_YOK_NOTU;
   }
   if (k.varis !== undefined) metin += varisNotu(k.varis);
   const insan = z === undefined ? undefined : insanZamani(z);

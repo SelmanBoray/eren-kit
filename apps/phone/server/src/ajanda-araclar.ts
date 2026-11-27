@@ -14,6 +14,7 @@ import {
   ajandaAraclari,
   ajandaAracTekrari,
   ajandaAracVarsayilanHatirlatmalari,
+  ajandaBildirimYokMu,
   ajandaBolgeAnahtari,
   AJANDA_ARAC_BOLGE_ADET,
   ajandaDegisikligiUygula,
@@ -100,7 +101,8 @@ import type {
  * - v3 araç yüzü (`b.aracV3`, ayar `ajanda_arac_v3`; verilmezse kapalı): kapalıyken girdi v2 şemasıyla
  *   denetlenir (`ajandaAraclari(false)`: v3 alanı geçmez, araçla v3 alanlı kayıt doğmaz) ve her çıktı v2
  *   yüzüne iner (`ajandaAracCiktisiV2`: özet `varis`, `bolge_yeni`, `kural`, `bolgeler` yok; liste kaydı v2
- *   görünümü). v3 telefonun yazdığı v3 alanları kayıtta kalır; eş birleşmesi ve güncelleme onlara dokunmaz.
+ *   görünümü; varışlı kayıtta yanlış "bildirim yok" uyarısı doğmasın diye `v2Yuzu`). v3 telefonun yazdığı
+ *   v3 alanları kayıtta kalır; eş birleşmesi ve güncelleme onlara dokunmaz.
  *   Telefon sohbeti ve PC oturumu aynı yüzü görür.
  * - Her işleyici eşzamanlıdır (araya `await` girmez) ve tek `depo.islem` içinde yazar.
  */
@@ -159,6 +161,22 @@ function siraAnahtari(z: AjandaZamani | undefined): string | undefined {
   if (z === undefined || z.kesinlik === "belirsiz") return undefined;
   if (z.kesinlik === "an") return `${z.tarih} ${z.saat}`;
   return `${z.kesinlik === "donem" ? z.baslangic : z.tarih} `;
+}
+
+/**
+ * v3 kapalıyken çıktının v2 yüzü (`ajandaAracCiktisiV2`). v3 telefonun yazdığı varışlı kayıtta özetten
+ * `varis` düşer; zaman hatırlatmalarından hiçbiri kurulmayacaksa (`ajandaBildirimYokMu`) v2 metni "hiçbir
+ * bildirim gelmeyecek" derdi, oysa telefon varışta bildirim verir. Yalnız o durumda özetin hatırlatması boş
+ * hatırlatmaya iner (metin `hatirlatma=yok.` der, bildirim iddiası ve v3 alanı taşımaz). Varışsız kayıtta
+ * ve öteki hallerde çıktı `ajandaAracCiktisiV2`'ninkidir, baytları değişmez.
+ */
+function v2Yuzu(fiil: AjandaFiili, ham: unknown): unknown {
+  const v2 = ajandaAracCiktisiV2({ fiil, cikti: ham } as never).cikti as { kayit?: Parameters<typeof ajandaBildirimYokMu>[0] };
+  const varisli = (ham as { kayit?: { varis?: unknown } }).kayit?.varis !== undefined;
+  if (varisli && v2.kayit !== undefined && ajandaBildirimYokMu(v2.kayit)) {
+    v2.kayit = { ...v2.kayit, hatirlatma: { toplam: 0, kurulacak: 0, saatsiz: 0, gecmis: 0 } };
+  }
+  return v2;
 }
 
 export function ajandaAraclariKur(b: AjandaBagimliliklari, pc?: PcDefteri): AjandaFiilIsleyiciler {
@@ -244,7 +262,7 @@ export function ajandaAraclariKur(b: AjandaBagimliliklari, pc?: PcDefteri): Ajan
       try {
         const ham = depo.islem(() => f(p.data as AjandaFiilGirdisi<F>, cagri, simdi));
         // v3 kapalıyken çıktı v2 yüzüne iner (v3 telefonun yazdığı kaydın alanları modele çıkmaz).
-        const cikti = (v3 ? ham : ajandaAracCiktisiV2({ fiil, cikti: ham } as never).cikti) as Cikti<F>;
+        const cikti = (v3 ? ham : v2Yuzu(fiil, ham)) as Cikti<F>;
         const c = cikti as { sonuc?: string; neden?: string; kayit?: { kayit_id: string; revizyon: number } };
         gunluk.bilgi(MODUL, "arac", {
           fiil,
