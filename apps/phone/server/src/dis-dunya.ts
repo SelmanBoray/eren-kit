@@ -861,6 +861,12 @@ export const kaynakIzinliMi = (origin: string | readonly string[] | undefined, h
  */
 export interface GercekWsBaglantisi extends WsBaglantisi {
   gonder(metin: string): boolean;
+  /**
+   * Gönderilmiş ama henüz sokete (çekirdeğe) yazılamamış bayt: `ws` `bufferedAmount` (soketin yazma
+   * kuyruğu ve `ws`'nin kendi kuyruğu). Karşı uç okumadıkça büyür. `gateway-ajanda` ek indirmesini buna
+   * göre keser (`TamponluWsBaglantisi`); `gonder` kendisi sınırlamaz (telafi tamponu meşru büyür).
+   */
+  bekleyenBayt(): number;
 }
 
 const wsBaglantisiKur = (
@@ -946,6 +952,7 @@ const wsBaglantisiKur = (
         return false;
       }
     },
+    bekleyenBayt: () => ws.bufferedAmount,
     kapat: (kod, neden) => {
       try {
         ws.close(kod, neden);
@@ -1643,6 +1650,8 @@ export const ajandaEkDiskiKur = (kok: string): AjandaEkDiski => {
       ozetli(ozet);
       await ekDizinHazirla(kok);
       await ekDizinHazirla(tamDizini(ozet));
+      // Yarım dizini bağsa (junction) içindeki dosya dışarıdandır: içeri taşınmaz (`ekDizinVar` atar).
+      if (!(await ekDizinVar(yarimDizini))) throw new Error("yarim_yok");
       const hedef = tamYolu(ozet);
       if ((await ekDuzDosya(hedef)) !== null) {
         // İçerik adresli: aynı özetli dosya zaten tam.

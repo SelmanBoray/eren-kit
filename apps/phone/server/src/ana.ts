@@ -84,6 +84,8 @@ export interface ServisGirdisi {
    * sunulmaz, ek çerçeveleri bugünkü gibi reddedilir (testler ve eski çağıranlar değişmez).
    */
   ajandaEkDiski?: AjandaEkDiski;
+  /** Ek yedeği kotası, bayt (`giris` `ayar.ts` `ajandaEkKotaBayt`'tan verir). Verilmezse `EK_TOPLAM_BAYT`. */
+  ajandaEkKotaBayt?: number;
 }
 
 export interface Servis {
@@ -192,7 +194,7 @@ const fiilleriKur = ({ ayar, planlar, isler, cihaz, sohbetler }: FiilModulleri):
   };
 };
 
-export function servisKur({ dunya, ayar, depoYolu, ajanda: ajandaSecenegi, ajandaEkDiski }: ServisGirdisi): Servis {
+export function servisKur({ dunya, ayar, depoYolu, ajanda: ajandaSecenegi, ajandaEkDiski, ajandaEkKotaBayt }: ServisGirdisi): Servis {
   const { saat, zamanlayici, rastgele, dosya, surec, sistem, ws, boru, http, anahtar, transkript } = dunya;
   const gunluk = gunlukYap(dunya);
 
@@ -211,7 +213,14 @@ export function servisKur({ dunya, ayar, depoYolu, ajanda: ajandaSecenegi, ajand
   const ajandaEkleri =
     takvim === null || ajandaEkDiski === undefined
       ? null
-      : ajandaEkleriKur({ disk: ajandaEkDiski, depo, saat, zamanlayici, gunluk });
+      : ajandaEkleriKur({
+          disk: ajandaEkDiski,
+          depo,
+          saat,
+          zamanlayici,
+          gunluk,
+          ...(ajandaEkKotaBayt !== undefined && { kotaBayt: ajandaEkKotaBayt }),
+        });
   const ajanda =
     takvim === null
       ? null
@@ -484,7 +493,13 @@ const giris = async (): Promise<void> => {
     }
 
     // Ek yedeği deposu veri kökünün altında: kökün izni (yukarıda denetlendi) alt klasöre geçer.
-    const servis = servisKur({ dunya, ayar, depoYolu: vt, ajandaEkDiski: ajandaEkDiskiKur(win32.join(kok, AJANDA_EK_KLASORU)) });
+    const servis = servisKur({
+      dunya,
+      ayar,
+      depoYolu: vt,
+      ajandaEkDiski: ajandaEkDiskiKur(win32.join(kok, AJANDA_EK_KLASORU)),
+      ajandaEkKotaBayt: ayar.ajandaEkKotaBayt,
+    });
     let kapaniyor = false;
     // Sinyal ve IPC aynı nazik yolu kullanır: 30 sn sınırı, kapanış sonrası `exit(0)`, takılırsa `exit(1)`.
     const kapat = (alanlar: GunlukAlanlari): void => {

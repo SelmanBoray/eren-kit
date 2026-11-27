@@ -42,7 +42,7 @@ import {
 import type { AjandaGecmisGirdisi, AjandaIslem, CihazKapsami, ServisBilgisi } from "@eren/protocol";
 import { depoAc } from "../src/depo.ts";
 import { gatewayKur } from "../src/gateway.ts";
-import { ajandaEkleriKur } from "../src/ajanda-ekler.ts";
+import { AJANDA_EK_SINIRLARI, ajandaEkleriKur } from "../src/ajanda-ekler.ts";
 import type { AjandaEkleriBagimliliklari } from "../src/ajanda-ekler.ts";
 import { AJANDA_TELAFI_SAYFASI, ajandaEkliYuz } from "../src/gateway-ajanda.ts";
 import type {
@@ -371,6 +371,7 @@ function kur(sec: { ajanda?: boolean; ekler?: boolean } = {}) {
           depo: {
             ajandaKaydiGetir: (id: string) => aj.kayitlar.get(id) ?? null,
             ajandaKayitlari: () => [...aj.kayitlar.values()].filter((k) => !k.silindi),
+            ajandaBasRev: () => Math.max(0, ...[...aj.kayitlar.values()].map((k) => k.revizyon)),
           } as unknown as AjandaEkleriBagimliliklari["depo"],
           saat: zaman.saat,
           zamanlayici: zaman.zamanlayici,
@@ -1681,6 +1682,28 @@ describe("gateway /ajanda: ek yedeği (ek_yedegi)", () => {
     await gonderBekle(o, a, yukle());
     assert.equal(a.hataKodu, "cihaz_bilinmiyor");
     assert.deepEqual(o.ekDiski.cagrilar, []);
+  });
+
+  it("indirme bağlantının gönderim tamponuna bakar: doluyken ek_ret{ic_hata}, bağlantı açık; boşalınca indirir; kayıt yayını etkilenmez", async () => {
+    const o = await ekli();
+    const a = await o.ajandaGiris(IP1, { yetenekler: ["ek_yedegi"] });
+    await gonderBekle(o, a, yukle());
+    await gonderBekle(o, a, parca);
+    // Okumayan istemci: gerçek bağlantının `bekleyenBayt`'ı (`ws` `bufferedAmount`) sınırın üstünde.
+    let bekleyen = AJANDA_EK_SINIRLARI.INDIRME_TAMPONU + 1;
+    (a.c as { bekleyenBayt?: () => number }).bekleyenBayt = () => bekleyen;
+    await gonderBekle(o, a, iste);
+    assert.deepEqual(a.tur("ek_ret"), [{ v: AV, type: "ek_ret", ek_id: "ek_1", code: "ic_hata" }]);
+    assert.equal(a.tur("ek_parca").length, 0);
+    assert.equal(a.kapali, false);
+    // Canlı kayıt tampondan bağımsız gider (telafi ve yayın sınırsız).
+    o.aj.yaz(kayitUret("k9", 0));
+    await bosalt();
+    assert.ok(a.tur("kayit").some((m) => m.kayit.kayit_id === "k9"));
+    bekleyen = 0;
+    await gonderBekle(o, a, iste);
+    assert.deepEqual(a.tur("ek_parca").map((m) => Buffer.from(m.veri, "base64").length), [VERI.length]);
+    assert.deepEqual(a.tur("ek_durum").at(-1), { v: AV, type: "ek_durum", ek_id: "ek_1", gonderilen: VERI.length, tamam: true });
   });
 
   it("bağlantı kapanınca süren işin yanıtı yollanmaz; yeni bağlantı kaldığı yerden sürer", async () => {

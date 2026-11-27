@@ -130,6 +130,60 @@ describe("ajandaEkDiskiKur", () => {
     assert.ok(existsSync(join(dis, ozet)));
   });
 
+  it("bağ izlenmez: kök (ajanda-ekler) junction ise her yöntem atar, hedefe hiçbir şey yazılmaz", { skip: process.platform !== "win32" }, async () => {
+    const { ust, kok, disk } = ortam();
+    const v = veri(32);
+    const ozet = sha(v);
+    const dis = join(ust, "dis");
+    mkdirSync(join(dis, ozet.slice(0, 2)), { recursive: true });
+    writeFileSync(join(dis, ozet.slice(0, 2), ozet), v);
+    symlinkSync(dis, kok, "junction");
+    for (const f of [
+      () => disk.tamBoyutu(ozet),
+      () => disk.tamOku(ozet, 0, 10),
+      () => disk.tamSil(ozet),
+      () => disk.tamListesi(),
+      () => disk.yarimDurumu(ozet),
+      () => disk.yarimaEkle(ozet, 0, v),
+      () => disk.yarimiTamamla(ozet),
+      () => disk.yarimSil(ozet),
+      () => disk.yarimListesi(),
+      () => disk.isaretleriOku(),
+      () => disk.isaretleriYaz(new Map([[ozet, 1]])),
+    ]) {
+      await assert.rejects(f(), /ek_dizini_guvensiz/);
+    }
+    // Hedef olduğu gibi: yalnız önceden konan dosya, ne yarım ne işaret dosyası.
+    assert.deepEqual(readdirSync(dis), [ozet.slice(0, 2)]);
+    assert.ok(existsSync(join(dis, ozet.slice(0, 2), ozet)));
+  });
+
+  it("bağ izlenmez: yarim dizini junction ise yarım yöntemleri atar, hedefe yazılmaz; tam dosyalar etkilenmez", { skip: process.platform !== "win32" }, async () => {
+    const { ust, kok, disk } = ortam();
+    const v = veri(32);
+    const ozet = sha(v);
+    const dis = join(ust, "dis");
+    mkdirSync(dis);
+    writeFileSync(join(dis, ozet), v);
+    writeFileSync(join(dis, `${ozet}.onay`), String(v.length));
+    mkdirSync(kok, { recursive: true });
+    symlinkSync(dis, join(kok, "yarim"), "junction");
+    for (const f of [
+      () => disk.yarimDurumu(ozet),
+      () => disk.yarimaEkle(ozet, 0, v),
+      () => disk.yarimOzeti(ozet),
+      () => disk.yarimSil(ozet),
+      () => disk.yarimListesi(),
+    ]) {
+      await assert.rejects(f(), /ek_dizini_guvensiz/);
+    }
+    // Junction'daki "yarım" tamamlanamaz (dışarıdaki dosya içeri taşınmaz).
+    await assert.rejects(disk.yarimiTamamla(ozet), /ek_dizini_guvensiz/);
+    assert.equal(await disk.tamBoyutu(ozet), null);
+    assert.deepEqual(readdirSync(dis).sort(), [ozet, `${ozet}.onay`].sort());
+    assert.deepEqual(await disk.tamListesi(), []);
+  });
+
   it("işaretler: atomik yazılır ve okunur; bozuk dosya ve geçersiz girdiler yok sayılır", async () => {
     const { kok, disk } = ortam();
     assert.deepEqual(await disk.isaretleriOku(), new Map());

@@ -28,7 +28,8 @@
  * ek modülüne gider: yüzde `ekler` var (`ajandaEkliYuz`), kimlik sonrası, `esitlendi` gitmiş ve bağlantının
  * kesişiminde `ek_yedegi` var (kesişim v2'de her zaman boştur; v2 şeması bu çerçeveleri zaten tanımaz).
  * Öteki hallerde bugünkü ret: `yetkisiz` + kapanış. Ek retleri `ek_ret` ile, bağlantı kapanmaz; yetki
- * denetimi her çerçevede öteki kimlik sonrası çerçeveler gibidir.
+ * denetimi her çerçevede öteki kimlik sonrası çerçeveler gibidir. İndirme bağlantının gönderim tamponuna
+ * bakar (`TamponluWsBaglantisi`): okumayan istemci ek parçasıyla belleği dolduramaz.
  */
 import {
   AJANDA_AZAMI_CERCEVE,
@@ -88,6 +89,14 @@ export const ajandaEkliYuz = (yuz: AjandaGatewayYuzu, ekler: Pick<AjandaEkleri, 
   ekler,
 });
 
+/**
+ * Gönderim tamponunu bildiren bağlantı: gerçeği `dis-dunya` `GercekWsBaglantisi.bekleyenBayt` (`ws`
+ * `bufferedAmount`). Sözleşmedeki `WsBaglantisi`'nde yok, bu yüzden isteğe bağlı; yoksa (sahte bağlantı)
+ * ek indirmesinin tampon sınırı uygulanmaz. Yalnız ek indirmesi okur; kayıt telafisi ve canlı kayıt bilerek
+ * sınırsızdır (`dis-dunya` `WS_CANLILIK_ARALIGI_MS` notu).
+ */
+export type TamponluWsBaglantisi = WsBaglantisi & { readonly bekleyenBayt?: () => number };
+
 /** Telafide bir `telafiSayfasi` çağrısının en çok kayıt sayısı. */
 export const AJANDA_TELAFI_SAYFASI = 200;
 
@@ -130,7 +139,7 @@ export interface AjandaKanaliBagimliliklari {
 
 export interface AjandaKanali {
   /** `/ajanda` yolundan gelen yeni bağlantı (gateway çalışıyorken). */
-  baglantiAl(b: WsBaglantisi): void;
+  baglantiAl(b: TamponluWsBaglantisi): void;
   /** `veriyolu` `ajanda_kayit_yazildi`: açık ve kimliği bitmiş her bağlantıya (telafi sürüyorsa sıraya). */
   kayitYazildi(kayit: AjandaKaydi): void;
   /** Kaldırılan ya da anahtarı değişen ajanda cihazının açık bağlantılarını kapatır. */
@@ -165,7 +174,7 @@ interface Kimlik {
 }
 
 interface Baglanti {
-  readonly b: WsBaglantisi;
+  readonly b: TamponluWsBaglantisi;
   /**
    * Bağlantının sürümü: ilk geçerli `hello` ya da `pair_request`'in `v`'si, sonra değişmez. `null`:
    * henüz sabitlenmedi (yalnız ret çerçevesi gidebilir, sürümü `retSurumu`).
@@ -511,6 +520,7 @@ export const ajandaKanaliKur = (d: AjandaKanaliBagimliliklari): AjandaKanali => 
       gonder: (y) => {
         if (g.asama.ad === "ajandada" && g.asama.oturum === o) yolla(g, y);
       },
+      bekleyenBayt: () => g.b.bekleyenBayt?.() ?? 0,
     });
     o.ek.cerceve(m);
   };

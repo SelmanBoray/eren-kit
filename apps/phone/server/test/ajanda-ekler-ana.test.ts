@@ -5,9 +5,11 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { AJANDA_SINIRLARI } from "@eren/protocol";
 import { AJANDA_SUNULAN_YETENEKLER } from "../src/ajanda.ts";
 import { servisKur } from "../src/ana.ts";
 import { ayarKur } from "../src/ayar.ts";
+import type { ServisEkAyari } from "../src/ayar.ts";
 import type { Ayar } from "../src/sozlesme.ts";
 import { sahteEkDiski } from "./sahte-ek-diski.ts";
 import { sahteDunya } from "./sahte.ts";
@@ -16,11 +18,14 @@ const T0 = Date.UTC(2026, 10, 27, 9, 0, 0);
 const YEREL = "C:\\ornek\\Yerel";
 const CLAUDE_EXE = "C:\\ornek\\bin\\claude.exe";
 
-async function ortam() {
+async function ortam(yerel: Record<string, unknown> = {}) {
   const d = sahteDunya({ baslangicMs: T0, servisPid: 4000 });
   d.dosya.yaz(CLAUDE_EXE, "");
-  d.dosya.yaz(`${YEREL}\\eren-kit\\ayar.local.json`, JSON.stringify({ kullanici_adi: "Deneme", claude_exe: CLAUDE_EXE, tam_yetki: false }));
-  const ayar: Ayar = await ayarKur({
+  d.dosya.yaz(
+    `${YEREL}\\eren-kit\\ayar.local.json`,
+    JSON.stringify({ kullanici_adi: "Deneme", claude_exe: CLAUDE_EXE, tam_yetki: false, ...yerel }),
+  );
+  const ayar: Ayar & ServisEkAyari = await ayarKur({
     dosya: d.dosya,
     ortam: { LOCALAPPDATA: YEREL, USERPROFILE: "C:\\ornek\\Kullanici", PATH: "C:\\ornek\\bin" },
     execPath: "C:\\ornek\\node.exe",
@@ -43,6 +48,21 @@ describe("ana: ek yedeği bağlaması", () => {
     } finally {
       await s.ajandaEkleri?.kapat();
       s.depo.kapat();
+    }
+  });
+
+  it("kota ayardan: ajanda_ek_kota_mb ajandaEkKotaBayt ile modüle gider; verilmezse EK_TOPLAM_BAYT", async () => {
+    const { d, ayar } = await ortam({ ajanda_ek_kota_mb: 128 });
+    const sd = sahteEkDiski(() => d.zaman.saat.simdiMs());
+    const ajanda = { sistemDilimi: () => "Europe/Istanbul" };
+    const s1 = servisKur({ dunya: d.dunya, ayar, depoYolu: ":memory:", ajanda, ajandaEkDiski: sd.disk, ajandaEkKotaBayt: ayar.ajandaEkKotaBayt });
+    const s2 = servisKur({ dunya: d.dunya, ayar, depoYolu: ":memory:", ajanda, ajandaEkDiski: sd.disk });
+    try {
+      assert.equal(s1.ajandaEkleri!.olcum().kota_bayt, 128 * 1024 * 1024);
+      assert.equal(s2.ajandaEkleri!.olcum().kota_bayt, AJANDA_SINIRLARI.EK_TOPLAM_BAYT);
+    } finally {
+      s1.depo.kapat();
+      s2.depo.kapat();
     }
   });
 
