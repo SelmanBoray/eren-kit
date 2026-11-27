@@ -4,7 +4,7 @@
  * çağrı `cagrilar`'a yazılır. sha256 protokolün saf işlevinden.
  */
 import { sha256Hex } from "@eren/protocol";
-import type { AjandaEkDiski, AjandaEkYarimi } from "../src/ajanda-ekler.ts";
+import type { AjandaEkDiski, AjandaEkIsareti, AjandaEkYarimi } from "../src/ajanda-ekler.ts";
 
 const OZET = /^[0-9a-f]{64}$/;
 
@@ -18,7 +18,7 @@ export interface SahteEkDiski {
   disk: AjandaEkDiski;
   tamlar: Map<string, Uint8Array>;
   yarimlar: Map<string, SahteYarim>;
-  isaretler: Map<string, number>;
+  isaretler: Map<string, AjandaEkIsareti>;
   /** `"yontem"` ya da `"yontem:<ozet>"`; özetin geçtiği her çağrı. */
   cagrilar: string[];
   /** Adı verilen yöntem bir sonraki çağrıda atar (bir kez). */
@@ -35,7 +35,7 @@ const birlesik = (a: Uint8Array, b: Uint8Array): Uint8Array => {
 export function sahteEkDiski(simdi: () => number): SahteEkDiski {
   const tamlar = new Map<string, Uint8Array>();
   const yarimlar = new Map<string, SahteYarim>();
-  const isaretler = new Map<string, number>();
+  const isaretler = new Map<string, AjandaEkIsareti>();
   const cagrilar: string[] = [];
   const atsin = new Set<string>();
 
@@ -60,6 +60,12 @@ export function sahteEkDiski(simdi: () => number): SahteEkDiski {
     tamOku: async (ozet, ofset, azami) => {
       giris("tamOku", ozet);
       return (tamlar.get(ozet) ?? new Uint8Array(0)).slice(ofset, ofset + azami);
+    },
+    tamOzeti: async (ozet) => {
+      giris("tamOzeti", ozet);
+      const v = tamlar.get(ozet);
+      if (v === undefined) throw new Error("tam_yok");
+      return { bayt: v.length, ozet: sha256Hex(v) };
     },
     tamSil: async (ozet) => {
       giris("tamSil", ozet);
@@ -111,8 +117,15 @@ export function sahteEkDiski(simdi: () => number): SahteEkDiski {
     },
     isaretleriYaz: async (m) => {
       giris("isaretleriYaz");
+      // Gerçek port gibi: özet olmayan anahtar ya da sayı olmayan değer atar, hiçbir şey yazılmaz.
+      for (const [k, v] of m) {
+        if (!OZET.test(k)) throw new Error("gecersiz_ozet");
+        if (!Number.isFinite(v.ilk_ms) || !Number.isFinite(v.gozlenen_ms) || !(v.rev === null || Number.isSafeInteger(v.rev))) {
+          throw new Error("gecersiz_isaret");
+        }
+      }
       isaretler.clear();
-      for (const [k, v] of m) isaretler.set(k, v);
+      for (const [k, v] of m) isaretler.set(k, { ...v });
     },
   };
   return { disk, tamlar, yarimlar, isaretler, cagrilar, atsin };

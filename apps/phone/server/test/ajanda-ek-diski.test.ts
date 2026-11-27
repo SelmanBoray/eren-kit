@@ -9,6 +9,7 @@ import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFi
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
+import type { AjandaEkIsareti } from "../src/ajanda-ekler.ts";
 import { ajandaEkDiskiKur } from "../src/dis-dunya.ts";
 
 const temizlenecek: string[] = [];
@@ -24,6 +25,7 @@ const ortam = () => {
 };
 
 const sha = (v: Uint8Array): string => createHash("sha256").update(v).digest("hex");
+const isaret = (ilk_ms: number, gozlenen_ms = 0, rev: number | null = 0): AjandaEkIsareti => ({ ilk_ms, gozlenen_ms, rev });
 const veri = (n: number, t = 3): Uint8Array => Uint8Array.from({ length: n }, (_, i) => (i * 31 + t) & 0xff);
 
 describe("ajandaEkDiskiKur", () => {
@@ -105,7 +107,8 @@ describe("ajandaEkDiskiKur", () => {
         () => disk.yarimOzeti(o),
         () => disk.yarimiTamamla(o),
         () => disk.yarimSil(o),
-        () => disk.isaretleriYaz(new Map([[o, 1]])),
+        () => disk.tamOzeti(o),
+        () => disk.isaretleriYaz(new Map([[o, isaret(1)]])),
       ]) {
         await assert.rejects(f(), /gecersiz_ozet/, JSON.stringify(o));
       }
@@ -149,7 +152,8 @@ describe("ajandaEkDiskiKur", () => {
       () => disk.yarimSil(ozet),
       () => disk.yarimListesi(),
       () => disk.isaretleriOku(),
-      () => disk.isaretleriYaz(new Map([[ozet, 1]])),
+      () => disk.tamOzeti(ozet),
+      () => disk.isaretleriYaz(new Map([[ozet, isaret(1)]])),
     ]) {
       await assert.rejects(f(), /ek_dizini_guvensiz/);
     }
@@ -184,17 +188,41 @@ describe("ajandaEkDiskiKur", () => {
     assert.deepEqual(await disk.tamListesi(), []);
   });
 
-  it("işaretler: atomik yazılır ve okunur; bozuk dosya ve geçersiz girdiler yok sayılır", async () => {
+  it("işaretler: atomik yazılır ve okunur (gözlenen süre ve revizyon dahil); bozuk dosya ve geçersiz girdiler yok sayılır", async () => {
     const { kok, disk } = ortam();
     assert.deepEqual(await disk.isaretleriOku(), new Map());
     const a = "a".repeat(64);
     const b = "b".repeat(64);
-    await disk.isaretleriYaz(new Map([[b, 2], [a, 1]]));
-    assert.deepEqual(await disk.isaretleriOku(), new Map([[a, 1], [b, 2]]));
-    assert.equal(readFileSync(join(kok, "basvurusuz.json"), "utf8"), JSON.stringify({ [a]: 1, [b]: 2 }));
+    await disk.isaretleriYaz(new Map([[b, isaret(2, 7, 3)], [a, isaret(1, 0, null)]]));
+    assert.deepEqual(await disk.isaretleriOku(), new Map([[a, isaret(1, 0, null)], [b, isaret(2, 7, 3)]]));
+    // Üst düzey `<ozet>: ilk_ms` eski biçimdir (eski servis de okur); gözlem ayrı anahtarda.
+    assert.equal(
+      readFileSync(join(kok, "basvurusuz.json"), "utf8"),
+      JSON.stringify({ [a]: 1, [b]: 2, gozlem: { [a]: { ms: 0 }, [b]: { ms: 7, rev: 3 } } }),
+    );
     writeFileSync(join(kok, "basvurusuz.json"), JSON.stringify({ [a]: 5, "../x": 1, [b]: "2" }));
-    assert.deepEqual(await disk.isaretleriOku(), new Map([[a, 5]]));
+    assert.deepEqual(await disk.isaretleriOku(), new Map([[a, isaret(5, 0, null)]]), "eski biçim: gözlenen 0, revizyon yok");
+    writeFileSync(
+      join(kok, "basvurusuz.json"),
+      JSON.stringify({ [a]: 5, [b]: 6, gozlem: { [a]: { ms: -1, rev: 1.5 }, [b]: "x", ["c".repeat(64)]: { ms: 9 } } }),
+    );
+    assert.deepEqual(await disk.isaretleriOku(), new Map([[a, isaret(5, 0, null)], [b, isaret(6, 0, null)]]));
     writeFileSync(join(kok, "basvurusuz.json"), "{bozuk");
     assert.deepEqual(await disk.isaretleriOku(), new Map());
+    await assert.rejects(disk.isaretleriYaz(new Map([[a, isaret(Number.NaN)]])), /gecersiz_isaret/);
+  });
+
+  it("tamOzeti: tam dosyanın boyu ve sha256'sı; dosya yoksa atar; diskte bozulan dosya adıyla tutmaz", async () => {
+    const { kok, disk } = ortam();
+    const v = veri(300_000);
+    const ozet = sha(v);
+    await assert.rejects(disk.tamOzeti(ozet), /tam_yok/);
+    await disk.yarimaEkle(ozet, 0, v);
+    await disk.yarimiTamamla(ozet);
+    assert.deepEqual(await disk.tamOzeti(ozet), { bayt: v.length, ozet });
+    appendFileSync(join(kok, ozet.slice(0, 2), ozet), "x");
+    const h = await disk.tamOzeti(ozet);
+    assert.equal(h.bayt, v.length + 1);
+    assert.notEqual(h.ozet, ozet);
   });
 });

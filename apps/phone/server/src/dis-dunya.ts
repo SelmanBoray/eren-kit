@@ -44,7 +44,7 @@ import {
   windowsPowerShellOrtami,
 } from "./kok-izni.ts";
 import type { KokIzniSonucu } from "./kok-izni.ts";
-import type { AjandaEkDiski, AjandaEkDosyasi, AjandaEkYarimi } from "./ajanda-ekler.ts";
+import type { AjandaEkDiski, AjandaEkDosyasi, AjandaEkIsareti, AjandaEkYarimi } from "./ajanda-ekler.ts";
 import { WebSocketServer } from "ws";
 import type { RawData, WebSocket } from "ws";
 import type {
@@ -1467,6 +1467,13 @@ const EK_OZETI = /^[0-9a-f]{64}$/;
 const EK_ONEKI = /^[0-9a-f]{2}$/;
 const EK_YARIM_DIZINI = "yarim";
 const EK_ISARET_DOSYASI = "basvurusuz.json";
+/**
+ * İşaret dosyasında gözlem alanının anahtarı (özet olamaz: 64 onaltılık değil). Dosya: üst düzeyde
+ * `<ozet>: ilk_ms` (eski biçim; eski servis de böyle okur, gözlem alanını yok sayar) ve
+ * `gozlem: {<ozet>: {ms, rev?}}` (gözlenen süre ve işaret revizyonu). Gözlem alanı olmayan ya da bozuk
+ * dosyada gözlenen süre 0, revizyon yok: saklama uzar, kısalmaz.
+ */
+const EK_GOZLEM_ANAHTARI = "gozlem";
 const EK_ONAY = ".onay";
 const EK_GECICI = ".tmp";
 const EK_OKUMA_PARCASI = 256 * 1024;
@@ -1534,6 +1541,28 @@ const ekDizinListesi = async (yol: string): Promise<Dirent[]> => {
     if (hataKodu(e) === "ENOENT" || hataKodu(e) === "ENOTDIR") return [];
     throw e;
   }
+};
+
+/** Dosyanın baştan `n` baytının sha256'sı (küçük harf onaltılık); dosya kısaysa atar. */
+const ekOzetHesapla = async (yol: string, n: number): Promise<string> => {
+  const h = createHash("sha256");
+  if (n > 0) {
+    const f = await open(yol, "r");
+    try {
+      const tampon = Buffer.alloc(EK_OKUMA_PARCASI);
+      let ofset = 0;
+      while (ofset < n) {
+        const { bytesRead } = await f.read(tampon, 0, Math.min(tampon.length, n - ofset), ofset);
+        if (bytesRead === 0) break;
+        h.update(tampon.subarray(0, bytesRead));
+        ofset += bytesRead;
+      }
+      if (ofset !== n) throw new Error("dosya_kisaldi");
+    } finally {
+      await f.close().catch(bos);
+    }
+  }
+  return h.digest("hex");
 };
 
 /** Küçük veriyi geçici dosyaya yazar, diske indirir, tek adımda yerine taşır. */
@@ -1639,6 +1668,13 @@ export const ajandaEkDiskiKur = (kok: string): AjandaEkDiski => {
       }
     },
 
+    tamOzeti: async (ozet) => {
+      const yol = await tamYoluOku(ozet);
+      const d = yol === null ? null : await ekDuzDosya(yol);
+      if (yol === null || d === null) throw new Error("tam_yok");
+      return { bayt: d.size, ozet: await ekOzetHesapla(yol, d.size) };
+    },
+
     tamSil: async (ozet) => {
       const yol = await tamYoluOku(ozet);
       if (yol !== null) await ekVarsaSil(yol);
@@ -1686,24 +1722,7 @@ export const ajandaEkDiskiKur = (kok: string): AjandaEkDiski => {
 
     yarimOzeti: async (ozet) => {
       const n = (await yarimDurumu(ozet)) ?? 0;
-      const h = createHash("sha256");
-      if (n > 0) {
-        const f = await open(yarimYolu(ozet), "r");
-        try {
-          const tampon = Buffer.alloc(EK_OKUMA_PARCASI);
-          let ofset = 0;
-          while (ofset < n) {
-            const { bytesRead } = await f.read(tampon, 0, Math.min(tampon.length, n - ofset), ofset);
-            if (bytesRead === 0) break;
-            h.update(tampon.subarray(0, bytesRead));
-            ofset += bytesRead;
-          }
-          if (ofset !== n) throw new Error("yarim_kisaldi");
-        } finally {
-          await f.close().catch(bos);
-        }
-      }
-      return { bayt: n, ozet: h.digest("hex") };
+      return { bayt: n, ozet: await ekOzetHesapla(yarimYolu(ozet), n) };
     },
 
     yarimiTamamla: async (ozet) => {
@@ -1750,7 +1769,7 @@ export const ajandaEkDiskiKur = (kok: string): AjandaEkDiski => {
     },
 
     isaretleriOku: async () => {
-      const sonuc = new Map<string, number>();
+      const sonuc = new Map<string, AjandaEkIsareti>();
       if (!(await ekDizinVar(kok))) return sonuc;
       const yol = join(kok, EK_ISARET_DOSYASI);
       let metin: string;
@@ -1767,16 +1786,34 @@ export const ajandaEkDiskiKur = (kok: string): AjandaEkDiski => {
       } catch {
         return sonuc;
       }
-      if (typeof deger !== "object" || deger === null || Array.isArray(deger)) return sonuc;
-      for (const [ozet, ms] of Object.entries(deger as Record<string, unknown>)) {
-        if (EK_OZETI.test(ozet) && typeof ms === "number" && Number.isFinite(ms)) sonuc.set(ozet, ms);
+      const nesneMi = (x: unknown): x is Record<string, unknown> => typeof x === "object" && x !== null && !Array.isArray(x);
+      if (!nesneMi(deger)) return sonuc;
+      const gozlemHam = deger[EK_GOZLEM_ANAHTARI];
+      const gozlem: Record<string, unknown> = nesneMi(gozlemHam) ? gozlemHam : {};
+      for (const [ozet, ms] of Object.entries(deger)) {
+        if (!EK_OZETI.test(ozet) || typeof ms !== "number" || !Number.isFinite(ms)) continue;
+        const g = Object.hasOwn(gozlem, ozet) ? gozlem[ozet] : undefined;
+        const gms = nesneMi(g) ? g.ms : undefined;
+        const grev = nesneMi(g) ? g.rev : undefined;
+        sonuc.set(ozet, {
+          ilk_ms: ms,
+          gozlenen_ms: typeof gms === "number" && Number.isFinite(gms) && gms >= 0 ? gms : 0,
+          rev: typeof grev === "number" && Number.isSafeInteger(grev) && grev >= 0 ? grev : null,
+        });
       }
       return sonuc;
     },
 
     isaretleriYaz: async (isaretler) => {
-      const nesne: Record<string, number> = {};
-      for (const ozet of [...isaretler.keys()].sort()) nesne[ozetli(ozet)] = isaretler.get(ozet) as number;
+      const nesne: Record<string, unknown> = {};
+      const gozlem: Record<string, { ms: number; rev?: number }> = {};
+      for (const ozet of [...isaretler.keys()].sort()) {
+        const i = isaretler.get(ozet) as AjandaEkIsareti;
+        if (!Number.isFinite(i.ilk_ms) || !Number.isFinite(i.gozlenen_ms)) throw new Error("gecersiz_isaret");
+        nesne[ozetli(ozet)] = i.ilk_ms;
+        gozlem[ozet] = { ms: i.gozlenen_ms, ...(i.rev !== null && { rev: i.rev }) };
+      }
+      nesne[EK_GOZLEM_ANAHTARI] = gozlem;
       await ekDizinHazirla(kok);
       await ekAtomikYaz(join(kok, EK_ISARET_DOSYASI), JSON.stringify(nesne));
     },
