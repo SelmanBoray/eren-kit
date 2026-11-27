@@ -11,6 +11,9 @@
  * - Eşleştirme penceresi denetimi, `pair_result{kapsam}`, kapsamlı `cihazEkle` → "eşleştirme".
  * - `ajandaKimlikImzaMetni`, `AJANDA_KANAL_HATALARI` → "imza", her ret çerçevesi şemadan geçer.
  * - Telafi: son gönderilen revizyon, telafi sürerken doğanı sıraya alma, aynı revizyonu iki kez yollamama → "telafi", "canlı".
+ * - Sürüm uyumu (YOL-HARITASI 3.3, D5): bağlantı sürümünün sabitlenmesi, aşağı uyarlama ve denetim, ret
+ *   sürümü, v2 bayt eşitliği → "sürüm uyumu". Bugün `AJANDA_SURUMLERI = [2]`: iki desteklenen sürüm
+ *   arasındaki sabitleme farkı ancak v3 eklenince ayrı sınanabilir.
  */
 import assert from "node:assert/strict";
 import { createPublicKey, generateKeyPairSync, sign as imzaAt, timingSafeEqual, verify as imzaDogrula } from "node:crypto";
@@ -20,11 +23,13 @@ import {
   AJANDA_AZAMI_CERCEVE,
   AJANDA_SURUMU,
   AJANDA_KANAL_HATALARI,
+  AJANDA_SURUMLERI,
   AjandaKaydi,
   AZAMI_CERCEVE,
   SOHBET_SURUMU,
   ajandaAsagiCoz,
   ajandaKimlikImzaMetni,
+  ajandaRetSurumuOku,
   cihazAsagiCoz,
   kimlikImzaMetni,
   sha256Hex,
@@ -1239,5 +1244,214 @@ describe("gateway /ajanda: kopma, kaldırma, kapanış", () => {
     await ist.gonder(islemMesaji("i-1", ekleIslemi("k2", "GIZLI-BASLIK-2")));
     await ist.gonder(islemMesaji("i-2", { ...ekleIslemi("k3", "GIZLI-BASLIK-3"), fazla: 1 }));
     assert.ok(!JSON.stringify(o.gunluk.girdiler).includes("GIZLI"));
+  });
+});
+
+describe("gateway /ajanda: sürüm uyumu (D5: bağlantı sürümü, aşağı uyarlama, ret sürümü)", () => {
+  const EN_KUCUK = Math.min(...AJANDA_SURUMLERI);
+  const EN_BUYUK = Math.max(...AJANDA_SURUMLERI);
+  /** Bugün v1 ve v3: kümenin hemen altı ve üstü. */
+  const DESTEKSIZ = [EN_KUCUK - 1, EN_BUYUK + 1];
+  const UYUMSUZ = JSON.stringify({ v: AJANDA_SURUMU, type: "error", code: "protokol_uyumsuz" });
+  /** Giden çerçeveler çözücüsüz (şemadan geçmeyen çerçeve de görünsün). */
+  const hamlar = (ist: Ist): Msg[] => ist.c.gonderilenler.map((m) => JSON.parse(m) as Msg);
+  const hata = (v: number, code: string): string => JSON.stringify({ v, type: "error", code });
+  const pair = (v: number) => ({ v, type: "pair_request", kod: KOD, public_key: AJ1.acik, platform: "android" });
+
+  it("AJANDA_SURUMU kümenin en büyüğüdür (ret sürümü ve iç model buna dayanır)", () => {
+    assert.equal(AJANDA_SURUMU, EN_BUYUK);
+  });
+
+  for (const v of DESTEKSIZ) {
+    it(`ilk çerçeve v${v} (hello ve pair_request): yalnız {v:AJANDA_SURUMU, error, protokol_uyumsuz} + 1002; sınama, eşleştirme yok`, async () => {
+      const o = await hazir();
+      o.pencereAc("ajanda");
+      const pencere = o.depo.eslestirmeOku();
+      const h = o.bagla("/ajanda");
+      await h.gonder({ v, type: "hello", device_id: "aj-1", son_rev: 0, client_nonce: NONCE });
+      assert.deepEqual(h.c.gonderilenler, [UYUMSUZ]);
+      assert.deepEqual(h.c.kapanis, { kod: 1002, neden: "protokol_uyumsuz" });
+      // İstemcinin geri düşüşü servisin en yüksek sürümünü okur.
+      assert.equal(ajandaRetSurumuOku(h.c.gonderilenler[0]!), AJANDA_SURUMU);
+      const p = o.bagla("/ajanda", IP3);
+      await p.gonder(pair(v));
+      assert.deepEqual(p.c.gonderilenler, [UYUMSUZ]);
+      assert.deepEqual(p.c.kapanis, { kod: 1002, neden: "protokol_uyumsuz" });
+      assert.equal(o.anahtar.imzalananlar.length, 0);
+      assert.equal(o.aj.c.karsila.length, 0);
+      assert.deepEqual(o.depo.eslestirmeOku(), pencere, "pencere ve sayaçlar değişmemeli");
+    });
+  }
+
+  it("sabitlemeden sonra başka v protokol_uyumsuz (ret v'si yine AJANDA_SURUMU): sınamada, kimlik sonrası, pair_request ardından", async () => {
+    const o = await hazir();
+    // `hello` ile sabitlendi; `auth_response` başka sürümde.
+    for (const v of DESTEKSIZ) {
+      const a = o.bagla("/ajanda");
+      await a.gonder({ v: AV, type: "hello", device_id: "aj-1", son_rev: 0, client_nonce: NONCE });
+      assert.equal(a.tur("auth_challenge").length, 1);
+      await a.gonder({ v, type: "auth_response", signature: "AAAA" });
+      assert.deepEqual(a.c.gonderilenler.slice(1), [UYUMSUZ]);
+      assert.equal(a.c.kapanis?.kod, 1002);
+      assert.equal(a.c.kimlikDogrulandiMi, false);
+    }
+    assert.equal(o.aj.c.karsila.length, 0);
+    // Kimlik sonrası: işlem ve geçmiş isteği başka sürümde; işlem uygulanmaz, `gecersiz_islem` de değil.
+    for (const cerceve of [
+      { ...islemMesaji("i-1", ekleIslemi("k1")), v: AV + 1 },
+      { v: AV - 1, type: "gecmis_iste", istek_id: "g1", kayit_id: "k1" },
+    ]) {
+      const b = await o.ajandaGiris();
+      const once = b.c.gonderilenler.length;
+      await b.gonder(cerceve);
+      assert.deepEqual(b.c.gonderilenler.slice(once), [UYUMSUZ]);
+      assert.equal(b.c.kapanis?.kod, 1002);
+    }
+    assert.equal(o.aj.c.uygulanan.length, 0);
+    assert.equal(o.aj.c.gecersiz.length, 0);
+    assert.equal(o.aj.c.gecmis.length, 0);
+    // `pair_request` ile sabitlendi; aynı bağlantıdaki `hello` başka sürümde.
+    o.pencereAc("ajanda");
+    const p = o.bagla("/ajanda", IP3);
+    await p.gonder(pair(AV));
+    const pr = p.tur("pair_result")[0];
+    assert.ok(pr?.ok, JSON.stringify(p.kare));
+    await p.gonder({ v: AV + 1, type: "hello", device_id: pr.device_id, son_rev: 0, client_nonce: NONCE });
+    assert.deepEqual(p.c.gonderilenler.slice(1), [UYUMSUZ]);
+    assert.equal(p.c.kapanis?.kod, 1002);
+  });
+
+  it("giden her çerçevenin v'si bağlantı sürümü: eşleştirme, sınama, telafi, canlı, işlem, geçmiş, ret", async () => {
+    const o = await hazir();
+    o.aj.yaz(kayitUret("k1", 0));
+    o.pencereAc("ajanda");
+    const ist = o.bagla("/ajanda", IP3);
+    await ist.gonder(pair(AV));
+    const pr = ist.tur("pair_result")[0]!;
+    await ajandaElSik(ist, { device_id: pr.device_id });
+    o.aj.yaz(kayitUret("k2", 0));
+    await ist.gonder(islemMesaji("i-1", ekleIslemi("k3")));
+    await ist.gonder(islemMesaji("i-2", { islem: "ekle" }));
+    await ist.gonder({ v: AV, type: "gecmis_iste", istek_id: "g1", kayit_id: "k1" });
+    await ist.gonder(pair(AV));
+    const kare = hamlar(ist);
+    assert.deepEqual(
+      [...new Set(kare.map((k) => k.type))].sort(),
+      ["auth_challenge", "error", "esitlendi", "gecmis", "islem_sonucu", "kayit", "pair_result", "welcome"],
+    );
+    for (const k of kare) assert.equal(k.v, AV, JSON.stringify(k));
+    assert.equal(ist.hataKodu, "yetkisiz");
+  });
+
+  it("ret sürümü sabitlenmemiş bağlantıda: çerçevenin desteklenen v'si; v yok, sayı değil, bozuk JSON, çok büyük ve zaman aşımı AJANDA_SURUMU", async () => {
+    const o = await hazir();
+    const durumlar: Array<[string | object, number, string, number]> = [
+      [{ v: AV, type: "hello", device_id: "aj-1", client_nonce: NONCE }, AV, "gecersiz_mesaj", 1008],
+      [{ v: AV, type: "auth_response", signature: "AAAA" }, AV, "yetkisiz", 1008],
+      [{ v: AV, type: "islem", islem_id: "i-1", islem: { islem: "ekle" } }, AV, "gecersiz_mesaj", 1008],
+      [{ type: "hello", device_id: "aj-1", son_rev: 0, client_nonce: NONCE }, AJANDA_SURUMU, "gecersiz_mesaj", 1008],
+      [{ v: String(AV), type: "hello", device_id: "aj-1", son_rev: 0, client_nonce: NONCE }, AJANDA_SURUMU, "gecersiz_mesaj", 1008],
+      ["{", AJANDA_SURUMU, "gecersiz_mesaj", 1008],
+      ["[2]", AJANDA_SURUMU, "gecersiz_mesaj", 1008],
+      [JSON.stringify({ v: AV, type: "hello", d: "x".repeat(AJANDA_AZAMI_CERCEVE.KANAL) }), AJANDA_SURUMU, "mesaj_cok_buyuk", 1009],
+    ];
+    for (const [cerceve, v, code, kod] of durumlar) {
+      const ist = o.bagla("/ajanda");
+      await ist.gonder(cerceve);
+      assert.deepEqual(ist.c.gonderilenler, [hata(v, code)], JSON.stringify(cerceve).slice(0, 80));
+      assert.equal(ist.c.kapanis?.kod, kod);
+    }
+    const sessiz = o.bagla("/ajanda");
+    o.zaman.ilerlet(10_000);
+    await bosalt();
+    assert.deepEqual(sessiz.c.gonderilenler, [hata(AJANDA_SURUMU, "zaman_asimi")]);
+  });
+
+  it("telafide denetimi tutmayan kayıt kabloya çıkmaz: ic_hata (1011), esitlendi yok; günlükte tür var, değer yok", async () => {
+    const o = await hazir();
+    o.aj.yaz(kayitUret("k1", 0));
+    o.aj.yaz({ ...kayitUret("k2", 0, { baslik: "GIZLI-BASLIK" }), fazla: "GIZLI-FAZLA" } as unknown as AjandaKaydi);
+    o.aj.yaz(kayitUret("k3", 0));
+    const ist = o.bagla("/ajanda");
+    await ajandaElSik(ist);
+    assert.deepEqual(hamlar(ist).map((k) => k.type), ["auth_challenge", "welcome", "kayit", "error"]);
+    assert.deepEqual(ist.revler, [1]);
+    assert.equal(ist.c.gonderilenler.at(-1), hata(AV, "ic_hata"));
+    assert.deepEqual(ist.c.kapanis, { kod: 1011, neden: "ic_hata" });
+    assert.ok(!ist.c.gonderilenler.some((m) => m.includes("GIZLI")), "geçersiz çerçeve kabloya çıktı");
+    const g = o.gunluk.bul("asagi_uyarlama_hatasi", "hata");
+    assert.equal(g.length, 1);
+    assert.equal(g[0]!.alanlar?.["type"], "kayit");
+    assert.equal(g[0]!.alanlar?.["v"], AV);
+    assert.equal(g[0]!.alanlar?.["code"], "gecersiz_mesaj");
+    assert.ok(!JSON.stringify(o.gunluk.girdiler).includes("GIZLI"), "değer günlüğe yazıldı");
+    // Kapanan bağlantı canlı yayın da almaz.
+    o.aj.yaz(kayitUret("k4", 0));
+    assert.deepEqual(ist.revler, [1]);
+  });
+
+  it("canlı kayıt ve işlem sonucu denetimi tutmazsa çerçeve çıkmaz, bağlantı ic_hata ile kapanır", async () => {
+    const o = await hazir();
+    const a = await o.ajandaGiris();
+    const once = a.c.gonderilenler.length;
+    o.veriyolu.yayinla("ajanda_kayit_yazildi", { kayit: { ...kayitUret("k1", 1), tur: "uydurma" } as unknown as AjandaKaydi });
+    assert.deepEqual(a.c.gonderilenler.slice(once), [hata(AV, "ic_hata")]);
+    assert.equal(a.c.kapanis?.kod, 1011);
+    // Yüz şemada olmayan ret kodu döndürdü.
+    o.aj.yuz.islemUygula = () => ({ ok: false, code: "uydurma_kod" }) as unknown as AjandaIslemSonucuGovdesi;
+    const b = await o.ajandaGiris(IP2, { device_id: "aj-2", anahtar: AJ2.private });
+    const bOnce = b.c.gonderilenler.length;
+    await b.gonder(islemMesaji("i-1", ekleIslemi("k9")));
+    assert.deepEqual(b.c.gonderilenler.slice(bOnce), [hata(AV, "ic_hata")]);
+    assert.equal(b.c.kapanis?.kod, 1011);
+    assert.deepEqual(
+      o.gunluk.bul("asagi_uyarlama_hatasi").map((g) => g.alanlar?.["type"]),
+      ["kayit", "islem_sonucu"],
+    );
+  });
+
+  it("bayt eşitliği: v2 istemcinin gördüğü baytlar D5 öncesiyle aynı (alan sırası dahil)", async () => {
+    assert.ok((AJANDA_SURUMLERI as readonly number[]).includes(2));
+    const o = await hazir();
+    // v1 uygulamasının reddi.
+    const eski = o.bagla("/ajanda");
+    await eski.gonder({ v: 1, type: "hello", device_id: "aj-1", son_rev: 0, client_nonce: NONCE });
+    assert.deepEqual(eski.c.gonderilenler, ['{"v":2,"type":"error","code":"protokol_uyumsuz"}']);
+    // Eşleştirme: başarı ve ret.
+    o.pencereAc("ajanda");
+    const p = o.bagla("/ajanda", IP3);
+    await p.gonder(pair(2));
+    const device_id = (JSON.parse(p.c.gonderilenler[0]!) as Msg).device_id as string;
+    assert.deepEqual(p.c.gonderilenler, [
+      `{"v":2,"type":"pair_result","ok":true,"device_id":${JSON.stringify(device_id)},"server_public_key":${JSON.stringify(o.anahtar.acikAnahtar())},"kapsam":"ajanda"}`,
+    ]);
+    const kotu = o.bagla("/ajanda", IP3);
+    await kotu.gonder({ ...pair(2), kod: "YANLIS1234" });
+    assert.deepEqual(kotu.c.gonderilenler, ['{"v":2,"type":"pair_result","ok":false,"code":"eslestirme_kapali"}']);
+    // Kimlik, telafi, canlı, işlem, geçmiş, ret.
+    o.aj.yaz(kayitUret("k1", 0));
+    const ist = o.bagla("/ajanda");
+    await ist.gonder({ v: 2, type: "hello", device_id: "aj-1", son_rev: 0, client_nonce: NONCE });
+    const ch = JSON.parse(ist.c.gonderilenler[0]!) as Msg;
+    await ist.gonder({
+      v: 2,
+      type: "auth_response",
+      signature: imzala(AJ1.private, ajandaKimlikImzaMetni({ rol: "telefon", device_id: "aj-1", client_nonce: NONCE, server_nonce: ch.server_nonce })),
+    });
+    await ist.gonder({ v: 2, type: "islem", islem_id: "i-1", islem: ekleIslemi("k2") });
+    await ist.gonder({ v: 2, type: "gecmis_iste", istek_id: "g1", kayit_id: "k1" });
+    await ist.gonder({ v: 2, type: "hello", device_id: "aj-1", son_rev: 0, client_nonce: NONCE });
+    const k1 = JSON.stringify(o.aj.kayitlar.get("k1"));
+    const k2 = JSON.stringify(o.aj.kayitlar.get("k2"));
+    assert.deepEqual(ist.c.gonderilenler, [
+      `{"v":2,"type":"auth_challenge","server_nonce":${JSON.stringify(ch.server_nonce)},"server_signature":${JSON.stringify(ch.server_signature)}}`,
+      `{"v":2,"type":"welcome","depo_id":"depo-1","bas_rev":1,"tam":true,"server_time_ms":${BASLANGIC}}`,
+      `{"v":2,"type":"kayit","kayit":${k1}}`,
+      '{"v":2,"type":"esitlendi","rev":1}',
+      `{"v":2,"type":"kayit","kayit":${k2}}`,
+      '{"v":2,"type":"islem_sonucu","islem_id":"i-1","ok":true,"kayit_id":"k2","rev":2}',
+      `{"v":2,"type":"gecmis","istek_id":"g1","kayit_id":"k1","girdiler":[${JSON.stringify(GECMIS_GIRDISI)}],"devami":true}`,
+      '{"v":2,"type":"error","code":"yetkisiz"}',
+    ]);
   });
 });
