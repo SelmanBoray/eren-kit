@@ -1,9 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <application>
         <!-- Yalnız debug: adb'den köprüyü arayüzsüz denemek için. Release'e girmez. -->
         <receiver
             android:name=".KopruAlici"
             android:exported="true" />
+
+        <!-- Yalnız debug: Sahne arayüzünü telefonda denemek için ikinci başlatıcı girişi. Eski giriş aynen kalır. -->
+        <!-- Yalnız sıra için (özniteliksiz): birleşik manifestte eski giriş ilk başlatıcı olarak kalsın. -->
+        <activity android:name=".ekran.AnaEkran" />
+        <activity
+            android:name=".ekran.sahne.SahneEtkinligi"
+            android:exported="true"
+            android:label="Ajanda Sahne"
+            tools:replace="android:exported">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
     </application>
 </manifest>

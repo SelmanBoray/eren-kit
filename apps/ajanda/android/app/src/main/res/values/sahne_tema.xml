@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Sahne arayüzünün pencere teması (ekran/sahne/SahneEtkinligi). Yalnız ilk karede görünen pencere zeminini
+  ve sistem çubuklarını ayarlar; renk, yazı ve biçim Compose tarafında (ekran/sahne/tema/).
+  Koyu karşılığı values-night/sahne_tema.xml.
+-->
+<resources>
+    <color name="sahne_pencere_zemini">#FFFFFF</color>
+
+    <style name="SahneTema" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/sahne_pencere_zemini</item>
+        <item name="android:colorBackground">@color/sahne_pencere_zemini</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+</resources>

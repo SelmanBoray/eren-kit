@@ -2,8 +2,11 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import javax.inject.Inject
 
 plugins {
-    id("com.android.application")
-    id("org.jetbrains.kotlin.android")
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.android)
+    // Sahne arayüzü: Compose derleyicisi ve cihazsız ekran görüntüsü testleri (Robolectric + Roborazzi).
+    alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.roborazzi)
 }
 
 // ---------------------------------------------------------------------------
@@ -128,6 +131,21 @@ android {
         getByName("debug").java.srcDirs("src/debug/kotlin")
         getByName("test").java.srcDirs("src/test/kotlin")
     }
+
+    // Sahne arayüzü (ekran/sahne/) Compose ile; eski ekranlar platform View'larıyla.
+    buildFeatures {
+        compose = true
+    }
+
+    testOptions {
+        // Robolectric ekran görüntüsü testleri kaynakları (yazı tipi, tema) gerçekten yükler.
+        unitTests.isIncludeAndroidResources = true
+    }
+}
+
+// Ekran görüntüsü referansları depoda durur; kaydet: recordRoborazziDebug, doğrula: verifyRoborazziDebug.
+roborazzi {
+    outputDir.set(file("src/test/screenshots"))
 }
 
 kotlin {
@@ -172,13 +190,28 @@ tasks.withType<Test>().configureEach {
     inputs.files(rustKaynakAgaci()).withPathSensitivity(PathSensitivity.RELATIVE)
     // Üretilen bağlamalar kitaplığı JNA ile adıyla yükler; masaüstü kitaplığını buradan bulur.
     systemProperty("jna.library.path", rustKoku.resolve("target/debug").absolutePath)
+    // Robolectric + Compose varsayılan 512 MB'ta sıkışıyor.
+    maxHeapSize = "2g"
 }
 
 dependencies {
     // UniFFI Kotlin bağlamaları JNA kullanır. aar: Android .so'ları; jar: masaüstü JVM testleri.
-    implementation("net.java.dev.jna:jna:5.17.0@aar")
+    implementation(variantOf(libs.jna) { artifactType("aar") })
     // K2: WebSocket istemcisi (Android'de yerleşik yok). Soket Kotlin'de, protokol Rust'ta (sans-IO).
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    testImplementation("net.java.dev.jna:jna:5.17.0")
-    testImplementation("junit:junit:4.13.2")
+    implementation(libs.okhttp)
+
+    // Sahne arayüzü: yalnız Compose ui + foundation (Material yok; tema ve bileşenler kendi belirteçlerimizle).
+    implementation(platform(libs.compose.bom))
+    implementation(libs.compose.ui)
+    implementation(libs.compose.foundation)
+    implementation(libs.activity.compose)
+
+    testImplementation(libs.jna)
+    testImplementation(libs.junit)
+    // Ekran görüntüsü testleri: cihazsız (Robolectric yerel grafik) + Roborazzi.
+    testImplementation(platform(libs.compose.bom))
+    testImplementation(libs.compose.ui.test.junit4)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.roborazzi)
+    testImplementation(libs.roborazzi.compose)
 }

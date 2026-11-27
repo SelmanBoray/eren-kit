@@ -39,6 +39,14 @@
         <activity
             android:name=".ekran.KayitEkrani"
             android:exported="false" />
+        <!-- Sahne arayüzü (Compose, ekran/sahne/). Başlatıcı girişi yalnız debug'da: src/debug/AndroidManifest.xml. -->
+        <activity
+            android:name=".ekran.sahne.SahneEtkinligi"
+            android:enableOnBackInvokedCallback="true"
+            android:exported="false"
+            android:theme="@style/SahneTema"
+            android:windowSoftInputMode="adjustResize"
+            tools:targetApi="33" />
 
         <!-- K1 -->
         <!-- adjustResize: klavye kod alanını ve "Eşleştir" düğmesini örtmesin (görünüm ScrollView içinde). -->
