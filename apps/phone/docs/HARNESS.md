@@ -267,8 +267,15 @@ kullanıcısı olduğu sürece aynı kullanıcının iki dosyası arasında ger�
   doğrulanmadı) kendi yazıcısını getirir ya da yalnız yönerge yazdırır.
 - `eren eslestir --pc-ajan <ad>`; `--claude-code` takma ad olarak kalır (canlı kurulum ve belgeler bozulmaz).
 - `ayarKur`'un `claude.exe` zorunluluğu kalkar: sürücü yapılandırılmamışsa eşleştirme yine yapılır, ana
-  sohbet "motor yok" durumunu bildirir.
-- Yol haritası 8'deki `--` / PowerShell sorunu bu dilimde `mcpKaydiYonergesi(kabuk)` ile kapanır.
+  sohbet "motor yok" durumunu bildirir. **Bu madde H4'e taşındı (2026-11-27, koordinatör onayı).** Zorunluluk
+  `server/src/ayar.ts`'tedir ve servisin kendisi de aynı `ayarKur` ile açılır. Yalnız eşleştirmede kaldırılırsa
+  `claude.exe` olmayan makinede telefon eşleşir ama servis açılmaz. Servisin "motor yok" durumuyla birlikte
+  yapılmalıdır.
+- Yol haritası 8'deki `--` / PowerShell sorunu bu dilimde kabuğa göre yönergeyle kapanır. Ölçüm
+  (2026-11-27): PowerShell'de `claude` npm'in `claude.ps1` kısayoluna çözülür ve bir `.ps1` çağrısı düz `--`
+  argümanını yutar (pwsh 7.7 ve Windows PowerShell 5.1, argüman yazan sahte betikle: `x -- a` → `x a`).
+  Tırnaklı `'--'` iki sürümde de `.ps1`, `.cmd` ve `.exe` çağrısında `--` olarak geçer. Git Bash'te iki biçim
+  aynıdır. cmd.exe tek tırnağı kaldırmaz, orada düz `--` gerekir (cmd ölçülmedi).
 
 ### 4.4 Protokol ve telefon
 
@@ -337,9 +344,9 @@ bağlıdır; ölçmeden karar verilmemeli.
 | Dilim | İçerik | Dokunduğu yer | Çakışma |
 |---|---|---|---|
 | **H1 – Tasdik çerçevesi** | Normalize çerçeve (`aktor`, `etkilesim`, `uyarlayici`), eski çerçeveyle geri uyum; T5 (oturum/bağlantı bağı); Claude uyarlayıcısı bugünkü kararları birebir üretir | `protocol/src/ajanda-pc*.ts`, `server/src/ajanda-pc.ts`, `kanca.ts`, `kopru.ts` (yalnız kimlik okuma), testler | C ile `protocol/src` ve servis ajanda dosyaları: sıra koordinatörden |
-| **H2 – Kurulum soyutlaması** | `kurulum/harness/`, `eslestir --pc-ajan`, `--claude-code` takma adı, kabuğa göre yönerge, `ayarKur`'da `claude.exe` zorunluluğunun kalkması | `kurulum/**`, `server/src/eslestir.ts` | Az |
+| **H2 – Kurulum soyutlaması** | `kurulum/harness/`, `eslestir --pc-ajan`, `--claude-code` takma adı, kabuğa göre yönerge | `kurulum/**`, `server/src/eslestir.ts` | Az (C'nin D5'i `eslestir.ts`'te küçük bir değişiklik yapıyor; H2 onun üstüne oturur) |
 | **H3 – İkinci bağlayıcı (Codex)** | Önce ölçüm (çağrı kimliği MCP'de var mı, alt agent ve etkileşim alanları); sonra uyarlayıcı ya da "yalnız taslak" kaydı | `kurulum/harness/codex.ts`, kanca uyarlayıcısı | Yok |
-| **H4 – Sürücü sınırı (yalnız Claude)** | `OturumSurucusu`, `NormalOlay`, yetenek beyanı; `.exe` sorunu; tur zaman aşımı | `konusma*.ts`, `isler*.ts`, `akis.ts`, `ayar.ts`, `sozlesme.ts` | C ile servis: C'nin D5 servis kısmından sonra |
+| **H4 – Sürücü sınırı (yalnız Claude)** | `OturumSurucusu`, `NormalOlay`, yetenek beyanı; `.exe` sorunu; tur zaman aşımı; `ayarKur`'da `claude.exe` zorunluluğunun kalkması ve "motor yok" durumu (H2'den taşındı) | `konusma*.ts`, `isler*.ts`, `akis.ts`, `ayar.ts`, `sozlesme.ts` | C ile servis: C'nin D5 servis kısmından sonra |
 | **H5 – Metinler** | Telefon ve istem metinlerinde harness etiketi | `protocol/src/plan.ts`, `app/` metinleri | Telefon uygulaması koordinatörde |
 | **H6 – ACP sürücüsü** | Ölçüm sonrası karar | yeni dosya | — |
 
