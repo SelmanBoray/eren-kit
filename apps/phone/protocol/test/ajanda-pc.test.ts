@@ -1,10 +1,16 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { z } from "zod";
 import * as Kanca from "../src/ajanda-pc-kanca.ts";
 import { kancaAsagiCoz, kancaHelloSatiri, kancaIstekSatiri, KANCA_AZAMI_SATIR, pcJetonuMu } from "../src/ajanda-pc-kanca.ts";
 import {
   AJANDA_ARAC_ACIKLAMALARI,
+  AJANDA_AZAMI_CERCEVE,
+  AjandaKopruHello,
+  cozumle,
+  mesaj,
+  PcEskiAracGirdi,
   AJANDA_BORU_ADI,
   AJANDA_FIILLERI,
   AJANDA_PC_ARAC_ACIKLAMALARI,
@@ -334,4 +340,61 @@ test("tur kararı: köprüye dönen sonuç katıdır; sentetik her karar sabit b
     assert.ok(n.includes("--teshis"));
     assert.equal(/[\n\r]/.test(n), false, "tek satır");
   }
+});
+
+/**
+ * Yükseltme penceresi (yeni kanca, eski servis). Kanca her ajanda çağrısında `guncel` junction'ından taze
+ * başlar; `kurulum/kur.ts` junction'ı servisi yeniden başlatmadan ÖNCE çevirir. O arada yeni kanca hâlâ
+ * çalışan H1 öncesi servise gider. Bu test o servisin yukarı şemasının SABİT KOPYASINI kullanır
+ * (`git show 460ccbf^:apps/phone/protocol/src/ajanda-pc.ts`, `PcAracGirdi` → `PcKancaIstek` →
+ * `PcKancaYukari`). Kopya bugünkü yapı taşlarıyla kurulur (`mesaj`, `OpakId`, `AracCagriId`,
+ * `AjandaKopruHello`, `cozumle`, `AJANDA_AZAMI_CERCEVE`, `PROTOKOL_SURUMU`); bunlar 460ccbf^'dan bu yana
+ * değişmedi (`git diff 460ccbf^ -- protocol/src/{temel,ajanda-arac,cozumle}.ts` boş, sınırlardaki ilgili
+ * sabitler aynı).
+ *
+ * Kanıtlanan: (1) yeni kancanın ürettiği istek satırı (`pcAracKancaGirdisi` + `kancaIstekSatiri`, süreç
+ * kimliğiyle de, onsuz da) eski şemadan GEÇMEZ; hello satırı geçer (anahtar kabul edilir, istek düşer);
+ * (2) aynı çağrının eski çerçevesi eski şemadan geçer (kopya her şeyi reddetmiyor); (3) kopyanın alanları
+ * bugünkü servisin kabul ettiği eski çerçeveyle (`PcEskiAracGirdi`) birebir aynı. Sonucun taslak olması
+ * eski servisin kodundandır (460ccbf^ `ajanda-kopru-sunucu.ts` `kancaIsle`): şemadan geçmeyen satırda
+ * `gecersiz_cerceve` yazar, bağlantıyı kapatır, `pc_arac` işleyicisini çağırmaz; tasdik kaydedilmez,
+ * köprünün çağrısı `tasdik_yok` kararını alır (taslak). Kanca bağlantı kapanınca sessiz çıkar
+ * (`server/test/ajanda-pc-yan.test.ts` "eski servis" sınar). Güvenli taraftır: pencere insan turu açamaz.
+ */
+test("yükseltme penceresi: yeni kancanın çerçevesi H1 öncesi servisin şemasından geçmez (taslak, güvenli taraf)", () => {
+  const EskiPcAracGirdi = z.strictObject({
+    oturum_id: OpakId,
+    istem_id: OpakId.optional(),
+    arac_cagri_id: AracCagriId,
+    alt_agent: z.boolean(),
+    etkilesimsiz: z.boolean(),
+  });
+  const EskiPcKancaIstek = mesaj("istek", { istek_id: OpakId, fiil: z.literal("pc_arac"), girdi: EskiPcAracGirdi });
+  const EskiPcKancaYukari = z.discriminatedUnion("type", [AjandaKopruHello, EskiPcKancaIstek]);
+  const eskiServisCoz = (ham: string) => cozumle(EskiPcKancaYukari, ham, AJANDA_AZAMI_CERCEVE.BORU, PROTOKOL_SURUMU);
+
+  // (3) Kopya, bugünkü servisin eski çerçeve olarak kabul ettiğiyle aynı alanlar.
+  assert.deepEqual(Object.keys(EskiPcAracGirdi.shape).sort(), Object.keys(PcEskiAracGirdi.shape).sort());
+
+  const ham = { session_id: OTURUM, prompt_id: "p-1", tool_name: "mcp__eren-ajanda__ajanda_ekle", tool_use_id: ARAC_ID, tool_input: {} };
+  assert.equal(eskiServisCoz(kancaHelloSatiri(JETON)).ok, true, "hello eski serviste de geçer");
+  for (const surec of [undefined, "3060"]) {
+    const istek = pcAracKancaGirdisi(ham, "cli", surec);
+    assert.ok(istek !== null);
+    const satir = kancaIstekSatiri("kanca_1", istek);
+    // Yeni servis geçirir; eski servis geçirmez (bağlantıyı kapatır → tasdik yok → taslak).
+    assert.equal(pcKancaYukariCoz(satir).ok, true, `yeni servis (surec ${String(surec)})`);
+    const eski = eskiServisCoz(satir);
+    assert.equal(eski.ok, false, `eski servis yeni çerçeveyi geçirdi (surec ${String(surec)})`);
+  }
+  // (2) Aynı çağrının H1 öncesi kancanın yolladığı çerçevesi eski şemadan geçer (ve bugünkü servisten de).
+  const eskiCerceve = JSON.stringify({
+    v,
+    type: "istek",
+    istek_id: "kanca_1",
+    fiil: "pc_arac",
+    girdi: { oturum_id: OTURUM, istem_id: "p-1", arac_cagri_id: ARAC_ID, alt_agent: false, etkilesimsiz: false },
+  });
+  assert.equal(eskiServisCoz(eskiCerceve).ok, true, "eski kopya her şeyi reddediyor");
+  assert.equal(pcKancaYukariCoz(eskiCerceve).ok, true, "geri alma penceresi: yeni servis eski kancayı kabul eder");
 });

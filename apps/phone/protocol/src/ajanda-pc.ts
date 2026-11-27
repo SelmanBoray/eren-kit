@@ -100,9 +100,19 @@ export const PcTasdikGirdi = z.strictObject({
 
 /**
  * H1 öncesi çerçeve (Claude Code alanlarıyla: `agent_id` dolu → `alt_agent`, `-p`/SDK →
- * `etkilesimsiz`). Güncellemeden önce başlamış kanca süreçleri için kabul edilir; servis onu
- * `claude-code` uyarlayıcısının çerçevesi sayar ve bugünkü kararı verir (oturum bağı uygulanmaz: eski
- * kanca süreç kimliğini vermez, `/clear` sonrası oturum köprününkinden ayrılır).
+ * `etkilesimsiz`). Servis onu `claude-code` uyarlayıcısının çerçevesi sayar ve bugünkü kararı verir
+ * (oturum bağı uygulanmaz: eski kanca süreç kimliğini vermez, `/clear` sonrası oturum köprününkinden ayrılır).
+ *
+ * Neden kabul edilir (sürüm farkının yönleri): kanca uzun ömürlü değildir, her ajanda çağrısında `guncel`
+ * junction'ından taze başlar; açık oturumlarda "eski kanca süreci" kalmaz. Uzun ömürlü olanlar köprü (MCP
+ * süreci, oturum boyunca eski kodla) ve servistir.
+ * - Yeni kanca, eski servis: `kur.ts` junction'ı çevirip servis yeniden başlayana kadar. Eski servisin katı
+ *   şeması `PcTasdikGirdi`'yi geçirmez, bağlantıyı kapatır; çağrı tasdiksiz kalır (`tasdik_yok`, taslak;
+ *   güvenli taraf, `protocol/test/ajanda-pc.test.ts` sınar).
+ * - Eski kanca, yeni servis: yalnız geri almada (`--geri-al`, otomatik geri alma) junction eski sürüme
+ *   dönüp servis henüz yeniden başlamamışken. Bu kabul o aralık içindir.
+ * - Eski köprü, yeni servis: güncellemeden önce açılmış oturumların köprüsü yeni servisle konuşmayı sürdürür;
+ *   bu yüzden yeni karar değeri yoktur (`PcAracSonucu` eski köprüde de çözülür).
  */
 export const PcEskiAracGirdi = z.strictObject({
   oturum_id: OturumId,
