@@ -364,12 +364,15 @@ export function kancaKur(ortam: Ortam, nodeExe: string, secenek: KancaSecenegi =
   const onceki = ayarCoz(okunan.metin);
   const { eski, kabuk } = kancaDurumuCoz(onceki);
   const yeni = kancalariEkle(onceki, y);
+  // İçerik (JSON değeri) değişti mi: dosya yoksa ya da yeni ayar öncekinden farklıysa. Yazma ve yedek bugünkü
+  // CLI davranışıyla aynı kalır (her seferinde); `degisti` yalnız içeriğin gerçekten değişip değişmediğini söyler.
+  const degisti = okunan.metin === null || JSON.stringify(yeni) !== JSON.stringify(onceki);
   const yedek = ayarYaz(ayarYolu, yeni, secenek.simdiMs ?? Date.now(), okunan.bom);
   const satirlar = [`Araç öncesi kanca eklendi: ${ayarYolu}${yedek === null ? "" : ` (yedek: ${yedek})`}`];
   if (eski > 0) satirlar.push(`Önceki kurulumun ${eski} eski kancası (istem / tur sonu / eski biçim) çıkarıldı.`);
   if (kabuk > 0) satirlar.push("Kabuk biçimli eski araç kancası yürütme biçimine çevrildi (kabuktan bağımsız).");
   satirlar.push("Açık Claude Code oturumları kancaları yeniden açılınca görür. MCP kaydı için: goster (adım 1).");
-  return { ayarYolu, degisti: true, yedek, satirlar };
+  return { ayarYolu, degisti, yedek, satirlar };
 }
 
 /** Bu aracın kancalarını kaldırır; yoksa dosyaya dokunmaz. */

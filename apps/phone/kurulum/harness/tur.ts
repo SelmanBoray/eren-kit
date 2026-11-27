@@ -33,6 +33,11 @@ export interface KancaSecenegi {
 /** Kanca kurma/kaldırmanın sonucu: hangi dosya, değişti mi, yedeği ve kullanıcıya yazılacak satırlar. */
 export interface KancaSonucu {
   ayarYolu: string;
+  /**
+   * Ayarın içeriği (JSON değeri) gerçekten değişti mi; dosya yeniden yazıldı mı değil. Kanca zaten güncel
+   * kuruluysa `kancaKur` dosyayı yine yazıp yedekleyebilir ama `false` döner. "Açık oturumları yeniden açın"
+   * gibi kararlar buna bakar.
+   */
   degisti: boolean;
   yedek: string | null;
   satirlar: string[];

@@ -131,6 +131,8 @@ test("canlı kurulum korunur: kurulu kanca tanınır, kanca-ekle iki kez çalı�
     assert.equal(readFileSync(yol, "utf8"), CANLI_METIN, "iki kez: değişmedi");
     const r = pcAjani("claude-code")!.kancaKur(ortam, NODE);
     assert.equal(r.ayarYolu, yol);
+    assert.equal(r.degisti, false, "kanca zaten güncel: içerik değişmedi");
+    assert.equal(typeof r.yedek, "string", "CLI ile aynı: yine yedeklenip yazılır");
     assert.equal(readFileSync(yol, "utf8"), CANLI_METIN, "uyarlayıcı üzerinden: değişmedi");
     assert.deepEqual(giris.kancaDurumu(ortam), beklenen);
     // Yedekler özgün içeriği tutar.
@@ -142,10 +144,36 @@ test("canlı kurulum korunur: kurulu kanca tanınır, kanca-ekle iki kez çalı�
     assert.equal(k.degisti, true);
     assert.deepEqual(giris.kancaDurumu(ortam), { ...beklenen, arac: false });
     assert.equal(pcAjani("claude-code")!.kancaKaldir(ortam).degisti, false, "ikinci kaldırma");
-    pcAjani("claude-code")!.kancaKur(ortam, NODE);
+    assert.equal(pcAjani("claude-code")!.kancaKur(ortam, NODE).degisti, true, "kaldırmadan sonra kurma");
     assert.equal(readFileSync(yol, "utf8"), CANLI_METIN);
   } finally {
     console.log = log;
+    rmSync(dizin, { recursive: true, force: true });
+  }
+});
+
+test("degisti yalnız ayar içeriği değişince true: dosya yok, kancasız ayar, güncel kanca, kaldırma", () => {
+  const dizin = mkdtempSync(join(tmpdir(), "eren-harness-degisti-"));
+  try {
+    const a = pcAjani("claude-code")!;
+    const ortam = { LOCALAPPDATA: "C:\\Users\\Ornek\\AppData\\Local", USERPROFILE: dizin, ProgramFiles: join(dizin, "pf") };
+    const yol = join(dizin, ".claude", "settings.json");
+    const secenek = { ayarYolu: yol, simdiMs: 1 };
+    assert.deepEqual([a.kancaKaldir(ortam, secenek).degisti, a.kancaKaldir(ortam, secenek).yedek], [false, null], "dosya yok: kaldırma");
+    const ilk = a.kancaKur(ortam, NODE, secenek);
+    assert.deepEqual([ilk.degisti, ilk.yedek], [true, null], "dosya yok: oluşturuldu");
+    const ikinci = a.kancaKur(ortam, NODE, { ...secenek, simdiMs: 2 });
+    assert.equal(ikinci.degisti, false, "güncel kanca");
+    // Kullanıcıya yazılan satırlar degisti'den etkilenmez (yalnız yedek eklenir); yazma ve yedek sürer.
+    assert.equal(typeof ikinci.yedek, "string");
+    assert.deepEqual(ikinci.satirlar, [`${ilk.satirlar[0]} (yedek: ${ikinci.yedek})`, ...ilk.satirlar.slice(1)]);
+    assert.equal(a.kancaKaldir(ortam, secenek).degisti, true, "kaldırma");
+    assert.equal(a.kancaKaldir(ortam, secenek).degisti, false, "ikinci kaldırma");
+    writeFileSync(yol, '{\n  "model": "opus"\n}\n', "utf8");
+    const kancasiz = a.kancaKur(ortam, NODE, { ...secenek, simdiMs: 3 });
+    assert.equal(kancasiz.degisti, true, "kancasız ayara ekleme");
+    assert.equal(a.kancaKur(ortam, NODE, { ...secenek, simdiMs: 4 }).degisti, false);
+  } finally {
     rmSync(dizin, { recursive: true, force: true });
   }
 });
