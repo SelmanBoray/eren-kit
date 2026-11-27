@@ -154,7 +154,9 @@ Uyarlayıcıya taşınırken bu testler Claude uyarlayıcısının testi olur, s
 - **T4.** Sentetik tur onaylayamaz, taslak olmayan kayda dokunamaz (bugünkü `ajanda-araclar.ts` kuralı,
   harness'tan bağımsızdır, değişmez).
 - **T5.** Tasdik tek kullanımlık, kısa ömürlüdür ve tasdiki tüketen bağlantıya bağlanır: tasdiği bildiren
-  oturum ile çağrıyı yapan köprünün oturumu eşleşmezse taslak (2.3'teki bulgunun kapatılması).
+  harness süreci ile çağrıyı yapan köprünün süreci eşleşmezse taslak (2.3'teki bulgunun kapatılması).
+  İlk tasarım oturum kimliğiyle karşılaştırıyordu. `/clear` ve `--continue` bunu bozduğu için süreç eşitliğine
+  geçildi (4.2 "Uygulanan (H1)").
 - **T6.** Kancası olmayan harness araçları kullanabilir; yalnız kayıtları taslak doğar ve telefondan
   onaylanır. Bu bir hata değil, tabandır.
 - **T7.** Güvenilmeyen metin modele harness'ın dosya anma / komut genişletme yolu açılmadan verilir
