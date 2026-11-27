@@ -147,7 +147,10 @@ describe("eslestir --claude-code", () => {
     assert.ok(m.endsWith(yonerge));
     // Yollar veri kökünün `guncel` bağlantısından; sürüm dizini (`surumler`) hiçbir komuta girmez.
     assert.ok(m.includes("C:\\ornek\\Yerel\\eren-kit\\uygulama\\guncel\\server\\src\\kopru.ts --rol pc_oturumu"));
-    assert.ok(m.includes("C:/ornek/Yerel/eren-kit/uygulama/guncel/server/src/kanca.ts\\\" arac || true"));
+    // Kanca yürütme biçiminde (kabuksuz): komut Node, argümanlar ayrı; kabuk sözdizimi yok.
+    assert.ok(m.includes('"command": "C:\\\\ornek\\\\node.exe"'));
+    assert.ok(m.includes('"C:\\\\ornek\\\\Yerel\\\\eren-kit\\\\uygulama\\\\guncel\\\\server\\\\src\\\\kanca.ts",\n'));
+    assert.equal(m.includes("|| true"), false);
     // Yalın yol: istem ve tur sonu kancası önerilmez.
     assert.equal(/kanca\.ts\\" (istem|tur_sonu)|UserPromptSubmit|"Stop"/.test(m), false);
     // Teşhisin okuduğu kanca durumu da aynı modülden.
@@ -155,6 +158,8 @@ describe("eslestir --claude-code", () => {
       ayarYolu: join(kok, "yok-kullanici", ".claude", "settings.json"),
       arac: false,
       eski: 0,
+      kabuk: 0,
+      kapatan: [],
     });
     assert.equal(/surumler/i.test(m), false);
     assert.ok(m.includes(y.anahtarDosyasi));
@@ -225,7 +230,7 @@ describe("eslestir --claude-code", () => {
     assert.match(kancasiz, /son PC araç kararı: tasdik_yok \(kayıtlar TASLAK doğuyor: araç öncesi kanca bu çağrıyı servise bildirmedi/);
     // Claude Code çağrı kimliğini vermiyor.
     const kimliksiz = pcTeshisMetni([arac("cagri_kimligi_yok", "yok")], undefined, { ayarYolu: "x", arac: true, eski: 0 });
-    assert.match(kimliksiz, /araç öncesi kanca \(PreToolUse, mcp__eren-ajanda__\.\*\): kurulu\./);
+    assert.match(kimliksiz, /araç öncesi kanca \(PreToolUse, mcp__eren-ajanda__\.\*\): ayarda kurulu\./);
     assert.equal(kimliksiz.includes("eski kancalar"), false);
     assert.match(kimliksiz, /çağrı kimliği MCP isteğinde geliyor mu: HAYIR/);
     assert.match(kimliksiz, /son PC araç kararı: cagri_kimligi_yok \(kayıtlar TASLAK doğuyor: Claude Code çağrı kimliğini/);
@@ -234,10 +239,51 @@ describe("eslestir --claude-code", () => {
     assert.match(pcTeshisMetni([arac("etkilesimsiz")]), /-p ya da Agent SDK oturumundandı; kaydı taslaktır \(beklenen\)/);
     // Bilinmeyen karar değeri açıklamasız yazılır; ayar okunamadı ve modül yok.
     assert.match(pcTeshisMetni([arac("eski_karar")]), /son PC araç kararı: eski_karar\n/);
-    assert.match(pcTeshisMetni([], undefined, { ayarYolu: "x", arac: null, eski: 0 }), /ayar dosyası okunamadı/);
+    assert.match(pcTeshisMetni([], undefined, { ayarYolu: "x", arac: null, eski: 0 }), /ayar dosyası okunamadı \(geçerli JSON değil\)/);
+    assert.match(
+      pcTeshisMetni([], undefined, { ayarYolu: "x", arac: null, eski: 0, hata: "ayar dosyası UTF-16 kodlanmış" }),
+      /ayar dosyası okunamadı \(ayar dosyası UTF-16 kodlanmış\)/,
+      "okunamama nedeni olduğu gibi",
+    );
     assert.match(pcTeshisMetni([], undefined, null), /^Kurulum: kanca durumu okunamadı/);
     // Her kararın açıklaması var.
     assert.deepEqual(Object.keys(TESHIS_KARAR_METNI).sort(), [...PC_TUR_KARARLARI].sort());
+  });
+
+  it("--teshis: kanca ayarda kurulu ama tasdik gelmedi: 'kurun' demez, olası nedenleri günlükten ve ayardan söyler", () => {
+    const s = (o: Record<string, unknown>) => JSON.stringify({ ts_ms: 1, seviye: "bilgi", ...o });
+    const arac = (karar: string) =>
+      s({ modul: "ajanda", olay: "arac", yol: "pc_araci", oturum_id: OTURUM, fiil: "ajanda_ekle", tur_kokeni: "sentetik", pc_karar: karar, cagri_kimligi: "var", sonuc: "eklendi" });
+    const tasdik = s({ modul: "ajanda", olay: "pc_arac", oturum_id: OTURUM, alt_agent: false, etkilesimsiz: false, istem_kimligi: "var" });
+    const ret = (neden: string) => s({ modul: "ajanda-kopru-sunucu", olay: "el_sikisma_ret", rol: "pc_kanca", code: "ic_hata", neden });
+    const kurulu = { ayarYolu: "x", arac: true, eski: 0, kabuk: 0, kapatan: [] as string[] };
+
+    // Kanca hiç ulaşmadı, ayarda kapatan yok: yeniden açma / proje ayarı / Node yolu.
+    const hic = pcTeshisMetni([arac("tasdik_yok")], undefined, kurulu);
+    assert.match(hic, /tasdik_yok \(kayıtlar TASLAK doğuyor: kanca ayarda kurulu görünüyor ama bu çağrıda tasdik gelmedi/);
+    assert.equal(hic.includes("Kanca kurulu değilse kurun"), false, "yanlış yere yönlendirme");
+    assert.match(hic, /Olası nedenler \(kurulu görünüyor ama tasdik gelmedi\):\n {2}- kanca hiç servise ulaşmadı: Claude Code kanca-ekle'den sonra yeniden açılmadı/);
+    assert.match(hic, /disableAllHooks/);
+
+    // Kapatan ayar görüldüyse ilk neden odur; kurulum satırında da uyarı.
+    const kapali = pcTeshisMetni([arac("tasdik_yok")], undefined, { ...kurulu, kapatan: ["kullanıcı ayarında disableAllHooks: true"] });
+    assert.match(kapali, /UYARI: kancaları kapatan ayar: kullanıcı ayarında disableAllHooks: true/);
+    assert.match(kapali, /Olası nedenler[^\n]*\n {2}- kancaları kapatan ayar: kullanıcı ayarında disableAllHooks: true/);
+
+    // Kanca bağlantı sınırında reddedildi: neden bu; öteki çağrılarda ulaşıyor.
+    const sinir = pcTeshisMetni([tasdik, arac("insan"), ret("pc_kanca_siniri"), arac("tasdik_yok")], undefined, kurulu);
+    assert.match(sinir, /- günlükte kanca reddi: servis kanca bağlantılarını sınırda reddetti/);
+    assert.match(sinir, /- kanca öteki çağrılarda ulaşıyor; bu çağrıda servis o an yanıt vermedi/);
+    // Eski servis sürümünün ortak sınırı ve anahtar uyuşmazlığı da adıyla.
+    assert.match(pcTeshisMetni([ret("pc_baglanti_siniri"), arac("tasdik_yok")], undefined, kurulu), /PC bağlantı sınırı doluydu \(çok açık oturum/);
+    assert.match(pcTeshisMetni([ret("pc_anahtar_gecersiz"), arac("tasdik_yok")], undefined, kurulu), /EREN_KIT_DATA_DIR/);
+    // Kurulum bilinmese de günlükteki ret nedeni söylenir.
+    assert.match(pcTeshisMetni([ret("pc_kanca_siniri"), arac("tasdik_yok")]), /Günlükte görülen neden:\n {2}- günlükte kanca reddi: servis kanca bağlantılarını/);
+    // Kanca kurulu değilken bugünkü metin (kurun) kalır; son karar insan ise neden bloğu yok.
+    assert.match(pcTeshisMetni([arac("tasdik_yok")], undefined, { ...kurulu, arac: false }), /Kanca kurulu değilse kurun/);
+    assert.equal(pcTeshisMetni([tasdik, arac("insan")], undefined, kurulu).includes("Olası nedenler"), false);
+    // Kabuk biçimli eski kanca ayrıca bildirilir.
+    assert.match(pcTeshisMetni([], undefined, { ...kurulu, kabuk: 1 }), /kanca eski kabuk biçiminde: Git Bash'le çalışır/);
   });
 });
 

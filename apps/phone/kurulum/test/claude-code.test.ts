@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -14,7 +14,8 @@ import {
   kancaDurumu,
   kancaDurumuCoz,
   kancaGruplari,
-  kancaKomutu,
+  kabukBicimiKomutu,
+  kancaGirdisi,
   kancalariCikar,
   kancalariEkle,
   kayitYonergesi,
@@ -48,16 +49,34 @@ test("server/src altında yollardaki betikler var (kurulu sürümde de aynı gö
   for (const ad of ["kopru.ts", "kanca.ts"]) assert.ok(existsSync(new URL(`../../server/src/${ad}`, import.meta.url)), ad);
 });
 
-test("kanca komutu tırnaklı ve ileri eğik çizgili; kendi kancamız (yeni ve eski biçim) tanınır, başkası tanınmaz", () => {
-  const k = kancaKomutu(Y, "istem");
+test("kanca yürütme biçimindedir (command + args, kabuk yok): yollar olduğu gibi, tırnak ve || true yok", () => {
+  assert.deepEqual(kancaGirdisi(Y, "arac"), {
+    type: "command",
+    command: NODE,
+    args: ["--disable-warning=ExperimentalWarning", "C:\\ornek\\Yerel\\eren-kit\\uygulama\\guncel\\server\\src\\kanca.ts", "arac"],
+    timeout: 10,
+  });
+  const g = JSON.stringify(kancaGirdisi(Y, "arac"));
+  assert.equal(/\|\||\\"/.test(g), false, "kabuk sözdizimi kaldı");
+  assert.equal(bizimKancaMi(kancaGirdisi(Y, "arac")), true);
+  assert.equal(bizimKancaMi(kancaGirdisi(Y, "istem")), true);
+  // Yürütme biçiminde başkasının kancası tanınmaz; köprünün eski --kanca biçimi tanınır.
+  assert.equal(bizimKancaMi({ type: "command", command: "node", args: ["C:\\baska\\kanca.ts", "arac"] }), false);
+  assert.equal(bizimKancaMi({ type: "command", command: "node", args: ["C:\\x\\server\\src\\kanca.ts", "baska"] }), false);
+  assert.equal(bizimKancaMi({ type: "command", command: "node", args: ["C:\\x\\server\\src\\kopru.ts", "--kanca", "arac"] }), true);
+  assert.equal(bizimKancaMi({ type: "command", args: ["C:\\x\\server\\src\\kanca.ts", "arac"] }), false, "command yok");
+});
+
+test("önceki kabuk biçimi tırnaklı ve ileri eğik çizgili; kendi kancamız (yeni ve eski biçim) tanınır, başkası tanınmaz", () => {
+  const k = kabukBicimiKomutu(Y, "istem");
   assert.equal(k, '"C:/Program Files/nodejs/node.exe" --disable-warning=ExperimentalWarning "C:/ornek/Yerel/eren-kit/uygulama/guncel/server/src/kanca.ts" istem || true');
   assert.equal(bizimKancaMi(k), true);
-  assert.equal(bizimKancaMi(kancaKomutu(Y, "tur_sonu")), true);
+  assert.equal(bizimKancaMi(kabukBicimiKomutu(Y, "tur_sonu")), true);
   // Önceki biçim (köprünün `--kanca`'sı, sürüm dizinli yol): kanca-ekle onu yenisiyle değiştirir.
   const eski = '"C:/x/node.exe" --disable-warning=ExperimentalWarning "C:/ornek/Yerel/eren-kit/uygulama/surumler/abc/server/src/kopru.ts" --kanca arac || true';
   assert.equal(bizimKancaMi(eski), true);
   const temiz = kancalariEkle({ hooks: { PreToolUse: [{ matcher: ARAC_ESLESTIRICI, hooks: [{ type: "command", command: eski }] }] } }, Y);
-  assert.deepEqual((temiz["hooks"] as Record<string, unknown>)["PreToolUse"], [{ matcher: ARAC_ESLESTIRICI, hooks: [{ type: "command", command: kancaKomutu(Y, "arac"), timeout: 10 }] }]);
+  assert.deepEqual((temiz["hooks"] as Record<string, unknown>)["PreToolUse"], [{ matcher: ARAC_ESLESTIRICI, hooks: [kancaGirdisi(Y, "arac")] }]);
   assert.equal(bizimKancaMi('python -I "C:/x/hook.py" || true'), false);
   assert.equal(bizimKancaMi('node "C:/baska/kanca.ts" istem'), false);
   assert.equal(bizimKancaMi("node kopru.ts --rol eren"), false);
@@ -68,7 +87,7 @@ test("kanca komutu tırnaklı ve ileri eğik çizgili; kendi kancamız (yeni ve 
 test("yalın yol: tek kanca, yalnız ajanda araçlarından önce (PreToolUse, eşleyici mcp__eren-ajanda__.*); istem ve tur sonu yok", () => {
   assert.deepEqual(KANCA_OLAYLARI, { PreToolUse: "arac" });
   assert.deepEqual(kancaGruplari(Y), {
-    PreToolUse: { matcher: "mcp__eren-ajanda__.*", hooks: [{ type: "command", command: kancaKomutu(Y, "arac"), timeout: 10 }] },
+    PreToolUse: { matcher: "mcp__eren-ajanda__.*", hooks: [kancaGirdisi(Y, "arac")] },
   });
   assert.deepEqual(Object.keys(kancalariEkle({}, Y)["hooks"] as object), ["PreToolUse"]);
 });
@@ -87,52 +106,100 @@ test("kanca ekleme: başka kancalara ve anahtarlara dokunmaz, idempotent; eski s
   const h = bir["hooks"] as Record<string, Array<Record<string, unknown>>>;
   assert.deepEqual(h["SessionStart"], [{ hooks: [baska] }]);
   assert.deepEqual(h["UserPromptSubmit"], [{ hooks: [baska] }], "başkasının istem kancası durur, bizimki eklenmez");
-  assert.deepEqual(h["PreToolUse"], [{ matcher: ARAC_ESLESTIRICI, hooks: [{ type: "command", command: kancaKomutu(Y, "arac"), timeout: 10 }] }]);
+  assert.deepEqual(h["PreToolUse"], [{ matcher: ARAC_ESLESTIRICI, hooks: [kancaGirdisi(Y, "arac")] }]);
   assert.equal(h["Stop"], undefined);
   assert.deepEqual(kancalariEkle(bir, Y), bir, "ikinci ekleme aynı");
   const yeniY = yollar({ ...ORTAM, EREN_KIT_DATA_DIR: "D:\\veri" }, NODE);
   const yeni = kancalariEkle(bir, yeniY)["hooks"] as Record<string, Array<Record<string, Array<Record<string, unknown>>>>>;
   assert.equal(yeni["PreToolUse"]!.length, 1);
-  assert.equal(yeni["PreToolUse"]![0]!["hooks"]![0]!["command"], kancaKomutu(yeniY, "arac"));
+  assert.deepEqual(yeni["PreToolUse"]![0]!["hooks"]![0], kancaGirdisi(yeniY, "arac"));
+});
+
+test("kabuk biçimli araç kancası kurulu sayılır ama ayrıca bildirilir; kanca-ekle onu yürütme biçimine çevirir", () => {
+  const kabuk = { type: "command", command: kabukBicimiKomutu(Y, "arac"), timeout: 10 };
+  const ayar = { hooks: { PreToolUse: [{ matcher: ARAC_ESLESTIRICI, hooks: [kabuk] }] } };
+  assert.deepEqual(kancaDurumuCoz(ayar), { arac: true, eski: 0, kabuk: 1 });
+  const yeni = kancalariEkle(ayar, Y);
+  assert.deepEqual(yeni, { hooks: { PreToolUse: [{ matcher: ARAC_ESLESTIRICI, hooks: [kancaGirdisi(Y, "arac")] }] } });
+  assert.deepEqual(kancaDurumuCoz(yeni), { arac: true, eski: 0, kabuk: 0 });
 });
 
 test("önceki kurulumdan geçiş: kanca-ekle eski istem ve tur sonu kancalarını çıkarır, yalnız araç öncesini bırakır", () => {
   const baska = { type: "command", command: "echo x" };
   const onceki = {
     hooks: {
-      UserPromptSubmit: [{ hooks: [baska] }, { hooks: [{ type: "command", command: kancaKomutu(Y, "istem"), timeout: 10 }] }],
-      PreToolUse: [{ matcher: ARAC_ESLESTIRICI, hooks: [{ type: "command", command: kancaKomutu(Y, "arac"), timeout: 10 }] }],
-      Stop: [{ hooks: [{ type: "command", command: kancaKomutu(Y, "tur_sonu"), timeout: 10 }] }],
+      UserPromptSubmit: [{ hooks: [baska] }, { hooks: [{ type: "command", command: kabukBicimiKomutu(Y, "istem"), timeout: 10 }] }],
+      PreToolUse: [{ matcher: ARAC_ESLESTIRICI, hooks: [kancaGirdisi(Y, "arac")] }],
+      Stop: [{ hooks: [{ type: "command", command: kabukBicimiKomutu(Y, "tur_sonu"), timeout: 10 }] }],
     },
   };
-  assert.deepEqual(kancaDurumuCoz(onceki), { arac: true, eski: 2 });
+  assert.deepEqual(kancaDurumuCoz(onceki), { arac: true, eski: 2, kabuk: 0 });
   const yeni = kancalariEkle(onceki, Y);
   assert.deepEqual(yeni, {
     hooks: {
       UserPromptSubmit: [{ hooks: [baska] }],
-      PreToolUse: [{ matcher: ARAC_ESLESTIRICI, hooks: [{ type: "command", command: kancaKomutu(Y, "arac"), timeout: 10 }] }],
+      PreToolUse: [{ matcher: ARAC_ESLESTIRICI, hooks: [kancaGirdisi(Y, "arac")] }],
     },
   });
-  assert.deepEqual(kancaDurumuCoz(yeni), { arac: true, eski: 0 });
+  assert.deepEqual(kancaDurumuCoz(yeni), { arac: true, eski: 0, kabuk: 0 });
 });
 
 test("kanca durumu: yok, kurulu, eşleyicisiz ya da yanlış olaydaki araç kancası eski sayılır; dosya yoksa ve bozuksa", () => {
-  assert.deepEqual(kancaDurumuCoz({}), { arac: false, eski: 0 });
-  assert.deepEqual(kancaDurumuCoz(kancalariEkle({}, Y)), { arac: true, eski: 0 });
-  const komut = { type: "command", command: kancaKomutu(Y, "arac") };
-  assert.deepEqual(kancaDurumuCoz({ hooks: { PreToolUse: [{ hooks: [komut] }] } }), { arac: false, eski: 1 }, "eşleyicisiz: her araçta çalışır");
-  assert.deepEqual(kancaDurumuCoz({ hooks: { PostToolUse: [{ matcher: ARAC_ESLESTIRICI, hooks: [komut] }] } }), { arac: false, eski: 1 });
-  assert.deepEqual(kancaDurumuCoz({ hooks: { PreToolUse: [{ matcher: ARAC_ESLESTIRICI, hooks: [{ type: "command", command: "echo x" }] }] } }), { arac: false, eski: 0 });
+  assert.deepEqual(kancaDurumuCoz({}), { arac: false, eski: 0, kabuk: 0 });
+  assert.deepEqual(kancaDurumuCoz(kancalariEkle({}, Y)), { arac: true, eski: 0, kabuk: 0 });
+  for (const komut of [kancaGirdisi(Y, "arac"), { type: "command", command: kabukBicimiKomutu(Y, "arac") }]) {
+    assert.deepEqual(kancaDurumuCoz({ hooks: { PreToolUse: [{ hooks: [komut] }] } }), { arac: false, eski: 1, kabuk: 0 }, "eşleyicisiz: her araçta çalışır");
+    assert.deepEqual(kancaDurumuCoz({ hooks: { PostToolUse: [{ matcher: ARAC_ESLESTIRICI, hooks: [komut] }] } }), { arac: false, eski: 1, kabuk: 0 });
+  }
+  assert.deepEqual(kancaDurumuCoz({ hooks: { PreToolUse: [{ matcher: ARAC_ESLESTIRICI, hooks: [{ type: "command", command: "echo x" }] }] } }), { arac: false, eski: 0, kabuk: 0 });
+  const kopruKancasi = { type: "command", command: '"C:/x/node.exe" "C:/x/server/src/kopru.ts" --kanca arac || true' };
+  assert.deepEqual(kancaDurumuCoz({ hooks: { PreToolUse: [{ matcher: ARAC_ESLESTIRICI, hooks: [kopruKancasi] }] } }), { arac: false, eski: 1, kabuk: 0 });
   const dizin = mkdtempSync(join(tmpdir(), "eren-claude-code-durum-"));
   try {
     const ortam = { ...ORTAM, USERPROFILE: dizin };
     const yol = join(dizin, ".claude", "settings.json");
-    assert.deepEqual(kancaDurumu(ortam), { ayarYolu: yol, arac: false, eski: 0 });
+    const bos = { ayarYolu: yol, eski: 0, kabuk: 0, kapatan: [] };
+    assert.deepEqual(kancaDurumu(ortam), { ...bos, arac: false });
     assert.equal(calis(["kanca-ekle"], ortam, NODE), 0);
-    assert.deepEqual(kancaDurumu(ortam), { ayarYolu: yol, arac: true, eski: 0 });
+    assert.deepEqual(kancaDurumu(ortam), { ...bos, arac: true });
     writeFileSync(yol, "{bozuk", "utf8");
-    assert.deepEqual(kancaDurumu(ortam), { ayarYolu: yol, arac: null, eski: 0 });
+    const bozuk = kancaDurumu(ortam);
+    assert.equal(bozuk.arac, null);
+    assert.match(bozuk.hata ?? "", /geçerli JSON değil/);
+    // BOM'lu dosya okunur (Claude Code da okur); UTF-16 doğru nedenle okunamaz.
+    writeFileSync(yol, `\uFEFF${JSON.stringify(kancalariEkle({}, Y))}`, "utf8");
+    assert.deepEqual(kancaDurumu(ortam), { ...bos, arac: true });
+    writeFileSync(yol, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from("{}", "utf16le")]));
+    assert.match(kancaDurumu(ortam).hata ?? "", /UTF-16/);
     assert.equal(kancaDurumu({ LOCALAPPDATA: ORTAM.LOCALAPPDATA }).arac, null, "USERPROFILE yok: atmaz");
+  } finally {
+    rmSync(dizin, { recursive: true, force: true });
+  }
+});
+
+test("kanca durumu: kancaları kapatan ayarlar (kullanıcıda ve yönetilen ayarda disableAllHooks, allowManagedHooksOnly) bildirilir", () => {
+  const dizin = mkdtempSync(join(tmpdir(), "eren-claude-code-kapali-"));
+  try {
+    const pf = join(dizin, "ProgramFiles");
+    const ortam = { ...ORTAM, USERPROFILE: dizin, ProgramFiles: pf };
+    const yol = join(dizin, ".claude", "settings.json");
+    assert.equal(calis(["kanca-ekle"], ortam, NODE), 0);
+    assert.deepEqual(kancaDurumu(ortam).kapatan, []);
+    writeFileSync(yol, JSON.stringify({ ...kancalariEkle({}, Y), disableAllHooks: true }), "utf8");
+    const d = kancaDurumu(ortam);
+    assert.equal(d.arac, true, "kanca yazılı");
+    assert.deepEqual(d.kapatan, ["kullanıcı ayarında disableAllHooks: true"]);
+    writeFileSync(yol, JSON.stringify(kancalariEkle({}, Y)), "utf8");
+    const yYol = join(pf, "ClaudeCode", "managed-settings.json");
+    mkdirSync(join(pf, "ClaudeCode"), { recursive: true });
+    writeFileSync(yYol, JSON.stringify({ allowManagedHooksOnly: true, disableAllHooks: true }), "utf8");
+    assert.deepEqual(kancaDurumu(ortam).kapatan, [
+      `yönetilen ayarda disableAllHooks: true (${yYol})`,
+      `yönetilen ayarda allowManagedHooksOnly: true (${yYol}; kullanıcı kancaları çalışmaz)`,
+    ]);
+    writeFileSync(yYol, "{bozuk", "utf8");
+    assert.deepEqual(kancaDurumu(ortam).kapatan, [], "okunamayan yönetilen ayar teşhisi durdurmaz");
+    assert.equal(kancaDurumu(ortam).arac, true);
   } finally {
     rmSync(dizin, { recursive: true, force: true });
   }
@@ -142,7 +209,7 @@ test("kanca kaldırma yalnız bizimkini çıkarır; boşalan grup ve olay gider,
   const baska = { type: "command", command: "echo x" };
   const ayar = kancalariEkle({ hooks: { Stop: [{ hooks: [baska] }] } }, Y);
   // Elle birleştirilmiş grup: bizimki (eski istem kancası) ile başkası aynı grupta.
-  (ayar["hooks"] as Record<string, unknown[]>)["UserPromptSubmit"] = [{ hooks: [baska, { type: "command", command: kancaKomutu(Y, "istem") }] }];
+  (ayar["hooks"] as Record<string, unknown[]>)["UserPromptSubmit"] = [{ hooks: [baska, { type: "command", command: kabukBicimiKomutu(Y, "istem") }] }];
   const { ayar: temiz, cikan } = kancalariCikar(ayar);
   assert.equal(cikan, 2);
   assert.deepEqual(temiz, { hooks: { Stop: [{ hooks: [baska] }], UserPromptSubmit: [{ hooks: [baska] }] } });
@@ -166,7 +233,9 @@ test("goster hiçbir şey değiştirmez ve tam komutları yazar; kayıt yönerge
   assert.ok(m.includes(mcpEkleKomutu(Y)));
   assert.ok(m.includes("eren eslestir --claude-code\n"));
   assert.ok(m.includes("claude mcp remove eren-ajanda -s user"));
-  assert.ok(m.includes(JSON.stringify(kancaKomutu(Y, "arac")).slice(1, -1)));
+  assert.ok(m.includes(`"command": ${JSON.stringify(NODE)}`));
+  assert.ok(m.includes(`${JSON.stringify(Y.kancaBetigi)},`) && m.includes('"args": ['));
+  assert.equal(m.includes("|| true"), false, "kabuk biçimi önerilmez");
   assert.equal(/UserPromptSubmit|"Stop"|kanca\.ts\\" (istem|tur_sonu)/.test(m), false, "yalın yolda istem ve tur sonu kancası yok");
   assert.ok(m.includes("eren eslestir --claude-code --teshis"));
   const y = kayitYonergesi(ORTAM, NODE);
@@ -198,6 +267,111 @@ test("komut satırı: kanca-ekle yedekler ve yazar, kanca-kaldir geri alır; boz
     const yeni = join(dizin, "yok", "settings.json");
     assert.equal(calis(["kanca-ekle", "--ayar", yeni], ORTAM, NODE), 0);
     assert.ok(Object.keys(JSON.parse(readFileSync(yeni, "utf8")) as object).includes("hooks"));
+  } finally {
+    rmSync(dizin, { recursive: true, force: true });
+  }
+});
+
+test("yedek hiçbir zaman ezilmez: aynı milisaniyedeki ikinci işlem ayrı yedek alır, ilk yedek özgün içeriği tutar", () => {
+  const dizin = mkdtempSync(join(tmpdir(), "eren-claude-code-yedek-"));
+  try {
+    const yol = join(dizin, "settings.json");
+    const ozgun = JSON.stringify({ model: "opus", hooks: { Stop: [{ hooks: [{ type: "command", command: "echo x" }] }] } });
+    writeFileSync(yol, ozgun, "utf8");
+    const sabit = () => 1_795_000_000_123;
+    assert.equal(calis(["kanca-ekle", "--ayar", yol], ORTAM, NODE, sabit), 0);
+    assert.equal(calis(["kanca-kaldir", "--ayar", yol], ORTAM, NODE, sabit), 0);
+    assert.equal(calis(["kanca-ekle", "--ayar", yol], ORTAM, NODE, sabit), 0);
+    const yedekler = readdirSync(dizin).filter((d) => d.includes(".yedek-")).sort();
+    assert.equal(yedekler.length, 3, yedekler.join(","));
+    assert.match(yedekler[0]!, /^settings\.json\.yedek-\d{8}T\d{9}Z$/, "milisaniyeli damga");
+    assert.equal(readFileSync(join(dizin, yedekler[0]!), "utf8"), ozgun, "ilk yedek özgün içerik");
+    assert.deepEqual(yedekler.slice(1), [`${yedekler[0]}-1`, `${yedekler[0]}-2`]);
+    assert.equal(readdirSync(dizin).filter((d) => d.includes(".yeni-")).length, 0, "geçici dosya kaldı");
+  } finally {
+    rmSync(dizin, { recursive: true, force: true });
+  }
+});
+
+test("BOM'lu ayar okunur ve BOM'lu kalır; UTF-16 ve bozuk JSON doğru nedenle reddedilir, dosya aynı kalır", () => {
+  const dizin = mkdtempSync(join(tmpdir(), "eren-claude-code-bom-"));
+  const hata = console.error;
+  const yazilan: string[] = [];
+  console.error = (...a: unknown[]) => void yazilan.push(a.join(" "));
+  try {
+    const yol = join(dizin, "settings.json");
+    writeFileSync(yol, `﻿${JSON.stringify({ model: "opus" })}`, "utf8");
+    assert.equal(calis(["kanca-ekle", "--ayar", yol], ORTAM, NODE), 0);
+    const metin = readFileSync(yol, "utf8");
+    assert.ok(metin.startsWith("﻿"), "BOM kayboldu");
+    assert.equal((JSON.parse(metin.slice(1)) as Record<string, unknown>)["model"], "opus");
+    assert.equal(calis(["kanca-kaldir", "--ayar", yol], ORTAM, NODE), 0);
+    assert.ok(readFileSync(yol, "utf8").startsWith("﻿"));
+
+    const utf16 = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(JSON.stringify({ model: "opus" }), "utf16le")]);
+    writeFileSync(yol, utf16);
+    assert.equal(calis(["kanca-ekle", "--ayar", yol], ORTAM, NODE), 1);
+    assert.deepEqual(readFileSync(yol), utf16, "UTF-16 dosya değişti");
+    assert.match(yazilan.at(-1) ?? "", /UTF-16/);
+    assert.doesNotMatch(yazilan.at(-1) ?? "", /geçerli JSON değil/);
+
+    writeFileSync(yol, '{"a": 1,}', "utf8");
+    assert.equal(calis(["kanca-ekle", "--ayar", yol], ORTAM, NODE), 1);
+    assert.match(yazilan.at(-1) ?? "", /geçerli JSON değil \(.+\)/, "ayrıştırıcının nedeni yazılır");
+    assert.equal(readFileSync(yol, "utf8"), '{"a": 1,}');
+  } finally {
+    console.error = hata;
+    rmSync(dizin, { recursive: true, force: true });
+  }
+});
+
+test("bağlantılı ayar: junction ve sembolik bağ korunur (yazma hedefe), sabit bağın öteki adı da yeni içeriği görür; kırık bağ reddedilir", (t) => {
+  const dizin = mkdtempSync(join(tmpdir(), "eren-claude-code-bag-"));
+  try {
+    const ozgun = JSON.stringify({ model: "opus" });
+    // Junction: ~/.claude bir klasör bağlantısı (ör. dotfiles deposu).
+    const gercekKlasor = join(dizin, "dotfiles");
+    mkdirSync(gercekKlasor);
+    writeFileSync(join(gercekKlasor, "settings.json"), ozgun, "utf8");
+    const bag = join(dizin, "claude-bag");
+    symlinkSync(gercekKlasor, bag, "junction");
+    assert.equal(calis(["kanca-ekle", "--ayar", join(bag, "settings.json")], ORTAM, NODE), 0);
+    assert.ok(lstatSync(bag).isSymbolicLink(), "junction düz klasöre döndü");
+    assert.ok(Object.keys(JSON.parse(readFileSync(join(gercekKlasor, "settings.json"), "utf8")) as object).includes("hooks"));
+
+    // Sabit bağ: iki ad aynı dosya; yerinde yazılır, ikisi de yeni içeriği görür.
+    const sabitA = join(dizin, "a.json");
+    const sabitB = join(dizin, "b.json");
+    writeFileSync(sabitA, ozgun, "utf8");
+    linkSync(sabitA, sabitB);
+    assert.equal(calis(["kanca-ekle", "--ayar", sabitA], ORTAM, NODE), 0);
+    assert.equal(readFileSync(sabitB, "utf8"), readFileSync(sabitA, "utf8"));
+    assert.equal(statSync(sabitA).nlink, 2, "sabit bağ ayrıldı");
+
+    // Dosya sembolik bağı (Windows'ta geliştirici kipi ya da yetki ister; yoksa bu parça atlanır).
+    const hedef = join(gercekKlasor, "hedef.json");
+    writeFileSync(hedef, ozgun, "utf8");
+    const dosyaBagi = join(dizin, "settings.json");
+    try {
+      symlinkSync(hedef, dosyaBagi, "file");
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "EPERM") {
+        t.diagnostic("dosya sembolik bağı oluşturulamadı (EPERM); o parça atlandı");
+        return;
+      }
+      throw e;
+    }
+    assert.equal(calis(["kanca-ekle", "--ayar", dosyaBagi], ORTAM, NODE), 0);
+    assert.ok(lstatSync(dosyaBagi).isSymbolicLink(), "sembolik bağ düz dosyaya döndü");
+    assert.ok(Object.keys(JSON.parse(readFileSync(hedef, "utf8")) as object).includes("hooks"), "hedef güncellenmedi");
+    const yedek = readdirSync(dizin).find((d) => d.startsWith("settings.json.yedek-"));
+    assert.ok(yedek !== undefined, "yedek bağın yanında değil");
+    assert.equal(readFileSync(join(dizin, yedek), "utf8"), ozgun);
+    // Kırık bağ: hedef silinince dosya yok sayılıp bağın üstüne yazılmaz.
+    rmSync(hedef);
+    assert.equal(calis(["kanca-ekle", "--ayar", dosyaBagi], ORTAM, NODE), 1);
+    assert.ok(lstatSync(dosyaBagi).isSymbolicLink());
+    assert.equal(existsSync(hedef), false);
   } finally {
     rmSync(dizin, { recursive: true, force: true });
   }

@@ -9,8 +9,9 @@
  * `pc_oturumu` (MCP köprüsü) ve `pc_kanca` (Claude Code'un araç öncesi kancası) rolleri PC anahtarıyla
  * (`ajanda_pc_anahtarlari`, yalnız özet) bağlanır. Anahtar el sıkışmada VE her istekte yeniden denetlenir:
  * `eslestir --claude-code` anahtarı yenileyince ya da kaldırınca açık bağlantı bir sonraki isteğinde
- * `kopru_ret{jeton_gecersiz}` alır ve kapanır. PC bağlantılarında tek bağlantı kuralı yoktur (çok oturum),
- * sayı `AJANDA_PC_SINIRLARI.BAGLANTI_ADET` ile sınırlıdır. `pc_oturumu` isteğinin `cagri`'sı bağlama
+ * `kopru_ret{jeton_gecersiz}` alır ve kapanır. PC bağlantılarında tek bağlantı kuralı yoktur (çok oturum);
+ * köprüler `AJANDA_PC_SINIRLARI.BAGLANTI_ADET`, kancalar ayrı olarak `KANCA_BAGLANTI_ADET` ile sınırlıdır
+ * (çok oturum açıkken kanca tıkanmasın) ve kanca bağlantısı `KANCA_BAGLANTI_OMRU_MS` sonra kapatılır. `pc_oturumu` isteğinin `cagri`'sı bağlama
  * (`AjandaPcBaglami`) geçer; `ana_oturum` isteğinin `cagri`'sı yok sayılır (bağlam bugünkü gibi yalnız
  * jetonun kapsamıdır). `pc_kanca` bağlantısı yalnız kanca isteğini (`pc_arac`, `pcKancaYukariCoz`) alır.
  * `pc_oturumu` başarılı yanıtının `sonuc`'u `PcAracSonucu{cikti, karar}`'dır (PC defterinin tur kararı;
@@ -63,6 +64,11 @@ const MODUL = "ajanda-kopru-sunucu";
 const HELLO_SURESI_MS = 10_000;
 /** PC bağlantısında ret yazıldıktan sonra karşı tarafın kapatması için süre; sonra servis kapatır. */
 const PC_RET_KAPANIS_MS = 2_000;
+/**
+ * `pc_kanca` bağlantısının el sıkışmadan sonraki en uzun ömrü. Kancanın bütün işi `KANCA_SURESI_MS`'tir
+ * (bağlantı ondan önce açılır); bu süre dolduğunda kanca zaten vazgeçmiştir, servis bağlantıyı kapatır.
+ */
+const KANCA_BAGLANTI_OMRU_MS = AJANDA_PC_SINIRLARI.KANCA_SURESI_MS + 1_000;
 
 type GenelIsleyici = (
   girdi: unknown,
@@ -179,9 +185,10 @@ export const ajandaKopruSunucuKur: AjandaKopruSunucuFabrikasi = ({
     return false;
   };
 
-  const pcBaglantiSayisi = (): number => {
+  /** Bu roldeki el sıkışmış, açık PC bağlantısı sayısı (köprü ve kanca ayrı sayılır). */
+  const pcBaglantiSayisi = (rol: AjandaPcRolu): number => {
     let n = 0;
-    for (const diger of baglantilar) if (!diger.kapali && diger.kimlik?.tur === "pc") n++;
+    for (const diger of baglantilar) if (!diger.kapali && diger.kimlik?.tur === "pc" && diger.kimlik.rol === rol) n++;
     return n;
   };
 
@@ -222,13 +229,16 @@ export const ajandaKopruSunucuKur: AjandaKopruSunucuFabrikasi = ({
         pcReddet(bag, "jeton_gecersiz", "pc_anahtar_gecersiz", { rol: m.rol });
         return;
       }
-      if (pcBaglantiSayisi() >= AJANDA_PC_SINIRLARI.BAGLANTI_ADET) {
-        // Geçici: köprü yeniden dener (kalıcı ret değildir).
-        pcReddet(bag, "ic_hata", "pc_baglanti_siniri", { rol: m.rol });
+      const kanca = m.rol === "pc_kanca";
+      if (pcBaglantiSayisi(m.rol) >= (kanca ? AJANDA_PC_SINIRLARI.KANCA_BAGLANTI_ADET : AJANDA_PC_SINIRLARI.BAGLANTI_ADET)) {
+        // Geçici: köprü yeniden dener (kalıcı ret değildir). Kanca denemez; çağrı taslak doğar, nedeni
+        // günlükte (`--teshis` bunu "kanca kurulu değil"den ayırır).
+        pcReddet(bag, "ic_hata", kanca ? "pc_kanca_siniri" : "pc_baglanti_siniri", { rol: m.rol });
         return;
       }
       bag.sureIptal?.();
-      bag.sureIptal = null;
+      // Kanca bağlantısı tek iş içindir: takılan ya da kapatmayı unutan kanca sınırı tutamasın.
+      bag.sureIptal = kanca ? zamanlayici.sonra(KANCA_BAGLANTI_OMRU_MS, () => baglantiKapat(bag)) : null;
       const baglanti_id = rastgele.opakId("pcb");
       bag.kimlik = { tur: "pc", rol: m.rol, ozet, baglanti_id };
       gunluk.bilgi(MODUL, "el_sikisma", { rol: m.rol, baglanti_id });

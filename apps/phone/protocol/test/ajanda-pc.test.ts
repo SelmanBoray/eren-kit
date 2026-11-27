@@ -132,7 +132,24 @@ test("araç öncesi kanca girdisi: servise yalnız gerekli alanlar; araç girdis
   // Alt agent (ön plan ya da arka plan): `agent_id` ve `agent_type` dolu (ölçüldü).
   const alt = pcAracKancaGirdisi({ ...ANA_ARAC, agent_id: "a690393e919d1ad35", agent_type: "general-purpose" }, "cli");
   assert.ok(alt !== null && alt.girdi.alt_agent === true && semadanGecer(alt));
-  assert.equal(pcAracKancaGirdisi({ ...ANA_ARAC, agent_id: "" }, "cli")?.girdi.alt_agent, false, "boş agent_id ana ajandır");
+  // Beklenmeyen biçim güvenli tarafa düşer: iki alandan biri hangi değerle olursa olsun varsa alt agent.
+  // (Ölçülen: ana ajanın girdisinde ikisi de hiç yoktur.)
+  for (const ek of [
+    { agent_id: "" },
+    { agent_id: null },
+    { agent_id: 0 },
+    { agent_id: 42 },
+    { agent_id: false },
+    { agent_id: {} },
+    { agent_id: [] },
+    { agent_type: "general-purpose" },
+    { agent_type: "" },
+    { agent_id: "", agent_type: null },
+  ]) {
+    const r = pcAracKancaGirdisi({ ...ANA_ARAC, ...ek }, "cli");
+    assert.ok(r !== null && r.girdi.alt_agent === true && semadanGecer(r), JSON.stringify(ek));
+  }
+  assert.equal(a0.girdi.alt_agent, false, "iki alan da yoksa ana ajan");
   // İstem kimliği yoksa ya da geçersizse düşer (tasdik yine gider).
   const { prompt_id: _p, ...kimliksiz } = ANA_ARAC;
   assert.equal(pcAracKancaGirdisi(kimliksiz, "cli")?.girdi.istem_id, undefined);

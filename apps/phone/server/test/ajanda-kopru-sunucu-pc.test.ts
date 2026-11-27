@@ -157,9 +157,42 @@ describe("ajanda borusu, PC rolleri: kimlik", () => {
     const acikBaglantilar: SahteBoruBaglantisi[] = [];
     for (let i = 0; i < AJANDA_PC_SINIRLARI.BAGLANTI_ADET; i++) acikBaglantilar.push(await baglan(k, "pc_oturumu"));
     for (const b of acikBaglantilar) assert.deepEqual(cikanlar(b), [WELCOME("pc_oturumu")]);
-    assert.deepEqual(cikanlar(await baglan(k, "pc_kanca")), [RET("ic_hata")]);
+    assert.deepEqual(cikanlar(await baglan(k, "pc_oturumu")), [RET("ic_hata")]);
     acikBaglantilar[0]!.istemciKopar();
     await bosalt();
+    assert.deepEqual(cikanlar(await baglan(k, "pc_oturumu")), [WELCOME("pc_oturumu")]);
+  });
+
+  it("köprü sınırı dolu olsa da kanca el sıkışır ve tasdik işlenir (sınırlar ayrı)", async () => {
+    const k = await kur();
+    k.depo.ajandaPcAnahtariYaz(ozetle(PC_JETON), 1);
+    for (let i = 0; i < AJANDA_PC_SINIRLARI.BAGLANTI_ADET; i++) await baglan(k, "pc_oturumu");
+    assert.deepEqual(cikanlar(await baglan(k, "pc_oturumu")), [RET("ic_hata")], "köprü sınırı doldu");
+    const kanca = await baglan(k, "pc_kanca");
+    assert.deepEqual(cikanlar(kanca), [WELCOME("pc_kanca")]);
+    gonder(kanca, istek("i1", "pc_arac", TASDIK("toolu_01")));
+    await bosalt();
+    assert.equal(k.kancalar.length, 1);
+  });
+
+  it("kanca bağlantıları kendi sınırıyla sayılır; sınırda ret nedeni ayrıdır; takılan kanca bağlantısı servisçe kapatılır", async () => {
+    const k = await kur();
+    k.depo.ajandaPcAnahtariYaz(ozetle(PC_JETON), 1);
+    const kancalar: SahteBoruBaglantisi[] = [];
+    for (let i = 0; i < AJANDA_PC_SINIRLARI.KANCA_BAGLANTI_ADET; i++) kancalar.push(await baglan(k, "pc_kanca"));
+    for (const b of kancalar) assert.deepEqual(cikanlar(b), [WELCOME("pc_kanca")]);
+    assert.deepEqual(cikanlar(await baglan(k, "pc_kanca")), [RET("ic_hata")]);
+    const ret = k.gunluk.girdiler.filter((g) => g.olay === "el_sikisma_ret").at(-1);
+    assert.deepEqual(ret?.alanlar, { code: "ic_hata", neden: "pc_kanca_siniri", rol: "pc_kanca" });
+    // Kanca sınırı köprüyü etkilemez.
+    assert.deepEqual(cikanlar(await baglan(k, "pc_oturumu")), [WELCOME("pc_oturumu")]);
+    // Kancanın bütün işi KANCA_SURESI_MS'tir: el sıkışmadan +1 sn sonra servis kapatır, sınır boşalır.
+    k.zaman.ilerlet(AJANDA_PC_SINIRLARI.KANCA_SURESI_MS + 999);
+    await bosalt();
+    assert.equal(kancalar[0]!.kapandi, false);
+    k.zaman.ilerlet(1);
+    await bosalt();
+    for (const b of kancalar) assert.equal(b.kapandi, true);
     assert.deepEqual(cikanlar(await baglan(k, "pc_kanca")), [WELCOME("pc_kanca")]);
   });
 

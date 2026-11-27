@@ -24,13 +24,17 @@ export const AJANDA_PC_MCP_ADI = "eren-ajanda";
  * - `TASDIK_OMRU_DK`: `pc_arac` tasdikinin geçerliliği. Kancayla çağrı arasına izin sorusu girebilir;
  *   kullanıcı izni bundan uzun bekletirse tasdik düşer ve çağrı güvenli tarafa (taslak) iner.
  * - `TASDIK_ADET`: bellekteki tasdik sayısı (eskiler atılır).
- * - `BAGLANTI_ADET`: aynı anda el sıkışmış PC bağlantısı.
+ * - `BAGLANTI_ADET`: aynı anda el sıkışmış `pc_oturumu` (MCP köprüsü, oturum başına bir) bağlantısı.
+ * - `KANCA_BAGLANTI_ADET`: aynı anda el sıkışmış `pc_kanca` bağlantısı. Köprülerden AYRI sayılır: açık
+ *   oturumlar köprü sınırını doldursa da kanca tıkanmaz. Kanca bağlantısı kısa ömürlüdür; servis onu
+ *   el sıkışmadan en geç `KANCA_SURESI_MS` + 1 sn sonra kapatır, takılan kanca sınırı tutamaz.
  * - `KANCA_SURESI_MS`: kancanın servisle bütün işi (bağlan, el sık, tek istek, yanıt) bu süreyi aşamaz.
  */
 export const AJANDA_PC_SINIRLARI = {
   TASDIK_OMRU_DK: 10,
   TASDIK_ADET: 256,
   BAGLANTI_ADET: 32,
+  KANCA_BAGLANTI_ADET: 64,
   KANCA_SURESI_MS: 2000,
 } as const;
 
@@ -77,7 +81,13 @@ const ARAC_CAGRI_ID = /^[A-Za-z0-9_-]{1,128}$/;
 const JETON = /^[A-Za-z0-9_-]{32,128}$/;
 
 const opakId = (v: unknown): string | undefined => (typeof v === "string" && OPAK_ID.test(v) ? v : undefined);
-const doluDizge = (v: unknown): boolean => typeof v === "string" && v !== "";
+
+/**
+ * Alt agent mı: güvenli tarafa düşer. Ölçülen: ana ajanın girdisinde `agent_id` ve `agent_type` HİÇ yoktur;
+ * alt agent'ınkinde ikisi de dolu dizgedir. Bu yüzden ikisinden biri, değeri ne olursa olsun (boş dizge,
+ * `null`, sayı, nesne) anahtar olarak bulunursa çağrı alt agent sayılır: beklenmeyen biçim insan turu açamaz.
+ */
+const altAgentMi = (h: Record<string, unknown>): boolean => Object.hasOwn(h, "agent_id") || Object.hasOwn(h, "agent_type");
 
 export const pcJetonuMu = (v: unknown): v is string => typeof v === "string" && JETON.test(v);
 
@@ -86,7 +96,8 @@ export const pcJetonuMu = (v: unknown): v is string => typeof v === "string" && 
  * `null`: kanca hiçbir şey yollamaz (oturumu bozmaz). Alanlar (ölçüldü: 2.1.332, gerçek `claude -p`):
  * `session_id`, `tool_use_id` (MCP isteğinin `_meta["claudecode/toolUseId"]`'siyle aynı değer),
  * `tool_name` (`mcp__eren-ajanda__<fiil>`), `prompt_id` (alt agent'ın çağrısında da ana turunki); alt
- * agent'ın (ön plan ya da arka plan) çağrısında `agent_id` ve `agent_type` dolu, ana ajanınkinde yok.
+ * agent'ın (ön plan ya da arka plan) çağrısında `agent_id` ve `agent_type` dolu, ana ajanınkinde yok;
+ * ikisinden biri hangi değerle olursa olsun bulunursa alt agent sayılır (`altAgentMi`, güvenli taraf).
  * `giris` kanca sürecinin `CLAUDE_CODE_ENTRYPOINT`'idir (`pcEtkilesimsizMi`). Araç girdisi (`tool_input`)
  * okunmaz, servise gitmez.
  */
@@ -104,7 +115,7 @@ export function pcAracKancaGirdisi(ham: unknown, giris: unknown): PcKancaIstegi 
   const istem = istemId === undefined ? {} : { istem_id: istemId };
   return {
     fiil: "pc_arac",
-    girdi: { oturum_id, ...istem, arac_cagri_id: id, alt_agent: doluDizge(h["agent_id"]), etkilesimsiz: pcEtkilesimsizMi(giris) },
+    girdi: { oturum_id, ...istem, arac_cagri_id: id, alt_agent: altAgentMi(h), etkilesimsiz: pcEtkilesimsizMi(giris) },
   };
 }
 

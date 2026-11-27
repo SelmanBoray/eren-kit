@@ -13,6 +13,7 @@
  */
 import {
   AJANDA_PC_MCP_ADI,
+  AJANDA_PC_SINIRLARI,
   AJANDA_SURUMU,
   AjandaEslestirmeQr as AjandaEslestirmeQrSemasi,
   ESKI_CIHAZ_KAPSAMI,
@@ -372,13 +373,18 @@ export interface KayitYonergesiModulu {
 
 /**
  * Kullanıcının Claude Code ayarında (`~/.claude/settings.json`) bu aracın kancaları: `arac` araç öncesi
- * kancası (`PreToolUse`, `mcp__eren-ajanda__.*`) kurulu mu (`null`: ayar okunamadı); `eski` önceki
- * kurulumun artık kullanılmayan kancaları (istem, tur sonu, eski biçim). `kurulum/claude-code.ts` üretir.
+ * kancası (`PreToolUse`, `mcp__eren-ajanda__.*`) kurulu mu (`null`: ayar okunamadı, `hata` nedeni); `eski`
+ * önceki kurulumun artık kullanılmayan kancaları (istem, tur sonu, eski biçim); `kabuk` kurulu araç
+ * kancalarından kaçı kabuk biçiminde (Git Bash'e bağlı); `kapatan` kancaları kapatan, okunabilen ayarlar
+ * (`disableAllHooks`, `allowManagedHooksOnly`). `kurulum/claude-code.ts` üretir; yeni alanlar isteğe bağlıdır.
  */
 export interface ClaudeCodeKancaDurumu {
   ayarYolu: string;
   arac: boolean | null;
   eski: number;
+  kabuk?: number;
+  kapatan?: readonly string[];
+  hata?: string;
 }
 
 /** Aynı sürümün `kurulum/claude-code.ts`'i (kur.ts `kurulum`'u sürüme kopyalar; depoda da aynı göreli yer). */
@@ -443,18 +449,69 @@ const teshisDegeri = (v: unknown): string | null => {
 /** Oturum kimliğinin yalnız son 6 karakteri (satırları eşlemeye yeter). */
 const kisaOturum = (v: unknown): string | null => (typeof v === "string" && /^[A-Za-z0-9_-]{6,64}$/.test(v) ? `…${v.slice(-6)}` : null);
 
+const KANCA_EKLE_KOMUTU = "node --disable-warning=ExperimentalWarning kurulum\\claude-code.ts kanca-ekle";
+
+/** Kanca bağlantısının el sıkışma reddi (`ajanda-kopru-sunucu`) → kullanıcıya nedeni. */
+const KANCA_RET_NEDENI: Readonly<Record<string, string>> = {
+  pc_kanca_siniri: `servis kanca bağlantılarını sınırda reddetti (aynı anda ${AJANDA_PC_SINIRLARI.KANCA_BAGLANTI_ADET}'ten çok kanca)`,
+  pc_baglanti_siniri: "servisin PC bağlantı sınırı doluydu (çok açık oturum; eski servis sürümünde köprüler ve kancalar aynı sınırı paylaşır)",
+  pc_anahtar_gecersiz:
+    "kancanın okuduğu anahtar servistekiyle uyuşmuyor (anahtar az önce yenilendi mi; Claude Code başka bir veri kökünü mü görüyor: EREN_KIT_DATA_DIR)",
+  pc_kapali: "servis PC oturumları kapalı açıldı",
+};
+
+/**
+ * Kanca ayarda kurulu görünürken son çağrı tasdiksiz (`tasdik_yok`) kaldıysa olası nedenler, günlükte
+ * görülenden başlayarak. Ayar dosyası kurulu demek kancanın çalıştığını göstermez.
+ */
+type TeshisOlayi = { olay: string; alanlar: Record<string, string> };
+
+/** Günlükteki kanca bağlantısı retlerinin kullanıcıya nedenleri (tekilleştirilmiş). */
+const kancaRetNedenleri = (olaylar: readonly TeshisOlayi[]): string[] =>
+  [...new Set(olaylar.filter((o) => o.olay === "el_sikisma_ret" && o.alanlar["rol"] === "pc_kanca").map((o) => o.alanlar["neden"] ?? "bilinmiyor"))].map(
+    (r) => `günlükte kanca reddi: ${KANCA_RET_NEDENI[r] ?? r}`,
+  );
+
+function tasdikYokNedenleri(olaylar: readonly TeshisOlayi[], kurulum: ClaudeCodeKancaDurumu): string[] {
+  const nedenler: string[] = [];
+  for (const n of kurulum.kapatan ?? []) nedenler.push(`kancaları kapatan ayar: ${n}`);
+  nedenler.push(...kancaRetNedenleri(olaylar));
+  if (!olaylar.some((o) => o.olay === "pc_arac")) {
+    nedenler.push(
+      "kanca hiç servise ulaşmadı: Claude Code kanca-ekle'den sonra yeniden açılmadı; ya da proje ayarı " +
+        "(<proje>\\.claude\\settings.json, settings.local.json) disableAllHooks ile kancaları kapatıyor; ya da kanca " +
+        "komutu çalışamıyor (Node yolu değişti: kanca-ekle yeniden yazar)",
+    );
+  } else {
+    nedenler.push(
+      `kanca öteki çağrılarda ulaşıyor; bu çağrıda servis o an yanıt vermedi ya da arada yeniden başladı, ya da izin sorusu ` +
+        `${AJANDA_PC_SINIRLARI.TASDIK_OMRU_DK} dakikadan uzun bekledi`,
+    );
+  }
+  return nedenler;
+}
+
 /** Kanca kurulumunun satırları (`--teshis`'in başı). `null`: kurulum modülü yüklenemedi. */
 function kurulumSatirlari(k: ClaudeCodeKancaDurumu | null): string[] {
   if (k === null) return ["Kurulum: kanca durumu okunamadı (kurulum dizini yok)."];
   const satirlar = [`Kurulum (${k.ayarYolu}):`];
   satirlar.push(
     k.arac === null
-      ? "  araç öncesi kanca: ayar dosyası okunamadı (geçerli JSON değil)."
+      ? `  araç öncesi kanca: ayar dosyası okunamadı (${k.hata ?? "geçerli JSON değil"}).`
       : k.arac
-        ? "  araç öncesi kanca (PreToolUse, mcp__eren-ajanda__.*): kurulu."
+        ? "  araç öncesi kanca (PreToolUse, mcp__eren-ajanda__.*): ayarda kurulu."
         : "  araç öncesi kanca (PreToolUse, mcp__eren-ajanda__.*): YOK. Bu durumda bütün kayıtlar taslak doğar. " +
-          "Kurmak için: node --disable-warning=ExperimentalWarning kurulum\\claude-code.ts kanca-ekle (sonra Claude Code'u yeniden açın).",
+          `Kurmak için: ${KANCA_EKLE_KOMUTU} (sonra Claude Code'u yeniden açın).`,
   );
+  if (k.arac === true && (k.kabuk ?? 0) > 0) {
+    satirlar.push(
+      "  kanca eski kabuk biçiminde: Git Bash'le çalışır, Git Bash bulunamazsa Claude Code PowerShell'e düşer ve orada " +
+        "çalışmaz. kanca-ekle onu kabuktan bağımsız yürütme biçimine çevirir.",
+    );
+  }
+  for (const neden of k.kapatan ?? []) {
+    satirlar.push(`  UYARI: kancaları kapatan ayar: ${neden}. Bu durdukça kanca hiç çalışmaz, bütün kayıtlar taslak doğar.`);
+  }
   if (k.eski > 0) {
     satirlar.push(
       `  eski kancalar (istem / tur sonu / eski biçim): ${k.eski}. Artık hiçbir şey yapmazlar ama her mesajda çalışırlar; ` +
@@ -515,7 +572,13 @@ export function pcTeshisMetni(
   const tasdikler = son.filter((o) => o.olay === "pc_arac");
   const evetHayir = (kosul: boolean, bos: boolean): string => (bos ? "olay yok" : kosul ? "evet" : "HAYIR");
   const sonKarar = araclar.at(-1)?.alanlar["pc_karar"];
-  const anlam = sonKarar !== undefined && Object.hasOwn(TESHIS_KARAR_METNI, sonKarar) ? ` (${TESHIS_KARAR_METNI[sonKarar as PcTurKarari]})` : "";
+  // Ayarda kurulu ama tasdik gelmedi: genel metin ("kurulu değilse kurun") yanlış yere yollar; nedenler ayrı.
+  const kuruluAmaTasdiksiz = sonKarar === "tasdik_yok" && kurulum !== undefined && kurulum !== null && kurulum.arac === true;
+  const anlam = kuruluAmaTasdiksiz
+    ? " (kayıtlar TASLAK doğuyor: kanca ayarda kurulu görünüyor ama bu çağrıda tasdik gelmedi; olası nedenler aşağıda)"
+    : sonKarar !== undefined && Object.hasOwn(TESHIS_KARAR_METNI, sonKarar)
+      ? ` (${TESHIS_KARAR_METNI[sonKarar as PcTurKarari]})`
+      : "";
   const ozet = [
     "Sınama (AJANDA.md \"Kurulumdan sonra sınama\"):",
     `  araç öncesi kanca servise ulaşıyor mu: ${tasdikler.length > 0 ? "evet" : araclar.length > 0 ? "HAYIR" : "olay yok"}`,
@@ -523,6 +586,14 @@ export function pcTeshisMetni(
     `  istem kimliği geliyor mu (araç öncesi): ${evetHayir(tasdikler.some((o) => o.alanlar["istem_kimligi"] === "var"), tasdikler.length === 0)}`,
     `  son PC araç kararı: ${sonKarar ?? "olay yok"}${anlam}`,
   ];
+  if (kuruluAmaTasdiksiz) {
+    ozet.push("Olası nedenler (kurulu görünüyor ama tasdik gelmedi):");
+    for (const n of tasdikYokNedenleri(son, kurulum)) ozet.push(`  - ${n}`);
+  } else if (sonKarar === "tasdik_yok" && kancaRetNedenleri(son).length > 0) {
+    // Kurulum bilinmese de günlükteki ret nedeni söylenir ("kancayı kurun"dan önce).
+    ozet.push("Günlükte görülen neden:");
+    for (const n of kancaRetNedenleri(son)) ozet.push(`  - ${n}`);
+  }
   return `${bas}Son PC olayları (en yeni sonda; metin ve kayıt alanı yazılmaz):\n${satir.join("\n")}\n\n${ozet.join("\n")}\n`;
 }
 

@@ -5,20 +5,34 @@
 //   node --disable-warning=ExperimentalWarning kurulum/claude-code.ts kanca-ekle  [--ayar <settings.json>]
 //   node --disable-warning=ExperimentalWarning kurulum/claude-code.ts kanca-kaldir [--ayar <settings.json>]
 //
-// `kanca-ekle` ve `kanca-kaldir` ayar dosyasının yanına zaman damgalı yedek bırakır, yalnız bu aracın
-// kendi kanca girdilerini (`bizimKancaMi`: komutunda `kanca.ts <olay>` ya da eski biçim `kopru.ts --kanca
-// <olay>` geçen) ekler ya da çıkarır; başka hiçbir anahtara ve kancaya dokunmaz, iki kez çalıştırmak bir
-// kez çalıştırmakla aynıdır. Yalın yolda tek kanca vardır: ajanda araçlarından önce `PreToolUse`
-// (`kanca.ts arac`). Önceki kurulumun istem (`UserPromptSubmit`) ve tur sonu (`Stop`) kancaları artık
-// hiçbir şey yapmaz; `kanca-ekle` onları da çıkarır. MCP sunucusunun kaydı (`claude mcp add`) bu betikte
-// yoktur: `goster` tam komutu yazar, kullanıcı kendisi çalıştırır.
+// `kanca-ekle` ve `kanca-kaldir` ayar dosyasının yanına zaman damgalı yedek bırakır (hiçbir yedeği ezmez),
+// yalnız bu aracın kendi kanca girdilerini (`bizimKancaMi`: `kanca.ts <olay>` ya da eski biçim `kopru.ts
+// --kanca <olay>`) ekler ya da çıkarır; başka hiçbir anahtara ve kancaya dokunmaz, iki kez çalıştırmak bir
+// kez çalıştırmakla aynıdır. Sembolik bağlı ayar dosyasında bağ korunur, BOM'lu dosya BOM'lu kalır.
+// Yalın yolda tek kanca vardır: ajanda araçlarından önce `PreToolUse` (`kanca.ts arac`), yürütme biçiminde
+// (`command` + `args`, kabuksuz; `kancaGirdisi`). Önceki kurulumun istem (`UserPromptSubmit`) ve tur sonu
+// (`Stop`) kancaları artık hiçbir şey yapmaz; `kanca-ekle` onları çıkarır, kabuk biçimli araç kancasını
+// yürütme biçimine çevirir. MCP sunucusunun kaydı (`claude mcp add`) bu betikte yoktur: `goster` tam
+// komutu yazar, kullanıcı kendisi çalıştırır.
 //
 // Yolların TEK kaynağı `yollar`'dır: veri kökünden `<veri kökü>\uygulama\guncel\server\src\...` (kurulu
 // sürüm; `guncel` bağlantısını kur.ts her dağıtımda yeni sürüme çevirir, eski sürümleri siler). Bu betiğin
 // ya da çalışan herhangi bir dosyanın kendi yolu kullanılmaz: o yol `surumler\<sürüm>`'e çözülür ve bir
 // sonraki güncellemede eskir. `eren eslestir --claude-code` de kayıt yönergesini buradan alır
 // (`kayitYonergesi`). Node bu betiği çalıştıran Node'dur.
-import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+  constants,
+  copyFileSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import win32 from "node:path/win32";
 import { ortamDegeri, uygulamaKoku, veriKoku } from "./ortam.ts";
 import type { Ortam } from "./ortam.ts";
@@ -65,26 +79,90 @@ export const varsayilanAyarYolu = (ortam: Ortam): string => {
 
 const ileri = (yol: string): string => yol.replaceAll("\\", "/");
 
+/** Kanca girdisi (Claude Code `hooks.<olay>[].hooks[]`); `args` varsa yürütme biçimidir (kabuk yok). */
+export interface KancaGirdisi {
+  type: "command";
+  command: string;
+  args: string[];
+  timeout: number;
+}
+
 /**
- * Kancanın tam komutu. Claude Code kancayı kabukta çalıştırır (Windows'ta Git Bash): yollar ileri eğik
- * çizgili ve tırnaklı. Sondaki `|| true`: kanca hiçbir koşulda 2 ile çıkmasın (2 kancada "engelle" demektir:
- * PreToolUse'ta aracı durdurur); `kanca.ts` her durumda 0 döner, ama eski
- * bir sürüme geri dönülürse dosya bulunamaz ve Node 1 ile çıkar.
+ * Kancanın girdisi, YÜRÜTME biçiminde (exec form): `command` Node'un kendisi, `args` argümanları; Claude
+ * Code süreci kabuksuz, doğrudan başlatır. Kabuk biçimi (`"…node.exe" … || true`) kabuğa bağlıydı: ölçüldü
+ * (2.1.332), Claude Code kancayı Git Bash'le (`bash -c`) çalıştırıyor, Git Bash yoksa PowerShell'e düşüyor
+ * ve orada tırnaklı yolla başlayan komut ayrıştırılamıyor. Yürütme biçiminde kabuk, tırnak ve kaçış yoktur;
+ * yollar Windows biçiminde kalır. `kanca.ts` her durumda 0 döner; Node kendisi hiçbir hatada 2 ("engelle")
+ * ile çıkmaz (dosya yoksa 1: engellemeyen kanca hatası), bu yüzden `|| true` gerekmez.
  */
-export const kancaKomutu = (y: Pick<Yollar, "nodeExe" | "kancaBetigi">, olay: string): string =>
+export const kancaGirdisi = (y: Pick<Yollar, "nodeExe" | "kancaBetigi">, olay: string): KancaGirdisi => ({
+  type: "command",
+  command: y.nodeExe,
+  args: ["--disable-warning=ExperimentalWarning", y.kancaBetigi, olay],
+  timeout: KANCA_SURESI_SN,
+});
+
+/**
+ * Önceki kurulumların kabuk biçimli komutu (yalnız tanımak ve sınamak için; artık yazılmaz): Git Bash'te
+ * çalışır, PowerShell'de çalışmaz. `kanca-ekle` bunu yürütme biçimiyle değiştirir.
+ */
+export const kabukBicimiKomutu = (y: Pick<Yollar, "nodeExe" | "kancaBetigi">, olay: string): string =>
   `"${ileri(y.nodeExe)}" --disable-warning=ExperimentalWarning "${ileri(y.kancaBetigi)}" ${olay} || true`;
 
-/**
- * Komut bu aracın kancası mı (yolu ne olursa olsun: sürüm ve kök değişse de tanınır). Önceki kurulumların
- * istem ve tur sonu kancaları ile eski biçim (`kopru.ts --kanca <olay>`) da tanınır ki `kanca-ekle` onları
- * çıkarıp yalnız araç öncesi kancayı bıraksın.
- */
-export const bizimKancaMi = (komut: unknown): boolean =>
-  typeof komut === "string" &&
-  (/[\\/]server[\\/]src[\\/]kanca\.ts"?\s+(istem|arac|tur_sonu)\b/.test(komut) || /kopru\.ts"?\s+--kanca\s+(istem|arac|tur_sonu)\b/.test(komut));
+const KANCA_OLAY_ADI = /^(istem|arac|tur_sonu)$/;
+const KANCA_BETIGI = /[\\/]server[\\/]src[\\/]kanca\.ts$/i;
+const KOPRU_BETIGI = /kopru\.ts$/i;
 
-/** Bugünkü araç öncesi kancanın komutu mu (`kanca.ts arac`). */
-const aracKancasiMi = (komut: unknown): boolean => typeof komut === "string" && /[\\/]server[\\/]src[\\/]kanca\.ts"?\s+arac\b/.test(komut);
+/** Bu aracın kancasının kimliği: biçim, betik (`kanca.ts` ya da eski `kopru.ts --kanca`) ve olay. */
+interface KancaKimligi {
+  bicim: "yurutme" | "kabuk";
+  betik: "kanca" | "kopru";
+  olay: string;
+}
+type Betik = Omit<KancaKimligi, "bicim">;
+
+/** Kabuk biçimli komut bu aracın kancası mı; öyleyse betiği ve olayı (`istem`, `arac`, `tur_sonu`). */
+const kabukBetigi = (komut: string): Betik | null => {
+  const k = /[\\/]server[\\/]src[\\/]kanca\.ts"?\s+(istem|arac|tur_sonu)\b/.exec(komut)?.[1];
+  if (k !== undefined) return { betik: "kanca", olay: k };
+  const e = /kopru\.ts"?\s+--kanca\s+(istem|arac|tur_sonu)\b/.exec(komut)?.[1];
+  return e === undefined ? null : { betik: "kopru", olay: e };
+};
+
+/** Yürütme biçimli argümanlar bu aracın kancası mı; öyleyse betiği ve olayı. */
+const argBetigi = (args: readonly unknown[]): Betik | null => {
+  for (let i = 0; i + 1 < args.length; i++) {
+    const a = args[i];
+    const b = args[i + 1];
+    if (typeof a !== "string" || typeof b !== "string") continue;
+    if (KANCA_BETIGI.test(a) && KANCA_OLAY_ADI.test(b)) return { betik: "kanca", olay: b };
+    const c = args[i + 2];
+    if (KOPRU_BETIGI.test(a) && b === "--kanca" && typeof c === "string" && KANCA_OLAY_ADI.test(c)) return { betik: "kopru", olay: c };
+  }
+  return null;
+};
+
+/** Bu aracın kancasıysa kimliği; değilse `null`. Girdi kanca nesnesi ya da kabuk biçimli komut dizgesi. */
+function kancaKimligi(kanca: unknown): KancaKimligi | null {
+  if (typeof kanca === "string") {
+    const b = kabukBetigi(kanca);
+    return b === null ? null : { bicim: "kabuk", ...b };
+  }
+  if (!nesneMi(kanca) || typeof kanca["command"] !== "string") return null;
+  if (Array.isArray(kanca["args"])) {
+    const b = argBetigi(kanca["args"] as unknown[]);
+    return b === null ? null : { bicim: "yurutme", ...b };
+  }
+  const b = kabukBetigi(kanca["command"]);
+  return b === null ? null : { bicim: "kabuk", ...b };
+}
+
+/**
+ * Bu aracın kancası mı (yolu ne olursa olsun: sürüm ve kök değişse de tanınır). Yürütme biçimi (`args`'ta
+ * `server\src\kanca.ts <olay>`), önceki kabuk biçimi, istem ve tur sonu kancaları ile eski köprü biçimi
+ * (`kopru.ts --kanca <olay>`) tanınır ki `kanca-ekle` onları çıkarıp yalnız bugünkü kancayı bıraksın.
+ */
+export const bizimKancaMi = (kanca: unknown): boolean => kancaKimligi(kanca) !== null;
 
 /** `claude mcp add` argümanları ve PowerShell'e yapıştırılacak hali. */
 export const mcpEkleArgumanlari = (y: Pick<Yollar, "nodeExe" | "kopruBetigi">): string[] => [
@@ -105,42 +183,88 @@ export class AyarHatasi extends Error {
 export const kancaGruplari = (y: Pick<Yollar, "nodeExe" | "kancaBetigi">): Record<KancaOlayi, Json> => ({
   PreToolUse: {
     matcher: ARAC_ESLESTIRICI,
-    hooks: [{ type: "command", command: kancaKomutu(y, KANCA_OLAYLARI.PreToolUse), timeout: KANCA_SURESI_SN }],
+    hooks: [kancaGirdisi(y, KANCA_OLAYLARI.PreToolUse)],
   },
 });
 
 /**
  * Ayardaki kanca durumu (saf): `arac` araç öncesi kancası `PreToolUse`'ta `ARAC_ESLESTIRICI` eşleyicili
- * bir grupta kurulu mu; `eski` bu aracın öteki kancaları (önceki kurulumun istem/tur sonu kancaları, eski
- * biçim, yanlış olaydaki ya da eşleyicisiz araç kancası). `kanca-ekle` ikisini de düzeltir.
+ * bir grupta kurulu mu; `kabuk` bunlardan kaçı önceki kabuk biçiminde (Git Bash'te çalışır, PowerShell'e
+ * düşülürse çalışmaz); `eski` bu aracın öteki kancaları (önceki kurulumun istem/tur sonu kancaları, eski
+ * köprü biçimi, yanlış olaydaki ya da eşleyicisiz araç kancası). `kanca-ekle` hepsini düzeltir.
  */
-export function kancaDurumuCoz(ayar: Json): { arac: boolean; eski: number } {
+export function kancaDurumuCoz(ayar: Json): { arac: boolean; eski: number; kabuk: number } {
   let arac = false;
   let eski = 0;
+  let kabuk = 0;
   const hooks = ayar["hooks"];
-  if (!nesneMi(hooks)) return { arac, eski };
+  if (!nesneMi(hooks)) return { arac, eski, kabuk };
   for (const [olay, gruplar] of Object.entries(hooks)) {
     if (!Array.isArray(gruplar)) continue;
     for (const g of gruplar) {
       if (!nesneMi(g) || !Array.isArray(g["hooks"])) continue;
       for (const h of g["hooks"] as unknown[]) {
-        if (!nesneMi(h) || !bizimKancaMi(h["command"])) continue;
-        if (olay === "PreToolUse" && g["matcher"] === ARAC_ESLESTIRICI && aracKancasiMi(h["command"])) arac = true;
-        else eski++;
+        const k = kancaKimligi(h);
+        if (k === null) continue;
+        if (olay === "PreToolUse" && g["matcher"] === ARAC_ESLESTIRICI && k.betik === "kanca" && k.olay === "arac") {
+          arac = true;
+          if (k.bicim === "kabuk") kabuk++;
+        } else eski++;
       }
     }
   }
-  return { arac, eski };
+  return { arac, eski, kabuk };
+}
+
+/** Claude Code'un yönetilen (kurumsal) ayar dosyası; Windows'ta `%ProgramFiles%\ClaudeCode\managed-settings.json`. */
+export const yonetilenAyarYolu = (ortam: Ortam): string | null => {
+  const pf = ortamDegeri(ortam, "ProgramFiles");
+  return pf === undefined || !win32.isAbsolute(pf) ? null : win32.join(pf, "ClaudeCode", "managed-settings.json");
+};
+
+/**
+ * Kancaları bu kurulumdan bağımsız kapatan, okunabilen ayarlar: kullanıcı ayarında ya da yönetilen ayarda
+ * `disableAllHooks: true`, yönetilen ayarda `allowManagedHooksOnly: true`. Proje ayarları (`<proje>\.claude\
+ * settings*.json`) buradan görülmez (hangi proje bilinmez); teşhis metni onları ayrıca anar.
+ */
+export function kapatanAyarlar(kullanici: Json, yonetilen: Json | null, yonetilenYol: string): string[] {
+  const nedenler: string[] = [];
+  if (kullanici["disableAllHooks"] === true) nedenler.push("kullanıcı ayarında disableAllHooks: true");
+  if (yonetilen !== null && yonetilen["disableAllHooks"] === true) nedenler.push(`yönetilen ayarda disableAllHooks: true (${yonetilenYol})`);
+  if (yonetilen !== null && yonetilen["allowManagedHooksOnly"] === true) {
+    nedenler.push(`yönetilen ayarda allowManagedHooksOnly: true (${yonetilenYol}; kullanıcı kancaları çalışmaz)`);
+  }
+  return nedenler;
+}
+
+export interface KancaDurumu {
+  ayarYolu: string;
+  /** `null`: kullanıcı ayarı okunamadı (`hata` nedenini söyler). */
+  arac: boolean | null;
+  eski: number;
+  kabuk: number;
+  /** Kancaları kapatan, okunabilen ayarlar (`kapatanAyarlar`); boşsa görülen bir kapatan yok. */
+  kapatan: string[];
+  hata?: string;
 }
 
 /** Kullanıcı ayarındaki kanca durumu (`eren eslestir --claude-code --teshis`; yalnız okur, hiç atmaz). */
-export function kancaDurumu(ortam: Ortam): { ayarYolu: string; arac: boolean | null; eski: number } {
+export function kancaDurumu(ortam: Ortam): KancaDurumu {
   let ayarYolu = "~\\.claude\\settings.json";
   try {
     ayarYolu = varsayilanAyarYolu(ortam);
-    return { ayarYolu, ...kancaDurumuCoz(ayarCoz(ayarOku(ayarYolu))) };
-  } catch {
-    return { ayarYolu, arac: null, eski: 0 };
+    const ayar = ayarCoz(ayarOku(ayarYolu).metin);
+    const yYol = yonetilenAyarYolu(ortam);
+    let yonetilen: Json | null = null;
+    try {
+      yonetilen = yYol === null ? null : ayarCoz(ayarOku(yYol).metin);
+    } catch {
+      yonetilen = null; // okunamayan yönetilen ayar teşhisi durdurmaz
+    }
+    return { ayarYolu, ...kancaDurumuCoz(ayar), kapatan: kapatanAyarlar(ayar, yonetilen, yYol ?? "") };
+  } catch (e) {
+    const hata = e instanceof AyarHatasi ? e.message : "ayar dosyası okunamadı";
+    return { ayarYolu, arac: null, eski: 0, kabuk: 0, kapatan: [], hata };
   }
 }
 
@@ -163,7 +287,7 @@ export function kancalariCikar(ayar: Json): { ayar: Json; cikan: number } {
         kalan.push(g);
         continue;
       }
-      const ic = (g["hooks"] as unknown[]).filter((h) => !(nesneMi(h) && bizimKancaMi(h["command"])));
+      const ic = (g["hooks"] as unknown[]).filter((h) => !(nesneMi(h) && bizimKancaMi(h)));
       cikan += (g["hooks"] as unknown[]).length - ic.length;
       if (ic.length > 0) kalan.push({ ...g, hooks: ic });
     }
@@ -187,14 +311,21 @@ export function kancalariEkle(ayar: Json, y: Pick<Yollar, "nodeExe" | "kancaBeti
   return { ...temiz, hooks };
 }
 
-/** Ayar dosyası metni → nesne. Yoksa `{}`; bozuksa ya da nesne değilse atar (dosyaya dokunulmaz). */
+const BOM = "﻿";
+
+/**
+ * Ayar dosyası metni → nesne. Yoksa `{}`; bozuksa ya da nesne değilse atar (dosyaya dokunulmaz). Baştaki
+ * UTF-8 BOM'u yok sayar: Claude Code BOM'lu ayarı okuyor (ölçüldü, 2.1.332), burada da geçerli sayılır.
+ */
 export function ayarCoz(metin: string | null): Json {
-  if (metin === null || metin.trim() === "") return {};
+  const govde = metin?.startsWith(BOM) ? metin.slice(BOM.length) : metin;
+  if (govde === null || govde === undefined || govde.trim() === "") return {};
   let j: unknown;
   try {
-    j = JSON.parse(metin);
-  } catch {
-    throw new AyarHatasi("ayar dosyası geçerli JSON değil; hiçbir şey değişmedi");
+    j = JSON.parse(govde);
+  } catch (e) {
+    const ayrinti = e instanceof SyntaxError && e.message !== "" ? ` (${e.message})` : "";
+    throw new AyarHatasi(`ayar dosyası geçerli JSON değil${ayrinti}; hiçbir şey değişmedi`);
   }
   if (!nesneMi(j)) throw new AyarHatasi("ayar dosyası bir JSON nesnesi değil; hiçbir şey değişmedi");
   return j;
@@ -217,6 +348,7 @@ export function gosterMetni(y: Yollar, ayarYolu: string, anahtarAdimi = true): s
     "",
     `2. Tek kanca: ajanda araçlarından önce (PreToolUse, ${ARAC_ESLESTIRICI}). Ana oturumun kaydını alt agent'ınkinden`,
     "   ayırır; kurulu değilse bütün kayıtlar taslak doğar. Başka hiçbir araçta ve mesajda çalışmaz, mesaj metnini okumaz.",
+    "   Yürütme biçimindedir (command + args): kabuk kullanılmaz, Git Bash'e ya da PowerShell'e bağlı değildir.",
     `   ${ayarYolu}; bu betik yedekleyip ekler (önceki kurulumun istem/tur sonu kancalarını da çıkarır): kanca-ekle.`,
     '   Elle eklenecekse "hooks"a:',
     json.split("\n").map((s) => `   ${s}`).join("\n"),
@@ -239,26 +371,92 @@ export function gosterMetni(y: Yollar, ayarYolu: string, anahtarAdimi = true): s
 export const kayitYonergesi = (ortam: Ortam, nodeExe: string): string =>
   gosterMetni(yollar(ortam, nodeExe), varsayilanAyarYolu(ortam), false);
 
-const zamanDamgasi = (ms: number): string => new Date(ms).toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
+/** Milisaniyeli UTC damga (`20261127T112835123Z`): yedek adının parçası. */
+const zamanDamgasi = (ms: number): string => new Date(ms).toISOString().replace(/[-:.]/g, "");
 
-/** Yedekle, yaz (geçici dosya + yeniden adlandırma). Yedek yolunu döner (dosya yoksa `null`). */
-function ayarYaz(yol: string, ayar: Json, simdiMs: number): string | null {
-  let yedek: string | null = null;
-  if (existsSync(yol)) {
-    yedek = `${yol}.yedek-${zamanDamgasi(simdiMs)}`;
-    copyFileSync(yol, yedek);
-  } else {
-    mkdirSync(win32.dirname(yol), { recursive: true });
+/** Yedek denemesi üst sınırı (aynı milisaniyede bu kadar işlem olmaz; olursa açık hata). */
+const YEDEK_DENEME = 100;
+
+/**
+ * Özgün içeriğin yedeği `<yol>.yedek-<damga>[-n]`. Hiçbir yedeği ezmez (`COPYFILE_EXCL`): aynı damgada
+ * yedek varsa (aynı anda ikinci işlem) sıradaki sayıyı dener. `kaynak` bağlantının hedefidir; yedek kullanıcının
+ * baktığı yere, ayar yolunun yanına yazılır.
+ */
+function yedekAl(yol: string, kaynak: string, simdiMs: number): string {
+  const temel = `${yol}.yedek-${zamanDamgasi(simdiMs)}`;
+  for (let n = 0; n < YEDEK_DENEME; n++) {
+    const aday = n === 0 ? temel : `${temel}-${n}`;
+    try {
+      copyFileSync(kaynak, aday, constants.COPYFILE_EXCL);
+      return aday;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+    }
   }
-  const gecici = `${yol}.yeni-${process.pid}`;
-  writeFileSync(gecici, `${JSON.stringify(ayar, null, 2)}\n`, "utf8");
-  renameSync(gecici, yol);
+  throw new AyarHatasi(`yedek adı bulunamadı (${temel}…); hiçbir şey değişmedi`);
+}
+
+/**
+ * Yedekle, yaz. Yedek yolunu döner (dosya yoksa `null`). Kullanıcının dosyası hiçbir durumda bozulmaz:
+ * - Ayar yolu sembolik bağ ya da bir üst klasörü junction ise yazma bağın HEDEFİNE yapılır (`realpath`);
+ *   bağ olduğu gibi kalır (yeniden adlandırma bağı düz dosyaya çevirirdi).
+ * - Hedefin başka sabit bağı varsa (`nlink > 1`) yerinde yazılır (yeniden adlandırma bağları ayırırdı);
+ *   yedek önceden alınmıştır. Öteki durumda geçici dosya + yeniden adlandırma (yarım dosya kalmaz).
+ * - BOM'lu dosya BOM'lu kalır (Claude Code ikisini de okur; kullanıcının biçimi korunur).
+ */
+function ayarYaz(yol: string, ayar: Json, simdiMs: number, bom: boolean): string | null {
+  const metin = `${bom ? BOM : ""}${JSON.stringify(ayar, null, 2)}\n`;
+  if (!existsSync(yol)) {
+    mkdirSync(win32.dirname(yol), { recursive: true });
+    writeFileSync(yol, metin, { encoding: "utf8", flag: "wx" });
+    return null;
+  }
+  const hedef = realpathSync.native(yol);
+  const yedek = yedekAl(yol, hedef, simdiMs);
+  if (statSync(hedef).nlink > 1) {
+    writeFileSync(hedef, metin, "utf8");
+    return yedek;
+  }
+  const gecici = `${hedef}.yeni-${process.pid}-${zamanDamgasi(simdiMs)}`;
+  writeFileSync(gecici, metin, { encoding: "utf8", flag: "wx" });
+  try {
+    renameSync(gecici, hedef);
+  } catch (e) {
+    rmSync(gecici, { force: true });
+    throw e;
+  }
   return yedek;
 }
 
-const ayarOku = (yol: string): string | null => (existsSync(yol) ? readFileSync(yol, "utf8") : null);
+/**
+ * Ayar dosyasının metni (`null`: yok) ve BOM'u. UTF-16 (PowerShell 5'in `Out-File` varsayılanı) ve kırık
+ * bağlantı doğru nedenle reddedilir; dosyaya dokunulmaz.
+ */
+function ayarOku(yol: string): { metin: string | null; bom: boolean } {
+  if (!existsSync(yol)) {
+    let bag = false;
+    try {
+      bag = lstatSync(yol).isSymbolicLink();
+    } catch {
+      bag = false;
+    }
+    if (bag) throw new AyarHatasi(`ayar yolu hedefi olmayan bir bağlantı (${yol}); elle bakılmalı, hiçbir şey değişmedi`);
+    return { metin: null, bom: false };
+  }
+  const bayt = readFileSync(yol);
+  if ((bayt[0] === 0xff && bayt[1] === 0xfe) || (bayt[0] === 0xfe && bayt[1] === 0xff)) {
+    throw new AyarHatasi("ayar dosyası UTF-16 kodlanmış; UTF-8 olarak kaydedilmeli (ör. Set-Content -Encoding utf8). Hiçbir şey değişmedi");
+  }
+  const metin = bayt.toString("utf8");
+  return { metin, bom: metin.startsWith(BOM) };
+}
 
-export function calis(argv: readonly string[], ortam: Ortam = process.env, nodeExe: string = process.execPath): number {
+export function calis(
+  argv: readonly string[],
+  ortam: Ortam = process.env,
+  nodeExe: string = process.execPath,
+  simdiMs: () => number = Date.now,
+): number {
   const [komut = "goster", ...geri] = argv;
   const i = geri.indexOf("--ayar");
   const verilen = i >= 0 ? geri[i + 1] : undefined;
@@ -279,27 +477,29 @@ export function calis(argv: readonly string[], ortam: Ortam = process.env, nodeE
         process.stdout.write(gosterMetni(y, ayarYolu));
         return 0;
       case "kanca-ekle": {
-        const onceki = ayarCoz(ayarOku(ayarYolu));
-        const { eski } = kancaDurumuCoz(onceki);
+        const okunan = ayarOku(ayarYolu);
+        const onceki = ayarCoz(okunan.metin);
+        const { eski, kabuk } = kancaDurumuCoz(onceki);
         const yeni = kancalariEkle(onceki, y);
-        const yedek = ayarYaz(ayarYolu, yeni, Date.now());
+        const yedek = ayarYaz(ayarYolu, yeni, simdiMs(), okunan.bom);
         console.log(`Araç öncesi kanca eklendi: ${ayarYolu}${yedek === null ? "" : ` (yedek: ${yedek})`}`);
         if (eski > 0) console.log(`Önceki kurulumun ${eski} eski kancası (istem / tur sonu / eski biçim) çıkarıldı.`);
+        if (kabuk > 0) console.log("Kabuk biçimli eski araç kancası yürütme biçimine çevrildi (kabuktan bağımsız).");
         console.log("Açık Claude Code oturumları kancaları yeniden açılınca görür. MCP kaydı için: goster (adım 1).");
         return 0;
       }
       case "kanca-kaldir": {
-        const metin = ayarOku(ayarYolu);
-        if (metin === null) {
+        const okunan = ayarOku(ayarYolu);
+        if (okunan.metin === null) {
           console.log(`Ayar dosyası yok (${ayarYolu}); kaldırılacak kanca yok.`);
           return 0;
         }
-        const { ayar, cikan } = kancalariCikar(ayarCoz(metin));
+        const { ayar, cikan } = kancalariCikar(ayarCoz(okunan.metin));
         if (cikan === 0) {
           console.log("Bu aracın kancası yok; hiçbir şey değişmedi.");
           return 0;
         }
-        const yedek = ayarYaz(ayarYolu, ayar, Date.now());
+        const yedek = ayarYaz(ayarYolu, ayar, simdiMs(), okunan.bom);
         console.log(`${cikan} kanca kaldırıldı: ${ayarYolu} (yedek: ${yedek ?? "-"}). MCP kaydı için: ${MCP_KALDIR_KOMUTU}`);
         return 0;
       }
