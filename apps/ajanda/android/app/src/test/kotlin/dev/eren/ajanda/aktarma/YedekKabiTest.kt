@@ -222,6 +222,87 @@ class YedekKabiTest {
     }
 
     @Test
+    fun onBinEkliKabinBasliklariHamPayaSigar() {
+        // Eski sabit 1 MiB pay: 10 000 ekin yerel başlıkları (~120 bayt) tek başına ~1,2 MB eder ve geçerli kap
+        // reddedilirdi. Pay artık girdi başına eklenir.
+        val b = bicim.copy(belgeAzamiBayt = 64uL * 1024uL)
+        val depo = BellekDeposu()
+        val ekler = List(YedekKabi.AZAMI_EK_SAYISI) { i ->
+            val v = java.nio.ByteBuffer.allocate(4).putInt(i).array()
+            depo.dosyalar[EkDenetimi.ozet(v)] = v
+            ek(v)
+        }
+        val cikti = ByteArrayOutputStream()
+        YedekKabi.yaz(cikti, b, disa("{}", ekler), depo)
+        val ham = cikti.toByteArray()
+        assertTrue("ham ${ham.size}", ham.size > 64 * 1024 + (1 shl 20))
+        val o = YedekKabi.oku(ByteArrayInputStream(ham), b)
+        assertEquals(YedekKabi.AZAMI_EK_SAYISI, o.ekler.size)
+        assertEquals(ekler.size, YedekKabi.ekleriYerlestir(ekler, o, b, BellekDeposu()))
+    }
+
+    @Test
+    fun sinirTamDoluncaKabulBirFazlasiRed() {
+        val tam = "a".repeat(bicim.belgeAzamiBayt.toInt())
+        val fazla = tam + "a"
+        // Akışla yazılmış (boy başlıkta yok) ve saklanmış (boy başlıkta var, güvenilmez) girdiler.
+        for (saklanmis in listOf(false, true)) {
+            assertEquals(tam, oku(zipYontemle(saklanmis, "ajanda.json" to tam.toByteArray())).belge)
+            reddedilir<YedekHatasi.CokBuyuk> { oku(zipYontemle(saklanmis, "ajanda.json" to fazla.toByteArray())) }
+            assertEquals("", oku(zipYontemle(saklanmis, "ajanda.json" to ByteArray(0))).belge)
+        }
+    }
+
+    @Test
+    fun utf8KatiCozulurDortBaytlilarDahil() {
+        val metin = "{\"not\":\"Çağrı ışık şöyle 😀 𝄞 İ ğ\"}"
+        assertEquals(metin, oku(zip("ajanda.json" to metin.toByteArray(Charsets.UTF_8))).belge)
+        val bomlu = byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte()) + metin.toByteArray(Charsets.UTF_8)
+        assertEquals(metin, oku(zip("ajanda.json" to bomlu)).belge)
+        val bozuklar = listOf(
+            byteArrayOf(0x7b, 0xE2.toByte(), 0x82.toByte()), // yarım üç baytlık dizi
+            byteArrayOf(0xC0.toByte(), 0xAF.toByte()), // aşırı uzun kodlama
+            byteArrayOf(0xED.toByte(), 0xA0.toByte(), 0x80.toByte()), // kodlanmış vekil
+            byteArrayOf(0x80.toByte()), // başsız devam baytı
+            byteArrayOf(0xF5.toByte(), 0x80.toByte(), 0x80.toByte(), 0x80.toByte()), // U+10FFFF üstü
+        )
+        for (b in bozuklar) reddedilir<YedekHatasi.GecersizDosya> { oku(zip("ajanda.json" to b)) }
+    }
+
+    @Test
+    fun yazilanBelgeBirebirVeBoyuKodlanmadanSayilir() {
+        // Parça sınırlarını (64 Ki karakter) aşan, çok baytlı karakterli belge.
+        val belge = buildString { repeat(70_000) { append(if (it % 3 == 0) "ş" else if (it % 7 == 0) "😀" else "a") } }
+        val genis = bicim.copy(belgeAzamiBayt = 1uL shl 20)
+        val c = ByteArrayOutputStream()
+        YedekKabi.yaz(c, genis, disa(belge), EkDeposu.Yok)
+        assertEquals(belge, YedekKabi.oku(ByteArrayInputStream(c.toByteArray()), genis).belge)
+        // Sınır UTF-8 bayt boyuna göredir: 5000 "ş" 10 000 bayttır (sınırda), bir fazlası aşar.
+        YedekKabi.yaz(ByteArrayOutputStream(), bicim, disa("ş".repeat(5000)), EkDeposu.Yok)
+        reddedilir<YedekHatasi.CokBuyuk> { YedekKabi.yaz(ByteArrayOutputStream(), bicim, disa("ş".repeat(5000) + "a"), EkDeposu.Yok) }
+        reddedilir<YedekHatasi.CokBuyuk> { YedekKabi.yaz(ByteArrayOutputStream(), bicim, disa("😀".repeat(2500) + "a"), EkDeposu.Yok) }
+    }
+
+    private fun zipYontemle(saklanmis: Boolean, vararg girdiler: Pair<String, ByteArray>): ByteArray {
+        val b = ByteArrayOutputStream()
+        ZipOutputStream(b).use { z ->
+            for ((ad, veri) in girdiler) {
+                val g = ZipEntry(ad)
+                if (saklanmis) {
+                    g.method = ZipEntry.STORED
+                    g.size = veri.size.toLong()
+                    g.compressedSize = veri.size.toLong()
+                    g.crc = java.util.zip.CRC32().apply { update(veri) }.value
+                }
+                z.putNextEntry(g)
+                z.write(veri)
+                z.closeEntry()
+            }
+        }
+        return b.toByteArray()
+    }
+
+    @Test
     fun yazarkenEksikYaDaBozukEkReddedilir() {
         val v = "ek".toByteArray()
         reddedilir<YedekHatasi.EkBozuk> { YedekKabi.yaz(ByteArrayOutputStream(), bicim, disa("{}", listOf(ek(v))), EkDeposu.Yok) }

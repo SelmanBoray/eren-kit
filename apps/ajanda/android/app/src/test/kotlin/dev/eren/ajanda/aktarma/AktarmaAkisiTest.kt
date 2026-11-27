@@ -18,6 +18,10 @@ import java.io.OutputStream
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZonedDateTime
+import java.util.Collections
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 /** Akış denetleyicisi sahte çekirdek yüzüyle: adımlar, metinler, yeniden önizleme dalı, hatalar. */
 class AktarmaAkisiTest {
@@ -152,13 +156,111 @@ class AktarmaAkisiTest {
     }
 
     @Test
-    fun silinecekGeriYuklenecekVeTaslakSatirlari() {
-        yuz.onizlemeler += plan(kip = CalismaKipi.BAGLI, islem = 3, silinecek = 2, geriYuklenecek = 1, taslak = 4)
+    fun silinecekGeriYuklenecekGuncellenecekAltMaddesiTaslakAlinmaz() {
+        yuz.onizlemeler += plan(kip = CalismaKipi.BAGLI, islem = 3, guncellenecek = 5, silinecek = 2, geriYuklenecek = 1, taslak = 4)
+        yuz.iceSonuclari += IceAktarmaSonucu(true, plan(kip = CalismaKipi.BAGLI, islem = 3, guncellenecek = 5, taslak = 4))
         val o = akis.dosyaOku { ByteArrayInputStream(kap()) }
-        assertTrue(o.metin, o.metin.contains("• 2 kayıt silinecek (telefondaki kayıt, yedekteki daha yeni silinmiş haliyle değişecek)"))
-        assertTrue(o.metin, o.metin.contains("• 1 kayıt geri yüklenecek (telefonda silinmiş, yedekteki daha yeni haliyle geri gelecek)"))
-        assertTrue(o.metin, o.metin.contains("• 4 taslak Eren servisine gönderilmeyecek"))
+        // Silinecek ve geri yüklenecek, güncellenecek 5'in içindedir: kardeş madde değil, "bunlardan" alt maddesi.
+        assertTrue(
+            o.metin,
+            o.metin.contains(
+                "• 5 kayıt güncellenecek (yedekteki daha yeni)\n" +
+                    "   – bunlardan 2 kayıt silinecek (yedekteki daha yeni hali silinmiş)\n" +
+                    "   – bunlardan 1 kayıt geri yüklenecek (telefonda silinmiş, yedekteki daha yeni hali geri gelecek)\n",
+            ),
+        )
+        assertFalse(o.metin, o.metin.contains("• 2 kayıt silinecek"))
+        // Bağlı kipte taslak hiç alınmaz (servise gitmez, telefona da yazılmaz).
+        assertTrue(o.metin, o.metin.contains("• 4 taslak alınmayacak (Eren servisi taslak kabul etmez; yedek dosyasında kalır)"))
+        assertFalse(o.metin, o.metin.contains("taslak Eren servisine gönderilmeyecek"))
         temiz(o)
+        val s = akis.onayla(o as AktarmaAkisi.Adim.Onay)
+        assertTrue(s.metin, s.metin.contains("4 taslak alınmadı; Eren servisi taslak kabul etmez."))
+        temiz(s)
+    }
+
+    @Test
+    fun onayAdiminIziyleYapilirCiftDokunmaCekirdegeGitmez() {
+        yuz.onizlemeler += plan(iz = "iz1")
+        yuz.iceSonuclari += IceAktarmaSonucu(true, plan(iz = "iz1"))
+        val o = akis.dosyaOku { ByteArrayInputStream(kap()) } as AktarmaAkisi.Adim.Onay
+        assertEquals("iz1", o.iz)
+        val s1 = akis.onayla(o)
+        val s2 = akis.onayla(o)
+        assertEquals("İçe aktarıldı", s1.baslik)
+        assertEquals(s1, s2)
+        assertEquals(1, yuz.cagrilar.count { it.startsWith("iceAktar:") })
+    }
+
+    @Test
+    fun eskiAdimlaOnayEskiIzleGiderYeniPlanSorulur() {
+        yuz.onizlemeler += plan(iz = "iz2")
+        yuz.iceSonuclari += IceAktarmaSonucu(false, plan(iz = "iz3", yeni = 7))
+        akis.dosyaOku { ByteArrayInputStream(kap()) }
+        // Ekranda daha eski bir plan kalmış: onun iziyle gider, çekirdek uygulamaz, yeni plan sorulur.
+        val eski = AktarmaAkisi.Adim.Onay("İçe aktarılsın mı?", "eski", "İçe aktar", "iz1")
+        val yeni = akis.onayla(eski)
+        assertTrue(yeni is AktarmaAkisi.Adim.Onay)
+        assertEquals("iz3", (yeni as AktarmaAkisi.Adim.Onay).iz)
+        assertTrue(yeni.metin, yeni.metin.contains("• 7 yeni kayıt eklenecek"))
+        assertEquals(listOf("iceAktarmaOnizlemesi", "iceAktar:iz1"), yuz.cagrilar)
+        assertTrue(akis.onayBekliyor)
+    }
+
+    @Test
+    fun uygulandiktanSonraMetinKurulamazsaYapilamadiDenmez() {
+        val bozuk = object : AktarmaMetinleri(dilim) {
+            override fun iceSonucu(p: IceAktarmaOnizlemesi): String = throw IllegalStateException("biçim")
+        }
+        val a = AktarmaAkisi(yuz, bozuk)
+        yuz.onizlemeler += plan()
+        yuz.iceSonuclari += IceAktarmaSonucu(true, plan())
+        val o = a.dosyaOku { ByteArrayInputStream(kap()) } as AktarmaAkisi.Adim.Onay
+        val s = a.onayla(o)
+        assertTrue(s is AktarmaAkisi.Adim.Bilgi)
+        assertEquals("İçe aktarıldı", s.baslik)
+        assertEquals("Yedekteki kayıtlar içe aktarıldı.", s.metin)
+        assertFalse(a.onayBekliyor)
+    }
+
+    @Test
+    fun esZamanliOnaylarTekIceAktarma() {
+        val kapi = CountDownLatch(1)
+        val girdi = CountDownLatch(1)
+        val icerde = AtomicInteger()
+        val azami = AtomicInteger()
+        val bekleten = object : CekirdekYuzu by yuz {
+            override fun iceAktar(belge: String, iz: String?): IceAktarmaSonucu {
+                azami.accumulateAndGet(icerde.incrementAndGet(), ::maxOf)
+                try {
+                    girdi.countDown()
+                    assertTrue(kapi.await(10, TimeUnit.SECONDS))
+                    return yuz.iceAktar(belge, iz)
+                } finally {
+                    icerde.decrementAndGet()
+                }
+            }
+        }
+        val a = AktarmaAkisi(bekleten, metinler)
+        yuz.onizlemeler += plan()
+        yuz.iceSonuclari += IceAktarmaSonucu(true, plan())
+        val o = a.dosyaOku { ByteArrayInputStream(kap()) } as AktarmaAkisi.Adim.Onay
+        val sonuclar = Collections.synchronizedList(mutableListOf<AktarmaAkisi.Adim>())
+        val t1 = Thread { sonuclar += a.onayla(o) }.apply { start() }
+        assertTrue(girdi.await(10, TimeUnit.SECONDS))
+        val t2 = Thread { sonuclar += a.onayla(o) }.apply { start() }
+        val son = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
+        while (t2.state != Thread.State.BLOCKED) {
+            assertTrue("${t2.state}", System.nanoTime() < son && t2.isAlive)
+            Thread.sleep(1)
+        }
+        kapi.countDown()
+        t1.join(10_000)
+        t2.join(10_000)
+        assertEquals(1, azami.get())
+        assertEquals(1, yuz.cagrilar.count { it.startsWith("iceAktar:") })
+        assertEquals(2, sonuclar.size)
+        assertTrue("$sonuclar", sonuclar.all { it is AktarmaAkisi.Adim.Bilgi && it.baslik == "İçe aktarıldı" })
     }
 
     @Test

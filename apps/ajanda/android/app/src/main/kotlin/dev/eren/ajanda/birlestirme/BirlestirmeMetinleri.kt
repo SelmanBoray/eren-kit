@@ -8,7 +8,7 @@ import dev.eren.ajanda.cekirdek.KoparmaSonucu
  * SAHİBİ: D4 (Android). Birleştirme önizlemesinin kullanıcı metinleri (saf). Yalnız sayı taşır: kayıt başlığı,
  * kimliği ya da alan değeri metne girmez. Servis "Eren servisi" diye anılır.
  */
-class BirlestirmeMetinleri {
+open class BirlestirmeMetinleri {
     val baslik = "Kayıtlar Eren servisiyle birleştirilsin mi?"
     val degistiBaslik = "Kayıtlar bu arada değişti"
     val sonucBaslik = "Birleştirildi"
@@ -18,8 +18,18 @@ class BirlestirmeMetinleri {
     val onayDugmesi = "Birleştir"
     val vazgecDugmesi = "Vazgeç"
     val sonraDugmesi = "Şimdi değil"
-    val bekleyenYok = "Onay bekleyen bir birleştirme yok."
     val koptu = "Eren servisiyle bağlantı koptu; hiçbir kayıt değişmedi. Yeniden bağlanınca yeniden sorulacak."
+    /** Sonuç metninin ilk cümlesi; sayılar kurulamazsa tek başına. */
+    val sonucKisa = "Bu telefon artık Eren servisine bağlı."
+    val zatenBaslik = "Zaten bağlı"
+    val zaten = "Bu telefon Eren servisine bağlı; birleştirme bu arada tamamlanmış. Kayıtları artık Eren servisi tutar."
+    val belirsizBaslik = "Birleştirmenin sonucu okunamadı"
+    val belirsiz = "Birleştirmenin uygulanıp uygulanmadığı şu an okunamadı. Kayıtlar yenilenince durum görünür; " +
+        "birleştirme hâlâ bekliyorsa yeniden sorulur."
+
+    /** "Bekleyen birleştirme" şeridi (`BirlestirmeAkisi.bekleyen`); düğme `denetle(zorla = true)`. */
+    val bekleyenSeridi = "Kayıtların Eren servisiyle birleştirilmesi onayınızı bekliyor."
+    val bekleyenDugmesi = "Gözden geçir"
 
     fun onizleme(p: BirlestirmeOnizlemesi, degisti: Boolean): String = buildList {
         if (degisti) add("Önizlemeden sonra kayıtlar değişti; plan yenilendi.")
@@ -46,8 +56,8 @@ class BirlestirmeMetinleri {
             if (p.dusecekMezar > 0) add("Telefonda silinmiş ${p.dusecekMezar} kayıt gönderilmeyecek, Silinenler'den kalkacak")
             if (p.taslaklar.isNotEmpty()) {
                 add(
-                    "${p.taslaklar.size} taslak Eren servisine gönderilmeyecek: gönderilemeyenler listesine düşecek, " +
-                        "oradan düzeltilip eklenebilir",
+                    "${p.taslaklar.size} taslak Eren servisine gönderilmeyecek: ana listeden kalkıp gönderilemeyenler " +
+                        "listesine düşecek, oradan düzeltilip eklenebilir",
                 )
             }
             if (p.okunamayanPcTemeli > 0) {
@@ -69,15 +79,24 @@ class BirlestirmeMetinleri {
         if (p.islem > 0) add("Onaylarsanız değişiklikler Eren servisine ${p.islem} işlem olarak gönderilir.")
         add("Bundan sonra kayıtları Eren servisi tutar; bu telefon ona bağlı çalışır.")
         add("Vazgeçerseniz hiçbir kayıt değişmez; eşleşme silinir, yeniden bağlanmak için QR kodu yeniden okutulur.")
-        add("Şimdi değil derseniz bağlantı yeniden kurulunca yeniden sorulur.")
+        add("Şimdi değil derseniz hiçbir kayıt değişmez; bağlantı yeniden kurulunca ya da kayıtlar değişince yeniden sorulur.")
     }.joinToString("\n")
 
-    fun sonuc(p: BirlestirmeOnizlemesi?): String = buildList {
-        add("Bu telefon artık Eren servisine bağlı.")
+    /**
+     * Uygulanan planın sonucu. Gönderilemeyenler: `retListesine` ve taslaklar dökmede hemen düşer; Eren servisinde
+     * silinmişler servis reddedince düşer (ayrı cümle).
+     */
+    open fun sonuc(p: BirlestirmeOnizlemesi?): String = buildList {
+        add(sonucKisa)
         if (p == null) return@buildList
         if (p.islem > 0) add("${p.islem} işlem Eren servisine gönderilmek üzere sıraya alındı.")
-        val ret = p.retListesine.size + p.pcSilmisler.size
-        if (ret > 0) add("$ret kayıt gönderilemeyenler listesine düşebilir; oradan düzeltilebilir.")
+        if (p.retListesine.isNotEmpty()) add("${p.retListesine.size} kayıt gönderilemeyenler listesine düştü; oradan düzeltilebilir.")
+        if (p.taslaklar.isNotEmpty()) {
+            add("${p.taslaklar.size} taslak ana listeden kalkıp gönderilemeyenler listesine düştü; oradan düzeltilip eklenebilir.")
+        }
+        if (p.pcSilmisler.isNotEmpty()) {
+            add("${p.pcSilmisler.size} kayıt Eren servisinde silinmiş olduğu için gönderilemeyenler listesine düşecek.")
+        }
         if (p.olasiCiftler.isNotEmpty()) add("${p.olasiCiftler.size} olası çift listede işaretlendi.")
     }.joinToString("\n")
 

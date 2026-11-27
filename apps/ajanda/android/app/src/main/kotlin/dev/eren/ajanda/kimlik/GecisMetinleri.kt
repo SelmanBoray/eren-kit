@@ -21,7 +21,9 @@ object GecisMetinleri {
     const val VAZGEC_DUGMESI = "Vazgeç"
 
     private const val KAYITLAR_DURUYOR = "Kayıtlarınız bu telefonda duruyor; uygulama Eren servisi olmadan çalışmayı sürdürüyor."
-    private const val YEDEK_DURUYOR = "Eren servisindeki kopya yedek olarak duruyor; yeniden bağlanınca telefondaki değişiklikler oraya gönderilir."
+    /** Yeniden bağlanmada kayıtlar sorulmadan gitmez (D4 birleştirme onayı); servise yeni gidecek taslak hiç gitmez. */
+    private const val YEDEK_DURUYOR = "Eren servisindeki kopya yedek olarak duruyor. Yeniden bağlanırsanız telefondaki değişiklikler sorulmadan " +
+        "gönderilmez; birleştirmeyi onaylarsanız (Eren servisinde olmayan taslaklar hariç) oraya gider."
 
     /**
      * Koparmadan önceki onay. `kuyrukta`: `baglantiDurumu().kuyrukta` (henüz gönderilmemiş işlem); okunamadıysa
@@ -73,10 +75,16 @@ object GecisMetinleri {
     }
 
     private fun depoDegistiSatirlari(s: KoparmaSonucu): List<String> = buildList {
-        add("Bu telefon başka bir Eren servisine bağlandı; kayıtlarınız oraya da gönderilecek.")
-        gonderilmeyen(s)?.let { add("$it önceki Eren servisine gönderilmeden kaldı; bu telefonda duruyor ve yeni servise gönderilecek.") }
+        add(
+            "Bu telefonun bağlandığı Eren servisi değişti. Kayıtlarınız bu telefonda duruyor; yeni servise sorulmadan " +
+                "gönderilmez, birleştirmeyi onaylarsanız (orada olmayan taslaklar hariç) oraya gider.",
+        )
+        gonderilmeyen(s)?.let { add("$it önceki Eren servisine gönderilmeden kaldı; bu telefonda duruyor, birleştirmeyi onaylarsanız yeni servise gider.") }
         yanitsiz(s, "önceki Eren servisine")?.let(::add)
-        add("Önceki Eren servisindeki kopya olduğu gibi duruyor. Ona yeniden bağlanırsanız bu telefondaki kayıtlar, yeni servisten gelenler dahil, oraya da gönderilir.")
+        add(
+            "Önceki Eren servisindeki kopya olduğu gibi duruyor. Ona yeniden bağlanıp birleştirmeyi onaylarsanız bu telefondaki " +
+                "kayıtlar, yeni servisten gelenler dahil, oraya da gönderilir.",
+        )
         ret(s)?.let(::add)
         okunamayan(s)?.let(::add)
     }
@@ -104,7 +112,8 @@ object GecisMetinleri {
 
     private fun okunamayan(s: KoparmaSonucu): String? =
         if (s.okunamayanPcTemeli > 0) {
-            "${s.okunamayanPcTemeli} kaydın Eren servisindeki hali okunamadı; yeniden bağlanınca telefondaki farklı her alan servise gönderilir."
+            "${s.okunamayanPcTemeli} kaydın Eren servisindeki hali okunamadı; yeniden bağlanıp birleştirmeyi onaylarsanız " +
+                "telefondaki farklı her alan servise gönderilir."
         } else null
 
     private fun ret(s: KoparmaSonucu): String? =

@@ -59,7 +59,7 @@ class GecisMetinleriTest {
     @Test
     fun okunamayanTemelYalnizSifirDegilseSoylenir() {
         val var_ = GecisMetinleri.koparma(sonuc(okunamayanTemel = 3))
-        assertTrue(var_.govde, var_.govde.contains("3 kaydın Eren servisindeki hali okunamadı; yeniden bağlanınca telefondaki farklı her alan servise gönderilir."))
+        assertTrue(var_.govde, var_.govde.contains("3 kaydın Eren servisindeki hali okunamadı; yeniden bağlanıp birleştirmeyi onaylarsanız telefondaki farklı her alan servise gönderilir."))
         assertFalse(var_.hepsi(), Regex("\bPC\b").containsMatchIn(var_.hepsi()))
         val yok = GecisMetinleri.koparma(sonuc())
         assertFalse(yok.govde, yok.govde.contains("okunamadı"))
@@ -87,19 +87,36 @@ class GecisMetinleriTest {
 
         val depo = GecisMetinleri.gecis(ozet(GecisNedeni.DEPO_DEGISTI, sonuc(kayit = 2, islem = 2, yanitsiz = 1)))
         assertEquals("Başka bir Eren servisi", depo.baslik)
-        assertEquals("Bu telefon başka bir Eren servisine bağlandı; kayıtlarınız oraya da gönderilecek.", depo.satirlar.first())
+        assertEquals(
+            "Bu telefonun bağlandığı Eren servisi değişti. Kayıtlarınız bu telefonda duruyor; yeni servise sorulmadan " +
+                "gönderilmez, birleştirmeyi onaylarsanız (orada olmayan taslaklar hariç) oraya gider.",
+            depo.satirlar.first(),
+        )
         assertTrue(depo.govde, depo.govde.contains("2 değişiklik önceki Eren servisine gönderilmeden kaldı"))
         assertTrue(depo.govde, depo.govde.contains("önceki Eren servisine ulaşmış olabilir"))
         // A→B→A: B'nin kayıtları A'ya da gider (MIMARI "Bilinen sınırlar" 9); önceden söylenir.
-        assertTrue(depo.govde, depo.govde.contains("yeniden bağlanırsanız"))
+        assertTrue(depo.govde, depo.govde.contains("yeniden bağlanıp birleştirmeyi onaylarsanız"))
 
         val bosDepo = GecisMetinleri.gecis(ozet(GecisNedeni.DEPO_DEGISTI))
         assertEquals(2, bosDepo.satirlar.size)
     }
 
     @Test
-    fun koparmaOnayi() {
-        val sayili = GecisMetinleri.koparmaOnayi(4)
+    fun gonderimHepBirlestirmeOnayinaBagliSoylenir() {
+        // Yeniden bağlanmada kayıtlar sorulmadan gitmez (D4): "gönderilir / gider" diyen her cümle onayı anar.
+        val gelecek = Regex("gönderilir\\b|gönderilecek\\b|\\bgider\\b")
+        val satirlar = ornekMetinler().flatMap { it.split("\n") }.filter { gelecek.containsMatchIn(it) }
+        assertTrue(satirlar.isNotEmpty())
+        val kosulsuz = satirlar.filterNot { it.contains("onaylarsanız") }
+        assertTrue("koşulsuz gönderim:\n" + kosulsuz.joinToString("\n"), kosulsuz.isEmpty())
+        // Taslaklar gönderilmez: yedek ve depo değişimi cümleleri söyler.
+        val kopar = GecisMetinleri.koparma(sonuc())
+        assertTrue(kopar.govde, kopar.govde.contains("(Eren servisinde olmayan taslaklar hariç)"))
+        assertTrue(GecisMetinleri.gecis(ozet(GecisNedeni.DEPO_DEGISTI)).govde.contains("taslaklar hariç"))
+    }
+
+    @Test
+    fun koparmaOnayi() {        val sayili = GecisMetinleri.koparmaOnayi(4)
         assertEquals(GecisMetinleri.KOPARMA_BASLIGI, sayili.baslik)
         assertTrue(sayili.govde.contains("4 değişiklik henüz Eren servisine gitmedi"))
         assertTrue(sayili.govde.contains("yedek olarak durur"))

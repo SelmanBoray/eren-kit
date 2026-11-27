@@ -1,14 +1,26 @@
 package dev.eren.ajanda.kimlik
 
+import dev.eren.ajanda.aktarma.OtomatikYedekMetinleri
+import dev.eren.ajanda.aktarma.YedekDurumu
+import dev.eren.ajanda.aktarma.YedekSonucu
+import dev.eren.ajanda.aktarma.YedekSorunu
+import dev.eren.ajanda.birlestirme.BirlestirmeMetinleri
 import dev.eren.ajanda.cekirdek.AjandaKanalHatasi
 import dev.eren.ajanda.cekirdek.BaglantiAsamasi
+import dev.eren.ajanda.cekirdek.BirlestirmeOnizlemesi
+import dev.eren.ajanda.cekirdek.CakisanKayit
+import dev.eren.ajanda.cekirdek.CalismaKipi
+import dev.eren.ajanda.cekirdek.CekirdekHatasi
+import dev.eren.ajanda.cekirdek.KoparmaSonucu
+import dev.eren.ajanda.cekirdek.OlasiCift
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
+import java.time.ZoneId
 
 /**
  * D6: kullanıcıya görünen metinlerde "PC" sözcüğü geçmez (servis "Eren servisi", makine "bilgisayar").
- * İki yoldan: (1) `kimlik/`, `aktarma/` ve D6'nın yeni dosyalarının kaynağındaki bütün dize sabitleri
+ * İki yoldan: (1) `kimlik/`, `aktarma/` (otomatik yedek dahil), `birlestirme/` ve D6'nın yeni dosyalarının kaynağındaki bütün dize sabitleri
  * (yorumlar ve `${...}` içindeki kod hariç; `EslestirmeEkrani` gibi JVM'de çalışmayan ekranlar da
  * böylece kapsanır), (2) metin işlevlerinin her dalının çıktısı. `ekran/` Kol U'nundur, kapsam dışı.
  */
@@ -29,7 +41,7 @@ class KullaniciMetniTest {
 
     private fun taranacaklar(): List<File> {
         val kok = kaynakKoku()
-        val dizinler = listOf("kimlik", "aktarma").flatMap { p ->
+        val dizinler = listOf("kimlik", "aktarma", "birlestirme").flatMap { p ->
             File(kok, p).listFiles { f -> f.extension == "kt" }.orEmpty().toList()
         }
         val tekler = listOf("alarm/IzinPlani.kt").map { File(kok, it) }
@@ -43,6 +55,10 @@ class KullaniciMetniTest {
         assertTrue(dosyalar.any { it.name == "EslestirmeEkrani.kt" })
         assertTrue(dosyalar.any { it.name == "GecisMetinleri.kt" })
         assertTrue(dosyalar.any { it.name == "AktarmaMetinleri.kt" })
+        assertTrue(dosyalar.any { it.name == "BirlestirmeMetinleri.kt" })
+        assertTrue(dosyalar.any { it.name == "BirlestirmeAkisi.kt" })
+        assertTrue(dosyalar.any { it.name == "OtomatikYedekPlani.kt" })
+        assertTrue(dosyalar.any { it.name == "OtomatikYedek.kt" })
         val bulunan = dosyalar.flatMap { f ->
             KotlinDizeleri.ayikla(f.readText()).filter { pc.containsMatchIn(it) }.map { "${f.name}: \"$it\"" }
         }
@@ -95,9 +111,50 @@ class KullaniciMetniTest {
             add(m.KALDIRMA_BASLIGI)
             add(m.KALDIRMA_ONAYI)
             addAll(GecisMetinleriTest.ornekMetinler())
+            addAll(birlestirmeMetinleri())
+            addAll(otomatikYedekMetinleri())
         }
         val bulunan = metinler.filter { pc.containsMatchIn(it) }
         assertTrue("\"PC\" geçen metinler:\n" + bulunan.joinToString("\n"), bulunan.isEmpty())
+    }
+
+    /** `BirlestirmeMetinleri`'nin her dalı: bütün sayılar sıfır ve sıfırdan büyük, aynı ve farklı depo. */
+    private fun birlestirmeMetinleri(): List<String> {
+        val m = BirlestirmeMetinleri()
+        fun plan(n: Int, ayni: Boolean) = BirlestirmeOnizlemesi(
+            depoId = "d", ayniDepo = ayni, yeni = n, degisen = n,
+            cakisanlar = List(n) { CakisanKayit("k$it", listOf("baslik")) }, pcSilmisler = List(n) { "s$it" },
+            retListesine = List(n) { "r$it" }, dusecekMezar = n, ayni = n, servistenGelecek = n, islem = n,
+            olasiCiftler = List(n) { OlasiCift("a$it", "b$it") }, iz = "iz", taslaklar = List(n) { "t$it" },
+            okunamayanPcTemeli = n,
+        )
+        val planlar = listOf(0, 2).flatMap { n -> listOf(true, false).map { plan(n, it) } }
+        return buildList {
+            addAll(listOf(m.baslik, m.degistiBaslik, m.sonucBaslik, m.koptuBaslik, m.vazgecBaslik, m.hataBaslik))
+            addAll(listOf(m.onayDugmesi, m.vazgecDugmesi, m.sonraDugmesi, m.koptu, m.sonucKisa, m.zatenBaslik, m.zaten))
+            addAll(listOf(m.belirsizBaslik, m.belirsiz, m.bekleyenSeridi, m.bekleyenDugmesi))
+            planlar.forEach { p -> add(m.onizleme(p, true)); add(m.onizleme(p, false)); add(m.sonuc(p)) }
+            add(m.sonuc(null))
+            listOf(true, false).forEach { add(m.vazgecSonucu(KoparmaSonucu(CalismaKipi.YEREL, 0, 0, 0, 0, it))) }
+            listOf(CekirdekHatasi.GecersizDurum("x"), CekirdekHatasi.Depo("x"), IllegalStateException("x")).forEach { add(m.hata(it)) }
+        }
+    }
+
+    /** `OtomatikYedekMetinleri`'nin her dalı. */
+    private fun otomatikYedekMetinleri(): List<String> {
+        val m = OtomatikYedekMetinleri(ZoneId.of("Europe/Istanbul"))
+        return buildList {
+            addAll(listOf(m.baslik, m.aciklama, m.klasorSecilmedi))
+            add(m.sonYedek(YedekDurumu()))
+            add(m.sonYedek(YedekDurumu(sonBasariliMs = 1_790_000_000_000)))
+            YedekSorunu.entries.forEach {
+                add(m.sorun(it))
+                add(m.sonHata(YedekDurumu(sonHata = it, sonHataMs = 1_790_000_000_000)).orEmpty())
+                add(m.sonuc(YedekSonucu.Basarisiz(it)))
+            }
+            add(m.sonuc(YedekSonucu.Gerekmedi))
+            add(m.sonuc(YedekSonucu.Yapildi("ajanda-yedegi-2026-11-28.zip", 5, 1)))
+        }
     }
 
     @Test

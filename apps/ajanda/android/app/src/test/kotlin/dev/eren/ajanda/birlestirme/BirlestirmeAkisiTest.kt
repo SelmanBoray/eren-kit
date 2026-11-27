@@ -13,40 +13,79 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.Collections
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
-/** Birleştirme akışı sahte çekirdek yüzüyle: soru, yeniden önizleme, kopma, vazgeç, erteleme, hatalar. */
+/**
+ * Birleştirme akışı sahte çekirdek yüzüyle: soru, yeniden önizleme, eski pencereyle onay, kopma, zaten uygulandı,
+ * vazgeç, erteleme (plan ve bağlantı kuşağı), bekleyen sorgusu, eşzamanlılık, hatalar.
+ */
 class BirlestirmeAkisiTest {
-    /** Sırayla tüketilen yanıtlar; [Exception] ise atılır. */
+    /** Sırayla tüketilen yanıtlar; [Exception] ise atılır. Eşzamanlılık için içerdeki çağrı sayısını izler. */
     private class SahteBirlestirme : BirlestirmeCekirdegi {
         val onizlemeler = ArrayDeque<Any?>()
         val onaySonuclari = ArrayDeque<Any>()
         var vazgecSonucu: Any = koparma(true)
-        val cagrilar = mutableListOf<String>()
+        var kipYaniti: Any = CalismaKipi.YEREL
+        val cagrilar: MutableList<String> = Collections.synchronizedList(mutableListOf())
 
-        override fun birlestirmeOnizlemesi(): BirlestirmeOnizlemesi? {
-            cagrilar += "onizleme"
+        /** Doluysa onay çağrısı içeri girince [girdi]'yi sayar ve bu kapı açılana dek bekler. */
+        var onayKapisi: CountDownLatch? = null
+        val girdi = CountDownLatch(1)
+        private val icerde = AtomicInteger()
+        val azamiEsZaman = AtomicInteger()
+
+        private inline fun <T> cagri(ad: String, is_: () -> T): T {
+            azamiEsZaman.accumulateAndGet(icerde.incrementAndGet(), ::maxOf)
+            try {
+                cagrilar += ad
+                return is_()
+            } finally {
+                icerde.decrementAndGet()
+            }
+        }
+
+        override fun birlestirmeOnizlemesi(): BirlestirmeOnizlemesi? = cagri("onizleme") {
             val o = onizlemeler.removeFirst()
             if (o is Exception) throw o
-            return o as BirlestirmeOnizlemesi?
+            o as BirlestirmeOnizlemesi?
         }
 
-        override fun birlestirmeyiOnayla(iz: String?): BirlestirmeSonucu {
-            cagrilar += "onayla:$iz"
+        override fun birlestirmeyiOnayla(iz: String?): BirlestirmeSonucu = cagri("onayla:$iz") {
+            onayKapisi?.let {
+                girdi.countDown()
+                assertTrue(it.await(10, TimeUnit.SECONDS))
+            }
             val o = onaySonuclari.removeFirst()
             if (o is Exception) throw o
-            return o as BirlestirmeSonucu
+            o as BirlestirmeSonucu
         }
 
-        override fun birlestirmedenVazgec(): KoparmaSonucu {
-            cagrilar += "vazgec"
+        override fun birlestirmedenVazgec(): KoparmaSonucu = cagri("vazgec") {
             val o = vazgecSonucu
             if (o is Exception) throw o
-            return o as KoparmaSonucu
+            o as KoparmaSonucu
+        }
+
+        override fun kip(): CalismaKipi = cagri("kip") {
+            val o = kipYaniti
+            if (o is Exception) throw o
+            o as CalismaKipi
         }
     }
 
     private val yuz = SahteBirlestirme()
-    private val akis = BirlestirmeAkisi(yuz)
+
+    /** Bağlantı kuşağı: testte elle artırılır (yeni soket). */
+    private var kusakNo = 1L
+    private val akis = BirlestirmeAkisi(yuz, kusak = { kusakNo })
+
+    private fun onay(a: BirlestirmeAkisi.Adim?): BirlestirmeAkisi.Adim.Onay {
+        assertTrue("$a", a is BirlestirmeAkisi.Adim.Onay)
+        return a as BirlestirmeAkisi.Adim.Onay
+    }
 
     private fun plan(
         iz: String = "iz1",
@@ -58,6 +97,7 @@ class BirlestirmeAkisiTest {
         cift: Int = 1,
         taslak: Int = 0,
         okunamayanTemel: Int = 0,
+        ret: Int = 0,
     ) = BirlestirmeOnizlemesi(
         depoId = "depo_ornek",
         ayniDepo = ayniDepo,
@@ -65,7 +105,7 @@ class BirlestirmeAkisiTest {
         degisen = degisen,
         cakisanlar = List(cakisan) { CakisanKayit("k_gizli_$it", listOf("baslik")) },
         pcSilmisler = listOf("k_gizli_silinmis"),
-        retListesine = emptyList(),
+        retListesine = List(ret) { "k_gizli_ret_$it" },
         dusecekMezar = 2,
         ayni = 4,
         servistenGelecek = 6,
@@ -80,6 +120,7 @@ class BirlestirmeAkisiTest {
         val t = "${a.baslik}\n${a.metin}"
         assertFalse(t, t.contains("k_gizli"))
         assertFalse(t, t.contains("depo_ornek"))
+        assertFalse(t, Regex("\\biz\\d\\b").containsMatchIn(t))
         assertFalse(t, Regex("\\bPC\\b").containsMatchIn(t))
     }
 
@@ -87,7 +128,13 @@ class BirlestirmeAkisiTest {
     fun taslakVeOkunamayanTemelCumleleriYalnizSifirDegilse() {
         yuz.onizlemeler += plan(taslak = 2, okunamayanTemel = 3)
         val o = akis.denetle()!!
-        assertTrue(o.metin, o.metin.contains("• 2 taslak Eren servisine gönderilmeyecek: gönderilemeyenler listesine düşecek, oradan düzeltilip eklenebilir"))
+        assertTrue(
+            o.metin,
+            o.metin.contains(
+                "• 2 taslak Eren servisine gönderilmeyecek: ana listeden kalkıp gönderilemeyenler listesine düşecek, " +
+                    "oradan düzeltilip eklenebilir",
+            ),
+        )
         assertTrue(o.metin, o.metin.contains("• 3 kaydın Eren servisindeki önceki hali okunamıyor: telefondaki farklı her alan Eren servisine gidecek"))
         temiz(o)
     }
@@ -104,9 +151,7 @@ class BirlestirmeAkisiTest {
     fun onizlemeSorulurOnaylaninceSonucGelir() {
         yuz.onizlemeler += plan()
         yuz.onaySonuclari += BirlestirmeSonucu(true, plan())
-        val o = akis.denetle()!!
-        assertTrue(o.toString(), o is BirlestirmeAkisi.Adim.Onay)
-        o as BirlestirmeAkisi.Adim.Onay
+        val o = onay(akis.denetle())
         assertEquals("Kayıtlar Eren servisiyle birleştirilsin mi?", o.baslik)
         assertEquals(
             "Bu telefondaki kayıtlar Eren servisindekilerle birleştirilecek.\n" +
@@ -121,20 +166,21 @@ class BirlestirmeAkisiTest {
                 "Onaylarsanız değişiklikler Eren servisine 5 işlem olarak gönderilir.\n" +
                 "Bundan sonra kayıtları Eren servisi tutar; bu telefon ona bağlı çalışır.\n" +
                 "Vazgeçerseniz hiçbir kayıt değişmez; eşleşme silinir, yeniden bağlanmak için QR kodu yeniden okutulur.\n" +
-                "Şimdi değil derseniz bağlantı yeniden kurulunca yeniden sorulur.",
+                "Şimdi değil derseniz hiçbir kayıt değişmez; bağlantı yeniden kurulunca ya da kayıtlar değişince yeniden sorulur.",
             o.metin,
         )
         assertEquals(listOf("Birleştir", "Vazgeç", "Şimdi değil"), listOf(o.onayDugmesi, o.vazgecDugmesi, o.sonraDugmesi))
+        assertEquals("iz1", o.iz)
         assertTrue(akis.onayBekliyor)
         temiz(o)
 
-        val s = akis.onayla()
+        val s = akis.onayla(o)
         assertTrue(s is BirlestirmeAkisi.Adim.Bilgi)
         assertEquals("Birleştirildi", s.baslik)
         assertEquals(
             "Bu telefon artık Eren servisine bağlı.\n" +
                 "5 işlem Eren servisine gönderilmek üzere sıraya alındı.\n" +
-                "1 kayıt gönderilemeyenler listesine düşebilir; oradan düzeltilebilir.\n" +
+                "1 kayıt Eren servisinde silinmiş olduğu için gönderilemeyenler listesine düşecek.\n" +
                 "1 olası çift listede işaretlendi.",
             s.metin,
         )
@@ -144,13 +190,27 @@ class BirlestirmeAkisiTest {
     }
 
     @Test
+    fun sonuctaTaslakVeRetAyriSayilir() {
+        yuz.onizlemeler += plan(taslak = 2, ret = 3, cift = 0, islem = 0)
+        yuz.onaySonuclari += BirlestirmeSonucu(true, plan(taslak = 2, ret = 3, cift = 0, islem = 0))
+        val s = akis.onayla(onay(akis.denetle()))
+        assertEquals(
+            "Bu telefon artık Eren servisine bağlı.\n" +
+                "3 kayıt gönderilemeyenler listesine düştü; oradan düzeltilebilir.\n" +
+                "2 taslak ana listeden kalkıp gönderilemeyenler listesine düştü; oradan düzeltilip eklenebilir.\n" +
+                "1 kayıt Eren servisinde silinmiş olduğu için gönderilemeyenler listesine düşecek.",
+            s.metin,
+        )
+        temiz(s)
+    }
+
+    @Test
     fun bekleyenYoksaSorulmaz() {
         yuz.onizlemeler += null
         assertNull(akis.denetle())
         assertFalse(akis.onayBekliyor)
-        val a = akis.onayla()
-        assertTrue(a is BirlestirmeAkisi.Adim.Hata)
-        assertEquals("Onay bekleyen bir birleştirme yok.", a.metin)
+        yuz.onizlemeler += null
+        assertNull(akis.bekleyen())
         assertFalse(yuz.cagrilar.any { it.startsWith("onayla") })
     }
 
@@ -159,27 +219,101 @@ class BirlestirmeAkisiTest {
         yuz.onizlemeler += plan(iz = "iz1")
         yuz.onaySonuclari += BirlestirmeSonucu(false, plan(iz = "iz2", yeni = 4))
         yuz.onaySonuclari += BirlestirmeSonucu(true, plan(iz = "iz2", yeni = 4))
-        akis.denetle()
-        val yeniden = akis.onayla()
-        assertTrue(yeniden is BirlestirmeAkisi.Adim.Onay)
+        val ilk = onay(akis.denetle())
+        val yeniden = onay(akis.onayla(ilk))
         assertEquals("Kayıtlar bu arada değişti", yeniden.baslik)
+        assertEquals("iz2", yeniden.iz)
         assertTrue(yeniden.metin, yeniden.metin.startsWith("Önizlemeden sonra kayıtlar değişti; plan yenilendi.\n"))
         assertTrue(yeniden.metin, yeniden.metin.contains("• 4 kayıt Eren servisine yeni kayıt olarak gidecek"))
-        assertTrue(akis.onayla() is BirlestirmeAkisi.Adim.Bilgi)
+        assertTrue(akis.onayla(yeniden) is BirlestirmeAkisi.Adim.Bilgi)
         assertEquals(listOf("onizleme", "onayla:iz1", "onayla:iz2"), yuz.cagrilar)
     }
 
     @Test
-    fun planBossaBaglantiKoptuYenidenSorulacak() {
+    fun eskiPencereylekiOnayGosterilmeyenPlaniUygulamaz() {
+        // A ekranda; gözlemci yeni bildirim getirdi, denetle planı B yaptı; görünüm yenilenmedi.
+        yuz.onizlemeler += plan(iz = "iz1", yeni = 3)
+        yuz.onizlemeler += plan(iz = "iz2", yeni = 9)
+        val a = onay(akis.denetle())
+        val b = onay(akis.denetle())
+        assertEquals("iz2", b.iz)
+        // Kullanıcı A'ya "Birleştir" der: çekirdeğe A'nın izi gider (B'nin değil); çekirdek uygulamaz.
+        yuz.onaySonuclari += BirlestirmeSonucu(false, plan(iz = "iz2", yeni = 9))
+        val yeni = onay(akis.onayla(a))
+        assertEquals(listOf("onizleme", "onizleme", "onayla:iz1"), yuz.cagrilar)
+        // Yeni soru: B'nin sayıları, "değişti" başlığıyla.
+        assertEquals("Kayıtlar bu arada değişti", yeni.baslik)
+        assertTrue(yeni.metin, yeni.metin.contains("• 9 kayıt Eren servisine yeni kayıt olarak gidecek"))
+        assertEquals("iz2", yeni.iz)
+        assertTrue(akis.onayBekliyor)
+    }
+
+    @Test
+    fun ayniAdimlaIkinciOnayCekirdegeGitmez() {
+        yuz.onizlemeler += plan()
+        yuz.onaySonuclari += BirlestirmeSonucu(true, plan())
+        val o = onay(akis.denetle())
+        val ilk = akis.onayla(o)
+        val ikinci = akis.onayla(o)
+        assertEquals(ilk, ikinci)
+        assertEquals("Birleştirildi", ikinci.baslik)
+        assertEquals(1, yuz.cagrilar.count { it.startsWith("onayla") })
+        // Uygulandıktan sonra önizleme kalktı: soru yok, son hal korunur (gecikmiş onay yine aynı sonucu alır).
+        yuz.onizlemeler += null
+        assertNull(akis.denetle())
+        assertEquals(ilk, akis.onayla(o))
+    }
+
+    @Test
+    fun bekleyenYokDeyinceKipOkunur() {
+        // Kip yerel: bağlantı koptu, hiçbir şey yazılmadı.
         yuz.onizlemeler += plan()
         yuz.onaySonuclari += BirlestirmeSonucu(false, null)
-        akis.denetle()
-        val a = akis.onayla()
+        val a = akis.onayla(onay(akis.denetle()))
         assertTrue(a is BirlestirmeAkisi.Adim.Bilgi)
         assertEquals("Birleştirilemedi", a.baslik)
         assertEquals("Eren servisiyle bağlantı koptu; hiçbir kayıt değişmedi. Yeniden bağlanınca yeniden sorulacak.", a.metin)
         assertFalse(akis.onayBekliyor)
         temiz(a)
+
+        // Kip bağlı: başka bir çağrı (ikinci akış, eski görünüm) uygulamış; "koptu" denmez.
+        val ikinciAkis = BirlestirmeAkisi(yuz, kusak = { kusakNo })
+        yuz.onizlemeler += plan(iz = "iz5")
+        val o = onay(ikinciAkis.denetle())
+        yuz.onaySonuclari += BirlestirmeSonucu(false, null)
+        yuz.kipYaniti = CalismaKipi.BAGLI
+        val z = ikinciAkis.onayla(o)
+        assertEquals("Zaten bağlı", z.baslik)
+        assertEquals("Bu telefon Eren servisine bağlı; birleştirme bu arada tamamlanmış. Kayıtları artık Eren servisi tutar.", z.metin)
+        assertFalse(z.metin, z.metin.contains("koptu") || z.metin.contains("değişmedi"))
+        assertEquals(z, ikinciAkis.onayla(o))
+        temiz(z)
+
+        // Kip de okunamadı: belirsiz olduğu söylenir.
+        val ucuncu = BirlestirmeAkisi(yuz, kusak = { kusakNo })
+        yuz.onizlemeler += plan(iz = "iz6")
+        val o3 = onay(ucuncu.denetle())
+        yuz.onaySonuclari += BirlestirmeSonucu(false, null)
+        yuz.kipYaniti = CekirdekHatasi.Depo("k_gizli")
+        val b = ucuncu.onayla(o3)
+        assertEquals("Birleştirmenin sonucu okunamadı", b.baslik)
+        assertTrue(b.metin, b.metin.contains("şu an okunamadı"))
+        assertFalse(b.metin, b.metin.contains("hiçbir kayıt değişmedi"))
+        temiz(b)
+    }
+
+    @Test
+    fun metinKurulamazsaDaUygulandiDenir() {
+        val bozukMetin = object : BirlestirmeMetinleri() {
+            override fun sonuc(p: BirlestirmeOnizlemesi?): String = throw IllegalStateException("biçim")
+        }
+        val a = BirlestirmeAkisi(yuz, bozukMetin, kusak = { kusakNo })
+        yuz.onizlemeler += plan()
+        yuz.onaySonuclari += BirlestirmeSonucu(true, plan())
+        val s = a.onayla(onay(a.denetle()))
+        assertTrue(s is BirlestirmeAkisi.Adim.Bilgi)
+        assertEquals("Birleştirildi", s.baslik)
+        assertEquals("Bu telefon artık Eren servisine bağlı.", s.metin)
     }
 
     @Test
@@ -203,24 +337,99 @@ class BirlestirmeAkisiTest {
     }
 
     @Test
-    fun simdiDegilBuBaglantidaYenidenSormazKopunculaSifirlanir() {
-        yuz.onizlemeler += plan()
-        assertTrue(akis.denetle() is BirlestirmeAkisi.Adim.Onay)
-        akis.simdiDegil()
-        assertFalse(akis.onayBekliyor)
-        // Aynı bağlantıda yeni bildirim: sorulmaz.
-        yuz.onizlemeler += plan(iz = "iz2")
+    fun simdiDegilAyniPlanVeBaglantidaSormazDegisinceSorar() {
+        yuz.onizlemeler += plan(iz = "iz1")
+        val o = onay(akis.denetle())
+        akis.simdiDegil(o)
+        // Birleştirme hâlâ onay bekliyor; ekran şerit gösterebilir.
+        assertTrue(akis.onayBekliyor)
+        assertTrue(akis.ertelendi)
+        yuz.onizlemeler += plan(iz = "iz1")
+        val b = akis.bekleyen()!!
+        assertTrue(b.ertelendi)
+        assertEquals("Kayıtların Eren servisiyle birleştirilmesi onayınızı bekliyor.", b.serit)
+        assertEquals("Gözden geçir", b.dugme)
+        // Aynı plan, aynı bağlantı: sorulmaz.
+        yuz.onizlemeler += plan(iz = "iz1")
         assertNull(akis.denetle())
-        // Kullanıcı kendisi açarsa sorulur.
+        // Şeride dokunuldu: sorulur.
+        yuz.onizlemeler += plan(iz = "iz1")
+        val zorla = onay(akis.denetle(zorla = true))
+        assertFalse(akis.ertelendi)
+        akis.simdiDegil(zorla)
+        // Plan değişti (aynı bağlantı): yeniden sorulur.
         yuz.onizlemeler += plan(iz = "iz2")
-        assertTrue(akis.denetle(zorla = true) is BirlestirmeAkisi.Adim.Onay)
-        akis.simdiDegil()
-        // Bağlantı koptu (önizleme kalktı), sonraki bağlantıda yeniden sorulur.
+        val degisen = onay(akis.denetle())
+        assertEquals("iz2", degisen.iz)
+        assertFalse(yuz.cagrilar.any { it.startsWith("onayla") || it == "vazgec" })
+    }
+
+    @Test
+    fun simdiDegilKesintisizYenidenBaglanmadaYenidenSorulur() {
+        yuz.onizlemeler += plan(iz = "iz1")
+        akis.simdiDegil(onay(akis.denetle()))
+        // Uygulama arkadaydı: bağlantı koptu ve yeniden kuruldu, aradaki boş önizlemeyi kimse görmedi.
+        // Plan aynı (aynı iz), ama bağlantı yeni.
+        kusakNo++
+        yuz.onizlemeler += plan(iz = "iz1")
+        assertFalse(akis.bekleyen()!!.ertelendi)
+        yuz.onizlemeler += plan(iz = "iz1")
+        val yeniden = onay(akis.denetle())
+        assertEquals("iz1", yeniden.iz)
+        assertFalse(akis.ertelendi)
+        // Boş önizleme görülürse erteleme de düşer.
+        akis.simdiDegil(yeniden)
         yuz.onizlemeler += null
         assertNull(akis.denetle())
-        yuz.onizlemeler += plan(iz = "iz3")
-        assertTrue(akis.denetle() is BirlestirmeAkisi.Adim.Onay)
-        assertFalse(yuz.cagrilar.any { it.startsWith("onayla") || it == "vazgec" })
+        assertFalse(akis.ertelendi)
+        assertFalse(akis.onayBekliyor)
+    }
+
+    @Test
+    fun esZamanliOnaylarVeDenetimSiralanir() {
+        yuz.onizlemeler += plan()
+        val o = onay(akis.denetle())
+        yuz.onaySonuclari += BirlestirmeSonucu(true, plan())
+        yuz.onizlemeler += null
+        val kapi = CountDownLatch(1)
+        yuz.onayKapisi = kapi
+        val sonuclar = Collections.synchronizedList(mutableListOf<BirlestirmeAkisi.Adim?>())
+        val hatalar = Collections.synchronizedList(mutableListOf<Throwable>())
+        fun is_(f: () -> BirlestirmeAkisi.Adim?) = Thread {
+            try {
+                sonuclar += f()
+            } catch (t: Throwable) {
+                hatalar += t
+            }
+        }
+        // 1: düğme, çekirdeğin içinde bekler.
+        val t1 = is_ { akis.onayla(o) }.apply { start() }
+        assertTrue(yuz.girdi.await(10, TimeUnit.SECONDS))
+        // 2: çift dokunma; 3: gözlemciden denetle. İkisi de kilitte bekler, çekirdeğe girmez.
+        val t2 = is_ { akis.onayla(o) }.apply { start() }
+        val t3 = is_ { akis.denetle() }.apply { start() }
+        bekleyeKadar(t2)
+        bekleyeKadar(t3)
+        assertEquals(listOf("onizleme", "onayla:iz1"), yuz.cagrilar.toList())
+        kapi.countDown()
+        listOf(t1, t2, t3).forEach { it.join(10_000) }
+        assertTrue("$hatalar", hatalar.isEmpty())
+        assertEquals(1, yuz.azamiEsZaman.get())
+        assertEquals(1, yuz.cagrilar.count { it.startsWith("onayla") })
+        val bilgiler = sonuclar.filterIsInstance<BirlestirmeAkisi.Adim.Bilgi>()
+        assertEquals("$sonuclar", 2, bilgiler.size)
+        assertTrue("$bilgiler", bilgiler.all { it.baslik == "Birleştirildi" })
+        assertTrue("$sonuclar", sonuclar.contains(null))
+        assertFalse(akis.onayBekliyor)
+    }
+
+    /** [t] kilitte (`synchronized`) bekleyene dek. */
+    private fun bekleyeKadar(t: Thread) {
+        val son = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
+        while (t.state != Thread.State.BLOCKED) {
+            assertTrue("iş parçacığı kilide gelmedi: ${t.state}", System.nanoTime() < son && t.isAlive)
+            Thread.sleep(1)
+        }
     }
 
     @Test
@@ -244,11 +453,18 @@ class BirlestirmeAkisiTest {
 
         yuz.onizlemeler += plan()
         yuz.onaySonuclari += IllegalStateException("k_gizli")
-        akis.denetle()
-        val h = akis.onayla()
+        val o = onay(akis.denetle())
+        val h = akis.onayla(o)
         assertEquals("Beklenmeyen bir sorun oldu. Yeniden deneyin.", h.metin)
-        assertFalse(akis.onayBekliyor)
+        // Çekirdek hata verdi: uygulandığı bilinmiyor; soru açık kalır, aynı adımla yeniden denenebilir.
+        assertTrue(akis.onayBekliyor)
+        yuz.onaySonuclari += BirlestirmeSonucu(true, plan())
+        assertEquals("Birleştirildi", akis.onayla(o).baslik)
         temiz(h)
+
+        // Bekleyen sorgusu okuma hatasında null döner (hatayı denetle söyler).
+        yuz.onizlemeler += CekirdekHatasi.Depo("k_gizli")
+        assertNull(akis.bekleyen())
     }
 
     @Test

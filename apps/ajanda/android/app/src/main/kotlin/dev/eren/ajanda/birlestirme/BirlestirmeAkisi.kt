@@ -1,7 +1,9 @@
 package dev.eren.ajanda.birlestirme
 
+import dev.eren.ajanda.ag.BaglantiKusagi
 import dev.eren.ajanda.cekirdek.BirlestirmeOnizlemesi
 import dev.eren.ajanda.cekirdek.BirlestirmeSonucu
+import dev.eren.ajanda.cekirdek.CalismaKipi
 import dev.eren.ajanda.cekirdek.Cekirdek
 import dev.eren.ajanda.cekirdek.Degisim
 import dev.eren.ajanda.cekirdek.KoparmaSonucu
@@ -14,6 +16,9 @@ interface BirlestirmeCekirdegi {
     fun birlestirmeOnizlemesi(): BirlestirmeOnizlemesi?
     fun birlestirmeyiOnayla(iz: String?): BirlestirmeSonucu
     fun birlestirmedenVazgec(): KoparmaSonucu
+
+    /** Onay "bekleyen yok" dönünce birleştirmenin uygulanıp uygulanmadığını ayırmak için. */
+    fun kip(): CalismaKipi
 }
 
 /** Gerçek çekirdeğe bağlanış. */
@@ -21,6 +26,7 @@ class CekirdekBirlestirmesi(private val c: Cekirdek) : BirlestirmeCekirdegi {
     override fun birlestirmeOnizlemesi(): BirlestirmeOnizlemesi? = c.birlestirmeOnizlemesi()
     override fun birlestirmeyiOnayla(iz: String?): BirlestirmeSonucu = c.birlestirmeyiOnayla(iz)
     override fun birlestirmedenVazgec(): KoparmaSonucu = c.birlestirmedenVazgec()
+    override fun kip(): CalismaKipi = c.kip()
 }
 
 /**
@@ -29,33 +35,50 @@ class CekirdekBirlestirmesi(private val c: Cekirdek) : BirlestirmeCekirdegi {
  *
  * - Çekirdek önizleme hazır olunca gözlemciye `Degisim.baglanti` yollar: görünüm [ilgili] doğruysa (çekirdek
  *   iş parçacığı dışında) [denetle] çağırır. Dönen `null`: sorulacak bir şey yok (açık soru varsa kapatılır).
- * - [Adim.Onay]: olumlu düğme [onayla], olumsuz [vazgec], üçüncü [simdiDegil].
- * - [onayla]: plan önizlemeden sonra değiştiyse yeni planla yeniden [Adim.Onay]; bekleyen birleştirme kalmadıysa
- *   (bağlantı koptu) [Adim.Bilgi] "yeniden bağlanınca sorulacak"; uygulandıysa sonuç [Adim.Bilgi].
+ *   Görünüm açılışta (onStart) da [denetle] çağırır: arada kaçırılan bildirim olabilir.
+ * - [Adim.Onay] gösterilen planın izini ([Adim.Onay.iz]) taşır. Düğmeler o adımı geri verir: olumlu
+ *   [onayla]`(adim)`, olumsuz [vazgec], üçüncü [simdiDegil]`(adim)`. Onay hep o adımın iziyle yapılır: ekranda
+ *   eski plan kaldıysa (arada [denetle] yeni plan getirdi, görünüm yenilemedi) çekirdek uygulamaz, yeni planla
+ *   yeniden [Adim.Onay] döner.
+ * - [onayla]: plan önizlemeden sonra değiştiyse yeni planla yeniden [Adim.Onay]; uygulandıysa sonuç [Adim.Bilgi];
+ *   çekirdek "bekleyen yok" derse kip okunur: `YEREL` ise bağlantı kopmuştur, hiçbir şey yazılmamıştır
+ *   ("yeniden bağlanınca sorulacak"); `BAGLI` ise birleştirme başka bir çağrıyla uygulanmıştır ("zaten bağlı");
+ *   kip de okunamazsa durum belirsizdir ve öyle söylenir. Aynı adımla ikinci onay (çift dokunma, iki iş
+ *   parçacığı) çekirdeğe gitmez, ilk onayın sonucunu yeniden döner.
  * - [vazgec]: bağlanmayı iptal eder (eşleşme silinir, kayıtlar değişmez; yeniden bağlanmak için QR).
- * - [simdiDegil]: çekirdeğe gitmez; soru yanıtsız kalır. Bu bağlantı boyunca [denetle] yeniden sormaz
- *   (önizleme kalkınca, yani bağlantı kopunca sıfırlanır); [denetle] `zorla = true` ile yine sorar.
+ * - [simdiDegil]: çekirdeğe gitmez; birleştirme onay beklemeyi sürdürür ([bekleyen], [ertelendi]: görünüm
+ *   "bekleyen birleştirme" şeridi gösterebilir). Erteleme o plana (iz) ve o bağlantıya ([BaglantiKusagi]) bağlıdır:
+ *   [denetle] plan değişince ya da yeni bir bağlantıda yeniden sorar (aradaki kopmayı görmemiş olsa da);
+ *   `zorla = true` ile (şeride dokunuldu) her zaman sorar.
  *
- * İş parçacığı: bütün yöntemler eşzamanlıdır, çekirdeği çağırır; ana iş parçacığından çağrılmaz, aynı anda tek
- * iş parçacığından (durum tutar). Her [Exception] bir [Adim.Hata]'ya çevrilir.
- * Mahremiyet: metinler yalnız sayı taşır; kayıt başlığı ya da kimliği girmez.
+ * İş parçacığı: bütün yöntemler eşzamanlıdır, çekirdeği çağırır; ana iş parçacığından çağrılmaz. Her iş
+ * parçacığından çağrılabilir: durum ve çekirdek çağrıları tek kilit altında sıralanır (gözlemciden gelen
+ * [denetle] ile düğmeden gelen [onayla] birbirinin ortasına girmez). Her [Exception] bir [Adim.Hata]'ya çevrilir.
+ * Mahremiyet: metinler yalnız sayı taşır; kayıt başlığı ya da kimliği girmez (iz yalnız [Adim.Onay.iz]'dedir,
+ * gösterilmez).
  */
 class BirlestirmeAkisi(
     private val c: BirlestirmeCekirdegi,
     private val metinler: BirlestirmeMetinleri = BirlestirmeMetinleri(),
+    /** Bağlantı kuşağı (testte elle). */
+    private val kusak: () -> Long = { BaglantiKusagi.simdiki },
 ) {
     /** Görünümün göstereceği adım. */
     sealed class Adim {
         abstract val baslik: String
         abstract val metin: String
 
-        /** Soru: [onayDugmesi] -> [onayla], [vazgecDugmesi] -> [vazgec], [sonraDugmesi] -> [simdiDegil]. */
+        /**
+         * Soru: [onayDugmesi] -> [onayla]`(bu)`, [vazgecDugmesi] -> [vazgec], [sonraDugmesi] -> [simdiDegil]`(bu)`.
+         * [iz]: gösterilen planın izi (görünüm göstermez, yalnız geri verir).
+         */
         data class Onay(
             override val baslik: String,
             override val metin: String,
             val onayDugmesi: String,
             val vazgecDugmesi: String,
             val sonraDugmesi: String,
+            val iz: String,
         ) : Adim()
 
         /** Bilgi (sonuç ya da yapılacak bir şey yok); tek "Tamam". */
@@ -65,64 +88,95 @@ class BirlestirmeAkisi(
         data class Hata(override val baslik: String, override val metin: String) : Adim()
     }
 
-    /** Gösterilen planın izi (onayda çekirdeğe verilir). */
-    private var bekleyenIz: String? = null
+    /** Ekranın sorguladığı bekleyen birleştirme ([bekleyen]); şerit metni ve düğmesi hazır. */
+    data class Bekleyen(val ertelendi: Boolean, val serit: String, val dugme: String)
 
-    /** Kullanıcı "Şimdi değil" dedi; önizleme kalkınca (bağlantı koptu) sıfırlanır. */
-    private var ertelendi = false
+    /** Akışın bildiği son hal (kilit altında değişir). */
+    private sealed interface Hal {
+        data object Yok : Hal
 
-    /** Onay bekleyen soru var mı (görünüm yeniden kurulunca). */
-    val onayBekliyor: Boolean get() = bekleyenIz != null
+        /** [iz]'li plan sorulmuş ([kusak] bağlantısında). */
+        data class Soruldu(val iz: String, val kusak: Long) : Hal
+
+        data class Ertelendi(val iz: String, val kusak: Long) : Hal
+
+        /** [izler]'den biriyle uygulandı; aynı izle gelen onay [sonuc]'u yeniden alır. */
+        data class Uygulandi(val izler: Set<String>, val sonuc: Adim.Bilgi) : Hal
+    }
+
+    private val kilit = Any()
+
+    @Volatile
+    private var hal: Hal = Hal.Yok
+
+    /** Son bilinen: çekirdek onay bekliyor (soru ekranda ya da ertelendi). Canlı sorgu: [bekleyen]. */
+    val onayBekliyor: Boolean get() = hal.let { it is Hal.Soruldu || it is Hal.Ertelendi }
+
+    /** Son bilinen: kullanıcı "Şimdi değil" dedi, birleştirme hâlâ onay bekliyor. Canlı sorgu: [bekleyen]. */
+    val ertelendi: Boolean get() = hal is Hal.Ertelendi
 
     /**
-     * Önizlemeyi okur. `null`: sorulacak bir şey yok (bekleyen birleştirme yok ya da bu bağlantıda ertelendi).
-     * Plan değiştiyse (yeni `iz`) güncel planla yeni [Adim.Onay] döner.
+     * Önizlemeyi okur. `null`: sorulacak bir şey yok (bekleyen birleştirme yok ya da aynı plan bu bağlantıda
+     * ertelendi). Plan değiştiyse (yeni `iz`) ya da bağlantı yenilendiyse güncel planla yeni [Adim.Onay] döner.
      */
-    fun denetle(zorla: Boolean = false): Adim? {
-        return try {
+    fun denetle(zorla: Boolean = false): Adim? = synchronized(kilit) {
+        try {
             val p = c.birlestirmeOnizlemesi()
             if (p == null) {
-                bekleyenIz = null
-                ertelendi = false
+                if (hal !is Hal.Uygulandi) hal = Hal.Yok
                 return null
             }
-            if (ertelendi && !zorla) return null
-            ertelendi = false
+            if (!zorla && ayniErteleme(p)) return null
             onayAdimi(p, degisti = false)
         } catch (e: Exception) {
-            bekleyenIz = null
             Adim.Hata(metinler.hataBaslik, metinler.hata(e))
         }
     }
 
-    /** Kullanıcı birleştirmeyi onayladı. */
-    fun onayla(): Adim {
-        val iz = bekleyenIz ?: return Adim.Hata(metinler.hataBaslik, metinler.bekleyenYok)
-        return try {
-            val s = c.birlestirmeyiOnayla(iz)
-            val plan = s.plan
-            when {
-                s.uygulandi -> {
-                    bekleyenIz = null
-                    Adim.Bilgi(metinler.sonucBaslik, metinler.sonuc(plan))
-                }
-                plan != null -> onayAdimi(plan, degisti = true)
-                else -> {
-                    bekleyenIz = null
-                    Adim.Bilgi(metinler.koptuBaslik, metinler.koptu)
-                }
-            }
+    /**
+     * Canlı sorgu (çekirdeği okur; ana iş parçacığından değil): onay bekleyen birleştirme var mı, kullanıcı onu
+     * erteledi mi. `null`: bekleyen yok ya da okunamadı (okuma hatasını [denetle] söyler). `ertelendi` yanlışsa
+     * soru açık ya da yeniden sorulmalı: görünüm [denetle] çağırır.
+     */
+    fun bekleyen(): Bekleyen? = synchronized(kilit) {
+        val p = try {
+            c.birlestirmeOnizlemesi()
+        } catch (_: Exception) {
+            return null
+        }
+        if (p == null) {
+            if (hal !is Hal.Uygulandi) hal = Hal.Yok
+            return null
+        }
+        Bekleyen(ayniErteleme(p), metinler.bekleyenSeridi, metinler.bekleyenDugmesi)
+    }
+
+    /** Kullanıcı [adim]'daki planı onayladı (onay o adımın iziyle yapılır). */
+    fun onayla(adim: Adim.Onay): Adim = synchronized(kilit) {
+        val h = hal
+        if (h is Hal.Uygulandi && adim.iz in h.izler) return h.sonuc
+        val s = try {
+            c.birlestirmeyiOnayla(adim.iz)
         } catch (e: Exception) {
-            bekleyenIz = null
-            Adim.Hata(metinler.hataBaslik, metinler.hata(e))
+            return Adim.Hata(metinler.hataBaslik, metinler.hata(e))
+        }
+        val plan = s.plan
+        when {
+            s.uygulandi -> uygulandi(setOfNotNull(adim.iz, plan?.iz), metinSonuc { metinler.sonuc(plan) })
+            plan != null -> try {
+                onayAdimi(plan, degisti = true)
+            } catch (e: Exception) {
+                // Hiçbir şey yazılmadı (uygulandi yanlış); soru sürer, görünüm denetle ile yeniden alır.
+                Adim.Hata(metinler.hataBaslik, metinler.hata(e))
+            }
+            else -> bekleyenYok(adim.iz)
         }
     }
 
     /** Kullanıcı vazgeçti: bağlanma iptal edilir (eşleşme silinir; kayıtlar değişmez). */
-    fun vazgec(): Adim {
-        bekleyenIz = null
-        ertelendi = false
-        return try {
+    fun vazgec(): Adim = synchronized(kilit) {
+        hal = Hal.Yok
+        try {
             val k = c.birlestirmedenVazgec()
             Adim.Bilgi(metinler.vazgecBaslik, metinler.vazgecSonucu(k))
         } catch (e: Exception) {
@@ -130,21 +184,64 @@ class BirlestirmeAkisi(
         }
     }
 
-    /** "Şimdi değil": çekirdeğe gitmez; soru bağlantı yeniden kurulunca yeniden gelir. */
-    fun simdiDegil() {
-        bekleyenIz = null
-        ertelendi = true
+    /**
+     * "Şimdi değil" ([adim]'daki plan için): çekirdeğe gitmez; birleştirme onay bekler. Aynı plan aynı bağlantıda
+     * yeniden sorulmaz; plan değişince ya da yeni bağlantıda yeniden sorulur.
+     */
+    fun simdiDegil(adim: Adim.Onay) = synchronized(kilit) {
+        val h = hal
+        if (h is Hal.Uygulandi) return@synchronized
+        val k = if (h is Hal.Soruldu && h.iz == adim.iz) h.kusak else kusak()
+        hal = Hal.Ertelendi(adim.iz, k)
     }
 
-    private fun onayAdimi(p: BirlestirmeOnizlemesi, degisti: Boolean): Adim {
-        bekleyenIz = p.iz
-        return Adim.Onay(
+    private fun ayniErteleme(p: BirlestirmeOnizlemesi): Boolean {
+        val h = hal
+        return h is Hal.Ertelendi && h.iz == p.iz && h.kusak == kusak()
+    }
+
+    private fun onayAdimi(p: BirlestirmeOnizlemesi, degisti: Boolean): Adim.Onay {
+        val a = Adim.Onay(
             baslik = if (degisti) metinler.degistiBaslik else metinler.baslik,
             metin = metinler.onizleme(p, degisti),
             onayDugmesi = metinler.onayDugmesi,
             vazgecDugmesi = metinler.vazgecDugmesi,
             sonraDugmesi = metinler.sonraDugmesi,
+            iz = p.iz,
         )
+        hal = Hal.Soruldu(p.iz, kusak())
+        return a
+    }
+
+    private fun uygulandi(izler: Set<String>, metin: String): Adim.Bilgi {
+        val b = Adim.Bilgi(metinler.sonucBaslik, metin)
+        hal = Hal.Uygulandi(izler, b)
+        return b
+    }
+
+    /** Uygulanmış birleştirmenin metni kurulamazsa da "uygulandı" denir (yazılmış olanı yapılamadı saymaz). */
+    private inline fun metinSonuc(kur: () -> String): String = try {
+        kur()
+    } catch (_: Exception) {
+        metinler.sonucKisa
+    }
+
+    /**
+     * Çekirdek "onay bekleyen birleştirme yok" dedi (`uygulandi` yanlış, `plan` yok): ya bağlantı koptu (hiçbir şey
+     * yazılmadı) ya da birleştirme başka bir çağrıyla uygulandı (kip bağlı). Bugünkü köprü ikisini ayırmaz; kip
+     * okunarak ayrılır. Çekirdek "zaten uygulandı" bilgisini verince bu okuma o alanla değişir.
+     */
+    private fun bekleyenYok(iz: String): Adim.Bilgi {
+        val kip = try {
+            c.kip()
+        } catch (_: Exception) {
+            null
+        }
+        return when (kip) {
+            CalismaKipi.BAGLI -> Adim.Bilgi(metinler.zatenBaslik, metinler.zaten).also { hal = Hal.Uygulandi(setOf(iz), it) }
+            CalismaKipi.YEREL -> Adim.Bilgi(metinler.koptuBaslik, metinler.koptu).also { hal = Hal.Yok }
+            null -> Adim.Bilgi(metinler.belirsizBaslik, metinler.belirsiz).also { hal = Hal.Yok }
+        }
     }
 
     companion object {

@@ -12,7 +12,7 @@ import java.util.Locale
  * SAHİBİ: D3. Dışa ve içe aktarmanın kullanıcı metinleri (saf). Yalnız sayı ve tarih taşır: dosyanın
  * içeriği (başlık vb.) metne girmez. Servis "Eren servisi" diye anılır.
  */
-class AktarmaMetinleri(private val dilim: ZoneId) {
+open class AktarmaMetinleri(private val dilim: ZoneId) {
     val disaBaslik = "Dışa aktarıldı"
     val disaHataBaslik = "Dışa aktarılamadı"
     val iceBaslik = "İçe aktarılsın mı?"
@@ -21,6 +21,9 @@ class AktarmaMetinleri(private val dilim: ZoneId) {
     val iceHataBaslik = "İçe aktarılamadı"
     val onayDugmesi = "İçe aktar"
     val bekleyenYok = "Onay bekleyen dosya yok. Dosyayı yeniden seçin."
+
+    /** Uygulanmış içe aktarmanın sayılı metni kurulamazsa. */
+    val iceSonucuKisa = "Yedekteki kayıtlar içe aktarıldı."
 
     private val tarihBicimi = DateTimeFormatter.ofPattern("d MMMM yyyy HH:mm", Locale.forLanguageTag("tr"))
 
@@ -42,22 +45,27 @@ class AktarmaMetinleri(private val dilim: ZoneId) {
         if (degisti) add("Önizlemeden sonra telefondaki kayıtlar değişti; plan yenilendi.")
         add("${tarih(p.disaAktarmaMs)} tarihli yedek: ${p.toplam} kayıt.")
         val satirlar = buildList {
-            if (p.yeni > 0) add("${p.yeni} yeni kayıt eklenecek")
-            if (p.guncellenecek > 0) add("${p.guncellenecek} kayıt güncellenecek (yedekteki daha yeni)")
-            if (p.ayni > 0) add("${p.ayni} kayıt telefondakiyle aynı")
-            if (p.atlanacak > 0) add("${p.atlanacak} kayıt atlanacak (telefondaki daha yeni)")
-            if (p.sinirAsan > 0) add("${p.sinirAsan} kayıt sınır dolduğu için eklenemeyecek")
-            if (p.silinecek > 0) {
-                add("${p.silinecek} kayıt silinecek (telefondaki kayıt, yedekteki daha yeni silinmiş haliyle değişecek)")
+            if (p.yeni > 0) add("• ${p.yeni} yeni kayıt eklenecek")
+            if (p.guncellenecek > 0) {
+                add("• ${p.guncellenecek} kayıt güncellenecek (yedekteki daha yeni)")
+                // `silinecek` ve `geriYuklenecek` güncellenecek kayıtların içindedir: alt madde, ayrıca sayılmaz.
+                if (p.silinecek > 0) {
+                    add("   – bunlardan ${p.silinecek} kayıt silinecek (yedekteki daha yeni hali silinmiş)")
+                }
+                if (p.geriYuklenecek > 0) {
+                    add("   – bunlardan ${p.geriYuklenecek} kayıt geri yüklenecek (telefonda silinmiş, yedekteki daha yeni hali geri gelecek)")
+                }
             }
-            if (p.geriYuklenecek > 0) {
-                add("${p.geriYuklenecek} kayıt geri yüklenecek (telefonda silinmiş, yedekteki daha yeni haliyle geri gelecek)")
+            if (p.ayni > 0) add("• ${p.ayni} kayıt telefondakiyle aynı")
+            if (p.atlanacak > 0) add("• ${p.atlanacak} kayıt atlanacak (telefondaki daha yeni)")
+            if (p.sinirAsan > 0) add("• ${p.sinirAsan} kayıt sınır dolduğu için eklenemeyecek")
+            if (p.gecersiz > 0) add("• ${p.gecersiz} kayıt okunamadı, alınmayacak")
+            if (p.taslakGonderilmeyecek > 0) {
+                add("• ${p.taslakGonderilmeyecek} taslak alınmayacak (Eren servisi taslak kabul etmez; yedek dosyasında kalır)")
             }
-            if (p.gecersiz > 0) add("${p.gecersiz} kayıt okunamadı, alınmayacak")
-            if (p.taslakGonderilmeyecek > 0) add("${p.taslakGonderilmeyecek} taslak Eren servisine gönderilmeyecek")
-            if (p.gonderilmeyecek > 0) add("${p.gonderilmeyecek} silinmiş kayıt Eren servisine gönderilmeyecek")
+            if (p.gonderilmeyecek > 0) add("• ${p.gonderilmeyecek} silinmiş kayıt Eren servisine gönderilmeyecek")
         }
-        satirlar.forEach { add("• $it") }
+        addAll(satirlar)
         if (p.yeni + p.guncellenecek == 0) {
             add("Telefona eklenecek ya da güncellenecek kayıt yok.")
         } else if (p.kip == CalismaKipi.BAGLI) {
@@ -70,7 +78,7 @@ class AktarmaMetinleri(private val dilim: ZoneId) {
         }
     }.joinToString("\n")
 
-    fun iceSonucu(p: IceAktarmaOnizlemesi): String = buildList {
+    open fun iceSonucu(p: IceAktarmaOnizlemesi): String = buildList {
         val parcalar = buildList {
             if (p.yeni > 0) add("${p.yeni} yeni kayıt eklendi")
             if (p.guncellenecek > 0) add("${p.guncellenecek} kayıt güncellendi")
@@ -81,6 +89,7 @@ class AktarmaMetinleri(private val dilim: ZoneId) {
         }
         if (p.gecersiz > 0) add("${p.gecersiz} kayıt okunamadığı için alınmadı.")
         if (p.sinirAsan > 0) add("${p.sinirAsan} kayıt sınır dolduğu için eklenmedi.")
+        if (p.taslakGonderilmeyecek > 0) add("${p.taslakGonderilmeyecek} taslak alınmadı; Eren servisi taslak kabul etmez.")
     }.joinToString("\n")
 
     fun hata(e: Throwable, yazarken: Boolean): String = when (sorunu(e, yazarken)) {

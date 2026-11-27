@@ -280,6 +280,7 @@ class BaglantiDenetcisi(
         }
         val s = AjandaSoketi(c, zaman, gunluk, ayar, soketOlaylari)
         soket = s
+        BaglantiKusagi.yeni()
         acilisZamani = zaman.sonra(ayar.acilisSuresiMs) {
             korumali {
                 if (soket === s && !s.acik) {

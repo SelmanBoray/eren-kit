@@ -15,10 +15,13 @@ import java.time.LocalDate
  * - Dışa: [disaAktar] çekirdekten belgeyi alır, kaba yazar; sonuç metni.
  * - İçe: [dosyaOku] kabı okur, önizlemeyi ister ([Adim.Onay]) -> [onayla] ekleri yerleştirir, `iceAktar`
  *   çağırır; telefon önizlemeden sonra değiştiyse yeni planla yeniden [Adim.Onay], değilse [Adim.Bilgi].
- *   [vazgec] bekleyen dosyayı bırakır.
+ *   [vazgec] bekleyen dosyayı bırakır. [Adim.Onay] gösterilen planın izini taşır; görünüm onu [onayla]'ya geri
+ *   verir: onay o izle yapılır (ekranda eski plan kaldıysa çekirdek uygulamaz, yeni planla yeniden sorulur), aynı
+ *   adımla ikinci onay (çift dokunma) çekirdeğe gitmez, ilk onayın sonucunu yeniden döner. Uygulandıktan sonra
+ *   sonuç metni kurulamazsa da "içe aktarıldı" denir.
  *
- * İş parçacığı: bütün yöntemler eşzamanlıdır, çekirdeği çağırır; ana iş parçacığından çağrılmaz, aynı
- * anda tek iş parçacığından (durum tutar). Her [Exception] ve [OutOfMemoryError] (dev ya da bozuk dosya;
+ * İş parçacığı: bütün yöntemler eşzamanlıdır, çekirdeği çağırır; ana iş parçacığından çağrılmaz. Her iş
+ * parçacığından çağrılabilir: durum ve çekirdek çağrıları tek kilit altında sıralanır. Her [Exception] ve [OutOfMemoryError] (dev ya da bozuk dosya;
  * "çok büyük ya da bozuk" denir, bekleyen dosya bırakılır) bir [Adim.Hata]'ya çevrilir. Başka [Error]'lar
  * (ör. `StackOverflowError`, `LinkageError`) yakalanmaz, çağırana çıkar.
  * Mahremiyet: dosya içeriği hiçbir günlüğe yazılmaz; metinler yalnız sayı ve tarih taşır.
@@ -33,8 +36,8 @@ class AktarmaAkisi(
         abstract val baslik: String
         abstract val metin: String
 
-        /** Onay iste: olumlu düğme [onayla], olumsuz [vazgec]. */
-        data class Onay(override val baslik: String, override val metin: String, val dugme: String) : Adim()
+        /** Onay iste: olumlu düğme [onayla]`(bu)`, olumsuz [vazgec]. [iz]: gösterilen planın izi (gösterilmez). */
+        data class Onay(override val baslik: String, override val metin: String, val dugme: String, val iz: String = "") : Adim()
 
         /** Bilgi (sonuç ya da yapılacak bir şey yok); tek "Tamam". */
         data class Bilgi(override val baslik: String, override val metin: String) : Adim()
@@ -46,14 +49,20 @@ class AktarmaAkisi(
     /** [ekler]: dosyanın taşıdığı ekler (dosyadan gelir, telefonun haline bağlı değil). */
     private class Bekleyen(val okunan: YedekKabi.Okunan, val iz: String, val ekler: List<EkDosyasi>)
 
+    private val kilit = Any()
+
+    @Volatile
     private var bekleyen: Bekleyen? = null
+
+    /** Son uygulanan içe aktarmanın izi ve sonucu (aynı adımla gelen ikinci onay için). */
+    private var uygulanan: Pair<String, Adim.Bilgi>? = null
 
     /**
      * Dışa aktarır ve [ac]'ın verdiği akışa yazar (akış burada kapatılır). Başarısızlıkta [basarisizsa]
      * çağrılır (yarım dosyayı silmek için; hatası yutulur).
      */
-    fun disaAktar(ac: () -> OutputStream, basarisizsa: () -> Unit = {}): Adim {
-        return try {
+    fun disaAktar(ac: () -> OutputStream, basarisizsa: () -> Unit = {}): Adim = synchronized(kilit) {
+        try {
             val bicim = c.aktarmaBicimi()
             val disa = c.disaAktar()
             ac().use { YedekKabi.yaz(it, bicim, disa, depo) }
@@ -68,9 +77,9 @@ class AktarmaAkisi(
     }
 
     /** Seçilen dosyayı okur ([ac]'ın akışı burada kapatılır) ve önizlemeyi döner. */
-    fun dosyaOku(ac: () -> InputStream): Adim {
+    fun dosyaOku(ac: () -> InputStream): Adim = synchronized(kilit) {
         bekleyen = null
-        return try {
+        try {
             val bicim = c.aktarmaBicimi()
             val okunan = ac().use { YedekKabi.oku(it, bicim) }
             val plan = c.iceAktarmaOnizlemesi(okunan.belge)
@@ -85,29 +94,45 @@ class AktarmaAkisi(
         }
     }
 
-    /** Kullanıcı önizlemeyi onayladı. */
-    fun onayla(): Adim {
+    /**
+     * Kullanıcı [adim]'daki önizlemeyi onayladı; onay o adımın iziyle yapılır. `null` (eski görünüm): bekleyen
+     * planın iziyle.
+     */
+    fun onayla(adim: Adim.Onay? = null): Adim = synchronized(kilit) {
+        val u = uygulanan
+        if (adim != null && u != null && adim.iz == u.first) return u.second
         val b = bekleyen ?: return Adim.Hata(metinler.iceHataBaslik, metinler.bekleyenYok)
-        return try {
+        val iz = adim?.iz?.takeIf { it.isNotEmpty() } ?: b.iz
+        val s = try {
             val bicim = c.aktarmaBicimi()
             YedekKabi.ekleriYerlestir(b.ekler, b.okunan, bicim, depo)
-            val s = c.iceAktar(b.okunan.belge, b.iz)
-            if (s.uygulandi) {
-                bekleyen = null
-                Adim.Bilgi(metinler.iceSonucBaslik, metinler.iceSonucu(s.plan))
-            } else {
-                onizlemeAdimi(b.okunan, s.plan, degisti = true)
-            }
+            c.iceAktar(b.okunan.belge, iz)
         } catch (e: Exception) {
             bekleyen = null
-            Adim.Hata(metinler.iceHataBaslik, metinler.hata(e, yazarken = false))
+            return Adim.Hata(metinler.iceHataBaslik, metinler.hata(e, yazarken = false))
         } catch (e: OutOfMemoryError) {
+            bekleyen = null
+            return Adim.Hata(metinler.iceHataBaslik, metinler.hata(e, yazarken = false))
+        }
+        if (s.uygulandi) {
+            // Yazıldı: bundan sonraki hiçbir hata "yapılamadı" diye söylenmez.
+            bekleyen = null
+            val metin = try {
+                metinler.iceSonucu(s.plan)
+            } catch (_: Exception) {
+                metinler.iceSonucuKisa
+            }
+            return Adim.Bilgi(metinler.iceSonucBaslik, metin).also { uygulanan = iz to it }
+        }
+        try {
+            onizlemeAdimi(b.okunan, s.plan, degisti = true)
+        } catch (e: Exception) {
             bekleyen = null
             Adim.Hata(metinler.iceHataBaslik, metinler.hata(e, yazarken = false))
         }
     }
 
-    fun vazgec() {
+    fun vazgec() = synchronized(kilit) {
         bekleyen = null
     }
 
@@ -121,7 +146,7 @@ class AktarmaAkisi(
             Adim.Bilgi(metinler.iceBaslik, metin)
         } else {
             bekleyen = Bekleyen(okunan, plan.iz, plan.ekler)
-            Adim.Onay(if (degisti) metinler.degistiBaslik else metinler.iceBaslik, metin, metinler.onayDugmesi)
+            Adim.Onay(if (degisti) metinler.degistiBaslik else metinler.iceBaslik, metin, metinler.onayDugmesi, plan.iz)
         }
     }
 
