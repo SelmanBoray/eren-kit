@@ -304,7 +304,9 @@ fn yerel_kipte_eslesince_kayitlar_pc_ye_gider_kip_bagli_olur() {
     assert!(h.gozlemci.al().iter().any(|d| d.tumu && d.baglanti));
     let d = h.c.baglanti_durumu().unwrap();
     assert_eq!((d.kuyrukta, d.ret_listesinde), (0, 0));
-    for (id, yerel) in [&a, &b, &c, &s].iter().zip(&once) {
+    // PC'de hiç olmamış mezar taşı gönderilmez (ölü kayıt PC'nin kayıt sınırını yemesin), görünen kopyadan çıkar.
+    assert!(!h.pc.d.kayitlar.contains_key(&c) && h.c.kayit(c.clone()).unwrap().is_none());
+    for (id, yerel) in [&a, &b, &s].iter().zip([&once[0], &once[1], &once[3]]) {
         let g = h.c.kayit((*id).clone()).unwrap().unwrap();
         assert!(!g.bekleyen);
         let pc = &h.pc.d.kayitlar[*id];

@@ -415,15 +415,18 @@ impl Motor {
         let yerel = self.yerel_mi()?;
         match t.tam {
             Some((depo_id, son_rev)) if yerel => {
-                self.depo.yazma(|d| {
-                    super::yerel::yereli_kuyruga_dok(d, o, &b, &depo_id, son_rev)?;
+                let ret = self.depo.yazma(|d| {
+                    let ret = super::yerel::yereli_kuyruga_dok(d, o, &b, &depo_id, son_rev)?;
                     d.meta_yaz(anahtar::SON_ESITLENME_MS, Some(&simdi))?;
-                    Ok(())
+                    Ok(ret)
                 })?;
+                self.yerelden_baglandi(e, ret);
                 self.hepsi_degisti(o, e);
             }
             Some((depo_id, son_rev)) => {
                 self.depo.yazma(|d| {
+                    // Aynı depo (servis yedekten dönmüş): PC'nin yitirdiği onaylı haller kuyruğa (`yerel.rs`).
+                    super::yerel::geri_donenleri_kuyruga_koy(d, o, &b, &depo_id)?;
                     d.telafiyi_sunucuya_gecir()?;
                     d.depo_id_yaz(&depo_id)?;
                     d.son_rev_yaz(son_rev)?;

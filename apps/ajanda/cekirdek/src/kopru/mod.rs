@@ -210,7 +210,9 @@ impl Cekirdek {
         zaman: Arc<dyn ZamanKabugu>,
         alarm: Arc<dyn AlarmKabugu>,
     ) -> Result<Arc<Self>, CekirdekHatasi> {
-        let motor = Motor::ac(&veritabani_yolu)?;
+        let mut motor = Motor::ac(&veritabani_yolu)?;
+        // Bağlı kip + eşleşme yok çıkışsızdır: veri kaybısız yerel kipe (`motor/yerel.rs`).
+        motor.cikissiz_bagli_kipi_onar(&Ortam { kimlik: &*kimlik, zaman: &*zaman })?;
         let okuyucu = crate::depo::Depo::okuyucu_ac(&veritabani_yolu)?.map(Mutex::new);
         Ok(Arc::new(Cekirdek {
             motor: Mutex::new(motor),

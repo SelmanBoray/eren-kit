@@ -410,9 +410,13 @@ fn pc_yedekten_geri_yuklenince_tam_esitleme() {
     h.pc.disaridan_ekle("k_c", &govde("C", None), false);
     h.baglan();
     assert_eq!(h.pc.son_welcome_tam, Some(true), "iz tutmuyor: tam");
+    // Aynı depo, tam telafi: PC'nin yitirdiği onaylı hal (k_b) PC'ye geri gider; PC'nin yeni kaydı gelir.
     let mut l = basliklar(&liste(&h, Sekme::Tarihsiz, true));
     l.sort();
-    assert_eq!(l, vec!["A", "C"], "telefon PC'nin kopyasına döndü");
+    assert_eq!(l, vec!["A", "B", "C"], "telefonun bildiği hal kaybolmadı");
+    assert_eq!(h.pc.d.kayitlar["k_b"].baslik, "B", "PC'nin yitirdiği kayıt geri gitti");
+    assert_eq!(h.c.kayit("k_b".into()).unwrap().unwrap().kayit, h.pc.d.kayitlar["k_b"]);
+    assert_eq!(h.c.baglanti_durumu().unwrap().kuyrukta, 0);
 }
 
 #[test]
