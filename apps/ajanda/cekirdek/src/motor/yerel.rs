@@ -291,7 +291,7 @@ fn kuyruga_islemler(temel: Option<&AjandaKaydi>, k: &AjandaKaydi) -> Vec<(Ajanda
     let t = match temel {
         None => {
             let girdi_yolu = if k.kaynak.yol == KaynakYolu::SesliNot { GirdiYolu::SesliNot } else { GirdiYolu::Elle };
-            l.push((AjandaIslem::Ekle { kayit_id: kayit_id(), govde: kayittan_govde(k), girdi_yolu }, k.olusturma_ms));
+            l.push((AjandaIslem::Ekle { kayit_id: kayit_id(), govde: kayittan_govde(k), v3: Default::default(), girdi_yolu }, k.olusturma_ms));
             &bos
         }
         Some(t) => t,

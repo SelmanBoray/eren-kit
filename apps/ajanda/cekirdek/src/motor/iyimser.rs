@@ -112,6 +112,7 @@ fn eklenen_kayit(kayit_id: &str, govde: &KayitGovdesi, yol: KaynakYolu, ts: i64,
         },
         olusturma_ms: ts,
         guncelleme_ms: ts,
+        v3: Default::default(),
     }
 }
 
@@ -129,7 +130,7 @@ pub(crate) enum Uygulama {
 /// İşlemi `onceki` hale servis kurallarıyla uygular (`ts`: işlemin anı). Yeni halin revizyonu değişmez
 /// (servis ya da yerel yazar verir); `guncelleme_ms` `degisiklikAni` kuralıyla ilerler.
 pub(crate) fn islem_uygula(onceki: Option<&AjandaKaydi>, islem: &AjandaIslem, ts: i64, b: &IyimserBaglam) -> Uygulama {
-    if let AjandaIslem::Ekle { kayit_id, govde, girdi_yolu } = islem {
+    if let AjandaIslem::Ekle { kayit_id, govde, girdi_yolu, .. } = islem {
         return match onceki {
             // Servis zaten uyguladı (kayıt sonuçtan önce geldi) ya da kimlik çakışıyor: gerçek olan kalır.
             Some(_) => Uygulama::Ret(AjandaRetNedeni::KimlikCakisiyor),

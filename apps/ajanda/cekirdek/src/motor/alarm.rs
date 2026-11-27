@@ -168,6 +168,7 @@ pub(crate) fn hatirlatma_onizlemesi(
         },
         olusturma_ms: simdi_ms,
         guncelleme_ms: simdi_ms,
+        v3: Default::default(),
     };
     let oz = crate::kural::hatirlatma::hatirlatma_ozeti(&kayit, simdi_ms, an)?;
     let ilk = crate::kural::hatirlatma::kurulacak_hatirlatmalar(&kayit, simdi_ms, an)?.iter().map(|t| t.tetik_ms).min();

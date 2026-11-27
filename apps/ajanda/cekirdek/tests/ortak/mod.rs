@@ -400,6 +400,7 @@ impl SahtePc {
             },
             olusturma_ms: ts,
             guncelleme_ms: ts,
+            v3: Default::default(),
         };
         self.yaz(k, ts, ajanda_cekirdek::model::IslemTuru::Ekle, Self::arac_yazari())
     }
@@ -467,6 +468,7 @@ impl SahtePc {
                 },
                 olusturma_ms: simdi,
                 guncelleme_ms: simdi,
+                v3: Default::default(),
             };
             let k = self.yaz(k, simdi, T::Ekle, yazar);
             return (Sonuc::ok(&kayit_id, Some(k.revizyon)), Some(k));
@@ -594,7 +596,7 @@ impl SahtePc {
                 });
                 self.telafi_sayisi += 1;
                 self.son_welcome_tam = Some(tam);
-                c.push(Self::cerceve(AjandaAsagi::Welcome { depo_id: self.d.depo_id.clone(), bas_rev: self.d.rev, tam, server_time_ms: self.simdi() }));
+                c.push(Self::cerceve(AjandaAsagi::Welcome { depo_id: self.d.depo_id.clone(), bas_rev: self.d.rev, tam, server_time_ms: self.simdi(), yetenekler: None }));
                 let alt = if tam { 0 } else { hello_son_rev.min(self.d.rev) };
                 let mut sirali: Vec<&AjandaKaydi> = self.d.kayitlar.values().filter(|k| k.revizyon > alt).collect();
                 sirali.sort_by_key(|k| k.revizyon);

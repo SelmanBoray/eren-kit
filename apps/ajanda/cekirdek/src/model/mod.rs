@@ -3,11 +3,17 @@
 //! habersizdir; yalnız `serde_json::Value` konuşur. Bazı tipler `uniffi::Record`/`Enum` türetir:
 //! Kotlin arayüzü kaydı aynı tiple görür (ayrı kopya tip yok).
 //!
-//! Başvuru: `apps/phone/protocol/src/ajanda.ts`, `ajanda-zaman.ts`, `sinirlar.ts`, `kanonik.ts`,
-//! `cozumle.ts`. Vektörler: `cekirdek/tests/vektorler.rs`.
+//! Başvuru: `apps/phone/protocol/src/ajanda.ts`, `ajanda-alan.ts`, `ajanda-zaman.ts`, `sinirlar.ts`,
+//! `kanonik.ts`, `cozumle.ts`. Vektörler: `cekirdek/tests/vektorler.rs`.
+//!
+//! Sürümler (`surum`): her sürüm kendi içinde katıdır; çözme ve yazma bağlantı sürümünü değişken olarak
+//! alır (`oku_surum`/`json_surum`, çerçevelerde `oku(v, surum)`). Gövde tiplerinin sürümsüz `oku`/`json`'ı
+//! en yeni sürümdür (depo, kuyruk); çerçevelerin sürümsüz `json`/`kodla`/`ajanda_*_coz`'u bugünkü kanalın
+//! sürümüdür (`surum::KANAL_SURUMU`, v2).
 
 pub mod json;
 
+pub mod alan;
 pub mod cerceve;
 pub mod eslesme;
 pub mod islem;
@@ -15,17 +21,30 @@ pub mod kanonik;
 pub mod kayit;
 pub mod metin;
 pub mod sinirlar;
+pub mod surum;
 pub mod takvim;
 pub mod tekrar;
 pub mod zaman;
 
-pub use cerceve::{AjandaAsagi, AjandaRevIzi, AjandaYukari, CozumHatasi, CozumKodu, ajanda_asagi_coz, ajanda_yukari_coz};
+pub use alan::{
+    AjandaBaglanti, AjandaBolgeKonumu, AjandaEkRetKodu, AjandaEki, AjandaVaris, AjandaVarisPenceresi, V3Alanlari,
+    V3Degisikligi, ajanda_bolge_anahtari, ajanda_bolge_yeri_degisir_mi, ajanda_url_alan_adi, ajanda_url_gecerli_mi,
+    ajanda_yetenek_kesisimi,
+};
+pub use cerceve::{
+    AjandaAsagi, AjandaRevIzi, AjandaYukari, CozumHatasi, CozumKodu, ajanda_asagi_coz, ajanda_asagi_coz_surum,
+    ajanda_asagi_surume, ajanda_yukari_coz, ajanda_yukari_coz_surum,
+};
 pub use eslesme::{AjandaEslestirmeQr, ImzaRolu, ajanda_kimlik_imza_metni, kanal_kapsamda_mi};
 pub use islem::{
     AjandaDegisiklik, AjandaGecmisGirdisi, AjandaIslem, AjandaKanalHatasi, AjandaParca, AjandaRetNedeni,
     AlanDegisikligi, IslemTuru, KayitGovdesi, KuyrukRetNedeni,
 };
 pub use json::{Alan, SemaHatasi};
+pub use surum::{
+    AJANDA_QR_SURUMU, AJANDA_SURUMLERI, AJANDA_SURUMU, DonmusHata, GeriDusus, KANAL_SURUMU, Surum, ajanda_donmus_hata_oku,
+    ajanda_geri_dusus, ajanda_ret_surumu_oku,
+};
 pub use kayit::{
     AjandaAlani, AjandaKaydi, AjandaKaynagi, AjandaOrnegi, AjandaYazar, GirdiYolu, KaynakYolu, KayitDurumu, KayitTuru,
     OrnekDurumu, TurKokeni, YazarKimligi, hatirlatma_etkin_mi, kullanici_emri_mi, otomasyon_mu,

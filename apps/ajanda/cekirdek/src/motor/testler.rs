@@ -120,6 +120,7 @@ fn esitleme_vektorleri_sqlite_uygulamasinda() {
                         bas_rev: 1_000,
                         tam: ol["tam"].as_bool().unwrap(),
                         server_time_ms: SIMDI,
+                        yetenekler: None,
                     });
                 }
                 "kayit" => {
@@ -180,7 +181,7 @@ fn bozuk_kuyruk_satiri_yollanmaz_ret_listesine_gecer_arkasi_gider() {
     let ilk = d.m.depo.kuyruk().unwrap()[0].sira;
     d.m.depo.kuyruk_islemini_boz(ilk, "{bozuk").unwrap();
     d.el_sikis();
-    d.cerceve(AjandaAsagi::Welcome { depo_id: "d_a".into(), bas_rev: 0, tam: true, server_time_ms: SIMDI });
+    d.cerceve(AjandaAsagi::Welcome { depo_id: "d_a".into(), bas_rev: 0, tam: true, server_time_ms: SIMDI, yetenekler: None });
     let e = d.cerceve(AjandaAsagi::Esitlendi { rev: 0 });
     // Bozuk satır ret listesinde; yollanan tek işlem sağlam olanın.
     assert_eq!(e.gonderilecek.len(), 1);
@@ -201,7 +202,7 @@ fn bozuk_kuyruk_satiri_yollanmaz_ret_listesine_gecer_arkasi_gider() {
 fn artimli_telafi_tamponlu_yazilir_kopmada_ilerleme_kalir() {
     let mut d = Duzen::yeni();
     d.el_sikis();
-    d.cerceve(AjandaAsagi::Welcome { depo_id: "d_a".into(), bas_rev: 450, tam: false, server_time_ms: SIMDI });
+    d.cerceve(AjandaAsagi::Welcome { depo_id: "d_a".into(), bas_rev: 450, tam: false, server_time_ms: SIMDI, yetenekler: None });
     for rev in 1..=450 {
         let id = format!("k_{}", base64url_yaz(&(rev as u32).to_be_bytes()));
         let e = d.cerceve(AjandaAsagi::Kayit { kayit: kayit(&id, rev, rev) });
@@ -242,7 +243,7 @@ fn yerel_kipte_baglanma_temeli_korur_esitlendide_doker() {
     d.kopar();
     d.el_sikis();
     // Servis artımlı dese de toplanır: temel ezilmez.
-    d.cerceve(AjandaAsagi::Welcome { depo_id: "d_a".into(), bas_rev: 5, tam: false, server_time_ms: SIMDI });
+    d.cerceve(AjandaAsagi::Welcome { depo_id: "d_a".into(), bas_rev: 5, tam: false, server_time_ms: SIMDI, yetenekler: None });
     let pc_ortak = AjandaKaydi { aciklama: Some("PC'de".into()), ..kayit("k_ortak", 4, 4) };
     for k in [pc_ortak.clone(), kayit("k_pc", 5, 5)] {
         let e = d.cerceve(AjandaAsagi::Kayit { kayit: k });

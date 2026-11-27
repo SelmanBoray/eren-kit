@@ -1,9 +1,11 @@
 //! Sözleşmenin sabitleri (`protocol/src/sinirlar.ts`): yalnız ajandanın kullandıkları, birebir.
 //! Karakter sınırları UTF-16 birimi, adet sınırları öğe sayısıdır.
 
-/// `/ajanda` kanalının sürümü (`AJANDA_SURUMU`). 1: ilk dilim. 2: saatsiz gün kaydında gün hatırlatması,
-/// `gun_bolumu`, `gece_teyidi_gerekli` (`docs/AJANDA.md` "Sürüm 2"). İmza öneki bundan türemez (`eslesme.rs`).
-pub const AJANDA_SURUMU: i64 = 2;
+/// Geçiş sarmalayıcısı: bugünkü kanalın bağlandığı sürüm (`surum::KANAL_SURUMU`, 2). Sözleşmenin
+/// `AJANDA_SURUMU`'su (en yüksek sürüm, 3) `surum::AJANDA_SURUMU`'dur. Bu ad yalnız `motor/kanal.rs`'in
+/// sürüm yönü karşılaştırması (`surum_yonu`) değişmeden kalsın diye durur: kanal aşaması geri düşüşü
+/// (`surum::ajanda_geri_dusus`) yazınca kalkar. Yeni kod bunu kullanmaz.
+pub const AJANDA_SURUMU: i64 = super::surum::KANAL_SURUMU.no();
 
 /// `/ajanda` çerçevesinin ayrıştırma öncesi üst sınırı (UTF-16 birimi): `AJANDA_AZAMI_CERCEVE.KANAL`.
 pub const AZAMI_CERCEVE_KANAL: usize = 2 * 1024 * 1024;
@@ -47,4 +49,38 @@ pub mod ajanda {
     pub const KACIRILAN_PENCERE_DK: i64 = 360;
     /// v2: mesaj anının yerel saati 00:00 ile bu kadar dakika sonrası (dahil değil) arası gece aralığıdır.
     pub const GECE_ARALIGI_DK: i64 = 240;
+
+    // v3 (genişleme kuralı 5: bu sınırlar büyütülmez)
+
+    /// `simge` anahtarı, ASCII.
+    pub const SIMGE: usize = 32;
+    /// `bolge` adı: tek satır.
+    pub const BOLGE: usize = 60;
+    /// `bolge_konumu.yaricap_m`, metre, iki uç dahil.
+    pub const BOLGE_YARICAP_MIN: i64 = 50;
+    pub const BOLGE_YARICAP_MAX: i64 = 1_000;
+    pub const KAYIT_BAGLANTI_ADET: usize = 10;
+    /// `baglantilar[].url`: yazdırılabilir ASCII (`alan::ajanda_url_gecerli_mi`).
+    pub const BAGLANTI_URL: usize = 2_000;
+    /// `baglantilar[].baslik`: tek satır.
+    pub const BAGLANTI_BASLIK: usize = 120;
+    /// Kayıt başına ek üstverisi.
+    pub const EK_ADET: usize = 8;
+    /// Bir ekin (küçültülmüş dosyanın) bayt üst sınırı: 4 MiB.
+    pub const EK_BAYT: i64 = 4 * 1024 * 1024;
+    /// `ekler[].genislik`/`yukseklik`, piksel.
+    pub const EK_KENAR: i64 = 65_535;
+    /// `ekler[].mime`, ASCII.
+    pub const EK_MIME: usize = 127;
+    /// `ek_parca.veri`'nin ham bayt üst sınırı (256 KiB; base64 hali `alan::ajanda_base64_boyu(EK_PARCA)`).
+    pub const EK_PARCA: i64 = 256 * 1024;
+    /// İndirmede bir `ek_iste`'ye en çok bu kadar `ek_parca`, sonra `ek_durum`.
+    pub const EK_PENCERE: usize = 4;
+    /// Servisin bütün eklere ayırdığı varsayılan alan (2 GiB). Kablo sınırı değildir.
+    pub const EK_TOPLAM_BAYT: i64 = 2 * 1024 * 1024 * 1024;
+    /// Hiçbir silinmemiş kayıtta geçmeyen ekin servisteki dosyasının silindiği gün. Kablo sınırı değildir.
+    pub const EK_SAKLAMA_GUN: i64 = 30;
+    /// `yetenekler` listesi ve bir yetenek adı.
+    pub const YETENEK_ADET: usize = 32;
+    pub const YETENEK_ADI: usize = 32;
 }

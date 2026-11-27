@@ -3,11 +3,11 @@
 
 use super::cerceve::{acik_anahtar_oku, eslestirme_kodu_oku};
 use super::json::{Nesne, Sonuc, Yazici, hata, metin, metin_sabiti, sayi_sabiti, tam_sayi};
-use super::sinirlar::AJANDA_SURUMU;
+use super::surum::AJANDA_QR_SURUMU;
 use serde_json::Value;
 
-/// `/sohbet` QR'ının (`EslestirmeQr`) sürümü: v1; ajanda QR'ı `v` olarak `AJANDA_SURUMU` taşır.
-/// İkisi de 1 olduğu için tek denetim yeter.
+/// Ajanda eşleştirme QR'ı (`AjandaEslestirmeQr`). `v` kanal sürümü değil `AJANDA_QR_SURUMU`'dur (2,
+/// dondurulmuş): kanal sürümü artınca da her sürümün uygulaması bu QR'ı okur.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct AjandaEslestirmeQr {
     pub host: String,
@@ -30,7 +30,7 @@ pub fn tailscale_adresi_mi(adres: &str) -> bool {
 impl AjandaEslestirmeQr {
     pub fn oku(v: &Value, yol: &str) -> Sonuc<Self> {
         let mut n = Nesne::ac(v, yol)?;
-        n.zorunlu("v", |v, y| sayi_sabiti(v, y, AJANDA_SURUMU))?;
+        n.zorunlu("v", |v, y| sayi_sabiti(v, y, AJANDA_QR_SURUMU))?;
         n.zorunlu("kanal", |v, y| metin_sabiti(v, y, "ajanda"))?;
         let host = n.zorunlu("host", |v, y| {
             let s = metin(v, y)?;
@@ -54,7 +54,7 @@ impl AjandaEslestirmeQr {
 
     pub fn json(&self) -> Value {
         Yazici::yeni()
-            .alan("v", AJANDA_SURUMU)
+            .alan("v", AJANDA_QR_SURUMU)
             .alan("kanal", "ajanda")
             .alan("host", self.host.as_str())
             .alan("port", self.port)
