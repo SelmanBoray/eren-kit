@@ -108,7 +108,7 @@ enum Tur {
     Canli,
 }
 
-fn gecmis_satiri(g: AjandaGecmisGirdisi) -> GecmisSatiri {
+pub(super) fn gecmis_satiri(g: AjandaGecmisGirdisi) -> GecmisSatiri {
     let onceki = g.onceki.json();
     let sonraki = g.sonraki.json();
     let mut alanlar: BTreeSet<String> = BTreeSet::new();
@@ -240,7 +240,7 @@ impl Motor {
                 e.degisim.eslesme = true;
                 match (ok, device_id) {
                     (true, Some(device_id)) => {
-                        let eslesme = self.eslesme_kaydet(&qr, &device_id)?;
+                        let eslesme = self.eslesme_kaydet(o, e, &qr, &device_id)?;
                         // Bağlantı açık kalır: aynı bağlantıda kimlik doğrulamasıyla sürer.
                         self.hello_yolla(o, e, eslesme)
                     }
@@ -387,7 +387,19 @@ impl Motor {
         let cevirici = o.cevirici();
         let b = self.iyimser_baglam(o, &cevirici)?;
         let simdi = o.simdi_ms().to_string();
+        // Yerel kipte görünen kopya doğruluk kaynağıdır: tam telafi yalnız PC temelini (sunucu kopyası,
+        // `depo_id`, `son_rev`) yeniler, görünen kopyaya ve alarmlara dokunmaz (`gorunen_yenile` de yazmaz).
+        let yerel = self.yerel_mi()?;
         match t.tam {
+            Some((depo_id, son_rev)) if yerel => {
+                self.depo.yazma(|d| {
+                    d.telafiyi_sunucuya_gecir()?;
+                    d.depo_id_yaz(&depo_id)?;
+                    d.son_rev_yaz(son_rev)?;
+                    d.meta_yaz(anahtar::SON_ESITLENME_MS, Some(&simdi))?;
+                    Ok(())
+                })?;
+            }
             Some((depo_id, son_rev)) => {
                 self.depo.yazma(|d| {
                     d.telafiyi_sunucuya_gecir()?;
@@ -570,9 +582,11 @@ impl Motor {
     }
 
     pub(crate) fn baglanti_durumu(&self) -> Result<BaglantiDurumu, CekirdekHatasi> {
+        // Yerel kipte kuyruk yoktur (göç 4 toplar, yerel yazar kullanmaz): gönderilecek iş sıfırdır.
+        let kuyrukta = if self.yerel_mi()? { 0 } else { self.depo.kuyruk_sayisi()? };
         Ok(BaglantiDurumu {
             asama: self.asama.disari(),
-            kuyrukta: i32::try_from(self.depo.kuyruk_sayisi()?).unwrap_or(i32::MAX),
+            kuyrukta: i32::try_from(kuyrukta).unwrap_or(i32::MAX),
             ret_listesinde: i32::try_from(self.depo.ret_sayisi()?).unwrap_or(i32::MAX),
             son_esitlenme_ms: self.depo.meta_oku(anahtar::SON_ESITLENME_MS)?.and_then(|s| s.parse().ok()),
             son_hata: self.son_hata,

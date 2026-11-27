@@ -6,6 +6,16 @@ use crate::model::{
     KayitTuru, KuyrukRetNedeni,
 };
 
+/// Çalışma kipi (D1, göç 4). `Yerel`: doğruluk kaynağı telefondur, işlemler kuyruğa girmeden kalıcı
+/// uygulanır (`KayitGorunumu.bekleyen` hep yanlış, `BaglantiDurumu.kuyrukta` 0, geçmiş yerel tablodan).
+/// `Bagli`: servis yazar (eşleşmiş kurulum; eşleşme kaldırılınca da bağlı kalır). Yerel kipte QR ile
+/// eşleşme tamamlanınca kip `Bagli` olur ve yerel kayıtlar kuyrukla PC'ye gider.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum CalismaKipi {
+    Yerel,
+    Bagli,
+}
+
 /// Listede ve ayrıntıda gösterilen kayıt.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct KayitGorunumu {

@@ -23,7 +23,7 @@ use crate::motor::{Etkiler, Motor, Ortam};
 
 use kabuklar::{AlarmKabugu, Gozlemci, KimlikKabugu, Tasima, ZamanKabugu};
 use tipler::{
-    BaglantiDurumu, DuzenlemeTemeli, EslesmeDurumu, GecmisSayfasi, HatirlatmaBildirimi, HatirlatmaOnizlemesi, KayitGorunumu,
+    BaglantiDurumu, CalismaKipi, DuzenlemeTemeli, EslesmeDurumu, GecmisSayfasi, HatirlatmaBildirimi, HatirlatmaOnizlemesi, KayitGorunumu,
     ListeSorgusu, RetGirdisi, TakvimAyi, TakvimOgesi, YenidenKurmaNedeni,
 };
 
@@ -230,6 +230,12 @@ impl Cekirdek {
         kilitle(&self.motor).sema_surumu()
     }
 
+    /// Çalışma kipi (D1): `Yerel` ya da `Bagli` (`CalismaKipi`). Kip değişince (yerelde eşleşme bitti)
+    /// gözlemciye `Degisim.tumu` ve `Degisim.baglanti` gider.
+    pub fn kip(&self) -> Result<CalismaKipi, CekirdekHatasi> {
+        self.calistir(|m, _, _| m.kip())
+    }
+
     // Gözlemci (K4)
 
     /// Döner: `gozlemci_cikar` için numara.
@@ -354,6 +360,8 @@ impl Cekirdek {
         self.oku(|d| crate::motor::takvim::takvim_gunu(d, &cevirici, &cihaz, &tarih, kapalilar_dahil))
     }
 
+    /// Bağlı kipte canlı bağlantıda servise sorar (yanıt `Degisim.gecmis` ile); yerel kipte yerel geçmişten
+    /// hemen yükler (bağlantı gerekmez). Sonuç `gecmis` ile okunur.
     pub fn gecmis_iste(&self, kayit_id: String, once_rev: Option<i64>) -> Result<(), CekirdekHatasi> {
         self.calistir(|m, o, e| m.gecmis_iste(o, e, &kayit_id, once_rev))
     }

@@ -10,7 +10,8 @@
 //! etkileri yine uygulanır, o yüzden hatadan önce yazılmış etki gerçek olmalıdır.
 //!
 //! Dosyalar: `kanal.rs` (bağlantı, telafi, kuyruğun yollanması ve sonuçları), `islem.rs` (kullanıcı
-//! işlemleri), `iyimser.rs` (görünen kopyanın hesabı), `eslesme.rs`, `sorgu.rs`, `alarm.rs` (R3).
+//! işlemleri), `iyimser.rs` (görünen kopyanın hesabı), `yerel.rs` (yerel kipin yazarı ve geçmişi),
+//! `eslesme.rs`, `sorgu.rs`, `alarm.rs` (R3).
 //!
 //! Değişiklik yayma kuralı (`gorunenler_degisti`): görünen kopyası değişen kayıtlar, yazan SQLite işlemi
 //! kalıcı olduktan SONRA R3'ün `alarm_senkronu`'na verilir ve `Degisim.kayitlar`'a bir kez girer. Tam
@@ -21,6 +22,7 @@ mod eslesme;
 mod islem;
 mod iyimser;
 mod kanal;
+mod yerel;
 pub(crate) mod sorgu;
 pub(crate) mod takvim;
 

@@ -56,19 +56,44 @@ impl Motor {
     }
 
     /// `pair_result{ok}`: QR'ın yerine eşleşme yazılır (eski eşleşmenin yerine geçer), ret silinir.
-    pub(crate) fn eslesme_kaydet(&mut self, qr: &AjandaEslestirmeQr, device_id: &str) -> Result<Eslesme, CekirdekHatasi> {
+    ///
+    /// Yerel kipte eşleşme bugünkü eşleşmesiz kullanımın davranışını sürdürür (D1; birleştirme önizlemesi
+    /// D4'ün işidir): aynı işlemde kip `bagli` olur ve yerel kayıtlar kuyruğa dökülür (`yerel.rs`
+    /// `yereli_kuyruga_dok`), böylece eşitlemeyle PC'ye gider; görünen hal aynı kalır, `bekleyen` olur.
+    pub(crate) fn eslesme_kaydet(
+        &mut self,
+        o: &Ortam,
+        e: &mut Etkiler,
+        qr: &AjandaEslestirmeQr,
+        device_id: &str,
+    ) -> Result<Eslesme, CekirdekHatasi> {
         let eslesme = Eslesme {
             device_id: device_id.to_string(),
             host: qr.host.clone(),
             port: qr.port,
             server_public_key: qr.server_public_key.clone(),
         };
+        let yerel = self.yerel_mi()?;
+        let cevirici = o.cevirici();
+        let b = super::iyimser::IyimserBaglam {
+            device_id: device_id.to_string(),
+            simdi_ms: o.simdi_ms(),
+            cihaz_dilimi: o.zaman.cihaz_dilimi(),
+            cevirici: &cevirici,
+        };
         self.depo.yazma(|d| {
             d.meta_yaz(anahtar::ESLESME, Some(&eslesme.json().to_string()))?;
             d.meta_yaz(anahtar::ESLESTIRME_QR, None)?;
             d.meta_yaz(anahtar::ESLESME_REDDI, None)?;
+            if yerel {
+                super::yerel::yereli_kuyruga_dok(d, o, &b)?;
+            }
             Ok(())
         })?;
+        if yerel {
+            e.degisim.baglanti = true;
+            self.hepsi_degisti(o, e);
+        }
         Ok(eslesme)
     }
 
@@ -111,10 +136,31 @@ impl Motor {
         })
     }
 
-    /// Eşleşmeyi, sunucu kopyasını, kuyruğu, ret listesini, görünen kopyayı ve alarmları siler; cihaz
-    /// anahtarını `anahtari_sil` ile siler. Açık bağlantı kapatılır. Anahtar silinemezse hata döner ama
-    /// yerel veriler silinmiş, etkiler uygulanmıştır (sonraki eşleştirme yine `acik_anahtar` ister).
+    /// Bağlı kipte eşleşmeyi, sunucu kopyasını, kuyruğu, ret listesini, görünen kopyayı ve alarmları siler
+    /// (kip `bagli` kalır); cihaz anahtarını `anahtari_sil` ile siler. Açık bağlantı kapatılır. Anahtar
+    /// silinemezse hata döner ama yerel veriler silinmiş, etkiler uygulanmıştır (sonraki eşleştirme yine
+    /// `acik_anahtar` ister).
+    ///
+    /// Yerel kipte kayıtların tek kopyası telefondadır: yalnız eşleşme bilgisi (eşleşme, bekleyen QR, son
+    /// ret) ve cihaz anahtarı silinir; görünen kopya, yerel geçmiş, ret listesi, alarmlar ve PC temeli kalır.
     pub(crate) fn eslesmeyi_kaldir(&mut self, o: &Ortam, e: &mut Etkiler) -> Result<(), CekirdekHatasi> {
+        if self.yerel_mi()? {
+            self.depo.yazma(|d| {
+                for a in [anahtar::ESLESME, anahtar::ESLESTIRME_QR, anahtar::ESLESME_REDDI] {
+                    d.meta_yaz(a, None)?;
+                }
+                Ok(())
+            })?;
+            self.son_hata = None;
+            self.surum_uyusmazligi = None;
+            if !matches!(self.asama, Asama::Kopuk | Asama::Kapaniyor) {
+                self.kapat(e, "eşleşme kaldırıldı");
+            }
+            e.degisim.eslesme = true;
+            e.degisim.baglanti = true;
+            o.kimlik.anahtari_sil()?;
+            return Ok(());
+        }
         self.depo.yazma(|d| d.eslesmeye_bagli_her_seyi_sil())?;
         self.gecmis.clear();
         self.gecmis_istekleri.clear();

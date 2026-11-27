@@ -26,6 +26,8 @@ impl Duzen {
         let m = Motor::ac(":memory:").unwrap();
         let e = json!({"device_id": "c_t", "host": "100.64.0.1", "port": 8787, "server_public_key": base64_yaz(&[9; 4])});
         m.depo.meta_yaz(anahtar::ESLESME, Some(&e.to_string())).unwrap();
+        // Eşleşmiş kurulum bağlı kiptedir (göç 4 eşleşmesiz yeni veritabanını yerel sınıflar).
+        m.depo.kip_yaz(false).unwrap();
         Duzen { m, kimlik: SahteKimlik::default(), zaman: SahteZaman::yeni(SIMDI) }
     }
 
@@ -210,4 +212,33 @@ fn artimli_telafi_tamponlu_yazilir_kopmada_ilerleme_kalir() {
     d.kopar();
     assert_eq!(d.m.depo.son_rev().unwrap(), 450, "kopmada tampon yazıldı");
     assert_eq!(d.m.depo.sunucu_kaydi_sayisi().unwrap(), 450);
+}
+
+/// Yerel kipte (bu dilimde yalnız elle kurulabilen durum: eşleşme var, kip yerel) telafi ve canlı `kayit`
+/// yalnız PC temelini yeniler; görünen kopya doğruluk kaynağıdır, ezilmez, silinmez, alarm değişmez.
+#[test]
+fn yerel_kipte_telafi_gorunen_kopyayi_ezmez() {
+    let mut d = Duzen::yeni();
+    d.m.depo.kip_yaz(true).unwrap();
+    let yerel = kayit("k_yerel", 3, 3);
+    let ortak = AjandaKaydi { baslik: "telefonda".into(), ..kayit("k_ortak", 2, 2) };
+    d.m.depo.gorunen_yaz(&yerel, false).unwrap();
+    d.m.depo.gorunen_yaz(&ortak, false).unwrap();
+    d.el_sikis();
+    d.cerceve(AjandaAsagi::Welcome { depo_id: "d_a".into(), bas_rev: 5, tam: true, server_time_ms: SIMDI });
+    d.cerceve(AjandaAsagi::Kayit { kayit: kayit("k_ortak", 4, 4) });
+    d.cerceve(AjandaAsagi::Kayit { kayit: kayit("k_pc", 5, 5) });
+    let e = d.cerceve(AjandaAsagi::Esitlendi { rev: 5 });
+    assert!(d.m.canli_mi());
+    assert!(!e.degisim.tumu && e.degisim.kayitlar.is_empty() && e.alarm_kur.is_empty());
+    assert_eq!(d.m.depo.gorunen_kayit("k_yerel").unwrap().unwrap().kayit, yerel);
+    assert_eq!(d.m.depo.gorunen_kayit("k_ortak").unwrap().unwrap().kayit, ortak);
+    assert!(d.m.depo.gorunen_kayit("k_pc").unwrap().is_none());
+    assert_eq!((d.m.depo.son_rev().unwrap(), d.m.depo.depo_id().unwrap().as_deref()), (5, Some("d_a")));
+    assert_eq!(d.m.depo.sunucu_kayitlari().unwrap().len(), 2, "PC temeli güncel");
+    // Canlı `kayit` de yalnız temele.
+    let e = d.cerceve(AjandaAsagi::Kayit { kayit: kayit("k_ortak", 6, 6) });
+    assert!(e.degisim.kayitlar.is_empty());
+    assert_eq!(d.m.depo.sunucu_revizyonu("k_ortak").unwrap(), Some(6));
+    assert_eq!(d.m.depo.gorunen_kayit("k_ortak").unwrap().unwrap().kayit, ortak);
 }
