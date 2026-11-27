@@ -130,6 +130,7 @@ export const KULLANIM = [
   "  eslestir --claude-code            Yeni ajanda anahtarı üretir (öncekini geçersiz kılar), kayıt komutlarını yazar.",
   "  eslestir --claude-code --liste    Anahtar geçmişini ve anahtar dosyasının durumunu gösterir.",
   "  eslestir --claude-code --kaldir   Anahtarı geçersiz kılar ve dosyasını siler (PC oturumları ajandaya erişemez).",
+  "  eslestir --claude-code --teshis   Son PC kanca olaylarını ve tur kararlarını gösterir (metin yok; kurulumu sınamak için).",
 ].join("\n");
 
 /** `kapsam` yalnız `--ajanda` verilince bulunur; yoksa komut bugünkü (sohbet) davranışındadır. */
@@ -140,25 +141,30 @@ export type EslestirKomutu =
   | { tur: "pc_anahtar" }
   | { tur: "pc_liste" }
   | { tur: "pc_kaldir" }
+  | { tur: "pc_teshis" }
   | { tur: "yardim" }
   | { tur: "hata"; ileti: string };
 
 const YARDIM_SECENEKLERI: readonly string[] = ["-h", "--help", "--yardim"];
 
-/** `--claude-code` seçenekleri: yalnız `--liste` ya da (değersiz) `--kaldir` eşlik eder, her biri bir kez. */
+const PC_ALT_KOMUTLARI = ["--liste", "--kaldir", "--teshis"] as const;
+
+/** `--claude-code` seçenekleri: en çok biri `--liste`, (değersiz) `--kaldir` ya da `--teshis`, bir kez. */
 function pcArgumanCoz(argv: readonly string[]): EslestirKomutu {
   const gorulen = new Set<string>();
   for (const a of argv) {
     if (YARDIM_SECENEKLERI.includes(a)) return { tur: "yardim" };
-    if (a !== "--claude-code" && a !== "--liste" && a !== "--kaldir") {
+    if (a !== "--claude-code" && !(PC_ALT_KOMUTLARI as readonly string[]).includes(a)) {
       return { tur: "hata", ileti: `--claude-code ile kullanılamaz: ${gorunur(a)}` };
     }
     if (gorulen.has(a)) return { tur: "hata", ileti: `${a} bir kez verilir` };
     gorulen.add(a);
   }
-  if (gorulen.has("--liste") && gorulen.has("--kaldir")) return { tur: "hata", ileti: "--liste ve --kaldir birlikte verilmez" };
+  const alt = PC_ALT_KOMUTLARI.filter((k) => gorulen.has(k));
+  if (alt.length > 1) return { tur: "hata", ileti: `${alt.join(" ve ")} birlikte verilmez` };
   if (gorulen.has("--liste")) return { tur: "pc_liste" };
   if (gorulen.has("--kaldir")) return { tur: "pc_kaldir" };
+  if (gorulen.has("--teshis")) return { tur: "pc_teshis" };
   return { tur: "pc_anahtar" };
 }
 
@@ -345,57 +351,125 @@ export function pcAnahtariUret(b: {
   return { jeton, ozet };
 }
 
-/** Kullanıcının Claude Code'una kayıt komutlarının yolları: güncel sürümün köprüsü ve Node. */
+/** Anahtar dosyasının yeri (terminal çıktıları için). */
 export interface ClaudeCodeYollari {
-  nodeExe: string;
-  /** `<veri kökü>\uygulama\guncel\server\src\kopru.ts` (kurulu sürüm; `guncel` junction'ı dağıtımla döner). */
-  kopruBetigi: string;
   anahtarDosyasi: string;
 }
 
 /**
- * Kancanın tam komutu (`settings.json` `hooks`'una); `olay` `PcKancaOlayi`. Claude Code kancayı kabukta
- * çalıştırır (Windows'ta Git Bash): yollar ileri eğik çizgili ve tırnaklı. Sondaki `|| true`: kanca hiçbir
- * koşulda 2 ile çıkmasın (2 kancada "engelle" demektir: istemi siler, aracı durdurur, Stop'ta yanıtı
- * sürdürür); bu sürüm her durumda 0 döner, ama geri alınmış eski bir `kopru.ts` `--kanca`'yı tanımaz ve
- * 2 ile çıkar. `kurulum/claude-code.ts` aynı biçimi üretir.
+ * Kayıt yönergesinin TEK kaynağı `kurulum/claude-code.ts`'tir (`kayitYonergesi`): `claude mcp add` komutu
+ * ve kanca komutları oradaki `yollar`'dan, yani veri kökünden (`<veri kökü>\uygulama\guncel\...`) türer.
+ * Bu dosyanın kendi yolu (`import.meta`) yazılan hiçbir yola girmez: servis `guncel` bağlantısından
+ * çalışırken Node bu dosyayı `surumler\<sürüm>\...` gerçek yoluna çevirir; o yol bir sonraki güncellemede
+ * eskir ve eski sürüm silinince kırılırdı. Burada yalnız kod yüklenir (aynı sürümün `kurulum` dizini).
  */
-export const kancaKomutu = (y: Pick<ClaudeCodeYollari, "nodeExe" | "kopruBetigi">, olay: string): string =>
-  `"${y.nodeExe.replaceAll("\\", "/")}" --disable-warning=ExperimentalWarning "${y.kopruBetigi.replaceAll("\\", "/")}" --kanca ${olay} || true`;
+export interface KayitYonergesiModulu {
+  kayitYonergesi(ortam: Readonly<Record<string, string | undefined>>, nodeExe: string): string;
+}
 
-/** `claude mcp add` argümanları (kullanıcı kapsamı). */
-export const mcpEkleArgumanlari = (y: Pick<ClaudeCodeYollari, "nodeExe" | "kopruBetigi">): string[] => [
-  "mcp",
-  "add",
-  CLAUDE_CODE_MCP_ADI,
-  "-s",
-  "user",
-  "--",
-  y.nodeExe,
-  "--disable-warning=ExperimentalWarning",
-  y.kopruBetigi,
-  "--rol",
-  "pc_oturumu",
-];
+/** Aynı sürümün `kurulum/claude-code.ts`'i (kur.ts `kurulum`'u sürüme kopyalar; depoda da aynı göreli yer). */
+export const kayitYonergesiYukle = async (): Promise<KayitYonergesiModulu> =>
+  (await import(new URL("../../kurulum/claude-code.ts", import.meta.url).href)) as KayitYonergesiModulu;
 
-const tirnakla = (a: string): string => (/[\s"]/.test(a) ? `"${a.replaceAll('"', '\\"')}"` : a);
+/** Yönerge yüklenemezse (kurulum dizini yok): elle nereye bakılacağı. */
+export const KAYIT_YONERGESI_YEDEK =
+  "Kayıt komutları için: node --disable-warning=ExperimentalWarning kurulum\\claude-code.ts goster (docs/SERVIS.md \"Claude Code oturumları\").\n";
 
-/** Anahtar üretiminin terminal çıktısı: ne değişti, dosya nerede, kayıt nasıl yapılır. Anahtarın kendisi yok. */
-export function pcAnahtarMetni(y: ClaudeCodeYollari, oncekiEtkin: number): string {
+/**
+ * Anahtar üretiminin terminal çıktısı: ne değişti, dosya nerede, ve kayıt yönergesi (`kurulum/claude-code.ts`
+ * `kayitYonergesi`'nin metni, olduğu gibi). Anahtarın kendisi yok.
+ */
+export function pcAnahtarMetni(y: ClaudeCodeYollari, oncekiEtkin: number, yonerge: string): string {
   const satirlar = [
     `Claude Code ajanda anahtarı üretildi${oncekiEtkin > 0 ? " (önceki anahtar artık geçersiz; açık PC oturumları yeni dosyayı kendiliğinden okur)" : ""}.`,
     `Anahtar dosyası: ${y.anahtarDosyasi}`,
     "  Yalnız bu Windows kullanıcısı okuyabilir (veri kökü). İçeriğini hiçbir yere yapıştırmayın; sızarsa: eslestir --claude-code (yeniler).",
     "",
-    "Bir kez yapılacak kayıt (kullanıcının Claude Code'u; ayrıntı docs/SERVIS.md \"Claude Code oturumları\"):",
-    `  claude ${mcpEkleArgumanlari(y).map(tirnakla).join(" ")}`,
-    "  Kancalar (~/.claude/settings.json \"hooks\"): kurulum\\claude-code.ts kanca-ekle ya da elle şu üç komut:",
-    `    UserPromptSubmit: ${kancaKomutu(y, "istem")}`,
-    `    PreToolUse (matcher "mcp__${CLAUDE_CODE_MCP_ADI}__.*"): ${kancaKomutu(y, "arac")}`,
-    `    Stop: ${kancaKomutu(y, "tur_sonu")}`,
-    "  Kancasız da çalışır, ama o zaman her kayıt taslak doğar (uygulamadan onay ister) ve asistan saati bilmez.",
   ];
-  return `${satirlar.join("\n")}\n`;
+  return `${satirlar.join("\n")}\n${yonerge}`;
+}
+
+// --- `--claude-code --teshis`: servis günlüğünden PC kararları (içerik yok) ---------------------
+
+/** Teşhiste gösterilen olaylar ve YALNIZ bu alanlar (izin listesi: başka alan hiç yazılmaz). */
+const TESHIS_ALANLARI: Readonly<Record<string, readonly string[]>> = {
+  pc_istem: ["kaynak", "istem_kimligi", "acik_tur_kapandi"],
+  pc_arac: ["alt_agent", "istem_kimligi"],
+  pc_tur_sonu: ["acik_tur_kapandi"],
+  arac: ["fiil", "tur_kokeni", "pc_karar", "cagri_kimligi", "sonuc", "neden"],
+  el_sikisma: ["rol"],
+  el_sikisma_ret: ["rol", "code", "neden"],
+};
+const TESHIS_MODULLERI: ReadonlySet<string> = new Set(["ajanda", "ajanda-kopru-sunucu"]);
+const TESHIS_SATIR = 40;
+/** Alan değerleri kapalı listelerden gelir; yine de yalnız bu kalıba uyan değer yazılır. */
+const TESHIS_DEGERI = /^[A-Za-z0-9_-]{1,40}$/;
+
+const teshisDegeri = (v: unknown): string | null => {
+  if (typeof v === "boolean") return v ? "evet" : "hayir";
+  if (typeof v === "number" && Number.isFinite(v)) return String(v);
+  return typeof v === "string" && TESHIS_DEGERI.test(v) ? v : null;
+};
+
+/** Oturum kimliğinin yalnız son 6 karakteri (satırları eşlemeye yeter). */
+const kisaOturum = (v: unknown): string | null => (typeof v === "string" && /^[A-Za-z0-9_-]{6,64}$/.test(v) ? `…${v.slice(-6)}` : null);
+
+/**
+ * Servis günlüğünün (JSON satırları) PC kanca ve PC araç olaylarından teşhis metni: en yeni `TESHIS_SATIR`
+ * olay, her biri izin listesindeki alanlarla; sonra sınanacak varsayımların özeti (kaynak alanı, istem
+ * kimliği, çağrı kimliği geliyor mu; son karar). Metin, kayıt alanı, anahtar ya da tam kimlik yazılmaz.
+ */
+export function pcTeshisMetni(satirlar: readonly string[], zaman: (ms: number) => string = yerelZaman): string {
+  const olaylar: Array<{ ts: number; olay: string; alanlar: Record<string, string>; oturum: string | null }> = [];
+  for (const s of satirlar) {
+    let j: unknown;
+    try {
+      j = JSON.parse(s);
+    } catch {
+      continue;
+    }
+    if (typeof j !== "object" || j === null || Array.isArray(j)) continue;
+    const k = j as Record<string, unknown>;
+    const olay = typeof k["olay"] === "string" ? k["olay"] : "";
+    const izinli = Object.hasOwn(TESHIS_ALANLARI, olay) ? TESHIS_ALANLARI[olay] : undefined;
+    if (izinli === undefined || typeof k["modul"] !== "string" || !TESHIS_MODULLERI.has(k["modul"])) continue;
+    // `arac` yalnız PC yolundaysa; el sıkışma yalnız PC rollerindeyse.
+    if (olay === "arac" && k["yol"] !== "pc_araci") continue;
+    if ((olay === "el_sikisma" || olay === "el_sikisma_ret") && k["rol"] !== "pc_oturumu" && k["rol"] !== "pc_kanca") continue;
+    const alanlar: Record<string, string> = {};
+    for (const a of izinli) {
+      const d = teshisDegeri(k[a]);
+      if (d !== null) alanlar[a] = d;
+    }
+    olaylar.push({ ts: typeof k["ts_ms"] === "number" ? k["ts_ms"] : 0, olay, alanlar, oturum: kisaOturum(k["oturum_id"]) });
+  }
+  const son = olaylar.slice(-TESHIS_SATIR);
+  if (son.length === 0) {
+    return (
+      "Servis günlüğünde PC kanca ya da PC araç olayı yok.\n" +
+      "  Kancalar kurulu mu (kurulum\\claude-code.ts goster), anahtar var mı (eslestir --claude-code --liste)?\n" +
+      "  Yeni bir Claude Code oturumu açıp bir mesaj yazdıktan sonra yeniden bakın.\n"
+    );
+  }
+  const satir = son.map((o) => {
+    const alan = Object.entries(o.alanlar).map(([a, d]) => `${a}=${d}`).join(" ");
+    return `  ${zaman(o.ts)}  ${o.olay}${o.oturum === null ? "" : ` oturum=${o.oturum}`}${alan === "" ? "" : ` ${alan}`}`;
+  });
+  const istemler = son.filter((o) => o.olay === "pc_istem");
+  const araclar = son.filter((o) => o.olay === "arac");
+  const tasdikler = son.filter((o) => o.olay === "pc_arac");
+  const evetHayir = (kosul: boolean, bos: boolean): string => (bos ? "olay yok" : kosul ? "evet" : "HAYIR");
+  const ozet = [
+    "Sınama (AJANDA.md \"Kurulumdan sonra sınama\"):",
+    `  istem kaynağı geliyor mu (kaynak≠yok): ${evetHayir(istemler.some((o) => o.alanlar["kaynak"] !== "yok"), istemler.length === 0)}`,
+    `  kullanıcının istemi kaynak=user mi: ${evetHayir(istemler.some((o) => o.alanlar["kaynak"] === "user"), istemler.length === 0)}`,
+    `  istem kimliği geliyor mu (istem): ${evetHayir(istemler.some((o) => o.alanlar["istem_kimligi"] === "var"), istemler.length === 0)}`,
+    `  araç öncesi kanca geliyor mu: ${tasdikler.length > 0 ? "evet" : araclar.length > 0 ? "HAYIR" : "olay yok"}`,
+    `  istem kimliği geliyor mu (araç öncesi): ${evetHayir(tasdikler.some((o) => o.alanlar["istem_kimligi"] === "var"), tasdikler.length === 0)}`,
+    `  çağrı kimliği MCP isteğinde geliyor mu: ${evetHayir(araclar.some((o) => o.alanlar["cagri_kimligi"] === "var"), araclar.length === 0)}`,
+    `  son PC araç kararı: ${araclar.at(-1)?.alanlar["pc_karar"] ?? "olay yok"}`,
+  ];
+  return `Son PC olayları (en yeni sonda; metin ve kayıt alanı yazılmaz):\n${satir.join("\n")}\n\n${ozet.join("\n")}\n`;
 }
 
 /** `--claude-code --liste`: anahtar geçmişi (özetsiz) ve dosyanın varlığı. */
@@ -434,27 +508,39 @@ export function pcKaldirMetni(iptalEdilen: number, dosyaSilindi: boolean): strin
 // ---------------------------------------------------------------------------------------------
 
 /** `--claude-code` ailesi: yalnız veri kökü ve depo (ayar ön koşulları gerekmez). */
-async function pcKomutu(komut: Extract<EslestirKomutu, { tur: "pc_anahtar" | "pc_liste" | "pc_kaldir" }>): Promise<number> {
+async function pcKomutu(komut: Extract<EslestirKomutu, { tur: "pc_anahtar" | "pc_liste" | "pc_kaldir" | "pc_teshis" }>): Promise<number> {
   const { asistanAdiUret, yollariUret } = await import("./ayar.ts");
   const { depoAc } = await import("./depo.ts");
   const { gunlukKur } = await import("./gunluk.ts");
   const { disDunyaKur, dosyaPortuKur } = await import("./dis-dunya.ts");
   const { ajandaPcAnahtarYolu, ortamDegeri } = await import("./veri-koku.ts");
-  const { existsSync, rmSync } = await import("node:fs");
-  const { dirname, join } = await import("node:path");
+  const { closeSync, existsSync, fstatSync, openSync, readSync, rmSync } = await import("node:fs");
 
   const ortam = { ...(process.env as Record<string, string>) };
   const yollar = yollariUret(ortam);
+  if (komut.tur === "pc_teshis") {
+    // Yalnız okur: servis günlüğünün sonu (önce dönmüş eski dosya, sonra güncel). Depo açılmaz.
+    const sonu = (yol: string, bayt: number): string[] => {
+      if (!existsSync(yol)) return [];
+      const fd = openSync(yol, "r");
+      try {
+        const boyut = fstatSync(fd).size;
+        const tampon = Buffer.alloc(Math.min(boyut, bayt));
+        readSync(fd, tampon, 0, tampon.length, boyut - tampon.length);
+        return tampon.toString("utf8").split("\n");
+      } finally {
+        closeSync(fd);
+      }
+    };
+    const eski = yollar.log.replace(/\.log$/, ".1.log");
+    process.stdout.write(pcTeshisMetni([...sonu(eski, 1024 * 1024), ...sonu(yollar.log, 2 * 1024 * 1024)]));
+    return 0;
+  }
   const anaSohbetAdi = asistanAdiUret(ortamDegeri(ortam, "EREN_KIT_ASSISTANT_NAME"));
   const dis = await disDunyaKur({ yollar });
   const gunluk = gunlukKur({ kayit: dis.kayit, saat: dis.saat, azamiBayt: 5 * 1024 * 1024, azamiDosya: 3 });
   const depo = depoAc({ yol: yollar.vt, saat: dis.saat, gunluk, anaSohbetAdi });
-  const y: ClaudeCodeYollari = {
-    nodeExe: process.execPath,
-    // Bu dosya kurulu sürümde `guncel\server\src\eslestir.ts`'tir; köprü yanındadır.
-    kopruBetigi: join(dirname(import.meta.filename), "kopru.ts"),
-    anahtarDosyasi: ajandaPcAnahtarYolu(yollar.kok),
-  };
+  const y: ClaudeCodeYollari = { anahtarDosyasi: ajandaPcAnahtarYolu(yollar.kok) };
   try {
     if (komut.tur === "pc_liste") {
       process.stdout.write(pcListeMetni(depo.ajandaPcAnahtarlari(), existsSync(y.anahtarDosyasi), y));
@@ -479,7 +565,13 @@ async function pcKomutu(komut: Extract<EslestirKomutu, { tur: "pc_anahtar" | "pc
       return 1;
     }
     gunluk.uyari("eslestir", "pc_anahtari_uretildi", { onceki_etkin: oncekiEtkin });
-    process.stdout.write(pcAnahtarMetni(y, oncekiEtkin));
+    let yonerge = KAYIT_YONERGESI_YEDEK;
+    try {
+      yonerge = (await kayitYonergesiYukle()).kayitYonergesi(ortam, process.execPath);
+    } catch {
+      // kurulum dizini yok: elle bakılacak yer yazılır
+    }
+    process.stdout.write(pcAnahtarMetni(y, oncekiEtkin, yonerge));
     return 0;
   } finally {
     depo.kapat();
@@ -496,7 +588,7 @@ async function komutCalistir(argv: readonly string[]): Promise<number> {
     process.stderr.write(`eslestir: ${komut.ileti}\n${KULLANIM}\n`);
     return 2;
   }
-  if (komut.tur === "pc_anahtar" || komut.tur === "pc_liste" || komut.tur === "pc_kaldir") return pcKomutu(komut);
+  if (komut.tur === "pc_anahtar" || komut.tur === "pc_liste" || komut.tur === "pc_kaldir" || komut.tur === "pc_teshis") return pcKomutu(komut);
 
   const { ayarKur, asistanAdiUret, yollariUret } = await import("./ayar.ts");
   const { depoAc } = await import("./depo.ts");

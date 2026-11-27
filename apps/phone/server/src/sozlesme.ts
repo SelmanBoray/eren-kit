@@ -17,6 +17,7 @@ import type {
   PcKancaCiktisi,
   PcKancaFiili,
   PcKancaGirdisi,
+  PcTurKarari,
   AjandaRetNedeni,
   AjandaRevIzi,
   AjandaYerelAn,
@@ -2405,9 +2406,12 @@ export type AjandaFiilCiktisi<F extends AjandaFiili> = z.infer<(typeof AJANDA_AR
 /**
  * Boru düzeyi sonuç. Alan kararları (`ret` dahil) `ok:true` ile çıktının içindedir (`sonuc:"ret"`,
  * `neden`, `mesaj_ani`); `ok:false` yalnız çıktı kurulamadığında: `tur_gecersiz` (bu nesilde açık tur
- * yok, mesaj anı bilinmiyor), `ic_hata`.
+ * yok, mesaj anı bilinmiyor), `ic_hata`. `pc_karar` yalnız `pc_oturumu` çağrısında: PC defterinin tur
+ * kararı (`PcTurKarari`); boru sunucusu bunu köprüye `PcAracSonucu` olarak verir (AJANDA.md "PC oturumları").
  */
-export type AjandaFiilSonucu<F extends AjandaFiili> = Sonuc<AjandaFiilCiktisi<F>, "tur_gecersiz" | "ic_hata">;
+export type AjandaFiilSonucu<F extends AjandaFiili> =
+  | { ok: true; deger: AjandaFiilCiktisi<F>; pc_karar?: PcTurKarari }
+  | { ok: false; code: "tur_gecersiz" | "ic_hata"; detail?: string };
 
 export type AjandaFiilIsleyici<F extends AjandaFiili> = (
   girdi: AjandaFiilGirdisi<F>,

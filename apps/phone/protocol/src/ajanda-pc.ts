@@ -6,6 +6,7 @@ import {
   AracCagriId,
   type AjandaFiili,
 } from "./ajanda-arac.ts";
+import { AJANDA_PC_SINIRLARI, PC_ISTEM_KAYNAGI_DEGERLERI } from "./ajanda-pc-kanca.ts";
 import { cozumle } from "./cozumle.ts";
 import { AJANDA_AZAMI_CERCEVE, PROTOKOL_SURUMU } from "./sinirlar.ts";
 import { mesaj, OpakId } from "./temel.ts";
@@ -19,30 +20,27 @@ import { mesaj, OpakId } from "./temel.ts";
  * İki rol aynı PC anahtarıyla bağlanır:
  * - `pc_oturumu`: kullanıcının Claude Code'una kayıtlı MCP köprüsü; araçları `ana_oturum`'unkilerle aynı.
  * - `pc_kanca`: aynı Claude Code'un kancaları. Servis turun kökenini, mesaj anını ve insan metnini
- *   bunlardan kurar: `UserPromptSubmit` → `pc_istem`, ajanda aracından önce `PreToolUse` → `pc_arac`
- *   (çağrı kimliği `tool_use_id` ve alt agent bilgisi), `Stop` → `pc_tur_sonu`.
+ *   bunlardan kurar: `UserPromptSubmit` → `pc_istem` (istemin kaynağıyla), ajanda aracından önce
+ *   `PreToolUse` → `pc_arac` (çağrı kimliği `tool_use_id` ve alt agent bilgisi), `Stop` → `pc_tur_sonu`.
  * Kancaları modelin kendisi tetikleyemez (Claude Code çalıştırır), ama aynı kullanıcının her süreci
  * anahtarı okuyabilir: güven sınırı işletim sistemi kullanıcısıdır (`docs/GUVENLIK.md`).
+ *
+ * Kanca sürecinin kullandığı bağımlılıksız parçalar (sınırlar, kaynak listesi, Claude Code JSON'unun
+ * okunuşu, damga, satırlar) `ajanda-pc-kanca.ts`'tedir; buradan yeniden dışa aktarılır.
  */
 
-/**
- * PC yolunun sınırları. `AJANDA_SINIRLARI`'na girmez: uygulama bunları görmez, `/ajanda` sürümünü etkilemez.
- * - `ISTEM_METNI`: kancanın servise verdiği istem metninin üst sınırı (karakter); yalnız `alinti` denetimi
- *   içindir, bellekte tutulur, günlüğe ve depoya girmez. Uzun istem kancada kırpılır.
- * - `INSAN_TURU_DK`: istemden sonra çağrının insan turu sayıldığı en uzun süre (uzun otonom turda
- *   sonradan okunan güvenilmez içeriğe dayanan kayıt taslak doğsun).
- * - `TASDIK_OMRU_DK`: `pc_arac` tasdikinin geçerliliği (izin sorusu araya girebilir).
- * - `OTURUM_ADET`, `TASDIK_ADET`: bellekteki istem ve tasdik kaydı sayısı (eskiler atılır).
- * - `BAGLANTI_ADET`: aynı anda el sıkışmış PC bağlantısı.
- */
-export const AJANDA_PC_SINIRLARI = {
-  ISTEM_METNI: 4000,
-  INSAN_TURU_DK: 30,
-  TASDIK_OMRU_DK: 10,
-  OTURUM_ADET: 64,
-  TASDIK_ADET: 256,
-  BAGLANTI_ADET: 32,
-} as const;
+export {
+  AJANDA_PC_MCP_ADI,
+  AJANDA_PC_SINIRLARI,
+  PC_ISTEM_KAYNAKLARI,
+  PC_ISTEM_KAYNAGI_DEGERLERI,
+  PC_KANCA_ARAC_FIILLERI,
+  PC_KANCA_OLAYLARI,
+  PC_SERVIS_OTURUMU_ORTAMI,
+  pcIstemKaynagi,
+  pcKancaGirdisi,
+} from "./ajanda-pc-kanca.ts";
+export type { PcKancaIstegi, PcKancaOlayi } from "./ajanda-pc-kanca.ts";
 
 /**
  * PC yolundan doğan kayıtların tekilleştirme kapsamı (`ajandaTekilAnahtari` `kapsam`): bütün PC oturumları
@@ -51,9 +49,6 @@ export const AJANDA_PC_SINIRLARI = {
  */
 export const PC_TEKIL_KAPSAMI = "pc";
 
-/** Claude Code'un araç adı öneki: `mcp__<sunucu>__<fiil>`; kayıt adı `eren-ajanda`. */
-export const AJANDA_PC_MCP_ADI = "eren-ajanda";
-
 /**
  * PC köprüsünün araç açıklamaları: sözleşmedekiler (`AJANDA_ARAC_ACIKLAMALARI`) birebir, yazan iki araca
  * PC eki. Damga telefon yolunda kullanıcı mesajının başında, PC'de ise kancanın eklediği bağlamdadır.
@@ -61,7 +56,8 @@ export const AJANDA_PC_MCP_ADI = "eren-ajanda";
 const PC_ZAMAN_EKI =
   " PC oturumu: [mesaj_ani: ...] damgası kullanıcı mesajına kanca bağlamı olarak eklenir; görmüyorsan " +
   "önce ajanda_listele{en_fazla:1} çağır ve çıktıdaki mesaj_ani'yi dayanak al. Kullanıcı mesajı olmadan " +
-  "(alt agent, arka plan) yapılan ekleme taslak doğar; taslağı kaydedildi diye anlatma.";
+  "(alt agent, arka plan) yapılan ekleme taslak doğar; çıktıdaki pc_tur satırı nedenini söyler, " +
+  "taslağı kaydedildi diye anlatma.";
 
 export const AJANDA_PC_ARAC_ACIKLAMALARI: Readonly<Record<AjandaFiili, string>> = {
   ajanda_ekle: AJANDA_ARAC_ACIKLAMALARI.ajanda_ekle + PC_ZAMAN_EKI,
@@ -74,16 +70,24 @@ export const AJANDA_PC_ARAC_ACIKLAMALARI: Readonly<Record<AjandaFiili, string>> 
 /** Claude Code oturum kimliği (UUID); kaynak izinde `oturum_id`. */
 const OturumId = OpakId;
 
+export const PcIstemKaynagi = z.enum(PC_ISTEM_KAYNAGI_DEGERLERI);
+export type PcIstemKaynagi = z.infer<typeof PcIstemKaynagi>;
+
 /**
- * `UserPromptSubmit`: kullanıcı bir mesaj gönderdi. `metin` istemin başı (`ISTEM_METNI`'ne kırpılmış);
- * `istem_id` Claude Code'un `prompt_id`'si (varsa). Çıktı: servisin varışta hesapladığı mesaj anı;
- * kanca bunu `mesajAniDamgasi` ile modelin bağlamına yazar.
+ * `UserPromptSubmit`: Claude Code bir istem gönderdi. `kaynak` Claude Code'un `source`'u (kapalı liste;
+ * tanınmayan `diger`, gelmeyen `yok`). `metin` istemin başıdır (`ISTEM_METNI`'ne kırpılmış) ve YALNIZ
+ * `kaynak:"user"` iken vardır: başka kaynaklı istemin metni servise gitmez, bellekte tutulmaz. `istem_id`
+ * Claude Code'un `prompt_id`'si (varsa). Çıktı: servisin varışta hesapladığı mesaj anı; kanca bunu
+ * damga olarak modelin bağlamına yazar.
  */
-export const PcIstemGirdi = z.strictObject({
-  oturum_id: OturumId,
-  istem_id: OpakId.optional(),
-  metin: z.string().max(AJANDA_PC_SINIRLARI.ISTEM_METNI),
-});
+export const PcIstemGirdi = z
+  .strictObject({
+    oturum_id: OturumId,
+    istem_id: OpakId.optional(),
+    kaynak: PcIstemKaynagi,
+    metin: z.string().max(AJANDA_PC_SINIRLARI.ISTEM_METNI).optional(),
+  })
+  .refine((g) => g.kaynak === "user" || g.metin === undefined, { message: "metin yalnız kullanıcının istemiyle gider" });
 export const PcIstemCikti = z.strictObject({ mesaj_ani: AjandaYerelAn });
 
 /** `PreToolUse` (yalnız ajanda araçları): bu çağrı kimliği bu oturumun bu isteminde; alt agent mı. */
@@ -129,49 +133,66 @@ export type PcKancaYukari = z.infer<typeof PcKancaYukari>;
 
 export const pcKancaYukariCoz = (ham: string) => cozumle(PcKancaYukari, ham, AJANDA_AZAMI_CERCEVE.BORU, PROTOKOL_SURUMU);
 
+// Turun kökeni kararı (servisin PC defteri) ve köprüye dönüşü
+
 /**
- * Kancanın Claude Code'dan aldığı JSON'dan servise gidecek girdi (saf; kanca süreci kullanır). Geçersiz ya
- * da bu kancanın işi olmayan girdi `null`: kanca hiçbir şey yollamaz (oturumu bozmaz).
- * - `istem`: `session_id`, `prompt`, isteğe bağlı `prompt_id`. Alt agent bağlamında (`agent_id` dolu)
- *   gelen istem insan mesajı sayılmaz.
- * - `arac`: `session_id`, `tool_use_id`, `tool_name` (`mcp__eren-ajanda__<fiil>`), isteğe bağlı
- *   `prompt_id`; `agent_id` doluysa alt agent.
- * - `tur_sonu`: `session_id`.
+ * PC çağrısının tur kararı; `insan` dışındakilerin hepsi sentetiktir (kayıt taslak doğar, taslak olmayana
+ * dokunulamaz). Sıra servisin denetim sırasıdır (`server/src/ajanda-pc.ts`):
+ * - `tasdik_yok`: bu çağrı kimliği için `PreToolUse` kancası gelmedi (kanca kurulu değil, çağrı kimliği
+ *   MCP isteğinde yok ya da tasdik eskidi / kullanıldı).
+ * - `alt_agent`: çağrı bir alt agent'tan.
+ * - `istem_yok`: servis bu oturumun hiç istemini görmedi (istem kancası yok ya da servis yeniden başladı).
+ * - `kaynak_yok`: son istemin kaynağı bildirilmedi (`source` alanı gelmedi).
+ * - `kaynak_kullanici_degil`: son istemi kullanıcı yazmadı (`sdk`, `system`, uyanış, zamanlanmış, olay, tanınmayan).
+ * - `tur_bitti`: son istemden sonra `Stop` geldi.
+ * - `istem_kimligi_yok`: istem ya da tasdik `prompt_id` taşımıyor.
+ * - `istem_kimligi_uyusmuyor`: çağrı son istemin turuna ait değil.
+ * - `sure_doldu`: istemden bu yana `INSAN_TURU_DK`'dan fazla geçti (yedek sınır).
  */
-export type PcKancaOlayi = "istem" | "arac" | "tur_sonu";
-export const PC_KANCA_OLAYLARI: readonly PcKancaOlayi[] = ["istem", "arac", "tur_sonu"];
+export const PC_TUR_KARARLARI = [
+  "insan",
+  "tasdik_yok",
+  "alt_agent",
+  "istem_yok",
+  "kaynak_yok",
+  "kaynak_kullanici_degil",
+  "tur_bitti",
+  "istem_kimligi_yok",
+  "istem_kimligi_uyusmuyor",
+  "sure_doldu",
+] as const;
+export const PcTurKarari = z.enum(PC_TUR_KARARLARI);
+export type PcTurKarari = z.infer<typeof PcTurKarari>;
 
-export type PcKancaIstegi =
-  | { fiil: "pc_istem"; girdi: PcKancaGirdisi<"pc_istem"> }
-  | { fiil: "pc_arac"; girdi: PcKancaGirdisi<"pc_arac"> }
-  | { fiil: "pc_tur_sonu"; girdi: PcKancaGirdisi<"pc_tur_sonu"> };
+/**
+ * `pc_oturumu` isteğinin başarılı yanıtının `sonuc`'u: aracın çıktısı (`AJANDA_ARACLARI[fiil].cikti`,
+ * köprü ayrıca doğrular) ve turun kararı. `ana_oturum` yanıtı bugünkü gibi yalnız çıktıdır.
+ */
+export const PcAracSonucu = z.strictObject({ cikti: z.unknown(), karar: PcTurKarari });
+export type PcAracSonucu = z.infer<typeof PcAracSonucu>;
 
-const dizge = (v: unknown): string | undefined => (typeof v === "string" && v !== "" ? v : undefined);
+/** Sentetik kararın modele giden nedeni (kullanıcıya tek cümleyle söylenecek); kayıt metni içermez. */
+export const PC_TUR_NEDENI_METNI: Readonly<Record<Exclude<PcTurKarari, "insan">, string>> = {
+  tasdik_yok: "Claude Code'un araç öncesi kancası bu çağrıyı servise bildirmedi (kancalar kurulu değil ya da çağrı kimliği gelmedi)",
+  alt_agent: "çağrı bir alt agent'tan geldi",
+  istem_yok: "servis bu oturumdaki son kullanıcı mesajını görmedi (istem kancası kurulu değil ya da servis yeniden başladı)",
+  kaynak_yok: "Claude Code mesajın kimden geldiğini bildirmedi (bu Claude Code sürümü kaynak alanını göndermiyor olabilir)",
+  kaynak_kullanici_degil: "bu turu kullanıcı değil sistem açtı (arka plan bildirimi, zamanlanmış görev, döngü uyanışı ya da -p/SDK oturumu)",
+  tur_bitti: "kullanıcının mesajıyla başlayan tur bitmişti",
+  istem_kimligi_yok: "Claude Code mesaj kimliğini bildirmedi",
+  istem_kimligi_uyusmuyor: "çağrı kullanıcının son mesajından başka bir tura ait",
+  sure_doldu: `kullanıcının mesajından bu yana ${AJANDA_PC_SINIRLARI.INSAN_TURU_DK} dakikadan fazla geçti`,
+};
 
-export function pcKancaGirdisi(olay: PcKancaOlayi, ham: unknown, fiiller: readonly string[]): PcKancaIstegi | null {
-  if (typeof ham !== "object" || ham === null || Array.isArray(ham)) return null;
-  const h = ham as Record<string, unknown>;
-  const oturum = OpakId.safeParse(h["session_id"]);
-  if (!oturum.success) return null;
-  const istemId = OpakId.safeParse(h["prompt_id"]);
-  const istem = istemId.success ? { istem_id: istemId.data } : {};
-  const altAgent = dizge(h["agent_id"]) !== undefined;
-  if (olay === "istem") {
-    if (altAgent) return null;
-    const p = h["prompt"];
-    if (typeof p !== "string") return null;
-    // UTF-16 birimiyle kırpılır (şema sınırı da öyle); yarım kalan vekil çifti atılır.
-    let metin = p.slice(0, AJANDA_PC_SINIRLARI.ISTEM_METNI);
-    if (/[\uD800-\uDBFF]$/.test(metin)) metin = metin.slice(0, -1);
-    return { fiil: "pc_istem", girdi: { oturum_id: oturum.data, ...istem, metin } };
-  }
-  if (olay === "arac") {
-    const id = AracCagriId.safeParse(h["tool_use_id"]);
-    const ad = dizge(h["tool_name"]);
-    if (!id.success || ad === undefined) return null;
-    const onek = `mcp__${AJANDA_PC_MCP_ADI}__`;
-    if (!ad.startsWith(onek) || !fiiller.includes(ad.slice(onek.length))) return null;
-    return { fiil: "pc_arac", girdi: { oturum_id: oturum.data, ...istem, arac_cagri_id: id.data, alt_agent: altAgent } };
-  }
-  return { fiil: "pc_tur_sonu", girdi: { oturum_id: oturum.data } };
+/**
+ * Köprünün yazan araçların metnine eklediği satır (yalnız sentetik kararda; `insan`'da `null`). Sabit
+ * metindir: kayıt metni, istem ya da kimlik taşımaz.
+ */
+export function pcTurNotu(karar: PcTurKarari): string | null {
+  if (karar === "insan") return null;
+  return (
+    `pc_tur: sentetik (${karar}). Bu çağrı kullanıcının yazdığı bir mesaja bağlanamadı: eklenen kayıt taslak doğar ` +
+    "(ajanda uygulamasında onay bekler), taslak olmayan kayda dokunulamaz. Kullanıcıya bunu ve nedenini tek " +
+    `cümleyle söyle: ${PC_TUR_NEDENI_METNI[karar]}. Teşhis: eren eslestir --claude-code --teshis`
+  );
 }

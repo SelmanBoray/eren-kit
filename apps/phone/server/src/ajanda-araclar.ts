@@ -20,6 +20,7 @@ import {
   kullaniciEmriMi,
   OpakId,
   PC_TEKIL_KAPSAMI,
+  type PcTurKarari,
   tarihliGirdiMi,
   type ZamandaKorunan,
 } from "@eren/protocol";
@@ -55,7 +56,8 @@ import type {
  * - Turun kökeni ve mesaj anı YALNIZ `turBaglami`'ndan (jetonun sohbeti + nesli); yoksa `tur_gecersiz`,
  *   hiçbir şey yazılmaz. Yazar `{yol:"sohbet_araci", tur_kokeni, sohbet_id}`.
  * - PC oturumu (`pc_oturumu`, AJANDA.md "PC oturumları"): tur PC defterinden (`ajanda-pc.ts`; kanca
- *   tasdiki yoksa sentetik, mesaj anı çağrının anı). Yazar `{yol:"pc_araci", tur_kokeni, oturum_id}`,
+ *   tasdiki yoksa sentetik, mesaj anı çağrının anı); defterin kararı sonuçla döner (`pc_karar`).
+ *   Yazar `{yol:"pc_araci", tur_kokeni, oturum_id}`,
  *   tekil kapsam `PC_TEKIL_KAPSAMI`; kurallar (taslak, alan koruması, dayanak, gece, tekilleştirme,
  *   alıntı) telefon yolundakilerle aynıdır.
  * - Takvime bağlı girdi `dayanakGecerliMi(dayanak, mesaj_ani)` ister (`dayanak_uyusmuyor`); hemen
@@ -95,6 +97,8 @@ interface Cagri {
   geceAnahtari: string;
   /** Günlük alanları: kimlik, metin yok. */
   iz: Record<string, string | number>;
+  /** Yalnız PC: defterin kararı (köprüye döner). */
+  pcKarar?: PcTurKarari;
 }
 
 type Govde<F extends AjandaFiili> = (girdi: AjandaFiilGirdisi<F>, c: Cagri, simdi: number) => Cikti<F>;
@@ -158,7 +162,9 @@ export function ajandaAraclariKur(b: AjandaBagimliliklari, pc?: PcDefteri): Ajan
       kaynakTemeli: { yol: "pc_araci", tur_kokeni: tur.tur_kokeni, oturum_id },
       tekilKapsam: PC_TEKIL_KAPSAMI,
       geceAnahtari: `pc:${oturum_id}`,
-      iz: { yol: "pc_araci", oturum_id, pc_karar: karar },
+      // `cagri_kimligi`: Claude Code'un MCP isteğinde çağrı kimliği geldi mi (teşhis; AJANDA.md "Kurulumdan sonra sınama").
+      iz: { yol: "pc_araci", oturum_id, pc_karar: karar, cagri_kimligi: baglam.arac_cagri_id === undefined ? "yok" : "var" },
+      pcKarar: karar,
     };
   };
 
@@ -192,7 +198,7 @@ export function ajandaAraclariKur(b: AjandaBagimliliklari, pc?: PcDefteri): Ajan
           kayit_id: c.kayit?.kayit_id ?? null,
           rev: c.kayit?.revizyon ?? null,
         });
-        return { ok: true, deger: cikti };
+        return cagri.pcKarar === undefined ? { ok: true, deger: cikti } : { ok: true, deger: cikti, pc_karar: cagri.pcKarar };
       } catch (e) {
         gunluk.hata(MODUL, "arac_hatasi", { fiil, hata: e instanceof Error ? e.name : "bilinmiyor" });
         return { ok: false, code: "ic_hata" };

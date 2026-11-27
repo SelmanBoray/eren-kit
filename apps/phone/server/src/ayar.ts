@@ -6,7 +6,7 @@
  */
 import win32 from "node:path/win32";
 import { fileURLToPath } from "node:url";
-import { ProjelerCikti } from "@eren/protocol";
+import { PC_SERVIS_OTURUMU_ORTAMI, ProjelerCikti } from "@eren/protocol";
 import type { McpProfili, ServisBilgisi } from "@eren/protocol";
 import { ortamDegeri, veriKokuCoz, VERI_KOKU_ORTAMI } from "./veri-koku.ts";
 import type {
@@ -357,7 +357,9 @@ export const ayarKur: AyarFabrikasi = async (b: AyarBagimliliklari): Promise<Aya
     },
     erenOrtami: kapatmali,
     telefonIsOrtami: kapatmali,
-    pcIsOrtami: () => ({ ...claudeSil(ortamKopyasi), ...PC_IS_KAPATMA_ANAHTARLARI }),
+    // `tam` profil kullanıcı ayarlarını (kancalar dahil) yükler: işaret, PC ajanda kancasının bu oturumda
+    // hiçbir şey yapmamasını sağlar (AJANDA.md "PC oturumları", "Servisin kendi oturumları").
+    pcIsOrtami: () => ({ ...claudeSil(ortamKopyasi), ...PC_IS_KAPATMA_ANAHTARLARI, [PC_SERVIS_OTURUMU_ORTAMI]: "1" }),
     async kimlikEki(): Promise<string> {
       return (await b.dosya.oku(yollar.kimlikEki)) ?? "";
     },

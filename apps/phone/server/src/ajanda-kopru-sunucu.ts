@@ -13,6 +13,8 @@
  * sayı `AJANDA_PC_SINIRLARI.BAGLANTI_ADET` ile sınırlıdır. `pc_oturumu` isteğinin `cagri`'sı bağlama
  * (`AjandaPcBaglami`) geçer; `ana_oturum` isteğinin `cagri`'sı yok sayılır (bağlam bugünkü gibi yalnız
  * jetonun kapsamıdır). `pc_kanca` bağlantısı yalnız kanca isteklerini (`pcKancaYukariCoz`) alır.
+ * `pc_oturumu` başarılı yanıtının `sonuc`'u `PcAracSonucu{cikti, karar}`'dır (PC defterinin tur kararı;
+ * köprü sentetik kararın nedenini modele söyler); `ana_oturum` yanıtı bugünkü gibi yalnız çıktıdır.
  */
 import { z } from "zod";
 import {
@@ -22,6 +24,7 @@ import {
   AJANDA_PC_SINIRLARI,
   OpakId,
   PC_KANCA_ARACLARI,
+  PcAracSonucu,
   PROTOKOL_SURUMU,
   ajandaFiilRoldeIzinliMi,
   ajandaKopruYukariCoz,
@@ -107,13 +110,24 @@ const hataYaniti = (istek_id: string, code: HataKodu): KopruYanit => ({
   code,
 });
 
-/** `null`: işleyici sözleşmeye uymadı, çağıran `ic_hata` yollar. `detail` hiç taşınmaz. */
-const sonucYaniti = (fiil: AjandaFiili, istek_id: string, sonuc: Sonuc<unknown, HataKodu>): KopruYanit | null => {
+/**
+ * `null`: işleyici sözleşmeye uymadı, çağıran `ic_hata` yollar. `detail` hiç taşınmaz. `pc` (yalnız
+ * `pc_oturumu` çağrısı): başarılı yanıtın `sonuc`'u `PcAracSonucu`'dur (çıktı + defterin kararı); karar
+ * yoksa sözleşme bozuktur.
+ */
+const sonucYaniti = (
+  fiil: AjandaFiili,
+  istek_id: string,
+  sonuc: Sonuc<unknown, HataKodu> & { pc_karar?: unknown },
+  pc: boolean,
+): KopruYanit | null => {
   if (sonuc.ok === true) {
     const sema: z.ZodType = AJANDA_ARACLARI[fiil].cikti;
     const cikti = sema.safeParse(sonuc.deger);
     if (!cikti.success) return null;
-    return { v: PROTOKOL_SURUMU, type: "yanit", istek_id, ok: true, sonuc: cikti.data };
+    if (!pc) return { v: PROTOKOL_SURUMU, type: "yanit", istek_id, ok: true, sonuc: cikti.data };
+    const sarili = PcAracSonucu.safeParse({ cikti: cikti.data, karar: sonuc.pc_karar });
+    return sarili.success ? { v: PROTOKOL_SURUMU, type: "yanit", istek_id, ok: true, sonuc: sarili.data } : null;
   }
   // Sözleşme: boru düzeyi ret yalnız `tur_gecersiz` ve `ic_hata`.
   if (sonuc.code !== "tur_gecersiz" && sonuc.code !== "ic_hata") return null;
@@ -254,7 +268,7 @@ export const ajandaKopruSunucuKur: AjandaKopruSunucuFabrikasi = ({
     try {
       const isleyici = isleyiciler[istek.fiil] as unknown as GenelIsleyici;
       const sonuc = await isleyici(istek.girdi, baglam, sinyal);
-      const yanit = sonucYaniti(istek.fiil, istek.istek_id, sonuc);
+      const yanit = sonucYaniti(istek.fiil, istek.istek_id, sonuc, baglam.rol === "pc_oturumu");
       if (yanit !== null) return yanit;
       gunluk.hata(MODUL, "sonuc_gecersiz", { fiil: istek.fiil });
     } catch {

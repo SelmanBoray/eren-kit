@@ -51,11 +51,14 @@ const kur = async (sec: { pcKanca?: PcKancaIsleyicileri | null } = {}) => {
   const depo = depoKur({ yol: ":memory:", saat: zaman.saat, gunluk: sahteGunluk() });
   acilanlar.push(depo);
   const cagrilar: Array<{ fiil: AjandaFiili; girdi: unknown; baglam: AjandaKopruBaglami }> = [];
+  const pcKarar: { deger: string | null } = { deger: "tasdik_yok" };
   const nesne: Record<string, unknown> = {};
   for (const fiil of AJANDA_FIILLERI) {
     nesne[fiil] = async (girdi: unknown, baglam: AjandaKopruBaglami) => {
       cagrilar.push({ fiil, girdi, baglam });
-      return { ok: true, deger: LISTE };
+      // Ajanda modülü PC çağrısında defterin kararını da döner (`pc_karar`); `kararsiz` sözleşme bozukluğunu dener.
+      if (baglam.rol !== "pc_oturumu" || pcKarar.deger === null) return { ok: true, deger: LISTE };
+      return { ok: true, deger: LISTE, pc_karar: pcKarar.deger };
     };
   }
   const kancalar: Array<{ fiil: string; girdi: unknown }> = [];
@@ -73,7 +76,7 @@ const kur = async (sec: { pcKanca?: PcKancaIsleyicileri | null } = {}) => {
     gunluk,
   });
   await sunucu.baslat(nesne as unknown as AjandaFiilIsleyiciler, sec.pcKanca === null ? undefined : (sec.pcKanca ?? pcKanca));
-  return { boru, depo, gunluk, zaman, sunucu, cagrilar, kancalar };
+  return { boru, depo, gunluk, zaman, sunucu, cagrilar, kancalar, pcKarar };
 };
 type Kurulum = Awaited<ReturnType<typeof kur>>;
 
@@ -210,6 +213,27 @@ describe("ajanda borusu, PC rolleri: istekler", () => {
     assert.equal(k.cagrilar.length, 2);
   });
 
+  it("pc_oturumu yanıtı çıktı + tur kararıdır (PcAracSonucu); karar yoksa ic_hata; ana_oturum yanıtı yalnız çıktı", async () => {
+    const k = await kur();
+    k.depo.ajandaPcAnahtariYaz(ozetle(PC_JETON), 1);
+    const b = await baglan(k, "pc_oturumu");
+    gonder(b, istek("i1", "ajanda_listele", {}));
+    await bosalt();
+    assert.deepEqual(cikanlar(b).at(-1), { v: PROTOKOL_SURUMU, type: "yanit", istek_id: "i1", ok: true, sonuc: { cikti: LISTE, karar: "tasdik_yok" } });
+    k.pcKarar.deger = null;
+    gonder(b, istek("i2", "ajanda_listele", {}));
+    await bosalt();
+    assert.deepEqual(cikanlar(b).at(-1), { v: PROTOKOL_SURUMU, type: "yanit", istek_id: "i2", ok: false, code: "ic_hata" });
+    k.pcKarar.deger = "insanmis";
+    gonder(b, istek("i3", "ajanda_listele", {}));
+    await bosalt();
+    assert.deepEqual(cikanlar(b).at(-1), { v: PROTOKOL_SURUMU, type: "yanit", istek_id: "i3", ok: false, code: "ic_hata" });
+    const ana = await baglan(k, "ana_oturum", k.sunucu.jetonUret(KAPSAM));
+    gonder(ana, istek("i4", "ajanda_listele", {}));
+    await bosalt();
+    assert.deepEqual(cikanlar(ana).at(-1), { v: PROTOKOL_SURUMU, type: "yanit", istek_id: "i4", ok: true, sonuc: LISTE });
+  });
+
   it("pc_oturumu kanca fiilini çağıramaz (rol_fiil_izinsiz, bağlantı açık); pc_kanca araç çağıramaz (kapanır)", async () => {
     const k = await kur();
     k.depo.ajandaPcAnahtariYaz(ozetle(PC_JETON), 1);
@@ -232,7 +256,7 @@ describe("ajanda borusu, PC rolleri: istekler", () => {
     const k = await kur();
     k.depo.ajandaPcAnahtariYaz(ozetle(PC_JETON), 1);
     const kanca = await baglan(k, "pc_kanca");
-    gonder(kanca, istek("i1", "pc_istem", { oturum_id: OTURUM, metin: "yarın 3'te dişçi" }));
+    gonder(kanca, istek("i1", "pc_istem", { oturum_id: OTURUM, kaynak: "user", metin: "yarın 3'te dişçi" }));
     gonder(kanca, istek("i2", "pc_arac", { oturum_id: OTURUM, arac_cagri_id: "toolu_01", alt_agent: true }));
     gonder(kanca, istek("i3", "pc_tur_sonu", { oturum_id: OTURUM }));
     await bosalt();
@@ -262,7 +286,7 @@ describe("ajanda borusu, PC rolleri: istekler", () => {
     });
     atan.depo.ajandaPcAnahtariYaz(ozetle(PC_JETON), 1);
     const b = await baglan(atan, "pc_kanca");
-    gonder(b, istek("i1", "pc_istem", { oturum_id: OTURUM, metin: "a" }));
+    gonder(b, istek("i1", "pc_istem", { oturum_id: OTURUM, kaynak: "user", metin: "a" }));
     await bosalt();
     const y = cikanlar(b).at(-1);
     assert.ok(y?.type === "yanit" && y.ok === false && y.code === "ic_hata");
@@ -277,7 +301,7 @@ describe("ajanda borusu, PC rolleri: istekler", () => {
     assert.equal(k.cagrilar.length, 1);
     assert.deepEqual(k.cagrilar[0]!.baglam, KAPSAM);
     // Ana oturum kancası yoktur.
-    gonder(b, istek("i2", "pc_istem", { oturum_id: OTURUM, metin: "a" }));
+    gonder(b, istek("i2", "pc_istem", { oturum_id: OTURUM, kaynak: "user", metin: "a" }));
     await bosalt();
     const y = cikanlar(b).at(-1);
     assert.ok(y?.type === "yanit" && y.code === "rol_fiil_izinsiz");

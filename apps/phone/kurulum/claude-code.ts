@@ -6,22 +6,28 @@
 //   node --disable-warning=ExperimentalWarning kurulum/claude-code.ts kanca-kaldir [--ayar <settings.json>]
 //
 // `kanca-ekle` ve `kanca-kaldir` ayar dosyasının yanına zaman damgalı yedek bırakır, yalnız bu aracın
-// kendi kanca girdilerini (komutunda `kopru.ts` ve `--kanca` geçen) ekler ya da çıkarır; başka hiçbir
-// anahtara ve kancaya dokunmaz, iki kez çalıştırmak bir kez çalıştırmakla aynıdır. MCP sunucusunun kaydı
-// (`claude mcp add`) bu betikte yoktur: `goster` tam komutu yazar, kullanıcı kendisi çalıştırır.
-// Yollar kurulu sürümdendir (`<veri kökü>\uygulama\guncel\server\src\kopru.ts`); Node bu betiği çalıştıran Node'dur.
+// kendi kanca girdilerini (`bizimKancaMi`: komutunda `kanca.ts <olay>` ya da eski biçim `kopru.ts --kanca
+// <olay>` geçen) ekler ya da çıkarır; başka hiçbir anahtara ve kancaya dokunmaz, iki kez çalıştırmak bir
+// kez çalıştırmakla aynıdır. MCP sunucusunun kaydı (`claude mcp add`) bu betikte yoktur: `goster` tam
+// komutu yazar, kullanıcı kendisi çalıştırır.
+//
+// Yolların TEK kaynağı `yollar`'dır: veri kökünden `<veri kökü>\uygulama\guncel\server\src\...` (kurulu
+// sürüm; `guncel` bağlantısını kur.ts her dağıtımda yeni sürüme çevirir, eski sürümleri siler). Bu betiğin
+// ya da çalışan herhangi bir dosyanın kendi yolu kullanılmaz: o yol `surumler\<sürüm>`'e çözülür ve bir
+// sonraki güncellemede eskir. `eren eslestir --claude-code` de kayıt yönergesini buradan alır
+// (`kayitYonergesi`). Node bu betiği çalıştıran Node'dur.
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import win32 from "node:path/win32";
 import { ortamDegeri, uygulamaKoku, veriKoku } from "./ortam.ts";
 import type { Ortam } from "./ortam.ts";
 
-/** Kullanıcının Claude Code'una kayıtlı MCP sunucusunun adı (`server/src/eslestir.ts` `CLAUDE_CODE_MCP_ADI`). */
+/** Kullanıcının Claude Code'una kayıtlı MCP sunucusunun adı (`protocol` `AJANDA_PC_MCP_ADI`). */
 export const MCP_ADI = "eren-ajanda";
-/** Kancanın en uzun süresi (sn). Kanca servise en çok 2 sn harcar; Node açılışı dahil bol pay. */
+/** Kancanın en uzun süresi (sn). Kanca servise en çok 2 sn harcar, en geç 3 sn'de kendini kapatır; bol pay. */
 export const KANCA_SURESI_SN = 10;
 
 export type KancaOlayi = "UserPromptSubmit" | "PreToolUse" | "Stop";
-/** Claude Code olayı → `kopru.ts --kanca` olayı. */
+/** Claude Code olayı → `kanca.ts` olayı. */
 export const KANCA_OLAYLARI: Readonly<Record<KancaOlayi, string>> = {
   UserPromptSubmit: "istem",
   PreToolUse: "arac",
@@ -31,15 +37,20 @@ export const ARAC_ESLESTIRICI = `mcp__${MCP_ADI}__.*`;
 
 export interface Yollar {
   nodeExe: string;
+  /** MCP köprüsü (`--rol pc_oturumu`). */
   kopruBetigi: string;
+  /** Hafif kanca girişi (`server/src/kanca.ts`; MCP kitaplığını ve zod'u yüklemez). */
+  kancaBetigi: string;
   anahtarDosyasi: string;
 }
 
 export const yollar = (ortam: Ortam, nodeExe: string): Yollar => {
   const kok = veriKoku(ortam);
+  const src = win32.join(uygulamaKoku(kok), "guncel", "server", "src");
   return {
     nodeExe,
-    kopruBetigi: win32.join(uygulamaKoku(kok), "guncel", "server", "src", "kopru.ts"),
+    kopruBetigi: win32.join(src, "kopru.ts"),
+    kancaBetigi: win32.join(src, "kanca.ts"),
     anahtarDosyasi: win32.join(kok, "ajanda-pc.anahtar"),
   };
 };
@@ -54,16 +65,21 @@ export const varsayilanAyarYolu = (ortam: Ortam): string => {
 const ileri = (yol: string): string => yol.replaceAll("\\", "/");
 
 /**
- * `server/src/eslestir.ts` `kancaKomutu` ile aynı biçim: ileri eğik çizgili, tırnaklı yollar; sonda `|| true`
- * (kanca 2 ile çıkarsa Claude Code istemi siler, aracı durdurur ya da Stop'ta yanıtı sürdürür; geri alınmış
- * eski bir `kopru.ts` `--kanca`'yı tanımaz ve 2 ile çıkar).
+ * Kancanın tam komutu. Claude Code kancayı kabukta çalıştırır (Windows'ta Git Bash): yollar ileri eğik
+ * çizgili ve tırnaklı. Sondaki `|| true`: kanca hiçbir koşulda 2 ile çıkmasın (2 kancada "engelle" demektir:
+ * istemi siler, aracı durdurur ya da Stop'ta yanıtı sürdürür); `kanca.ts` her durumda 0 döner, ama eski
+ * bir sürüme geri dönülürse dosya bulunamaz ve Node 1 ile çıkar.
  */
-export const kancaKomutu = (y: Pick<Yollar, "nodeExe" | "kopruBetigi">, olay: string): string =>
-  `"${ileri(y.nodeExe)}" --disable-warning=ExperimentalWarning "${ileri(y.kopruBetigi)}" --kanca ${olay} || true`;
+export const kancaKomutu = (y: Pick<Yollar, "nodeExe" | "kancaBetigi">, olay: string): string =>
+  `"${ileri(y.nodeExe)}" --disable-warning=ExperimentalWarning "${ileri(y.kancaBetigi)}" ${olay} || true`;
 
-/** Komut bu aracın kancası mı (yolu ne olursa olsun: sürüm ve kök değişse de tanınır). */
+/**
+ * Komut bu aracın kancası mı (yolu ne olursa olsun: sürüm ve kök değişse de tanınır). Eski biçim
+ * (`kopru.ts --kanca <olay>`) da tanınır ki `kanca-ekle` onu yenisiyle değiştirsin.
+ */
 export const bizimKancaMi = (komut: unknown): boolean =>
-  typeof komut === "string" && /kopru\.ts"?\s+--kanca\s+(istem|arac|tur_sonu)\b/.test(komut);
+  typeof komut === "string" &&
+  (/[\\/]server[\\/]src[\\/]kanca\.ts"?\s+(istem|arac|tur_sonu)\b/.test(komut) || /kopru\.ts"?\s+--kanca\s+(istem|arac|tur_sonu)\b/.test(komut));
 
 /** `claude mcp add` argümanları ve PowerShell'e yapıştırılacak hali. */
 export const mcpEkleArgumanlari = (y: Pick<Yollar, "nodeExe" | "kopruBetigi">): string[] => [
@@ -81,7 +97,7 @@ export class AyarHatasi extends Error {
 }
 
 /** Bu aracın kanca grupları (olay başına bir grup). */
-export const kancaGruplari = (y: Pick<Yollar, "nodeExe" | "kopruBetigi">): Record<KancaOlayi, Json> => {
+export const kancaGruplari = (y: Pick<Yollar, "nodeExe" | "kancaBetigi">): Record<KancaOlayi, Json> => {
   const grup = (olay: KancaOlayi): Json => ({
     ...(olay === "PreToolUse" ? { matcher: ARAC_ESLESTIRICI } : {}),
     hooks: [{ type: "command", command: kancaKomutu(y, KANCA_OLAYLARI[olay]), timeout: KANCA_SURESI_SN }],
@@ -120,7 +136,7 @@ export function kancalariCikar(ayar: Json): { ayar: Json; cikan: number } {
 }
 
 /** Önce eski girdilerimizi çıkarır, sonra güncellerini olayların sonuna ekler (idempotent). */
-export function kancalariEkle(ayar: Json, y: Pick<Yollar, "nodeExe" | "kopruBetigi">): Json {
+export function kancalariEkle(ayar: Json, y: Pick<Yollar, "nodeExe" | "kancaBetigi">): Json {
   if (ayar["hooks"] !== undefined && !nesneMi(ayar["hooks"])) throw new AyarHatasi('ayardaki "hooks" bir nesne değil; elle bakılmalı');
   const { ayar: temiz } = kancalariCikar(ayar);
   const hooks: Json = nesneMi(temiz["hooks"]) ? temiz["hooks"] : {};
@@ -145,16 +161,18 @@ export function ayarCoz(metin: string | null): Json {
   return j;
 }
 
-/** `goster` çıktısı: kayıt, kancalar, izin önerisi, kaldırma. Hiçbir şey değiştirmez. */
-export function gosterMetni(y: Yollar, ayarYolu: string): string {
+/**
+ * `goster` çıktısı: kayıt, kancalar, izin önerisi, sınama, kaldırma. Hiçbir şey değiştirmez. `anahtarAdimi`
+ * yanlışsa (anahtar az önce üretildi: `eren eslestir --claude-code`) adım 0 yazılmaz.
+ */
+export function gosterMetni(y: Yollar, ayarYolu: string, anahtarAdimi = true): string {
   const json = JSON.stringify({ hooks: Object.fromEntries(Object.entries(kancaGruplari(y)).map(([o, g]) => [o, [g]])) }, null, 2);
   return [
     "PC'deki Claude Code oturumlarının ajanda kaydı (kullanıcının onayıyla, bir kez):",
     "",
-    "0. Anahtar (servisin veri kökünde; yoksa araçlar \"anahtar yok\" der):",
-    "   eren eslestir --claude-code",
-    `   Dosya: ${y.anahtarDosyasi}`,
-    "",
+    ...(anahtarAdimi
+      ? ["0. Anahtar (servisin veri kökünde; yoksa araçlar \"anahtar yok\" der):", "   eren eslestir --claude-code", `   Dosya: ${y.anahtarDosyasi}`, ""]
+      : []),
     "1. MCP köprüsü (kullanıcı kapsamı; ~/.claude.json'a yazılır):",
     `   ${mcpEkleKomutu(y)}`,
     "",
@@ -164,10 +182,20 @@ export function gosterMetni(y: Yollar, ayarYolu: string): string {
     "3. İsteğe bağlı izin (her çağrıda sorulmasın): settings.json permissions.allow'a",
     `   "mcp__${MCP_ADI}__ajanda_ekle", "mcp__${MCP_ADI}__ajanda_guncelle", "mcp__${MCP_ADI}__ajanda_listele"`,
     "",
+    "4. Sınama: yeni bir Claude Code oturumu açın, bir kayıt isteyin (\"yarın 10'da dişçi, ajandaya ekle\"),",
+    "   sonra: eren eslestir --claude-code --teshis  (son karar \"insan\" olmalı; docs/AJANDA.md \"Kurulumdan sonra sınama\")",
+    "",
     "Kaldırma: kanca-kaldir; " + MCP_KALDIR_KOMUTU + "; eren eslestir --claude-code --kaldir",
     "",
   ].join("\n");
 }
+
+/**
+ * `eren eslestir --claude-code`'un anahtardan sonra yazdığı kayıt yönergesi (`server/src/eslestir.ts`
+ * bunu yükler ve olduğu gibi yazar): `goster` ile aynı metin, adım 0'sız, yollar `yollar(ortam, nodeExe)`'den.
+ */
+export const kayitYonergesi = (ortam: Ortam, nodeExe: string): string =>
+  gosterMetni(yollar(ortam, nodeExe), varsayilanAyarYolu(ortam), false);
 
 const zamanDamgasi = (ms: number): string => new Date(ms).toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
 

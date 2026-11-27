@@ -8,8 +8,10 @@ import { fileURLToPath } from "node:url";
 // MODULLER.md genel kural 3 ve 7, "ana" bölümü: mimari taraması.
 const KAYNAK_DIZINI = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
 
-// [karar] Bu dosyalar yasak içe aktarma ve API'lerden muaftır.
-const MUAF = new Set(["dis-dunya.ts", "ana.ts", "kopru.ts", "eslestir.ts", "bekci-ana.ts"]);
+// [karar] Bu dosyalar yasak içe aktarma ve API'lerden muaftır. `kanca.ts`: Claude Code kancasının süreç
+// girişi (kopru.ts gibi bir süreç kabuğu: boru, stdin, ortam, saat); ayrıca aşağıdaki "hafif kanca" kuralına
+// bağlıdır (yalnız izinli modüller).
+const MUAF = new Set(["dis-dunya.ts", "ana.ts", "kopru.ts", "eslestir.ts", "bekci-ana.ts", "kanca.ts"]);
 const SOZLESME = "sozlesme.ts";
 
 const dosyalar = (): string[] =>
@@ -230,6 +232,35 @@ describe("mimari tarama (genel kural 3, 7)", () => {
     kalan = kalan.replace(/\bexport\s*\{\s*\}\s*;?/g, "");
     const kirpilmis = kalan.replace(/\s+/g, " ").trim();
     assert.equal(kirpilmis, "", `sozlesme.ts'te çalışma anı kodu kalıyor: ${kirpilmis.slice(0, 200)}`);
+  });
+
+  it("hafif kanca: kanca.ts'nin çalışma anı içe aktarma kapanışı yalnız izinli modüller (MCP, zod, protokol kökü yok)", () => {
+    // Kanca her Claude Code mesajında ayrı süreçtir: kapanışa giren her modül her mesajı geciktirir.
+    const IZINLI_YERLESIK = new Set(["node:fs", "node:net", "node:path/win32"]);
+    const PROTOKOL_SRC = join(KAYNAK_DIZINI, "..", "..", "protocol", "src");
+    const KANCA_GIRISI = "@eren/protocol/kanca";
+    const gorulen = new Set<string>();
+    const ihlaller: string[] = [];
+    const yuru = (yol: string): void => {
+      if (gorulen.has(yol)) return;
+      gorulen.add(yol);
+      const kod = ayikla(readFileSync(yol, "utf8"), false);
+      // `import type` ve `export type` silinir (tip ayıklamada kalkar); geri kalan statik ve dinamik aktarımlar.
+      const degerli = kod.replace(/\b(?:import|export)\s+type\b[^;]*?\bfrom\s*["'][^"'\n]+["']/g, "");
+      for (const e of degerli.matchAll(BELIRTEC)) {
+        const b = e[2] as string;
+        if (b.startsWith("./")) yuru(join(dirname(yol), b));
+        else if (b === KANCA_GIRISI) yuru(join(PROTOKOL_SRC, "ajanda-pc-kanca.ts"));
+        else if (!IZINLI_YERLESIK.has(b)) ihlaller.push(`${yol}: "${b}"`);
+      }
+    };
+    yuru(join(KAYNAK_DIZINI, "kanca.ts"));
+    bildir(ihlaller, "kanca.ts kapanışında izinsiz modül");
+    const adlar = [...gorulen].map((y) => ad(y.replaceAll("\\", "/"))).sort();
+    assert.deepEqual(adlar, ["ajanda-pc-kanca.ts", "kanca.ts", "sinirlar.ts", "veri-koku.ts"]);
+    // Paketin `./kanca` girişi bu dosyayı gösterir.
+    const paket = JSON.parse(readFileSync(join(PROTOKOL_SRC, "..", "package.json"), "utf8")) as { exports: Record<string, string> };
+    assert.equal(paket.exports["./kanca"], "./src/ajanda-pc-kanca.ts");
   });
 
   it("kaynakta kişisel yol kalıbı yok", () => {

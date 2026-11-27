@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -13,6 +13,7 @@ import {
   kancaKomutu,
   kancalariCikar,
   kancalariEkle,
+  kayitYonergesi,
   mcpEkleKomutu,
   yollar,
 } from "../claude-code.ts";
@@ -21,22 +22,40 @@ const ORTAM = { LOCALAPPDATA: "C:\\ornek\\Yerel", USERPROFILE: "C:\\ornek\\Kulla
 const NODE = "C:\\Program Files\\nodejs\\node.exe";
 const Y = yollar(ORTAM, NODE);
 
-test("yollar kurulu sürümün köprüsünü ve veri kökündeki anahtarı gösterir", () => {
+test("yollar kurulu sürümün (guncel) köprüsünü, hafif kancasını ve veri kökündeki anahtarı gösterir; sürüm dizini yok", () => {
   assert.deepEqual(Y, {
     nodeExe: NODE,
     kopruBetigi: "C:\\ornek\\Yerel\\eren-kit\\uygulama\\guncel\\server\\src\\kopru.ts",
+    kancaBetigi: "C:\\ornek\\Yerel\\eren-kit\\uygulama\\guncel\\server\\src\\kanca.ts",
     anahtarDosyasi: "C:\\ornek\\Yerel\\eren-kit\\ajanda-pc.anahtar",
   });
   const ozel = yollar({ ...ORTAM, EREN_KIT_DATA_DIR: "D:\\veri" }, NODE);
   assert.equal(ozel.kopruBetigi, "D:\\veri\\uygulama\\guncel\\server\\src\\kopru.ts");
+  assert.equal(ozel.kancaBetigi, "D:\\veri\\uygulama\\guncel\\server\\src\\kanca.ts");
+  // Tek kaynak: yollar yalnız ortamdan (veri kökü) türer; betiğin kendi yeri hiçbir yola girmez.
+  const kaynak = readFileSync(new URL("../claude-code.ts", import.meta.url), "utf8");
+  assert.equal(/import\.meta\.(url|filename|dirname)/.test(kaynak), false);
+  for (const metin of [gosterMetni(Y, "C:\\a\\settings.json"), kayitYonergesi(ORTAM, NODE), JSON.stringify(kancalariEkle({}, Y))]) {
+    assert.equal(/surumler/i.test(metin), false);
+  }
 });
 
-test("kanca komutu tırnaklı ve ileri eğik çizgili; kendi kancamız tanınır, başkası tanınmaz", () => {
+test("server/src altında yollardaki betikler var (kurulu sürümde de aynı göreli yer)", () => {
+  for (const ad of ["kopru.ts", "kanca.ts"]) assert.ok(existsSync(new URL(`../../server/src/${ad}`, import.meta.url)), ad);
+});
+
+test("kanca komutu tırnaklı ve ileri eğik çizgili; kendi kancamız (yeni ve eski biçim) tanınır, başkası tanınmaz", () => {
   const k = kancaKomutu(Y, "istem");
-  assert.equal(k, '"C:/Program Files/nodejs/node.exe" --disable-warning=ExperimentalWarning "C:/ornek/Yerel/eren-kit/uygulama/guncel/server/src/kopru.ts" --kanca istem || true');
+  assert.equal(k, '"C:/Program Files/nodejs/node.exe" --disable-warning=ExperimentalWarning "C:/ornek/Yerel/eren-kit/uygulama/guncel/server/src/kanca.ts" istem || true');
   assert.equal(bizimKancaMi(k), true);
   assert.equal(bizimKancaMi(kancaKomutu(Y, "tur_sonu")), true);
+  // Önceki biçim (köprünün `--kanca`'sı, sürüm dizinli yol): kanca-ekle onu yenisiyle değiştirir.
+  const eski = '"C:/x/node.exe" --disable-warning=ExperimentalWarning "C:/ornek/Yerel/eren-kit/uygulama/surumler/abc/server/src/kopru.ts" --kanca arac || true';
+  assert.equal(bizimKancaMi(eski), true);
+  const temiz = kancalariEkle({ hooks: { PreToolUse: [{ matcher: ARAC_ESLESTIRICI, hooks: [{ type: "command", command: eski }] }] } }, Y);
+  assert.deepEqual((temiz["hooks"] as Record<string, unknown>)["PreToolUse"], [{ matcher: ARAC_ESLESTIRICI, hooks: [{ type: "command", command: kancaKomutu(Y, "arac"), timeout: 10 }] }]);
   assert.equal(bizimKancaMi('python -I "C:/x/hook.py" || true'), false);
+  assert.equal(bizimKancaMi('node "C:/baska/kanca.ts" istem'), false);
   assert.equal(bizimKancaMi("node kopru.ts --rol eren"), false);
   assert.equal(bizimKancaMi(undefined), false);
   assert.match(mcpEkleKomutu(Y), /^claude mcp add eren-ajanda -s user -- 'C:\\Program Files\\nodejs\\node\.exe' --disable-warning=ExperimentalWarning C:\\ornek\\Yerel\\eren-kit\\uygulama\\guncel\\server\\src\\kopru\.ts --rol pc_oturumu$/);
@@ -87,12 +106,17 @@ test("bozuk ayar dosyasına dokunulmaz", () => {
   assert.throws(() => kancalariEkle({ hooks: { Stop: {} } }, Y), AyarHatasi);
 });
 
-test("goster hiçbir şey değiştirmez ve tam komutları yazar", () => {
+test("goster hiçbir şey değiştirmez ve tam komutları yazar; kayıt yönergesi aynı metin, adım 0'sız", () => {
   const m = gosterMetni(Y, "C:\\ornek\\Kullanici\\.claude\\settings.json");
   assert.ok(m.includes(mcpEkleKomutu(Y)));
-  assert.ok(m.includes("eren eslestir --claude-code"));
+  assert.ok(m.includes("eren eslestir --claude-code\n"));
   assert.ok(m.includes("claude mcp remove eren-ajanda -s user"));
   assert.ok(m.includes(JSON.stringify(kancaKomutu(Y, "istem")).slice(1, -1)));
+  assert.ok(m.includes("eren eslestir --claude-code --teshis"));
+  const y = kayitYonergesi(ORTAM, NODE);
+  assert.equal(y, gosterMetni(Y, "C:\\ornek\\Kullanici\\.claude\\settings.json", false));
+  assert.equal(y.includes("0. Anahtar"), false);
+  assert.ok(y.includes(mcpEkleKomutu(Y)));
 });
 
 test("komut satırı: kanca-ekle yedekler ve yazar, kanca-kaldir geri alır; bozuk dosyada 1 ve dosya aynı", () => {

@@ -21,7 +21,7 @@ export function ortamDegeri(ortam: Readonly<Record<string, string | undefined>>,
 
 /**
  * PC'deki Claude Code oturumlarının ajanda anahtarı (AJANDA.md "PC oturumları"): veri kökünde tek satır.
- * `eslestir --claude-code` yazar; `kopru.ts --rol pc_oturumu` ve `--kanca` her bağlanışta okur. Servis
+ * `eslestir --claude-code` yazar; `kopru.ts --rol pc_oturumu` ve `kanca.ts` her bağlanışta okur. Servis
  * dosyayı okumaz (depoda yalnız özeti vardır).
  */
 export const AJANDA_PC_ANAHTAR_DOSYASI = "ajanda-pc.anahtar";

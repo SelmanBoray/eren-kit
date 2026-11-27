@@ -141,6 +141,14 @@ describe("ayar: ortam temizliği", () => {
     assert.equal("CLAUDE_CODE_DISABLE_ATTACHMENTS" in o, false);
     const kalanClaude = Object.keys(o).filter((k) => /^(claude|anthropic)/i.test(k)).sort();
     assert.deepEqual(kalanClaude, uc.sort());
+    // Servisin kendi oturumu işareti: PC ajanda kancası bu oturumda hiçbir şey yapmaz.
+    assert.equal(o["EREN_KIT_SERVIS_OTURUMU"], "1");
+  });
+
+  it("servis oturumu işareti yalnız PC iş ortamında (ana sohbet ve telefon işi kullanıcı kancası yüklemez)", async () => {
+    const a = await kur(hazir(undefined, kirli));
+    assert.equal("EREN_KIT_SERVIS_OTURUMU" in a.erenOrtami(), false);
+    assert.equal("EREN_KIT_SERVIS_OTURUMU" in a.telefonIsOrtami(), false);
   });
 
   it("erenOrtami ve telefonIsOrtami: silinir, sonra tam dört anahtar eklenir", async () => {

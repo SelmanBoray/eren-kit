@@ -26,6 +26,7 @@ import {
   zamanKurallari,
 } from "./ajanda-zaman.ts";
 import { geceAraligindaMi } from "./ajanda-kural.ts";
+import { AJANDA_BORU_ADI } from "./ajanda-pc-kanca.ts";
 import { cozumle } from "./cozumle.ts";
 import { KopruIptal, KopruRet, KopruYanit } from "./kopru.ts";
 import { AJANDA_AZAMI_CERCEVE, AJANDA_SINIRLARI, PROTOKOL_SURUMU } from "./sinirlar.ts";
@@ -43,7 +44,8 @@ import { Jeton, mesaj, OpakId } from "./temel.ts";
  * Çıktılar modele yapılandırılmış gitmez: köprü yalnız `ajandaMcpSonucu`'nun tek metin içeriğini verir.
  */
 
-export const AJANDA_BORU_ADI = "\\\\.\\pipe\\eren-ajanda";
+/** Ad, PC kancasının bağımlılıksız çekirdeğindedir (`ajanda-pc-kanca.ts`); değer değişmedi. */
+export { AJANDA_BORU_ADI };
 
 /**
  * - `ana_oturum`: telefondaki bir sohbetin ana oturumu (jeton kapsamı `sohbet_id` + nesil; kaynak

@@ -12,15 +12,12 @@ import {
   AJANDA_ARACLARI,
   AJANDA_AZAMI_CERCEVE,
   AJANDA_BORU_ADI,
-  AJANDA_FIILLERI,
   AJANDA_PC_ARAC_ACIKLAMALARI,
   AJANDA_ROL_FIILLERI,
   AracCagriId,
   OpakId,
-  PC_KANCA_ARACLARI,
-  PC_KANCA_OLAYLARI,
-  mesajAniDamgasi,
-  pcKancaGirdisi,
+  PcAracSonucu,
+  pcTurNotu,
   ajandaKopruAsagiCoz,
   AjandaKopruRolu,
   ajandaMcpSonucu,
@@ -47,8 +44,6 @@ import type {
   AjandaFiili,
   AjandaKopruAsagi,
   AjandaPcCagri,
-  AjandaYerelAn,
-  PcKancaOlayi,
   CozumSonucu,
   HataKodu,
   KopruAsagi,
@@ -56,7 +51,6 @@ import type {
 } from "@eren/protocol";
 import { z } from "zod";
 import { ekranMetniKur } from "./ekran-metni.ts";
-import { takvimKur } from "./takvim.ts";
 import { ajandaPcAnahtarYolu, veriKokuCoz } from "./veri-koku.ts";
 import type {
   AjandaKopruIstemciAyari,
@@ -839,13 +833,26 @@ export async function ajandaKopruCalistir(
     return ajandaHataSonucu("ic_hata");
   };
 
-  /** Tek yol: şemadan geçen çıktı → `ajandaMcpSonucu` → yalnız onun alanları. */
+  /**
+   * Tek yol: şemadan geçen çıktı → `ajandaMcpSonucu` → yalnız onun alanları. PC köprüsünde yanıt
+   * `PcAracSonucu`'dur (çıktı + servisin tur kararı); sentetik kararda yazan araçların tek metnine sabit
+   * `pcTurNotu` satırı eklenir (kaydın neden taslak doğduğu; kayıt metni taşımaz). Liste metnine eklenmez.
+   */
   const sonucCevir = (fiil: AjandaFiili, ham: unknown): CallToolResult => {
+    let govde = ham;
+    let not: string | null = null;
+    if (pc) {
+      const s = PcAracSonucu.safeParse(ham);
+      if (!s.success) return icHata(fiil);
+      govde = s.data.cikti;
+      if (fiil !== "ajanda_listele") not = pcTurNotu(s.data.karar);
+    }
     const sema: z.ZodType = AJANDA_ARACLARI[fiil].cikti;
-    const r = sema.safeParse(ham);
+    const r = sema.safeParse(govde);
     if (!r.success) return icHata(fiil);
     const mcp = AjandaMcpSonucu.parse(ajandaMcpSonucu({ fiil, cikti: r.data } as AjandaAracCiktisi, citUret));
-    return mcp._meta === undefined ? { content: mcp.content } : { content: mcp.content, _meta: mcp._meta };
+    const content: CallToolResult["content"] = not === null ? mcp.content : [{ type: "text", text: `${mcp.content[0].text}\n${not}` }];
+    return mcp._meta === undefined ? { content } : { content, _meta: mcp._meta };
   };
 
   const aracCagir = async (ad: string, ham: unknown, sinyal: AbortSignal, meta: unknown): Promise<CallToolResult> => {
@@ -880,105 +887,6 @@ export async function ajandaKopruCalistir(
   };
 
   return mcpBaslat(AJANDA_MCP_SUNUCU_ADI, tools, aracCagir, boru, b);
-}
-
-// --- PC kancası (`--kanca istem|arac|tur_sonu`; AJANDA.md "PC oturumları") ----------------------
-
-/** Kancanın servisle bütün işi (bağlan, el sık, tek istek, yanıt) bu süreyi aşamaz; aşarsa vazgeçer. */
-export const PC_KANCA_SURESI_MS = 2_000;
-
-export interface PcKancaBagimliliklari {
-  baglan: (boruAdi: string) => Promise<BoruBaglantisi>;
-  /** PC anahtarı (dosyadan); `null`: yok, servise hiç gidilmez. */
-  jetonOku: () => string | null;
-  rastgele: Pick<RastgelePortu, "opakId">;
-  /** Servise ulaşılamazsa damganın anı: kancanın kendi saati ve sistem dilimi. */
-  yerelSimdi: () => AjandaYerelAn;
-  /** `ms` sonra çözülür (zaman aşımı). */
-  bekle: (ms: number) => Promise<void>;
-  gunluk: Gunluk;
-}
-
-/**
- * Claude Code kancasının gövdesi: `hamGirdi` kancanın stdin'i (JSON), dönen metin stdout'u. Hiç atmaz,
- * oturumu bozmaz: servis kapalıysa, anahtar yoksa ya da girdi geçersizse sessizce geçer.
- * - `istem` (UserPromptSubmit): servise `pc_istem`; stdout'a mesaj anı damgası (`mesajAniDamgasi`; servis
- *   yanıt vermezse kancanın kendi saatinden). Claude Code bunu kullanıcının mesajına bağlam olarak ekler:
- *   PC oturumundaki asistan tarihi ve saati buradan bilir. Damgadan başka metin yazılmaz.
- * - `arac` (PreToolUse, ajanda araçları): `pc_arac` tasdiki; stdout boş (izin akışına karışmaz).
- * - `tur_sonu` (Stop): `pc_tur_sonu`; stdout boş.
- */
-export async function pcKancaCalistir(olay: PcKancaOlayi, hamGirdi: string, b: PcKancaBagimliliklari): Promise<string> {
-  let ham: unknown = null;
-  try {
-    ham = JSON.parse(hamGirdi);
-  } catch {
-    ham = null;
-  }
-  const istek = pcKancaGirdisi(olay, ham, AJANDA_FIILLERI);
-  let jeton: string | null = null;
-  try {
-    jeton = istek === null ? null : b.jetonOku();
-  } catch {
-    jeton = null;
-  }
-  let sonuc: unknown = null;
-  if (istek !== null && jeton !== null) sonuc = await kancaIstegiYolla(istek.fiil, istek.girdi, jeton, b).catch(() => null);
-  if (olay !== "istem") return "";
-  const cikti = PC_KANCA_ARACLARI.pc_istem.cikti.safeParse(sonuc);
-  let an: AjandaYerelAn | null = cikti.success ? cikti.data.mesaj_ani : null;
-  if (an === null) {
-    try {
-      an = b.yerelSimdi();
-    } catch {
-      return "";
-    }
-  }
-  return `${mesajAniDamgasi(an)}\n`;
-}
-
-/**
- * Tek bağlantı, tek istek: el sıkışma `pc_kanca`, yanıtın `sonuc`'u (doğrulanmamış) ya da `null`. En çok
- * `PC_KANCA_SURESI_MS`; süre dolunca bağlantı kapatılır, `null`.
- */
-function kancaIstegiYolla(fiil: string, girdi: unknown, jeton: string, b: PcKancaBagimliliklari): Promise<unknown> {
-  return new Promise((coz) => {
-    let bag: BoruBaglantisi | null = null;
-    let bitti = false;
-    const bitir = (deger: unknown): void => {
-      if (bitti) return;
-      bitti = true;
-      bag?.kapat();
-      coz(deger);
-    };
-    void b.bekle(PC_KANCA_SURESI_MS).then(() => bitir(null));
-    const istek_id = b.rastgele.opakId("kanca");
-    b.baglan(AJANDA_BORU_ADI).then(
-      (bg) => {
-        bag = bg;
-        if (bitti) {
-          bg.kapat();
-          return;
-        }
-        bg.kapanisDinle(() => bitir(null));
-        bg.satirDinle((satir) => {
-          const cozum = ajandaKopruAsagiCoz(satir);
-          if (!cozum.ok) return bitir(null);
-          const m = cozum.mesaj;
-          if (m.type === "kopru_welcome") {
-            bg.satirYaz(JSON.stringify({ v: PROTOKOL_SURUMU, type: "istek", istek_id, fiil, girdi }));
-          } else if (m.type === "kopru_ret") {
-            b.gunluk.uyari(MODUL, "kanca_reddedildi", { code: m.code });
-            bitir(null);
-          } else if (m.istek_id === istek_id) {
-            bitir(m.ok ? m.sonuc : null);
-          }
-        });
-        bg.satirYaz(JSON.stringify({ v: PROTOKOL_SURUMU, type: "kopru_hello", rol: "pc_kanca", jeton }));
-      },
-      () => bitir(null),
-    );
-  });
 }
 
 function soketBaglantisi(soket: Socket, azamiSatir: number = AZAMI_CERCEVE.KOPRU): BoruBaglantisi {
@@ -1059,53 +967,8 @@ function pcAnahtariOku(): string | null {
   }
 }
 
-/** Stdin'in tamamı (kanca girdisi), en çok `azami` bayt; fazlası okunmaz (JSON'u bozulur, kanca sessiz geçer). */
-async function stdinOku(azami: number): Promise<string> {
-  const parcalar: Buffer[] = [];
-  let bayt = 0;
-  for await (const p of process.stdin) {
-    const parca = Buffer.isBuffer(p) ? p : Buffer.from(String(p));
-    parcalar.push(parca);
-    bayt += parca.length;
-    if (bayt > azami) break;
-  }
-  return Buffer.concat(parcalar).toString("utf8");
-}
-
-const KANCA_GIRDI_AZAMI = 16 * 1024 * 1024;
-
-/** `--kanca <olay>`: Claude Code kancası. Her durumda 0 ile çıkar (oturumu bozmaz). */
-async function kancaGirisi(olayArgumani: string | undefined): Promise<void> {
-  const olay = PC_KANCA_OLAYLARI.find((o) => o === olayArgumani);
-  if (olay === undefined) {
-    process.stderr.write("kullanim: kopru --kanca istem|arac|tur_sonu (Claude Code kancası; girdi stdin'de)\n");
-    process.exit(0);
-  }
-  let cikti = "";
-  try {
-    const girdi = await stdinOku(KANCA_GIRDI_AZAMI);
-    cikti = await pcKancaCalistir(olay, girdi, {
-      baglan: (ad) => boruyaBaglan(ad, AJANDA_AZAMI_CERCEVE.BORU),
-      jetonOku: pcAnahtariOku,
-      rastgele: { opakId: (on) => `${on}_${randomBytes(16).toString("base64url")}` },
-      yerelSimdi: () => {
-        const dilim = Intl.DateTimeFormat().resolvedOptions().timeZone;
-        return takvimKur({ sistemDilimi: () => dilim }).yerelAn(Date.now(), dilim);
-      },
-      bekle: (ms) => new Promise((coz) => setTimeout(coz, ms).unref()),
-      gunluk: stderrGunluk(),
-    });
-  } catch {
-    cikti = "";
-  }
-  if (cikti !== "") process.stdout.write(cikti);
-  process.exit(0);
-}
-
 async function giris(): Promise<void> {
   const argumanlar = process.argv.slice(2);
-  const k = argumanlar.indexOf("--kanca");
-  if (k >= 0) return kancaGirisi(argumanlar[k + 1]);
   const i = argumanlar.indexOf("--rol");
   const rolArgumani = i >= 0 ? argumanlar[i + 1] : undefined;
   const rol = KopruRolu.safeParse(rolArgumani);
@@ -1115,7 +978,7 @@ async function giris(): Promise<void> {
   const jeton = pcKoprusu ? { success: true as const, data: "" } : Jeton.safeParse(process.env.EREN_KOPRU_JETON);
   if (!jeton.success || (!rol.success && !ajandaRol.success) || (ajandaRol.success && ajandaRol.data === "pc_kanca")) {
     process.stderr.write(
-      "kullanim: kopru --rol eren|soru|telefon|ana_oturum (jeton EREN_KOPRU_JETON'da) | --rol pc_oturumu | --kanca istem|arac|tur_sonu\n",
+      "kullanim: kopru --rol eren|soru|telefon|ana_oturum (jeton EREN_KOPRU_JETON'da) | --rol pc_oturumu (Claude Code kancası: kanca.ts)\n",
     );
     process.exitCode = 2;
     return;

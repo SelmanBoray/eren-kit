@@ -14,6 +14,7 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
+    "./kanca": "./src/ajanda-pc-kanca.ts",
     "./package.json": "./package.json"
   },
   "scripts": {
