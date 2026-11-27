@@ -785,6 +785,42 @@ describe("eslestir --pc-ajan: uyarlayıcı seçimi", () => {
       assert.match(insan, /son PC araç kararı: insan \(ana oturumun çağrısı/);
     });
 
+    it("sahipsiz neden (çağrısı arac_hatasi/arac_girdisi_gecersiz ile düştü) sonraki tasdik_yok'a geçmez; kurulum yönlendirmesi kalır", () => {
+      const hata = s({ modul: "ajanda", olay: "arac_hatasi", seviye: "hata", fiil: "ajanda_ekle", hata: "Error" });
+      const girdi = s({ modul: "ajanda", olay: "arac_girdisi_gecersiz", seviye: "uyari", fiil: "ajanda_ekle" });
+      for (const neden of [uyusmuyor, yetersiz({ neden: "uyarlayici", uyarlayici: "baska-ajan", surum: 3 }), yetersiz({ neden: "aktor" })]) {
+        for (const ara of [hata, girdi]) {
+          const satirlar = [tasdikYeni, neden, ara, arac("tasdik_yok")];
+          const kuruluM = pcTeshisMetni(satirlar, z, kurulu);
+          assert.equal(kuruluM.includes("Günlükte görülen neden"), false, kuruluM);
+          assert.match(kuruluM, /Olası nedenler \(kurulu görünüyor ama tasdik gelmedi\):\n {2}- kanca öteki çağrılarda ulaşıyor/);
+          const bilinmez = pcTeshisMetni(satirlar, z);
+          assert.equal(bilinmez.includes("Günlükte görülen neden"), false, bilinmez);
+          assert.match(bilinmez, /son PC araç kararı: tasdik_yok \(kayıtlar TASLAK doğuyor: araç öncesi kanca bu çağrıyı servise bildirmedi\. Kanca kurulu değilse kurun/);
+          // Ara satır gösterilmez (izin listesinde değil): olay satırları ara satırsız günlükle aynı.
+          assert.equal(bilinmez.includes("arac_hatasi") || bilinmez.includes("arac_girdisi_gecersiz"), false);
+        }
+      }
+    });
+
+    it("neden yalnız kendi arac'ına bitişikse sayılır: araya başka çağrının olayı girerse ya da süre bloğa sığmazsa söylenmez", () => {
+      const sohbetArac = s({ modul: "ajanda", olay: "arac", fiil: "ajanda_ekle", tur_kokeni: "insan", sohbet_id: "s_1", sonuc: "eklendi" });
+      for (const ara of [tasdikYeni, sohbetArac]) {
+        const m = pcTeshisMetni([uyusmuyor, ara, arac("tasdik_yok")], z, kurulu);
+        assert.equal(m.includes("Günlükte görülen neden"), false, m);
+        assert.match(m, /Olası nedenler \(kurulu görünüyor ama tasdik gelmedi\)/);
+      }
+      const ts = (satir: string, ms: number) => JSON.stringify({ ...(JSON.parse(satir) as object), ts_ms: ms });
+      const gec = pcTeshisMetni([tasdikYeni, ts(uyusmuyor, 1000), ts(arac("tasdik_yok"), 1000 + 2001)], z, kurulu);
+      assert.equal(gec.includes("Günlükte görülen neden"), false, gec);
+      const geri = pcTeshisMetni([tasdikYeni, ts(uyusmuyor, 5000), ts(arac("tasdik_yok"), 4000)], z, kurulu);
+      assert.equal(geri.includes("Günlükte görülen neden"), false, geri);
+      // Blok içindeki gecikme (sınırda) ve başka modülün araya giren satırı eşleşmeyi bozmaz.
+      const depoSatiri = s({ modul: "depo", olay: "yavas_islem" });
+      const sinir = pcTeshisMetni([tasdikYeni, ts(uyusmuyor, 1000), depoSatiri, ts(arac("tasdik_yok"), 3000)], z, kurulu);
+      assert.match(sinir, /Günlükte görülen neden \(kanca çalışıyor; kurulum sorunu değil\):\n {2}- tasdik başka bir köprüye bağlı/);
+    });
+
     it("yeni pc_arac alanları izinli ve kimliksiz gösterilir; metin, tam oturum ve süreç kimliği sızmaz", () => {
       const m = pcTeshisMetni([tasdikYeni, uyusmuyor, arac("tasdik_yok")], z, kurulu);
       assert.ok(

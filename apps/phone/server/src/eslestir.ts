@@ -609,24 +609,38 @@ const kancaRetNedenleri = (olaylar: readonly TeshisOlayi[]): string[] =>
 /** Tasdik geldi ama karar yine `tasdik_yok`: servisin günlüğe yazdığı neden olayları (ajanda-pc `kararVer`). */
 const TASDIK_REDDI_OLAYLARI: ReadonlySet<string> = new Set(["pc_tasdik_yetersiz", "pc_oturum_uyusmuyor"]);
 
+/** Neden olayı ile kendi `arac`'ı arasındaki en uzun süre (aynı eşzamanlı blok; `depo.islem` bekleyebilir). */
+const TASDIK_REDDI_ARALIK_MS = 2000;
+
+/** Teşhis modüllerinin günlük satırları sırasıyla: gösterilen olay ya da `null` (gösterilmeyen satır: `arac_hatasi`, `arac_girdisi_gecersiz`, sohbet `arac` …). */
+type TeshisZinciri = ReadonlyArray<(TeshisOlayi & { ts: number }) | null>;
+
 /**
- * Son `arac` olayının kendi neden olayları: bir önceki `arac`'tan sonra, sonuncudan önce yazılanlar (servis
- * nedeni kararla aynı çağrıda, `arac`'tan hemen önce yazar). Kullanıcıya nedenleri (tekilleştirilmiş).
+ * Son `arac` olayının kendi neden olayları. Neden olayında çağrı kimliği yoktur (`pc_tasdik_yetersiz` hiç
+ * kimlik taşımaz; `pc_oturum_uyusmuyor`'unki tasdikin oturumudur, `arac`'ınki köprününki), eşleme sırayladır:
+ * servis nedeni kararla aynı eşzamanlı blokta, `arac`'tan HEMEN önce yazar (araya teşhis modüllerinden satır
+ * giremez). Bu yüzden yalnız son `arac`'a bitişik neden olayları sayılır; araya başka herhangi bir satır
+ * (`arac_hatasi`, `arac_girdisi_gecersiz`, başka bir çağrının olayı) girdiyse ya da zaman aralığı blok için
+ * fazlaysa neden sahipsizdir, söylenmez (kurulum yönlendirmesi kalır). Kullanıcıya nedenleri (tekilleştirilmiş).
  */
-function tasdikReddiNedenleri(olaylar: readonly TeshisOlayi[]): string[] {
+function tasdikReddiNedenleri(zincir: TeshisZinciri): string[] {
   let son = -1;
-  for (let i = olaylar.length - 1; i >= 0; i--) {
-    if (olaylar[i]?.olay === "arac") {
+  for (let i = zincir.length - 1; i >= 0; i--) {
+    if (zincir[i]?.olay === "arac") {
       son = i;
       break;
     }
   }
   if (son < 0) return [];
-  let i = son - 1;
+  const sonArac = zincir[son];
+  if (sonArac === null || sonArac === undefined) return [];
   const bulunan: TeshisOlayi[] = [];
-  for (; i >= 0 && olaylar[i]?.olay !== "arac"; i--) {
-    const o = olaylar[i];
-    if (o !== undefined && TASDIK_REDDI_OLAYLARI.has(o.olay)) bulunan.unshift(o);
+  for (let i = son - 1; i >= 0; i--) {
+    const o = zincir[i];
+    if (o === null || o === undefined || !TASDIK_REDDI_OLAYLARI.has(o.olay)) break;
+    const fark = sonArac.ts - o.ts;
+    if (fark < 0 || fark > TASDIK_REDDI_ARALIK_MS) break;
+    bulunan.unshift(o);
   }
   const metinler = bulunan.map((o) => {
     if (o.olay === "pc_oturum_uyusmuyor") {
@@ -740,6 +754,8 @@ export function pcTeshisMetni(
 ): string {
   const bas = kurulum === undefined ? "" : `${kurulumSatirlari(kurulum, ajan).join("\n")}\n\n`;
   const olaylar: Array<{ ts: number; olay: string; alanlar: Record<string, string>; oturum: string | null }> = [];
+  // Neden olaylarını kendi `arac`'ına bağlamak için teşhis modüllerinin bütün satırları (`tasdikReddiNedenleri`).
+  const zincir: Array<(typeof olaylar)[number] | null> = [];
   for (const s of satirlar) {
     let j: unknown;
     try {
@@ -749,18 +765,26 @@ export function pcTeshisMetni(
     }
     if (typeof j !== "object" || j === null || Array.isArray(j)) continue;
     const k = j as Record<string, unknown>;
+    if (typeof k["modul"] !== "string" || !TESHIS_MODULLERI.has(k["modul"])) continue;
     const olay = typeof k["olay"] === "string" ? k["olay"] : "";
     const izinli = Object.hasOwn(TESHIS_ALANLARI, olay) ? TESHIS_ALANLARI[olay] : undefined;
-    if (izinli === undefined || typeof k["modul"] !== "string" || !TESHIS_MODULLERI.has(k["modul"])) continue;
     // `arac` yalnız PC yolundaysa; el sıkışma yalnız PC rollerindeyse.
-    if (olay === "arac" && k["yol"] !== "pc_araci") continue;
-    if ((olay === "el_sikisma" || olay === "el_sikisma_ret") && k["rol"] !== "pc_oturumu" && k["rol"] !== "pc_kanca") continue;
+    if (
+      izinli === undefined ||
+      (olay === "arac" && k["yol"] !== "pc_araci") ||
+      ((olay === "el_sikisma" || olay === "el_sikisma_ret") && k["rol"] !== "pc_oturumu" && k["rol"] !== "pc_kanca")
+    ) {
+      zincir.push(null);
+      continue;
+    }
     const alanlar: Record<string, string> = {};
     for (const a of izinli) {
       const d = teshisDegeri(k[a]);
       if (d !== null) alanlar[a] = d;
     }
-    olaylar.push({ ts: typeof k["ts_ms"] === "number" ? k["ts_ms"] : 0, olay, alanlar, oturum: kisaOturum(k["oturum_id"]) });
+    const o = { ts: typeof k["ts_ms"] === "number" ? k["ts_ms"] : 0, olay, alanlar, oturum: kisaOturum(k["oturum_id"]) };
+    olaylar.push(o);
+    zincir.push(o);
   }
   const son = olaylar.slice(-TESHIS_SATIR);
   if (son.length === 0) {
@@ -780,7 +804,7 @@ export function pcTeshisMetni(
   const evetHayir = (kosul: boolean, bos: boolean): string => (bos ? "olay yok" : kosul ? "evet" : "HAYIR");
   const sonKarar = araclar.at(-1)?.alanlar["pc_karar"];
   // Tasdik geldi ama servis kullanmadı (başka köprüye bağlı ya da yetersiz): kanca kurulumu değil; "kurun" denmez.
-  const reddiNedenleri = sonKarar === "tasdik_yok" ? tasdikReddiNedenleri(olaylar) : [];
+  const reddiNedenleri = sonKarar === "tasdik_yok" ? tasdikReddiNedenleri(zincir) : [];
   // Ayarda kurulu ama tasdik gelmedi: genel metin ("kurulu değilse kurun") yanlış yere yollar; nedenler ayrı.
   const kuruluAmaTasdiksiz =
     reddiNedenleri.length === 0 && sonKarar === "tasdik_yok" && kurulum !== undefined && kurulum !== null && kurulum.arac === true;
