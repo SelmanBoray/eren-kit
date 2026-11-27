@@ -2541,6 +2541,12 @@ export interface AjandaYoneticisi {
   telafiSayfasi(g: { sonRev: number; ustRev: number; adet: number }): AjandaKaydi[];
   /** `gecmis_iste`: en çok `GECMIS_SAYFA` girdi, `rev` azalan; kayıt yoksa `code:"kayit_bulunamadi"`. */
   gecmis(kayit_id: string, once_rev?: number): AjandaGecmisSayfasi;
+  /**
+   * Servisin `/ajanda`'da sunduğu yetenekler (`AjandaBagimliliklari.yetenekler`), kanonik sırada (tekil,
+   * ASCII artan). Gateway v3 `welcome.yetenekler`'i bununla `hello.yetenekler`'in kesişimi olarak kurar
+   * (`ajandaYetenekKesisimi`). Asistan motoruna bağlı değildir: ajanda kanalı motorsuz da aynıdır.
+   */
+  readonly yetenekler: readonly string[];
   /** Ajanda borusunun işleyicileri: `AjandaKopruSunucu.baslat`'a verilir. */
   readonly araclar: AjandaFiilIsleyiciler;
   /**
@@ -2578,6 +2584,12 @@ export interface AjandaBagimliliklari {
    */
   turBaglami: (sohbet: SohbetSecimi, nesil: number) => AjandaTurBaglami | null;
   gunluk: Gunluk;
+  /**
+   * Sunulan yetenek adları (`AjandaYetenekAdi`; sıra ve tekrar önemsiz, modül kanonikleştirir, geçersiz ad
+   * kurulumda atar). Verilmezse boş küme. Bir yetenek ancak davranışı uygulandığında buraya girer (ör.
+   * `ek_yedegi`: ek baytlarını saklama; ayrı dilim). `ana` bağlar (`AJANDA_SUNULAN_YETENEKLER`).
+   */
+  yetenekler?: readonly string[];
 }
 
 export type AjandaFabrikasi = (b: AjandaBagimliliklari) => AjandaYoneticisi;
@@ -2585,5 +2597,5 @@ export type AjandaFabrikasi = (b: AjandaBagimliliklari) => AjandaYoneticisi;
 /** `gateway`'in ajanda modülünden gördüğü yüz. */
 export type AjandaGatewayYuzu = Pick<
   AjandaYoneticisi,
-  "islemUygula" | "gecersizIslem" | "karsila" | "telafiSayfasi" | "gecmis"
+  "islemUygula" | "gecersizIslem" | "karsila" | "telafiSayfasi" | "gecmis" | "yetenekler"
 >;

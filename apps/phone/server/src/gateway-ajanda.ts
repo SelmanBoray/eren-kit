@@ -19,6 +19,10 @@
  * gider; çünkü yayınlanmış eski uygulama `v`'si farklı ret çerçevesini "uygulama eski" sayıp yeniden
  * bağlanmayı bırakır. Kod sürüm kümesine geneldir:
  * yeni sürüm yalnız protokol paketinde eklenir.
+ *
+ * Yetenekler (v3): `welcome.yetenekler` = `ajandaYetenekKesisimi(hello.yetenekler, ajanda.yetenekler)`;
+ * sunulan küme ajanda modülünün bağımlılığıdır (asistan motoruna bağlı değil). v2 bağlantıda alan
+ * uyarlamada düşer.
  */
 import {
   AJANDA_AZAMI_CERCEVE,
@@ -27,6 +31,7 @@ import {
   ajandaAsagiSurume,
   ajandaKimlikImzaMetni,
   ajandaSurumuMu,
+  ajandaYetenekKesisimi,
   ajandaYukariCoz,
   ESKI_CIHAZ_KAPSAMI,
   kanalKapsamdaMi,
@@ -283,7 +288,19 @@ export const ajandaKanaliKur = (d: AjandaKanaliBagimliliklari): AjandaKanali => 
       ...(hello.depo_id !== undefined && { depo_id: hello.depo_id }),
       ...(hello.son_rev_izi !== undefined && { son_rev_izi: hello.son_rev_izi }),
     });
-    if (!yolla(g, { v: AJANDA_SURUMU, type: "welcome", depo_id: k.depo_id, bas_rev: k.bas_rev, tam: k.tam, server_time_ms: saat.simdiMs() })) return;
+    // Yetenek müzakeresi: istenenlerle sunulanların kesişimi. v2 `hello` istemez (boş); v2 `welcome`'da alan
+    // yoktur, uyarlama atar. Alan sona eklenir: v2'nin gördüğü baytlar (alan sırası dahil) değişmez.
+    const yetenekler = ajandaYetenekKesisimi("yetenekler" in hello ? hello.yetenekler : undefined, ajanda.yetenekler);
+    const welcome: AjandaAsagi = {
+      v: AJANDA_SURUMU,
+      type: "welcome",
+      depo_id: k.depo_id,
+      bas_rev: k.bas_rev,
+      tam: k.tam,
+      server_time_ms: saat.simdiMs(),
+      yetenekler,
+    };
+    if (!yolla(g, welcome)) return;
     // `tam` değilse yalnız `son_rev`'ten sonrası; baştan ileri bir `son_rev` (servis `tam` demeliydi) canlıyı yutmasın.
     o.sonRev = k.tam ? 0 : Math.min(hello.son_rev, k.bas_rev);
     araligiYolla(g, o, k.bas_rev);
@@ -291,7 +308,7 @@ export const ajandaKanaliKur = (d: AjandaKanaliBagimliliklari): AjandaKanali => 
     if (!yolla(g, { v: AJANDA_SURUMU, type: "esitlendi", rev: k.bas_rev })) return;
     o.sonRev = Math.max(o.sonRev, k.bas_rev);
     o.telafide = false;
-    gunluk.bilgi("gateway", "ajanda_esitlendi", { device_id: o.device_id, bas_rev: k.bas_rev, tam: k.tam });
+    gunluk.bilgi("gateway", "ajanda_esitlendi", { device_id: o.device_id, bas_rev: k.bas_rev, tam: k.tam, yetenekler: yetenekler.join(",") });
     for (const kayit of o.bekleyen.splice(0)) {
       if (!acik(g)) return;
       canliYolla(g, o, kayit);

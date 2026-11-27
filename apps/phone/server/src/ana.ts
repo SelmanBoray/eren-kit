@@ -7,7 +7,7 @@ import win32 from "node:path/win32";
 import { VARSAYILAN_IS_PROFILI } from "@eren/protocol";
 import type { CmdAdi, CmdSonucu } from "@eren/protocol";
 import { ajandaKopruSunucuKur } from "./ajanda-kopru-sunucu.ts";
-import { ajandaKur } from "./ajanda.ts";
+import { AJANDA_SUNULAN_YETENEKLER, ajandaKur } from "./ajanda.ts";
 import { akisKur } from "./akis.ts";
 import { AyarHatasi, ayarKur, yollariUret } from "./ayar.ts";
 import { bildirimKur } from "./bildirim.ts";
@@ -206,6 +206,8 @@ export function servisKur({ dunya, ayar, depoYolu, ajanda: ajandaSecenegi }: Ser
           rastgele,
           gunluk,
           turBaglami: (sohbet, nesil) => sohbetler.konusma(sohbet)?.turBaglami?.(nesil) ?? null,
+          // `/ajanda` yetenekleri: motordan bağımsız, servisin uyguladığı davranışlar (bugün boş).
+          yetenekler: AJANDA_SUNULAN_YETENEKLER,
         });
   const ajandaKopru = ajanda === null ? null : ajandaKopruSunucuKur({ boru, depo, rastgele, anahtar, zamanlayici, gunluk });
   const cihaz = cihazKur({ ayar, saat, zamanlayici, rastgele, veriyolu, depo, gunluk });

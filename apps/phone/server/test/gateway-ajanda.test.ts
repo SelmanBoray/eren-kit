@@ -12,8 +12,9 @@
  * - `ajandaKimlikImzaMetni`, `AJANDA_KANAL_HATALARI` → "imza", her ret çerçevesi şemadan geçer.
  * - Telafi: son gönderilen revizyon, telafi sürerken doğanı sıraya alma, aynı revizyonu iki kez yollamama → "telafi", "canlı".
  * - Sürüm uyumu (YOL-HARITASI 3.3, D5): bağlantı sürümünün sabitlenmesi, aşağı uyarlama ve denetim, ret
- *   sürümü, v2 bayt eşitliği → "sürüm uyumu". Bugün `AJANDA_SURUMLERI = [2]`: iki desteklenen sürüm
- *   arasındaki sabitleme farkı ancak v3 eklenince ayrı sınanabilir.
+ *   sürümü, v2 bayt eşitliği → "sürüm uyumu". Bugün `AJANDA_SURUMLERI = [2, 3]`.
+ * - Sürüm 3: yetenek müzakeresi (`welcome.yetenekler` = kesişim) → "yetenekler". v3 alanlarının gerçek
+ *   ajanda modülüyle uçtan uca yolu ve v2/v3 istemcinin birlikte çalışması `ajanda-surum-v3.test.ts`'te.
  */
 import assert from "node:assert/strict";
 import { createPublicKey, generateKeyPairSync, sign as imzaAt, timingSafeEqual, verify as imzaDogrula } from "node:crypto";
@@ -68,7 +69,7 @@ const NONCE = Buffer.alloc(32, 7).toString("base64");
 const KOD = "ABC123XYZ9";
 const SERVIS: ServisBilgisi = { surum: "abc123def456", baslangic_ms: BASLANGIC - 5000 };
 const DEPO_ID = "depo-1";
-/** Ajanda kanalının sürümü: elle yazılan `/ajanda` çerçeveleri bununla (v2). */
+/** Ajanda kanalının sürümü: elle yazılan `/ajanda` çerçeveleri bununla (en yeni sürüm, bugün v3). */
 const AV: number = AJANDA_SURUMU;
 
 type Msg = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -170,6 +171,8 @@ function sahteAjanda(veriyolu: Veriyolu) {
     sayfaKancasi: null as null | ((n: number) => void),
     islemAtar: false,
     gecmisAtar: false,
+    /** Servisin sunduğu yetenekler (`AjandaGatewayYuzu.yetenekler`). */
+    yetenekler: [] as string[],
   };
   /** Yeni revizyonla yazar; `yayinla` yanlışsa yayınlamaz (yayını kaçırılan revizyon). */
   const yaz = (k: AjandaKaydi, yayinla = true): AjandaKaydi => {
@@ -180,6 +183,9 @@ function sahteAjanda(veriyolu: Veriyolu) {
     return yeni;
   };
   const yuz: AjandaGatewayYuzu = {
+    get yetenekler() {
+      return ayar.yetenekler;
+    },
     karsila: (h) => {
       c.karsila.push(h);
       const tam = h.depo_id !== DEPO_ID || h.son_rev > bas || (h.son_rev > 0 && h.son_rev_izi === undefined);
@@ -281,25 +287,31 @@ interface AjandaElSikma {
   anahtar?: KeyObject;
   /** Verilirse imzalanan metin bu (sunucu nonce'uyla). */
   metin?: (server_nonce: string) => string;
+  /** Bağlantının sürümü (varsayılan `AV`). */
+  v?: number;
+  /** v3 `hello.yetenekler` (verilmezse alan yok). */
+  yetenekler?: string[];
 }
 
 async function ajandaElSik(ist: Ist, s: AjandaElSikma = {}): Promise<Msg | null> {
   const device_id = s.device_id ?? "aj-1";
+  const v = s.v ?? AV;
   await ist.gonder({
-    v: AV,
+    v,
     type: "hello",
     device_id,
     son_rev: s.son_rev ?? 0,
     ...(s.depo_id !== undefined && { depo_id: s.depo_id }),
     ...(s.son_rev_izi !== undefined && { son_rev_izi: s.son_rev_izi }),
     client_nonce: NONCE,
+    ...(s.yetenekler !== undefined && { yetenekler: s.yetenekler }),
   });
   const ch = ist.tur("auth_challenge")[0];
   if (ch === undefined || ist.kapali) return null;
   const metin =
     s.metin?.(ch.server_nonce) ??
     ajandaKimlikImzaMetni({ rol: "telefon", device_id, client_nonce: NONCE, server_nonce: ch.server_nonce });
-  await ist.gonder({ v: AV, type: "auth_response", signature: imzala(s.anahtar ?? AJ1.private, metin) });
+  await ist.gonder({ v, type: "auth_response", signature: imzala(s.anahtar ?? AJ1.private, metin) });
   return ch;
 }
 
@@ -764,7 +776,8 @@ describe("gateway /ajanda: el sıkışma ve çözücü", () => {
     assert.equal(ist.c.kimlikDogrulandiMi, true);
     assert.deepEqual(o.aj.c.karsila, [{ son_rev: 1, depo_id: DEPO_ID, son_rev_izi: { kayit_id: "k1", guncelleme_ms: BASLANGIC + 1 } }]);
     const w = ist.tur("welcome")[0]!;
-    assert.deepEqual(w, { v: AV, type: "welcome", depo_id: DEPO_ID, bas_rev: 1, tam: false, server_time_ms: BASLANGIC });
+    // v3: `yetenekler` her zaman yollanır (istenmediyse boş kesişim).
+    assert.deepEqual(w, { v: AV, type: "welcome", depo_id: DEPO_ID, bas_rev: 1, tam: false, server_time_ms: BASLANGIC, yetenekler: [] });
     assert.deepEqual(ist.turler, ["auth_challenge", "welcome", "esitlendi"]);
     assert.ok(o.gunluk.bul("kimlik_tamam").some((g) => g.alanlar?.["kanal"] === "ajanda"));
   });
@@ -814,16 +827,16 @@ describe("gateway /ajanda: el sıkışma ve çözücü", () => {
     const V1_HELLO = { v: 1, type: "hello", device_id: "aj-1", son_rev: 3, depo_id: DEPO_ID, client_nonce: NONCE };
     const V1_PAIR = { v: 1, type: "pair_request", kod: KOD, public_key: AJ1.acik, platform: "android" };
 
-    it("v1 hello: {v:2, error, protokol_uyumsuz} + 1002; sınama yok, karsila yok, kayıt gitmez", async () => {
-      assert.equal(AV, 2);
+    it("v1 hello: {v:AJANDA_SURUMU, error, protokol_uyumsuz} + 1002; sınama yok, karsila yok, kayıt gitmez", async () => {
       const o = await hazir();
       o.aj.yaz(kayitUret("k1", 0));
       const ist = o.bagla("/ajanda");
       await ist.gonder(V1_HELLO);
       reddedildi(ist, "protokol_uyumsuz");
-      assert.deepEqual(ist.kare, [{ v: 2, type: "error", code: "protokol_uyumsuz" }]);
+      // Ret sürümü servisin en yüksek sürümüdür (D5 kuralı; v3'le 2'den 3'e çıktı).
+      assert.deepEqual(ist.kare, [{ v: AJANDA_SURUMU, type: "error", code: "protokol_uyumsuz" }]);
       assert.equal(ist.c.kapanis?.kod, 1002);
-      assert.equal(ajandaAsagiCoz(ist.c.gonderilenler[0]!).ok, true, "giden çerçeve v2 şemasından geçer");
+      assert.equal(ajandaAsagiCoz(ist.c.gonderilenler[0]!).ok, true, "giden çerçeve kendi sürümünün şemasından geçer");
       assert.equal(o.anahtar.imzalananlar.length, 0);
       assert.equal(o.aj.c.karsila.length, 0);
       assert.equal(ist.tur("kayit").length, 0);
@@ -840,7 +853,7 @@ describe("gateway /ajanda: el sıkışma ve çözücü", () => {
       const sayi = o.depo.eslesmeler().length;
       const ist = o.bagla("/ajanda", IP3);
       await ist.gonder(V1_PAIR);
-      assert.deepEqual(ist.kare, [{ v: 2, type: "error", code: "protokol_uyumsuz" }]);
+      assert.deepEqual(ist.kare, [{ v: AJANDA_SURUMU, type: "error", code: "protokol_uyumsuz" }]);
       assert.equal(ist.c.kapanis?.kod, 1002);
       assert.deepEqual(o.depo.eslestirmeOku(), once);
       assert.equal(o.depo.eslesmeler().length, sayi);
@@ -1247,10 +1260,87 @@ describe("gateway /ajanda: kopma, kaldırma, kapanış", () => {
   });
 });
 
+describe("gateway /ajanda: yetenekler (v3 müzakere)", () => {
+  it("welcome.yetenekler = istenenlerle sunulanların kesişimi, kanonik sırada; bilinmeyen ad girmez", async () => {
+    const o = await hazir();
+    o.aj.ayar.yetenekler = ["eslesme_birak", "ice_aktar"];
+    const a = await o.ajandaGiris(IP1, { yetenekler: ["ek_yedegi", "ice_aktar", "zz_bilinmeyen"] });
+    assert.deepEqual(a.tur("welcome")[0]!.yetenekler, ["ice_aktar"]);
+    // İstemci hiç istemediyse boş; sunulan küme kendiliğinden ilan edilmez.
+    const b = await o.ajandaGiris(IP2, { device_id: "aj-2", anahtar: AJ2.private });
+    assert.deepEqual(b.tur("welcome")[0]!.yetenekler, []);
+  });
+
+  it("servis bugün hiçbir yetenek sunmaz (ek_yedegi ayrı dilim): ek_yedegi istense de kesişim boş", async () => {
+    const o = await hazir();
+    assert.deepEqual(o.aj.ayar.yetenekler, []);
+    const a = await o.ajandaGiris(IP1, { yetenekler: ["ek_yedegi"] });
+    assert.deepEqual(a.tur("welcome")[0]!.yetenekler, []);
+  });
+
+  it("v2 bağlantı: welcome'da yetenekler alanı yok (baytlar v2'nin); v2 hello yetenek taşıyamaz", async () => {
+    const o = await hazir();
+    o.aj.ayar.yetenekler = ["ice_aktar"];
+    const a = await o.ajandaGiris(IP1, { v: 2 });
+    const w = JSON.parse(a.c.gonderilenler[1]!) as Msg;
+    assert.equal(w.type, "welcome");
+    assert.equal(w.v, 2);
+    assert.equal("yetenekler" in w, false);
+    // v2 şeması katı: `yetenekler`'li v2 hello şema reddidir, sınama başlamaz.
+    const b = o.bagla("/ajanda", IP2);
+    await ajandaElSik(b, { device_id: "aj-2", anahtar: AJ2.private, v: 2, yetenekler: ["ice_aktar"] });
+    reddedildi(b, "gecersiz_mesaj");
+    assert.equal(JSON.parse(b.c.gonderilenler[0]!).v, 2);
+  });
+
+  it("kanonik olmayan hello.yetenekler (sırasız ya da tekrarlı) şema reddidir", async () => {
+    const o = await hazir();
+    for (const yetenekler of [["ice_aktar", "ek_yedegi"], ["ek_yedegi", "ek_yedegi"]]) {
+      const a = o.bagla("/ajanda");
+      await ajandaElSik(a, { yetenekler });
+      reddedildi(a, "gecersiz_mesaj");
+    }
+    assert.equal(o.anahtar.imzalananlar.length, 0);
+  });
+});
+
+describe("gateway /ajanda: v3 alan listeleri v2 bağlantıya süzülür", () => {
+  it("islem_sonucu.korunan_alanlar ve geçmişin korunan_alanlar'ı v2'de yalnız v2 alanları; v3'te tam", async () => {
+    const o = await hazir();
+    o.aj.yaz(kayitUret("k1", 0));
+    const korunan = ["baslik", "bolge", "bolge_konumu", "ekler"] as const;
+    o.aj.yuz.islemUygula = () => ({ ok: true, kayit_id: "k1", korunan_alanlar: [...korunan] });
+    const girdi: AjandaGecmisGirdisi = {
+      ...GECMIS_GIRDISI,
+      yazar: { yol: "arka_plan", tur_kokeni: "insan", sohbet_id: "ana" },
+      korunan_alanlar: [...korunan],
+      onceki: { baslik: "A", bolge: "Kadıköy", bolge_konumu: { enlem_e6: 1, boylam_e6: 2, yaricap_m: 100 } },
+      sonraki: { baslik: "B", bolge: null, bolge_konumu: null },
+    };
+    o.aj.yuz.gecmis = (kayit_id) => ({ kayit_id, girdiler: [girdi], devami: false });
+    const v2 = await o.ajandaGiris(IP1, { v: 2 });
+    const v3 = await o.ajandaGiris(IP2, { device_id: "aj-2", anahtar: AJ2.private });
+    for (const [ist, v] of [[v2, 2], [v3, AV]] as const) {
+      await ist.gonder({ v, type: "islem", islem_id: "i-1", islem: ekleIslemi("k9") });
+      await ist.gonder({ v, type: "gecmis_iste", istek_id: "g1", kayit_id: "k1" });
+    }
+    const son = (ist: Ist, t: string): Msg => JSON.parse(ist.c.gonderilenler.filter((m) => m.includes(`"type":"${t}"`)).at(-1)!) as Msg;
+    assert.deepEqual(son(v2, "islem_sonucu").korunan_alanlar, ["baslik"]);
+    assert.deepEqual(son(v3, "islem_sonucu").korunan_alanlar, [...korunan]);
+    const g2 = son(v2, "gecmis").girdiler[0] as Msg;
+    assert.deepEqual(g2.korunan_alanlar, ["baslik"]);
+    assert.deepEqual([g2.onceki, g2.sonraki], [{ baslik: "A" }, { baslik: "B" }]);
+    assert.deepEqual(son(v3, "gecmis").girdiler[0], girdi);
+    // Her giden çerçeve kendi bağlantısının sürümünün şemasından geçer.
+    for (const m of v2.c.gonderilenler) assert.ok(ajandaAsagiCoz(m, 2).ok, m);
+    for (const m of v3.c.gonderilenler) assert.ok(ajandaAsagiCoz(m, 3).ok, m);
+  });
+});
+
 describe("gateway /ajanda: sürüm uyumu (D5: bağlantı sürümü, aşağı uyarlama, ret sürümü)", () => {
   const EN_KUCUK = Math.min(...AJANDA_SURUMLERI);
   const EN_BUYUK = Math.max(...AJANDA_SURUMLERI);
-  /** Bugün v1 ve v3: kümenin hemen altı ve üstü. */
+  /** Bugün v1 ve v4: kümenin hemen altı ve üstü. */
   const DESTEKSIZ = [EN_KUCUK - 1, EN_BUYUK + 1];
   const UYUMSUZ = JSON.stringify({ v: AJANDA_SURUMU, type: "error", code: "protokol_uyumsuz" });
   /** Giden çerçeveler çözücüsüz (şemadan geçmeyen çerçeve de görünsün). */
@@ -1414,10 +1504,11 @@ describe("gateway /ajanda: sürüm uyumu (D5: bağlantı sürümü, aşağı uya
   it("bayt eşitliği: v2 istemcinin gördüğü baytlar D5 öncesiyle aynı (alan sırası dahil)", async () => {
     assert.ok((AJANDA_SURUMLERI as readonly number[]).includes(2));
     const o = await hazir();
-    // v1 uygulamasının reddi.
+    // v1 uygulamasının reddi. Tek değişen bayt: `protokol_uyumsuz`'un `v`'si servisin en yüksek sürümüdür
+    // (D5), v3 ile 2'den 3'e çıktı. Bu çerçeveyi v2 telefon görmez (yalnız v1 ya da desteksiz sürüm görür).
     const eski = o.bagla("/ajanda");
     await eski.gonder({ v: 1, type: "hello", device_id: "aj-1", son_rev: 0, client_nonce: NONCE });
-    assert.deepEqual(eski.c.gonderilenler, ['{"v":2,"type":"error","code":"protokol_uyumsuz"}']);
+    assert.deepEqual(eski.c.gonderilenler, [`{"v":${AJANDA_SURUMU},"type":"error","code":"protokol_uyumsuz"}`]);
     // Eşleştirme: başarı ve ret.
     o.pencereAc("ajanda");
     const p = o.bagla("/ajanda", IP3);

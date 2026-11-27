@@ -28,6 +28,7 @@ import {
   AJANDA_ARAC_ACIKLAMALARI,
   AJANDA_BORU_ADI,
   AJANDA_ROL_FIILLERI,
+  AJANDA_QR_SURUMU,
   AJANDA_SURUMU,
   AjandaKaydi,
   ajandaAsagiCoz,
@@ -250,11 +251,14 @@ afterEach(async () => {
 interface AjandaUcu extends Uc {
   /** Son `kayit` çerçevelerinin revizyon sırası. */
   kayitlar(): AjandaKaydi[];
+  /** Bağlantının sürümü (`hello.v`); işlem çerçeveleri bununla yollanır. */
+  surum: number;
 }
 
 interface AjandaCihazi {
   device_id: string;
-  baglan(hello?: J): Promise<AjandaUcu>;
+  /** `v`: bağlantının sürümü (varsayılan `AJANDA_SURUMU`; bugünkü canlı telefon 2 konuşur). */
+  baglan(hello?: J, v?: number): Promise<AjandaUcu>;
 }
 
 let msgNo = 0;
@@ -422,10 +426,10 @@ async function ortamKur(sec: { depoYolu?: string; ajanda?: ServisGirdisi["ajanda
       return {
         device_id,
         ozel,
-        baglan: async (hello: J = { son_rev: 0 }) => {
+        baglan: async (hello: J = { son_rev: 0 }, v: number = AJANDA_SURUMU) => {
           const u = ucSar(d.ws.baglan("/ajanda", TELEFON_IP));
           const client_nonce = randomBytes(32).toString("base64");
-          await u.gonder({ v: AJANDA_SURUMU, type: "hello", device_id, client_nonce, ...hello });
+          await u.gonder({ v, type: "hello", device_id, client_nonce, ...hello });
           const ch = u.tur("auth_challenge")[0];
           assert.ok(ch, `/ajanda auth_challenge yok: ${JSON.stringify(u.kareler())}`);
           const ortak = { device_id, client_nonce, server_nonce: ch["server_nonce"] as string };
@@ -433,14 +437,14 @@ async function ortamKur(sec: { depoYolu?: string; ajanda?: ServisGirdisi["ajanda
             imzaTutarMi(anahtar.acikAnahtar(), ajandaKimlikImzaMetni({ rol: "pc", ...ortak }), ch["server_signature"] as string),
             "PC'nin /ajanda imzası doğrulanamadı",
           );
-          await u.gonder({ v: AJANDA_SURUMU, type: "auth_response", signature: imzala(ozel, ajandaKimlikImzaMetni({ rol: "telefon", ...ortak })) });
+          await u.gonder({ v, type: "auth_response", signature: imzala(ozel, ajandaKimlikImzaMetni({ rol: "telefon", ...ortak })) });
           assert.equal(u.tur("welcome").length, 1, `/ajanda welcome yok: ${JSON.stringify(u.kareler())}`);
-          return { ...u, kayitlar: () => u.tur("kayit").map((k) => AjandaKaydi.parse(k["kayit"])) };
+          return { ...u, surum: v, kayitlar: () => u.tur("kayit").map((k) => AjandaKaydi.parse(k["kayit"])) };
         },
       };
     },
-    islem: async (u: Uc, islem_id: string, islem: J): Promise<J> => {
-      await u.gonder({ v: AJANDA_SURUMU, type: "islem", islem_id, islem });
+    islem: async (u: Uc & { surum?: number }, islem_id: string, islem: J): Promise<J> => {
+      await u.gonder({ v: u.surum ?? AJANDA_SURUMU, type: "islem", islem_id, islem });
       const s = u.tur("islem_sonucu").filter((k) => k["islem_id"] === islem_id).at(-1);
       assert.ok(s, `islem_sonucu yok: ${islem_id}`);
       return s;
@@ -452,14 +456,14 @@ async function ortamKur(sec: { depoYolu?: string; ajanda?: ServisGirdisi["ajanda
 type Ortam = Awaited<ReturnType<typeof ortamKur>>;
 
 /** Servis ayakta, ana oturum hazır (ilk tur yok), telefonun sohbeti ve ajanda uygulaması bağlı, köprü bağlı. */
-async function hazirla(o: Ortam) {
+async function hazirla(o: Ortam, sec: { ajandaSurumu?: number } = {}) {
   await o.baslat();
   const eren = o.eren();
   await o.erenSatiri(eren, initSatiri(eren));
   const tel = await o.sohbetCihazi();
   const sohbet = await tel.baglan("/sohbet");
   const ajCihaz = await o.ajandaCihazi();
-  const ajanda = await ajCihaz.baglan();
+  const ajanda = await ajCihaz.baglan(undefined, sec.ajandaSurumu);
   const { istemci, jeton } = await o.ajandaKoprusu(eren);
   return { eren, tel, sohbet, ajCihaz, ajanda, istemci, jeton };
 }
@@ -737,7 +741,7 @@ describe("birleşim: ajanda sürüm 2 (ilk gerçek kullanım: gece 01:45 'yarın
 
   it("teyitsiz çağrı reddedilir ve iki günü adıyla verir -> teyitli çağrı doğru güne bölümüyle yazar -> çıktı günü adıyla ve hatırlatmanın gün/saatiyle -> /ajanda v2 kayit; gün sonradan değişince hatırlatma taşınır", async () => {
     const o = await ortamKur({ baslangicMs: GECE_T0 });
-    const { eren, sohbet, ajanda, istemci } = await hazirla(o);
+    const { eren, sohbet, ajanda, istemci } = await hazirla(o, { ajandaSurumu: 2 });
 
     // Araç tanımları sözleşmeden birebir (köprü kendi metnini koymaz).
     const { tools } = await istemci.listTools();
@@ -831,7 +835,7 @@ describe("birleşim: ajanda sürüm 2 (ilk gerçek kullanım: gece 01:45 'yarın
 
   it("gece reddinden sonra aynı turda sormadan gelen soruldu yazılmaz, kullanıcının sonraki mesajıyla gelen yazılır; 'cuma, akşam' kaydının yalnız günü değişince bölüm ve 19:00 hatırlatması korunur", async () => {
     const o = await ortamKur({ baslangicMs: GECE_T0 });
-    const { eren, sohbet, ajanda, istemci } = await hazirla(o);
+    const { eren, sohbet, ajanda, istemci } = await hazirla(o, { ajandaSurumu: 2 });
     const takvim = o.servis.takvim!;
 
     // 01:45: teyitsiz çağrı reddedilir; model AYNI turda sormadan soruldu ile yeniden çağırır: yine ret.
@@ -891,7 +895,7 @@ describe("birleşim: ajanda sürüm 2 (ilk gerçek kullanım: gece 01:45 'yarın
 
   it("gündüz (10:00) aynı istek teyit istemez: 'yarın' takvime göre Cumartesi, çıktı günü adıyla söyler", async () => {
     const o = await ortamKur({ baslangicMs: Date.UTC(2026, 10, 27, 7, 0, 0) });
-    const { sohbet, ajanda, istemci } = await hazirla(o);
+    const { sohbet, ajanda, istemci } = await hazirla(o, { ajandaSurumu: 2 });
     await o.kullaniciMesaji(sohbet, ISTEK);
     const m = await o.arac(istemci, "ajanda_ekle", {
       tur: "gorev",
@@ -908,22 +912,23 @@ describe("birleşim: ajanda sürüm 2 (ilk gerçek kullanım: gece 01:45 'yarın
 
   it("sürüm 1 konuşan ajanda uygulaması el sıkışmada protokol_uyumsuz (1002) alır; sohbet kanalı etkilenmez", async () => {
     const o = await ortamKur();
-    const { eren, sohbet, ajCihaz, ajanda } = await hazirla(o);
+    const { eren, sohbet, ajCihaz, ajanda } = await hazirla(o, { ajandaSurumu: 2 });
     const sohbetOnce = sohbet.c.gonderilenler.length;
     // v1 hello: yalnız sözleşmedeki hata, kayıt gitmez, sınama başlamaz.
     const eski = o.d.ws.baglan("/ajanda", TELEFON_IP);
     eski.mesajGonder(JSON.stringify({ v: 1, type: "hello", device_id: ajCihaz.device_id, son_rev: 0, client_nonce: randomBytes(32).toString("base64") }));
     await bosalt();
-    assert.deepEqual(hamKareler(eski), [{ v: 2, type: "error", code: "protokol_uyumsuz" }]);
+    // Ret sürümü servisin en yüksek sürümüdür (istemcinin geri düşüşü bunu okur).
+    assert.deepEqual(hamKareler(eski), [{ v: AJANDA_SURUMU, type: "error", code: "protokol_uyumsuz" }]);
     assert.equal(eski.kapanis?.kod, 1002);
     // v1 pair_request de (açık ajanda penceresinde).
     const b = ajandaEslestirmeBaslat({ depo: o.servis.depo, anahtar: o.anahtar, sistem: o.d.sistem, rastgele: o.d.rastgele, saat: o.d.saat, wsPort: o.ayar.wsPort });
     assert.ok(b.ok);
-    assert.equal(b.deger.qr.v, AJANDA_SURUMU);
+    assert.equal(b.deger.qr.v, AJANDA_QR_SURUMU);
     const eskiEs = o.d.ws.baglan("/ajanda", TELEFON_IP);
     eskiEs.mesajGonder(JSON.stringify({ v: 1, type: "pair_request", kod: b.deger.kod, public_key: cihazAnahtari().acik, platform: "android" }));
     await bosalt();
-    assert.deepEqual(hamKareler(eskiEs), [{ v: 2, type: "error", code: "protokol_uyumsuz" }]);
+    assert.deepEqual(hamKareler(eskiEs), [{ v: AJANDA_SURUMU, type: "error", code: "protokol_uyumsuz" }]);
     assert.equal(eskiEs.kapanis?.kod, 1002);
     assert.notEqual(o.servis.depo.eslestirmeOku(), null, "pencere v1 denemesiyle tüketilmedi");
     // Açık v2 ajanda bağlantısı ve sohbet sürer; sohbete fazladan çerçeve gitmedi, mesaj işlenir.
@@ -934,7 +939,7 @@ describe("birleşim: ajanda sürüm 2 (ilk gerçek kullanım: gece 01:45 'yarın
     assert.equal(ack["ok"], true);
     assert.ok((o.kullaniciSatirlari(eren).at(-1)!["message"]["content"] as string).endsWith("\nmerhaba"));
     // Aynı cihaz v2 ile yeniden eşleşmeden bağlanır.
-    const yeni = await ajCihaz.baglan();
+    const yeni = await ajCihaz.baglan(undefined, 2);
     assert.equal(yeni.tur("welcome").length, 1);
   });
 });

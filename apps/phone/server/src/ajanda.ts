@@ -3,6 +3,7 @@ import {
   AjandaIslem,
   type AjandaKaydi,
   type AjandaYazar,
+  AjandaYetenekler,
   ajandaDegisikligiUygula,
   ajandaOrnekDurumuUygula,
   ajandaTelafiTamMi,
@@ -36,7 +37,19 @@ import type { AjandaFabrikasi, AjandaGecmisSayfasi, AjandaIslemSonucuGovdesi } f
  * kullanıcı emridir (`kullaniciEmriMi`), korunan alan doğmaz. Elle eklemede kaydın verilen bütün
  * alanları (`durum` hariç; `hatirlatmalar` ekranda hep verilir) `elle_alanlar`'a girer. Elle ekleme
  * otomatik ekleme değildir: tekil anahtar almaz, tekilleştirilmez.
+ *
+ * Sürüm 3 alanları (`simge`, `bolge`, `bolge_konumu`, `varis`, `baglantilar`, `ekler`) öteki alanlar gibi
+ * işlenir: kurallar (kaldırma `null`'ı, bölge başka yere değişince konumun düşmesi, `elle_alanlar`,
+ * korunan alanlar) `ajandaDegisikligiUygula`'dadır, geçmiş parçası `fark`/`dogumParcasi` ile
+ * `AJANDA_ALANLARI`'ndan türer. Eski sürümün işlemi bu alanları taşımaz, bu yüzden onlara dokunmaz.
+ * `bolge_konumu` hiçbir günlük satırına girmez (öteki kayıt alanları gibi).
  */
+
+/**
+ * Servisin bugün sunduğu yetenekler (`ana` bağlar). Boş: `ek_yedegi` ek saklama dilimiyle gelir. Yetenek
+ * yalnız davranışı uygulandığında eklenir; hiçbiri asistan motoruna bağlı değildir.
+ */
+export const AJANDA_SUNULAN_YETENEKLER: readonly string[] = [];
 
 type Sonuc = AjandaIslemSonucuGovdesi;
 
@@ -44,6 +57,8 @@ const basarili = (kayit_id: string, rev?: number): Sonuc => (rev === undefined ?
 
 export const ajandaKur: AjandaFabrikasi = (b) => {
   const { depo, takvim, saat, rastgele, gunluk } = b;
+  // Kanonik (tekil, ASCII artan) ve biçimce geçerli: geçersiz ad kurulumda atar (yapılandırma hatası).
+  const yetenekler: readonly string[] = Object.freeze(AjandaYetenekler.parse([...new Set(b.yetenekler ?? [])].sort()));
   const yeniDepoId = (): string => rastgele.opakId("d");
   // PC oturumlarının turları (bellek; `ajanda-pc.ts`). Araçların `pc_oturumu` çağrısı ve kancalar paylaşır.
   const pc = pcDefteriKur({ takvim, saat, rastgele, gunluk });
@@ -95,6 +110,13 @@ export const ajandaKur: AjandaFabrikasi = (b) => {
     if (islem.aciklama !== undefined) yeni.aciklama = islem.aciklama;
     if (islem.zaman !== undefined) yeni.zaman = islem.zaman;
     if (islem.tekrar !== undefined) yeni.tekrar = islem.tekrar;
+    // v3 alanları (eski sürümün `ekle`'si taşımaz). `bolge_konumu` ve `varis` yalnız `bolge` ile (şema).
+    if (islem.simge !== undefined) yeni.simge = islem.simge;
+    if (islem.bolge !== undefined) yeni.bolge = islem.bolge;
+    if (islem.bolge_konumu !== undefined) yeni.bolge_konumu = islem.bolge_konumu;
+    if (islem.varis !== undefined) yeni.varis = islem.varis;
+    if (islem.baglantilar !== undefined) yeni.baglantilar = islem.baglantilar;
+    if (islem.ekler !== undefined) yeni.ekler = islem.ekler;
     const girdi = { islem: "ekle" as const, yazar, onceki: {}, sonraki: dogumParcasi(yeni) };
     return sonucaCevir(kayit_id, dogrulaVeYaz(depo, yeni, 1, girdi, simdi));
   };
@@ -202,7 +224,11 @@ export const ajandaKur: AjandaFabrikasi = (b) => {
   return {
     baslat() {
       depo.ajandaDepoKimligi(yeniDepoId);
-      gunluk.bilgi(MODUL, "basladi", { bas_rev: depo.ajandaBasRev(), kayit_sayisi: depo.ajandaKayitSayisi() });
+      gunluk.bilgi(MODUL, "basladi", {
+        bas_rev: depo.ajandaBasRev(),
+        kayit_sayisi: depo.ajandaKayitSayisi(),
+        yetenekler: yetenekler.join(","),
+      });
     },
 
     islemUygula(device_id, islem_id, islem) {
@@ -241,6 +267,7 @@ export const ajandaKur: AjandaFabrikasi = (b) => {
       return { kayit_id, girdiler: satirlar.slice(0, GECMIS_SAYFA), devami: satirlar.length > GECMIS_SAYFA };
     },
 
+    yetenekler,
     araclar: ajandaAraclariKur(b, pc),
     pcKanca: pc.kanca,
   };
