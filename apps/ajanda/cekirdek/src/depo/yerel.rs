@@ -88,6 +88,27 @@ impl Depo {
         Ok(sonuc)
     }
 
+    /// Süren tam telafinin topladığı kayıt (yerel kipten bağlanırken servisin kopyası; `motor/yerel.rs`).
+    pub fn telafi_kaydi(&self, kayit_id: &str) -> Result<Option<AjandaKaydi>, CekirdekHatasi> {
+        let json: Option<String> = self
+            .baglanti
+            .query_row("SELECT json FROM telafi_kayitlari WHERE kayit_id = ?1", [kayit_id], |s| s.get(0))
+            .optional()?;
+        json.map(|j| super::kopya::kayit_json_oku(&j)).transpose()
+    }
+
+    /// Koparma: kuyruğun bütün satırları atılır.
+    pub fn kuyrugu_bosalt(&self) -> rusqlite::Result<()> {
+        self.baglanti.execute("DELETE FROM kuyruk", [])?;
+        Ok(())
+    }
+
+    /// Koparma: görünen kopyanın `bekleyen` işaretleri düşer (kayıt metinleri aynı kalır).
+    pub fn bekleyenleri_dusur(&self) -> rusqlite::Result<()> {
+        self.baglanti.execute("UPDATE gorunen SET bekleyen = 0 WHERE bekleyen != 0", [])?;
+        Ok(())
+    }
+
     /// Kaydın yerel geçmiş satırı sayısı (testler ve tanı).
     pub fn yerel_gecmis_sayisi(&self, kayit_id: &str) -> rusqlite::Result<i64> {
         self.baglanti.query_row("SELECT COUNT(*) FROM yerel_gecmis WHERE kayit_id = ?1", [kayit_id], |s| s.get(0))

@@ -15,17 +15,26 @@
 //! `islem_uygula`'dan gelir. Taslak ve sentetik tur kuralları yerelde yoktur: yerelde yalnız insan yazar
 //! (bağlantıdan kalan taslak onaylanabilir).
 //!
-//! Bu dilimde yerel kipten çıkış yalnız eşleşmedir (`eslesme_kaydet` -> `yereli_kuyruga_dok`): bugünkü
-//! eşleşmesiz kullanım gibi yerel kayıtlar kuyrukla PC'ye gider. Koparma ve önizlemeli birleştirme sonraki
-//! dilimlerdedir (D2, D4).
+//! Geçişler (`YOL-HARITASI.md` 3.3):
+//! - Bağlanma: yerel kipte QR ile eşleşince kip, servisin tam kopyası elde edilene dek `yerel` kalır. Bu
+//!   sürede yerel yazmalar sürer; `hello` boş kopya gibi gider (`son_rev` 0, `depo_id` yok: servis hep tam
+//!   telafi yapar), gelenler yalnız `telafi_kayitlari`'na toplanır; görünen kopya, alarmlar ve koparma
+//!   anındaki PC temeli (`sunucu_kayitlari`, `depo_id`, `son_rev`) değişmez. Bağlantı yarıda koparsa
+//!   toplanan atılır, sonraki bağlantı baştan dener. `esitlendi`'de tek işlemde `yereli_kuyruga_dok`:
+//!   yerel kayıtlar fark olarak kuyruğa girer, kip `bagli` olur. Görünen kopya hiçbir zaman başka bir
+//!   `depo_id`'nin tam telafisiyle değiştirilmez.
+//! - Koparma (`Motor::baglantiyi_kopar`): bağlı kipten yerel kipe; görünen kopya o anki haliyle kalır.
+//! - Önizlemeli birleştirme D4'tedir; bağlı kipte `eslesmeyi_kaldir` ve yeni QR'ın koparmaya dönmesi D2'de.
 
-use super::iyimser::{IyimserBaglam, Uygulama, gorunen_yenile, islem_uygula, kayittan_govde, yazar};
+use std::collections::BTreeMap;
+
+use super::iyimser::{IyimserBaglam, Uygulama, gorunen_yenile, islem_coz, islem_uygula, iyimser_uygula, kayittan_govde, yazar};
 use super::islem::govde_farki;
 use super::kanal::gecmis_satiri;
-use super::{Etkiler, Motor, Ortam};
-use crate::depo::Depo;
+use super::{Asama, Etkiler, Motor, Ortam};
+use crate::depo::{Depo, KopyaTablosu, KuyrukSatiri, anahtar};
 use crate::hata::CekirdekHatasi;
-use crate::kopru::tipler::{CalismaKipi, GecmisSayfasi};
+use crate::kopru::tipler::{CalismaKipi, GecmisSayfasi, KoparmaSonucu};
 use crate::model::sinirlar::ajanda::{GECMIS_SAYFA, KAYIT_ADET};
 use crate::model::{
     AjandaGecmisGirdisi, AjandaIslem, AjandaKaydi, AjandaParca, AjandaRetNedeni, AjandaYazar, AjandaZamani, Alan,
@@ -320,26 +329,183 @@ fn kuyruga_islemler(temel: Option<&AjandaKaydi>, k: &AjandaKaydi) -> Vec<(Ajanda
     l
 }
 
-/// Yerel kipten bağlı kipe (eşleşme, `Motor::eslesme_kaydet`'in işlemi içinde): kip `bagli` olur, yerel
-/// kayıtlar kuyruğa dökülür ve görünen kopya sunucu + kuyruktan yeniden hesaplanır (görünen hal aynı,
-/// `bekleyen` doğru). Ret listesi ve alarmlar kalır. Döner: kuyruğa dökülen kayıtlar.
-pub(crate) fn yereli_kuyruga_dok(d: &Depo, o: &Ortam, b: &IyimserBaglam) -> Result<Vec<String>, CekirdekHatasi> {
+/// Yerel kaydın fark temeli (`yereli_kuyruga_dok`). Servisin kopyasında aynı kimlikli kayıt yoksa temel
+/// yoktur (kayıt `ekle` ile gider). Varsa: yeni kopya koparma anındaki temelle aynı depoya aitse ve o temel
+/// kaydı biliyorsa eski temel (üç yollu: yalnız telefonda değişen alanlar gider, PC'de değişen dokunulmayan
+/// alanlar PC'deki gibi kalır); değilse servisin kendi kopyası (yolda kalmış ekleme gibi: telefonun hali
+/// fark olarak gider).
+fn fark_temeli(d: &Depo, ayni_depo: bool, kayit_id: &str) -> Result<Option<AjandaKaydi>, CekirdekHatasi> {
+    let Some(yeni) = d.telafi_kaydi(kayit_id)? else { return Ok(None) };
+    if ayni_depo && let Some(eski) = d.sunucu_kaydi(kayit_id)? {
+        return Ok(Some(eski));
+    }
+    Ok(Some(yeni))
+}
+
+/// Yerel kipten bağlı kipe: yerel kipte açılan bağlantının `esitlendi`'si (`kanal.rs`), çağıranın tek
+/// işleminde. Servisin tam kopyası `telafi_kayitlari`'nda, koparma anındaki PC temeli `sunucu_kayitlari`'nda
+/// ve `meta.depo_id`'dedir. Her görünen (yerel) kayıt için fark temeli (`fark_temeli`) ile yerel hal
+/// arasındaki işlemler kuyruğa girer; sonra toplanan kopya sunucu kopyasının yerine geçer, `depo_id` ve
+/// `son_rev` yazılır, kip `bagli` olur ve görünen kopya bağlı kipin tam telafi sonundaki gibi sunucu +
+/// kuyruktan yeniden hesaplanır (yalnız PC'de olanlar eklenir; görünen kayıt silinmez).
+///
+/// Değişmez: her yerel kayıt ya görünen kopyada kalır (kuyruktaki işlemi iyimser görünür) ya da servis
+/// işlemi reddedince ret listesine düşer. Kuyruğa hiçbir işlemi girmeyen kayıt servisin kopyasında vardır
+/// (temelsiz kayıt hep `ekle` alır), yani görünen kopyadan düşmez. Döner: kuyruğa dökülen kayıtlar.
+pub(crate) fn yereli_kuyruga_dok(
+    d: &Depo,
+    o: &Ortam,
+    b: &IyimserBaglam,
+    depo_id: &str,
+    son_rev: i64,
+) -> Result<Vec<String>, CekirdekHatasi> {
+    let ayni_depo = d.depo_id()?.as_deref() == Some(depo_id);
+    let mut dokulecek = Vec::new();
+    for k in d.gorunen_hepsi()? {
+        let temel = fark_temeli(d, ayni_depo, &k.kayit_id)?;
+        let islemler = kuyruga_islemler(temel.as_ref(), &k);
+        if !islemler.is_empty() {
+            dokulecek.push((k.kayit_id, islemler));
+        }
+    }
+    d.telafiyi_sunucuya_gecir()?;
+    d.depo_id_yaz(depo_id)?;
+    d.son_rev_yaz(son_rev)?;
     d.kip_yaz(false)?;
     let mut dokulen = Vec::new();
-    for k in d.gorunen_hepsi()? {
-        let temel = d.sunucu_kaydi(&k.kayit_id)?;
-        let islemler = kuyruga_islemler(temel.as_ref(), &k);
-        if islemler.is_empty() {
-            continue;
-        }
+    for (kayit_id, islemler) in dokulecek {
         for (islem, ts) in islemler {
             let islem_id = Motor::yeni_kimlik(o, "i_")?;
-            d.kuyruga_ekle(&islem_id, &k.kayit_id, &islem.json().to_string(), ts)?;
+            d.kuyruga_ekle(&islem_id, &kayit_id, &islem.json().to_string(), ts)?;
         }
-        gorunen_yenile(d, b, &k.kayit_id)?;
-        dokulen.push(k.kayit_id);
+        dokulen.push(kayit_id);
+    }
+    // Yerel kipte kuyruk boştu: sahipsiz görünen kayıt yoktur, onaylanmış satır yoktur; silme adımları gerekmez.
+    for k in d.gorunenden_farkli_sunucu_kayitlari()? {
+        d.gorunen_yaz(&k, false)?;
+    }
+    for kayit_id in &dokulen {
+        gorunen_yenile(d, b, kayit_id)?;
     }
     Ok(dokulen)
+}
+
+/// Koparmada servisin kabul ettiği ama `kayit`'i gelmemiş (onaylanmış) satırlar PC'de uygulanmıştır: PC
+/// temeline (sunucu kopyası) iyimser uygulanıp onaylanan revizyonla yazılırlar. Böylece temel görünen
+/// kopyanın türetildiği halin PC tarafını taşır (görünen = temel + gönderilmemiş işlemler) ve sonraki
+/// bağlanmada bu değişiklikler fark olarak yeniden gitmez (PC'de sonradan değişen alanı ezmesin).
+fn onaylananlari_temele_kat(d: &Depo, b: &IyimserBaglam, kuyruk: &[KuyrukSatiri]) -> Result<(), CekirdekHatasi> {
+    let mut kayitlar: BTreeMap<&str, Vec<&KuyrukSatiri>> = BTreeMap::new();
+    for s in kuyruk.iter().filter(|s| s.bekledigi_rev.is_some()) {
+        kayitlar.entry(s.kayit_id.as_str()).or_default().push(s);
+    }
+    for (kayit_id, satirlar) in kayitlar {
+        let mut hal = d.sunucu_kaydi(kayit_id)?;
+        let mut rev = 0;
+        for s in satirlar {
+            if let Some(islem) = islem_coz(&s.islem_json) {
+                hal = iyimser_uygula(hal.as_ref(), &islem, s.olusturma_ms, b);
+            }
+            rev = rev.max(s.bekledigi_rev.unwrap_or(0));
+        }
+        if let Some(mut k) = hal {
+            k.revizyon = k.revizyon.max(rev);
+            d.kopya_kaydi_uygula(KopyaTablosu::Sunucu, &k)?;
+        }
+    }
+    Ok(())
+}
+
+impl Motor {
+    /// Koparma (`YOL-HARITASI.md` 3.3 "Koparma"): bağlı kipten yerel kipe veri kaybı olmadan. Tek SQLite
+    /// işleminde: görünen kopya o anki haliyle yerel gerçek olur (`bekleyen` düşer, metin aynı), onaylanmış
+    /// satırlar PC temeline katılır (`onaylananlari_temele_kat`), kuyruk ve süren tam telafinin toplananları
+    /// atılır, eşleşme bilgisi (eşleşme, bekleyen QR, son ret) silinir, kip `yerel` olur. Ret listesi, PC
+    /// temeli (`sunucu_kayitlari`, `depo_id`, `son_rev`), yerel geçmiş ve alarm planı kalır (görünen kayıt
+    /// değişmediği için alarm senkronu çağrılmaz). Sonra açık bağlantı kapatılır, geçmiş önbelleği (PC'nin
+    /// geçmişi) atılır, cihaz anahtarı silinir.
+    ///
+    /// Yerel kipte kayıtlara dokunulmaz: süren bağlanma (eşleşme kayıtlı, servisin kopyası henüz gelmedi) ya
+    /// da bekleyen eşleştirme iptal edilir (eşleşme bilgisi ve toplanan kopya silinir, bağlantı kapanır); PC
+    /// temeli koparma anındaki haliyle kalır. Hiçbiri yoksa yalnız (zaten olmaması gereken) cihaz anahtarı
+    /// silinir; çağrı yinelenebilir. Anahtar silinemezse hata döner ama veriler ve etkiler yazılmıştır
+    /// (`eslesmeyi_kaldir` gibi); yinelenen çağrı anahtarı yeniden dener.
+    pub(crate) fn baglantiyi_kopar(&mut self, o: &Ortam, e: &mut Etkiler) -> Result<KoparmaSonucu, CekirdekHatasi> {
+        let yerel = self.yerel_mi()?;
+        let bagli_eslesme = [anahtar::ESLESME, anahtar::ESLESTIRME_QR, anahtar::ESLESME_REDDI];
+        let sonuc = if yerel {
+            let mut iptal = !matches!(self.asama, Asama::Kopuk);
+            for a in bagli_eslesme {
+                iptal |= self.depo.meta_oku(a)?.is_some();
+            }
+            self.depo.yazma(|d| {
+                for a in bagli_eslesme {
+                    d.meta_yaz(a, None)?;
+                }
+                d.telafiyi_sil()
+            })?;
+            KoparmaSonucu {
+                onceki_kip: CalismaKipi::Yerel,
+                gonderilmeyen_kayit: 0,
+                gonderilmeyen_islem: 0,
+                yanitsiz_islem: 0,
+                ret_listesinde: sayi(self.depo.ret_sayisi()?),
+                baglanma_iptal: iptal,
+            }
+        } else {
+            let cevirici = o.cevirici();
+            let b = self.iyimser_baglam(o, &cevirici)?;
+            self.depo.yazma(|d| {
+                let kuyruk = d.kuyruk()?;
+                let gonderilmeyen: Vec<&KuyrukSatiri> = kuyruk.iter().filter(|s| s.bekledigi_rev.is_none()).collect();
+                let mut kayitlar: Vec<&str> = gonderilmeyen.iter().map(|s| s.kayit_id.as_str()).collect();
+                kayitlar.sort_unstable();
+                kayitlar.dedup();
+                let sonuc = KoparmaSonucu {
+                    onceki_kip: CalismaKipi::Bagli,
+                    gonderilmeyen_kayit: sayi(kayitlar.len() as i64),
+                    gonderilmeyen_islem: sayi(gonderilmeyen.len() as i64),
+                    yanitsiz_islem: sayi(gonderilmeyen.iter().filter(|s| s.yollandi).count() as i64),
+                    ret_listesinde: sayi(d.ret_sayisi()?),
+                    baglanma_iptal: false,
+                };
+                onaylananlari_temele_kat(d, &b, &kuyruk)?;
+                d.kuyrugu_bosalt()?;
+                d.bekleyenleri_dusur()?;
+                d.telafiyi_sil()?;
+                for a in bagli_eslesme {
+                    d.meta_yaz(a, None)?;
+                }
+                d.kip_yaz(true)?;
+                Ok(sonuc)
+            })?
+        };
+        let degisti = !yerel || sonuc.baglanma_iptal;
+        self.son_hata = None;
+        self.surum_uyusmazligi = None;
+        self.gecmis_istekleri.clear();
+        if !yerel {
+            // Önbellekteki sayfalar PC'nin geçmişidir; yerel kipte geçmiş yerel tablodan yeniden yüklenir.
+            for kayit_id in std::mem::take(&mut self.gecmis).into_keys() {
+                e.degisim.gecmis.push(kayit_id);
+            }
+            e.degisim.tumu = true;
+        }
+        if !matches!(self.asama, Asama::Kopuk | Asama::Kapaniyor) {
+            self.kapat(e, "bağlantı koparıldı");
+        }
+        if degisti {
+            e.degisim.eslesme = true;
+            e.degisim.baglanti = true;
+        }
+        o.kimlik.anahtari_sil()?;
+        Ok(sonuc)
+    }
+}
+
+/// Köprünün sayı alanı (taşarsa en büyük).
+fn sayi(n: i64) -> i32 {
+    i32::try_from(n).unwrap_or(i32::MAX)
 }
 
 #[cfg(test)]

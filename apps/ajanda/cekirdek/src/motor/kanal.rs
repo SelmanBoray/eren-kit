@@ -24,6 +24,8 @@
 //!   kopya yeniden hesaplanır (kuyruk taze kopya üstüne yeniden uygulanır), sonra bütün alarmlar
 //!   (`alarm_senkronu(&[])`) ve `Degisim.tumu`. Kopmada toplanan atılır.
 //! - Canlı `kayit` hemen (tek işlem) uygulanır.
+//! - Yerel kipte (bağlanma sürüyor, `yerel.rs` "Geçişler"): `hello` boş kopya gibi gider, telafi hep tam
+//!   sayılıp toplanır; `esitlendi`'de `yereli_kuyruga_dok` yerel kayıtları kuyruğa döker ve kip `bagli` olur.
 //!
 //! Kuyruk (`kural::kuyruk::ajanda_kuyruk_karari`): yalnız `Canli`'da, en çok bir işlem yolda. Yollanan satır
 //! kalıcı olarak `yollandi` işaretlenir; sonucu gelmeden bağlantı biterse (ya da süreç ölürse: sonraki
@@ -40,6 +42,7 @@ use super::{Etkiler, Motor, Ortam, TELAFI_TAMPONU};
 use crate::depo::{KopyaTablosu, KuyrukSatiri, RetSatiri, anahtar};
 use crate::hata::CekirdekHatasi;
 use crate::kopru::tipler::{BaglantiAsamasi, BaglantiDurumu, GecmisSatiri, GecmisSayfasi, SurumUyusmazligi};
+use crate::kural::esitleme::HelloAlanlari;
 use crate::model::sinirlar::AJANDA_SURUMU;
 use crate::kural::kuyruk::{KuyrukKarari, KuyrukOlayi, ajanda_kuyruk_karari};
 use crate::model::json::Yazici;
@@ -187,7 +190,13 @@ impl Motor {
 
     fn hello_yolla(&mut self, o: &Ortam, e: &mut Etkiler, eslesme: Eslesme) -> Result<(), CekirdekHatasi> {
         let client_nonce = base64_yaz(&o.kimlik.rastgele(32)?);
-        let h = self.depo.hello_alanlari()?;
+        // Yerel kipte boş kopya gibi (`son_rev` 0, `depo_id` yok): servis hep tam telafi yapar, koparma
+        // anındaki PC temeli artımlı telafiyle ezilmez (`yerel.rs` "Geçişler").
+        let h = if self.yerel_mi()? {
+            HelloAlanlari { son_rev: 0, depo_id: None, son_rev_izi: None }
+        } else {
+            self.depo.hello_alanlari()?
+        };
         e.gonderilecek.push(
             AjandaYukari::Hello {
                 device_id: eslesme.device_id.clone(),
@@ -240,7 +249,7 @@ impl Motor {
                 e.degisim.eslesme = true;
                 match (ok, device_id) {
                     (true, Some(device_id)) => {
-                        let eslesme = self.eslesme_kaydet(o, e, &qr, &device_id)?;
+                        let eslesme = self.eslesme_kaydet(&qr, &device_id)?;
                         // Bağlantı açık kalır: aynı bağlantıda kimlik doğrulamasıyla sürer.
                         self.hello_yolla(o, e, eslesme)
                     }
@@ -261,7 +270,9 @@ impl Motor {
             (Tur::Yanit, AjandaAsagi::Welcome { depo_id, tam, .. }) => {
                 // Tam telafi kuyruğa dokunmaz (`ajanda_kuyruk_karari(TamTelafi)` = `Bekle`, deneme aynı):
                 // işlemler `esitlendi`'de taze kopya üstüne yeniden uygulanır ve sırayla yeniden gider.
-                let tam = if tam {
+                // Yerel kipte telafi hep toplanır (servis boş `hello`'ya zaten tam der): PC temeli bağlanma
+                // bitene dek koparma anındaki haliyle kalmalı.
+                let tam = if tam || self.yerel_mi()? {
                     self.depo.telafiyi_sil()?;
                     Some((depo_id, 0))
                 } else {
@@ -387,18 +398,17 @@ impl Motor {
         let cevirici = o.cevirici();
         let b = self.iyimser_baglam(o, &cevirici)?;
         let simdi = o.simdi_ms().to_string();
-        // Yerel kipte görünen kopya doğruluk kaynağıdır: tam telafi yalnız PC temelini (sunucu kopyası,
-        // `depo_id`, `son_rev`) yeniler, görünen kopyaya ve alarmlara dokunmaz (`gorunen_yenile` de yazmaz).
+        // Yerel kipte bağlanma burada biter: servisin tam kopyası elde edildi; tek işlemde yerel kayıtlar
+        // kuyruğa dökülür ve kip `bagli` olur (`yerel.rs` `yereli_kuyruga_dok`). Yerel kipte telafi hep tamdır.
         let yerel = self.yerel_mi()?;
         match t.tam {
             Some((depo_id, son_rev)) if yerel => {
                 self.depo.yazma(|d| {
-                    d.telafiyi_sunucuya_gecir()?;
-                    d.depo_id_yaz(&depo_id)?;
-                    d.son_rev_yaz(son_rev)?;
+                    super::yerel::yereli_kuyruga_dok(d, o, &b, &depo_id, son_rev)?;
                     d.meta_yaz(anahtar::SON_ESITLENME_MS, Some(&simdi))?;
                     Ok(())
                 })?;
+                self.hepsi_degisti(o, e);
             }
             Some((depo_id, son_rev)) => {
                 self.depo.yazma(|d| {

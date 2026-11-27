@@ -57,43 +57,21 @@ impl Motor {
 
     /// `pair_result{ok}`: QR'ın yerine eşleşme yazılır (eski eşleşmenin yerine geçer), ret silinir.
     ///
-    /// Yerel kipte eşleşme bugünkü eşleşmesiz kullanımın davranışını sürdürür (D1; birleştirme önizlemesi
-    /// D4'ün işidir): aynı işlemde kip `bagli` olur ve yerel kayıtlar kuyruğa dökülür (`yerel.rs`
-    /// `yereli_kuyruga_dok`), böylece eşitlemeyle PC'ye gider; görünen hal aynı kalır, `bekleyen` olur.
-    pub(crate) fn eslesme_kaydet(
-        &mut self,
-        o: &Ortam,
-        e: &mut Etkiler,
-        qr: &AjandaEslestirmeQr,
-        device_id: &str,
-    ) -> Result<Eslesme, CekirdekHatasi> {
+    /// Yerel kipte kip burada değişmez: yerel kayıtlar servisin tam kopyası gelince (`esitlendi`) kuyruğa
+    /// dökülür ve kip o anda `bagli` olur (`yerel.rs` "Geçişler"; birleştirme önizlemesi D4'ün işidir).
+    pub(crate) fn eslesme_kaydet(&mut self, qr: &AjandaEslestirmeQr, device_id: &str) -> Result<Eslesme, CekirdekHatasi> {
         let eslesme = Eslesme {
             device_id: device_id.to_string(),
             host: qr.host.clone(),
             port: qr.port,
             server_public_key: qr.server_public_key.clone(),
         };
-        let yerel = self.yerel_mi()?;
-        let cevirici = o.cevirici();
-        let b = super::iyimser::IyimserBaglam {
-            device_id: device_id.to_string(),
-            simdi_ms: o.simdi_ms(),
-            cihaz_dilimi: o.zaman.cihaz_dilimi(),
-            cevirici: &cevirici,
-        };
         self.depo.yazma(|d| {
             d.meta_yaz(anahtar::ESLESME, Some(&eslesme.json().to_string()))?;
             d.meta_yaz(anahtar::ESLESTIRME_QR, None)?;
             d.meta_yaz(anahtar::ESLESME_REDDI, None)?;
-            if yerel {
-                super::yerel::yereli_kuyruga_dok(d, o, &b)?;
-            }
             Ok(())
         })?;
-        if yerel {
-            e.degisim.baglanti = true;
-            self.hepsi_degisti(o, e);
-        }
         Ok(eslesme)
     }
 

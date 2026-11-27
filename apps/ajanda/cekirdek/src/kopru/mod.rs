@@ -24,7 +24,7 @@ use crate::motor::{Etkiler, Motor, Ortam};
 use kabuklar::{AlarmKabugu, Gozlemci, KimlikKabugu, Tasima, ZamanKabugu};
 use tipler::{
     BaglantiDurumu, CalismaKipi, DuzenlemeTemeli, EslesmeDurumu, GecmisSayfasi, HatirlatmaBildirimi, HatirlatmaOnizlemesi, KayitGorunumu,
-    ListeSorgusu, RetGirdisi, TakvimAyi, TakvimOgesi, YenidenKurmaNedeni,
+    KoparmaSonucu, ListeSorgusu, RetGirdisi, TakvimAyi, TakvimOgesi, YenidenKurmaNedeni,
 };
 
 fn kilitle<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -230,8 +230,8 @@ impl Cekirdek {
         kilitle(&self.motor).sema_surumu()
     }
 
-    /// Çalışma kipi (D1): `Yerel` ya da `Bagli` (`CalismaKipi`). Kip değişince (yerelde eşleşme bitti)
-    /// gözlemciye `Degisim.tumu` ve `Degisim.baglanti` gider.
+    /// Çalışma kipi (D1): `Yerel` ya da `Bagli` (`CalismaKipi`). Kip değişince (yerelde bağlanma servisin
+    /// tam kopyasıyla bitti ya da `baglantiyi_kopar`) gözlemciye `Degisim.tumu` ve `Degisim.baglanti` gider.
     pub fn kip(&self) -> Result<CalismaKipi, CekirdekHatasi> {
         self.calistir(|m, _, _| m.kip())
     }
@@ -261,6 +261,16 @@ impl Cekirdek {
 
     pub fn eslesmeyi_kaldir(&self) -> Result<(), CekirdekHatasi> {
         self.calistir(|m, o, e| m.eslesmeyi_kaldir(o, e))
+    }
+
+    /// Koparma (D1): bağlı kipten yerel kipe, veri kaybı olmadan. Görünen kopya o anki haliyle (bekleyen
+    /// işlemler dahil) telefonun gerçeği olur; kuyruk atılır, ret listesi, PC temeli ve alarmlar kalır;
+    /// eşleşme bilgisi ve cihaz anahtarı silinir, açık bağlantı kapanır. Döner: kullanıcıya söylenecek
+    /// sayılar (`KoparmaSonucu`). Yerel kipte süren bağlanmayı ya da bekleyen eşleştirmeyi iptal eder,
+    /// kayıtlara dokunmaz; ikisi de yoksa etkisizdir. Gözlemciye: bağlı kipten `tumu`, `eslesme`, `baglanti`
+    /// (ve açık geçmiş sayfaları `gecmis`: önbellek atıldı, yeniden istenmeli).
+    pub fn baglantiyi_kopar(&self) -> Result<KoparmaSonucu, CekirdekHatasi> {
+        self.calistir(|m, o, e| m.baglantiyi_kopar(o, e))
     }
 
     /// Açılacak WebSocket adresi; `None`: eşleşme yok, bağlanma.

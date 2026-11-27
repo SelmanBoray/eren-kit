@@ -9,11 +9,33 @@ use crate::model::{
 /// Çalışma kipi (D1, göç 4). `Yerel`: doğruluk kaynağı telefondur, işlemler kuyruğa girmeden kalıcı
 /// uygulanır (`KayitGorunumu.bekleyen` hep yanlış, `BaglantiDurumu.kuyrukta` 0, geçmiş yerel tablodan).
 /// `Bagli`: servis yazar (eşleşmiş kurulum; eşleşme kaldırılınca da bağlı kalır). Yerel kipte QR ile
-/// eşleşme tamamlanınca kip `Bagli` olur ve yerel kayıtlar kuyrukla PC'ye gider.
+/// eşleşince kip, servisin tam kopyası gelene (ilk `esitlendi`) dek `Yerel` kalır; o anda yerel kayıtlar
+/// kuyruğa dökülür, kip `Bagli` olur ve kayıtlar kuyrukla PC'ye gider. `Cekirdek::baglantiyi_kopar` bağlı
+/// kipten `Yerel`'e döner.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum CalismaKipi {
     Yerel,
     Bagli,
+}
+
+/// `Cekirdek::baglantiyi_kopar`'ın sonucu: arayüzün kullanıcıya söyleyeceği sayılar. Koparmada hiçbir kayıt
+/// telefondan gitmez; buradaki sayılar PC'ye ulaşmamış (ya da ulaştığı bilinmeyen) değişikliklerdir.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct KoparmaSonucu {
+    /// Çağrıdan önceki kip. `Yerel` ise kayıtlara dokunulmadı; yalnız süren bağlanma ya da bekleyen
+    /// eşleştirme iptal edildi (`baglanma_iptal`).
+    pub onceki_kip: CalismaKipi,
+    /// PC'ye gönderilmeden ayrılan değişikliklerin dokunduğu kayıt sayısı (kuyrukta sonucu gelmemiş işlemi
+    /// olan kayıtlar). Telefonda o haliyle duruyorlar; PC'de yoklar ya da eski halleriyle duruyorlar.
+    pub gonderilmeyen_kayit: i32,
+    /// Aynı değişikliklerin işlem sayısı (`BaglantiDurumu.kuyrukta`'nın koparma anındaki değeri).
+    pub gonderilmeyen_islem: i32,
+    /// `gonderilmeyen_islem`'in yollanmış ama yanıtı gelmemiş olanları: PC'ye ulaşmış olabilir.
+    pub yanitsiz_islem: i32,
+    /// Ret listesinde kalan işlem sayısı (koparma ret listesine dokunmaz).
+    pub ret_listesinde: i32,
+    /// Yerel kipte çağrıldıysa: bir eşleşme ya da bekleyen eşleştirme (süren bağlanma) iptal edildi mi.
+    pub baglanma_iptal: bool,
 }
 
 /// Listede ve ayrıntıda gösterilen kayıt.
