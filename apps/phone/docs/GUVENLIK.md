@@ -101,7 +101,7 @@ Ayrı ajanda uygulaması aynı porttan üçüncü yola (`/ajanda`) bağlanır; k
   - **İndirme tamponu tavanı:** okumayan istemci belleği dolduramaz; bağlantının gönderim tamponunda 2 MiB'tan fazla bayt bekliyorsa yeni parça gitmez (tampon en çok bu kadar artı bir parça büyür).
   - **İçerik türü:** servis görseli hiç açmaz, çözmez, küçültmez, önizleme üretmez (ayrıştırıcı saldırı yüzeyi yok); `mime` okunmaz, yalnız etikettir.
   - **Günlük:** yalnız `ek_id`, bayt, sayı ve ret kodu; içerik, özet ve yol girmez, hata yalnız türüyle.
-  - **Veri kökü izni:** `<veri kökü>\ajanda-ekler` kökün altındadır ve kökün DACL'ini kalıtır (`kok-izni.ts`, `OICI`); ayrı izin yazılmaz. Dosyalar şifresizdir (63).
+  - **Veri kökü izni:** `<veri kökü>\ajanda-ekler` kökün altındadır ve kökün DACL'ini kalıtır (`kok-izni.ts`, `OICI`); ayrı izin yazılmaz. Dosyalar şifresizdir (64).
 
 ## Medya ekleri (`medya1`)
 Telefonun yüklediği fotoğraf ve video güvenilmez girdidir: hem PC'deki araçlar (ffmpeg) hem model onu işler. Akış `MIMARI.md` "Medya", sözleşme `server/MODULLER.md` "Medya dalgası".
