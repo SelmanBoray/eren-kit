@@ -72,6 +72,7 @@ motor/              iş mantığı, tek Mutex<Motor>
   kanal.rs          bağlantı durum makinesi, telafi, kuyruğun yollanması ve sonuçları   [R4]
   iyimser.rs        iyimser uygulama, görünen kopyanın hesabı                            [R4]
   yerel.rs          yerel yazar, koparma, yerel kipten bağlanma (`yereli_kuyruga_dok`)   [D1]
+  aktarma.rs        dışa ve içe aktarma: ajanda.json belgesi, plan, uygulama           [D3]
   islem.rs eslesme.rs sorgu.rs testler.rs                                       [R4]
   takvim.rs         takvim sekmesi: ay özeti, gün listesi (+ takvim_testleri.rs) [takvim]
   alarm.rs                                                                      [R3]
@@ -94,6 +95,8 @@ tests/veri/v3_eslesmesiz_kuyruklu.sql  şema 3, eşleşmesiz ama kuyruklu verita
 tests/veri_koruma.rs  veri koruması: temel kuralı, başka depo, yedekten dönen PC, kayıt başına denetim [D2]
 tests/gecis_guvenligi.rs  geçiş güvenliği: temelsiz mezar taşı, bozuk kayıt, açılış onarımı, `son_gecis` [D2]
 tests/veri/v3_eslesmis_zengin.sql  şema 3, eşleşmiş, zengin (PC temeli, kuyruk, ret) veritabanı (fikstür) [D2]
+tests/donus_denetimi.rs  yedekten dönen PC: yazım kimliği ve `DonusAnalizi` senaryoları [D2]
+tests/aktarma.rs   dışa ve içe aktarma: biçim, plan, yerel ve bağlı kip, ölçüm        [D3]
 tests/ortak/        sahte kabuklar ve `/ajanda` konuşan sahte PC servisi        [R4]
 ```
 *Model hatası bulunursa düzeltme şefin sırasıyla yapılır (aşağı bak); model tipleri köprüden de geçer.
@@ -123,6 +126,7 @@ kimlik/                KeystoreKimlik.kt (KimlikKabugu), EslestirmeEkrani.kt (+ 
 ag/                    AjandaSoketi.kt (Tasima), BaglantiYoneticisi.kt, EsitlemeIsi.kt — İSKELET  [K2]
 alarm/                 AlarmPlanlayici.kt (AlarmKabugu), AlarmAlici.kt, AcilisAlici.kt (+ Bildirimler,
                        BildirimIcerigi, HatirlatmaDurumu, SorunKaydi, AlarmIsParcacigi) — yazıldı [K3, kapandı]
+aktarma/               YedekKabi.kt (zip), AktarmaAkisi.kt, AktarmaMetinleri.kt — saf mantık [D3]
 ekran/                 AnaEkran.kt (başlatıcı), KayitEkrani.kt (+ K4'ün ekleyecekleri) — İSKELET  [K4]
 cekirdek/ (üretilir)   UniFFI bağlamaları: build/generated, git'e girmez
 src/test/kotlin/...    KopruTest.kt [şef]; her parça kendi test dosyasını kendi paketinde açar
@@ -333,18 +337,34 @@ bölümde ve `surum` uyuşmazlığında çıkış 1 verir: sözleşmeye bölüm 
   eşleşme kalır, bağlantı bu yoldan sürer (`GecisNedeni.DepoDegisti`). QR reddedilirse eski eşleşme korunur.
   `esitlendi`'de tek işlemde `yereli_kuyruga_dok`: her yerel kayıt için
   fark temeli seçilir, fark kuyruğa girer, toplanan kopya sunucu kopyasının yerine geçer, kip `Bagli` olur,
-  görünen kopya yeniden hesaplanır. **Fark temeli kuralı** (`fark_temeli`): servisin
-  kopyasında kayıt yoksa temel yok (kayıt `ekle` ile gider). Varsa ve yeni kopya koparma anındaki PC temeliyle
-  aynı `depo_id`'ye aitse ve temel kaydı biliyorsa temel eski PC temelidir (üç yollu: yalnız telefonda değişen
-  alanlar gider, PC'de değişenler korunur); değilse (başka depo ya da temel kaydı bilmiyor) servisin kendi
-  kopyasıdır. `geri_yukle` yalnız aynı depo temeliyle verilir; başka depoda PC'de silinmiş kayıt diriltilmez.
-  Aynı depoda kayıt başına "PC yedekten dönmüş" denetimi (`geri_dondu`) yapılır: kayıt servis kopyasında yok,
-  revizyonu temelden küçük ya da aynı revizyonda içerik başka. Dönmüşse temel servisin kopyası olur ve
-  `geri_yukle` izniyle telefonun hali (PC'nin yitirdiği onaylı hal + yerel değişiklikler) fark olarak gider;
-  PC revizyonu büyükse meşru ilerlemedir, üç yollu kural sürer. Temelsiz mezar taşı (PC'de hiç olmamış silinmiş
-  kayıt) gönderilmez; telefonda da servisin kopyasında da silinmişse hiçbir işlem gitmez. Okunamayan görünen
-  kayıt `tutarsiz_kayit` nedeniyle ret listesine düşer, geçiş sürer. Açılışta "bağlı kip + eşleşme yok" (çıkışsız)
-  durum yerel kipe çevrilir (`cikissiz_bagli_kipi_onar`, veri kaybı yok). **Değişmez: hiçbir yerel kayıt sessizce
+  görünen kopya yeniden hesaplanır. **Fark temeli kuralı** (`birlesme_islemleri`, `hedef_hal`):
+  - Servisin kopyasında kayıt yoksa temel yok, kayıt `ekle` ile gider. Varsa fark, telefonun koparma anındaki
+    PC temeline (`sunucu_kayitlari`; depo değişse de bilinir) göre **alan alan** hesaplanır: telefonun
+    dokunmadığı alanda PC kazanır, iki tarafın da değiştirdiği alanda telefon kazanır (önizleme ve seçim
+    D4'tedir). Temel kaydı bilmiyorsa (yolda kalmış ekleme) telefonun PC'den farklı her alanı gider.
+  - Temelin bilmediği alan geri gönderilmez: v3 kuralı gereği `Alan::Yok` kaldırma değildir; yalnız telefonun
+    açıkça kaldırdığı (`null`) alan kalkar.
+  - **Yazım kimliği** revizyon + `guncelleme_ms`'tir (revizyon büyüklüğü tek başına kanıt değil). Aynı
+    `depo_id`'de "PC yedekten dönmüş" mü, depo düzeyinde kanıtla `DonusAnalizi` ayırır: telefonun bildiği
+    yazım PC'de yoksa (kayıt yok, revizyon küçük, aynı numarada başka yazım, numarası büyük ama PC saatiyle
+    daha eski) kayıptır; kalan yazımlar dönüş noktasının alt, kayıp yazımlar ve yeniden verilmiş numaralar
+    üst sınırını verir. Kanıt yoksa dönüş yoktur ve her kayıt meşru ilerlemiştir; kanıt varsa kalışı
+    kanıtlanamayan kayıt yitirilmiş sayılır. Dönüşte PC'nin yitirdiği onaylı değerler de yeniden gider. Hem
+    yerel kipten bağlanmada hem bağlı kipte (`geri_donenleri_kuyruga_koy`) çalışır.
+  - `geri_yukle` yalnız aynı depo temeliyle verilir; başka depoda PC'de silinmiş kayıt diriltilmez. Telefonun
+    silmesi yalnız PC'nin hali de dönmüşse (yitirmişse) geri alınır; PC'nin silmesi geçerliyse telefonun
+    öteki farkları `geri_yukle`'siz gider, servis `kayit_silinmis` der, telefonun hali ret listesine düşer.
+  - Birleşen hal geçerli bir kayıt değilse `tutarsiz_kayit`: PC yitirmemişse telefonun değiştirdikleri gider
+    ve servis reddeder; PC yitirmişse hiçbir işlem gitmez, PC'nin hali kalır, telefonun hali ret listesine
+    girer. Temelsiz mezar taşı (PC'de hiç olmamış silinmiş kayıt) gönderilmez; iki tarafta da silinmişse
+    hiçbir işlem gitmez.
+  - Okunamayan görünen kayıt `tutarsiz_kayit` nedeniyle ret listesine düşer, geçiş sürer. Aynı kayıt PC'de de
+    varsa tek sonuç: görünen kopyada PC'nin hali durur, ret girdisi o kaydın düzeltmesidir; PC'de yoksa kayıt
+    görünen kopyadan çıkar, düzeltme yeni kayıt olarak eklenir. Satırı okunamayan PC temeli bilinmiyor sayılır.
+  - Açılışta "bağlı kip + eşleşme yok" (çıkışsız) durum yerel kipe çevrilir (`acilis_onarimi` ->
+    `cikissiz_bagli_kipi_onar`, veri kaybı yok). Onarım hatası açılışı düşürmez (kip bağlı kalır, sonraki
+    açılış yeniden dener); izi `meta.onarim_hatasi`'na (`ts_ms`, `mesaj`) yazılır, başarılı olunca silinir.
+    Köprüden okunamıyor (arayüz henüz görmez). **Değişmez: hiçbir yerel kayıt sessizce
   kaybolmaz.** Her yerel kayıt ya görünen kopyada kalır ya da servis işlemi reddedince ret listesine düşer;
   görünen kopya başka bir `depo_id`'nin tam telafisiyle değiştirilmez.
 - **Kotlin'in bilmesi gerekenler.** Yeni yüzey: `kip()` ve `baglantiyiKopar()`. Bağlanma sürerken `kip()` hâlâ
@@ -354,15 +374,79 @@ bölümde ve `surum` uyuşmazlığında çıkış 1 verir: sözleşmeye bölüm 
   söylenecek metindir. Kotlin tarafı `d274ebe`'de şema 4'e ve kuyruksuz `ekle`'ye uydu.
 - **Bilinen sınırlar.** (1) Taslak işareti ve kaynak izi `ekle` ile düşer. (2) Her yerel kipten bağlanma bir
   tam telafidir. (3) PC'de silinmiş ama telefonda düzenlenmiş kayıt ret listesine düşer. (4) Önizlemeli
-  birleştirme D4'tedir. (5) Temel servis kopyasıyken (ör. A'ya bağlı, kopar, B, kopar, A) iki tarafta canlı ve
-  farklı kayıtta telefonun değeri PC'nin değerini ezer; PC'nin değeri PC geçmişinde kalır; önizleme ve seçim
-  D4'tedir. (6) Göç 4, eşleşmesiz kurulumda onaylanmış kuyruk satırlarını PC temeline katmaz; sonradan aynı
-  değerle yeniden giderler (zararsız).
+  birleştirme D4'tedir. (5) Yalnız iki tarafın da değiştirdiği alan için: telefonun değeri PC'nin değerini ezer;
+  PC'nin değeri PC geçmişinde kalır; önizleme ve seçim D4'tedir. (6) Göç 4, eşleşmesiz kurulumda onaylanmış
+  kuyruk satırlarını PC temeline katmaz; sonradan aynı değerle yeniden giderler (zararsız). (7) Yerel kipte
+  `hello` boş gittiği için tek kayıtlık dönüş (yitirilen yazımların hepsi sonradan `son_rev`'i aşan tek
+  kayıttaysa) görülemez; çözümü kanal ya da protokol işidir. (8) Belirsiz aralıkta (dönüş noktası kanıtla
+  daraltılamadığında) telefonun değeri PC'nin dönüş sonrası değerini ezebilir; PC'nin değeri PC geçmişinde
+  kalır. (9) A→B→A'da B'nin bütün kayıtları A'ya kalıcı eklenir; arayüz bunu `sonGecis` ile önceden söylemeli
+  (D6). (10) Sıfırdan kurulmuş servisin kopyasında kayıt yoktur: telefonun bütün kayıtları `ekle` ile gider ve
+  `ekle`'nin kayıpları (1) geçerlidir. (11) İçe aktarma (D3) iki tarafın değiştirdiği alanı birleştirmez:
+  kayıt bütün olarak daha yeni `guncelleme_ms`'e göre kazanır; bağlı kipte kaybolanlar "Dışa ve içe
+  aktarma" bölümündedir.
 - **Geri alma kısıtı.** Şema 4'e geçmiş eşleşmesiz kurulumda şema 3 APK'sına dönülürse eski kod kipi bilmez;
   ilk eşleşmede tam telafi yerel kayıtları siler. Şema 4'ten geri dönülmemeli; dönülecekse önce dışa aktarma
   (D3) alınmalı.
 - **Kotlin notu.** `kimlik/EslestirmeEkrani.kt` içindeki "kopya ve hatırlatmalar silinir" onay metni artık
   yanlış (`eslesmeyiKaldir` koparmadır); D6'da `sonGecis` sayılarıyla değişecek.
+
+## Dışa ve içe aktarma (D3)
+
+Bağımsız kipte telefonun tek yedeği. Çekirdek dosya sistemine dokunmaz: belge metni girer ve çıkar; zip'i
+Kotlin yazar ve okur. Kurallar `motor/aktarma.rs` başındadır.
+
+- **Belge** (`ajanda.json`, UTF-8, anahtarlar sıralı): `bicim` (`eren_ajanda_yedegi`), `bicim_surumu`,
+  `sozlesme_surumu`, `uygulama_surumu` (yalnız tanı), `olusturma_ms`, `kip`, `kayitlar` (modelin kendi kayıt
+  JSON'u, mezar taşları dahil), `ekler`, `bolgeler`. **Sürüm kuralı:** `bicim`, `bicim_surumu` ve
+  `sozlesme_surumu` katı okumadan önce bakılır; `bicim_surumu` ya da `sozlesme_surumu` bu uygulamanınkinden
+  büyükse belge bütünüyle reddedilir (okuyamayacağı alanı sessizce atmaz). Eski sözleşme sürümü okunur; kendi
+  sürümünde şema katıdır. `ekler`, kaydın başvurduğu dosyaların tekil dizinidir (`{ozet, bayt, mime}`;
+  `ozet` sha256 küçük harf hex, dosya kapta `ekler/<ozet>`); ek üstverisi kaydın içindedir (v3). Bugün hep
+  boştur. `bolgeler` biçim 1'de hep boştur (dolu dizi reddedilir); bölgeler gelince öğe şeması tanımlanır ve
+  biçim sürümü 2'ye ayrılır.
+- **Zip kabı** (`aktarma/YedekKabi.kt`): kökte `ajanda.json`, ekler `ekler/<ozet>`; ad, dizin ve sınırlar
+  çekirdekten gelir (`aktarmaBicimi`). Sınırlar: belge 256 MiB, bir ek 4 MiB, ek sayısı 10 000, açılmış
+  toplam belge sınırı (+1 MiB ham payı). Okurken her girdi adı beyaz listeden geçer; yol kaçışı (`..`, mutlak
+  yol, ters bölü), beklenmeyen ve yinelenen girdi reddedilir. Boyutlar başlığa güvenilmeden açılırken sayılır
+  (şişirme saldırısı reddi).
+- **Köprü yüzeyi.** `aktarmaBicimi()` (kap düzeni ve sınırlar); `disaAktar()` (`DisaAktarma`: belge, kayıt,
+  silinmiş, okunamayan, `retListesinde`, kip, ekler); `iceAktarmaOnizlemesi(belge)` (`IceAktarmaOnizlemesi`:
+  yeni, güncellenecek, aynı, atlanacak, geçersiz (ilk 20'si konumla), sınır aşan, gönderilmeyecek, kuyruğa
+  girecek işlem, ekler, `iz`); `iceAktar(belge, iz)`. `iz` verilmişse ve işlem içinde yeniden kurulan plan
+  onunla tutmuyorsa hiçbir şey yazılmaz: `uygulandi` yanlış, `plan` yeni önizlemedir (kullanıcıya yeniden
+  gösterilip onayıyla yeni `iz`'le çağrılır). Uygulama tek SQLite işlemidir.
+- **Çakışma kuralı.** Aynı `kayit_id` telefonda da varsa `guncelleme_ms`'i büyük olan kazanır (mezar taşları
+  dahil); eşitse telefondaki kalır. Her kayıt ayrı sınıflanır: tek bozuk kayıt (şema, kural, dosyada yinelenen
+  kimlik, bilinmeyen dilim) aktarmayı düşürmez, geçersiz sayılır; kayıt sınırı dolunca yeniler `sinir_asan`.
+- **Yerel kip:** doğrudan yazılır, alanlar korunur (oluşturma ve güncelleme anı, kaynak izi, `elle_alanlar`,
+  örnekler, durum, taslak, silindi); revizyon yerel sayaçtan; yerel geçmişe içe aktarma satırı (yeni: doğum
+  parçası, güncelleme: fark); kalıcı olunca alarm senkronu.
+- **Bağlı kip:** servis yazar, bu yüzden D1'in dökme kuralıyla işlemler kuyruğa girer (yeni: `ekle`, durum,
+  örnekler, `sil`; güncelleme: `geri_yukle`, `guncelle`, `durum`, örnekler, `onayla`, `sil`). Kaybolanlar:
+  kaynak izi (servis `ekle`'yi bu telefonun elle ya da sesli not yazması sayar), oluşturma ve güncelleme
+  anları, revizyon, `elle_alanlar` (servis hesaplar), yeni kaydın taslak işareti ve taslak olmayanın taslağa
+  döndürülmesi, telefonda olmayan mezar taşları (PC'nin sınırını ölü kayıtla doldurmasın; `gonderilmeyecek`).
+  Servisin reddettiği işlem ret listesine düşer.
+- **Belgeye girmeyenler.** Kuyruk: etkisi görünen kopyadadır (bağlı kipte iyimser hal aktarılır). Ret listesi:
+  kayıt değil, belli bir servise ve revizyona bağlı reddedilmiş istektir, başka telefonda anlamı yoktur;
+  sayısı `retListesinde` ile söylenir (önce düzeltilsin). Yerel geçmiş: yeni telefonda içe aktarma satırıyla
+  başlar.
+- **Mahremiyet.** Belge içeriği (başlık, açıklama, ileride bölge) günlüğe, hata mesajına ya da
+  `GecersizKayit`'e girmez. Hatalar yalnız konum (şemanın alan adları ve sıra numaraları, `guvenli_yol`) ve
+  sabit neden taşır; JSON sözdizimi hatası yalnız satır ve sütun. Kotlin metinleri yalnız sayı ve tarih
+  taşır.
+- **Ölçüm** (`tests/aktarma.rs`, 5000 kayıt, hata ayıklama/yayın): önizleme 162/50 ms; yerel uygulama
+  844/301 ms; dışa aktarma 302/94 ms; bağlı kipte dökme 1,16/0,50 s.
+- **Kotlin** (`aktarma/`, saf mantık, JVM testli): `YedekKabi` (zip), `AktarmaAkisi` (adım adım: dışa
+  aktarma; dosya oku -> `Adim.Onay` -> `onayla` ya da `vazgec` -> `Adim.Bilgi`/`Hata`; önizlemeden sonra
+  telefon değiştiyse yeni planla yeniden onay), `AktarmaMetinleri`. Görünüm bugün `AnaEkran`'ın ⋮ menüsünde
+  SAF (`ACTION_CREATE_DOCUMENT`/`OPEN_DOCUMENT`) bağlantısıdır (eski görünüm; yeni arayüz `AktarmaAkisi`'ni
+  çağıracak).
+- **Açık kalanlar.** Ek deposu yer tutucudur (ek yok; `kayit_ekleri` v3 alanları gelince dolacak). Açılmış
+  boyut sınırı (belge 256 MiB) yalnız kötü dosyaya karşı bekçidir, gerçek bir ürün sınırı değil. Ekran
+  döndürmede bekleyen içe aktarma (okunmuş dosya, önizleme) kaybolur. Seçilen klasöre otomatik dışa aktarma
+  D6 ile gelecek; manifest'e iş tanımı gerektirir.
 
 ## İkinci dalga iş parçaları
 
