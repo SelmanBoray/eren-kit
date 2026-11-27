@@ -2,6 +2,7 @@ package dev.eren.ajanda.ag
 
 import dev.eren.ajanda.cekirdek.BaglantiAsamasi
 import dev.eren.ajanda.cekirdek.BaglantiDurumu
+import dev.eren.ajanda.cekirdek.CalismaKipi
 import dev.eren.ajanda.cekirdek.Degisim
 import dev.eren.ajanda.cekirdek.Gozlemci
 import java.util.concurrent.atomic.AtomicBoolean
@@ -31,6 +32,12 @@ enum class ArkaPlanSonucu {
 
     /** Uygulama ile servis farklı sürümde (`protokol_uyumsuz`): yeniden denemek boşuna, sıradaki dönem beklenir. */
     SURUM_UYUSMAZ,
+
+    /**
+     * Yerel kipte eşleşme var: bağlanılmadı. Gönderilecek kuyruk yok; bağlanmak her seferinde servisin tam
+     * kopyasını indirir ve çekirdek birleştirme onayı bekler (onu yalnız ön plandaki arayüz sorabilir).
+     */
+    YEREL_KIP,
 }
 
 /**
@@ -387,6 +394,11 @@ class BaglantiDenetcisi(
             oturumuBitir(o, ArkaPlanSonucu.AG_YOK)
             return
         }
+        if (yerelKipteEslesmeli()) {
+            // Ön plandaki bağlantıya dokunulmaz (açıksa sürer; önizlemeyi kullanıcı orada görür).
+            oturumuBitir(o, ArkaPlanSonucu.YEREL_KIP)
+            return
+        }
         oturumlar += o
         o.sure = zaman.sonra(ayar.arkaPlanSuresiMs) {
             korumali {
@@ -399,6 +411,20 @@ class BaglantiDenetcisi(
             if (cekirdekHazir() != null) durumuOku()
         } else {
             degerlendir(hemen = true)
+        }
+    }
+
+    /**
+     * Yerel kip ve eşleşme var mı. Okunamazsa `false`: eski yol sürer (çekirdek yoksa `HATA`, eşleşme yoksa
+     * `ESLESME_YOK` ve periyodik iş kaldırılır).
+     */
+    private fun yerelKipteEslesmeli(): Boolean {
+        val c = cekirdekHazir() ?: return false
+        return try {
+            c.kip() == CalismaKipi.YEREL && c.baglantiAdresi() != null
+        } catch (e: Exception) {
+            gunluk.uyari("kip okunamadı", e)
+            false
         }
     }
 

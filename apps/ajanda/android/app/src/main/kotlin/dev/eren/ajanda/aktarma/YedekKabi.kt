@@ -24,6 +24,8 @@ import java.util.zip.ZipOutputStream
  * Okurken: her girdinin adı beyaz listeden geçer (belge, ek dizini, `ekler/<64 hex>`), yol kaçışı
  * (`..`, mutlak yol, ters bölü) ve beklenmeyen ya da yinelenen girdi reddedilir. Boyutlar başlığa
  * güvenilmeden açılırken sayılır: belge, her ek ve açılmış toplam ayrı sınırlıdır (şişirme saldırısı).
+ * Toplama her girdinin açılmış baytı girer, saklanmayanlarınki (dizin girdisi) de; aşan okuma ilk
+ * fazla tamponda kesilir. Sınırlar yalnız çekirdekten okunur (`aktarmaBicimi()`); burada sabit yok.
  *
  * Mahremiyet: hata mesajları dosya içeriği ya da girdi adı taşımaz.
  */
@@ -67,7 +69,7 @@ object YedekKabi {
 
     /**
      * Kabı okur ve doğrular (belgenin içeriğine bakmaz: o çekirdeğin işi).
-     * @param toplamAzamiBayt açılmış bütün girdilerin toplam sınırı (varsayılan: belge sınırı; ekler
+     * @param toplamAzamiBayt açılmış bütün girdilerin toplam sınırı (varsayılan: çekirdeğin belge sınırı; ekler
      *   gelince ve depolamaya akıtılınca yeniden bakılır).
      * @throws YedekHatasi geçersiz kap, çok büyük, bozuk ek; [IOException] okunamazsa.
      */
@@ -113,6 +115,9 @@ object YedekKabi {
                         }
                         else -> throw YedekHatasi.GecersizDosya("beklenmeyen girdi")
                     }
+                    // Girdinin okunmamış kalanı (dizin girdisinin verisi gibi) `closeEntry`'de sayılmadan
+                    // açılırdı: burada sayılarak tüketilir, toplam sınırı aşınca okuma kesilir.
+                    toplam += sinirliAt(z, toplamAzamiBayt - toplam)
                     z.closeEntry()
                 }
             }
@@ -170,6 +175,18 @@ object YedekKabi {
             cikti.write(tampon, 0, r)
         }
         return cikti.toByteArray()
+    }
+
+    /** Girdinin kalanını saklamadan okur ve sayar; [azami]'yi aşınca [YedekHatasi.CokBuyuk]. */
+    private fun sinirliAt(z: InputStream, azami: Long): Long {
+        val tampon = ByteArray(8 * 1024)
+        var n = 0L
+        while (true) {
+            val r = z.read(tampon)
+            if (r < 0) return n
+            n += r
+            if (n > azami) throw YedekHatasi.CokBuyuk()
+        }
     }
 
     private fun utf8(b: ByteArray): String {

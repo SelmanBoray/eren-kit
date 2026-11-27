@@ -170,6 +170,25 @@ class YedekKabiTest {
     }
 
     @Test
+    fun sisirilmisEkDizinGirdisiReddedilir() {
+        // `ekler/` dizin girdisi veri taşıyor: saklanmaz ama açılmış boyu toplama girer (eskiden
+        // `closeEntry` sayılmadan açıyordu). 50 MB sıfır birkaç KB'a sıkışır; ham sınır onu durdurmaz.
+        val bomba = zip("ajanda.json" to "{}".toByteArray(), "ekler/" to ByteArray(50_000_000))
+        assertTrue(bomba.size < 200_000)
+        val giris = ByteArrayInputStream(bomba)
+        reddedilir<YedekHatasi.CokBuyuk> { YedekKabi.oku(giris, bicim) }
+        // Erken kesilir: sıkıştırılmış verinin çoğu hiç okunmadı.
+        assertTrue("kalan ${giris.available()} / ${bomba.size}", giris.available() > bomba.size / 2)
+
+        // Sınırın altındaki dizin verisi de toplama sayılır: belge + dizin toplamı aşar.
+        val belge = ByteArray(6000) { 'a'.code.toByte() }
+        val ikisi = zip("ajanda.json" to belge, "ekler/" to ByteArray(5000))
+        reddedilir<YedekHatasi.CokBuyuk> { oku(ikisi) }
+        // Veri taşımayan dizin girdisi bugünkü gibi kabul.
+        assertEquals(6000, oku(zip("ajanda.json" to belge, "ekler/" to null)).belge.length)
+    }
+
+    @Test
     fun ekOzetiVeBoyuDenetlenir() {
         val v = "ek verisi".toByteArray()
         val baska = "başka".toByteArray()

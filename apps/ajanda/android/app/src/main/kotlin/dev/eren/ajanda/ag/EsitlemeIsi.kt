@@ -17,7 +17,8 @@ import java.util.concurrent.Executors
  *   adres görünce kurar, kalıcıdır (yeniden başlatmada sürer).
  * - [KUYRUK_ISI]: arayüz kapanırken kuyrukta işlem kaldıysa ağ gelince bir kez.
  * Her çalışma: bağlan -> `CANLI && kuyrukta == 0` (ya da süre/deneme sınırı) -> kapat ->
- * `AlarmYenidenKurma.simdi(PERIYODIK)` -> `jobFinished`.
+ * `AlarmYenidenKurma.simdi(PERIYODIK)` -> `jobFinished`. Yerel kipte (eşleşme olsa da) bağlanılmaz
+ * (`ArkaPlanSonucu.YEREL_KIP`); alarmlar yine kurulur.
  */
 class EsitlemeIsi : JobService() {
 

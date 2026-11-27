@@ -80,6 +80,7 @@ class AktarmaMetinleri(private val dilim: ZoneId) {
         AktarmaSorunu.GECERSIZ -> "Bu dosya bir ajanda yedeği değil ya da bozuk."
         AktarmaSorunu.DAHA_YENI -> "Bu yedek uygulamanın daha yeni bir sürümüyle yapılmış. İçe aktarmak için uygulamayı güncelleyin."
         AktarmaSorunu.COK_BUYUK -> "Dosya çok büyük; bir ajanda yedeği bu kadar büyük olamaz."
+        AktarmaSorunu.BELLEK -> "Dosya çok büyük ya da bozuk; telefonun belleği açmaya yetmedi."
         AktarmaSorunu.EK_BOZUK -> "Yedekteki ek dosyalarından biri bozuk; yedek kullanılamıyor."
         AktarmaSorunu.OKUNAMADI -> "Dosya okunamadı. Yeniden deneyin."
         AktarmaSorunu.YAZILAMADI -> "Dosya yazılamadı. Başka bir yer seçip yeniden deneyin."

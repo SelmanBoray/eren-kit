@@ -5,6 +5,7 @@ import dev.eren.ajanda.cekirdek.CekirdekHatasi
 import dev.eren.ajanda.cekirdek.DisaAktarma
 import dev.eren.ajanda.cekirdek.IceAktarmaOnizlemesi
 import dev.eren.ajanda.cekirdek.IceAktarmaSonucu
+import dev.eren.ajanda.ekran.CekirdekYuzu
 import dev.eren.ajanda.ekran.SahteYuz
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -199,6 +200,44 @@ class AktarmaAkisiTest {
         }
         // Okuma hatası.
         assertEquals("Dosya okunamadı. Yeniden deneyin.", akis.dosyaOku { throw IOException("izin yok") }.metin)
+    }
+
+    @Test
+    fun bellekYetmezseSurecDusmezCokBuyukYaDaBozukDenir() {
+        val beklenen = "Dosya çok büyük ya da bozuk; telefonun belleği açmaya yetmedi."
+        // Okuma sırasında.
+        val o = akis.dosyaOku { throw OutOfMemoryError("test") }
+        assertTrue(o is AktarmaAkisi.Adim.Hata)
+        assertEquals(beklenen, o.metin)
+
+        // Çekirdeğin önizlemesi sırasında (sahte yüz OOM fırlatır).
+        val oomYuz = object : CekirdekYuzu by yuz {
+            var onizlemeOom = true
+            override fun iceAktarmaOnizlemesi(belge: String): IceAktarmaOnizlemesi =
+                if (onizlemeOom) throw OutOfMemoryError("test") else yuz.iceAktarmaOnizlemesi(belge)
+            override fun iceAktar(belge: String, iz: String?): IceAktarmaSonucu = throw OutOfMemoryError("test")
+            override fun disaAktar(): DisaAktarma = throw OutOfMemoryError("test")
+        }
+        val a2 = AktarmaAkisi(oomYuz, metinler)
+        val o2 = a2.dosyaOku { ByteArrayInputStream(kap()) }
+        assertEquals(beklenen, o2.metin)
+        assertFalse(a2.onayBekliyor)
+
+        // Onay sırasında: bekleyen dosya bırakılır.
+        oomYuz.onizlemeOom = false
+        yuz.onizlemeler += plan()
+        assertTrue(a2.dosyaOku { ByteArrayInputStream(kap()) } is AktarmaAkisi.Adim.Onay)
+        val s = a2.onayla()
+        assertTrue(s is AktarmaAkisi.Adim.Hata)
+        assertEquals(beklenen, s.metin)
+        assertFalse(a2.onayBekliyor)
+
+        // Dışa aktarırken: yarım dosya silinir.
+        var silindi = false
+        val d = a2.disaAktar({ ByteArrayOutputStream() }) { silindi = true }
+        assertEquals("Dışa aktarılamadı", d.baslik)
+        assertEquals(beklenen, d.metin)
+        assertTrue(silindi)
     }
 
     @Test

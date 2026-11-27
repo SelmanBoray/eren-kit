@@ -18,7 +18,9 @@ import java.time.LocalDate
  *   [vazgec] bekleyen dosyayı bırakır.
  *
  * İş parçacığı: bütün yöntemler eşzamanlıdır, çekirdeği çağırır; ana iş parçacığından çağrılmaz, aynı
- * anda tek iş parçacığından (durum tutar). Hiçbir hata dışarı sızmaz: her yol bir [Adim] döner.
+ * anda tek iş parçacığından (durum tutar). Her [Exception] ve [OutOfMemoryError] (dev ya da bozuk dosya;
+ * "çok büyük ya da bozuk" denir, bekleyen dosya bırakılır) bir [Adim.Hata]'ya çevrilir. Başka [Error]'lar
+ * (ör. `StackOverflowError`, `LinkageError`) yakalanmaz, çağırana çıkar.
  * Mahremiyet: dosya içeriği hiçbir günlüğe yazılmaz; metinler yalnız sayı ve tarih taşır.
  */
 class AktarmaAkisi(
@@ -59,6 +61,9 @@ class AktarmaAkisi(
         } catch (e: Exception) {
             runCatching(basarisizsa)
             Adim.Hata(metinler.disaHataBaslik, metinler.hata(e, yazarken = true))
+        } catch (e: OutOfMemoryError) {
+            runCatching(basarisizsa)
+            Adim.Hata(metinler.disaHataBaslik, metinler.hata(e, yazarken = true))
         }
     }
 
@@ -73,6 +78,9 @@ class AktarmaAkisi(
             if (okunan.ekler.keys.any { o -> plan.ekler.none { it.ozet == o } }) throw YedekHatasi.GecersizDosya("belgede olmayan ek")
             onizlemeAdimi(okunan, plan, degisti = false)
         } catch (e: Exception) {
+            Adim.Hata(metinler.iceHataBaslik, metinler.hata(e, yazarken = false))
+        } catch (e: OutOfMemoryError) {
+            // Okunan kap yereldedir, burada bırakılır; süreç düşmez.
             Adim.Hata(metinler.iceHataBaslik, metinler.hata(e, yazarken = false))
         }
     }
@@ -91,6 +99,9 @@ class AktarmaAkisi(
                 onizlemeAdimi(b.okunan, s.plan, degisti = true)
             }
         } catch (e: Exception) {
+            bekleyen = null
+            Adim.Hata(metinler.iceHataBaslik, metinler.hata(e, yazarken = false))
+        } catch (e: OutOfMemoryError) {
             bekleyen = null
             Adim.Hata(metinler.iceHataBaslik, metinler.hata(e, yazarken = false))
         }
@@ -123,9 +134,10 @@ class AktarmaAkisi(
 }
 
 /** Hata sınıfının kullanıcı metnine eşlemi için ara sınıf (saf). */
-internal enum class AktarmaSorunu { GECERSIZ, DAHA_YENI, COK_BUYUK, EK_BOZUK, OKUNAMADI, YAZILAMADI, DEPO, BEKLENMEYEN }
+internal enum class AktarmaSorunu { GECERSIZ, DAHA_YENI, COK_BUYUK, BELLEK, EK_BOZUK, OKUNAMADI, YAZILAMADI, DEPO, BEKLENMEYEN }
 
 internal fun sorunu(e: Throwable, yazarken: Boolean): AktarmaSorunu = when (e) {
+    is OutOfMemoryError -> AktarmaSorunu.BELLEK
     is YedekHatasi.CokBuyuk -> AktarmaSorunu.COK_BUYUK
     is YedekHatasi.EkBozuk -> AktarmaSorunu.EK_BOZUK
     is YedekHatasi.GecersizDosya -> AktarmaSorunu.GECERSIZ
