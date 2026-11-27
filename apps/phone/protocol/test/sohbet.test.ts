@@ -27,6 +27,8 @@ import {
   sohbetSurumu,
   SohbetYukari,
   VARSAYILAN_SOHBET_ADI,
+  YETENEK_JETONU_DESENI,
+  YetenekJetonu,
 } from "../src/index.ts";
 import { ANAHTAR, HASH, IMZA, NONCE, PLAN_PC, RAPOR } from "./ornekler.ts";
 
@@ -292,8 +294,24 @@ const ASAGI: Record<string, Ornek> = {
     gecersiz: [["imza yok", { v, type: "auth_challenge", server_nonce: NONCE }]],
   },
   welcome: {
-    gecerli: [{ v, type: "welcome", head_seq: 12, server_time_ms: 1000 }],
-    gecersiz: [["head_seq yok", { v, type: "welcome", server_time_ms: 1000 }]],
+    gecerli: [
+      { v, type: "welcome", head_seq: 12, server_time_ms: 1000 },
+      // Yetenek `medya1` ile: yalnız jetonu isteyen bağlantıya yazılır.
+      { v, type: "welcome", head_seq: 12, server_time_ms: 1000, yetenekler: ["medya1"] },
+      { v, type: "welcome", head_seq: 12, server_time_ms: 1000, yetenekler: [] },
+      { v, type: "welcome", head_seq: 0, server_time_ms: 0, yetenekler: ["medya1", "gelecek_2", "a".repeat(32)] },
+    ],
+    gecersiz: [
+      ["head_seq yok", { v, type: "welcome", server_time_ms: 1000 }],
+      ["yetenekler dizi değil", { v, type: "welcome", head_seq: 12, server_time_ms: 1000, yetenekler: "medya1" }],
+      ["büyük harf jeton", { v, type: "welcome", head_seq: 12, server_time_ms: 1000, yetenekler: ["Medya1"] }],
+      ["boş jeton", { v, type: "welcome", head_seq: 12, server_time_ms: 1000, yetenekler: [""] }],
+      ["uzun jeton", { v, type: "welcome", head_seq: 12, server_time_ms: 1000, yetenekler: ["a".repeat(33)] }],
+      ["virgüllü jeton", { v, type: "welcome", head_seq: 12, server_time_ms: 1000, yetenekler: ["etkinlik1,medya1"] }],
+      ["yinelenen jeton", { v, type: "welcome", head_seq: 12, server_time_ms: 1000, yetenekler: ["medya1", "medya1"] }],
+      ["fazla jeton", { v, type: "welcome", head_seq: 12, server_time_ms: 1000, yetenekler: Array.from({ length: 17 }, (_, i) => `j${i}`) }],
+      ["null yetenekler", { v, type: "welcome", head_seq: 12, server_time_ms: 1000, yetenekler: null }],
+    ],
   },
   pair_result: {
     gecerli: [
@@ -442,7 +460,7 @@ test("kararlar listesindeki adların hepsi vardır", () => {
 test("etkinlik yeteneği: sürüm artmaz, sabitler ve yukarı yönde çerçeve yok", () => {
   assert.equal(SOHBET_SURUMU, 5);
   assert.equal(SOHBET_YETENEK_PARAMETRESI, "yetenek");
-  assert.deepEqual(SOHBET_YETENEKLERI, { ETKINLIK: "etkinlik1" });
+  assert.deepEqual(SOHBET_YETENEKLERI, { ETKINLIK: "etkinlik1", MEDYA: "medya1" });
   assert.equal(SohbetYukari.safeParse({ v, type: "assistant_activity", sohbet_id: s, turn_id: "t1", etkinlik: "web", gecen_ms: 1 }).success, false);
   assert.equal(SohbetYukari.safeParse({ v, type: "assistant_activity_end", sohbet_id: s, turn_id: "t1" }).success, false);
 });
@@ -701,4 +719,18 @@ test("v3 ile gelen hata kodları ack ve error'da geçer", () => {
     assert.equal(SohbetAsagi.safeParse({ v, type: "ack", client_msg_id: "m", ok: false, code }).success, true, code);
     assert.equal(SohbetAsagi.safeParse({ v, type: "error", code }).success, true, code);
   }
+});
+
+test("welcome.yetenekler: en çok YETENEK_ADET tekil jeton; jetonlar sorgu biçiminde", () => {
+  assert.equal(SOHBET_SINIRLARI.YETENEK_ADET, 16);
+  assert.equal(SOHBET_SINIRLARI.YETENEK_JETONU, 32);
+  const hos = (yetenekler: string[]) => SohbetAsagi.safeParse({ v, type: "welcome", head_seq: 1, server_time_ms: 1, yetenekler }).success;
+  assert.equal(hos(Array.from({ length: 16 }, (_, i) => `j${i}`)), true);
+  assert.equal(hos(Array.from({ length: 17 }, (_, i) => `j${i}`)), false);
+  for (const jeton of Object.values(SOHBET_YETENEKLERI)) {
+    assert.match(jeton, YETENEK_JETONU_DESENI);
+    assert.equal(YetenekJetonu.safeParse(jeton).success, true, jeton);
+  }
+  // Eski APK'nın gördüğü welcome bugünküyle aynıdır: alan yoksa geçerli.
+  assert.equal(hos([]), true);
 });

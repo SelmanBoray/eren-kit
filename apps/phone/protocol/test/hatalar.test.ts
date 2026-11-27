@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { HATA_KODLARI, HataKodu, HataKoduV1, SINIRLAR, SOHBET_HATA_KODLARI, SOHBET_SINIRLARI } from "../src/index.ts";
+import {
+  HATA_KODLARI,
+  HataKodu,
+  HataKoduV1,
+  MEDYA_HATA_KODLARI,
+  MEDYA_SINIRLARI,
+  SINIRLAR,
+  SOHBET_HATA_KODLARI,
+  SOHBET_SINIRLARI,
+} from "../src/index.ts";
 
 test("hata listesi kapalıdır ve yinelenmez", () => {
   assert.equal(new Set(HATA_KODLARI).size, HATA_KODLARI.length);
@@ -33,14 +42,28 @@ const V1_KODLARI = [
 
 test("v1 kod kümesi değişmedi, sırası aynı", () => {
   assert.deepEqual([...HataKoduV1.options], V1_KODLARI);
-  for (const kod of SOHBET_HATA_KODLARI) assert.equal(HataKoduV1.safeParse(kod).success, false, kod);
+  for (const kod of [...SOHBET_HATA_KODLARI, ...MEDYA_HATA_KODLARI]) assert.equal(HataKoduV1.safeParse(kod).success, false, kod);
 });
 
 test("/sohbet'e özgü kodlar listenin sonundadır", () => {
   assert.deepEqual([...SOHBET_HATA_KODLARI], ["sohbet_mesgul", "sohbet_bulunamadi", "sohbet_siniri", "sohbet_silinemez"]);
-  assert.deepEqual([...HATA_KODLARI], [...V1_KODLARI, ...SOHBET_HATA_KODLARI]);
+  // Medya kodları (yetenek `medya1`) en sondadır.
+  assert.deepEqual([...HATA_KODLARI], [...V1_KODLARI, ...SOHBET_HATA_KODLARI, ...MEDYA_HATA_KODLARI]);
 });
 
 test("/sohbet sınırları Kotlin'in kopyaladığı SINIRLAR'a girmez", () => {
   for (const ad of Object.keys(SOHBET_SINIRLARI)) assert.equal(ad in SINIRLAR, false, ad);
+});
+
+test("medya kodları (medya1) listenin en sonundadır, v1 kümesine girmez, ama /sohbet'te geçer", () => {
+  assert.deepEqual([...MEDYA_HATA_KODLARI], ["medya_yok", "medya_reddedildi", "medya_siniri"]);
+  assert.deepEqual(HATA_KODLARI.slice(-MEDYA_HATA_KODLARI.length), [...MEDYA_HATA_KODLARI]);
+  for (const kod of MEDYA_HATA_KODLARI) {
+    assert.equal(HataKodu.safeParse(kod).success, true, kod);
+    assert.equal(HataKoduV1.safeParse(kod).success, false, kod);
+  }
+});
+
+test("medya sınırları Kotlin'in kopyaladığı SINIRLAR'a girmez", () => {
+  for (const ad of Object.keys(MEDYA_SINIRLARI)) assert.equal(ad in SINIRLAR, false, ad);
 });

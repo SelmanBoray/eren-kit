@@ -96,6 +96,35 @@ export const SOHBET_SINIRLARI = {
   BAGLAM_ADI: 80,
   /** `usage_report.isler` en çok bu kadar öğe (en yeni işler). */
   TUKETIM_IS_ADET: 50,
+  /** `welcome.yetenekler` en çok bu kadar jeton (servisin `?yetenek=` okuma sınırıyla aynı). */
+  YETENEK_ADET: 16,
+  /** Bir yetenek jetonunun en çok uzunluğu (`YETENEK_JETONU_DESENI`). */
+  YETENEK_JETONU: 32,
+} as const;
+
+/**
+ * Medya eki sınırları (yetenek `medya1`, `medya.ts`). `SINIRLAR`'a eklenmez: Kotlin o bloğun anahtar
+ * kümesini birebir sınar, bu sınırlar Kotlin'e hiç ulaşmaz. Sürüm artmaz ama sınırı değiştirmek
+ * jetonsuz değişiklik değildir: yeni jeton (`medya2`) ister (README "Sürümleme"). Bayt sınırları ham
+ * dosya baytıdır (base64 değil).
+ */
+export const MEDYA_SINIRLARI = {
+  /** Bir mesajdaki ek üst sınırı; en çok biri video. */
+  EK_ADET: 4,
+  /** Fotoğraf dosyası. Telefon küçültür; manipülatör düşerse özgün dosya bu sınırla gider. */
+  FOTO_BAYT: 15 * 1024 * 1024,
+  /** Video dosyası (Selman kararı, 2026-11-27). */
+  VIDEO_BAYT: 250 * 1024 * 1024,
+  /** Video süresi, ms: 5 dk (Selman kararı). Telefonun beyanı; PC `ffprobe` ile yeniden ölçer. */
+  VIDEO_SURE_MS: 300_000,
+  /** `media_chunk.veri`'nin çözülmüş en çok baytı. Base64'ü ~683 KiB, 2 MiB çerçevenin altında. */
+  PARCA_BAYT: 512 * 1024,
+  /** Cihaz başına bitmemiş (yükleniyor ya da kabul edilmiş ama mesaja bağlanmamış) kayıt. */
+  BEKLEYEN_YUKLEME: 8,
+  /** Telefonda fotoğraf küçültmesinin uzun kenarı, px. */
+  FOTO_UZUN_KENAR: 1568,
+  /** `genislik`/`yukseklik` üst sınırı, px. */
+  BOYUT_KENAR: 20_000,
 } as const;
 
 /** Tek bir kablo çerçevesinin ayrıştırma öncesi üst sınırı. */
