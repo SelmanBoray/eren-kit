@@ -23,6 +23,12 @@
  * Yetenekler (v3): `welcome.yetenekler` = `ajandaYetenekKesisimi(hello.yetenekler, ajanda.yetenekler)`;
  * sunulan küme ajanda modülünün bağımlılığıdır (asistan motoruna bağlı değil). v2 bağlantıda alan
  * uyarlamada düşer.
+ *
+ * Ek yedeği (`ek_yedegi`; `ajanda-ekler.ts`): `ek_yukle`, `ek_parca`, `ek_iste` yalnız şu hepsi tutunca
+ * ek modülüne gider: yüzde `ekler` var (`ajandaEkliYuz`), kimlik sonrası, `esitlendi` gitmiş ve bağlantının
+ * kesişiminde `ek_yedegi` var (kesişim v2'de her zaman boştur; v2 şeması bu çerçeveleri zaten tanımaz).
+ * Öteki hallerde bugünkü ret: `yetkisiz` + kapanış. Ek retleri `ek_ret` ile, bağlantı kapanmaz; yetki
+ * denetimi her çerçevede öteki kimlik sonrası çerçeveler gibidir.
  */
 import {
   AJANDA_AZAMI_CERCEVE,
@@ -59,6 +65,28 @@ import type {
   WsBaglantisi,
   ZamanlayiciPortu,
 } from "./sozlesme.ts";
+import { AJANDA_EK_YETENEGI } from "./ajanda-ekler.ts";
+import type { AjandaEkCercevesi, AjandaEkleri, AjandaEkOturumu } from "./ajanda-ekler.ts";
+
+/**
+ * Kanalın ajanda yüzü: gateway'in verdiği `AjandaGatewayYuzu`, ek yedeği kuruluysa `ekler` ile
+ * (`ana` `ajandaEkliYuz` ile bağlar; `gateway.ts` yüzü olduğu gibi geçirir). `ekler` yoksa ek
+ * çerçeveleri bugünkü gibi reddedilir.
+ */
+export type AjandaKanalYuzu = AjandaGatewayYuzu & { readonly ekler?: Pick<AjandaEkleri, "oturumAc"> };
+
+/** Ajanda yüzüne ek modülünü ekler (yöntemler aynen yönlendirilir). */
+export const ajandaEkliYuz = (yuz: AjandaGatewayYuzu, ekler: Pick<AjandaEkleri, "oturumAc">): AjandaKanalYuzu => ({
+  islemUygula: (device_id, islem_id, islem) => yuz.islemUygula(device_id, islem_id, islem),
+  gecersizIslem: (device_id, islem_id) => yuz.gecersizIslem(device_id, islem_id),
+  karsila: (hello) => yuz.karsila(hello),
+  telafiSayfasi: (g) => yuz.telafiSayfasi(g),
+  gecmis: (kayit_id, once_rev) => yuz.gecmis(kayit_id, once_rev),
+  get yetenekler() {
+    return yuz.yetenekler;
+  },
+  ekler,
+});
 
 /** Telafide bir `telafiSayfasi` çağrısının en çok kayıt sayısı. */
 export const AJANDA_TELAFI_SAYFASI = 200;
@@ -83,7 +111,7 @@ export interface AjandaEslestirmeIstegi {
 
 export interface AjandaKanaliBagimliliklari {
   depo: Pick<Depo, "kapsamliCihazGetir">;
-  ajanda: AjandaGatewayYuzu;
+  ajanda: AjandaKanalYuzu;
   anahtar: Pick<AnahtarPortu, "acikAnahtar" | "imzala" | "dogrula">;
   rastgele: Pick<RastgelePortu, "baytlar">;
   saat: SaatPortu;
@@ -119,6 +147,10 @@ interface Oturum {
   /** `welcome` ile `esitlendi` arası: canlı kayıt sıraya girer. */
   telafide: boolean;
   bekleyen: AjandaKaydi[];
+  /** `welcome.yetenekler` (kesişim): bu bağlantıda açılan davranışlar. */
+  yetenekler: readonly string[];
+  /** Ek yedeği durumu; ilk ek çerçevesinde açılır, bağlantı kapanınca kapanır. */
+  ek: AjandaEkOturumu | null;
 }
 
 type Asama =
@@ -204,6 +236,13 @@ export const ajandaKanaliKur = (d: AjandaKanaliBagimliliklari): AjandaKanali => 
   };
 
   const birak = (g: Baglanti): void => {
+    if (g.asama.ad === "ajandada") {
+      try {
+        g.asama.oturum.ek?.kapat();
+      } catch (e) {
+        hataYaz("ek_kapanis_hatasi", e);
+      }
+    }
     g.asama = { ad: "kapali" };
     g.sureIptal?.();
     g.sureIptal = null;
@@ -300,6 +339,7 @@ export const ajandaKanaliKur = (d: AjandaKanaliBagimliliklari): AjandaKanali => 
       server_time_ms: saat.simdiMs(),
       yetenekler,
     };
+    o.yetenekler = yetenekler;
     if (!yolla(g, welcome)) return;
     // `tam` değilse yalnız `son_rev`'ten sonrası; baştan ileri bir `son_rev` (servis `tam` demeliydi) canlıyı yutmasın.
     o.sonRev = k.tam ? 0 : Math.min(hello.son_rev, k.bas_rev);
@@ -370,7 +410,7 @@ export const ajandaKanaliKur = (d: AjandaKanaliBagimliliklari): AjandaKanali => 
     g.kimlik = kimlik;
     g.b.kimlikDogrulandi();
     gunluk.bilgi("gateway", "kimlik_tamam", { kanal: "ajanda", device_id: kimlik.device_id });
-    const oturum: Oturum = { device_id: kimlik.device_id, sonRev: 0, telafide: true, bekleyen: [] };
+    const oturum: Oturum = { device_id: kimlik.device_id, sonRev: 0, telafide: true, bekleyen: [], yetenekler: [], ek: null };
     g.asama = { ad: "ajandada", oturum };
     telafiYap(g, oturum, a.hello);
   };
@@ -459,6 +499,22 @@ export const ajandaKanaliKur = (d: AjandaKanaliBagimliliklari): AjandaKanali => 
     });
   };
 
+  /**
+   * Ek yedeği çerçevesi. Yalnız `ekler` kuruluyken, `esitlendi`'den sonra ve kesişimde `ek_yedegi` varken
+   * ek modülüne gider; değilse bugünkü ret (`yetkisiz` + kapanış). Yanıtlar arkadan gelir: bağlantı o
+   * sırada kapanmışsa (ya da başka oturuma geçmişse) yollanmaz.
+   */
+  const ekAl = (g: Baglanti, o: Oturum, m: AjandaEkCercevesi): void => {
+    const ekler = ajanda.ekler;
+    if (ekler === undefined || o.telafide || !o.yetenekler.includes(AJANDA_EK_YETENEGI)) return reddet(g, "yetkisiz");
+    o.ek ??= ekler.oturumAc({
+      gonder: (y) => {
+        if (g.asama.ad === "ajandada" && g.asama.oturum === o) yolla(g, y);
+      },
+    });
+    o.ek.cerceve(m);
+  };
+
   // ------------------------------------------------------------------------------------------
   // Çerçeve
   // ------------------------------------------------------------------------------------------
@@ -492,6 +548,7 @@ export const ajandaKanaliKur = (d: AjandaKanaliBagimliliklari): AjandaKanali => 
         if (g.kimlik === null || !yetkiSuruyor(g.kimlik)) return reddet(g, "cihaz_bilinmiyor");
         if (m.type === "islem") return islemAl(g, asama.oturum, m);
         if (m.type === "gecmis_iste") return gecmisAl(g, m);
+        if (m.type === "ek_yukle" || m.type === "ek_parca" || m.type === "ek_iste") return ekAl(g, asama.oturum, m);
         return reddet(g, "yetkisiz");
       case "kapali":
         return;

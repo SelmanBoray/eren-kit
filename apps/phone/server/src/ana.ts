@@ -6,6 +6,8 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import win32 from "node:path/win32";
 import { VARSAYILAN_IS_PROFILI } from "@eren/protocol";
 import type { CmdAdi, CmdSonucu } from "@eren/protocol";
+import { AJANDA_EK_KLASORU, AJANDA_EK_YETENEGI, ajandaEkleriKur } from "./ajanda-ekler.ts";
+import type { AjandaEkDiski, AjandaEkleri } from "./ajanda-ekler.ts";
 import { ajandaKopruSunucuKur } from "./ajanda-kopru-sunucu.ts";
 import { AJANDA_SUNULAN_YETENEKLER, ajandaKur } from "./ajanda.ts";
 import { akisKur } from "./akis.ts";
@@ -13,8 +15,9 @@ import { AyarHatasi, ayarKur, yollariUret } from "./ayar.ts";
 import { bildirimKur } from "./bildirim.ts";
 import { cihazKur } from "./cihaz.ts";
 import { depoKur } from "./depo.ts";
-import { disDunyaKur, dosyaPortuKur, veriKokuIzniHazirla } from "./dis-dunya.ts";
+import { ajandaEkDiskiKur, disDunyaKur, dosyaPortuKur, veriKokuIzniHazirla } from "./dis-dunya.ts";
 import { gatewayKur } from "./gateway.ts";
+import { ajandaEkliYuz } from "./gateway-ajanda.ts";
 import { gunlukKur } from "./gunluk.ts";
 import { islerKur } from "./isler.ts";
 import { kilitKur } from "./kilit.ts";
@@ -75,6 +78,12 @@ export interface ServisGirdisi {
    * `gateway` ajanda bağımlılıksız kurulur, davranış ajanda öncesiyle aynıdır (A0.6; birleşim testi sabitler).
    */
   ajanda?: false | { sistemDilimi: () => string };
+  /**
+   * Ek yedeği (`ek_yedegi`; AJANDA.md "Sürüm 3" > "Ek yedeği"): ek dosyalarının deposu (`giris`
+   * `<veri kökü>\ajanda-ekler` ile kurar). Verilmezse ya da ajanda kapalıysa ek modülü kurulmaz, yetenek
+   * sunulmaz, ek çerçeveleri bugünkü gibi reddedilir (testler ve eski çağıranlar değişmez).
+   */
+  ajandaEkDiski?: AjandaEkDiski;
 }
 
 export interface Servis {
@@ -97,6 +106,8 @@ export interface Servis {
   takvim: TakvimPortu | null;
   ajanda: AjandaYoneticisi | null;
   ajandaKopru: AjandaKopruSunucu | null;
+  /** Ek yedeği; `ServisGirdisi.ajandaEkDiski` yoksa ya da ajanda kapalıysa `null`. */
+  ajandaEkleri: AjandaEkleri | null;
   baslat(): Promise<void>;
   kapat(): Promise<void>;
 }
@@ -181,7 +192,7 @@ const fiilleriKur = ({ ayar, planlar, isler, cihaz, sohbetler }: FiilModulleri):
   };
 };
 
-export function servisKur({ dunya, ayar, depoYolu, ajanda: ajandaSecenegi }: ServisGirdisi): Servis {
+export function servisKur({ dunya, ayar, depoYolu, ajanda: ajandaSecenegi, ajandaEkDiski }: ServisGirdisi): Servis {
   const { saat, zamanlayici, rastgele, dosya, surec, sistem, ws, boru, http, anahtar, transkript } = dunya;
   const gunluk = gunlukYap(dunya);
 
@@ -196,6 +207,11 @@ export function servisKur({ dunya, ayar, depoYolu, ajanda: ajandaSecenegi }: Ser
   // kurulur: bağ geç çözülür (yalnız araç çağrısı anında, `baslat`'tan sonra), kurulum sırası değişmez.
   const ajandaAcik = ajandaSecenegi !== false;
   const takvim = ajandaAcik ? takvimKur({ sistemDilimi: ajandaSecenegi?.sistemDilimi ?? sistemDilimi }) : null;
+  // Ek yedeği: modül kuruluysa `ek_yedegi` sunulur ve `/ajanda` yüzüne ek modülü eklenir; ikisi birlikte.
+  const ajandaEkleri =
+    takvim === null || ajandaEkDiski === undefined
+      ? null
+      : ajandaEkleriKur({ disk: ajandaEkDiski, depo, saat, zamanlayici, gunluk });
   const ajanda =
     takvim === null
       ? null
@@ -206,8 +222,8 @@ export function servisKur({ dunya, ayar, depoYolu, ajanda: ajandaSecenegi }: Ser
           rastgele,
           gunluk,
           turBaglami: (sohbet, nesil) => sohbetler.konusma(sohbet)?.turBaglami?.(nesil) ?? null,
-          // `/ajanda` yetenekleri: motordan bağımsız, servisin uyguladığı davranışlar (bugün boş).
-          yetenekler: AJANDA_SUNULAN_YETENEKLER,
+          // `/ajanda` yetenekleri: motordan bağımsız, servisin uyguladığı davranışlar (ek modülü kuruluysa `ek_yedegi`).
+          yetenekler: ajandaEkleri === null ? AJANDA_SUNULAN_YETENEKLER : [...AJANDA_SUNULAN_YETENEKLER, AJANDA_EK_YETENEGI],
         });
   const ajandaKopru = ajanda === null ? null : ajandaKopruSunucuKur({ boru, depo, rastgele, anahtar, zamanlayici, gunluk });
   const cihaz = cihazKur({ ayar, saat, zamanlayici, rastgele, veriyolu, depo, gunluk });
@@ -285,7 +301,7 @@ export function servisKur({ dunya, ayar, depoYolu, ajanda: ajandaSecenegi }: Ser
     veriyolu,
     gunluk,
     // `/ajanda` yolu, dinleme sınırı, kayıt yayını aboneliği, yetki yoklaması ve kanal kapanışı gateway'de.
-    ...(ajanda !== null && { ajanda }),
+    ...(ajanda !== null && { ajanda: ajandaEkleri === null ? ajanda : ajandaEkliYuz(ajanda, ajandaEkleri) }),
   });
 
   const fiiller = fiilleriKur({ ayar, planlar, isler, cihaz, sohbetler });
@@ -308,6 +324,7 @@ export function servisKur({ dunya, ayar, depoYolu, ajanda: ajandaSecenegi }: Ser
     takvim,
     ajanda,
     ajandaKopru,
+    ajandaEkleri,
 
     async baslat() {
       const adimlar: ReadonlyArray<() => unknown> = [
@@ -316,6 +333,8 @@ export function servisKur({ dunya, ayar, depoYolu, ajanda: ajandaSecenegi }: Ser
         () => kilit.baslat(),
         // Ajanda dalgası: depo kimliği gateway ve köprüden önce kurulur (`karsila` ve araçlar onu okur).
         () => ajanda?.baslat(),
+        // Ek yedeğinin periyodik temizliği (ilk tur arkada; açılışı bekletmez).
+        () => ajandaEkleri?.baslat(),
         // Önceki ömrün ajanda jetonları ve açık bağlantıları: `sohbetler.baslat()` yenilerini üretmeden
         // önce (`eren` jetonlarını `sohbetler` kendisi siler). Silinen sayı ajanda borusunun günlüğünde.
         () => ajandaKopru?.jetonlariniSil(),
@@ -374,6 +393,8 @@ export function servisKur({ dunya, ayar, depoYolu, ajanda: ajandaSecenegi }: Ser
           ["cihaz", () => cihaz.kapat()],
           // `/ajanda` bağlantıları ve kayıt yayını aboneliği burada kapanır.
           ["gateway", () => gateway.kapat()],
+          // Bağlantılar kapandıktan sonra, depodan önce: süren ek yazımı ve temizlik turu bitsin.
+          ["ajandaEkleri", () => ajandaEkleri?.kapat()],
           ["kopru", () => kopru.kapat()],
           ["ajandaKopru", () => ajandaKopru?.kapat()],
           ["depo", () => depo.kapat()],
@@ -462,7 +483,8 @@ const giris = async (): Promise<void> => {
       process.exit(0);
     }
 
-    const servis = servisKur({ dunya, ayar, depoYolu: vt });
+    // Ek yedeği deposu veri kökünün altında: kökün izni (yukarıda denetlendi) alt klasöre geçer.
+    const servis = servisKur({ dunya, ayar, depoYolu: vt, ajandaEkDiski: ajandaEkDiskiKur(win32.join(kok, AJANDA_EK_KLASORU)) });
     let kapaniyor = false;
     // Sinyal ve IPC aynı nazik yolu kullanır: 30 sn sınırı, kapanış sonrası `exit(0)`, takılırsa `exit(1)`.
     const kapat = (alanlar: GunlukAlanlari): void => {

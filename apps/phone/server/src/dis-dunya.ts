@@ -18,6 +18,7 @@ import {
 import {
   appendFileSync,
   closeSync,
+  constants as dosyaSabitleri,
   existsSync,
   mkdirSync,
   openSync,
@@ -25,12 +26,13 @@ import {
   rmSync,
   statSync,
 } from "node:fs";
-import { lstat, mkdir, open, readdir, readFile, rename, rmdir, stat, unlink, writeFile } from "node:fs/promises";
+import type { Dirent } from "node:fs";
+import { lstat, mkdir, open, readdir, readFile, rename, rmdir, stat, truncate, unlink, writeFile } from "node:fs/promises";
 import { createServer as httpSunucusu } from "node:http";
 import { createServer as boruSunucusu } from "node:net";
 import type { Server as NetSunucusu, Socket } from "node:net";
 import { freemem, networkInterfaces, totalmem } from "node:os";
-import { dirname, win32 } from "node:path";
+import { dirname, join, win32 } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { SOHBET_YETENEK_PARAMETRESI } from "@eren/protocol";
 import {
@@ -41,6 +43,7 @@ import {
   windowsPowerShellOrtami,
 } from "./kok-izni.ts";
 import type { KokIzniSonucu } from "./kok-izni.ts";
+import type { AjandaEkDiski, AjandaEkDosyasi, AjandaEkYarimi } from "./ajanda-ekler.ts";
 import { WebSocketServer } from "ws";
 import type { RawData, WebSocket } from "ws";
 import type {
@@ -1388,6 +1391,328 @@ const transkriptKur = (kok: string): TranskriptPortu => ({
     return sonuc;
   },
 });
+
+// ---------------------------------------------------------------------------------------------
+// Ajanda ek deposu (`ek_yedegi`; sözleşme `ajanda-ekler.ts` `AjandaEkDiski`)
+// ---------------------------------------------------------------------------------------------
+
+const EK_OZETI = /^[0-9a-f]{64}$/;
+const EK_ONEKI = /^[0-9a-f]{2}$/;
+const EK_YARIM_DIZINI = "yarim";
+const EK_ISARET_DOSYASI = "basvurusuz.json";
+const EK_ONAY = ".onay";
+const EK_GECICI = ".tmp";
+const EK_OKUMA_PARCASI = 256 * 1024;
+
+/** Windows'ta hedef o an açıksa yeniden adlandırma EPERM/EBUSY verebilir: kısa yeniden deneme. */
+const ekYenidenAdlandir = async (kaynak: string, hedef: string): Promise<void> => {
+  for (let deneme = 0; ; deneme += 1) {
+    try {
+      await rename(kaynak, hedef);
+      return;
+    } catch (e) {
+      const k = hataKodu(e);
+      if (deneme >= 5 || (k !== "EPERM" && k !== "EBUSY" && k !== "EACCES")) throw e;
+      await new Promise<void>((coz) => setTimeout(coz, 20 * (deneme + 1)));
+    }
+  }
+};
+
+/** Düz dosyanın `lstat`'ı; yoksa `null`. Dizin ya da bağ (junction, sembolik) ise atar: izlenmez. */
+const ekDuzDosya = async (yol: string): Promise<{ size: number; mtimeMs: number } | null> => {
+  let d;
+  try {
+    d = await lstat(yol);
+  } catch (e) {
+    if (hataKodu(e) === "ENOENT" || hataKodu(e) === "ENOTDIR") return null;
+    throw e;
+  }
+  if (!d.isFile()) throw new Error("dosya_degil");
+  return d;
+};
+
+const ekVarsaSil = async (yol: string): Promise<void> => {
+  if ((await ekDuzDosya(yol)) === null) return;
+  try {
+    await unlink(yol);
+  } catch (e) {
+    if (hataKodu(e) !== "ENOENT") throw e;
+  }
+};
+
+/** Dizini oluşturur ve gerçek dizin olduğunu (bağ değil) doğrular. */
+const ekDizinHazirla = async (yol: string): Promise<void> => {
+  await mkdir(yol, { recursive: true });
+  const d = await lstat(yol);
+  if (!d.isDirectory() || d.isSymbolicLink()) throw new Error("ek_dizini_guvensiz");
+};
+
+/** Var olan dizin gerçek dizin mi; yoksa `false`, bağsa atar. */
+const ekDizinVar = async (yol: string): Promise<boolean> => {
+  let d;
+  try {
+    d = await lstat(yol);
+  } catch (e) {
+    if (hataKodu(e) === "ENOENT" || hataKodu(e) === "ENOTDIR") return false;
+    throw e;
+  }
+  if (!d.isDirectory() || d.isSymbolicLink()) throw new Error("ek_dizini_guvensiz");
+  return true;
+};
+
+const ekDizinListesi = async (yol: string): Promise<Dirent[]> => {
+  try {
+    return await readdir(yol, { withFileTypes: true });
+  } catch (e) {
+    if (hataKodu(e) === "ENOENT" || hataKodu(e) === "ENOTDIR") return [];
+    throw e;
+  }
+};
+
+/** Küçük veriyi geçici dosyaya yazar, diske indirir, tek adımda yerine taşır. */
+const ekAtomikYaz = async (yol: string, icerik: string): Promise<void> => {
+  const gecici = yol + EK_GECICI;
+  const f = await open(gecici, "w");
+  try {
+    await f.writeFile(icerik, "utf8");
+    await f.sync();
+  } finally {
+    await f.close().catch(bos);
+  }
+  try {
+    await ekYenidenAdlandir(gecici, yol);
+  } catch (e) {
+    await unlink(gecici).catch(bos);
+    throw e;
+  }
+};
+
+/**
+ * `kok`: `<veri kökü>\ajanda-ekler`. Yerleşim: tam dosya `<ozet[0:2]>\<ozet>`, yarım `yarim\<ozet>` ve
+ * onaylı uzunluğu `yarim\<ozet>.onay`, başvurusuzluk işaretleri `basvurusuz.json`. Yol yalnız doğrulanmış
+ * 64 onaltılık özetten kurulur. Veri kökünün izni (`kok-izni.ts`) alt klasörlere kalıtımla geçer.
+ *
+ * Çökme tutarlılığı: parça yazılır ve diske indirilir (`sync`), SONRA onay dosyası geçici addan yerine
+ * taşınır. Okumada onayın ötesindeki bayt (yarım kalan yazım) kesilir; onay diskteki boydan büyükse
+ * (onaylanan bayt kaybolmuş) yarım baştan alınır. Tamamlama aynı birimde tek yeniden adlandırmadır.
+ */
+export const ajandaEkDiskiKur = (kok: string): AjandaEkDiski => {
+  const ozetli = (ozet: string): string => {
+    if (typeof ozet !== "string" || !EK_OZETI.test(ozet)) throw new Error("gecersiz_ozet");
+    return ozet;
+  };
+  const yarimDizini = join(kok, EK_YARIM_DIZINI);
+  const tamDizini = (ozet: string): string => join(kok, ozetli(ozet).slice(0, 2));
+  const tamYolu = (ozet: string): string => join(tamDizini(ozet), ozet);
+  const yarimYolu = (ozet: string): string => join(yarimDizini, ozetli(ozet));
+  const onayYolu = (ozet: string): string => yarimYolu(ozet) + EK_ONAY;
+
+  /** Tam dosyanın yolu; kök ya da önek dizini yoksa `null`, bağsa atar. */
+  const tamYoluOku = async (ozet: string): Promise<string | null> => {
+    const yol = tamYolu(ozet);
+    if (!(await ekDizinVar(kok)) || !(await ekDizinVar(tamDizini(ozet)))) return null;
+    return yol;
+  };
+
+  const tamBoyutu = async (ozet: string): Promise<number | null> => {
+    const yol = await tamYoluOku(ozet);
+    if (yol === null) return null;
+    return (await ekDuzDosya(yol))?.size ?? null;
+  };
+
+  const onayOku = async (ozet: string): Promise<number | null> => {
+    if ((await ekDuzDosya(onayYolu(ozet))) === null) return null;
+    let metin: string;
+    try {
+      metin = await readFile(onayYolu(ozet), "utf8");
+    } catch (e) {
+      if (hataKodu(e) === "ENOENT") return null;
+      throw e;
+    }
+    if (!/^\d{1,16}$/.test(metin)) return null;
+    const n = Number(metin);
+    return Number.isSafeInteger(n) ? n : null;
+  };
+
+  const yarimDurumu = async (ozet: string): Promise<number | null> => {
+    const yol = yarimYolu(ozet);
+    if (!(await ekDizinVar(kok)) || !(await ekDizinVar(yarimDizini))) return null;
+    const d = await ekDuzDosya(yol);
+    if (d === null) {
+      await ekVarsaSil(onayYolu(ozet));
+      return null;
+    }
+    const onay = await onayOku(ozet);
+    let n = onay ?? 0;
+    // Onaylanan bayt diskte yok (dosya kısalmış): yarıma güvenilmez, baştan.
+    if (n > d.size) n = 0;
+    if (d.size !== n) await truncate(yol, n);
+    if (onay !== null && onay !== n) await ekAtomikYaz(onayYolu(ozet), String(n));
+    return n;
+  };
+
+  return {
+    tamBoyutu,
+
+    tamOku: async (ozet, ofset, azamiBayt) => {
+      const yol = await tamYoluOku(ozet);
+      if (yol === null || (await ekDuzDosya(yol)) === null) return new Uint8Array(0);
+      const f = await open(yol, "r");
+      try {
+        const tampon = Buffer.alloc(Math.max(0, azamiBayt));
+        let okunan = 0;
+        while (okunan < tampon.length) {
+          const { bytesRead } = await f.read(tampon, okunan, tampon.length - okunan, ofset + okunan);
+          if (bytesRead === 0) break;
+          okunan += bytesRead;
+        }
+        return new Uint8Array(tampon.buffer, tampon.byteOffset, okunan);
+      } finally {
+        await f.close().catch(bos);
+      }
+    },
+
+    tamSil: async (ozet) => {
+      const yol = await tamYoluOku(ozet);
+      if (yol !== null) await ekVarsaSil(yol);
+    },
+
+    tamListesi: async () => {
+      const liste: AjandaEkDosyasi[] = [];
+      if (!(await ekDizinVar(kok))) return liste;
+      for (const d of await ekDizinListesi(kok)) {
+        if (!d.isDirectory() || d.isSymbolicLink() || !EK_ONEKI.test(d.name)) continue;
+        for (const f of await ekDizinListesi(join(kok, d.name))) {
+          if (!f.isFile() || !EK_OZETI.test(f.name) || !f.name.startsWith(d.name)) continue;
+          const durum = await ekDuzDosya(join(kok, d.name, f.name)).catch(() => null);
+          if (durum !== null) liste.push({ ozet: f.name, bayt: durum.size });
+        }
+      }
+      return liste;
+    },
+
+    yarimDurumu,
+
+    yarimaEkle: async (ozet, ofset, veri) => {
+      ozetli(ozet);
+      await ekDizinHazirla(kok);
+      await ekDizinHazirla(yarimDizini);
+      const mevcut = (await yarimDurumu(ozet)) ?? 0;
+      if (mevcut !== ofset) throw new Error("ofset_uyusmuyor");
+      const f = await open(yarimYolu(ozet), dosyaSabitleri.O_RDWR | dosyaSabitleri.O_CREAT);
+      try {
+        await f.truncate(ofset);
+        let yazilan = 0;
+        while (yazilan < veri.length) {
+          const { bytesWritten } = await f.write(veri, yazilan, veri.length - yazilan, ofset + yazilan);
+          if (bytesWritten === 0) throw new Error("yazilamadi");
+          yazilan += bytesWritten;
+        }
+        await f.sync();
+      } finally {
+        await f.close().catch(bos);
+      }
+      const yeni = ofset + veri.length;
+      await ekAtomikYaz(onayYolu(ozet), String(yeni));
+      return yeni;
+    },
+
+    yarimOzeti: async (ozet) => {
+      const n = (await yarimDurumu(ozet)) ?? 0;
+      const h = createHash("sha256");
+      if (n > 0) {
+        const f = await open(yarimYolu(ozet), "r");
+        try {
+          const tampon = Buffer.alloc(EK_OKUMA_PARCASI);
+          let ofset = 0;
+          while (ofset < n) {
+            const { bytesRead } = await f.read(tampon, 0, Math.min(tampon.length, n - ofset), ofset);
+            if (bytesRead === 0) break;
+            h.update(tampon.subarray(0, bytesRead));
+            ofset += bytesRead;
+          }
+          if (ofset !== n) throw new Error("yarim_kisaldi");
+        } finally {
+          await f.close().catch(bos);
+        }
+      }
+      return { bayt: n, ozet: h.digest("hex") };
+    },
+
+    yarimiTamamla: async (ozet) => {
+      ozetli(ozet);
+      await ekDizinHazirla(kok);
+      await ekDizinHazirla(tamDizini(ozet));
+      const hedef = tamYolu(ozet);
+      if ((await ekDuzDosya(hedef)) !== null) {
+        // İçerik adresli: aynı özetli dosya zaten tam.
+        await ekVarsaSil(yarimYolu(ozet));
+      } else {
+        if ((await ekDuzDosya(yarimYolu(ozet))) === null) throw new Error("yarim_yok");
+        await ekYenidenAdlandir(yarimYolu(ozet), hedef);
+      }
+      await ekVarsaSil(onayYolu(ozet));
+    },
+
+    yarimSil: async (ozet) => {
+      ozetli(ozet);
+      if (!(await ekDizinVar(kok)) || !(await ekDizinVar(yarimDizini))) return;
+      await ekVarsaSil(yarimYolu(ozet));
+      await ekVarsaSil(onayYolu(ozet));
+      await ekVarsaSil(onayYolu(ozet) + EK_GECICI);
+    },
+
+    yarimListesi: async () => {
+      if (!(await ekDizinVar(kok)) || !(await ekDizinVar(yarimDizini))) return [];
+      const ozetler = new Map<string, { bayt: number; degisme_ms: number }>();
+      for (const d of await ekDizinListesi(yarimDizini)) {
+        if (!d.isFile()) continue;
+        const ozet = d.name.slice(0, 64);
+        const kuyruk = d.name.slice(64);
+        if (!EK_OZETI.test(ozet) || (kuyruk !== "" && kuyruk !== EK_ONAY && kuyruk !== EK_ONAY + EK_GECICI)) continue;
+        const durum = await ekDuzDosya(join(yarimDizini, d.name)).catch(() => null);
+        if (durum === null) continue;
+        const o = ozetler.get(ozet) ?? { bayt: 0, degisme_ms: 0 };
+        if (kuyruk === "") o.bayt = durum.size;
+        o.degisme_ms = Math.max(o.degisme_ms, durum.mtimeMs);
+        ozetler.set(ozet, o);
+      }
+      return [...ozetler].map(([ozet, o]): AjandaEkYarimi => ({ ozet, ...o }));
+    },
+
+    isaretleriOku: async () => {
+      const sonuc = new Map<string, number>();
+      if (!(await ekDizinVar(kok))) return sonuc;
+      const yol = join(kok, EK_ISARET_DOSYASI);
+      let metin: string;
+      try {
+        if ((await ekDuzDosya(yol)) === null) return sonuc;
+        metin = await readFile(yol, "utf8");
+      } catch (e) {
+        if (hataKodu(e) === "ENOENT") return sonuc;
+        throw e;
+      }
+      let deger: unknown;
+      try {
+        deger = JSON.parse(metin);
+      } catch {
+        return sonuc;
+      }
+      if (typeof deger !== "object" || deger === null || Array.isArray(deger)) return sonuc;
+      for (const [ozet, ms] of Object.entries(deger as Record<string, unknown>)) {
+        if (EK_OZETI.test(ozet) && typeof ms === "number" && Number.isFinite(ms)) sonuc.set(ozet, ms);
+      }
+      return sonuc;
+    },
+
+    isaretleriYaz: async (isaretler) => {
+      const nesne: Record<string, number> = {};
+      for (const ozet of [...isaretler.keys()].sort()) nesne[ozetli(ozet)] = isaretler.get(ozet) as number;
+      await ekDizinHazirla(kok);
+      await ekAtomikYaz(join(kok, EK_ISARET_DOSYASI), JSON.stringify(nesne));
+    },
+  };
+};
 
 // ---------------------------------------------------------------------------------------------
 // Fabrika
