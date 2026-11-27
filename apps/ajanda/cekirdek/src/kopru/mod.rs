@@ -218,8 +218,9 @@ impl Cekirdek {
         alarm: Arc<dyn AlarmKabugu>,
     ) -> Result<Arc<Self>, CekirdekHatasi> {
         let mut motor = Motor::ac(&veritabani_yolu)?;
-        // Bağlı kip + eşleşme yok çıkışsızdır: veri kaybısız yerel kipe (`motor/yerel.rs`).
-        motor.cikissiz_bagli_kipi_onar(&Ortam { kimlik: &*kimlik, zaman: &*zaman })?;
+        // Bağlı kip + eşleşme yok çıkışsızdır: veri kaybısız yerel kipe (`motor/yerel.rs`). Onarımın hatası
+        // açılışı düşürmez: iz `meta.onarim_hatasi`'na yazılır, sonraki açılış yeniden dener.
+        motor.acilis_onarimi(&Ortam { kimlik: &*kimlik, zaman: &*zaman });
         let okuyucu = crate::depo::Depo::okuyucu_ac(&veritabani_yolu)?.map(Mutex::new);
         Ok(Arc::new(Cekirdek {
             motor: Mutex::new(motor),

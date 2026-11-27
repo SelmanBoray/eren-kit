@@ -378,17 +378,19 @@ fn yarida_kesilen_tam_esitleme_gorunen_kopyayi_ve_alarmlari_goturmez() {
     assert_eq!(h.c.kip().unwrap(), CalismaKipi::Yerel);
     assert!(h.gozlemci.al().iter().all(|d| d.kayitlar.is_empty()));
 
-    // Sonraki bağlantı yerel kipten bağlanmadır: B düşmez, telefonun hali yeni depoya gider (D1 fark temeli).
+    // Sonraki bağlantı yerel kipten bağlanmadır: B düşmez (yeni depoya `ekle` ile gider). Telefon `k_a`'ya
+    // eski temelden beri dokunmadı: yeni deponun A' / 17:00'ı kalır, eski 15:00 onu ezmez (alarm 16:00).
     h.baglan();
     assert!(h.canli_mi());
     assert_eq!(h.c.kip().unwrap(), CalismaKipi::Bagli);
-    assert_eq!(basliklar(&liste(&h, Sekme::Tarihli, true)), vec!["A", "B", "C"]);
+    assert_eq!(basliklar(&liste(&h, Sekme::Tarihli, true)), vec!["B", "A'", "C"]);
     for id in ["k_a", "k_b", "k_c"] {
         assert_eq!(h.c.kayit(id.into()).unwrap().unwrap().kayit, h.pc.d.kayitlar[id], "{id}: telefon ile PC aynı");
     }
+    assert_eq!(h.pc.d.kayitlar["k_a"].zaman, Some(an("2026-11-26", "17:00")));
     assert_eq!(
         h.alarm.kurulular(),
-        vec![("k_a".to_string(), yarin(14)), ("k_b".to_string(), yarin(15)), ("k_c".to_string(), yarin(8) + GUN)]
+        vec![("k_a".to_string(), yarin(16)), ("k_b".to_string(), yarin(15)), ("k_c".to_string(), yarin(8) + GUN)]
     );
     assert_eq!(kurulu_alarm_satirlari(&h), h.alarm.kurulular());
     assert!(h.gozlemci.al().iter().any(|d| d.tumu));

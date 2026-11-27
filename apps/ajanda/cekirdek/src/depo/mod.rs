@@ -19,7 +19,7 @@ mod yerel;
 
 pub use alarmlar::KuruluAlarm;
 pub use gorunen::{GorunenKayit, GorunenSuzgec, TakvimAdayAraligi};
-pub use kopya::KopyaTablosu;
+pub use kopya::{KopyaSatiri, KopyaTablosu};
 pub use kuyruk::{KuyrukSatiri, RetSatiri};
 pub use yerel::{KIP_BAGLI, KIP_YEREL};
 
@@ -49,6 +49,9 @@ pub mod anahtar {
     pub const YEREL_REV: &str = "yerel_rev";
     /// Bağlı kipten yerel kipe son geçişin özeti (D2, JSON; `motor/yerel.rs` `gecis_json`).
     pub const SON_GECIS: &str = "son_gecis";
+    /// Açılış onarımının son hatası (JSON: `ts_ms`, `mesaj`; `motor/yerel.rs` `acilis_onarimi`). Onarım
+    /// sonraki açılışta başarılı olunca silinir.
+    pub const ONARIM_HATASI: &str = "onarim_hatasi";
 }
 
 pub struct Depo {
