@@ -220,7 +220,9 @@ fn ertelenen_sonraki_ayni_alan_degisikliginin_ustune_yazmaz_v2_kismi_yerinde_gid
 }
 
 /// v2'de aynı depoyla tam telafi (servis yedekten dönmüş gibi: iz tutmuyor): kuyruk taze kopya üstüne yeniden
-/// uygulanır, ertelenen satır atılmaz, kayıt v3 alanlarıyla görünmeye devam eder; sonra v3'te gider.
+/// uygulanır, ertelenen satır atılmaz, kayıt v3 alanlarıyla görünmeye devam eder; sonra v3'te gider. İz
+/// yollanmışken tam telafi yedekten dönüş kanıtıdır (`yerel.rs` `DonusAnalizi`): telefonun bildiği ve PC'de
+/// kanıtlanamayan yazım (başlık "A") yitirilmiş sayılır, ertelenenin önünde yeniden gider.
 #[test]
 fn v2_tam_telafisi_ertelenen_satiri_atmaz() {
     let mut h = Hat::yeni("erteleme-tam");
@@ -236,7 +238,8 @@ fn v2_tam_telafisi_ertelenen_satiri_atmaz() {
     assert!(h.canli_mi());
     assert_eq!((h.pc.acilislar.last(), h.pc.son_welcome_tam), (Some(&("hello", 2)), Some(true)));
     let k = kayit(&h, &a);
-    assert_eq!((k.baslik.as_str(), k.v3.simge.as_deref()), ("PC'de", Some("ev")));
+    assert_eq!((k.baslik.as_str(), k.v3.simge.as_deref()), ("A", Some("ev")));
+    assert_eq!(h.pc.d.kayitlar[&a].baslik, "A", "yitirilen değer yeniden gitti");
     assert_eq!(depo(&h).kuyruk().unwrap().iter().map(|s| s.islem_id.as_str()).collect::<Vec<_>>(), ["i_v3"]);
     assert_eq!(yetenek(&h).ertelenen, 1);
 
@@ -326,4 +329,24 @@ fn v3_alani_olmayan_kuyruk_v2_serviste_eskisi_gibi() {
     assert_eq!(h.pc.d.kayitlar[&a].baslik, "Çevrimdışı");
     assert_eq!(h.c.baglanti_durumu().unwrap().kuyrukta, 0);
     assert!(!gorunum(&h, &a).bekleyen);
+}
+
+/// İlk v3 bağlantının bir kezlik tam telafisi (`kanal.rs` `hello_yolla` "kopya eski": `hello` izsiz gider)
+/// yedekten dönüş sayılmaz (`yerel.rs` `geri_donenleri_kuyruga_koy` `iz_kaybi`): PC'nin kopukken meşru
+/// ilerlemesi telefonun eski bildiği değerle ezilmez.
+#[test]
+fn ilk_v3_tam_telafisi_yedekten_donus_sayilmaz_pc_ilerlemesi_kalir() {
+    let mut h = Hat::yeni("erteleme-ilk-v3");
+    let a = v2ye_inen_kurulum(&mut h);
+    v2de_baglan(&mut h);
+    assert_eq!(h.pc.d.kayitlar[&a].baslik, "A");
+    h.kopar();
+    h.pc.disaridan_degistir(&a, |k| k.baslik = "PC'de".into());
+    let uygulanan = h.pc.uygulanan.len();
+    v3e_gec(&mut h);
+    assert_eq!(h.pc.son_welcome_tam, Some(true), "kopya v2 ile doluydu: bir kez tam telafi");
+    assert_eq!(h.pc.uygulanan.len(), uygulanan, "telefon hiçbir işlem yollamadı");
+    assert_eq!(h.pc.d.kayitlar[&a].baslik, "PC'de");
+    assert_eq!(&kayit(&h, &a), &h.pc.d.kayitlar[&a]);
+    assert_eq!(h.c.baglanti_durumu().unwrap().kuyrukta, 0);
 }

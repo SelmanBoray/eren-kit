@@ -1,6 +1,7 @@
 package dev.eren.ajanda.ekran
 
 import dev.eren.ajanda.cekirdek.AjandaKaydi
+import dev.eren.ajanda.cekirdek.AktarmaBicimi
 import dev.eren.ajanda.cekirdek.AjandaKaynagi
 import dev.eren.ajanda.cekirdek.AjandaZamani
 import dev.eren.ajanda.cekirdek.AlarmKabugu
@@ -8,12 +9,15 @@ import dev.eren.ajanda.cekirdek.BaglantiAsamasi
 import dev.eren.ajanda.cekirdek.BaglantiDurumu
 import dev.eren.ajanda.cekirdek.CalismaKipi
 import dev.eren.ajanda.cekirdek.CekirdekHatasi
+import dev.eren.ajanda.cekirdek.DisaAktarma
 import dev.eren.ajanda.cekirdek.DuzenlemeTemeli
 import dev.eren.ajanda.cekirdek.EslesmeDurumu
 import dev.eren.ajanda.cekirdek.GecmisSayfasi
 import dev.eren.ajanda.cekirdek.GunBolumu
 import dev.eren.ajanda.cekirdek.Hatirlatma
 import dev.eren.ajanda.cekirdek.HatirlatmaOnizlemesi
+import dev.eren.ajanda.cekirdek.IceAktarmaOnizlemesi
+import dev.eren.ajanda.cekirdek.IceAktarmaSonucu
 import dev.eren.ajanda.cekirdek.KacirilanBildirimi
 import dev.eren.ajanda.cekirdek.KayitDurumu
 import dev.eren.ajanda.cekirdek.KayitGorunumu
@@ -190,6 +194,35 @@ class SahteYuz : CekirdekYuzu {
     override fun varsayilanHatirlatmalar(): List<Hatirlatma> = listOf(Hatirlatma.Once(60))
     var onizleme = HatirlatmaOnizlemesi(0u, 0u, 0u, null, null)
     override fun hatirlatmaOnizlemesi(govde: KayitGovdesi): HatirlatmaOnizlemesi = onizleme
+
+    // Dışa ve içe aktarma (D3): döndürülecekler testte kurulur; önizlemeler ve sonuçlar sırayla tüketilir.
+    var bicim = AktarmaBicimi("ajanda.json", "ekler/", 1, 1024uL * 1024uL, 4096uL)
+    var disa: DisaAktarma? = null
+    val onizlemeler = ArrayDeque<Any>()
+    val iceSonuclari = ArrayDeque<IceAktarmaSonucu>()
+    /** `iceAktar`'a gelen belgeler (içerik denetimi için). */
+    val iceBelgeleri = mutableListOf<String>()
+
+    override fun aktarmaBicimi(): AktarmaBicimi = bicim
+
+    override fun disaAktar(): DisaAktarma {
+        cagrilar += "disaAktar"
+        return disa ?: throw IllegalStateException("disa kurulmadı")
+    }
+
+    override fun iceAktarmaOnizlemesi(belge: String): IceAktarmaOnizlemesi {
+        cagrilar += "iceAktarmaOnizlemesi"
+        return when (val o = onizlemeler.removeFirst()) {
+            is Exception -> throw o
+            else -> o as IceAktarmaOnizlemesi
+        }
+    }
+
+    override fun iceAktar(belge: String, iz: String?): IceAktarmaSonucu {
+        cagrilar += "iceAktar:$iz"
+        iceBelgeleri += belge
+        return iceSonuclari.removeFirst()
+    }
 }
 
 /** Gerçek çekirdek için sahte kabuklar (JVM'de Keystore ve AlarmManager yok). */

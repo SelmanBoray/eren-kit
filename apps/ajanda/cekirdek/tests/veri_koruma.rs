@@ -259,12 +259,13 @@ fn bagli_kipte_baska_servise_yeni_qr_kayit_kaybettirmez() {
     assert_eq!((d.kuyrukta, d.ret_listesinde), (0, 0));
     hicbiri_kaybolmadi(&h, &yereller);
     pc_ile_ayni(&h, &["k_a", b.as_str(), c.as_str(), "k_x"]);
-    // Telefonun hali yeni servise gitti (PC2'nin aynı kimlikli kaydı telefondakini ezmedi).
+    // Telefonun eski temelden değiştirdiği (başlık) yeni servise gitti; dokunmadığı zamanda PC2 kazandı (eski
+    // 15:00 PC2'nin 27 Kasım 12:00'ını ezmedi).
     let ka = &h.pc.d.kayitlar["k_a"];
-    assert_eq!((ka.baslik.as_str(), &ka.zaman), ("A (telefon)", &Some(an("2026-11-26", "15:00"))));
+    assert_eq!((ka.baslik.as_str(), &ka.zaman), ("A (telefon)", &Some(an("2026-11-27", "12:00"))));
     assert_eq!((h.pc.d.kayitlar[&b].baslik.as_str(), h.pc.d.kayitlar[&c].baslik.as_str()), ("B", "C"));
     assert_eq!(temel(&h).1.as_deref(), Some("d_pc2"));
-    let mut beklenen = vec![("k_a".to_string(), yarin(14)), ("k_x".to_string(), yarin(9) + GUN)];
+    let mut beklenen = vec![("k_a".to_string(), yarin(11) + GUN), ("k_x".to_string(), yarin(9) + GUN)];
     beklenen.sort();
     assert_eq!(h.alarm.kurulular(), beklenen);
     // Bundan sonrası yeni servisle olağan bağlı kip: artımlı.

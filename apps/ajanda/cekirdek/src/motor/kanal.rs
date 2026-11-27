@@ -322,6 +322,12 @@ impl Motor {
         Ok(s.unwrap_or(Surum::V2))
     }
 
+    /// Bağlı kipte kopya bu bağlantıdan alt bir sürümle doldu (`hello_yolla`): `hello` boş kopya gibi, izsiz
+    /// gider; servisin tam telafisi yedekten dönüş kanıtı değildir (`esitlendi`).
+    fn kopya_eski(&self) -> Result<bool, CekirdekHatasi> {
+        Ok(!self.yerel_mi()? && self.depo.depo_id()?.is_some() && self.kopya_surumu()? < self.surum.baglanti)
+    }
+
     /// `protokol_uyumsuz`'un kararı (`ajanda_geri_dusus`; `ret`: ret çerçevesinden okunan sürüm, çerçevesiz
     /// 1002'de `None`). Bağlantıyı kapatmak çağıranın işidir. `YenidenDene`'de uyuşmazlık yazılmaz (öncekinin
     /// `protokol_uyumsuz`'u kalkar): kabuk sıradan kopma gibi yeniden bağlanır, yeni bağlantı düşülen sürümle
@@ -383,7 +389,7 @@ impl Motor {
         // (v2 bağlantıda v3 alanları) değişmemiş kayıtlarda da gelir. Kopya hiç yoksa (`depo_id` yok) servis
         // zaten tam der.
         let yerel = self.yerel_mi()?;
-        let kopya_eski = !yerel && self.depo.depo_id()?.is_some() && self.kopya_surumu()? < s;
+        let kopya_eski = self.kopya_eski()?;
         let h = if yerel || kopya_eski {
             HelloAlanlari { son_rev: 0, depo_id: None, son_rev_izi: None }
         } else {
@@ -639,6 +645,8 @@ impl Motor {
         let yerel = self.yerel_mi()?;
         // Tam telafi kopyanın yerine geçer: kopya artık bu bağlantının sürümüyle dolu (`KOPYA_SURUMU`).
         let kopya_surumu = self.surum.baglanti.no().to_string();
+        // `hello` izsiz gittiyse (kopya eski) servisin tam demesi iz kaybı değildir.
+        let iz_yollandi = !self.kopya_eski()?;
         match t.tam {
             Some((depo_id, son_rev)) if yerel => {
                 let ret = self.depo.yazma(|d| {
@@ -653,7 +661,7 @@ impl Motor {
             Some((depo_id, son_rev)) => {
                 self.depo.yazma(|d| {
                     // Aynı depo (servis yedekten dönmüş): PC'nin yitirdiği onaylı haller kuyruğa (`yerel.rs`).
-                    super::yerel::geri_donenleri_kuyruga_koy(d, o, &b, &depo_id)?;
+                    super::yerel::geri_donenleri_kuyruga_koy(d, o, &b, &depo_id, iz_yollandi)?;
                     d.telafiyi_sunucuya_gecir()?;
                     d.depo_id_yaz(&depo_id)?;
                     d.son_rev_yaz(son_rev)?;

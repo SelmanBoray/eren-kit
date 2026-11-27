@@ -1,8 +1,9 @@
 //! Geçişlerin gözden geçirme bulguları uçtan uca (D1/D2 sonrası): köprünün açık yüzeyi + sahte kabuklar +
 //! sahte PC (`ortak`).
 //!
-//! - Fark temeli servisin kopyasıyken (başka depo ya da temel kaydı bilmiyor) PC'de silinmiş kayıt
-//!   diriltilmez; telefondaki farklı hali ret listesinde düzeltme gövdesiyle kalır (A → B → A).
+//! - Başka depoda telefonun eski temeli (B'ninki) farkı seçer: yalnız telefonun o temelden değiştirdiği
+//!   alanlar gider, dokunmadığı alanda PC kazanır; PC'de silinmiş kayıt diriltilmez, telefonun farklı hali
+//!   ret listesinde düzeltme gövdesiyle kalır (A → B → A). İkinci tur bulguları `donus_denetimi.rs`'te.
 //! - Aynı `depo_id`'li servis yedekten dönünce telefonun bildiği son onaylı hal PC'ye geri gider; PC'de meşru
 //!   olarak ilerlemiş kayıt ezilmez (yerel kipten bağlanmada ve bağlı kipte).
 //! - Temelsiz mezar taşı ve iki tarafta da silinmiş kayıt için hiçbir işlem gönderilmez.
@@ -52,20 +53,23 @@ fn bitti(h: &Hat) {
     assert_eq!(h.c.baglanti_durumu().unwrap().kuyrukta, 0);
 }
 
-/// Bulgu 1: A'ya bağlı → kopar → B'ye bağlan → kopar → yeniden A. Saklı temel B'nindir: A'nın kopyası fark
-/// temelidir (iki yollu). A'da silinmiş kayıt diriltilmez: telefonda farklıysa hali ret listesinde düzeltme
-/// gövdesiyle, aynıysa yalnız mezar taşı kalır.
+/// Bulgu 1 (D2 ilk tur) ve karar (ikinci tur): A'ya bağlı → kopar → B'ye bağlan → kopar → yeniden A. Saklı
+/// temel B'nindir; depo farklı olsa da telefon onu bilir: yalnız telefonun bu temelden farklı alanları A'ya
+/// gider, dokunmadığı alanda A kazanır. A'da silinmiş kayıt diriltilmez: telefon B'den sonra değiştirdiyse
+/// hali ret listesinde düzeltme gövdesiyle, değiştirmediyse yalnız mezar taşı kalır.
 #[test]
 fn a_b_a_pc_de_silineni_diriltmez_telefondaki_farkli_hal_ret_listesinde() {
     let mut h = Hat::yeni("gecis-aba");
     h.pc.disaridan_ekle("k_a", &govde("A", Some(an("2026-11-26", "15:00"))), false);
     h.pc.disaridan_ekle("k_s", &govde("S", None), false);
+    h.pc.disaridan_ekle("k_e", &govde("E", None), false);
     h.pc.disaridan_ekle("k_z", &govde("Z", None), false);
     h.pc.disaridan_ekle("k_d", &govde("D", None), false);
     h.eslestir();
     h.c.baglantiyi_kopar().unwrap();
     h.pompala();
     h.c.duzenle("k_s".into(), None, govde("S (telefon)", None)).unwrap();
+    h.c.duzenle("k_e".into(), None, govde("E (telefon)", None)).unwrap();
 
     // B'ye bağlan: B kayıtları bilmez, hepsi `ekle` ile gider. Sonra B'den de kopar.
     let mut pc_a = std::mem::replace(&mut h.pc, SahtePc::yeni("d_pc2", h.zaman.clone()));
@@ -74,12 +78,15 @@ fn a_b_a_pc_de_silineni_diriltmez_telefondaki_farkli_hal_ret_listesinde() {
     assert_eq!(h.pc.d.kayitlar["k_s"].baslik, "S (telefon)");
     h.c.baglantiyi_kopar().unwrap();
     h.pompala();
+    // B'den sonra yalnız S yeniden değişti.
+    h.c.duzenle("k_s".into(), None, govde("S (telefon, B'den sonra)", None)).unwrap();
     let yereller = depo(&h).gorunen_hepsi().unwrap();
 
-    // Bu arada A'da: S (telefonda değişen) ve Z (telefonda aynı) silindi, A'nın zamanı değişti.
+    // Bu arada A'da: S ve E (telefonda değişenler) ile Z (telefonda aynı) silindi, A'nın zamanı değişti.
     h.zaman.ilerlet(DK);
-    pc_a.disaridan_degistir("k_s", |k| k.silindi = true);
-    pc_a.disaridan_degistir("k_z", |k| k.silindi = true);
+    for id in ["k_s", "k_e", "k_z"] {
+        pc_a.disaridan_degistir(id, |k| k.silindi = true);
+    }
     pc_a.disaridan_degistir("k_a", |k| k.zaman = Some(an("2026-11-26", "17:00")));
     h.pc = pc_a;
     h.eslestir();
@@ -88,16 +95,17 @@ fn a_b_a_pc_de_silineni_diriltmez_telefondaki_farkli_hal_ret_listesinde() {
     hicbiri_kaybolmadi(&h, &yereller);
 
     // Diriltilmedi: A'da ve telefonda mezar taşı.
-    assert!(h.pc.d.kayitlar["k_s"].silindi && h.pc.d.kayitlar["k_z"].silindi);
-    pc_ile_ayni(&h, &["k_a", "k_s", "k_z", "k_d"]);
-    // Telefonun farklı hali kaybolmadı: düzeltme gövdesiyle ret listesinde (düzeltme yeni kayıt ekler).
+    assert!(["k_s", "k_e", "k_z"].iter().all(|id| h.pc.d.kayitlar[*id].silindi));
+    pc_ile_ayni(&h, &["k_a", "k_s", "k_e", "k_z", "k_d"]);
+    // Telefonun B'den sonraki farkı kaybolmadı: düzeltme gövdesiyle ret listesinde (düzeltme yeni kayıt ekler).
+    // E'nin telefondaki hali B'nin temelinde de vardı (telefon ona B'den beri dokunmadı): A'nın silmesi kalır,
+    // değer B'de durur.
     let ret = h.c.ret_listesi().unwrap();
     assert_eq!(ret.len(), 1, "{ret:?}");
     assert_eq!((ret[0].kayit_id.as_str(), ret[0].islem, ret[0].neden), ("k_s", IslemTuru::Guncelle, KuyrukRetNedeni::KayitSilinmis));
-    assert_eq!(ret[0].govde.as_ref().unwrap().baslik, "S (telefon)");
-    // Bilinen sınır (D4, önizleme): temel servisin kopyasıyken hangi tarafın değiştirdiği bilinmez; telefonun
-    // farklı alanı gider. A'nın önceki değeri A'nın geçmişindedir.
-    assert_eq!(h.pc.d.kayitlar["k_a"].zaman, Some(an("2026-11-26", "15:00")));
+    assert_eq!(ret[0].govde.as_ref().unwrap().baslik, "S (telefon, B'den sonra)");
+    // Telefonun dokunmadığı alan: A'nın 17:00'ı eski 15:00 ile ezilmedi.
+    assert_eq!(h.pc.d.kayitlar["k_a"].zaman, Some(an("2026-11-26", "17:00")));
 }
 
 /// Bulgu 2, yerel kipten bağlanma: aynı servis yedekten döndü. PC'nin yitirdiği onaylı haller (başlık

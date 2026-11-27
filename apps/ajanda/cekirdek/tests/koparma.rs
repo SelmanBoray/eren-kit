@@ -213,13 +213,14 @@ fn koparip_baska_servise_baglanma_kayit_kaybettirmez() {
     for id in ["k_a", c.as_str(), "k_x"] {
         assert_eq!(&kayit(&h, id), &h.pc.d.kayitlar[id], "{id}: telefon ile PC2 aynı");
     }
-    // Görünen kopya PC2'nin kopyasıyla değiştirilmedi: telefonun hali PC2'ye gitti.
+    // Görünen kopya PC2'nin kopyasıyla değiştirilmedi: telefonun eski temelden değiştirdiği başlık PC2'ye
+    // gitti; dokunmadığı zamanda PC2 kazandı (eski 15:00 PC2'nin 27 Kasım 10:00'ını ezmedi).
     let ka = &h.pc.d.kayitlar["k_a"];
-    assert_eq!((ka.baslik.as_str(), &ka.zaman), ("A (telefon)", &Some(an("2026-11-26", "15:00"))));
+    assert_eq!((ka.baslik.as_str(), &ka.zaman), ("A (telefon)", &Some(an("2026-11-27", "10:00"))));
     // PC2'de hiç olmamış mezar taşı gönderilmez.
     assert!(!h.pc.d.kayitlar.contains_key(&b) && h.c.kayit(b.clone()).unwrap().is_none());
     assert_eq!(h.pc.d.kayitlar[&c].baslik, "C");
-    assert_eq!(h.alarm.kurulular(), vec![("k_a".to_string(), yarin(14))]);
+    assert_eq!(h.alarm.kurulular(), vec![("k_a".to_string(), yarin(9) + GUN)]);
     assert_eq!(temel(&h).1.as_deref(), Some("d_pc2"));
 }
 
