@@ -253,6 +253,12 @@ eşleşiyor (T5) ∧ `aktor = ana` ∧ `etkilesim = etkilesimli`. Diğer her şe
   - PID yeniden kullanılıp ilk çağrı `/clear` sonrası gelirse ya da süreç kimliği olmayan kancada başka
     pencereden `/resume` yapılırsa nadir bir yanlış ret olabilir.
   - `/resume`, `--resume`, agent teams ve eski sürümlerde `CLAUDE_PID` ölçülmedi.
+  - Tam oturum eşleşmesi istisnası köprünün kendi beyanına dayanır. Köprü `oturum_id`'yi hello'da kendisi
+    bildirir; tam oturum kimliği günlükte ve harness transkript dosya adlarında açıktır. Anahtarı olan bir
+    istemci başka bir oturumu beyan ederek T5'i aşabilir ve bağı kendine çekebilir. Bu, bugünkü güven modelinin
+    (sınır işletim sistemi kullanıcısı, `GUVENLIK.md`) içindedir. T5 kötü niyetli anahtar sahibine karşı değil,
+    oturumlar arası karışmaya karşı bir bağdır. Daha güçlü bağ (kanca ile köprüyü aynı sürece bağlayan
+    doğrulanmış işaret) harness'ın böyle bir işaret vermesini ister.
 - Köprü `--uyarlayici <ad>` alır; varsayılan `claude-code`. Bilinmeyen ad 2 ile çıkar.
 
 **İkinci uyarlayıcı için sonuç:** T5 her harness'ta kancayla köprüyü aynı sürece bağlayan, model dışı bir işaret
