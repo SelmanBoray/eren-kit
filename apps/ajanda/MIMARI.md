@@ -260,6 +260,28 @@ bölümde ve `surum` uyuşmazlığında çıkış 1 verir: sözleşmeye bölüm 
   "Cumartesi · akşam"); hatırlatma saati listede yazılmaz (ayrıntı/form notunda). Bildirim saat uydurmaz:
   "Görev · bugün akşam".
 
+## Sürüm uyumu ve sözleşme 3 (kanal)
+
+Sözleşme: `docs/AJANDA.md` "Sürüm uyumu" ve "Sürüm 3". Model katmanı (`1aa4883`) ile kanal (`62dd419`, `41496f7`) iki ayrı adımdır.
+
+- **Model (`model/surum.rs`, `model/alan.rs`).** `AJANDA_SURUMU` = 3, `AJANDA_SURUMLERI` = `[2, 3]`, QR için ayrı `AJANDA_QR_SURUMU` = 2 (yukarıdaki "Sürüm 2" bölümündeki QR açığı bununla kapandı). `Surum {V2, V3}` çözme ve yazmanın parametresidir: her çözücü ve yazıcı bağlantı sürümünü alır, v2'de v3 alanı yazılmaz. `V3Alanlari` kayıttaki v3 alanlarını (`simge`, `bolge`, `bolge_konumu`, `varis`, `baglantilar`, `ekler`, dar `tekrar`), `V3Degisikligi` işlemdeki v3 kısmını taşır. `hello`/`welcome` `yetenekler`, ek yedeği çerçeveleri, `DonmusHata` (`ajanda_donmus_hata_oku`) ve `ajanda_geri_dusus(denenen, ret, kume)` buradadır.
+- **Kanal (`motor/kanal.rs`).** Bağlantı kümenin en büyüğüyle (v3) açılır. v2 servis `protokol_uyumsuz` verirse `ajanda_geri_dusus` v2'yi seçer ve yeni bağlantı v2'de eşitlenir (veri, kuyruk, alarmlar korunur). Düşülen sürüm `YUKARI_DENEME_MS` (1 saat) ya da süreç yeniden başlayana dek tutulur (bellek içi); sonra yeniden v3 denenir. Sürüm sabitlenmeden gelen öteki ret kodları dondurulmuş zarfla okunur ve kodun kendisi olarak işlenir (geri düşüş yok).
+- **Kopya ve servis sürümü.** Kopyanın hangi sürümle dolduğu meta `kopya_surumu`'nda durur: v2'de dolmuş kopya ilk v3 bağlantıda bir kez tam telafi ister. Servis sürümü meta `servis_surumu`'ndadır; erteleme kararı ve `BaglantiYetenekleri` buna bakar.
+- **Erteleme (bağlı kip, sürüm < 3; yerel kipte yok).** Ayrı sütun yoktur: satırın hali işlemden ve bilinen sürümden hesaplanır (`satir_ertelemesi`).
+  - v2 kısmı da olan satır bölünür: v2 kısmı aynı `islem_id` ile gider, v3 kalanı yeni `islem_id`'yle hemen arkasına girer.
+  - Yalnız v3 alanı değiştiren satır yerinde kalır, atlanır, denemesi artmaz, telafide atılmaz; arkasındaki satır gider.
+  - Ertelenenler ilk v3 bağlantıda `esitlendi`'den sonra gider. Aynı v3 alanına sonradan dokunan değişiklik de ertelenir ve sırada arkadadır: sonraki kazanır.
+  - `BaglantiDurumu.kuyrukta` ertelenenleri saymaz (Kotlin'in "kuyruk boşalana dek" beklemeleri takılmasın).
+  - Koparmada (`bagli_kipten_cik`) ertelenenler kuyrukla atılır; değerleri görünen kopyada kalır.
+- **Köprü.** `baglantiYetenekleri() -> BaglantiYetenekleri{kip: BaglantiKipi{Yerel, BagliDegil, Bagli}, surum?, v3Alanlari, yetenekler, ertelenen}` ve `KayitGorunumu.ertelenen` (yalnız ertelenmiş satırı olan kaydın `bekleyen`'i yanlıştır). Değişiklik `Degisim.baglanti` / `Degisim.kayitlar` ile bildirilir. `v3Alanlari` yanlışken alan yine düzenlenebilir (ertelenir).
+- **Sınama.** `tests/surum_v3.rs`, `motor/v3_testleri.rs`, `motor/erteleme_testleri.rs`; `cargo test` 209 (+2 `#[ignore]`), vektörler 773.
+- **Bilinen açıklar.**
+  - Koparmadan sonra yeniden bağlanınca ertelenen v3 değeri PC'ye gitmiyor: Kol B'nin `yereli_kuyruga_dok` düzeltmesini bekliyor; test `#[ignore]`'lu.
+  - Yerel yazar `Ekle`'nin v3 alanlarını taşımıyor (Kol B).
+  - Ertelenen bir değişiklikten sonra gelen `sil`, v3'te ertelenen satırı `kayit_silinmis` ile ret listesine düşürür.
+  - Ek yükleme ve indirme istemci tarafında yok; istemci `ek_yedegi` istemiyor.
+  - Kotlin formu v3 alanlarını düzenleyemiyor (arayüz kolu).
+
 ## Takvim sekmesi (yerel salt okuma; sözleşme değişmedi)
 
 Üçüncü sekme: ay ızgarası, altında seçili günün kayıtları. Kablo biçimi, `AJANDA_SURUMU`, eşitleme ve yerel
