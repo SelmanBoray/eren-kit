@@ -37,6 +37,14 @@ impl Depo {
         Ok(sonuc)
     }
 
+    /// Bütün görünen satırlar ham (`kayit_id`, kayıt JSON metni), `gorunen_hepsi` sırasıyla: okunamayan satır
+    /// tek tek ele alınabilsin (`motor/yerel.rs` `yereli_kuyruga_dok`).
+    pub fn gorunen_ham_hepsi(&self) -> rusqlite::Result<Vec<(String, String)>> {
+        let mut s = self.baglanti.prepare("SELECT kayit_id, json FROM gorunen ORDER BY olusturma_ms, kayit_id")?;
+        let satirlar = s.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        satirlar.collect()
+    }
+
     /// Görünen kopyadaki kayıt sayısı, mezar taşları dahil (servisin `ajandaKayitSayisi`'nin yerel karşılığı).
     pub fn gorunen_sayisi(&self) -> rusqlite::Result<i64> {
         self.baglanti.query_row("SELECT COUNT(*) FROM gorunen", [], |s| s.get(0))

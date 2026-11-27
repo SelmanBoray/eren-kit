@@ -18,6 +18,8 @@ import { SohbetEkrani } from "./src/ekranlar/SohbetEkrani.tsx";
 import { UstCubuk } from "./src/ekranlar/UstCubuk.tsx";
 import { stil, yazi, renk, bosluk } from "./src/ekranlar/tema.ts";
 import { ASISTAN_ADI } from "./src/platform/asistanAdi.ts";
+import { medyaDosyaKur } from "./src/platform/medyaDosya.ts";
+import { medyaSeciciKur } from "./src/platform/medyaSecici.ts";
 import { saatKur } from "./src/platform/saat.ts";
 import { wsPortuKur } from "./src/platform/ws.ts";
 
@@ -33,10 +35,20 @@ const SOHBET_AC_RED: Record<Extract<SohbetAcSonucu, { ok: false }>["neden"], str
 
 export default function App() {
   const cihaz = useMemo(() => erenCihazKur(), []);
+  // Medya: dosya portu çekirdeğe verilince `medya1` istenir ve ek gönderimi açılır (özellik bayrağı);
+  // seçici bir kez kurulur, sohbet ekranına geçer (bekleyen seçim süreç başına bir kez sorulur).
+  const medyaSecici = useMemo(() => medyaSeciciKur(), []);
   const cekirdek = useMemo(
     () =>
       cekirdekKur(
-        { ws: wsPortuKur(), kimlik: cihaz.kimlikPortu(), depo: dosyaDepoKur(), saat: saatKur(), ses: cihaz.sesPortu() },
+        {
+          ws: wsPortuKur(),
+          kimlik: cihaz.kimlikPortu(),
+          depo: dosyaDepoKur(),
+          saat: saatKur(),
+          ses: cihaz.sesPortu(),
+          medya: medyaDosyaKur(),
+        },
         { asistanAdi: ASISTAN_ADI },
       ),
     [cihaz],
@@ -184,6 +196,7 @@ export default function App() {
                 onCekmece={cekmeceAc}
                 onSecenekler={secenekler}
                 onKurulum={() => setEkran("kurulum")}
+                secici={medyaSecici}
               />
             </View>
           )}

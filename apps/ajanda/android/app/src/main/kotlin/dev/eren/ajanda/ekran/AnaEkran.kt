@@ -12,6 +12,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.provider.DocumentsContract
 import android.provider.Settings
 import android.text.TextUtils
 import android.view.Gravity
@@ -30,6 +31,8 @@ import android.window.OnBackInvokedDispatcher
 import dev.eren.ajanda.CekirdekErisimi
 import dev.eren.ajanda.R
 import dev.eren.ajanda.ag.BaglantiYoneticisi
+import dev.eren.ajanda.aktarma.AktarmaAkisi
+import dev.eren.ajanda.aktarma.AktarmaMetinleri
 import dev.eren.ajanda.alarm.AlarmYenidenKurma
 import dev.eren.ajanda.alarm.Bildirimler
 import dev.eren.ajanda.alarm.HatirlatmaDurumu
@@ -41,6 +44,7 @@ import dev.eren.ajanda.cekirdek.KayitTuru
 import dev.eren.ajanda.cekirdek.YenidenKurmaNedeni
 import dev.eren.ajanda.kimlik.EslestirmeEkrani
 import java.time.LocalDate
+import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -63,6 +67,8 @@ class AnaEkran : Activity() {
 
     /** Yalnız [arka]'da erişilir. */
     private var denetleyici: AnaDenetleyici? = null
+    /** Yalnız [arka]'da erişilir (dışa ve içe aktarma, D3). */
+    private var aktarma: AktarmaAkisi? = null
     private var gozlemciNo: ULong? = null
 
     private val bekleyenKilit = Any()
@@ -212,6 +218,21 @@ class AnaEkran : Activity() {
                     ?: data.getStringExtra(SONUC_YENIDEN_AC)?.let { GeriAlma.Durum(it, KayitDurumu.ACIK) }
                 data.getStringExtra(KayitEkrani.SONUC_MESAJI)?.let { cubukGoster(it, geriAlma) }
             }
+            ISTEK_DISA_AKTAR -> data?.data?.takeIf { resultCode == RESULT_OK }?.let { uri ->
+                arkada {
+                    val adim = aktarmaAl().disaAktar(
+                        ac = { contentResolver.openOutputStream(uri, "wt") ?: throw java.io.IOException("akış yok") },
+                        basarisizsa = { DocumentsContract.deleteDocument(contentResolver, uri) },
+                    )
+                    anada { aktarmaGoster(adim) }
+                }
+            }
+            ISTEK_ICE_AKTAR -> data?.data?.takeIf { resultCode == RESULT_OK }?.let { uri ->
+                arkada {
+                    val adim = aktarmaAl().dosyaOku { contentResolver.openInputStream(uri) ?: throw java.io.IOException("akış yok") }
+                    anada { aktarmaGoster(adim) }
+                }
+            }
             ISTEK_ESLESTIRME -> {
                 arkada {
                     denetleyiciAl().hepsiniOku()
@@ -254,6 +275,11 @@ class AnaEkran : Activity() {
     private fun denetleyiciAl(): AnaDenetleyici = denetleyici ?: AnaDenetleyici(
         CekirdekYuzu.Gercek(CekirdekErisimi.al(applicationContext)),
     ) { ZonedDateTime.now() }.also { denetleyici = it }
+
+    private fun aktarmaAl(): AktarmaAkisi = aktarma ?: AktarmaAkisi(
+        CekirdekYuzu.Gercek(CekirdekErisimi.al(applicationContext)),
+        AktarmaMetinleri(ZoneId.systemDefault()),
+    ).also { aktarma = it }
 
     private fun arkada(isi: () -> Unit) {
         try {
@@ -637,9 +663,44 @@ class AnaEkran : Activity() {
         eylemler += (if (kapalilar) "Tamamlananları gizle" else "Tamamlananları göster") to { kapalilariGoster(!kapalilar) }
         eylemler += "Hatırlatma durumu" to { hatirlatmaPenceresi() }
         eylemler += "PC eşleştirmesi" to { eslestir() }
+        eylemler += "Dışa aktar" to { dosyaSec(ISTEK_DISA_AKTAR) }
+        eylemler += "İçe aktar" to { dosyaSec(ISTEK_ICE_AKTAR) }
         eylemler.forEachIndexed { i, (ad, _) -> p.menu.add(0, i, i, ad) }
         p.setOnMenuItemClickListener { eylemler[it.itemId].second(); true }
         p.show()
+    }
+
+    /** Sistem dosya seçicisi (SAF; izin gerekmez). Sonuç [onActivityResult]'ta. */
+    private fun dosyaSec(istek: Int) {
+        val niyet = if (istek == ISTEK_DISA_AKTAR) {
+            Intent(Intent.ACTION_CREATE_DOCUMENT).putExtra(Intent.EXTRA_TITLE, AktarmaAkisi.onerilenAd(LocalDate.now()))
+        } else {
+            Intent(Intent.ACTION_OPEN_DOCUMENT)
+        }.addCategory(Intent.CATEGORY_OPENABLE).setType(AktarmaAkisi.MIME)
+        try {
+            @Suppress("DEPRECATION")
+            startActivityForResult(niyet, istek)
+        } catch (_: ActivityNotFoundException) {
+            cubukGoster("Dosya seçici açılamadı.", null)
+        }
+    }
+
+    /** Aktarma adımını gösterir; onay arka iş parçacığında sürer. */
+    private fun aktarmaGoster(adim: AktarmaAkisi.Adim) {
+        val b = AlertDialog.Builder(this).setTitle(adim.baslik).setMessage(adim.metin)
+        if (adim is AktarmaAkisi.Adim.Onay) {
+            b.setPositiveButton(adim.dugme) { _, _ ->
+                arkada {
+                    val s = aktarmaAl().onayla()
+                    anada { aktarmaGoster(s) }
+                }
+            }
+            b.setNegativeButton("Vazgeç") { _, _ -> arkada { aktarmaAl().vazgec() } }
+            b.setOnCancelListener { arkada { aktarmaAl().vazgec() } }
+        } else {
+            b.setPositiveButton("Tamam", null)
+        }
+        b.show()
     }
 
     private fun kapalilariGoster(b: Boolean) {
@@ -1016,5 +1077,7 @@ class AnaEkran : Activity() {
         private const val ISTEK_KAYIT = 41
         private const val ISTEK_ESLESTIRME = 42
         private const val ISTEK_IZIN = 43
+        private const val ISTEK_DISA_AKTAR = 44
+        private const val ISTEK_ICE_AKTAR = 45
     }
 }

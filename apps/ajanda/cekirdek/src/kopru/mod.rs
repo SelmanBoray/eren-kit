@@ -23,8 +23,9 @@ use crate::motor::{Etkiler, Motor, Ortam};
 
 use kabuklar::{AlarmKabugu, Gozlemci, KimlikKabugu, Tasima, ZamanKabugu};
 use tipler::{
-    BaglantiDurumu, CalismaKipi, DuzenlemeTemeli, EslesmeDurumu, GecmisSayfasi, HatirlatmaBildirimi, HatirlatmaOnizlemesi, KayitGorunumu,
-    KoparmaSonucu, ListeSorgusu, RetGirdisi, TakvimAyi, TakvimOgesi, YenidenKurmaNedeni,
+    AktarmaBicimi, BaglantiDurumu, CalismaKipi, DisaAktarma, DuzenlemeTemeli, EslesmeDurumu, GecisOzeti, GecmisSayfasi, HatirlatmaBildirimi,
+    HatirlatmaOnizlemesi, IceAktarmaOnizlemesi, IceAktarmaSonucu, KayitGorunumu, KoparmaSonucu, ListeSorgusu, RetGirdisi, TakvimAyi, TakvimOgesi,
+    YenidenKurmaNedeni,
 };
 
 fn kilitle<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -80,6 +81,12 @@ pub fn eslestirme_qr_coz(metin: String) -> Result<AjandaEslestirmeQr, CekirdekHa
 #[uniffi::export]
 pub fn metni_temizle(metin: String) -> Result<String, CekirdekHatasi> {
     kural(|| crate::kural::metin::ajanda_metni_temizle(&metin))
+}
+
+/// Dışa aktarma kabının (zip) düzeni (D3): belge adı, ek dizini, biçim sürümü, boyut sınırları.
+#[uniffi::export]
+pub fn aktarma_bicimi() -> AktarmaBicimi {
+    crate::motor::aktarma_bicimi()
 }
 
 /// Formu kabloya hazırlar ve doğrular (kaydetmeden önce alan hatasını göstermek için).
@@ -210,7 +217,10 @@ impl Cekirdek {
         zaman: Arc<dyn ZamanKabugu>,
         alarm: Arc<dyn AlarmKabugu>,
     ) -> Result<Arc<Self>, CekirdekHatasi> {
-        let motor = Motor::ac(&veritabani_yolu)?;
+        let mut motor = Motor::ac(&veritabani_yolu)?;
+        // Bağlı kip + eşleşme yok çıkışsızdır: veri kaybısız yerel kipe (`motor/yerel.rs`). Onarımın hatası
+        // açılışı düşürmez: iz `meta.onarim_hatasi`'na yazılır, sonraki açılış yeniden dener.
+        motor.acilis_onarimi(&Ortam { kimlik: &*kimlik, zaman: &*zaman });
         let okuyucu = crate::depo::Depo::okuyucu_ac(&veritabani_yolu)?.map(Mutex::new);
         Ok(Arc::new(Cekirdek {
             motor: Mutex::new(motor),
@@ -259,8 +269,19 @@ impl Cekirdek {
         self.calistir(|m, _, _| m.eslesme_durumu())
     }
 
+    /// Eşleşme bilgisini ve cihaz anahtarını siler, açık bağlantıyı kapatır. Kayıt silmez (D2): bağlı kipte
+    /// `baglantiyi_kopar` ile aynıdır (kip `Yerel` olur; sayılar `son_gecis`'te, neden `EslesmeKaldirildi`),
+    /// yerel kipte süren bağlanmayı ya da bekleyen eşleştirmeyi iptal eder.
     pub fn eslesmeyi_kaldir(&self) -> Result<(), CekirdekHatasi> {
         self.calistir(|m, o, e| m.eslesmeyi_kaldir(o, e))
+    }
+
+    /// Bağlı kipten yerel kipe son geçişin özeti (D2; kalıcı, sonraki geçiş üstüne yazar); hiç olmadıysa
+    /// `None`. Nedenler: `baglantiyi_kopar`, `eslesmeyi_kaldir`, bağlantıda servisin farklı `depo_id`
+    /// getirmesi (`DepoDegisti`: gözlemciye `tumu` ve `baglanti` gider, kip `Yerel` olur ve bağlanma sürer;
+    /// servisin tam kopyası gelince kip `Bagli` olur). Arayüz kullanıcıya ne olduğunu bununla söyler.
+    pub fn son_gecis(&self) -> Result<Option<GecisOzeti>, CekirdekHatasi> {
+        self.calistir(|m, _, _| m.son_gecis())
     }
 
     /// Koparma (D1): bağlı kipten yerel kipe, veri kaybı olmadan. Görünen kopya o anki haliyle (bekleyen
@@ -413,6 +434,31 @@ impl Cekirdek {
 
     pub fn ret_at(&self, islem_id: String) -> Result<(), CekirdekHatasi> {
         self.calistir(|m, o, e| m.ret_at(o, e, &islem_id))
+    }
+
+    // Dışa ve içe aktarma (D3; biçim ve kurallar `motor/aktarma.rs` başında, kap `aktarma_bicimi`)
+
+    /// Bütün kayıtların (mezar taşları dahil) belgesi; iki kipte de çalışır (bağlı kipte görünen kopya,
+    /// gönderilmemiş değişiklikler dahil). Kuyruk ve ret listesi girmez (`ret_listesinde` sayısı söylenir).
+    /// Hiçbir şey yazmaz. Kotlin `belge`'yi zip'e `ajanda.json` olarak (UTF-8), `ekler`'i `yol`'larıyla koyar.
+    pub fn disa_aktar(&self) -> Result<DisaAktarma, CekirdekHatasi> {
+        self.calistir(|m, o, _| m.disa_aktar(o))
+    }
+
+    /// Belgenin içe aktarma planı (hiçbir şey yazmaz): kaç yeni, güncellenecek, aynı, atlanacak, geçersiz,
+    /// sınırı aşan. Belge bütünüyle okunamazsa `GecersizGirdi{alan, neden}`: `alan` `belge` (JSON değil,
+    /// nesne değil, çok büyük), `bicim` (ajanda yedeği değil), `bicim_surumu` / `sozlesme_surumu` (daha yeni:
+    /// uygulama güncellenmeli) ya da üst düzey alanın yolu. Mesajlar içerik taşımaz.
+    pub fn ice_aktarma_onizlemesi(&self, belge: String) -> Result<IceAktarmaOnizlemesi, CekirdekHatasi> {
+        self.calistir(|m, o, _| m.ice_aktarma_onizlemesi(o, &belge))
+    }
+
+    /// İçe aktarma, tek işlemde (ya hepsi ya hiçbiri). `iz`: önizlemenin `iz`'i; verilirse ve telefon bu arada
+    /// planı değiştirecek kadar değiştiyse hiçbir şey yazılmaz, `uygulandi` yanlış ve `plan` yeni önizlemedir.
+    /// `None`: şimdiki plan uygulanır. Yerel kipte kayıtlar alanlarıyla yazılır (yerel geçmiş, alarm); bağlı
+    /// kipte işlemler kuyruğa girer (servis yazar). Gözlemciye `kayitlar` (çoksa `tumu`), bağlı kipte `baglanti`.
+    pub fn ice_aktar(&self, belge: String, iz: Option<String>) -> Result<IceAktarmaSonucu, CekirdekHatasi> {
+        self.calistir(|m, o, e| m.ice_aktar(o, e, &belge, iz.as_deref()))
     }
 
     // Alarmlar (K3)

@@ -18,10 +18,11 @@ import type {
   SohbetSecimi,
   SonlandirmaSonucu,
   TemizlikBagimliliklari,
+  TemizlikMedyaYuzu,
   TemizlikSohbetleri,
   YeniSayfaSonucu,
 } from "../src/sozlesme.ts";
-import { CagriDefteri, sahteGunluk, sahteTranskript, sahteZaman } from "./sahte.ts";
+import { CagriDefteri, sahteGunluk, sahteMedyaYoneticisi, sahteTranskript, sahteZaman } from "./sahte.ts";
 
 const U1 = "11111111-1111-4111-8111-111111111111";
 const U2 = "22222222-2222-4222-8222-222222222222";
@@ -63,6 +64,11 @@ interface Ayar {
   sayfaHata?: Error;
   /** Bu sohbetlerin örneği yok (`sohbetler.konusma` `null`). */
   yok?: readonly SohbetId[];
+  /** Medya dalgası (S7): verilirse `TemizlikBagimliliklari.medya`. */
+  medya?: TemizlikMedyaYuzu;
+  /** Depo sonuçlarına `silinecek_medya` (S1) olarak konur. */
+  silinecekMedya?: number;
+  kaldirHata?: Error;
 }
 
 function kur(a: Ayar = {}) {
@@ -102,6 +108,7 @@ function kur(a: Ayar = {}) {
     },
     kaldir: (s) => {
       c.ekle("kaldir", islemde, s.sohbet_id);
+      if (a.kaldirHata) throw a.kaldirHata;
       if (a.yok?.includes(s.sohbet_id)) return null;
       return {
         sonlandir: () => {
@@ -132,6 +139,7 @@ function kur(a: Ayar = {}) {
           silinen_olay: 7,
           bosaltilan_tur: 1,
           silinen_kuyruk: 2,
+          ...(a.silinecekMedya === undefined ? {} : { silinecek_medya: a.silinecekMedya }),
         } as never;
       },
       sohbetiSil: (s: SohbetSecimi, ms: number) => {
@@ -142,6 +150,7 @@ function kur(a: Ayar = {}) {
           silinen_olay: 5,
           bosaltilan_tur: 1,
           silinen_kuyruk: 0,
+          ...(a.silinecekMedya === undefined ? {} : { silinecek_medya: a.silinecekMedya }),
         } as never;
       },
       walDaralt: () => {
@@ -173,6 +182,7 @@ function kur(a: Ayar = {}) {
     transkript,
     saat: { simdiMs: () => 1234 },
     gunluk,
+    ...(a.medya === undefined ? {} : { medya: a.medya }),
   };
   const t = temizlikKur(b);
   return {
@@ -1023,4 +1033,190 @@ test("gerçek depo: gecmisiSil(B) A'nın meşgul olmasından etkilenmez; A meşg
   assert.ok(b.ok);
   await k.t.bekle();
   assert.equal(k.olaylar(B_ID).some((o) => o.type === "chat_cleared"), true);
+});
+
+// ---- Medya dalgası (S7): sohbet medyasının silinmesi ----
+// MODULLER "Medya dalgası" > "Silme" ve "S7 temizlik"; sozlesme.ts `TemizlikBagimliliklari.medya`,
+// `MedyaYoneticisi.sohbetMedyasiniSil`. Yeniden deneme ve kota tahliyesi yöneticinindir (S4): burada
+// yalnız temizliğin çağrı kuralı sınanır.
+
+/** Sahte yöneticiyi saran yüz: çağrıyı ortak deftere yazar; `ertele` ise söz testten çözülür. */
+function medyaKur(ayar: { ertele?: boolean; red?: Error; at?: Error } = {}) {
+  const y = sahteMedyaYoneticisi();
+  const bekleyen: Ertel<void>[] = [];
+  let defter: CagriDefteri | null = null;
+  const yuz: TemizlikMedyaYuzu = {
+    sohbetMedyasiniSil: (s) => {
+      defter?.ekle("medya.sohbetMedyasiniSil", s.sohbet_id);
+      if (ayar.at) throw ayar.at;
+      const p = y.sohbetMedyasiniSil(s);
+      const red = ayar.red;
+      if (red) return p.then(() => Promise.reject(red));
+      if (!ayar.ertele) return p;
+      const e = ertel<void>();
+      bekleyen.push(e);
+      return p.then(() => e.soz);
+    },
+  };
+  return {
+    y,
+    yuz,
+    bekleyen,
+    bagla: (c: CagriDefteri) => {
+      defter = c;
+    },
+  };
+}
+
+function medyaliKur(a: Ayar = {}, m: Parameters<typeof medyaKur>[0] = {}) {
+  const mk = medyaKur(m);
+  const k = kur({ ...a, medya: mk.yuz });
+  mk.bagla(k.c);
+  return { ...k, m: mk };
+}
+
+test("medya: gecmisiSil başarısında sohbetMedyasiniSil(o sohbet) bir kez, depo işleminden sonra, dönüşten önce", async () => {
+  const k = medyaliKur({ silinecekMedya: 3 });
+  const s = k.t.gecmisiSil(S);
+  assert.deepEqual(s, { ok: true, deger: { mezar_seq: 50, sinir_seq: 40 } });
+  assert.deepEqual(k.m.y.silinenSohbetler, [A_ID], "çağrı dönüşten önce");
+  const a = adlar(k.c);
+  assert.ok(a.indexOf("islem.bitti") < a.indexOf("medya.sohbetMedyasiniSil"), JSON.stringify(a));
+  k.sayfaBitir();
+  await k.t.bekle();
+  assert.equal(k.c.say("medya.sohbetMedyasiniSil"), 1);
+  const g = k.gunluk.girdiler.find((x) => x.olay === "medya_silme");
+  assert.deepEqual(g?.alanlar, { sohbet_id: A_ID, silinecek_medya: 3 });
+});
+
+test("medya: sohbetiSil başarısında sohbetMedyasiniSil(o sohbet) bir kez, işlem ve kaldir'dan sonra", async () => {
+  const k = medyaliKur({ silinecekMedya: 0 });
+  const s = k.t.sohbetiSil(SB);
+  assert.deepEqual(s, { ok: true, deger: { seq: 60 } });
+  const a = adlar(k.c);
+  assert.ok(a.indexOf("islem.bitti") < a.indexOf("medya.sohbetMedyasiniSil"), JSON.stringify(a));
+  assert.ok(a.indexOf("kaldir") < a.indexOf("medya.sohbetMedyasiniSil"), JSON.stringify(a));
+  assert.deepEqual(k.m.y.silinenSohbetler, [B_ID], "silinecek_medya 0 iken de çağrılır (yeniden deneme)");
+  k.sonlandirBitir();
+  await k.t.bekle();
+  assert.equal(k.c.say("medya.sohbetMedyasiniSil"), 1);
+});
+
+test("medya: ack beklemez; söz çözülmeden dönülür, bekle() ve kapat() onu beklemez", async () => {
+  const k = medyaliKur({}, { ertele: true });
+  assert.equal(k.t.gecmisiSil(S).ok, true);
+  assert.equal(k.t.sohbetiSil(SB).ok, true);
+  k.sayfaBitir();
+  k.sonlandirBitir();
+  await k.t.bekle();
+  await new Promise((r) => setImmediate(r));
+  // İki medya sözü de hâlâ çözülmedi; temizliğin bekle()'si ve kapat()'ı yine de döner.
+  assert.equal(k.m.bekleyen.length, 2);
+  await k.t.kapat();
+  for (const e of k.m.bekleyen) e.coz();
+});
+
+for (const [ad, m] of [
+  ["reddederse", { red: new TypeError("x") }],
+  ["eşzamanlı atarsa", { at: new RangeError("y") }],
+] as const) {
+  test(`medya: sohbetMedyasiniSil ${ad} sonuç yine başarı, günlüğe hata türü, sonraki silme yine çağırır`, async () => {
+    const k = medyaliKur({}, m);
+    assert.equal(k.t.gecmisiSil(S).ok, true);
+    k.sayfaBitir();
+    await k.t.bekle();
+    await new Promise((r) => setImmediate(r));
+    const g = k.gunluk.girdiler.find((x) => x.olay === "medya_silme_hata");
+    assert.ok(g, JSON.stringify(k.gunluk.girdiler));
+    assert.equal(g.alanlar?.["sohbet_id"], A_ID);
+    assert.equal(g.alanlar?.["hata_turu"], ("red" in m ? m.red : m.at).name);
+    // Silinemeyenler sonraki silmede yeniden denenir: temizlik çağrıyı yine yapar.
+    assert.equal(k.t.sohbetiSil(SB).ok, true);
+    assert.equal(k.c.say("medya.sohbetMedyasiniSil"), 2);
+    k.sonlandirBitir();
+    await k.t.bekle();
+    await new Promise((r) => setImmediate(r));
+  });
+}
+
+for (const [ad, ayar, cagir] of [
+  ["gecmisiSil ön koşul tutmaz", { aktif: 1 }, "gecmisiSil"],
+  ["gecmisiSil örnek yok", { yok: [A_ID] }, "gecmisiSil"],
+  ["gecmisiTemizle atar", { temizlemeHata: new Error("t") }, "gecmisiSil"],
+  ["bekleyenleriIptal atar", { iptalHata: new Error("i") }, "gecmisiSil"],
+  ["sohbetiSil ön koşul tutmaz", { sorular: 1 }, "sohbetiSil"],
+  ["depo.sohbetiSil atar", { sohbetiSilHata: new Error("s") }, "sohbetiSil"],
+] as const) {
+  test(`medya: ${ad}: sohbetMedyasiniSil çağrılmaz`, async () => {
+    const k = medyaliKur(ayar);
+    const s = cagir === "gecmisiSil" ? k.t.gecmisiSil(S) : k.t.sohbetiSil(SB);
+    assert.equal(s.ok, false);
+    k.sayfaBitir();
+    await k.t.bekle();
+    assert.deepEqual(k.m.y.silinenSohbetler, []);
+  });
+}
+
+test("medya: ana sohbet_silinemez iken çağrı yok; ana'nın geçmişi silinince çağrı var", async () => {
+  const k = medyaliKur();
+  assert.equal(k.t.sohbetiSil(ANA).ok, false);
+  assert.deepEqual(k.m.y.silinenSohbetler, []);
+  assert.equal(k.t.gecmisiSil(ANA).ok, true);
+  assert.deepEqual(k.m.y.silinenSohbetler, [ANA_SOHBET_ID]);
+  k.sayfaBitir({}, ANA_SOHBET_ID);
+  await k.t.bekle();
+});
+
+test("medya: kaldir atsa da sohbet silinmiştir, medya yine silinir", async () => {
+  const k = medyaliKur({ kaldirHata: new Error("k") });
+  assert.equal(k.t.sohbetiSil(SB).ok, true);
+  assert.deepEqual(k.m.y.silinenSohbetler, [B_ID]);
+  await k.t.bekle();
+});
+
+test("medya: kapat() sonrası çağrı yok", async () => {
+  const k = medyaliKur();
+  await k.t.kapat();
+  assert.equal(k.t.gecmisiSil(S).ok, false);
+  assert.equal(k.t.sohbetiSil(SB).ok, false);
+  assert.deepEqual(k.m.y.silinenSohbetler, []);
+});
+
+test("medya: yalnız silinen sohbetin medyası (sahte yönetici başka sohbetin ekine dokunmaz)", async () => {
+  const k = medyaliKur();
+  const ek = (id: string) => ({ medya_id: id, tur: "foto", mime: "image/jpeg", boyut: 10 }) as never;
+  const ekA = k.m.y.ekKoy("cihaz", A_ID, ek("m-a"));
+  const ekB = k.m.y.ekKoy("cihaz", B_ID, ek("m-b"));
+  assert.equal(k.t.sohbetiSil(SB).ok, true);
+  assert.equal(ekB.durum, "silinecek");
+  assert.equal(ekA.durum, "kabul");
+  k.sonlandirBitir();
+  await k.t.bekle();
+});
+
+test("medya verilmezse: silinecek_medya dolu olsa da medya günlük satırı yok, akış bugünkü", async () => {
+  const k = kur({ silinecekMedya: 2 });
+  assert.equal(k.t.gecmisiSil(S).ok, true);
+  assert.equal(k.t.sohbetiSil(SB).ok, true);
+  k.sayfaBitir();
+  k.sonlandirBitir();
+  await k.t.bekle();
+  assert.ok(!k.gunluk.girdiler.some((g) => g.olay.startsWith("medya_")), JSON.stringify(k.gunluk.girdiler));
+});
+
+test("medya: günlükte hata iletisi yok; yalnız sohbet_id, sayı ve hata türü", async () => {
+  const k = medyaliKur({ silinecekMedya: 4 }, { red: new Error("gizli yol C:\\x") });
+  k.t.gecmisiSil(S);
+  k.sayfaBitir();
+  await k.t.bekle();
+  await new Promise((r) => setImmediate(r));
+  const medyaGirdileri = k.gunluk.girdiler.filter((g) => g.olay.startsWith("medya_"));
+  assert.equal(medyaGirdileri.length, 2);
+  const tum = JSON.stringify(medyaGirdileri);
+  assert.ok(!tum.includes("gizli") && !tum.includes("C:"), tum);
+  for (const g of medyaGirdileri) {
+    for (const [ad, v] of Object.entries(g.alanlar ?? {})) {
+      assert.ok(typeof v === "number" || ad === "sohbet_id" || ad === "hata_turu", `${g.olay}.${ad}`);
+    }
+  }
 });

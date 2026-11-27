@@ -26,6 +26,8 @@
 //! - Canlı `kayit` hemen (tek işlem) uygulanır.
 //! - Yerel kipte (bağlanma sürüyor, `yerel.rs` "Geçişler"): `hello` boş kopya gibi gider, telafi hep tam
 //!   sayılıp toplanır; `esitlendi`'de `yereli_kuyruga_dok` yerel kayıtları kuyruğa döker ve kip `bagli` olur.
+//! - Bağlı kipte `welcome` saklı `depo_id`'den farklı `depo_id` getirirse (D2) önce `depo_degisti` kipi
+//!   yerele çevirir (veri kalır, eşleşme kalır); bağlantı yukarıdaki yerel kip yolundan sürer.
 //!
 //! Kuyruk (`kural::kuyruk::ajanda_kuyruk_karari`): yalnız `Canli`'da, en çok bir işlem yolda. Yollanan satır
 //! kalıcı olarak `yollandi` işaretlenir; sonucu gelmeden bağlantı biterse (ya da süreç ölürse: sonraki
@@ -268,6 +270,16 @@ impl Motor {
                 self.sinamayi_yanitla(o, e, &eslesme, &client_nonce, &server_nonce, &server_signature)
             }
             (Tur::Yanit, AjandaAsagi::Welcome { depo_id, tam, .. }) => {
+                // D2, kesin kural: bağlı kipte saklı `depo_id`'den farklı depo (başka servisle yeni eşleşme ya
+                // da sıfırdan kurulmuş servis) görünen kopyayı tam telafisiyle ezemez. Önce koparmanın veri
+                // kısmı (`depo_degisti`, eşleşme kalır), sonra bu bağlantı aşağıda yerel kipten bağlanma
+                // olarak sürer. Saklı `depo_id` yoksa (ilk `welcome`) bugünkü gibi.
+                if !self.yerel_mi()?
+                    && let Some(eski) = self.depo.depo_id()?
+                    && eski != depo_id
+                {
+                    self.depo_degisti(o, e, &depo_id)?;
+                }
                 // Tam telafi kuyruğa dokunmaz (`ajanda_kuyruk_karari(TamTelafi)` = `Bekle`, deneme aynı):
                 // işlemler `esitlendi`'de taze kopya üstüne yeniden uygulanır ve sırayla yeniden gider.
                 // Yerel kipte telafi hep toplanır (servis boş `hello`'ya zaten tam der): PC temeli bağlanma
@@ -403,15 +415,18 @@ impl Motor {
         let yerel = self.yerel_mi()?;
         match t.tam {
             Some((depo_id, son_rev)) if yerel => {
-                self.depo.yazma(|d| {
-                    super::yerel::yereli_kuyruga_dok(d, o, &b, &depo_id, son_rev)?;
+                let ret = self.depo.yazma(|d| {
+                    let ret = super::yerel::yereli_kuyruga_dok(d, o, &b, &depo_id, son_rev)?;
                     d.meta_yaz(anahtar::SON_ESITLENME_MS, Some(&simdi))?;
-                    Ok(())
+                    Ok(ret)
                 })?;
+                self.yerelden_baglandi(e, ret);
                 self.hepsi_degisti(o, e);
             }
             Some((depo_id, son_rev)) => {
                 self.depo.yazma(|d| {
+                    // Aynı depo (servis yedekten dönmüş): PC'nin yitirdiği onaylı haller kuyruğa (`yerel.rs`).
+                    super::yerel::geri_donenleri_kuyruga_koy(d, o, &b, &depo_id)?;
                     d.telafiyi_sunucuya_gecir()?;
                     d.depo_id_yaz(&depo_id)?;
                     d.son_rev_yaz(son_rev)?;

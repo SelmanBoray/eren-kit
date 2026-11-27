@@ -136,10 +136,30 @@ export const erenKaynakli: ErenKaynakliMi = (o) => {
 // Liste özeti
 // ---------------------------------------------------------------------------------------------
 
+/**
+ * Medya. Metni boş (ya da yalnız boşluk) ekli mesajın liste önizlemesi: "📷 Fotoğraf", "📷 3 fotoğraf",
+ * "🎥 Video", "📎 2 fotoğraf, 1 video". Ek yoksa boş metin.
+ */
+export function ekOnizlemeMetni(ekler: readonly { tur: "foto" | "video" }[]): string {
+  let foto = 0;
+  let video = 0;
+  for (const e of ekler) {
+    if (e.tur === "video") video++;
+    else foto++;
+  }
+  if (foto > 0 && video > 0) return `📎 ${foto} fotoğraf, ${video} video`;
+  if (video > 0) return video === 1 ? "🎥 Video" : `🎥 ${video} video`;
+  if (foto > 0) return foto === 1 ? "📷 Fotoğraf" : `📷 ${foto} fotoğraf`;
+  return "";
+}
+
 function sonMesajBul(ogeler: readonly GorunumOgesi[]): SonMesaj | null {
   for (let i = ogeler.length - 1; i >= 0; i--) {
     const o = ogeler[i]!;
-    if (o.tur === "kullanici") return { kim: "kullanici", metin: o.metin };
+    if (o.tur === "kullanici") {
+      const ekli = o.ekler !== undefined && o.ekler.length > 0 && o.metin.trim() === "";
+      return { kim: "kullanici", metin: ekli ? ekOnizlemeMetni(o.ekler!) : o.metin };
+    }
     if (o.tur === "asistan") return { kim: "asistan", metin: o.metin };
   }
   return null;

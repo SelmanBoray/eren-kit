@@ -24,21 +24,36 @@
 //!   yerel kayıtlar fark olarak kuyruğa girer, kip `bagli` olur. Görünen kopya hiçbir zaman başka bir
 //!   `depo_id`'nin tam telafisiyle değiştirilmez.
 //! - Koparma (`Motor::baglantiyi_kopar`): bağlı kipten yerel kipe; görünen kopya o anki haliyle kalır.
-//! - Önizlemeli birleştirme D4'tedir; bağlı kipte `eslesmeyi_kaldir` ve yeni QR'ın koparmaya dönmesi D2'de.
+//! - Veri koruması (D2): bağlı kipte `eslesmeyi_kaldir` koparmadır (`GecisNedeni::EslesmeKaldirildi`). Bağlı
+//!   kipte `welcome` saklı `depo_id`'den farklı bir `depo_id` getirirse (başka servisle yeni QR ya da sıfırdan
+//!   kurulmuş servis) `Motor::depo_degisti` koparmanın veri kısmını yapar, eşleşme kalır ve bağlantı yerel
+//!   kipten bağlanma olarak sürer: servis değiştirme "koparma + bağlanma"dır. Yeni QR reddedilirse hiçbir
+//!   şey değişmez (eski eşleşme ve bağlı kip sürer). Son geçişin özeti `meta.son_gecis`'tedir.
+//! - Fark (D2 ikinci tur, "Alan alan birleşme" aşağıda): telefon koparma anındaki PC temelini
+//!   (`sunucu_kayitlari`) depo değişse de bilir. Yalnız telefonun bu temelden farklı alanları telefonun
+//!   değeriyle gider; telefonun dokunmadığı alanda PC kazanır. Aynı `depo_id`'de tam telafide PC yedekten
+//!   dönmüşse (`DonusAnalizi`: yazım kimliği revizyon + PC saatiyle `guncelleme_ms`, revizyon büyüklüğü
+//!   değil) PC'nin yitirdiği onaylı değerler de yeniden gider; hem yerel kipten bağlanmada hem bağlı kipte
+//!   (`geri_donenleri_kuyruga_koy`).
+//! - Bağlı kip + eşleşme yok açılışta yerel kipe çevrilir (`Motor::acilis_onarimi`); onarımın hatası açılışı
+//!   düşürmez, izi `meta.onarim_hatasi`'na yazılır.
+//! - Önizlemeli birleştirme (iki tarafın da değiştirdiği alan) D4'tedir.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+
+use serde_json::{Map, Value};
 
 use super::iyimser::{IyimserBaglam, Uygulama, gorunen_yenile, islem_coz, islem_uygula, iyimser_uygula, kayittan_govde, yazar};
 use super::islem::govde_farki;
 use super::kanal::gecmis_satiri;
 use super::{Asama, Etkiler, Motor, Ortam};
-use crate::depo::{Depo, KopyaTablosu, KuyrukSatiri, anahtar};
+use crate::depo::{Depo, KopyaSatiri, KopyaTablosu, KuyrukSatiri, RetSatiri, anahtar};
 use crate::hata::CekirdekHatasi;
-use crate::kopru::tipler::{CalismaKipi, GecmisSayfasi, KoparmaSonucu};
+use crate::kopru::tipler::{CalismaKipi, GecisNedeni, GecisOzeti, GecmisSayfasi, KoparmaSonucu};
 use crate::model::sinirlar::ajanda::{GECMIS_SAYFA, KAYIT_ADET};
 use crate::model::{
     AjandaGecmisGirdisi, AjandaIslem, AjandaKaydi, AjandaParca, AjandaRetNedeni, AjandaYazar, AjandaZamani, Alan,
-    GirdiYolu, Hatirlatma, KayitDurumu, KaynakYolu, OrnekDurumu, TurKokeni,
+    GirdiYolu, Hatirlatma, KayitDurumu, KaynakYolu, KuyrukRetNedeni, OrnekDurumu, TurKokeni,
 };
 
 /// Servis retlerinin köprü hatası (yerelde kuyruk ve ret listesi yoktur: çağrı hata döner).
@@ -95,7 +110,7 @@ fn parca_alani<T: Clone>(v: &Option<T>) -> Alan<T> {
 
 /// Servisin `fark`'ı: izlenen alanlardan (kayıt alanları, `taslak`, `silindi`) yalnız değişenlerin öncesi ve
 /// sonrası; `ornekler` değiştiyse iki tam liste.
-fn fark(o: &AjandaKaydi, s: &AjandaKaydi) -> (AjandaParca, AjandaParca) {
+pub(super) fn fark(o: &AjandaKaydi, s: &AjandaKaydi) -> (AjandaParca, AjandaParca) {
     let mut a = AjandaParca::default();
     let mut b = AjandaParca::default();
     if o.tur != s.tur {
@@ -132,7 +147,7 @@ fn fark(o: &AjandaKaydi, s: &AjandaKaydi) -> (AjandaParca, AjandaParca) {
 }
 
 /// Servisin `dogumParcasi`'ı: kaydın var olan alanları, durum ve taslak.
-fn dogum_parcasi(k: &AjandaKaydi) -> AjandaParca {
+pub(super) fn dogum_parcasi(k: &AjandaKaydi) -> AjandaParca {
     AjandaParca {
         tur: Some(k.tur),
         baslik: Some(k.baslik.clone()),
@@ -283,20 +298,28 @@ impl Motor {
 /// Kaydın yerel hali `k`'yı PC'ye taşıyacak işlemler (`ts`: kuyruk satırının anı, iyimser hesap onu
 /// kullanır). Temel (sunucu kopyası) yoksa telefonda doğmuştur: aynı kimlikle `ekle`, sonra durum, örnek
 /// durumları ve silme. Temel varsa temel ile şimdiki hal arasındaki fark (`YOL-HARITASI.md` 3.3 "Bağlanma").
-fn kuyruga_islemler(temel: Option<&AjandaKaydi>, k: &AjandaKaydi) -> Vec<(AjandaIslem, i64)> {
+///
+/// Gönderilmeyenler: temelsiz mezar taşı (PC'de hiç olmamış silinmiş kayıt; `ekle` + `sil` PC'nin
+/// kayıt sınırını ölü kayıtla doldururdu) ve iki tarafta da silinmiş kayıt (alanlar farklı olsa da her
+/// işlem `kayit_silinmis` alırdı). `geri_yukle_izni` yanlışsa temelde silinmiş kayıt geri yüklenmez (temel
+/// servisin kendi kopyasıyken PC'nin silmesi meşrudur); öteki farklar yine gider ve servis onları
+/// `kayit_silinmis` ile reddeder: telefonun hali düzeltme gövdesiyle ret listesine düşer.
+pub(super) fn kuyruga_islemler(temel: Option<&AjandaKaydi>, k: &AjandaKaydi, geri_yukle_izni: bool) -> Vec<(AjandaIslem, i64)> {
     let kayit_id = || k.kayit_id.clone();
     let mut l = Vec::new();
     let ts = k.guncelleme_ms;
     let bos = AjandaKaydi { ornekler: vec![], durum: KayitDurumu::Acik, taslak: false, silindi: false, ..k.clone() };
     let t = match temel {
+        None if k.silindi => return l,
         None => {
             let girdi_yolu = if k.kaynak.yol == KaynakYolu::SesliNot { GirdiYolu::SesliNot } else { GirdiYolu::Elle };
             l.push((AjandaIslem::Ekle { kayit_id: kayit_id(), govde: kayittan_govde(k), girdi_yolu }, k.olusturma_ms));
             &bos
         }
+        Some(t) if t.silindi && k.silindi => return l,
         Some(t) => t,
     };
-    if t.silindi && !k.silindi {
+    if t.silindi && !k.silindi && geri_yukle_izni {
         l.push((AjandaIslem::GeriYukle { kayit_id: kayit_id() }, ts));
     }
     let degisiklik = govde_farki(&kayittan_govde(t), &kayittan_govde(k));
@@ -329,44 +352,381 @@ fn kuyruga_islemler(temel: Option<&AjandaKaydi>, k: &AjandaKaydi) -> Vec<(Ajanda
     l
 }
 
-/// Yerel kaydın fark temeli (`yereli_kuyruga_dok`). Servisin kopyasında aynı kimlikli kayıt yoksa temel
-/// yoktur (kayıt `ekle` ile gider). Varsa: yeni kopya koparma anındaki temelle aynı depoya aitse ve o temel
-/// kaydı biliyorsa eski temel (üç yollu: yalnız telefonda değişen alanlar gider, PC'de değişen dokunulmayan
-/// alanlar PC'deki gibi kalır); değilse servisin kendi kopyası (yolda kalmış ekleme gibi: telefonun hali
-/// fark olarak gider).
-fn fark_temeli(d: &Depo, ayni_depo: bool, kayit_id: &str) -> Result<Option<AjandaKaydi>, CekirdekHatasi> {
-    let Some(yeni) = d.telafi_kaydi(kayit_id)? else { return Ok(None) };
-    if ayni_depo && let Some(eski) = d.sunucu_kaydi(kayit_id)? {
-        return Ok(Some(eski));
+/// İki hal PC'ye gidecek her alanda aynı mı (gövde, durum, örnekler, taslak, silindi; revizyon, zaman
+/// damgaları ve kaynak sayılmaz).
+pub(super) fn icerik_ayni(a: &AjandaKaydi, b: &AjandaKaydi) -> bool {
+    kayittan_govde(a) == kayittan_govde(b)
+        && a.durum == b.durum
+        && a.ornekler == b.ornekler
+        && a.taslak == b.taslak
+        && a.silindi == b.silindi
+}
+
+// ---------------------------------------------------------------------------------------------
+// Yedekten dönme denetimi (D2 ikinci tur)
+// ---------------------------------------------------------------------------------------------
+
+/// Bir yazımın kimliği: revizyon ve PC saatiyle `guncelleme_ms` (servisin telafi izi `ajandaTelafiTamMi`
+/// gibi). Yedekten dönen servis revizyon numaralarını yeniden verir: numaranın büyüklüğü tek başına ilerleme
+/// demek değildir, aynı numara başka yazım olabilir.
+type Iz = (i64, i64);
+
+fn izler(satirlar: &[KopyaSatiri]) -> BTreeMap<String, Iz> {
+    satirlar.iter().map(|s| (s.kayit_id.clone(), (s.revizyon, s.guncelleme_ms))).collect()
+}
+
+/// Telefonun bildiği yazımın (eski temel `o`) PC'nin yeni kopyasındaki (`n`) karşılığı.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Soy {
+    /// Aynı yazım: PC telefonun bildiği hali taşıyor.
+    Ayni,
+    /// Telefonun bildiği yazım PC'de yok: kayıt yok (servis kayıt silmez), revizyonu küçük, aynı numarada
+    /// başka yazım, ya da numarası büyük ama PC saatiyle daha eski (meşru ilerleme `guncelleme_ms`'i
+    /// küçültmez: servis `max(şimdi, önceki)` yazar).
+    Kayip,
+    /// Numarası büyük, zamanı geride değil: meşru ilerleme ya da dönüşten sonra yeniden yazılmış;
+    /// `DonusAnalizi` depo düzeyindeki kanıtla ayırır.
+    Ileride,
+}
+
+/// `iyimser`: telefonun bildiği hal PC'den gelmedi, onaylanmış işlemin iyimser sonucudur (revizyonu
+/// `son_rev`'in üstünde; `guncelleme_ms`'i telefon saatiyle): yalnız revizyonu karşılaştırılır, aynı
+/// numara servisin gerçek sonucudur.
+fn soy(o: Iz, iyimser: bool, n: Option<Iz>) -> Soy {
+    let Some((n_rev, n_ms)) = n else { return Soy::Kayip };
+    let (o_rev, o_ms) = o;
+    if n_rev == o_rev {
+        return if iyimser || n_ms == o_ms { Soy::Ayni } else { Soy::Kayip };
     }
-    Ok(Some(yeni))
+    if n_rev < o_rev || (!iyimser && n_ms < o_ms) {
+        return Soy::Kayip;
+    }
+    Soy::Ileride
+}
+
+/// Kaydın PC'deki yeni halinin telefonun bildiği son PC haline göre durumu (`hedef_hal`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct PcDurumu {
+    /// PC telefonun bildiği yazımı yitirmiş (yedekten dönmüş): telefonun dokunmadığı ama PC'de farklı
+    /// alanda telefonun bildiği değer yeniden gider.
+    eksik: bool,
+    /// PC kaydının son yazımı telefonun bildiğinden eski (PC saatiyle): PC'nin hali dönmüş bir haldir,
+    /// dönüşten sonra yazılmamıştır.
+    eskimis: bool,
+}
+
+/// Aynı `depo_id`'nin tam kopyasında PC yedekten dönmüş mü, döndüyse telefonun bildiği hangi yazımlar
+/// kalmış. Temel: telefonun PC temeli (`sunucu_kayitlari`) servisin `son_rev` anındaki tam kopyasıdır
+/// (onaylanmış işlemlerin iyimser sonuçları `son_rev`'in üstünde). Yedekten dönen servis bir `b < son_rev`
+/// anına döner: revizyonu `b`'ye kadar olan yazımlar kalır, sonrakiler gider, dönüşten sonraki yazımlar
+/// `b + 1`'den yeniden numara alır.
+///
+/// Kanıt: kalan yazım (aynı kimlik) `b`'nin alt sınırını (`korunan_ust`), kayıp yazım ve yeniden verilmiş
+/// numara (yeni kopyada `son_rev`'e kadar numarası olup temelde o yazımı olmayan kayıt) üst sınırını verir.
+/// Hiç kayıp kanıtı yoksa dönüş yoktur: her kayıt meşru ilerlemiştir. Kanıt varsa telefonun bildiği yazımı
+/// kalmış sayılan kayıt yalnız `korunan_ust`'e kadar olandır; üstündeki `Ileride` kayıt yitirilmiş sayılır
+/// (kanıtlanamayan kalış, iki yönde de iz bırakan yola, yeniden göndermeye gider: PC'nin değeri PC
+/// geçmişinde kalır, telefonun yitirilen değeri ise başka hiçbir yerde yoktur).
+struct DonusAnalizi {
+    son_rev: i64,
+    donmus: bool,
+    korunan_ust: i64,
+}
+
+impl DonusAnalizi {
+    /// `temeller`: telefonun bildiği haller (bağlı kipte onaylanmışlar uygulanmış); `sunucu`: PC temelinin
+    /// satırları; `yeni`: servisin tam kopyası; `iz_kaybi`: servis aynı depoyla tam dedi ve telefon izini
+    /// (revizyonu `son_rev` olan yazım) yollamıştı, yani o yazım PC'de yok (`kural::telafi`).
+    fn kur(temeller: &BTreeMap<String, Iz>, sunucu: &BTreeMap<String, Iz>, yeni: &BTreeMap<String, Iz>, son_rev: i64, iz_kaybi: bool) -> Self {
+        let mut korunan_ust = 0;
+        let mut kayip_alt = if iz_kaybi { son_rev } else { i64::MAX };
+        for (kayit_id, &o) in temeller {
+            match soy(o, o.0 > son_rev, yeni.get(kayit_id).copied()) {
+                Soy::Ayni => korunan_ust = korunan_ust.max(o.0),
+                Soy::Kayip => kayip_alt = kayip_alt.min(o.0),
+                Soy::Ileride => {}
+            }
+        }
+        for (kayit_id, &(rev, ms)) in sunucu {
+            if rev <= son_rev && yeni.get(kayit_id) == Some(&(rev, ms)) {
+                korunan_ust = korunan_ust.max(rev);
+            }
+        }
+        // `son_rev`'e kadar her yazım temelde vardır: temelin bu kayıt için daha küçük numarası (ya da hiç
+        // kaydı) varsa yeni kopyadaki numara dönüşten sonra yeniden verilmiştir.
+        for (kayit_id, &(rev, _)) in yeni {
+            let bilinen = sunucu.get(kayit_id).or_else(|| temeller.get(kayit_id)).map(|i| i.0);
+            if rev <= son_rev && bilinen.is_none_or(|b| b < rev) {
+                kayip_alt = kayip_alt.min(rev);
+            }
+        }
+        DonusAnalizi { son_rev, donmus: kayip_alt != i64::MAX, korunan_ust }
+    }
+
+    fn durum(&self, o: &AjandaKaydi, n: &AjandaKaydi) -> PcDurumu {
+        let iyimser = o.revizyon > self.son_rev;
+        let eksik = match soy((o.revizyon, o.guncelleme_ms), iyimser, Some((n.revizyon, n.guncelleme_ms))) {
+            Soy::Ayni => false,
+            Soy::Kayip => true,
+            Soy::Ileride => self.donmus && o.revizyon > self.korunan_ust,
+        };
+        PcDurumu { eksik, eskimis: !iyimser && n.guncelleme_ms < o.guncelleme_ms }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Alan alan birleşme
+// ---------------------------------------------------------------------------------------------
+
+/// Kayıt JSON'unun içerik dışı anahtarları (kimlik, revizyon, kaynak izi, zaman damgaları): birleşmeye
+/// girmez. Geri kalan her anahtar (bugünküler ve şema genişleyince gelecekler) içerik alanıdır.
+const ICERIK_DISI: [&str; 6] = ["kayit_id", "revizyon", "elle_alanlar", "kaynak", "olusturma_ms", "guncelleme_ms"];
+
+/// Alanın değeri; "alan yok" (anahtar yok, `null`, boş liste ya da `false`) `None`'dır (Kol C kuralı).
+fn alan<'a>(j: &'a Map<String, Value>, ad: &str) -> Option<&'a Value> {
+    j.get(ad).filter(|v| !matches!(v, Value::Null | Value::Bool(false)) && v.as_array().is_none_or(|a| !a.is_empty()))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Taraf {
+    Telefon,
+    Pc,
+}
+
+/// Bir alanda (ya da tekrarın bir örneğinde) kalacak taraf. `o` telefonun bildiği son PC değeri, `p`
+/// telefonun değeri, `n` PC'nin yeni değeri.
+/// - Telefon değiştirdiyse (`p != o`) telefonun değeri; iki taraf da değiştirdiyse de (önizleme D4'tedir).
+/// - Değiştirmediyse PC'nin değeri; PC telefonun bildiği yazımı yitirmişse (`eksik`) yitirilen değer
+///   yeniden gider, ama temelde bulunmayan alan PC değişikliğidir, geri gönderilmez (yokluk hiçbir zaman
+///   "kaldırıldı" sayılmaz). Silme ya da geri yükleme yalnız PC'nin hali dönmüş haldeyse (`eskimis`)
+///   yeniden gider: dönüşten sonraki mezar taşı PC'nin kararıdır. Var olan kayıt taslağa dönmez: PC'deki
+///   taslak işareti dönmüş haldir, onay yeniden gider.
+fn taraf_sec(ad: &str, o: Option<&Value>, p: Option<&Value>, n: Option<&Value>, pc: PcDurumu) -> Taraf {
+    if p != o {
+        return Taraf::Telefon;
+    }
+    if n == o || !pc.eksik {
+        return Taraf::Pc;
+    }
+    let geri_gider = match ad {
+        "silindi" => pc.eskimis,
+        "taslak" => true,
+        _ => o.is_some(),
+    };
+    if geri_gider { Taraf::Telefon } else { Taraf::Pc }
+}
+
+/// Tekrarın örnekleri tarih tarih birleşir (`kuyruga_islemler` de örnek başına işlem yollar).
+fn ornekleri_birlestir(o: &Map<String, Value>, p: &Map<String, Value>, n: &Map<String, Value>, pc: PcDurumu) -> Value {
+    let tarihli = |j: &Map<String, Value>| -> BTreeMap<String, Value> {
+        j.get("ornekler")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|x| Some((x.get("tarih")?.as_str()?.to_string(), x.clone())))
+            .collect()
+    };
+    let (om, pm, nm) = (tarihli(o), tarihli(p), tarihli(n));
+    let tarihler: BTreeSet<&String> = om.keys().chain(pm.keys()).chain(nm.keys()).collect();
+    let mut l = Vec::new();
+    for t in tarihler {
+        let secilen = match taraf_sec("ornek", om.get(t), pm.get(t), nm.get(t), pc) {
+            Taraf::Telefon => pm.get(t),
+            Taraf::Pc => nm.get(t),
+        };
+        l.extend(secilen.cloned());
+    }
+    Value::Array(l)
+}
+
+/// PC'nin yeni halinin (`n`) gideceği hal: alan alan `taraf_sec`; içerik dışı alanlar telefonun halinden
+/// (`p`; işlemlerin anı onun `guncelleme_ms`'i). Birleşen hal geçerli bir kayıt değilse `None`
+/// (alanlar birbirini tutmuyor, ör. PC tekrarı kaldırdı, telefon örnek işaretledi).
+fn hedef_hal(o: &AjandaKaydi, p: &AjandaKaydi, n: &AjandaKaydi, pc: PcDurumu) -> Option<AjandaKaydi> {
+    let (Value::Object(oj), Value::Object(pj), Value::Object(nj)) = (o.json(), p.json(), n.json()) else { return None };
+    let adlar: BTreeSet<&String> = oj.keys().chain(pj.keys()).chain(nj.keys()).filter(|a| !ICERIK_DISI.contains(&a.as_str())).collect();
+    let mut t = pj.clone();
+    for ad in adlar {
+        if ad == "ornekler" {
+            t.insert(ad.clone(), ornekleri_birlestir(&oj, &pj, &nj, pc));
+        } else if taraf_sec(ad, alan(&oj, ad), alan(&pj, ad), alan(&nj, ad), pc) == Taraf::Pc {
+            match nj.get(ad) {
+                Some(v) => t.insert(ad.clone(), v.clone()),
+                None => t.remove(ad),
+            };
+        }
+    }
+    AjandaKaydi::oku(&Value::Object(t), "").ok()
+}
+
+/// `birlesme_islemleri`'nin sonucu.
+#[derive(Debug, PartialEq)]
+enum Birlesme {
+    /// Kuyruğa girecek işlemler (boş olabilir).
+    Islemler(Vec<(AjandaIslem, i64)>),
+    /// Hiçbir işlem gitmez; telefonun hali düzeltme gövdesiyle ret listesine (`kaydi_ret_listesine`).
+    RetListesine,
+}
+
+/// Bir kaydın yerel halini (`p`) PC'nin yeni kopyasına (`n`) taşıyacak işlemler; `o` telefonun bildiği son
+/// PC hali (eski temel; depo değişse de). İşlemler `n`'den `hedef_hal`'e giden farktır: PC'de zaten olan
+/// değer yeniden gitmez. `temel_revizyon` aynı depoda PC eski temeli taşıyorsa ondan, başka depoda ya da PC
+/// yitirmişse yeni kopyadan.
+/// - İki tarafta da silinmiş: hiçbir işlem.
+/// - Eski temel kaydı bilmiyor (yolda kalmış ekleme): telefonun PC'den farklı her alanı gider, PC'de
+///   silinmiş kayıt diriltilmez.
+/// - PC telefonun bildiği yazımı taşıyor ya da başka depo (`!pc.eksik`): yalnız telefonun eski temelden
+///   farklı alanları gider, telefonun dokunmadığı alanda PC kazanır. Temelde silinmiş kaydı telefon geri
+///   yüklediyse yalnız aynı depoda `geri_yukle`.
+/// - PC yitirmiş (`pc.eksik`, yalnız aynı depo): yitirilen değerler de gider (`taraf_sec`).
+/// - PC'nin silmesi geçerli kalırsa telefonun öteki farkları `geri_yukle`'siz gider: servis `kayit_silinmis`
+///   ile reddeder, telefonun hali düzeltme gövdesiyle ret listesine düşer (sessizce kaybolmaz).
+/// - Birleşen hal geçerli bir kayıt değilse (alanlar birbirini tutmuyor): PC yitirmemişse yalnız telefonun
+///   eski temelden değiştirdikleri gider (servis tutarsız sonucu `tutarsiz_kayit` ile reddeder, telefonun
+///   hali ret listesine düşer); PC yitirmişse hiçbir işlem gitmez, PC'nin hali kalır ve telefonun hali
+///   düzeltme gövdesiyle ret listesine girer (`Birlesme::RetListesine`): yitirilen değer kaybolmaz, PC'nin
+///   dönüşten sonraki silmesi ve eklediği alan da (geri yükleme ya da kaldırma gitmez).
+fn birlesme_islemleri(o: Option<&AjandaKaydi>, p: &AjandaKaydi, n: &AjandaKaydi, pc: PcDurumu, ayni_depo: bool) -> Birlesme {
+    if p.silindi && n.silindi {
+        return Birlesme::Islemler(Vec::new());
+    }
+    let Some(o) = o else { return Birlesme::Islemler(kuyruga_islemler(Some(n), p, false)) };
+    // Aynı depoda PC eski temeli taşıyorsa fark ona göredir; başka depoda ya da PC yitirmişse yeni kopyaya.
+    let temel_rev = if ayni_depo && !pc.eksik { o.revizyon } else { n.revizyon };
+    let mut l = match hedef_hal(o, p, n, pc) {
+        Some(mut t) => {
+            let mut izin = ayni_depo;
+            if t.silindi && n.silindi && !p.silindi {
+                t.silindi = false;
+                izin = false;
+            }
+            kuyruga_islemler(Some(n), &t, izin)
+        }
+        None if pc.eksik => return Birlesme::RetListesine,
+        None => kuyruga_islemler(Some(o), p, ayni_depo),
+    };
+    for (islem, _) in &mut l {
+        if let AjandaIslem::Guncelle { temel_revizyon, .. } = islem {
+            *temel_revizyon = temel_rev;
+        }
+    }
+    Birlesme::Islemler(l)
+}
+
+/// Satırı okunamayan PC temeli (bozuk satır) bilinmiyor sayılır: tek kaydın sorunu geçişi kilitlemez.
+fn sunucu_kaydi_ya_da_yok(d: &Depo, kayit_id: &str) -> Option<AjandaKaydi> {
+    d.sunucu_kaydi(kayit_id).ok().flatten()
+}
+
+/// Okunamayan görünen satırın içerik alanları PC'deki kaydınkilerle aynı mı (yokluk Kol C kuralıyla): öyleyse
+/// satırın bozukluğu içerik dışındadır, PC'nin hali hiçbir şey yitirmeden yerine geçer.
+fn ham_icerik_ayni(json: &str, n: &AjandaKaydi) -> bool {
+    let (Ok(Value::Object(a)), Value::Object(b)) = (serde_json::from_str::<Value>(json), n.json()) else { return false };
+    a.keys().chain(b.keys()).filter(|k| !ICERIK_DISI.contains(&k.as_str())).all(|k| alan(&a, k) == alan(&b, k))
+}
+
+/// Görünen satırın kaydı (`kopya::kayit_json_oku` gibi); okunamazsa `None`.
+pub(super) fn kayit_coz(json: &str) -> Option<AjandaKaydi> {
+    let v: serde_json::Value = serde_json::from_str(json).ok()?;
+    AjandaKaydi::oku(&v, "").ok()
+}
+
+/// Telefonun bir kayıt hali (okunamayan görünen satırın metni ya da birleşemeyen kaydın JSON'u) kaybolmadan
+/// ret listesine düşer: metin olduğu gibi `islem_json`'da (ret listesi okunamayan işlemi `guncelle` sayıp
+/// gösterir), okunabiliyorsa gövdesi düzeltme formunda, neden `tutarsiz_kayit`. Tek sonuç: kayıt PC'de varsa
+/// görünen kopyada PC'nin hali durur ve girdi o kaydın düzeltmesidir (düzeltme aynı kayda uygulanır, Kotlin
+/// `RetListesi.hedef` `MevcutKayit`; PC'de silinmişse yeni kayıt); PC'de yoksa (yalnız okunamayan satır)
+/// kayıt görünen kopyadan çıkar, düzeltme yeni kayıt olarak eklenir.
+fn kaydi_ret_listesine(d: &Depo, o: &Ortam, kayit_id: &str, json: &str, ts_ms: i64) -> Result<(), CekirdekHatasi> {
+    let govde_json = serde_json::from_str::<serde_json::Value>(json).ok().and_then(|v| {
+        let mut n = crate::model::json::Nesne::ac(&v, "").ok()?;
+        let g = crate::model::KayitGovdesi::alanlari_oku(&mut n).ok()?;
+        Some(g.alanlari_yaz(crate::model::json::Yazici::yeni()).bitir().to_string())
+    });
+    d.ret_ekle(&RetSatiri {
+        islem_id: Motor::yeni_kimlik(o, "i_")?,
+        kayit_id: kayit_id.to_string(),
+        islem_json: json.to_string(),
+        neden: KuyrukRetNedeni::TutarsizKayit.ad().to_string(),
+        ts_ms,
+        govde_json,
+        sira: 0,
+    })
 }
 
 /// Yerel kipten bağlı kipe: yerel kipte açılan bağlantının `esitlendi`'si (`kanal.rs`), çağıranın tek
 /// işleminde. Servisin tam kopyası `telafi_kayitlari`'nda, koparma anındaki PC temeli `sunucu_kayitlari`'nda
-/// ve `meta.depo_id`'dedir. Her görünen (yerel) kayıt için fark temeli (`fark_temeli`) ile yerel hal
-/// arasındaki işlemler kuyruğa girer; sonra toplanan kopya sunucu kopyasının yerine geçer, `depo_id` ve
-/// `son_rev` yazılır, kip `bagli` olur ve görünen kopya bağlı kipin tam telafi sonundaki gibi sunucu +
-/// kuyruktan yeniden hesaplanır (yalnız PC'de olanlar eklenir; görünen kayıt silinmez).
+/// ve `meta.depo_id`'dedir. Her görünen (yerel) kayıt için işlemler (`birlesme_islemleri`: servisin kopyasında
+/// yoksa `ekle`; varsa eski temele göre alan alan, aynı depoda `DonusAnalizi` ile) kuyruğa girer; sonra
+/// toplanan kopya sunucu kopyasının yerine geçer, `depo_id` ve `son_rev` yazılır, kip `bagli` olur ve görünen
+/// kopya bağlı kipin tam telafi sonundaki gibi sunucu + kuyruktan yeniden hesaplanır (yalnız PC'de olanlar
+/// eklenir).
 ///
-/// Değişmez: her yerel kayıt ya görünen kopyada kalır (kuyruktaki işlemi iyimser görünür) ya da servis
-/// işlemi reddedince ret listesine düşer. Kuyruğa hiçbir işlemi girmeyen kayıt servisin kopyasında vardır
-/// (temelsiz kayıt hep `ekle` alır), yani görünen kopyadan düşmez. Döner: kuyruğa dökülen kayıtlar.
+/// Değişmez: her canlı yerel kayıt ya görünen kopyada kalır (kuyruktaki işlemi iyimser görünür ya da kayıt
+/// servisin kopyasında vardır) ya da ret listesine düşer (servis işlemi reddetti, satır okunamadı ya da PC
+/// yitirmiş ama birleşen hal geçerli değil: `kaydi_ret_listesine`; tek kaydın sorunu geçişi durdurmaz).
+/// Kuyruğa hiçbir işlemi girmeyen kayıt servisin kopyasındadır (temelsiz canlı kayıt hep `ekle` alır).
+/// Görünen kopyadan yalnız PC'de olmayan mezar taşları ve PC'de olmayan okunamayan satırlar çıkar. Döner:
+/// ret listesine satır eklendi mi.
 pub(crate) fn yereli_kuyruga_dok(
     d: &Depo,
     o: &Ortam,
     b: &IyimserBaglam,
     depo_id: &str,
     son_rev: i64,
-) -> Result<Vec<String>, CekirdekHatasi> {
+) -> Result<bool, CekirdekHatasi> {
     let ayni_depo = d.depo_id()?.as_deref() == Some(depo_id);
+    let analiz = if ayni_depo {
+        let sunucu = izler(&d.kopya_satirlari(KopyaTablosu::Sunucu)?);
+        let yeni = izler(&d.kopya_satirlari(KopyaTablosu::Telafi)?);
+        // Yerel kipte `hello` boş gider: servisin iz kararı yoktur, kanıt yalnız kopyalardandır.
+        Some(DonusAnalizi::kur(&sunucu, &sunucu, &yeni, d.son_rev()?, false))
+    } else {
+        None
+    };
+    let ts_ms = o.simdi_ms();
     let mut dokulecek = Vec::new();
-    for k in d.gorunen_hepsi()? {
-        let temel = fark_temeli(d, ayni_depo, &k.kayit_id)?;
-        let islemler = kuyruga_islemler(temel.as_ref(), &k);
-        if !islemler.is_empty() {
-            dokulecek.push((k.kayit_id, islemler));
+    let mut cikan = Vec::new();
+    let mut ret = false;
+    for (kayit_id, json) in d.gorunen_ham_hepsi()? {
+        let Some(k) = kayit_coz(&json) else {
+            let pc_hali = d.telafi_kaydi(&kayit_id)?;
+            if !pc_hali.as_ref().is_some_and(|n| ham_icerik_ayni(&json, n)) {
+                kaydi_ret_listesine(d, o, &kayit_id, &json, ts_ms)?;
+                ret = true;
+            }
+            // PC'de varsa satır aşağıda PC'nin haliyle yeniden yazılır (`gorunenden_farkli_sunucu_kayitlari`).
+            if pc_hali.is_none() {
+                cikan.push(kayit_id);
+            }
+            continue;
+        };
+        let Some(n) = d.telafi_kaydi(&kayit_id)? else {
+            // PC'de yok (telefonda doğdu ya da PC yitirdi): `ekle`; PC'de olmayan mezar taşı gitmez.
+            if k.silindi {
+                cikan.push(kayit_id);
+            } else {
+                dokulecek.push((kayit_id, kuyruga_islemler(None, &k, false)));
+            }
+            continue;
+        };
+        let temel = sunucu_kaydi_ya_da_yok(d, &kayit_id);
+        let pc = match (&analiz, &temel) {
+            (Some(a), Some(t)) => a.durum(t, &n),
+            _ => PcDurumu::default(),
+        };
+        match birlesme_islemleri(temel.as_ref(), &k, &n, pc, ayni_depo) {
+            Birlesme::Islemler(islemler) if !islemler.is_empty() => dokulecek.push((kayit_id, islemler)),
+            Birlesme::Islemler(_) => {}
+            // Görünen satır aşağıda PC'nin haliyle yeniden yazılır; telefonun hali ret listesinde.
+            Birlesme::RetListesine => {
+                kaydi_ret_listesine(d, o, &kayit_id, &k.json().to_string(), ts_ms)?;
+                ret = true;
+            }
         }
+    }
+    for kayit_id in &cikan {
+        d.gorunen_sil(kayit_id)?;
     }
     d.telafiyi_sunucuya_gecir()?;
     d.depo_id_yaz(depo_id)?;
@@ -380,14 +740,87 @@ pub(crate) fn yereli_kuyruga_dok(
         }
         dokulen.push(kayit_id);
     }
-    // Yerel kipte kuyruk boştu: sahipsiz görünen kayıt yoktur, onaylanmış satır yoktur; silme adımları gerekmez.
+    // Yerel kipte kuyruk boştu: onaylanmış satır yoktur; sahipsiz görünen kayıt yukarıda çıkanlardır.
     for k in d.gorunenden_farkli_sunucu_kayitlari()? {
         d.gorunen_yaz(&k, false)?;
     }
     for kayit_id in &dokulen {
         gorunen_yenile(d, b, kayit_id)?;
     }
-    Ok(dokulen)
+    Ok(ret)
+}
+
+/// Bağlı kipte aynı `depo_id`'nin tam telafisinin sonu (`kanal.rs` `esitlendi`, toplanan kopya sunucu
+/// kopyasının yerine geçmeden önce, aynı işlemde). Servis aynı depoyla tam telafi verdiyse büyük olasılıkla
+/// yedekten dönmüştür (`kural::telafi`: telefon ileride ya da iz tutmuyor; iz yollandıysa revizyonu
+/// `son_rev` olan yazım PC'de yoktur). Kayıt başına telefonun bildiği son onaylı hal (PC temeli +
+/// onaylanmış kuyruk satırları, revizyonu onaylanan revizyon) `DonusAnalizi` ile denetlenir. PC o hali
+/// yitirmişse (`PcDurumu::eksik`) yitirilen değerler alan alan fark olarak yeniden gönderilir
+/// (`birlesme_islemleri`; `YOL-HARITASI.md` 3.3 "Aynı depo_id'de tam telafi"): fark işlemleri kaydın
+/// bekleyen satırlarının önüne girer (bekleyenler aynı `islem_id`, deneme ve anla arkaya taşınır;
+/// onaylanmışlar farkın içindedir; birleşen hal geçerli değilse fark yerine onaylı hal ret listesine).
+/// Yitirmemişse kayda dokunulmaz: bekleyen satırlar taze kopya üstüne yeniden uygulanır (PC'de ilerlemiş
+/// alanlar ezilmez). Saklı `depo_id` yoksa ya da başkaysa hiçbir şey yapmaz (başka depo `welcome`'da yerel
+/// kip yoluna döner).
+pub(crate) fn geri_donenleri_kuyruga_koy(d: &Depo, o: &Ortam, b: &IyimserBaglam, depo_id: &str) -> Result<(), CekirdekHatasi> {
+    if d.depo_id()?.as_deref() != Some(depo_id) {
+        return Ok(());
+    }
+    let son_rev = d.son_rev()?;
+    let iz_kaybi = son_rev > 0 && d.hello_alanlari()?.son_rev_izi.is_some();
+    let sunucu_satirlari = d.kopya_satirlari(KopyaTablosu::Sunucu)?;
+    let sunucu = izler(&sunucu_satirlari);
+    let yeni = izler(&d.kopya_satirlari(KopyaTablosu::Telafi)?);
+    let mut onaylilar: BTreeMap<String, AjandaKaydi> =
+        sunucu_satirlari.iter().filter_map(|s| Some((s.kayit_id.clone(), kayit_coz(&s.json)?))).collect();
+    let mut onaylananlar: BTreeMap<String, Vec<KuyrukSatiri>> = BTreeMap::new();
+    for s in d.kuyruk()?.into_iter().filter(|s| s.bekledigi_rev.is_some()) {
+        onaylananlar.entry(s.kayit_id.clone()).or_default().push(s);
+    }
+    for (kayit_id, satirlar) in onaylananlar {
+        let mut hal = onaylilar.remove(&kayit_id);
+        let mut rev = hal.as_ref().map_or(0, |k| k.revizyon);
+        for s in &satirlar {
+            if let Some(islem) = islem_coz(&s.islem_json) {
+                hal = iyimser_uygula(hal.as_ref(), &islem, s.olusturma_ms, b);
+            }
+            rev = rev.max(s.bekledigi_rev.unwrap_or(0));
+        }
+        if let Some(mut k) = hal {
+            k.revizyon = rev;
+            onaylilar.insert(kayit_id, k);
+        }
+    }
+    let temeller: BTreeMap<String, Iz> = onaylilar.iter().map(|(id, k)| (id.clone(), (k.revizyon, k.guncelleme_ms))).collect();
+    let analiz = DonusAnalizi::kur(&temeller, &sunucu, &yeni, son_rev, iz_kaybi);
+    for (kayit_id, onayli) in &onaylilar {
+        let islemler = match d.telafi_kaydi(kayit_id)? {
+            None => kuyruga_islemler(None, onayli, true),
+            Some(n) => {
+                let pc = analiz.durum(onayli, &n);
+                if !pc.eksik {
+                    continue;
+                }
+                match birlesme_islemleri(Some(onayli), onayli, &n, pc, true) {
+                    Birlesme::Islemler(l) => l,
+                    // Gözlemci ret listesini `tumu` ile yeniden okur (`kanal.rs` `hepsi_degisti`).
+                    Birlesme::RetListesine => {
+                        kaydi_ret_listesine(d, o, kayit_id, &onayli.json().to_string(), o.simdi_ms())?;
+                        Vec::new()
+                    }
+                }
+            }
+        };
+        let satirlar = d.kuyruk_kaydin(kayit_id)?;
+        d.kaydin_kuyrugunu_sil(kayit_id)?;
+        for (islem, ts) in islemler {
+            d.kuyruga_ekle(&Motor::yeni_kimlik(o, "i_")?, kayit_id, &islem.json().to_string(), ts)?;
+        }
+        for s in satirlar.iter().filter(|s| s.bekledigi_rev.is_none()) {
+            d.kuyruga_yeniden_ekle(s)?;
+        }
+    }
+    Ok(())
 }
 
 /// Koparmada servisin kabul ettiği ama `kayit`'i gelmemiş (onaylanmış) satırlar PC'de uygulanmıştır: PC
@@ -416,14 +849,174 @@ fn onaylananlari_temele_kat(d: &Depo, b: &IyimserBaglam, kuyruk: &[KuyrukSatiri]
     Ok(())
 }
 
+/// Bağlı kipten yerel kipe geçişin veri kısmı (koparma ve `depo_id` değişimi), çağıranın tek işleminde:
+/// görünen kopya o anki haliyle yerel gerçek olur (`bekleyen` düşer, metin aynı), onaylanmış satırlar PC
+/// temeline katılır (`onaylananlari_temele_kat`), kuyruk ve süren tam telafinin toplananları atılır, kip
+/// `yerel` olur. Ret listesi, PC temeli (`sunucu_kayitlari`, `depo_id`, `son_rev`), yerel geçmiş, alarm
+/// planı ve eşleşme bilgisi kalır. Döner: koparmanın sayıları (kuyruk atılmadan önce sayılır).
+fn bagli_kipten_cik(d: &Depo, b: &IyimserBaglam) -> Result<KoparmaSonucu, CekirdekHatasi> {
+    let kuyruk = d.kuyruk()?;
+    let gonderilmeyen: Vec<&KuyrukSatiri> = kuyruk.iter().filter(|s| s.bekledigi_rev.is_none()).collect();
+    let mut kayitlar: Vec<&str> = gonderilmeyen.iter().map(|s| s.kayit_id.as_str()).collect();
+    kayitlar.sort_unstable();
+    kayitlar.dedup();
+    let sonuc = KoparmaSonucu {
+        onceki_kip: CalismaKipi::Bagli,
+        gonderilmeyen_kayit: sayi(kayitlar.len() as i64),
+        gonderilmeyen_islem: sayi(gonderilmeyen.len() as i64),
+        yanitsiz_islem: sayi(gonderilmeyen.iter().filter(|s| s.yollandi).count() as i64),
+        ret_listesinde: sayi(d.ret_sayisi()?),
+        baglanma_iptal: false,
+    };
+    onaylananlari_temele_kat(d, b, &kuyruk)?;
+    d.kuyrugu_bosalt()?;
+    d.bekleyenleri_dusur()?;
+    d.telafiyi_sil()?;
+    d.kip_yaz(true)?;
+    Ok(sonuc)
+}
+
+fn neden_adi(n: GecisNedeni) -> &'static str {
+    match n {
+        GecisNedeni::Koparma => "koparma",
+        GecisNedeni::EslesmeKaldirildi => "eslesme_kaldirildi",
+        GecisNedeni::DepoDegisti => "depo_degisti",
+    }
+}
+
+/// `meta.son_gecis`'in JSON'u (`GecisOzeti`; `onceki_kip` ve `baglanma_iptal` yazılmaz: hep `Bagli`, yanlış).
+fn gecis_json(g: &GecisOzeti) -> String {
+    let k = &g.koparma;
+    serde_json::json!({
+        "neden": neden_adi(g.neden),
+        "ts_ms": g.ts_ms,
+        "gonderilmeyen_kayit": k.gonderilmeyen_kayit,
+        "gonderilmeyen_islem": k.gonderilmeyen_islem,
+        "yanitsiz_islem": k.yanitsiz_islem,
+        "ret_listesinde": k.ret_listesinde,
+        "eski_depo_id": g.eski_depo_id,
+        "yeni_depo_id": g.yeni_depo_id,
+    })
+    .to_string()
+}
+
+/// `gecis_json`'un tersi; okunamayan değer yok sayılır (`None`).
+fn gecis_coz(metin: &str) -> Option<GecisOzeti> {
+    let v: serde_json::Value = serde_json::from_str(metin).ok()?;
+    let neden = [GecisNedeni::Koparma, GecisNedeni::EslesmeKaldirildi, GecisNedeni::DepoDegisti]
+        .into_iter()
+        .find(|n| v.get("neden").and_then(|x| x.as_str()) == Some(neden_adi(*n)))?;
+    let sayi_al = |ad: &str| v.get(ad)?.as_i64().and_then(|n| i32::try_from(n).ok());
+    let metin_al = |ad: &str| v.get(ad).and_then(|x| x.as_str()).map(str::to_string);
+    Some(GecisOzeti {
+        neden,
+        ts_ms: v.get("ts_ms")?.as_i64()?,
+        koparma: KoparmaSonucu {
+            onceki_kip: CalismaKipi::Bagli,
+            gonderilmeyen_kayit: sayi_al("gonderilmeyen_kayit")?,
+            gonderilmeyen_islem: sayi_al("gonderilmeyen_islem")?,
+            yanitsiz_islem: sayi_al("yanitsiz_islem")?,
+            ret_listesinde: sayi_al("ret_listesinde")?,
+            baglanma_iptal: false,
+        },
+        eski_depo_id: metin_al("eski_depo_id"),
+        yeni_depo_id: metin_al("yeni_depo_id"),
+    })
+}
+
+/// Geçişi `bagli_kipten_cik` ile yapar ve özetini (`meta.son_gecis`) aynı işlemde yazar.
+fn gecisi_yaz(d: &Depo, b: &IyimserBaglam, neden: GecisNedeni, ts_ms: i64, yeni_depo_id: Option<&str>) -> Result<KoparmaSonucu, CekirdekHatasi> {
+    let eski_depo_id = d.depo_id()?;
+    let koparma = bagli_kipten_cik(d, b)?;
+    let ozet = GecisOzeti { neden, ts_ms, koparma: koparma.clone(), eski_depo_id, yeni_depo_id: yeni_depo_id.map(str::to_string) };
+    d.meta_yaz(anahtar::SON_GECIS, Some(&gecis_json(&ozet)))?;
+    Ok(koparma)
+}
+
 impl Motor {
+    /// Bağlı kipten yerel kipe son geçişin özeti (`meta.son_gecis`); hiç geçiş olmadıysa `None`.
+    pub(crate) fn son_gecis(&self) -> Result<Option<GecisOzeti>, CekirdekHatasi> {
+        Ok(self.depo.meta_oku(anahtar::SON_GECIS)?.as_deref().and_then(gecis_coz))
+    }
+
+    /// Bağlı kipte servis saklı `depo_id`'den farklı bir `depo_id` getirdi (`welcome`; kesin kural: görünen
+    /// kopya başka bir `depo_id`'nin tam telafisiyle değiştirilmez). Tek SQLite işleminde koparmanın veri
+    /// kısmı (`bagli_kipten_cik`) ve özet (`DepoDegisti`); eşleşme, cihaz anahtarı ve bağlantı kalır. Çağıran
+    /// (`kanal.rs`) bu bağlantıyı yerel kipten bağlanma olarak sürdürür: telafi toplanır, `esitlendi`'de
+    /// `yereli_kuyruga_dok`. Bağlantı ondan önce koparsa kip yerel kalır, sonraki bağlantı boş `hello` ile
+    /// baştan dener. Gözlemciye `tumu` ve `baglanti` (kip değişti), açık geçmiş sayfaları için `gecmis`.
+    pub(crate) fn depo_degisti(&mut self, o: &Ortam, e: &mut Etkiler, yeni_depo_id: &str) -> Result<(), CekirdekHatasi> {
+        let cevirici = o.cevirici();
+        let b = self.iyimser_baglam(o, &cevirici)?;
+        let ts_ms = o.simdi_ms();
+        self.depo.yazma(|d| gecisi_yaz(d, &b, GecisNedeni::DepoDegisti, ts_ms, Some(yeni_depo_id)))?;
+        // Önbellekteki sayfalar eski servisin geçmişidir.
+        self.gecmis_onbellegini_at(e);
+        e.degisim.tumu = true;
+        e.degisim.baglanti = true;
+        Ok(())
+    }
+
+    /// Geçmiş önbelleği başka bir kaynağın (PC ya da yerel tablo) geçmişidir: atılır, yanıt bekleyen istekler
+    /// düşer, açık sayfalar için gözlemciye `Degisim.gecmis` (arayüz yeniden ister).
+    fn gecmis_onbellegini_at(&mut self, e: &mut Etkiler) {
+        self.gecmis_istekleri.clear();
+        for kayit_id in std::mem::take(&mut self.gecmis).into_keys() {
+            e.degisim.gecmis.push(kayit_id);
+        }
+    }
+
+    /// Yerel kipten bağlanma bitti (`kanal.rs` `esitlendi`, `yereli_kuyruga_dok` kalıcı olduktan sonra): yerel
+    /// geçmiş önbelleği atılır (açık sayfanın yerel `once_rev`'i PC'ye gitmesin, iki kaynağın satırları
+    /// karışmasın), ret listesine satır düştüyse `Degisim.ret_listesi`.
+    pub(crate) fn yerelden_baglandi(&mut self, e: &mut Etkiler, ret_eklendi: bool) {
+        self.gecmis_onbellegini_at(e);
+        if ret_eklendi {
+            e.degisim.ret_listesi = true;
+        }
+    }
+
+    /// Bağlı kip + eşleşme yok (ya da okunamıyor) çıkışsız bir durumdur: kuyruk hiç gitmez, bağlantı açılamaz,
+    /// yeni QR'a dek her yazma "bekliyor" kalır (D1 öncesinin eşleşme kaldırması kipi `bagli` bırakıyordu; elle
+    /// silinmiş meta da `bagli` sayılır). Açılışta (`Cekirdek::ac`) bağlı kipten yerel kipe veri kaybısız
+    /// geçilir (`bagli_kipten_cik`: görünen kopya o anki haliyle yerel gerçek olur, onaylanmışlar PC temeline
+    /// katılır, kuyruk atılır; ret listesi, PC temeli, alarmlar kalır), okunamayan eşleşme satırı silinir,
+    /// özet `son_gecis`'e `EslesmeKaldirildi` ile yazılır. Bekleyen QR kalır (bağlanma yerel kipten sürer).
+    /// Döner: geçiş yapıldı mı.
+    fn cikissiz_bagli_kipi_onar(&mut self, o: &Ortam) -> Result<bool, CekirdekHatasi> {
+        if self.yerel_mi()? || self.eslesme_oku()?.is_some() {
+            return Ok(false);
+        }
+        let cevirici = o.cevirici();
+        let b = self.iyimser_baglam(o, &cevirici)?;
+        let ts_ms = o.simdi_ms();
+        self.depo.yazma(|d| {
+            gecisi_yaz(d, &b, GecisNedeni::EslesmeKaldirildi, ts_ms, None)?;
+            Ok(d.meta_yaz(anahtar::ESLESME, None)?)
+        })?;
+        Ok(true)
+    }
+
+    /// Açılış onarımı (`Cekirdek::ac`): `cikissiz_bagli_kipi_onar`. Hatası açılışı düşürmez (veri yerinde
+    /// kalır: onarım tek işlemdir, yarım kalmaz; kip bağlı kalır, sonraki açılış yeniden dener): iz
+    /// `meta.onarim_hatasi`'na (`ts_ms`, `mesaj`) yazılır, onarım sonra başarılı olunca (ya da gerekmeyince)
+    /// silinir. İzin kendisi yazılamazsa (depo yazılamıyor) yalnız açılış sürer.
+    pub(crate) fn acilis_onarimi(&mut self, o: &Ortam) {
+        let iz = match self.cikissiz_bagli_kipi_onar(o) {
+            Ok(_) => None,
+            Err(h) => Some(serde_json::json!({ "ts_ms": o.simdi_ms(), "mesaj": h.to_string() }).to_string()),
+        };
+        if iz.is_some() || self.depo.meta_oku(anahtar::ONARIM_HATASI).ok().flatten().is_some() {
+            let _ = self.depo.meta_yaz(anahtar::ONARIM_HATASI, iz.as_deref());
+        }
+    }
+
     /// Koparma (`YOL-HARITASI.md` 3.3 "Koparma"): bağlı kipten yerel kipe veri kaybı olmadan. Tek SQLite
-    /// işleminde: görünen kopya o anki haliyle yerel gerçek olur (`bekleyen` düşer, metin aynı), onaylanmış
-    /// satırlar PC temeline katılır (`onaylananlari_temele_kat`), kuyruk ve süren tam telafinin toplananları
-    /// atılır, eşleşme bilgisi (eşleşme, bekleyen QR, son ret) silinir, kip `yerel` olur. Ret listesi, PC
-    /// temeli (`sunucu_kayitlari`, `depo_id`, `son_rev`), yerel geçmiş ve alarm planı kalır (görünen kayıt
-    /// değişmediği için alarm senkronu çağrılmaz). Sonra açık bağlantı kapatılır, geçmiş önbelleği (PC'nin
-    /// geçmişi) atılır, cihaz anahtarı silinir.
+    /// işleminde `bagli_kipten_cik` (görünen kopya o anki haliyle yerel gerçek olur, kuyruk atılır; ret
+    /// listesi, PC temeli, yerel geçmiş ve alarm planı kalır: görünen kayıt değişmediği için alarm senkronu
+    /// çağrılmaz), eşleşme bilgisi (eşleşme, bekleyen QR, son ret) silinir ve özet (`meta.son_gecis`,
+    /// `GecisNedeni::Koparma`) yazılır. Sonra açık bağlantı kapatılır, geçmiş önbelleği (PC'nin geçmişi)
+    /// atılır, cihaz anahtarı silinir.
     ///
     /// Yerel kipte kayıtlara dokunulmaz: süren bağlanma (eşleşme kayıtlı, servisin kopyası henüz gelmedi) ya
     /// da bekleyen eşleştirme iptal edilir (eşleşme bilgisi ve toplanan kopya silinir, bağlantı kapanır); PC
@@ -431,6 +1024,11 @@ impl Motor {
     /// silinir; çağrı yinelenebilir. Anahtar silinemezse hata döner ama veriler ve etkiler yazılmıştır
     /// (`eslesmeyi_kaldir` gibi); yinelenen çağrı anahtarı yeniden dener.
     pub(crate) fn baglantiyi_kopar(&mut self, o: &Ortam, e: &mut Etkiler) -> Result<KoparmaSonucu, CekirdekHatasi> {
+        self.kopar_nedeniyle(o, e, GecisNedeni::Koparma)
+    }
+
+    /// `baglantiyi_kopar`; bağlı kipte özete `neden` yazılır (`eslesmeyi_kaldir` `EslesmeKaldirildi` verir).
+    pub(crate) fn kopar_nedeniyle(&mut self, o: &Ortam, e: &mut Etkiler, neden: GecisNedeni) -> Result<KoparmaSonucu, CekirdekHatasi> {
         let yerel = self.yerel_mi()?;
         let bagli_eslesme = [anahtar::ESLESME, anahtar::ESLESTIRME_QR, anahtar::ESLESME_REDDI];
         let sonuc = if yerel {
@@ -455,28 +1053,12 @@ impl Motor {
         } else {
             let cevirici = o.cevirici();
             let b = self.iyimser_baglam(o, &cevirici)?;
+            let ts_ms = o.simdi_ms();
             self.depo.yazma(|d| {
-                let kuyruk = d.kuyruk()?;
-                let gonderilmeyen: Vec<&KuyrukSatiri> = kuyruk.iter().filter(|s| s.bekledigi_rev.is_none()).collect();
-                let mut kayitlar: Vec<&str> = gonderilmeyen.iter().map(|s| s.kayit_id.as_str()).collect();
-                kayitlar.sort_unstable();
-                kayitlar.dedup();
-                let sonuc = KoparmaSonucu {
-                    onceki_kip: CalismaKipi::Bagli,
-                    gonderilmeyen_kayit: sayi(kayitlar.len() as i64),
-                    gonderilmeyen_islem: sayi(gonderilmeyen.len() as i64),
-                    yanitsiz_islem: sayi(gonderilmeyen.iter().filter(|s| s.yollandi).count() as i64),
-                    ret_listesinde: sayi(d.ret_sayisi()?),
-                    baglanma_iptal: false,
-                };
-                onaylananlari_temele_kat(d, &b, &kuyruk)?;
-                d.kuyrugu_bosalt()?;
-                d.bekleyenleri_dusur()?;
-                d.telafiyi_sil()?;
+                let sonuc = gecisi_yaz(d, &b, neden, ts_ms, None)?;
                 for a in bagli_eslesme {
                     d.meta_yaz(a, None)?;
                 }
-                d.kip_yaz(true)?;
                 Ok(sonuc)
             })?
         };
@@ -486,9 +1068,7 @@ impl Motor {
         self.gecmis_istekleri.clear();
         if !yerel {
             // Önbellekteki sayfalar PC'nin geçmişidir; yerel kipte geçmiş yerel tablodan yeniden yüklenir.
-            for kayit_id in std::mem::take(&mut self.gecmis).into_keys() {
-                e.degisim.gecmis.push(kayit_id);
-            }
+            self.gecmis_onbellegini_at(e);
             e.degisim.tumu = true;
         }
         if !matches!(self.asama, Asama::Kopuk | Asama::Kapaniyor) {
@@ -546,41 +1126,206 @@ mod testler {
             v["ornekler"] = json!([{"tarih": "2026-11-25", "durum": "iptal"}]);
             v["guncelleme_ms"] = json!(300);
         });
-        let l = kuyruga_islemler(Some(&temel), &k);
-        assert_eq!(
-            turler(&l),
-            vec![
-                r#"{"islem":"geri_yukle","kayit_id":"k_a"}"#,
-                r#"{"degisiklik":{"baslik":"y"},"islem":"guncelle","kayit_id":"k_a","temel_revizyon":7}"#,
-                r#"{"durum":"tamam","islem":"durum","kayit_id":"k_a"}"#,
-                r#"{"durum":"acik","islem":"durum","kayit_id":"k_a","ornek_tarihi":"2026-11-24"}"#,
-                r#"{"durum":"iptal","islem":"durum","kayit_id":"k_a","ornek_tarihi":"2026-11-25"}"#,
-                r#"{"islem":"onayla","kayit_id":"k_a"}"#,
-            ]
-        );
+        let l = kuyruga_islemler(Some(&temel), &k, true);
+        let sonrasi = [
+            r#"{"degisiklik":{"baslik":"y"},"islem":"guncelle","kayit_id":"k_a","temel_revizyon":7}"#,
+            r#"{"durum":"tamam","islem":"durum","kayit_id":"k_a"}"#,
+            r#"{"durum":"acik","islem":"durum","kayit_id":"k_a","ornek_tarihi":"2026-11-24"}"#,
+            r#"{"durum":"iptal","islem":"durum","kayit_id":"k_a","ornek_tarihi":"2026-11-25"}"#,
+            r#"{"islem":"onayla","kayit_id":"k_a"}"#,
+        ];
+        let t = turler(&l);
+        assert_eq!(t[0], r#"{"islem":"geri_yukle","kayit_id":"k_a"}"#);
+        assert_eq!(&t[1..], sonrasi);
         assert!(l.iter().all(|(_, ts)| *ts == 300));
-        assert!(kuyruga_islemler(Some(&k), &k).is_empty(), "fark yoksa işlem yok");
+        assert!(kuyruga_islemler(Some(&k), &k, true).is_empty(), "fark yoksa işlem yok");
+        // İzin yoksa (temel servisin kopyası) PC'nin silmesi geri alınmaz; öteki farklar gider (servis
+        // `kayit_silinmis` ile reddeder, telefonun hali ret listesinde kalır).
+        assert_eq!(turler(&kuyruga_islemler(Some(&temel), &k, false)), sonrasi);
+        // İki tarafta da silinmiş: alanlar farklı olsa da hiçbir işlem.
+        let silinmis = AjandaKaydi { silindi: true, ..k.clone() };
+        assert!(kuyruga_islemler(Some(&temel), &silinmis, true).is_empty());
     }
 
-    /// Telefonda doğan kayıt: aynı kimlikle `ekle` (oluşturma anıyla), sonra durum, örnekler, silme.
+    /// Telefonda doğan kayıt: aynı kimlikle `ekle` (oluşturma anıyla), sonra durum, örnekler. Temelsiz mezar
+    /// taşı hiç gönderilmez.
     #[test]
     fn temelsiz_kayit_ekle_ile_baslar() {
         let k = kayit(|v| {
             v["kaynak"] = json!({"yol": "sesli_not", "tur_kokeni": "insan", "device_id": "yerel"});
             v["durum"] = json!("iptal");
-            v["silindi"] = json!(true);
             v["ornekler"] = json!([{"tarih": "2026-11-24", "durum": "tamam"}]);
         });
-        let l = kuyruga_islemler(None, &k);
+        let l = kuyruga_islemler(None, &k, false);
         let t = turler(&l);
-        assert_eq!(t.len(), 4);
+        assert_eq!(t.len(), 3);
         assert!(t[0].contains(r#""girdi_yolu":"sesli_not""#) && t[0].contains(r#""islem":"ekle""#), "{}", t[0]);
         assert_eq!(l[0].1, 100);
         assert_eq!(&t[1..], [
             r#"{"durum":"iptal","islem":"durum","kayit_id":"k_a"}"#,
             r#"{"durum":"tamam","islem":"durum","kayit_id":"k_a","ornek_tarihi":"2026-11-24"}"#,
-            r#"{"islem":"sil","kayit_id":"k_a"}"#,
         ]);
+        assert!(kuyruga_islemler(None, &AjandaKaydi { silindi: true, ..k }, true).is_empty());
+    }
+
+    fn izler_(l: &[(&str, i64, i64)]) -> BTreeMap<String, Iz> {
+        l.iter().map(|(id, r, ms)| (id.to_string(), (*r, *ms))).collect()
+    }
+
+    /// Yazım kimliği revizyon + PC saatidir: numara büyük ama zaman geride, aynı numara başka zaman, kayıt
+    /// yok ya da numara küçük kayıptır; iyimser (onaylanmış) halde yalnız revizyon sayılır.
+    #[test]
+    fn yazim_kimligi_revizyon_ve_pc_saatidir() {
+        assert_eq!(soy((45, 4500), false, Some((45, 4500))), Soy::Ayni);
+        assert_eq!(soy((45, 4500), false, Some((45, 9000))), Soy::Kayip, "çakışan numara");
+        assert_eq!(soy((45, 4500), false, Some((41, 9000))), Soy::Kayip, "dönüşten sonra küçük numara");
+        assert_eq!(soy((45, 4500), false, None), Soy::Kayip);
+        assert_eq!(soy((45, 4500), false, Some((60, 4000))), Soy::Kayip, "numara büyük, zaman geride");
+        assert_eq!(soy((45, 4500), false, Some((60, 4500))), Soy::Ileride);
+        assert_eq!(soy((46, 100), true, Some((46, 9000))), Soy::Ayni, "iyimser: servisin gerçek sonucu");
+        assert_eq!(soy((46, 100), true, Some((44, 9000))), Soy::Kayip);
+    }
+
+    /// Bulgu 1: telefon 45'e kadar biliyor, servis 40'a döndü. (a) X dönüşten sonra 41 aldı, (b) X 60'a gitti
+    /// (arada başka kayıt 42'yi yeniden aldı), (c) X aynı numarayı (45) başka zamanda aldı: üçü de yitirilmiş.
+    /// 40'ta kalmış, sonra ilerlemiş kayıt (W) yitirilmemiştir. Dönüş kanıtı yoksa hiçbiri.
+    #[test]
+    fn yedekten_donme_kayit_ve_depo_duzeyinde_bulunur() {
+        let o = kayit(|v| {
+            v["revizyon"] = json!(45);
+            v["guncelleme_ms"] = json!(4500);
+        });
+        let n = |rev: i64, ms: i64| AjandaKaydi { revizyon: rev, guncelleme_ms: ms, ..o.clone() };
+        let w = AjandaKaydi { kayit_id: "k_w".into(), revizyon: 30, guncelleme_ms: 3000, ..o.clone() };
+        let temel = izler_(&[("k_a", 45, 4500), ("k_w", 30, 3000), ("k_s", 38, 3800)]);
+        for (x, y, beklenen) in [((41, 9000), None, (true, false)), ((60, 9500), Some(("k_y", 42, 9100)), (true, false)), ((45, 9000), None, (true, false))] {
+            let mut yeni = vec![("k_a", x.0, x.1), ("k_w", 50, 9200), ("k_s", 38, 3800)];
+            yeni.extend(y);
+            let a = DonusAnalizi::kur(&temel, &temel, &izler_(&yeni), 45, false);
+            assert!(a.donmus, "{x:?}");
+            assert_eq!(a.korunan_ust, 38);
+            let d = a.durum(&o, &n(x.0, x.1));
+            assert_eq!((d.eksik, d.eskimis), beklenen, "{x:?}");
+            assert!(!a.durum(&w, &AjandaKaydi { revizyon: 50, guncelleme_ms: 9200, ..w.clone() }).eksik, "W kaldı");
+        }
+        // Dönmemiş servis: kayıt başka yazarca ilerletildi, öteki aynı: hiçbiri yitirilmemiş.
+        let a = DonusAnalizi::kur(&temel, &temel, &izler_(&[("k_a", 60, 9000), ("k_w", 30, 3000), ("k_s", 38, 3800)]), 45, false);
+        assert!(!a.donmus && !a.durum(&o, &n(60, 9000)).eksik);
+        // Dönmüş ve hiç yazılmamış kayıt: PC'nin hali eskimiş (silme/geri yükleme de yeniden gider).
+        let a = DonusAnalizi::kur(&temel, &temel, &izler_(&[("k_a", 33, 3300), ("k_w", 30, 3000), ("k_s", 38, 3800)]), 45, false);
+        assert_eq!(a.durum(&o, &n(33, 3300)), PcDurumu { eksik: true, eskimis: true });
+        // Bağlı kipte servisin iz kararı (`son_rev` yazımı PC'de yok) üst sınırdır: yalnız ilerlemiş X bile.
+        let a = DonusAnalizi::kur(&temel, &temel, &izler_(&[("k_a", 60, 9500), ("k_w", 30, 3000), ("k_s", 38, 3800)]), 45, true);
+        assert!(a.durum(&o, &n(60, 9500)).eksik);
+    }
+
+    /// Alan alan hedef hal: telefonun değiştirdiği alan telefondan; dokunmadığı alanda PC (yitirmemişse);
+    /// yitirmişse bilinen değer geri gider ama temelde olmayan alan (yokluk) geri gitmez; silme yalnız PC'nin
+    /// hali eskimişse geri alınır; örnekler tarih tarih.
+    #[test]
+    fn hedef_hal_alan_alan_birlesir() {
+        let o = kayit(|v| v["ornekler"] = json!([{"tarih": "2026-11-24", "durum": "tamam"}]));
+        let p = kayit(|v| {
+            v["baslik"] = json!("telefon");
+            v["ornekler"] = json!([{"tarih": "2026-11-24", "durum": "tamam"}, {"tarih": "2026-11-25", "durum": "iptal"}]);
+        });
+        let n = kayit(|v| {
+            v["revizyon"] = json!(9);
+            v["aciklama"] = json!("PC'de eklendi");
+            v["hatirlatmalar"] = json!([{"tur": "once", "dk": 30}]);
+            v["ornekler"] = json!([{"tarih": "2026-11-23", "durum": "iptal"}]);
+            v["silindi"] = json!(true);
+        });
+        let ilerlemis = PcDurumu::default();
+        let t = hedef_hal(&o, &p, &n, ilerlemis).unwrap();
+        assert_eq!(t.baslik, "telefon");
+        assert_eq!((t.aciklama.as_deref(), t.hatirlatmalar.len(), t.silindi), (Some("PC'de eklendi"), 1, true));
+        let tarihler: Vec<_> = t.ornekler.iter().map(|x| (x.tarih.as_str(), x.durum)).collect();
+        assert_eq!(tarihler, [("2026-11-23", OrnekDurumu::Iptal), ("2026-11-25", OrnekDurumu::Iptal)], "PC 24'ü açtı, telefon 25'i kapattı");
+
+        // PC yitirmiş: telefonun bildiği hatırlatma boş listeydi (yok): PC'ninki kalır; dolu bilinen değer
+        // (24'ün `tamam`'ı) geri gider; PC'nin açıklaması (temelde yok) kalır; dönüşten sonraki silme kalır.
+        let yitik = PcDurumu { eksik: true, eskimis: false };
+        let o2 = AjandaKaydi { hatirlatmalar: vec![], ..o.clone() };
+        let p2 = AjandaKaydi { hatirlatmalar: vec![], ..o.clone() };
+        let t = hedef_hal(&o2, &p2, &n, yitik).unwrap();
+        assert_eq!((t.aciklama.as_deref(), t.hatirlatmalar.len(), t.silindi), (Some("PC'de eklendi"), 1, true));
+        let tarihler: Vec<_> = t.ornekler.iter().map(|x| x.tarih.as_str()).collect();
+        assert_eq!(tarihler, ["2026-11-23", "2026-11-24"]);
+        // PC'nin hali eskimişse mezar taşı dönmüş haldir: telefonun canlı hali geri gider.
+        assert!(!hedef_hal(&o2, &p2, &n, PcDurumu { eksik: true, eskimis: true }).unwrap().silindi);
+        // Var olan kayıt taslağa dönmez: PC'deki taslak dönmüş haldir, onay geri gider.
+        let taslak = AjandaKaydi { taslak: true, ..n.clone() };
+        assert!(!hedef_hal(&o2, &p2, &taslak, yitik).unwrap().taslak);
+        assert!(hedef_hal(&o2, &p2, &taslak, ilerlemis).unwrap().taslak);
+    }
+
+    /// PC'nin geçerli silmesi kalırken telefonun farkları `geri_yukle`'siz gider (servis reddeder, ret
+    /// listesine düşer); iki tarafta silinmişse hiçbir işlem; PC yitirmemişse yalnız telefonun farkı, temel
+    /// revizyonu yeni kopyadan.
+    #[test]
+    fn birlesme_islemleri_silmeyi_ve_temeli_korur() {
+        let o = kayit(|_| {});
+        let p = kayit(|v| v["baslik"] = json!("telefon"));
+        let n = kayit(|v| {
+            v["revizyon"] = json!(12);
+            v["zaman"] = json!({"kesinlik": "gun", "tarih": "2026-11-24", "saat_dilimi": "Europe/Istanbul"});
+        });
+        assert_eq!(
+            turler(&islemler(birlesme_islemleri(Some(&o), &p, &n, PcDurumu::default(), false))),
+            [r#"{"degisiklik":{"baslik":"telefon"},"islem":"guncelle","kayit_id":"k_a","temel_revizyon":12}"#]
+        );
+        let silik = AjandaKaydi { silindi: true, ..n.clone() };
+        let yitik = PcDurumu { eksik: true, eskimis: false };
+        let l = turler(&islemler(birlesme_islemleri(Some(&o), &o, &silik, yitik, true)));
+        assert_eq!(l, [r#"{"degisiklik":{"zaman":{"kesinlik":"gun","saat_dilimi":"Europe/Istanbul","tarih":"2026-11-23"}},"islem":"guncelle","kayit_id":"k_a","temel_revizyon":12}"#]);
+        assert!(islemler(birlesme_islemleri(Some(&o), &AjandaKaydi { silindi: true, ..p.clone() }, &silik, yitik, true)).is_empty());
+        let l = turler(&islemler(birlesme_islemleri(Some(&o), &o, &silik, PcDurumu { eksik: true, eskimis: true }, true)));
+        assert_eq!(l[0], r#"{"islem":"geri_yukle","kayit_id":"k_a"}"#);
+    }
+
+    fn islemler(b: Birlesme) -> Vec<(AjandaIslem, i64)> {
+        match b {
+            Birlesme::Islemler(l) => l,
+            Birlesme::RetListesine => panic!("ret listesi beklenmiyordu"),
+        }
+    }
+
+    /// Birleşen hal geçerli bir kayıt değil. PC yitirmişse hiçbir işlem gitmez, telefonun hali ret listesine:
+    /// yitirilen zamanı geri göndermek PC'nin dönüşten sonra eklediği tekrarı kaldırmayı ya da kaydı bozmayı
+    /// gerektirirdi (eski fark `n → p` tekrarı kaldırır, silmeyi geri alırdı). PC yitirmemişse yalnız
+    /// telefonun değiştirdiği gider (servis karar verir).
+    #[test]
+    fn birlesemeyen_hal_pc_yitirmisse_ret_listesine_gider() {
+        let o = kayit(|v| {
+            v["zaman"] = json!({"kesinlik": "belirsiz", "ifade": "bir ara"});
+            v.as_object_mut().unwrap().remove("tekrar");
+        });
+        let n = kayit(|v| {
+            v["revizyon"] = json!(12);
+            v["aciklama"] = json!("PC");
+        });
+        let yitik = PcDurumu { eksik: true, eskimis: false };
+        assert!(hedef_hal(&o, &o, &n, yitik).is_none(), "belirsiz zaman + PC'nin tekrarı");
+        assert_eq!(birlesme_islemleri(Some(&o), &o, &n, yitik, true), Birlesme::RetListesine);
+        let silik = AjandaKaydi { silindi: true, guncelleme_ms: 900, ..n.clone() };
+        assert_eq!(birlesme_islemleri(Some(&o), &o, &silik, yitik, true), Birlesme::RetListesine, "mezar taşı diriltilmez");
+        assert!(islemler(birlesme_islemleri(Some(&o), &o, &n, PcDurumu::default(), true)).is_empty(), "PC yitirmemiş: PC'nin hali");
+
+        // PC yitirmemiş: telefon tekrarı kaldırdı, PC örnek işaretledi; birleşen hal geçersiz, telefonun farkı gider.
+        let o = kayit(|_| {});
+        let p = kayit(|v| {
+            v.as_object_mut().unwrap().remove("tekrar");
+        });
+        let n = kayit(|v| {
+            v["revizyon"] = json!(12);
+            v["ornekler"] = json!([{"tarih": "2026-11-24", "durum": "iptal"}]);
+        });
+        assert!(hedef_hal(&o, &p, &n, PcDurumu::default()).is_none());
+        assert_eq!(
+            turler(&islemler(birlesme_islemleri(Some(&o), &p, &n, PcDurumu::default(), true))),
+            [r#"{"degisiklik":{"tekrar":null},"islem":"guncelle","kayit_id":"k_a","temel_revizyon":7}"#]
+        );
     }
 
     /// Geçmiş satırı servisin `fark`'ıyla: yalnız değişen izlenen alanlar; `ORNEK_ADET` atmasında iki tam liste.

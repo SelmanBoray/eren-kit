@@ -19,6 +19,8 @@ import type {
   IsNo,
   JetonKapsami,
   KonusmaFabrikasi,
+  MedyaIcerigi,
+  MedyaIcerigiDurumu,
   MesajKullanimi,
   NesilKaydi,
   SohbetErenDurumuTipi,
@@ -70,6 +72,16 @@ const AKTIF_IS_ADEDI = 50;
 const SON_IS_ADEDI = 10;
 /** `init` ilk stdin satırından önce gelmez `[eren-surec §1]`: boşta bekleyen süreç bu paydan sonra hazır sayılır. */
 const HAZIR_PAYI_MS = 10000;
+/**
+ * Medya dalgası. `Ayar.medya` yoksa (eski test sahteleri) görsel bütçesi: `MedyaServisSinirlari.gorselNesilSiniri`
+ * önerisiyle aynı.
+ */
+const VARSAYILAN_GORSEL_NESIL_SINIRI = 60;
+/**
+ * Medya dalgası. Kuyruk başı `bekliyor` iken güvenlik yoklaması: asıl tetik `medya_durumu`'dur; kaçırılan bir
+ * olay (ya da süresi dolan işleme) satırı sonsuza dek bekletmesin.
+ */
+const MEDYA_YOKLAMA_MS = 5000;
 
 const BITISLER: Readonly<Record<TurSonucuSinifi, TurBitisi>> = { tamam: "tamam", kesildi: "kesildi", hata: "hata" };
 
@@ -170,15 +182,43 @@ const sonBoslukSonu = (metin: string, bas: number): number => {
 const damgali = (metin: string, an: AjandaYerelAn | null): string =>
   an === null ? metin : `${mesajAniDamgasi(an)}\n${metin}`;
 
-/** İnsan kökenli satırın tek kod noktası. Girdisi yalnız `insanMesajiAl`'ın yazdığı kuyruk satırı. */
-const insanSatiriKur = (satir: ErenKuyrukSatiri, an: AjandaYerelAn | null): string => {
+/** stream-json `message.content` bloğu (Messages API biçimi). */
+type IcerikBlogu =
+  | { type: "text"; text: string }
+  | { type: "image"; source: { type: "base64"; media_type: "image/jpeg"; data: string } };
+
+/**
+ * Medya dalgası: ekli satırın blokları stream-json dizisine. Damga ilk metin bloğunun başına (`damgali`
+ * kuralı); ilk blok sözleşme gereği metindir, değilse damga ayrı bir metin bloğu olarak öne girer.
+ */
+const medyaBloklari = (icerik: MedyaIcerigi, an: AjandaYerelAn | null): IcerikBlogu[] => {
+  const bloklar: IcerikBlogu[] = icerik.map((b) =>
+    b.tur === "metin"
+      ? { type: "text", text: b.metin }
+      : { type: "image", source: { type: "base64", media_type: b.mime, data: b.base64 } },
+  );
+  if (an === null) return bloklar;
+  const ilk = bloklar[0];
+  if (ilk !== undefined && ilk.type === "text") {
+    bloklar[0] = { type: "text", text: damgali(ilk.text, an) };
+    return bloklar;
+  }
+  return [{ type: "text", text: mesajAniDamgasi(an) }, ...bloklar];
+};
+
+/**
+ * İnsan kökenli satırın tek kod noktası. Girdisi yalnız `insanMesajiAl`'ın yazdığı kuyruk satırı. Medya
+ * dalgası: `icerik` (yalnız `MedyaYoneticisi.icerik`'in `hazir` cevabı) verilirse `content` o satırın blok
+ * dizisidir; ek içeriği ayrı bir insan satırı olmaz. Verilmezse satır bayt bayt medya öncesi biçimdedir.
+ */
+const insanSatiriKur = (satir: ErenKuyrukSatiri, an: AjandaYerelAn | null, icerik?: MedyaIcerigi): string => {
   if (satir.kaynak !== "insan") throw new Error("konusma: kuyruk satırı insan kaynaklı değil");
   return JSON.stringify({
     type: "user",
     parent_tool_use_id: null,
     client_composed: true,
     origin: { kind: "human" },
-    message: { role: "user", content: damgali(satir.metin, an) },
+    message: { role: "user", content: icerik === undefined ? damgali(satir.metin, an) : medyaBloklari(icerik, an) },
   });
 };
 
@@ -237,8 +277,11 @@ export const konusmaKur: KonusmaFabrikasi = ({
   gunluk,
   takvim,
   ajandaKopru,
+  medya,
 }) => {
   const sureler = ayar.sureler;
+  /** Medya dalgası: nesil başına modele verilen görsel üst sınırı (aşacak satırdan önce devir). */
+  const gorselSiniri = ayar.medya?.sinirlar.gorselNesilSiniri ?? VARSAYILAN_GORSEL_NESIL_SINIRI;
   const computerUse = ayar.computerUse ?? null;
   const masaustu = computerUse !== null;
   /** PC tam yetki anahtarı (dilim 3b): `masaustu` gibi servis ömrü boyunca sabit, istemde söylenir. */
@@ -314,6 +357,13 @@ export const konusmaKur: KonusmaFabrikasi = ({
   let sayfaBekliyor = false;
   /** Her yeni sayfada artar: sayfadan önce başlamış bir açılış kendi sürecini kapatır. */
   let sayfaNo = 0;
+  /** Medya dalgası: kuyruk başı `bekliyor` iken kurulan tek atımlık güvenlik yoklaması. */
+  let medyaYoklamaZamani: IptalEt | null = null;
+  /**
+   * Medya dalgası: görsel bütçesi yüzünden devri başlatılan nesil. Devir başarısız olur da aynı nesil sürerse
+   * satır bütçeyi aşarak yine gider (kullanıcı mesajı düşmez, devir döngüye girmez).
+   */
+  let gorselDevriNesli: number | null = null;
 
   const hataYaz = (olay: string, e: unknown): void => {
     // İleti yazılmaz: içinde güvenilmez metin olabilir.
@@ -724,7 +774,15 @@ export const konusmaKur: KonusmaFabrikasi = ({
       }
       await dosya.atomikYaz(mcpYolu, erenMcpMetni(ayar.nodeExe, ayar.kopruBetigi, jeton, computerUse, ajandaJetonu));
       // Ajanda dalgası: damga (`damgali`) yalnız `takvim` varken; istem damgadan yalnız o zaman söz eder.
-      const istem = sistemIstemi(await ayar.kimlikEki(), masaustu, tamYetki, ayar.asistanAdi, takvim !== undefined);
+      // Medya dalgası: ekler hakkındaki cümle yalnız `medya` verildiyse (yokken istem bayt bayt medya öncesi).
+      const istem = sistemIstemi(
+        await ayar.kimlikEki(),
+        masaustu,
+        tamYetki,
+        ayar.asistanAdi,
+        takvim !== undefined,
+        medya !== undefined,
+      );
       s = await surec.boruluBaslat({
         exe: ayar.claudeExe,
         argv: argvKur(mcpYolu, session_id, kip, istem),
@@ -832,6 +890,62 @@ export const konusmaKur: KonusmaFabrikasi = ({
     return true;
   };
 
+  // ---- medya dalgası: kuyruk başının içeriği ve görsel bütçesi ----
+
+  const medyaYoklamaIptal = (): void => {
+    if (medyaYoklamaZamani === null) return;
+    medyaYoklamaZamani();
+    medyaYoklamaZamani = null;
+  };
+
+  const medyaYoklamaKur = (): void => {
+    if (medyaYoklamaZamani !== null || kapandi) return;
+    medyaYoklamaZamani = zamanlayici.sonra(MEDYA_YOKLAMA_MS, () => {
+      medyaYoklamaZamani = null;
+      guvenli("pompa", pompala);
+    });
+  };
+
+  /**
+   * Kuyruk başındaki satırın medya içeriği. Medya yoksa ya da satır insan kaynaklı değilse `yok` (bugünkü
+   * düz satır). Yönetici atmaz; atarsa satır düz metniyle gider: kullanıcı mesajı düşmez, kuyruk tıkanmaz.
+   */
+  const kuyrukBasiIcerigi = (bas: ErenKuyrukSatiri): MedyaIcerigiDurumu => {
+    if (medya === undefined || bas.kaynak !== "insan") return { durum: "yok" };
+    try {
+      return medya.icerik({ kuyruk_id: bas.id, kullanici_metni: bas.metin });
+    } catch (e) {
+      hataYaz("medya_icerigi_okunamadi", e);
+      return { durum: "yok" };
+    }
+  };
+
+  /**
+   * Görselli satır bu neslin bütçesini aşacaksa önce devir (mevcut düzenek, ikinci tetik): `--resume` geçmişin
+   * bütün görsellerini her istekte yeniden yollar. Nesilde henüz görsel yoksa (tek satır sınırdan büyük olsa
+   * da) devir boşunadır; bu nesil için devir zaten denendiyse (başarısız, nesil sürdü) satır yine gider. Devir
+   * koşulları `turSiniri`'ninkiyle aynı; tutmazsa satır bekletilmez.
+   */
+  const gorselDevriGerekli = (c: Calisan, adet: number): boolean => {
+    if (medya === undefined || adet <= 0 || gorselDevriNesli === c.nesil) return false;
+    let onceki: number;
+    try {
+      onceki = medya.nesilGorselSayisi(c.nesil);
+    } catch (e) {
+      hataYaz("gorsel_sayisi_okunamadi", e);
+      return false;
+    }
+    if (onceki <= 0 || onceki + adet <= gorselSiniri) return false;
+    return c === etkin && !reddedildi && kilitSerbest() && kapi.devirSerbestMi();
+  };
+
+  /** Ekli satır stdin'e yazıldı: neslin görsel sayacı ve satırın önbelleği. Hatası turu bozmaz. */
+  const gorselleriSay = (nesil: number, kuyruk_id: number, adet: number): void => {
+    if (medya === undefined) return;
+    if (adet > 0) guvenli("gorsel_sayisi_yazilamadi", () => medya.nesilGorselEkle(nesil, adet));
+    guvenli("medya_icerigi_birakilamadi", () => medya.icerikBirak(kuyruk_id));
+  };
+
   const pompala = (): void => {
     // Uyutma istendi: sıradaki kuyruk satırı açılmaz, süreç boştaysa kapanır.
     if (uyutmaIstegi !== null) {
@@ -874,11 +988,25 @@ export const konusmaKur: KonusmaFabrikasi = ({
           insanMetinleri.clear();
           return;
         }
+        // Medya dalgası: ekli satırın içeriği hazır değilse tur açılmaz; sohbetin arkasındaki satırlar da
+        // bekler (kuyruk başı bu satırdır), öteki sohbetler kendi örneklerindedir.
+        const ek = kuyrukBasiIcerigi(bas);
+        if (ek.durum === "bekliyor") {
+          medyaYoklamaKur();
+          return;
+        }
+        medyaYoklamaIptal();
+        if (ek.durum === "hazir" && gorselDevriGerekli(c, ek.gorsel_adet)) {
+          gorselDevriNesli = c.nesil;
+          gunluk.bilgi("konusma", "gorsel_butcesi_devri", { sohbet_id, nesil: c.nesil, gorsel: ek.gorsel_adet });
+          devirBaslat(c);
+          return;
+        }
         // İletim anı değil varış anı: satır meşgul ya da uyuyan oturumda beklemiş olabilir.
         const an = satirAni(bas);
         const msgId = kuyrukMesajlari.get(bas.id) ?? null;
         // Kaynak kuyruk satırından gelir; `insanSatiriKur` insan dışı satırda atar, tur açılmaz.
-        yazildi = turuYaz(c, insanSatiriKur(bas, an), {
+        yazildi = turuYaz(c, insanSatiriKur(bas, an, ek.durum === "hazir" ? ek.icerik : undefined), {
           kaynak: bas.kaynak,
           gorunur: true,
           rol: "normal",
@@ -896,6 +1024,7 @@ export const konusmaKur: KonusmaFabrikasi = ({
                   },
                 },
         });
+        if (yazildi && ek.durum === "hazir") gorselleriSay(c.nesil, bas.id, ek.gorsel_adet);
       }
     }
     if (!yazildi) boruKirildi(c);
@@ -1090,6 +1219,17 @@ export const konusmaKur: KonusmaFabrikasi = ({
    * Soru metni, rapor gövdesi, plan metni bu çağrıda hiç okunmaz: yalnız kimlik, başlık, durum. Dilim 2:
    * yalnız bu sohbetin işleri, planları, soruları ve son konuşması.
    */
+  /** Ekli konuşma satırının PC dizinleri; medya yoksa ya da okunamazsa boş (önek yalnız sayıyla kalır). */
+  const ekDizinleri = (ekler: readonly { medya_id: string }[]): readonly string[] => {
+    if (medya === undefined) return [];
+    try {
+      return medya.ekDizinleri(sohbet, ekler.map((e) => e.medya_id));
+    } catch (e) {
+      hataYaz("ek_dizinleri_okunamadi", e);
+      return [];
+    }
+  };
+
   const devirNotu = (ozet: string | null): string => {
     const isler = new Map<IsNo, DevirIsi>();
     const notaGirer = mezarSonrasiMi();
@@ -1106,9 +1246,11 @@ export const konusmaKur: KonusmaFabrikasi = ({
       sorular: depo.bekleyenSorular(sohbet).map((s) => ({ soru_id: s.soru_id, is_id: s.is_id, durum: s.durum })),
       // Kısayol satırı ana oturuma ilk gittiği önekle (aynı kurucu) görünür; yeni nesil hangi uygulamadan
       // söz edildiğini kaybetmez. Kısayol olmayan satır aynen.
-      konusma: depo.sonKonusma(KONUSMA_ADEDI, sohbet).map(({ kisayol, ...k }) =>
-        kisayol === undefined ? k : { ...k, metin: erenMetniKur({ input: "kisayol", text: k.metin, baglam: kisayol.baglam }) },
-      ),
+      konusma: depo.sonKonusma(KONUSMA_ADEDI, sohbet).map(({ kisayol, ...k }) => {
+        const satir = kisayol === undefined ? k : { ...k, metin: erenMetniKur({ input: "kisayol", text: k.metin, baglam: kisayol.baglam }) };
+        // Medya dalgası: ekli satır `[ek: ...]` önekiyle (dizinler yöneticiden); görsel yeniden gitmez.
+        return satir.ekler === undefined ? satir : { ...satir, ek_dizinleri: ekDizinleri(satir.ekler) };
+      }),
     });
   };
 
@@ -1910,6 +2052,14 @@ export const konusmaKur: KonusmaFabrikasi = ({
       const o = sohbetler[sohbet_id];
       if (o !== undefined) sentetikEkle(uzlastirmaMetni(o.sahiplenilen, o.biten));
     }),
+    // Medya dalgası: kendi sohbetinde bir ekin durumu değişti ya da kuyruk satırının içeriği hazırlandı.
+    ...(medya === undefined
+      ? []
+      : [
+          veriyolu.dinle("medya_durumu", (o) => {
+            if (benim(o) && !kapandi) guvenli("pompa", pompala);
+          }),
+        ]),
   ];
   let dinliyor = true;
   const dinleyicileriBirak = (): void => {
@@ -2010,6 +2160,12 @@ export const konusmaKur: KonusmaFabrikasi = ({
       // Savunma: yanlış sohbete insan satırı yazılmaz; silinmiş sohbet mesaj almaz. Hiçbir şey yazılmadan atar.
       if (mesaj.sohbet_id !== sohbet_id) throw new Error("konusma: mesaj bu sohbetin değil");
       if (sonlandirildi) throw new Error("konusma: sohbet sonlandırıldı");
+      // Medya dalgası (savunma; doğru kod gateway'in ön denetimindedir): medya kapalıyken ya da yazı dışı
+      // girdiyle ekli mesaj kabul edilmez, hiçbir şey yazılmaz.
+      const ekler = mesaj.ekler;
+      if (ekler !== undefined && (medya === undefined || mesaj.input !== "yazi")) {
+        throw new Error("konusma: ekli mesaj kabul edilemez");
+      }
       const ms = saat.simdiMs();
       // Ajanda dalgası: varış anı kullanıcının ŞU ANKİ dilimiyle bir kez, işlemden önce (takvim atarsa ek yok).
       const an = yerelAnHesapla(ms);
@@ -2021,11 +2177,22 @@ export const konusmaKur: KonusmaFabrikasi = ({
           input: mesaj.input,
           text: mesaj.text,
           ...(mesaj.baglam !== undefined && { baglam: mesaj.baglam }),
+          ...(ekler !== undefined && { ekler }),
         });
         // Olay öneksiz (telefonun gördüğü), kuyruk satırı ana oturuma gidecek metin (kısayolda önekli).
         const id = depo.kuyrugaEkle("insan", erenMetniKur(mesaj), ms, sohbet);
         // Ek metin taşımaz (an + `client_msg_id`); damga kuyruk `metin`'ine ve `user_echo`'ya girmez.
         kuyrukEkiYaz(id, an, mesaj.client_msg_id);
+        // Medya dalgası: bağlama aynı işlemde; atarsa işlem geri alınır, bu yöntem atar (hiçbir şey yazılmaz).
+        if (ekler !== undefined && medya !== undefined) {
+          medya.ekleriBagla({
+            device_id: mesaj.device_id,
+            sohbet,
+            ekler,
+            kuyruk_id: id,
+            client_msg_id: mesaj.client_msg_id,
+          });
+        }
         depo.sohbetEtkinlikYaz(sohbet, ms);
         return { seq: olay.seq, kuyrukId: id };
       });
@@ -2117,6 +2284,7 @@ export const konusmaKur: KonusmaFabrikasi = ({
       }
       dinleyicileriBirak();
       yenidenIptal();
+      medyaYoklamaIptal();
       const bekleyenSayfa = sayfaSuruyor ? sayfaSozu : null;
       const uyutmalar = [uyutmaIstegi, uyutulan?.istek ?? null];
       uyutmaIstegi = null;
@@ -2143,6 +2311,7 @@ export const konusmaKur: KonusmaFabrikasi = ({
       }
       dinleyicileriBirak();
       yenidenIptal();
+      medyaYoklamaIptal();
       const uyutmalar = [uyutmaIstegi, uyutulan?.istek ?? null];
       uyutmaIstegi = null;
       const d = devir;

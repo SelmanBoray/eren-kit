@@ -96,7 +96,7 @@ describe("depo: PC anahtarları (ek göç 7)", () => {
     h.exec("UPDATE sema_ek SET deger = 6 WHERE anahtar = 'ek_surum'");
     h.close();
     const b = kur(yol);
-    assert.deepEqual(b.semaBilgisi(), { user_version: 1, ek_surum: 7 });
+    assert.deepEqual(b.semaBilgisi(), { user_version: 1, ek_surum: 8 });
     assert.equal(b.ajandaPcAnahtariGecerliMi(ozet("a".repeat(43))), true);
   });
 });

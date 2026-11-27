@@ -3,16 +3,19 @@
 // kendi dosyalarındadır; burada yalnız yerleştirilir.
 import { memo, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { AccessibilityInfo, ActivityIndicator, Animated, Easing, Pressable, Text, View } from "react-native";
+import { AccessibilityInfo, ActivityIndicator, Animated, Easing, Image, Modal, Pressable, Text, View } from "react-native";
 import type { ViewStyle } from "react-native";
 import type {
   BekleyenDurumu,
   DevirNotu,
+  EkBilgisi,
+  EkGorunumu,
   GidenHatasi,
   GorunumOgesi,
   IsKarti,
   IsMesaji,
   KesilenTur,
+  MedyaId,
   Sohbet,
   SistemNotu as SistemOgesi,
   TuketimRaporu,
@@ -20,6 +23,20 @@ import type {
 import type { ErenCihaz } from "../cihaz/erenDevice.ts";
 import { ASISTAN_ADI } from "../platform/asistanAdi.ts";
 import { Dugme, Duz, Serit } from "./Bilesenler.tsx";
+import { ekGorunumleriEsit, ekIlerlemeleri, ogeEkleri } from "./ekDurumu.ts";
+import { Simge } from "./Ikonlar.tsx";
+import {
+  BEKLEYEN_KALDIR_ETIKETI,
+  BEKLEYEN_KALDIR_METNI,
+  EK_AC_IPUCU,
+  ONIZLEME_KAPAT_ETIKETI,
+  VIDEO_PCDE_METNI,
+  ekBalonEtiketi,
+  ekYerelYokMetni,
+  gonderilemediBasligi,
+  mesajIlerlemeMetni,
+  sureMetni,
+} from "./medyaMetni.ts";
 import { Markdown } from "./Markdown.tsx";
 import { PlanKartiEkrani } from "./PlanKartiEkrani.tsx";
 import { RaporKartiEkrani } from "./RaporKartiEkrani.tsx";
@@ -74,25 +91,246 @@ const BEKLEYEN_DURUMU: Record<BekleyenDurumu, { metin: string; renk: RenkAdi }> 
   teslim_edildi: { metin: "Teslim edildi", renk: "metinSonuk" },
 };
 
-/** Kullanıcının balonu. `durum` yalnız olayı henüz gelmemiş mesajda verilir. */
-export const KullaniciBalonu = memo(function KullaniciBalonu(p: {
+type KullaniciBalonuProps = {
   metin: string;
   durum?: BekleyenDurumu;
   /** Girdi yolu kısayol mu (`input === "kisayol"`). Çip bağlam olmadan da çizilir. */
   kisayol?: boolean;
   baglam?: { paket: string; ad: string };
-}): ReactNode {
+  /** Medya: mesajın ekleri, sırasıyla; görsel ve ilerleme `gorunumler`'den. */
+  ekler?: readonly EkBilgisi[];
+  gorunumler?: ReadonlyMap<MedyaId, EkGorunumu>;
+  /** Medya: verilirse durum satırının yanında "Kaldır" (yalnız `kuyrukta` ekli bekleyen). */
+  onKaldir?: () => void;
+};
+
+/**
+ * Kullanıcının balonu. `durum` yalnız olayı henüz gelmemiş mesajda verilir. Ekli mesajda ekler metnin
+ * üstünde ızgarada; metin boşsa metin balonu çizilmez. Altta tek durum satırı: bekleyen durumu ve
+ * eklerin yükleme/işleme metni (`mesajIlerlemeMetni`).
+ */
+export const KullaniciBalonu = memo(function KullaniciBalonu(p: KullaniciBalonuProps): ReactNode {
   const d = p.durum !== undefined ? BEKLEYEN_DURUMU[p.durum] : null;
+  const ekler = p.ekler ?? BOS_EKLER;
+  const ekli = ekler.length > 0;
+  const ilerlemeler = ekli ? ekIlerlemeleri(ekler, p.gorunumler ?? BOS_GORUNUM) : [];
+  const ilerleme = ekli ? mesajIlerlemeMetni(ilerlemeler) : null;
+  const ilerlemeHatasi = ilerlemeler.some((i) => i?.durum === "reddedildi" || i?.durum === "yerel_yok");
+  // Ekli bekleyen `kuyrukta` iken asıl bilgi yüklemedir ("Sırada", "%42 yüklendi"); "Bağlantı bekliyor"
+  // yerine o yazılır. Yollandıktan sonra ikisi birlikte ("Gönderiliyor · PC'de işleniyor").
+  const durumMetni = d !== null && !(p.durum === "kuyrukta" && ilerleme !== null) ? d.metin : null;
+  const satir = [durumMetni, ilerleme].filter((x): x is string => x !== null).join(" · ");
+  const satirRengi: RenkAdi = ilerlemeHatasi ? "hata" : durumMetni !== null && d !== null ? d.renk : "metinSonuk";
+  const metinVar = !ekli || p.metin.trim() !== "";
   return (
     <View style={kullaniciSutun}>
       {p.kisayol === true && <KisayolCipi ad={p.baglam?.ad} />}
-      <View style={kullaniciBalonStili}>
-        <Duz metin={p.metin} />
-      </View>
-      {d !== null && <Text style={[yazi.mini, { color: renk[d.renk] }]}>{d.metin}</Text>}
+      {ekli && <EkIzgarasi ekler={ekler} gorunumler={p.gorunumler ?? BOS_GORUNUM} />}
+      {metinVar && (
+        <View style={kullaniciBalonStili}>
+          <Duz metin={p.metin} />
+        </View>
+      )}
+      {(satir !== "" || p.onKaldir !== undefined) && (
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: bosluk[1] }}>
+          {satir !== "" && <Text style={[yazi.mini, { color: renk[satirRengi], flexShrink: 1 }]}>{satir}</Text>}
+          {p.onKaldir !== undefined && (
+            <Dugme
+              tur="metin"
+              yazi={BEKLEYEN_KALDIR_METNI}
+              accessibilityLabel={BEKLEYEN_KALDIR_ETIKETI}
+              basinca={p.onKaldir}
+            />
+          )}
+        </View>
+      )}
     </View>
   );
-});
+}, (a, b) =>
+  a.metin === b.metin &&
+  a.durum === b.durum &&
+  a.kisayol === b.kisayol &&
+  a.baglam === b.baglam &&
+  a.ekler === b.ekler &&
+  a.onKaldir === b.onKaldir &&
+  ekGorunumleriEsit(a.ekler, a.gorunumler, b.gorunumler));
+
+const BOS_EKLER: readonly EkBilgisi[] = [];
+const BOS_GORUNUM: ReadonlyMap<MedyaId, EkGorunumu> = new Map();
+
+// ---------------------------------------------------------------- Ekler (Medya, U5b)
+
+// Izgara genişliği kullanıcı balonunun en dar halinden (360 dp ekranda %82 ≈ 268) küçük kalır.
+const IZGARA_EN = 220;
+const IZGARA_ARA = bosluk[1];
+const KARE = (IZGARA_EN - IZGARA_ARA) / 2;
+const TEK_EN_AZ = 120;
+const TEK_EN_COK = 280;
+
+/** Tek ekin yüksekliği: beyan edilen en/boy oranıyla, sınırlar içinde; bilinmiyorsa 4:3. */
+function tekYukseklik(e: EkBilgisi): number {
+  const en = e.genislik ?? 0;
+  const boy = e.yukseklik ?? 0;
+  if (en < 1 || boy < 1) return Math.round((IZGARA_EN * 3) / 4);
+  return Math.round(Math.min(TEK_EN_COK, Math.max(TEK_EN_AZ, (IZGARA_EN * boy) / en)));
+}
+
+/** Balonun ek ızgarası: tek ek tam genişlikte, birden çoksa iki sütunlu kareler. */
+function EkIzgarasi(p: { ekler: readonly EkBilgisi[]; gorunumler: ReadonlyMap<MedyaId, EkGorunumu> }): ReactNode {
+  const [acik, setAcik] = useState<string | null>(null);
+  const tek = p.ekler.length === 1;
+  return (
+    <View style={{ width: IZGARA_EN, flexDirection: "row", flexWrap: "wrap", gap: IZGARA_ARA }}>
+      {p.ekler.map((e, i) => (
+        <EkBalonKarosu
+          key={e.medya_id}
+          ek={e}
+          sira={i + 1}
+          toplam={p.ekler.length}
+          gorunum={p.gorunumler.get(e.medya_id) ?? null}
+          en={tek ? IZGARA_EN : KARE}
+          boy={tek ? tekYukseklik(e) : KARE}
+          onAc={setAcik}
+        />
+      ))}
+      <TamEkranOnizleme uri={acik} onKapat={() => setAcik(null)} />
+    </View>
+  );
+}
+
+/**
+ * Balondaki tek ek. Fotoğraf: yerel kopya, dokununca tam ekran. Video: kapak (varsa) ya da yer
+ * tutucu, ortada oynat simgesi, altta süre ve "PC'de" (video telefonda oynatılmaz). Yerel görseli
+ * olmayan fotoğraf: "Fotoğraf (bu cihazda yok)".
+ */
+function EkBalonKarosu(p: {
+  ek: EkBilgisi;
+  sira: number;
+  toplam: number;
+  gorunum: EkGorunumu | null;
+  en: number;
+  boy: number;
+  onAc: (uri: string) => void;
+}): ReactNode {
+  const { ek } = p;
+  const video = ek.tur === "video";
+  const [bozuk, setBozuk] = useState(false);
+  const uri = bozuk ? null : (p.gorunum?.onizleme_uri ?? null);
+  const etiket = ekBalonEtiketi(ek.tur, p.sira, p.toplam, ek.sure_ms ?? null, uri !== null);
+  const kutu: ViewStyle = {
+    width: p.en,
+    height: p.boy,
+    borderRadius: yaricap.orta,
+    overflow: "hidden",
+    backgroundColor: renk.yuzeyUst,
+    borderWidth: cizgi.ince,
+    borderColor: renk.kenar,
+    alignItems: "center",
+    justifyContent: "center",
+  };
+  const gorsel =
+    uri !== null ? (
+      <Image
+        source={{ uri }}
+        resizeMode="cover"
+        onError={() => setBozuk(true)}
+        style={{ position: "absolute", top: 0, left: 0, width: p.en, height: p.boy }}
+      />
+    ) : null;
+
+  if (!video) {
+    if (uri === null) {
+      return (
+        <View accessible accessibilityLabel={etiket} style={[kutu, { padding: bosluk[2] }]}>
+          <Text style={[yazi.mini, { color: renk.metinSonuk, textAlign: "center" }]}>{ekYerelYokMetni(ek.tur)}</Text>
+        </View>
+      );
+    }
+    return (
+      <Pressable
+        accessibilityRole="imagebutton"
+        accessibilityLabel={etiket}
+        accessibilityHint={EK_AC_IPUCU}
+        onPress={() => p.onAc(uri)}
+        style={({ pressed }) => [kutu, { opacity: pressed ? 0.8 : 1 }]}
+      >
+        {gorsel}
+      </Pressable>
+    );
+  }
+
+  const alt = ek.sure_ms !== undefined ? `${sureMetni(ek.sure_ms)} · ${VIDEO_PCDE_METNI}` : VIDEO_PCDE_METNI;
+  return (
+    <View accessible accessibilityLabel={etiket} style={kutu}>
+      {gorsel}
+      <View
+        style={{
+          width: 40,
+          height: 40,
+          borderRadius: yaricap.tam,
+          alignItems: "center",
+          justifyContent: "center",
+          backgroundColor: renk.perde,
+        }}
+      >
+        <Simge ad="oynat" boyut={20} renk={renk.metin} />
+      </View>
+      <View
+        style={{
+          position: "absolute",
+          left: 0,
+          right: 0,
+          bottom: 0,
+          paddingHorizontal: bosluk[2],
+          paddingVertical: 2,
+          backgroundColor: renk.perde,
+        }}
+      >
+        <Text numberOfLines={1} style={[yazi.mini, { color: renk.metin }]}>
+          {alt}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
+/** Fotoğrafın tam ekran önizlemesi; dokununca, "Kapat" ya da geri tuşuyla kapanır. */
+function TamEkranOnizleme(p: { uri: string | null; onKapat: () => void }): ReactNode {
+  const az = useAzHareket();
+  return (
+    <Modal
+      visible={p.uri !== null}
+      transparent={false}
+      animationType={az ? "none" : "fade"}
+      statusBarTranslucent
+      onRequestClose={p.onKapat}
+    >
+      <View style={{ flex: 1, backgroundColor: renk.zemin }}>
+        <Pressable accessible={false} onPress={p.onKapat} style={{ flex: 1 }}>
+          {p.uri !== null && <Image source={{ uri: p.uri }} resizeMode="contain" style={{ flex: 1 }} />}
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={ONIZLEME_KAPAT_ETIKETI}
+          onPress={p.onKapat}
+          style={({ pressed }) => ({
+            position: "absolute",
+            top: bosluk[8],
+            right: bosluk[3],
+            width: olcu.dokunma,
+            height: olcu.dokunma,
+            borderRadius: yaricap.tam,
+            alignItems: "center",
+            justifyContent: "center",
+            backgroundColor: pressed ? renk.basili : renk.perde,
+          })}
+        >
+          <Simge ad="kapat" boyut={24} renk={renk.metin} />
+        </Pressable>
+      </View>
+    </Modal>
+  );
+}
 
 /** Kısayoldan gelen mesajın üstündeki çip. `ad` güvenilmez: tek satır, kırpılmış, düz metin (link değil). */
 export function KisayolCipi(p: { ad?: string }): ReactNode {
@@ -431,6 +669,10 @@ export function GonderilemediSeridi(p: { hata: GidenHatasi; onKapat: () => void;
   const [acik, setAcik] = useState(false);
   const kisa = mesaj.type === "user_message" ? kisalt(mesaj.text, 80) : null;
   const kesik = mesaj.type === "user_message" && kisa !== null && kisa !== mesaj.text.replace(/\s+/g, " ").trim();
+  // Medya: ekli mesajda neden `kod`'dan (ek görünümü yeniden açılışta `bekliyor`'a dönebilir) ve ek özeti;
+  // ekli mesajın metni boş olabilir.
+  const baslik = gonderilemediBasligi(kod, mesaj.type === "user_message" ? mesaj.ekler : undefined);
+  const metinli = (t: string): string => (mesaj.type === "user_message" && mesaj.text.trim() === "" ? `${baslik}.` : `${baslik}: ${t}`);
   const yaziStili = [yazi.kucuk, { color: renk.hata, paddingVertical: bosluk[3] }];
   let govde: ReactNode;
   if (mesaj.type !== "user_message") {
@@ -442,7 +684,7 @@ export function GonderilemediSeridi(p: { hata: GidenHatasi; onKapat: () => void;
   } else if (!kesik || acik) {
     govde = (
       <Text selectable style={yaziStili}>
-        {`Gönderilemedi (${kod}): ${acik ? mesaj.text : kisa}`}
+        {metinli(acik ? mesaj.text : (kisa ?? ""))}
       </Text>
     );
   } else {
@@ -453,7 +695,7 @@ export function GonderilemediSeridi(p: { hata: GidenHatasi; onKapat: () => void;
         onPress={() => setAcik(true)}
         style={({ pressed }) => ({ borderRadius: yaricap.kucuk, backgroundColor: pressed ? renk.basili : "transparent" })}
       >
-        <Text style={yaziStili}>{`Gönderilemedi (${kod}): ${kisa}`}</Text>
+        <Text style={yaziStili}>{metinli(kisa ?? "")}</Text>
       </Pressable>
     );
   }
@@ -526,6 +768,8 @@ export type ZamanCizelgesiOgesiProps = {
   onIsler: () => void;
   /** İsteğe bağlı: eldeki tüketim raporu; rapor kartı kendi işinin satırını buradan alır. */
   tuketimRaporu?: TuketimRaporu | null;
+  /** Medya: sohbetin ek görünümleri (`SohbetDurumu.ekGorunumleri`); yalnız ekli kullanıcı balonu kullanır. */
+  ekGorunumleri?: ReadonlyMap<MedyaId, EkGorunumu>;
 };
 
 /**
@@ -557,7 +801,15 @@ export const ZamanCizelgesiOgesi = memo(function ZamanCizelgesiOgesi(p: ZamanCiz
   const o = p.oge;
   switch (o.tur) {
     case "kullanici":
-      return <KullaniciBalonu metin={o.metin} kisayol={o.input === "kisayol"} baglam={o.baglam} />;
+      return (
+        <KullaniciBalonu
+          metin={o.metin}
+          kisayol={o.input === "kisayol"}
+          baglam={o.baglam}
+          ekler={o.ekler}
+          gorunumler={o.ekler !== undefined ? p.ekGorunumleri : undefined}
+        />
+      );
     case "asistan":
       return <AsistanBalonu metin={o.metin} />;
     case "tur_kesildi":
@@ -588,6 +840,7 @@ export function ogePropEsit(a: ZamanCizelgesiOgesiProps, b: ZamanCizelgesiOgesiP
     a.sohbet === b.sohbet &&
     a.cihaz === b.cihaz &&
     a.onIsler === b.onIsler &&
-    tuketimPropEsit(a, b)
+    tuketimPropEsit(a, b) &&
+    ekGorunumleriEsit(ogeEkleri(a.oge), a.ekGorunumleri, b.ekGorunumleri)
   );
 }

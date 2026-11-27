@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { Olay, planHash } from "@eren/protocol";
+import type { EkBilgisi } from "@eren/protocol";
 import { olaylarKur } from "../../src/cekirdek/olaylar.ts";
 import type { GorunumOgesi, Olaylar } from "../../src/cekirdek/olaylar.ts";
 import {
   adHazirla,
+  ekOnizlemeMetni,
   erenKaynakli,
   otomatikAd,
   ozetleriKur,
@@ -522,6 +524,32 @@ describe("sohbetler: ozetleriKur türetilen alanlar", () => {
     assert.deepEqual(bul(g, "s-1").sonMesaj, { kim: "kullanici", metin: "y" });
     assert.equal(bul(g, "s-2").sonMesaj, null);
     assert.equal(bul(g, "s-3").sonMesaj, null);
+  });
+
+  it("sonMesaj (medya): metni boş ekli kullanıcı balonunda ek özeti; metinli ekli balonda metin", () => {
+    const foto: EkBilgisi = { medya_id: "m-a-1", tur: "foto", mime: "image/jpeg", boyut: 10 };
+    const foto2: EkBilgisi = { ...foto, medya_id: "m-a-2" };
+    const video: EkBilgisi = { medya_id: "m-a-3", tur: "video", mime: "video/mp4", boyut: 10 };
+    const ekli = (seq: number, metin: string, ekler: readonly EkBilgisi[]): GorunumOgesi => ({
+      ...(kullaniciOgesi(seq, metin) as Extract<GorunumOgesi, { tur: "kullanici" }>),
+      ekler,
+    });
+    const g = girdi({
+      kayitlar: kayitlarDefterden(acildi(1, "s-1"), acildi(2, "s-2"), acildi(3, "s-3"), acildi(4, "s-4")),
+      gorunumler: {
+        ana: gv([ekli(1, "", [foto])]),
+        "s-1": gv([ekli(1, "  ", [foto, foto2])]),
+        "s-2": gv([ekli(1, "", [video])]),
+        "s-3": gv([ekli(1, "", [foto, video])]),
+        "s-4": gv([ekli(1, "bak buna", [foto])]),
+      },
+    });
+    assert.deepEqual(bul(g, "ana").sonMesaj, { kim: "kullanici", metin: "📷 Fotoğraf" });
+    assert.deepEqual(bul(g, "s-1").sonMesaj, { kim: "kullanici", metin: "📷 2 fotoğraf" });
+    assert.deepEqual(bul(g, "s-2").sonMesaj, { kim: "kullanici", metin: "🎥 Video" });
+    assert.deepEqual(bul(g, "s-3").sonMesaj, { kim: "kullanici", metin: "📎 1 fotoğraf, 1 video" });
+    assert.deepEqual(bul(g, "s-4").sonMesaj, { kim: "kullanici", metin: "bak buna" });
+    assert.equal(ekOnizlemeMetni([]), "");
   });
 
   it("sonEtkinlikMs: max(olusturma_ms, son öğe ts_ms); öğe yoksa olusturma_ms; ana 0", () => {

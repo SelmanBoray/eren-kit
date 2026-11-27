@@ -34,6 +34,15 @@ impl KopyaTablosu {
     }
 }
 
+/// Kopya tablosunun ham satırı (`kopya_satirlari`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KopyaSatiri {
+    pub kayit_id: String,
+    pub revizyon: i64,
+    pub guncelleme_ms: i64,
+    pub json: String,
+}
+
 pub(crate) fn kayit_json_oku(json: &str) -> Result<AjandaKaydi, CekirdekHatasi> {
     let deger: serde_json::Value =
         serde_json::from_str(json).map_err(|e| CekirdekHatasi::Depo { mesaj: format!("kayıt JSON'u bozuk: {e}") })?;
@@ -154,6 +163,18 @@ impl Depo {
         )?;
         let satirlar = sorgu.query_map([], |s| s.get::<_, String>(0))?;
         satirlar.map(|j| kayit_json_oku(&j?)).collect()
+    }
+
+    /// Tablonun bütün satırları ham (`kayit_id` sırasıyla): yazım izi (revizyon, `guncelleme_ms`) sütunlardan,
+    /// kayıt metni çözülmeden. Satırı okunamayan kayıt da izini verir (`motor/yerel.rs` yedekten dönme
+    /// denetimi yalnız izlere bakar).
+    pub fn kopya_satirlari(&self, tablo: KopyaTablosu) -> Result<Vec<KopyaSatiri>, CekirdekHatasi> {
+        let sql = format!("SELECT kayit_id, revizyon, guncelleme_ms, json FROM {} ORDER BY kayit_id", tablo.ad());
+        let mut sorgu = self.baglanti.prepare(&sql)?;
+        let satirlar = sorgu.query_map([], |s| {
+            Ok(KopyaSatiri { kayit_id: s.get(0)?, revizyon: s.get(1)?, guncelleme_ms: s.get(2)?, json: s.get(3)? })
+        })?;
+        Ok(satirlar.collect::<rusqlite::Result<_>>()?)
     }
 
     /// Görünen kopyada olup sunucu kopyasında ve kuyrukta olmayan kayıtları siler. Döner: silinenler.
