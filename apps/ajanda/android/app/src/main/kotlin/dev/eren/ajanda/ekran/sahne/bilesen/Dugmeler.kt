@@ -2,6 +2,7 @@ package dev.eren.ajanda.ekran.sahne.bilesen
 
 import androidx.compose.ui.semantics.heading
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -123,7 +124,8 @@ fun TamamlaDugmesi(
     renk: Color = LocalSahneMetinStili.current.color,
 ) {
     val hareket = Sahne.hareket
-    val dolum by animateFloatAsState(if (tamam) 1f else 0f, hareket.solma(200), label = "dolum")
+    // Hareket azaltılmışsa tik dolu ve çizili hâlde belirir (SAHNE.md §6, 5.2 satırı): solma da yok.
+    val dolum by animateFloatAsState(if (tamam) 1f else 0f, if (hareket.azalt) snap() else hareket.solma(200), label = "dolum")
     val cizim by animateFloatAsState(if (tamam) 1f else 0f, hareket.oturma(), label = "tik")
     // Tamamlanınca daire 0.6'dan yayla büyüyerek oturur (SAHNE.md §5.2); geri alınca olduğu yerde kalır.
     val olcek = remember { androidx.compose.animation.core.Animatable(1f) }

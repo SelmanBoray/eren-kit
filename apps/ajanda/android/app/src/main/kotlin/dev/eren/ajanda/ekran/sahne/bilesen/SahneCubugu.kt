@@ -11,7 +11,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
@@ -23,7 +25,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
@@ -96,12 +100,16 @@ fun SahneCubugu(
             horizontalArrangement = Arrangement.spacedBy(4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Row(Modifier.selectableGroup(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            // Genişlik sınırlıyken önce "+" ve seçili olmayan sekmeler ölçülür (her biri en az 48 dp); seçili
+            // sekmenin yazısı kalan yere sığarsa görünür, sığmazsa yalnız simge kalır. Hiçbir dokunma hedefi 48 dp'nin altına inmez.
+            Row(Modifier.selectableGroup().weight(1f, fill = false), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 for (s in Hedef.Sekme.entries) {
                     val sec = s == secili
                     Row(
                         Modifier
+                            .then(if (sec) Modifier.weight(1f, fill = false) else Modifier)
                             .height(48.dp)
+                            .widthIn(min = 48.dp)
                             .onPlaced { yerler[s] = it.positionInParent().x.roundToInt() to it.size.width }
                             .clip(Sahne.olcu.hap)
                             .selectable(selected = sec, role = Role.Tab, onClick = { onSekme(s) })
@@ -112,22 +120,38 @@ fun SahneCubugu(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        Simge(s.simge(), aciklama = null, modifier = Modifier.size(20.dp), renk = renk.zemin)
-                        if (sec && !yaziYok) {
-                            Metin(
-                                s.ad,
-                                stil = Sahne.yazi.etiket.copy(fontWeight = FontWeight.SemiBold),
-                                renk = renk.zemin,
-                                satirSiniri = 1,
-                                modifier = Modifier.clearAndSetSemantics {},
-                            )
+                        // Yazı sığarsa tam görünür, sığmazsa hiç görünmez (yarım "Tari…" yerine yalnız simge).
+                        Layout(
+                            content = {
+                                Simge(s.simge(), aciklama = null, modifier = Modifier.requiredSize(20.dp), renk = renk.zemin)
+                                if (sec && !yaziYok) {
+                                    Metin(
+                                        s.ad,
+                                        stil = Sahne.yazi.etiket.copy(fontWeight = FontWeight.SemiBold),
+                                        renk = renk.zemin,
+                                        satirSiniri = 1,
+                                        modifier = Modifier.clearAndSetSemantics {},
+                                    )
+                                }
+                            },
+                        ) { olculer, c ->
+                            val ikon = olculer[0].measure(Constraints())
+                            val yazi = olculer.getOrNull(1)?.measure(Constraints(maxHeight = c.maxHeight))
+                            val bosluk = 8.dp.roundToPx()
+                            val sigar = yazi != null && ikon.width + bosluk + yazi.width <= c.maxWidth
+                            val g = if (sigar) ikon.width + bosluk + yazi!!.width else ikon.width
+                            val y = maxOf(ikon.height, if (sigar) yazi!!.height else 0)
+                            layout(g, y) {
+                                ikon.place(0, (y - ikon.height) / 2)
+                                if (sigar) yazi!!.place(ikon.width + bosluk, (y - yazi.height) / 2)
+                            }
                         }
                     }
                 }
             }
             Box(
                 Modifier
-                    .size(width = 56.dp, height = 48.dp)
+                    .requiredSize(width = 56.dp, height = 48.dp)
                     .clip(Sahne.olcu.hap)
                     .background(renk.vurgu)
                     // SAHNE.md §10.1: koyu temada vurgu ile açık mürekkep arasında ayrım zayıf; zemin renginde halka.

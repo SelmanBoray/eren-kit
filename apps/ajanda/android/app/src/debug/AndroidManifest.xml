@@ -10,10 +10,13 @@
         <!-- Yalnız debug: Sahne arayüzünü telefonda denemek için ikinci başlatıcı girişi. Eski giriş aynen kalır. -->
         <!-- Yalnız sıra için (özniteliksiz): birleşik manifestte eski giriş ilk başlatıcı olarak kalsın. -->
         <activity android:name=".ekran.AnaEkran" />
+        <!-- Ayrı görev yakınlığı: iki başlatıcı girişi aynı görevi paylaşmasın. Paylaşırsa "Ajanda Sahne"ye
+             dokunmak açık duran AnaEkran görevini öne getirir (tersi de); her giriş kendi görevinde açılır. -->
         <activity
             android:name=".ekran.sahne.SahneEtkinligi"
             android:exported="true"
             android:label="Ajanda Sahne"
+            android:taskAffinity="dev.eren.ajanda.sahne"
             tools:replace="android:exported">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

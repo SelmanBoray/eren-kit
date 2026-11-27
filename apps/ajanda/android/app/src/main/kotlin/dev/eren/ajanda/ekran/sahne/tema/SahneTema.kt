@@ -34,7 +34,7 @@ import kotlinx.coroutines.launch
 
 /**
  * Ölçüler ve biçimler. Kenar payı telefonda 16 dp (prototip `--gl/--gr`); levhalar büyük yarıçaplı,
- * satırlar orta, düğme ve çubuklar hap biçimli. Dokunma hedefleri en az 44–48 dp.
+ * satırlar orta, düğme ve çubuklar hap biçimli. Dokunma hedefleri en az 48 dp (SAHNE.md §3.1).
  */
 @Immutable
 data class SahneOlculer(
@@ -45,7 +45,12 @@ data class SahneOlculer(
     val satirYaricapi: Dp = 20.dp,
     val kapakYaricapi: Dp = 34.dp,
     val dokunma: Dp = 48.dp,
-    val yuvarlakDugme: Dp = 46.dp,
+    /**
+     * Yuvarlak simge düğmesi. Prototipte 46 dp; düğmenin tıklama alanı dairenin kendisi olduğundan 48 dp:
+     * Compose'un küçük öğe genişletmesi (48 dp'ye) altta dokunma alan bir kardeş varsa (ayrıntıdaki kaydırma
+     * sütunu gibi) o kardeşe kaybediyor.
+     */
+    val yuvarlakDugme: Dp = 48.dp,
     /** Alt çubuğun yüksekliği (6 dp iç pay + 48 dp öğe + 6 dp); içerik altına bu kadar ve sistem çubuğu kadar pay bırakır. */
     val cubukYuksekligi: Dp = 60.dp,
     val cubukAltPayi: Dp = 14.dp,

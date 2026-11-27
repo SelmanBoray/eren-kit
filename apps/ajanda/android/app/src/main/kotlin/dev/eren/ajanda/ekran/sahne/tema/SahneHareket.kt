@@ -2,6 +2,7 @@ package dev.eren.ajanda.ekran.sahne.tema
 
 import android.animation.ValueAnimator
 import android.database.ContentObserver
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
@@ -105,21 +106,38 @@ class SahneHareket(val azalt: Boolean) {
 /**
  * Sistemin animasyon ayarını izler: "Animasyonları kaldır" açıksa (ya da animatör ölçeği 0) [SahneHareket.Azaltilmis].
  * Ayar uygulama açıkken değişirse hemen yansır.
+ *
+ * Değişiklik iki ayrı yoldan, belirsiz sırayla gelir: ayarın kendisi ([ContentObserver]) ve sürecin animatör
+ * ölçeği (pencere yöneticisi bağlayıcı üstünden `ValueAnimator.setDurationScale` çağırır). Ayar bildirimi
+ * geldiğinde süreç ölçeği henüz eskisi olabilir; o anda [ValueAnimator.areAnimatorsEnabled] okumak, ayar geri
+ * açıldığında azaltılmış kipi takılı bırakır. Bu yüzden:
+ * - API 33+: süreç ölçeğinin kendi dinleyicisi ([ValueAnimator.registerDurationScaleChangeListener]) esas
+ *   alınır; ölçek gerçekten değişince bildirir (pil tasarrufunun animasyonu kapatması da buna dahil).
+ * - Daha eskide: yalnız ayarın değeri okunur.
+ * Başlangıçta ikisi de okunur; o anda yarış yoktur.
  */
 @Composable
 fun sistemHareketi(): SahneHareket {
     val context = LocalContext.current
-    var azalt by remember { mutableStateOf(!ValueAnimator.areAnimatorsEnabled()) }
+    var azalt by remember { mutableStateOf(animatorOlcegi(context) == 0f || !ValueAnimator.areAnimatorsEnabled()) }
     DisposableEffect(context) {
-        val cozucu = context.contentResolver
-        val gozcu = object : ContentObserver(Handler(Looper.getMainLooper())) {
-            override fun onChange(selfChange: Boolean) {
-                azalt = animatorOlcegi(context) == 0f || !ValueAnimator.areAnimatorsEnabled()
+        val ana = Handler(Looper.getMainLooper())
+        azalt = animatorOlcegi(context) == 0f || !ValueAnimator.areAnimatorsEnabled()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            // Bağlayıcı iş parçacığından çağrılabilir; durum ana iş parçacığında yazılır.
+            val dinleyici = ValueAnimator.DurationScaleChangeListener { olcek -> ana.post { azalt = olcek == 0f } }
+            ValueAnimator.registerDurationScaleChangeListener(dinleyici)
+            onDispose { ValueAnimator.unregisterDurationScaleChangeListener(dinleyici) }
+        } else {
+            val cozucu = context.contentResolver
+            val gozcu = object : ContentObserver(ana) {
+                override fun onChange(selfChange: Boolean) {
+                    azalt = animatorOlcegi(context) == 0f
+                }
             }
+            cozucu.registerContentObserver(Settings.Global.getUriFor(Settings.Global.ANIMATOR_DURATION_SCALE), false, gozcu)
+            onDispose { cozucu.unregisterContentObserver(gozcu) }
         }
-        cozucu.registerContentObserver(Settings.Global.getUriFor(Settings.Global.ANIMATOR_DURATION_SCALE), false, gozcu)
-        gozcu.onChange(false)
-        onDispose { cozucu.unregisterContentObserver(gozcu) }
     }
     return if (azalt) SahneHareket.Azaltilmis else SahneHareket.Tam
 }

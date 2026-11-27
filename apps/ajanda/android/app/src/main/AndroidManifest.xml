@@ -79,5 +79,11 @@
             android:name=".ag.EsitlemeIsi"
             android:exported="true"
             android:permission="android.permission.BIND_JOB_SERVICE" />
+
+        <!-- profileinstaller'ın dışa açık alıcısı yalnız adb/Macrobenchmark içindir (DUMP korumalı); bu uygulamada
+             kullanılmıyor. Profil kurulumu InitializationProvider'daki ProfileInstallerInitializer ile sürer. -->
+        <receiver
+            android:name="androidx.profileinstaller.ProfileInstallReceiver"
+            tools:node="remove" />
     </application>
 </manifest>

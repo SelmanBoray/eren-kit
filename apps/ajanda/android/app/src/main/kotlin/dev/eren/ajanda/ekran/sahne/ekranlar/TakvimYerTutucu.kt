@@ -95,9 +95,10 @@ fun TakvimYerTutucu(bugun: LocalDate, onKayit: (String) -> Unit, modifier: Modif
                     renk = Sahne.renk.soluk,
                     modifier = Modifier.padding(start = 10.dp, bottom = 3.dp).weight(1f),
                 )
+                // Prototipte 44 dp; dokunma alanı en az 48 dp olsun diye ortak yuvarlak düğme boyu (SAHNE.md §3.1).
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    YuvarlakDugme(Simgeler.Geri, "Önceki ay", { ayKaydir -= 1 }, boyut = 44.dp)
-                    YuvarlakDugme(Simgeler.Ileri, "Sonraki ay", { ayKaydir += 1 }, boyut = 44.dp)
+                    YuvarlakDugme(Simgeler.Geri, "Önceki ay", { ayKaydir -= 1 })
+                    YuvarlakDugme(Simgeler.Ileri, "Sonraki ay", { ayKaydir += 1 })
                 }
             }
             // Büyük yazıda üç harf sığmaz; iki harflik yaygın kısaltma.

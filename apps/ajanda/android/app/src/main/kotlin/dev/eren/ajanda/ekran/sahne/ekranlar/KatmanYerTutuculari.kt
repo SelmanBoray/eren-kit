@@ -15,9 +15,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -39,6 +43,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
@@ -71,6 +76,9 @@ fun AyrintiYerTutucu(kayitId: String, onKapat: () -> Unit, modifier: Modifier = 
     BoxWithConstraints(modifier.fillMaxSize().background(Sahne.renk.zemin)) {
         val kapakBoyu = maxOf(260.dp, maxHeight * 0.46f)
         val genislik = maxWidth
+        val yon = LocalLayoutDirection.current
+        // Yanlarda kenar payı ya da güvenli alan (yatay çentik, yan gezinme çubuğu), hangisi büyükse.
+        val pay = sayfaPayi()
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
             Box(
                 Modifier
@@ -86,7 +94,7 @@ fun AyrintiYerTutucu(kayitId: String, onKapat: () -> Unit, modifier: Modifier = 
                 )
             }
             Column(
-                Modifier.padding(start = Sahne.olcu.kenar, end = Sahne.olcu.kenar, top = 22.dp, bottom = 110.dp),
+                Modifier.padding(start = pay.calculateStartPadding(yon), end = pay.calculateEndPadding(yon), top = 22.dp, bottom = 110.dp),
                 verticalArrangement = Arrangement.spacedBy(24.dp),
             ) {
                 Column {
@@ -110,9 +118,7 @@ fun AyrintiYerTutucu(kayitId: String, onKapat: () -> Unit, modifier: Modifier = 
         YuvarlakDugme(
             Simgeler.Asagi, aciklama = "Kapat", onClick = onKapat,
             zemin = Sahne.renk.zemin, renk = Sahne.renk.murekkep,
-            modifier = Modifier
-                .windowInsetsPadding(WindowInsets.statusBars)
-                .padding(start = Sahne.olcu.kenar, top = 12.dp),
+            modifier = Modifier.padding(koseDugmesiPayi(sag = false)),
         )
         if (k?.taslak != true) {
             // Alt düğme ve arkasındaki zemine geçen degrade (SAHNE.md §3.7).
@@ -124,8 +130,8 @@ fun AyrintiYerTutucu(kayitId: String, onKapat: () -> Unit, modifier: Modifier = 
                     .drawBehind {
                         drawRect(Brush.verticalGradient(0f to Color.Transparent, 0.34f to zemin, 1f to zemin))
                     }
-                    .windowInsetsPadding(WindowInsets.navigationBars)
-                    .padding(start = Sahne.olcu.kenar, end = Sahne.olcu.kenar, top = 26.dp, bottom = 14.dp),
+                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom))
+                    .padding(start = pay.calculateStartPadding(yon), end = pay.calculateEndPadding(yon), top = 26.dp, bottom = 14.dp),
             ) {
                 val dolu = !bitti
                 Box(
@@ -163,6 +169,8 @@ fun DuzenleYerTutucu(kayitId: String?, onKapat: () -> Unit, modifier: Modifier =
         BoxWithConstraints(modifier.fillMaxSize().background(takim.zemin)) {
             val ekranBoyu = maxHeight
             val yanPay = maxWidth * 0.16f
+            val yon = LocalLayoutDirection.current
+            val pay = sayfaPayi()
             Column(
                 Modifier
                     .fillMaxSize()
@@ -170,7 +178,7 @@ fun DuzenleYerTutucu(kayitId: String?, onKapat: () -> Unit, modifier: Modifier =
                     .verticalScroll(rememberScrollState())
                     // Kaydırılabilir sütunda ağırlık, en az yüksekliğe göre dağıtılır: çizim alanı kalan boşluğu doldurur.
                     .heightIn(min = ekranBoyu)
-                    .windowInsetsPadding(WindowInsets.statusBars),
+                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top)),
             ) {
                 Box(
                     Modifier
@@ -183,8 +191,8 @@ fun DuzenleYerTutucu(kayitId: String?, onKapat: () -> Unit, modifier: Modifier =
                 }
                 Column(
                     Modifier
-                        .padding(start = Sahne.olcu.kenar, end = Sahne.olcu.kenar, top = 8.dp, bottom = 18.dp)
-                        .windowInsetsPadding(WindowInsets.navigationBars),
+                        .padding(start = pay.calculateStartPadding(yon), end = pay.calculateEndPadding(yon), top = 8.dp, bottom = 18.dp)
+                        .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom)),
                     verticalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
                     Metin(
@@ -242,23 +250,24 @@ fun DuzenleYerTutucu(kayitId: String?, onKapat: () -> Unit, modifier: Modifier =
                 zemin = Color.Transparent, renk = takim.yazi, cerceve = true,
                 modifier = Modifier
                     .align(Alignment.TopEnd)
-                    .windowInsetsPadding(WindowInsets.statusBars)
-                    .padding(end = Sahne.olcu.kenar, top = 12.dp),
+                    .padding(koseDugmesiPayi(sag = true)),
             )
         }
     }
 }
 
 /**
- * Ayarlar yer tutucusu: başlık ve satırlar. "Açık kaynak lisansları" gömülü yazı tipinin OFL metnini
- * gösterir (Play Store için lisansın uygulamada görünmesi; SAHNE.md / LISANSLAR.md).
+ * Ayarlar yer tutucusu: başlık ve satırlar. "Açık kaynak lisansları" APK'ya giren bütün açık kaynak
+ * bileşenlerin listesini ve lisans metinlerini gösterir ([LISANS_METINLERI]; Play Store için lisansların
+ * uygulamada görünmesi; SAHNE.md / LISANSLAR.md).
  */
 @Composable
 fun AyarlarYerTutucu(onKapat: () -> Unit, modifier: Modifier = Modifier) {
     var lisans by rememberSaveable { mutableStateOf(false) }
     val context = LocalContext.current
-    val metin = remember(lisans) {
-        if (!lisans) "" else context.resources.openRawResource(R.raw.ofl_bricolage_grotesque).bufferedReader().use { it.readText() }
+    val metinler = remember(lisans) {
+        if (!lisans) emptyList()
+        else LISANS_METINLERI.map { id -> context.resources.openRawResource(id).bufferedReader().use { it.readText() } }
     }
     Box(modifier.fillMaxSize().background(Sahne.renk.zemin)) {
         Column(
@@ -271,17 +280,43 @@ fun AyarlarYerTutucu(onKapat: () -> Unit, modifier: Modifier = Modifier) {
             Metin("Ayarlar", stil = Sahne.yazi.ayrintiBasligi, modifier = Modifier.padding(start = 2.dp, bottom = 14.dp).semantics { heading() })
             AyarSatiri("Eşleştirme", "Bilgisayarla bağlantı", onClick = {})
             AyarSatiri("Bildirimler", "Hatırlatmalar ve izinler", onClick = {})
-            AyarSatiri("Açık kaynak lisansları", "Bricolage Grotesque, SIL Open Font License 1.1", onClick = { lisans = !lisans })
-            if (lisans) {
+            AyarSatiri("Açık kaynak lisansları", "Kullanılan kitaplıklar ve yazı tipi", onClick = { lisans = !lisans })
+            for (metin in metinler) {
                 Metin(metin, stil = Sahne.yazi.kucuk, renk = Sahne.renk.soluk, modifier = Modifier.padding(horizontal = 2.dp, vertical = 8.dp))
             }
         }
         YuvarlakDugme(
             Simgeler.Geri, aciklama = "Geri", onClick = onKapat,
-            modifier = Modifier
-                .windowInsetsPadding(WindowInsets.statusBars)
-                .padding(start = Sahne.olcu.kenar, top = 12.dp),
+            modifier = Modifier.padding(koseDugmesiPayi(sag = false)),
         )
+    }
+}
+
+/**
+ * Lisans ekranının metinleri, sırayla: bileşen listesi (hangi bileşen hangi lisansla), sonra lisans metinleri.
+ * Liste APK'nın bağımlılık ağaçlarından üretildi (Gradle releaseRuntimeClasspath, Rust çekirdeği için
+ * `cargo tree -e normal,no-proc-macro`); bağımlılık eklenince ya da sürüm değişince yeniden üretilmeli.
+ */
+internal val LISANS_METINLERI = listOf(
+    R.raw.acik_kaynak_bilesenleri,
+    R.raw.lisans_apache_2_0,
+    R.raw.lisans_mpl_2_0,
+    R.raw.lisans_mit_zlib,
+    R.raw.ofl_bricolage_grotesque,
+)
+
+/**
+ * Üst köşedeki yuvarlak düğmenin payı: yanda sayfa içeriğiyle aynı hizada (kenar payı ya da güvenli alan,
+ * hangisi büyükse; yatay çentikte düğme çentiğin altında kalmaz), üstte güvenli alanın 12 dp altında.
+ */
+@Composable
+private fun koseDugmesiPayi(sag: Boolean): PaddingValues {
+    val pay = sayfaPayi(ust = 12.dp, alt = 0.dp)
+    val yon = LocalLayoutDirection.current
+    return if (sag) {
+        PaddingValues(end = pay.calculateEndPadding(yon), top = pay.calculateTopPadding())
+    } else {
+        PaddingValues(start = pay.calculateStartPadding(yon), top = pay.calculateTopPadding())
     }
 }
 

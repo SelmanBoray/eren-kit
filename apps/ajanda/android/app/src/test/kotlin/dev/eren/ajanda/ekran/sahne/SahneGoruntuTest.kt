@@ -23,6 +23,7 @@ import java.time.LocalDate
  * - Android 15 (SDK 35) çalışma zamanı, 360 × 780 dp telefon, xhdpi (720 × 1560 px).
  * - Koyu tema `night` niteleyicisiyle, büyük yazı `fontScale = 2` (Android 14+ en büyük ölçek) ile.
  * - Gün sabit: 12 Mart 2026, Perşembe; görüntüler günden güne değişmez.
+ * - Bugün sekmesinin görüntüleri gerçek veri akışıyla (sahte çekirdek) `bugun/BugunGoruntuTest`'te.
  *
  * Kaydet:   gradlew recordRoborazziDebug --tests "dev.eren.ajanda.ekran.sahne.SahneGoruntuTest"
  * Doğrula:  gradlew verifyRoborazziDebug --tests "dev.eren.ajanda.ekran.sahne.SahneGoruntuTest"
@@ -48,12 +49,8 @@ class SahneGoruntuTest {
         kural.onRoot().captureRoboImage("src/test/screenshots/sahne/$ad.png")
     }
 
-    @Test fun bugunAcik() = ciz("bugun_acik", Hedef.Sekme.BUGUN)
     @Test fun takvimAcik() = ciz("takvim_acik", Hedef.Sekme.TAKVIM)
     @Test fun tarihsizAcik() = ciz("tarihsiz_acik", Hedef.Sekme.TARIHSIZ)
-
-    @Config(qualifiers = "+night")
-    @Test fun bugunKoyu() = ciz("bugun_koyu", Hedef.Sekme.BUGUN)
 
     @Config(qualifiers = "+night")
     @Test fun takvimKoyu() = ciz("takvim_koyu", Hedef.Sekme.TAKVIM)
@@ -62,17 +59,10 @@ class SahneGoruntuTest {
     @Test fun tarihsizKoyu() = ciz("tarihsiz_koyu", Hedef.Sekme.TARIHSIZ)
 
     @Config(fontScale = 2f)
-    @Test fun bugunBuyukYazi() = ciz("bugun_buyuk_yazi", Hedef.Sekme.BUGUN)
-
-    @Config(fontScale = 2f)
     @Test fun takvimBuyukYazi() = ciz("takvim_buyuk_yazi", Hedef.Sekme.TAKVIM)
 
     @Config(fontScale = 2f)
     @Test fun tarihsizBuyukYazi() = ciz("tarihsiz_buyuk_yazi", Hedef.Sekme.TARIHSIZ)
-
-    /** Küçük ekran (320 × 568 dp) ve orta büyük yazı (1.3: alt çubuk yazısız). */
-    @Config(qualifiers = "w320dp-h568dp-port-xhdpi", fontScale = 1.3f)
-    @Test fun bugunKucukEkran() = ciz("bugun_kucuk_ekran", Hedef.Sekme.BUGUN)
 
     // Yer tutucu katmanlar
     @Test fun ayrintiAcik() = ciz("ayrinti_acik", Hedef.Sekme.BUGUN, Hedef.Ayrinti("ornek-kahve"))

@@ -32,6 +32,7 @@ import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
@@ -39,6 +40,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Shape
 import dev.eren.ajanda.ekran.sahne.tema.Sahne
 import dev.eren.ajanda.ekran.sahne.tema.SahneHareket
+import kotlinx.coroutines.launch
 import kotlin.coroutines.cancellation.CancellationException
 
 /** Paylaşılan öğe alanı ([SharedTransitionLayout]); gezinme dışında (önizleme, tek ekran testi) `null`. */
@@ -94,21 +96,34 @@ fun SahneGezinme(
     val durum = remember { SeekableTransitionState(gezgin.ust) }
     val gecis = rememberTransition(durum, label = "sahne")
     var parmakta by remember { mutableStateOf(false) }
+    val kapsam = rememberCoroutineScope()
 
     LaunchedEffect(gezgin.ust) {
-        if (!parmakta && durum.targetState != gezgin.ust) durum.animateTo(gezgin.ust)
+        // Yalnız hedefe değil şimdiki hâle de bakılır: yarıda bırakılmış bir arama (seekTo) hedefi zaten
+        // gezgin.ust'e çekmiş olabilir; o durumda da geçiş sona götürülmeli.
+        if (!parmakta && (durum.targetState != gezgin.ust || durum.currentState != gezgin.ust)) durum.animateTo(gezgin.ust)
     }
 
     // Katman açıkken: öngörülü geri, kapanışı parmağa bağlar.
     PredictiveBackHandler(enabled = gezgin.derinlik > 1) { olaylar ->
-        val alttaki = gezgin.alttaki() ?: return@PredictiveBackHandler
+        val alttaki = gezgin.alttaki()
+        if (alttaki == null) {
+            // `enabled` henüz yeniden çizimle güncellenmedi (ör. "Kapat" ile geri aynı karede). Akış
+            // toplanmadan dönülürse activity-compose IllegalStateException fırlatır; olaylar boşa toplanır.
+            olaylar.collect {}
+            return@PredictiveBackHandler
+        }
         parmakta = true
         try {
             olaylar.collect { e -> durum.seekTo(e.progress, targetState = alttaki) }
             gezgin.geri()
             durum.animateTo(alttaki)
         } catch (e: CancellationException) {
-            durum.animateTo(durum.currentState)
+            // Vazgeçmede activity-compose 1.13 bu görevi de iptal eder: buradan askıya alınan her çağrı
+            // hemen atar. Yerine oturma ayrı bir eşyordamda; hedef gezgin.ust (vazgeçmede katmanın kendisi,
+            // kapanış animasyonu yarıda kesildiyse alttaki).
+            kapsam.launch { durum.animateTo(gezgin.ust) }
+            throw e
         } finally {
             parmakta = false
         }
