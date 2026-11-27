@@ -12,6 +12,11 @@
  *   diskte onaylanmış (kalıcı) uzunluktur: port parçayı yazar, diske indirir, sonra onaylar; çökmeden sonra
  *   onaysız kuyruk kesilir. Son parçada uzunluk ve sha256 doğrulanır; tutmazsa yarım silinir
  *   (`ozet_uyusmuyor`). Doğrulanan yarım tek adımda son adına taşınır (atomik).
+ * - İndirme de üstveriye bağlıdır: `ek_iste` yalnız istenen `ek_id` ve `ozet` silinmemiş bir kaydın `ekler`'inde
+ *   aynı öğede geçiyor ve öğenin `bayt`'ı dosyanın boyuna eşitse karşılanır (yüklemenin kabul ölçütü).
+ *   Öteki her durum (kayıt silinmiş, ek listeden çıkmış, `ek_id` başka özetle, hiç geçmiyor) `ek_yok`'tur ve
+ *   diske, özetin sırasına dokunulmadan döner: yanıt (kod ve zamanlama) özetin diskte olup olmadığını
+ *   söylemez. Denetim revizyonla tazelenen bellek dizinindendir (`basvuruDizini`), çağrı başına tarama yok.
  * - İndirme penceredir: `ek_iste` → en çok `EK_PENCERE` `ek_parca`, sonra `ek_durum{gonderilen}`. Bağlantının
  *   gönderim tamponunda `INDIRME_TAMPONU`'ndan fazla bayt bekliyorsa (okumayan istemci) pencere orada kesilir:
  *   hiç parça gitmediyse `ek_ret{ic_hata}` (geçici), gittiyse `ek_durum{gonderilen}` gidene kadarını söyler.
@@ -454,32 +459,57 @@ export const ajandaEkleriKur = (d: AjandaEkleriBagimliliklari): AjandaEkleri => 
       if (a.sahip <= 0) k.ayrilan.delete(y.ozet);
     });
 
-  /** Silinmemiş kayıtların eklerindeki özetler. Eşzamanlı okuma; atarsa çağıran hiçbir şey silmeden düşer. */
-  const basvurulanlar = (): Set<string> => {
-    const s = new Set<string>();
+  /** Dizin anahtarı: `ek_id` ve `ozet` birlikte (`ek_id` şemada denetimli; ayraç ikisinde de geçemez). */
+  const ekAnahtari = (ek_id: string, ozet: string): string => `${ek_id}
+${ozet}`;
+
+  interface BasvuruDizini {
+    /** Silinmemiş kayıtların eklerindeki özetler (saklama). */
+    readonly ozetler: Set<string>;
+    /** `ekAnahtari(ek_id, ozet)` → o öğelerin `bayt`'ları (indirme). */
+    readonly ekler: Map<string, Set<number>>;
+  }
+
+  /** Silinmemiş kayıtların eklerinden dizin kurar. Eşzamanlı okuma; atarsa çağıran hiçbir şey silmeden düşer. */
+  const dizinKur = (): BasvuruDizini => {
+    const ozetler = new Set<string>();
+    const ekler = new Map<string, Set<number>>();
     for (const kayit of depo.ajandaKayitlari()) {
       if (kayit.silindi) continue;
-      for (const e of kayit.ekler ?? []) s.add(e.ozet);
+      for (const e of kayit.ekler ?? []) {
+        ozetler.add(e.ozet);
+        const a = ekAnahtari(e.ek_id, e.ozet);
+        const b = ekler.get(a);
+        if (b === undefined) ekler.set(a, new Set([e.bayt]));
+        else b.add(e.bayt);
+      }
     }
-    return s;
+    return { ozetler, ekler };
   };
 
   /**
-   * Başvuru denetleyicisi: ilk çağrıda kayıtları okur; sonraki her çağrıda kayıtlar o andan beri değiştiyse
-   * (`ajandaBasRev`) yeniden okur. Silmeden hemen önce çağrılır: anlık görüntüden sonra yeniden başvurulan
-   * dosya silinmez. Okuma eşzamanlıdır; denetimle silme arasında başka iş araya girmez.
+   * Başvuru dizini (modül başına tek): kayıtlar son kurulumdan beri değiştiyse (`ajandaBasRev`, tek artan
+   * sayaç) yeniden kurulur, değişmediyse bellektekini döner. Kurulum O(kayıt + ek), sorgu O(1). Temizlik
+   * (silmeden hemen önce) ve indirme (her `ek_iste`) bunu okur: anlık görüntüden sonra yeniden başvurulan
+   * dosya silinmez, silinen kaydın eki indirilmez. Okuma eşzamanlıdır; denetimle işlem arasında iş girmez.
    */
-  const basvuruDenetleyicisi = (): ((ozet: string) => boolean) => {
-    let rev: number | null = null;
-    let kume = new Set<string>();
-    return (ozet) => {
-      const simdiki = depo.ajandaBasRev();
-      if (rev !== simdiki) {
-        kume = basvurulanlar();
-        rev = simdiki;
-      }
-      return kume.has(ozet);
-    };
+  let dizin: { rev: number; d: BasvuruDizini } | null = null;
+  const basvuruDizini = (): BasvuruDizini => {
+    const rev = depo.ajandaBasRev();
+    if (dizin === null || dizin.rev !== rev) dizin = { rev, d: dizinKur() };
+    return dizin.d;
+  };
+
+  /** Saklama denetleyicisi: özet silinmemiş bir kaydın eklerinde geçiyor mu (her çağrıda revizyon denetimi). */
+  const basvuruDenetleyicisi = (): ((ozet: string) => boolean) => (ozet) => basvuruDizini().ozetler.has(ozet);
+
+  /**
+   * İndirme denetimi: `ek_id` ve `ozet` silinmemiş bir kaydın eklerinde aynı öğede geçiyor mu; `bayt`
+   * verilirse öğenin boyu da tutmalı (yüklemenin `ek_id`, `ozet`, `bayt` ölçütü).
+   */
+  const indirilebilir = (ek_id: string, ozet: string, bayt?: number): boolean => {
+    const b = basvuruDizini().ekler.get(ekAnahtari(ek_id, ozet));
+    return b !== undefined && (bayt === undefined || b.has(bayt));
   };
 
   // ------------------------------------------------------------------------------------------
@@ -696,10 +726,13 @@ export const ajandaEkleriKur = (d: AjandaEkleriBagimliliklari): AjandaEkleri => 
   };
 
   const isteAl = async (o: OturumDurumu, m: EkIste): Promise<void> => {
-    if (!ajandaEkOzetiMi(m.ozet)) return ret(o, m.ek_id, "ek_yok");
+    // Başvurusuz istek diske ve özetin sırasına hiç ulaşmaz: var olan ve olmayan özet aynı yoldan, aynı
+    // kodla, beklemeden döner (sıra beklemesi de özetin varlığını sızdırırdı).
+    if (!ajandaEkOzetiMi(m.ozet) || !indirilebilir(m.ek_id, m.ozet)) return ret(o, m.ek_id, "ek_yok");
     await sirada(m.ozet, async () => {
       const boyut = await disk.tamBoyutu(m.ozet);
-      if (boyut === null) return ret(o, m.ek_id, "ek_yok");
+      // Sırada beklerken kayıt silinmiş ya da ek çıkarılmış olabilir; boy da üstveriyle tutmalı.
+      if (boyut === null || !indirilebilir(m.ek_id, m.ozet, boyut)) return ret(o, m.ek_id, "ek_yok");
       dokun(m.ozet);
       // İstemcinin bildiği dosya bu değil (ofset sonun ötesinde).
       if (m.ofset > boyut) return ret(o, m.ek_id, "ozet_uyusmuyor");

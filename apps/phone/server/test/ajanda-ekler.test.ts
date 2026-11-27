@@ -411,6 +411,7 @@ describe("ek yedeği: indirme", () => {
   it("pencere: en çok EK_PENCERE parça, sonra ek_durum{gonderilen}; istemci sürer, baytlar ve sha256 tutar", async () => {
     const t = kur();
     const e = ekUret("ek_1", 5 * PARCA + 77);
+    t.kayitKoy(kayit("k1", [e]));
     t.sd.tamlar.set(e.ozet, e.veri);
     const b = t.oturum();
     const p1 = await b.iste(e, 0);
@@ -427,6 +428,7 @@ describe("ek yedeği: indirme", () => {
   it("yoksa ek_yok; ofset sonun ötesindeyse ozet_uyusmuyor; sonundaysa parçasız tamam", async () => {
     const t = kur();
     const e = ekUret("ek_1", 100);
+    t.kayitKoy(kayit("k1", [e]));
     const b = t.oturum();
     assert.deepEqual(await b.iste(e, 0), [ret("ek_1", "ek_yok")]);
     t.sd.tamlar.set(e.ozet, e.veri);
@@ -444,6 +446,152 @@ describe("ek yedeği: indirme", () => {
     const veri = Buffer.concat(p.filter((m) => m.type === "ek_parca").map((m) => Buffer.from(m.veri, "base64")));
     assert.deepEqual(new Uint8Array(veri), e.veri);
     assert.equal(p.at(-1)!.tamam, true);
+  });
+});
+
+describe("ek yedeği: indirme kayıt eşleşmesine bağlı", () => {
+  /** Penceredeki parçaların birleşimi (tek pencereye sığan ek). */
+  const indirilen = (p: Msg[]): Uint8Array =>
+    new Uint8Array(Buffer.concat(p.filter((m) => m.type === "ek_parca").map((m) => Buffer.from(m.veri, "base64"))));
+
+  it("bugünkü başarılı indirme sürer: eşleşen ek_id + ozet + bayt baytları verir", async () => {
+    const t = kur();
+    const e = ekUret("ek_1", 3000);
+    t.kayitKoy(kayit("k1", [e]));
+    t.sd.tamlar.set(e.ozet, e.veri);
+    const p = await t.oturum().iste(e, 0);
+    assert.deepEqual(indirilen(p), e.veri);
+    assert.deepEqual(p.at(-1), { v: AJANDA_SURUMU, type: "ek_durum", ek_id: "ek_1", gonderilen: e.bayt, tamam: true });
+  });
+
+  it("silinmiş kaydın eki indirilemez; geri yüklenen (geri_yukle) kaydın eki yeniden indirilir", async () => {
+    const t = kur();
+    const e = ekUret("ek_1", 3000);
+    t.kayitKoy(kayit("k1", [e]));
+    t.sd.tamlar.set(e.ozet, e.veri);
+    const b = t.oturum();
+    assert.equal((await b.iste(e, 0)).at(-1)!.tamam, true);
+    t.kayitKoy(kayit("k1", [e], { silindi: true }));
+    const once = t.sd.cagrilar.length;
+    assert.deepEqual(await b.iste(e, 0), [ret("ek_1", "ek_yok")]);
+    assert.equal(t.sd.cagrilar.length, once, "başvurusuz istek diske ulaşmaz");
+    // Geri yükleme: kayıt aynı ekleriyle silinmemiş haline döner (dosya saklama süresinde duruyor).
+    t.kayitKoy(kayit("k1", [e]));
+    assert.deepEqual(indirilen(await b.iste(e, 0)), e.veri);
+  });
+
+  it("listeden çıkarılan ek indirilemez; kayıt durur, öteki ek indirilir", async () => {
+    const t = kur();
+    const a = ekUret("ek_a", 500, 1);
+    const c = ekUret("ek_c", 500, 2);
+    t.kayitKoy(kayit("k1", [a, c]));
+    t.sd.tamlar.set(a.ozet, a.veri);
+    t.sd.tamlar.set(c.ozet, c.veri);
+    const b = t.oturum();
+    assert.deepEqual(indirilen(await b.iste(a, 0)), a.veri);
+    t.kayitKoy(kayit("k1", [c]));
+    assert.deepEqual(await b.iste(a, 0), [ret("ek_a", "ek_yok")]);
+    assert.deepEqual(indirilen(await b.iste(c, 0)), c.veri);
+  });
+
+  it("ek_id ile özet uyuşmazlığı: ek_id başka özetle geçiyorsa ya da hiç geçmiyorsa ek_yok", async () => {
+    const t = kur();
+    const a = ekUret("ek_a", 500, 1);
+    const c = ekUret("ek_c", 500, 2);
+    t.kayitKoy(kayit("k1", [a]));
+    t.kayitKoy(kayit("k2", [c]));
+    t.sd.tamlar.set(a.ozet, a.veri);
+    t.sd.tamlar.set(c.ozet, c.veri);
+    const b = t.oturum();
+    const once = t.sd.cagrilar.length;
+    // ek_a'nın kimliğiyle c'nin (başka kayıtta başvurulan) özeti; hiç geçmeyen ek_id ile a'nın özeti.
+    assert.deepEqual(await b.iste(a, 0, c.ozet), [ret("ek_a", "ek_yok")]);
+    assert.deepEqual(await b.iste({ ...a, ek_id: "ek_yok_boyle" }, 0), [ret("ek_yok_boyle", "ek_yok")]);
+    assert.equal(t.sd.cagrilar.length, once);
+  });
+
+  it("bayt da tutmalı: üstverideki boy dosyanınkiyle aynı değilse ek_yok", async () => {
+    const t = kur();
+    const e = ekUret("ek_1", 500);
+    t.kayitKoy(kayit("k1", [{ ...e, bayt: 501 }]));
+    t.sd.tamlar.set(e.ozet, e.veri);
+    assert.deepEqual(await t.oturum().iste(e, 0), [ret("ek_1", "ek_yok")]);
+  });
+
+  it("var olmayan özet ile var olup başvurusuz özet aynı yanıtı, aynı yoldan alır (diske ve sıraya dokunmaz)", async () => {
+    const t = kur();
+    const var_ = ekUret("ek_1", 500, 1);
+    const yok = ekUret("ek_1", 500, 2);
+    t.sd.tamlar.set(var_.ozet, var_.veri);
+    // Başka bir kayıt başvuruyor: dosyanın serviste olduğu kesin, ama bu ek_id ile değil.
+    t.kayitKoy(kayit("k2", [{ ...var_, ek_id: "ek_baska" }]));
+    const b = t.oturum();
+    const once = t.sd.cagrilar.length;
+    const r1 = await b.iste(var_, 0);
+    const r2 = await b.iste(yok, 0);
+    assert.deepEqual(r1, r2);
+    assert.deepEqual(r1, [ret("ek_1", "ek_yok")]);
+    assert.equal(t.sd.cagrilar.length, once, "ikisi de diske ulaşmaz");
+    assert.equal(t.ekler.olcum().dokunulan_adet, 0);
+    // Günlük de ayırt etmez (ikisi de aynı satır).
+    const retler = t.gunluk.bul("ek_ret").map((g) => g.alanlar);
+    assert.equal(retler.length, 2);
+    assert.deepEqual(retler[0], retler[1]);
+  });
+
+  it("zamanlama: başvurusuz istek, özetin sırası meşgulken de beklemeden döner", async () => {
+    const t = kur();
+    const e = ekUret("ek_1", 500);
+    t.kayitKoy(kayit("k1", [e]));
+    t.sd.tamlar.set(e.ozet, e.veri);
+    const asil = t.sd.disk.tamOku;
+    let birak: () => void = () => {};
+    const kapi = new Promise<void>((r) => (birak = r));
+    t.sd.disk.tamOku = async (...a) => {
+      await kapi;
+      return asil(...a);
+    };
+    const b = t.oturum();
+    // Meşru indirme özetin sırasını tutar (okuma kapıda bekliyor).
+    b.o.cerceve({ v: AJANDA_SURUMU, type: "ek_iste", istek_id: "i", ek_id: "ek_1", ozet: e.ozet, ofset: 0 } as AjandaEkCercevesi);
+    b.o.cerceve({ v: AJANDA_SURUMU, type: "ek_iste", istek_id: "i", ek_id: "ek_x", ozet: e.ozet, ofset: 0 } as AjandaEkCercevesi);
+    for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));
+    assert.deepEqual([...b.gelen], [ret("ek_x", "ek_yok")], "başvurusuz yanıt sırayı beklemedi");
+    birak();
+    await t.ekler.bekle();
+    assert.equal(b.gelen.at(-1)!.tamam, true);
+  });
+
+  it("sırada beklerken kayıt silinirse ek verilmez", async () => {
+    const t = kur();
+    const e = ekUret("ek_1", 500);
+    t.kayitKoy(kayit("k1", [e]));
+    t.sd.tamlar.set(e.ozet, e.veri);
+    const asil = t.sd.disk.tamBoyutu;
+    let ilk = true;
+    t.sd.disk.tamBoyutu = async (ozet) => {
+      if (ilk) {
+        ilk = false;
+        t.kayitKoy(kayit("k1", [e], { silindi: true }));
+      }
+      return asil(ozet);
+    };
+    assert.deepEqual(await t.oturum().iste(e, 0), [ret("ek_1", "ek_yok")]);
+  });
+
+  it("maliyet: kayıtlar değişmedikçe ek_iste kayıtları yeniden okumaz (dizin revizyonla tazelenir)", async () => {
+    const t = kur();
+    const ekler = Array.from({ length: 5 }, (_, i) => ekUret(`ek_${i}`, 100, 700 + i));
+    t.kayitKoy(kayit("k1", ekler));
+    for (const e of ekler) t.sd.tamlar.set(e.ozet, e.veri);
+    const b = t.oturum();
+    const once = t.sayac.okuma;
+    for (let n = 0; n < 4; n++) for (const e of ekler) await b.iste(e, 0);
+    await b.iste(ekUret("ek_z", 10, 999), 0);
+    assert.equal(t.sayac.okuma - once, 1);
+    t.kayitKoy(kayit("k2", []));
+    await b.iste(ekler[0]!, 0);
+    assert.equal(t.sayac.okuma - once, 2);
   });
 });
 
@@ -590,6 +738,7 @@ describe("ek yedeği: kaynak sınırları (inceleme bulguları)", () => {
   it("indirme seli: okumayan istemcinin tamponu INDIRME_TAMPONU + bir parçayı aşmaz; aşınca ek_ret{ic_hata}, boşalınca sürer", async () => {
     const t = kur();
     const e = ekUret("ek_1", AJANDA_SINIRLARI.EK_BAYT);
+    t.kayitKoy(kayit("k1", [e]));
     t.sd.tamlar.set(e.ozet, e.veri);
     const tampon = { bayt: 0 };
     const b = t.oturum({ tampon });
@@ -621,6 +770,7 @@ describe("ek yedeği: kaynak sınırları (inceleme bulguları)", () => {
   it("bekleyenBayt atarsa 0 sayılır: indirme sürer, işleyici düşmez", async () => {
     const t = kur();
     const e = ekUret("ek_1", 100);
+    t.kayitKoy(kayit("k1", [e]));
     t.sd.tamlar.set(e.ozet, e.veri);
     const gelen: Msg[] = [];
     const o = t.ekler.oturumAc({
@@ -783,6 +933,7 @@ describe("ek yedeği: kaynak sınırları (inceleme bulguları)", () => {
     }
     assert.equal(t.ekler.olcum().dokunulan_adet, 0);
     const e = ekUret("ek_1", 100);
+    t.kayitKoy(kayit("k1", [e]));
     t.sd.tamlar.set(e.ozet, e.veri);
     await b.iste(e, 0);
     assert.equal(t.ekler.olcum().dokunulan_adet, 1);
