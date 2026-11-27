@@ -560,7 +560,7 @@ describe("PC oturumu, T5: tasdik onu tüketen köprüye bağlanır", () => {
     assert.equal(o.karar(), "insan");
   });
 
-  it("süreç kimliği yoksa bağ oturum düzeyindedir; oturumu tam eşleşen köprü her zaman kabul edilir ve bağı devralır", async () => {
+  it("süreç kimliği yoksa bağ oturum düzeyindedir; oturumu tam eşleşen köprü her zaman kabul edilir ve bağa üye olarak katılır", async () => {
     const o = kur();
     await o.ekle({ ...DISCI, baslik: "S1" }, o.pcBaglam(o.tasdikNormal({ oturum_id: A }), A, "pcb_a"));
     assert.equal(o.karar(), "insan");
@@ -572,9 +572,12 @@ describe("PC oturumu, T5: tasdik onu tüketen köprüye bağlanır", () => {
     await o.ekle({ ...DISCI, baslik: "S4" }, o.pcBaglam(o.tasdikNormal({ oturum_id: B, surec_id: "500" }), B, "pcb_b"));
     assert.equal(o.karar(), "insan", "tam eşleşme");
     await o.ekle({ ...DISCI, baslik: "S5" }, o.pcBaglam(o.tasdikNormal({ oturum_id: A_TEMIZ, surec_id: "500" }), B, "pcb_b"));
-    assert.equal(o.karar(), "insan", "bağ B'ye geçti");
+    assert.equal(o.karar(), "insan", "B üye");
+    // H1'de tam eşleşme bağı B'ye taşıyordu ve bu çağrı taslaktı; aynı süreçteki iki oturumu kilitliyordu.
     await o.ekle({ ...DISCI, baslik: "S6" }, o.pcBaglam(o.tasdikNormal({ oturum_id: A_TEMIZ, surec_id: "500" }), A, "pcb_a"));
-    assert.equal(o.karar(), "tasdik_yok");
+    assert.equal(o.karar(), "insan", "A da üye: tam eşleşme devralmaz, katılır");
+    await o.ekle({ ...DISCI, baslik: "S7" }, o.pcBaglam(o.tasdikNormal({ oturum_id: A_TEMIZ, surec_id: "500" }), "pck_c", "pcb_c"));
+    assert.equal(o.karar(), "tasdik_yok", "üye olmayan köprü yine tüketemez");
   });
 });
 
@@ -718,6 +721,190 @@ describe("PC oturumu, T5: kapanan köprünün bağı bırakılır (kopruKapandi)
     assert.equal(d.cagri(eski(A1), B, "pcb_1"), "insan");
     d.pc.kopruKapandi("pcb_1");
     assert.equal(d.cagri(eski(A2), A3, "pcb_2"), "insan");
+  });
+});
+
+/**
+ * Tek Claude Code sürecinde birden çok oturum (doğrulanmadı: süreç içi agent teams, masaüstü uygulaması, IDE
+ * uzantısı): hepsi aynı `CLAUDE_PID`'i taşır, her birinin kendi köprüsü olur. Bağın birden çok üyesi olur;
+ * tam oturum eşleşmesi devralmaz, katılır. İlk çağrısını `/clear`'dan sonra yapan köprü bir kez taslak alır,
+ * sonra kanıtla katılır (sahipsiz kalan kendi tasdiki). Başka sürecin köprüsü hiçbir yoldan katılamaz.
+ */
+describe("PC oturumu, T5: tek süreçte birden çok oturum (bağın birden çok üyesi)", () => {
+  const P = "100";
+  const Q = "200";
+  const A1 = OTURUM;
+  const A2 = "6e7f8091-2b3c-4d5e-9f0a-b1c2d3e4f506";
+  const A3 = "7f8091a2-3c4d-4e5f-8a1b-c2d3e4f50617";
+  const B1 = OTURUM_2;
+  const B2 = "8091a2b3-4d5e-4f60-9b2c-d3e4f5061728";
+  const B3 = "91a2b3c4-5e6f-4071-8c3d-e4f506172839";
+  const C = "a2b3c4d5-6f70-4182-9d4e-f5061728394a";
+  /** Kanıt tasdikinin en az yaşı (`KANIT_ARALIGI_MS`, kancanın süre sınırı). */
+  const KANIT = AJANDA_PC_SINIRLARI.KANCA_SURESI_MS;
+
+  const defter = () => {
+    const zaman = sahteZaman(T0);
+    const gunluk = sahteGunluk();
+    const pc = pcDefteriKur({ takvim: sahteTakvim(DILIM), saat: zaman.saat, rastgele: sahteRastgele(), gunluk });
+    let no = 0;
+    const tasdik = (oturum: string, surec: string): string => {
+      const cagri_id = `toolu_cok${++no}`;
+      pc.kanca.pc_arac(
+        PC_KANCA_ARACLARI.pc_arac.girdi.parse({
+          uyarlayici: { ad: "claude-code", surum: 1 },
+          cagri_id,
+          oturum_id: oturum,
+          istem_id: ISTEM,
+          aktor: "ana",
+          etkilesim: "etkilesimli",
+          surec_id: surec,
+        }),
+      );
+      return cagri_id;
+    };
+    const cagri = (cagri_id: string, kopruOturumu: string, baglanti: string): PcTurKarari =>
+      pc.tur({ rol: "pc_oturumu", baglanti_id: baglanti, arac_cagri_id: cagri_id, oturum_id: kopruOturumu }, zaman.simdi()).karar;
+    const olaylar = (ad: string) =>
+      (gunluk.girdiler as ReadonlyArray<{ olay: string; alanlar?: Record<string, unknown> }>).filter((x) => x.olay === ad).map((x) => x.alanlar);
+    return { pc, zaman, tasdik, cagri, olaylar };
+  };
+
+  it("aynı süreçte iki dürüst köprü, ikisi de defalarca /clear yapar: hiçbiri kilitlenmez (devralma yok)", () => {
+    const d = defter();
+    // Köprüler açılıştaki oturumu bildirir (A1, B1); kancanın oturumu her /clear'da yenilenir.
+    assert.equal(d.cagri(d.tasdik(A1, P), A1, "pcb_a"), "insan");
+    assert.equal(d.cagri(d.tasdik(B1, P), B1, "pcb_b"), "insan");
+    for (const [a, b] of [[A2, B1], [A2, B2], [A3, B2], [A3, B3]] as const) {
+      assert.equal(d.cagri(d.tasdik(a, P), A1, "pcb_a"), "insan", `A ${a}`);
+      assert.equal(d.cagri(d.tasdik(b, P), B1, "pcb_b"), "insan", `B ${b}`);
+      // Tam eşleşme (köprünün kendi açılış oturumu) öbürünü çıkarmaz.
+      assert.equal(d.cagri(d.tasdik(B1, P), B1, "pcb_b"), "insan");
+      assert.equal(d.cagri(d.tasdik(a, P), A1, "pcb_a"), "insan", `A ${a}, B'nin tam eşleşmesinden sonra`);
+    }
+    assert.equal(d.olaylar("pc_oturum_uyusmuyor").length, 0);
+  });
+
+  it("ilk çağrısını /clear'dan sonra yapan kardeş köprü: ilk çağrı (ve koşutu) taslak; aralık dolunca kanıtla katılır; öbürü etkilenmez", () => {
+    const d = defter();
+    assert.equal(d.cagri(d.tasdik(A1, P), A1, "pcb_a"), "insan");
+    // B açıldı (B1), çağrısız /clear (B2): kancanın oturumu B2, köprününki B1; bağın üyesi A.
+    const ilk = d.tasdik(B2, P);
+    assert.equal(d.cagri(ilk, B1, "pcb_b"), "tasdik_yok", "ilk çağrı ayırt edilemez: güvenli yön");
+    assert.equal(d.cagri(d.tasdik(B2, P), B1, "pcb_b"), "tasdik_yok", "aynı andaki koşut çağrı kanıt sayılmaz");
+    d.zaman.ilerlet(KANIT - 1);
+    assert.equal(d.cagri(d.tasdik(B2, P), B1, "pcb_b"), "tasdik_yok", "aralık dolmadı");
+    d.zaman.ilerlet(1);
+    assert.equal(d.cagri(d.tasdik(B2, P), B1, "pcb_b"), "insan", "kendi ilk tasdiki sahipsiz kaldı: kanıt");
+    assert.deepEqual(d.olaylar("pc_bag_katildi"), [{ yol: "kanit" }]);
+    assert.equal(d.cagri(ilk, B1, "pcb_b"), "tasdik_yok", "kanıt tasdiki silindi (çağrısı zaten taslak döndü)");
+    // İkisi de üye: B bir daha /clear yapar, A da.
+    assert.equal(d.cagri(d.tasdik(B3, P), B1, "pcb_b"), "insan");
+    assert.equal(d.cagri(d.tasdik(A2, P), A1, "pcb_a"), "insan");
+    assert.equal(d.olaylar("pc_oturum_uyusmuyor").length, 3);
+  });
+
+  it("kardeşi açıkken /mcp ve çağrısız /clear: yeni köprü bir kez taslak, sonra insan; eski köprünün kapanışı hiç gelmese de (yetim)", () => {
+    for (const kapanisBildirildi of [true, false]) {
+      const d = defter();
+      assert.equal(d.cagri(d.tasdik(A1, P), A1, "pcb_a1"), "insan");
+      assert.equal(d.cagri(d.tasdik(B1, P), B1, "pcb_b"), "insan");
+      // A: /clear (A2), /mcp (köprü A2 ile yeniden açılır), çağrısız /clear (A3).
+      if (kapanisBildirildi) d.pc.kopruKapandi("pcb_a1");
+      assert.equal(d.olaylar("pc_bag_birakildi").length, 0, "bağ B'de sürer");
+      assert.equal(d.cagri(d.tasdik(A3, P), A2, "pcb_a2"), "tasdik_yok", `kapanış ${kapanisBildirildi}`);
+      d.zaman.ilerlet(KANIT);
+      for (let i = 0; i < 3; i++) assert.equal(d.cagri(d.tasdik(A3, P), A2, "pcb_a2"), "insan", `kapanış ${kapanisBildirildi}, çağrı ${i}`);
+      assert.equal(d.cagri(d.tasdik(B2, P), B1, "pcb_b"), "insan", "B etkilenmedi");
+    }
+  });
+
+  it("tek pencere, eski köprünün kapanışı hiç gelmez (yetim): yeni köprü bir kez taslak, aralık dolunca insan", () => {
+    const d = defter();
+    assert.equal(d.cagri(d.tasdik(A1, P), A1, "pcb_kopru1"), "insan");
+    // /clear → /mcp (köprü2, A2) → çağrısız /clear (A3); köprü1'in kapanışı bildirilmez.
+    assert.equal(d.cagri(d.tasdik(A3, P), A2, "pcb_kopru2"), "tasdik_yok", "kapanış ölçülemez: güvenli yön");
+    d.zaman.ilerlet(KANIT);
+    for (let i = 0; i < 3; i++) assert.equal(d.cagri(d.tasdik(A3, P), A2, "pcb_kopru2"), "insan", `çağrı ${i}`);
+    // Ölü üye zararsızdır; kapanışı sonradan gelirse yalnız o ayrılır.
+    d.pc.kopruKapandi("pcb_kopru1");
+    assert.equal(d.olaylar("pc_bag_birakildi").length, 0);
+    assert.equal(d.cagri(d.tasdik(A3, P), A2, "pcb_kopru2"), "insan");
+  });
+
+  it("T5 korunur: başka sürecin köprüsü bu sürecin tasdikini tüketemez; ne kanıtla (zaman geçse de) ne ilk görüşle; yalnız tam oturum beyanıyla", () => {
+    const d = defter();
+    assert.equal(d.cagri(d.tasdik(A1, P), A1, "pcb_a"), "insan");
+    assert.equal(d.cagri(d.tasdik(C, Q), C, "pcb_c"), "insan", "C'nin köprüsü Q'ya bağlı");
+    // P'nin tasdiklerini (sahibi sunmamış olsa da) C'nin köprüsü sunar.
+    assert.equal(d.cagri(d.tasdik(A2, P), C, "pcb_c"), "tasdik_yok");
+    d.zaman.ilerlet(10 * KANIT);
+    assert.equal(d.cagri(d.tasdik(A2, P), C, "pcb_c"), "tasdik_yok", "başka sürece bağlı köprü kanıtla katılamaz");
+    // P'nin köprüsü kapandı, bağ bırakıldı: C ilk görüşle de alamaz.
+    d.pc.kopruKapandi("pcb_a");
+    assert.equal(d.olaylar("pc_bag_birakildi").length, 1);
+    assert.equal(d.cagri(d.tasdik(A3, P), C, "pcb_c"), "tasdik_yok", "başka sürece bağlı köprü ilk görüşle bağlanamaz");
+    assert.equal(d.cagri(d.tasdik(A3, P), A2, "pcb_a2"), "insan", "P'nin yeni köprüsü ilk görüşle bağlanır");
+    assert.equal(d.cagri(d.tasdik(C, Q), C, "pcb_c"), "insan", "C'nin kendi bağı yerinde");
+    assert.equal(d.olaylar("pc_bag_katildi").length, 0);
+    // Oturum beyanı istisnası (HARNESS.md 4.2): tasdikin oturumu köprününkine eşitse katılır.
+    assert.equal(d.cagri(d.tasdik(C, P), C, "pcb_c"), "insan");
+  });
+
+  it("kanıt oluşmaz: sahibi tasdikini tüketti; oturum bir üyenin; iki köprü aynı tasdiki sundu; aynı kimlik yeniden; oturum değişti", () => {
+    const d = defter();
+    assert.equal(d.cagri(d.tasdik(A1, P), A1, "pcb_a"), "insan");
+    // Sahibi açık: yabancı köprünün önce sunduğu tasdiki sahibi hemen tüketir.
+    const a2 = d.tasdik(A2, P);
+    assert.equal(d.cagri(a2, "pck_x", "pcb_x"), "tasdik_yok");
+    assert.equal(d.cagri(a2, A1, "pcb_a"), "insan", "tasdik sahibine kaldı");
+    d.zaman.ilerlet(KANIT);
+    assert.equal(d.cagri(d.tasdik(A2, P), "pck_x", "pcb_x"), "tasdik_yok", "kanıt sahibince tüketildi");
+    // Oturum bir üyenin (A1 ve A2'yi A tüketti).
+    assert.equal(d.cagri(d.tasdik(A1, P), "pck_y", "pcb_y"), "tasdik_yok");
+    d.zaman.ilerlet(KANIT);
+    assert.equal(d.cagri(d.tasdik(A1, P), "pck_y", "pcb_y"), "tasdik_yok", "oturumu üyenin");
+    // İki köprü aynı tasdiki sundu: ikisinin de kanıtı değildir.
+    const ortak = d.tasdik(B1, P);
+    assert.equal(d.cagri(ortak, "pck_z", "pcb_z"), "tasdik_yok");
+    assert.equal(d.cagri(ortak, "pck_w", "pcb_w"), "tasdik_yok");
+    d.zaman.ilerlet(KANIT);
+    assert.equal(d.cagri(d.tasdik(B1, P), "pck_z", "pcb_z"), "tasdik_yok", "çekişmeli kanıt");
+    assert.equal(d.cagri(d.tasdik(B1, P), "pck_w", "pcb_w"), "tasdik_yok", "çekişmeli kanıt");
+    // Aynı kimliği yeniden sunmak kanıt değildir.
+    const ayni = d.tasdik(B2, P);
+    assert.equal(d.cagri(ayni, "pck_v", "pcb_v"), "tasdik_yok");
+    d.zaman.ilerlet(KANIT);
+    assert.equal(d.cagri(ayni, "pck_v", "pcb_v"), "tasdik_yok");
+    // Oturum değişti (araya /clear girdi): kanıt yeni oturumla yeniden başlar.
+    assert.equal(d.cagri(d.tasdik(B3, P), "pck_u", "pcb_u"), "tasdik_yok");
+    d.zaman.ilerlet(KANIT);
+    assert.equal(d.cagri(d.tasdik(C, P), "pck_u", "pcb_u"), "tasdik_yok", "farklı oturum");
+    d.zaman.ilerlet(KANIT);
+    assert.equal(d.cagri(d.tasdik(C, P), "pck_u", "pcb_u"), "insan", "yeni oturumun sahipsiz tasdiki kanıttır");
+    assert.equal(d.cagri(d.tasdik(A3, P), A1, "pcb_a"), "insan", "A hep üye");
+    assert.equal(d.olaylar("pc_bag_katildi").length, 1);
+  });
+
+  it("iki köprü açıkken kapanış: kapanan üye ayrılır, bağ ve bekleyen tasdikler öbüründe kalır; son üye kapanınca bırakılır, bekleyenler silinir", () => {
+    const d = defter();
+    assert.equal(d.cagri(d.tasdik(A1, P), A1, "pcb_a"), "insan");
+    assert.equal(d.cagri(d.tasdik(B1, P), B1, "pcb_b"), "insan");
+    // A'nın çağrısı yolda iken A'nın köprüsü kapandı (/mcp); yeni köprü güncel oturumla açıldı.
+    const yolda = d.tasdik(A2, P);
+    d.pc.kopruKapandi("pcb_a");
+    assert.equal(d.olaylar("pc_bag_birakildi").length, 0);
+    assert.equal(d.cagri(d.tasdik(B2, P), B1, "pcb_b"), "insan", "B sürer");
+    assert.equal(d.cagri(d.tasdik(A2, P), A1, "pcb_a3"), "tasdik_yok", "A1 artık üye değil");
+    assert.equal(d.cagri(yolda, A2, "pcb_a2"), "insan", "bekleyen tasdik silinmedi; yeni köprü tam eşleşir");
+    // B'nin çağrısı yolda iken son iki üye kapanır: bağ bırakılır, bekleyen tasdik silinir (güvenli yön).
+    const bYolda = d.tasdik(B3, P);
+    d.pc.kopruKapandi("pcb_b");
+    d.pc.kopruKapandi("pcb_a2");
+    assert.equal(d.olaylar("pc_bag_birakildi").length, 1);
+    assert.equal(d.olaylar("pc_bag_birakildi")[0]?.["baglanti_id"], "pcb_a2");
+    assert.equal(d.cagri(bYolda, B3, "pcb_b2"), "tasdik_yok", "silindi");
+    assert.equal(d.cagri(d.tasdik(B3, P), B1, "pcb_b3"), "insan", "kilitlenmez: üyesiz bağ ilk görüşle kurulur");
   });
 });
 

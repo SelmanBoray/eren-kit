@@ -680,4 +680,42 @@ describe("ajanda borusu, PC: köprü kapanışı defterin T5 bağını bırakır
     assert.equal(await k.cagri(c, id, "pck_c"), "tasdik_yok", "A'nın köprüsü açık: bağ yerinde, tasdik silinmedi");
     assert.equal(await k.cagri(a, id, A1), "insan", "tasdik sahibine kaldı");
   });
+
+  it("tek süreçte iki oturum (aynı süreç kimliği, iki köprü): ikisi de /clear yapar, kilitlenmez; kapanan kardeşin yeni köprüsü bir taslaktan sonra insan; başka süreç tüketemez", async () => {
+    const B2 = "8091a2b3-4d5e-4f60-9b2c-d3e4f5061728";
+    const B3 = "91a2b3c4-5e6f-4071-8c3d-e4f506172839";
+    const Y = "a2b3c4d5-6f70-4182-9d4e-f5061728394a";
+    const A4 = "b3c4d5e6-7081-4293-8e5f-061728394a5b";
+    const k = await defterli();
+    const a = await k.kopru();
+    const b = await k.kopru();
+    const yabanci = await k.kopru();
+    assert.equal(await k.cagri(a, await k.tasdik(A1, SUREC), A1), "insan");
+    assert.equal(await k.cagri(b, await k.tasdik(B, SUREC), B), "insan");
+    assert.equal(await k.cagri(yabanci, await k.tasdik(Y, "200"), Y), "insan", "başka Claude Code süreci");
+    // İki oturum da /clear yaptı (köprüler eski oturumu bildirir), sırayla çağırır.
+    for (const [ao, bo] of [[A2, B], [A2, B2], [A3, B3]] as const) {
+      assert.equal(await k.cagri(a, await k.tasdik(ao, SUREC), A1), "insan", `A ${ao}`);
+      assert.equal(await k.cagri(b, await k.tasdik(bo, SUREC), B), "insan", `B ${bo}`);
+    }
+    // Başka sürecin köprüsü bu sürecin tasdikini tüketemez, zaman geçse de.
+    assert.equal(await k.cagri(yabanci, await k.tasdik(A2, SUREC), Y), "tasdik_yok");
+    k.zaman.ilerlet(AJANDA_PC_SINIRLARI.KANCA_SURESI_MS);
+    assert.equal(await k.cagri(yabanci, await k.tasdik(A2, SUREC), Y), "tasdik_yok");
+    // A'nın köprüsü kapandı (/mcp): bağ B'de sürer; A'nın yeni köprüsü (açılış oturumu A2) çağrısız /clear'dan sonra.
+    a.kopar();
+    await bosalt();
+    assert.equal(k.olay("pc_bag_birakildi").length, 0, "B açık");
+    const a2 = await k.kopru();
+    const ilk = await k.cagri(a2, await k.tasdik(A4, SUREC), A2);
+    assert.equal(ilk, "tasdik_yok", "ilk çağrı: güvenli yön");
+    k.zaman.ilerlet(AJANDA_PC_SINIRLARI.KANCA_SURESI_MS);
+    for (let i = 0; i < 2; i++) assert.equal(await k.cagri(a2, await k.tasdik(A4, SUREC), A2), "insan", `kanıtla katıldı, çağrı ${i}`);
+    assert.equal(await k.cagri(b, await k.tasdik(B, SUREC), B), "insan", "B sürer");
+    // Son iki üye kapanınca bağ bırakılır.
+    b.kopar();
+    a2.kopar();
+    await bosalt();
+    assert.equal(k.olay("pc_bag_birakildi").length, 1);
+  });
 });

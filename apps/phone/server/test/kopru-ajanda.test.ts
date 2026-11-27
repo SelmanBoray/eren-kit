@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
+import type { Socket } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, win32 } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -17,6 +20,7 @@ import {
   GUN_BOLUMLERI,
   GUVENILMEZ_META,
   OpakId,
+  PROTOKOL_SURUMU,
   ajandaEkleMetni,
   ajandaGorunmezMi,
   ajandaGuncelleMetni,
@@ -829,5 +833,220 @@ describe("kopru PC köprüsü: uyarlayıcı (--uyarlayici)", () => {
     const r = yalitilmisKopru(["--rol", "pc_oturumu", "--uyarlayici", "claude-code"]);
     assert.equal(r.error, undefined, String(r.error));
     assert.equal(r.status, 0, r.stderr);
+  });
+});
+
+/**
+ * Ölçüm (HARNESS.md 4.2, Açık 2): köprünün ebeveyni (Claude Code) kapanınca ya da öldürülünce gerçek `kopru.ts`
+ * süreci çıkıyor ve boru bağlantısı kapanıyor mu. Ebeveyn sahtedir (köprüyü Claude Code gibi stdio borularıyla
+ * açan küçük bir Node süreci); `taskkill /F` ile öldürülür (Windows'ta TerminateProcess, kapanış kodu çalışmaz).
+ *
+ * Yalıtım. Boru adı sabittir (`AJANDA_BORU_ADI`) ve bu ölçümde köprünün bağlanması gerekir, bu yüzden "anahtar yoksa
+ * bağlanmaz" yalıtımı yetmez. İki katman:
+ * 1. Bağlantı hedefi: köprü `--import` ile verilen bir ön modülle başlar (dosya değil, `data:` adresi). Ön modül
+ *    `node:net`'in `connect`/`createConnection`'ını değiştirir ve `syncBuiltinESMExports` ile `kopru.ts`'in
+ *    `import { connect } from "node:net"` bağını da günceller. Yalnız `AJANDA_BORU_ADI` hedefini kabul eder ve onu
+ *    rastgele adlı sahte boruya çevirir; başka her hedefte atar. Değişikliğin ESM bağına geçtiğini köprü modülü
+ *    yüklenmeden denetler, geçmediyse süreç 97 ile çıkar (köprü hiç başlamaz). Ön modül yüklenemezse Node başlamaz.
+ * 2. Veri kökü: ortam devralınmaz; veri kökü ve onu türetebilecek her klasör boş geçici dizindir, içinde yalnız bu
+ *    ölçüm için üretilmiş rastgele anahtar vardır (canlı anahtar okunamaz; canlı servis onu tanımaz).
+ * Sahte borunun gördüğü hello'daki anahtar sahte anahtardır: köprü yalnız sahte kökü okudu, yalnız sahte boruya bağlandı.
+ *
+ * Sonuç (2026-11-28, Node 24.22.1, Windows 11; Claude Code'un kendisiyle ölçülmedi): Node/libuv ebeveyni çocuğu
+ * "kapanınca öldür" iş nesnesine koyar, ebeveyn ölünce köprü onunla ölür. İş nesnesi olmasa da köprü stdin'in
+ * bitişiyle kendisi çıkar (~50 ms). Açık kalan tek yol: stdin'in yazma ucu ebeveynden başka bir süreçte açıksa köprü
+ * yetim kalır ve bağlantısı açık durur; köprünün ebeveyn denetimi yoktur. Servis tarafı bunu kanıtla katılımla
+ * karşılar (`ajanda-pc.ts` `bagla`: yetim üye bağı tıkamaz).
+ */
+describe("kopru PC köprüsü: ebeveyn kapanınca köprü çıkar, boru bağlantısı kapanır (ölçüm, gerçek süreç)", {
+  skip: process.platform === "win32" ? false : "adlı boru ve taskkill Windows'a özgü",
+}, () => {
+  const KOPRU = fileURLToPath(new URL("../src/kopru.ts", import.meta.url));
+  /**
+   * Sahte ebeveyn: köprüyü açar, PID'ini yazar, bekler. stdin `soket`: köprünün stdin'i ebeveynin bağlandığı,
+   * testin dinlediği adlı borudur (yazma ucu testte; ebeveynin `ChildProcess` ömrüne bağlı değil).
+   */
+  const EBEVEYN = [
+    'const { spawn } = require("node:child_process");',
+    'const { connect } = require("node:net");',
+    "const [kip, ...arg] = process.argv.slice(1);",
+    "const { stdio, ayri } = JSON.parse(kip);",
+    "const ac = (giris) => {",
+    "  const c = spawn(process.execPath, arg, { stdio: [giris, ...stdio.slice(1)], detached: ayri, env: process.env, cwd: process.cwd(), windowsHide: true });",
+    "  c.stdout?.resume(); c.stderr?.resume();",
+    '  process.stdout.write(JSON.stringify({ kopru: c.pid }) + "\\n");',
+    "};",
+    'if (stdio[0] === "soket") { const s = connect(process.env.OLCUM_STDIN, () => ac(s)); } else ac(stdio[0]);',
+    "setInterval(() => {}, 1e9);",
+  ].join("\n");
+
+  const yasiyor = (pid: number): boolean => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const bekle = async (kosul: () => boolean, ms: number): Promise<number | null> => {
+    const bas = Date.now();
+    while (Date.now() - bas < ms) {
+      if (kosul()) return Date.now() - bas;
+      await new Promise((c) => setTimeout(c, 25));
+    }
+    return kosul() ? Date.now() - bas : null;
+  };
+
+  /**
+   * Ebeveynin köprüyü açışı. `ayri: false`: Node'un (libuv) varsayılanı, çocuk ebeveynin "kapanınca öldür" iş
+   * nesnesine (job object) girer. `ayri: true` (`detached`): iş nesnesi yok; köprü yalnız kendi stdio'sunu görür.
+   * stdin `soket`: yazma ucu testte kalır, ebeveyn ölse de kapanmaz. (`inherit` bunu ölçmez: Node, çocuğu
+   * çıkınca onun stdin akışını kapatır, yazma ucu o anda kapanır; ilk denemede ölçüldü.)
+   */
+  const STDIO = {
+    isNesnesi: { stdio: ["pipe", "pipe", "pipe"], ayri: false },
+    claude: { stdio: ["pipe", "pipe", "pipe"], ayri: true },
+    stdin: { stdio: ["pipe", "ignore", "ignore"], ayri: true },
+    devral: { stdio: ["soket", "ignore", "ignore"], ayri: true },
+  } as const;
+  const olc = async (kip: keyof typeof STDIO) => {
+    const kok = mkdtempSync(join(tmpdir(), "eren-kopru-olcum-"));
+    const anahtar = randomBytes(32).toString("base64url");
+    writeFileSync(ajandaPcAnahtarYolu(kok), anahtar);
+    const sahteBoru = `\\\\.\\pipe\\eren-ajanda-olcum-${randomBytes(8).toString("hex")}`;
+    assert.notEqual(sahteBoru, AJANDA_BORU_ADI);
+    const onModul = [
+      'import { syncBuiltinESMExports } from "node:module";',
+      'const net = process.getBuiltinModule("node:net");',
+      `const CANLI = ${JSON.stringify(AJANDA_BORU_ADI)};`,
+      `const SAHTE = ${JSON.stringify(sahteBoru)};`,
+      "const asil = net.connect;",
+      "const yonlendir = function (hedef, ...kalan) {",
+      '  const yol = typeof hedef === "string" ? hedef : hedef?.path;',
+      '  if (yol !== CANLI) throw new Error("olcum: beklenmeyen hedef");',
+      "  return asil.call(this, SAHTE, ...kalan);",
+      "};",
+      "net.connect = yonlendir;",
+      "net.createConnection = yonlendir;",
+      "syncBuiltinESMExports();",
+      'const m = await import("node:net");',
+      "if (m.connect !== yonlendir || m.createConnection !== yonlendir || m.default.connect !== yonlendir) process.exit(97);",
+    ].join("\n");
+
+    const bag = { hello: null as Record<string, unknown> | null, acik: false, kapandi: false };
+    const sunucu = createServer((s) => {
+      bag.acik = true;
+      let tampon = "";
+      s.on("data", (v) => {
+        tampon += v.toString("utf8");
+        for (let i = tampon.indexOf("\n"); i !== -1; i = tampon.indexOf("\n")) {
+          const satir = tampon.slice(0, i);
+          tampon = tampon.slice(i + 1);
+          const m = JSON.parse(satir) as Record<string, unknown>;
+          if (m["type"] === "kopru_hello" && bag.hello === null) {
+            bag.hello = m;
+            s.write(JSON.stringify({ v: PROTOKOL_SURUMU, type: "kopru_welcome", rol: "pc_oturumu" }) + "\n");
+          }
+        }
+      });
+      s.on("error", () => {});
+      s.on("close", () => {
+        bag.kapandi = true;
+      });
+    });
+    await new Promise<void>((c, r) => {
+      sunucu.once("error", r);
+      sunucu.listen(sahteBoru, () => c());
+    });
+
+    // Köprünün stdin'i (`soket` kipinde): yazma ucu bu süreçte.
+    const stdinBoru = `\\\\.\\pipe\\eren-olcum-stdin-${randomBytes(8).toString("hex")}`;
+    const stdinUcu: { s: Socket | null } = { s: null };
+    const stdinSunucu = createServer((s) => {
+      stdinUcu.s = s;
+      s.on("error", () => {});
+    });
+    await new Promise<void>((c) => stdinSunucu.listen(stdinBoru, () => c()));
+    const ortam: Record<string, string> = { OLCUM_STDIN: stdinBoru, EREN_KIT_DATA_DIR: kok, LOCALAPPDATA: kok, APPDATA: kok, USERPROFILE: kok, HOME: kok, TEMP: kok, TMP: kok };
+    if (process.env.SystemRoot !== undefined) ortam.SystemRoot = process.env.SystemRoot;
+    const kopruArg = [
+      "--disable-warning=ExperimentalWarning",
+      "--import",
+      `data:text/javascript,${encodeURIComponent(onModul)}`,
+      KOPRU,
+      "--rol",
+      "pc_oturumu",
+    ];
+    const ebeveyn = spawn(process.execPath, ["-e", EBEVEYN, "--", JSON.stringify(STDIO[kip]), ...kopruArg], { stdio: ["pipe", "pipe", "ignore"], env: ortam, cwd: kok, windowsHide: true });
+    let kopruPid = 0;
+    try {
+      kopruPid = await new Promise<number>((c, r) => {
+        let t = "";
+        ebeveyn.stdout.on("data", (v: Buffer) => {
+          t += v.toString("utf8");
+          const i = t.indexOf("\n");
+          if (i !== -1) c((JSON.parse(t.slice(0, i)) as { kopru: number }).kopru);
+        });
+        ebeveyn.once("exit", () => r(new Error("ebeveyn erken çıktı")));
+      });
+      assert.notEqual(await bekle(() => bag.hello !== null, 30_000), null, "köprü sahte boruya bağlanmadı");
+      assert.equal(bag.hello?.["rol"], "pc_oturumu");
+      assert.equal(bag.hello?.["jeton"], anahtar, "köprü yalnız sahte kökün anahtarını okudu");
+      // Denetim: ebeveyn yaşarken bağlantı açık kalır (el sıkışma süresi de dolmaz: welcome geldi).
+      await new Promise((c) => setTimeout(c, 500));
+      assert.equal(bag.kapandi, false);
+      assert.equal(yasiyor(kopruPid), true);
+
+      execFileSync("taskkill", ["/F", "/PID", String(ebeveyn.pid)], { stdio: "ignore" });
+      assert.notEqual(await bekle(() => !yasiyor(ebeveyn.pid ?? 0), 10_000), null, "ebeveyn ölmedi");
+      if (STDIO[kip].stdio[0] === "soket") {
+        // stdin'in yazma ucu testte açık: ebeveyn ölse de köprü yetim kalır, bağlantı açık durur.
+        await new Promise((c) => setTimeout(c, 3_000));
+        const yetim = { yasiyor: yasiyor(kopruPid), bagliMi: !bag.kapandi };
+        // Windows adlı borusunda yarım kapanış yoktur (`end` karşıya bitiş göndermez); uç kapatılır.
+        stdinUcu.s?.destroy();
+        const kapanma = await bekle(() => bag.kapandi && !yasiyor(kopruPid), 10_000);
+        return { yetim, kapanma };
+      }
+      const kapanma = await bekle(() => bag.kapandi && !yasiyor(kopruPid), 10_000);
+      return { yetim: null, kapanma };
+    } finally {
+      for (const pid of [kopruPid, ebeveyn.pid ?? 0]) {
+        if (pid === 0 || !yasiyor(pid)) continue;
+        process.kill(pid);
+        await bekle(() => !yasiyor(pid), 5_000);
+      }
+      stdinUcu.s?.destroy();
+      await new Promise<void>((c) => stdinSunucu.close(() => c()));
+      await new Promise<void>((c) => sunucu.close(() => c()));
+      assert.deepEqual(readdirSync(kok), [win32.basename(ajandaPcAnahtarYolu(kok))], "köprü sahte köke bir şey yazmadı");
+      // Ölen sürecin çalışma dizini kolu bir an daha açık kalabilir (EPERM).
+      rmSync(kok, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+    }
+  };
+
+  it("libuv ebeveyni (iş nesnesi): ebeveyn öldürülünce köprüyü işletim sistemi sonlandırır, boru bağlantısı kapanır", { timeout: 60_000 }, async (t) => {
+    const r = await olc("isNesnesi");
+    assert.notEqual(r.kapanma, null, "köprü 10 sn içinde çıkmadı ya da boru kapanmadı");
+    t.diagnostic(`öldürmeden sonra köprü çıkışı ve boru kapanışı: ${r.kapanma} ms`);
+  });
+
+  it("iş nesnesi yok, Claude Code gibi üç stdio borusu: ebeveyn öldürülünce köprü kendisi çıkar, boru bağlantısı kapanır", { timeout: 60_000 }, async (t) => {
+    const r = await olc("claude");
+    assert.notEqual(r.kapanma, null, "köprü 10 sn içinde çıkmadı ya da boru kapanmadı");
+    t.diagnostic(`öldürmeden sonra: ${r.kapanma} ms`);
+  });
+
+  it("iş nesnesi yok, yalnız stdin borusu: çıkışı stdin'in bitişi sağlar", { timeout: 60_000 }, async (t) => {
+    const r = await olc("stdin");
+    assert.notEqual(r.kapanma, null);
+    t.diagnostic(`öldürmeden sonra: ${r.kapanma} ms`);
+  });
+
+  it("açık kalan yol: iş nesnesi yok ve stdin'in yazma ucu başka süreçte açık; ebeveyn ölse de köprü yetim kalır, bağlantı açık durur; uç kapanınca çıkar", { timeout: 60_000 }, async (t) => {
+    const r = await olc("devral");
+    assert.deepEqual(r.yetim, { yasiyor: true, bagliMi: true }, "köprünün ebeveyn denetimi yok: yalnız stdin'in bitişine bakar");
+    assert.notEqual(r.kapanma, null, "yazma ucu kapandıktan sonra 10 sn içinde çıkmadı");
+    t.diagnostic(`yetim 3 sn yaşadı; yazma ucu kapanınca: ${r.kapanma} ms`);
   });
 });
