@@ -12,7 +12,7 @@
 use super::{Asama, Etkiler, Motor, Ortam};
 use crate::depo::anahtar;
 use crate::hata::CekirdekHatasi;
-use crate::kopru::tipler::EslesmeDurumu;
+use crate::kopru::tipler::{EslesmeDurumu, GecisNedeni};
 use crate::model::{AjandaEslestirmeQr, AjandaKanalHatasi};
 use serde_json::{Value, json};
 
@@ -59,6 +59,10 @@ impl Motor {
     ///
     /// Yerel kipte kip burada değişmez: yerel kayıtlar servisin tam kopyası gelince (`esitlendi`) kuyruğa
     /// dökülür ve kip o anda `bagli` olur (`yerel.rs` "Geçişler"; birleştirme önizlemesi D4'ün işidir).
+    /// Bağlı kipte de burada kip ve veri değişmez (D2): aynı bağlantının `welcome`'ı saklı `depo_id`'den
+    /// farklı bir depo getirirse (başka servis) geçiş orada yapılır (`kanal.rs`, `Motor::depo_degisti`);
+    /// aynı depo ise bağlantı bugünkü gibi sürer. Bağlantı `welcome`'dan önce koparsa sonraki bağlantı aynı
+    /// kararı verir.
     pub(crate) fn eslesme_kaydet(&mut self, qr: &AjandaEslestirmeQr, device_id: &str) -> Result<Eslesme, CekirdekHatasi> {
         let eslesme = Eslesme {
             device_id: device_id.to_string(),
@@ -114,9 +118,10 @@ impl Motor {
         })
     }
 
-    /// Bağlı kipte eşleşmeyi, sunucu kopyasını, kuyruğu, ret listesini, görünen kopyayı ve alarmları siler
-    /// (kip `bagli` kalır); cihaz anahtarını `anahtari_sil` ile siler. Açık bağlantı kapatılır. Anahtar
-    /// silinemezse hata döner ama yerel veriler silinmiş, etkiler uygulanmıştır (sonraki eşleştirme yine
+    /// Bağlı kipte koparmadır (D2, `Motor::kopar_nedeniyle`, `GecisNedeni::EslesmeKaldirildi`): görünen kopya
+    /// o anki haliyle yerel gerçek olur, kip `yerel`; ret listesi, alarmlar ve PC temeli kalır; kuyruk
+    /// atılır (sayıları `son_gecis`'te), eşleşme bilgisi ve cihaz anahtarı silinir, açık bağlantı kapatılır.
+    /// Anahtar silinemezse hata döner ama veriler ve etkiler yazılmıştır (sonraki eşleştirme yine
     /// `acik_anahtar` ister).
     ///
     /// Yerel kipte kayıtların tek kopyası telefondadır: yalnız eşleşme bilgisi (eşleşme, bekleyen QR, son
@@ -139,22 +144,7 @@ impl Motor {
             o.kimlik.anahtari_sil()?;
             return Ok(());
         }
-        self.depo.yazma(|d| d.eslesmeye_bagli_her_seyi_sil())?;
-        self.gecmis.clear();
-        self.gecmis_istekleri.clear();
-        self.son_hata = None;
-        self.surum_uyusmazligi = None;
-        if !matches!(self.asama, Asama::Kopuk | Asama::Kapaniyor) {
-            self.kapat(e, "eşleşme kaldırıldı");
-        }
-        e.degisim.tumu = true;
-        e.degisim.eslesme = true;
-        e.degisim.ret_listesi = true;
-        e.degisim.baglanti = true;
-        // Alarm satırları kendi savepoint'inde, yukarıdaki işlem kalıcı olduktan sonra (R3).
-        self.tum_alarmlari_kaldir(e)?;
-        o.kimlik.anahtari_sil()?;
-        Ok(())
+        self.kopar_nedeniyle(o, e, GecisNedeni::EslesmeKaldirildi).map(|_| ())
     }
 
     /// Açılacak adres (`ws://<tailscale>:<port>/ajanda`); eşleşme ve bekleyen eşleştirme yoksa `None`.

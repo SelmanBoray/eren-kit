@@ -26,6 +26,8 @@
 //! - Canlı `kayit` hemen (tek işlem) uygulanır.
 //! - Yerel kipte (bağlanma sürüyor, `yerel.rs` "Geçişler"): `hello` boş kopya gibi gider, telafi hep tam
 //!   sayılıp toplanır; `esitlendi`'de `yereli_kuyruga_dok` yerel kayıtları kuyruğa döker ve kip `bagli` olur.
+//! - Bağlı kipte `welcome` saklı `depo_id`'den farklı `depo_id` getirirse (D2) önce `depo_degisti` kipi
+//!   yerele çevirir (veri kalır, eşleşme kalır); bağlantı yukarıdaki yerel kip yolundan sürer.
 //!
 //! Kuyruk (`kural::kuyruk::ajanda_kuyruk_karari`): yalnız `Canli`'da, en çok bir işlem yolda. Yollanan satır
 //! kalıcı olarak `yollandi` işaretlenir; sonucu gelmeden bağlantı biterse (ya da süreç ölürse: sonraki
@@ -268,6 +270,16 @@ impl Motor {
                 self.sinamayi_yanitla(o, e, &eslesme, &client_nonce, &server_nonce, &server_signature)
             }
             (Tur::Yanit, AjandaAsagi::Welcome { depo_id, tam, .. }) => {
+                // D2, kesin kural: bağlı kipte saklı `depo_id`'den farklı depo (başka servisle yeni eşleşme ya
+                // da sıfırdan kurulmuş servis) görünen kopyayı tam telafisiyle ezemez. Önce koparmanın veri
+                // kısmı (`depo_degisti`, eşleşme kalır), sonra bu bağlantı aşağıda yerel kipten bağlanma
+                // olarak sürer. Saklı `depo_id` yoksa (ilk `welcome`) bugünkü gibi.
+                if !self.yerel_mi()?
+                    && let Some(eski) = self.depo.depo_id()?
+                    && eski != depo_id
+                {
+                    self.depo_degisti(o, e, &depo_id)?;
+                }
                 // Tam telafi kuyruğa dokunmaz (`ajanda_kuyruk_karari(TamTelafi)` = `Bekle`, deneme aynı):
                 // işlemler `esitlendi`'de taze kopya üstüne yeniden uygulanır ve sırayla yeniden gider.
                 // Yerel kipte telafi hep toplanır (servis boş `hello`'ya zaten tam der): PC temeli bağlanma

@@ -338,11 +338,12 @@ fn bagli_kip_degismez_kuyruk_bekleyen_ve_canli_gecmis() {
     h.baglan();
     assert_eq!(h.c.baglanti_durumu().unwrap().kuyrukta, 0);
     assert_eq!(h.c.kayit(id.clone()).unwrap().unwrap().kayit, h.pc.d.kayitlar[&id]);
-    // Eşleşme kaldırılınca bağlı kip her şeyi siler ve bağlı kalır (bugünkü davranış).
+    // Eşleşme kaldırılınca (D2) bağlı kip koparılır: kayıt kalır, kip yerel olur, yazma kuyruksuz sürer.
     h.c.eslesmeyi_kaldir().unwrap();
     h.kopar();
-    assert_eq!(h.c.kip().unwrap(), CalismaKipi::Bagli);
-    assert!(h.c.kayit(id).unwrap().is_none());
-    let sonra = h.c.ekle(govde("Eşleşmesiz bağlı", None), GirdiYolu::Elle).unwrap();
-    assert!(h.c.kayit(sonra).unwrap().unwrap().bekleyen, "eşleşmesiz bağlı kip kuyrukla sürer");
+    assert_eq!(h.c.kip().unwrap(), CalismaKipi::Yerel);
+    assert_eq!(h.c.kayit(id.clone()).unwrap().unwrap().kayit, h.pc.d.kayitlar[&id]);
+    let sonra = h.c.ekle(govde("Eşleşmesiz", None), GirdiYolu::Elle).unwrap();
+    assert!(!h.c.kayit(sonra).unwrap().unwrap().bekleyen, "yerel kip kuyruksuz yazar");
+    assert_eq!(h.c.baglanti_durumu().unwrap().kuyrukta, 0);
 }

@@ -24,7 +24,12 @@
 //!   yerel kayıtlar fark olarak kuyruğa girer, kip `bagli` olur. Görünen kopya hiçbir zaman başka bir
 //!   `depo_id`'nin tam telafisiyle değiştirilmez.
 //! - Koparma (`Motor::baglantiyi_kopar`): bağlı kipten yerel kipe; görünen kopya o anki haliyle kalır.
-//! - Önizlemeli birleştirme D4'tedir; bağlı kipte `eslesmeyi_kaldir` ve yeni QR'ın koparmaya dönmesi D2'de.
+//! - Veri koruması (D2): bağlı kipte `eslesmeyi_kaldir` koparmadır (`GecisNedeni::EslesmeKaldirildi`). Bağlı
+//!   kipte `welcome` saklı `depo_id`'den farklı bir `depo_id` getirirse (başka servisle yeni QR ya da sıfırdan
+//!   kurulmuş servis) `Motor::depo_degisti` koparmanın veri kısmını yapar, eşleşme kalır ve bağlantı yerel
+//!   kipten bağlanma olarak sürer: servis değiştirme "koparma + bağlanma"dır. Yeni QR reddedilirse hiçbir
+//!   şey değişmez (eski eşleşme ve bağlı kip sürer). Son geçişin özeti `meta.son_gecis`'tedir.
+//! - Önizlemeli birleştirme ve aynı `depo_id`'de tam telafi (servis yedekten dönmüş) D4'tedir.
 
 use std::collections::BTreeMap;
 
@@ -34,7 +39,7 @@ use super::kanal::gecmis_satiri;
 use super::{Asama, Etkiler, Motor, Ortam};
 use crate::depo::{Depo, KopyaTablosu, KuyrukSatiri, anahtar};
 use crate::hata::CekirdekHatasi;
-use crate::kopru::tipler::{CalismaKipi, GecmisSayfasi, KoparmaSonucu};
+use crate::kopru::tipler::{CalismaKipi, GecisNedeni, GecisOzeti, GecmisSayfasi, KoparmaSonucu};
 use crate::model::sinirlar::ajanda::{GECMIS_SAYFA, KAYIT_ADET};
 use crate::model::{
     AjandaGecmisGirdisi, AjandaIslem, AjandaKaydi, AjandaParca, AjandaRetNedeni, AjandaYazar, AjandaZamani, Alan,
@@ -416,14 +421,123 @@ fn onaylananlari_temele_kat(d: &Depo, b: &IyimserBaglam, kuyruk: &[KuyrukSatiri]
     Ok(())
 }
 
+/// Bağlı kipten yerel kipe geçişin veri kısmı (koparma ve `depo_id` değişimi), çağıranın tek işleminde:
+/// görünen kopya o anki haliyle yerel gerçek olur (`bekleyen` düşer, metin aynı), onaylanmış satırlar PC
+/// temeline katılır (`onaylananlari_temele_kat`), kuyruk ve süren tam telafinin toplananları atılır, kip
+/// `yerel` olur. Ret listesi, PC temeli (`sunucu_kayitlari`, `depo_id`, `son_rev`), yerel geçmiş, alarm
+/// planı ve eşleşme bilgisi kalır. Döner: koparmanın sayıları (kuyruk atılmadan önce sayılır).
+fn bagli_kipten_cik(d: &Depo, b: &IyimserBaglam) -> Result<KoparmaSonucu, CekirdekHatasi> {
+    let kuyruk = d.kuyruk()?;
+    let gonderilmeyen: Vec<&KuyrukSatiri> = kuyruk.iter().filter(|s| s.bekledigi_rev.is_none()).collect();
+    let mut kayitlar: Vec<&str> = gonderilmeyen.iter().map(|s| s.kayit_id.as_str()).collect();
+    kayitlar.sort_unstable();
+    kayitlar.dedup();
+    let sonuc = KoparmaSonucu {
+        onceki_kip: CalismaKipi::Bagli,
+        gonderilmeyen_kayit: sayi(kayitlar.len() as i64),
+        gonderilmeyen_islem: sayi(gonderilmeyen.len() as i64),
+        yanitsiz_islem: sayi(gonderilmeyen.iter().filter(|s| s.yollandi).count() as i64),
+        ret_listesinde: sayi(d.ret_sayisi()?),
+        baglanma_iptal: false,
+    };
+    onaylananlari_temele_kat(d, b, &kuyruk)?;
+    d.kuyrugu_bosalt()?;
+    d.bekleyenleri_dusur()?;
+    d.telafiyi_sil()?;
+    d.kip_yaz(true)?;
+    Ok(sonuc)
+}
+
+fn neden_adi(n: GecisNedeni) -> &'static str {
+    match n {
+        GecisNedeni::Koparma => "koparma",
+        GecisNedeni::EslesmeKaldirildi => "eslesme_kaldirildi",
+        GecisNedeni::DepoDegisti => "depo_degisti",
+    }
+}
+
+/// `meta.son_gecis`'in JSON'u (`GecisOzeti`; `onceki_kip` ve `baglanma_iptal` yazılmaz: hep `Bagli`, yanlış).
+fn gecis_json(g: &GecisOzeti) -> String {
+    let k = &g.koparma;
+    serde_json::json!({
+        "neden": neden_adi(g.neden),
+        "ts_ms": g.ts_ms,
+        "gonderilmeyen_kayit": k.gonderilmeyen_kayit,
+        "gonderilmeyen_islem": k.gonderilmeyen_islem,
+        "yanitsiz_islem": k.yanitsiz_islem,
+        "ret_listesinde": k.ret_listesinde,
+        "eski_depo_id": g.eski_depo_id,
+        "yeni_depo_id": g.yeni_depo_id,
+    })
+    .to_string()
+}
+
+/// `gecis_json`'un tersi; okunamayan değer yok sayılır (`None`).
+fn gecis_coz(metin: &str) -> Option<GecisOzeti> {
+    let v: serde_json::Value = serde_json::from_str(metin).ok()?;
+    let neden = [GecisNedeni::Koparma, GecisNedeni::EslesmeKaldirildi, GecisNedeni::DepoDegisti]
+        .into_iter()
+        .find(|n| v.get("neden").and_then(|x| x.as_str()) == Some(neden_adi(*n)))?;
+    let sayi_al = |ad: &str| v.get(ad)?.as_i64().and_then(|n| i32::try_from(n).ok());
+    let metin_al = |ad: &str| v.get(ad).and_then(|x| x.as_str()).map(str::to_string);
+    Some(GecisOzeti {
+        neden,
+        ts_ms: v.get("ts_ms")?.as_i64()?,
+        koparma: KoparmaSonucu {
+            onceki_kip: CalismaKipi::Bagli,
+            gonderilmeyen_kayit: sayi_al("gonderilmeyen_kayit")?,
+            gonderilmeyen_islem: sayi_al("gonderilmeyen_islem")?,
+            yanitsiz_islem: sayi_al("yanitsiz_islem")?,
+            ret_listesinde: sayi_al("ret_listesinde")?,
+            baglanma_iptal: false,
+        },
+        eski_depo_id: metin_al("eski_depo_id"),
+        yeni_depo_id: metin_al("yeni_depo_id"),
+    })
+}
+
+/// Geçişi `bagli_kipten_cik` ile yapar ve özetini (`meta.son_gecis`) aynı işlemde yazar.
+fn gecisi_yaz(d: &Depo, b: &IyimserBaglam, neden: GecisNedeni, ts_ms: i64, yeni_depo_id: Option<&str>) -> Result<KoparmaSonucu, CekirdekHatasi> {
+    let eski_depo_id = d.depo_id()?;
+    let koparma = bagli_kipten_cik(d, b)?;
+    let ozet = GecisOzeti { neden, ts_ms, koparma: koparma.clone(), eski_depo_id, yeni_depo_id: yeni_depo_id.map(str::to_string) };
+    d.meta_yaz(anahtar::SON_GECIS, Some(&gecis_json(&ozet)))?;
+    Ok(koparma)
+}
+
 impl Motor {
+    /// Bağlı kipten yerel kipe son geçişin özeti (`meta.son_gecis`); hiç geçiş olmadıysa `None`.
+    pub(crate) fn son_gecis(&self) -> Result<Option<GecisOzeti>, CekirdekHatasi> {
+        Ok(self.depo.meta_oku(anahtar::SON_GECIS)?.as_deref().and_then(gecis_coz))
+    }
+
+    /// Bağlı kipte servis saklı `depo_id`'den farklı bir `depo_id` getirdi (`welcome`; kesin kural: görünen
+    /// kopya başka bir `depo_id`'nin tam telafisiyle değiştirilmez). Tek SQLite işleminde koparmanın veri
+    /// kısmı (`bagli_kipten_cik`) ve özet (`DepoDegisti`); eşleşme, cihaz anahtarı ve bağlantı kalır. Çağıran
+    /// (`kanal.rs`) bu bağlantıyı yerel kipten bağlanma olarak sürdürür: telafi toplanır, `esitlendi`'de
+    /// `yereli_kuyruga_dok`. Bağlantı ondan önce koparsa kip yerel kalır, sonraki bağlantı boş `hello` ile
+    /// baştan dener. Gözlemciye `tumu` ve `baglanti` (kip değişti), açık geçmiş sayfaları için `gecmis`.
+    pub(crate) fn depo_degisti(&mut self, o: &Ortam, e: &mut Etkiler, yeni_depo_id: &str) -> Result<(), CekirdekHatasi> {
+        let cevirici = o.cevirici();
+        let b = self.iyimser_baglam(o, &cevirici)?;
+        let ts_ms = o.simdi_ms();
+        self.depo.yazma(|d| gecisi_yaz(d, &b, GecisNedeni::DepoDegisti, ts_ms, Some(yeni_depo_id)))?;
+        self.gecmis_istekleri.clear();
+        // Önbellekteki sayfalar eski servisin geçmişidir.
+        for kayit_id in std::mem::take(&mut self.gecmis).into_keys() {
+            e.degisim.gecmis.push(kayit_id);
+        }
+        e.degisim.tumu = true;
+        e.degisim.baglanti = true;
+        Ok(())
+    }
+
     /// Koparma (`YOL-HARITASI.md` 3.3 "Koparma"): bağlı kipten yerel kipe veri kaybı olmadan. Tek SQLite
-    /// işleminde: görünen kopya o anki haliyle yerel gerçek olur (`bekleyen` düşer, metin aynı), onaylanmış
-    /// satırlar PC temeline katılır (`onaylananlari_temele_kat`), kuyruk ve süren tam telafinin toplananları
-    /// atılır, eşleşme bilgisi (eşleşme, bekleyen QR, son ret) silinir, kip `yerel` olur. Ret listesi, PC
-    /// temeli (`sunucu_kayitlari`, `depo_id`, `son_rev`), yerel geçmiş ve alarm planı kalır (görünen kayıt
-    /// değişmediği için alarm senkronu çağrılmaz). Sonra açık bağlantı kapatılır, geçmiş önbelleği (PC'nin
-    /// geçmişi) atılır, cihaz anahtarı silinir.
+    /// işleminde `bagli_kipten_cik` (görünen kopya o anki haliyle yerel gerçek olur, kuyruk atılır; ret
+    /// listesi, PC temeli, yerel geçmiş ve alarm planı kalır: görünen kayıt değişmediği için alarm senkronu
+    /// çağrılmaz), eşleşme bilgisi (eşleşme, bekleyen QR, son ret) silinir ve özet (`meta.son_gecis`,
+    /// `GecisNedeni::Koparma`) yazılır. Sonra açık bağlantı kapatılır, geçmiş önbelleği (PC'nin geçmişi)
+    /// atılır, cihaz anahtarı silinir.
     ///
     /// Yerel kipte kayıtlara dokunulmaz: süren bağlanma (eşleşme kayıtlı, servisin kopyası henüz gelmedi) ya
     /// da bekleyen eşleştirme iptal edilir (eşleşme bilgisi ve toplanan kopya silinir, bağlantı kapanır); PC
@@ -431,6 +545,11 @@ impl Motor {
     /// silinir; çağrı yinelenebilir. Anahtar silinemezse hata döner ama veriler ve etkiler yazılmıştır
     /// (`eslesmeyi_kaldir` gibi); yinelenen çağrı anahtarı yeniden dener.
     pub(crate) fn baglantiyi_kopar(&mut self, o: &Ortam, e: &mut Etkiler) -> Result<KoparmaSonucu, CekirdekHatasi> {
+        self.kopar_nedeniyle(o, e, GecisNedeni::Koparma)
+    }
+
+    /// `baglantiyi_kopar`; bağlı kipte özete `neden` yazılır (`eslesmeyi_kaldir` `EslesmeKaldirildi` verir).
+    pub(crate) fn kopar_nedeniyle(&mut self, o: &Ortam, e: &mut Etkiler, neden: GecisNedeni) -> Result<KoparmaSonucu, CekirdekHatasi> {
         let yerel = self.yerel_mi()?;
         let bagli_eslesme = [anahtar::ESLESME, anahtar::ESLESTIRME_QR, anahtar::ESLESME_REDDI];
         let sonuc = if yerel {
@@ -455,28 +574,12 @@ impl Motor {
         } else {
             let cevirici = o.cevirici();
             let b = self.iyimser_baglam(o, &cevirici)?;
+            let ts_ms = o.simdi_ms();
             self.depo.yazma(|d| {
-                let kuyruk = d.kuyruk()?;
-                let gonderilmeyen: Vec<&KuyrukSatiri> = kuyruk.iter().filter(|s| s.bekledigi_rev.is_none()).collect();
-                let mut kayitlar: Vec<&str> = gonderilmeyen.iter().map(|s| s.kayit_id.as_str()).collect();
-                kayitlar.sort_unstable();
-                kayitlar.dedup();
-                let sonuc = KoparmaSonucu {
-                    onceki_kip: CalismaKipi::Bagli,
-                    gonderilmeyen_kayit: sayi(kayitlar.len() as i64),
-                    gonderilmeyen_islem: sayi(gonderilmeyen.len() as i64),
-                    yanitsiz_islem: sayi(gonderilmeyen.iter().filter(|s| s.yollandi).count() as i64),
-                    ret_listesinde: sayi(d.ret_sayisi()?),
-                    baglanma_iptal: false,
-                };
-                onaylananlari_temele_kat(d, &b, &kuyruk)?;
-                d.kuyrugu_bosalt()?;
-                d.bekleyenleri_dusur()?;
-                d.telafiyi_sil()?;
+                let sonuc = gecisi_yaz(d, &b, neden, ts_ms, None)?;
                 for a in bagli_eslesme {
                     d.meta_yaz(a, None)?;
                 }
-                d.kip_yaz(true)?;
                 Ok(sonuc)
             })?
         };

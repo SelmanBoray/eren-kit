@@ -23,7 +23,7 @@ use crate::motor::{Etkiler, Motor, Ortam};
 
 use kabuklar::{AlarmKabugu, Gozlemci, KimlikKabugu, Tasima, ZamanKabugu};
 use tipler::{
-    BaglantiDurumu, CalismaKipi, DuzenlemeTemeli, EslesmeDurumu, GecmisSayfasi, HatirlatmaBildirimi, HatirlatmaOnizlemesi, KayitGorunumu,
+    BaglantiDurumu, CalismaKipi, DuzenlemeTemeli, EslesmeDurumu, GecisOzeti, GecmisSayfasi, HatirlatmaBildirimi, HatirlatmaOnizlemesi, KayitGorunumu,
     KoparmaSonucu, ListeSorgusu, RetGirdisi, TakvimAyi, TakvimOgesi, YenidenKurmaNedeni,
 };
 
@@ -259,8 +259,19 @@ impl Cekirdek {
         self.calistir(|m, _, _| m.eslesme_durumu())
     }
 
+    /// Eşleşme bilgisini ve cihaz anahtarını siler, açık bağlantıyı kapatır. Kayıt silmez (D2): bağlı kipte
+    /// `baglantiyi_kopar` ile aynıdır (kip `Yerel` olur; sayılar `son_gecis`'te, neden `EslesmeKaldirildi`),
+    /// yerel kipte süren bağlanmayı ya da bekleyen eşleştirmeyi iptal eder.
     pub fn eslesmeyi_kaldir(&self) -> Result<(), CekirdekHatasi> {
         self.calistir(|m, o, e| m.eslesmeyi_kaldir(o, e))
+    }
+
+    /// Bağlı kipten yerel kipe son geçişin özeti (D2; kalıcı, sonraki geçiş üstüne yazar); hiç olmadıysa
+    /// `None`. Nedenler: `baglantiyi_kopar`, `eslesmeyi_kaldir`, bağlantıda servisin farklı `depo_id`
+    /// getirmesi (`DepoDegisti`: gözlemciye `tumu` ve `baglanti` gider, kip `Yerel` olur ve bağlanma sürer;
+    /// servisin tam kopyası gelince kip `Bagli` olur). Arayüz kullanıcıya ne olduğunu bununla söyler.
+    pub fn son_gecis(&self) -> Result<Option<GecisOzeti>, CekirdekHatasi> {
+        self.calistir(|m, _, _| m.son_gecis())
     }
 
     /// Koparma (D1): bağlı kipten yerel kipe, veri kaybı olmadan. Görünen kopya o anki haliyle (bekleyen
