@@ -2386,7 +2386,7 @@ export interface AjandaPcBaglami {
 export type AjandaKopruBaglami = Readonly<AjandaJetonKapsami> | Readonly<AjandaPcBaglami>;
 
 /**
- * PC kancalarının (`pc_kanca`) işleyicileri: `ajanda` uygular (`AjandaYoneticisi.pcKanca`), boru sunucusu
+ * PC kancasının (`pc_kanca`, yalnız `pc_arac`) işleyicileri: `ajanda` uygular (`AjandaYoneticisi.pcKanca`), boru sunucusu
  * çağırır. Eşzamanlıdır, depoya yazmaz (yalnız bellek); atarsa boru `ic_hata` döner. Girdi şemadan geçmiştir.
  */
 export type PcKancaIsleyicileri = {
@@ -2544,9 +2544,9 @@ export interface AjandaYoneticisi {
   /** Ajanda borusunun işleyicileri: `AjandaKopruSunucu.baslat`'a verilir. */
   readonly araclar: AjandaFiilIsleyiciler;
   /**
-   * PC kancalarının işleyicileri (`AjandaKopruSunucu.baslat`'ın ikinci argümanı). Bellekteki PC defterini
-   * besler: istem (mesaj anı, insan metni), araç tasdiki, tur sonu. `araclar`'ın `pc_oturumu` çağrısı
-   * turunu buradan alır (AJANDA.md "PC oturumları").
+   * PC kancasının işleyicisi (`AjandaKopruSunucu.baslat`'ın ikinci argümanı). Bellekteki PC defterini
+   * besler: araç öncesi tasdik (çağrı kimliği, alt agent, etkileşimsiz). `araclar`'ın `pc_oturumu`
+   * çağrısı turunu buradan alır (AJANDA.md "PC oturumları").
    */
   readonly pcKanca: PcKancaIsleyicileri;
 }

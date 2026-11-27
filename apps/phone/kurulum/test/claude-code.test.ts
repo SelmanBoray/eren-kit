@@ -10,6 +10,10 @@ import {
   bizimKancaMi,
   calis,
   gosterMetni,
+  KANCA_OLAYLARI,
+  kancaDurumu,
+  kancaDurumuCoz,
+  kancaGruplari,
   kancaKomutu,
   kancalariCikar,
   kancalariEkle,
@@ -61,6 +65,14 @@ test("kanca komutu tırnaklı ve ileri eğik çizgili; kendi kancamız (yeni ve 
   assert.match(mcpEkleKomutu(Y), /^claude mcp add eren-ajanda -s user -- 'C:\\Program Files\\nodejs\\node\.exe' --disable-warning=ExperimentalWarning C:\\ornek\\Yerel\\eren-kit\\uygulama\\guncel\\server\\src\\kopru\.ts --rol pc_oturumu$/);
 });
 
+test("yalın yol: tek kanca, yalnız ajanda araçlarından önce (PreToolUse, eşleyici mcp__eren-ajanda__.*); istem ve tur sonu yok", () => {
+  assert.deepEqual(KANCA_OLAYLARI, { PreToolUse: "arac" });
+  assert.deepEqual(kancaGruplari(Y), {
+    PreToolUse: { matcher: "mcp__eren-ajanda__.*", hooks: [{ type: "command", command: kancaKomutu(Y, "arac"), timeout: 10 }] },
+  });
+  assert.deepEqual(Object.keys(kancalariEkle({}, Y)["hooks"] as object), ["PreToolUse"]);
+});
+
 test("kanca ekleme: başka kancalara ve anahtarlara dokunmaz, idempotent; eski sürüm yolu yenisiyle değişir", () => {
   const baska = { type: "command", command: 'python -I "C:/x/hook.py" || true' };
   const ayar = {
@@ -74,26 +86,67 @@ test("kanca ekleme: başka kancalara ve anahtarlara dokunmaz, idempotent; eski s
   assert.deepEqual(bir["permissions"], { allow: ["Bash(git status)"] });
   const h = bir["hooks"] as Record<string, Array<Record<string, unknown>>>;
   assert.deepEqual(h["SessionStart"], [{ hooks: [baska] }]);
-  assert.equal(h["UserPromptSubmit"]!.length, 2);
-  assert.deepEqual(h["UserPromptSubmit"]![0], { hooks: [baska] });
+  assert.deepEqual(h["UserPromptSubmit"], [{ hooks: [baska] }], "başkasının istem kancası durur, bizimki eklenmez");
   assert.deepEqual(h["PreToolUse"], [{ matcher: ARAC_ESLESTIRICI, hooks: [{ type: "command", command: kancaKomutu(Y, "arac"), timeout: 10 }] }]);
-  assert.deepEqual(h["Stop"], [{ hooks: [{ type: "command", command: kancaKomutu(Y, "tur_sonu"), timeout: 10 }] }]);
+  assert.equal(h["Stop"], undefined);
   assert.deepEqual(kancalariEkle(bir, Y), bir, "ikinci ekleme aynı");
   const yeniY = yollar({ ...ORTAM, EREN_KIT_DATA_DIR: "D:\\veri" }, NODE);
   const yeni = kancalariEkle(bir, yeniY)["hooks"] as Record<string, Array<Record<string, Array<Record<string, unknown>>>>>;
-  assert.equal(yeni["Stop"]!.length, 1);
-  assert.equal(yeni["Stop"]![0]!["hooks"]![0]!["command"], kancaKomutu(yeniY, "tur_sonu"));
+  assert.equal(yeni["PreToolUse"]!.length, 1);
+  assert.equal(yeni["PreToolUse"]![0]!["hooks"]![0]!["command"], kancaKomutu(yeniY, "arac"));
+});
+
+test("önceki kurulumdan geçiş: kanca-ekle eski istem ve tur sonu kancalarını çıkarır, yalnız araç öncesini bırakır", () => {
+  const baska = { type: "command", command: "echo x" };
+  const onceki = {
+    hooks: {
+      UserPromptSubmit: [{ hooks: [baska] }, { hooks: [{ type: "command", command: kancaKomutu(Y, "istem"), timeout: 10 }] }],
+      PreToolUse: [{ matcher: ARAC_ESLESTIRICI, hooks: [{ type: "command", command: kancaKomutu(Y, "arac"), timeout: 10 }] }],
+      Stop: [{ hooks: [{ type: "command", command: kancaKomutu(Y, "tur_sonu"), timeout: 10 }] }],
+    },
+  };
+  assert.deepEqual(kancaDurumuCoz(onceki), { arac: true, eski: 2 });
+  const yeni = kancalariEkle(onceki, Y);
+  assert.deepEqual(yeni, {
+    hooks: {
+      UserPromptSubmit: [{ hooks: [baska] }],
+      PreToolUse: [{ matcher: ARAC_ESLESTIRICI, hooks: [{ type: "command", command: kancaKomutu(Y, "arac"), timeout: 10 }] }],
+    },
+  });
+  assert.deepEqual(kancaDurumuCoz(yeni), { arac: true, eski: 0 });
+});
+
+test("kanca durumu: yok, kurulu, eşleyicisiz ya da yanlış olaydaki araç kancası eski sayılır; dosya yoksa ve bozuksa", () => {
+  assert.deepEqual(kancaDurumuCoz({}), { arac: false, eski: 0 });
+  assert.deepEqual(kancaDurumuCoz(kancalariEkle({}, Y)), { arac: true, eski: 0 });
+  const komut = { type: "command", command: kancaKomutu(Y, "arac") };
+  assert.deepEqual(kancaDurumuCoz({ hooks: { PreToolUse: [{ hooks: [komut] }] } }), { arac: false, eski: 1 }, "eşleyicisiz: her araçta çalışır");
+  assert.deepEqual(kancaDurumuCoz({ hooks: { PostToolUse: [{ matcher: ARAC_ESLESTIRICI, hooks: [komut] }] } }), { arac: false, eski: 1 });
+  assert.deepEqual(kancaDurumuCoz({ hooks: { PreToolUse: [{ matcher: ARAC_ESLESTIRICI, hooks: [{ type: "command", command: "echo x" }] }] } }), { arac: false, eski: 0 });
+  const dizin = mkdtempSync(join(tmpdir(), "eren-claude-code-durum-"));
+  try {
+    const ortam = { ...ORTAM, USERPROFILE: dizin };
+    const yol = join(dizin, ".claude", "settings.json");
+    assert.deepEqual(kancaDurumu(ortam), { ayarYolu: yol, arac: false, eski: 0 });
+    assert.equal(calis(["kanca-ekle"], ortam, NODE), 0);
+    assert.deepEqual(kancaDurumu(ortam), { ayarYolu: yol, arac: true, eski: 0 });
+    writeFileSync(yol, "{bozuk", "utf8");
+    assert.deepEqual(kancaDurumu(ortam), { ayarYolu: yol, arac: null, eski: 0 });
+    assert.equal(kancaDurumu({ LOCALAPPDATA: ORTAM.LOCALAPPDATA }).arac, null, "USERPROFILE yok: atmaz");
+  } finally {
+    rmSync(dizin, { recursive: true, force: true });
+  }
 });
 
 test("kanca kaldırma yalnız bizimkini çıkarır; boşalan grup ve olay gider, karışık grupta öteki kalır", () => {
   const baska = { type: "command", command: "echo x" };
   const ayar = kancalariEkle({ hooks: { Stop: [{ hooks: [baska] }] } }, Y);
-  // Elle birleştirilmiş grup: bizimki ile başkası aynı grupta.
+  // Elle birleştirilmiş grup: bizimki (eski istem kancası) ile başkası aynı grupta.
   (ayar["hooks"] as Record<string, unknown[]>)["UserPromptSubmit"] = [{ hooks: [baska, { type: "command", command: kancaKomutu(Y, "istem") }] }];
   const { ayar: temiz, cikan } = kancalariCikar(ayar);
-  assert.equal(cikan, 3);
+  assert.equal(cikan, 2);
   assert.deepEqual(temiz, { hooks: { Stop: [{ hooks: [baska] }], UserPromptSubmit: [{ hooks: [baska] }] } });
-  assert.deepEqual(kancalariCikar(kancalariEkle({}, Y)), { ayar: {}, cikan: 3 });
+  assert.deepEqual(kancalariCikar(kancalariEkle({}, Y)), { ayar: {}, cikan: 1 });
   assert.deepEqual(kancalariCikar({ a: 1 }), { ayar: { a: 1 }, cikan: 0 });
 });
 
@@ -103,7 +156,9 @@ test("bozuk ayar dosyasına dokunulmaz", () => {
   assert.throws(() => ayarCoz("{bozuk"), AyarHatasi);
   assert.throws(() => ayarCoz("[1]"), AyarHatasi);
   assert.throws(() => kancalariEkle({ hooks: [] as unknown as Record<string, unknown> }, Y), AyarHatasi);
-  assert.throws(() => kancalariEkle({ hooks: { Stop: {} } }, Y), AyarHatasi);
+  assert.throws(() => kancalariEkle({ hooks: { PreToolUse: {} } }, Y), AyarHatasi);
+  // Eklemediğimiz olayın tanınmayan biçimi olduğu gibi kalır.
+  assert.deepEqual((kancalariEkle({ hooks: { Stop: {} } }, Y)["hooks"] as Record<string, unknown>)["Stop"], {});
 });
 
 test("goster hiçbir şey değiştirmez ve tam komutları yazar; kayıt yönergesi aynı metin, adım 0'sız", () => {
@@ -111,7 +166,8 @@ test("goster hiçbir şey değiştirmez ve tam komutları yazar; kayıt yönerge
   assert.ok(m.includes(mcpEkleKomutu(Y)));
   assert.ok(m.includes("eren eslestir --claude-code\n"));
   assert.ok(m.includes("claude mcp remove eren-ajanda -s user"));
-  assert.ok(m.includes(JSON.stringify(kancaKomutu(Y, "istem")).slice(1, -1)));
+  assert.ok(m.includes(JSON.stringify(kancaKomutu(Y, "arac")).slice(1, -1)));
+  assert.equal(/UserPromptSubmit|"Stop"|kanca\.ts\\" (istem|tur_sonu)/.test(m), false, "yalın yolda istem ve tur sonu kancası yok");
   assert.ok(m.includes("eren eslestir --claude-code --teshis"));
   const y = kayitYonergesi(ORTAM, NODE);
   assert.equal(y, gosterMetni(Y, "C:\\ornek\\Kullanici\\.claude\\settings.json", false));
@@ -127,7 +183,7 @@ test("komut satırı: kanca-ekle yedekler ve yazar, kanca-kaldir geri alır; boz
     assert.equal(calis(["kanca-ekle", "--ayar", yol], ORTAM, NODE), 0);
     const eklendi = JSON.parse(readFileSync(yol, "utf8")) as Record<string, unknown>;
     assert.equal(eklendi["model"], "opus");
-    assert.ok(Object.keys(eklendi["hooks"] as object).length === 3);
+    assert.deepEqual(Object.keys(eklendi["hooks"] as object), ["PreToolUse"]);
     assert.equal(readdirSync(dizin).filter((d) => d.includes(".yedek-")).length, 1);
     assert.equal(calis(["kanca-kaldir", "--ayar", yol], ORTAM, NODE), 0);
     assert.deepEqual(JSON.parse(readFileSync(yol, "utf8")), { model: "opus" });

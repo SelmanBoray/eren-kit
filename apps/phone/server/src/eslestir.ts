@@ -22,6 +22,7 @@ import {
   sha256Hex,
   utf8Bayt,
   type CihazKapsami,
+  type PcTurKarari,
 } from "@eren/protocol";
 import type { CihazYonetimi, EslesmeOzeti } from "./depo.ts";
 import type {
@@ -126,11 +127,11 @@ export const KULLANIM = [
   "",
   "Aynı anda tek eşleştirme penceresi açıktır: yeni kod (hangi kapsamda olursa olsun) öncekini geçersiz kılar.",
   "",
-  "PC'deki Claude Code oturumları (ajanda araçları ve kancaları; docs/SERVIS.md \"Claude Code oturumları\"):",
+  "PC'deki Claude Code oturumları (ajanda araçları ve araç öncesi kancası; docs/SERVIS.md \"Claude Code oturumları\"):",
   "  eslestir --claude-code            Yeni ajanda anahtarı üretir (öncekini geçersiz kılar), kayıt komutlarını yazar.",
   "  eslestir --claude-code --liste    Anahtar geçmişini ve anahtar dosyasının durumunu gösterir.",
   "  eslestir --claude-code --kaldir   Anahtarı geçersiz kılar ve dosyasını siler (PC oturumları ajandaya erişemez).",
-  "  eslestir --claude-code --teshis   Son PC kanca olaylarını ve tur kararlarını gösterir (metin yok; kurulumu sınamak için).",
+  "  eslestir --claude-code --teshis   Kanca kurulumunu, son PC kanca olaylarını ve tur kararlarını gösterir (metin yok).",
 ].join("\n");
 
 /** `kapsam` yalnız `--ajanda` verilince bulunur; yoksa komut bugünkü (sohbet) davranışındadır. */
@@ -365,6 +366,19 @@ export interface ClaudeCodeYollari {
  */
 export interface KayitYonergesiModulu {
   kayitYonergesi(ortam: Readonly<Record<string, string | undefined>>, nodeExe: string): string;
+  /** Kullanıcı ayarındaki kanca durumu (`--teshis`; yalnız okur). */
+  kancaDurumu(ortam: Readonly<Record<string, string | undefined>>): ClaudeCodeKancaDurumu;
+}
+
+/**
+ * Kullanıcının Claude Code ayarında (`~/.claude/settings.json`) bu aracın kancaları: `arac` araç öncesi
+ * kancası (`PreToolUse`, `mcp__eren-ajanda__.*`) kurulu mu (`null`: ayar okunamadı); `eski` önceki
+ * kurulumun artık kullanılmayan kancaları (istem, tur sonu, eski biçim). `kurulum/claude-code.ts` üretir.
+ */
+export interface ClaudeCodeKancaDurumu {
+  ayarYolu: string;
+  arac: boolean | null;
+  eski: number;
 }
 
 /** Aynı sürümün `kurulum/claude-code.ts`'i (kur.ts `kurulum`'u sürüme kopyalar; depoda da aynı göreli yer). */
@@ -393,12 +407,27 @@ export function pcAnahtarMetni(y: ClaudeCodeYollari, oncekiEtkin: number, yonerg
 
 /** Teşhiste gösterilen olaylar ve YALNIZ bu alanlar (izin listesi: başka alan hiç yazılmaz). */
 const TESHIS_ALANLARI: Readonly<Record<string, readonly string[]>> = {
-  pc_istem: ["kaynak", "istem_kimligi", "acik_tur_kapandi"],
-  pc_arac: ["alt_agent", "istem_kimligi"],
-  pc_tur_sonu: ["acik_tur_kapandi"],
+  pc_arac: ["alt_agent", "etkilesimsiz", "istem_kimligi"],
   arac: ["fiil", "tur_kokeni", "pc_karar", "cagri_kimligi", "sonuc", "neden"],
   el_sikisma: ["rol"],
   el_sikisma_ret: ["rol", "code", "neden"],
+};
+
+/**
+ * Son kararın kullanıcıya açıklaması (`PC_TUR_KARARLARI`). Sentetik kararların hepsinde kayıt taslak
+ * doğar; alt agent ve etkileşimsiz oturum için bu beklenen davranıştır, öteki ikisi kurulum sorunudur.
+ */
+export const TESHIS_KARAR_METNI: Readonly<Record<PcTurKarari, string>> = {
+  insan: "ana oturumun çağrısı; kayıt doğrudan (taslaksız) yazıldı. Kurulum doğru.",
+  cagri_kimligi_yok:
+    "kayıtlar TASLAK doğuyor: Claude Code çağrı kimliğini MCP isteğinde göndermiyor (sürüm farkı); kanca bunu düzeltemez, " +
+    "kayıtları uygulamadan onaylayın.",
+  tasdik_yok:
+    "kayıtlar TASLAK doğuyor: araç öncesi kanca bu çağrıyı servise bildirmedi. Kanca kurulu değilse kurun " +
+    "(kurulum\\claude-code.ts kanca-ekle) ve Claude Code'u yeniden açın; kuruluysa servis o an yanıt vermemiş, " +
+    "izin sorusu uzun beklemiş ya da servis arada yeniden başlamış olabilir.",
+  alt_agent: "son çağrı bir alt agent'tandı; alt agent'ın kaydı her zaman taslaktır (beklenen).",
+  etkilesimsiz: "son çağrı -p ya da Agent SDK oturumundandı; kaydı taslaktır (beklenen).",
 };
 const TESHIS_MODULLERI: ReadonlySet<string> = new Set(["ajanda", "ajanda-kopru-sunucu"]);
 const TESHIS_SATIR = 40;
@@ -414,12 +443,39 @@ const teshisDegeri = (v: unknown): string | null => {
 /** Oturum kimliğinin yalnız son 6 karakteri (satırları eşlemeye yeter). */
 const kisaOturum = (v: unknown): string | null => (typeof v === "string" && /^[A-Za-z0-9_-]{6,64}$/.test(v) ? `…${v.slice(-6)}` : null);
 
+/** Kanca kurulumunun satırları (`--teshis`'in başı). `null`: kurulum modülü yüklenemedi. */
+function kurulumSatirlari(k: ClaudeCodeKancaDurumu | null): string[] {
+  if (k === null) return ["Kurulum: kanca durumu okunamadı (kurulum dizini yok)."];
+  const satirlar = [`Kurulum (${k.ayarYolu}):`];
+  satirlar.push(
+    k.arac === null
+      ? "  araç öncesi kanca: ayar dosyası okunamadı (geçerli JSON değil)."
+      : k.arac
+        ? "  araç öncesi kanca (PreToolUse, mcp__eren-ajanda__.*): kurulu."
+        : "  araç öncesi kanca (PreToolUse, mcp__eren-ajanda__.*): YOK. Bu durumda bütün kayıtlar taslak doğar. " +
+          "Kurmak için: node --disable-warning=ExperimentalWarning kurulum\\claude-code.ts kanca-ekle (sonra Claude Code'u yeniden açın).",
+  );
+  if (k.eski > 0) {
+    satirlar.push(
+      `  eski kancalar (istem / tur sonu / eski biçim): ${k.eski}. Artık hiçbir şey yapmazlar ama her mesajda çalışırlar; ` +
+        "kanca-ekle onları temizler.",
+    );
+  }
+  return satirlar;
+}
+
 /**
- * Servis günlüğünün (JSON satırları) PC kanca ve PC araç olaylarından teşhis metni: en yeni `TESHIS_SATIR`
- * olay, her biri izin listesindeki alanlarla; sonra sınanacak varsayımların özeti (kaynak alanı, istem
- * kimliği, çağrı kimliği geliyor mu; son karar). Metin, kayıt alanı, anahtar ya da tam kimlik yazılmaz.
+ * Servis günlüğünün (JSON satırları) PC kanca ve PC araç olaylarından teşhis metni: önce kanca kurulumu
+ * (`kurulum`; verilmezse yazılmaz), sonra en yeni `TESHIS_SATIR` olay, her biri izin listesindeki
+ * alanlarla; sonra özet (araç öncesi kanca servise ulaşıyor mu, çağrı kimliği geliyor mu, son karar ve
+ * kullanıcıya anlamı). Metin, kayıt alanı, anahtar ya da tam kimlik yazılmaz.
  */
-export function pcTeshisMetni(satirlar: readonly string[], zaman: (ms: number) => string = yerelZaman): string {
+export function pcTeshisMetni(
+  satirlar: readonly string[],
+  zaman: (ms: number) => string = yerelZaman,
+  kurulum?: ClaudeCodeKancaDurumu | null,
+): string {
+  const bas = kurulum === undefined ? "" : `${kurulumSatirlari(kurulum).join("\n")}\n\n`;
   const olaylar: Array<{ ts: number; olay: string; alanlar: Record<string, string>; oturum: string | null }> = [];
   for (const s of satirlar) {
     let j: unknown;
@@ -446,30 +502,28 @@ export function pcTeshisMetni(satirlar: readonly string[], zaman: (ms: number) =
   const son = olaylar.slice(-TESHIS_SATIR);
   if (son.length === 0) {
     return (
-      "Servis günlüğünde PC kanca ya da PC araç olayı yok.\n" +
-      "  Kancalar kurulu mu (kurulum\\claude-code.ts goster), anahtar var mı (eslestir --claude-code --liste)?\n" +
-      "  Yeni bir Claude Code oturumu açıp bir mesaj yazdıktan sonra yeniden bakın.\n"
+      `${bas}Servis günlüğünde PC kanca ya da PC araç olayı yok.\n` +
+      "  MCP köprüsü kayıtlı mı (kurulum\\claude-code.ts goster), anahtar var mı (eslestir --claude-code --liste)?\n" +
+      "  Yeni bir Claude Code oturumunda bir kayıt isteyip yeniden bakın.\n"
     );
   }
   const satir = son.map((o) => {
     const alan = Object.entries(o.alanlar).map(([a, d]) => `${a}=${d}`).join(" ");
     return `  ${zaman(o.ts)}  ${o.olay}${o.oturum === null ? "" : ` oturum=${o.oturum}`}${alan === "" ? "" : ` ${alan}`}`;
   });
-  const istemler = son.filter((o) => o.olay === "pc_istem");
   const araclar = son.filter((o) => o.olay === "arac");
   const tasdikler = son.filter((o) => o.olay === "pc_arac");
   const evetHayir = (kosul: boolean, bos: boolean): string => (bos ? "olay yok" : kosul ? "evet" : "HAYIR");
+  const sonKarar = araclar.at(-1)?.alanlar["pc_karar"];
+  const anlam = sonKarar !== undefined && Object.hasOwn(TESHIS_KARAR_METNI, sonKarar) ? ` (${TESHIS_KARAR_METNI[sonKarar as PcTurKarari]})` : "";
   const ozet = [
     "Sınama (AJANDA.md \"Kurulumdan sonra sınama\"):",
-    `  istem kaynağı geliyor mu (kaynak≠yok): ${evetHayir(istemler.some((o) => o.alanlar["kaynak"] !== "yok"), istemler.length === 0)}`,
-    `  kullanıcının istemi kaynak=user mi: ${evetHayir(istemler.some((o) => o.alanlar["kaynak"] === "user"), istemler.length === 0)}`,
-    `  istem kimliği geliyor mu (istem): ${evetHayir(istemler.some((o) => o.alanlar["istem_kimligi"] === "var"), istemler.length === 0)}`,
-    `  araç öncesi kanca geliyor mu: ${tasdikler.length > 0 ? "evet" : araclar.length > 0 ? "HAYIR" : "olay yok"}`,
-    `  istem kimliği geliyor mu (araç öncesi): ${evetHayir(tasdikler.some((o) => o.alanlar["istem_kimligi"] === "var"), tasdikler.length === 0)}`,
+    `  araç öncesi kanca servise ulaşıyor mu: ${tasdikler.length > 0 ? "evet" : araclar.length > 0 ? "HAYIR" : "olay yok"}`,
     `  çağrı kimliği MCP isteğinde geliyor mu: ${evetHayir(araclar.some((o) => o.alanlar["cagri_kimligi"] === "var"), araclar.length === 0)}`,
-    `  son PC araç kararı: ${araclar.at(-1)?.alanlar["pc_karar"] ?? "olay yok"}`,
+    `  istem kimliği geliyor mu (araç öncesi): ${evetHayir(tasdikler.some((o) => o.alanlar["istem_kimligi"] === "var"), tasdikler.length === 0)}`,
+    `  son PC araç kararı: ${sonKarar ?? "olay yok"}${anlam}`,
   ];
-  return `Son PC olayları (en yeni sonda; metin ve kayıt alanı yazılmaz):\n${satir.join("\n")}\n\n${ozet.join("\n")}\n`;
+  return `${bas}Son PC olayları (en yeni sonda; metin ve kayıt alanı yazılmaz):\n${satir.join("\n")}\n\n${ozet.join("\n")}\n`;
 }
 
 /** `--claude-code --liste`: anahtar geçmişi (özetsiz) ve dosyanın varlığı. */
@@ -498,7 +552,7 @@ export function pcKaldirMetni(iptalEdilen: number, dosyaSilindi: boolean): strin
   return (
     "Claude Code ajanda anahtarı geçersiz kılındı" +
     (dosyaSilindi ? " ve dosyası silindi" : "") +
-    ". Açık PC oturumlarının köprüsü bir sonraki çağrıda reddedilir; kayıtlı MCP sunucusu ve kancalar durur, " +
+    ". Açık PC oturumlarının köprüsü bir sonraki çağrıda reddedilir; kayıtlı MCP sunucusu ve kanca durur, " +
     "kaldırmak için docs/SERVIS.md \"Claude Code oturumları\".\n"
   );
 }
@@ -533,7 +587,14 @@ async function pcKomutu(komut: Extract<EslestirKomutu, { tur: "pc_anahtar" | "pc
       }
     };
     const eski = yollar.log.replace(/\.log$/, ".1.log");
-    process.stdout.write(pcTeshisMetni([...sonu(eski, 1024 * 1024), ...sonu(yollar.log, 2 * 1024 * 1024)]));
+    // Kanca kurulumu: kullanıcının Claude Code ayarı yalnız okunur (kurulum modülü; yüklenemezse `null`).
+    let kurulum: ClaudeCodeKancaDurumu | null = null;
+    try {
+      kurulum = (await kayitYonergesiYukle()).kancaDurumu(ortam);
+    } catch {
+      kurulum = null;
+    }
+    process.stdout.write(pcTeshisMetni([...sonu(eski, 1024 * 1024), ...sonu(yollar.log, 2 * 1024 * 1024)], yerelZaman, kurulum));
     return 0;
   }
   const anaSohbetAdi = asistanAdiUret(ortamDegeri(ortam, "EREN_KIT_ASSISTANT_NAME"));

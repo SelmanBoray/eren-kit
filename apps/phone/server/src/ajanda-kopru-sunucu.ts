@@ -6,13 +6,13 @@
  * kimse çağrılmaz; kayıt metni günlüğe girmez. MODULLER.md "Ajanda dalgası" > "ajanda-kopru-sunucu".
  *
  * PC oturumları (AJANDA.md "PC oturumları", MODULLER.md "PC oturumları"): `baslat`'a `pcKanca` verilirse
- * `pc_oturumu` (MCP köprüsü) ve `pc_kanca` (Claude Code kancaları) rolleri PC anahtarıyla
+ * `pc_oturumu` (MCP köprüsü) ve `pc_kanca` (Claude Code'un araç öncesi kancası) rolleri PC anahtarıyla
  * (`ajanda_pc_anahtarlari`, yalnız özet) bağlanır. Anahtar el sıkışmada VE her istekte yeniden denetlenir:
  * `eslestir --claude-code` anahtarı yenileyince ya da kaldırınca açık bağlantı bir sonraki isteğinde
  * `kopru_ret{jeton_gecersiz}` alır ve kapanır. PC bağlantılarında tek bağlantı kuralı yoktur (çok oturum),
  * sayı `AJANDA_PC_SINIRLARI.BAGLANTI_ADET` ile sınırlıdır. `pc_oturumu` isteğinin `cagri`'sı bağlama
  * (`AjandaPcBaglami`) geçer; `ana_oturum` isteğinin `cagri`'sı yok sayılır (bağlam bugünkü gibi yalnız
- * jetonun kapsamıdır). `pc_kanca` bağlantısı yalnız kanca isteklerini (`pcKancaYukariCoz`) alır.
+ * jetonun kapsamıdır). `pc_kanca` bağlantısı yalnız kanca isteğini (`pc_arac`, `pcKancaYukariCoz`) alır.
  * `pc_oturumu` başarılı yanıtının `sonuc`'u `PcAracSonucu{cikti, karar}`'dır (PC defterinin tur kararı;
  * köprü sentetik kararın nedenini modele söyler); `ana_oturum` yanıtı bugünkü gibi yalnız çıktıdır.
  */
@@ -43,7 +43,6 @@ import type {
   AjandaPcRolu,
   HataKodu,
   KopruYanit,
-  PcKancaGirdisi,
   PcKancaIstek,
 } from "@eren/protocol";
 import type {
@@ -402,12 +401,7 @@ export const ajandaKopruSunucuKur: AjandaKopruSunucuFabrikasi = ({
   const kancaYaniti = (m: PcKancaIstek, pcKanca: PcKancaIsleyicileri): KopruYanit => {
     try {
       // Girdi `pcKancaYukariCoz`'dan fiilin şemasıyla geçti.
-      const ham: unknown =
-        m.fiil === "pc_istem"
-          ? pcKanca.pc_istem(m.girdi as PcKancaGirdisi<"pc_istem">)
-          : m.fiil === "pc_arac"
-            ? pcKanca.pc_arac(m.girdi as PcKancaGirdisi<"pc_arac">)
-            : pcKanca.pc_tur_sonu(m.girdi as PcKancaGirdisi<"pc_tur_sonu">);
+      const ham: unknown = pcKanca.pc_arac(m.girdi);
       const sema: z.ZodType = PC_KANCA_ARACLARI[m.fiil].cikti;
       const cikti = sema.safeParse(ham);
       if (cikti.success) return { v: PROTOKOL_SURUMU, type: "yanit", istek_id: m.istek_id, ok: true, sonuc: cikti.data };

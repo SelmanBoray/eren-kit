@@ -1,22 +1,20 @@
 /**
  * PC'deki Claude Code oturumlarının kancası (`docs/AJANDA.md` "PC oturumları", MODULLER.md "PC
- * oturumları"): `node kanca.ts istem|arac|tur_sonu`, girdi stdin'de (Claude Code'un kanca JSON'u).
- * - `istem` (UserPromptSubmit): servise `pc_istem` (kaynak, istem kimliği; metin yalnız kullanıcının
- *   yazdığı istemde); stdout'a mesaj anı damgası (servis yanıt vermezse kancanın kendi saatinden).
- *   Claude Code bunu mesaja bağlam olarak ekler: PC oturumundaki asistan tarihi ve saati buradan bilir.
- * - `arac` (PreToolUse, yalnız ajanda araçları): `pc_arac` tasdiki; stdout boş (izin akışına karışmaz).
- * - `tur_sonu` (Stop): `pc_tur_sonu`; stdout boş.
+ * oturumları"): `node kanca.ts arac`, girdi stdin'de (Claude Code'un `PreToolUse` JSON'u; eşleyici
+ * `mcp__eren-ajanda__.*`, yani yalnız ajanda araçlarından önce). Servise `pc_arac` tasdiki gider (çağrı
+ * kimliği, alt agent mı, etkileşimsiz oturum mu, istem kimliği); stdout boştur (izin akışına karışmaz).
+ * İstem ve tur sonu kancası yoktur (yalın yol): eski kurulumun `istem`/`tur_sonu` olayıyla çağrılırsa
+ * stdin'i okumadan hiçbir şey yapmadan çıkar (`kanca-ekle` o girdileri temizler).
  *
- * Bu süreç kullanıcının makinesindeki BÜTÜN Claude Code oturumlarında her mesajda ve her tur sonunda
- * çalışır. Kurallar:
+ * Kurallar:
  * - Hafif: yalnız Node'un yerleşikleri, bağımlılıksız `veri-koku.ts` ve protokolün bağımlılıksız çekirdeği
  *   (`@eren/protocol/kanca`). MCP kitaplığı, zod ve protokolün geri kalanı YÜKLENMEZ (yüklenince her
- *   mesaja ~0,3 sn ekleniyordu). `mimari.test.ts` bunu sınar.
+ *   çağrıya ~0,3 sn ekleniyordu). `mimari.test.ts` bunu sınar.
  * - Hiç engellemez: her durumda 0 ile çıkar, stderr'e yazmaz; servis kapalıysa, anahtar yoksa, girdi
- *   bozuksa sessizce geçer. Servisle bütün iş `AJANDA_PC_SINIRLARI.KANCA_SURESI_MS`'i aşamaz; süreç en geç
- *   bundan bir saniye sonra kendini kapatır.
+ *   bozuksa sessizce geçer (çağrı o zaman tasdiksizdir: taslak). Servisle bütün iş
+ *   `AJANDA_PC_SINIRLARI.KANCA_SURESI_MS`'i aşamaz; süreç en geç bundan bir saniye sonra kendini kapatır.
  * - Servisin kendi oturumlarında (`PC_SERVIS_OTURUMU_ORTAMI`) hiçbir şey yapmaz.
- * Servise giden çerçeveleri servis `PcKancaYukari` şemasıyla denetler; kanca turu insan ilan edemez,
+ * Servise giden çerçeveyi servis `PcKancaYukari` şemasıyla denetler; kanca turu insan ilan edemez,
  * yalnız Claude Code'un verdiği alanları iletir (kararı servisin PC defteri verir).
  */
 import { readFileSync } from "node:fs";
@@ -24,19 +22,16 @@ import { connect } from "node:net";
 import {
   AJANDA_BORU_ADI,
   AJANDA_PC_SINIRLARI,
+  CLAUDE_CODE_GIRIS_ORTAMI,
   KANCA_AZAMI_SATIR,
   PC_KANCA_OLAYLARI,
   PC_SERVIS_OTURUMU_ORTAMI,
   kancaAsagiCoz,
-  kancaDamgasi,
   kancaHelloSatiri,
   kancaIstekSatiri,
-  kancaYerelAnMi,
+  pcAracKancaGirdisi,
   pcJetonuMu,
-  pcKancaGirdisi,
-  type KancaYerelAn,
   type PcKancaIstegi,
-  type PcKancaOlayi,
 } from "@eren/protocol/kanca";
 import type { BoruBaglantisi } from "./sozlesme.ts";
 import { ajandaPcAnahtarYolu, veriKokuCoz } from "./veri-koku.ts";
@@ -45,50 +40,39 @@ export interface PcKancaBagimliliklari {
   baglan: (boruAdi: string) => Promise<BoruBaglantisi>;
   /** PC anahtarı (dosyadan); `null`: yok, servise hiç gidilmez. */
   jetonOku: () => string | null;
-  /** Servise ulaşılamazsa damganın anı: kancanın kendi saati ve sistem dilimi. */
-  yerelSimdi: () => KancaYerelAn | null;
   /** `ms` sonra çözülür (zaman aşımı). */
   bekle: (ms: number) => Promise<void>;
   /** Servisin kendi başlattığı oturum mu (`PC_SERVIS_OTURUMU_ORTAMI`): öyleyse hiçbir şey yapılmaz. */
   servisOturumu: boolean;
+  /** Kanca sürecinin `CLAUDE_CODE_ENTRYPOINT`'i (`cli`, `sdk-cli`, ...; yoksa `undefined`). */
+  giris: string | undefined;
 }
 
 /** Tek bağlantıdaki tek isteğin kimliği. */
 const ISTEK_ID = "kanca_1";
 
 /**
- * Kancanın gövdesi: `hamGirdi` stdin (JSON), dönen metin stdout. Hiç atmaz. Servis kapalıysa, anahtar
- * yoksa ya da girdi geçersizse sessizce geçer; `istem` yine de damgayı yazar.
+ * Kancanın gövdesi (`PreToolUse`): `hamGirdi` stdin (JSON). Hiç atmaz, stdout'a hiçbir şey yazılmaz.
+ * Servis kapalıysa, anahtar yoksa ya da girdi geçersizse sessizce geçer. Servis tasdiki kabul edince
+ * çözülür (köprünün çağrısı bundan sonra gelir: Claude Code aracı kanca bittikten sonra çalıştırır).
  */
-export async function pcKancaCalistir(olay: PcKancaOlayi, hamGirdi: string, b: PcKancaBagimliliklari): Promise<string> {
-  if (b.servisOturumu) return "";
+export async function pcKancaCalistir(hamGirdi: string, b: PcKancaBagimliliklari): Promise<void> {
+  if (b.servisOturumu) return;
   let ham: unknown = null;
   try {
     ham = JSON.parse(hamGirdi);
   } catch {
     ham = null;
   }
-  const istek = pcKancaGirdisi(olay, ham);
+  const istek = pcAracKancaGirdisi(ham, b.giris);
+  if (istek === null) return;
   let jeton: string | null = null;
   try {
-    jeton = istek === null ? null : b.jetonOku();
+    jeton = b.jetonOku();
   } catch {
     jeton = null;
   }
-  let sonuc: unknown = null;
-  if (istek !== null && jeton !== null) sonuc = await kancaIstegiYolla(istek, jeton, b).catch(() => null);
-  if (olay !== "istem") return "";
-  const servisAni = typeof sonuc === "object" && sonuc !== null ? (sonuc as Record<string, unknown>)["mesaj_ani"] : undefined;
-  let an: unknown = kancaYerelAnMi(servisAni) ? servisAni : null;
-  if (an === null) {
-    try {
-      an = b.yerelSimdi();
-    } catch {
-      an = null;
-    }
-  }
-  const damga = kancaDamgasi(an);
-  return damga === null ? "" : `${damga}\n`;
+  if (jeton !== null) await kancaIstegiYolla(istek, jeton, b).catch(() => null);
 }
 
 /**
@@ -125,30 +109,6 @@ function kancaIstegiYolla(istek: PcKancaIstegi, jeton: string, b: PcKancaBagimli
       () => bitir(null),
     );
   });
-}
-
-/**
- * Damganın yerel yedeği: `ms` anının `dilim`'deki duvar saati, dakikaya yuvarlanmış (`takvim.ts`
- * `yerelAn` ile aynı sonuç; test sınar). Dilim geçersizse `null`.
- */
-export function kancaYerelAni(ms: number, dilim: string): KancaYerelAn | null {
-  try {
-    const p: Record<string, string> = {};
-    const f = new Intl.DateTimeFormat("en-US", {
-      timeZone: dilim,
-      hourCycle: "h23",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-    for (const parca of f.formatToParts(new Date(ms))) if (parca.type !== "literal") p[parca.type] = parca.value;
-    const an = { tarih: `${(p["year"] ?? "").padStart(4, "0")}-${p["month"]}-${p["day"]}`, saat: `${p["hour"]}:${p["minute"]}`, saat_dilimi: dilim };
-    return kancaYerelAnMi(an) ? an : null;
-  } catch {
-    return null;
-  }
 }
 
 /** PC anahtar dosyası (`eslestir --claude-code` yazar); yoksa, okunamazsa ya da biçimi geçersizse `null`. */
@@ -219,24 +179,22 @@ async function kancaGirisi(olayArgumani: string | undefined): Promise<void> {
   const cik = (): never => process.exit(0);
   setTimeout(cik, AJANDA_PC_SINIRLARI.KANCA_SURESI_MS + 1_000);
   const olay = PC_KANCA_OLAYLARI.find((o) => o === olayArgumani);
-  let cikti = "";
   try {
     if (olay !== undefined) {
       const servisOturumu = process.env[PC_SERVIS_OTURUMU_ORTAMI] === "1";
       const girdi = servisOturumu ? "" : await stdinOku(KANCA_GIRDI_AZAMI);
-      cikti = await pcKancaCalistir(olay, girdi, {
+      await pcKancaCalistir(girdi, {
         baglan: (ad) => kancaBoruyaBaglan(ad),
         jetonOku: () => kancaAnahtariOku(process.env),
-        yerelSimdi: () => kancaYerelAni(Date.now(), Intl.DateTimeFormat().resolvedOptions().timeZone),
         bekle: (ms) => new Promise((r) => setTimeout(r, ms).unref()),
         servisOturumu,
+        giris: process.env[CLAUDE_CODE_GIRIS_ORTAMI],
       });
     }
   } catch {
-    cikti = "";
+    // hiçbir durumda engellemez
   }
-  if (cikti === "") cik();
-  process.stdout.write(cikti, cik);
+  cik();
 }
 
 if (import.meta.main) await kancaGirisi(process.argv[2]);

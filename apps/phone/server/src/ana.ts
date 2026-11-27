@@ -321,7 +321,7 @@ export function servisKur({ dunya, ayar, depoYolu, ajanda: ajandaSecenegi }: Ser
         // açılamazsa (ad başka süreçte) `eren` borusu gibi açılış düşer: sahte bir sunucuya jeton gitmesin.
         // `eren` borusundan önce: iki boru bağımsızdır; sahte borunun adsız `baglan`'ı en son dinlenene
         // (`eren`) gittiği için eski birleşim testleri değişmeden kalır.
-        // PC oturumları (AJANDA.md "PC oturumları"): kancalar ajandanın PC defterine; PC anahtarı yoksa
+        // PC oturumları (AJANDA.md "PC oturumları"): araç öncesi kanca ajandanın PC defterine; PC anahtarı yoksa
         // PC rolleri yine reddedilir (`ajanda_pc_anahtarlari` boş).
         () => (ajanda === null ? undefined : ajandaKopru?.baslat(ajanda.araclar, ajanda.pcKanca)),
         () => kopru.baslat(fiiller),

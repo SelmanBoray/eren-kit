@@ -9,7 +9,7 @@ import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, afterEach, describe, it } from "node:test";
-import { AJANDA_PC_SINIRLARI, PROTOKOL_SURUMU, ajandaKopruAsagiCoz, mesajAniDamgasi, pcKancaYukariCoz, sha256Hex } from "@eren/protocol";
+import { AJANDA_PC_SINIRLARI, PC_TUR_KARARLARI, PROTOKOL_SURUMU, pcKancaYukariCoz, sha256Hex } from "@eren/protocol";
 import { depoAc } from "../src/depo.ts";
 import type { CihazYonetimliDepo } from "../src/depo.ts";
 import {
@@ -23,8 +23,9 @@ import {
   pcKaldirMetni,
   pcListeMetni,
   pcTeshisMetni,
+  TESHIS_KARAR_METNI,
 } from "../src/eslestir.ts";
-import { kancaYerelAni, pcKancaCalistir } from "../src/kanca.ts";
+import { pcKancaCalistir } from "../src/kanca.ts";
 import type { PcKancaBagimliliklari } from "../src/kanca.ts";
 import type { BoruBaglantisi } from "../src/sozlesme.ts";
 import { ajandaPcAnahtarYolu } from "../src/veri-koku.ts";
@@ -146,10 +147,18 @@ describe("eslestir --claude-code", () => {
     assert.ok(m.endsWith(yonerge));
     // Yollar veri kökünün `guncel` bağlantısından; sürüm dizini (`surumler`) hiçbir komuta girmez.
     assert.ok(m.includes("C:\\ornek\\Yerel\\eren-kit\\uygulama\\guncel\\server\\src\\kopru.ts --rol pc_oturumu"));
-    assert.ok(m.includes("C:/ornek/Yerel/eren-kit/uygulama/guncel/server/src/kanca.ts\\\" istem || true"));
+    assert.ok(m.includes("C:/ornek/Yerel/eren-kit/uygulama/guncel/server/src/kanca.ts\\\" arac || true"));
+    // Yalın yol: istem ve tur sonu kancası önerilmez.
+    assert.equal(/kanca\.ts\\" (istem|tur_sonu)|UserPromptSubmit|"Stop"/.test(m), false);
+    // Teşhisin okuduğu kanca durumu da aynı modülden.
+    assert.deepEqual(modul.kancaDurumu({ ...ortam, USERPROFILE: join(kok, "yok-kullanici") }), {
+      ayarYolu: join(kok, "yok-kullanici", ".claude", "settings.json"),
+      arac: false,
+      eski: 0,
+    });
     assert.equal(/surumler/i.test(m), false);
     assert.ok(m.includes(y.anahtarDosyasi));
-    assert.equal(pcAnahtarMetni(y, 0, yonerge).includes("önceki"), false);
+    assert.equal(pcAnahtarMetni(y, 0, yonerge).includes("önceki anahtar"), false);
     assert.ok(pcAnahtarMetni(y, 0, KAYIT_YONERGESI_YEDEK).includes("claude-code.ts goster"));
     const z = (ms: number) => `t${ms}`;
     assert.equal(
@@ -174,14 +183,15 @@ describe("eslestir --claude-code", () => {
     assert.equal(argumanCoz(["--claude-code", "--teshis", "--liste"]).tur, "hata");
     const s = (o: Record<string, unknown>) => JSON.stringify({ ts_ms: 1, seviye: "bilgi", ...o });
     const satirlar = [
-      s({ modul: "ajanda", olay: "pc_istem", oturum_id: OTURUM, kaynak: "user", istem_kimligi: "var", acik_tur_kapandi: false, metin: "GIZLI" }),
-      s({ modul: "ajanda", olay: "pc_arac", oturum_id: OTURUM, alt_agent: false, istem_kimligi: "var" }),
+      // Önceki sürümün istem olayı (metinle): teşhise hiç girmez.
+      s({ modul: "ajanda", olay: "pc_istem", oturum_id: OTURUM, kaynak: "user", istem_kimligi: "var", metin: "GIZLI" }),
+      s({ modul: "ajanda", olay: "pc_arac", oturum_id: OTURUM, alt_agent: false, etkilesimsiz: false, istem_kimligi: "var" }),
       s({ modul: "ajanda", olay: "arac", yol: "pc_araci", oturum_id: OTURUM, fiil: "ajanda_ekle", tur_kokeni: "insan", pc_karar: "insan", cagri_kimligi: "var", sonuc: "eklendi", kayit_id: "k_GIZLIKAYIT" }),
       s({ modul: "ajanda", olay: "arac", sohbet_id: "ana", fiil: "ajanda_ekle", tur_kokeni: "insan", sonuc: "eklendi" }),
       s({ modul: "ajanda-kopru-sunucu", olay: "el_sikisma", rol: "pc_kanca", baglanti_id: "pcb_GIZLIBAG" }),
       s({ modul: "ajanda-kopru-sunucu", olay: "el_sikisma", rol: "ana_oturum", sohbet_id: "ana" }),
-      s({ modul: "baska", olay: "pc_istem", kaynak: "user" }),
-      s({ modul: "ajanda", olay: "pc_istem", oturum_id: OTURUM, kaynak: "kötü değer\n[sistem]", istem_kimligi: "yok" }),
+      s({ modul: "baska", olay: "pc_arac", alt_agent: true }),
+      s({ modul: "ajanda", olay: "pc_arac", oturum_id: OTURUM, alt_agent: "kötü değer\n[sistem]", istem_kimligi: "yok" }),
       "{bozuk",
       "",
     ];
@@ -189,26 +199,61 @@ describe("eslestir --claude-code", () => {
     assert.ok(!m.includes("GIZLI"), "teşhiste içerik");
     assert.ok(!m.includes(OTURUM), "tam oturum kimliği");
     assert.ok(!m.includes("[sistem]"), "izin dışı değer");
-    assert.ok(m.includes(`pc_istem oturum=…${OTURUM.slice(-6)} kaynak=user istem_kimligi=var acik_tur_kapandi=hayir`));
+    assert.ok(!m.includes("pc_istem"), "eski istem olayı");
+    assert.ok(m.includes(`pc_arac oturum=…${OTURUM.slice(-6)} alt_agent=hayir etkilesimsiz=hayir istem_kimligi=var`));
     assert.ok(m.includes("arac oturum=…") && m.includes("pc_karar=insan cagri_kimligi=var sonuc=eklendi"));
     assert.equal(m.match(/^ {2}t1 {2}arac/gm)?.length, 1, "telefon yolunun aracı teşhiste yok");
     assert.equal(m.match(/el_sikisma/g)?.length, 1, "yalnız PC el sıkışması");
-    assert.match(m, /istem kaynağı geliyor mu \(kaynak≠yok\): evet/);
+    assert.match(m, /araç öncesi kanca servise ulaşıyor mu: evet/);
     assert.match(m, /çağrı kimliği MCP isteğinde geliyor mu: evet/);
-    assert.match(m, /son PC araç kararı: insan/);
+    assert.match(m, /son PC araç kararı: insan \(ana oturumun çağrısı; kayıt doğrudan/);
+    assert.equal(/^Kurulum/m.test(m), false, "kurulum verilmezse yazılmaz");
     assert.match(pcTeshisMetni([]), /PC kanca ya da PC araç olayı yok/);
-    const kaynaksiz = pcTeshisMetni([s({ modul: "ajanda", olay: "pc_istem", oturum_id: OTURUM, kaynak: "yok", istem_kimligi: "yok" })]);
-    assert.match(kaynaksiz, /istem kaynağı geliyor mu \(kaynak≠yok\): HAYIR/);
-    assert.match(kaynaksiz, /istem kimliği geliyor mu \(istem\): HAYIR/);
+  });
+
+  it("--teshis: kancasız ve eşleşmeyen çağrıyı kullanıcıya anlaşılır söyler; kurulum durumu (kanca yok, eski kancalar)", () => {
+    const s = (o: Record<string, unknown>) => JSON.stringify({ ts_ms: 1, seviye: "bilgi", ...o });
+    const arac = (karar: string, cagri = "var") =>
+      s({ modul: "ajanda", olay: "arac", yol: "pc_araci", oturum_id: OTURUM, fiil: "ajanda_ekle", tur_kokeni: "sentetik", pc_karar: karar, cagri_kimligi: cagri, sonuc: "eklendi" });
+    // Kanca kurulu değil: tasdik hiç gelmiyor, kayıtlar taslak.
+    const kancasiz = pcTeshisMetni([arac("tasdik_yok")], (ms) => `t${ms}`, { ayarYolu: "C:\\ornek\\settings.json", arac: false, eski: 2 });
+    assert.match(kancasiz, /^Kurulum \(C:\\ornek\\settings\.json\):/);
+    assert.match(kancasiz, /araç öncesi kanca \(PreToolUse, mcp__eren-ajanda__\.\*\): YOK\. Bu durumda bütün kayıtlar taslak doğar/);
+    assert.match(kancasiz, /kanca-ekle/);
+    assert.match(kancasiz, /eski kancalar \(istem \/ tur sonu \/ eski biçim\): 2/);
+    assert.match(kancasiz, /araç öncesi kanca servise ulaşıyor mu: HAYIR/);
+    assert.match(kancasiz, /son PC araç kararı: tasdik_yok \(kayıtlar TASLAK doğuyor: araç öncesi kanca bu çağrıyı servise bildirmedi/);
+    // Claude Code çağrı kimliğini vermiyor.
+    const kimliksiz = pcTeshisMetni([arac("cagri_kimligi_yok", "yok")], undefined, { ayarYolu: "x", arac: true, eski: 0 });
+    assert.match(kimliksiz, /araç öncesi kanca \(PreToolUse, mcp__eren-ajanda__\.\*\): kurulu\./);
+    assert.equal(kimliksiz.includes("eski kancalar"), false);
+    assert.match(kimliksiz, /çağrı kimliği MCP isteğinde geliyor mu: HAYIR/);
+    assert.match(kimliksiz, /son PC araç kararı: cagri_kimligi_yok \(kayıtlar TASLAK doğuyor: Claude Code çağrı kimliğini/);
+    // Alt agent ve -p: beklenen taslak.
+    assert.match(pcTeshisMetni([arac("alt_agent")]), /alt agent'ın kaydı her zaman taslaktır \(beklenen\)/);
+    assert.match(pcTeshisMetni([arac("etkilesimsiz")]), /-p ya da Agent SDK oturumundandı; kaydı taslaktır \(beklenen\)/);
+    // Bilinmeyen karar değeri açıklamasız yazılır; ayar okunamadı ve modül yok.
+    assert.match(pcTeshisMetni([arac("eski_karar")]), /son PC araç kararı: eski_karar\n/);
+    assert.match(pcTeshisMetni([], undefined, { ayarYolu: "x", arac: null, eski: 0 }), /ayar dosyası okunamadı/);
+    assert.match(pcTeshisMetni([], undefined, null), /^Kurulum: kanca durumu okunamadı/);
+    // Her kararın açıklaması var.
+    assert.deepEqual(Object.keys(TESHIS_KARAR_METNI).sort(), [...PC_TUR_KARARLARI].sort());
   });
 });
 
 // --- Kanca gövdesi: sahte boru ---------------------------------------------------------------
 
 const OTURUM = "3f1c2a9e-7b4d-4c1a-9e2f-0a1b2c3d4e5f";
-const AN = { tarih: "2026-11-25", saat: "14:30", saat_dilimi: "Europe/Istanbul" };
-const YEREL = { tarih: "2026-11-25", saat: "14:29", saat_dilimi: "Europe/Istanbul" };
 const JETON = "p".repeat(43);
+/** Claude Code'un `PreToolUse` girdisi (ölçülen biçim; ana ajan). */
+const ARAC_GIRDISI = {
+  session_id: OTURUM,
+  prompt_id: "p1",
+  hook_event_name: "PreToolUse",
+  tool_name: "mcp__eren-ajanda__ajanda_ekle",
+  tool_input: { tur: "not", baslik: "GIZLI" },
+  tool_use_id: "toolu_1",
+};
 
 /** Sahte servis: el sıkışma ve tek yanıt; `davranis` ile susar ya da reddeder. */
 function sahteServis(davranis: "yanit" | "sus" | "ret" | "yok" = "yanit") {
@@ -231,8 +276,7 @@ function sahteServis(davranis: "yanit" | "sus" | "ret" | "yok" = "yanit") {
           ilet(davranis === "ret" ? { v: PROTOKOL_SURUMU, type: "kopru_ret", code: "jeton_gecersiz" } : { v: PROTOKOL_SURUMU, type: "kopru_welcome", rol: "pc_kanca" });
         } else if (m["type"] === "istek") {
           assert.ok(pcKancaYukariCoz(s).ok, `kanca isteği şemaya uymuyor: ${s}`);
-          const sonuc = m["fiil"] === "pc_istem" ? { mesaj_ani: AN } : {};
-          ilet({ v: PROTOKOL_SURUMU, type: "yanit", istek_id: m["istek_id"], ok: true, sonuc });
+          ilet({ v: PROTOKOL_SURUMU, type: "yanit", istek_id: m["istek_id"], ok: true, sonuc: {} });
         }
       },
       kapat: () => {
@@ -250,114 +294,71 @@ function sahteServis(davranis: "yanit" | "sus" | "ret" | "yok" = "yanit") {
 
 const bag = (
   s: ReturnType<typeof sahteServis>,
-  sec: { jeton?: string | null; bekle?: PcKancaBagimliliklari["bekle"]; servisOturumu?: boolean } = {},
+  sec: { jeton?: string | null; bekle?: PcKancaBagimliliklari["bekle"]; servisOturumu?: boolean; giris?: string } = {},
 ): PcKancaBagimliliklari => ({
   baglan: s.baglan,
   jetonOku: () => (sec.jeton === undefined ? JETON : sec.jeton),
-  yerelSimdi: () => YEREL,
   bekle: sec.bekle ?? ((ms: number) => new Promise((r) => setTimeout(r, ms).unref())),
   servisOturumu: sec.servisOturumu ?? false,
+  giris: sec.giris ?? "cli",
 });
 
+const girdisi = (s: ReturnType<typeof sahteServis>): unknown => (s.gelen[1] as Record<string, unknown>)["girdi"];
+
 describe("kanca gövdesi (kanca.ts)", () => {
-  it("istem: servisin mesaj anı damga olarak stdout'a; istek yalnız gerekli alanlar, rol pc_kanca", async () => {
+  it("araç öncesi: tasdik servise gider (rol pc_kanca, tek bağlantı, tek istek); araç girdisi gitmez", async () => {
     const s = sahteServis();
-    const cikti = await pcKancaCalistir(
-      "istem",
-      JSON.stringify({ session_id: OTURUM, prompt: "yarın 3'te dişçi", prompt_id: "p1", cwd: "C:\\x", source: "user" }),
-      bag(s),
-    );
-    assert.equal(cikti, `${mesajAniDamgasi(AN)}\n`);
+    assert.equal(await pcKancaCalistir(JSON.stringify(ARAC_GIRDISI), bag(s)), undefined);
     assert.deepEqual(
       s.gelen.map((m) => (m as Record<string, unknown>)["type"]),
       ["kopru_hello", "istek"],
     );
     assert.deepEqual((s.gelen[0] as Record<string, unknown>)["rol"], "pc_kanca");
-    assert.deepEqual((s.gelen[1] as Record<string, unknown>)["girdi"], { oturum_id: OTURUM, istem_id: "p1", kaynak: "user", metin: "yarın 3'te dişçi" });
+    assert.deepEqual(girdisi(s), { oturum_id: OTURUM, istem_id: "p1", arac_cagri_id: "toolu_1", alt_agent: false, etkilesimsiz: false });
+    assert.ok(!JSON.stringify(s.gelen).includes("GIZLI"), "araç girdisi servise gitti");
     assert.deepEqual(s.sayilar(), { baglanti: 1, kapanan: 1 });
   });
 
-  it("kullanıcı dışı istem: kaynağıyla ve metinsiz gider (servis açık turu kapatır); damga yine yazılır", async () => {
+  it("alt agent ve etkileşimsiz oturum işaretlenir; başka araç tasdik edilmez", async () => {
+    const alt = sahteServis();
+    await pcKancaCalistir(JSON.stringify({ ...ARAC_GIRDISI, agent_id: "a-1", agent_type: "Explore" }), bag(alt));
+    assert.equal((girdisi(alt) as Record<string, unknown>)["alt_agent"], true);
+    const p = sahteServis();
+    await pcKancaCalistir(JSON.stringify(ARAC_GIRDISI), bag(p, { giris: "sdk-cli" }));
+    assert.equal((girdisi(p) as Record<string, unknown>)["etkilesimsiz"], true);
+    const baska = sahteServis();
+    await pcKancaCalistir(JSON.stringify({ ...ARAC_GIRDISI, tool_name: "Bash" }), bag(baska));
+    assert.equal(baska.sayilar().baglanti, 0);
+  });
+
+  it("servisin kendi oturumunda hiçbir şey yapmaz: servise gitmez", async () => {
     const s = sahteServis();
-    const g = { session_id: OTURUM, prompt: "<task-notification>GIZLI</task-notification>", prompt_id: "p2", source: "system" };
-    assert.equal(await pcKancaCalistir("istem", JSON.stringify(g), bag(s)), `${mesajAniDamgasi(AN)}\n`);
-    assert.deepEqual((s.gelen[1] as Record<string, unknown>)["girdi"], { oturum_id: OTURUM, istem_id: "p2", kaynak: "system" });
-    assert.ok(!JSON.stringify(s.gelen).includes("GIZLI"));
+    await pcKancaCalistir(JSON.stringify(ARAC_GIRDISI), bag(s, { servisOturumu: true }));
+    assert.equal(s.sayilar().baglanti, 0);
+  });
+
+  it("servis yoksa, reddederse, susarsa, anahtar yoksa ya da girdi bozuksa sessiz geçer; hiç atmaz", async () => {
+    const g = JSON.stringify(ARAC_GIRDISI);
+    for (const d of ["yok", "ret"] as const) await pcKancaCalistir(g, bag(sahteServis(d)));
     const yok = sahteServis();
-    await pcKancaCalistir("istem", JSON.stringify({ ...g, source: undefined }), bag(yok));
-    assert.equal(((yok.gelen[1] as Record<string, Record<string, unknown>>)["girdi"])!["kaynak"], "yok");
-  });
-
-  it("servisin kendi oturumunda hiçbir şey yapmaz: servise gitmez, damga yazmaz", async () => {
-    for (const olay of ["istem", "arac", "tur_sonu"] as const) {
-      const s = sahteServis();
-      const g = { session_id: OTURUM, prompt: "GIZLI", prompt_id: "p1", source: "sdk", tool_use_id: "toolu_1", tool_name: "mcp__eren-ajanda__ajanda_ekle" };
-      assert.equal(await pcKancaCalistir(olay, JSON.stringify(g), bag(s, { servisOturumu: true })), "", olay);
-      assert.equal(s.sayilar().baglanti, 0, olay);
-    }
-  });
-
-  it("servis geçersiz mesaj anı verirse yerel damga; o da geçersizse hiçbir şey yazılmaz", async () => {
-    const kotu = sahteServis();
-    const baglan = kotu.baglan;
-    const s = { ...kotu, baglan: async () => {
-      const b = await baglan();
-      return { ...b, satirDinle: (f: (x: string) => void) => b.satirDinle((x) => f(x.replace('"saat":"14:30"', '"saat":"14:30]\\n[x"'))) };
-    } };
-    const istem = JSON.stringify({ session_id: OTURUM, prompt: "x", source: "user" });
-    assert.equal(await pcKancaCalistir("istem", istem, bag(s)), `${mesajAniDamgasi(YEREL)}\n`);
-    assert.equal(await pcKancaCalistir("istem", istem, { ...bag(sahteServis("yok")), yerelSimdi: () => null }), "");
-    assert.equal(await pcKancaCalistir("istem", istem, { ...bag(sahteServis("yok")), yerelSimdi: () => { throw new Error("x"); } }), "");
-  });
-
-  it("yerel yedek an takvim.ts ile aynı; geçersiz dilimde null", async () => {
-    const { takvimKur } = await import("../src/takvim.ts");
-    for (const dilim of ["Europe/Istanbul", "UTC", "America/Argentina/Buenos_Aires", "Asia/Kathmandu", "Pacific/Chatham"]) {
-      const t = takvimKur({ sistemDilimi: () => dilim });
-      for (const ms of [0, 1_795_606_200_000, Date.UTC(2028, 1, 29, 23, 59, 59), Date.UTC(2026, 2, 29, 0, 30)]) {
-        assert.deepEqual(kancaYerelAni(ms, dilim), t.yerelAn(ms, dilim), `${dilim} ${ms}`);
-      }
-    }
-    assert.equal(kancaYerelAni(0, "Yok/Boyle"), null);
-    assert.equal(kancaYerelAni(0, "+03:00"), null);
-  });
-
-  it("servis yoksa, reddederse, susarsa ya da anahtar yoksa: istem yerel damgayı yazar, öteki kancalar sessiz; hiç atmaz", async () => {
-    const istem = JSON.stringify({ session_id: OTURUM, prompt: "x", source: "user" });
-    for (const d of ["yok", "ret"] as const) {
-      assert.equal(await pcKancaCalistir("istem", istem, bag(sahteServis(d))), `${mesajAniDamgasi(YEREL)}\n`, d);
-    }
-    const yok = sahteServis();
-    assert.equal(await pcKancaCalistir("istem", istem, bag(yok, { jeton: null })), `${mesajAniDamgasi(YEREL)}\n`);
+    await pcKancaCalistir(g, bag(yok, { jeton: null }));
     assert.equal(yok.sayilar().baglanti, 0, "anahtarsız kanca servise gitti");
+    await pcKancaCalistir(g, { ...bag(sahteServis()), jetonOku: () => { throw new Error("x"); } });
     // Susan servis: süre dolunca vazgeçer, bağlantıyı kapatır.
     const sus = sahteServis("sus");
     const sureler: number[] = [];
     const t0 = Date.now();
-    const c = await pcKancaCalistir("istem", istem, bag(sus, { bekle: (ms: number) => (sureler.push(ms), new Promise((r) => setTimeout(r, 20))) }));
-    assert.equal(c, `${mesajAniDamgasi(YEREL)}\n`);
+    await pcKancaCalistir(g, bag(sus, { bekle: (ms: number) => (sureler.push(ms), new Promise((r) => setTimeout(r, 20))) }));
     assert.deepEqual(sureler, [AJANDA_PC_SINIRLARI.KANCA_SURESI_MS]);
     assert.ok(Date.now() - t0 < 1000);
     assert.deepEqual(sus.sayilar(), { baglanti: 1, kapanan: 1 });
-    // Bozuk girdi: istem yine damgayı yazar, servise gidilmez.
     const bozuk = sahteServis();
-    assert.equal(await pcKancaCalistir("istem", "{bozuk", bag(bozuk)), `${mesajAniDamgasi(YEREL)}\n`);
+    await pcKancaCalistir("{bozuk", bag(bozuk));
+    await pcKancaCalistir("", bag(bozuk));
     assert.equal(bozuk.sayilar().baglanti, 0);
-    assert.equal(await pcKancaCalistir("arac", "{bozuk", bag(bozuk)), "");
-    assert.equal(await pcKancaCalistir("tur_sonu", "", bag(sahteServis("yok"))), "");
   });
 
-  it("arac: yalnız ajanda araçlarını tasdik eder (alt agent işaretiyle); stdout boş", async () => {
-    const s = sahteServis();
-    const g = { session_id: OTURUM, tool_use_id: "toolu_1", tool_name: "mcp__eren-ajanda__ajanda_ekle", prompt_id: "p1", agent_id: "a-1" };
-    assert.equal(await pcKancaCalistir("arac", JSON.stringify(g), bag(s)), "");
-    assert.deepEqual((s.gelen[1] as Record<string, unknown>)["girdi"], { oturum_id: OTURUM, istem_id: "p1", arac_cagri_id: "toolu_1", alt_agent: true });
-    const baska = sahteServis();
-    assert.equal(await pcKancaCalistir("arac", JSON.stringify({ ...g, tool_name: "Bash" }), bag(baska)), "");
-    assert.equal(baska.sayilar().baglanti, 0);
-  });
-
-  it("gerçek süreç: anahtar yokken, bozuk girdide, servis oturumunda ve bilinmeyen olayda 0 ile, sessiz ve hızlı çıkar", async () => {
+  it("gerçek süreç: anahtar yokken, bozuk girdide, servis oturumunda, eski ve bilinmeyen olayda 0 ile, sessiz ve hızlı çıkar", async () => {
     const { spawnSync } = await import("node:child_process");
     // Anahtarsız geçici veri kökü: kanca boruya hiç bağlanmaz (canlı servise dokunulmaz).
     const veri = mkdtempSync(join(tmpdir(), "eren-kanca-surec-"));
@@ -377,34 +378,26 @@ describe("kanca gövdesi (kanca.ts)", () => {
         windowsHide: true,
       });
     try {
+      const arac = JSON.stringify(ARAC_GIRDISI);
+      // Önceki kurulumun istem kancası: stdin'i okumaz, hiçbir şey yazmaz (damga yok).
       const istem = JSON.stringify({ session_id: OTURUM, prompt: "x", source: "user", prompt_id: "p1" });
-      const r1 = calistir(["istem"], istem);
-      assert.equal(r1.status, 0);
-      assert.match(r1.stdout, /^\[mesaj_ani: \d{4}-\d{2}-\d{2} \S+ \d{2}:\d{2} \S+\]\n$/);
-      assert.equal(r1.stderr, "");
       for (const [argv, girdi, ek] of [
+        [["arac"], arac, {}],
         [["arac"], "{bozuk", {}],
+        [["istem"], istem, {}],
         [["tur_sonu"], "", {}],
-        [["bilinmeyen"], istem, {}],
-        [[], istem, {}],
-        [["istem"], istem, { EREN_KIT_SERVIS_OTURUMU: "1" }],
-        [["istem"], istem, { EREN_KIT_DATA_DIR: "goreli\\yol" }],
+        [["bilinmeyen"], arac, {}],
+        [[], arac, {}],
+        [["arac"], arac, { EREN_KIT_SERVIS_OTURUMU: "1" }],
+        [["arac"], arac, { EREN_KIT_DATA_DIR: "goreli\\yol" }],
       ] as Array<[string[], string, Record<string, string>]>) {
         const r = calistir(argv, girdi, ek);
         assert.equal(r.status, 0, JSON.stringify(argv));
         assert.equal(r.stderr, "", JSON.stringify(argv));
-        if (argv[0] !== "istem" || ek["EREN_KIT_SERVIS_OTURUMU"] === "1") assert.equal(r.stdout, "", JSON.stringify(argv));
+        assert.equal(r.stdout, "", JSON.stringify(argv));
       }
     } finally {
       rmSync(veri, { recursive: true, force: true });
     }
-  });
-
-  it("uzun istem kırpılır ve tek çerçeveye sığar", async () => {
-    const s = sahteServis();
-    await pcKancaCalistir("istem", JSON.stringify({ session_id: OTURUM, prompt: "a".repeat(100_000), source: "user" }), bag(s));
-    const girdi = (s.gelen[1] as Record<string, Record<string, unknown>>)["girdi"]!;
-    assert.equal((girdi["metin"] as string).length, AJANDA_PC_SINIRLARI.ISTEM_METNI);
-    assert.ok(ajandaKopruAsagiCoz(JSON.stringify({ v: PROTOKOL_SURUMU, type: "kopru_welcome", rol: "pc_kanca" })).ok);
   });
 });

@@ -55,8 +55,9 @@ import type {
  *
  * - Turun kökeni ve mesaj anı YALNIZ `turBaglami`'ndan (jetonun sohbeti + nesli); yoksa `tur_gecersiz`,
  *   hiçbir şey yazılmaz. Yazar `{yol:"sohbet_araci", tur_kokeni, sohbet_id}`.
- * - PC oturumu (`pc_oturumu`, AJANDA.md "PC oturumları"): tur PC defterinden (`ajanda-pc.ts`; kanca
- *   tasdiki yoksa sentetik, mesaj anı çağrının anı); defterin kararı sonuçla döner (`pc_karar`).
+ * - PC oturumu (`pc_oturumu`, AJANDA.md "PC oturumları"): tur PC defterinden (`ajanda-pc.ts`; ana
+ *   ajanın kancayla tasdikli çağrısı insan, öteki her çağrı sentetik; mesaj anı her zaman çağrının
+ *   servise vardığı an); defterin kararı sonuçla döner (`pc_karar`).
  *   Yazar `{yol:"pc_araci", tur_kokeni, oturum_id}`,
  *   tekil kapsam `PC_TEKIL_KAPSAMI`; kurallar (taslak, alan koruması, dayanak, gece, tekilleştirme,
  *   alıntı) telefon yolundakilerle aynıdır.

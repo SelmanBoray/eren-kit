@@ -52,8 +52,8 @@ export { AJANDA_BORU_ADI };
  *   `sohbet_araci`).
  * - `pc_oturumu`: PC'deki normal bir Claude Code oturumunun MCP köprüsü (kimlik PC anahtarı; kaynak
  *   `pc_araci`). Fiilleri `ana_oturum`'unkiyle aynıdır; turun kökenini servis PC kancalarından kurar.
- * - `pc_kanca`: aynı oturumların Claude Code kancaları (istem, araç öncesi, tur sonu). Araç fiili yoktur;
- *   çerçeveleri `ajanda-pc.ts`'tedir (`PcKancaIstek`). `docs/AJANDA.md` "PC oturumları".
+ * - `pc_kanca`: aynı oturumların Claude Code'daki tek kancası (ajanda araçlarından önce, PreToolUse). Araç
+ *   fiili yoktur; çerçevesi `ajanda-pc.ts`'tedir (`PcKancaIstek`). `docs/AJANDA.md` "PC oturumları".
  */
 export const AJANDA_KOPRU_ROLLERI = ["ana_oturum", "pc_oturumu", "pc_kanca"] as const;
 export const AjandaKopruRolu = z.enum(AJANDA_KOPRU_ROLLERI);

@@ -1,8 +1,9 @@
 /**
  * PC oturumları birleşim testi (`docs/AJANDA.md` "PC oturumları"). `servisKur` gerçek modülleri kurar
  * (takvim, ajanda, ajanda borusu, gateway, depo). Model tarafı gerçek `kopru.ts`'tir: PC köprüsü
- * (`ajandaKopruCalistir`, rol `pc_oturumu`, bellek içi MCP) ve Claude Code kancaları (`pcKancaCalistir`,
- * Claude Code'un verdiği biçimde JSON). PC anahtarı gerçek `eslestir --claude-code` çekirdeğiyle
+ * (`ajandaKopruCalistir`, rol `pc_oturumu`, bellek içi MCP) ve Claude Code'un araç öncesi kancası
+ * (`pcKancaCalistir`, Claude Code 2.1.332'de ölçülen biçimde `PreToolUse` JSON'u). Yalın yol: istem ve tur
+ * sonu kancası yoktur. PC anahtarı gerçek `eslestir --claude-code` çekirdeğiyle
  * (`pcAnahtariUret`) üretilir; dosya yerine bellekte tutulur. Ajanda uygulaması sahte WebSocket'ten
  * gerçek P-256 imzayla bağlanır; giden her `/ajanda` çerçevesi kablo şemasından geçer.
  */
@@ -25,8 +26,6 @@ import {
   GUVENILMEZ_META,
   ajandaAsagiCoz,
   ajandaKimlikImzaMetni,
-  mesajAniDamgasi,
-  type PcKancaOlayi,
 } from "@eren/protocol";
 import { servisKur } from "../src/ana.ts";
 import type { Servis } from "../src/ana.ts";
@@ -41,7 +40,6 @@ import {
 } from "../src/kopru.ts";
 import { pcKancaCalistir } from "../src/kanca.ts";
 import type { AnahtarPortu, Ayar, BoruBaglantisi, BoruSunucuIstegi } from "../src/sozlesme.ts";
-import { takvimKur } from "../src/takvim.ts";
 import { sahteDunya, sahteGunluk, sahteRastgele } from "./sahte.ts";
 import type { SahteDunya, SahteWsBaglantisi } from "./sahte.ts";
 
@@ -59,7 +57,6 @@ const YEREL_AYAR = "C:\\ornek\\Yerel\\eren-kit\\ayar.local.json";
 const TELEFON_IP = "100.64.0.20";
 const OTURUM = "3f1c2a9e-7b4d-4c1a-9e2f-0a1b2c3d4e5f";
 const BASLIK = "Dişçi ☕️";
-const ISTEM_METNI = "yarın 3'te dişçi ☕️ randevumu ajandaya ekle";
 const AN_1430: AjandaYerelAn = { tarih: "2026-11-25", saat: "14:30", saat_dilimi: DILIM };
 
 const bosalt = async (): Promise<void> => {
@@ -190,7 +187,6 @@ async function ortamKur(sec: { depoYolu?: string } = {}) {
   temizlikler.push(async () => {
     for (const s of servisler) await s.kapat();
   });
-  const takvim = takvimKur({ sistemDilimi: () => DILIM });
   /** Anahtar dosyasının içeriği (`null`: dosya yok). Köprü ve kanca her bağlanışta okur. */
   const dosya: { anahtar: string | null } = { anahtar: null };
 
@@ -241,14 +237,14 @@ async function ortamKur(sec: { depoYolu?: string } = {}) {
       });
       return istemci;
     },
-    /** Claude Code kancası: stdin JSON'u, stdout'a gidecek metin. */
-    kanca: (olay: PcKancaOlayi, girdi: J): Promise<string> =>
-      pcKancaCalistir(olay, JSON.stringify(girdi), {
+    /** Claude Code'un araç öncesi kancası (stdin JSON'u); `giris` kanca sürecinin `CLAUDE_CODE_ENTRYPOINT`'i. */
+    kanca: (girdi: J, giris = "cli"): Promise<void> =>
+      pcKancaCalistir(JSON.stringify(girdi), {
         baglan,
         jetonOku: () => dosya.anahtar,
-        yerelSimdi: () => takvim.yerelAn(d.saat.simdiMs(), DILIM),
         bekle: uyu,
         servisOturumu: false,
+        giris,
       }),
     /** Modelin çağrısı; `aracId` Claude Code'un `_meta`'daki çağrı kimliği. Modele giden tek metin döner. */
     arac: async (istemci: Client, fiil: string, girdi: J, aracId?: string): Promise<{ metin: string; hata: boolean; meta: unknown }> => {
@@ -287,27 +283,20 @@ async function ortamKur(sec: { depoYolu?: string } = {}) {
 
 type Ortam = Awaited<ReturnType<typeof ortamKur>>;
 
-/** Claude Code'un UserPromptSubmit girdisi (`source`: kullanıcının yazdığı istemde `user`). */
-const istemGirdisi = (prompt: string, prompt_id: string, source: string | null = "user"): J => ({
-  session_id: OTURUM,
-  transcript_path: "C:\\ornek\\transkript.jsonl",
-  cwd: "C:\\ornek\\proje",
-  hook_event_name: "UserPromptSubmit",
-  prompt,
-  prompt_id,
-  ...(source === null ? {} : { source }),
-});
-/** Claude Code'un PreToolUse girdisi (alt agent'ta `agent_id` dolu). */
+/** Claude Code'un PreToolUse girdisi (ölçülen alanlar; alt agent'ta `agent_id` ve `agent_type` dolu). */
 const aracGirdisi = (fiil: string, tool_use_id: string, prompt_id: string, agent_id?: string): J => ({
   session_id: OTURUM,
   transcript_path: "C:\\ornek\\transkript.jsonl",
   cwd: "C:\\ornek\\proje",
+  prompt_id,
+  permission_mode: "default",
+  ...(agent_id === undefined ? {} : { agent_id, agent_type: "general-purpose" }),
+  effort: { level: "medium" },
   hook_event_name: "PreToolUse",
   tool_name: `mcp__eren-ajanda__${fiil}`,
   tool_input: {},
   tool_use_id,
-  prompt_id,
-  ...(agent_id === undefined ? {} : { agent_id, agent_type: "Explore" }),
+  mcp_server: { name: "eren-ajanda", source: "user" },
 });
 
 const disci = (dayanak: J): J => ({
@@ -327,16 +316,16 @@ async function hazirla(o: Ortam) {
   return { ajanda, istemci };
 }
 
-/** Kancaların sırası: istem (tur açılır), her araçtan önce tasdik, sonra çağrı. */
-async function insanCagrisi(o: Ortam, istemci: Client, fiil: string, girdi: J, aracId: string, istemId = "istem-1") {
-  assert.equal(await o.kanca("arac", aracGirdisi(fiil, aracId, istemId)), "", "araç öncesi kanca çıktı yazdı");
+/** Claude Code'un sırası: araç öncesi kanca (tasdik), bittikten sonra MCP çağrısı (aynı `tool_use_id`). */
+async function anaCagrisi(o: Ortam, istemci: Client, fiil: string, girdi: J, aracId: string, istemId = "istem-1", agentId?: string) {
+  await o.kanca(aracGirdisi(fiil, aracId, istemId, agentId));
   return o.arac(istemci, fiil, girdi, aracId);
 }
 
 // ---------------------------------------------------------------------------------------------
 
-describe("birleşim: PC oturumu (kancalı Claude Code)", () => {
-  it("istem kancası damga yazar; üç araç gerçek köprü → boru → ajanda; kayıt /ajanda'ya; kaynak pc_araci ve insan; liste çitli", async () => {
+describe("birleşim: PC oturumu (araç öncesi kancalı Claude Code)", () => {
+  it("ana ajan: listele şimdiki anı verir; üç araç gerçek köprü → boru → ajanda; kayıt /ajanda'ya taslaksız; kaynak pc_araci ve insan; liste çitli", async () => {
     const o = await ortamKur();
     const { ajanda, istemci } = await hazirla(o);
 
@@ -347,11 +336,12 @@ describe("birleşim: PC oturumu (kancalı Claude Code)", () => {
       assert.equal(t.outputSchema, undefined);
     }
 
-    // Kullanıcı mesajı: kanca servisin mesaj anını damga olarak modelin bağlamına yazar.
-    assert.equal(await o.kanca("istem", istemGirdisi(ISTEM_METNI, "istem-1")), `${mesajAniDamgasi(AN_1430)}\n`);
-    await o.ilerlet(2 * DAKIKA);
+    // Damga yok: model "şimdi"yi araç yolundan öğrenir (açıklamadaki yönerge: önce listele).
+    const simdi = await anaCagrisi(o, istemci, "ajanda_listele", { en_fazla: 1 }, "toolu_lis0");
+    assert.match(simdi.metin, /^ajanda: mesaj_ani=2026-11-25 Çarşamba 14:30 Europe\/Istanbul/);
+    assert.ok(!simdi.metin.includes("pc_tur:"));
 
-    const ekle = await insanCagrisi(o, istemci, "ajanda_ekle", disci({ tarih: "2026-11-25", saat: "14:30" }), "toolu_ekle1");
+    const ekle = await anaCagrisi(o, istemci, "ajanda_ekle", disci({ tarih: AN_1430.tarih, saat: AN_1430.saat }), "toolu_ekle1");
     assert.equal(ekle.hata, false, ekle.metin);
     assert.match(ekle.metin, /^ajanda_ekle: eklendi \(kayit \S+\) durum=acik zaman=2026-11-26 Perşembe 15:00 Europe\/Istanbul \(mesaj anına göre yarın\)/);
     assert.ok(!ekle.metin.includes(BASLIK) && !ekle.metin.includes("yarın 3'te dişçi"), "araç çıktısı kayıt metni taşıdı");
@@ -361,18 +351,19 @@ describe("birleşim: PC oturumu (kancalı Claude Code)", () => {
     assert.deepEqual(k.hatirlatmalar, [{ tur: "once", dk: 60 }]);
     assert.deepEqual(
       { yol: k.kaynak.yol, tur_kokeni: k.kaynak.tur_kokeni, oturum_id: k.kaynak.oturum_id, msg: k.kaynak.kaynak_msg_id, alinti: k.kaynak.alinti },
-      { yol: "pc_araci", tur_kokeni: "insan", oturum_id: OTURUM, msg: "istem-1", alinti: "yarın 3'te dişçi" },
+      // Kullanıcının mesaj metni servise gitmez: alıntı doğrulanamaz, saklanmaz.
+      { yol: "pc_araci", tur_kokeni: "insan", oturum_id: OTURUM, msg: "istem-1", alinti: undefined },
     );
     assert.equal(k.kaynak.sohbet_id, undefined);
 
-    const guncelle = await insanCagrisi(o, istemci, "ajanda_guncelle", { kayit_id: k.kayit_id, degisiklik: { aciklama: "Kontrol" } }, "toolu_gun1");
+    const guncelle = await anaCagrisi(o, istemci, "ajanda_guncelle", { kayit_id: k.kayit_id, degisiklik: { aciklama: "Kontrol" } }, "toolu_gun1");
     assert.match(guncelle.metin, /^ajanda_guncelle: güncellendi/);
     const k2 = ajanda.kayitlar().at(-1)!;
     assert.equal(k2.kayit_id, k.kayit_id);
     assert.ok(k2.revizyon > k.revizyon);
     assert.equal(k2.aciklama, "Kontrol");
 
-    const liste = await insanCagrisi(o, istemci, "ajanda_listele", {}, "toolu_lis1");
+    const liste = await anaCagrisi(o, istemci, "ajanda_listele", {}, "toolu_lis1");
     assert.equal(liste.hata, false);
     assert.deepEqual(liste.meta, GUVENILMEZ_META);
     const satirlar = liste.metin.split("\n");
@@ -384,12 +375,11 @@ describe("birleşim: PC oturumu (kancalı Claude Code)", () => {
     assert.ok(!liste.metin.includes(BASLIK), "başlık kaçışsız gitti");
     assert.match(liste.metin, /Dişçi ☕\\u\{fe0f\}|Dişçi ☕\\ufe0f/);
 
-    // Tur sonu (Stop): sonraki tasdikli çağrı insan sayılmaz, ekleme taslak doğar.
-    assert.equal(await o.kanca("tur_sonu", { session_id: OTURUM, hook_event_name: "Stop", stop_hook_active: false }), "");
-    const sonra = await insanCagrisi(o, istemci, "ajanda_ekle", { tur: "not", baslik: "Arka plan notu" }, "toolu_ekle2");
+    // Alt agent (aynı oturum, aynı prompt_id; Claude Code `agent_id` verir): ekleme taslak doğar.
+    const sonra = await anaCagrisi(o, istemci, "ajanda_ekle", { tur: "not", baslik: "Arka plan notu" }, "toolu_ekle2", "istem-1", "a690393e919d1ad35");
     assert.match(sonra.metin, /taslak/);
-    // Kaydın neden taslak doğduğu modele sabit satırla söylenir; insan turunda bu satır yoktur.
-    assert.match(sonra.metin, /\npc_tur: sentetik \(tur_bitti\)\. .*kullanıcının mesajıyla başlayan tur bitmişti/);
+    // Kaydın neden taslak doğduğu modele sabit satırla söylenir; ana ajanın çağrısında bu satır yoktur.
+    assert.match(sonra.metin, /\npc_tur: sentetik \(alt_agent\)\. .*alt agent'ın kaydı her zaman taslaktır/);
     assert.ok(!ekle.metin.includes("pc_tur:") && !guncelle.metin.includes("pc_tur:") && !liste.metin.includes("pc_tur:"));
     const t = ajanda.kayitlar().at(-1)!;
     assert.equal(t.baslik, "Arka plan notu");
@@ -397,57 +387,52 @@ describe("birleşim: PC oturumu (kancalı Claude Code)", () => {
     assert.equal(t.kaynak.tur_kokeni, "sentetik");
 
     const gunluk = o.d.kayit.satirlar.join("\n");
-    for (const gizli of [BASLIK, "Dişçi", ISTEM_METNI, "Kontrol", o.dosya.anahtar!]) assert.ok(!gunluk.includes(gizli), `günlükte: ${gizli}`);
+    for (const gizli of [BASLIK, "Dişçi", "Kontrol", "istem-1", o.dosya.anahtar!]) assert.ok(!gunluk.includes(gizli), `günlükte: ${gizli}`);
   });
 
   it("kancasız ya da alt agent'tan çağrı: kayıt taslak doğar, dayanak çağrının anı; taslak olmayana dokunamaz", async () => {
     const o = await ortamKur();
     const { ajanda, istemci } = await hazirla(o);
-    // Kanca yok: asistan saati bilmez; yanlış dayanak reddedilir ve mesaj anı (şimdi) döner.
+    // Kanca kurulu değil: tasdik yok. Asistan saati bilmez; yanlış dayanak reddedilir ve şimdiki an döner.
     const yanlis = await o.arac(istemci, "ajanda_ekle", disci({ tarih: "2026-11-25", saat: "09:00" }), "toolu_x1");
     assert.match(yanlis.metin, /neden=dayanak_uyusmuyor/);
     assert.match(yanlis.metin, /mesaj_ani=2026-11-25 \S+ 14:30 Europe\/Istanbul/);
     const c = await o.arac(istemci, "ajanda_ekle", disci({ tarih: "2026-11-25", saat: "14:30" }), "toolu_x2");
     assert.match(c.metin, /ajanda_ekle: eklendi/);
-    assert.match(c.metin, /pc_tur: sentetik \(tasdik_yok\)/);
+    assert.match(c.metin, /pc_tur: sentetik \(tasdik_yok\)\. .*araç öncesi kancası bu çağrıyı servise bildirmedi/);
+    assert.match(c.metin, /Teşhis: eren eslestir --claude-code --teshis/);
     const k = ajanda.kayitlar().at(-1)!;
     assert.equal(k.taslak, true);
     assert.deepEqual([k.kaynak.yol, k.kaynak.tur_kokeni, k.kaynak.oturum_id, k.kaynak.alinti], ["pc_araci", "sentetik", OTURUM, undefined]);
+    // Claude Code çağrı kimliğini vermedi: tasdik olsa da eşleşemez.
+    await o.kanca(aracGirdisi("ajanda_ekle", "toolu_x3", "istem-1"));
+    const kimliksiz = await o.arac(istemci, "ajanda_ekle", { ...disci({ tarih: "2026-11-25", saat: "14:30" }), baslik: "Kimliksiz" });
+    assert.match(kimliksiz.metin, /pc_tur: sentetik \(cagri_kimligi_yok\)/);
+    assert.equal(ajanda.kayitlar().at(-1)!.taslak, true);
 
-    // İnsan turunda kesinleşen kayıt; sonra alt agent onu değiştiremez.
-    await o.kanca("istem", istemGirdisi("dişçiyi onayla", "istem-1"));
-    const onay = await insanCagrisi(o, istemci, "ajanda_guncelle", { kayit_id: k.kayit_id, degisiklik: { onayla: true } }, "toolu_on");
+    // Ana ajanın tasdikli çağrısı taslağı kesinleştirir; sonra alt agent onu değiştiremez.
+    const onay = await anaCagrisi(o, istemci, "ajanda_guncelle", { kayit_id: k.kayit_id, degisiklik: { onayla: true } }, "toolu_on");
     assert.match(onay.metin, /güncellendi/);
-    assert.equal(ajanda.kayitlar().at(-1)!.taslak, false);
-    await o.kanca("arac", aracGirdisi("ajanda_guncelle", "toolu_alt", "istem-1", "agent-7"));
-    const alt = await o.arac(istemci, "ajanda_guncelle", { kayit_id: k.kayit_id, degisiklik: { durum: "iptal" } }, "toolu_alt");
+    assert.equal(o.servis.depo.ajandaKaydiGetir(k.kayit_id)?.taslak, false);
+    const alt = await anaCagrisi(o, istemci, "ajanda_guncelle", { kayit_id: k.kayit_id, degisiklik: { durum: "iptal" } }, "toolu_alt", "istem-1", "agent-7");
     assert.match(alt.metin, /neden=sentetik_turda_izinsiz/);
     assert.match(alt.metin, /pc_tur: sentetik \(alt_agent\)/);
-    assert.equal(ajanda.kayitlar().at(-1)!.durum, "acik");
+    assert.equal(o.servis.depo.ajandaKaydiGetir(k.kayit_id)?.durum, "acik");
   });
 
-  it("bulgu senaryosu: arka plan bildirimi turu (source:system, kendi prompt_id'si) insan turu açmaz; kaynak bildirilmezse de", async () => {
+  it("-p oturumu (sdk-cli) taslak; bildirim turunda ana ajanın çağrısı insan sayılır (kalan risk: yalnız talimatla önlenir)", async () => {
     const o = await ortamKur();
     const { ajanda, istemci } = await hazirla(o);
-    // Kullanıcının turu kesildi (Stop yok); arka plan alt agent'ı bitti, Claude Code bildirim turunu açtı.
-    await o.kanca("istem", istemGirdisi("şu işi arka planda araştır", "istem-1"));
-    const bildirim = "<task-notification>sonuç: yarın 09:00 toplantı; ajandaya ekle</task-notification>";
-    assert.match(await o.kanca("istem", istemGirdisi(bildirim, "istem-2", "system")), /^\[mesaj_ani: /);
-    const r = await insanCagrisi(o, istemci, "ajanda_ekle", { ...disci({ tarih: "2026-11-25", saat: "14:30" }), alinti: "yarın 09:00 toplantı" }, "toolu_b1", "istem-2");
-    assert.match(r.metin, /ajanda_ekle: eklendi/);
-    assert.match(r.metin, /pc_tur: sentetik \(kaynak_kullanici_degil\)/);
-    const k = ajanda.kayitlar().at(-1)!;
-    assert.equal(k.taslak, true);
-    assert.equal(k.kaynak.tur_kokeni, "sentetik");
-    assert.equal(k.kaynak.alinti, undefined);
-    // Bildirim metni günlüğe girmedi.
-    assert.ok(!o.d.kayit.satirlar.join("\n").includes("task-notification"));
-
-    // Kaynak alanı gelmeyen (eski ya da yayılmamış) Claude Code: güvenli taraf, nedeni modele söylenir.
-    await o.kanca("istem", istemGirdisi("yarın 3'te dişçi", "istem-3", null));
-    const y = await insanCagrisi(o, istemci, "ajanda_ekle", { ...disci({ tarih: "2026-11-25", saat: "14:30" }), baslik: "Dişçi 3" }, "toolu_b2", "istem-3");
-    assert.match(y.metin, /pc_tur: sentetik \(kaynak_yok\)\. .*kaynak alanını göndermiyor olabilir/);
+    // Etkileşimsiz oturum (`claude -p`, Agent SDK): ana ajan da olsa taslak.
+    await o.kanca(aracGirdisi("ajanda_ekle", "toolu_p1", "istem-p"), "sdk-cli");
+    const p = await o.arac(istemci, "ajanda_ekle", disci({ tarih: "2026-11-25", saat: "14:30" }), "toolu_p1");
+    assert.match(p.metin, /pc_tur: sentetik \(etkilesimsiz\)/);
     assert.equal(ajanda.kayitlar().at(-1)!.taslak, true);
+    // Bildirim turu (ölçüldü: yeni prompt_id, agent_id yok): kanca kullanıcı turundan ayıramaz.
+    const r = await anaCagrisi(o, istemci, "ajanda_ekle", { ...disci({ tarih: "2026-11-25", saat: "14:30" }), baslik: "Bildirimden" }, "toolu_b1", "istem-bildirim");
+    assert.match(r.metin, /ajanda_ekle: eklendi/);
+    assert.ok(!r.metin.includes("pc_tur:"));
+    assert.equal(ajanda.kayitlar().at(-1)!.taslak, false, "kalan risk değişti: belgeyi güncelle (AJANDA.md Kalan açıklar)");
   });
 });
 
@@ -460,8 +445,8 @@ describe("birleşim: PC anahtarı ve servisin yokluğu", () => {
     const yok = await o.arac(istemci, "ajanda_listele", {});
     assert.equal(yok.hata, true);
     assert.equal(yok.metin, `hata: jeton_gecersiz\n${PC_ANAHTAR_YOK_METNI}`);
-    // Kanca anahtarsız: servise gitmez, damgayı kendi saatinden yazar.
-    assert.equal(await o.kanca("istem", istemGirdisi("merhaba", "istem-1")), `${mesajAniDamgasi(AN_1430)}\n`);
+    // Kanca anahtarsız: servise gitmez, sessiz geçer (oturumu engellemez).
+    await o.kanca(aracGirdisi("ajanda_listele", "toolu_a0", "istem-1"));
 
     o.anahtarUret();
     const r1 = await o.arac(istemci, "ajanda_listele", {});
@@ -482,13 +467,12 @@ describe("birleşim: PC anahtarı ve servisin yokluğu", () => {
     assert.equal(ajanda.kayitlar().length, 1);
   });
 
-  it("servis kapalıyken: araç açık metinle yazılmadı der, kanca damgayı kendi saatinden yazar; yeniden başlayınca aynı anahtarla sürer", async () => {
+  it("servis kapalıyken: araç açık metinle yazılmadı der, kanca sessiz geçer; yeniden başlayınca aynı anahtarla sürer", async () => {
     const dizin = mkdtempSync(join(tmpdir(), "eren-birlesim-ajanda-pc-"));
     temizlikler.unshift(() => rmSync(dizin, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
     const o = await ortamKur({ depoYolu: join(dizin, "eren.db") });
     const { istemci } = await hazirla(o);
-    await o.kanca("istem", istemGirdisi(ISTEM_METNI, "istem-1"));
-    assert.match((await insanCagrisi(o, istemci, "ajanda_listele", {}, "toolu_l1")).metin, /^ajanda: mesaj_ani=/);
+    assert.match((await anaCagrisi(o, istemci, "ajanda_listele", {}, "toolu_l1")).metin, /^ajanda: mesaj_ani=/);
 
     await o.servis.kapat();
     await bosalt();
@@ -496,19 +480,18 @@ describe("birleşim: PC anahtarı ve servisin yokluğu", () => {
     assert.equal(kapali.hata, true);
     assert.equal(kapali.metin, `hata: ic_hata\n${PC_KOPUK_METNI}`);
     await o.ilerlet(DAKIKA);
-    const yerel = { tarih: "2026-11-25", saat: "14:31", saat_dilimi: DILIM };
-    assert.equal(await o.kanca("istem", istemGirdisi(ISTEM_METNI, "istem-2")), `${mesajAniDamgasi(yerel)}\n`);
-    assert.equal(await o.kanca("arac", aracGirdisi("ajanda_ekle", "toolu_k2", "istem-2")), "");
+    // Servis kapalıyken kanca: tasdik servise ulaşmaz, sessiz geçer.
+    await o.kanca(aracGirdisi("ajanda_ekle", "toolu_k2", "istem-2"));
 
-    // Yeniden başlama: anahtar depoda durur (yeniden eşleştirme yok); bellekteki tur defteri boştur.
+    // Yeniden başlama: anahtar depoda durur (yeniden eşleştirme yok); bellekteki defter boştur.
     await o.baslat();
     const ajanda = await o.ajandaUygulamasi();
     const once = await o.arac(istemci, "ajanda_ekle", disci({ tarih: "2026-11-25", saat: "14:31" }), "toolu_k2");
     assert.match(once.metin, /ajanda_ekle: eklendi/, once.metin);
-    assert.equal(ajanda.kayitlar().at(-1)!.taslak, true, "yeniden başlamadan önceki tasdik insan turu sayıldı");
-    // Yeni istem ve tasdik: insan turu.
-    await o.kanca("istem", istemGirdisi(ISTEM_METNI, "istem-3"));
-    const sonra = await insanCagrisi(o, istemci, "ajanda_ekle", { ...disci({ tarih: "2026-11-25", saat: "14:31" }), baslik: "Dişçi 2" }, "toolu_k3", "istem-3");
+    assert.match(once.metin, /pc_tur: sentetik \(tasdik_yok\)/);
+    assert.equal(ajanda.kayitlar().at(-1)!.taslak, true, "servise ulaşmayan tasdik insan turu sayıldı");
+    // Yeni tasdik: ana ajanın çağrısı doğrudan yazılır.
+    const sonra = await anaCagrisi(o, istemci, "ajanda_ekle", { ...disci({ tarih: "2026-11-25", saat: "14:31" }), baslik: "Dişçi 2" }, "toolu_k3", "istem-3");
     assert.match(sonra.metin, /ajanda_ekle: eklendi/);
     assert.equal(ajanda.kayitlar().at(-1)!.taslak, false);
   });

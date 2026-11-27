@@ -8,8 +8,10 @@
 // `kanca-ekle` ve `kanca-kaldir` ayar dosyasının yanına zaman damgalı yedek bırakır, yalnız bu aracın
 // kendi kanca girdilerini (`bizimKancaMi`: komutunda `kanca.ts <olay>` ya da eski biçim `kopru.ts --kanca
 // <olay>` geçen) ekler ya da çıkarır; başka hiçbir anahtara ve kancaya dokunmaz, iki kez çalıştırmak bir
-// kez çalıştırmakla aynıdır. MCP sunucusunun kaydı (`claude mcp add`) bu betikte yoktur: `goster` tam
-// komutu yazar, kullanıcı kendisi çalıştırır.
+// kez çalıştırmakla aynıdır. Yalın yolda tek kanca vardır: ajanda araçlarından önce `PreToolUse`
+// (`kanca.ts arac`). Önceki kurulumun istem (`UserPromptSubmit`) ve tur sonu (`Stop`) kancaları artık
+// hiçbir şey yapmaz; `kanca-ekle` onları da çıkarır. MCP sunucusunun kaydı (`claude mcp add`) bu betikte
+// yoktur: `goster` tam komutu yazar, kullanıcı kendisi çalıştırır.
 //
 // Yolların TEK kaynağı `yollar`'dır: veri kökünden `<veri kökü>\uygulama\guncel\server\src\...` (kurulu
 // sürüm; `guncel` bağlantısını kur.ts her dağıtımda yeni sürüme çevirir, eski sürümleri siler). Bu betiğin
@@ -26,12 +28,11 @@ export const MCP_ADI = "eren-ajanda";
 /** Kancanın en uzun süresi (sn). Kanca servise en çok 2 sn harcar, en geç 3 sn'de kendini kapatır; bol pay. */
 export const KANCA_SURESI_SN = 10;
 
-export type KancaOlayi = "UserPromptSubmit" | "PreToolUse" | "Stop";
+/** Yalın yol: tek Claude Code olayı, yalnız ajanda araçlarında (`ARAC_ESLESTIRICI`). */
+export type KancaOlayi = "PreToolUse";
 /** Claude Code olayı → `kanca.ts` olayı. */
 export const KANCA_OLAYLARI: Readonly<Record<KancaOlayi, string>> = {
-  UserPromptSubmit: "istem",
   PreToolUse: "arac",
-  Stop: "tur_sonu",
 };
 export const ARAC_ESLESTIRICI = `mcp__${MCP_ADI}__.*`;
 
@@ -67,19 +68,23 @@ const ileri = (yol: string): string => yol.replaceAll("\\", "/");
 /**
  * Kancanın tam komutu. Claude Code kancayı kabukta çalıştırır (Windows'ta Git Bash): yollar ileri eğik
  * çizgili ve tırnaklı. Sondaki `|| true`: kanca hiçbir koşulda 2 ile çıkmasın (2 kancada "engelle" demektir:
- * istemi siler, aracı durdurur ya da Stop'ta yanıtı sürdürür); `kanca.ts` her durumda 0 döner, ama eski
+ * PreToolUse'ta aracı durdurur); `kanca.ts` her durumda 0 döner, ama eski
  * bir sürüme geri dönülürse dosya bulunamaz ve Node 1 ile çıkar.
  */
 export const kancaKomutu = (y: Pick<Yollar, "nodeExe" | "kancaBetigi">, olay: string): string =>
   `"${ileri(y.nodeExe)}" --disable-warning=ExperimentalWarning "${ileri(y.kancaBetigi)}" ${olay} || true`;
 
 /**
- * Komut bu aracın kancası mı (yolu ne olursa olsun: sürüm ve kök değişse de tanınır). Eski biçim
- * (`kopru.ts --kanca <olay>`) da tanınır ki `kanca-ekle` onu yenisiyle değiştirsin.
+ * Komut bu aracın kancası mı (yolu ne olursa olsun: sürüm ve kök değişse de tanınır). Önceki kurulumların
+ * istem ve tur sonu kancaları ile eski biçim (`kopru.ts --kanca <olay>`) da tanınır ki `kanca-ekle` onları
+ * çıkarıp yalnız araç öncesi kancayı bıraksın.
  */
 export const bizimKancaMi = (komut: unknown): boolean =>
   typeof komut === "string" &&
   (/[\\/]server[\\/]src[\\/]kanca\.ts"?\s+(istem|arac|tur_sonu)\b/.test(komut) || /kopru\.ts"?\s+--kanca\s+(istem|arac|tur_sonu)\b/.test(komut));
+
+/** Bugünkü araç öncesi kancanın komutu mu (`kanca.ts arac`). */
+const aracKancasiMi = (komut: unknown): boolean => typeof komut === "string" && /[\\/]server[\\/]src[\\/]kanca\.ts"?\s+arac\b/.test(komut);
 
 /** `claude mcp add` argümanları ve PowerShell'e yapıştırılacak hali. */
 export const mcpEkleArgumanlari = (y: Pick<Yollar, "nodeExe" | "kopruBetigi">): string[] => [
@@ -96,14 +101,48 @@ export class AyarHatasi extends Error {
   override name = "AyarHatasi";
 }
 
-/** Bu aracın kanca grupları (olay başına bir grup). */
-export const kancaGruplari = (y: Pick<Yollar, "nodeExe" | "kancaBetigi">): Record<KancaOlayi, Json> => {
-  const grup = (olay: KancaOlayi): Json => ({
-    ...(olay === "PreToolUse" ? { matcher: ARAC_ESLESTIRICI } : {}),
-    hooks: [{ type: "command", command: kancaKomutu(y, KANCA_OLAYLARI[olay]), timeout: KANCA_SURESI_SN }],
-  });
-  return { UserPromptSubmit: grup("UserPromptSubmit"), PreToolUse: grup("PreToolUse"), Stop: grup("Stop") };
-};
+/** Bu aracın kanca grupları (olay başına bir grup; yalın yolda yalnız `PreToolUse`). */
+export const kancaGruplari = (y: Pick<Yollar, "nodeExe" | "kancaBetigi">): Record<KancaOlayi, Json> => ({
+  PreToolUse: {
+    matcher: ARAC_ESLESTIRICI,
+    hooks: [{ type: "command", command: kancaKomutu(y, KANCA_OLAYLARI.PreToolUse), timeout: KANCA_SURESI_SN }],
+  },
+});
+
+/**
+ * Ayardaki kanca durumu (saf): `arac` araç öncesi kancası `PreToolUse`'ta `ARAC_ESLESTIRICI` eşleyicili
+ * bir grupta kurulu mu; `eski` bu aracın öteki kancaları (önceki kurulumun istem/tur sonu kancaları, eski
+ * biçim, yanlış olaydaki ya da eşleyicisiz araç kancası). `kanca-ekle` ikisini de düzeltir.
+ */
+export function kancaDurumuCoz(ayar: Json): { arac: boolean; eski: number } {
+  let arac = false;
+  let eski = 0;
+  const hooks = ayar["hooks"];
+  if (!nesneMi(hooks)) return { arac, eski };
+  for (const [olay, gruplar] of Object.entries(hooks)) {
+    if (!Array.isArray(gruplar)) continue;
+    for (const g of gruplar) {
+      if (!nesneMi(g) || !Array.isArray(g["hooks"])) continue;
+      for (const h of g["hooks"] as unknown[]) {
+        if (!nesneMi(h) || !bizimKancaMi(h["command"])) continue;
+        if (olay === "PreToolUse" && g["matcher"] === ARAC_ESLESTIRICI && aracKancasiMi(h["command"])) arac = true;
+        else eski++;
+      }
+    }
+  }
+  return { arac, eski };
+}
+
+/** Kullanıcı ayarındaki kanca durumu (`eren eslestir --claude-code --teshis`; yalnız okur, hiç atmaz). */
+export function kancaDurumu(ortam: Ortam): { ayarYolu: string; arac: boolean | null; eski: number } {
+  let ayarYolu = "~\\.claude\\settings.json";
+  try {
+    ayarYolu = varsayilanAyarYolu(ortam);
+    return { ayarYolu, ...kancaDurumuCoz(ayarCoz(ayarOku(ayarYolu))) };
+  } catch {
+    return { ayarYolu, arac: null, eski: 0 };
+  }
+}
 
 /**
  * Ayardan bu aracın kancalarını çıkarır (saf; girdi değişmez). Gruptaki öteki kancalar kalır; boşalan grup,
@@ -176,14 +215,17 @@ export function gosterMetni(y: Yollar, ayarYolu: string, anahtarAdimi = true): s
     "1. MCP köprüsü (kullanıcı kapsamı; ~/.claude.json'a yazılır):",
     `   ${mcpEkleKomutu(y)}`,
     "",
-    `2. Kancalar (${ayarYolu}; bu betik yedekleyip ekler: kanca-ekle). Elle eklenecekse "hooks"a:`,
+    `2. Tek kanca: ajanda araçlarından önce (PreToolUse, ${ARAC_ESLESTIRICI}). Ana oturumun kaydını alt agent'ınkinden`,
+    "   ayırır; kurulu değilse bütün kayıtlar taslak doğar. Başka hiçbir araçta ve mesajda çalışmaz, mesaj metnini okumaz.",
+    `   ${ayarYolu}; bu betik yedekleyip ekler (önceki kurulumun istem/tur sonu kancalarını da çıkarır): kanca-ekle.`,
+    '   Elle eklenecekse "hooks"a:',
     json.split("\n").map((s) => `   ${s}`).join("\n"),
     "",
     "3. İsteğe bağlı izin (her çağrıda sorulmasın): settings.json permissions.allow'a",
     `   "mcp__${MCP_ADI}__ajanda_ekle", "mcp__${MCP_ADI}__ajanda_guncelle", "mcp__${MCP_ADI}__ajanda_listele"`,
     "",
     "4. Sınama: yeni bir Claude Code oturumu açın, bir kayıt isteyin (\"yarın 10'da dişçi, ajandaya ekle\"),",
-    "   sonra: eren eslestir --claude-code --teshis  (son karar \"insan\" olmalı; docs/AJANDA.md \"Kurulumdan sonra sınama\")",
+    "   sonra: eren eslestir --claude-code --teshis  (kanca \"kurulu\", son karar \"insan\" olmalı; docs/AJANDA.md \"Kurulumdan sonra sınama\")",
     "",
     "Kaldırma: kanca-kaldir; " + MCP_KALDIR_KOMUTU + "; eren eslestir --claude-code --kaldir",
     "",
@@ -237,9 +279,12 @@ export function calis(argv: readonly string[], ortam: Ortam = process.env, nodeE
         process.stdout.write(gosterMetni(y, ayarYolu));
         return 0;
       case "kanca-ekle": {
-        const yeni = kancalariEkle(ayarCoz(ayarOku(ayarYolu)), y);
+        const onceki = ayarCoz(ayarOku(ayarYolu));
+        const { eski } = kancaDurumuCoz(onceki);
+        const yeni = kancalariEkle(onceki, y);
         const yedek = ayarYaz(ayarYolu, yeni, Date.now());
-        console.log(`Kancalar eklendi: ${ayarYolu}${yedek === null ? "" : ` (yedek: ${yedek})`}`);
+        console.log(`Araç öncesi kanca eklendi: ${ayarYolu}${yedek === null ? "" : ` (yedek: ${yedek})`}`);
+        if (eski > 0) console.log(`Önceki kurulumun ${eski} eski kancası (istem / tur sonu / eski biçim) çıkarıldı.`);
         console.log("Açık Claude Code oturumları kancaları yeniden açılınca görür. MCP kaydı için: goster (adım 1).");
         return 0;
       }
