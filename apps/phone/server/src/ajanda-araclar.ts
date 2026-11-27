@@ -156,7 +156,7 @@ export function ajandaAraclariKur(b: AjandaBagimliliklari, pc?: PcDefteri): Ajan
       gunluk.uyari(MODUL, "tur_gecersiz", { fiil, yol: "pc_araci" });
       return null;
     }
-    const { tur, oturum_id, karar } = pc.tur(baglam, simdi);
+    const { tur, oturum_id, karar, cagri_izi } = pc.tur(baglam, simdi);
     return {
       tur,
       yazar: { yol: "pc_araci", tur_kokeni: tur.tur_kokeni, oturum_id },
@@ -164,7 +164,7 @@ export function ajandaAraclariKur(b: AjandaBagimliliklari, pc?: PcDefteri): Ajan
       tekilKapsam: PC_TEKIL_KAPSAMI,
       geceAnahtari: `pc:${oturum_id}`,
       // `cagri_kimligi`: Claude Code'un MCP isteğinde çağrı kimliği geldi mi (teşhis; AJANDA.md "Kurulumdan sonra sınama").
-      iz: { yol: "pc_araci", oturum_id, pc_karar: karar, cagri_kimligi: baglam.arac_cagri_id === undefined ? "yok" : "var" },
+      iz: { yol: "pc_araci", oturum_id, pc_karar: karar, cagri_kimligi: baglam.arac_cagri_id === undefined ? "yok" : "var", ...(cagri_izi === undefined ? {} : { cagri_izi }) },
       pcKarar: karar,
     };
   };

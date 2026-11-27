@@ -364,9 +364,12 @@ export function kancaKur(ortam: Ortam, nodeExe: string, secenek: KancaSecenegi =
   const onceki = ayarCoz(okunan.metin);
   const { eski, kabuk } = kancaDurumuCoz(onceki);
   const yeni = kancalariEkle(onceki, y);
-  // İçerik (JSON değeri) değişti mi: dosya yoksa ya da yeni ayar öncekinden farklıysa. Yazma ve yedek bugünkü
-  // CLI davranışıyla aynı kalır (her seferinde); `degisti` yalnız içeriğin gerçekten değişip değişmediğini söyler.
+  // İçerik (JSON değeri) değişti mi: dosya yoksa ya da yeni ayar öncekinden farklıysa. Değişmediyse dosyaya
+  // dokunulmaz (yazma da yedek de yok).
   const degisti = okunan.metin === null || JSON.stringify(yeni) !== JSON.stringify(onceki);
+  if (!degisti) {
+    return { ayarYolu, degisti, yedek: null, satirlar: [`Araç öncesi kanca zaten kurulu: ${ayarYolu}; hiçbir şey değişmedi.`] };
+  }
   const yedek = ayarYaz(ayarYolu, yeni, secenek.simdiMs ?? Date.now(), okunan.bom);
   const satirlar = [`Araç öncesi kanca eklendi: ${ayarYolu}${yedek === null ? "" : ` (yedek: ${yedek})`}`];
   if (eski > 0) satirlar.push(`Önceki kurulumun ${eski} eski kancası (istem / tur sonu / eski biçim) çıkarıldı.`);

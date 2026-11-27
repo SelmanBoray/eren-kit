@@ -10,7 +10,7 @@
 import assert from "node:assert/strict";
 import { createPublicKey, generateKeyPairSync, randomBytes, sign as imzaAt, timingSafeEqual, verify as imzaDogrula } from "node:crypto";
 import type { KeyObject } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
@@ -30,7 +30,7 @@ import {
 import { servisKur } from "../src/ana.ts";
 import type { Servis } from "../src/ana.ts";
 import { ayarKur } from "../src/ayar.ts";
-import { ajandaEslestirmeBaslat, pcAnahtariUret } from "../src/eslestir.ts";
+import { ajandaEslestirmeBaslat, pcAnahtariUret, pcTeshisMetni } from "../src/eslestir.ts";
 import {
   ajandaKopruCalistir,
   CLAUDE_CODE_ARAC_KIMLIGI,
@@ -182,7 +182,17 @@ async function ortamKur(sec: { depoYolu?: string } = {}) {
     baslangicMs: T0 - 5_000,
   });
   const depoYolu = sec.depoYolu ?? ":memory:";
-  const dunya = { ...d.dunya, anahtar };
+  /** PC defterinin çağrı izi tuzunun parçaları (`opakId("t")`; servis rastgele kaynağından, her kurulumda yeni). */
+  const tuzlar: string[] = [];
+  const rastgele = {
+    ...d.dunya.rastgele,
+    opakId: (on: string): string => {
+      const v = d.dunya.rastgele.opakId(on);
+      if (on === "t") tuzlar.push(v);
+      return v;
+    },
+  };
+  const dunya = { ...d.dunya, rastgele, anahtar };
   const servisler: Servis[] = [];
   temizlikler.push(async () => {
     for (const s of servisler) await s.kapat();
@@ -200,6 +210,7 @@ async function ortamKur(sec: { depoYolu?: string } = {}) {
   const o = {
     d,
     dosya,
+    tuzlar,
     get servis(): Servis {
       const s = servisler.at(-1);
       assert.ok(s, "servis kurulmadı");
@@ -223,10 +234,10 @@ async function ortamKur(sec: { depoYolu?: string } = {}) {
       return jeton;
     },
     /** Kullanıcının Claude Code'una kayıtlı PC köprüsü: gerçek `kopru.ts`, model tarafı bellek içi MCP. */
-    pcKoprusu: async (): Promise<Client> => {
+    pcKoprusu: async (oturumId: string = OTURUM): Promise<Client> => {
       const [mcpKopru, mcpIstemci] = InMemoryTransport.createLinkedPair();
       const calisan = await ajandaKopruCalistir(
-        { rol: "pc_oturumu", jeton: "", boruAdi: AJANDA_BORU_ADI, jetonOku: () => dosya.anahtar, oturumId: OTURUM },
+        { rol: "pc_oturumu", jeton: "", boruAdi: AJANDA_BORU_ADI, jetonOku: () => dosya.anahtar, oturumId },
         { transport: mcpKopru, baglan, rastgele: sahteRastgele(901), gunluk: sahteGunluk(), bekle: (ms) => uyu(Math.min(ms, 20)) },
       );
       const istemci = new Client({ name: "sahte-claude-code", version: "0.0.0" }, { capabilities: {} });
@@ -238,13 +249,14 @@ async function ortamKur(sec: { depoYolu?: string } = {}) {
       return istemci;
     },
     /** Claude Code'un araç öncesi kancası (stdin JSON'u); `giris` kanca sürecinin `CLAUDE_CODE_ENTRYPOINT`'i. */
-    kanca: (girdi: J, giris = "cli"): Promise<void> =>
+    kanca: (girdi: J, giris = "cli", surec?: string): Promise<void> =>
       pcKancaCalistir(JSON.stringify(girdi), {
         baglan,
         jetonOku: () => dosya.anahtar,
         bekle: uyu,
         servisOturumu: false,
         giris,
+        surec,
       }),
     /** Modelin çağrısı; `aracId` Claude Code'un `_meta`'daki çağrı kimliği. Modele giden tek metin döner. */
     arac: async (istemci: Client, fiil: string, girdi: J, aracId?: string): Promise<{ metin: string; hata: boolean; meta: unknown }> => {
@@ -434,6 +446,35 @@ describe("birleşim: PC oturumu (araç öncesi kancalı Claude Code)", () => {
     assert.ok(!r.metin.includes("pc_tur:"));
     assert.equal(ajanda.kayitlar().at(-1)!.taslak, false, "kalan risk değişti: belgeyi güncelle (AJANDA.md Kalan açıklar)");
   });
+
+  it("T5: iki Claude Code penceresi; B'nin köprüsü A'nın tasdikini tüketemez, A'nınki kullanır; /clear sonrası A sürer", async () => {
+    const o = await ortamKur();
+    const { ajanda, istemci: a } = await hazirla(o);
+    const OTURUM_B = "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d";
+    const b = await o.pcKoprusu(OTURUM_B);
+    const SUREC_A = "3060";
+    const simdi = disci({ tarih: "2026-11-25", saat: "14:30" });
+    // A'nın ilk çağrısı (kanca süreç kimliğiyle): A'nın Claude Code süreci A'nın köprüsüne bağlanır.
+    await o.kanca(aracGirdisi("ajanda_ekle", "toolu_t1", "istem-1"), "cli", SUREC_A);
+    const a1 = await o.arac(a, "ajanda_ekle", simdi, "toolu_t1");
+    assert.ok(!a1.metin.includes("pc_tur:"), a1.metin);
+    // A'nın sıradaki tasdiki B'nin köprüsünden sunulur: taslak, iz B'nin oturumu.
+    await o.kanca(aracGirdisi("ajanda_ekle", "toolu_t2", "istem-2"), "cli", SUREC_A);
+    const b1 = await o.arac(b, "ajanda_ekle", { ...simdi, baslik: "B'den" }, "toolu_t2");
+    assert.match(b1.metin, /pc_tur: sentetik \(tasdik_yok\)/);
+    const bk = ajanda.kayitlar().at(-1)!;
+    assert.equal(bk.taslak, true);
+    assert.equal(bk.kaynak.oturum_id, OTURUM_B);
+    const a2 = await o.arac(a, "ajanda_ekle", { ...simdi, baslik: "A'dan" }, "toolu_t2");
+    assert.ok(!a2.metin.includes("pc_tur:"), a2.metin);
+    assert.equal(ajanda.kayitlar().at(-1)!.taslak, false);
+    // /clear: kancanın oturumu yenilenir, köprününki (MCP sunucusu yeniden başlamaz) eskir.
+    const temiz = { ...aracGirdisi("ajanda_ekle", "toolu_t3", "istem-3"), session_id: "5d6e7f80-1a2b-4c3d-8e9f-a0b1c2d3e4f5" };
+    await o.kanca(temiz, "cli", SUREC_A);
+    const a3 = await o.arac(a, "ajanda_ekle", { ...simdi, baslik: "Temizden sonra" }, "toolu_t3");
+    assert.ok(!a3.metin.includes("pc_tur:"), a3.metin);
+    assert.equal(ajanda.kayitlar().at(-1)!.taslak, false);
+  });
 });
 
 describe("birleşim: PC anahtarı ve servisin yokluğu", () => {
@@ -494,5 +535,140 @@ describe("birleşim: PC anahtarı ve servisin yokluğu", () => {
     const sonra = await anaCagrisi(o, istemci, "ajanda_ekle", { ...disci({ tarih: "2026-11-25", saat: "14:31" }), baslik: "Dişçi 2" }, "toolu_k3", "istem-3");
     assert.match(sonra.metin, /ajanda_ekle: eklendi/);
     assert.equal(ajanda.kayitlar().at(-1)!.taslak, false);
+  });
+});
+
+describe("birleşim: çağrı izi (teşhis nedeni kendi çağrısına izle bağlanır)", () => {
+  const OTURUM_B = "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d";
+  const SUREC_A = "3060";
+  const KURULU = { ayarYolu: "x", arac: true, eski: 0, kabuk: 0, kapatan: [] as string[] };
+  const z = (ms: number) => `t${ms}`;
+  const IZ = /^[0-9a-f]{12}$/;
+  const NEDEN = /Günlükte görülen neden \(kanca çalışıyor; kurulum sorunu değil\):\n {2}- tasdik başka bir köprüye bağlı \(pc_oturum_uyusmuyor\)/;
+  const KURULUM_YONU = /Olası nedenler \(kurulu görünüyor ama tasdik gelmedi\):\n {2}- kanca öteki çağrılarda ulaşıyor; bu çağrıda servis o an yanıt vermedi ya da arada yeniden başladı/;
+  const simdi = disci({ tarih: "2026-11-25", saat: "14:30" });
+
+  /** Günlüğün `bas`tan sonraki satırları (JSON). */
+  const satirlar = (o: Ortam, bas = 0): J[] => o.d.kayit.satirlar.slice(bas).map((s) => JSON.parse(s) as J);
+  const bul = (blok: J[], olay: string): J => {
+    const s = blok.find((x) => x["olay"] === olay);
+    assert.ok(s, `${olay} yok: ${JSON.stringify(blok.map((x) => x["olay"]))}`);
+    return s;
+  };
+  const metin = (blok: J[]): string[] => blok.map((x) => JSON.stringify(x));
+  /** İzi bütün satırlardan siler (izsiz eski günlük). */
+  const izsiz = (blok: J[]): J[] =>
+    blok.map((x) => {
+      const { cagri_izi: _iz, ...kalan } = x;
+      return kalan;
+    });
+
+  /** A penceresi bağlanır (t1), A'nın t2 tasdiki B'nin köprüsünden gelir: T5 reddi. Satır blokları döner. */
+  async function t5Reddi(o: Ortam, a: Client, b: Client) {
+    await o.kanca(aracGirdisi("ajanda_ekle", "toolu_t1", "istem-1"), "cli", SUREC_A);
+    assert.ok(!(await o.arac(a, "ajanda_ekle", simdi, "toolu_t1")).metin.includes("pc_tur:"));
+    const bas = o.d.kayit.satirlar.length;
+    await o.kanca(aracGirdisi("ajanda_ekle", "toolu_t2", "istem-2"), "cli", SUREC_A);
+    const r = await o.arac(b, "ajanda_ekle", { ...simdi, baslik: "B'den" }, "toolu_t2");
+    assert.match(r.metin, /pc_tur: sentetik \(tasdik_yok\)/);
+    const blok = satirlar(o, bas);
+    return { once: satirlar(o).slice(0, bas), blok, neden: bul(blok, "pc_oturum_uyusmuyor"), arac: bul(blok, "arac") };
+  }
+
+  it("gerçek defter + araçlar + günlük: pc arac olayı neden olayıyla aynı izi taşır; teşhis nedeni araya çağrı girse ve 2 sn aşılsa da doğru çağrıya bağlar", async () => {
+    const o = await ortamKur();
+    const { istemci: a } = await hazirla(o);
+    const b = await o.pcKoprusu(OTURUM_B);
+    const t2 = await t5Reddi(o, a, b);
+    assert.match(String(t2.neden["cagri_izi"]), IZ);
+    assert.equal(t2.arac["cagri_izi"], t2.neden["cagri_izi"], "arac olayı neden olayının izini taşımıyor");
+    assert.equal(t2.arac["yol"], "pc_araci");
+    assert.equal(t2.arac["pc_karar"], "tasdik_yok");
+    // Gerçek günlükte (bitişik) teşhis nedeni söyler.
+    assert.match(pcTeshisMetni(o.d.kayit.satirlar, z, KURULU), NEDEN);
+
+    // Araya başka çağrılar girer, 3 sn geçer: A'nın kendi çağrısı (t3, insan) ve B'den kancasız çağrı (t4, tasdik_yok).
+    await o.ilerlet(3_000);
+    let bas = o.d.kayit.satirlar.length;
+    await o.kanca(aracGirdisi("ajanda_ekle", "toolu_t3", "istem-3"), "cli", SUREC_A);
+    assert.ok(!(await o.arac(a, "ajanda_ekle", { ...simdi, baslik: "A'dan" }, "toolu_t3")).metin.includes("pc_tur:"));
+    const t3 = satirlar(o, bas);
+    bas = o.d.kayit.satirlar.length;
+    assert.match((await o.arac(b, "ajanda_ekle", { ...simdi, baslik: "Kancasız" }, "toolu_t4")).metin, /pc_tur: sentetik \(tasdik_yok\)/);
+    const t4 = satirlar(o, bas);
+    const t3Arac = bul(t3, "arac");
+    const t4Arac = bul(t4, "arac");
+    assert.equal(t4.some((x) => x["olay"] === "pc_oturum_uyusmuyor" || x["olay"] === "pc_tasdik_yetersiz"), false);
+    assert.equal(new Set([t2.arac["cagri_izi"], t3Arac["cagri_izi"], t4Arac["cagri_izi"]]).size, 3, "her çağrının izi ayrı");
+    for (const x of [t3Arac, t4Arac]) assert.match(String(x["cagri_izi"]), IZ);
+
+    // Gerçek günlüğün son çağrısı t4: t2'nin nedeni ona geçmez, kurulum yönlendirmesi kalır.
+    const gercek = pcTeshisMetni(o.d.kayit.satirlar, z, KURULU);
+    assert.equal(gercek.includes("Günlükte görülen neden"), false, gercek);
+    assert.match(gercek, KURULUM_YONU);
+
+    // t2'nin arac'ı t3 ve t4'ten sonra (neden olayından > 2 sn sonra) yazılsa da neden t2'ye bağlanır.
+    const gec: J = { ...t2.arac, ts_ms: t4Arac["ts_ms"] };
+    assert.ok((gec["ts_ms"] as number) - (t2.neden["ts_ms"] as number) > 2_000);
+    const sirasiz = [...t2.once, ...t2.blok.filter((x) => x !== t2.arac), ...t3, ...t4, gec];
+    assert.match(pcTeshisMetni(metin(sirasiz), z, KURULU), NEDEN);
+    // Aynı satırlar izsiz (eski günlük): eski sıra + süre kuralı nedeni sahipsiz bırakır.
+    const eski = pcTeshisMetni(metin(izsiz(sirasiz)), z, KURULU);
+    assert.equal(eski.includes("Günlükte görülen neden"), false, eski);
+
+    // Neden başka bir çağrının arac'ına bitişik ve 2 sn içinde: izli günlükte ona geçmez (izsiz eski kural geçirirdi).
+    const bitisik = [...t2.once, ...t2.blok.filter((x) => x !== t2.arac), { ...t4Arac, ts_ms: t2.neden["ts_ms"] }];
+    const izli = pcTeshisMetni(metin(bitisik), z, KURULU);
+    assert.equal(izli.includes("Günlükte görülen neden"), false, izli);
+    assert.match(izli, KURULUM_YONU);
+    assert.match(pcTeshisMetni(metin(izsiz(bitisik)), z, KURULU), NEDEN, "eski kural (bilinen yanlış eşleme) değişti");
+  });
+
+  it("servis yeniden başlayınca iz değişir: eski nedenler yeni çağrıya bağlanmaz (güvenli taraf: kurulum yönlendirmesi); tuz ve çağrı kimliği günlükte ve depoda yok", async () => {
+    const dizin = mkdtempSync(join(tmpdir(), "eren-birlesim-ajanda-pc-iz-"));
+    temizlikler.unshift(() => rmSync(dizin, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+    const o = await ortamKur({ depoYolu: join(dizin, "eren.db") });
+    const { istemci: a } = await hazirla(o);
+    const b = await o.pcKoprusu(OTURUM_B);
+    const t2 = await t5Reddi(o, a, b);
+    assert.equal(o.tuzlar.length, 2, "tuz defter kurulurken alındı");
+
+    await o.servis.kapat();
+    await bosalt();
+    await o.baslat();
+    assert.equal(o.tuzlar.length, 4, "yeni servis süreci, yeni tuz");
+    assert.equal(new Set(o.tuzlar).size, 4);
+    // Yeni süreçte aynı çağrı kimliği (tasdik yok: defter boş): iz eskisinden farklı.
+    const bas = o.d.kayit.satirlar.length;
+    assert.match((await o.arac(b, "ajanda_ekle", { ...simdi, baslik: "Yeniden" }, "toolu_t2")).metin, /pc_tur: sentetik \(tasdik_yok\)/);
+    const yeni = bul(satirlar(o, bas), "arac");
+    assert.match(String(yeni["cagri_izi"]), IZ);
+    assert.notEqual(yeni["cagri_izi"], t2.arac["cagri_izi"], "aynı kimlik, yeni süreç: iz eşleşmemeli");
+
+    // Gerçek günlük: son çağrı yeni süreçte, nedensiz; kurulum yönlendirmesi.
+    const gercek = pcTeshisMetni(o.d.kayit.satirlar, z, KURULU);
+    assert.equal(gercek.includes("Günlükte görülen neden"), false, gercek);
+    assert.match(gercek, KURULUM_YONU);
+    // En kötü dizilim: eski süreçteki neden yeni arac'a bitişik ve 2 sn içinde; yine yanlış nedene düşmez.
+    const bitisik = [...t2.once, ...t2.blok.filter((x) => x !== t2.arac), { ...yeni, ts_ms: t2.neden["ts_ms"] }];
+    const m = pcTeshisMetni(metin(bitisik), z, KURULU);
+    assert.equal(m.includes("Günlükte görülen neden"), false, m);
+    assert.match(m, KURULUM_YONU);
+
+    // Tuz, tuzun parçaları ve çağrı kimlikleri ne günlükte ne depoda.
+    await o.servis.kapat();
+    await bosalt();
+    const gizliler = [...o.tuzlar, ...o.tuzlar.map((t) => t.slice(1)), "toolu_t1", "toolu_t2"];
+    const gunluk = o.d.kayit.satirlar.join("\n");
+    for (const g of gizliler) assert.ok(!gunluk.includes(g), `günlükte: ${g}`);
+    const dosyalar = readdirSync(dizin);
+    assert.ok(dosyalar.includes("eren.db"), JSON.stringify(dosyalar));
+    for (const f of dosyalar) {
+      const icerik = readFileSync(join(dizin, f));
+      for (const g of gizliler) {
+        assert.equal(icerik.includes(Buffer.from(g, "utf8")), false, `depoda (${f}): ${g}`);
+        assert.equal(icerik.includes(Buffer.from(g, "utf16le")), false, `depoda utf16 (${f}): ${g}`);
+      }
+    }
   });
 });
