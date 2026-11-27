@@ -4,22 +4,45 @@
  * geçerlidir; mevcut boruya dokunmamak için ayrı örnektir (ortak kod yalnız protokol işlevleri).
  * Rol, sohbet ve nesil yalnız jetondan (`ajanda_jetonlari`) türer; `AjandaFiilIsleyiciler` dışında
  * kimse çağrılmaz; kayıt metni günlüğe girmez. MODULLER.md "Ajanda dalgası" > "ajanda-kopru-sunucu".
+ *
+ * PC oturumları (AJANDA.md "PC oturumları", MODULLER.md "PC oturumları"): `baslat`'a `pcKanca` verilirse
+ * `pc_oturumu` (MCP köprüsü) ve `pc_kanca` (Claude Code kancaları) rolleri PC anahtarıyla
+ * (`ajanda_pc_anahtarlari`, yalnız özet) bağlanır. Anahtar el sıkışmada VE her istekte yeniden denetlenir:
+ * `eslestir --claude-code` anahtarı yenileyince ya da kaldırınca açık bağlantı bir sonraki isteğinde
+ * `kopru_ret{jeton_gecersiz}` alır ve kapanır. PC bağlantılarında tek bağlantı kuralı yoktur (çok oturum),
+ * sayı `AJANDA_PC_SINIRLARI.BAGLANTI_ADET` ile sınırlıdır. `pc_oturumu` isteğinin `cagri`'sı bağlama
+ * (`AjandaPcBaglami`) geçer; `ana_oturum` isteğinin `cagri`'sı yok sayılır (bağlam bugünkü gibi yalnız
+ * jetonun kapsamıdır). `pc_kanca` bağlantısı yalnız kanca isteklerini (`pcKancaYukariCoz`) alır.
  */
 import { z } from "zod";
 import {
   AJANDA_ARACLARI,
   AJANDA_AZAMI_CERCEVE,
   AJANDA_BORU_ADI,
+  AJANDA_PC_SINIRLARI,
   OpakId,
+  PC_KANCA_ARACLARI,
   PROTOKOL_SURUMU,
   ajandaFiilRoldeIzinliMi,
   ajandaKopruYukariCoz,
+  ajandaPcRoluMu,
   cozumle,
   mesaj,
+  pcKancaYukariCoz,
   sha256Hex,
   utf8Bayt,
 } from "@eren/protocol";
-import type { AjandaFiili, AjandaKopruAsagi, AjandaKopruIstek, HataKodu, KopruYanit } from "@eren/protocol";
+import type {
+  AjandaFiili,
+  AjandaKopruAsagi,
+  AjandaKopruIstek,
+  AjandaKopruRolu,
+  AjandaPcRolu,
+  HataKodu,
+  KopruYanit,
+  PcKancaGirdisi,
+  PcKancaIstek,
+} from "@eren/protocol";
 import type {
   AjandaFiilIsleyiciler,
   AjandaJetonKapsami,
@@ -30,11 +53,14 @@ import type {
   IptalEt,
   KapatilabilirSunucu,
   KopruIptalNedeni,
+  PcKancaIsleyicileri,
   Sonuc,
 } from "./sozlesme.ts";
 
 const MODUL = "ajanda-kopru-sunucu";
 const HELLO_SURESI_MS = 10_000;
+/** PC bağlantısında ret yazıldıktan sonra karşı tarafın kapatması için süre; sonra servis kapatır. */
+const PC_RET_KAPANIS_MS = 2_000;
 
 type GenelIsleyici = (
   girdi: unknown,
@@ -47,15 +73,24 @@ type GenelIsleyici = (
  * (`ajandaFiilRoldeIzinliMi` her dizgeyi alır). İzinli fiilin girdisi şemaya uymuyorsa çerçeve
  * geçersizdir ve bağlantı kapanır (köprü girdiyi boruya çıkmadan denetler).
  */
-const IstekZarfi = mesaj("istek", { istek_id: OpakId, fiil: z.string().max(64), girdi: z.unknown() });
+const IstekZarfi = mesaj("istek", { istek_id: OpakId, fiil: z.string().max(64), girdi: z.unknown(), cagri: z.unknown().optional() });
+
+/** Bağlantının el sıkışmayla sabitlenen kimliği. */
+type Kimlik =
+  /** Telefon sohbetinin ana oturumu: bağlam yalnız jetonun kapsamı. */
+  | { tur: "ana"; baglam: Readonly<AjandaJetonKapsami> }
+  /** PC: anahtarın özeti (her istekte yeniden denetlenir) ve servisin verdiği bağlantı kimliği. */
+  | { tur: "pc"; rol: AjandaPcRolu; ozet: string; baglanti_id: string };
 
 interface Baglanti {
   readonly port: BoruBaglantisi;
-  /** Yalnız depodaki ajanda jeton kaydından dolar. `null` iken `kopru_hello` bekleniyor. */
-  baglam: AjandaKopruBaglami | null;
+  /** `null` iken `kopru_hello` bekleniyor. */
+  kimlik: Kimlik | null;
   readonly suren: Map<string, AbortController>;
   sureIptal: IptalEt | null;
   kapali: boolean;
+  /** Yalnız PC: reddedildi ya da anahtarı iptal edildi; kapanış bekleniyor (`gecikmeliKapat`). */
+  dusuk: boolean;
 }
 
 /** `depo.ajandaJetonlariSil` ile aynı eşitlik: kapsamın bütün alanları. */
@@ -126,9 +161,15 @@ export const ajandaKopruSunucuKur: AjandaKopruSunucuFabrikasi = ({
   /** El sıkışmış, açık bir bağlantı bu kapsamı taşıyor mu (tek bağlantı kuralı). */
   const kapsamKullanimda = (kapsam: AjandaJetonKapsami): boolean => {
     for (const diger of baglantilar) {
-      if (!diger.kapali && diger.baglam !== null && kapsamEsit(diger.baglam, kapsam)) return true;
+      if (!diger.kapali && diger.kimlik?.tur === "ana" && kapsamEsit(diger.kimlik.baglam, kapsam)) return true;
     }
     return false;
+  };
+
+  const pcBaglantiSayisi = (): number => {
+    let n = 0;
+    for (const diger of baglantilar) if (!diger.kapali && diger.kimlik?.tur === "pc") n++;
+    return n;
   };
 
   const reddet = (bag: Baglanti, code: HataKodu, neden: string, ek: GunlukAlanlari = {}): void => {
@@ -137,7 +178,17 @@ export const ajandaKopruSunucuKur: AjandaKopruSunucuFabrikasi = ({
     baglantiKapat(bag);
   };
 
-  const helloIsle = (bag: Baglanti, satir: string): void => {
+  /** PC anahtarı bu an hâlâ etkin mi (iptal servis yeniden başlamadan geçerli olsun). Atarsa hayır. */
+  const pcAnahtariGecerli = (ozet: string): boolean => {
+    try {
+      return depo.ajandaPcAnahtariGecerliMi(ozet);
+    } catch {
+      gunluk.hata(MODUL, "pc_anahtar_okunamadi");
+      return false;
+    }
+  };
+
+  const helloIsle = (bag: Baglanti, satir: string, pcKanca: PcKancaIsleyicileri | undefined): void => {
     const cozum = ajandaKopruYukariCoz(satir);
     if (!cozum.ok) {
       reddet(bag, cozum.kod === "protokol_uyumsuz" ? "protokol_uyumsuz" : "yetkisiz", "cerceve_gecersiz");
@@ -149,6 +200,28 @@ export const ajandaKopruSunucuKur: AjandaKopruSunucuFabrikasi = ({
       return;
     }
     const ozet = jetonOzeti(m.jeton);
+    if (ajandaPcRoluMu(m.rol)) {
+      if (pcKanca === undefined) {
+        pcReddet(bag, "yetkisiz", "pc_kapali", { rol: m.rol });
+        return;
+      }
+      if (!pcAnahtariGecerli(ozet)) {
+        pcReddet(bag, "jeton_gecersiz", "pc_anahtar_gecersiz", { rol: m.rol });
+        return;
+      }
+      if (pcBaglantiSayisi() >= AJANDA_PC_SINIRLARI.BAGLANTI_ADET) {
+        // Geçici: köprü yeniden dener (kalıcı ret değildir).
+        pcReddet(bag, "ic_hata", "pc_baglanti_siniri", { rol: m.rol });
+        return;
+      }
+      bag.sureIptal?.();
+      bag.sureIptal = null;
+      const baglanti_id = rastgele.opakId("pcb");
+      bag.kimlik = { tur: "pc", rol: m.rol, ozet, baglanti_id };
+      gunluk.bilgi(MODUL, "el_sikisma", { rol: m.rol, baglanti_id });
+      yaz(bag, { v: PROTOKOL_SURUMU, type: "kopru_welcome", rol: m.rol });
+      return;
+    }
     const kayit = depo.ajandaJetonBul(ozet);
     if (kayit === null || !anahtar.sabitZamanEsit(kayit.ozet, ozet)) {
       reddet(bag, "jeton_gecersiz", "jeton_bilinmiyor");
@@ -165,9 +238,10 @@ export const ajandaKopruSunucuKur: AjandaKopruSunucuFabrikasi = ({
     }
     bag.sureIptal?.();
     bag.sureIptal = null;
-    bag.baglam = Object.freeze({ ...kayit.kapsam });
-    gunluk.bilgi(MODUL, "el_sikisma", { rol: bag.baglam.rol, sohbet_id: bag.baglam.sohbet_id });
-    yaz(bag, { v: PROTOKOL_SURUMU, type: "kopru_welcome", rol: bag.baglam.rol });
+    const baglam = Object.freeze({ ...kayit.kapsam });
+    bag.kimlik = { tur: "ana", baglam };
+    gunluk.bilgi(MODUL, "el_sikisma", { rol: baglam.rol, sohbet_id: baglam.sohbet_id });
+    yaz(bag, { v: PROTOKOL_SURUMU, type: "kopru_welcome", rol: baglam.rol });
   };
 
   /** Hiç reddetmez: atan ya da sözleşmeye uymayan işleyici `ic_hata`dır, `detail` taşımaz. */
@@ -191,13 +265,14 @@ export const ajandaKopruSunucuKur: AjandaKopruSunucuFabrikasi = ({
 
   const istekBaslat = (
     bag: Baglanti,
+    rol: AjandaKopruRolu,
     baglam: AjandaKopruBaglami,
     isleyiciler: AjandaFiilIsleyiciler,
     istek: AjandaKopruIstek,
   ): void => {
     const { istek_id, fiil } = istek;
-    if (!ajandaFiilRoldeIzinliMi(baglam.rol, fiil)) {
-      gunluk.uyari(MODUL, "rol_fiil_izinsiz", { rol: baglam.rol, fiil });
+    if (!ajandaFiilRoldeIzinliMi(rol, fiil)) {
+      gunluk.uyari(MODUL, "rol_fiil_izinsiz", { rol, fiil });
       yaz(bag, hataYaniti(istek_id, "rol_fiil_izinsiz"));
       return;
     }
@@ -213,18 +288,51 @@ export const ajandaKopruSunucuKur: AjandaKopruSunucuFabrikasi = ({
     });
   };
 
-  const yukariIsle = (
-    bag: Baglanti,
-    baglam: AjandaKopruBaglami,
-    isleyiciler: AjandaFiilIsleyiciler,
-    satir: string,
-  ): void => {
+  /** `pc_oturumu` çağrısının bağlamı: rol ve bağlantı kimliği servisten, `cagri` köprüden (doğrulanmamış). */
+  const pcBaglami = (k: Extract<Kimlik, { tur: "pc" }>, istek: AjandaKopruIstek): AjandaKopruBaglami => {
+    const b: { rol: "pc_oturumu"; baglanti_id: string; arac_cagri_id?: string; oturum_id?: string } = {
+      rol: "pc_oturumu",
+      baglanti_id: k.baglanti_id,
+    };
+    if (istek.cagri?.arac_cagri_id !== undefined) b.arac_cagri_id = istek.cagri.arac_cagri_id;
+    if (istek.cagri?.oturum_id !== undefined) b.oturum_id = istek.cagri.oturum_id;
+    return Object.freeze(b);
+  };
+
+  /**
+   * İptal edilmiş anahtarla gelen istek: isteğin kendisine `jeton_gecersiz` yanıtı (köprü kesin metni
+   * verir, anahtar dosyasını yeniden okuyup yeniden bağlanır) ve gecikmeli kapanış. Yazıp hemen kapatmak
+   * adlı boruda yanıtı düşürebilir (ölçüldü: yaz + destroy yarı yarıya teslim): köprü "belirsiz" görürdü.
+   */
+  const pcAnahtariDusur = (bag: Baglanti, rol: AjandaPcRolu, istek_id: string): void => {
+    gunluk.uyari(MODUL, "pc_anahtar_iptal", { rol });
+    yaz(bag, hataYaniti(istek_id, "jeton_gecersiz"));
+    gecikmeliKapat(bag);
+  };
+
+  /** PC bağlantısını karşı tarafın kapatmasına bırakır; en geç `PC_RET_KAPANIS_MS` sonra servis kapatır. */
+  const gecikmeliKapat = (bag: Baglanti): void => {
+    if (bag.dusuk) return;
+    bag.dusuk = true;
+    bag.sureIptal?.();
+    bag.sureIptal = zamanlayici.sonra(PC_RET_KAPANIS_MS, () => baglantiKapat(bag));
+  };
+
+  /** PC el sıkışma reddi: `kopru_ret` (köprü engeli doğru söylesin diye gecikmeli kapanış). */
+  const pcReddet = (bag: Baglanti, code: HataKodu, neden: string, ek: GunlukAlanlari): void => {
+    gunluk.uyari(MODUL, "el_sikisma_ret", { code, neden, ...ek });
+    yaz(bag, { v: PROTOKOL_SURUMU, type: "kopru_ret", code });
+    gecikmeliKapat(bag);
+  };
+
+  const yukariIsle = (bag: Baglanti, kimlik: Kimlik, isleyiciler: AjandaFiilIsleyiciler, satir: string): void => {
+    const rol = kimlik.tur === "ana" ? kimlik.baglam.rol : kimlik.rol;
     const cozum = ajandaKopruYukariCoz(satir);
     if (!cozum.ok) {
       // Zarfı geçerli, fiili bu rolün olmayan istek (ör. `eren` borusunun fiili): bağlantı kapanmaz.
       const zarf = cozum.kod === "gecersiz_mesaj" ? cozumle(IstekZarfi, satir, AJANDA_AZAMI_CERCEVE.BORU) : null;
-      if (zarf?.ok === true && !ajandaFiilRoldeIzinliMi(baglam.rol, zarf.mesaj.fiil)) {
-        gunluk.uyari(MODUL, "rol_fiil_izinsiz", { rol: baglam.rol });
+      if (zarf?.ok === true && !ajandaFiilRoldeIzinliMi(rol, zarf.mesaj.fiil)) {
+        gunluk.uyari(MODUL, "rol_fiil_izinsiz", { rol });
         yaz(bag, hataYaniti(zarf.mesaj.istek_id, "rol_fiil_izinsiz"));
         return;
       }
@@ -236,41 +344,97 @@ export const ajandaKopruSunucuKur: AjandaKopruSunucuFabrikasi = ({
     switch (m.type) {
       case "kopru_hello":
         // Bağlantının kimliği ilk jetonla sabitlenir, ikinci hello onu değiştiremez.
-        gunluk.uyari(MODUL, "ikinci_hello", { rol: baglam.rol });
+        gunluk.uyari(MODUL, "ikinci_hello", { rol });
         baglantiKapat(bag);
         return;
       case "iptal":
         bag.suren.get(m.istek_id)?.abort("model_iptal" satisfies KopruIptalNedeni);
         return;
       case "istek":
-        istekBaslat(bag, baglam, isleyiciler, m);
+        if (kimlik.tur === "ana") {
+          istekBaslat(bag, rol, kimlik.baglam, isleyiciler, m);
+          return;
+        }
+        if (!pcAnahtariGecerli(kimlik.ozet)) {
+          pcAnahtariDusur(bag, kimlik.rol, m.istek_id);
+          return;
+        }
+        istekBaslat(bag, rol, pcBaglami(kimlik, m), isleyiciler, m);
         return;
     }
   };
 
-  const satirIsle = (bag: Baglanti, isleyiciler: AjandaFiilIsleyiciler, satir: string): void => {
-    if (bag.kapali) return;
+  /** `pc_kanca` bağlantısı: yalnız kanca istekleri; eşzamanlı işlenir, yanıt `PC_KANCA_ARACLARI` ile doğrulanır. */
+  const kancaIsle = (bag: Baglanti, kimlik: Extract<Kimlik, { tur: "pc" }>, pcKanca: PcKancaIsleyicileri, satir: string): void => {
+    const cozum = pcKancaYukariCoz(satir);
+    if (!cozum.ok) {
+      gunluk.uyari(MODUL, "gecersiz_cerceve", { rol: "pc_kanca", neden: cozum.kod, yollar: cozum.yollar.join(",") });
+      baglantiKapat(bag);
+      return;
+    }
+    const m = cozum.mesaj;
+    if (m.type === "kopru_hello") {
+      gunluk.uyari(MODUL, "ikinci_hello", { rol: "pc_kanca" });
+      baglantiKapat(bag);
+      return;
+    }
+    if (!pcAnahtariGecerli(kimlik.ozet)) {
+      pcAnahtariDusur(bag, kimlik.rol, m.istek_id);
+      return;
+    }
+    yaz(bag, kancaYaniti(m, pcKanca));
+  };
+
+  const kancaYaniti = (m: PcKancaIstek, pcKanca: PcKancaIsleyicileri): KopruYanit => {
     try {
-      if (bag.baglam === null) helloIsle(bag, satir);
-      else yukariIsle(bag, bag.baglam, isleyiciler, satir);
+      // Girdi `pcKancaYukariCoz`'dan fiilin şemasıyla geçti.
+      const ham: unknown =
+        m.fiil === "pc_istem"
+          ? pcKanca.pc_istem(m.girdi as PcKancaGirdisi<"pc_istem">)
+          : m.fiil === "pc_arac"
+            ? pcKanca.pc_arac(m.girdi as PcKancaGirdisi<"pc_arac">)
+            : pcKanca.pc_tur_sonu(m.girdi as PcKancaGirdisi<"pc_tur_sonu">);
+      const sema: z.ZodType = PC_KANCA_ARACLARI[m.fiil].cikti;
+      const cikti = sema.safeParse(ham);
+      if (cikti.success) return { v: PROTOKOL_SURUMU, type: "yanit", istek_id: m.istek_id, ok: true, sonuc: cikti.data };
+      gunluk.hata(MODUL, "sonuc_gecersiz", { fiil: m.fiil });
+    } catch {
+      gunluk.hata(MODUL, "isleyici_atti", { fiil: m.fiil });
+    }
+    return hataYaniti(m.istek_id, "ic_hata");
+  };
+
+  const satirIsle = (bag: Baglanti, isleyiciler: AjandaFiilIsleyiciler, pcKanca: PcKancaIsleyicileri | undefined, satir: string): void => {
+    if (bag.kapali) return;
+    // Reddedilmiş ya da anahtarı düşmüş PC bağlantısı: kapanışı beklerken yalnız `jeton_gecersiz`.
+    if (bag.dusuk) {
+      const zarf = cozumle(IstekZarfi, satir, AJANDA_AZAMI_CERCEVE.BORU);
+      if (zarf.ok && bag.kimlik !== null) yaz(bag, hataYaniti(zarf.mesaj.istek_id, "jeton_gecersiz"));
+      return;
+    }
+    try {
+      const k = bag.kimlik;
+      if (k === null) helloIsle(bag, satir, pcKanca);
+      else if (k.tur === "pc" && k.rol === "pc_kanca" && pcKanca !== undefined) kancaIsle(bag, k, pcKanca, satir);
+      else yukariIsle(bag, k, isleyiciler, satir);
     } catch {
       gunluk.hata(MODUL, "satir_isleme_hatasi");
-      if (bag.baglam === null) reddet(bag, "ic_hata", "ic_hata");
+      if (bag.kimlik === null) reddet(bag, "ic_hata", "ic_hata");
       else baglantiKapat(bag);
     }
   };
 
-  const baglantiKabul = (port: BoruBaglantisi, isleyiciler: AjandaFiilIsleyiciler): void => {
+  const baglantiKabul = (port: BoruBaglantisi, isleyiciler: AjandaFiilIsleyiciler, pcKanca: PcKancaIsleyicileri | undefined): void => {
     if (!acik) {
       port.kapat();
       return;
     }
-    const bag: Baglanti = { port, baglam: null, suren: new Map(), sureIptal: null, kapali: false };
+    const bag: Baglanti = { port, kimlik: null, suren: new Map(), sureIptal: null, kapali: false, dusuk: false };
     baglantilar.add(bag);
     port.kapanisDinle(() => temizle(bag));
-    port.satirDinle((satir) => satirIsle(bag, isleyiciler, satir));
+    port.satirDinle((satir) => satirIsle(bag, isleyiciler, pcKanca, satir));
     bag.sureIptal = zamanlayici.sonra(HELLO_SURESI_MS, () => {
-      if (bag.baglam === null && !bag.kapali) reddet(bag, "yetkisiz", "sure_doldu");
+      if (bag.kimlik === null && !bag.kapali) reddet(bag, "yetkisiz", "sure_doldu");
     });
   };
 
@@ -284,7 +448,7 @@ export const ajandaKopruSunucuKur: AjandaKopruSunucuFabrikasi = ({
     jetonlariIptalEt(kapsam) {
       depo.ajandaJetonlariSil(kapsam);
       for (const bag of [...baglantilar]) {
-        if (bag.baglam !== null && kapsamEsit(bag.baglam, kapsam)) baglantiKapat(bag);
+        if (bag.kimlik?.tur === "ana" && kapsamEsit(bag.kimlik.baglam, kapsam)) baglantiKapat(bag);
       }
     },
 
@@ -300,14 +464,14 @@ export const ajandaKopruSunucuKur: AjandaKopruSunucuFabrikasi = ({
       return silinen;
     },
 
-    async baslat(isleyiciler) {
+    async baslat(isleyiciler, pcKanca) {
       if (acik) throw new Error("ajanda köprü sunucusu zaten açık");
       acik = true;
       try {
         sunucu = await boru.dinle({
           ad: AJANDA_BORU_ADI,
           azamiSatir: AJANDA_AZAMI_CERCEVE.BORU,
-          baglanti: (port) => baglantiKabul(port, isleyiciler),
+          baglanti: (port) => baglantiKabul(port, isleyiciler, pcKanca),
         });
       } catch (hata) {
         acik = false;

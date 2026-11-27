@@ -19,9 +19,11 @@ import {
   geceTeyidiEksikMi,
   kullaniciEmriMi,
   OpakId,
+  PC_TEKIL_KAPSAMI,
   tarihliGirdiMi,
   type ZamandaKorunan,
 } from "@eren/protocol";
+import type { PcDefteri } from "./ajanda-pc.ts";
 import {
   degisiklikAni,
   dilimlerBilinir,
@@ -52,6 +54,10 @@ import type {
  *
  * - Turun kökeni ve mesaj anı YALNIZ `turBaglami`'ndan (jetonun sohbeti + nesli); yoksa `tur_gecersiz`,
  *   hiçbir şey yazılmaz. Yazar `{yol:"sohbet_araci", tur_kokeni, sohbet_id}`.
+ * - PC oturumu (`pc_oturumu`, AJANDA.md "PC oturumları"): tur PC defterinden (`ajanda-pc.ts`; kanca
+ *   tasdiki yoksa sentetik, mesaj anı çağrının anı). Yazar `{yol:"pc_araci", tur_kokeni, oturum_id}`,
+ *   tekil kapsam `PC_TEKIL_KAPSAMI`; kurallar (taslak, alan koruması, dayanak, gece, tekilleştirme,
+ *   alıntı) telefon yolundakilerle aynıdır.
  * - Takvime bağlı girdi `dayanakGecerliMi(dayanak, mesaj_ani)` ister (`dayanak_uyusmuyor`); hemen
  *   ardından (v2) `geceTeyidiEksikMi(girdi, mesaj_ani, tur_kokeni)` doğruysa `gece_teyidi_gerekli`
  *   (insan turunda, mesaj anı 00:00-04:00, takvime bağlı ve `dayanak.gece_teyidi` yok; sentetik turda
@@ -72,7 +78,26 @@ import type {
  */
 
 type Cikti<F extends AjandaFiili> = AjandaFiilCiktisi<F>;
-type Govde<F extends AjandaFiili> = (girdi: AjandaFiilGirdisi<F>, tur: AjandaTurBaglami, baglam: AjandaKopruBaglami, simdi: number) => Cikti<F>;
+
+/**
+ * Çağrının yolu: kim yazıyor, turu ne, kayıt hangi kapsamda tekilleşir. Telefon sohbeti
+ * (`ana_oturum`): yol `sohbet_araci`, kapsam `sohbet:<id>`, gece reddi sohbet başına. PC oturumu
+ * (`pc_oturumu`, AJANDA.md "PC oturumları"): yol `pc_araci`, `oturum_id`, kapsam `PC_TEKIL_KAPSAMI`,
+ * gece reddi oturum başına; tur PC defterinden.
+ */
+interface Cagri {
+  tur: AjandaTurBaglami;
+  yazar: AjandaYazar;
+  /** `tekil_anahtar`, `kaynak_msg_id`, `alinti` dışındaki kaynak izi. */
+  kaynakTemeli: Pick<AjandaKaynagi, "yol" | "tur_kokeni" | "sohbet_id" | "oturum_id">;
+  tekilKapsam: string;
+  /** Gece reddinin aynı tur kuralının anahtarı (sohbet ya da oturum). */
+  geceAnahtari: string;
+  /** Günlük alanları: kimlik, metin yok. */
+  iz: Record<string, string | number>;
+}
+
+type Govde<F extends AjandaFiili> = (girdi: AjandaFiilGirdisi<F>, c: Cagri, simdi: number) => Cikti<F>;
 
 /** Araçta modelin dokunabildiği alanlar (tekrar ve kaynak yok). */
 type AracAlanlari = Pick<AjandaAlanDegisikligi, "tur" | "baslik" | "aciklama" | "zaman" | "hatirlatmalar" | "durum">;
@@ -94,15 +119,48 @@ function siraAnahtari(z: AjandaZamani | undefined): string | undefined {
   return `${z.kesinlik === "donem" ? z.baslangic : z.tarih} `;
 }
 
-export function ajandaAraclariKur(b: AjandaBagimliliklari): AjandaFiilIsleyiciler {
+export function ajandaAraclariKur(b: AjandaBagimliliklari, pc?: PcDefteri): AjandaFiilIsleyiciler {
   const { depo, takvim, saat, rastgele, gunluk } = b;
   const ozet = (k: AjandaKaydi, simdi: number) => kayitOzeti(k, simdi, takvim);
 
-  const yazarKur = (tur: AjandaTurBaglami, baglam: AjandaKopruBaglami): AjandaYazar => ({
-    yol: "sohbet_araci",
-    tur_kokeni: tur.tur_kokeni,
-    sohbet_id: baglam.sohbet_id,
-  });
+  /** Telefon sohbeti: tur `turBaglami`'ndan (jetonun sohbeti + nesli); yoksa `null` (`tur_gecersiz`). */
+  const sohbetCagrisi = (fiil: AjandaFiili, baglam: Extract<AjandaKopruBaglami, { rol: "ana_oturum" }>): Cagri | null => {
+    let tur: AjandaTurBaglami | null;
+    try {
+      tur = b.turBaglami({ sohbet_id: baglam.sohbet_id }, baglam.nesil);
+    } catch {
+      tur = null;
+    }
+    if (tur === null) {
+      gunluk.uyari(MODUL, "tur_gecersiz", { fiil, sohbet_id: baglam.sohbet_id, nesil: baglam.nesil });
+      return null;
+    }
+    return {
+      tur,
+      yazar: { yol: "sohbet_araci", tur_kokeni: tur.tur_kokeni, sohbet_id: baglam.sohbet_id },
+      kaynakTemeli: { yol: "sohbet_araci", tur_kokeni: tur.tur_kokeni, sohbet_id: baglam.sohbet_id },
+      tekilKapsam: `sohbet:${baglam.sohbet_id}`,
+      geceAnahtari: baglam.sohbet_id,
+      iz: { sohbet_id: baglam.sohbet_id },
+    };
+  };
+
+  /** PC oturumu: tur PC defterinden; hiç `null` değildir (tasdik yoksa sentetik). Defter yoksa `null`. */
+  const pcCagrisi = (fiil: AjandaFiili, baglam: Extract<AjandaKopruBaglami, { rol: "pc_oturumu" }>, simdi: number): Cagri | null => {
+    if (pc === undefined) {
+      gunluk.uyari(MODUL, "tur_gecersiz", { fiil, yol: "pc_araci" });
+      return null;
+    }
+    const { tur, oturum_id, karar } = pc.tur(baglam, simdi);
+    return {
+      tur,
+      yazar: { yol: "pc_araci", tur_kokeni: tur.tur_kokeni, oturum_id },
+      kaynakTemeli: { yol: "pc_araci", tur_kokeni: tur.tur_kokeni, oturum_id },
+      tekilKapsam: PC_TEKIL_KAPSAMI,
+      geceAnahtari: `pc:${oturum_id}`,
+      iz: { yol: "pc_araci", oturum_id, pc_karar: karar },
+    };
+  };
 
   /**
    * Ortak zarf: iptal, tur bağlamı, girdi doğrulaması, tek `depo.islem`. Çıktı kurulamazsa (`tur_gecersiz`,
@@ -112,30 +170,23 @@ export function ajandaAraclariKur(b: AjandaBagimliliklari): AjandaFiilIsleyicile
     <F extends AjandaFiili>(fiil: F, f: Govde<F>): AjandaFiilIsleyici<F> =>
     async (girdi, baglam, sinyal) => {
       if (sinyal.aborted) return { ok: false, code: "ic_hata" };
-      let tur: AjandaTurBaglami | null;
-      try {
-        tur = b.turBaglami({ sohbet_id: baglam.sohbet_id }, baglam.nesil);
-      } catch {
-        tur = null;
-      }
-      if (tur === null) {
-        gunluk.uyari(MODUL, "tur_gecersiz", { fiil, sohbet_id: baglam.sohbet_id, nesil: baglam.nesil });
-        return { ok: false, code: "tur_gecersiz" };
-      }
+      const simdi = saat.simdiMs();
+      const cagri = baglam.rol === "pc_oturumu" ? pcCagrisi(fiil, baglam, simdi) : sohbetCagrisi(fiil, baglam);
+      if (cagri === null) return { ok: false, code: "tur_gecersiz" };
       const semasi = AJANDA_ARACLARI[fiil].girdi as unknown as { safeParse(g: unknown): { success: boolean; data?: unknown } };
       const p = semasi.safeParse(girdi);
       if (!p.success) {
         gunluk.uyari(MODUL, "arac_girdisi_gecersiz", { fiil });
         return { ok: false, code: "ic_hata" };
       }
-      const t = tur;
+      const t = cagri.tur;
       try {
-        const cikti = depo.islem(() => f(p.data as AjandaFiilGirdisi<F>, t, baglam, saat.simdiMs()));
+        const cikti = depo.islem(() => f(p.data as AjandaFiilGirdisi<F>, cagri, simdi));
         const c = cikti as { sonuc?: string; neden?: string; kayit?: { kayit_id: string; revizyon: number } };
         gunluk.bilgi(MODUL, "arac", {
           fiil,
           tur_kokeni: t.tur_kokeni,
-          sohbet_id: baglam.sohbet_id,
+          ...cagri.iz,
           sonuc: c.sonuc ?? "liste",
           neden: c.neden ?? null,
           kayit_id: c.kayit?.kayit_id ?? null,
@@ -166,35 +217,33 @@ export function ajandaAraclariKur(b: AjandaBagimliliklari): AjandaFiilIsleyicile
   const geceReddiTuru = new Map<string, string>();
 
   /** Gece aralığı kararı (dayanaktan sonra, kayda dokunmadan önce): ret ya da `null`. */
-  const geceReddi = (
-    g: Parameters<typeof geceTeyidiEksikMi>[0],
-    tur: AjandaTurBaglami,
-    baglam: AjandaKopruBaglami,
-  ): { neden: "gece_teyidi_gerekli"; ayni_tur?: true } | null => {
+  const geceReddi = (g: Parameters<typeof geceTeyidiEksikMi>[0], c: Cagri): { neden: "gece_teyidi_gerekli"; ayni_tur?: true } | null => {
+    const tur = c.tur;
     if (geceTeyidiEksikMi(g, tur.mesaj_ani, tur.tur_kokeni)) {
-      geceReddiTuru.set(baglam.sohbet_id, tur.turn_id);
+      geceReddiTuru.set(c.geceAnahtari, tur.turn_id);
       return { neden: "gece_teyidi_gerekli" };
     }
-    const istendi = geceReddiTuru.get(baglam.sohbet_id) === tur.turn_id;
+    const istendi = geceReddiTuru.get(c.geceAnahtari) === tur.turn_id;
     if (geceSorulduAyniTurdaMi(g, tur.mesaj_ani, tur.tur_kokeni, istendi)) return { neden: "gece_teyidi_gerekli", ayni_tur: true };
     return null;
   };
 
-  const ekle: Govde<"ajanda_ekle"> = (g, tur, baglam, simdi) => {
+  const ekle: Govde<"ajanda_ekle"> = (g, c, simdi) => {
+    const tur = c.tur;
     const mesaj_ani = tur.mesaj_ani;
     const ret = (neden: Extract<Cikti<"ajanda_ekle">, { sonuc: "ret" }>["neden"]): Cikti<"ajanda_ekle"> => ({ sonuc: "ret", mesaj_ani, neden });
     if (!dayanakTutar(g, g.dayanak, mesaj_ani)) return ret("dayanak_uyusmuyor");
     // v2: dayanaktan hemen sonra, kayda dokunmadan önce gece aralığı teyidi (aynı turda soruldu da ret).
-    const gece = geceReddi(g, tur, baglam);
+    const gece = geceReddi(g, c);
     if (gece !== null) return { sonuc: "ret", mesaj_ani, ...gece };
-    const yazar = yazarKur(tur, baglam);
+    const yazar = c.yazar;
     const emir = kullaniciEmriMi(yazar);
     const dilim = mesaj_ani.saat_dilimi;
     const zaman = g.zaman === undefined ? undefined : zamanDoldur(g.zaman, dilim);
     const hatirlatmalar = g.hatirlatmalar?.map((h) => hatirlatmaDoldur(h, dilim));
     if (!dilimlerBilinir(takvim, zaman, hatirlatmalar)) return ret("saat_dilimi_bilinmiyor");
 
-    const tekil_anahtar = ajandaTekilAnahtari({ kapsam: `sohbet:${baglam.sohbet_id}`, tur: g.tur, baslik: g.baslik, zaman });
+    const tekil_anahtar = ajandaTekilAnahtari({ kapsam: c.tekilKapsam, tur: g.tur, baslik: g.baslik, zaman });
     const esler = depo.ajandaTekilEsler(tekil_anahtar);
     const karar = ajandaTekilKarari(esler, yazar);
 
@@ -216,7 +265,7 @@ export function ajandaAraclariKur(b: AjandaBagimliliklari): AjandaFiilIsleyicile
     }
 
     if (depo.ajandaKayitSayisi() >= AJANDA_SINIRLARI.KAYIT_ADET) return ret("kayit_siniri");
-    const kaynak: AjandaKaynagi = { yol: "sohbet_araci", tur_kokeni: tur.tur_kokeni, sohbet_id: baglam.sohbet_id, tekil_anahtar };
+    const kaynak: AjandaKaynagi = { ...c.kaynakTemeli, tekil_anahtar };
     if (tur.tur_kokeni === "insan") {
       if (tur.kaynak_msg_id !== undefined && OpakId.safeParse(tur.kaynak_msg_id).success) kaynak.kaynak_msg_id = tur.kaynak_msg_id;
       // Alıntı yalnız turun insan mesajında birebir geçiyorsa saklanır.
@@ -245,7 +294,8 @@ export function ajandaAraclariKur(b: AjandaBagimliliklari): AjandaFiilIsleyicile
     return { sonuc: "eklendi", mesaj_ani, kayit: ozet(yazim.deger, simdi) };
   };
 
-  const guncelle: Govde<"ajanda_guncelle"> = (g, tur, baglam, simdi) => {
+  const guncelle: Govde<"ajanda_guncelle"> = (g, c, simdi) => {
+    const tur = c.tur;
     const mesaj_ani = tur.mesaj_ani;
     const ret = (neden: Extract<Cikti<"ajanda_guncelle">, { sonuc: "ret" }>["neden"]): Cikti<"ajanda_guncelle"> => ({
       sonuc: "ret",
@@ -255,12 +305,12 @@ export function ajandaAraclariKur(b: AjandaBagimliliklari): AjandaFiilIsleyicile
     const d = g.degisiklik;
     if (!dayanakTutar(d, g.dayanak, mesaj_ani)) return ret("dayanak_uyusmuyor");
     // v2: sıra dayanak → gece → kayıt (kayıt aranmadan önce; yoksa da teyit istenir).
-    const gece = geceReddi(g, tur, baglam);
+    const gece = geceReddi(g, c);
     if (gece !== null) return { sonuc: "ret", mesaj_ani, ...gece };
     const k = depo.ajandaKaydiGetir(g.kayit_id);
     if (k === null) return ret("kayit_bulunamadi");
     if (k.silindi) return ret("kayit_silinmis");
-    const yazar = yazarKur(tur, baglam);
+    const yazar = c.yazar;
     const emir = kullaniciEmriMi(yazar);
     // Sentetik tur yalnız taslağı düzenleyebilir, hiçbir şeyi onaylayamaz.
     if (!emir && (d.onayla === true || !k.taslak)) return ret("sentetik_turda_izinsiz");
@@ -316,7 +366,7 @@ export function ajandaAraclariKur(b: AjandaBagimliliklari): AjandaFiilIsleyicile
     return cikti;
   };
 
-  const listele: Govde<"ajanda_listele"> = (g, tur) => {
+  const listele: Govde<"ajanda_listele"> = (g, { tur }) => {
     // Silinmiş kayıt hiç listelenmez (depo varsayılanı).
     let liste = depo.ajandaKayitlari({ durumlar: g.durumlar ?? ["acik"], ...(g.turler === undefined ? {} : { turler: g.turler }) });
     if (g.baslangic !== undefined || g.bitis !== undefined) liste = liste.filter((k) => araligaDeger(k.zaman, g.baslangic, g.bitis));

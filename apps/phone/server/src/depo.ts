@@ -381,6 +381,17 @@ const ekGocler = (anaAdi: string): readonly string[] => [
     kaynak_msg_id TEXT
   ) STRICT;
   `,
+  // 7: PC'deki Claude Code oturumlarının ajanda anahtarları (AJANDA.md "PC oturumları"). YALNIZ yeni
+  // tablo: var olan hiçbir tabloya dokunmaz, eski kod (geri alma) tabloyu görmez ve PC rolünü zaten
+  // tanımaz (`ajandaJetonBul` tanımadığı rolü `null` okur). Düz anahtar yazılmaz, yalnız SHA-256 özeti.
+  // Satır silinmez, iptal `iptal_ms` ile. `IF NOT EXISTS`: sayacı geri kalmış dosyada yeniden uygulanabilir.
+  `
+  CREATE TABLE IF NOT EXISTS ajanda_pc_anahtarlari (
+    ozet TEXT PRIMARY KEY,
+    olusturma_ms INTEGER NOT NULL,
+    iptal_ms INTEGER
+  ) STRICT;
+  `,
 ];
 
 /** Mezar taşının olay türü. Silinmeyenler listesi ayrıca `SILINMEZ_OLAY_TURLERI`'nden okunur. */
@@ -1946,6 +1957,27 @@ export const depoAc = (b: DepoBagimliliklari): CihazYonetimliDepo => {
     },
     ajandaJetonlariniSil() {
       return calistir("DELETE FROM ajanda_jetonlari").changes;
+    },
+
+    // Ek göç 7: PC anahtarları. Satır silinmez: iptal `iptal_ms` ile işaretlenir (geçmiş görünsün).
+    ajandaPcAnahtariYaz(ozet: string, ms: number) {
+      if (!/^[0-9a-f]{64}$/.test(ozet)) throw new Error("PC anahtarı özeti geçersiz");
+      islem(() => {
+        calistir("UPDATE ajanda_pc_anahtarlari SET iptal_ms = ? WHERE iptal_ms IS NULL", ms);
+        calistir("INSERT INTO ajanda_pc_anahtarlari (ozet, olusturma_ms, iptal_ms) VALUES (?, ?, NULL)", ozet, ms);
+      });
+    },
+    ajandaPcAnahtariGecerliMi(ozet: string) {
+      return bir("SELECT 1 AS var FROM ajanda_pc_anahtarlari WHERE ozet = ? AND iptal_ms IS NULL", ozet) !== null;
+    },
+    ajandaPcAnahtarlariniIptalEt(ms: number) {
+      return calistir("UPDATE ajanda_pc_anahtarlari SET iptal_ms = ? WHERE iptal_ms IS NULL", ms).changes;
+    },
+    ajandaPcAnahtarlari() {
+      return hepsi("SELECT olusturma_ms, iptal_ms FROM ajanda_pc_anahtarlari ORDER BY olusturma_ms, rowid").map((r) => ({
+        olusturma_ms: sayi(r.olusturma_ms),
+        iptal_ms: r.iptal_ms === null ? null : sayi(r.iptal_ms),
+      }));
     },
   };
   return depo;

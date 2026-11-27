@@ -19,6 +19,17 @@ export function ortamDegeri(ortam: Readonly<Record<string, string | undefined>>,
   return undefined;
 }
 
+/**
+ * PC'deki Claude Code oturumlarının ajanda anahtarı (AJANDA.md "PC oturumları"): veri kökünde tek satır.
+ * `eslestir --claude-code` yazar; `kopru.ts --rol pc_oturumu` ve `--kanca` her bağlanışta okur. Servis
+ * dosyayı okumaz (depoda yalnız özeti vardır).
+ */
+export const AJANDA_PC_ANAHTAR_DOSYASI = "ajanda-pc.anahtar";
+
+export function ajandaPcAnahtarYolu(veriKoku: string): string {
+  return win32.join(veriKoku, AJANDA_PC_ANAHTAR_DOSYASI);
+}
+
 export type VeriKokuSonucu =
   | { readonly ok: true; readonly kok: string }
   | { readonly ok: false; readonly hata: "ozel_kok_goreli" | "localappdata_yok" };

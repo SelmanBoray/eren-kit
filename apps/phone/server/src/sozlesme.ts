@@ -14,6 +14,9 @@ import type {
   AjandaIslemSonucu,
   AjandaKaydi,
   AjandaKopruRolu,
+  PcKancaCiktisi,
+  PcKancaFiili,
+  PcKancaGirdisi,
   AjandaRetNedeni,
   AjandaRevIzi,
   AjandaYerelAn,
@@ -1388,6 +1391,26 @@ export interface Depo {
   ajandaJetonlariSil(kapsam: AjandaJetonKapsami): void;
   /** Bütün ajanda jetonları (açılışta, önceki ömrün jetonları ölsün); silinen sayısı. */
   ajandaJetonlariniSil(): number;
+
+  // PC oturumları (ek göç 7, `ajanda_pc_anahtarlari`; AJANDA.md "PC oturumları"). Yazan YALNIZ
+  // `eslestir --claude-code` (servisin dışında, ikinci süreç); okuyan `ajanda-kopru-sunucu` (her el
+  // sıkışmada ve her istekte, böylece iptal servis yeniden başlamadan geçerli olur). Düz anahtar depoya
+  // girmez; açılıştaki `ajandaJetonlariniSil` bu tabloya dokunmaz (anahtar servis ömrüne bağlı değildir).
+
+  /** Yeni PC anahtarı: etkin olanların hepsini `ms` ile iptal eder ve bu özeti etkin yazar (tek işlem). */
+  ajandaPcAnahtariYaz(ozet: string, ms: number): void;
+  /** Özet etkin (iptal edilmemiş) bir PC anahtarının mı. */
+  ajandaPcAnahtariGecerliMi(ozet: string): boolean;
+  /** Etkin bütün PC anahtarlarını `ms` ile iptal eder; iptal edilen sayısı. */
+  ajandaPcAnahtarlariniIptalEt(ms: number): number;
+  /** Anahtar geçmişi (özetsiz), oluşturma sırasıyla: `eslestir --claude-code --liste`. */
+  ajandaPcAnahtarlari(): AjandaPcAnahtarOzeti[];
+}
+
+/** PC anahtarının özetsiz kaydı. `iptal_ms` `null`: etkin. */
+export interface AjandaPcAnahtarOzeti {
+  olusturma_ms: number;
+  iptal_ms: number | null;
 }
 
 /** Ajanda dalgası. `Depo.ajandaKayitlari` süzgeci; verilmeyen alan süzmez. Silinmişler varsayılan olarak DIŞTA. */
@@ -2337,14 +2360,37 @@ export type AjandaTurBaglami =
 
 /**
  * Ajanda jetonunun kapsamı = bağlantının bağlamı: telefondaki bir sohbetin ana oturumunun bir nesli.
- * Rol, sohbet ve nesil YALNIZ jetondan türer; fiil girdisinde sohbet yoktur. `pc_araci` sonraki dilimde.
+ * Rol, sohbet ve nesil YALNIZ jetondan türer; fiil girdisinde sohbet yoktur.
  */
 export interface AjandaJetonKapsami {
   rol: Extract<AjandaKopruRolu, "ana_oturum">;
   sohbet_id: SohbetId;
   nesil: number;
 }
-export type AjandaKopruBaglami = Readonly<AjandaJetonKapsami>;
+
+/**
+ * PC köprüsünün (`pc_oturumu`) çağrı bağlamı (AJANDA.md "PC oturumları"). Rol PC anahtarından,
+ * `baglanti_id` servisin bağlantıya verdiği kimlikten; `arac_cagri_id` ve `oturum_id` isteğin
+ * `cagri`'sından (köprünün bildirdiği, doğrulanmamış). Turun kökeni bunlardan DEĞİL, `ajanda`'nın PC
+ * defterindeki kanca tasdikinden (`arac_cagri_id` ile) kurulur; tasdik yoksa tur sentetiktir.
+ */
+export interface AjandaPcBaglami {
+  rol: Extract<AjandaKopruRolu, "pc_oturumu">;
+  baglanti_id: string;
+  arac_cagri_id?: string;
+  oturum_id?: string;
+}
+
+/** `ana_oturum` bağlamı bugünkü gibi yalnız jetonun kapsamıdır (ek alan yok); PC çağrısınınki ayrıdır. */
+export type AjandaKopruBaglami = Readonly<AjandaJetonKapsami> | Readonly<AjandaPcBaglami>;
+
+/**
+ * PC kancalarının (`pc_kanca`) işleyicileri: `ajanda` uygular (`AjandaYoneticisi.pcKanca`), boru sunucusu
+ * çağırır. Eşzamanlıdır, depoya yazmaz (yalnız bellek); atarsa boru `ic_hata` döner. Girdi şemadan geçmiştir.
+ */
+export type PcKancaIsleyicileri = {
+  readonly [F in PcKancaFiili]: (girdi: PcKancaGirdisi<F>) => PcKancaCiktisi<F>;
+};
 
 export interface AjandaJetonKaydi {
   /** `sha256Hex(utf8Bayt(jeton))`; düz jeton depoya ve günlüğe girmez. */
@@ -2385,13 +2431,21 @@ export interface AjandaKopruSunucu {
   jetonlariIptalEt(kapsam: AjandaJetonKapsami): void;
   /** `ana` açılışta, `sohbetler.baslat()`'tan ÖNCE: bütün ajanda jetonları + açık bağlantılar; silinen sayısı. */
   jetonlariniSil(): number;
-  baslat(isleyiciler: AjandaFiilIsleyiciler): Promise<void>;
+  /**
+   * `pcKanca` verilirse PC rolleri (`pc_oturumu`, `pc_kanca`) PC anahtarıyla kabul edilir (anahtar her
+   * istekte yeniden denetlenir; iptalde `kopru_ret{jeton_gecersiz}` + kapanış). Verilmezse PC rolleri
+   * `yetkisiz` ile reddedilir ve davranış PC öncesiyle aynıdır.
+   */
+  baslat(isleyiciler: AjandaFiilIsleyiciler, pcKanca?: PcKancaIsleyicileri): Promise<void>;
   kapat(): Promise<void>;
 }
 
 export interface AjandaKopruSunucuBagimliliklari {
   boru: BoruSunucuPortu;
-  depo: Pick<Depo, "ajandaJetonEkle" | "ajandaJetonBul" | "ajandaJetonlariSil" | "ajandaJetonlariniSil">;
+  depo: Pick<
+    Depo,
+    "ajandaJetonEkle" | "ajandaJetonBul" | "ajandaJetonlariSil" | "ajandaJetonlariniSil" | "ajandaPcAnahtariGecerliMi"
+  >;
   rastgele: RastgelePortu;
   anahtar: Pick<AnahtarPortu, "sabitZamanEsit">;
   zamanlayici: Pick<ZamanlayiciPortu, "sonra">;
@@ -2417,6 +2471,14 @@ export interface AjandaKopruIstemciAyari {
   rol: AjandaKopruRolu;
   jeton: string;
   boruAdi: string;
+  /**
+   * Yalnız `pc_oturumu`: anahtar her bağlanma denemesinde buradan okunur (anahtar dosyası; yenilenince
+   * köprü yeniden başlamadan yenisiyle bağlanır). `null`: anahtar yok, deneme yapılmaz. Verilince
+   * `jeton_gecersiz` kalıcı değildir (dosya değişebilir); `jeton` yok sayılır.
+   */
+  jetonOku?: () => string | null;
+  /** Yalnız `pc_oturumu`: köprünün bildiği oturum (`CLAUDE_CODE_SESSION_ID`, yoksa süreç kimliği). */
+  oturumId?: string;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -2477,6 +2539,12 @@ export interface AjandaYoneticisi {
   gecmis(kayit_id: string, once_rev?: number): AjandaGecmisSayfasi;
   /** Ajanda borusunun işleyicileri: `AjandaKopruSunucu.baslat`'a verilir. */
   readonly araclar: AjandaFiilIsleyiciler;
+  /**
+   * PC kancalarının işleyicileri (`AjandaKopruSunucu.baslat`'ın ikinci argümanı). Bellekteki PC defterini
+   * besler: istem (mesaj anı, insan metni), araç tasdiki, tur sonu. `araclar`'ın `pc_oturumu` çağrısı
+   * turunu buradan alır (AJANDA.md "PC oturumları").
+   */
+  readonly pcKanca: PcKancaIsleyicileri;
 }
 
 export interface AjandaBagimliliklari {

@@ -12,6 +12,7 @@
  * cihazlarını gösterir, `--kaldir <kimlik> --ajanda` yalnız ajanda cihazını kaldırır.
  */
 import {
+  AJANDA_PC_MCP_ADI,
   AJANDA_SURUMU,
   AjandaEslestirmeQr as AjandaEslestirmeQrSemasi,
   ESKI_CIHAZ_KAPSAMI,
@@ -25,6 +26,7 @@ import {
 import type { CihazYonetimi, EslesmeOzeti } from "./depo.ts";
 import type {
   AjandaEslestirmeBaslatici,
+  AjandaPcAnahtarOzeti,
   EslestirmeBagimliliklari,
   EslestirmeBaslatici,
   EslestirmeKaydi,
@@ -123,6 +125,11 @@ export const KULLANIM = [
   "  eslestir --ajanda --kaldir <kimlik>   Ajanda cihazının eşleşmesini kaldırır (sohbet cihazına dokunmaz).",
   "",
   "Aynı anda tek eşleştirme penceresi açıktır: yeni kod (hangi kapsamda olursa olsun) öncekini geçersiz kılar.",
+  "",
+  "PC'deki Claude Code oturumları (ajanda araçları ve kancaları; docs/SERVIS.md \"Claude Code oturumları\"):",
+  "  eslestir --claude-code            Yeni ajanda anahtarı üretir (öncekini geçersiz kılar), kayıt komutlarını yazar.",
+  "  eslestir --claude-code --liste    Anahtar geçmişini ve anahtar dosyasının durumunu gösterir.",
+  "  eslestir --claude-code --kaldir   Anahtarı geçersiz kılar ve dosyasını siler (PC oturumları ajandaya erişemez).",
 ].join("\n");
 
 /** `kapsam` yalnız `--ajanda` verilince bulunur; yoksa komut bugünkü (sohbet) davranışındadır. */
@@ -130,16 +137,38 @@ export type EslestirKomutu =
   | { tur: "kod"; kapsam?: "ajanda" }
   | { tur: "liste"; kapsam?: "ajanda" }
   | { tur: "kaldir"; device_id: string; kapsam?: "ajanda" }
+  | { tur: "pc_anahtar" }
+  | { tur: "pc_liste" }
+  | { tur: "pc_kaldir" }
   | { tur: "yardim" }
   | { tur: "hata"; ileti: string };
 
 const YARDIM_SECENEKLERI: readonly string[] = ["-h", "--help", "--yardim"];
 
+/** `--claude-code` seçenekleri: yalnız `--liste` ya da (değersiz) `--kaldir` eşlik eder, her biri bir kez. */
+function pcArgumanCoz(argv: readonly string[]): EslestirKomutu {
+  const gorulen = new Set<string>();
+  for (const a of argv) {
+    if (YARDIM_SECENEKLERI.includes(a)) return { tur: "yardim" };
+    if (a !== "--claude-code" && a !== "--liste" && a !== "--kaldir") {
+      return { tur: "hata", ileti: `--claude-code ile kullanılamaz: ${gorunur(a)}` };
+    }
+    if (gorulen.has(a)) return { tur: "hata", ileti: `${a} bir kez verilir` };
+    gorulen.add(a);
+  }
+  if (gorulen.has("--liste") && gorulen.has("--kaldir")) return { tur: "hata", ileti: "--liste ve --kaldir birlikte verilmez" };
+  if (gorulen.has("--liste")) return { tur: "pc_liste" };
+  if (gorulen.has("--kaldir")) return { tur: "pc_kaldir" };
+  return { tur: "pc_anahtar" };
+}
+
 /**
  * Seçenekler herhangi bir sırada; `--kaldir`'ın hemen ardından kimlik gelir. Hata: bilinmeyen seçenek,
- * yinelenen `--ajanda`, `--liste` ile `--kaldir` birlikte, eksik ya da fazla değer.
+ * yinelenen `--ajanda`, `--liste` ile `--kaldir` birlikte, eksik ya da fazla değer. `--claude-code`
+ * ayrı bir komut ailesidir (`pcArgumanCoz`): `--kaldir` orada değer almaz, `--ajanda` ile birleşmez.
  */
 export function argumanCoz(argv: readonly string[]): EslestirKomutu {
+  if (argv.includes("--claude-code")) return pcArgumanCoz(argv);
   let ajanda = false;
   let eylem: { tur: "liste" } | { tur: "kaldir"; device_id: string } | null = null;
   for (let i = 0; i < argv.length; i++) {
@@ -294,8 +323,168 @@ export function kodMetni(
 }
 
 // ---------------------------------------------------------------------------------------------
+// PC'deki Claude Code oturumları (`--claude-code`; AJANDA.md "PC oturumları"). Saf parçalar test edilir.
+// Düz anahtar yalnız anahtar dosyasına yazılır: terminale, günlüğe ve depoya girmez (depoda özeti).
+// ---------------------------------------------------------------------------------------------
+
+/** Kullanıcının Claude Code'una kayıtlı MCP sunucusunun adı; araçlar `mcp__eren-ajanda__<fiil>`. */
+export const CLAUDE_CODE_MCP_ADI = AJANDA_PC_MCP_ADI;
+
+/**
+ * Yeni PC anahtarı: güvenli üreteçten jeton, depoya özeti (öncekiler aynı işlemde iptal). Dosyaya yazmak
+ * çağıranındır; yazılamazsa çağıran `ajandaPcAnahtarlariniIptalEt` ile yeni anahtarı da geçersiz kılar.
+ */
+export function pcAnahtariUret(b: {
+  depo: { ajandaPcAnahtariYaz(ozet: string, ms: number): void };
+  rastgele: { jeton(): string };
+  saat: { simdiMs(): number };
+}): { jeton: string; ozet: string } {
+  const jeton = b.rastgele.jeton();
+  const ozet = sha256Hex(utf8Bayt(jeton));
+  b.depo.ajandaPcAnahtariYaz(ozet, b.saat.simdiMs());
+  return { jeton, ozet };
+}
+
+/** Kullanıcının Claude Code'una kayıt komutlarının yolları: güncel sürümün köprüsü ve Node. */
+export interface ClaudeCodeYollari {
+  nodeExe: string;
+  /** `<veri kökü>\uygulama\guncel\server\src\kopru.ts` (kurulu sürüm; `guncel` junction'ı dağıtımla döner). */
+  kopruBetigi: string;
+  anahtarDosyasi: string;
+}
+
+/**
+ * Kancanın tam komutu (`settings.json` `hooks`'una); `olay` `PcKancaOlayi`. Claude Code kancayı kabukta
+ * çalıştırır (Windows'ta Git Bash): yollar ileri eğik çizgili ve tırnaklı. Sondaki `|| true`: kanca hiçbir
+ * koşulda 2 ile çıkmasın (2 kancada "engelle" demektir: istemi siler, aracı durdurur, Stop'ta yanıtı
+ * sürdürür); bu sürüm her durumda 0 döner, ama geri alınmış eski bir `kopru.ts` `--kanca`'yı tanımaz ve
+ * 2 ile çıkar. `kurulum/claude-code.ts` aynı biçimi üretir.
+ */
+export const kancaKomutu = (y: Pick<ClaudeCodeYollari, "nodeExe" | "kopruBetigi">, olay: string): string =>
+  `"${y.nodeExe.replaceAll("\\", "/")}" --disable-warning=ExperimentalWarning "${y.kopruBetigi.replaceAll("\\", "/")}" --kanca ${olay} || true`;
+
+/** `claude mcp add` argümanları (kullanıcı kapsamı). */
+export const mcpEkleArgumanlari = (y: Pick<ClaudeCodeYollari, "nodeExe" | "kopruBetigi">): string[] => [
+  "mcp",
+  "add",
+  CLAUDE_CODE_MCP_ADI,
+  "-s",
+  "user",
+  "--",
+  y.nodeExe,
+  "--disable-warning=ExperimentalWarning",
+  y.kopruBetigi,
+  "--rol",
+  "pc_oturumu",
+];
+
+const tirnakla = (a: string): string => (/[\s"]/.test(a) ? `"${a.replaceAll('"', '\\"')}"` : a);
+
+/** Anahtar üretiminin terminal çıktısı: ne değişti, dosya nerede, kayıt nasıl yapılır. Anahtarın kendisi yok. */
+export function pcAnahtarMetni(y: ClaudeCodeYollari, oncekiEtkin: number): string {
+  const satirlar = [
+    `Claude Code ajanda anahtarı üretildi${oncekiEtkin > 0 ? " (önceki anahtar artık geçersiz; açık PC oturumları yeni dosyayı kendiliğinden okur)" : ""}.`,
+    `Anahtar dosyası: ${y.anahtarDosyasi}`,
+    "  Yalnız bu Windows kullanıcısı okuyabilir (veri kökü). İçeriğini hiçbir yere yapıştırmayın; sızarsa: eslestir --claude-code (yeniler).",
+    "",
+    "Bir kez yapılacak kayıt (kullanıcının Claude Code'u; ayrıntı docs/SERVIS.md \"Claude Code oturumları\"):",
+    `  claude ${mcpEkleArgumanlari(y).map(tirnakla).join(" ")}`,
+    "  Kancalar (~/.claude/settings.json \"hooks\"): kurulum\\claude-code.ts kanca-ekle ya da elle şu üç komut:",
+    `    UserPromptSubmit: ${kancaKomutu(y, "istem")}`,
+    `    PreToolUse (matcher "mcp__${CLAUDE_CODE_MCP_ADI}__.*"): ${kancaKomutu(y, "arac")}`,
+    `    Stop: ${kancaKomutu(y, "tur_sonu")}`,
+    "  Kancasız da çalışır, ama o zaman her kayıt taslak doğar (uygulamadan onay ister) ve asistan saati bilmez.",
+  ];
+  return `${satirlar.join("\n")}\n`;
+}
+
+/** `--claude-code --liste`: anahtar geçmişi (özetsiz) ve dosyanın varlığı. */
+export function pcListeMetni(
+  anahtarlar: readonly AjandaPcAnahtarOzeti[],
+  dosyaVar: boolean,
+  y: Pick<ClaudeCodeYollari, "anahtarDosyasi">,
+  zaman: (ms: number) => string = yerelZaman,
+): string {
+  const etkin = anahtarlar.filter((a) => a.iptal_ms === null);
+  const satirlar = [`Claude Code ajanda anahtarı: ${etkin.length === 0 ? "yok (PC oturumları ajandaya erişemez)" : "etkin"}`];
+  for (const a of etkin) satirlar.push(`  etkin, üretildi ${zaman(a.olusturma_ms)}`);
+  const iptal = anahtarlar.filter((a) => a.iptal_ms !== null);
+  if (iptal.length > 0) {
+    satirlar.push(`Geçersiz kılınmış anahtarlar (${iptal.length}):`);
+    for (const a of iptal) satirlar.push(`  üretildi ${zaman(a.olusturma_ms)}  geçersiz ${zaman(a.iptal_ms ?? 0)}`);
+  }
+  satirlar.push(`Anahtar dosyası: ${y.anahtarDosyasi} (${dosyaVar ? "var" : "yok"})`);
+  if (etkin.length > 0 && !dosyaVar) satirlar.push("UYARI: anahtar etkin ama dosyası yok; yenilemek için: eslestir --claude-code");
+  return `${satirlar.join("\n")}\n`;
+}
+
+/** `--claude-code --kaldir` çıktısı. */
+export function pcKaldirMetni(iptalEdilen: number, dosyaSilindi: boolean): string {
+  if (iptalEdilen === 0 && !dosyaSilindi) return "Claude Code ajanda anahtarı zaten yok; hiçbir şey değişmedi.\n";
+  return (
+    "Claude Code ajanda anahtarı geçersiz kılındı" +
+    (dosyaSilindi ? " ve dosyası silindi" : "") +
+    ". Açık PC oturumlarının köprüsü bir sonraki çağrıda reddedilir; kayıtlı MCP sunucusu ve kancalar durur, " +
+    "kaldırmak için docs/SERVIS.md \"Claude Code oturumları\".\n"
+  );
+}
+
+// ---------------------------------------------------------------------------------------------
 // Komut satırı. Düz kod yalnız terminale yazılır; günlüğe ve depoya girmez.
 // ---------------------------------------------------------------------------------------------
+
+/** `--claude-code` ailesi: yalnız veri kökü ve depo (ayar ön koşulları gerekmez). */
+async function pcKomutu(komut: Extract<EslestirKomutu, { tur: "pc_anahtar" | "pc_liste" | "pc_kaldir" }>): Promise<number> {
+  const { asistanAdiUret, yollariUret } = await import("./ayar.ts");
+  const { depoAc } = await import("./depo.ts");
+  const { gunlukKur } = await import("./gunluk.ts");
+  const { disDunyaKur, dosyaPortuKur } = await import("./dis-dunya.ts");
+  const { ajandaPcAnahtarYolu, ortamDegeri } = await import("./veri-koku.ts");
+  const { existsSync, rmSync } = await import("node:fs");
+  const { dirname, join } = await import("node:path");
+
+  const ortam = { ...(process.env as Record<string, string>) };
+  const yollar = yollariUret(ortam);
+  const anaSohbetAdi = asistanAdiUret(ortamDegeri(ortam, "EREN_KIT_ASSISTANT_NAME"));
+  const dis = await disDunyaKur({ yollar });
+  const gunluk = gunlukKur({ kayit: dis.kayit, saat: dis.saat, azamiBayt: 5 * 1024 * 1024, azamiDosya: 3 });
+  const depo = depoAc({ yol: yollar.vt, saat: dis.saat, gunluk, anaSohbetAdi });
+  const y: ClaudeCodeYollari = {
+    nodeExe: process.execPath,
+    // Bu dosya kurulu sürümde `guncel\server\src\eslestir.ts`'tir; köprü yanındadır.
+    kopruBetigi: join(dirname(import.meta.filename), "kopru.ts"),
+    anahtarDosyasi: ajandaPcAnahtarYolu(yollar.kok),
+  };
+  try {
+    if (komut.tur === "pc_liste") {
+      process.stdout.write(pcListeMetni(depo.ajandaPcAnahtarlari(), existsSync(y.anahtarDosyasi), y));
+      return 0;
+    }
+    if (komut.tur === "pc_kaldir") {
+      const iptal = depo.ajandaPcAnahtarlariniIptalEt(dis.saat.simdiMs());
+      const vardi = existsSync(y.anahtarDosyasi);
+      if (vardi) rmSync(y.anahtarDosyasi, { force: true });
+      gunluk.uyari("eslestir", "pc_anahtari_kaldirildi", { iptal });
+      process.stdout.write(pcKaldirMetni(iptal, vardi));
+      return 0;
+    }
+    const oncekiEtkin = depo.ajandaPcAnahtarlari().filter((a) => a.iptal_ms === null).length;
+    const { jeton } = pcAnahtariUret({ depo, rastgele: dis.rastgele, saat: dis.saat });
+    try {
+      await dosyaPortuKur().atomikYaz(y.anahtarDosyasi, `${jeton}\n`);
+    } catch {
+      // Dosyasız etkin anahtar kimsenin işine yaramaz: geçersiz kıl, kullanıcı yeniden dener.
+      depo.ajandaPcAnahtarlariniIptalEt(dis.saat.simdiMs());
+      process.stderr.write(`Anahtar dosyası yazılamadı (${y.anahtarDosyasi}); anahtar geçersiz kılındı, yeniden deneyin.\n`);
+      return 1;
+    }
+    gunluk.uyari("eslestir", "pc_anahtari_uretildi", { onceki_etkin: oncekiEtkin });
+    process.stdout.write(pcAnahtarMetni(y, oncekiEtkin));
+    return 0;
+  } finally {
+    depo.kapat();
+  }
+}
 
 async function komutCalistir(argv: readonly string[]): Promise<number> {
   const komut = argumanCoz(argv);
@@ -307,6 +496,7 @@ async function komutCalistir(argv: readonly string[]): Promise<number> {
     process.stderr.write(`eslestir: ${komut.ileti}\n${KULLANIM}\n`);
     return 2;
   }
+  if (komut.tur === "pc_anahtar" || komut.tur === "pc_liste" || komut.tur === "pc_kaldir") return pcKomutu(komut);
 
   const { ayarKur, asistanAdiUret, yollariUret } = await import("./ayar.ts");
   const { depoAc } = await import("./depo.ts");

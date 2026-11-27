@@ -401,6 +401,13 @@ describe("kopru ajanda kipi: sonuç metni", () => {
     assert.deepEqual(istek!["girdi"], EKLE_GIRDI);
   });
 
+  it("PC oturumları: ana_oturum köprüsünün isteği bugünkü zarftır; Claude Code _meta'sı boruya taşınmaz", async () => {
+    const { servis, istemci } = await sahteKur((s) => s.yanitla({ ok: true, sonuc: EKLE_CIKTI }));
+    await istemci.callTool({ name: "ajanda_ekle", arguments: EKLE_GIRDI, _meta: { "claudecode/toolUseId": "toolu_01" } });
+    const [istek] = servis.istekler("ajanda_ekle");
+    assert.deepEqual(Object.keys(istek!).sort(), ["fiil", "girdi", "istek_id", "type", "v"]);
+  });
+
   it("v2: gece_teyidi_gerekli boru hatası değildir: isError yok, modele ajandaEkleMetni/ajandaGuncelleMetni ret metni", async () => {
     const gece = { tarih: "2026-11-27", saat: "01:45", saat_dilimi: IST };
     const ekleRet = AJANDA_ARACLARI.ajanda_ekle.cikti.parse({ sonuc: "ret", mesaj_ani: gece, neden: "gece_teyidi_gerekli" });

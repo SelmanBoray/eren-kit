@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { connect } from "node:net";
 import type { Socket } from "node:net";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -11,7 +12,15 @@ import {
   AJANDA_ARACLARI,
   AJANDA_AZAMI_CERCEVE,
   AJANDA_BORU_ADI,
+  AJANDA_FIILLERI,
+  AJANDA_PC_ARAC_ACIKLAMALARI,
   AJANDA_ROL_FIILLERI,
+  AracCagriId,
+  OpakId,
+  PC_KANCA_ARACLARI,
+  PC_KANCA_OLAYLARI,
+  mesajAniDamgasi,
+  pcKancaGirdisi,
   ajandaKopruAsagiCoz,
   AjandaKopruRolu,
   ajandaMcpSonucu,
@@ -37,6 +46,9 @@ import type {
   AjandaAracCiktisi,
   AjandaFiili,
   AjandaKopruAsagi,
+  AjandaPcCagri,
+  AjandaYerelAn,
+  PcKancaOlayi,
   CozumSonucu,
   HataKodu,
   KopruAsagi,
@@ -44,6 +56,8 @@ import type {
 } from "@eren/protocol";
 import { z } from "zod";
 import { ekranMetniKur } from "./ekran-metni.ts";
+import { takvimKur } from "./takvim.ts";
+import { ajandaPcAnahtarYolu, veriKokuCoz } from "./veri-koku.ts";
 import type {
   AjandaKopruIstemciAyari,
   AjandaMcpSunucuAdi,
@@ -142,9 +156,16 @@ interface BoruIstemci {
    * `kopuk`: bağlantı yok; kalıcı retse o kod.
    */
   hazirBekle(sinyal: AbortSignal, surekli: boolean): Promise<HataKodu | "kopuk" | null>;
-  istekYolla(fiil: KopruFiili | AjandaFiili, girdi: unknown, sinyal: AbortSignal): Promise<BoruYaniti>;
+  /** `ek`: zarfa eklenen alanlar (yalnız PC köprüsünün `cagri`'sı). */
+  istekYolla(fiil: KopruFiili | AjandaFiili, girdi: unknown, sinyal: AbortSignal, ek?: Record<string, unknown>): Promise<BoruYaniti>;
   soruIptaliBiriktir(soruId: string): void;
   durdur(): void;
+  /** Bekleme aralığındaki yeniden bağlanma döngüsünü hemen denemeye geçirir (PC köprüsü, çağrı gelince). */
+  uyandir(): void;
+  /** Hazırsa hemen `null`; değilse süren ya da sıradaki denemenin sonunu bekler (en çok bir deneme). */
+  denemeBekle(sinyal: AbortSignal): Promise<HataKodu | "kopuk" | null>;
+  /** Son bağlanma denemesinin engeli: anahtar yok ya da servis `kopru_ret` verdi (PC metni için). */
+  sonEngel(): "anahtar_yok" | HataKodu | null;
 }
 
 /** Borunun aşağı çözücüsü: `eren` borusunda `kopruAsagiCoz`, ajanda borusunda `ajandaKopruAsagiCoz`. */
@@ -162,6 +183,11 @@ function boruIstemciKur(
   let denemede = false;
   let durdu = false;
   let kaliciHata: HataKodu | null = null;
+  // PC köprüsü (`jetonOku` verildi): anahtar her denemede dosyadan okunur, `jeton_gecersiz` kalıcı değildir
+  // (kullanıcı anahtarı yenileyince köprü yeniden başlamadan bağlanır); engel yalnız metin içindir.
+  const jetonOku = "jetonOku" in ayar ? ayar.jetonOku : undefined;
+  let sonEngel: "anahtar_yok" | HataKodu | null = null;
+  let uyandirici: (() => void) | null = null;
   const bekleyenler = new Map<string, (y: BoruYaniti) => void>();
   const denemeDinleyicileri = new Set<() => void>();
   const biriken = new Set<string>();
@@ -200,7 +226,7 @@ function boruIstemciKur(
   };
 
   /** Bağlantı kapanınca çözülür. `true`: el sıkışma başarılıydı. */
-  const baglantiYurut = (bag: BoruBaglantisi): Promise<boolean> =>
+  const baglantiYurut = (bag: BoruBaglantisi, jeton: string): Promise<boolean> =>
     new Promise((coz) => {
       let karsilandi = false;
       const elSikisma = setTimeout(() => bag.kapat(), EL_SIKISMA_MS);
@@ -223,13 +249,16 @@ function boruIstemciKur(
           clearTimeout(elSikisma);
           hazir = bag;
           denemede = false;
+          sonEngel = null;
           gunluk.bilgi(MODUL, "boru_baglandi", { rol: ayar.rol });
           biriktirilenleriYolla(bag);
           denemeBitti();
         } else if (m.type === "kopru_ret") {
           gunluk.uyari(MODUL, "boru_reddedildi", { code: m.code });
-          // Jeton yalnız iş bitince silinir, bir daha geçerli olmaz: denemeye değmez.
-          if (m.code === "jeton_gecersiz") kaliciHata = m.code;
+          sonEngel = m.code;
+          // Jeton yalnız iş bitince silinir, bir daha geçerli olmaz: denemeye değmez. PC anahtarı
+          // dosyadan yenilenebilir: kalıcı değil, sonraki deneme dosyayı yeniden okur.
+          if (m.code === "jeton_gecersiz" && jetonOku === undefined) kaliciHata = m.code;
           bag.kapat();
         } else {
           const bekleyen = bekleyenler.get(m.istek_id);
@@ -240,6 +269,11 @@ function boruIstemciKur(
               ? { tur: "basari", sonuc: m.sonuc }
               : { tur: "hata", code: m.code ?? "ic_hata", detail: m.detail },
           );
+          // PC: anahtar bağlantı açıkken iptal edildi. Bağlantı bırakılır; yeniden bağlanma dosyayı yeniden okur.
+          if (!m.ok && m.code === "jeton_gecersiz" && jetonOku !== undefined) {
+            sonEngel = "jeton_gecersiz";
+            bag.kapat();
+          }
         }
       });
 
@@ -258,10 +292,21 @@ function boruIstemciKur(
           v: PROTOKOL_SURUMU,
           type: "kopru_hello",
           rol: ayar.rol,
-          jeton: ayar.jeton,
+          jeton,
         }),
       );
     });
+
+  /** Bekleme ya da `uyandir`: hangisi önce. */
+  const aralikBekle = async (ms: number): Promise<void> => {
+    const uyan = Promise.withResolvers<void>();
+    uyandirici = uyan.resolve;
+    try {
+      await Promise.race([b.bekle(ms), uyan.promise]);
+    } finally {
+      uyandirici = null;
+    }
+  };
 
   return {
     calistir: async () => {
@@ -269,15 +314,30 @@ function boruIstemciKur(
       while (!durdu && kaliciHata === null) {
         denemede = true;
         let karsilandi = false;
-        try {
-          const bag = await b.baglan(ayar.boruAdi);
-          if (durdu) {
-            bag.kapat();
-            break;
+        let jeton: string | null = ayar.jeton;
+        if (jetonOku !== undefined) {
+          try {
+            jeton = jetonOku();
+          } catch {
+            jeton = null;
           }
-          karsilandi = await baglantiYurut(bag);
-        } catch {
-          gunluk.uyari(MODUL, "boru_baglanamadi");
+        }
+        if (jeton === null) {
+          // PC anahtarı yok (henüz üretilmedi ya da kaldırıldı): denemeden bekle.
+          sonEngel = "anahtar_yok";
+        } else {
+          try {
+            const bag = await b.baglan(ayar.boruAdi);
+            if (durdu) {
+              bag.kapat();
+              break;
+            }
+            karsilandi = await baglantiYurut(bag, jeton);
+          } catch {
+            gunluk.uyari(MODUL, "boru_baglanamadi");
+            // Boru yok: engel servisin kendisidir (metin "ulaşılamıyor").
+            sonEngel = null;
+          }
         }
         denemede = false;
         denemeBitti();
@@ -286,10 +346,24 @@ function boruIstemciKur(
           gunluk.uyari(MODUL, "boru_koptu");
           gecikme = ILK_GECIKME_MS;
         }
-        await b.bekle(gecikme);
+        await aralikBekle(gecikme);
         gecikme = Math.min(gecikme * 2, AZAMI_GECIKME_MS);
       }
     },
+
+    uyandir: () => {
+      uyandirici?.();
+    },
+
+    denemeBekle: async (sinyal) => {
+      if (hazir !== null) return null;
+      if (kaliciHata !== null) return kaliciHata;
+      if (durdu || sinyal.aborted) return "kopuk";
+      await denemeBitisi(sinyal);
+      return hazir !== null ? null : (kaliciHata ?? "kopuk");
+    },
+
+    sonEngel: () => sonEngel,
 
     hazirBekle: async (sinyal, surekli) => {
       for (;;) {
@@ -300,7 +374,7 @@ function boruIstemciKur(
       }
     },
 
-    istekYolla: (fiil, girdi, sinyal) => {
+    istekYolla: (fiil, girdi, sinyal, ek = {}) => {
       const bag = hazir;
       if (bag === null) return Promise.resolve({ tur: "yollanmadi" });
       if (sinyal.aborted) return Promise.resolve({ tur: "iptal" });
@@ -317,7 +391,7 @@ function boruIstemciKur(
           coz(y);
         });
         bag.satirYaz(
-          JSON.stringify({ v: PROTOKOL_SURUMU, type: "istek", istek_id, fiil, girdi }),
+          JSON.stringify({ v: PROTOKOL_SURUMU, type: "istek", istek_id, fiil, girdi, ...ek }),
         );
       });
     },
@@ -614,7 +688,7 @@ ${govde}`,
 async function mcpBaslat(
   ad: string,
   tools: Tool[],
-  aracCagir: (ad: string, ham: unknown, sinyal: AbortSignal) => Promise<CallToolResult>,
+  aracCagir: (ad: string, ham: unknown, sinyal: AbortSignal, meta: unknown) => Promise<CallToolResult>,
   boru: BoruIstemci,
   b: KopruBagimliliklari,
 ): Promise<KopruCalisani> {
@@ -622,8 +696,9 @@ async function mcpBaslat(
   const server = new Server({ name: ad, version: "1.0.0" }, { capabilities: { tools: {} } });
   server.setRequestHandler(ListToolsRequestSchema, () => ({ tools }));
   // `notifications/cancelled` SDK'da `ekstra.signal`'i keser, oradan `iptal` çerçevesi çıkar.
+  // `_meta` yalnız PC köprüsünde okunur (Claude Code'un çağrı kimliği); öteki kipler yok sayar.
   server.setRequestHandler(CallToolRequestSchema, (istek, ekstra) =>
-    aracCagir(istek.params.name, istek.params.arguments, ekstra.signal),
+    aracCagir(istek.params.name, istek.params.arguments, ekstra.signal, istek.params._meta),
   );
   server.onerror = () => gunluk.uyari(MODUL, "mcp_hatasi");
 
@@ -667,6 +742,29 @@ const ajandaHataSonucu = (code: HataKodu): CallToolResult => hataSonucu(code, AJ
 const AJANDA_KOPUK_SONUCU = (): CallToolResult =>
   hataSonucu("ic_hata", "ajanda: servise şu an ulaşılamıyor; hiçbir şey yazılmadı, biraz sonra yeniden dene.");
 
+// --- PC köprüsü (`--rol pc_oturumu`; AJANDA.md "PC oturumları") ---------------------------------
+
+/** Claude Code'un MCP `tools/call` isteğinde çağrı kimliğini taşıyan `_meta` anahtarı (kancadaki `tool_use_id`). */
+export const CLAUDE_CODE_ARAC_KIMLIGI = "claudecode/toolUseId";
+/** Boru hazır değilken çağrının yeniden bağlanmayı beklediği en uzun süre (servis yeniden başlıyor olabilir). */
+export const PC_BAGLANTI_BEKLEME_MS = 3_000;
+/** O bekleme içinde boru yokken iki deneme arası. */
+const PC_YENIDEN_DENEME_MS = 250;
+
+/**
+ * PC köprüsünün bağlantısız metinleri (`isError`). Kayıt yazılmadığı kesindir; model kullanıcıya söyler,
+ * yazılmamış kaydı "kaydettim" diye anlatmaz. Kuyruk yoktur (bilinçli: AJANDA.md "PC oturumları").
+ */
+export const PC_KOPUK_METNI =
+  "ajanda: eren servisine şu an ulaşılamıyor (kapalı ya da yeniden başlıyor); hiçbir şey yazılmadı. " +
+  "Kullanıcıya kaydın yazılmadığını söyle; biraz sonra yeniden dene.";
+export const PC_ANAHTAR_YOK_METNI =
+  "ajanda: bu bilgisayarda Claude Code ajanda anahtarı yok; hiçbir şey yazılmadı. Kullanıcıya söyle: " +
+  "anahtar `eren eslestir --claude-code` ile üretilir.";
+export const PC_ANAHTAR_GECERSIZ_METNI =
+  "ajanda: Claude Code ajanda anahtarı geçersiz ya da kaldırılmış; hiçbir şey yazılmadı. Kullanıcıya söyle: " +
+  "yeni anahtar `eren eslestir --claude-code` ile üretilir.";
+
 /**
  * Stdio köprünün ajanda kipi: `AJANDA_BORU_ADI`'na `ana_oturum` jetonuyla bağlanır, yalnız
  * `AJANDA_ROL_FIILLERI[rol]` araçlarını `jsonSemasi(AJANDA_ARACLARI[fiil].girdi)` ile yayınlar
@@ -682,12 +780,58 @@ export async function ajandaKopruCalistir(
 ): Promise<KopruCalisani> {
   const { gunluk, rastgele } = b;
   const boru = boruIstemciKur(ayar, b, ajandaKopruAsagiCoz);
+  const pc = ayar.rol === "pc_oturumu";
   const fiiller: readonly AjandaFiili[] = AJANDA_ROL_FIILLERI[ayar.rol];
+  const aciklamalar = pc ? AJANDA_PC_ARAC_ACIKLAMALARI : AJANDA_ARAC_ACIKLAMALARI;
   const tools: Tool[] = fiiller.map((fiil) => ({
     name: fiil,
-    description: AJANDA_ARAC_ACIKLAMALARI[fiil],
+    description: aciklamalar[fiil],
     inputSchema: jsonSemasi(AJANDA_ARACLARI[fiil].girdi) as Tool["inputSchema"],
   }));
+  const oturumId = ayar.oturumId !== undefined && OpakId.safeParse(ayar.oturumId).success ? ayar.oturumId : undefined;
+
+  /** PC: `cagri` zarfı. Çağrı kimliği Claude Code'un `_meta`'sından; geçersizse yok (tur sentetik olur). */
+  const pcCagri = (meta: unknown): Record<string, unknown> => {
+    const id = typeof meta === "object" && meta !== null ? (meta as Record<string, unknown>)[CLAUDE_CODE_ARAC_KIMLIGI] : undefined;
+    const r = AracCagriId.safeParse(id);
+    const cagri: AjandaPcCagri = {};
+    if (r.success) cagri.arac_cagri_id = r.data;
+    if (oturumId !== undefined) cagri.oturum_id = oturumId;
+    return { cagri };
+  };
+
+  /**
+   * PC: boru hazır değilse döngüyü uyandırıp en çok `PC_BAGLANTI_BEKLEME_MS` yeniden dener (servis yeniden
+   * başlıyor olabilir). Anahtar yoksa ya da servis anahtarı reddettiyse beklemez: engel kesindir.
+   */
+  const pcHazirBekle = async (sinyal: AbortSignal): Promise<HataKodu | "kopuk" | null> => {
+    const sure = new AbortController();
+    const bitir = (): void => sure.abort();
+    sinyal.addEventListener("abort", bitir, { once: true });
+    void b.bekle(PC_BAGLANTI_BEKLEME_MS).then(bitir);
+    const ara = Promise.withResolvers<void>();
+    sure.signal.addEventListener("abort", () => ara.resolve(), { once: true });
+    try {
+      for (;;) {
+        boru.uyandir();
+        const r = await boru.denemeBekle(sure.signal);
+        if (r !== "kopuk") return r;
+        if (boru.sonEngel() !== null || sure.signal.aborted) return "kopuk";
+        // Boru yok: kısa ara, sonra yeniden dene.
+        await Promise.race([b.bekle(PC_YENIDEN_DENEME_MS), ara.promise]);
+      }
+    } finally {
+      sinyal.removeEventListener("abort", bitir);
+    }
+  };
+
+  /** PC: bağlantı yokken modele giden metin, engelin nedenine göre. Hepsinde "hiçbir şey yazılmadı". */
+  const pcKopukSonucu = (): CallToolResult => {
+    const engel = boru.sonEngel();
+    if (engel === "anahtar_yok") return hataSonucu("jeton_gecersiz", PC_ANAHTAR_YOK_METNI);
+    if (engel === "jeton_gecersiz") return hataSonucu("jeton_gecersiz", PC_ANAHTAR_GECERSIZ_METNI);
+    return hataSonucu("ic_hata", PC_KOPUK_METNI);
+  };
   const citUret = (): string => rastgele.hex64() + rastgele.hex64();
 
   const icHata = (fiil: string): CallToolResult => {
@@ -704,26 +848,29 @@ export async function ajandaKopruCalistir(
     return mcp._meta === undefined ? { content: mcp.content } : { content: mcp.content, _meta: mcp._meta };
   };
 
-  const aracCagir = async (ad: string, ham: unknown, sinyal: AbortSignal): Promise<CallToolResult> => {
+  const aracCagir = async (ad: string, ham: unknown, sinyal: AbortSignal, meta: unknown): Promise<CallToolResult> => {
     const fiil = fiiller.find((f) => f === ad);
     if (fiil === undefined) return hataSonucu("rol_fiil_izinsiz");
     // Servis şemaya uymayan çerçevede boruyu kapatır: bozuk girdi boruya çıkmamalı.
     const sema: z.ZodType = AJANDA_ARACLARI[fiil].girdi;
     const girdi = sema.safeParse(ham ?? {});
     if (!girdi.success) return hataSonucu("gecersiz_mesaj", semaHatasiMetni(girdi.error.issues));
+    const kopuk = pc ? pcKopukSonucu : AJANDA_KOPUK_SONUCU;
     try {
-      const engel = await boru.hazirBekle(sinyal, false);
-      if (engel !== null) return engel === "kopuk" ? AJANDA_KOPUK_SONUCU() : ajandaHataSonucu(engel);
-      const y = await boru.istekYolla(fiil, girdi.data, sinyal);
+      const engel = pc ? await pcHazirBekle(sinyal) : await boru.hazirBekle(sinyal, false);
+      if (pc && sinyal.aborted) return iptalSonucu();
+      if (engel !== null) return engel === "kopuk" ? kopuk() : ajandaHataSonucu(engel);
+      const y = await boru.istekYolla(fiil, girdi.data, sinyal, pc ? pcCagri(meta) : undefined);
       switch (y.tur) {
         case "basari":
           return sonucCevir(fiil, y.sonuc);
         case "hata":
-          return ajandaHataSonucu(y.code);
+          return pc && y.code === "jeton_gecersiz" ? hataSonucu(y.code, PC_ANAHTAR_GECERSIZ_METNI) : ajandaHataSonucu(y.code);
         case "koptu":
-          return ajandaHataSonucu("belirsiz");
+          // PC: anahtar istek sırasında iptal edildiyse servis `kopru_ret` verip kapatır.
+          return pc && boru.sonEngel() === "jeton_gecersiz" ? hataSonucu("jeton_gecersiz", PC_ANAHTAR_GECERSIZ_METNI) : ajandaHataSonucu("belirsiz");
         case "yollanmadi":
-          return AJANDA_KOPUK_SONUCU();
+          return kopuk();
         case "iptal":
           return iptalSonucu();
       }
@@ -733,6 +880,105 @@ export async function ajandaKopruCalistir(
   };
 
   return mcpBaslat(AJANDA_MCP_SUNUCU_ADI, tools, aracCagir, boru, b);
+}
+
+// --- PC kancası (`--kanca istem|arac|tur_sonu`; AJANDA.md "PC oturumları") ----------------------
+
+/** Kancanın servisle bütün işi (bağlan, el sık, tek istek, yanıt) bu süreyi aşamaz; aşarsa vazgeçer. */
+export const PC_KANCA_SURESI_MS = 2_000;
+
+export interface PcKancaBagimliliklari {
+  baglan: (boruAdi: string) => Promise<BoruBaglantisi>;
+  /** PC anahtarı (dosyadan); `null`: yok, servise hiç gidilmez. */
+  jetonOku: () => string | null;
+  rastgele: Pick<RastgelePortu, "opakId">;
+  /** Servise ulaşılamazsa damganın anı: kancanın kendi saati ve sistem dilimi. */
+  yerelSimdi: () => AjandaYerelAn;
+  /** `ms` sonra çözülür (zaman aşımı). */
+  bekle: (ms: number) => Promise<void>;
+  gunluk: Gunluk;
+}
+
+/**
+ * Claude Code kancasının gövdesi: `hamGirdi` kancanın stdin'i (JSON), dönen metin stdout'u. Hiç atmaz,
+ * oturumu bozmaz: servis kapalıysa, anahtar yoksa ya da girdi geçersizse sessizce geçer.
+ * - `istem` (UserPromptSubmit): servise `pc_istem`; stdout'a mesaj anı damgası (`mesajAniDamgasi`; servis
+ *   yanıt vermezse kancanın kendi saatinden). Claude Code bunu kullanıcının mesajına bağlam olarak ekler:
+ *   PC oturumundaki asistan tarihi ve saati buradan bilir. Damgadan başka metin yazılmaz.
+ * - `arac` (PreToolUse, ajanda araçları): `pc_arac` tasdiki; stdout boş (izin akışına karışmaz).
+ * - `tur_sonu` (Stop): `pc_tur_sonu`; stdout boş.
+ */
+export async function pcKancaCalistir(olay: PcKancaOlayi, hamGirdi: string, b: PcKancaBagimliliklari): Promise<string> {
+  let ham: unknown = null;
+  try {
+    ham = JSON.parse(hamGirdi);
+  } catch {
+    ham = null;
+  }
+  const istek = pcKancaGirdisi(olay, ham, AJANDA_FIILLERI);
+  let jeton: string | null = null;
+  try {
+    jeton = istek === null ? null : b.jetonOku();
+  } catch {
+    jeton = null;
+  }
+  let sonuc: unknown = null;
+  if (istek !== null && jeton !== null) sonuc = await kancaIstegiYolla(istek.fiil, istek.girdi, jeton, b).catch(() => null);
+  if (olay !== "istem") return "";
+  const cikti = PC_KANCA_ARACLARI.pc_istem.cikti.safeParse(sonuc);
+  let an: AjandaYerelAn | null = cikti.success ? cikti.data.mesaj_ani : null;
+  if (an === null) {
+    try {
+      an = b.yerelSimdi();
+    } catch {
+      return "";
+    }
+  }
+  return `${mesajAniDamgasi(an)}\n`;
+}
+
+/**
+ * Tek bağlantı, tek istek: el sıkışma `pc_kanca`, yanıtın `sonuc`'u (doğrulanmamış) ya da `null`. En çok
+ * `PC_KANCA_SURESI_MS`; süre dolunca bağlantı kapatılır, `null`.
+ */
+function kancaIstegiYolla(fiil: string, girdi: unknown, jeton: string, b: PcKancaBagimliliklari): Promise<unknown> {
+  return new Promise((coz) => {
+    let bag: BoruBaglantisi | null = null;
+    let bitti = false;
+    const bitir = (deger: unknown): void => {
+      if (bitti) return;
+      bitti = true;
+      bag?.kapat();
+      coz(deger);
+    };
+    void b.bekle(PC_KANCA_SURESI_MS).then(() => bitir(null));
+    const istek_id = b.rastgele.opakId("kanca");
+    b.baglan(AJANDA_BORU_ADI).then(
+      (bg) => {
+        bag = bg;
+        if (bitti) {
+          bg.kapat();
+          return;
+        }
+        bg.kapanisDinle(() => bitir(null));
+        bg.satirDinle((satir) => {
+          const cozum = ajandaKopruAsagiCoz(satir);
+          if (!cozum.ok) return bitir(null);
+          const m = cozum.mesaj;
+          if (m.type === "kopru_welcome") {
+            bg.satirYaz(JSON.stringify({ v: PROTOKOL_SURUMU, type: "istek", istek_id, fiil, girdi }));
+          } else if (m.type === "kopru_ret") {
+            b.gunluk.uyari(MODUL, "kanca_reddedildi", { code: m.code });
+            bitir(null);
+          } else if (m.istek_id === istek_id) {
+            bitir(m.ok ? m.sonuc : null);
+          }
+        });
+        bg.satirYaz(JSON.stringify({ v: PROTOKOL_SURUMU, type: "kopru_hello", rol: "pc_kanca", jeton }));
+      },
+      () => bitir(null),
+    );
+  });
 }
 
 function soketBaglantisi(soket: Socket, azamiSatir: number = AZAMI_CERCEVE.KOPRU): BoruBaglantisi {
@@ -798,15 +1044,79 @@ function stderrGunluk(): Gunluk {
   return { bilgi: yaz("bilgi"), uyari: yaz("uyari"), hata: yaz("hata") };
 }
 
+/**
+ * PC anahtar dosyası (`<veri kökü>\ajanda-pc.anahtar`, `eslestir --claude-code` yazar). Her çağrıda
+ * yeniden okunur; yoksa, okunamazsa ya da biçimi geçersizse `null`.
+ */
+function pcAnahtariOku(): string | null {
+  const kok = veriKokuCoz(process.env);
+  if (!kok.ok) return null;
+  try {
+    const j = Jeton.safeParse(readFileSync(ajandaPcAnahtarYolu(kok.kok), "utf8").trim());
+    return j.success ? j.data : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Stdin'in tamamı (kanca girdisi), en çok `azami` bayt; fazlası okunmaz (JSON'u bozulur, kanca sessiz geçer). */
+async function stdinOku(azami: number): Promise<string> {
+  const parcalar: Buffer[] = [];
+  let bayt = 0;
+  for await (const p of process.stdin) {
+    const parca = Buffer.isBuffer(p) ? p : Buffer.from(String(p));
+    parcalar.push(parca);
+    bayt += parca.length;
+    if (bayt > azami) break;
+  }
+  return Buffer.concat(parcalar).toString("utf8");
+}
+
+const KANCA_GIRDI_AZAMI = 16 * 1024 * 1024;
+
+/** `--kanca <olay>`: Claude Code kancası. Her durumda 0 ile çıkar (oturumu bozmaz). */
+async function kancaGirisi(olayArgumani: string | undefined): Promise<void> {
+  const olay = PC_KANCA_OLAYLARI.find((o) => o === olayArgumani);
+  if (olay === undefined) {
+    process.stderr.write("kullanim: kopru --kanca istem|arac|tur_sonu (Claude Code kancası; girdi stdin'de)\n");
+    process.exit(0);
+  }
+  let cikti = "";
+  try {
+    const girdi = await stdinOku(KANCA_GIRDI_AZAMI);
+    cikti = await pcKancaCalistir(olay, girdi, {
+      baglan: (ad) => boruyaBaglan(ad, AJANDA_AZAMI_CERCEVE.BORU),
+      jetonOku: pcAnahtariOku,
+      rastgele: { opakId: (on) => `${on}_${randomBytes(16).toString("base64url")}` },
+      yerelSimdi: () => {
+        const dilim = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        return takvimKur({ sistemDilimi: () => dilim }).yerelAn(Date.now(), dilim);
+      },
+      bekle: (ms) => new Promise((coz) => setTimeout(coz, ms).unref()),
+      gunluk: stderrGunluk(),
+    });
+  } catch {
+    cikti = "";
+  }
+  if (cikti !== "") process.stdout.write(cikti);
+  process.exit(0);
+}
+
 async function giris(): Promise<void> {
   const argumanlar = process.argv.slice(2);
+  const k = argumanlar.indexOf("--kanca");
+  if (k >= 0) return kancaGirisi(argumanlar[k + 1]);
   const i = argumanlar.indexOf("--rol");
   const rolArgumani = i >= 0 ? argumanlar[i + 1] : undefined;
   const rol = KopruRolu.safeParse(rolArgumani);
   const ajandaRol = AjandaKopruRolu.safeParse(rolArgumani);
-  const jeton = Jeton.safeParse(process.env.EREN_KOPRU_JETON);
-  if (!jeton.success || (!rol.success && !ajandaRol.success)) {
-    process.stderr.write("kullanim: kopru --rol eren|soru|telefon|ana_oturum, jeton EREN_KOPRU_JETON'da\n");
+  const pcKoprusu = ajandaRol.success && ajandaRol.data === "pc_oturumu";
+  // PC köprüsünün jetonu ortamdan değil anahtar dosyasından gelir (her denemede yeniden okunur).
+  const jeton = pcKoprusu ? { success: true as const, data: "" } : Jeton.safeParse(process.env.EREN_KOPRU_JETON);
+  if (!jeton.success || (!rol.success && !ajandaRol.success) || (ajandaRol.success && ajandaRol.data === "pc_kanca")) {
+    process.stderr.write(
+      "kullanim: kopru --rol eren|soru|telefon|ana_oturum (jeton EREN_KOPRU_JETON'da) | --rol pc_oturumu | --kanca istem|arac|tur_sonu\n",
+    );
     process.exitCode = 2;
     return;
   }
@@ -827,7 +1137,15 @@ async function giris(): Promise<void> {
       )
     : ajandaRol.success
       ? await ajandaKopruCalistir(
-          { rol: ajandaRol.data, jeton: jeton.data, boruAdi: AJANDA_BORU_ADI },
+          pcKoprusu
+            ? {
+                rol: ajandaRol.data,
+                jeton: "",
+                boruAdi: AJANDA_BORU_ADI,
+                jetonOku: pcAnahtariOku,
+                oturumId: process.env.CLAUDE_CODE_SESSION_ID ?? `pck_${randomBytes(16).toString("base64url")}`,
+              }
+            : { rol: ajandaRol.data, jeton: jeton.data, boruAdi: AJANDA_BORU_ADI },
           ortak((ad) => boruyaBaglan(ad, AJANDA_AZAMI_CERCEVE.BORU)),
         )
       : null;

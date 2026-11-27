@@ -9,6 +9,7 @@ import {
   type KayitDurumu,
 } from "@eren/protocol";
 import { ajandaAraclariKur } from "./ajanda-araclar.ts";
+import { pcDefteriKur } from "./ajanda-pc.ts";
 import {
   type Adim,
   dilimlerBilinir,
@@ -44,6 +45,8 @@ const basarili = (kayit_id: string, rev?: number): Sonuc => (rev === undefined ?
 export const ajandaKur: AjandaFabrikasi = (b) => {
   const { depo, takvim, saat, rastgele, gunluk } = b;
   const yeniDepoId = (): string => rastgele.opakId("d");
+  // PC oturumlarının turları (bellek; `ajanda-pc.ts`). Araçların `pc_oturumu` çağrısı ve kancalar paylaşır.
+  const pc = pcDefteriKur({ takvim, saat, rastgele, gunluk });
 
   /** Var olan, silinmemiş kayıt ya da ret. */
   const canliKayit = (kayit_id: string): Adim<AjandaKaydi> => {
@@ -238,6 +241,7 @@ export const ajandaKur: AjandaFabrikasi = (b) => {
       return { kayit_id, girdiler: satirlar.slice(0, GECMIS_SAYFA), devami: satirlar.length > GECMIS_SAYFA };
     },
 
-    araclar: ajandaAraclariKur(b),
+    araclar: ajandaAraclariKur(b, pc),
+    pcKanca: pc.kanca,
   };
 };

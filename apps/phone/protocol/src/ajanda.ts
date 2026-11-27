@@ -187,8 +187,9 @@ export const ORNEK_DURUMLARI = ["tamam", "iptal"] as const;
 export const OrnekDurumu = z.enum(ORNEK_DURUMLARI);
 
 /**
- * Kaydın doğduğu (ya da değişikliğin geldiği) yol. İlk dilimde üreten: `sohbet_araci` (telefondaki
- * sohbetin ana oturumu) ve `elle` (ajanda uygulaması). Sonraki dilimlerin yolları şimdiden listededir.
+ * Kaydın doğduğu (ya da değişikliğin geldiği) yol. Üretenler: `sohbet_araci` (telefondaki sohbetin ana
+ * oturumu), `pc_araci` (PC'deki normal Claude Code oturumları, `ajanda-pc.ts`) ve `elle` (ajanda
+ * uygulaması). Sonraki dilimlerin yolları (`arka_plan`, `sesli_not`) şimdiden listededir.
  */
 export const KAYNAK_YOLLARI = ["sohbet_araci", "pc_araci", "arka_plan", "sesli_not", "elle"] as const;
 export const KaynakYolu = z.enum(KAYNAK_YOLLARI);

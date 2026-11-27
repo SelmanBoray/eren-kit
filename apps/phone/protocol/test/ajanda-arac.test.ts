@@ -82,8 +82,12 @@ function kayit(yama: Record<string, unknown> = {}): AjandaKaydi {
 test("ajanda borusu ayrıdır; rol ve fiiller tam olarak beklenendir", () => {
   assert.equal(AJANDA_BORU_ADI, "\\\\.\\pipe\\eren-ajanda");
   assert.notEqual(AJANDA_BORU_ADI, KOPRU_BORU_ADI);
-  assert.deepEqual([...AJANDA_KOPRU_ROLLERI], ["ana_oturum"]);
+  // PC oturumları (AJANDA.md "PC oturumları"): köprü rolü aynı üç fiili alır, kanca rolünün aracı yoktur.
+  assert.deepEqual([...AJANDA_KOPRU_ROLLERI], ["ana_oturum", "pc_oturumu", "pc_kanca"]);
   assert.deepEqual([...AJANDA_ROL_FIILLERI.ana_oturum], ["ajanda_ekle", "ajanda_guncelle", "ajanda_listele"]);
+  assert.deepEqual([...AJANDA_ROL_FIILLERI.pc_oturumu], ["ajanda_ekle", "ajanda_guncelle", "ajanda_listele"]);
+  assert.deepEqual([...AJANDA_ROL_FIILLERI.pc_kanca], []);
+  for (const f of AJANDA_FIILLERI) assert.equal(ajandaFiilRoldeIzinliMi("pc_kanca", f), false, f);
   assert.deepEqual(Object.keys(AJANDA_ARACLARI).sort(), [...AJANDA_FIILLERI].sort());
   for (const f of AJANDA_FIILLERI) assert.equal((KOPRU_FIILLERI as readonly string[]).includes(f), false, f);
   assert.equal(ajandaFiilRoldeIzinliMi("ana_oturum", "plan_oner"), false);

@@ -46,15 +46,28 @@ import { Jeton, mesaj, OpakId } from "./temel.ts";
 export const AJANDA_BORU_ADI = "\\\\.\\pipe\\eren-ajanda";
 
 /**
- * `ana_oturum`: telefondaki bir sohbetin ana oturumu (jeton kapsamı `sohbet_id` + nesil; kaynak
- * `sohbet_araci`). Sonraki dilimin PC oturumu rolü (`pc_araci`) buraya eklenecek.
+ * - `ana_oturum`: telefondaki bir sohbetin ana oturumu (jeton kapsamı `sohbet_id` + nesil; kaynak
+ *   `sohbet_araci`).
+ * - `pc_oturumu`: PC'deki normal bir Claude Code oturumunun MCP köprüsü (kimlik PC anahtarı; kaynak
+ *   `pc_araci`). Fiilleri `ana_oturum`'unkiyle aynıdır; turun kökenini servis PC kancalarından kurar.
+ * - `pc_kanca`: aynı oturumların Claude Code kancaları (istem, araç öncesi, tur sonu). Araç fiili yoktur;
+ *   çerçeveleri `ajanda-pc.ts`'tedir (`PcKancaIstek`). `docs/AJANDA.md` "PC oturumları".
  */
-export const AJANDA_KOPRU_ROLLERI = ["ana_oturum"] as const;
+export const AJANDA_KOPRU_ROLLERI = ["ana_oturum", "pc_oturumu", "pc_kanca"] as const;
 export const AjandaKopruRolu = z.enum(AJANDA_KOPRU_ROLLERI);
 export type AjandaKopruRolu = z.infer<typeof AjandaKopruRolu>;
 
+/** PC anahtarıyla bağlanan roller (`ajanda-pc.ts`). */
+export const AJANDA_PC_ROLLERI = ["pc_oturumu", "pc_kanca"] as const satisfies readonly AjandaKopruRolu[];
+export type AjandaPcRolu = (typeof AJANDA_PC_ROLLERI)[number];
+export function ajandaPcRoluMu(rol: AjandaKopruRolu): rol is AjandaPcRolu {
+  return (AJANDA_PC_ROLLERI as readonly string[]).includes(rol);
+}
+
 export const AJANDA_ROL_FIILLERI = {
   ana_oturum: ["ajanda_ekle", "ajanda_guncelle", "ajanda_listele"],
+  pc_oturumu: ["ajanda_ekle", "ajanda_guncelle", "ajanda_listele"],
+  pc_kanca: [],
 } as const;
 export type AjandaFiili = (typeof AJANDA_ROL_FIILLERI)[AjandaKopruRolu][number];
 export const AJANDA_FIILLERI: readonly AjandaFiili[] = [...AJANDA_ROL_FIILLERI.ana_oturum];
@@ -486,8 +499,23 @@ export const AJANDA_ARACLARI = {
 
 // Ajanda borusu
 
+/**
+ * Claude Code'un araç çağrısı kimliği (`tool_use_id`; MCP isteğinde `_meta["claudecode/toolUseId"]`,
+ * kancada `tool_use_id`). Yalnız eşleştirme anahtarıdır, içerik taşımaz.
+ */
+export const AracCagriId = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/);
+
+/**
+ * Yalnız `pc_oturumu` köprüsünün isteğinde (isteğe bağlı): çağrının Claude Code kimliği ve köprünün
+ * bildiği oturum (`CLAUDE_CODE_SESSION_ID`, yoksa köprü sürecinin kendi kimliği). Servis turun kökenini
+ * bundan DEĞİL, aynı `arac_cagri_id` için PC kancasının tasdikinden kurar; `oturum_id` yalnız tasdik
+ * yokken kaynak izine girer. `ana_oturum` isteğinde servis bu alanı yok sayar.
+ */
+export const AjandaPcCagri = z.strictObject({ arac_cagri_id: AracCagriId.optional(), oturum_id: OpakId.optional() });
+export type AjandaPcCagri = z.infer<typeof AjandaPcCagri>;
+
 function istek<F extends AjandaFiili, G extends z.ZodType>(fiil: F, girdi: G) {
-  return mesaj("istek", { istek_id: OpakId, fiil: z.literal(fiil), girdi });
+  return mesaj("istek", { istek_id: OpakId, fiil: z.literal(fiil), girdi, cagri: AjandaPcCagri.optional() });
 }
 
 export const AjandaKopruIstek = z.discriminatedUnion("fiil", [
