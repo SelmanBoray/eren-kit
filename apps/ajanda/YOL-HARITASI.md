@@ -7,7 +7,7 @@ tek yerde toplar. Bir kol, bu dosya ile `apps/phone/docs/AJANDA.md` (ürün söz
 
 Kod bu belgeyle çelişirse kod ve sözleşme kazanır; çelişkiyi koordinatöre bildirin, belge düzeltilir.
 
-Son güncelleme: 2026-11-27.
+Son güncelleme: 2026-11-27 (akşam).
 
 ## İçindekiler
 
@@ -15,6 +15,7 @@ Son güncelleme: 2026-11-27.
 2. Kullanıcı kararları
 3. Bağımsız uygulama mimarisi (dilimler D1–D8)
 4. Bölge hatırlatması ve takvim
+   - 4A. Arayüz: Sahne yönü
 5. Play Store koşulları
 6. Eren'in harness'tan bağımsızlığı
 7. Kollar ve çalışma düzeni
@@ -22,7 +23,7 @@ Son güncelleme: 2026-11-27.
 
 ---
 
-## 1. Bugünkü durum (2026-11-27)
+## 1. Bugünkü durum (2026-11-27 akşamı)
 
 | Parça | Durum |
 |---|---|
@@ -30,8 +31,12 @@ Son güncelleme: 2026-11-27.
 | Saatsiz güne hatırlatma, gün bölümü, gece teyidi | Sürüm 2 ile canlıda |
 | PC'deki Claude Code oturumlarından ajanda ("yalın yol") | Kod ana dalda ve canlı serviste; kullanıcının makinesinde etkin (anahtar, MCP kaydı, tek araç öncesi kanca, talimat kuralı). Etkileşimsiz oturumla uçtan uca sınandı (karar: `etkilesimsiz`, beklenen). Etkileşimli oturumda `insan` kararı henüz gözlenmedi |
 | Takvim: çekirdek sorguları (`takvimAyi`, `takvimGunu`) | Ana dalda. Sözleşme ve yerel şema (3) değişmedi |
-| Takvim: Kotlin ekranı (üçüncü sekme) | Yazılıyor (Kol A) |
-| Bölge ölçüm uygulaması (`apps/ajanda-bolge-olcum`) | Ana dalda; APK kullanıcıya verildi; hiçbir cihazda çalıştırılmadı, cihazda ölçüm bekliyor |
+| Takvim: Kotlin ekranı (üçüncü sekme) | Ana dalda; bu telefonda kurulu (takvim sekmeli sürüm) |
+| Ana dalda, canlıya ve telefona kurulmadı | D5'in servis dilimi (çok sürümlü çözücü, bağlantı başına sürüm, aşağı uyarlama; kablo değişmedi, küme [2]) ve gözden geçirme düzeltmeleri; D1 (yerel kip: göç 4, yerel yazar, yerel geçmiş, koparma, yerelden bağlanma); D2 (eşleşmeyi kaldırma artık koparmadır, başka servise geçiş veri düşürmez); harness H2 (kurulum soyutlaması: `kurulum/harness/`, `eslestir --pc-ajan`, kabuğa göre yönerge) |
+| Canlı servis ve telefon sürümleri | Canlı servis hâlâ PC oturumu yolunun kurulduğu sürümde; telefondaki uygulama takvim sekmeli sürümde. Sonraki canlı kurulum sözleşme v3 ile birlikte planlanıyor |
+| Dallarda süren işler | Kol C: sözleşme v3 (protokol, servis, asistan araçları, Rust model/kural katmanı) ve ek yedeği servis dilimi. Kol B: D2 gözden geçirme düzeltmeleri ve D3. Kol H: H1 (tasdik çerçevesi ve tasdikin oturuma bağlanması) |
+| Arayüz yönü | Üç yönlü prototipten kullanıcı "Sahne"yi seçti (bölüm 4A); Kol U başlıyor |
+| Bölge ölçüm uygulaması (`apps/ajanda-bolge-olcum`) | Ana dalda; telefona gönderildi (4 günlük kısa plan), rapor bekleniyor |
 | Alarm ölçüm uygulaması (`apps/ajanda-olcum`) | Telefonda kurulu; günlüğü bekleniyor |
 | Bağımsız kip, sürüm uyumu, bölge hatırlatması, yayın derlemesi | Tasarım bitti (bu belge); kod başlamadı |
 | Eren'in harness'tan bağımsızlığı | Yalnız yön kararı var; döküm ve tasarım yapılmadı |
@@ -58,6 +63,13 @@ Sürüm 2'den sürüm 1'e geri alma kısıtlıdır (`gun_bolumu` taşıyan kayı
 | 2026-11-27 | Yayın hedefi Play Store; plan buna göre yapılır. Uygulamanın adı sonra düşünülecek |
 | 2026-11-27 | Konum algılamada Google hizmeti (Play Hizmetleri geofencing) kullanılacak |
 | 2026-11-27 | Yön: Eren yalnız Claude Code'a bağlı kalmayacak, herkesin kendi yapay zekâ harness'ına uyumlu olacak. Tasarımı yapılmadı |
+| 2026-11-27 | Arayüz baştan yazılacak; her şey hareketli olacak; yön "Sahne" (bölüm 4A) |
+| 2026-11-27 | Kayıtlara ayrıntı metni, başlıklı bağlantılar, fotoğraf ve kaydın kendi çizimi/simgesi gelecek |
+| 2026-11-27 | Fotoğraflar bağlı kipte PC'de de yedeklenecek |
+| 2026-11-27 | Kolların sorduğu öteki sorularda önerilen varsayılanlar kabul edildi: içe aktarmada daha yeni güncellenen kalır ve önizleme gösterilir; klasöre otomatik dışa aktarma varsayılan kapalı; Android'in hesap yedeği kapalı; birleştirmede olası çiftler tutulur ve işaretlenir; ilk açılış doğrudan boş liste; bölgede her gün ilk girişte bir kez, çıkışta işaretlenmediyse ikinci hatırlatma, varış saatleri PC'ye gitmez; harness'ta önce bağlayıcı sonra sürücü, ikinci harness Codex CLI, etkileşimsiz ayrımının izin listesine çevrilmesi ayrı iş, bellek ve orkestra paketleri kapsam dışı |
+| 2026-11-27 | Açık kalan iki soru: başka harness'ta API anahtarına izin (sürücü aşamasında yeniden sorulacak); Codex ölçümü için güncel sürümün geçici dizine indirilmesi (onay bekliyor) |
+| 2026-11-27 | Çalışma düzeni: kollar ayrı oturumlarda izin sormadan çalışır; kullanıcı yalnız koordinatörle konuşur; kollar soru ve karar isteklerini koordinatöre yazar |
+| 2026-11-27 | Varışlı kayıtta varsayılan zaman hatırlatması kaydın zamanına göre belirlenir: saatli ya da tarihli tek seferlik kayıtta bugünkü varsayılan kalır ve varış eklenir; zamansız kayıtta ve varışlı tekrarda yalnız varış |
 
 Henüz kullanıcıya teyit ettirilmemiş varsayılanlar (bu belgedeki önerilerdir; kol uygulamadan önce
 koordinatör üzerinden teyit ister):
@@ -435,6 +447,42 @@ okunamadığı; Play Hizmetleri'nin uygulama güncellemesinden sonra kayıtları
 
 ---
 
+## 4A. Arayüz: Sahne yönü
+
+Arayüz için üç yönlü prototip hazırlandı; kullanıcı "Sahne" yönünü seçti (2026-11-27).
+
+**Fikir.** Her kaydın bir resmi vardır; gün, sıradaki iş en büyük olacak şekilde renkli levhalardan kurulur.
+Taslak (asistanın önerdiği, onay bekleyen kayıt) karakalemdir, onaylanınca boyanır. Hareket yaylıdır: levha
+büyüyüp ayrıntıya dönüşür, aşağı çekince kapanır; yeni kayıtta başlık yazılırken çizim ve renk kendiliğinden
+gelir; tamamlanan iş solar. Ayrıntıda kapak, çizim ile kullanıcının fotoğrafı arasında değişebilir.
+Yoğunluk düşüktür.
+
+**Öteki iki yönden alınabilecek parçalar.** "Cetvel"in mezura biçimli saat seçicisi; "Tabela"nın satırı sağa
+çekerek tamamlaması ve sekmeli ayrıntısı.
+
+**Zayıf yanı.** Çok kayıtlı günde liste uzar; yoğun gün için çözüm tasarlanmalı.
+
+**Android'de pahalı ya da kırılgan olacaklar**
+
+- 20–30 vektör çizimlik takım ve anahtar sözcük tablosu (prototipte 10 çizim).
+- Çizimlerin parça parça canlanması (köpük, imza, buhar gibi).
+- Karakalemden boyamaya geçiş için her çizimin hem çizgi hem dolgu hâli.
+- Levhanın ayrıntıya büyümesi (paylaşılan öğe geçişi).
+- Prototipteki fotoğraf greni ve bulanıklık yalnız dolgudur, taşınmaz.
+- Yazı tipi açık lisanslı olmalı ve uygulamaya gömülmelidir.
+
+**Teknik yön.** Görünüm katmanı yeniden yazılır; Jetpack Compose'a (AndroidX) geçiş önerilir. Çekirdek
+(kayıtlar, eşitleme, alarmlar) ve ekran denetleyicilerindeki mantık korunur.
+
+**Prototip.** Tek dosyalık bir HTML'dir; arayüz kolu onu ilk işinde `apps/ajanda/tasarim/` altına tasarım
+kaynağı olarak depoya alır (kişisel iz taramasından sonra). Prototip yalnız öykünmeyle sınandı; gerçek
+telefonda parmakla denenmedi.
+
+**Kaydın çizimi.** Sözleşme v3'teki açık kümeli simge anahtarından gelir; telefon başlıktan önerir,
+kullanıcı ya da asistan değiştirebilir; kullanıcının kapak fotoğrafı çizimin yerini alır.
+
+---
+
 ## 5. Play Store koşulları
 
 Araştırma 2026-11-27'de resmi sayfalar okunarak yapıldı. Sayfaların çoğunda güncelleme tarihi yoktur;
@@ -532,9 +580,10 @@ Sürüm uyumu sözleşmesi (D5) "Eren'e bağlan" yolunu belli bir harness'a bağ
 | Kol | İş | Sıra |
 |---|---|---|
 | **A – koordinatör** | Birleştirme, ana dala gönderme, canlı servise kurulum, telefona APK; takvim ekranı; PC oturumu yolunun izlenmesi; sonra yayın hazırlığı (D7) | Sürekli |
-| **B – bağımsız kip** | D1 → D2 → D3 → D4 → D6 | D3, D1 ile paralel başlayabilir |
-| **C – sürüm uyumu** | D5; ardından bölge için sözleşme v3 ve servis tarafı; sonra D8 | Rust kısmı B'nin D1'inden sonra |
-| **H – harness bağımsızlığı** | Önce döküm ve tasarım (salt okuma); kullanıcı onayından sonra uygulama | Bağımsız |
+| **B – bağımsız kip** | D1 ve D2 birleşti; sıra D2 düzeltmeleri → D3 → D4 → D6. D3, D4 ve D6'daki ekran işi U'ya geçti: B mantığı, köprü yüzeyini ve denetleyici düzeyinde sınanabilir arayüzü teslim eder, gereken ekranı U'ya tarif eder | D2 düzeltmeleri ve D3 sürüyor |
+| **C – sürüm uyumu** | D5 servis dilimi birleşti; sözleşme v3 (ayrıntı, bağlantılar, ek üstverisi, simge, bölge ve varış) ve ek yedeği dalında sürüyor; Rust kanal aşaması D2'den sonra; sonra D8 | Sürüyor |
+| **U – arayüz** | Görünüm katmanının "Sahne" yönünde yeniden yazımı: Compose'a geçiş, bugün/takvim/ayrıntı/yeni kayıt ekranları, çizim takımı, hareketler; fotoğraf seçme, küçültme ve telefonda saklama; sonra B'nin teslim ettiği mantık için ekranlar (ayarlar, ilk açılış, dışa/içe aktarma, birleştirme önizlemesi, geçmiş) | B ve C ile paralel |
+| **H – harness bağımsızlığı** | Tasarım ve H2 birleşti; H1 (tasdik çerçevesi, tasdikin oturuma bağlanması) sürüyor; H3 ölçümü kullanıcı onayı bekliyor | Bağımsız |
 
 Sırada bekleyenler (kol atanmadı): bölge hatırlatmasının uygulama tarafı (Rust `kural/varis`, Kotlin
 `konum/`, ekranlar; B'nin D1'i ve C'nin D5'i ile v3 sözleşmesinden sonra), sesli hızlı not, tekrar
@@ -556,8 +605,9 @@ yasaktır.
 **Kol B (bağımsız kip)**
 
 - Sahip: `apps/ajanda/cekirdek/**` (depo, motor, köprü, kip ve geçmiş için model eklemeleri);
-  `apps/ajanda/android/app/src/**` içinde eşleştirme, ayarlar, ilk açılış, geçmiş, dışa/içe aktarma
-  ekranları ve ilgili testler; `apps/ajanda/MIMARI.md` ve `apps/ajanda/README.md` içinde kendi dilimlerinin
+  `apps/ajanda/android/app/src/**` içinde `alarm/`, `ag/`, `kimlik/` paketlerindeki mantık ve
+  `CekirdekErisimi.kt` ile ilgili testler (B artık `ekran/**` altında yazmaz; ekranlar Kol U'dadır);
+  `apps/ajanda/MIMARI.md` ve `apps/ajanda/README.md` içinde kendi dilimlerinin
   bölümleri.
 - Okur: `apps/phone/**` (sözleşme, vektörler, servis davranışı).
 - Yasak: `apps/phone/**` içinde yazmak (D1–D4 ve D6'da servis değişmez; gerekirse C'den ya da
@@ -573,6 +623,17 @@ yasaktır.
 - Okur: `apps/ajanda/**`.
 - Yasak: `apps/ajanda/android/**`, canlı kurulum (`kurulum/kur.ts` çalıştırmak), ölçüm uygulamaları,
   `packages/**`.
+
+**Kol U (arayüz)**
+
+- Sahip: `apps/ajanda/android/app/src/**/ekran/**` ve arayüz kaynakları (`res/**`); yeni fotoğraf/ek paketi
+  `apps/ajanda/android/app/src/**/ek/**`; `apps/ajanda/tasarim/**`; Compose geçişi için
+  `apps/ajanda/android/app/build.gradle.kts`, `apps/ajanda/android/gradle.properties`,
+  `apps/ajanda/android/build.gradle.kts`, `settings.gradle.kts`; `AndroidManifest.xml` içinde yalnız
+  arayüzün gerektirdiği değişiklikler (koordinatöre haber vererek).
+- Okur: `apps/ajanda/cekirdek/**`, `apps/phone/**`.
+- Yasak: `apps/ajanda/cekirdek/**` içinde yazmak (köprüde eksik yüzeyi B ya da C'den ister); `alarm/`, `ag/`,
+  `kimlik/` paketlerindeki mantık (yalnız ekranları); `apps/phone/**`; ölçüm uygulamaları; `packages/**`.
 
 **Kol H (harness bağımsızlığı, ilk aşama)**
 
@@ -591,7 +652,8 @@ dokunulmaz, commit'lenmez. Ana kopyanın yanındaki başka işlere ait kardeş �
 | `apps/ajanda/cekirdek/src/depo/sema.rs` | Göç numaraları sabittir: **D1 yerel göç 4** (B), **bölge göç 5** (bölge kolu, sonra). Başka göç gerekirse numara koordinatörden alınır. Şema sürümünü bekleyen testler (`KopruTest`, `tests/yukseltme.rs`) aynı değişiklikte güncellenir |
 | `apps/ajanda/cekirdek/src/kopru/mod.rs`, `kopru/tipler.rs` | Yalnız ekleme; mevcut yöntem imzası değişmez. Sıra: takvim (birleşti) → B (D1) → C (D5) → bölge |
 | `apps/ajanda/cekirdek/src/model/kayit.rs`, `model/cerceve.rs`, `motor/kanal.rs` | Önce B (D1 gerekiyorsa), sonra C (D5), sonra v3 |
-| `apps/ajanda/android/app/src/main/AndroidManifest.xml`, `app/build.gradle.kts`, `gradle.properties` | Parallel kollar değiştirmez; gereken değişikliği koordinatöre bildirir, koordinatör uygular (konum izinleri, Play Hizmetleri bağımlılığı, yayın ayarları) |
+| `apps/ajanda/android/app/build.gradle.kts`, `android/gradle.properties`, `android/build.gradle.kts`, `settings.gradle.kts` | Sahibi Kol U (Compose geçişi). Konum izinleri, Play Hizmetleri bağımlılığı ve yayın ayarları yine koordinatörle sıraya girer |
+| `apps/ajanda/android/app/src/main/AndroidManifest.xml` | Diğer paralel kollar değiştirmez; gereken değişikliği koordinatöre bildirir, koordinatör uygular (konum izinleri, yayın ayarları). Kol U yalnız arayüzün gerektirdiği değişiklikleri yapar, koordinatöre haber vererek |
 | `apps/ajanda/android/**/alarm/Bildirimler.kt` | Bildirim eylemi ekleyen kol (bölge) koordinatörle sıraya girer |
 | `apps/phone/protocol/src/ajanda.ts`, `ajanda-zaman.ts`, vektör dosyaları | C. Yeni vektör, Rust tarafı yetişene kadar çekirdek vektör testini kırabilir: koşucunun "bekliyor" işaretleme yoluna `cekirdek/tests/vektorler.rs` içinden bakın; vektör ve Rust karşılığı aynı birleştirmede gelmeli ya da vektör bekliyor olarak işaretlenmeli |
 | `apps/phone/docs/AJANDA.md` | C yazar; B ve H değişiklik isteğini C'ye ya da koordinatöre iletir |
@@ -649,6 +711,8 @@ dokunabileceğini sınırlar; yeni servis modülü bu kısıtlara uyar.
     dal kaldırılır. Bunu kol değil koordinatör yapar ya da kol koordinatöre haber vererek yapar.
 13. **Kolların kendi iç düzeni:** her kol işini dar alt görevlere böler, sonucu kendisi doğrular; "bitti"
     demek kanıt değildir (test çıktısı, değişen dosyaların sınır denetimi).
+14. **Kollar izin sormadan çalışır ve kullanıcıya kendi pencerelerinde soru sormaz.** Soru, ürün kararı ve
+    onay isteği koordinatöre yazılır; koordinatör kullanıcıya sorar ve cevabı iletir.
 
 ---
 
@@ -656,13 +720,13 @@ dokunabileceğini sınırlar; yeni servis modülü bu kısıtlara uyar.
 
 **PC oturumu yolu**
 
-- `kurulum/claude-code.ts goster` çıktısındaki `claude mcp add … -- …` satırı PowerShell'de `--` yüzünden
-  başarısız oluyor (`unknown option`); Git Bash'te çalışıyor. Çıktı kabuğa göre doğru biçimi vermeli ya da
-  kabuktan bağımsız bir yol önermeli.
+- (Çözüldü, H2) `kurulum/claude-code.ts goster` çıktısındaki `claude mcp add … -- …` satırı PowerShell'de
+  `--` yüzünden başarısız oluyordu (`unknown option`); yönerge artık PowerShell, Git Bash ve cmd için ayrı
+  satır veriyor.
 - PC tekilleştirmesi oturumlar arası ortak: bir oturumdaki alt agent taslağı, başka oturumda ana agent aynı
   tür/başlık/zamanla ekleme yapınca onaylanır; taslağın açıklaması ve hatırlatmaları kayda geçer. Önerilen
-  dar çözüm uygulanmadı: eş taslak başka oturumun sentetik yazarındansa, onayda insanın vermediği alanlar
-  taşınmasın. Telefon yolunun davranışı değişmemeli.
+  dar çözüm (eş taslak başka oturumun sentetik yazarındansa, onayda insanın vermediği alanlar taşınmasın;
+  telefon yolunun davranışı değişmemeli) Kol C'nin v3 dalında uygulandı; v3 ile birleşecek.
 - Ayrı pencerede çalışan ekip üyesinin (agent teams) çağrısının `insan` sayılıp sayılmadığı ölçülmedi.
 - Etkileşimli oturumda `insan` kararı kurulumdan sonra henüz gözlenmedi
   (`eren eslestir --claude-code --teshis`).
@@ -671,6 +735,19 @@ dokunabileceğini sınırlar; yeni servis modülü bu kısıtlara uyar.
 - Proje düzeyinde kancaları kapatan ayar teşhiste okunamıyor; yalnız metinde anılıyor.
 - Alt agent ayrımı tek bir harness alanına dayanıyor; Claude Code güncellemesinden sonra bir alt agent
   sınaması önerilir.
+
+**Bağımsız kip ve sürüm uyumu (2026-11-27 gözden geçirmesi)**
+
+- D2 gözden geçirmesinin açık bulguları (Kol B kapatıyor): servis yedekten dönünce revizyon karşılaştırması
+  yanıltıyor (silinmiş kayıt dirilebilir ya da telefonun son değişikliği kaybolabilir); temel servis
+  kopyasıyken telefonun dokunmadığı alanlar da gidiyor (karar: yalnız telefonun eski temelden farklı
+  alanları gider); aynı revizyonda içerik denetimi şema genişlemesinde yanlış pozitif verir (v3'ten önce
+  kapatılmalı); açılış onarımı hata verirse çekirdek açılmıyor.
+- D5 kuralı: bir sınırı daraltan şema değişikliği göçle gelmeli; depoda şemaya uymayan kayıt tam telafiyi
+  kilitler.
+- Eşleştirme ekranındaki "kopya ve hatırlatmalar silinir" onay metni D2'den sonra yanlış (eşleşmeyi kaldırma
+  artık koparmadır); yeni arayüzde düzeltilecek.
+- Bölge ölçümü 4 günlük kısa planla yürütülüyor; telefona ölçüm uygulaması gönderildi, rapor bekleniyor.
 
 **Takvim**
 
