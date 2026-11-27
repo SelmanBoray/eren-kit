@@ -23,6 +23,12 @@ Bilgiler google/fonts deposundaki `METADATA.pb` dosyalarından alındı (2026-11
 - `latin-ext` alt kümesi Türkçe harfleri (ı, İ, ş, ğ, ç, ö, ü) kapsar; prototipin ekran görüntülerinde
   bu harfler Bricolage Grotesque ile çizilmiş görünüyor (`goruntu/1-bugun-acik.png`).
 
+## Uygulamaya gömülen varlıklar
+
+| Ad | Dosya | Kaynak | Biçim | Boyut | sha256 | Tasarımcı | Lisans | Telif | Lisans metni |
+|---|---|---|---|---|---|---|---|---|---|
+| Bricolage Grotesque (gömülü) | `apps/ajanda/android/app/src/main/res/font/bricolage_grotesque.ttf` | google/fonts deposu, `ofl/bricolagegrotesque` | Değişken eksenler opsz/wdth/wght | 408.496 bayt | `413e7357809ddd12fd80a96a8a396de0e401638d4acd3cb3e37532f0472ac682` | Mathieu Triay | SIL OFL 1.1; ayrılmış yazı tipi adı yok; dosya değiştirilmedi | Copyright 2022 The Bricolage Grotesque Project Authors | `app/src/main/res/raw/ofl_bricolage_grotesque.txt`; uygulamada Ayarlar > Açık kaynak lisansları ekranında gösterilir |
+
 ## OFL 1.1'in uygulama için gerektirdikleri
 
 - Yazı tipi uygulamayla birlikte dağıtılabilir, ticari uygulamada da kullanılabilir.
