@@ -77,7 +77,7 @@ fn degistir(taban: &Value, f: impl FnOnce(&mut Value)) -> String {
 }
 
 fn uygula(h: &Hat, b: &str) -> IceAktarmaOnizlemesi {
-    let s = h.c.ice_aktar(b.to_string(), None).unwrap();
+    let s = h.ice_aktar_onayla(b);
     assert!(s.uygulandi);
     s.plan
 }
@@ -108,7 +108,8 @@ fn bicim_sabitleri_koprude() {
     let b = aktarma_bicimi();
     assert_eq!((b.belge_adi.as_str(), b.ekler_dizini.as_str(), b.bicim_surumu), ("ajanda.json", "ekler/", 1));
     assert_eq!(b.ek_azami_bayt, 4 * 1024 * 1024);
-    assert_eq!(b.belge_azami_bayt, 32 * 1024 * 1024);
+    // Modelden hesaplanan: `KAYIT_ADET` × (en büyük kayıt + virgül) + dolu ek dizini + üst düzey.
+    assert_eq!(b.belge_azami_bayt, 1_900_614_096);
 }
 
 /// Dışa aktar -> boş telefona içe aktar: kayıtlar alan alan aynı (revizyon dışında), mezar taşı, örnek
@@ -568,6 +569,7 @@ fn hata_mesajlarinda_icerik_sizmaz() {
     assert_eq!(on.gecersiz, 8);
     let mut metinler = vec![format!("{on:?}")];
     metinler.push(format!("{:?}", b.c.ice_aktar(v.to_string(), None).unwrap()));
+    metinler.push(format!("{:?}", b.ice_aktar_onayla(&v.to_string())));
     let ust = |f: fn(&mut Value)| degistir(&taban, f);
     let belgeler = vec![
         format!("{{\"bicim\": \"{GIZLI}"),
@@ -648,8 +650,10 @@ fn buyuk_kopyada_aktarma_sureleri() {
     let mut p = Hat::yeni("buyuk-aktarma-bagli");
     p.eslestir();
     p.kopar();
+    let on3 = p.c.ice_aktarma_onizlemesi(d.belge.clone()).unwrap();
     let t = Instant::now();
-    let s = p.c.ice_aktar(d.belge.clone(), None).unwrap();
+    let s = p.c.ice_aktar(d.belge.clone(), Some(on3.iz)).unwrap();
+    assert!(s.uygulandi);
     let bagli = t.elapsed();
     let canli = adet - adet.div_ceil(50);
     assert_eq!((s.plan.yeni as usize, s.plan.gonderilmeyecek as usize), (canli, adet.div_ceil(50)));

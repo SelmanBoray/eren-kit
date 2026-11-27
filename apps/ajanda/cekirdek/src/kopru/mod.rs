@@ -453,10 +453,13 @@ impl Cekirdek {
         self.calistir(|m, o, _| m.ice_aktarma_onizlemesi(o, &belge))
     }
 
-    /// İçe aktarma, tek işlemde (ya hepsi ya hiçbiri). `iz`: önizlemenin `iz`'i; verilirse ve telefon bu arada
+    /// İçe aktarma, tek işlemde (ya hepsi ya hiçbiri). `iz`: önizlemenin `iz`'i, zorunlu; telefon bu arada
     /// planı değiştirecek kadar değiştiyse hiçbir şey yazılmaz, `uygulandi` yanlış ve `plan` yeni önizlemedir.
-    /// `None`: şimdiki plan uygulanır. Yerel kipte kayıtlar alanlarıyla yazılır (yerel geçmiş, alarm); bağlı
-    /// kipte işlemler kuyruğa girer (servis yazar). Gözlemciye `kayitlar` (çoksa `tumu`), bağlı kipte `baglanti`.
+    /// `None`: hiçbir şey yazılmaz, şimdiki plan döner (kullanıcının görmediği plan uygulanmaz). Yerel kipte
+    /// kayıtlar alanlarıyla yazılır (yerel geçmiş, alarm; okunamayan telefon satırının metni ret listesine);
+    /// bağlı kipte işlemler kuyruğa girer (servis yazar). Gözlemciye `kayitlar` (çoksa `tumu`), ret listesine
+    /// satır düştüyse `ret_listesi`, bağlı kipte `baglanti`. Uygulandıktan sonra kuyruğun hatası çağrıyı
+    /// başarısız yapmaz.
     pub fn ice_aktar(&self, belge: String, iz: Option<String>) -> Result<IceAktarmaSonucu, CekirdekHatasi> {
         self.calistir(|m, o, e| m.ice_aktar(o, e, &belge, iz.as_deref()))
     }
@@ -472,9 +475,11 @@ impl Cekirdek {
     }
 
     /// Onay: tek işlemde dökme (D2 kuralları), olası çiftler kaydedilir, kip `Bagli`, kuyruk yollanır.
-    /// `iz`: önizlemenin `iz`'i; plan bu arada değiştiyse hiçbir şey yazılmaz, `uygulandi` yanlış ve `plan` yeni
-    /// önizlemedir (yeniden gösterilip yeni `iz`'le onaylanır). Bekleyen yoksa (bağlantı koptu: sonraki
-    /// bağlantıda yeniden sorulur) `uygulandi` yanlış, `plan` `None`. Gözlemciye `tumu`, `baglanti`.
+    /// `iz`: önizlemenin `iz`'i, zorunlu; `None` ya da plan bu arada değiştiyse hiçbir şey yazılmaz, `uygulandi`
+    /// yanlış ve `plan` şimdiki önizlemedir (yeniden gösterilip onun `iz`'iyle onaylanır). Bekleyen yoksa
+    /// `uygulandi` yanlış, `plan` `None`: `zaten_uygulandi` doğruysa bu iz daha önce uygulandı (ikinci ya da
+    /// gecikmiş çağrı), değilse bağlantı koptu (sonraki bağlantıda yeniden sorulur). Dökme kalıcı olunca çağrı
+    /// başarılıdır; kuyruğun yollanmasındaki hata onu değiştirmez. Gözlemciye `tumu`, `baglanti`.
     pub fn birlestirmeyi_onayla(&self, iz: Option<String>) -> Result<BirlestirmeSonucu, CekirdekHatasi> {
         self.calistir(|m, o, e| m.birlestirmeyi_onayla(o, e, iz.as_deref()))
     }

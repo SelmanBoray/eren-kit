@@ -150,7 +150,8 @@ fn onayli_dokme_d2_kurallariyla_ayni_sonucu_verir() {
     elle.otomatik_onay = false;
     senaryo(&mut elle);
     bekliyor(&elle);
-    assert!(elle.c.birlestirmeyi_onayla(None).unwrap().uygulandi);
+    let p = elle.c.birlestirme_onizlemesi().unwrap().expect("onay bekliyor");
+    assert!(elle.c.birlestirmeyi_onayla(Some(p.iz)).unwrap().uygulandi);
     elle.pompala();
     let mut kendi = Hat::yeni("birlestir-kendi");
     senaryo(&mut kendi);

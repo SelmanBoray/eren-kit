@@ -787,8 +787,10 @@ impl Hat {
             }
             let giden: Vec<String> = std::mem::take(&mut *b.tasima.giden.lock().unwrap());
             if giden.is_empty() {
-                if self.otomatik_onay && self.c.birlestirme_onizlemesi().unwrap().is_some() {
-                    assert!(self.c.birlestirmeyi_onayla(None).unwrap().uygulandi);
+                if self.otomatik_onay
+                    && let Some(p) = self.c.birlestirme_onizlemesi().unwrap()
+                {
+                    assert!(self.c.birlestirmeyi_onayla(Some(p.iz)).unwrap().uygulandi);
                     continue;
                 }
                 return;
@@ -822,5 +824,11 @@ impl Hat {
 
     pub fn canli_mi(&self) -> bool {
         self.c.baglanti_durumu().unwrap().asama == ajanda_cekirdek::kopru::tipler::BaglantiAsamasi::Canli
+    }
+
+    /// Kullanıcının içe aktarma yolu: önizleme, sonra onun iziyle uygulama (iz zorunlu).
+    pub fn ice_aktar_onayla(&self, belge: &str) -> ajanda_cekirdek::kopru::tipler::IceAktarmaSonucu {
+        let on = self.c.ice_aktarma_onizlemesi(belge.to_string()).unwrap();
+        self.c.ice_aktar(belge.to_string(), Some(on.iz)).unwrap()
     }
 }

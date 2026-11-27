@@ -373,7 +373,9 @@ pub struct AktarmaBicimi {
     pub ekler_dizini: String,
     /// Bu uygulamanın yazdığı (ve okuyabildiği en yeni) biçim sürümü.
     pub bicim_surumu: i64,
-    /// Belgenin en çok bayt uzunluğu; daha büyüğü okunmadan reddedilmeli (çekirdek de reddeder).
+    /// Belgenin en çok bayt uzunluğu; daha büyüğü okunmadan reddedilmeli (çekirdek de reddeder). Dışa
+    /// aktarmanın yazabileceği en büyük belgedir (modelin sınırlarından, ~1,77 GiB; `motor/aktarma.rs`
+    /// `BELGE_AZAMI_BAYT`): çekirdeğin yazdığı belge bu sınırla reddedilmez. Bellek sınırı değildir.
     pub belge_azami_bayt: u64,
     /// Bir ek dosyasının en çok bayt uzunluğu.
     pub ek_azami_bayt: u64,
@@ -470,13 +472,24 @@ pub struct IceAktarmaOnizlemesi {
     /// doğurur): gönderilmez. Yerel kipte hep 0 (taslak taslak olarak yazılır).
     #[uniffi(default = 0)]
     pub taslak_gonderilmeyecek: i32,
+    /// `guncellenecek`'lerden telefonda taslak (onaylanmamış öneri) olup dosyadaki daha yeni onaylı halle
+    /// onaylanacaklar: bağlı kipte `onayla` işlemi servise gider (hatırlatma kurulur), yerel kipte doğrudan.
+    /// Kullanıcıya ayrıca söylenmeli (onaylamak, yedekteki onaylı hali seçmektir).
+    #[uniffi(default = 0)]
+    pub taslak_onaylanacak: i32,
+    /// Yerel kipte: `guncellenecek`'lerden telefondaki satırı okunamayanlar. Dosyadaki hal yazılır, telefondaki
+    /// eski metin kaybolmasın diye ret listesine düşer (`tutarsiz_kayit`; oradan düzeltilebilir ya da
+    /// atılabilir). Bağlı kipte hep 0 (okunamayan satır atlanır: `atlanacak`).
+    #[uniffi(default = 0)]
+    pub okunamayan_ret_listesine: i32,
 }
 
 /// `Cekirdek::ice_aktar`'ın sonucu.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct IceAktarmaSonucu {
-    /// Yanlışsa hiçbir şey yazılmadı: verilen iz şimdiki planınkiyle tutmadı (telefon önizlemeden sonra
-    /// değişti). `plan` yeni önizlemedir; kullanıcıya yeniden gösterilip onayıyla yeni `iz`'le çağrılır.
+    /// Yanlışsa hiçbir şey yazılmadı: iz verilmedi ya da şimdiki planınkiyle tutmadı (telefon önizlemeden
+    /// sonra değişti; aynı belgenin ikinci uygulamasında da: plan artık "aynı"lardır). `plan` şimdiki
+    /// önizlemedir; kullanıcıya yeniden gösterilip onayıyla yeni `iz`'le çağrılır.
     pub uygulandi: bool,
     /// Uygulanan (ya da `uygulandi` yanlışsa uygulanacak) planın sayıları.
     pub plan: IceAktarmaOnizlemesi,
@@ -551,10 +564,15 @@ pub struct OlasiCift {
 /// `Cekirdek::birlestirmeyi_onayla`'nın sonucu.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct BirlestirmeSonucu {
-    /// Yanlışsa hiçbir şey yazılmadı.
+    /// Yanlışsa bu çağrı hiçbir şey yazmadı. Doğruysa birleştirme kalıcıdır (sonraki adımın, kuyruğun
+    /// yollanmasının hatası bunu değiştirmez).
     pub uygulandi: bool,
-    /// Uygulanan plan; `uygulandi` yanlışsa: `Some` plan önizlemeden sonra değişti (yeni plan, yeni `iz`'le
-    /// yeniden onaylanır), `None` onay bekleyen birleştirme yok (bağlantı koptu: sonraki bağlantıda yeniden
-    /// sorulur; ya da kip zaten bağlı).
+    /// Uygulanan plan; `uygulandi` yanlışsa: `Some` iz verilmedi ya da plan önizlemeden sonra değişti (şimdiki
+    /// plan, onun `iz`'iyle yeniden onaylanır), `None` onay bekleyen birleştirme yok: `zaten_uygulandi`
+    /// doğruysa bu iz daha önce uygulandı, değilse bağlantı koptu (sonraki bağlantıda yeniden sorulur).
     pub plan: Option<BirlestirmeOnizlemesi>,
+    /// Bekleyen birleştirme yok ve verilen `iz` en son uygulanan birleştirmeninki: ikinci (ya da gecikmiş)
+    /// onay çağrısı. "Bağlantı koptu" değildir; birleştirme yapılmıştır.
+    #[uniffi(default = false)]
+    pub zaten_uygulandi: bool,
 }

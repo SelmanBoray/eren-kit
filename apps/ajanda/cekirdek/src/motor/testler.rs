@@ -260,7 +260,12 @@ fn yerel_kipte_baglanma_temeli_korur_esitlendide_doker() {
     let e = d.cerceve(AjandaAsagi::Esitlendi { rev: 5 });
     assert!(e.degisim.baglanti && !e.degisim.tumu && e.gonderilecek.is_empty());
     assert!(d.m.tam_telafi_suruyor() && d.m.yerel_mi().unwrap() && d.m.depo.kuyruk().unwrap().is_empty());
-    let (r, e) = d.calistir(|m, o, e| m.birlestirmeyi_onayla(o, e, None));
+    // İzsiz onay hiçbir şey yazmaz, şimdiki planı verir; onun iziyle uygulanır.
+    let (r, _) = d.calistir(|m, o, e| m.birlestirmeyi_onayla(o, e, None));
+    let r = r.unwrap();
+    assert!(!r.uygulandi && !r.zaten_uygulandi && d.m.yerel_mi().unwrap() && d.m.depo.kuyruk().unwrap().is_empty());
+    let iz = r.plan.expect("şimdiki plan").iz;
+    let (r, e) = d.calistir(|m, o, e| m.birlestirmeyi_onayla(o, e, Some(&iz)));
     assert!(r.unwrap().uygulandi);
     assert!(d.m.canli_mi() && !d.m.yerel_mi().unwrap());
     assert!(e.degisim.tumu && e.degisim.baglanti);

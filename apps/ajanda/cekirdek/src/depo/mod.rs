@@ -58,6 +58,9 @@ pub mod anahtar {
     pub const BIRLESTIRME: &str = "birlestirme_bekliyor";
     /// Birleştirmede işaretlenen olası çiftler (D4, JSON `[[telefondaki, servisteki], ...]`; `motor/birlestirme.rs`).
     pub const OLASI_CIFTLER: &str = "olasi_ciftler";
+    /// En son uygulanan birleştirmenin izi (D4, `motor/birlestirme.rs`): dökmeyle aynı işlemde yazılır;
+    /// bekleyen yokken aynı izle gelen onay "zaten uygulandı"dır, "bağlantı koptu" değil.
+    pub const SON_BIRLESTIRME_IZI: &str = "son_birlestirme_izi";
 }
 
 pub struct Depo {

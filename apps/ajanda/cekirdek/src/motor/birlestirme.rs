@@ -10,11 +10,13 @@
 //!   `BaglantiAsamasi.Telafi`; servis telefonu canlı sayar, gelen canlı `kayit`'ler toplanan kopyaya yazılır),
 //!   `meta.birlestirme_bekliyor` servisin `depo_id`'sini taşır. Gözlemciye `Degisim.baglanti`; arayüz
 //!   `birlestirme_onizlemesi()` ile planı okur. Yerel yazmalar sürer (kip yerel).
-//! - Onay (`birlestirmeyi_onayla(iz)`): tek SQLite işleminde plan yeniden kurulur; `iz` verildiyse ve şimdiki
-//!   planınkiyle tutmuyorsa (önizlemeden sonra telefon ya da servisin kopyası planı değiştirdi) hiçbir şey
-//!   yazılmaz, yeni plan döner (D3 `ice_aktar` kalıbı). Tutuyorsa dökme (`yerel::yereli_kuyruga_dok`, D2
-//!   kuralları; işlemler bugünkü kuyruğa koyma yoluyla girer), olası çiftler kaydedilir, kip `Bagli`, bağlantı
-//!   `Canli`, kuyruk yollanmaya başlar.
+//! - Onay (`birlestirmeyi_onayla(iz)`): tek SQLite işleminde plan yeniden kurulur; `iz` zorunludur: yoksa ya da
+//!   şimdiki planınkiyle tutmuyorsa (önizlemeden sonra telefon ya da servisin kopyası planı değiştirdi) hiçbir
+//!   şey yazılmaz, şimdiki plan döner (D3 `ice_aktar` kalıbı). Tutuyorsa dökme (`yerel::yereli_kuyruga_dok`, D2
+//!   kuralları; işlemler bugünkü kuyruğa koyma yoluyla girer), olası çiftler ve iz (`meta.son_birlestirme_izi`)
+//!   kaydedilir, kip `Bagli`, bağlantı `Canli`, kuyruk yollanmaya başlar. Dökme kalıcı olduktan sonra
+//!   kuyruğun hatası çağrıyı başarısız yapmaz. Bekleyen yokken aynı izle gelen onay `zaten_uygulandi`'dır
+//!   (ikinci ya da gecikmiş çağrı "bağlantı koptu" ile karışmaz).
 //! - Bağlantı onaydan önce koparsa ya da süreç ölürse toplanan kopya ve işaret atılır (`telafiyi_sil`: kopma,
 //!   `Motor::ac`, yeni `welcome`): hiçbir kayıt değişmemiştir, kip yerel kalır, sonraki bağlantı servisin
 //!   kopyasını yeniden alır ve yeniden sorar. Kopya saklanmaz: onay her zaman servisin o anki kopyasına
@@ -297,12 +299,19 @@ impl Motor {
         Ok(Some(onizleme_kur(&self.depo, &depo_id, &plan)?))
     }
 
-    /// Onay: tek SQLite işleminde plan yeniden kurulur; `iz` verildiyse ve tutmuyorsa hiçbir şey yazılmaz
-    /// (`uygulandi` yanlış, yeni plan). Tutuyorsa dökme; kalıcı olunca `esitlendi` sonundaki gibi: geçmiş
-    /// önbelleği atılır, alarmlar ve `Degisim.tumu` (ret düştüyse `ret_listesi`), bağlantı canlı, kuyruk ilerler.
-    /// Bekleyen birleştirme yoksa (bağlantı koptu, kip bağlı) hiçbir şey yazılmaz, `plan` `None`.
+    /// Onay: tek SQLite işleminde plan yeniden kurulur; `iz` zorunludur: yoksa ya da tutmuyorsa hiçbir şey
+    /// yazılmaz (`uygulandi` yanlış, şimdiki plan). Tutuyorsa dökme ve izin kaydı; kalıcı olunca `esitlendi`
+    /// sonundaki gibi: geçmiş önbelleği atılır, alarmlar ve `Degisim.tumu` (ret düştüyse `ret_listesi`),
+    /// bağlantı canlı, kuyruk ilerler. Kalıcı işlemden sonraki adımın (kuyruğun) hatası çağrıyı başarısız
+    /// yapmaz: birleştirme uygulanmıştır, kuyruk sonraki tetikte (sonuç, yeni bağlantı) yeniden dener.
+    /// Bekleyen birleştirme yoksa hiçbir şey yazılmaz, `plan` `None`; iz en son uygulanan birleştirmeninkiyse
+    /// `zaten_uygulandi` (ikinci ya da gecikmiş onay), değilse bağlantı koptu.
     pub(crate) fn birlestirmeyi_onayla(&mut self, o: &Ortam, e: &mut Etkiler, iz: Option<&str>) -> Result<BirlestirmeSonucu, CekirdekHatasi> {
-        let Some(depo_id) = self.bekleyen_birlestirme()? else { return Ok(BirlestirmeSonucu { uygulandi: false, plan: None }) };
+        let Some(depo_id) = self.bekleyen_birlestirme()? else {
+            let son = self.depo.meta_oku(anahtar::SON_BIRLESTIRME_IZI)?;
+            let zaten_uygulandi = iz.is_some() && son.as_deref() == iz;
+            return Ok(BirlestirmeSonucu { uygulandi: false, plan: None, zaten_uygulandi });
+        };
         self.telafi_tamponunu_yaz(o, e)?;
         let cevirici = o.cevirici();
         let b = self.iyimser_baglam(o, &cevirici)?;
@@ -310,11 +319,13 @@ impl Motor {
             let son_rev = d.telafi_son_rev()?;
             let plan = dokme_plani(d, &depo_id)?;
             let onizleme = onizleme_kur(d, &depo_id, &plan)?;
-            if iz.is_some_and(|i| i != onizleme.iz) {
-                return Ok((BirlestirmeSonucu { uygulandi: false, plan: Some(onizleme) }, false));
+            // İz zorunlu: kullanıcının görmediği plan uygulanmaz.
+            if iz != Some(onizleme.iz.as_str()) {
+                return Ok((BirlestirmeSonucu { uygulandi: false, plan: Some(onizleme), zaten_uygulandi: false }, false));
             }
             let ret = uygula(d, o, &b, &depo_id, son_rev, &plan, &onizleme.olasi_ciftler)?;
-            Ok((BirlestirmeSonucu { uygulandi: true, plan: Some(onizleme) }, ret))
+            d.meta_yaz(anahtar::SON_BIRLESTIRME_IZI, Some(&onizleme.iz))?;
+            Ok((BirlestirmeSonucu { uygulandi: true, plan: Some(onizleme), zaten_uygulandi: false }, ret))
         })?;
         if !sonuc.uygulandi {
             return Ok(sonuc);
@@ -326,7 +337,7 @@ impl Motor {
         self.surum_uyusmazligi = None;
         e.degisim.baglanti = true;
         self.asama = Asama::Canli;
-        self.kuyruk_ilerlet(o, e)?;
+        let _ = self.kuyruk_ilerlet(o, e);
         Ok(sonuc)
     }
 

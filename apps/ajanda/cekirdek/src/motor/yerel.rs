@@ -644,7 +644,7 @@ pub(super) fn kayit_coz(json: &str) -> Option<AjandaKaydi> {
 /// görünen kopyada PC'nin hali durur ve girdi o kaydın düzeltmesidir (düzeltme aynı kayda uygulanır, Kotlin
 /// `RetListesi.hedef` `MevcutKayit`; PC'de silinmişse yeni kayıt); PC'de yoksa (yalnız okunamayan satır)
 /// kayıt görünen kopyadan çıkar, düzeltme yeni kayıt olarak eklenir.
-fn kaydi_ret_listesine(d: &Depo, o: &Ortam, kayit_id: &str, json: &str, ts_ms: i64) -> Result<(), CekirdekHatasi> {
+pub(super) fn kaydi_ret_listesine(d: &Depo, o: &Ortam, kayit_id: &str, json: &str, ts_ms: i64) -> Result<(), CekirdekHatasi> {
     let govde_json = serde_json::from_str::<serde_json::Value>(json).ok().and_then(|v| {
         let mut n = crate::model::json::Nesne::ac(&v, "").ok()?;
         let g = crate::model::KayitGovdesi::alanlari_oku(&mut n).ok()?;
