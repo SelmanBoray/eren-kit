@@ -860,6 +860,42 @@ describe("eslestir --pc-ajan: uyarlayıcı seçimi", () => {
       assert.match(pcTeshisMetni([tasdikYeni, izli(uyusmuyor, "x"), izli(arac("tasdik_yok"), "y")], z, kurulu), NEDEN);
     });
 
+    it("aynı iz yeniden sunulursa neden yalnız kendisinden sonraki ilk aynı izli arac'ındır; önceki sunuşun nedeni sonrakine geçmez", () => {
+      const izli = (satir: string, iz: string, ms?: number) => JSON.stringify({ ...(JSON.parse(satir) as object), cagri_izi: iz, ...(ms === undefined ? {} : { ts_ms: ms }) });
+      const IZ = "0123456789ab";
+      const NEDEN = /Günlükte görülen neden \(kanca çalışıyor; kurulum sorunu değil\):\n {2}- tasdik başka bir köprüye bağlı/;
+      const KURULUM = /Olası nedenler \(kurulu görünüyor ama tasdik gelmedi\):\n {2}- kanca öteki çağrılarda ulaşıyor/;
+      // 1) Köprü B sunar: uyuşmazlık, tasdik_yok. 2) Köprü A tüketir: insan. 3) Yeniden sunuş: nedensiz tasdik_yok.
+      const bir = [tasdikYeni, izli(uyusmuyor, IZ, 1000), izli(arac("tasdik_yok"), IZ, 1000)];
+      assert.match(pcTeshisMetni(bir, z, kurulu), NEDEN, "1. çağrının kendi nedeni");
+      const uc = [...bir, izli(arac("insan"), IZ, 2000), izli(arac("tasdik_yok"), IZ, 3000)];
+      for (const k of [kurulu, undefined]) {
+        const m = pcTeshisMetni(uc, z, k);
+        assert.equal(m.includes("Günlükte görülen neden"), false, m);
+        if (k !== undefined) assert.match(m, KURULUM);
+      }
+      // Arada insan olmadan da: iki tasdik_yok'tan yalnız ilki nedenlidir.
+      const iki = pcTeshisMetni([...bir, izli(arac("tasdik_yok"), IZ, 2000)], z, kurulu);
+      assert.equal(iki.includes("Günlükte görülen neden"), false, iki);
+      assert.match(iki, KURULUM);
+      // Aynı iz iki kez reddedilir (her biri kendi nedeniyle), sonra insan olur: insan kararında neden yazılmaz;
+      // ikinci reddin nedeni de yalnız ikinci arac'a aittir.
+      const ikiRet = [
+        tasdikYeni, izli(uyusmuyor, IZ, 1000), izli(arac("tasdik_yok"), IZ, 1000),
+        izli(yetersiz({ neden: "aktor" }), IZ, 2000), izli(arac("tasdik_yok"), IZ, 2000),
+      ];
+      const ikinci = pcTeshisMetni(ikiRet, z, kurulu);
+      assert.match(ikinci, /- tasdik yetersiz \(pc_tasdik_yetersiz\): kanca çağrının ana ajandan mı alt agent'tan mı geldiğini \(aktor\)/);
+      assert.equal(ikinci.includes("tasdik başka bir köprüye bağlı"), false, "1. reddin nedeni 2. redde geçti");
+      const sonraInsan = pcTeshisMetni([...ikiRet, izli(arac("insan"), IZ, 3000)], z, kurulu);
+      assert.equal(sonraInsan.includes("Günlükte görülen neden"), false, sonraInsan);
+      assert.match(sonraInsan, /son PC araç kararı: insan \(ana oturumun çağrısı/);
+      // İnsan sonrası yeniden sunuş nedensiz: iki reddin hiçbir nedeni geçmez.
+      const sonra = pcTeshisMetni([...ikiRet, izli(arac("insan"), IZ, 3000), izli(arac("tasdik_yok"), IZ, 4000)], z, kurulu);
+      assert.equal(sonra.includes("Günlükte görülen neden"), false, sonra);
+      assert.match(sonra, KURULUM);
+    });
+
     it("izsiz günlükte neden bağlama çıktısı iz öncesi sürümle (c3e18d6^) bayt bayt aynı", () => {
       const bas =
         "Kurulum (x):\n  araç öncesi kanca (PreToolUse, mcp__eren-ajanda__.*): ayarda kurulu.\n\n" +
