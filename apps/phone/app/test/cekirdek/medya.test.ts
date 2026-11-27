@@ -620,6 +620,138 @@ describe("yükleyici: kalıcılık", () => {
     );
   });
 
+  /** `t`'nin diskini ve dosyalarını taşıyan yeni yükleyici (yeniden açılış). */
+  const yenidenAc = async (t: ReturnType<typeof kur>) => {
+    await t.y.bosalt();
+    const t2 = kur();
+    t2.depo.kv = new Map(t.depo.kv);
+    t2.dosya.dosyalar = new Map(t.dosya.dosyalar);
+    await t2.y.yukle();
+    await t2.y.bosalt();
+    return t2;
+  };
+
+  it("reddedildi ve yerel_yok yeniden açılışta korunur: sorulmaz, yüklenmez, bekleyen sayılmaz", async () => {
+    const t = kur();
+    await t.y.yukle();
+    await t.y.ekle([yeni(t, "m-1-1"), yeni(t, "m-1-2"), yeni(t, "m-1-3")]);
+    t.bagla();
+    t.durum("m-1-1", "reddedildi", { code: "medya_siniri" });
+    t.dosya.dosyalar.delete("file:///eren-medya/m-1-2.jpg");
+    t.durum("m-1-2", "yukleniyor", { alinan: 0 });
+    await bosalt();
+    assert.deepEqual(t.y.gorunum(id("m-1-2"))?.ilerleme, { durum: "yerel_yok" });
+    // Dosya geri gelse bile yeniden açılışta yüklenmez.
+    t.dosya.dosyalar.set("file:///eren-medya/m-1-2.jpg", icerik(1000, 1000));
+    const t2 = await yenidenAc(t);
+    assert.deepEqual(t2.y.gorunum(id("m-1-1"))?.ilerleme, { durum: "reddedildi", kod: "medya_siniri" });
+    assert.deepEqual(t2.y.gorunum(id("m-1-2"))?.ilerleme, { durum: "yerel_yok" });
+    assert.deepEqual(t2.y.gorunum(id("m-1-3"))?.ilerleme, { durum: "bekliyor" });
+    assert.equal(t2.y.bekleyenSayisi(), 1);
+    assert.deepEqual(t2.y.hazirlik([id("m-1-1")]), { hata: "medya_siniri" });
+    assert.deepEqual(t2.y.hazirlik([id("m-1-2")]), { hata: "ek_bulunamadi" });
+    t2.bagla();
+    assert.deepEqual(
+      t2.giden.map((m) => [m.type, m["medya_id"]]),
+      [["media_begin", "m-1-3"]],
+    );
+    // Sonlanmış kayda geç gelen durum yükleme başlatmaz.
+    t2.durum("m-1-2", "yukleniyor", { alinan: 0 });
+    await bosalt();
+    assert.deepEqual(t2.parcalar(), []);
+    // Süpürme kayıtlı dosyalara dokunmadı.
+    assert.deepEqual(t2.dosya.silinenler, []);
+    // İkinci açılış da aynı.
+    const t3 = await yenidenAc(t2);
+    assert.equal(t3.y.bekleyenSayisi(), 1);
+    assert.deepEqual(t3.y.gorunum(id("m-1-1"))?.ilerleme, { durum: "reddedildi", kod: "medya_siniri" });
+  });
+
+  it("sonlanmış kayıt iptal edilince diskten de kalkar", async () => {
+    const t = kur();
+    await t.y.yukle();
+    await t.y.ekle([yeni(t, "m-1-1"), yeni(t, "m-1-2")]);
+    t.bagla();
+    t.durum("m-1-1", "reddedildi", { code: "medya_reddedildi" });
+    await t.y.bosalt();
+    const t2 = await yenidenAc(t);
+    await t2.y.iptal([id("m-1-1")]);
+    assert.equal(t2.y.gorunum(id("m-1-1")), null);
+    assert.ok(t2.dosya.silinenler.includes("file:///eren-medya/m-1-1.jpg"));
+    const t3 = await yenidenAc(t2);
+    assert.equal(t3.y.gorunum(id("m-1-1")), null);
+    assert.deepEqual(t3.y.gorunum(id("m-1-2"))?.ilerleme, { durum: "bekliyor" });
+    const disk = JSON.parse(t3.depo.kv.get(YUKLEME_ANAHTARI)!) as { kayitlar: { bilgi: { medya_id: string } }[] };
+    assert.deepEqual(
+      disk.kayitlar.map((k) => k.bilgi.medya_id),
+      ["m-1-2"],
+    );
+  });
+
+  it("sonlanmış durum yazılamazsa bellek doğru kalır, sonraki yazım taşır", async () => {
+    const t = kur();
+    await t.y.yukle();
+    await t.y.ekle([yeni(t, "m-1-1")]);
+    t.bagla();
+    t.depo.hata.yaz = true;
+    t.durum("m-1-1", "reddedildi", { code: "medya_siniri" });
+    await t.y.bosalt();
+    assert.equal(t.y.bekleyenSayisi(), 0);
+    t.depo.hata.yaz = false;
+    await t.y.ekle([yeni(t, "m-1-2")]);
+    const t2 = await yenidenAc(t);
+    assert.deepEqual(t2.y.gorunum(id("m-1-1"))?.ilerleme, { durum: "reddedildi", kod: "medya_siniri" });
+    assert.equal(t2.y.bekleyenSayisi(), 1);
+  });
+
+  it("eski v1 kaydı (son alanı yok) okunur ve bekliyor'dan başlar; geçersiz son kaydı atar", async () => {
+    const t = kur();
+    const eski = (m: string) => ({
+      sohbet_id: "ana",
+      bilgi: ekBilgisi(m),
+      uri: `file:///eren-medya/${m}.jpg`,
+      onizleme_uri: `file:///eren-medya/${m}.jpg`,
+    });
+    t.depo.kv.set(
+      YUKLEME_ANAHTARI,
+      JSON.stringify({
+        v: 1,
+        kayitlar: [
+          eski("m-1-1"),
+          { ...eski("m-1-2"), son: { durum: "yerel_yok" } },
+          { ...eski("m-1-3"), son: { durum: "reddedildi", kod: "medya_siniri" } },
+          { ...eski("m-1-4"), son: { durum: "reddedildi" } },
+          { ...eski("m-1-5"), son: { durum: "reddedildi", kod: "uydurma_kod" } },
+          { ...eski("m-1-6"), son: { durum: "kabul" } },
+          { ...eski("m-1-7"), son: null },
+          { ...eski("m-1-8"), son: "yerel_yok" },
+        ],
+      }),
+    );
+    await t.y.yukle();
+    assert.deepEqual(t.y.gorunum(id("m-1-1"))?.ilerleme, { durum: "bekliyor" });
+    assert.deepEqual(t.y.gorunum(id("m-1-2"))?.ilerleme, { durum: "yerel_yok" });
+    assert.deepEqual(t.y.gorunum(id("m-1-3"))?.ilerleme, { durum: "reddedildi", kod: "medya_siniri" });
+    for (const m of ["m-1-4", "m-1-5", "m-1-6", "m-1-7", "m-1-8"]) assert.equal(t.y.gorunum(id(m)), null, m);
+    assert.equal(t.y.bekleyenSayisi(), 1);
+    t.bagla();
+    assert.deepEqual(
+      t.giden.map((m) => [m.type, m["medya_id"]]),
+      [["media_begin", "m-1-1"]],
+    );
+    // Yeniden yazımda biçim v1 kalır, son yalnız sonlanmışta.
+    await t.y.iptal([id("m-1-3")]);
+    const disk = JSON.parse(t.depo.kv.get(YUKLEME_ANAHTARI)!) as { v: number; kayitlar: Record<string, unknown>[] };
+    assert.equal(disk.v, 1);
+    assert.deepEqual(
+      disk.kayitlar.map((k) => [(k["bilgi"] as { medya_id: string }).medya_id, k["son"]]),
+      [
+        ["m-1-1", undefined],
+        ["m-1-2", { durum: "yerel_yok" }],
+      ],
+    );
+  });
+
   it("aynı medya_id ikinci kez eklenmez", async () => {
     const t = kur();
     await t.y.yukle();

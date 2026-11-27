@@ -4,8 +4,10 @@
  *
  * Yükleyici platformsuzdur: dosyayı `MedyaDosyaPortu`'ndan, kaydı `DepoPortu`'ndan okur ve çerçeveyi
  * çağıranın verdiği `gonder` ile yollar. Kalıcı biçim bu dosyanındır (`v: 1`):
- * - `medya_yuklemeleri`: `{v, kayitlar: [{sohbet_id, bilgi, uri, onizleme_uri}]}` (bağlanmamış kayıtlar,
- *   `ekle` sırasıyla). Kaydın ilerlemesi kalıcı değildir: yeniden açılışta `bekliyor`'dan başlar.
+ * - `medya_yuklemeleri`: `{v, kayitlar: [{sohbet_id, bilgi, uri, onizleme_uri, son?}]}` (bağlanmamış
+ *   kayıtlar, `ekle` sırasıyla). Yalnız sonlanmış durum kalıcıdır: `son` `{durum: "reddedildi", kod}` ya da
+ *   `{durum: "yerel_yok"}` (yeniden açılışta korunur, yeniden sorulmaz). `son`'suz kayıt (eski v1 dahil)
+ *   yeniden açılışta `bekliyor`'dan başlar; süren ilerleme kalıcı değildir.
  * - `medya_onizlemeleri`: `{v, onizlemeler: [{medya_id, sohbet_id, seq, onizleme_uri}]}` (mesaja
  *   bağlanmış eklerin önizleme dizini).
  * Tanınmayan sürüm, bozuk JSON ya da şemadan geçmeyen tek kayıt atılır; yükleme atmaz.
@@ -18,6 +20,7 @@
  */
 import {
   EkBilgisi,
+  HataKodu,
   MEDYA_MIME,
   MEDYA_SINIRLARI,
   MedyaId,
@@ -149,15 +152,50 @@ interface Aktif {
 const nesneMi = (x: unknown): x is Record<string, unknown> => typeof x === "object" && x !== null && !Array.isArray(x);
 const uriMi = (x: unknown): x is string => typeof x === "string" && x.length > 0;
 
-function kayitCoz(ham: unknown): Omit<Kayit, "ilerleme"> | null {
+/** Kalıcı sonlanmış durum (`son` alanı). */
+type Son = Extract<EkIlerlemesi, { durum: "reddedildi" | "yerel_yok" }>;
+
+/** `son` alanı: yoksa `null` (bekliyor), geçersizse `undefined` (kayıt bozuk). */
+function sonCoz(ham: unknown): Son | null | undefined {
+  if (ham === undefined) return null;
+  if (!nesneMi(ham)) return undefined;
+  if (ham["durum"] === "yerel_yok") return { durum: "yerel_yok" };
+  if (ham["durum"] !== "reddedildi") return undefined;
+  const kod = HataKodu.safeParse(ham["kod"]);
+  return kod.success ? { durum: "reddedildi", kod: kod.data } : undefined;
+}
+
+function kayitCoz(ham: unknown): Kayit | null {
   if (!nesneMi(ham)) return null;
   const sohbet = SohbetId.safeParse(ham["sohbet_id"]);
   const bilgi = EkBilgisi.safeParse(ham["bilgi"]);
   const uri = ham["uri"];
   const onizleme = ham["onizleme_uri"];
+  const son = sonCoz(ham["son"]);
   if (!sohbet.success || !bilgi.success || !uriMi(uri)) return null;
   if (onizleme !== null && !uriMi(onizleme)) return null;
-  return { sohbet_id: sohbet.data, bilgi: bilgi.data, uri, onizleme_uri: onizleme };
+  if (son === undefined) return null;
+  return {
+    sohbet_id: sohbet.data,
+    bilgi: bilgi.data,
+    uri,
+    onizleme_uri: onizleme,
+    ilerleme: son ?? { durum: "bekliyor" },
+  };
+}
+
+/** Kaydın kalıcı biçimi; `son` yalnız sonlanmış durumda yazılır. */
+function kayitBicimi(k: Kayit): Record<string, unknown> {
+  const o: Record<string, unknown> = {
+    sohbet_id: k.sohbet_id,
+    bilgi: k.bilgi,
+    uri: k.uri,
+    onizleme_uri: k.onizleme_uri,
+  };
+  const i = k.ilerleme;
+  if (i.durum === "reddedildi") o["son"] = { durum: "reddedildi", kod: i.kod };
+  else if (i.durum === "yerel_yok") o["son"] = { durum: "yerel_yok" };
+  return o;
 }
 
 function onizlemeCoz(ham: unknown): Onizleme | null {
@@ -185,6 +223,9 @@ function listeCoz(metin: string | null, alan: string): unknown[] {
   const liste = ham[alan];
   return Array.isArray(liste) ? liste : [];
 }
+
+/** Kalıcı `son` alanının karşılaştırma anahtarı (`""`: sonlanmamış). */
+const sonAnahtari = (k: Kayit): string => JSON.stringify(kayitBicimi(k)["son"] ?? "");
 
 const yukleniyorMu = (k: Kayit) => k.ilerleme.durum === "yukleniyor";
 const bitikMi = (k: Kayit) => k.ilerleme.durum === "reddedildi" || k.ilerleme.durum === "yerel_yok";
@@ -222,16 +263,15 @@ export const yukleyiciKur: YukleyiciFabrikasi = ({ depo, dosya, degisti }) => {
   const kayitlariYaz = (liste: readonly Kayit[]) =>
     depo.yaz(
       YUKLEME_ANAHTARI,
-      JSON.stringify({
-        v: KAYIT_SURUMU,
-        kayitlar: liste.map((k) => ({
-          sohbet_id: k.sohbet_id,
-          bilgi: k.bilgi,
-          uri: k.uri,
-          onizleme_uri: k.onizleme_uri,
-        })),
-      }),
+      JSON.stringify({ v: KAYIT_SURUMU, kayitlar: liste.map(kayitBicimi) }),
     );
+  /**
+   * Sonlanmış durumu (ya da ondan çıkışı) diske işler. Kuyrukta koşar, o anki kayıtları yazar; düşerse
+   * bellek doğru kalır, sonraki yazım (ekle/iptal/bağlama) yine taşır.
+   */
+  const sonuKaydet = (): void => {
+    void sirala(() => kayitlariYaz([...kayitlar.values()])).catch(() => undefined);
+  };
   const onizlemeleriYaz = (liste: readonly Onizleme[]) =>
     depo.yaz(ONIZLEME_ANAHTARI, JSON.stringify({ v: KAYIT_SURUMU, onizlemeler: liste }));
 
@@ -276,6 +316,7 @@ export const yukleyiciKur: YukleyiciFabrikasi = ({ depo, dosya, degisti }) => {
     if (aktif?.medya_id === id) aktifiBirak();
     if (k === undefined || k.ilerleme.durum === "yerel_yok") return;
     k.ilerleme = { durum: "yerel_yok" };
+    sonuKaydet();
     iptalYolla(id);
     degisti();
     pompala();
@@ -386,7 +427,7 @@ export const yukleyiciKur: YukleyiciFabrikasi = ({ depo, dosya, degisti }) => {
         const c = kayitCoz(h);
         // Bağlandıktan sonra kayıt silinmeden süreç öldüyse önizleme kazanır (kayıt artığı).
         if (c === null || kayitlar.has(c.bilgi.medya_id) || onizlemeler.has(c.bilgi.medya_id)) continue;
-        kayitlar.set(c.bilgi.medya_id, { ...c, ilerleme: { durum: "bekliyor" } });
+        kayitlar.set(c.bilgi.medya_id, c);
       }
       void sirala(supur);
     },
@@ -455,6 +496,7 @@ export const yukleyiciKur: YukleyiciFabrikasi = ({ depo, dosya, degisti }) => {
       // Yerel kopya yok: `media_cancel` gitti, geç gelen durum bunu değiştirmez.
       if (k.ilerleme.durum === "yerel_yok") return;
       const a = aktif?.medya_id === s.medya_id ? aktif : null;
+      const onceSon = sonAnahtari(k);
       if (s.durum === "yukleniyor") {
         const alinan = s.alinan ?? 0;
         k.ilerleme = { durum: "yukleniyor", alinan, boyut: k.bilgi.boyut };
@@ -468,6 +510,7 @@ export const yukleyiciKur: YukleyiciFabrikasi = ({ depo, dosya, degisti }) => {
         }
         if (a !== null) aktifiBirak();
       }
+      if (sonAnahtari(k) !== onceSon) sonuKaydet();
       degisti();
       pompala();
     },
