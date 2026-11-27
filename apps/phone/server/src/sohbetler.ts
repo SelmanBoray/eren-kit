@@ -471,6 +471,8 @@ export const sohbetlerKur: SohbetlerFabrikasi = (b) => {
         jetonlariIptalEt: (kapsam: AjandaJetonKapsami) => ajandaKopru.jetonlariIptalEt(kapsam),
       },
     }),
+    // Medya dalgası (S6): yönetici yüzü örneklere aynen; verilmemişse anahtar hiç eklenmez (medya kapalı).
+    ...(b.medya !== undefined && { medya: b.medya }),
   };
 
   /** Örneği kurar ve haritaya ekler; kurucu atarsa `null`. `baslat` ayrıca tetiklenir. */
