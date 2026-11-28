@@ -2455,6 +2455,12 @@ export interface AjandaPcBaglami {
   baglanti_id: string;
   arac_cagri_id?: string;
   oturum_id?: string;
+  /**
+   * Köprünün hello'da bildirdiği harness süreci (`kopru_hello.surec_id`; Claude: köprünün `process.ppid`'i),
+   * bağlantının ömrü boyunca sabit. Yoksa eski köprü. T5 (`ajanda-pc` `surecUyusmazligi`) tasdikin `surec_id`'siyle
+   * karşılaştırır.
+   */
+  kopru_surec_id?: string;
 }
 
 /** `ana_oturum` bağlamı bugünkü gibi yalnız jetonun kapsamıdır (ek alan yok); PC çağrısınınki ayrıdır. */
@@ -2466,6 +2472,13 @@ export type AjandaKopruBaglami = Readonly<AjandaJetonKapsami> | Readonly<AjandaP
  */
 export type PcKancaIsleyicileri = {
   readonly [F in PcKancaFiili]: (girdi: PcKancaGirdisi<F>) => PcKancaCiktisi<F>;
+} & {
+  /**
+   * `pc_oturumu` bağlantısı kapandı (`AjandaPcBaglami.baglanti_id`): boru sunucusu her kapanış yolunda
+   * (uzak uç, kendi kapatması, süre, hata) bir kez çağırır; PC defteri o köprünün T5 bağını bırakır
+   * (`ajanda-pc` `kopruKapandi`). Eşzamanlıdır, atmamalıdır. Yoksa bağ servis yeniden başlayana dek kalır.
+   */
+  kopruKapandi?(baglanti_id: string): void;
 };
 
 export interface AjandaJetonKaydi {

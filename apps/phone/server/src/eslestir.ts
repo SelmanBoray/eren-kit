@@ -192,6 +192,7 @@ function pcArgumanCoz(argv: readonly string[]): EslestirKomutu {
       if (gorulen.has(CLAUDE_CODE_SECENEGI)) return { tur: "hata", ileti: birlikte };
       if (gorulen.has(a)) return { tur: "hata", ileti: `${a} bir kez verilir` };
       const ad = argv[i + 1];
+      if (ad !== undefined && YARDIM_SECENEKLERI.includes(ad)) return { tur: "yardim" };
       if (ad === undefined || ad.trim() === "" || ad.startsWith("-")) {
         return { tur: "hata", ileti: `${PC_AJAN_SECENEGI} bir ajan adı ister (ör. ${PC_AJAN_SECENEGI} ${VARSAYILAN_PC_AJANI})` };
       }
@@ -541,8 +542,15 @@ export function pcAnahtarMetni(
 
 /** Teşhiste gösterilen olaylar ve YALNIZ bu alanlar (izin listesi: başka alan hiç yazılmaz). */
 const TESHIS_ALANLARI: Readonly<Record<string, readonly string[]>> = {
-  pc_arac: ["alt_agent", "etkilesimsiz", "istem_kimligi"],
+  // Yeni alanlar (`uyarlayici` … `cerceve`) eski kayıtlarda yoktur; olmayan alan yazılmaz, eski satır aynı kalır.
+  // `surec_kimligi` kimliğin kendisi değil, yalnız `var`/`yok`'tur (ajanda-pc `varYok`).
+  pc_arac: ["alt_agent", "etkilesimsiz", "istem_kimligi", "uyarlayici", "aktor", "etkilesim", "surec_kimligi", "cerceve"],
   arac: ["fiil", "tur_kokeni", "pc_karar", "cagri_kimligi", "sonuc", "neden"],
+  // `tasdik_yok` kararının kanca kurulumu dışındaki nedenleri (ajanda-pc `kararVer`; `arac`'tan hemen önce yazılır).
+  pc_tasdik_yetersiz: ["neden", "uyarlayici", "surum"],
+  // `pc_oturum_uyusmuyor`: eski servis sürümünün T5 olayı (eski günlükte görünür, gösterimi değişmedi).
+  pc_oturum_uyusmuyor: ["surec_kimligi"],
+  pc_surec_uyusmuyor: ["kopru_surec"],
   el_sikisma: ["rol"],
   el_sikisma_ret: ["rol", "code", "neden"],
 };
@@ -599,6 +607,117 @@ const kancaRetNedenleri = (olaylar: readonly TeshisOlayi[]): string[] =>
   [...new Set(olaylar.filter((o) => o.olay === "el_sikisma_ret" && o.alanlar["rol"] === "pc_kanca").map((o) => o.alanlar["neden"] ?? "bilinmiyor"))].map(
     (r) => `günlükte kanca reddi: ${KANCA_RET_NEDENI[r] ?? r}`,
   );
+
+/** Tasdik geldi ama karar yine `tasdik_yok`: servisin günlüğe yazdığı neden olayları (ajanda-pc `kararVer`). */
+const TASDIK_REDDI_OLAYLARI: ReadonlySet<string> = new Set(["pc_tasdik_yetersiz", "pc_oturum_uyusmuyor", "pc_surec_uyusmuyor"]);
+
+/** Neden olayı ile kendi `arac`'ı arasındaki en uzun süre (aynı eşzamanlı blok; `depo.islem` bekleyebilir). */
+const TASDIK_REDDI_ARALIK_MS = 2000;
+
+/**
+ * Çağrı izi (ajanda-pc defterinin tuzlu, kısaltılmış tek yönlü özeti). Teşhis onu hesaplamaz, yalnız eşitlik için
+ * karşılaştırır; yazmaz. Tuz servis süreci ömrüyle sınırlıdır: servis yeniden başladıysa eski izler yeni `arac`'la
+ * eşleşmez, neden sahipsiz kalır (güvenli taraf: kurulum yönlendirmesi, yanlış neden değil).
+ */
+const CAGRI_IZI = /^[0-9a-f]{12}$/;
+const cagriIzi = (v: unknown): string | null => (typeof v === "string" && CAGRI_IZI.test(v) ? v : null);
+
+/**
+ * Teşhis modüllerinin günlük satırları sırasıyla: gösterilen olay ya da `null` (gösterilmeyen satır: `arac_hatasi`,
+ * `arac_girdisi_gecersiz`, sohbet `arac` …). `iz`: satırın çağrı izi (`cagri_izi`; eski satırda yok).
+ */
+type TeshisZinciri = ReadonlyArray<(TeshisOlayi & { ts: number; iz?: string | null }) | null>;
+
+/**
+ * Son `arac` olayının kendi neden olayları. İzli günlük: son `arac` çağrı izi (`cagri_izi`) taşıyorsa nedenleri
+ * yalnız aynı izi taşıyan, ondan önceki ve aynı izli bir önceki `arac`'tan sonraki neden olaylarıdır (aynı çağrı
+ * kimliği yeniden sunulduysa önceki sunuşun nedeni sonrakine geçmez); sıra ve süre aranmaz (araya başka çağrı girse
+ * de, blok uzasa da), izsiz ya da başka izli (başka çağrı, başka servis süreci) neden sayılmaz. İzsiz `arac` (eski günlük ya da
+ * izi yazmayan sürüm) için bugünkü kural: neden olayında çağrı kimliği yoktur (`pc_tasdik_yetersiz` hiç
+ * kimlik taşımaz; `pc_oturum_uyusmuyor`'unki tasdikin oturumudur, `arac`'ınki köprününki), eşleme sırayladır:
+ * servis nedeni kararla aynı eşzamanlı blokta, `arac`'tan HEMEN önce yazar (araya teşhis modüllerinden satır
+ * giremez). Bu yüzden yalnız son `arac`'a bitişik neden olayları sayılır; araya başka herhangi bir satır
+ * (`arac_hatasi`, `arac_girdisi_gecersiz`, başka bir çağrının olayı) girdiyse ya da zaman aralığı blok için
+ * fazlaysa neden sahipsizdir, söylenmez (kurulum yönlendirmesi kalır). Kullanıcıya nedenleri (tekilleştirilmiş).
+ */
+function tasdikReddiNedenleri(zincir: TeshisZinciri): string[] {
+  let son = -1;
+  for (let i = zincir.length - 1; i >= 0; i--) {
+    if (zincir[i]?.olay === "arac") {
+      son = i;
+      break;
+    }
+  }
+  if (son < 0) return [];
+  const sonArac = zincir[son];
+  if (sonArac === null || sonArac === undefined) return [];
+  const bulunan: TeshisOlayi[] = [];
+  const iz = sonArac.iz ?? null;
+  // Neden yalnız kendisinden sonraki ilk aynı izli `arac`'ındır: aynı izli önceki bir `arac`'ta durulur (aynı
+  // çağrı kimliği yeniden sunulduysa öncekinin nedeni sonrakine geçmez).
+  for (let i = son - 1; iz !== null && i >= 0; i--) {
+    const o = zincir[i];
+    if (o === null || o === undefined || o.iz !== iz) continue;
+    if (o.olay === "arac") break;
+    if (TASDIK_REDDI_OLAYLARI.has(o.olay)) bulunan.unshift(o);
+  }
+  for (let i = son - 1; iz === null && i >= 0; i--) {
+    const o = zincir[i];
+    if (o === null || o === undefined || !TASDIK_REDDI_OLAYLARI.has(o.olay)) break;
+    const fark = sonArac.ts - o.ts;
+    if (fark < 0 || fark > TASDIK_REDDI_ARALIK_MS) break;
+    bulunan.unshift(o);
+  }
+  const metinler = bulunan.map((o) => {
+    if (o.olay === "pc_oturum_uyusmuyor") {
+      return (
+        "tasdik başka bir köprüye bağlı (pc_oturum_uyusmuyor): kanca bu çağrıyı bildirdi, ama tasdik onu bildiren " +
+        "Claude Code sürecine bağlı başka bir MCP köprüsünün; bu çağrıyı getiren köprü onu kullanamaz (bu çarpışma tasdiki silmez). " +
+        "Olası: aynı Claude Code sürecinde MCP köprüsü yeniden başladı (/mcp ile yeniden bağlanma) ya da köprü başka " +
+        "bir Claude Code sürecinden açıldı. Bir sonraki çağrıda kendiliğinden düzelir (köprü kapanınca o sürecin bağı " +
+        "bırakılır, yeni köprünün sonraki çağrısı doğrudan kayıt olur); sürerse ve iki köprü aynı anda açıksa Claude Code " +
+        "penceresini kapatıp yeniden açın. Kanca kurulumu doğru, yeniden kurmak gerekmez."
+      );
+    }
+    if (o.olay === "pc_surec_uyusmuyor") {
+      if (o.alanlar["kopru_surec"] === "ilk_gorus") {
+        return (
+          "eski köprü başka bir Claude Code sürecine bağlı (pc_surec_uyusmuyor, ilk_gorus): bu çağrıyı getiren MCP köprüsü " +
+          "sürecini bildirmeyen eski bir sürüm; bağlantısı ilk tükettiği tasdikin Claude Code sürecine bağlandı, bu tasdik " +
+          "başka bir süreçten (tasdik silinmez, sahibine kalır). Claude Code oturumunu yeniden açın: yeni köprü sürecini " +
+          "kendisi bildirir. Kanca kurulumu doğru, yeniden kurmak gerekmez."
+        );
+      }
+      return (
+        "köprünün ebeveyni harness süreci değil (pc_surec_uyusmuyor): kanca bu çağrıyı bildirdi, ama çağrıyı getiren MCP " +
+        "köprüsünün ebeveyni (hello'da bildirdiği süreç) tasdiki veren Claude Code süreci değil; tasdik kullanılmadı " +
+        "(silinmez, sahibine kalır). Olası: köprü bir sarmalayıcıyla başlatılıyor (cmd /c, npx, sh -c): MCP kaydını " +
+        "sarmalayıcısız yapın (kurulum\\claude-code.ts goster); ya da köprü başka bir Claude Code sürecinin. Sarmalayıcı " +
+        "durdukça bu pencerenin bütün kayıtları taslak doğar (güvenli taraf). Kanca kurulumu doğru, yeniden kurmak gerekmez."
+      );
+    }
+    const neden = o.alanlar["neden"];
+    if (neden === "uyarlayici") {
+      const ad = o.alanlar["uyarlayici"] ?? "?";
+      const surum = o.alanlar["surum"] ?? "?";
+      return (
+        `tasdik yetersiz (pc_tasdik_yetersiz): kanca tasdiki bu servisin tanımadığı bir uyarlayıcıyla ya da sürümle ` +
+        `gönderdi (uyarlayici=${ad} surum=${surum}). Kanca ile servis farklı sürümlerden: güncellemeden sonra servis ` +
+        "yeniden başlatılmadıysa yeniden başlatın; kanca komutu başka bir kurulumun (ör. geliştirme kopyası) dosyasını " +
+        "çalıştırıyorsa ayardaki yolu bu kuruluma çevirin."
+      );
+    }
+    if (neden === "aktor" || neden === "etkilesim") {
+      const ne = neden === "aktor" ? "çağrının ana ajandan mı alt agent'tan mı geldiğini (aktor)" : "oturumun etkileşimli olup olmadığını (etkilesim)";
+      return (
+        `tasdik yetersiz (pc_tasdik_yetersiz): kanca ${ne} "bilinmiyor" bildirdi; ajanın uyarlayıcısı bu bilgiyi ` +
+        "veremiyor, güvenli taraf taslaktır. Kanca kurulu ve çalışıyor; kayıtları uygulamadan onaylayın."
+      );
+    }
+    return "tasdik yetersiz (pc_tasdik_yetersiz): servis tasdiki yetersiz buldu; kanca kurulu ve çalışıyor, kayıtları uygulamadan onaylayın.";
+  });
+  return [...new Set(metinler)];
+}
 
 function tasdikYokNedenleri(olaylar: readonly TeshisOlayi[], kurulum: ClaudeCodeKancaDurumu): string[] {
   const nedenler: string[] = [];
@@ -678,7 +797,9 @@ export function pcTeshisMetni(
   ajan: PcAjanGorunumu = CLAUDE_CODE_GORUNUMU,
 ): string {
   const bas = kurulum === undefined ? "" : `${kurulumSatirlari(kurulum, ajan).join("\n")}\n\n`;
-  const olaylar: Array<{ ts: number; olay: string; alanlar: Record<string, string>; oturum: string | null }> = [];
+  const olaylar: Array<{ ts: number; olay: string; alanlar: Record<string, string>; oturum: string | null; iz: string | null }> = [];
+  // Neden olaylarını kendi `arac`'ına bağlamak için teşhis modüllerinin bütün satırları (`tasdikReddiNedenleri`).
+  const zincir: Array<(typeof olaylar)[number] | null> = [];
   for (const s of satirlar) {
     let j: unknown;
     try {
@@ -688,18 +809,26 @@ export function pcTeshisMetni(
     }
     if (typeof j !== "object" || j === null || Array.isArray(j)) continue;
     const k = j as Record<string, unknown>;
+    if (typeof k["modul"] !== "string" || !TESHIS_MODULLERI.has(k["modul"])) continue;
     const olay = typeof k["olay"] === "string" ? k["olay"] : "";
     const izinli = Object.hasOwn(TESHIS_ALANLARI, olay) ? TESHIS_ALANLARI[olay] : undefined;
-    if (izinli === undefined || typeof k["modul"] !== "string" || !TESHIS_MODULLERI.has(k["modul"])) continue;
     // `arac` yalnız PC yolundaysa; el sıkışma yalnız PC rollerindeyse.
-    if (olay === "arac" && k["yol"] !== "pc_araci") continue;
-    if ((olay === "el_sikisma" || olay === "el_sikisma_ret") && k["rol"] !== "pc_oturumu" && k["rol"] !== "pc_kanca") continue;
+    if (
+      izinli === undefined ||
+      (olay === "arac" && k["yol"] !== "pc_araci") ||
+      ((olay === "el_sikisma" || olay === "el_sikisma_ret") && k["rol"] !== "pc_oturumu" && k["rol"] !== "pc_kanca")
+    ) {
+      zincir.push(null);
+      continue;
+    }
     const alanlar: Record<string, string> = {};
     for (const a of izinli) {
       const d = teshisDegeri(k[a]);
       if (d !== null) alanlar[a] = d;
     }
-    olaylar.push({ ts: typeof k["ts_ms"] === "number" ? k["ts_ms"] : 0, olay, alanlar, oturum: kisaOturum(k["oturum_id"]) });
+    const o = { ts: typeof k["ts_ms"] === "number" ? k["ts_ms"] : 0, olay, alanlar, oturum: kisaOturum(k["oturum_id"]), iz: cagriIzi(k["cagri_izi"]) };
+    olaylar.push(o);
+    zincir.push(o);
   }
   const son = olaylar.slice(-TESHIS_SATIR);
   if (son.length === 0) {
@@ -718,9 +847,14 @@ export function pcTeshisMetni(
   const tasdikler = son.filter((o) => o.olay === "pc_arac");
   const evetHayir = (kosul: boolean, bos: boolean): string => (bos ? "olay yok" : kosul ? "evet" : "HAYIR");
   const sonKarar = araclar.at(-1)?.alanlar["pc_karar"];
+  // Tasdik geldi ama servis kullanmadı (başka köprüye bağlı ya da yetersiz): kanca kurulumu değil; "kurun" denmez.
+  const reddiNedenleri = sonKarar === "tasdik_yok" ? tasdikReddiNedenleri(zincir) : [];
   // Ayarda kurulu ama tasdik gelmedi: genel metin ("kurulu değilse kurun") yanlış yere yollar; nedenler ayrı.
-  const kuruluAmaTasdiksiz = sonKarar === "tasdik_yok" && kurulum !== undefined && kurulum !== null && kurulum.arac === true;
-  const anlam = kuruluAmaTasdiksiz
+  const kuruluAmaTasdiksiz =
+    reddiNedenleri.length === 0 && sonKarar === "tasdik_yok" && kurulum !== undefined && kurulum !== null && kurulum.arac === true;
+  const anlam = reddiNedenleri.length > 0
+    ? " (kayıtlar TASLAK doğuyor: kanca bu çağrıyı bildirdi ama servis tasdiki kullanmadı; neden aşağıda)"
+    : kuruluAmaTasdiksiz
     ? " (kayıtlar TASLAK doğuyor: kanca ayarda kurulu görünüyor ama bu çağrıda tasdik gelmedi; olası nedenler aşağıda)"
     : sonKarar !== undefined && Object.hasOwn(TESHIS_KARAR_METNI, sonKarar)
       ? ` (${TESHIS_KARAR_METNI[sonKarar as PcTurKarari]})`
@@ -732,7 +866,10 @@ export function pcTeshisMetni(
     `  istem kimliği geliyor mu (araç öncesi): ${evetHayir(tasdikler.some((o) => o.alanlar["istem_kimligi"] === "var"), tasdikler.length === 0)}`,
     `  son PC araç kararı: ${sonKarar ?? "olay yok"}${anlam}`,
   ];
-  if (kuruluAmaTasdiksiz) {
+  if (reddiNedenleri.length > 0) {
+    ozet.push("Günlükte görülen neden (kanca çalışıyor; kurulum sorunu değil):");
+    for (const n of reddiNedenleri) ozet.push(`  - ${n}`);
+  } else if (kuruluAmaTasdiksiz) {
     ozet.push("Olası nedenler (kurulu görünüyor ama tasdik gelmedi):");
     for (const n of tasdikYokNedenleri(son, kurulum)) ozet.push(`  - ${n}`);
   } else if (sonKarar === "tasdik_yok" && kancaRetNedenleri(son).length > 0) {

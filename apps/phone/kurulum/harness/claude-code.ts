@@ -56,6 +56,14 @@ export interface Yollar {
   anahtarDosyasi: string;
 }
 
+/**
+ * Komutlar `guncel` junction'ından geçer; ömürleri farklıdır. Kanca (`kanca.ts`) her ajanda çağrısında Claude
+ * Code'un başlattığı yeni bir süreçtir: junction'ın O ANKİ sürümünü çalıştırır, açık oturumda bile
+ * güncellemeden hemen sonra yeni koddur. Köprü (`kopru.ts`, MCP süreci) oturum açılışında bir kez başlar ve
+ * oturum boyunca başladığı sürümde kalır (Node junction'ı gerçek yola çözer). Bu yüzden sürüm farkı iki
+ * yöndedir: yeni kanca ile henüz yeniden başlamamış eski servis (`kur.ts` junction'ı servisten önce çevirir;
+ * eski servis yeni çerçeveyi geçirmez, çağrı taslak kalır) ve eski köprü ile yeni servis.
+ */
 export const yollar = (ortam: Ortam, nodeExe: string): Yollar => {
   const kok = veriKoku(ortam);
   const src = win32.join(uygulamaKoku(kok), "guncel", "server", "src");
@@ -364,9 +372,12 @@ export function kancaKur(ortam: Ortam, nodeExe: string, secenek: KancaSecenegi =
   const onceki = ayarCoz(okunan.metin);
   const { eski, kabuk } = kancaDurumuCoz(onceki);
   const yeni = kancalariEkle(onceki, y);
-  // İçerik (JSON değeri) değişti mi: dosya yoksa ya da yeni ayar öncekinden farklıysa. Yazma ve yedek bugünkü
-  // CLI davranışıyla aynı kalır (her seferinde); `degisti` yalnız içeriğin gerçekten değişip değişmediğini söyler.
+  // İçerik (JSON değeri) değişti mi: dosya yoksa ya da yeni ayar öncekinden farklıysa. Değişmediyse dosyaya
+  // dokunulmaz (yazma da yedek de yok).
   const degisti = okunan.metin === null || JSON.stringify(yeni) !== JSON.stringify(onceki);
+  if (!degisti) {
+    return { ayarYolu, degisti, yedek: null, satirlar: [`Araç öncesi kanca zaten kurulu: ${ayarYolu}; hiçbir şey değişmedi.`] };
+  }
   const yedek = ayarYaz(ayarYolu, yeni, secenek.simdiMs ?? Date.now(), okunan.bom);
   const satirlar = [`Araç öncesi kanca eklendi: ${ayarYolu}${yedek === null ? "" : ` (yedek: ${yedek})`}`];
   if (eski > 0) satirlar.push(`Önceki kurulumun ${eski} eski kancası (istem / tur sonu / eski biçim) çıkarıldı.`);

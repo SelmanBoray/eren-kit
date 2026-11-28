@@ -38,8 +38,11 @@ import {
   SORU_ARACLARI,
   TELEFON_ARACLARI,
   UygulamalarCikti,
+  PC_VARSAYILAN_UYARLAYICI,
+  pcUyarlayiciAdiMi,
 } from "@eren/protocol";
 import type {
+  PcUyarlayiciAdi,
   AjandaAracCiktisi,
   AjandaFiili,
   AjandaKopruAsagi,
@@ -165,10 +168,20 @@ interface BoruIstemci {
 /** Borunun aşağı çözücüsü: `eren` borusunda `kopruAsagiCoz`, ajanda borusunda `ajandaKopruAsagiCoz`. */
 type AsagiCozucu = (satir: string) => CozumSonucu<KopruAsagi | AjandaKopruAsagi>;
 
+/**
+ * `helloEki` (isteğe bağlı): her denemede hello'ya eklenecek isteğe bağlı alanlar (zengin hello; PC köprüsünde
+ * `surec_id`). Alanı tanımayan eski servis zengin hello'yu katı şemasıyla reddeder (`kopru_ret{yetkisiz}`, sonra
+ * kapatır; ret satırı adlı boruda kapanışla birlikte düşebilir). Zengin hello karşılanmadan `yetkisiz` ile ya da
+ * hiç yanıtsız kapanırsa köprü beklemeden BİR KEZ düz (eksiz) hello ile yeniden dener. Düz hello hiçbir zaman
+ * hemen yeniden denemeye yol açmaz: gerçek bir ret (anahtar, kapalı PC rolü) her döngüde en çok bir düz deneme
+ * ekler, sonra olağan bekleme gelir. Sonraki deneme yine zengindir (servis güncellenip yeniden başlamış olabilir).
+ * Yeni isteğe bağlı hello alanları aynı yoldan geçer; alan başına ayrı düşüş yoktur.
+ */
 function boruIstemciKur(
   ayar: KopruIstemciAyari | AjandaKopruIstemciAyari,
   b: KopruBagimliliklari,
   asagiCoz: AsagiCozucu = kopruAsagiCoz,
+  helloEki?: () => Readonly<Record<string, unknown>>,
 ): BoruIstemci {
   const { gunluk, rastgele } = b;
   let acik: BoruBaglantisi | null = null;
@@ -185,6 +198,10 @@ function boruIstemciKur(
   const bekleyenler = new Map<string, (y: BoruYaniti) => void>();
   const denemeDinleyicileri = new Set<() => void>();
   const biriken = new Set<string>();
+  /** Sıradaki hello düz (zengin hello az önce reddedildi). */
+  let duzSira = false;
+  /** Zengin hello reddedildi: sıradaki (düz) deneme beklemeden. */
+  let hemenYeniden = false;
 
   const denemeBitti = (): void => {
     for (const f of [...denemeDinleyicileri]) f();
@@ -225,6 +242,11 @@ function boruIstemciKur(
       let karsilandi = false;
       const elSikisma = setTimeout(() => bag.kapat(), EL_SIKISMA_MS);
       acik = bag;
+      const ek = duzSira ? {} : (helloEki?.() ?? {});
+      duzSira = false;
+      const zengin = Object.keys(ek).length > 0;
+      /** Zengin hello'ya gelen ret kodu (yoksa `null`: hiç ret gelmedi). */
+      let ret: HataKodu | null = null;
 
       bag.satirDinle((satir) => {
         const cozum = asagiCoz(satir);
@@ -250,6 +272,7 @@ function boruIstemciKur(
         } else if (m.type === "kopru_ret") {
           gunluk.uyari(MODUL, "boru_reddedildi", { code: m.code });
           sonEngel = m.code;
+          if (!karsilandi) ret = m.code;
           // Jeton yalnız iş bitince silinir, bir daha geçerli olmaz: denemeye değmez. PC anahtarı
           // dosyadan yenilenebilir: kalıcı değil, sonraki deneme dosyayı yeniden okur.
           if (m.code === "jeton_gecersiz" && jetonOku === undefined) kaliciHata = m.code;
@@ -278,11 +301,20 @@ function boruIstemciKur(
         const kopanlar = [...bekleyenler.values()];
         bekleyenler.clear();
         for (const f of kopanlar) f({ tur: "koptu" });
+        // Zengin hello karşılanmadı: eski servisin katı şeması (yetkisiz) ya da ret satırı kapanışla düştü.
+        if (zengin && !karsilandi && (ret === null || ret === "yetkisiz")) {
+          gunluk.uyari(MODUL, "zengin_hello_reddedildi", { code: ret ?? "yanitsiz" });
+          duzSira = true;
+          hemenYeniden = true;
+          // Engel zengin alanındır, bağlantının değil: düz denemenin sonucu belirler.
+          sonEngel = null;
+        }
         coz(karsilandi);
       });
 
       bag.satirYaz(
         JSON.stringify({
+          ...ek,
           v: PROTOKOL_SURUMU,
           type: "kopru_hello",
           rol: ayar.rol,
@@ -333,6 +365,13 @@ function boruIstemciKur(
             sonEngel = null;
           }
         }
+        if (hemenYeniden && !durdu && kaliciHata === null) {
+          // Tek seferlik düz deneme (`helloEki`); düz hello bunu yeniden kuramaz. Deneme sürüyor sayılır:
+          // bekleyen çağrı (`denemeBekle`) zengin hello'nun retini değil, düz denemenin sonucunu görür.
+          hemenYeniden = false;
+          continue;
+        }
+        hemenYeniden = false;
         denemede = false;
         denemeBitti();
         if (durdu || kaliciHata !== null) break;
@@ -740,6 +779,31 @@ const AJANDA_KOPUK_SONUCU = (): CallToolResult =>
 
 /** Claude Code'un MCP `tools/call` isteğinde çağrı kimliğini taşıyan `_meta` anahtarı (kancadaki `tool_use_id`). */
 export const CLAUDE_CODE_ARAC_KIMLIGI = "claudecode/toolUseId";
+
+/**
+ * Köprü tarafı uyarlayıcılar (`docs/HARNESS.md` 4.2): çağrı kimliği MCP isteğinin hangi `_meta`
+ * anahtarında, köprünün oturum kimliği hangi ortam değişkeninde. Köprü `--uyarlayici <ad>` alır;
+ * bayrak yoksa `PC_VARSAYILAN_UYARLAYICI` (`claude-code`; canlı kayıt bayraksızdır). Claude Code MCP
+ * sunucusunu `CLAUDE_CODE_SESSION_ID` ile başlatır (2.1.332 ikili dosyası: stdio sunucusunun ortamı
+ * `CLAUDE_CODE_SESSION_ID: <o anki oturum>`); `/clear` sonrası bu değer eskir. Oturum yalnız iz ve yedektir:
+ * T5 hello'daki süreçle kurulur (`ajandaKopruCalistir` `surecId`).
+ */
+export interface PcKopruUyarlayicisi {
+  aracKimligiMeta: string;
+  oturumOrtami: string;
+}
+export const PC_KOPRU_UYARLAYICILARI: Readonly<Record<PcUyarlayiciAdi, PcKopruUyarlayicisi>> = {
+  "claude-code": { aracKimligiMeta: CLAUDE_CODE_ARAC_KIMLIGI, oturumOrtami: "CLAUDE_CODE_SESSION_ID" },
+};
+
+/** `--uyarlayici` argümanı: bayrak yoksa varsayılan; bilinmeyen ad ya da değersiz bayrak `null` (kullanım hatası). */
+export function pcKopruUyarlayicisiSec(argumanlar: readonly string[]): PcKopruUyarlayicisi | null {
+  const i = argumanlar.indexOf("--uyarlayici");
+  if (i < 0) return PC_KOPRU_UYARLAYICILARI[PC_VARSAYILAN_UYARLAYICI];
+  const ad = argumanlar[i + 1];
+  return pcUyarlayiciAdiMi(ad) ? PC_KOPRU_UYARLAYICILARI[ad] : null;
+}
+
 /** Boru hazır değilken çağrının yeniden bağlanmayı beklediği en uzun süre (servis yeniden başlıyor olabilir). */
 export const PC_BAGLANTI_BEKLEME_MS = 3_000;
 /** O bekleme içinde boru yokken iki deneme arası. */
@@ -767,14 +831,24 @@ export const PC_ANAHTAR_GECERSIZ_METNI =
  * ile yeniden doğrulanır ve modele YALNIZ `ajandaMcpSonucu`'nun tek metin içeriği gider (çit her
  * çağrıda güvenli üreteçten, 128 bit). Bir kez gider, yeniden denenmez. Boru koparsa `eren` kipiyle
  * aynı aralıkla yeniden bağlanır.
+ *
+ * `surecId` (yalnız `pc_oturumu`): köprünün harness süreci, hello'nun `surec_id`'si (T5: servis tasdikin
+ * sürecine eşit olanı tüketir). Claude Code'da köprünün ebeveynidir (`process.ppid`; kancanın `CLAUDE_PID`'i,
+ * MCP ortamında `CLAUDE_PID` yoktur). Köprüyü bir sarmalayıcı (`cmd /c`, `npx`, `sh -c`) başlatırsa ebeveyn
+ * harness olmaz ve o pencerenin kayıtları taslak doğar (güvenli yön; kurulum köprüyü sarmalayıcısız kaydeder).
+ * Alanı tanımayan eski servise bir kez düz hello ile bağlanır (`boruIstemciKur` `helloEki`).
  */
 export async function ajandaKopruCalistir(
   ayar: AjandaKopruIstemciAyari,
   b: KopruBagimliliklari,
+  uyarlayici: PcKopruUyarlayicisi = PC_KOPRU_UYARLAYICILARI[PC_VARSAYILAN_UYARLAYICI],
+  surecId?: string,
 ): Promise<KopruCalisani> {
   const { gunluk, rastgele } = b;
-  const boru = boruIstemciKur(ayar, b, ajandaKopruAsagiCoz);
   const pc = ayar.rol === "pc_oturumu";
+  // Yalnız PC: harness süreci hello'da (T5); `cagri`'ya girmez (eski servisin katı `AjandaPcCagri`'sı).
+  const surec = pc && surecId !== undefined && OpakId.safeParse(surecId).success ? { surec_id: surecId } : undefined;
+  const boru = boruIstemciKur(ayar, b, ajandaKopruAsagiCoz, surec === undefined ? undefined : () => surec);
   const fiiller: readonly AjandaFiili[] = AJANDA_ROL_FIILLERI[ayar.rol];
   const aciklamalar = pc ? AJANDA_PC_ARAC_ACIKLAMALARI : AJANDA_ARAC_ACIKLAMALARI;
   const tools: Tool[] = fiiller.map((fiil) => ({
@@ -784,9 +858,9 @@ export async function ajandaKopruCalistir(
   }));
   const oturumId = ayar.oturumId !== undefined && OpakId.safeParse(ayar.oturumId).success ? ayar.oturumId : undefined;
 
-  /** PC: `cagri` zarfı. Çağrı kimliği Claude Code'un `_meta`'sından; geçersizse yok (tur sentetik olur). */
+  /** PC: `cagri` zarfı. Çağrı kimliği uyarlayıcının `_meta` anahtarından; geçersizse yok (tur sentetik olur). */
   const pcCagri = (meta: unknown): Record<string, unknown> => {
-    const id = typeof meta === "object" && meta !== null ? (meta as Record<string, unknown>)[CLAUDE_CODE_ARAC_KIMLIGI] : undefined;
+    const id = typeof meta === "object" && meta !== null ? (meta as Record<string, unknown>)[uyarlayici.aracKimligiMeta] : undefined;
     const r = AracCagriId.safeParse(id);
     const cagri: AjandaPcCagri = {};
     if (r.success) cagri.arac_cagri_id = r.data;
@@ -974,6 +1048,12 @@ async function giris(): Promise<void> {
   const rol = KopruRolu.safeParse(rolArgumani);
   const ajandaRol = AjandaKopruRolu.safeParse(rolArgumani);
   const pcKoprusu = ajandaRol.success && ajandaRol.data === "pc_oturumu";
+  const uyarlayici = pcKopruUyarlayicisiSec(argumanlar);
+  if (pcKoprusu && uyarlayici === null) {
+    process.stderr.write(`kullanim: kopru --rol pc_oturumu [--uyarlayici ${Object.keys(PC_KOPRU_UYARLAYICILARI).join("|")}]\n`);
+    process.exitCode = 2;
+    return;
+  }
   // PC köprüsünün jetonu ortamdan değil anahtar dosyasından gelir (her denemede yeniden okunur).
   const jeton = pcKoprusu ? { success: true as const, data: "" } : Jeton.safeParse(process.env.EREN_KOPRU_JETON);
   if (!jeton.success || (!rol.success && !ajandaRol.success) || (ajandaRol.success && ajandaRol.data === "pc_kanca")) {
@@ -1006,10 +1086,13 @@ async function giris(): Promise<void> {
                 jeton: "",
                 boruAdi: AJANDA_BORU_ADI,
                 jetonOku: pcAnahtariOku,
-                oturumId: process.env.CLAUDE_CODE_SESSION_ID ?? `pck_${randomBytes(16).toString("base64url")}`,
+                oturumId: (uyarlayici !== null ? process.env[uyarlayici.oturumOrtami] : undefined) ?? `pck_${randomBytes(16).toString("base64url")}`,
               }
             : { rol: ajandaRol.data, jeton: jeton.data, boruAdi: AJANDA_BORU_ADI },
           ortak((ad) => boruyaBaglan(ad, AJANDA_AZAMI_CERCEVE.BORU)),
+          uyarlayici ?? undefined,
+          // Ata yürüyüşü yok: yalnız doğrudan ebeveyn (ölçüm: canlı köprülerin ebeveyni claude.exe).
+          pcKoprusu ? String(process.ppid) : undefined,
         )
       : null;
   if (calisan === null) return;

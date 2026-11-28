@@ -14,6 +14,7 @@ import {
   sha256Hex,
 } from "@eren/protocol";
 import type { AjandaFiili, AjandaKopruAsagi } from "@eren/protocol";
+import { pcDefteriKur } from "../src/ajanda-pc.ts";
 import { ajandaKopruSunucuKur } from "../src/ajanda-kopru-sunucu.ts";
 import { depoKur } from "../src/depo.ts";
 import type {
@@ -24,7 +25,7 @@ import type {
   Depo,
   PcKancaIsleyicileri,
 } from "../src/sozlesme.ts";
-import { sahteBoru, sahteGunluk, sahteRastgele, sahteZaman } from "./sahte.ts";
+import { sahteBoru, sahteGunluk, sahteRastgele, sahteTakvim, sahteZaman } from "./sahte.ts";
 import type { SahteBoruBaglantisi } from "./sahte.ts";
 
 const acilanlar: Depo[] = [];
@@ -291,10 +292,21 @@ describe("ajanda borusu, PC rolleri: istekler", () => {
     const kanca = await baglan(k, "pc_kanca");
     gonder(kanca, istek("i1", "pc_arac", TASDIK("toolu_01", { alt_agent: true, istem_id: "p-1" })));
     gonder(kanca, istek("i2", "pc_arac", TASDIK("toolu_02", { etkilesimsiz: true })));
+    // Normalize çerçeve (H1) de aynı borudan geçer; eski çerçeve (yukarıdakiler) de geçmeye devam eder.
+    const NORMAL = {
+      uyarlayici: { ad: "claude-code", surum: 1 },
+      cagri_id: "toolu_03",
+      oturum_id: OTURUM,
+      aktor: "ana",
+      etkilesim: "etkilesimli",
+      surec_id: "3060",
+    };
+    gonder(kanca, istek("i3", "pc_arac", NORMAL));
     await bosalt();
     assert.deepEqual(k.kancalar, [
       { fiil: "pc_arac", girdi: TASDIK("toolu_01", { alt_agent: true, istem_id: "p-1" }) },
       { fiil: "pc_arac", girdi: TASDIK("toolu_02", { etkilesimsiz: true }) },
+      { fiil: "pc_arac", girdi: NORMAL },
     ]);
     const yanitlar = cikanlar(kanca).filter((m) => m.type === "yanit");
     assert.deepEqual(
@@ -302,13 +314,14 @@ describe("ajanda borusu, PC rolleri: istekler", () => {
       [
         ["i1", true, {}],
         ["i2", true, {}],
+        ["i3", true, {}],
       ],
     );
     // Yalın yol: istem metni servise gelemez (eski kancanın çerçevesi geçersizdir, bağlantı kapanır).
     gonder(kanca, istek("i3", "pc_istem", { oturum_id: OTURUM, kaynak: "user", metin: "yarın 3'te dişçi" }));
     await bosalt();
     assert.equal(kanca.kapandi, true);
-    assert.equal(k.kancalar.length, 2);
+    assert.equal(k.kancalar.length, 3);
     assert.ok(!JSON.stringify(k.gunluk.girdiler).includes("dişçi"), "istem metni günlükte");
 
     const atan = await kur({
@@ -348,5 +361,362 @@ describe("ajanda borusu, PC rolleri: istekler", () => {
     k.sunucu.jetonlariniSil();
     assert.equal(k.depo.ajandaPcAnahtariGecerliMi(ozetle(PC_JETON)), true);
     assert.deepEqual(cikanlar(await baglan(k, "pc_oturumu")), [WELCOME("pc_oturumu")]);
+  });
+});
+
+/**
+ * T5 boru sunucusu düzeyinde, gerçek defterle ve gerçek kapanış yollarıyla (`docs/HARNESS.md` 4.2): yeni köprü
+ * hello'da harness sürecini bildirir (`surec_id`), servis onu bağlantıya yazar ve her isteğin bağlamına
+ * (`kopru_surec_id`) geçirir; tasdik yalnız sürecine eşit köprüce tüketilir. Eski köprü (hello'da süreç yok)
+ * bağlantı başına ilk görüşle bağlanır. Bağlantılar arası durum yoktur: hiçbir kapanış yolu, kapanış
+ * bildiriminin hiç gelmemesi (yetim köprü) ya da sıra yarışı bir pencereyi kilitleyemez. Köprü portu
+ * sunucunun kendi kapatmasını geri yansıtmaz (bildirim `temizle`'den gelir); uzak uç kapanışı portun kapanış olayıdır.
+ */
+describe("ajanda borusu, PC: T5 süreç eşitliği ve kilit yok (gerçek defter, gerçek kapanış)", () => {
+  const A1 = OTURUM;
+  const A2 = "6e7f8091-2b3c-4d5e-9f0a-b1c2d3e4f506";
+  const A3 = "7f8091a2-3c4d-4e5f-8a1b-c2d3e4f50617";
+  const B = "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d";
+  const P = "3060";
+  const Q = "4170";
+  const YENI_JETON = "q".repeat(43);
+  /** Köprü türleri: yeni köprü hello'da ebeveynini bildirir, eski köprü bildirmez. */
+  const TURLER = ["yeni", "eski"] as const;
+  type Tur = (typeof TURLER)[number];
+
+  const defterli = async () => {
+    const boru = sahteBoru();
+    const gunluk = sahteGunluk();
+    const zaman = sahteZaman();
+    // Defterin saati iki yöne gider (saatin geri gitmesi); boru sunucusunun zamanlayıcısı sahte saatte.
+    let an = zaman.simdi();
+    const saat = { simdiMs: () => an, ilerlet: (ms: number) => void (an += ms) };
+    const depo = depoKur({ yol: ":memory:", saat: zaman.saat, gunluk: sahteGunluk() });
+    acilanlar.push(depo);
+    depo.ajandaPcAnahtariYaz(ozetle(PC_JETON), 1);
+    const pc = pcDefteriKur({ takvim: sahteTakvim(IST), saat, rastgele: sahteRastgele(5), gunluk });
+    // Gözlemci: bildirimleri sayar, defterin kendi işleyicisine aynen iletir.
+    const kapananlar: string[] = [];
+    const kanca: PcKancaIsleyicileri = {
+      pc_arac: (g) => pc.kanca.pc_arac(g),
+      kopruKapandi: (id) => {
+        kapananlar.push(id);
+        pc.kanca.kopruKapandi?.(id);
+      },
+    };
+    const baglamlar: AjandaKopruBaglami[] = [];
+    const nesne: Record<string, unknown> = {};
+    for (const fiil of AJANDA_FIILLERI) {
+      nesne[fiil] = async (_g: unknown, baglam: AjandaKopruBaglami) => {
+        baglamlar.push(baglam);
+        return baglam.rol === "pc_oturumu" ? { ok: true, deger: LISTE, pc_karar: pc.tur(baglam, an).karar } : { ok: true, deger: LISTE };
+      };
+    }
+    const sunucu = ajandaKopruSunucuKur({
+      boru,
+      depo,
+      rastgele: sahteRastgele(77),
+      anahtar: { sabitZamanEsit: (a: string, b: string) => a === b },
+      zamanlayici: zaman.zamanlayici,
+      gunluk,
+    });
+    await sunucu.baslat(nesne as unknown as AjandaFiilIsleyiciler, kanca);
+
+    let no = 0;
+    /** Claude Code'un araç öncesi kancası: kendi bağlantısı, tek tasdik, sonra kapanır. `surec` CLAUDE_PID. */
+    const tasdik = async (oturum: string, surec: string, jeton = PC_JETON): Promise<string> => {
+      const cagri_id = `toolu_k${++no}`;
+      const b = boru.baglan(AJANDA_BORU_ADI);
+      gonder(b, hello("pc_kanca", jeton));
+      const girdi = { uyarlayici: { ad: "claude-code", surum: 1 }, cagri_id, oturum_id: oturum, istem_id: "istem-1", aktor: "ana", etkilesim: "etkilesimli", surec_id: surec };
+      gonder(b, istek(`k${no}`, "pc_arac", girdi));
+      await bosalt();
+      assert.deepEqual(cikanlar(b).at(-1), { v: PROTOKOL_SURUMU, type: "yanit", istek_id: `k${no}`, ok: true, sonuc: {} });
+      b.istemciKopar();
+      await bosalt();
+      return cagri_id;
+    };
+
+    /**
+     * Köprü bağlantısı: `tur` yeni ise hello `surec_id: ebeveyn` taşır. `kopar`: uzak uç kapandı; sunucunun
+     * `kapat`'ı yalnız işaretler (geri yansıtmaz).
+     */
+    const kopru = async (tur: Tur, ebeveyn: string, jeton = PC_JETON) => {
+      const satirlar: Array<(s: string) => void> = [];
+      const kapanislar: Array<() => void> = [];
+      const yazilanlar: string[] = [];
+      const d = { kapandi: false, yazmaBozuk: false };
+      const sunucuIstegi = boru.istek(AJANDA_BORU_ADI);
+      assert.ok(sunucuIstegi !== null);
+      sunucuIstegi.baglanti({
+        satirYaz: (s) => {
+          if (d.yazmaBozuk) throw new Error("EPIPE");
+          if (!d.kapandi) yazilanlar.push(s);
+        },
+        kapat: () => {
+          d.kapandi = true;
+        },
+        satirDinle: (f) => void satirlar.push(f),
+        kapanisDinle: (f) => void kapanislar.push(f),
+      });
+      const gonderHam = (s: string): void => {
+        if (!d.kapandi) for (const f of [...satirlar]) f(s);
+      };
+      const cik = (): AjandaKopruAsagi[] =>
+        yazilanlar.map((s) => {
+          const c = ajandaKopruAsagiCoz(s);
+          assert.ok(c.ok, s);
+          return c.mesaj;
+        });
+      gonderHam(JSON.stringify({ ...hello("pc_oturumu", jeton), ...(tur === "yeni" ? { surec_id: ebeveyn } : {}) }));
+      await bosalt();
+      assert.deepEqual(cik(), [WELCOME("pc_oturumu")]);
+      const el = gunluk.girdiler.filter((g) => g.olay === "el_sikisma" && g.alanlar?.["rol"] === "pc_oturumu").at(-1);
+      return {
+        baglanti_id: String(el?.alanlar?.["baglanti_id"]),
+        d,
+        gonder: (m: unknown) => gonderHam(JSON.stringify(m)),
+        gonderHam,
+        cikanlar: cik,
+        kopar: () => {
+          d.kapandi = true;
+          for (const f of [...kapanislar]) f();
+        },
+      };
+    };
+    type Kopru = Awaited<ReturnType<typeof kopru>>;
+
+    let istekNo = 0;
+    /** Köprünün çağrısı (`oturum`: köprünün bildirdiği; yoksa bildirmez): defterin kararı. */
+    const cagri = async (u: Kopru, cagri_id: string, oturum?: string): Promise<string> => {
+      const istek_id = `i${++istekNo}`;
+      u.gonder(istek(istek_id, "ajanda_listele", {}, { cagri: { arac_cagri_id: cagri_id, ...(oturum === undefined ? {} : { oturum_id: oturum }) } }));
+      await bosalt();
+      const y = u.cikanlar().at(-1) as { type: string; istek_id: string; ok: boolean; sonuc?: { karar: string } } | undefined;
+      assert.ok(y?.type === "yanit" && y.istek_id === istek_id && y.ok, JSON.stringify(y));
+      return y.sonuc?.karar ?? "?";
+    };
+    const olay = (ad: string) => gunluk.girdiler.filter((g) => g.olay === ad).map((g) => g.alanlar);
+    return { boru, gunluk, zaman, saat, depo, sunucu, kapananlar, baglamlar, tasdik, kopru, cagri, olay };
+  };
+  type Kopru = Awaited<ReturnType<Awaited<ReturnType<typeof defterli>>["kopru"]>>;
+
+  it("hello'nun surec_id'si bağlantıya yazılır, her isteğin bağlamına geçer (kopru_surec_id); eski köprüde yok; cagri'ya konamaz", async () => {
+    const k = await defterli();
+    const yeni = await k.kopru("yeni", P);
+    const eski = await k.kopru("eski", P);
+    await k.cagri(yeni, "toolu_x1", A1);
+    await k.cagri(eski, "toolu_x2", A1);
+    assert.deepEqual(k.baglamlar.map((b) => ({ ...b, baglanti_id: "?" })), [
+      { rol: "pc_oturumu", baglanti_id: "?", arac_cagri_id: "toolu_x1", oturum_id: A1, kopru_surec_id: P },
+      { rol: "pc_oturumu", baglanti_id: "?", arac_cagri_id: "toolu_x2", oturum_id: A1 },
+    ]);
+    // Süreç yalnız hello'dadır: `cagri`'daki süreç alanı çerçeveyi bozar (katı `AjandaPcCagri`), bağlantı kapanır.
+    yeni.gonder(istek("iz", "ajanda_listele", {}, { cagri: { arac_cagri_id: "toolu_x3", surec_id: Q } }));
+    await bosalt();
+    assert.equal(yeni.d.kapandi, true);
+    assert.equal(k.baglamlar.length, 2);
+    // Öbür roller hello'da süreç taşıyamaz: el sıkışma reddedilir.
+    for (const [rol, jeton] of [["pc_kanca", PC_JETON], ["ana_oturum", k.sunucu.jetonUret(KAPSAM)]] as const) {
+      const b = k.boru.baglan(AJANDA_BORU_ADI);
+      gonder(b, { ...hello(rol, jeton), surec_id: P });
+      await bosalt();
+      assert.deepEqual(cikanlar(b), [RET("yetkisiz")], rol);
+    }
+    // Geçersiz biçimli süreç de reddedilir.
+    const bozuk = k.boru.baglan(AJANDA_BORU_ADI);
+    gonder(bozuk, { ...hello("pc_oturumu", PC_JETON), surec_id: "12 34" });
+    await bosalt();
+    assert.deepEqual(cikanlar(bozuk), [RET("yetkisiz")]);
+  });
+
+  for (const tur of TURLER) {
+    it(`A'nın tasdikini B tüketemez: B'nin çağrısı taslak, tasdik sahibine kalır, B'nin kapanışı A'yı etkilemez; ${tur} köprü`, async () => {
+      const k = await defterli();
+      const a = await k.kopru(tur, P);
+      const b = await k.kopru(tur, Q);
+      assert.equal(await k.cagri(a, await k.tasdik(A1, P), A1), "insan");
+      assert.equal(await k.cagri(b, await k.tasdik(B, Q), B), "insan");
+      const id = await k.tasdik(A3, P);
+      assert.equal(await k.cagri(b, id, B), "tasdik_yok", "B'nin köprüsü A'nın tasdikini tüketemez");
+      assert.deepEqual(k.olay("pc_surec_uyusmuyor").map((x) => x?.["kopru_surec"]), [tur === "yeni" ? "bildirildi" : "ilk_gorus"]);
+      b.kopar();
+      await bosalt();
+      assert.equal(await k.cagri(a, id, A1), "insan", "tasdik sahibine kaldı");
+    });
+
+    it(`kilit yok, /clear ve tek süreçte birden çok oturum: iki köprü aynı süreçte defalarca /clear; ${tur} köprü`, async () => {
+      const k = await defterli();
+      const a = await k.kopru(tur, P);
+      const b = await k.kopru(tur, P);
+      // B'nin ilk çağrısı /clear'dan sonra (kancanın oturumu köprününkinden farklı).
+      for (const [ao, bo] of [[A1, A3], [A2, B], [A3, A2], [B, A1]] as const) {
+        assert.equal(await k.cagri(a, await k.tasdik(ao, P), A1), "insan", `A ${ao}`);
+        assert.equal(await k.cagri(b, await k.tasdik(bo, P), B), "insan", `B ${bo}`);
+      }
+    });
+
+    it(`kilit yok, --resume / --continue ile ikinci pencere + /clear: iki süreç ayrı, ikisi de insan; ${tur} köprü`, async () => {
+      const k = await defterli();
+      const p1 = await k.kopru(tur, P);
+      assert.equal(await k.cagri(p1, await k.tasdik(A1, P), A1), "insan");
+      // İkinci pencere aynı oturumu sürdürür (--resume: köprü A1 bildirir; --continue: geçici A2), sonra /clear (A3).
+      for (const kopruOturumu of [A1, A2]) {
+        const p2 = await k.kopru(tur, Q);
+        for (const o of [A1, A3, A3]) assert.equal(await k.cagri(p2, await k.tasdik(o, Q), kopruOturumu), "insan", `pencere 2, ${o}`);
+        assert.equal(await k.cagri(p2, await k.tasdik(A1, P), kopruOturumu), "tasdik_yok", "pencere 1'in tasdiki");
+      }
+      for (const o of [A1, A3]) assert.equal(await k.cagri(p1, await k.tasdik(o, P), A1), "insan", `pencere 1, ${o}`);
+    });
+
+    it(`kilit yok, boruya yeniden bağlanma ve saatin geri gitmesi; oturum kimliği gelmemesi; ${tur} köprü`, async () => {
+      const k = await defterli();
+      const ilk = await k.kopru(tur, P);
+      assert.equal(await k.cagri(ilk, await k.tasdik(A1, P)), "insan", "oturum kimliği yok");
+      // Aynı köprü süreci yeniden bağlandı (anahtar yenilendi ya da servis kısa koptu); eski bağlantı sonra kapanır.
+      const yeni = await k.kopru(tur, P);
+      assert.equal(await k.cagri(yeni, await k.tasdik(A2, P), "pck_rastgele"), "insan");
+      ilk.kopar();
+      await bosalt();
+      assert.equal(await k.cagri(yeni, await k.tasdik(A2, P), "pck_rastgele"), "insan");
+      const id = await k.tasdik(A3, P);
+      k.saat.ilerlet(-5 * 60_000);
+      assert.equal(await k.cagri(yeni, id), "tasdik_yok", "tasdik çağrıdan sonraki bir ana ait: güvenli yön");
+      for (let i = 0; i < 2; i++) assert.equal(await k.cagri(yeni, await k.tasdik(A3, P)), "insan", `saat geri gittikten sonra ${i}`);
+    });
+  }
+
+  /** Köprünün kapanış yolları (/mcp, köprü çökmesi, servisin kapatması). */
+  const KAPANISLAR: ReadonlyArray<{ ad: string; kapat(u: Kopru): void; yetim?: true }> = [
+    { ad: "uzak uç kapandı (köprü çöktü ya da /mcp)", kapat: (u) => u.kopar() },
+    { ad: "sunucu kapattı (ikinci hello)", kapat: (u) => u.gonder(hello("pc_oturumu", PC_JETON)) },
+    { ad: "sunucu kapattı (geçersiz çerçeve)", kapat: (u) => u.gonderHam("{bozuk") },
+    {
+      ad: "hata (yanıt yazılamadı)",
+      kapat: (u) => {
+        u.d.yazmaBozuk = true;
+        u.gonder(istek("iy", "ajanda_listele", {}));
+      },
+    },
+    { ad: "kapanış hiç gelmedi (yetim köprü)", kapat: () => {}, yetim: true },
+  ];
+
+  for (const tur of TURLER) {
+    for (const ks of KAPANISLAR) {
+      it(`kilit yok, /mcp (köprü yenilenir) → çağrısız /clear; ${ks.ad}: yeni köprünün ilk çağrısı kapanıştan önce de sonra da insan; ${tur} köprü`, async () => {
+        const k = await defterli();
+        const eski = await k.kopru(tur, P);
+        assert.equal(await k.cagri(eski, await k.tasdik(A1, P), A1), "insan");
+        const yeni = await k.kopru(tur, P);
+        assert.equal(await k.cagri(yeni, await k.tasdik(A3, P), A2), "insan", "kapanıştan önce");
+        const bekleyen = await k.tasdik(A3, P);
+        ks.kapat(eski);
+        await bosalt();
+        const yetim = ks.yetim === true;
+        assert.equal(eski.d.kapandi, !yetim);
+        assert.deepEqual(k.kapananlar, yetim ? [] : [eski.baglanti_id], "tek bildirim, yalnız eski köprü");
+        assert.equal(await k.cagri(yeni, bekleyen, A2), "insan", "kapanış bekleyen tasdiki silmez");
+        for (let i = 0; i < 3; i++) assert.equal(await k.cagri(yeni, await k.tasdik(A3, P), A2), "insan", `çağrı ${i}`);
+        // Kaldırılan olaylar hiç yazılmaz.
+        for (const ad of ["pc_oturum_uyusmuyor", "pc_bag_birakildi", "pc_bag_katildi", "pc_surec_uyusmuyor"]) assert.equal(k.olay(ad).length, 0, ad);
+      });
+    }
+  }
+
+  it("süre dolması: anahtarı düşen köprüyü servis PC_RET_KAPANIS_MS sonra kapatır; yeni anahtarla yeni köprü insan", async () => {
+    const k = await defterli();
+    const eski = await k.kopru("yeni", P);
+    assert.equal(await k.cagri(eski, await k.tasdik(A1, P), "pck_bir"), "insan");
+    k.depo.ajandaPcAnahtariYaz(ozetle(YENI_JETON), 2);
+    eski.gonder(istek("id", "ajanda_listele", {}));
+    await bosalt();
+    assert.deepEqual(eski.cikanlar().at(-1), { v: PROTOKOL_SURUMU, type: "yanit", istek_id: "id", ok: false, code: "jeton_gecersiz" });
+    assert.deepEqual(k.kapananlar, [], "kapanış bekleniyor");
+    k.zaman.ilerlet(2_000);
+    await bosalt();
+    assert.equal(eski.d.kapandi, true);
+    assert.deepEqual(k.kapananlar, [eski.baglanti_id]);
+    const yeni = await k.kopru("yeni", P, YENI_JETON);
+    assert.equal(await k.cagri(yeni, await k.tasdik(A1, P, YENI_JETON), "pck_iki"), "insan");
+  });
+
+  it("servisin toplu kapatması (jetonlariniSil, kapat): her köprü bir kez bildirilir; yeniden bağlanan köprü insan", async () => {
+    const k = await defterli();
+    const a = await k.kopru("yeni", P);
+    const b = await k.kopru("eski", Q);
+    assert.equal(await k.cagri(a, await k.tasdik(A1, P), "pck_a"), "insan");
+    assert.equal(await k.cagri(b, await k.tasdik(B, Q), "pck_b"), "insan");
+    k.sunucu.jetonlariniSil();
+    await bosalt();
+    assert.deepEqual([...k.kapananlar].sort(), [a.baglanti_id, b.baglanti_id].sort());
+    const a2 = await k.kopru("eski", P);
+    assert.equal(await k.cagri(a2, await k.tasdik(A1, P), "pck_a2"), "insan");
+    await k.sunucu.kapat();
+    assert.equal(k.kapananlar.length, 3);
+    assert.equal(k.kapananlar.at(-1), a2.baglanti_id);
+  });
+
+  it("sunucunun kapatmasını port geri yansıtsa da (sahte boru) bildirim bir kez; kanca ve ana_oturum kapanışı bildirilmez", async () => {
+    const k = await defterli();
+    await k.tasdik(A1, P);
+    const ana = k.boru.baglan(AJANDA_BORU_ADI);
+    gonder(ana, hello("ana_oturum", k.sunucu.jetonUret(KAPSAM)));
+    await bosalt();
+    ana.istemciKopar();
+    await bosalt();
+    assert.deepEqual(k.kapananlar, [], "kanca ve ana_oturum");
+    const b = k.boru.baglan(AJANDA_BORU_ADI);
+    gonder(b, hello("pc_oturumu", PC_JETON));
+    await bosalt();
+    gonder(b, hello("pc_oturumu", PC_JETON));
+    await bosalt();
+    assert.equal(b.kapandi, true);
+    b.istemciKopar();
+    await bosalt();
+    assert.equal(k.kapananlar.length, 1);
+  });
+
+  it("kopruKapandi atarsa bağlantı yine temizlenir, sunucu sürer; alanı olmayan (eski) kanca işleyicisi zararsız", async () => {
+    const atan: PcKancaIsleyicileri = {
+      pc_arac: () => ({}),
+      kopruKapandi: () => {
+        throw new Error("x");
+      },
+    };
+    const eskiTip: PcKancaIsleyicileri = { pc_arac: () => ({}) };
+    for (const pcKanca of [atan, eskiTip]) {
+      const k = await kur({ pcKanca });
+      k.depo.ajandaPcAnahtariYaz(ozetle(PC_JETON), 1);
+      for (let i = 0; i < AJANDA_PC_SINIRLARI.BAGLANTI_ADET + 2; i++) {
+        const b = await baglan(k, "pc_oturumu");
+        assert.deepEqual(cikanlar(b), [WELCOME("pc_oturumu")], "sınır sızmadı");
+        b.istemciKopar();
+        await bosalt();
+      }
+      const atti = k.gunluk.girdiler.filter((g) => g.olay === "isleyici_atti");
+      assert.equal(atti.length, pcKanca === atan ? AJANDA_PC_SINIRLARI.BAGLANTI_ADET + 2 : 0);
+    }
+  });
+
+  describe("yarış: eski köprünün kapanışı ile yeni köprünün ilk çağrısı (sıra karara girmez)", () => {
+    for (const tur of TURLER) {
+      it(`kapanış önce / tasdik kapanıştan önce / çağrı kapanıştan önce: hepsi insan; başka süreç tüketemez; ${tur} köprü`, async () => {
+        for (const sira of ["kapanis_once", "tasdik_once", "cagri_once"] as const) {
+          const k = await defterli();
+          const eski = await k.kopru(tur, P);
+          const baskasi = await k.kopru("yeni", Q);
+          assert.equal(await k.cagri(eski, await k.tasdik(A1, P), A1), "insan");
+          const yeni = await k.kopru(tur, P);
+          if (sira === "kapanis_once") eski.kopar();
+          const id = await k.tasdik(A3, P);
+          if (sira === "tasdik_once") eski.kopar();
+          assert.equal(await k.cagri(baskasi, id, B), "tasdik_yok", `${sira}: başka süreç`);
+          assert.equal(await k.cagri(yeni, id, A2), "insan", sira);
+          if (sira === "cagri_once") eski.kopar();
+          await bosalt();
+          assert.equal(await k.cagri(yeni, await k.tasdik(A3, P), A2), "insan", `${sira}: sonraki`);
+        }
+      });
+    }
   });
 });

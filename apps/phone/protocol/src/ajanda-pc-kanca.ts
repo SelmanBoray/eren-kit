@@ -60,12 +60,61 @@ export const PC_ETKILESIMSIZ_GIRISLER = ["sdk-cli", "sdk-ts", "sdk-py"] as const
 export const pcEtkilesimsizMi = (giris: unknown): boolean =>
   typeof giris === "string" && (PC_ETKILESIMSIZ_GIRISLER as readonly string[]).includes(giris);
 
+/**
+ * Claude Code'un kanca sürecine verdiği kendi süreç kimliği (ondalık PID). Kanıt (2.1.332, kurulu ikili
+ * dosya): kanca ortamı `CLAUDE_PID: String(process.pid)` ile kurulur; MCP sunucularının ortamına bu alan
+ * konmaz. Canlıda köprü süreçleri doğrudan `claude.exe`'nin çocuğudur (süreç ağacı, 2026-11-27). Değer
+ * oturumdan bağımsızdır (`/clear` oturum kimliğini değiştirir, süreci değil): servis tasdiki köprüye bunun
+ * üzerinden bağlar (T5, `server/src/ajanda-pc.ts`). Yoksa ya da geçersizse çerçeveye girmez.
+ */
+export const CLAUDE_CODE_SUREC_ORTAMI = "CLAUDE_PID";
+
 /** Claude Code olayı (`kanca.ts <olay>`). Yalnız araç öncesi; eski kurulumun `istem`/`tur_sonu`'su hiçbir şey yapmaz. */
 export type PcKancaOlayi = "arac";
 export const PC_KANCA_OLAYLARI: readonly PcKancaOlayi[] = ["arac"];
 
-/** Kancanın servise verdiği girdi; şeması `ajanda-pc.ts` `PC_KANCA_ARACLARI.pc_arac`. */
+/**
+ * Tasdik çerçevesinin uyarlayıcıları (kapalı liste): ad → bu sürümün tanıdığı en yeni çerçeve sürümü.
+ * Listede olmayan ad ya da daha yeni sürüm şemadan geçer ama servis onu insan turu için yeterli saymaz
+ * (`tasdik_yok`, güvenli taraf). Köprünün `--uyarlayici` bayrağı da bu adları alır; varsayılan `claude-code`.
+ */
+export const PC_UYARLAYICILARI = { "claude-code": 1 } as const;
+export type PcUyarlayiciAdi = keyof typeof PC_UYARLAYICILARI;
+export const PC_VARSAYILAN_UYARLAYICI: PcUyarlayiciAdi = "claude-code";
+export const pcUyarlayiciAdiMi = (ad: unknown): ad is PcUyarlayiciAdi => typeof ad === "string" && Object.hasOwn(PC_UYARLAYICILARI, ad);
+/** Ad listede ve sürüm 1 ile o adın en yeni sürümü arasında mı. */
+export const pcUyarlayiciTanindiMi = (ad: unknown, surum: unknown): boolean =>
+  pcUyarlayiciAdiMi(ad) && typeof surum === "number" && Number.isInteger(surum) && surum >= 1 && surum <= PC_UYARLAYICILARI[ad];
+
+/** Çağrıyı yapan: ana ajan, alt agent ya da uyarlayıcının ayıramadığı (`bilinmiyor`: güvenli taraf). */
+export const PC_AKTORLER = ["ana", "alt", "bilinmiyor"] as const;
+export type PcAktor = (typeof PC_AKTORLER)[number];
+/** Oturumun türü: etkileşimli, etkileşimsiz (betik, SDK) ya da bilinmiyor (güvenli taraf). */
+export const PC_ETKILESIMLER = ["etkilesimli", "etkilesimsiz", "bilinmiyor"] as const;
+export type PcEtkilesim = (typeof PC_ETKILESIMLER)[number];
+
+/**
+ * Kancanın servise verdiği normalize tasdik çerçevesi (harness'tan bağımsız; `docs/HARNESS.md` 4.2);
+ * şeması `ajanda-pc.ts` `PcTasdikGirdi`. Alanların hepsi harness'ın model dışı yürütme noktasından gelir
+ * (T1): `cagri_id` harness'ın çağrı kimliği, `oturum_id` ve `istem_id` oturum ve tur, `surec_id` harness
+ * sürecinin kimliği (oturumdan bağımsız, isteğe bağlı; T5 bağı için).
+ */
 export interface PcAracKancaGirdisi {
+  uyarlayici: { ad: string; surum: number };
+  cagri_id: string;
+  oturum_id: string;
+  istem_id?: string;
+  aktor: PcAktor;
+  etkilesim: PcEtkilesim;
+  surec_id?: string;
+}
+/**
+ * H1 öncesi çerçeve (Claude Code alanlarıyla). Servis bunu da kabul eder: kanca uzun ömürlü değildir (her
+ * araç çağrısında `guncel` yolundan yeniden başlar), bu yüzden kabul geri alma içindir: junction eski
+ * sürüme döner, servis bir süre yeni kalır, eski kanca eski çerçeveyi yollar. Kararı bugünkü gibidir
+ * (`PcEskiAracGirdi`). Kanca artık yollamaz.
+ */
+export interface PcEskiAracKancaGirdisi {
   oturum_id: string;
   istem_id?: string;
   arac_cagri_id: string;
@@ -98,10 +147,16 @@ export const pcJetonuMu = (v: unknown): v is string => typeof v === "string" && 
  * `tool_name` (`mcp__eren-ajanda__<fiil>`), `prompt_id` (alt agent'ın çağrısında da ana turunki); alt
  * agent'ın (ön plan ya da arka plan) çağrısında `agent_id` ve `agent_type` dolu, ana ajanınkinde yok;
  * ikisinden biri hangi değerle olursa olsun bulunursa alt agent sayılır (`altAgentMi`, güvenli taraf).
- * `giris` kanca sürecinin `CLAUDE_CODE_ENTRYPOINT`'idir (`pcEtkilesimsizMi`). Araç girdisi (`tool_input`)
- * okunmaz, servise gitmez.
+ * `giris` kanca sürecinin `CLAUDE_CODE_ENTRYPOINT`'idir (`pcEtkilesimsizMi`), `surec` `CLAUDE_PID`'i
+ * (`CLAUDE_CODE_SUREC_ORTAMI`). Araç girdisi (`tool_input`) okunmaz, servise gitmez; JSON'daki başka hiçbir
+ * alan (ör. `aktor`, `uyarlayici`) çerçeveye geçmez.
+ *
+ * Claude uyarlayıcısı (`claude-code`, sürüm 1): `tool_use_id → cagri_id`, `prompt_id → istem_id`,
+ * `agent_id`/`agent_type` anahtarı varsa `aktor: alt`, yoksa `ana`; giriş `PC_ETKILESIMSIZ_GIRISLER`'den
+ * biriyse `etkilesimsiz`, değilse `etkilesimli` (yasak listesi, bugünkü davranış). Bu uyarlayıcı
+ * `bilinmiyor` üretmez.
  */
-export function pcAracKancaGirdisi(ham: unknown, giris: unknown): PcKancaIstegi | null {
+export function pcAracKancaGirdisi(ham: unknown, giris: unknown, surec?: unknown): PcKancaIstegi | null {
   if (typeof ham !== "object" || ham === null || Array.isArray(ham)) return null;
   const h = ham as Record<string, unknown>;
   const oturum_id = opakId(h["session_id"]);
@@ -113,9 +168,18 @@ export function pcAracKancaGirdisi(ham: unknown, giris: unknown): PcKancaIstegi 
   if (!ad.startsWith(onek) || !(PC_KANCA_ARAC_FIILLERI as readonly string[]).includes(ad.slice(onek.length))) return null;
   const istemId = opakId(h["prompt_id"]);
   const istem = istemId === undefined ? {} : { istem_id: istemId };
+  const surecId = opakId(surec);
   return {
     fiil: "pc_arac",
-    girdi: { oturum_id, ...istem, arac_cagri_id: id, alt_agent: altAgentMi(h), etkilesimsiz: pcEtkilesimsizMi(giris) },
+    girdi: {
+      uyarlayici: { ad: "claude-code", surum: PC_UYARLAYICILARI["claude-code"] },
+      cagri_id: id,
+      oturum_id,
+      ...istem,
+      aktor: altAgentMi(h) ? "alt" : "ana",
+      etkilesim: pcEtkilesimsizMi(giris) ? "etkilesimsiz" : "etkilesimli",
+      ...(surecId === undefined ? {} : { surec_id: surecId }),
+    },
   };
 }
 
