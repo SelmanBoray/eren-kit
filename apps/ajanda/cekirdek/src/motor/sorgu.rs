@@ -12,7 +12,7 @@
 //! Bu sorgular yalnız `Depo` okur: köprü onları motor kilidini almadan ayrı bir okuma bağlantısında da
 //! çalıştırabilir (`kopru::Cekirdek`), böylece uzun bir telafi yazması arayüzü bekletmez.
 
-use super::kanal::{SatirErtelemesi, erteleme_surumu, kuyruk_ertelemeleri};
+use super::kanal::{ERTELENEN_ATILDI, SatirErtelemesi, erteleme_surumu, kuyruk_ertelemeleri};
 use super::{Etkiler, Motor, Ortam};
 use crate::depo::{Depo, GorunenSuzgec};
 use crate::hata::CekirdekHatasi;
@@ -70,7 +70,8 @@ pub(crate) fn kayit(d: &Depo, kayit_id: &str) -> Result<Option<KayitGorunumu>, C
 }
 
 /// Ret listesi, eskiden yeniye. Çözülemeyen satır da gösterilir (hiçbir işlem sessizce kaybolmaz):
-/// türü okunamazsa `guncelle`, nedeni okunamazsa `gecersiz_islem` sayılır, gövdesi yoktur.
+/// türü okunamazsa `guncelle`, nedeni okunamazsa `gecersiz_islem` sayılır, gövdesi yoktur. Kullanıcının attığı
+/// ertelenen v3 değişikliği (`ERTELENEN_ATILDI`) `teslim_edilemedi` ve `ertelenen_atildi` ile gelir.
 pub(crate) fn ret_listesi(d: &Depo) -> Result<Vec<RetGirdisi>, CekirdekHatasi> {
     Ok(d.ret_listesi()?
         .into_iter()
@@ -89,14 +90,13 @@ pub(crate) fn ret_listesi(d: &Depo) -> Result<Vec<RetGirdisi>, CekirdekHatasi> {
                 n.bitir().ok()?;
                 Some(g)
             });
-            RetGirdisi {
-                islem_id: r.islem_id,
-                kayit_id: r.kayit_id,
-                islem,
-                neden: KuyrukRetNedeni::coz(&r.neden).unwrap_or(KuyrukRetNedeni::GecersizIslem),
-                govde,
-                ts_ms: r.ts_ms,
-            }
+            let ertelenen_atildi = r.neden == ERTELENEN_ATILDI;
+            let neden = if ertelenen_atildi {
+                KuyrukRetNedeni::TeslimEdilemedi
+            } else {
+                KuyrukRetNedeni::coz(&r.neden).unwrap_or(KuyrukRetNedeni::GecersizIslem)
+            };
+            RetGirdisi { islem_id: r.islem_id, kayit_id: r.kayit_id, islem, neden, govde, ts_ms: r.ts_ms, ertelenen_atildi }
         })
         .collect())
 }

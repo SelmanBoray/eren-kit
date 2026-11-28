@@ -1325,7 +1325,7 @@ const yanlisKoktekiServisiDurdur = async (): Promise<string> => {
  * Hangi adımda düştüğü: "kapanma" = eski bekçi kapanmadı (eski servis büyük olasılıkla hâlâ çalışıyor),
  * "baslatma" = bekçi/ana başlatılamadı, "dogrulama" = yeni sürüm kararlı ayağa kalkmadı.
  */
-type YenilemeSonucu =
+export type YenilemeSonucu =
   | { readonly tamam: true }
   | { readonly tamam: false; readonly asama: "kapanma" | "baslatma" | "dogrulama" | "veri_koku"; readonly sebep: string };
 
@@ -1458,16 +1458,42 @@ export const veriKokuHatasindanCik = async (
  * ayrıştırma (50 000 kayıtta ~0,5-0,7 sn) servisi kapalı tutmasın, kararlılık beklemesinin zamanlayıcısını
  * da geciktirmesin. Yanlış kökte açılan servis önce durdurulur, sonra denetlenir.
  */
-const etkinlestir = async (kaynak: string, hedef: string, sha: string): Promise<void> => {
+/**
+ * `etkinlestir` ve elle geri almanın (`geriAlUygula`) dış dünyası. Yalnız sınanabilirlik için: testler
+ * ajanda denetiminin (`vt`) servisin başlatılmasından (`servisiYenile`) sonra geldiğini sırayla gözler.
+ */
+export type EtkinlestirBag = {
+  /** guncel değişmeden önceki denetimler: görev kapalı, bekçisiz servis yok. */
+  readonly onDenetim: () => Promise<void>;
+  /** Yalnız elle geri almada, guncel değişmeden önce: veri kökünün izni. */
+  readonly izinSagla: () => void;
+  readonly servisiYenile: (kaynak: string, sha: string) => Promise<YenilemeSonucu>;
+  /** Yanlış kökteki servisi durdurur (`yanlisKoktekiServisiDurdur`). */
+  readonly durdur: () => Promise<string>;
+  /** Ajanda denetiminin okuyacağı veritabanı; denetim anında çağrılır. */
+  readonly vt: () => string;
+};
+
+const gercekEtkinlestirBag: EtkinlestirBag = {
+  onDenetim: async () => {
+    gorevKapaliDenetle();
+    await bekcisizServisDenetle();
+  },
+  izinSagla: () => veriKokuIzniniSagla(veriKoku(process.env)),
+  servisiYenile: (kaynak, sha) => servisiYenile(kaynak, sha),
+  durdur: () => yanlisKoktekiServisiDurdur(),
+  vt: vtYolu,
+};
+
+export const etkinlestir = async (kaynak: string, hedef: string, sha: string, bag: EtkinlestirBag = gercekEtkinlestirBag): Promise<void> => {
   // guncel değişmeden ÖNCE
-  gorevKapaliDenetle();
-  await bekcisizServisDenetle();
+  await bag.onDenetim();
   const onceki = guncelSha(hedef);
   guncelYap(hedef, sha);
   console.log(`guncel: ${onceki ?? "yok"} → ${sha}`);
-  const s = await servisiYenile(kaynak, sha);
+  const s = await bag.servisiYenile(kaynak, sha);
   if (s.tamam) return;
-  if (s.asama === "veri_koku") await veriKokuHatasindanCik(hedef, sha, onceki, s.sebep);
+  if (s.asama === "veri_koku") await veriKokuHatasindanCik(hedef, sha, onceki, s.sebep, { durdur: bag.durdur, geriAl: otomatikGeriAl, vt: bag.vt });
   if (onceki === null) {
     throw new KurHatasi(`${s.sebep}; önceki sürüm yok, otomatik geri alma yapılamadı (guncel ${sha})`);
   }
@@ -1478,7 +1504,7 @@ const etkinlestir = async (kaynak: string, hedef: string, sha: string): Promise<
   console.error(`otomatik geri alındı: ${sha} → ${onceki}`);
   sohbetUyarisi(hedef, onceki, sha);
   // Ajanda denetimi servis yeniden başlatıldıktan sonra (yukarıdaki not); başlatılmayacaksa hemen.
-  const ajandaDenetimi = (): string | null => ajandaUyarisi(hedef, onceki, vtYolu());
+  const ajandaDenetimi = (): string | null => ajandaUyarisi(hedef, onceki, bag.vt());
   if (s.asama === "kapanma") {
     throw new KurHatasi(
       ajandaEki(
@@ -1487,9 +1513,9 @@ const etkinlestir = async (kaynak: string, hedef: string, sha: string): Promise<
       ),
     );
   }
-  const g = await servisiYenile(kaynak, onceki);
+  const g = await bag.servisiYenile(kaynak, onceki);
   if (!g.tamam && g.asama === "veri_koku") {
-    const durdurma = await yanlisKoktekiServisiDurdur();
+    const durdurma = await bag.durdur();
     throw new KurHatasi(
       ajandaEki(
         `${s.sebep}; otomatik geri alındı: ${sha} → ${onceki}, ama ${g.sebep}; servis yeniden başlatılmadı: ${durdurma}. ` +
@@ -1572,28 +1598,32 @@ const kur = async (o: { kirli: boolean; testsiz: boolean; eskiKokuYoksay: boolea
 const geriAl = async (eskiKokuYoksay: boolean): Promise<number> => {
   const hedef = uygulamaKokuOrtamdan();
   kurulumOnDenetimi(eskiKokuYoksay);
+  return await geriAlUygula(hedef, kaynakKoku());
+};
+
+/** `--geri-al`'in ön denetimden sonraki gövdesi; `bag` yalnız sınanabilirlik için (`EtkinlestirBag`). */
+export const geriAlUygula = async (hedef: string, kaynak: string, bag: EtkinlestirBag = gercekEtkinlestirBag): Promise<number> => {
   const g = guncelSha(hedef);
   const o = oncekiSha(hedef);
   if (o === null) throw new KurHatasi("geri alınacak önceki sürüm yok");
-  gorevKapaliDenetle();
-  await bekcisizServisDenetle();
-  veriKokuIzniniSagla(veriKoku(process.env));
+  await bag.onDenetim();
+  bag.izinSagla();
   guncelYap(hedef, o);
   console.log(`guncel: ${g ?? "yok"} → ${o}`);
   if (g !== null) sohbetUyarisi(hedef, o, g);
-  const s = await servisiYenile(kaynakKoku(), o);
+  const s = await bag.servisiYenile(kaynak, o);
   if (!s.tamam && s.asama === "veri_koku") {
-    const durdurma = await yanlisKoktekiServisiDurdur();
+    const durdurma = await bag.durdur();
     throw new KurHatasi(
       ajandaEki(
         `${s.sebep} (guncel ${o}); servis yanlış köke yazmasın diye durduruldu: ${durdurma}. ` +
           "Ortamı düzeltip (oturumu kapatıp açın) `eren baslat` ile başlatın",
-        ajandaUyarisi(hedef, o, vtYolu()),
+        ajandaUyarisi(hedef, o, bag.vt()),
       ),
     );
   }
   // Elle geri alma bilinçli: uyarır, durmaz. Denetim servis başladıktan sonra (`etkinlestir` notu).
-  const ajanda = ajandaUyarisi(hedef, o, vtYolu());
+  const ajanda = ajandaUyarisi(hedef, o, bag.vt());
   if (!s.tamam) throw new KurHatasi(ajandaEki(`${s.sebep} (guncel ${o}; elle geri almada otomatik geri dönüş yapılmaz)`, ajanda));
   return 0;
 };

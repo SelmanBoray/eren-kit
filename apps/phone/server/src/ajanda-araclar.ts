@@ -112,7 +112,8 @@ import type {
  *   v3 alanları kayıtta kalır; eş birleşmesi ve güncelleme onlara dokunmaz.
  *   Telefon sohbeti ve PC oturumu aynı yüzü görür. Ayar açıkken çıktının yüzünü bağlantının yüzü belirler
  *   (işleyicinin dördüncü argümanı `v3Yuz`, boru sunucusu `bag.v3`'ü verir; verilmezse ayar): v2 yüzlü
- *   bağlantı (eski köprü, düz hello'ya düşmüş köprü) ayar kapalıykenki v2 yüzünü aynen alır.
+ *   bağlantı (eski köprü, düz hello'ya düşmüş köprü) ayar kapalıykenki v2 yüzünü aynen alır. Girdi şeması da
+ *   aynı yüzden: v2 yüzlü bağlantının v3 alanı ayar açıkken de "bilinmeyen alan" ile reddedilir.
  * - Her işleyici eşzamanlıdır (araya `await` girmez) ve tek `depo.islem` içinde yazar.
  */
 
@@ -219,7 +220,9 @@ function v2Yuzu(fiil: AjandaFiili, ham: unknown): unknown {
 export function ajandaAraclariKur(b: AjandaBagimliliklari, pc?: PcDefteri): AjandaFiilIsleyiciler {
   const { depo, takvim, saat, rastgele, gunluk } = b;
   const v3 = b.aracV3 === true;
-  const araclar = ajandaAraclari(v3);
+  // Girdi şeması bağlantının yüzünden (`Cagri.v3Yuz`): ayar açıkken de v2 yüzlü bağlantı v2 şemasıyla denetlenir.
+  const v3Araclari = ajandaAraclari(true);
+  const v2Araclari = ajandaAraclari(false);
   const ozet = (k: AjandaKaydi, simdi: number) => kayitOzeti(k, simdi, takvim);
 
   /**
@@ -316,11 +319,15 @@ export function ajandaAraclariKur(b: AjandaBagimliliklari, pc?: PcDefteri): Ajan
       if (yol === null) return { ok: false, code: "tur_gecersiz" };
       // Yüz: ayar kapalıysa hep v2; açıksa bağlantının yüzü (verilmezse v3).
       const cagri: Cagri = { ...yol, v3Yuz: v3 && v3Yuz !== false };
-      // v3 kapalıyken v2 şeması: köprü atlanırsa da v3 alanı işleyiciye geçmez.
-      const semasi = araclar[fiil].girdi as unknown as { safeParse(g: unknown): { success: boolean; data?: unknown } };
+      // Girdi de çıktı gibi bağlantının yüzünden: v2 yüzde (ayar kapalı ya da bağlantı v2 yüzlü) v2 şeması;
+      // köprü atlanırsa ya da kurallara uymazsa da v3 alanı işleyiciye geçmez ("bilinmeyen alan").
+      const semasi = (cagri.v3Yuz ? v3Araclari : v2Araclari)[fiil].girdi as unknown as {
+        safeParse(g: unknown): { success: boolean; data?: unknown; error?: { issues: readonly { code: string }[] } };
+      };
       const p = semasi.safeParse(girdi);
       if (!p.success) {
-        gunluk.uyari(MODUL, "arac_girdisi_gecersiz", { fiil });
+        const bilinmeyen = p.error?.issues.some((i) => i.code === "unrecognized_keys") === true;
+        gunluk.uyari(MODUL, "arac_girdisi_gecersiz", { fiil, ...(bilinmeyen ? { bilinmeyen_alan: true } : {}) });
         return { ok: false, code: "ic_hata" };
       }
       const t = cagri.tur;

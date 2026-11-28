@@ -78,7 +78,8 @@ pub struct KayitGorunumu {
     pub bekleyen: bool,
     /// Ertelenen v3 değişikliği var: eski (v2) servise bağlıyken v3 alanlarına yapılan değişiklik telefonda
     /// bekliyor, kayıt onunla görünüyor; servis güncellenince kendiliğinden eşitlenir ("servis güncellenince
-    /// eşitlenecek"). Yerel kipte ve v3 serviste hep yanlış.
+    /// eşitlenecek"; servis hiç güncellenmezse süresiz bekler, kullanıcı `Cekirdek::ertelenenleri_at` ile atabilir).
+    /// Yerel kipte ve v3 serviste hep yanlış.
     #[uniffi(default)]
     pub ertelenen: bool,
 }
@@ -123,6 +124,12 @@ pub struct RetGirdisi {
     /// hal (biliniyorsa); öteki işlemlerde yok.
     pub govde: Option<KayitGovdesi>,
     pub ts_ms: i64,
+    /// Kullanıcının `Cekirdek::ertelenenleri_at` ile attığı ertelenen v3 değişikliği (eski servis hiç
+    /// güncellenmediği için gönderilemedi; `neden` `TeslimEdilemedi`). Arayüz "PC'deki servis eski olduğu için
+    /// gönderilmeden atıldı" gibi kendi metnini gösterir ve düzeltme sunmaz: form v3 alanı taşımaz (`govde` yalnız
+    /// başlık içindir). Atmak (`ret_at`) girdiyi siler. Öteki retlerde yanlış.
+    #[uniffi(default)]
+    pub ertelenen_atildi: bool,
 }
 
 /// Geçmişin bir satırı (servisin `gecmis` çerçevesinden).
@@ -249,8 +256,10 @@ pub struct BaglantiYetenekleri {
     /// Bağlantının `welcome.yetenekler`'i (istenenlerle sunulanların kesişimi); `Bagli` dışında boş.
     pub yetenekler: Vec<String>,
     /// Ertelenen v3 değişikliği taşıyan kuyruk işlemi sayısı: eski servise bağlıyken v3 alanlarına yapılan
-    /// değişiklikler; servisle v3 konuşulan ilk bağlantıda kendiliğinden giderler ("servis güncellenince
-    /// eşitlenecek"). Yerel kipte 0.
+    /// değişiklikler (karma işlemin v3 kalanı dahil; arkalarında sırası tutulan v2 işlemleri, ör. bekleyen
+    /// silme, sayılmaz: onlar `BaglantiDurumu.ertelenen_islem`'de); servisle v3 konuşulan ilk bağlantıda
+    /// kendiliğinden giderler ("servis güncellenince eşitlenecek"). Servis hiç güncellenmezse süresiz beklerler;
+    /// `Cekirdek::ertelenenleri_at` onları ret listesine atar (bu sayı kadar girdi). Yerel kipte 0.
     pub ertelenen: i32,
 }
 

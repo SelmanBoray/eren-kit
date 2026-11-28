@@ -117,10 +117,13 @@ export function sahteEkDiski(simdi: () => number): SahteEkDiski {
     },
     isaretleriYaz: async (m) => {
       giris("isaretleriYaz");
-      // Gerçek port gibi: özet olmayan anahtar ya da sayı olmayan değer atar, hiçbir şey yazılmaz.
+      // Gerçek port gibi: özet olmayan anahtar ya da geçersiz değer atar, hiçbir şey yazılmaz.
       for (const [k, v] of m) {
         if (!OZET.test(k)) throw new Error("gecersiz_ozet");
-        if (!Number.isFinite(v.ilk_ms) || !Number.isFinite(v.gozlenen_ms) || !(v.rev === null || Number.isSafeInteger(v.rev))) {
+        // Gerçek port gibi: eksi gözlenen süre, eksi ya da tam sayı olmayan `rev` de atar (okuyucu onları
+        // 0/`null` sayardı; yazılan değer okunanla aynı kalmalı).
+        const revGecerli = v.rev === null || (Number.isSafeInteger(v.rev) && v.rev >= 0);
+        if (!Number.isFinite(v.ilk_ms) || !Number.isFinite(v.gozlenen_ms) || v.gozlenen_ms < 0 || !revGecerli) {
           throw new Error("gecersiz_isaret");
         }
       }
