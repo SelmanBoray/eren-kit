@@ -52,6 +52,15 @@ pub mod anahtar {
     /// Açılış onarımının son hatası (JSON: `ts_ms`, `mesaj`; `motor/yerel.rs` `acilis_onarimi`). Onarım
     /// sonraki açılışta başarılı olunca silinir.
     pub const ONARIM_HATASI: &str = "onarim_hatasi";
+    /// Yerel kipten bağlanmada kullanıcının onayını bekleyen birleştirme (D4, `motor/birlestirme.rs`):
+    /// servisin `depo_id`'si. Toplanan kopyayla (`telafi_kayitlari`) yaşar ve ölür: `telafiyi_sil` ve
+    /// `telafiyi_sunucuya_gecir` siler. Bağlantı `Telafi` aşamasında değilse anlamı yoktur.
+    pub const BIRLESTIRME: &str = "birlestirme_bekliyor";
+    /// Birleştirmede işaretlenen olası çiftler (D4, JSON `[[telefondaki, servisteki], ...]`; `motor/birlestirme.rs`).
+    pub const OLASI_CIFTLER: &str = "olasi_ciftler";
+    /// En son uygulanan birleştirmenin izi (D4, `motor/birlestirme.rs`): dökmeyle aynı işlemde yazılır;
+    /// bekleyen yokken aynı izle gelen onay "zaten uygulandı"dır, "bağlantı koptu" değil.
+    pub const SON_BIRLESTIRME_IZI: &str = "son_birlestirme_izi";
 }
 
 pub struct Depo {

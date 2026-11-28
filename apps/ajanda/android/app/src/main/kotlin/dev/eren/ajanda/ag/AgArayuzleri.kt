@@ -1,6 +1,7 @@
 package dev.eren.ajanda.ag
 
 import dev.eren.ajanda.cekirdek.BaglantiDurumu
+import dev.eren.ajanda.cekirdek.CalismaKipi
 import dev.eren.ajanda.cekirdek.Cekirdek
 import dev.eren.ajanda.cekirdek.Gozlemci
 import dev.eren.ajanda.cekirdek.Tasima
@@ -23,6 +24,9 @@ interface KanalCekirdegi {
     fun baglantiKapandi(nesil: ULong, kod: Int?)
     fun baglantiDurumu(): BaglantiDurumu
     fun gozlemciEkle(gozlemci: Gozlemci): ULong
+
+    /** Çalışma kipi: arka plan oturumu yerel kipte bağlanmaz (`BaglantiDenetcisi.oturumBasla`). */
+    fun kip(): CalismaKipi
 }
 
 class CekirdekKanali(private val c: Cekirdek) : KanalCekirdegi {
@@ -32,6 +36,7 @@ class CekirdekKanali(private val c: Cekirdek) : KanalCekirdegi {
     override fun baglantiKapandi(nesil: ULong, kod: Int?) = c.baglantiKapandi(nesil, kod)
     override fun baglantiDurumu(): BaglantiDurumu = c.baglantiDurumu()
     override fun gozlemciEkle(gozlemci: Gozlemci): ULong = c.gozlemciEkle(gozlemci)
+    override fun kip(): CalismaKipi = c.kip()
 }
 
 /** Ham WebSocket'in yazma ucu. Hiçbiri bloklamaz, hiçbiri atmaz. */

@@ -132,6 +132,7 @@ fn bagli_kipte_koparma_gorunen_kopyayi_yerel_gercek_yapar_sayilari_dondurur() {
             yanitsiz_islem: 1,
             ret_listesinde: 1,
             baglanma_iptal: false,
+            okunamayan_pc_temeli: 0,
         }
     );
     assert!(h.baglanti.as_ref().unwrap().tasima.kapatildi.lock().unwrap().is_some(), "açık bağlantı kapatıldı");

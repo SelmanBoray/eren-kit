@@ -3,6 +3,7 @@ package dev.eren.ajanda.ag
 import dev.eren.ajanda.cekirdek.AjandaKanalHatasi
 import dev.eren.ajanda.cekirdek.BaglantiAsamasi
 import dev.eren.ajanda.cekirdek.BaglantiDurumu
+import dev.eren.ajanda.cekirdek.CalismaKipi
 import dev.eren.ajanda.cekirdek.CekirdekHatasi
 import dev.eren.ajanda.cekirdek.Degisim
 import dev.eren.ajanda.cekirdek.Gozlemci
@@ -181,6 +182,11 @@ class SahteCekirdek : KanalCekirdegi {
 
     @Synchronized
     override fun baglantiDurumu(): BaglantiDurumu = durum
+
+    var calismaKipi = CalismaKipi.BAGLI
+
+    @Synchronized
+    override fun kip(): CalismaKipi = calismaKipi
 
     @Synchronized
     override fun gozlemciEkle(gozlemci: Gozlemci): ULong {

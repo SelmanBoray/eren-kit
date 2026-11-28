@@ -158,7 +158,7 @@ pub(crate) const ISTEMCI_YETENEKLERI: [&str; 0] = [];
 /// `meta` anahtarı: sunucu kopyasının dolduğu en düşük bağlantı sürümü (tam telafinin sonunda o bağlantının
 /// sürümü; alt sürümlü bağlantının `welcome`'unda o sürüm). Yoksa 2 sayılır: v3 öncesi kurulumun kopyası v2
 /// bağlantıyla doldu. Kopyadan büyük sürümlü bağlantı tam telafi ister (`hello_yolla`).
-const KOPYA_SURUMU: &str = "kopya_surumu";
+pub(super) const KOPYA_SURUMU: &str = "kopya_surumu";
 
 /// `meta` anahtarı: bilinen servis sürümü, son `welcome`'un bağlantı sürümü ("Erteleme"). Yoksa bilinmiyor:
 /// erteleme yok (bu sürümden önceki kurulum ilk `welcome`'a dek eskisi gibi sayar).
@@ -1021,6 +1021,8 @@ impl Motor {
         let simdi = o.simdi_ms().to_string();
         // Yerel kipte bağlanma burada biter: servisin tam kopyası elde edildi; tek işlemde yerel kayıtlar
         // kuyruğa dökülür ve kip `bagli` olur (`yerel.rs` `yereli_kuyruga_dok`). Yerel kipte telafi hep tamdır.
+        // D4: gidecek bir şey varsa önce kullanıcının onayı (`birlestirme.rs`); beklerken telafi aşamasında
+        // kalınır (canlı `kayit`'ler toplanan kopyaya), onay bağlantıyı canlıya geçirir.
         let yerel = self.yerel_mi()?;
         // Tam telafi kopyanın yerine geçer: kopya artık bu bağlantının sürümüyle dolu (`KOPYA_SURUMU`).
         let kopya_surumu = self.surum.baglanti.no().to_string();
@@ -1028,14 +1030,10 @@ impl Motor {
         let iz_yollandi = !self.kopya_eski()?;
         match t.tam {
             Some((depo_id, son_rev)) if yerel => {
-                let ret = self.depo.yazma(|d| {
-                    let ret = super::yerel::yereli_kuyruga_dok(d, o, &b, &depo_id, son_rev)?;
-                    d.meta_yaz(anahtar::SON_ESITLENME_MS, Some(&simdi))?;
-                    d.meta_yaz(KOPYA_SURUMU, Some(&kopya_surumu))?;
-                    Ok(ret)
-                })?;
-                self.yerelden_baglandi(e, ret);
-                self.hepsi_degisti(o, e);
+                if !self.yerelden_baglan(o, e, &b, &depo_id, son_rev)? {
+                    self.asama = Asama::Telafi(Telafi { tam: Some((depo_id, son_rev)), tampon: Vec::new() });
+                    return Ok(());
+                }
             }
             Some((depo_id, son_rev)) => {
                 self.depo.yazma(|d| {

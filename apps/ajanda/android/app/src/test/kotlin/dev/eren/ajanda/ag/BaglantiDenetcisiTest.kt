@@ -2,6 +2,7 @@ package dev.eren.ajanda.ag
 
 import dev.eren.ajanda.cekirdek.SurumUyusmazligi
 import dev.eren.ajanda.cekirdek.BaglantiAsamasi
+import dev.eren.ajanda.cekirdek.CalismaKipi
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -354,6 +355,47 @@ class BaglantiDenetcisiTest {
         d.arkaPlanOturumu { sonuc += it }
         zaman.bosalt()
         assertEquals(listOf(ArkaPlanSonucu.ESITLENDI), sonuc)
+        assertFalse(h.bitti)
+        assertEquals(1, acici.acilanlar.size)
+    }
+
+    @Test
+    fun arkaPlanYerelKipteBaglanmaz() {
+        cekirdek.calismaKipi = CalismaKipi.YEREL
+        val d = denetci()
+        val sonuc = mutableListOf<ArkaPlanSonucu>()
+        d.arkaPlanOturumu { sonuc += it }
+        zaman.bosalt()
+        assertEquals(listOf(ArkaPlanSonucu.YEREL_KIP), sonuc)
+        assertTrue(acici.acilanlar.isEmpty())
+        // Periyodik iş kaldırılmaz (onaydan sonra bağlı kipte gerekir), süre zamanlayıcısı kalmaz.
+        assertTrue(isler.cagrilar.isEmpty())
+        assertEquals(emptyList<Long>(), zaman.bekleyenler())
+    }
+
+    @Test
+    fun arkaPlanYerelKipteEslesmeYoksaEskiYol() {
+        cekirdek.calismaKipi = CalismaKipi.YEREL
+        cekirdek.adres = null
+        val d = denetci()
+        val sonuc = mutableListOf<ArkaPlanSonucu>()
+        d.arkaPlanOturumu { sonuc += it }
+        zaman.bosalt()
+        assertEquals(listOf(ArkaPlanSonucu.ESLESME_YOK), sonuc)
+        assertEquals(listOf("periyodik-iptal"), isler.cagrilar)
+    }
+
+    @Test
+    fun yerelKipteOnPlanBaglantisiSurerArkaPlanOnaDokunmaz() {
+        cekirdek.calismaKipi = CalismaKipi.YEREL
+        val (d, h) = bagliDenetci()
+        // Birleştirme onayı bekleniyor: bağlantı Telafi'de durur.
+        cekirdek.durumYaz(BaglantiAsamasi.TELAFI, 0)
+        zaman.bosalt()
+        val sonuc = mutableListOf<ArkaPlanSonucu>()
+        d.arkaPlanOturumu { sonuc += it }
+        zaman.bosalt()
+        assertEquals(listOf(ArkaPlanSonucu.YEREL_KIP), sonuc)
         assertFalse(h.bitti)
         assertEquals(1, acici.acilanlar.size)
     }

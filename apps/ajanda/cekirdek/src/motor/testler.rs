@@ -270,7 +270,17 @@ fn yerel_kipte_baglanma_temeli_korur_esitlendide_doker() {
     assert!(d.m.depo.kuyruk().unwrap().is_empty());
     assert_eq!(d.m.depo.gorunen_kayit("k_ortak").unwrap().unwrap().kayit, ortak);
 
+    // D4: gidecek değişiklik var, önce onay beklenir (telafi aşaması, kip yerel, hiçbir şey dökülmedi).
     let e = d.cerceve(AjandaAsagi::Esitlendi { rev: 5 });
+    assert!(e.degisim.baglanti && !e.degisim.tumu && e.gonderilecek.is_empty());
+    assert!(d.m.tam_telafi_suruyor() && d.m.yerel_mi().unwrap() && d.m.depo.kuyruk().unwrap().is_empty());
+    // İzsiz onay hiçbir şey yazmaz, şimdiki planı verir; onun iziyle uygulanır.
+    let (r, _) = d.calistir(|m, o, e| m.birlestirmeyi_onayla(o, e, None));
+    let r = r.unwrap();
+    assert!(!r.uygulandi && !r.zaten_uygulandi && d.m.yerel_mi().unwrap() && d.m.depo.kuyruk().unwrap().is_empty());
+    let iz = r.plan.expect("şimdiki plan").iz;
+    let (r, e) = d.calistir(|m, o, e| m.birlestirmeyi_onayla(o, e, Some(&iz)));
+    assert!(r.unwrap().uygulandi);
     assert!(d.m.canli_mi() && !d.m.yerel_mi().unwrap());
     assert!(e.degisim.tumu && e.degisim.baglanti);
     assert_eq!((d.m.depo.son_rev().unwrap(), d.m.depo.depo_id().unwrap().as_deref()), (5, Some("d_a")));

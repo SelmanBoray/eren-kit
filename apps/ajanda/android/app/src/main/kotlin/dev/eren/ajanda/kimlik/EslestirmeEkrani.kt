@@ -295,14 +295,14 @@ class EslestirmeEkrani : Activity() {
                 kok.addView(baslik("Eşleştiriliyor"))
                 kok.addView(ProgressBar(this), satirDuzeni())
                 kok.addView(metin(EslestirmeMetinleri.asama(d.asama)))
-                kok.addView(metin("PC: ${d.host}:${d.port}", renk = GRI))
+                kok.addView(metin(EslestirmeMetinleri.adres(d.host, d.port), renk = GRI))
                 d.parmakIzi?.let { kok.addView(parmakIziGorunumu(it)) }
                 kok.addView(dugme("Vazgeç") { gonder(Olay.Vazgec) })
             }
             is EkranDurumu.Eslesti -> {
                 if (d.yeni) setResult(RESULT_OK)
                 kok.addView(baslik(if (d.yeni) "Eşleşme tamamlandı" else "Eşleşmiş"))
-                kok.addView(metin("PC: ${d.host}:${d.port}"))
+                kok.addView(metin(EslestirmeMetinleri.adres(d.host, d.port)))
                 kok.addView(metin("Bu telefonun kimliği: ${d.deviceId}", renk = GRI, mono = true))
                 kok.addView(dugme(if (d.yeni) "Tamam" else "Kapat", birincil = d.yeni) { finish() })
                 kok.addView(dugme("Eşleşmeyi kaldır") { kaldirmaOnayi() })
@@ -320,12 +320,9 @@ class EslestirmeEkrani : Activity() {
 
     private fun kaldirmaOnayi() {
         AlertDialog.Builder(this)
-            .setTitle("Eşleşme kaldırılsın mı?")
-            .setMessage(
-                "Telefondaki ajanda kopyası, gönderilmemiş değişiklikler ve kurulu hatırlatmalar silinir; " +
-                    "cihaz anahtarı da silinir. Yeniden eşleştirmek için PC'de yeni kod gerekir.",
-            )
-            .setPositiveButton("Kaldır") { _, _ -> gonder(Olay.KaldirmaOnaylandi) }
+            .setTitle(EslestirmeMetinleri.KALDIRMA_BASLIGI)
+            .setMessage(EslestirmeMetinleri.KALDIRMA_ONAYI)
+            .setPositiveButton(EslestirmeMetinleri.KALDIR_DUGMESI) { _, _ -> gonder(Olay.KaldirmaOnaylandi) }
             .setNegativeButton("Vazgeç", null)
             .show()
     }
@@ -407,7 +404,7 @@ class EslestirmeEkrani : Activity() {
                 VeriCozumu.Bos -> veriSonucu.yaz("", GRI)
                 is VeriCozumu.Hatali -> veriSonucu.yaz(EslestirmeMetinleri.veriHatasi(v.hata), KIRMIZI)
                 is VeriCozumu.Gecerli -> {
-                    veriSonucu.yaz("PC: ${v.qr.host}:${v.qr.port}", YESIL)
+                    veriSonucu.yaz(EslestirmeMetinleri.adres(v.qr.host, v.qr.port), YESIL)
                     parmakIzi.addView(parmakIziGorunumu(v.parmakIzi))
                 }
             }
@@ -485,7 +482,7 @@ class EslestirmeEkrani : Activity() {
     private fun parmakIziGorunumu(parmakIzi: String) = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         setPadding(0, dp(8), 0, dp(8))
-        addView(metin("PC anahtarının parmak izi (PC'deki \"Parmak izi:\" satırıyla aynı olmalı):", renk = GRI))
+        addView(metin(EslestirmeMetinleri.PARMAK_IZI_ACIKLAMASI, renk = GRI))
         val satirlar = parmakIzi.split(" ").chunked(4).joinToString("\n") { it.joinToString(" ") }
         addView(
             TextView(this@EslestirmeEkrani).apply {

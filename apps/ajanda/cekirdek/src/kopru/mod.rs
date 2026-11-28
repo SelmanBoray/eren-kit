@@ -23,9 +23,10 @@ use crate::motor::{Etkiler, Motor, Ortam};
 
 use kabuklar::{AlarmKabugu, Gozlemci, KimlikKabugu, Tasima, ZamanKabugu};
 use tipler::{
-    AktarmaBicimi, BaglantiDurumu, BaglantiYetenekleri, CalismaKipi, DisaAktarma, DuzenlemeTemeli, ErtelenenGeriAlma, EslesmeDurumu, GecisOzeti, GecmisSayfasi,
-    HatirlatmaBildirimi, HatirlatmaOnizlemesi, IceAktarmaOnizlemesi, IceAktarmaSonucu, KayitGorunumu, KoparmaSonucu, ListeSorgusu, RetGirdisi,
-    TakvimAyi, TakvimOgesi, YenidenKurmaNedeni,
+    AktarmaBicimi, BaglantiDurumu, BaglantiYetenekleri, BirlestirmeOnizlemesi, BirlestirmeSonucu, CalismaKipi, DisaAktarma,
+    DuzenlemeTemeli, ErtelenenGeriAlma, EslesmeDurumu, GecisOzeti, GecmisSayfasi, HatirlatmaBildirimi, HatirlatmaOnizlemesi,
+    IceAktarmaOnizlemesi, IceAktarmaSonucu, KayitGorunumu, KoparmaSonucu, ListeSorgusu, OlasiCift, RetGirdisi, TakvimAyi,
+    TakvimOgesi, YenidenKurmaNedeni,
 };
 
 fn kilitle<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -520,8 +521,11 @@ impl Cekirdek {
     // Dışa ve içe aktarma (D3; biçim ve kurallar `motor/aktarma.rs` başında, kap `aktarma_bicimi`)
 
     /// Bütün kayıtların (mezar taşları dahil) belgesi; iki kipte de çalışır (bağlı kipte görünen kopya,
-    /// gönderilmemiş değişiklikler dahil). Kuyruk ve ret listesi girmez (`ret_listesinde` sayısı söylenir).
-    /// Hiçbir şey yazmaz. Kotlin `belge`'yi zip'e `ajanda.json` olarak (UTF-8), `ekler`'i `yol`'larıyla koyar.
+    /// gönderilmemiş değişiklikler dahil). Kuyruk girmez; ret listesinin düzeltme gövdesi olan girdileri girer
+    /// (`ret_yedekte`; girmeyenlerin, gövdesiz ya da gövdesi okunamayan ve öğe sınırını aşanların sayısı
+    /// `ret_listesinde`). İçe aktarma sınırını aşan belge de döner
+    /// (`ice_aktarma_sinirini_asiyor`: yazılmalı, kullanıcıya söylenmeli). Hiçbir şey yazmaz. Kotlin `belge`'yi
+    /// zip'e `ajanda.json` olarak (UTF-8), `ekler`'i `yol`'larıyla koyar.
     pub fn disa_aktar(&self) -> Result<DisaAktarma, CekirdekHatasi> {
         self.calistir(|m, o, _| m.disa_aktar(o))
     }
@@ -534,12 +538,68 @@ impl Cekirdek {
         self.calistir(|m, o, _| m.ice_aktarma_onizlemesi(o, &belge))
     }
 
-    /// İçe aktarma, tek işlemde (ya hepsi ya hiçbiri). `iz`: önizlemenin `iz`'i; verilirse ve telefon bu arada
+    /// İçe aktarma, tek işlemde (ya hepsi ya hiçbiri). `iz`: önizlemenin `iz`'i, zorunlu; telefon bu arada
     /// planı değiştirecek kadar değiştiyse hiçbir şey yazılmaz, `uygulandi` yanlış ve `plan` yeni önizlemedir.
-    /// `None`: şimdiki plan uygulanır. Yerel kipte kayıtlar alanlarıyla yazılır (yerel geçmiş, alarm); bağlı
-    /// kipte işlemler kuyruğa girer (servis yazar). Gözlemciye `kayitlar` (çoksa `tumu`), bağlı kipte `baglanti`.
+    /// `None`: hiçbir şey yazılmaz, şimdiki plan döner (kullanıcının görmediği plan uygulanmaz). Yerel kipte
+    /// kayıtlar alanlarıyla yazılır (yerel geçmiş, alarm; okunamayan telefon satırının metni ret listesine);
+    /// bağlı kipte işlemler kuyruğa girer (servis yazar). Gözlemciye `kayitlar` (çoksa `tumu`), ret listesine
+    /// satır düştüyse `ret_listesi`, bağlı kipte `baglanti`. Uygulandıktan sonra kuyruğun hatası çağrıyı
+    /// başarısız yapmaz.
     pub fn ice_aktar(&self, belge: String, iz: Option<String>) -> Result<IceAktarmaSonucu, CekirdekHatasi> {
         self.calistir(|m, o, e| m.ice_aktar(o, e, &belge, iz.as_deref()))
+    }
+
+    /// `ice_aktarma_onizlemesi`, belge kaptan okunduğu gibi UTF-8 baytlarıyla (Kotlin `ByteArray`): Kotlin
+    /// belgeyi UTF-16 `String`'e çevirip tutmaz, köprü de yeniden UTF-8'e kodlamaz (tepe yığın belge boyunun
+    /// birkaç katı yerine yaklaşık bir katı). Sonuç, hatalar ve `iz` `String` sürümüyle aynıdır (iki yol
+    /// karışık kullanılabilir); ek hata: UTF-8 değilse `GecersizGirdi{alan: "belge", neden: "UTF-8 değil
+    /// (bayt N)"}`. Sınır yine `belge_azami_bayt`.
+    pub fn ice_aktarma_onizlemesi_bayt(&self, belge: Vec<u8>) -> Result<IceAktarmaOnizlemesi, CekirdekHatasi> {
+        self.calistir(|m, o, _| m.ice_aktarma_onizlemesi(o, Motor::belge_utf8(&belge)?))
+    }
+
+    /// `ice_aktar`, belge UTF-8 baytlarıyla (`ice_aktarma_onizlemesi_bayt`'a bakın); kurallar `ice_aktar`'ınkiyle
+    /// aynıdır.
+    pub fn ice_aktar_bayt(&self, belge: Vec<u8>, iz: Option<String>) -> Result<IceAktarmaSonucu, CekirdekHatasi> {
+        self.calistir(|m, o, e| m.ice_aktar(o, e, Motor::belge_utf8(&belge)?, iz.as_deref()))
+    }
+
+    // Birleştirme önizlemesi (D4; kurallar `motor/birlestirme.rs` başında)
+
+    /// Yerel kipten servise bağlanmada onay bekleyen birleştirmenin önizlemesi; bekleyen yoksa `None`.
+    /// Servisin tam kopyası gelince (gidecek bir şey varsa) bağlantı `Telafi` aşamasında bekler ve gözlemciye
+    /// `Degisim.baglanti` gider: arayüz bunu sorar. Bekleme sırasında yerel yazmalar sürer; plan değiştiyse
+    /// (`Degisim.kayitlar`/`tumu` sonrası) yeniden sorulabilir, onay zaten `iz` ile denetler. Kayıtlara dokunmaz.
+    pub fn birlestirme_onizlemesi(&self) -> Result<Option<BirlestirmeOnizlemesi>, CekirdekHatasi> {
+        self.calistir(|m, o, e| m.birlestirme_onizlemesi(o, e))
+    }
+
+    /// Onay: tek işlemde dökme (D2 kuralları), olası çiftler kaydedilir, kip `Bagli`, kuyruk yollanır.
+    /// `iz`: önizlemenin `iz`'i, zorunlu; `None` ya da plan bu arada değiştiyse hiçbir şey yazılmaz, `uygulandi`
+    /// yanlış ve `plan` şimdiki önizlemedir (yeniden gösterilip onun `iz`'iyle onaylanır). Bekleyen yoksa
+    /// `uygulandi` yanlış, `plan` `None`: `zaten_uygulandi` doğruysa bu iz daha önce uygulandı (ikinci ya da
+    /// gecikmiş çağrı), değilse bağlantı koptu (sonraki bağlantıda yeniden sorulur). Dökme kalıcı olunca çağrı
+    /// başarılıdır; kuyruğun yollanmasındaki hata onu değiştirmez. Gözlemciye `tumu`, `baglanti`.
+    pub fn birlestirmeyi_onayla(&self, iz: Option<String>) -> Result<BirlestirmeSonucu, CekirdekHatasi> {
+        self.calistir(|m, o, e| m.birlestirmeyi_onayla(o, e, iz.as_deref()))
+    }
+
+    /// Vazgeç: yerel kipte süren bağlanmayı iptal eder (`baglantiyi_kopar`'ın yerel kip yolu): eşleşme bilgisi
+    /// ve cihaz anahtarı silinir, bağlantı kapanır, hiçbir kayıt değişmez; yeniden bağlanmak için QR yeniden
+    /// okutulur. Bağlı kipte `GecersizDurum`.
+    pub fn birlestirmeden_vazgec(&self) -> Result<KoparmaSonucu, CekirdekHatasi> {
+        self.calistir(|m, o, e| m.birlestirmeden_vazgec(o, e))
+    }
+
+    /// Onaylanmış birleştirmelerin olası çiftleri (ikisi de görünen kopyada canlı olanlar). Liste ekranı bir
+    /// kez okuyup işaretler. Motor kilidini almaz.
+    pub fn olasi_ciftler(&self) -> Result<Vec<OlasiCift>, CekirdekHatasi> {
+        self.oku(crate::motor::birlestirme::olasi_ciftler)
+    }
+
+    /// Bir kaydın olası çiftlerinin kimlikleri (yoksa boş; ayrıntı ekranı).
+    pub fn olasi_ciftleri(&self, kayit_id: String) -> Result<Vec<String>, CekirdekHatasi> {
+        self.oku(|d| crate::motor::birlestirme::olasi_ciftleri(d, &kayit_id))
     }
 
     // Alarmlar (K3)

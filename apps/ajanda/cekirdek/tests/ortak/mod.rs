@@ -61,6 +61,8 @@ pub struct SahteKimlik {
     pub imza_hatasi: AtomicU64,
     /// Sonraki bu kadar `rastgele` hata versin.
     pub rastgele_hatasi: AtomicU64,
+    /// `rastgele_hatasi` doluyken önce bu kadar çağrı hatasız geçsin (işlemin ortasında hata).
+    pub rastgele_atla: AtomicU64,
 }
 
 /// Sayaç sıfır değilse bir azaltır ve `true` döner.
@@ -91,7 +93,7 @@ impl KimlikKabugu for SahteKimlik {
         Ok(veri == imza)
     }
     fn rastgele(&self, uzunluk: u32) -> Result<Vec<u8>, KabukHatasi> {
-        if hata_sirasi(&self.rastgele_hatasi) {
+        if self.rastgele_hatasi.load(Ordering::SeqCst) > 0 && !hata_sirasi(&self.rastgele_atla) && hata_sirasi(&self.rastgele_hatasi) {
             return Err(KabukHatasi::Basarisiz { mesaj: "rastgele üretilemedi".into() });
         }
         let n = self.sayac.fetch_add(1, Ordering::SeqCst) + 1;
@@ -814,6 +816,9 @@ pub struct Hat {
     pub gozlemci: Arc<SahteGozlemci>,
     pub pc: SahtePc,
     pub baglanti: Option<Baglanti>,
+    /// D4: trafik durulunca onay bekleyen birleştirme kendiliğinden onaylanır (`pompala`). Yerel kipten
+    /// bağlanmanın sonucunu (D1, D2 kuralları) sınayan testler için; önizleme testleri kapatır.
+    pub otomatik_onay: bool,
     /// Son alan: çekirdek kapandıktan sonra düşer ve dosyaları siler.
     _dosya: GeciciDosya,
 }
@@ -849,7 +854,7 @@ impl Hat {
         let c = Cekirdek::ac(yol.clone(), kimlik.clone(), zaman.clone(), alarm.clone()).unwrap();
         c.gozlemci_ekle(gozlemci.clone());
         let pc = SahtePc::yeni("d_pc1", zaman.clone());
-        Hat { c, yol: yol.clone(), kimlik, zaman, alarm, gozlemci, pc, baglanti: None, _dosya: GeciciDosya(yol) }
+        Hat { c, yol: yol.clone(), kimlik, zaman, alarm, gozlemci, pc, baglanti: None, otomatik_onay: true, _dosya: GeciciDosya(yol) }
     }
 
     /// Var olan bir yerel veritabanının üstüne (yükseltme): `sql` dosyaya yazılır, sonra çekirdek açılır.
@@ -864,7 +869,7 @@ impl Hat {
         let c = Cekirdek::ac(yol.clone(), kimlik.clone(), zaman.clone(), alarm.clone()).unwrap();
         c.gozlemci_ekle(gozlemci.clone());
         let pc = SahtePc::yeni("d_pc1", zaman.clone());
-        Hat { c, yol, kimlik, zaman, alarm, gozlemci, pc, baglanti: None, _dosya: dosya }
+        Hat { c, yol, kimlik, zaman, alarm, gozlemci, pc, baglanti: None, otomatik_onay: true, _dosya: dosya }
     }
 
     /// Süreç öldü ve yeniden açıldı: bağlantı kapanış haberi verilmeden çekirdek düşer. Android'in
@@ -908,6 +913,12 @@ impl Hat {
             }
             let giden: Vec<String> = std::mem::take(&mut *b.tasima.giden.lock().unwrap());
             if giden.is_empty() {
+                if self.otomatik_onay
+                    && let Some(p) = self.c.birlestirme_onizlemesi().unwrap()
+                {
+                    assert!(self.c.birlestirmeyi_onayla(Some(p.iz)).unwrap().uygulandi);
+                    continue;
+                }
                 return;
             }
             for f in giden {
@@ -939,5 +950,11 @@ impl Hat {
 
     pub fn canli_mi(&self) -> bool {
         self.c.baglanti_durumu().unwrap().asama == ajanda_cekirdek::kopru::tipler::BaglantiAsamasi::Canli
+    }
+
+    /// Kullanıcının içe aktarma yolu: önizleme, sonra onun iziyle uygulama (iz zorunlu).
+    pub fn ice_aktar_onayla(&self, belge: &str) -> ajanda_cekirdek::kopru::tipler::IceAktarmaSonucu {
+        let on = self.c.ice_aktarma_onizlemesi(belge.to_string()).unwrap();
+        self.c.ice_aktar(belge.to_string(), Some(on.iz)).unwrap()
     }
 }

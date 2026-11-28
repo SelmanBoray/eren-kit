@@ -5,6 +5,7 @@ import android.app.Application
 import android.content.Context
 import android.os.Bundle
 import dev.eren.ajanda.CekirdekErisimi
+import dev.eren.ajanda.aktarma.OtomatikYedek
 
 /**
  * Süreç başına tek bağlantı yöneticisi. Mantık `BaglantiDenetcisi`'nde, strateji `AgStratejisi.kt`'de.
@@ -23,13 +24,27 @@ object BaglantiYoneticisi {
     @Volatile
     private var izleniyor = false
 
+    @Volatile
+    private var gorunurluk: GorunurlukSayaci? = null
+
+    /** Uygulamanın bir ekranı şu an görünür mü (arka plan bildirimi görünür arayüzde gösterilmez). */
+    val arayuzGorunur: Boolean get() = gorunurluk?.gorunur == true
+
     /** `AjandaUygulamasi.onCreate`: etkinliklerin görünürlüğünü bağlantı talebine bağlar (süreçte bir kez). */
     fun izle(uygulama: Application) {
         synchronized(this) {
             if (izleniyor) return
             izleniyor = true
         }
-        val sayac = GorunurlukSayaci(gorundu = { al(uygulama).basla() }, gizlendi = { denetci?.birak() })
+        // Uygulama öne gelince otomatik yedek işi de denetlenir (T3: silinmişse yeniden kurulur; arka planda).
+        val sayac = GorunurlukSayaci(
+            gorundu = {
+                al(uygulama).basla()
+                OtomatikYedek.isiDenetleArkaPlanda(uygulama)
+            },
+            gizlendi = { denetci?.birak() },
+        )
+        gorunurluk = sayac
         uygulama.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
             override fun onActivityStarted(activity: Activity) = sayac.basladi()
             override fun onActivityStopped(activity: Activity) = sayac.durdu()
