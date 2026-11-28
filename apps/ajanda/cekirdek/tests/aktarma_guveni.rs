@@ -1,9 +1,10 @@
 //! Başkasından gelen yedeğe güven (D3 bağımsız gözden geçirmesinin bulguları) ve yakın D1/D2/D4 kuralları,
 //! uçtan uca: köprünün açık yüzeyi + sahte kabuklar ve sahte PC (`ortak`). Kişisel veri yoktur.
 //!
-//! - Bellek: belge sınırı modelden (kendi yedeği reddedilmez), `kayitlar` en çok 2 × `KAYIT_ADET` öğe (dev
-//!   dizi ağaca çevrilmeden reddedilir),
-//!   tek kayıt öğesi en çok 256 KiB, kayıtlar dışı sözcük ve ek sayısı sınırlı; sınırın hemen altı ve üstü.
+//! - Bellek: belge sınırı gerçekçi en büyük yedek (64 MiB; aşan kendi yedeği yazılır ve söylenir),
+//!   `kayitlar` en çok 2 × `KAYIT_ADET` öğe (dev dizi ağaca çevrilmeden reddedilir), tek kayıt öğesi en çok
+//!   256 KiB, kayıtlar dışı sözcük ve ek sayısı sınırlı; sınırın hemen altı ve üstü. Okunamayan derin satır ve
+//!   büyük öğedeki büyük sayı kendi yedeğini düşürmez.
 //! - Gelecek tarihli `guncelleme_ms` (şimdi + 1 gün üstü) geçersizdir; güncellemenin içindeki silme ve geri
 //!   yükleme ayrı sayılır.
 //! - İz, etkilenecek kaydın içeriğini ve telefondaki satırını kapsar.
@@ -16,6 +17,7 @@ mod ortak;
 use std::time::{Duration, Instant};
 
 use ajanda_cekirdek::CekirdekHatasi;
+use ajanda_cekirdek::depo::Depo;
 use ajanda_cekirdek::kopru::tipler::{CalismaKipi, IceAktarmaOnizlemesi};
 use ajanda_cekirdek::model::sinirlar::AJANDA_SURUMU;
 use ajanda_cekirdek::model::sinirlar::ajanda::KAYIT_ADET;
@@ -23,7 +25,7 @@ use ajanda_cekirdek::model::{AjandaKaydi, GirdiYolu, KuyrukRetNedeni};
 use ortak::*;
 use serde_json::{Value, json};
 
-/// Eski belge sınırı (32 MiB): dev dizi bunun altında kalır; R2 sınırı modelden hesaplanır (~1,77 GiB).
+/// Eski belge sınırı (32 MiB): dev dizi bunun altında kalır (bugünkü sınır 64 MiB).
 const BELGE_AZAMI_ESKI: usize = 32 * 1024 * 1024;
 const KAYIT_AZAMI: usize = 256 * 1024;
 const DIZI_AZAMI: usize = 2 * KAYIT_ADET;
@@ -133,14 +135,35 @@ fn buyuk_kayit(id: &str) -> Value {
     v
 }
 
-/// Belge sınırı modelden hesaplanır (R2): dışa aktarmanın yazdığı belge içe aktarmada boyutla reddedilmez.
-/// Büyük kayıtlarla dolu telefonun dışa aktarması kayıt başına ölçülür; `KAYIT_ADET` tanesi köprünün verdiği
-/// sınıra sığar (eski 32 MiB'a ~800 tanesi sığardı); belge başka telefonda bütünüyle okunur. Sınırın kendisi
-/// (tam sınırda geçer, bir fazlası reddedilir) birim testinde küçük sınırla sınanır.
+/// Belge sınırı gerçekçi en büyük yedektir (64 MiB), modelin en büyüğü değil (~1,77 GiB: telefonun belleğine
+/// sığmaz; güvenilmeyen dosya o kadar ayırtabilirdi). Ölçü: uygulamanın olağan ve ağır kaydı; dolu telefon
+/// (`KAYIT_ADET`) olağan kayıtla iki kat payla sığar. Büyük kayıtlarla dolu telefonun dışa aktarması başka
+/// telefonda bütünüyle okunur ve sıkışık, anahtarları sıralıdır.
 #[test]
 fn kendi_yedegi_boyutla_reddedilmez() {
     let bicim = ajanda_cekirdek::kopru::aktarma_bicimi();
-    assert!(bicim.belge_azami_bayt <= i32::MAX as u64 - 8, "Kotlin bayt dizisine sığar");
+    let belge_azami = bicim.belge_azami_bayt as usize;
+    assert_eq!(belge_azami, 64 * 1024 * 1024);
+    // Olağan kayıt: elle eklenmiş saatli randevu, bir hatırlatma.
+    let o = Hat::yeni("guven-belge-olagan");
+    o.c.ekle(govde("Dişçi randevusu", Some(an("2026-11-26", "10:00"))), GirdiYolu::Elle).unwrap();
+    let olagan = json_belge(&o)["kayitlar"][0].to_string().len();
+    // Ağır ama gerçekçi kayıt: 300 karakterlik Türkçe açıklama, iki hatırlatma, haftada bir tekrarın 50 örneği.
+    let mut agir: Value = serde_json::from_str(&ornek_kayit()).unwrap();
+    agir["baslik"] = json!("Haftalık ekip toplantısı ve ödev teslimi");
+    agir["aciklama"] = json!("Gündem: ölçümler, şubat planı, çalışma notları. ".repeat(6));
+    agir["hatirlatmalar"] = json!([{"tur": "once", "dk": 60}, {"tur": "once", "dk": 1440}]);
+    agir["zaman"]["tarih"] = json!("2025-01-06");
+    agir["tekrar"] = json!({"siklik": "gunluk", "aralik": 7});
+    let bas = ajanda_cekirdek::model::takvim::gun_no(2025, 1, 6);
+    agir["ornekler"] =
+        json!((0..50).map(|i| json!({"tarih": ajanda_cekirdek::model::takvim::gun_no_tarih(bas + 7 * i), "durum": "tamam"})).collect::<Vec<_>>());
+    let agir = AjandaKaydi::oku(&agir, "").expect("geçerli").json().to_string().len();
+    eprintln!("olağan kayıt {olagan} bayt, ağır kayıt {agir} bayt; sınıra {} olağan, {} ağır kayıt sığar", belge_azami / (olagan + 1), belge_azami / (agir + 1));
+    assert!(olagan < 600 && agir > 2000, "{olagan} {agir}");
+    assert!(2 * KAYIT_ADET * (olagan + 1) < belge_azami, "dolu telefon olağan kayıtla iki kat payla sığar");
+    assert!(belge_azami / (agir + 1) > 20_000, "ağır kayıtla da 20 000'den çok");
+
     let a = Hat::yeni("guven-belge-a");
     let adet = 40;
     let kayitlar: Vec<String> = (0..adet).map(|i| buyuk_kayit(&format!("k_buyuk_{i}")).to_string()).collect();
@@ -148,18 +171,79 @@ fn kendi_yedegi_boyutla_reddedilmez() {
     assert!(p.uygulandi);
     assert_eq!((p.plan.yeni, p.plan.gecersiz), (adet, 0));
     let d = a.c.disa_aktar().unwrap();
-    assert_eq!(d.kayit, adet);
+    assert_eq!((d.kayit, d.ice_aktarma_sinirini_asiyor), (adet, false));
     let v: Value = serde_json::from_str(&d.belge).unwrap();
     let en_buyuk = v["kayitlar"].as_array().unwrap().iter().map(|k| k.to_string().len()).max().unwrap();
     assert!(en_buyuk > 30_000 && en_buyuk < KAYIT_AZAMI, "{en_buyuk}");
-    assert!(BELGE_AZAMI_ESKI / (en_buyuk + 1) < 1000, "eski sınır dolu telefonu yedeksiz bırakıyordu");
-    let ust = d.belge.len() - v["kayitlar"].as_array().unwrap().iter().map(|k| k.to_string().len() + 1).sum::<usize>();
-    assert!((KAYIT_ADET * (en_buyuk + 1) + ust) as u64 <= bicim.belge_azami_bayt);
     // Belge sıkışık ve anahtarları sıralı (ağaçsız yazım `json!`'ınkiyle aynı).
     assert_eq!(v.to_string(), d.belge);
     let b = Hat::yeni("guven-belge-b");
     let on = onizle(&b, &d.belge);
     assert_eq!((on.toplam, on.yeni, on.gecersiz), (adet, adet, 0));
+}
+
+/// Görünen satırın metnini olduğu gibi değiştirir (okunamayan satır).
+fn goruneni_yaz(h: &Hat, id: &str, json: &str) {
+    let db = rusqlite::Connection::open(&h.yol).unwrap();
+    assert_eq!(db.execute("UPDATE gorunen SET json = ?2 WHERE kayit_id = ?1", [id, json]).unwrap(), 1);
+}
+
+/// Takas: içe aktarma sınırını aşan telefonun yedeği yine yazılır (veri yalnız telefonda kalmasın) ve
+/// söylenir (`ice_aktarma_sinirini_asiyor`); bu sürümde içe aktarmada boyutla reddedilir. Sınır gerçek
+/// sınırdır: üç okunamayan dev satır (her biri ~22 MB metin) belgeyi 64 MiB'ın üstüne çıkarır.
+#[test]
+fn siniri_asan_yedek_yazilir_ve_soylenir() {
+    let mut a = Hat::yeni("guven-asan-a");
+    let idler: Vec<String> = ["A", "B", "C"].iter().map(|b| a.c.ekle(govde(b, None), GirdiYolu::Elle).unwrap()).collect();
+    let dev = Value::String("x".repeat(22 * 1024 * 1024)).to_string();
+    for id in &idler {
+        goruneni_yaz(&a, id, &dev);
+    }
+    a.sureci_oldur_ve_ac();
+    let d = a.c.disa_aktar().unwrap();
+    assert!(d.belge.len() > 64 * 1024 * 1024);
+    assert_eq!((d.kayit, d.okunamayan, d.ice_aktarma_sinirini_asiyor), (3, 3, true));
+    let b = Hat::yeni("guven-asan-b");
+    assert_eq!(red(&b, &d.belge), ("belge".into(), "çok büyük (en çok 64 MiB)".into()));
+    assert!(b.c.ice_aktarma_onizlemesi_bayt(d.belge.into_bytes()).is_err());
+}
+
+/// (c) Okunamayan satır belgenin iç içelik sınırını aşacaksa metin olarak yazılır: kendi yedeği bu yüzden
+/// bütünüyle reddedilmez (kök nesne ve `kayitlar` iki düzeydir: 125 düzeyli satır JSON olarak, 126 düzeylisi
+/// metin olarak girer; ikisi de içe aktarmada yalnız kendisi geçersizdir).
+#[test]
+fn okunamayan_derin_satir_yedegi_dusurmez() {
+    let mut a = Hat::yeni("guven-derin-a");
+    let x = a.c.ekle(govde("X", None), GirdiYolu::Elle).unwrap();
+    let y = a.c.ekle(govde("Y", None), GirdiYolu::Elle).unwrap();
+    let derin = |n: usize| format!("{}{}", "[".repeat(n), "]".repeat(n));
+    goruneni_yaz(&a, &x, &derin(125));
+    goruneni_yaz(&a, &y, &derin(126));
+    a.sureci_oldur_ve_ac();
+    let d = a.c.disa_aktar().unwrap();
+    assert_eq!((d.kayit, d.okunamayan, d.ice_aktarma_sinirini_asiyor), (2, 2, false));
+    let v: Value = serde_json::from_str(&d.belge).unwrap();
+    let ogeler = v["kayitlar"].as_array().unwrap();
+    assert!(ogeler.iter().any(Value::is_array), "125 düzeyli satır JSON olarak");
+    assert!(ogeler.iter().any(|o| o.as_str() == Some(derin(126).as_str())), "126 düzeyli satır metin olarak");
+    let b = Hat::yeni("guven-derin-b");
+    let p = onizle(&b, &d.belge);
+    assert_eq!((p.toplam, p.gecersiz), (2, 2));
+}
+
+/// (d) 256 KiB üstü öğedeki 1e308 ile f64'ün en büyük sonlu değeri arasındaki sayı serde_json'ca geçerlidir:
+/// yalnız o kayıt (çok büyük) geçersiz sayılır, belge reddedilmez (eskiden ağaçsız denetleyici bütün belgeyi
+/// düşürüyordu). Sonsuza yuvarlanan sayı serde_json'daki gibi bütün belgeyi reddeder.
+#[test]
+fn buyuk_ogedeki_buyuk_sayi_yalniz_o_kaydi_dusurur() {
+    let h = Hat::yeni("guven-sayi");
+    let buyuk = |sayi: &str| format!(r#"{{"kayit_id":"k_dev","dolgu":"{}","sayi":{sayi}}}"#, "x".repeat(KAYIT_AZAMI));
+    let p = onizle(&h, &belge_metni(&[buyuk("1.5e308"), ornek_kayit()].join(",")));
+    assert_eq!((p.toplam, p.gecersiz, p.yeni), (2, 1, 1));
+    assert_eq!(p.gecersizler[0].neden, "kayıt çok büyük");
+    let metin = belge_metni(&[buyuk("1.8e308"), ornek_kayit()].join(","));
+    assert!(serde_json::from_str::<Value>(&metin).is_err());
+    assert!(red(&h, &metin).1.starts_with("JSON değil"));
 }
 
 /// Tek kayıt öğesi en çok 256 KiB: tam sınırdaki geçerli kayıt eklenir, bir bayt fazlası (ya da içinde dev
@@ -915,4 +999,130 @@ fn taslaga_donus_ice_aktarmada_ayri_sayilir() {
     assert_eq!(h.pc.d.kayitlar["k_x"].baslik, "X (dosya)");
     assert!(!h.pc.d.kayitlar["k_x"].taslak, "PC'de onaylı kaldı");
     assert!(!kayit(&h, "k_x").taslak, "telefonda onaylı kaldı");
+}
+
+/// (a) Telefonda taslak, dosyada daha yeni ve onaylı bir mezar taşı: kayıt yalnız `silinecek` sayılır, taslak
+/// kalır (silinmiş kaydın onayı görünür etki doğurmaz; önizleme "onaylanacak" demez). Yerel kipte mezar taşı
+/// taslak olarak yazılır; bağlı kipte yalnız `sil` gider (`onayla` gitmez: `sil` reddedilse kayıt kullanıcının
+/// görmediği bir onayla canlı kalmazdı). İki kipte sonuç aynı: silinmiş taslak.
+#[test]
+fn onayli_mezar_tasi_taslagi_onaylamadan_siler() {
+    let y = Hat::yeni("guven-a-yerel");
+    let mut k: Value = serde_json::from_str(&ornek_kayit()).unwrap();
+    k["kayit_id"] = json!("k_t");
+    k["taslak"] = json!(true);
+    assert!(y.ice_aktar_onayla(&belge_metni(&k.to_string())).uygulandi);
+    assert!(kayit(&y, "k_t").taslak);
+    let mut v = json_belge(&y);
+    let d = kaydi_bul(&mut v, "k_t");
+    d["taslak"] = json!(false);
+    d["silindi"] = json!(true);
+    d["guncelleme_ms"] = json!(SIMDI + DK);
+    let p = onizle(&y, &v.to_string());
+    assert_eq!((p.guncellenecek, p.silinecek, p.taslak_onaylanacak, p.geri_yuklenecek), (1, 1, 0, 0));
+    assert!(y.c.ice_aktar(v.to_string(), Some(p.iz)).unwrap().uygulandi);
+    let t = kayit(&y, "k_t");
+    assert!(t.silindi && t.taslak, "silinmiş taslak");
+    assert_eq!(t.guncelleme_ms, SIMDI + DK);
+    // Canlı onaylı hal ise onaylanır (eski davranış).
+    let mut h = Hat::yeni("guven-a-bagli");
+    h.pc.disaridan_ekle("k_t", &govde("Öneri", Some(an("2026-11-27", "10:00"))), true);
+    h.pc.disaridan_ekle("k_u", &govde("Öneri 2", None), true);
+    h.eslestir();
+    let mut v = json_belge(&h);
+    for (id, silindi) in [("k_t", true), ("k_u", false)] {
+        let d = kaydi_bul(&mut v, id);
+        d["taslak"] = json!(false);
+        d["silindi"] = json!(silindi);
+        d["guncelleme_ms"] = json!(SIMDI + DK);
+    }
+    let p = onizle(&h, &v.to_string());
+    assert_eq!((p.guncellenecek, p.silinecek, p.taslak_onaylanacak, p.kuyruga_girecek_islem), (2, 1, 1, 2));
+    assert!(h.c.ice_aktar(v.to_string(), Some(p.iz)).unwrap().uygulandi);
+    let turler: Vec<String> = Depo::ac(&h.yol)
+        .unwrap()
+        .kuyruk()
+        .unwrap()
+        .iter()
+        .map(|s| format!("{}:{}", s.kayit_id, serde_json::from_str::<Value>(&s.islem_json).unwrap()["islem"].as_str().unwrap()))
+        .collect();
+    assert_eq!(turler, ["k_t:sil", "k_u:onayla"], "mezar taşına `onayla` gitmez");
+    h.pompala();
+    let pc = &h.pc.d.kayitlar;
+    assert!(pc["k_t"].silindi && pc["k_t"].taslak, "PC'de silinmiş taslak");
+    assert!(!pc["k_u"].silindi && !pc["k_u"].taslak, "canlı olan onaylandı");
+    assert!(h.c.ret_listesi().unwrap().is_empty());
+}
+
+/// Görünen satırı okunamaz yapar (`kaynak` silinir) ve metnin öteki alanlarını `f` ile değiştirir.
+fn goruneni_boz_ve(h: &Hat, id: &str, f: impl FnOnce(&mut Value)) {
+    let db = rusqlite::Connection::open(&h.yol).unwrap();
+    let json: String = db.query_row("SELECT json FROM gorunen WHERE kayit_id = ?1", [id], |s| s.get(0)).unwrap();
+    let mut v: Value = serde_json::from_str(&json).unwrap();
+    v.as_object_mut().unwrap().remove("kaynak");
+    f(&mut v);
+    db.execute("UPDATE gorunen SET json = ?2 WHERE kayit_id = ?1", [id, &v.to_string()]).unwrap();
+}
+
+/// (b) Okunamayan telefon satırında önceki halin `silindi` ve `taslak`'ı metinden okunur ve dört sayı okunabilen
+/// satırdaki kuralla sayılır: metinde silinmiş, dosyada canlı -> `geri_yuklenecek`; metinde taslak, dosyada
+/// onaylı ve canlı -> `taslak_onaylanacak`; metinde taslak, dosyada onaylı mezar taşı -> yalnız `silinecek`,
+/// taslak kalır (a).
+#[test]
+fn okunamayan_satirin_bayraklari_sayilir() {
+    let mut b = Hat::yeni("guven-b");
+    let x = b.c.ekle(govde("X", None), GirdiYolu::Elle).unwrap();
+    let y = b.c.ekle(govde("Y", None), GirdiYolu::Elle).unwrap();
+    let z = b.c.ekle(govde("Z", None), GirdiYolu::Elle).unwrap();
+    let mut v = json_belge(&b);
+    kaydi_bul(&mut v, &z)["silindi"] = json!(true);
+    goruneni_boz_ve(&b, &x, |v| v["silindi"] = json!(true));
+    goruneni_boz_ve(&b, &y, |v| v["taslak"] = json!(true));
+    goruneni_boz_ve(&b, &z, |v| v["taslak"] = json!(true));
+    b.sureci_oldur_ve_ac();
+    let p = onizle(&b, &v.to_string());
+    assert_eq!((p.guncellenecek, p.okunamayan_ret_listesine), (3, 3));
+    assert_eq!((p.geri_yuklenecek, p.taslak_onaylanacak, p.silinecek, p.taslaga_donecek), (1, 1, 1, 0));
+    assert!(b.c.ice_aktar(v.to_string(), Some(p.iz)).unwrap().uygulandi);
+    assert!(!kayit(&b, &x).silindi && !kayit(&b, &y).taslak);
+    let z = kayit(&b, &z);
+    assert!(z.silindi && z.taslak);
+    assert_eq!(b.c.ret_listesi().unwrap().len(), 3);
+}
+
+/// (e) Uygulamanın ortasındaki hata (yerel kipte ikinci okunamayan satırın ret girdisinin kimliği
+/// alınamadı) işlemi bütünüyle geri alır: ilk okunamayan satırın onarımı, ret girdisi, yeni kayıt ve yerel
+/// geçmiş satırı kalmaz; plan ve iz aynı kalır, aynı izle yeniden uygulanır.
+#[test]
+fn uygulamanin_ortasindaki_hata_hicbir_sey_yazmaz() {
+    let mut b = Hat::yeni("guven-e");
+    let x = b.c.ekle(govde("X", None), GirdiYolu::Elle).unwrap();
+    let y = b.c.ekle(govde("Y", None), GirdiYolu::Elle).unwrap();
+    let mut v = json_belge(&b);
+    let mut w: Value = serde_json::from_str(&ornek_kayit()).unwrap();
+    w["kayit_id"] = json!("k_w");
+    v["kayitlar"].as_array_mut().unwrap().push(w);
+    goruneni_boz(&b, &x);
+    goruneni_boz(&b, &y);
+    b.sureci_oldur_ve_ac();
+    let ham = |h: &Hat| -> Vec<(String, String)> { Depo::ac(&h.yol).unwrap().gorunen_ham_hepsi().unwrap() };
+    let gecmis = |h: &Hat, id: &str| Depo::ac(&h.yol).unwrap().yerel_gecmis_sayisi(id).unwrap();
+    let (once_ham, once_x, once_y) = (ham(&b), gecmis(&b, &x), gecmis(&b, &y));
+    let p = onizle(&b, &v.to_string());
+    assert_eq!((p.guncellenecek, p.okunamayan_ret_listesine, p.yeni), (2, 2, 1));
+    b.kimlik.rastgele_atla.store(1, std::sync::atomic::Ordering::SeqCst);
+    b.kimlik.rastgele_hatasi.store(1, std::sync::atomic::Ordering::SeqCst);
+    b.gozlemci.al();
+    assert!(matches!(b.c.ice_aktar(v.to_string(), Some(p.iz.clone())), Err(CekirdekHatasi::KabukCagrisi { .. })));
+    assert_eq!(b.kimlik.rastgele_hatasi.load(std::sync::atomic::Ordering::SeqCst), 0, "hata ikinci çağrıda geldi");
+    assert_eq!(ham(&b), once_ham, "hiçbir görünen satır yazılmadı");
+    assert!(b.c.ret_listesi().unwrap().is_empty(), "hiçbir ret girdisi yazılmadı");
+    assert_eq!((gecmis(&b, &x), gecmis(&b, &y), gecmis(&b, "k_w")), (once_x, once_y, 0));
+    assert!(b.c.kayit("k_w".into()).unwrap().is_none());
+    assert!(b.gozlemci.al().iter().all(|d| d.kayitlar.is_empty() && !d.ret_listesi && !d.tumu));
+    let p2 = onizle(&b, &v.to_string());
+    assert_eq!(p2, p);
+    assert!(b.c.ice_aktar(v.to_string(), Some(p.iz)).unwrap().uygulandi);
+    assert_eq!(b.c.ret_listesi().unwrap().len(), 2);
+    assert!(b.c.kayit("k_w".into()).unwrap().is_some());
 }

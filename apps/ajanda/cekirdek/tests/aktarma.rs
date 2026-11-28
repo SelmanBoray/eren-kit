@@ -106,10 +106,12 @@ fn zengin_telefon(ad: &str) -> (Hat, Vec<String>) {
 #[test]
 fn bicim_sabitleri_koprude() {
     let b = aktarma_bicimi();
-    assert_eq!((b.belge_adi.as_str(), b.ekler_dizini.as_str(), b.bicim_surumu), ("ajanda.json", "ekler/", 1));
-    assert_eq!(b.ek_azami_bayt, 4 * 1024 * 1024);
-    // Modelden hesaplanan: `KAYIT_ADET` × (en büyük kayıt + virgül) + dolu ek dizini + üst düzey.
-    assert_eq!(b.belge_azami_bayt, 1_900_614_096);
+    // Okunabilen en yeni biçim 2 (`retler`); yazılan, içeriğin gerektirdiği en düşüğü.
+    assert_eq!((b.belge_adi.as_str(), b.ekler_dizini.as_str(), b.bicim_surumu), ("ajanda.json", "ekler/", 2));
+    assert_eq!((b.ek_azami_bayt, b.ek_azami_adet), (4 * 1024 * 1024, 10_000));
+    // Bellek koruması (gerçekçi en büyük yedek): belge 64 MiB, kaptaki ekler toplamı 16 MiB, açılmış toplam ikisi.
+    assert_eq!((b.belge_azami_bayt, b.ekler_toplam_azami_bayt), (64 << 20, 16 << 20));
+    assert_eq!(b.acilmis_toplam_azami_bayt, b.belge_azami_bayt + b.ekler_toplam_azami_bayt);
 }
 
 /// Dışa aktar -> boş telefona içe aktar: kayıtlar alan alan aynı (revizyon dışında), mezar taşı, örnek
@@ -290,7 +292,7 @@ fn gecersiz_belge_ve_daha_yeni_surum_reddedilir() {
         (degistir(|v| v["bicim"] = json!("baska")), "bicim", "ajanda yedeği değil"),
         (
             degistir(|v| {
-                v["bicim_surumu"] = json!(2);
+                v["bicim_surumu"] = json!(3);
                 v["yeni_alan"] = json!({"x": 1});
                 v["kayitlar"] = json!("başka biçim");
             }),

@@ -371,14 +371,26 @@ pub struct AktarmaBicimi {
     pub belge_adi: String,
     /// Ek dosyalarının dizini (`ekler/`): her ek `ekler/<ozet>` yolunda, içerik adresli.
     pub ekler_dizini: String,
-    /// Bu uygulamanın yazdığı (ve okuyabildiği en yeni) biçim sürümü.
+    /// Bu uygulamanın okuyabildiği en yeni biçim sürümü (yazdığı, içeriğin gerektirdiği en düşüğüdür: ret
+    /// girdisi yoksa 1, varsa 2).
     pub bicim_surumu: i64,
-    /// Belgenin en çok bayt uzunluğu; daha büyüğü okunmadan reddedilmeli (çekirdek de reddeder). Dışa
-    /// aktarmanın yazabileceği en büyük belgedir (modelin sınırlarından, ~1,77 GiB; `motor/aktarma.rs`
-    /// `BELGE_AZAMI_BAYT`): çekirdeğin yazdığı belge bu sınırla reddedilmez. Bellek sınırı değildir.
+    /// İçe aktarmada belgenin en çok bayt uzunluğu (64 MiB; `motor/aktarma.rs` `BELGE_AZAMI_BAYT`): bellek
+    /// koruması. Kap okunurken belge bu sınırla sayılır, daha büyüğü belleğe alınmadan reddedilmeli (çekirdek
+    /// de reddeder). Dışa aktarma bunu aşan belgeyi de yazar (`DisaAktarma.ice_aktarma_sinirini_asiyor`):
+    /// yazarken sınır olarak kullanılmamalı.
     pub belge_azami_bayt: u64,
     /// Bir ek dosyasının en çok bayt uzunluğu.
     pub ek_azami_bayt: u64,
+    /// Kap okunurken belleğe alınan bütün ek dosyalarının toplam sınırı (16 MiB; bugün hiçbir sürüm ek yazmaz).
+    #[uniffi(default = 0)]
+    pub ekler_toplam_azami_bayt: u64,
+    /// Kap okunurken açılmış bütün girdilerin (belge + ekler + saklanmayanlar) toplam sınırı:
+    /// `belge_azami_bayt` + `ekler_toplam_azami_bayt` (80 MiB). Şişirme saldırısı bu sınırda kesilir.
+    #[uniffi(default = 0)]
+    pub acilmis_toplam_azami_bayt: u64,
+    /// Kaptaki ek dosyası sayısının sınırı (10 000; belgenin `ekler` dizisininkiyle aynı).
+    #[uniffi(default = 0)]
+    pub ek_azami_adet: u32,
 }
 
 /// Kaba girecek (ya da kaptan okunacak) bir ek dosyası. Bugün hiç yoktur (ek alanları sözleşme v3'le gelir).
@@ -404,12 +416,21 @@ pub struct DisaAktarma {
     pub silinmis: i32,
     /// Telefonda okunamayan satırlar: belgeye olduğu gibi kondu, içe aktarmada geçersiz sayılırlar.
     pub okunamayan: i32,
-    /// Belgeye girmeyen ret listesi işlemleri (kayıt değil, servise bağlı istek; kullanıcı önce düzeltmeli).
+    /// Belgeye girmeyen ret listesi girdileri: düzeltme gövdesi olmayanlar (yalnız atılabilir: `sil`, `durum`,
+    /// okunamayan metin). Kullanıcı önce düzeltmeli ya da atmalı.
     pub ret_listesinde: i32,
     /// Aktarmanın yapıldığı kip (bağlı kipte görünen kopya, gönderilmemiş değişiklikler dahil).
     pub kip: CalismaKipi,
     /// Kaba `yol`'larıyla konacak ek dosyaları (bugün hep boş).
     pub ekler: Vec<EkDosyasi>,
+    /// Belgeye giren ret listesi girdileri (düzeltme gövdesiyle; içe aktarmada ret listesine geri yazılır).
+    #[uniffi(default = 0)]
+    pub ret_yedekte: i32,
+    /// Belge bu sürümün içe aktarma sınırlarını aşıyor (`AktarmaBicimi.belge_azami_bayt` ya da kayıt öğesi
+    /// sınırı): yazılmalı (veri yalnız telefonda kalmasın) ama bu sürümde geri yüklenemez; kullanıcıya
+    /// söylenmeli.
+    #[uniffi(default = false)]
+    pub ice_aktarma_sinirini_asiyor: bool,
 }
 
 /// Önizlemede geçersiz sayılan bir kayıt: yalnız konum ve neden (içerik yoktur).
@@ -474,7 +495,8 @@ pub struct IceAktarmaOnizlemesi {
     pub taslak_gonderilmeyecek: i32,
     /// `guncellenecek`'lerden telefonda taslak (onaylanmamış öneri) olup dosyadaki daha yeni onaylı halle
     /// onaylanacaklar: bağlı kipte `onayla` işlemi servise gider (hatırlatma kurulur), yerel kipte doğrudan.
-    /// Kullanıcıya ayrıca söylenmeli (onaylamak, yedekteki onaylı hali seçmektir).
+    /// Kullanıcıya ayrıca söylenmeli (onaylamak, yedekteki onaylı hali seçmektir). Dosyadaki hal onaylı bir
+    /// mezar taşıysa sayılmaz: kayıt yalnız `silinecek`'tir ve taslak kalır (`onayla` gönderilmez).
     #[uniffi(default = 0)]
     pub taslak_onaylanacak: i32,
     /// Yerel kipte: `guncellenecek`'lerden telefondaki satırı okunamayanlar. Dosyadaki hal yazılır, telefondaki
@@ -488,6 +510,13 @@ pub struct IceAktarmaOnizlemesi {
     /// (servis kaydı taslağa döndürmez; dökme kuralı bu farkı göndermez).
     #[uniffi(default = 0)]
     pub taslaga_donecek: i32,
+    /// Biçim 2: dosyadan ret listesine eklenecek girdiler (iki kipte de; telefonun ret listesinde aynı
+    /// `islem_id`'li olanlar sayılmaz, yinelenmez). Kayıt sayılarının (`toplam`) dışındadır.
+    #[uniffi(default = 0)]
+    pub ret_listesine_gelecek: i32,
+    /// Biçim 2: okunamayan ya da dosyada `islem_id`'si yinelenen ret girdileri (uygulanmaz).
+    #[uniffi(default = 0)]
+    pub ret_gecersiz: i32,
 }
 
 /// `Cekirdek::ice_aktar`'ın sonucu.

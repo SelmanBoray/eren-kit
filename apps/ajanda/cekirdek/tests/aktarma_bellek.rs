@@ -1,7 +1,8 @@
 //! D3 bellek iddiası, ayırma ölçüsüyle: içe aktarma önizlemesi belgeyi ağaca çevirmez (tepe ayırma belge
-//! metninin küçük bir kesridir), dışa aktarma belgeyi ağaçsız yazar (tepe: satırlar + belge). Süre ölçüsü
-//! (`aktarma_guveni.rs` dev dizi) yerine Rust ayırıcısının kendisi sayılır. SQLite'ın kendi ayırmaları sayılmaz
-//! (C ayırıcısı); ölçülen ağaçlar Rust'tadır.
+//! metninin küçük bir kesridir), uygulama yazılacakları biriktirmez (tepe: alarm senkronu + önizlemenin payı),
+//! kayıtlar dışındaki dev değer kopyalanmadan reddedilir, dışa aktarma belgeyi ağaçsız yazar (tepe: satırlar +
+//! belge). Süre ölçüsü (`aktarma_guveni.rs` dev dizi) yerine Rust ayırıcısının kendisi sayılır. SQLite'ın
+//! kendi ayırmaları sayılmaz (C ayırıcısı); ölçülen ağaçlar Rust'tadır.
 //!
 //! Sayaç süreç genelidir: bu dosyada tek test vardır (paralel test ölçüyü bozmasın).
 
@@ -100,9 +101,29 @@ fn aktarma_belgeyi_agaca_cevirmez() {
     assert!(on_tepe < pay, "önizleme tepesi {on_tepe}, kayıt başına pay {pay}");
     assert!(on_tepe * 5 < belge.len(), "önizleme tepesi {on_tepe}, belge {}", belge.len());
 
-    // Dışa aktarma: satırlar + belge (+ tek kaydın ağacı); ağaçlı yazım bütün kayıtların ağacını tutardı.
+    // Uygulama da yazılacakları tutmaz (iki geçiş: önce iz, sonra her kayıt sınıflandığı anda yazılır); eski
+    // hal (yazılacakların hepsi bellekte) önizlemenin eski tepesi gibi belgenin ~3 katıydı. Ölçülen: yalnız
+    // planın uygulanması (`ice_aktar`; alarm senkronu dahil, SQLite'ın kendi ayırmaları hariç).
     let c = Hat::yeni("bellek-c");
-    assert!(c.ice_aktar_onayla(&belge).uygulandi);
+    let iz = c.c.ice_aktarma_onizlemesi(belge.clone()).unwrap().iz;
+    let girdi = belge.clone();
+    let (s, uygulama_tepe) = tepe(|| c.c.ice_aktar(girdi, Some(iz)).unwrap());
+    assert!(s.uygulandi && s.plan.yeni == adet);
+    // Uygulamanın sonundaki alarm senkronu telefonun bütün kayıtlarını okur (içe aktarmadan bağımsız, her tam
+    // eşitlemede de); planın kendi payı önizlemeninkidir.
+    let ((), alarm_tepe) = tepe(|| c.c.alarmlari_yeniden_kur(ajanda_cekirdek::kopru::tipler::YenidenKurmaNedeni::UygulamaAcildi).unwrap());
+    eprintln!("belge {} bayt; önizleme tepesi {on_tepe}, uygulama tepesi {uygulama_tepe}, alarm senkronu {alarm_tepe}, ağaç {agac_tepe}", belge.len());
+    assert!(uygulama_tepe < alarm_tepe + pay, "uygulama tepesi {uygulama_tepe}, alarm senkronu {alarm_tepe}");
+
+    // Güvenilmeyen dosya: kayıtlar dışındaki dev değer (20 MiB'lık `uygulama_surumu`, ~20 KB'lık zip'ten)
+    // boşaltılmış kopyası ve ağacı kurulmadan reddedilir (eskiden kopya + ağaç: belgenin ~2 katı ayırma).
+    let dev = belge.replacen("\"uygulama_surumu\":\"", &format!("\"uygulama_surumu\":\"{}", "x".repeat(20 << 20)), 1);
+    let (sonuc, dev_tepe) = tepe(|| c.c.ice_aktarma_onizlemesi(dev));
+    assert!(matches!(sonuc, Err(ajanda_cekirdek::CekirdekHatasi::GecersizGirdi { ref neden, .. }) if neden.contains("kayıtlar dışı")), "{sonuc:?}");
+    eprintln!("dev kayıtlar dışı değer: tepe {dev_tepe}");
+    assert!(dev_tepe < 4 << 20, "dev değerin tepesi {dev_tepe}");
+
+    // Dışa aktarma: satırlar + belge (+ tek kaydın ağacı); ağaçlı yazım bütün kayıtların ağacını tutardı.
     let (d, disa_tepe) = tepe(|| c.c.disa_aktar().unwrap());
     assert_eq!(d.kayit, adet);
     assert!(disa_tepe < 3 * d.belge.len(), "dışa aktarma tepesi {disa_tepe}, belge {}", d.belge.len());

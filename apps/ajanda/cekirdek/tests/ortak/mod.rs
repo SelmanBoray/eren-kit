@@ -55,6 +55,8 @@ pub struct SahteKimlik {
     pub imza_hatasi: AtomicU64,
     /// Sonraki bu kadar `rastgele` hata versin.
     pub rastgele_hatasi: AtomicU64,
+    /// `rastgele_hatasi` doluyken önce bu kadar çağrı hatasız geçsin (işlemin ortasında hata).
+    pub rastgele_atla: AtomicU64,
 }
 
 /// Sayaç sıfır değilse bir azaltır ve `true` döner.
@@ -85,7 +87,7 @@ impl KimlikKabugu for SahteKimlik {
         Ok(veri == imza)
     }
     fn rastgele(&self, uzunluk: u32) -> Result<Vec<u8>, KabukHatasi> {
-        if hata_sirasi(&self.rastgele_hatasi) {
+        if self.rastgele_hatasi.load(Ordering::SeqCst) > 0 && !hata_sirasi(&self.rastgele_atla) && hata_sirasi(&self.rastgele_hatasi) {
             return Err(KabukHatasi::Basarisiz { mesaj: "rastgele üretilemedi".into() });
         }
         let n = self.sayac.fetch_add(1, Ordering::SeqCst) + 1;
