@@ -69,6 +69,19 @@ const ILK_GECIKME_MS = 1_000;
 const AZAMI_GECIKME_MS = 30_000;
 /** Servisin `kopru_hello` için tanıdığı süreyle aynı. */
 const EL_SIKISMA_MS = 10_000;
+/**
+ * Zengin hello'nun bitişi (ret ya da yanıtsız kapanış) hello'dan bu kadar sonra geldiyse alanla ilgili sayılmaz
+ * (basamak inilmez): katı şemanın reddi hello işlenir işlenmez yazılır; geç bitiş takılan servisin kendi el sıkışma
+ * süresidir (`sure_doldu`, o da `yetkisiz`) ya da geçici bir kapanıştır.
+ */
+const GEC_BITIS_MS = 5_000;
+/** Belirsiz inişle (yanıtsız kapanış, sonra alt basamak karşılandı) kurulan bağlantıda üst basamak yoklamasına dek. */
+const ZENGIN_YOKLAMA_MS = 4_000;
+
+const gercekZamanla = (ms: number, f: () => void): (() => void) => {
+  const t = setTimeout(f, ms);
+  return () => clearTimeout(t);
+};
 
 interface AracSemasi {
   readonly girdi: z.ZodType;
@@ -127,6 +140,11 @@ export interface KopruBagimliliklari {
   gunluk: Gunluk;
   /** Yeniden bağlanma aralığı. */
   bekle: (ms: number) => Promise<void>;
+  /**
+   * Bağlantıya bağlı zamanlayıcılar (el sıkışma süresi, geç bitiş eşiği, üst basamak yoklaması): `ms` sonra `f`;
+   * dönen işlev iptal eder. Verilmezse gerçek saat (`setTimeout`); testte elle tetiklenir.
+   */
+  zamanla?: (ms: number, f: () => void) => () => void;
 }
 
 export interface KopruCalisani {
@@ -173,14 +191,17 @@ type HelloEki = Readonly<Record<string, unknown>>;
 /**
  * Zengin hello'nun karşılanmadan bitişi. `ret`: servis `kopru_ret{yetkisiz}` verdi (katı şemada bilinmeyen alan).
  * `yanitsiz`: hiç ret satırı gelmeden kapandı (adlı boruda ret satırı kapanışla birlikte düşebilir; servis başka
- * nedenle de kapatmış olabilir). Başka kodlu ret (`jeton_gecersiz`, `protokol_uyumsuz`...) alanla ilgili değildir:
- * bitiş sayılmaz, basamak inilmez.
+ * nedenle de kapatmış olabilir). Başka kodlu ret (`jeton_gecersiz`, `protokol_uyumsuz`, servisin kapalı PC rolü
+ * `rol_fiil_izinsiz`...) alanla ilgili değildir: bitiş sayılmaz, basamak inilmez. Geçici olaylar da bitiş sayılmaz:
+ * köprünün kendi el sıkışma süresi (`EL_SIKISMA_MS`) ve hello'dan `GEC_BITIS_MS` sonra gelen ret ya da kapanış
+ * (takılan servis): olağan bekleme, sonraki döngü yine en üst basamaktan.
  */
 type ZenginBitis = "ret" | "yanitsiz";
 
 /**
- * Hangi bitiş bir alt basamağa iner (beklemeden). Bugün ikisi de iner; yanıtsız kapanışın inmemesi için yalnız bu
- * tablo değişir (`yanitsiz: false`), merdiven ve döngü aynı kalır.
+ * Hangi bitiş bir alt basamağa iner (beklemeden). İkisi de iner: adlı boruda eski servisin ret satırı kapanışla
+ * düşebilir (ölçüldü), yanıtsız kapanış inmeseydi o servise hiç bağlanılamazdı. Yanıtsız iniş belirsizdir (servis
+ * kapanırken de olur): PC köprüsünde alt basamakla kurulan bağlantı boştayken bir kez üst basamağı yoklar (`ZENGIN_YOKLAMA_MS`).
  */
 const BASAMAK_INDIREN_BITIS: Readonly<Record<ZenginBitis, boolean>> = { ret: true, yanitsiz: true };
 
@@ -200,6 +221,15 @@ const basamakImzasi = (ek: HelloEki): string => Object.keys(ek).sort().join("+")
  * değişebilir); denenmiş basamaklar imzalarıyla atlanır. Sonraki döngü yine en üst basamaktan başlar (servis
  * güncellenip yeniden başlamış olabilir).
  *
+ * `ustYoklama` (yalnız PC köprüsü) — belirsiz iniş (alt basamağın hemen üstündeki bitiş `yanitsiz`): servis yeni ama o an kapanıyor olabilir, bağlantı
+ * ömrü boyunca alt basamakta (ör. `surec_id`'siz) kalmasın diye bağlantı `ZENGIN_YOKLAMA_MS` sonra, süren istek
+ * yoksa (varsa yine o kadar sonra) BİR KEZ kapatılır ve merdiven beklemeden en üst basamaktan yeniden denenir
+ * (`zengin_hello_yoklamasi`; kopuş sayılmaz). Yoklama en üst basamak karşılanana dek bir daha yapılmaz: ret satırı
+ * kapanışla düşen eski servis yine iner, ikinci yoklama olmaz, döngü oluşmaz. Açık `yetkisiz` ardından kurulan
+ * bağlantı (servis alanı gerçekten tanımıyor) yoklanmaz. `ana_oturum` köprüsü yoklamaz: kaybı yalnız yüzdür, ve
+ * köprünün kendi kapattığı bağlantıdan hemen sonraki hello, servis eski bağlantının kapanışını işlemeden gelirse tek
+ * bağlantı kuralına (`jeton_kullanimda`) takılır; o kipte `jeton_gecersiz` kalıcıdır.
+ *
  * `aracV3Dinle` (yalnız ajanda kipi): her `kopru_welcome`'da servisin bu bağlantıya v3 araç yüzü verip vermediğini
  * (`arac_v3`) bekleyenler uyanmadan önce alır. `arac_v3`'süz basamakta istenmemiştir: servis alanı yazmaz,
  * dinleyici `false` alır (yüz v2).
@@ -210,6 +240,7 @@ function boruIstemciKur(
   asagiCoz: AsagiCozucu = kopruAsagiCoz,
   helloMerdiveni?: () => readonly HelloEki[],
   aracV3Dinle?: (acik: boolean) => void,
+  ustYoklama = false,
 ): BoruIstemci {
   const { gunluk, rastgele } = b;
   let acik: BoruBaglantisi | null = null;
@@ -230,6 +261,13 @@ function boruIstemciKur(
   const denenenBasamaklar = new Set<string>();
   /** Zengin hello karşılanmadan bitti (`BASAMAK_INDIREN_BITIS`): sıradaki basamak beklemeden. */
   let hemenYeniden = false;
+  const zamanla = b.zamanla ?? gercekZamanla;
+  /** Bu döngünün son inişi yanıtsız kapanıştandı (belirsiz); açık ret ya da olağan bekleme sıfırlar. */
+  let belirsizInis = false;
+  /** Üst basamak yoklaması yapıldı; en üst basamak karşılanınca sıfırlanır. */
+  let yoklandi = false;
+  /** Bağlantı yoklama için kapatıldı: merdiven beklemeden en üstten. */
+  let yoklamaKapatti = false;
 
   /** Merdivenin bu döngüde denenmemiş ilk basamağı; kalmadıysa düz hello. */
   const basamakSec = (): HelloEki => {
@@ -274,13 +312,41 @@ function boruIstemciKur(
   const baglantiYurut = (bag: BoruBaglantisi, jeton: string): Promise<boolean> =>
     new Promise((coz) => {
       let karsilandi = false;
-      const elSikisma = setTimeout(() => bag.kapat(), EL_SIKISMA_MS);
+      /** Köprünün kendi el sıkışma süresi doldu (servis yanıt vermedi): geçici, iniş değil. */
+      let zamanAsimi = false;
+      /** Hello'dan `GEC_BITIS_MS` geçti: bundan sonraki ret ya da kapanış alanla ilgili sayılmaz. */
+      let gec = false;
+      const elSikismaIptal = zamanla(EL_SIKISMA_MS, () => {
+        zamanAsimi = true;
+        bag.kapat();
+      });
+      const gecIptal = zamanla(GEC_BITIS_MS, () => {
+        gec = true;
+      });
+      let yoklamaIptal: (() => void) | null = null;
       acik = bag;
+      const merdiven = helloMerdiveni?.() ?? [];
       const ek = basamakSec();
-      denenenBasamaklar.add(basamakImzasi(ek));
+      const imza = basamakImzasi(ek);
+      denenenBasamaklar.add(imza);
       const zengin = Object.keys(ek).length > 0;
+      /** Merdivenin o anki en üst basamağı (iniş olmadı). */
+      const enUst = merdiven.length === 0 || basamakImzasi(merdiven[0]!) === imza;
       /** Zengin hello'ya gelen ret kodu (yoksa `null`: hiç ret gelmedi). */
       let ret: HataKodu | null = null;
+
+      /** Belirsiz inişin üst basamak yoklaması: boştaysa kapatır, süren istek varsa yine `ZENGIN_YOKLAMA_MS` sonra. */
+      const yoklamaKur = (): void => {
+        yoklamaIptal = zamanla(ZENGIN_YOKLAMA_MS, () => {
+          yoklamaIptal = null;
+          if (hazir !== bag || durdu) return;
+          if (bekleyenler.size > 0) return yoklamaKur();
+          yoklandi = true;
+          yoklamaKapatti = true;
+          gunluk.bilgi(MODUL, "zengin_hello_yoklamasi", { basamak: imza });
+          bag.kapat();
+        });
+      };
 
       bag.satirDinle((satir) => {
         const cozum = asagiCoz(satir);
@@ -296,7 +362,10 @@ function boruIstemciKur(
         if (m.type === "kopru_welcome") {
           if (karsilandi) return;
           karsilandi = true;
-          clearTimeout(elSikisma);
+          elSikismaIptal();
+          gecIptal();
+          if (enUst) yoklandi = false;
+          else if (ustYoklama && belirsizInis && !yoklandi) yoklamaKur();
           aracV3Dinle?.((m as { arac_v3?: unknown }).arac_v3 === true);
           hazir = bag;
           denemede = false;
@@ -330,18 +399,31 @@ function boruIstemciKur(
       });
 
       bag.kapanisDinle(() => {
-        clearTimeout(elSikisma);
+        elSikismaIptal();
+        gecIptal();
+        yoklamaIptal?.();
         acik = null;
         hazir = null;
         const kopanlar = [...bekleyenler.values()];
         bekleyenler.clear();
         for (const f of kopanlar) f({ tur: "koptu" });
+        if (zamanAsimi) {
+          gunluk.uyari(MODUL, "el_sikisma_zaman_asimi", { basamak: imza });
+          // Engel servisin kendisidir (metin "ulaşılamıyor").
+          sonEngel = null;
+        }
         // Zengin hello karşılanmadı: eski servisin katı şeması (ret) ya da ret satırı kapanışla düştü (yanıtsız).
-        const bitis: ZenginBitis | null =
+        // Köprünün kendi süresi ya da geç bitiş geçicidir (takılan servis): iniş yok.
+        const ham: ZenginBitis | null =
           !zengin || karsilandi ? null : ret === null ? "yanitsiz" : ret === "yetkisiz" ? "ret" : null;
+        const bitis = zamanAsimi || gec ? null : ham;
+        if (ham !== null && bitis === null && !zamanAsimi) {
+          gunluk.uyari(MODUL, "zengin_hello_gec_bitti", { code: ret ?? "yanitsiz", basamak: imza });
+        }
         if (bitis !== null && BASAMAK_INDIREN_BITIS[bitis]) {
-          gunluk.uyari(MODUL, "zengin_hello_reddedildi", { code: ret ?? "yanitsiz", basamak: basamakImzasi(ek) });
+          gunluk.uyari(MODUL, "zengin_hello_reddedildi", { code: ret ?? "yanitsiz", basamak: imza });
           hemenYeniden = true;
+          belirsizInis = bitis === "yanitsiz";
           // Engel zengin alanındır, bağlantının değil: alt basamağın sonucu belirler.
           sonEngel = null;
         }
@@ -401,6 +483,15 @@ function boruIstemciKur(
             sonEngel = null;
           }
         }
+        if (yoklamaKapatti && !durdu && kaliciHata === null) {
+          // Belirsiz inişin üst basamak yoklaması: kopuş değildir, beklemeden en üst basamaktan.
+          yoklamaKapatti = false;
+          hemenYeniden = false;
+          belirsizInis = false;
+          denenenBasamaklar.clear();
+          continue;
+        }
+        yoklamaKapatti = false;
         if (hemenYeniden && !durdu && kaliciHata === null) {
           // Merdivenin alt basamağı (`helloMerdiveni`); her basamak döngüde bir kez, düz hello bunu yeniden
           // kuramaz. Deneme sürüyor sayılır: bekleyen çağrı (`denemeBekle`) üst basamağın retini değil, alt
@@ -409,6 +500,7 @@ function boruIstemciKur(
           continue;
         }
         hemenYeniden = false;
+        belirsizInis = false;
         denenenBasamaklar.clear();
         denemede = false;
         denemeBitti();
@@ -879,11 +971,25 @@ export const PC_KOPRU_UYARLAYICILARI: Readonly<Record<PcKopruUyarlayiciAdi, PcKo
 const pcKopruUyarlayiciAdiMi = (ad: unknown): ad is PcKopruUyarlayiciAdi =>
   typeof ad === "string" && Object.hasOwn(PC_KOPRU_UYARLAYICILARI, ad);
 
-/** `--uyarlayici` argümanı: bayrak yoksa varsayılan; bilinmeyen ad ya da değersiz bayrak `null` (kullanım hatası). */
+/**
+ * PC köprüsünün argümanları (`--rol pc_oturumu [--uyarlayici <ad>]`) ve uyarlayıcısı. Katıdır: yalnız `--rol` ve
+ * `--uyarlayici`, her biri en çok bir kez, değeri ayrı argümanda. Bayrak yoksa varsayılan (`claude-code`; kurulu
+ * Claude Code kaydı bayraksızdır). Bilinmeyen ad, değersiz bayrak, eşittirli biçim (`--uyarlayici=codex`), yinelenen
+ * bayrak ya da başka her argüman (yanlış yazılmış bayrak, ör. `--uyarlayıcı`) `null`: kullanım hatası (2 ile çıkış).
+ * Yanlış yazılan bayrak sessizce varsayılana düşmez: Codex köprüsü Claude Code'unkiyle karışmasın.
+ */
 export function pcKopruUyarlayicisiSec(argumanlar: readonly string[]): PcKopruUyarlayicisi | null {
-  const i = argumanlar.indexOf("--uyarlayici");
-  if (i < 0) return PC_KOPRU_UYARLAYICILARI[PC_VARSAYILAN_UYARLAYICI];
-  const ad = argumanlar[i + 1];
+  let ad: string | undefined;
+  let rol = false;
+  for (let i = 0; i < argumanlar.length; i += 2) {
+    const bayrak = argumanlar[i];
+    const deger = argumanlar[i + 1];
+    if (deger === undefined || deger.startsWith("-")) return null;
+    if (bayrak === "--rol" && !rol) rol = true;
+    else if (bayrak === "--uyarlayici" && ad === undefined) ad = deger;
+    else return null;
+  }
+  if (ad === undefined) return PC_KOPRU_UYARLAYICILARI[PC_VARSAYILAN_UYARLAYICI];
   return pcKopruUyarlayiciAdiMi(ad) ? PC_KOPRU_UYARLAYICILARI[ad] : null;
 }
 
@@ -951,12 +1057,17 @@ export const ARAC_LISTESI_BEKLEME_MS = 3_000;
  * MCP ortamında `CLAUDE_PID` yoktur). Köprüyü bir sarmalayıcı (`cmd /c`, `npx`, `sh -c`) başlatırsa ebeveyn
  * harness olmaz ve o pencerenin kayıtları taslak doğar (güvenli yön; kurulum köprüyü sarmalayıcısız kaydeder).
  *
- * `arac_v3` ve `surec_id` hello'ya `helloMerdiveni`'nden girer: `{surec_id, arac_v3}` → `{surec_id}` → `{}`
- * (`ana_oturum`: `{arac_v3}` → `{}`; `v2Kilitli`: `arac_v3`'lü basamak yok). Alanı tanımayan eski servis zengin
- * hello'yu reddederse köprü beklemeden bir alt basamağa iner. `surec_id`'yi tanıyıp `arac_v3`'ü tanımayan servis
- * (d7bf303) `{surec_id}`'yi kabul eder: süreç eşitliği korunur, yüz v2. Yalnız ikisini de tanımayan servis
- * (55948ea; kullanıcılarda kurulu 5c6759f de aynı) düz hello'ya dek iner: `surec_id` gitmediğinden bağlantıyı eski köprü sayar, T5 bağlantı başına ilk
- * görüşle kurulur.
+ * `uyarlayici` (yalnız `pc_oturumu`): köprünün PC ajanı (`uyarlayici.ad`); servis bağlantıya yazar, `arac` günlük
+ * olayına girer (teşhis hangi ajanın çağrısı olduğunu bilir). Tur kararına girmez.
+ *
+ * `uyarlayici`, `arac_v3` ve `surec_id` hello'ya `helloMerdiveni`'nden girer: `{surec_id, arac_v3, uyarlayici}` →
+ * `{surec_id, arac_v3}` → `{surec_id}` → `{}` (`ana_oturum`: `{arac_v3}` → `{}`; `v2Kilitli`: `{surec_id, uyarlayici}`
+ * → `{surec_id}` → `{}`). Alanı tanımayan eski servis zengin hello'yu reddederse köprü beklemeden bir alt basamağa
+ * iner. `uyarlayici`'yı tanımayan 3600780 `{surec_id, arac_v3}`'ü kabul eder (yüz ve süreç korunur, teşhis
+ * uyarlayıcıyı bilmez). `surec_id`'yi tanıyıp `arac_v3`'ü tanımayan servis (d7bf303) `{surec_id}`'yi kabul eder:
+ * süreç eşitliği korunur, yüz v2. Yalnız hiçbirini tanımayan servis (55948ea; kullanıcılarda kurulu 5c6759f de
+ * aynı) düz hello'ya dek iner: `surec_id` gitmediğinden bağlantıyı eski köprü sayar, T5 bağlantı başına ilk görüşle
+ * kurulur.
  */
 export async function ajandaKopruCalistir(
   ayar: AjandaKopruIstemciAyari,
@@ -985,11 +1096,19 @@ export async function ajandaKopruCalistir(
   let listeDegisti: (() => void) | null = null;
   /** `initialize`'da yüz kapalı bilindi: `listChanged` ilan edilmedi, köprü v3 istemez (v2'de kalır). */
   let v2Kilitli = false;
-  // Hello merdiveni: önce `arac_v3` bırakılır (kaybı yalnız yüzdür, v2), en son `surec_id` (T5 süreç eşitliği).
-  // `arac_v3` yalnız yüz v2'ye kilitlenmediyse istenir. Düz hello (`{}`) son basamaktır.
+  // Yalnız PC: köprünün PC ajanı hello'da (teşhis; tur kararına girmez).
+  const uyar = pc ? { uyarlayici: uyarlayici.ad } : undefined;
+  // Hello merdiveni: önce `uyarlayici` bırakılır (kaybı yalnız teşhistir), sonra `arac_v3` (kaybı yalnız yüzdür,
+  // v2), en son `surec_id` (T5 süreç eşitliği). Her basamak bir öncekinin alt kümesidir. `arac_v3` yalnız yüz v2'ye
+  // kilitlenmediyse istenir. Düz hello (`{}`) son basamaktır.
   const helloMerdiveni = (): readonly HelloEki[] => {
     const basamaklar: HelloEki[] = [];
-    if (!v2Kilitli) basamaklar.push({ ...surec, arac_v3: true });
+    if (!v2Kilitli) {
+      if (uyar !== undefined) basamaklar.push({ ...surec, arac_v3: true, ...uyar });
+      basamaklar.push({ ...surec, arac_v3: true });
+    } else if (uyar !== undefined) {
+      basamaklar.push({ ...surec, ...uyar });
+    }
     if (surec !== undefined) basamaklar.push(surec);
     basamaklar.push({});
     return basamaklar;
@@ -1007,6 +1126,7 @@ export async function ajandaKopruCalistir(
         listeDegisti?.();
       }
     },
+    pc,
   );
   const yuzAcik = (): boolean => v3 === true;
   const araclar = (): ReturnType<typeof ajandaAraclari> => ajandaAraclari(yuzAcik());

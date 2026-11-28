@@ -14,6 +14,7 @@ import type {
   AjandaIslemSonucu,
   AjandaKaydi,
   AjandaKopruRolu,
+  AjandaKopruUyarlayici,
   PcKancaCiktisi,
   PcKancaFiili,
   PcKancaGirdisi,
@@ -2461,6 +2462,12 @@ export interface AjandaPcBaglami {
    * karşılaştırır.
    */
   kopru_surec_id?: string;
+  /**
+   * Köprünün hello'da bildirdiği PC ajanı (`kopru_hello.uyarlayici`; yalnız kapalı listeden, bilinmeyen değer yazılmaz),
+   * bağlantının ömrü boyunca sabit. Yoksa alanı bildirmeyen köprü. YALNIZ teşhis içindir (`arac` günlük olayı): tur
+   * kararına (`ajanda-pc`) girmez; köprünün beyanıdır, doğrulanmaz.
+   */
+  uyarlayici?: AjandaKopruUyarlayici;
 }
 
 /** `ana_oturum` bağlamı bugünkü gibi yalnız jetonun kapsamıdır (ek alan yok); PC çağrısınınki ayrıdır. */
