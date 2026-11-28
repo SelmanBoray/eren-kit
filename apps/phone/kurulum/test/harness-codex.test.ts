@@ -66,6 +66,13 @@ test("yönerge dürüst: taslak doğar ve telefondan onaylanır, nedeni, kanca y
   assert.match(m, /Bu kurulum oraya yazmaz; komutu kendiniz çalıştırın/);
   assert.match(m, /2\. Kanca yok: kurmayın\./);
   assert.match(m, /codex exec \(etkileşimsiz\)[\s\S]*approval_mode = "approve" gerekir/);
+  // exec maddesi: ölçülen gereklilik ile bilinmeyen yer ayrı; taslak cümlesi tek anlamlı (onaylanıp çalışan çağrı).
+  assert.match(m, /Ölçülen yalnız bu gerekliliktir \(Codex 0\.172\.0,\n\s+docs\/HARNESS-H3-OLCUM\.md Ö10\)/);
+  assert.match(m, /config\.toml'daki tam yeri[\s\S]*ölçülmedi, bilinmiyor/);
+  assert.match(m, /Ayarla exec'te çalışan çağrının kaydı da, etkileşimli oturumdaki gibi, taslak doğar\./);
+  assert.equal(/Onaysız çalışan/.test(m), false, "iki türlü okunan eski cümle yok");
+  // Sentetik tur onaylanmış kayda dokunamaz: yönerge bunu ve örneğini söyler.
+  assert.match(m, /Codex onaylanmış \(taslak olmayan\) kayda dokunamaz: "dişçiyi 11'e al" gibi bir değişiklik, kayıt telefonda\n\s+onaylandıysa reddedilir/);
   assert.match(m, /--teshis[\s\S]*cagri_kimligi_yok/);
   assert.match(m, /Kaldırma: codex mcp remove eren-ajanda;/);
   // Kanca kurma yönergesi, Claude'a özgü komut ya da "insan" vaadi yok.

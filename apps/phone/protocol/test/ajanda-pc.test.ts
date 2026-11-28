@@ -45,6 +45,7 @@ import {
   pcEtkilesimsizMi,
   pcKancaYukariCoz,
   pcTurNotu,
+  PC_CODEX_TASLAK_NEDENI_METNI,
   PROTOKOL_SURUMU,
 } from "../src/index.ts";
 import { JETON } from "./ornekler.ts";
@@ -339,6 +340,23 @@ test("tur kararı: köprüye dönen sonuç katıdır; sentetik her karar sabit b
     assert.ok(n.includes(PC_TUR_NEDENI_METNI[k as Exclude<typeof k, "insan">]), k);
     assert.ok(n.includes("--teshis"));
     assert.equal(/[\n\r]/.test(n), false, "tek satır");
+    // Varsayılan Claude Code'dur: açık ad aynı metni verir.
+    assert.equal(pcTurNotu(k, "claude-code"), n, k);
+  }
+});
+
+test("tur notu: Codex (yalnız taslak) kendi nedenini ve teşhis komutunu söyler; Claude Code'u, kancasını, sürüm farkını anmaz", () => {
+  assert.equal(pcTurNotu("insan", "codex"), null);
+  assert.ok(PC_CODEX_TASLAK_NEDENI_METNI.startsWith("Codex yalnız taslak ajanıdır"));
+  for (const k of PC_TUR_KARARLARI.slice(1)) {
+    const n = pcTurNotu(k, "codex");
+    assert.ok(n !== null && n.startsWith(`pc_tur: sentetik (${k}).`), k);
+    assert.ok(n.includes(PC_CODEX_TASLAK_NEDENI_METNI), k);
+    assert.ok(n.includes("taslak olmayan (onaylanmış) kayda dokunulamaz"), k);
+    assert.ok(n.endsWith("Teşhis: eren eslestir --pc-ajan codex --teshis"), k);
+    for (const yanlis of ["Claude Code", "--claude-code", "sürüm farkı", "kanca", "ana oturum"]) assert.equal(n.includes(yanlis), false, `${k} ${yanlis}`);
+    assert.equal(/[\n\r]/.test(n), false, "tek satır");
+    assert.notEqual(n, pcTurNotu(k), k);
   }
 });
 

@@ -884,6 +884,8 @@ export const CLAUDE_CODE_ARAC_KIMLIGI = "claudecode/toolUseId";
  * sahtesi de, bu köprünün çağrısına bağlanamaz.
  */
 export interface PcKopruUyarlayicisi {
+  /** Uyarlayıcının adı: modele giden not ve anahtar metinleri buna göre seçilir (`pcTurNotu`, `PC_ANAHTAR_METINLERI`). */
+  ad: PcKopruUyarlayiciAdi;
   aracKimligiMeta: string | null;
   oturumOrtami: string | null;
 }
@@ -898,8 +900,8 @@ export const PC_YALNIZ_TASLAK_UYARLAYICILARI = ["codex"] as const;
 export type PcKopruUyarlayiciAdi = PcUyarlayiciAdi | (typeof PC_YALNIZ_TASLAK_UYARLAYICILARI)[number];
 
 export const PC_KOPRU_UYARLAYICILARI: Readonly<Record<PcKopruUyarlayiciAdi, PcKopruUyarlayicisi>> = {
-  "claude-code": { aracKimligiMeta: CLAUDE_CODE_ARAC_KIMLIGI, oturumOrtami: "CLAUDE_CODE_SESSION_ID" },
-  codex: { aracKimligiMeta: null, oturumOrtami: null },
+  "claude-code": { ad: "claude-code", aracKimligiMeta: CLAUDE_CODE_ARAC_KIMLIGI, oturumOrtami: "CLAUDE_CODE_SESSION_ID" },
+  codex: { ad: "codex", aracKimligiMeta: null, oturumOrtami: null },
 };
 
 const pcKopruUyarlayiciAdiMi = (ad: unknown): ad is PcKopruUyarlayiciAdi =>
@@ -931,6 +933,18 @@ export const PC_ANAHTAR_YOK_METNI =
 export const PC_ANAHTAR_GECERSIZ_METNI =
   "ajanda: Claude Code ajanda anahtarı geçersiz ya da kaldırılmış; hiçbir şey yazılmadı. Kullanıcıya söyle: " +
   "yeni anahtar `eren eslestir --claude-code` ile üretilir.";
+/** Codex köprüsünün anahtar metinleri. Anahtar bütün PC ajanlarında ortaktır (`eslestir.ts` `ORTAK_ANAHTAR_NOTU`). */
+export const PC_CODEX_ANAHTAR_YOK_METNI =
+  "ajanda: bu bilgisayarda PC ajanda anahtarı yok (Codex de bu anahtarı kullanır); hiçbir şey yazılmadı. Kullanıcıya söyle: " +
+  "anahtar `eren eslestir --pc-ajan codex` ile üretilir.";
+export const PC_CODEX_ANAHTAR_GECERSIZ_METNI =
+  "ajanda: PC ajanda anahtarı (Codex de bunu kullanır) geçersiz ya da kaldırılmış; hiçbir şey yazılmadı. Kullanıcıya söyle: " +
+  "yeni anahtar `eren eslestir --pc-ajan codex` ile üretilir.";
+/** Köprünün uyarlayıcısına göre anahtar metinleri; Claude Code'unkiler yukarıdaki iki sabitin kendisidir. */
+export const PC_ANAHTAR_METINLERI: Readonly<Record<PcKopruUyarlayiciAdi, { yok: string; gecersiz: string }>> = {
+  "claude-code": { yok: PC_ANAHTAR_YOK_METNI, gecersiz: PC_ANAHTAR_GECERSIZ_METNI },
+  codex: { yok: PC_CODEX_ANAHTAR_YOK_METNI, gecersiz: PC_CODEX_ANAHTAR_GECERSIZ_METNI },
+};
 
 /**
  * Stdio köprünün ajanda kipi: `AJANDA_BORU_ADI`'na `ana_oturum` jetonuyla bağlanır, yalnız
@@ -966,6 +980,7 @@ export async function ajandaKopruCalistir(
     inputSchema: jsonSemasi(AJANDA_ARACLARI[fiil].girdi) as Tool["inputSchema"],
   }));
   const oturumId = ayar.oturumId !== undefined && OpakId.safeParse(ayar.oturumId).success ? ayar.oturumId : undefined;
+  const anahtarMetni = PC_ANAHTAR_METINLERI[uyarlayici.ad];
 
   /**
    * PC: `cagri` zarfı. Çağrı kimliği uyarlayıcının `_meta` anahtarından; geçersizse ya da uyarlayıcı okumuyorsa
@@ -1009,8 +1024,8 @@ export async function ajandaKopruCalistir(
   /** PC: bağlantı yokken modele giden metin, engelin nedenine göre. Hepsinde "hiçbir şey yazılmadı". */
   const pcKopukSonucu = (): CallToolResult => {
     const engel = boru.sonEngel();
-    if (engel === "anahtar_yok") return hataSonucu("jeton_gecersiz", PC_ANAHTAR_YOK_METNI);
-    if (engel === "jeton_gecersiz") return hataSonucu("jeton_gecersiz", PC_ANAHTAR_GECERSIZ_METNI);
+    if (engel === "anahtar_yok") return hataSonucu("jeton_gecersiz", anahtarMetni.yok);
+    if (engel === "jeton_gecersiz") return hataSonucu("jeton_gecersiz", anahtarMetni.gecersiz);
     return hataSonucu("ic_hata", PC_KOPUK_METNI);
   };
   const citUret = (): string => rastgele.hex64() + rastgele.hex64();
@@ -1023,7 +1038,8 @@ export async function ajandaKopruCalistir(
   /**
    * Tek yol: şemadan geçen çıktı → `ajandaMcpSonucu` → yalnız onun alanları. PC köprüsünde yanıt
    * `PcAracSonucu`'dur (çıktı + servisin tur kararı); sentetik kararda yazan araçların tek metnine sabit
-   * `pcTurNotu` satırı eklenir (kaydın neden taslak doğduğu; kayıt metni taşımaz). Liste metnine eklenmez.
+   * `pcTurNotu` satırı eklenir (kaydın neden taslak doğduğu; kayıt metni taşımaz), uyarlayıcının adıyla (Codex'in
+   * notu Claude Code'u anmaz). Liste metnine eklenmez.
    */
   const sonucCevir = (fiil: AjandaFiili, ham: unknown): CallToolResult => {
     let govde = ham;
@@ -1032,7 +1048,7 @@ export async function ajandaKopruCalistir(
       const s = PcAracSonucu.safeParse(ham);
       if (!s.success) return icHata(fiil);
       govde = s.data.cikti;
-      if (fiil !== "ajanda_listele") not = pcTurNotu(s.data.karar);
+      if (fiil !== "ajanda_listele") not = pcTurNotu(s.data.karar, uyarlayici.ad);
     }
     const sema: z.ZodType = AJANDA_ARACLARI[fiil].cikti;
     const r = sema.safeParse(govde);
@@ -1059,10 +1075,10 @@ export async function ajandaKopruCalistir(
         case "basari":
           return sonucCevir(fiil, y.sonuc);
         case "hata":
-          return pc && y.code === "jeton_gecersiz" ? hataSonucu(y.code, PC_ANAHTAR_GECERSIZ_METNI) : ajandaHataSonucu(y.code);
+          return pc && y.code === "jeton_gecersiz" ? hataSonucu(y.code, anahtarMetni.gecersiz) : ajandaHataSonucu(y.code);
         case "koptu":
           // PC: anahtar istek sırasında iptal edildiyse servis `kopru_ret` verip kapatır.
-          return pc && boru.sonEngel() === "jeton_gecersiz" ? hataSonucu("jeton_gecersiz", PC_ANAHTAR_GECERSIZ_METNI) : ajandaHataSonucu("belirsiz");
+          return pc && boru.sonEngel() === "jeton_gecersiz" ? hataSonucu("jeton_gecersiz", anahtarMetni.gecersiz) : ajandaHataSonucu("belirsiz");
         case "yollanmadi":
           return kopuk();
         case "iptal":

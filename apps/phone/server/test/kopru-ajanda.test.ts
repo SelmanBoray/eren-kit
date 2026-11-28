@@ -37,7 +37,9 @@ import {
   ajandaListesiMetni,
   jsonSemasi,
   PC_KANCA_ARACLARI,
+  PC_TUR_KARARLARI,
   PC_UYARLAYICILARI,
+  pcTurNotu,
   pcUyarlayiciTanindiMi,
   sha256Hex,
 } from "@eren/protocol";
@@ -49,6 +51,11 @@ import {
   ajandaKopruCalistir,
   CLAUDE_CODE_ARAC_KIMLIGI,
   kopruCalistir,
+  PC_ANAHTAR_GECERSIZ_METNI,
+  PC_ANAHTAR_METINLERI,
+  PC_ANAHTAR_YOK_METNI,
+  PC_CODEX_ANAHTAR_GECERSIZ_METNI,
+  PC_CODEX_ANAHTAR_YOK_METNI,
   PC_KOPRU_UYARLAYICILARI,
   PC_YALNIZ_TASLAK_UYARLAYICILARI,
   pcKopruUyarlayicisiSec,
@@ -800,7 +807,7 @@ describe("kopru ajanda kipi: uçtan uca (köprü → boru → ajanda-kopru-sunuc
 describe("kopru PC köprüsü: uyarlayıcı (--uyarlayici)", () => {
   it("bayrak yoksa claude-code (canlı kayıt bayraksız): çağrı kimliği claudecode/toolUseId, oturum CLAUDE_CODE_SESSION_ID", () => {
     const varsayilan = pcKopruUyarlayicisiSec(["--rol", "pc_oturumu"]);
-    assert.deepEqual(varsayilan, { aracKimligiMeta: "claudecode/toolUseId", oturumOrtami: "CLAUDE_CODE_SESSION_ID" });
+    assert.deepEqual(varsayilan, { ad: "claude-code", aracKimligiMeta: "claudecode/toolUseId", oturumOrtami: "CLAUDE_CODE_SESSION_ID" });
     assert.equal(varsayilan?.aracKimligiMeta, CLAUDE_CODE_ARAC_KIMLIGI);
     assert.deepEqual(pcKopruUyarlayicisiSec(["--rol", "pc_oturumu", "--uyarlayici", "claude-code"]), varsayilan);
     assert.deepEqual(Object.keys(PC_KOPRU_UYARLAYICILARI), ["claude-code", "codex"]);
@@ -808,7 +815,7 @@ describe("kopru PC köprüsü: uyarlayıcı (--uyarlayici)", () => {
 
   it("codex yalnız taslak: çağrı kimliği ve oturum okunmaz; tasdik çerçevesi codex'i tanımaz (PC_UYARLAYICILARI'nda yok)", () => {
     const c = pcKopruUyarlayicisiSec(["--rol", "pc_oturumu", "--uyarlayici", "codex"]);
-    assert.deepEqual(c, { aracKimligiMeta: null, oturumOrtami: null });
+    assert.deepEqual(c, { ad: "codex", aracKimligiMeta: null, oturumOrtami: null });
     assert.equal(c, PC_KOPRU_UYARLAYICILARI.codex);
     assert.deepEqual([...PC_YALNIZ_TASLAK_UYARLAYICILARI], ["codex"]);
     assert.equal(Object.hasOwn(PC_UYARLAYICILARI, "codex"), false);
@@ -995,11 +1002,11 @@ describe("kopru PC köprüsü: zengin hello (surec_id) ve sürüm uyumu", () => 
     olaylar: Olay[],
     surecId?: string,
     uyarlayici?: PcKopruUyarlayicisi,
-    ek: { gunluk?: ReturnType<typeof sahteGunluk>; zamanla?: (ms: number, f: () => void) => () => void } = {},
+    ek: { gunluk?: ReturnType<typeof sahteGunluk>; zamanla?: (ms: number, f: () => void) => () => void; jetonOku?: () => string | null } = {},
   ) {
     const [mcpKopru, mcpIstemci] = InMemoryTransport.createLinkedPair();
     const calisan = await ajandaKopruCalistir(
-      { rol: "pc_oturumu", jeton: "", boruAdi: AJANDA_BORU_ADI, jetonOku: () => PC_JETON, oturumId: OTURUM_PC },
+      { rol: "pc_oturumu", jeton: "", boruAdi: AJANDA_BORU_ADI, jetonOku: ek.jetonOku ?? (() => PC_JETON), oturumId: OTURUM_PC },
       {
         transport: mcpKopru,
         baglan,
@@ -1372,15 +1379,110 @@ describe("kopru PC köprüsü: zengin hello (surec_id) ve sürüm uyumu", () => 
     assert.deepEqual(kararlar.slice(3), ["insan", "tasdik_yok"]);
   });
 
+  /**
+   * Claude Code köprüsünün modele giden notları, değişiklikten önceki koddan (f7ab5f1) bayt bayt kopya. Codex notunu
+   * eklemek bunları değiştirmemeli.
+   */
+  const CLAUDE_NOT_BASI =
+    "Bu çağrı ana oturumun etkileşimli bir çağrısı olarak doğrulanamadı: eklenen kayıt taslak doğar (ajanda uygulamasında onay bekler, " +
+    "onaylanana dek hatırlatma çalmaz), taslak olmayan kayda dokunulamaz. Kullanıcıya bunu ve nedenini tek cümleyle söyle: ";
+  const CLAUDE_NOT_SONU = ". Teşhis: eren eslestir --claude-code --teshis";
+  const CLAUDE_NOTLARI: Record<Exclude<PcTurKarari, "insan">, string> = {
+    cagri_kimligi_yok: `pc_tur: sentetik (cagri_kimligi_yok). ${CLAUDE_NOT_BASI}Claude Code bu çağrının kimliğini ajanda köprüsüne vermedi (sürüm farkı olabilir); çağrı ana oturumunki diye doğrulanamadı${CLAUDE_NOT_SONU}`,
+    tasdik_yok: `pc_tur: sentetik (tasdik_yok). ${CLAUDE_NOT_BASI}Claude Code'un araç öncesi kancası bu çağrıyı servise bildirmedi (kanca kurulu değil ya da çalışmadı, izin sorusu 10 dakikadan uzun sürdü ya da servis arada yeniden başladı)${CLAUDE_NOT_SONU}`,
+    alt_agent: `pc_tur: sentetik (alt_agent). ${CLAUDE_NOT_BASI}çağrı bir alt agent'tan geldi; alt agent'ın kaydı her zaman taslaktır${CLAUDE_NOT_SONU}`,
+    etkilesimsiz: `pc_tur: sentetik (etkilesimsiz). ${CLAUDE_NOT_BASI}çağrı etkileşimsiz bir oturumdan (-p ya da Agent SDK) geldi${CLAUDE_NOT_SONU}`,
+  };
+
+  it("codex: yazan araçta (ajanda_ekle, ajanda_guncelle) modele Codex'e özgü not gider; Claude Code'u ve kancasını anmaz, kendi teşhis komutunu verir", async () => {
+    const zaman = sahteZaman();
+    const defter = pcDefteriKur({ takvim: sahteTakvim(IST), saat: zaman.saat, rastgele: sahteRastgele(3), gunluk: sahteGunluk() });
+    const kararlar: PcTurKarari[] = [];
+    const { kur: u } = await pcUcKur((b) => {
+      const k = defter.tur(b as AjandaPcBaglami, zaman.saat.simdiMs()).karar;
+      kararlar.push(k);
+      return k;
+    });
+    const istemci = await pcKopruAc(u.baglan, [], SUREC, PC_KOPRU_UYARLAYICILARI.codex);
+    const ekle = await istemci.callTool({ name: "ajanda_ekle", arguments: EKLE_GIRDI, _meta: CODEX_META });
+    assert.ok(!hataMi(ekle), metin(ekle));
+    const guncelle = await istemci.callTool({ name: "ajanda_guncelle", arguments: GUNCELLE_GIRDI, _meta: CODEX_META });
+    assert.ok(!hataMi(guncelle), metin(guncelle));
+    assert.deepEqual(kararlar, ["cagri_kimligi_yok", "cagri_kimligi_yok"]);
+    const not = pcTurNotu("cagri_kimligi_yok", "codex")!;
+    assert.equal(metin(ekle), `${ajandaEkleMetni(EKLE_CIKTI)}\n${not}`);
+    assert.equal(metin(guncelle), `${ajandaGuncelleMetni(GUNCELLE_CIKTI)}\n${not}`);
+    assert.ok(not.startsWith("pc_tur: sentetik (cagri_kimligi_yok)."), not);
+    assert.ok(not.includes("Codex yalnız taslak ajanıdır"), not);
+    assert.ok(not.includes("telefondaki ajanda uygulamasından onaylanır"), not);
+    assert.ok(not.endsWith("Teşhis: eren eslestir --pc-ajan codex --teshis"), not);
+    for (const yanlis of ["Claude Code", "--claude-code", "sürüm farkı", "kanca"]) assert.equal(not.includes(yanlis), false, `${yanlis}: ${not}`);
+    assert.equal(/[\n\r]/.test(not), false, "tek satır");
+    // Liste metnine not eklenmez (Codex'te de).
+    const liste = await istemci.callTool({ name: "ajanda_listele", arguments: {}, _meta: CODEX_META });
+    assert.equal(metin(liste).includes("pc_tur:"), false);
+  });
+
+  it("claude-code: yazan araçtaki not bayt bayt değişmedi (her sentetik karar); insan kararında not yok", async () => {
+    for (const k of PC_TUR_KARARLARI) {
+      const { kur: u } = await pcUcKur(() => k);
+      const istemci = await pcKopruAc(u.baglan, [], SUREC);
+      const r = await istemci.callTool({ name: "ajanda_ekle", arguments: EKLE_GIRDI, _meta: { [CLAUDE_CODE_ARAC_KIMLIGI]: "toolu_n1" } });
+      assert.ok(!hataMi(r), metin(r));
+      const beklenen = k === "insan" ? ajandaEkleMetni(EKLE_CIKTI) : `${ajandaEkleMetni(EKLE_CIKTI)}\n${CLAUDE_NOTLARI[k]}`;
+      assert.equal(metin(r), beklenen, k);
+      // Varsayılan argüman da aynı metni verir (çağıranlar değişmedi).
+      if (k !== "insan") {
+        assert.equal(pcTurNotu(k), CLAUDE_NOTLARI[k], k);
+        assert.equal(pcTurNotu(k, "claude-code"), CLAUDE_NOTLARI[k], k);
+      }
+    }
+  });
+
+  it("anahtar metinleri uyarlayıcıya göre: Claude Code'unki bayt bayt aynı; Codex'inki Claude Code'u anmaz, --pc-ajan codex der", async () => {
+    // Değişiklikten önceki metinler (f7ab5f1), bayt bayt.
+    assert.equal(
+      PC_ANAHTAR_YOK_METNI,
+      "ajanda: bu bilgisayarda Claude Code ajanda anahtarı yok; hiçbir şey yazılmadı. Kullanıcıya söyle: anahtar `eren eslestir --claude-code` ile üretilir.",
+    );
+    assert.equal(
+      PC_ANAHTAR_GECERSIZ_METNI,
+      "ajanda: Claude Code ajanda anahtarı geçersiz ya da kaldırılmış; hiçbir şey yazılmadı. Kullanıcıya söyle: yeni anahtar `eren eslestir --claude-code` ile üretilir.",
+    );
+    assert.deepEqual(PC_ANAHTAR_METINLERI["claude-code"], { yok: PC_ANAHTAR_YOK_METNI, gecersiz: PC_ANAHTAR_GECERSIZ_METNI });
+    assert.deepEqual(PC_ANAHTAR_METINLERI.codex, { yok: PC_CODEX_ANAHTAR_YOK_METNI, gecersiz: PC_CODEX_ANAHTAR_GECERSIZ_METNI });
+    for (const m of [PC_CODEX_ANAHTAR_YOK_METNI, PC_CODEX_ANAHTAR_GECERSIZ_METNI]) {
+      assert.equal(m.includes("Claude Code"), false, m);
+      assert.equal(m.includes("--claude-code"), false, m);
+      assert.ok(m.includes("`eren eslestir --pc-ajan codex`"), m);
+      assert.ok(m.includes("hiçbir şey yazılmadı"), m);
+    }
+    // Uçtan uca: anahtar yok, sonra geçersiz anahtar (servis reddeder); iki köprü kendi metnini verir.
+    const { kur: u } = await pcUcKur();
+    for (const [uyarlayici, yok, gecersiz] of [
+      [PC_KOPRU_UYARLAYICILARI["claude-code"], PC_ANAHTAR_YOK_METNI, PC_ANAHTAR_GECERSIZ_METNI],
+      [PC_KOPRU_UYARLAYICILARI.codex, PC_CODEX_ANAHTAR_YOK_METNI, PC_CODEX_ANAHTAR_GECERSIZ_METNI],
+    ] as const) {
+      const anahtarsiz = await pcKopruAc(u.baglan, [], SUREC, uyarlayici, { jetonOku: () => null });
+      const r1 = await anahtarsiz.callTool({ name: "ajanda_ekle", arguments: EKLE_GIRDI });
+      assert.ok(hataMi(r1));
+      assert.equal(metin(r1), `hata: jeton_gecersiz\n${yok}`, uyarlayici.ad);
+      const yanlis = await pcKopruAc(u.baglan, [], SUREC, uyarlayici, { jetonOku: () => "q".repeat(43) });
+      const r2 = await yanlis.callTool({ name: "ajanda_ekle", arguments: EKLE_GIRDI });
+      assert.ok(hataMi(r2));
+      assert.equal(metin(r2), `hata: jeton_gecersiz\n${gecersiz}`, uyarlayici.ad);
+    }
+  });
+
   /** `karar` verilirse PC kararı ondan (ör. gerçek PC defteri); yoksa sabit `insan`. */
   async function pcUcKur(karar: (baglam: AjandaKopruBaglami) => PcTurKarari = () => "insan") {
     const depo = depoKur({ yol: ":memory:", saat: sahteZaman().saat, gunluk: sahteGunluk() });
     depo.ajandaPcAnahtariYaz(sha256Hex(new TextEncoder().encode(PC_JETON)), 1);
     const boru = bellekBoru();
     const baglamlar: AjandaKopruBaglami[] = [];
-    const isleyici = async (_g: unknown, baglam: AjandaKopruBaglami): Promise<never> => {
+    const isleyici = (deger: unknown) => async (_g: unknown, baglam: AjandaKopruBaglami): Promise<never> => {
       baglamlar.push(baglam);
-      return { ok: true, deger: LISTE_CIKTI, pc_karar: karar(baglam) } as never;
+      return { ok: true, deger, pc_karar: karar(baglam) } as never;
     };
     const s = ajandaKopruSunucuKur({
       boru: boru.port,
@@ -1390,7 +1492,10 @@ describe("kopru PC köprüsü: zengin hello (surec_id) ve sürüm uyumu", () => 
       zamanlayici: sahteZaman().zamanlayici,
       gunluk: sahteGunluk(),
     });
-    await s.baslat({ ajanda_ekle: isleyici, ajanda_guncelle: isleyici, ajanda_listele: isleyici } as AjandaFiilIsleyiciler, { pc_arac: () => ({}) });
+    await s.baslat(
+      { ajanda_ekle: isleyici(EKLE_CIKTI), ajanda_guncelle: isleyici(GUNCELLE_CIKTI), ajanda_listele: isleyici(LISTE_CIKTI) } as AjandaFiilIsleyiciler,
+      { pc_arac: () => ({}) },
+    );
     acik.unshift(async () => {
       await s.kapat();
       depo.kapat();
