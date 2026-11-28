@@ -294,7 +294,6 @@ fn koparmada_ertelenen_degerler_yerel_gercekte_kalir() {
 /// Koparmadan sonra v3 servisle yeniden bağlanma: yerel gerçekteki (ertelenmiş olan) v3 değeri PC'ye fark
 /// olarak gitmeli.
 #[test]
-#[ignore = "R1, düzeltme Kol B'nin dalında: v3 alanları dört yerde düşüyor: motor/yerel.rs ~316 kuyruga_islemler (ekle hep v3: Default), motor/islem.rs ~48 govde_farki (v3 farkı yok), yerel.rs ~357 icerik_ayni (v3'ü saymıyor), motor/iyimser.rs ~115 eklenen_kayit (v3: Default). Yalnız yerel yazar değil: aynı fonksiyonlar bağlı kipin D2 yollarında da kullanılıyor (yereli_kuyruga_dok: koparma/depo değişimi sonrası bağlanma; geri_donenleri_kuyruga_koy: aynı depoda yedekten dönüş; ice_aktar bağlı kipte; iyimser ekle)"]
 fn koparmadan_sonra_v3_baglanmada_ertelenen_deger_pcye_gider() {
     let mut h = Hat::yeni("erteleme-kopar-baglan");
     let a = v2ye_inen_kurulum(&mut h);
@@ -683,7 +682,6 @@ fn ertelenenlerin_arkasindaki_uzun_kuyruk_her_gonderimde_bastan_yurunmez() {
 /// Gerçek üretici yol: bağlı kipte (v2 servis) v3 alanlı kaydın içe aktarılması kuyruğa v3 alanlı işlem
 /// koyar (`kuyruga_islemler`); v2 kısmı gider, v3 kalanı ertelenir, servis v3'e geçince gider.
 #[test]
-#[ignore = "R1, düzeltme Kol B'nin dalında: bağlı kipte içe aktarma motor/yerel.rs ~316 kuyruga_islemler (ekle hep v3: Default) ve ~357 icerik_ayni (v3'ü saymıyor) yüzünden v3 alanlarını düşürüyor"]
 fn ice_aktarilan_v3_alanli_kayit_v2_serviste_ertelenir() {
     let mut h = Hat::yeni("erteleme-ice-aktar");
     v2ye_inen_kurulum(&mut h);
@@ -693,7 +691,7 @@ fn ice_aktarilan_v3_alanli_kayit_v2_serviste_ertelenir() {
     k["kayit_id"] = serde_json::json!("k_iceden01");
     k["simge"] = serde_json::json!("market");
     belge["kayitlar"].as_array_mut().unwrap().push(k);
-    let s = h.c.ice_aktar(belge.to_string(), None).unwrap();
+    let s = h.ice_aktar_onayla(&belge.to_string());
     assert!(s.uygulandi);
     h.pompala();
     assert!(h.pc.d.kayitlar.contains_key("k_iceden01"), "v2 kısmı gitti");
