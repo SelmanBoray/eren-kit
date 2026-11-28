@@ -16,10 +16,16 @@
  * jetonun kapsamıdır). `pc_kanca` bağlantısı yalnız kanca isteğini (`pc_arac`, `pcKancaYukariCoz`) alır.
  * `pc_oturumu` başarılı yanıtının `sonuc`'u `PcAracSonucu{cikti, karar}`'dır (PC defterinin tur kararı;
  * köprü sentetik kararın nedenini modele söyler); `ana_oturum` yanıtı bugünkü gibi yalnız çıktıdır.
+ *
+ * v3 araç yüzü (`aracV3`, ayar `ajanda_arac_v3`) bağlantı başınadır: ayar açık VE araç rolünün (`ana_oturum`,
+ * `pc_oturumu`) köprüsü hello'da `arac_v3` istediyse `kopru_welcome` `arac_v3:true` taşır (köprü v3 şemalarını
+ * ve tanımlarını yayınlar). Öteki bağlantılarda alan yazılmaz (çerçeve bugünkü baytlarla) ve çıktı v2 şemasıyla
+ * denetlenir. Ayar kapalıyken v3 alanı taşıyan çıktı `ic_hata` olur; ayar açıkken istemeyen köprünün (v3
+ * öncesi kod: alanlı karşılamayı çözemez) çıktısı önce v3 şemasıyla denetlenir, sonra v2 yüzüne iner
+ * (`ajandaAracCiktisiV2`).
  */
 import { z } from "zod";
 import {
-  AJANDA_ARACLARI,
   AJANDA_AZAMI_CERCEVE,
   AJANDA_BORU_ADI,
   AJANDA_PC_SINIRLARI,
@@ -27,6 +33,8 @@ import {
   PC_KANCA_ARACLARI,
   PcAracSonucu,
   PROTOKOL_SURUMU,
+  ajandaAracCiktisiV2,
+  ajandaAraclari,
   ajandaFiilRoldeIzinliMi,
   ajandaKopruYukariCoz,
   ajandaPcRoluMu,
@@ -74,6 +82,8 @@ type GenelIsleyici = (
   girdi: unknown,
   baglam: AjandaKopruBaglami,
   sinyal: AbortSignal,
+  /** Bağlantının yüzü (`bag.v3`): ayar açıkken işleyici çıktının yüzünü buna göre kurar (`ajanda-araclar.ts`). */
+  v3Yuz?: boolean,
 ) => Promise<Sonuc<unknown, HataKodu>>;
 
 /**
@@ -88,12 +98,14 @@ type Kimlik =
   /** Telefon sohbetinin ana oturumu: bağlam yalnız jetonun kapsamı. */
   | { tur: "ana"; baglam: Readonly<AjandaJetonKapsami> }
   /** PC: anahtarın özeti (her istekte yeniden denetlenir) ve servisin verdiği bağlantı kimliği. */
-  | { tur: "pc"; rol: AjandaPcRolu; ozet: string; baglanti_id: string };
+  | { tur: "pc"; rol: AjandaPcRolu; ozet: string; baglanti_id: string; kopru_surec_id?: string };
 
 interface Baglanti {
   readonly port: BoruBaglantisi;
   /** `null` iken `kopru_hello` bekleniyor. */
   kimlik: Kimlik | null;
+  /** El sıkışmada sabitlenir: bu bağlantı v3 araç yüzünde mi (ayar açık ve köprü istedi). */
+  v3: boolean;
   readonly suren: Map<string, AbortController>;
   sureIptal: IptalEt | null;
   kapali: boolean;
@@ -120,17 +132,30 @@ const hataYaniti = (istek_id: string, code: HataKodu): KopruYanit => ({
 /**
  * `null`: işleyici sözleşmeye uymadı, çağıran `ic_hata` yollar. `detail` hiç taşınmaz. `pc` (yalnız
  * `pc_oturumu` çağrısı): başarılı yanıtın `sonuc`'u `PcAracSonucu`'dur (çıktı + defterin kararı); karar
- * yoksa sözleşme bozuktur.
+ * yoksa sözleşme bozuktur. Gizlilik sınırı (v3): şemalar katıdır, liste kaydı `AjandaAracKaydi`'dır;
+ * `bolge_konumu` ya da `ekler` taşıyan çıktı (işleyici `ajandaAracKaydi` süzgecini atladıysa) burada
+ * reddedilir ve `ic_hata` olur: konum boruya hiçbir yoldan çıkmaz. `ayarV3` (servisin ayarı) açık, `v3`
+ * (bağlantının yüzü) kapalıysa işleyici yüzü bilir ve v2 yüzünü (ayar kapalıykenkiyle aynı; `v2Yuzu`) verir:
+ * çıktı v2 şemasından geçer. Geçmezse (yüzü bilmeyen işleyici) v3 şemasından geçtikten sonra v2 yüzüne iner
+ * (`ajandaAracCiktisiV2`) ve v2 şemasıyla denetlenir.
  */
 const sonucYaniti = (
   fiil: AjandaFiili,
   istek_id: string,
   sonuc: Sonuc<unknown, HataKodu> & { pc_karar?: unknown },
   pc: boolean,
+  ayarV3: boolean,
+  v3: boolean,
 ): KopruYanit | null => {
   if (sonuc.ok === true) {
-    const sema: z.ZodType = AJANDA_ARACLARI[fiil].cikti;
-    const cikti = sema.safeParse(sonuc.deger);
+    let deger = sonuc.deger;
+    if (ayarV3 && !v3 && !ajandaAraclari(false)[fiil].cikti.safeParse(deger).success) {
+      const tam = (ajandaAraclari(true)[fiil].cikti as z.ZodType).safeParse(deger);
+      if (!tam.success) return null;
+      deger = ajandaAracCiktisiV2({ fiil, cikti: tam.data } as never).cikti;
+    }
+    const sema: z.ZodType = ajandaAraclari(v3)[fiil].cikti;
+    const cikti = sema.safeParse(deger);
     if (!cikti.success) return null;
     if (!pc) return { v: PROTOKOL_SURUMU, type: "yanit", istek_id, ok: true, sonuc: cikti.data };
     const sarili = PcAracSonucu.safeParse({ cikti: cikti.data, karar: sonuc.pc_karar });
@@ -148,8 +173,14 @@ export const ajandaKopruSunucuKur: AjandaKopruSunucuFabrikasi = ({
   anahtar,
   zamanlayici,
   gunluk,
+  aracV3 = false,
 }) => {
   const baglantilar = new Set<Baglanti>();
+  /** Bağlantının yüzü: ayar açık, araç rolü ve köprü hello'da istedi. */
+  const baglantiV3 = (rol: AjandaKopruRolu, istedi: boolean): boolean => aracV3 && istedi && rol !== "pc_kanca";
+  /** Araç rollerinin karşılaması: bağlantı v3 yüzündeyse `arac_v3:true`, değilse bugünkü çerçeve. */
+  const karsilama = (rol: AjandaKopruRolu, v3: boolean): AjandaKopruAsagi =>
+    v3 ? { v: PROTOKOL_SURUMU, type: "kopru_welcome", rol, arac_v3: true } : { v: PROTOKOL_SURUMU, type: "kopru_welcome", rol };
   let sunucu: KapatilabilirSunucu | null = null;
   let acik = false;
 
@@ -250,9 +281,12 @@ export const ajandaKopruSunucuKur: AjandaKopruSunucuFabrikasi = ({
       // Kanca bağlantısı tek iş içindir: takılan ya da kapatmayı unutan kanca sınırı tutamasın.
       bag.sureIptal = kanca ? zamanlayici.sonra(KANCA_BAGLANTI_OMRU_MS, () => baglantiKapat(bag)) : null;
       const baglanti_id = rastgele.opakId("pcb");
-      bag.kimlik = { tur: "pc", rol: m.rol, ozet, baglanti_id };
-      gunluk.bilgi(MODUL, "el_sikisma", { rol: m.rol, baglanti_id });
-      yaz(bag, { v: PROTOKOL_SURUMU, type: "kopru_welcome", rol: m.rol });
+      // Köprünün bildirdiği harness süreci (yalnız `pc_oturumu`; şema öbür rollerde geçirmez): bağlantı boyunca sabit (T5).
+      const surec = m.rol === "pc_oturumu" && m.surec_id !== undefined ? { kopru_surec_id: m.surec_id } : {};
+      bag.kimlik = { tur: "pc", rol: m.rol, ozet, baglanti_id, ...surec };
+      bag.v3 = baglantiV3(m.rol, m.arac_v3 === true);
+      gunluk.bilgi(MODUL, "el_sikisma", { rol: m.rol, baglanti_id, ...(aracV3 && !kanca && !bag.v3 ? { arac_v3_istenmedi: true } : {}) });
+      yaz(bag, karsilama(m.rol, bag.v3));
       return;
     }
     const kayit = depo.ajandaJetonBul(ozet);
@@ -273,8 +307,9 @@ export const ajandaKopruSunucuKur: AjandaKopruSunucuFabrikasi = ({
     bag.sureIptal = null;
     const baglam = Object.freeze({ ...kayit.kapsam });
     bag.kimlik = { tur: "ana", baglam };
-    gunluk.bilgi(MODUL, "el_sikisma", { rol: baglam.rol, sohbet_id: baglam.sohbet_id });
-    yaz(bag, { v: PROTOKOL_SURUMU, type: "kopru_welcome", rol: baglam.rol });
+    bag.v3 = baglantiV3(baglam.rol, m.arac_v3 === true);
+    gunluk.bilgi(MODUL, "el_sikisma", { rol: baglam.rol, sohbet_id: baglam.sohbet_id, ...(aracV3 && !bag.v3 ? { arac_v3_istenmedi: true } : {}) });
+    yaz(bag, karsilama(baglam.rol, bag.v3));
   };
 
   /** Hiç reddetmez: atan ya da sözleşmeye uymayan işleyici `ic_hata`dır, `detail` taşımaz. */
@@ -283,11 +318,12 @@ export const ajandaKopruSunucuKur: AjandaKopruSunucuFabrikasi = ({
     baglam: AjandaKopruBaglami,
     isleyiciler: AjandaFiilIsleyiciler,
     sinyal: AbortSignal,
+    v3: boolean,
   ): Promise<KopruYanit> => {
     try {
       const isleyici = isleyiciler[istek.fiil] as unknown as GenelIsleyici;
-      const sonuc = await isleyici(istek.girdi, baglam, sinyal);
-      const yanit = sonucYaniti(istek.fiil, istek.istek_id, sonuc, baglam.rol === "pc_oturumu");
+      const sonuc = await isleyici(istek.girdi, baglam, sinyal, v3);
+      const yanit = sonucYaniti(istek.fiil, istek.istek_id, sonuc, baglam.rol === "pc_oturumu", aracV3, v3);
       if (yanit !== null) return yanit;
       gunluk.hata(MODUL, "sonuc_gecersiz", { fiil: istek.fiil });
     } catch {
@@ -315,20 +351,21 @@ export const ajandaKopruSunucuKur: AjandaKopruSunucuFabrikasi = ({
     }
     const denetleyici = new AbortController();
     bag.suren.set(istek_id, denetleyici);
-    void yanitUret(istek, baglam, isleyiciler, denetleyici.signal).then((yanit) => {
+    void yanitUret(istek, baglam, isleyiciler, denetleyici.signal, bag.v3).then((yanit) => {
       bag.suren.delete(istek_id);
       yaz(bag, yanit);
     });
   };
 
-  /** `pc_oturumu` çağrısının bağlamı: rol ve bağlantı kimliği servisten, `cagri` köprüden (doğrulanmamış). */
+  /** `pc_oturumu` çağrısının bağlamı: rol, bağlantı kimliği ve hello'nun süreci servisten, `cagri` köprüden (doğrulanmamış). */
   const pcBaglami = (k: Extract<Kimlik, { tur: "pc" }>, istek: AjandaKopruIstek): AjandaKopruBaglami => {
-    const b: { rol: "pc_oturumu"; baglanti_id: string; arac_cagri_id?: string; oturum_id?: string } = {
+    const b: { rol: "pc_oturumu"; baglanti_id: string; arac_cagri_id?: string; oturum_id?: string; kopru_surec_id?: string } = {
       rol: "pc_oturumu",
       baglanti_id: k.baglanti_id,
     };
     if (istek.cagri?.arac_cagri_id !== undefined) b.arac_cagri_id = istek.cagri.arac_cagri_id;
     if (istek.cagri?.oturum_id !== undefined) b.oturum_id = istek.cagri.oturum_id;
+    if (k.kopru_surec_id !== undefined) b.kopru_surec_id = k.kopru_surec_id;
     return Object.freeze(b);
   };
 
@@ -457,7 +494,7 @@ export const ajandaKopruSunucuKur: AjandaKopruSunucuFabrikasi = ({
       port.kapat();
       return;
     }
-    const bag: Baglanti = { port, kimlik: null, suren: new Map(), sureIptal: null, kapali: false, dusuk: false, pcKanca };
+    const bag: Baglanti = { port, kimlik: null, v3: false, suren: new Map(), sureIptal: null, kapali: false, dusuk: false, pcKanca };
     baglantilar.add(bag);
     port.kapanisDinle(() => temizle(bag));
     port.satirDinle((satir) => satirIsle(bag, isleyiciler, pcKanca, satir));

@@ -28,7 +28,8 @@ pub struct KoparmaSonucu {
     /// PC'ye gönderilmeden ayrılan değişikliklerin dokunduğu kayıt sayısı (kuyrukta sonucu gelmemiş işlemi
     /// olan kayıtlar). Telefonda o haliyle duruyorlar; PC'de yoklar ya da eski halleriyle duruyorlar.
     pub gonderilmeyen_kayit: i32,
-    /// Aynı değişikliklerin işlem sayısı (`BaglantiDurumu.kuyrukta`'nın koparma anındaki değeri).
+    /// Aynı değişikliklerin işlem sayısı (koparma anındaki `BaglantiDurumu.kuyrukta + ertelenen_islem`:
+    /// eski serviste ertelenmiş işlemler de sayılır).
     pub gonderilmeyen_islem: i32,
     /// `gonderilmeyen_islem`'in yollanmış ama yanıtı gelmemiş olanları: PC'ye ulaşmış olabilir.
     pub yanitsiz_islem: i32,
@@ -77,8 +78,15 @@ pub struct GecisOzeti {
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct KayitGorunumu {
     pub kayit: AjandaKaydi,
-    /// Kuyrukta sonucu gelmemiş işlemi var (iyimser hal; arayüz "gönderiliyor" gösterebilir).
+    /// Kuyrukta sonucu gelmemiş işlemi var (iyimser hal; arayüz "gönderiliyor" gösterebilir). Yalnız
+    /// ertelenmiş işlemi olan kayıtta yanlıştır (o işlem bu serviste gitmez; `ertelenen`).
     pub bekleyen: bool,
+    /// Ertelenen v3 değişikliği var: eski (v2) servise bağlıyken v3 alanlarına yapılan değişiklik telefonda
+    /// bekliyor, kayıt onunla görünüyor; servis güncellenince kendiliğinden eşitlenir ("servis güncellenince
+    /// eşitlenecek"; servis hiç güncellenmezse süresiz bekler, kullanıcı `Cekirdek::ertelenenleri_at` ile atabilir).
+    /// Yerel kipte ve v3 serviste hep yanlış.
+    #[uniffi(default)]
+    pub ertelenen: bool,
 }
 
 /// Düzenleme formunun açıldığı hal (`duzenle`): yalnız bu halden farklı olan alanlar gönderilir; form
@@ -121,6 +129,12 @@ pub struct RetGirdisi {
     /// hal (biliniyorsa); öteki işlemlerde yok.
     pub govde: Option<KayitGovdesi>,
     pub ts_ms: i64,
+    /// Kullanıcının `Cekirdek::ertelenenleri_at` ile attığı ertelenen v3 değişikliği (eski servis hiç
+    /// güncellenmediği için gönderilemedi; `neden` `TeslimEdilemedi`). Arayüz "PC'deki servis eski olduğu için
+    /// gönderilmeden atıldı" gibi kendi metnini gösterir ve düzeltme sunmaz: form v3 alanı taşımaz (`govde` yalnız
+    /// başlık içindir). Atmak (`ret_at`) girdiyi siler. Öteki retlerde yanlış.
+    #[uniffi(default)]
+    pub ertelenen_atildi: bool,
 }
 
 /// Geçmişin bir satırı (servisin `gecmis` çerçevesinden).
@@ -184,7 +198,8 @@ pub enum BaglantiAsamasi {
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct BaglantiDurumu {
     pub asama: BaglantiAsamasi,
-    /// Kuyrukta sonucu gelmemiş işlem sayısı.
+    /// Kuyrukta sonucu gelmemiş işlem sayısı. Eski (v2) servise bağlıyken bütünüyle ertelenmiş (yalnız v3
+    /// alanı değiştiren) işlemler sayılmaz: bu serviste gitmezler (`ertelenen_islem`).
     pub kuyrukta: i32,
     pub ret_listesinde: i32,
     pub son_esitlenme_ms: Option<i64>,
@@ -194,6 +209,20 @@ pub struct BaglantiDurumu {
     /// olduğu. Doluyken kabuk yeniden bağlanmayı geri çeker ve "güncelle" durumunu gösterir; `CANLI`'da,
     /// başka bir kanal hatasında ve eşleşme değişiminde temizlenir. Bellek içidir (süreç ölünce yeniden denenir).
     pub surum_uyusmazligi: Option<SurumUyusmazligi>,
+    /// Kuyrukta bu serviste gitmeyen gönderilmemiş işlem sayısı: eski (v2) servise bağlıyken bütünüyle
+    /// ertelenmiş işlemler (yalnız v3 alanı değiştiren ya da aynı kaydın ertelenmiş işleminin arkasında sırası
+    /// tutulan). `kuyrukta`'ya girmez (kabuğun "kuyruk boşalana dek" beklemeleri eski serviste bitsin) ama
+    /// gönderilmemiş değişikliktir: gönderilmemişlerin toplamı `kuyrukta + ertelenen_islem`'dir
+    /// (`KoparmaSonucu.gonderilmeyen_islem` koparma anında budur). "Gönderilmemiş değişiklik yok" ancak ikisi
+    /// de sıfırken söylenir. Yerel kipte ve erteleme yokken 0.
+    #[uniffi(default)]
+    pub ertelenen_islem: i32,
+    /// Açık bağlantı düşülen alt sürümdeyken (`protokol_uyumsuz` sonrası) yukarı deneme anı (ms, kabuğun
+    /// saati): bu andan sonraki ilk köprü çağrısında, yolda işlem yokken çekirdek bağlantıyı kendisi kapatır
+    /// (`kapat`; hata yazılmaz), sonraki bağlantı en yeni sürümle açılır. Bağlantı boşta açık kalıyorsa kabuk bu
+    /// ana bir `baglanti_durumu` yoklaması kurmalı (yoksa deneme ilk olaya kalır). Öteki hallerde yok.
+    #[uniffi(default)]
+    pub yukari_deneme_ms: Option<i64>,
 }
 
 /// Sürüm uyuşmazlığının yönü (`AJANDA_SURUMU` karşılaştırması).
@@ -205,6 +234,38 @@ pub enum SurumUyusmazligi {
     UygulamaEski,
     /// Yön bilinmiyor (`error{protokol_uyumsuz}` ya da yalnız kapanış 1002): eski olan güncellenmeli.
     Bilinmiyor,
+}
+
+/// `BaglantiYetenekleri.kip`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum BaglantiKipi {
+    /// Yerel kip (`CalismaKipi::Yerel`; süren bağlanma dahil): servis yok, v3 alanları kısıtsız.
+    Yerel,
+    /// Bağlı kip, açık bir bağlantının `welcome`'u yok (kopuk ya da el sıkışma sürüyor).
+    BagliDegil,
+    /// Bağlı kip, bağlantının `welcome`'u geldi (telafi ya da canlı): sürüm ve yetenekler bu bağlantınındır.
+    Bagli,
+}
+
+/// `Cekirdek::baglanti_yetenekleri`: arayüzün bağlantıya göre açacakları. Değişince gözlemciye
+/// `Degisim.baglanti` gider.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct BaglantiYetenekleri {
+    pub kip: BaglantiKipi,
+    /// `Bagli`'da bağlantının sürümü (2 ya da 3); öteki kiplerde yok.
+    pub surum: Option<i32>,
+    /// v3 alanlarındaki değişiklik servise hemen gider mi: yerel kipte ve v3 bağlantıda doğru, v2 bağlantıda
+    /// yanlış (yine düzenlenebilir: değişiklik ertelenir, `ertelenen`). `BagliDegil`'de bilinen son servis
+    /// sürümüne göre (bilinmiyorsa doğru).
+    pub v3_alanlari: bool,
+    /// Bağlantının `welcome.yetenekler`'i (istenenlerle sunulanların kesişimi); `Bagli` dışında boş.
+    pub yetenekler: Vec<String>,
+    /// Ertelenen v3 değişikliği taşıyan kuyruk işlemi sayısı: eski servise bağlıyken v3 alanlarına yapılan
+    /// değişiklikler (karma işlemin v3 kalanı dahil; arkalarında sırası tutulan v2 işlemleri, ör. bekleyen
+    /// silme, sayılmaz: onlar `BaglantiDurumu.ertelenen_islem`'de); servisle v3 konuşulan ilk bağlantıda
+    /// kendiliğinden giderler ("servis güncellenince eşitlenecek"). Servis hiç güncellenmezse süresiz beklerler;
+    /// `Cekirdek::ertelenenleri_at` onları ret listesine atar (bu sayı kadar girdi). Yerel kipte 0.
+    pub ertelenen: i32,
 }
 
 /// Saatsiz gün kaydının gün hatırlatması (v2): kaydın diliminde yerel gün ve saat; `gecti`: tetiği geçti,

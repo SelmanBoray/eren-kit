@@ -8,6 +8,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { DatabaseSync } from "node:sqlite";
 import {
   uygulamaKoku,
   surumKopyala,
@@ -22,8 +23,10 @@ import {
   temizSurumAdi,
   veriKokuHatasindanCik,
   izinDuzeltKomutu,
+  etkinlestir,
+  geriAlUygula,
 } from "../kur.ts";
-import type { IzinDuzeltBaglari, KokHatasiBag, SurumBilgisi } from "../kur.ts";
+import type { EtkinlestirBag, IzinDuzeltBaglari, KokHatasiBag, SurumBilgisi, YenilemeSonucu } from "../kur.ts";
 import type { KaliciOrtam, Ortam } from "../ortam.ts";
 import type { IzinSonucu } from "../izin.ts";
 
@@ -446,6 +449,7 @@ test("veriKokuHatasindanCik: geri alma fırlatsa da servis durur; mesaj kök sor
         olaylar.push("geriAl");
         throw new Error("junction değiştirilemedi (EPERM)");
       },
+      vt: () => path.join(gecici("vt"), "eren.db"),
     };
     const hata = await sessizce(() => veriKokuHatasindanCik(hedef, B, A, KOK_SEBEBI, bag).then(() => null, (e: unknown) => e));
     assert.ok(hata instanceof Error, "fırlatmalı");
@@ -467,12 +471,271 @@ test("veriKokuHatasindanCik: geri alma fırlatsa da servis durur; mesaj kök sor
         guncelYap(h, o);
         void d;
       },
+      vt: bag.vt,
     };
     const h2 = await sessizce(() => veriKokuHatasindanCik(hedef, B, A, KOK_SEBEBI, gercekGeriAl).then(() => null, (e: unknown) => e));
     assert.ok(h2 instanceof Error);
     assert.deepEqual(olaylar, ["durdur", "geriAl"]);
     assert.match(h2.message, new RegExp(`otomatik geri alındı: ${B} → ${A}`));
     assert.equal(guncelSha(hedef), A);
+  } finally {
+    temizle();
+  }
+});
+
+/** Servisin ajanda tablosuyla (depo.ts ek göç 6) geçici depo; canlı veri köküne dokunmaz. */
+function ajandaDeposu(kayitlar: readonly Record<string, unknown>[]): string {
+  const yol = path.join(gecici("vt"), "eren.db");
+  const db = new DatabaseSync(yol);
+  db.exec(`CREATE TABLE ajanda_kayitlari (kayit_id TEXT PRIMARY KEY, revizyon INTEGER NOT NULL, olusturma_rev INTEGER NOT NULL,
+    tekil_anahtar TEXT, tur TEXT NOT NULL, durum TEXT NOT NULL, silindi INTEGER NOT NULL, veri TEXT NOT NULL) STRICT`);
+  const ekle = db.prepare("INSERT INTO ajanda_kayitlari VALUES (?, ?, ?, NULL, 'gorev', 'acik', 0, ?)");
+  kayitlar.forEach((k, i) => ekle.run(String(k.kayit_id), i + 1, i + 1, JSON.stringify(k)));
+  db.close();
+  return yol;
+}
+
+const ajandaKaydi = (kayit_id: string, v3: boolean): Record<string, unknown> => ({
+  kayit_id,
+  revizyon: 1,
+  tur: "gorev",
+  baslik: "Süt al",
+  hatirlatmalar: [],
+  ornekler: [],
+  durum: "acik",
+  taslak: false,
+  silindi: false,
+  elle_alanlar: [],
+  kaynak: { yol: "elle", tur_kokeni: "insan", device_id: "d_telefon01" },
+  olusturma_ms: 1795000000000,
+  guncelleme_ms: 1795000000000,
+  ...(v3 ? { bolge: "market", varis: {} } : {}),
+});
+
+test("veriKokuHatasindanCik: v3 alanlı kayıt varken ajanda v2 sürümüne geri alma uyarır (geri alma yine yapılır); yokken uyarı yok", async () => {
+  try {
+    const kaynak = sahteKaynak();
+    const hedef = gecici("hedef");
+    kopyala(kaynak, hedef, A, 1000);
+    kopyala(kaynak, hedef, B, 2000);
+    // geri alınacak A ajanda v2 konuşur, B (düşen) v3
+    yaz(path.join(hedef, "surumler", A), "protocol/src/sinirlar.ts", "export const AJANDA_SURUMU = 2 as const;\n");
+    yaz(path.join(hedef, "surumler", B), "protocol/src/sinirlar.ts", "export const AJANDA_SURUMU = 3 as const;\n");
+    let durduruldu = false;
+    const bagla = (vt: string): KokHatasiBag => ({
+      durdur: async () => {
+        durduruldu = true;
+        return "servis durduruldu";
+      },
+      geriAl: (h, _d, o) => guncelYap(h, o),
+      vt: () => {
+        assert.ok(durduruldu, "ajanda denetimi servis durdurulduktan sonra");
+        return vt;
+      },
+    });
+    const hataMetni = async (vt: string): Promise<{ mesaj: string; akan: string }> => {
+      guncelYap(hedef, B);
+      durduruldu = false;
+      const akan: string[] = [];
+      const error = console.error;
+      console.error = (...a: unknown[]) => void akan.push(a.join(" "));
+      try {
+        const h = await veriKokuHatasindanCik(hedef, B, A, KOK_SEBEBI, bagla(vt)).then(() => null, (e: unknown) => e);
+        assert.ok(h instanceof Error);
+        return { mesaj: h.message, akan: akan.join("\n") };
+      } finally {
+        console.error = error;
+      }
+    };
+
+    const v3li = await hataMetni(ajandaDeposu([ajandaKaydi("k_a", false), ajandaKaydi("k_b", true)]));
+    assert.equal(guncelSha(hedef), A, "geri alma yine yapılmalı");
+    for (const m of [v3li.mesaj, v3li.akan]) {
+      assert.ok(m.includes(`geri alınan sürüm (${A}, ajanda v2) depodaki 2 ajanda kaydından 1'ini çözemez`), m);
+      assert.match(m, /alanlar: bolge, varis/);
+      assert.match(m, /yeniden bağlanma döngüsünde/);
+      assert.match(m, /tutarsiz_kayit ile kalıcı reddedilir/);
+    }
+    assert.match(v3li.mesaj, /otomatik geri alındı/);
+    assert.doesNotMatch(v3li.mesaj, /\.\./, "çift nokta olmamalı");
+
+    const v2li = await hataMetni(ajandaDeposu([ajandaKaydi("k_a", false)]));
+    assert.equal(guncelSha(hedef), A);
+    assert.doesNotMatch(v2li.mesaj + v2li.akan, /ajanda/);
+  } finally {
+    temizle();
+  }
+});
+
+/**
+ * `etkinlestir` (otomatik geri alma) ve `geriAlUygula` (elle `--geri-al`) için sahte dış dünya: her çağrı
+ * `olaylar`'a sırayla yazılır (`yenile:<sha>`, `durdur`, `denetim`). `denetim` ajanda denetiminin anıdır (`vt`).
+ * `yenilemeler` sırayla tüketilir. Hedefte A (ajanda v2) ve B (ajanda v3) kurulu; depoda v3 alanlı kayıt var.
+ */
+function geriAlmaDuzeni(yenilemeler: YenilemeSonucu[]) {
+  const kaynak = sahteKaynak();
+  const hedef = gecici("hedef");
+  kopyala(kaynak, hedef, A, 1000);
+  kopyala(kaynak, hedef, B, 2000);
+  yaz(path.join(hedef, "surumler", A), "protocol/src/sinirlar.ts", "export const AJANDA_SURUMU = 2 as const;\n");
+  yaz(path.join(hedef, "surumler", B), "protocol/src/sinirlar.ts", "export const AJANDA_SURUMU = 3 as const;\n");
+  const vt = ajandaDeposu([ajandaKaydi("k_a", false), ajandaKaydi("k_b", true)]);
+  const olaylar: string[] = [];
+  const bag: EtkinlestirBag = {
+    onDenetim: async () => void olaylar.push("on_denetim"),
+    izinSagla: () => void olaylar.push("izin"),
+    servisiYenile: async (_k, sha) => {
+      olaylar.push(`yenile:${sha}`);
+      const y = yenilemeler.shift();
+      assert.ok(y !== undefined, `beklenmeyen yenileme: ${sha}`);
+      return y;
+    },
+    durdur: async () => {
+      olaylar.push("durdur");
+      return "servis durduruldu";
+    },
+    vt: () => {
+      olaylar.push("denetim");
+      return vt;
+    },
+  };
+  return { kaynak, hedef, olaylar, bag };
+}
+
+/** Dönüş değeri ya da hata, ve console.error'a akan metin. */
+async function akisla<T>(is: () => Promise<T>): Promise<{ sonuc: T | Error; akan: string }> {
+  const { log, error } = console;
+  const akan: string[] = [];
+  console.log = () => {};
+  console.error = (...a: unknown[]) => void akan.push(a.join(" "));
+  try {
+    const sonuc = await is().then(
+      (d) => d,
+      (e: unknown) => (e instanceof Error ? e : new Error(String(e))),
+    );
+    return { sonuc, akan: akan.join("\n") };
+  } finally {
+    console.log = log;
+    console.error = error;
+  }
+}
+
+const AJANDA_UYARISI = `geri alınan sürüm (${A}, ajanda v2) depodaki 2 ajanda kaydından 1'ini çözemez`;
+const DUSTU: YenilemeSonucu = { tamam: false, asama: "dogrulama", sebep: "yeni sürüm doğrulanamadı" };
+
+test("etkinlestir: otomatik geri almada ajanda denetimi eski servis başladıktan sonra; uyarı son mesajda", async () => {
+  try {
+    const d = geriAlmaDuzeni([DUSTU, { tamam: true }]);
+    guncelYap(d.hedef, A);
+    const { sonuc, akan } = await akisla(() => etkinlestir(d.kaynak, d.hedef, B, d.bag));
+    assert.ok(sonuc instanceof Error);
+    assert.deepEqual(d.olaylar, ["on_denetim", `yenile:${B}`, `yenile:${A}`, "denetim"]);
+    assert.equal(guncelSha(d.hedef), A);
+    assert.ok(sonuc.message.includes(`otomatik geri alındı: ${B} → ${A}, servis ${A} sürümünde çalışıyor`), sonuc.message);
+    for (const m of [sonuc.message, akan]) assert.ok(m.includes(AJANDA_UYARISI), m);
+  } finally {
+    temizle();
+  }
+});
+
+test("etkinlestir: eski servis de başlamazsa denetim yine başlatma denemesinden sonra; servis kapalı olabilir der", async () => {
+  try {
+    const d = geriAlmaDuzeni([DUSTU, { tamam: false, asama: "baslatma", sebep: "başlatılamadı" }]);
+    guncelYap(d.hedef, A);
+    const { sonuc } = await akisla(() => etkinlestir(d.kaynak, d.hedef, B, d.bag));
+    assert.ok(sonuc instanceof Error);
+    assert.deepEqual(d.olaylar, ["on_denetim", `yenile:${B}`, `yenile:${A}`, "denetim"]);
+    assert.equal(guncelSha(d.hedef), A);
+    assert.ok(sonuc.message.includes(`ama ${A} de ayakta kalmadı: başlatılamadı; servis kapalı olabilir`), sonuc.message);
+    assert.ok(sonuc.message.includes(AJANDA_UYARISI), sonuc.message);
+  } finally {
+    temizle();
+  }
+});
+
+test("etkinlestir: eski servis yanlış kökte açılırsa önce durdurulur, sonra denetlenir", async () => {
+  try {
+    const d = geriAlmaDuzeni([DUSTU, { tamam: false, asama: "veri_koku", sebep: KOK_SEBEBI }]);
+    guncelYap(d.hedef, A);
+    const { sonuc } = await akisla(() => etkinlestir(d.kaynak, d.hedef, B, d.bag));
+    assert.ok(sonuc instanceof Error);
+    assert.deepEqual(d.olaylar, ["on_denetim", `yenile:${B}`, `yenile:${A}`, "durdur", "denetim"]);
+    assert.ok(sonuc.message.includes("servis yeniden başlatılmadı: servis durduruldu"), sonuc.message);
+    assert.ok(sonuc.message.includes(AJANDA_UYARISI), sonuc.message);
+  } finally {
+    temizle();
+  }
+});
+
+test("etkinlestir: eski bekçi kapanmadıysa servis başlatılmaz, denetim hemen (ikinci yenileme yok)", async () => {
+  try {
+    const d = geriAlmaDuzeni([{ tamam: false, asama: "kapanma", sebep: "eski bekçi kapanmadı" }]);
+    guncelYap(d.hedef, A);
+    const { sonuc } = await akisla(() => etkinlestir(d.kaynak, d.hedef, B, d.bag));
+    assert.ok(sonuc instanceof Error);
+    assert.deepEqual(d.olaylar, ["on_denetim", `yenile:${B}`, "denetim"]);
+    assert.equal(guncelSha(d.hedef), A);
+    assert.ok(sonuc.message.includes("eski bekçi kapanmadığı için yeniden başlatılmadı"), sonuc.message);
+    assert.ok(sonuc.message.includes(AJANDA_UYARISI), sonuc.message);
+  } finally {
+    temizle();
+  }
+});
+
+test("etkinlestir: yeni sürüm ayaktaysa geri alma da ajanda denetimi de yok", async () => {
+  try {
+    const d = geriAlmaDuzeni([{ tamam: true }]);
+    guncelYap(d.hedef, A);
+    const { sonuc } = await akisla(() => etkinlestir(d.kaynak, d.hedef, B, d.bag));
+    assert.equal(sonuc, undefined);
+    assert.deepEqual(d.olaylar, ["on_denetim", `yenile:${B}`]);
+    assert.equal(guncelSha(d.hedef), B);
+  } finally {
+    temizle();
+  }
+});
+
+test("geriAlUygula (--geri-al): ajanda denetimi servis başladıktan sonra; uyarır, durmaz (0 döner)", async () => {
+  try {
+    const d = geriAlmaDuzeni([{ tamam: true }]);
+    guncelYap(d.hedef, A);
+    guncelYap(d.hedef, B);
+    const { sonuc, akan } = await akisla(() => geriAlUygula(d.hedef, d.kaynak, d.bag));
+    assert.equal(sonuc, 0);
+    assert.deepEqual(d.olaylar, ["on_denetim", "izin", `yenile:${A}`, "denetim"]);
+    assert.equal(guncelSha(d.hedef), A);
+    assert.ok(akan.includes(AJANDA_UYARISI), akan);
+  } finally {
+    temizle();
+  }
+});
+
+test("geriAlUygula (--geri-al): servis başlamazsa denetim başlatma denemesinden sonra; uyarı hata metninde", async () => {
+  try {
+    const d = geriAlmaDuzeni([{ tamam: false, asama: "baslatma", sebep: "başlatılamadı" }]);
+    guncelYap(d.hedef, A);
+    guncelYap(d.hedef, B);
+    const { sonuc } = await akisla(() => geriAlUygula(d.hedef, d.kaynak, d.bag));
+    assert.ok(sonuc instanceof Error);
+    assert.deepEqual(d.olaylar, ["on_denetim", "izin", `yenile:${A}`, "denetim"]);
+    assert.equal(guncelSha(d.hedef), A);
+    assert.ok(sonuc.message.includes(`başlatılamadı (guncel ${A}; elle geri almada otomatik geri dönüş yapılmaz)`), sonuc.message);
+    assert.ok(sonuc.message.includes(AJANDA_UYARISI), sonuc.message);
+  } finally {
+    temizle();
+  }
+});
+
+test("geriAlUygula (--geri-al): servis yanlış kökte açılırsa önce durdurulur, sonra denetlenir", async () => {
+  try {
+    const d = geriAlmaDuzeni([{ tamam: false, asama: "veri_koku", sebep: KOK_SEBEBI }]);
+    guncelYap(d.hedef, A);
+    guncelYap(d.hedef, B);
+    const { sonuc } = await akisla(() => geriAlUygula(d.hedef, d.kaynak, d.bag));
+    assert.ok(sonuc instanceof Error);
+    assert.deepEqual(d.olaylar, ["on_denetim", "izin", `yenile:${A}`, "durdur", "denetim"]);
+    assert.ok(sonuc.message.includes("servis yanlış köke yazmasın diye durduruldu: servis durduruldu"), sonuc.message);
+    assert.ok(sonuc.message.includes(AJANDA_UYARISI), sonuc.message);
   } finally {
     temizle();
   }

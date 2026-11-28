@@ -23,9 +23,9 @@ use crate::motor::{Etkiler, Motor, Ortam};
 
 use kabuklar::{AlarmKabugu, Gozlemci, KimlikKabugu, Tasima, ZamanKabugu};
 use tipler::{
-    AktarmaBicimi, BaglantiDurumu, BirlestirmeOnizlemesi, BirlestirmeSonucu, OlasiCift, CalismaKipi, DisaAktarma, DuzenlemeTemeli, EslesmeDurumu, GecisOzeti, GecmisSayfasi, HatirlatmaBildirimi,
-    HatirlatmaOnizlemesi, IceAktarmaOnizlemesi, IceAktarmaSonucu, KayitGorunumu, KoparmaSonucu, ListeSorgusu, RetGirdisi, TakvimAyi, TakvimOgesi,
-    YenidenKurmaNedeni,
+    AktarmaBicimi, BaglantiDurumu, BaglantiYetenekleri, BirlestirmeOnizlemesi, BirlestirmeSonucu, OlasiCift, CalismaKipi, DisaAktarma,
+    DuzenlemeTemeli, EslesmeDurumu, GecisOzeti, GecmisSayfasi, HatirlatmaBildirimi, HatirlatmaOnizlemesi, IceAktarmaOnizlemesi,
+    IceAktarmaSonucu, KayitGorunumu, KoparmaSonucu, ListeSorgusu, RetGirdisi, TakvimAyi, TakvimOgesi, YenidenKurmaNedeni,
 };
 
 fn kilitle<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -128,7 +128,14 @@ impl Cekirdek {
         let mut etkiler = Etkiler::default();
         let (sonuc, tasima, etki_kilidi) = {
             let mut motor = kilitle(&self.motor);
-            let sonuc = catch_unwind(AssertUnwindSafe(|| f(&mut motor, &ortam, &mut etkiler)));
+            let sonuc = catch_unwind(AssertUnwindSafe(|| {
+                let sonuc = f(&mut motor, &ortam, &mut etkiler);
+                // Her çağrının sonunda: alt sürümlü açık bağlantının yukarı denemesi zamanı geldiyse bağlantı
+                // kapanır (`kanal.rs` `YUKARI_DENEME_MS`). Hatası çağrının sonucunu değiştirmez (sonraki çağrı
+                // yeniden dener).
+                let _ = motor.yukari_denemesi(&ortam, &mut etkiler);
+                sonuc
+            }));
             let tasima = kilitle(&self.tasima).clone();
             (sonuc, tasima, kilitle(&self.etki))
         };
@@ -343,8 +350,25 @@ impl Cekirdek {
         })
     }
 
+    /// Yukarı denemenin zamanı geldiyse (`BaglantiDurumu.yukari_deneme_ms`) bağlantı bu çağrıda kapatılır ve
+    /// dönen durum kapanmış halidir (`Kopuk`): kapanmış bağlantı `Canli` görünmez.
     pub fn baglanti_durumu(&self) -> Result<BaglantiDurumu, CekirdekHatasi> {
-        self.calistir(|m, _, _| m.baglanti_durumu())
+        self.calistir(|m, o, e| {
+            let _ = m.yukari_denemesi(o, e);
+            m.baglanti_durumu()
+        })
+    }
+
+    /// Arayüzün bağlantıya göre açacakları (`BaglantiYetenekleri`): kip (yerel / bağlı değil / bağlı),
+    /// bağlantının sürümü, v3 alanlarının servise hemen gidip gitmediği, `welcome` yetenekleri ve ertelenen v3
+    /// değişikliği sayısı (eski servise bağlıyken; "servis güncellenince eşitlenecek"). Değişince gözlemciye
+    /// `Degisim.baglanti`.
+    pub fn baglanti_yetenekleri(&self) -> Result<BaglantiYetenekleri, CekirdekHatasi> {
+        // `baglanti_durumu` gibi: yukarı deneme bu çağrıda kapattıysa kapanmış hal döner.
+        self.calistir(|m, o, e| {
+            let _ = m.yukari_denemesi(o, e);
+            m.baglanti_yetenekleri()
+        })
     }
 
     /// Gövdenin hatırlatmaları şimdi kaydedilse ne zaman çalar (v2; form ve ayrıntı): saatsiz gün kaydında
@@ -434,6 +458,18 @@ impl Cekirdek {
 
     pub fn ret_at(&self, islem_id: String) -> Result<(), CekirdekHatasi> {
         self.calistir(|m, o, e| m.ret_at(o, e, &islem_id))
+    }
+
+    /// Eski (v2) servise bağlıyken ertelenen v3 değişikliklerini atıp kayıtları serbest bırakır (`kayit_id`: o
+    /// kayıt; `None`: bütün kayıtlar). Servis hiç güncellenmezse ertelenenler ve kaydın arkasında sırası tutulan
+    /// işlemler (silme dahil) süresiz bekler; bu çağrı kullanıcının çıkış yoludur. Her ertelenen v3 değişikliği
+    /// ret listesine geçer (`RetGirdisi.ertelenen_atildi`, `neden` `TeslimEdilemedi`; sessizce kaybolmaz), aynı
+    /// işlemin v2 kısmı ve sırası tutulan işlemler kuyrukta kalır ve bu serviste gider; kayıt v3 değeri olmadan
+    /// (PC'deki haliyle) görünür. Erteleme yokken (yerel kip, v3 ya da bilinmeyen servis) etkisizdir. Döner: ret
+    /// listesine geçen değişiklik sayısı (`BaglantiYetenekleri.ertelenen`'in atılan kısmı). Gözlemciye
+    /// `ret_listesi`, `baglanti`, etkilenen `kayitlar`. Hata: `GecersizGirdi{alan:"kayit_id"}`.
+    pub fn ertelenenleri_at(&self, kayit_id: Option<String>) -> Result<i32, CekirdekHatasi> {
+        self.calistir(|m, o, e| m.ertelenenleri_at(o, e, kayit_id.as_deref()))
     }
 
     // Dışa ve içe aktarma (D3; biçim ve kurallar `motor/aktarma.rs` başında, kap `aktarma_bicimi`)

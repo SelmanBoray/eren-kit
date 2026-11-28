@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { AJANDA_ARAC_ACIKLAMALARI, AjandaKopruHello, AracCagriId, type AjandaFiili } from "./ajanda-arac.ts";
+import { AJANDA_ARAC_ACIKLAMALARI, AJANDA_ARAC_ACIKLAMALARI_V2, AjandaKopruHello, AracCagriId, type AjandaFiili } from "./ajanda-arac.ts";
 import { AJANDA_PC_SINIRLARI, PC_AKTORLER, PC_ETKILESIMLER } from "./ajanda-pc-kanca.ts";
 import { cozumle } from "./cozumle.ts";
 import { AJANDA_AZAMI_CERCEVE, PROTOKOL_SURUMU } from "./sinirlar.ts";
@@ -74,6 +74,18 @@ export const AJANDA_PC_ARAC_ACIKLAMALARI: Readonly<Record<AjandaFiili, string>> 
   ajanda_listele: AJANDA_ARAC_ACIKLAMALARI.ajanda_listele,
 };
 
+/** v3 araç yüzü kapalıyken PC tanımları: v3 öncesi metin (`AJANDA_ARAC_ACIKLAMALARI_V2`) + aynı PC eki. */
+export const AJANDA_PC_ARAC_ACIKLAMALARI_V2: Readonly<Record<AjandaFiili, string>> = {
+  ajanda_ekle: AJANDA_ARAC_ACIKLAMALARI_V2.ajanda_ekle + PC_ZAMAN_EKI,
+  ajanda_guncelle: AJANDA_ARAC_ACIKLAMALARI_V2.ajanda_guncelle + PC_ZAMAN_EKI,
+  ajanda_listele: AJANDA_ARAC_ACIKLAMALARI_V2.ajanda_listele,
+};
+
+/** Ayarın seçtiği yüzün PC tanımları (telefonunki `ajandaAracAciklamalari`). */
+export function ajandaPcAracAciklamalari(v3: boolean): Readonly<Record<AjandaFiili, string>> {
+  return v3 ? AJANDA_PC_ARAC_ACIKLAMALARI : AJANDA_PC_ARAC_ACIKLAMALARI_V2;
+}
+
 // Kanca çerçeveleri (rol `pc_kanca`)
 
 /** Claude Code oturum kimliği (UUID); kaynak izinde `oturum_id`. */
@@ -100,9 +112,19 @@ export const PcTasdikGirdi = z.strictObject({
 
 /**
  * H1 öncesi çerçeve (Claude Code alanlarıyla: `agent_id` dolu → `alt_agent`, `-p`/SDK →
- * `etkilesimsiz`). Güncellemeden önce başlamış kanca süreçleri için kabul edilir; servis onu
- * `claude-code` uyarlayıcısının çerçevesi sayar ve bugünkü kararı verir (oturum bağı uygulanmaz: eski
- * kanca süreç kimliğini vermez, `/clear` sonrası oturum köprününkinden ayrılır).
+ * `etkilesimsiz`). Servis onu `claude-code` uyarlayıcısının çerçevesi sayar ve bugünkü kararı verir
+ * (oturum bağı uygulanmaz: eski kanca süreç kimliğini vermez, `/clear` sonrası oturum köprününkinden ayrılır).
+ *
+ * Neden kabul edilir (sürüm farkının yönleri): kanca uzun ömürlü değildir, her ajanda çağrısında `guncel`
+ * junction'ından taze başlar; açık oturumlarda "eski kanca süreci" kalmaz. Uzun ömürlü olanlar köprü (MCP
+ * süreci, oturum boyunca eski kodla) ve servistir.
+ * - Yeni kanca, eski servis: `kur.ts` junction'ı çevirip servis yeniden başlayana kadar. Eski servisin katı
+ *   şeması `PcTasdikGirdi`'yi geçirmez, bağlantıyı kapatır; çağrı tasdiksiz kalır (`tasdik_yok`, taslak;
+ *   güvenli taraf, `protocol/test/ajanda-pc.test.ts` sınar).
+ * - Eski kanca, yeni servis: yalnız geri almada (`--geri-al`, otomatik geri alma) junction eski sürüme
+ *   dönüp servis henüz yeniden başlamamışken. Bu kabul o aralık içindir.
+ * - Eski köprü, yeni servis: güncellemeden önce açılmış oturumların köprüsü yeni servisle konuşmayı sürdürür;
+ *   bu yüzden yeni karar değeri yoktur (`PcAracSonucu` eski köprüde de çözülür).
  */
 export const PcEskiAracGirdi = z.strictObject({
   oturum_id: OturumId,
@@ -148,9 +170,9 @@ export const pcKancaYukariCoz = (ham: string) => cozumle(PcKancaYukari, ham, AJA
  *   değil ya da çalışmadı; servise ulaşamadı ya da süresi doldu; tasdik `TASDIK_OMRU_DK`'dan eski, zaten
  *   kullanıldı ya da servis arada yeniden başladı). Tasdik var ama bu köprünün oturumuna bağlanamıyorsa
  *   (T5: başka bir köprüye bağlı harness sürecinin ya da oturumun tasdiki; tasdik tüketilmez, sahibi
- *   kullanabilir) ya da insan turu için yeterli değilse (bilinmeyen uyarlayıcı ya da sürüm, `aktor` ya da
- *   `etkilesim` `bilinmiyor`) de budur: yeni karar değeri eski köprünün şemasından geçmezdi. Neden
- *   günlükte ayrıdır (`pc_oturum_uyusmuyor`, `pc_tasdik_yetersiz`).
+ *   kullanabilir; süreç eşitliği tutmaz) ya da insan turu için yeterli değilse (bilinmeyen uyarlayıcı ya da
+ *   sürüm, `aktor` ya da `etkilesim` `bilinmiyor`) de budur: yeni karar değeri eski köprünün şemasından
+ *   geçmezdi. Neden günlükte ayrıdır (`pc_surec_uyusmuyor`, `pc_tasdik_yetersiz`).
  * - `alt_agent`: tasdik çağrının bir alt agent'tan geldiğini söylüyor.
  * - `etkilesimsiz`: tasdik çağrının etkileşimsiz bir oturumdan (`-p`, Agent SDK) geldiğini söylüyor.
  * - `insan`: tasdikli, ana ajanın, etkileşimli oturumun çağrısı.

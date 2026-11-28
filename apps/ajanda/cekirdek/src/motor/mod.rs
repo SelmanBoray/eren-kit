@@ -92,6 +92,8 @@ pub(crate) struct Motor {
     son_hata: Option<AjandaKanalHatasi>,
     /// `son_hata` `protokol_uyumsuz` iken karşı tarafın hangi yönde farklı olduğu (v2); onunla temizlenir.
     surum_uyusmazligi: Option<crate::kopru::tipler::SurumUyusmazligi>,
+    /// Bağlantının sürümü, düşülen sürüm, `welcome.yetenekler` (`kanal.rs` "Sürüm uyumu").
+    surum: kanal::KanalSurumu,
     /// Geçmiş önbelleği (`kayit_id` -> sayfa) ve yanıt bekleyen istekler (`istek_id` -> `kayit_id`).
     gecmis: BTreeMap<String, GecmisSayfasi>,
     gecmis_istekleri: BTreeMap<String, String>,
@@ -107,6 +109,7 @@ impl Motor {
             asama: Asama::Kopuk,
             son_hata: None,
             surum_uyusmazligi: None,
+            surum: kanal::KanalSurumu::yeni(),
             gecmis: BTreeMap::new(),
             gecmis_istekleri: BTreeMap::new(),
         })
@@ -198,3 +201,7 @@ impl Motor {
 
 #[cfg(test)]
 mod testler;
+#[cfg(test)]
+mod v3_testleri;
+#[cfg(test)]
+mod erteleme_testleri;

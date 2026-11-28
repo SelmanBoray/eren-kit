@@ -33,8 +33,8 @@ import type {
  * etkileşim, isteğe bağlı harness süreci; `docs/HARNESS.md` 4.2); H1 öncesi Claude çerçevesi de kabul edilir
  * ve aynı karara çevrilir (`tasdikKur`). Köprünün çağrısı (`pc_oturumu`, `arac_cagri_id`) gelince `tur`
  * kararı verir. İnsan turu YALNIZ: çağrı kimliği var, aynı kimlik için tasdik var (en çok `TASDIK_OMRU_DK`
- * önce, tek kullanımlık), uyarlayıcı tanınıyor, tasdik bu köprüye bağlanıyor (T5, `bagla`; eski çerçevede
- * uygulanmaz), aktör `ana`, etkileşim `etkilesimli`. Bu durumda ana ajanın çağrısı kullanıcının emri sayılır (insan turunun bütün
+ * önce, tek kullanımlık), uyarlayıcı tanınıyor, tasdik bu köprünün harness sürecinin (T5, `surecUyusmazligi`;
+ * süreç kimliksiz ya da eski çerçevede uygulanmaz), aktör `ana`, etkileşim `etkilesimli`. Bu durumda ana ajanın çağrısı kullanıcının emri sayılır (insan turunun bütün
  * kuralları: taslaksız ekleme, onay, korunan alanlar, gece teyidi). Geri kalan her durum sentetiktir:
  * kayıt taslak doğar, taslak olmayan kayda dokunamaz; karar (`PcTurKarari`) köprüye döner, köprü nedenini
  * modele söyler. Alt agent'ın çağrısı hiçbir yoldan insan olamaz: tasdik alt agent diyorsa sentetik,
@@ -52,13 +52,13 @@ import type {
 
 export interface PcTuru {
   tur: AjandaTurBaglami;
-  /** Kaynak izinin `oturum_id`'si: tasdikteki oturum, yoksa köprünün bildirdiği, yoksa bağlantı kimliği. */
+  /** Kaynak izinin `oturum_id`'si: tüketilen tasdikteki oturum, yoksa köprünün bildirdiği, yoksa bağlantı kimliği. */
   oturum_id: string;
   /** Kararın nedeni: köprüye döner (modele sabit metin), günlüğe girer. */
   karar: PcTurKarari;
   /**
    * Çağrı kimliği geldiyse çağrının izi (defterin tuzlu izi, `pcDefteriKur`): defterin neden olayları
-   * (`pc_tasdik_yetersiz`, `pc_oturum_uyusmuyor`) aynı değeri `cagri_izi` alanında taşır; araçlar bunu pc
+   * (`pc_tasdik_yetersiz`, `pc_surec_uyusmuyor`) aynı değeri `cagri_izi` alanında taşır; araçlar bunu pc
    * `arac` olayına koyar, teşhis nedeni sırayla değil izle bağlar (`eslestir` `tasdikReddiNedenleri`).
    */
   cagri_izi?: string;
@@ -74,11 +74,9 @@ export interface PcDefteri {
   tur(baglam: AjandaPcBaglami, simdi: number): PcTuru;
   /**
    * Köprü bağlantısı kapandı (`AjandaPcBaglami.baglanti_id`; boru sunucusu bildirir, kapanış hangi
-   * yönden olursa olsun). O bağlantının taşıdığı T5 bağları bırakılır: aynı köprü kimliğinin açık başka
-   * bağlantısı bağı kullanmadıysa bağ silinir ve süreç bir sonraki tasdikinde yeniden ilk görüşle bağlanır.
-   * Bırakılan bağın bekleyen (tüketilmemiş) tasdikleri de silinir: kapanan köprü onları artık kullanamaz,
-   * bağ boşken başka bir köprü de ilk görüşle onları alamaz (yarış: kapanıştan önce gelen tasdik taslak olur).
-   * Bilinmeyen kimlik ya da köprü olmayan bağlantı zararsızdır. Eşzamanlıdır, atmaz.
+   * yönden olursa olsun). Yalnız o bağlantının durumu (eski köprünün ilk görüşü) silinir; tasdiklere ve
+   * başka bağlantılara dokunulmaz. Kapanış hiç gelmezse kayıt kalır ve zararsızdır (servis bağlantı kimliğini
+   * bir daha vermez). Bilinmeyen kimlik ya da köprü olmayan bağlantı zararsızdır. Eşzamanlıdır, atmaz.
    */
   kopruKapandi(baglanti_id: string): void;
 }
@@ -93,7 +91,7 @@ export interface PcDefteriBagimliliklari {
 /** Normalize tasdik (çerçeve hangisi olursa olsun). */
 interface Tasdik {
   uyarlayici: { ad: string; surum: number };
-  /** H1 öncesi çerçeve (eski kanca süreci): oturum bağı (T5) uygulanmaz, karar bugünkü gibi. */
+  /** H1 öncesi çerçeve (eski kanca süreci): T5 uygulanmaz, karar bugünkü gibi. */
   eski: boolean;
   oturum_id: string;
   istem_id?: string;
@@ -104,19 +102,18 @@ interface Tasdik {
 }
 
 const DAKIKA = 60_000;
-/** Bellekteki oturum bağı sayısı (harness süreci ya da oturum → köprü); eskiler atılır. */
-const BAG_ADET = AJANDA_PC_SINIRLARI.TASDIK_ADET;
 /**
- * Bir bağın hatırladığı köprü bağlantısı sayısı. Aynı anda en çok bu kadar köprü bağlantısı açık olur;
- * fazlası kapanışı gelmemiş bağlantılardır, en eskiler atılır.
+ * Eski köprü bağlantılarının hatırlanan ilk görüş sayısı (bağlantı → harness süreci). Her kayıt bağlantı
+ * kapanınca silinir (`kopruKapandi`); sınır yalnız kapanışı hiç gelmeyen bağlantılar içindir, en eskiler atılır.
  */
-const BAG_BAGLANTI_ADET = AJANDA_PC_SINIRLARI.BAGLANTI_ADET;
+const ILK_GORUS_ADET = AJANDA_PC_SINIRLARI.TASDIK_ADET;
 
-/** T5 bağı: köprünün kimliği ve bağı kullanan (tasdik tüketen) bağlantıları. */
-interface Bag {
-  kopru: string;
-  baglantilar: Set<string>;
-}
+/**
+ * T5 reddinin türü (`pc_surec_uyusmuyor` olayının `kopru_surec` alanı): `bildirildi` köprünün hello'da
+ * bildirdiği süreç (ebeveyni) tasdikin harness süreci değil; `ilk_gorus` eski köprünün bağlantısı başka bir
+ * harness sürecinin tasdikiyle bağlanmıştı.
+ */
+type SurecUyusmazligi = "bildirildi" | "ilk_gorus";
 
 /** Eski çerçeve `claude-code` uyarlayıcısının çerçevesidir; alanları birebir karşılığına çevrilir. */
 function tasdikKur(g: PcKancaGirdisi<"pc_arac">, ms: number): { cagri_id: string; tasdik: Tasdik } {
@@ -164,8 +161,11 @@ export function pcDefteriKur(b: PcDefteriBagimliliklari): PcDefteri {
   /** Çağrının günlük izi: tuzlu, alan ayrımlı SHA-256'nın ilk 12 onaltılığı. Aynı süreçte aynı çağrının olaylarını eşler. */
   const cagriIzi = (arac_cagri_id: string): string => sha256Hex(utf8Bayt(`eren-pc-cagri-izi\u0000${izTuzu}\u0000${arac_cagri_id}`)).slice(0, 12);
   const tasdikler = new Map<string, Tasdik>();
-  /** T5 bağı: `s:<harness süreci>` (yoksa `o:<oturum>`) → onu tüketen köprünün kimliği ve bağlantıları. */
-  const baglar = new Map<string, Bag>();
+  /**
+   * Yalnız eski köprü (hello'da süreç bildirmeyen) bağlantıları: bağlantı → ilk tükettiği tasdikin harness süreci.
+   * Bağlantı başınadır, bağlantılar arası hiçbir durum yoktur; bağlantı kapanınca silinir.
+   */
+  const ilkGorus = new Map<string, string>();
 
   const kanca: PcKancaIsleyicileri = {
     pc_arac(g) {
@@ -189,63 +189,44 @@ export function pcDefteriKur(b: PcDefteriBagimliliklari): PcDefteri {
     kopruKapandi: (baglanti_id) => kopruKapandi(baglanti_id),
   };
 
-  const bagAnahtari = (t: Tasdik): string => (t.surec_id !== undefined ? `s:${t.surec_id}` : `o:${t.oturum_id}`);
-
   /**
-   * T5: tasdik onu tüketen köprüye bağlanır. Köprünün kimliği bildirdiği oturumdur (Claude:
-   * `CLAUDE_CODE_SESSION_ID`, köprü süreci açılırken; yoksa rastgele `pck_`), o da yoksa bağlantı.
-   * Eşleşir: tasdikin oturumu köprününkiyle aynı (kesin kanıt; bağ ona taşınır), ya da tasdikin harness
-   * süreci (yoksa oturumu) zaten bu köprüye bağlı, ya da henüz hiçbir köprüye bağlı değil (ilk görüş; bağ
-   * kurulur). Eşleşmez: başka bir köprüye bağlı. Neden oturum eşitliği yetmez: Claude Code `/clear`'da
-   * oturum kimliğini yeniler, MCP sunucusunu yeniden başlatmaz (2.1.332 ikili dosyası); köprünün oturumu
-   * eskir, kancanınki yenidir. Süreç kimliği `/clear`'da değişmez, iki Claude Code penceresinde ayrıdır.
+   * T5: bir harness sürecinin kancasından gelen tasdiki başka bir sürecin köprüsü tüketemez. Durumsuz kural,
+   * bağlantılar arası paylaşılan durum yoktur (`docs/HARNESS.md` 4.2 "Uygulanan (H1)"):
+   * - Tasdik eski çerçeveyse ya da süreç kimliği (`surec_id`, Claude: `CLAUDE_PID`) taşımıyorsa T5 uygulanmaz
+   *   (eski çerçevenin bugünkü kuralı). Süreç kimliği olmayan yeni çerçeve de aynı kuralı alır: karşılaştırılacak
+   *   bir süreç yoktur ve oturum kimliğine dayanan her bağ `/clear` ya da `--continue`'da kilitlenir.
+   * - Yeni köprü (hello'da süreç bildiren; Claude: `process.ppid`): bildirilen süreç tasdikinkine eşitse
+   *   tüketilir, değilse ret (`bildirildi`). Köprüyü sarmalayıcı (`cmd /c`, `npx`) başlattıysa ebeveyn harness
+   *   değildir ve o pencere hep taslak kalır: güvenli yön.
+   * - Eski köprü (süreç bildirmeyen): bağlantı başına ilk görüş. Bağlantı ilk tükettiği tasdikin sürecine
+   *   bağlanır ve sonra yalnız onu tüketir (`ilk_gorus`). Bağ bağlantıyla ölür (`kopruKapandi`).
+   * Ret tasdiki silmez: sahibi (kendi sürecinin köprüsü) hâlâ kullanabilir.
    *
-   * Bağ, onu kullanan köprü bağlantılarının hepsi kapanınca bırakılır (`kopruKapandi`). Neden gerekir:
-   * `/mcp` yeniden bağlanması, oturum bildirmeyen (`pck_`) ya da hiç bildirmeyen (`b:`) köprünün yeniden
-   * açılışı köprünün kimliğini değiştirir; ölü köprüye bağlı kalan süreç, sonraki `/clear`'dan sonra tam
-   * eşleşme de bulamaz ve her çağrısı taslak olurdu. Açık köprünün bağı bırakılmaz: aynı anda açık iki
-   * köprüde A'nın tasdikini B'ninki tüketemez. Kapanış hiç gelmezse bağ kalır (eski davranış: taslak).
+   * Neden oturum kimliği değil: Claude Code `/clear`'da oturum kimliğini yeniler, MCP sürecini yeniden
+   * başlatmaz; `--continue`'da köprünün `CLAUDE_CODE_SESSION_ID`'si kancanın oturumundan farklıdır. Süreç kimliği
+   * ikisinde de değişmez ve iki Claude Code penceresinde ayrıdır.
    */
-  const bagla = (tasdik: Tasdik, kopru: string, baglanti_id: string): boolean => {
-    const anahtar = bagAnahtari(tasdik);
-    const bagli = baglar.get(anahtar);
-    if (tasdik.oturum_id !== kopru && bagli !== undefined && bagli.kopru !== kopru) return false;
-    // Aynı köprü bağlantılarını biriktirir; devralan (tam eşleşen başka köprü) yeni kümeyle başlar.
-    const baglantilar = bagli !== undefined && bagli.kopru === kopru ? bagli.baglantilar : new Set<string>();
-    baglantilar.delete(baglanti_id);
-    baglantilar.add(baglanti_id);
-    while (baglantilar.size > BAG_BAGLANTI_ADET) {
-      const ilk = baglantilar.values().next();
-      if (ilk.done === true) break;
-      baglantilar.delete(ilk.value);
+  const surecUyusmazligi = (tasdik: Tasdik, baglam: AjandaPcBaglami): SurecUyusmazligi | null => {
+    if (tasdik.eski || tasdik.surec_id === undefined) return null;
+    if (baglam.kopru_surec_id !== undefined) return baglam.kopru_surec_id === tasdik.surec_id ? null : "bildirildi";
+    const bagli = ilkGorus.get(baglam.baglanti_id);
+    if (bagli === undefined) {
+      sinirliKoy(ilkGorus, baglam.baglanti_id, tasdik.surec_id, ILK_GORUS_ADET);
+      return null;
     }
-    sinirliKoy(baglar, anahtar, { kopru, baglantilar }, BAG_ADET);
-    return true;
+    return bagli === tasdik.surec_id ? null : "ilk_gorus";
   };
 
+  /** Bağlantı başına durumu (eski köprünün ilk görüşü) temizler; tasdiklere dokunmaz. */
   const kopruKapandi = (baglanti_id: string): void => {
-    const birakilan = new Set<string>();
-    for (const [anahtar, bag] of baglar) {
-      if (!bag.baglantilar.delete(baglanti_id) || bag.baglantilar.size > 0) continue;
-      baglar.delete(anahtar);
-      birakilan.add(anahtar);
-    }
-    if (birakilan.size === 0) return;
-    // Bırakılan bağın bekleyen tasdikleri (eski çerçevede bağ yoktur, dokunulmaz).
-    let silinen = 0;
-    for (const [id, t] of tasdikler) {
-      if (t.eski || !birakilan.has(bagAnahtari(t))) continue;
-      tasdikler.delete(id);
-      silinen++;
-    }
-    gunluk.bilgi(MODUL, "pc_bag_birakildi", { baglanti_id, adet: birakilan.size, ...(silinen > 0 ? { tasdik: silinen } : {}) });
+    ilkGorus.delete(baglanti_id);
   };
 
   /**
    * Sıra `PC_TUR_KARARLARI` açıklamasıyla aynı. Tasdik eşleşince silinir (tek kullanımlık); eskiyse ya da
-   * tanınmayan uyarlayıcınınsa da silinir. Başka köprüye bağlıysa SİLİNMEZ: sahibi hâlâ kullanabilir.
+   * tanınmayan uyarlayıcınınsa da silinir. Süreç uyuşmuyorsa (T5) SİLİNMEZ: sahibi hâlâ kullanabilir.
    */
-  const kararVer = (baglam: AjandaPcBaglami, simdi: number, kopru: string): { karar: PcTurKarari; tasdik?: Tasdik } => {
+  const kararVer = (baglam: AjandaPcBaglami, simdi: number): { karar: PcTurKarari; tasdik?: Tasdik } => {
     if (baglam.arac_cagri_id === undefined) return { karar: "cagri_kimligi_yok" };
     const id = baglam.arac_cagri_id;
     // Neden olaylarının çağrı izi (`PcTuru.cagri_izi`); kimliğin kendisi günlüğe girmez.
@@ -260,8 +241,9 @@ export function pcDefteriKur(b: PcDefteriBagimliliklari): PcDefteri {
       gunluk.uyari(MODUL, "pc_tasdik_yetersiz", { neden: "uyarlayici", uyarlayici: tasdik.uyarlayici.ad, surum: tasdik.uyarlayici.surum, cagri_izi: iz });
       return { karar: "tasdik_yok" };
     }
-    if (!tasdik.eski && !bagla(tasdik, kopru, baglam.baglanti_id)) {
-      gunluk.uyari(MODUL, "pc_oturum_uyusmuyor", { oturum_id: tasdik.oturum_id, surec_kimligi: varYok(tasdik.surec_id), cagri_izi: iz });
+    const uyusmazlik = surecUyusmazligi(tasdik, baglam);
+    if (uyusmazlik !== null) {
+      gunluk.uyari(MODUL, "pc_surec_uyusmuyor", { oturum_id: tasdik.oturum_id, kopru_surec: uyusmazlik, cagri_izi: iz });
       return { karar: "tasdik_yok" };
     }
     tasdikler.delete(id);
@@ -280,8 +262,7 @@ export function pcDefteriKur(b: PcDefteriBagimliliklari): PcDefteri {
 
   const tur = (baglam: AjandaPcBaglami, simdi: number): PcTuru => {
     const bildirilen = baglam.oturum_id !== undefined && OpakId.safeParse(baglam.oturum_id).success ? baglam.oturum_id : undefined;
-    // Bağlantı kimliği servisin; `b:` öneki hiçbir oturum kimliğiyle çakışmasın diye.
-    const { karar, tasdik } = kararVer(baglam, simdi, bildirilen ?? `b:${baglam.baglanti_id}`);
+    const { karar, tasdik } = kararVer(baglam, simdi);
     const oturum_id = tasdik?.oturum_id ?? bildirilen ?? baglam.baglanti_id;
     const izi = baglam.arac_cagri_id === undefined ? {} : { cagri_izi: cagriIzi(baglam.arac_cagri_id) };
     // Mesaj anı: çağrının servise varışı (yalın yolda mesajın geliş anı bilinmez).

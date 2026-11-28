@@ -26,7 +26,7 @@ use std::cmp::{Ordering, Reverse};
 
 use crate::depo::{Depo, GorunenKayit, TakvimAdayAraligi};
 use crate::hata::CekirdekHatasi;
-use crate::kopru::tipler::{KayitGorunumu, TakvimAyi, TakvimGunOzeti, TakvimOgesi, TakvimSeridi};
+use crate::kopru::tipler::{TakvimAyi, TakvimGunOzeti, TakvimOgesi, TakvimSeridi};
 use crate::kural::AnCevirici;
 use crate::model::sinirlar::ajanda::{DONEM_GUN, SURE_DK, YIL_MAX, YIL_MIN};
 use crate::model::takvim::{aydaki_gun, dakika_no, gun_no, gun_no_tarih, saat_gecerli_mi, tarih_gun_no, tarih_parcala};
@@ -302,18 +302,21 @@ pub(crate) fn takvim_gunu(
     let adaylar = pencere(d, n, n, kapalilar_dahil)?;
     let mut yerler = yerler(&adaylar, c, cihaz, n, n, kapalilar_dahil);
     yerler.sort_by(|a, b| sirala(a, b, n));
-    Ok(yerler
+    let gorunumcu = super::sorgu::Gorunumcu::ac(d)?;
+    yerler
         .into_iter()
-        .map(|y| TakvimOgesi {
-            gorunum: KayitGorunumu { kayit: y.g.kayit.clone(), bekleyen: y.g.bekleyen },
-            ornek_tarihi: y.ornek_tarihi,
-            durum: y.durum,
-            ilk_gun: gun_no_tarih(y.ilk),
-            son_gun: gun_no_tarih(y.son),
-            saat: y.saat,
-            bitis_saati: y.bitis_saati,
+        .map(|y| {
+            Ok(TakvimOgesi {
+                gorunum: gorunumcu.gorunum(d, y.g.kayit.clone(), y.g.bekleyen)?,
+                ornek_tarihi: y.ornek_tarihi,
+                durum: y.durum,
+                ilk_gun: gun_no_tarih(y.ilk),
+                son_gun: gun_no_tarih(y.son),
+                saat: y.saat,
+                bitis_saati: y.bitis_saati,
+            })
         })
-        .collect())
+        .collect()
 }
 
 #[cfg(test)]

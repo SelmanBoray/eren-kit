@@ -1,0 +1,2026 @@
+{
+ "aciklama": "/ajanda sürüm 3 kuralları için dil bağımsız vektörler. sinirlar: AJANDA_SINIRLARI'nın v3 anahtarları. simgeler: AJANDA_SIMGELERI (öneri, doğrulama değil). yetenekler: AJANDA_YETENEKLERI (bilinen, liste açık). ek_ret_kodlari: AJANDA_EK_RET_KODLARI (kapalı). bolge_anahtari: ajandaBolgeAnahtari(girdi) (Türkçe birleşik tablo, White_Space sadeleştirme, bağlamsız küçük harf: İ->i, I->ı). url: ajandaUrlAlanAdi(url), gecersizse null. tekil_anahtar: ajandaTekilAnahtari(girdi); bolge yalnız varsa eşleşme anahtarıyla girer. bolge_konumu: ajandaDegisikligiUygula(kayit, degisiklik, yazar) (ajanda-kurallar.json birlestirme biçimi; beklenen.<alan> verilmişse sonuçtaki değer, kaldirilan sonuçta olmayan alanlar). yetenek_kesisimi: ajandaYetenekKesisimi(istenen | null, sunulan). asagi_uyarlama: ajandaAsagiSurume(girdi, surum); cikti null ise ok:false (o sürümde karşılığı yok), değilse uyarlanan çerçeve (alan sırası dahil).",
+ "surum": 3,
+ "sinirlar": {
+  "SIMGE": 32,
+  "BOLGE": 60,
+  "BOLGE_YARICAP_MIN": 50,
+  "BOLGE_YARICAP_MAX": 1000,
+  "KAYIT_BAGLANTI_ADET": 10,
+  "BAGLANTI_URL": 2000,
+  "BAGLANTI_BASLIK": 120,
+  "EK_ADET": 8,
+  "EK_BAYT": 4194304,
+  "EK_KENAR": 65535,
+  "EK_MIME": 127,
+  "EK_PARCA": 262144,
+  "EK_PENCERE": 4,
+  "EK_TOPLAM_BAYT": 2147483648,
+  "EK_SAKLAMA_GUN": 30,
+  "YETENEK_ADET": 32,
+  "YETENEK_ADI": 32
+ },
+ "simgeler": [
+  "genel",
+  "araba",
+  "banka",
+  "dis",
+  "dogum_gunu",
+  "doktor",
+  "ev",
+  "fatura",
+  "ilac",
+  "is",
+  "kahve",
+  "kargo",
+  "kitap",
+  "market",
+  "okul",
+  "sac",
+  "seyahat",
+  "spor",
+  "telefon",
+  "temizlik",
+  "toplanti",
+  "yemek",
+  "kamp",
+  "evcil",
+  "bitki",
+  "tamir",
+  "camasir",
+  "eglence",
+  "mektup"
+ ],
+ "yetenekler": [
+  "ek_yedegi",
+  "eslesme_birak",
+  "ice_aktar"
+ ],
+ "ek_ret_kodlari": [
+  "ek_bilinmiyor",
+  "ozet_uyusmuyor",
+  "ek_cok_buyuk",
+  "kota_asildi",
+  "ek_yok",
+  "ic_hata"
+ ],
+ "bolge_anahtari": [
+  {
+   "ad": "küçük harf kimlik",
+   "girdi": "market",
+   "anahtar": "market"
+  },
+  {
+   "ad": "Türkçe büyük I",
+   "girdi": "IŞIK",
+   "anahtar": "ışık"
+  },
+  {
+   "ad": "Türkçe büyük İ",
+   "girdi": "İŞ YERİ",
+   "anahtar": "iş yeri"
+  },
+  {
+   "ad": "karışık",
+   "girdi": "İstanbul Işıkları",
+   "anahtar": "istanbul ışıkları"
+  },
+  {
+   "ad": "noktasız ı korunur",
+   "girdi": "ılık",
+   "anahtar": "ılık"
+  },
+  {
+   "ad": "noktalı i korunur",
+   "girdi": "iğne",
+   "anahtar": "iğne"
+  },
+  {
+   "ad": "Ç Ğ Ö Ş Ü",
+   "girdi": "ÇĞÖŞÜ",
+   "anahtar": "çğöşü"
+  },
+  {
+   "ad": "ayrışık ş birleşir",
+   "girdi": "s\u0327ehir",
+   "anahtar": "şehir"
+  },
+  {
+   "ad": "ayrışık İ birleşir",
+   "girdi": "I\u0307ZMIR",
+   "anahtar": "izmır"
+  },
+  {
+   "ad": "ayrışık büyük Ü ve Ğ",
+   "girdi": "U\u0308G\u0306",
+   "anahtar": "üğ"
+  },
+  {
+   "ad": "şapkalı harf",
+   "girdi": "Ka\u0302ğıthane",
+   "anahtar": "kâğıthane"
+  },
+  {
+   "ad": "Türkçe dışı birleşen kalır",
+   "girdi": "e\u0301",
+   "anahtar": "e\u0301"
+  },
+  {
+   "ad": "i üstü nokta birleşmez",
+   "girdi": "i\u0307",
+   "anahtar": "i\u0307"
+  },
+  {
+   "ad": "boşluklar sadeleşir",
+   "girdi": "  iş   yeri  ",
+   "anahtar": "iş yeri"
+  },
+  {
+   "ad": "sekme ve satır sonu",
+   "girdi": "iş\t\n yeri",
+   "anahtar": "iş yeri"
+  },
+  {
+   "ad": "bölünmez ve ideografik boşluk",
+   "girdi": "\u00a0iş\u3000\u2007yeri\u202f",
+   "anahtar": "iş yeri"
+  },
+  {
+   "ad": "U+0085 boşluktur",
+   "girdi": "a\u0085b",
+   "anahtar": "a b"
+  },
+  {
+   "ad": "U+FEFF boşluk değildir",
+   "girdi": "a\ufeffb",
+   "anahtar": "a\ufeffb"
+  },
+  {
+   "ad": "U+200B boşluk değildir",
+   "girdi": "a\u200bb",
+   "anahtar": "a\u200bb"
+  },
+  {
+   "ad": "son sigma bağlamsız",
+   "girdi": "ΟΔΟΣ",
+   "anahtar": "οδοσ"
+  },
+  {
+   "ad": "Almanca ß kalır",
+   "girdi": "STRAßE",
+   "anahtar": "straße"
+  },
+  {
+   "ad": "Kiril",
+   "girdi": "МОСКВА",
+   "anahtar": "москва"
+  },
+  {
+   "ad": "rakam ve noktalama",
+   "girdi": "Blok-3/A",
+   "anahtar": "blok-3/a"
+  },
+  {
+   "ad": "emoji",
+   "girdi": "Ev 🏠",
+   "anahtar": "ev 🏠"
+  },
+  {
+   "ad": "yalnız boşluk",
+   "girdi": "   ",
+   "anahtar": ""
+  },
+  {
+   "ad": "boş",
+   "girdi": "",
+   "anahtar": ""
+  }
+ ],
+ "url": [
+  {
+   "ad": "https sorgulu",
+   "url": "https://ornek.com.tr/kampanya?id=42#ust",
+   "gecerli": true,
+   "alan_adi": "ornek.com.tr"
+  },
+  {
+   "ad": "http yalın",
+   "url": "http://ornek.org",
+   "gecerli": true,
+   "alan_adi": "ornek.org"
+  },
+  {
+   "ad": "büyük harfli ana bilgisayar küçülür",
+   "url": "https://Ornek.COM/Yol",
+   "gecerli": true,
+   "alan_adi": "ornek.com"
+  },
+  {
+   "ad": "port",
+   "url": "https://ornek.com:8443/a",
+   "gecerli": true,
+   "alan_adi": "ornek.com"
+  },
+  {
+   "ad": "port 65535",
+   "url": "http://a.b:65535",
+   "gecerli": true,
+   "alan_adi": "a.b"
+  },
+  {
+   "ad": "yolda @ serbest",
+   "url": "https://medium.com/@yazar/yazi",
+   "gecerli": true,
+   "alan_adi": "medium.com"
+  },
+  {
+   "ad": "sorguda @ serbest",
+   "url": "https://a.example/?e=x@y.z",
+   "gecerli": true,
+   "alan_adi": "a.example"
+  },
+  {
+   "ad": "IPv4",
+   "url": "http://192.0.2.1/",
+   "gecerli": true,
+   "alan_adi": "192.0.2.1"
+  },
+  {
+   "ad": "IPv6",
+   "url": "http://[2001:db8::1]:8080/x",
+   "gecerli": true,
+   "alan_adi": "[2001:db8::1]"
+  },
+  {
+   "ad": "alt çizgi ve tire",
+   "url": "https://alt_alan.ornek-site.com",
+   "gecerli": true,
+   "alan_adi": "alt_alan.ornek-site.com"
+  },
+  {
+   "ad": "punycode",
+   "url": "https://xn--rnek-0ra.com/",
+   "gecerli": true,
+   "alan_adi": "xn--rnek-0ra.com"
+  },
+  {
+   "ad": "yüzde kodlu Türkçe yol",
+   "url": "https://tr.wikipedia.org/wiki/%C4%B0stanbul",
+   "gecerli": true,
+   "alan_adi": "tr.wikipedia.org"
+  },
+  {
+   "ad": "parça ve sorgu doğrudan",
+   "url": "https://a.example#x?y",
+   "gecerli": true,
+   "alan_adi": "a.example"
+  },
+  {
+   "ad": "2000 karakter",
+   "url": "https://a.example/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "gecerli": true,
+   "alan_adi": "a.example"
+  },
+  {
+   "ad": "2001 karakter",
+   "url": "https://a.example/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "gecerli": false,
+   "alan_adi": null
+  },
+  {
+   "ad": "boş",
+   "url": "",
+   "gecerli": false,
+   "alan_adi": null
+  },
+  {
+   "ad": "büyük harf şema",
+   "url": "HTTPS://ornek.com",
+   "gecerli": false,
+   "alan_adi": null
+  },
+  {
+   "ad": "karışık şema",
+   "url": "Https://ornek.com",
+   "gecerli": false,
+   "alan_adi": null
+  },
+  {
+   "ad": "javascript",
+   "url": "javascript:alert(1)",
+   "gecerli": false,
+   "alan_adi": null
+  },
+  {
+   "ad": "ftp",
+   "url": "ftp://ornek.com",
+   "gecerli": false,
+   "alan_adi": null
+  },
+  {
+   "ad": "intent",
+   "url": "intent://scan/#Intent;scheme=zxing;end",
+   "gecerli": false,
+   "alan_adi": null
+  },
+  {
+   "ad": "şemasız",
+   "url": "ornek.com",
+   "gecerli": false,
+   "alan_adi": null
+  },
+  {
+   "ad": "tek eğik çizgi",
+   "url": "https:/ornek.com",
+   "gecerli": false,
+   "alan_adi": null
+  },
+  {
+   "ad": "ana bilgisayarsız",
+   "url": "https:///yol",
+   "gecerli": false,
+   "alan_adi": null
+  },
+  {
+   "ad": "yalnız önek",
+   "url": "https://",
+   "gecerli": false,
+   "alan_adi": null
+  },
+  {
+   "ad": "kullanıcı bilgisi",
+   "url": "https://kullanici@ornek",
+   "gecerli": false,
+   "alan_adi": null
+  },
+  {
+   "ad": "kullanıcı ve parola",
+   "url": "https://k:p@ornek/",
+   "gecerli": false,
+   "alan_adi": null
+  },
+  {
+   "ad": "boşluk",
+   "url": "https://ornek.com/a b",
+   "gecerli": false,
+   "alan_adi": null
+  },
+  {
+   "ad": "sekme",
+   "url": "https://ornek.com/a\tb",
+   "gecerli": false,
+   "alan_adi": null
+  },
+  {
+   "ad": "ASCII dışı yol",
+   "url": "https://ornek.com/İstanbul",
+   "gecerli": false,
+   "alan_adi": null
+  },
+  {
+   "ad": "ASCII dışı ana bilgisayar",
+   "url": "https://örnek.com",
+   "gecerli": false,
+   "alan_adi": null
+  },
+  {
+   "ad": "ters eğik çizgi",
+   "url": "https://ornek.com\\@kotu",
+   "gecerli": false,
+   "alan_adi": null
+  },
+  {
+   "ad": "köşeli parantez dışı",
+   "url": "https://ornek.com/<script>",
+   "gecerli": false,
+   "alan_adi": null
+  },
+  {
+   "ad": "süslü parantez",
+   "url": "https://ornek.com/{a}",
+   "gecerli": false,
+   "alan_adi": null
+  },
+  {
+   "ad": "dikey çizgi",
+   "url": "https://ornek.com/a|b",
+   "gecerli": false,
+   "alan_adi": null
+  },
+  {
+   "ad": "çift tırnak",
+   "url": "https://ornek.com/\"",
+   "gecerli": false,
+   "alan_adi": null
+  },
+  {
+   "ad": "boş etiket",
+   "url": "https://ornek..com",
+   "gecerli": false,
+   "alan_adi": null
+  },
+  {
+   "ad": "sondaki nokta",
+   "url": "https://ornek.com.",
+   "gecerli": false,
+   "alan_adi": null
+  },
+  {
+   "ad": "baştaki nokta",
+   "url": "https://.ornek.com",
+   "gecerli": false,
+   "alan_adi": null
+  },
+  {
+   "ad": "yalnız tire",
+   "url": "http://-",
+   "gecerli": false,
+   "alan_adi": null
+  },
+  {
+   "ad": "yalnız alt çizgi",
+   "url": "http://_",
+   "gecerli": false,
+   "alan_adi": null
+  },
+  {
+   "ad": "tireyle başlayan etiket",
+   "url": "https://-ornek.com",
+   "gecerli": false,
+   "alan_adi": null
+  },
+  {
+   "ad": "tireyle biten etiket",
+   "url": "https://ornek-.com",
+   "gecerli": false,
+   "alan_adi": null
+  },
+  {
+   "ad": "alt çizgiyle başlayan etiket",
+   "url": "https://_dmarc.ornek.com",
+   "gecerli": false,
+   "alan_adi": null
+  },
+  {
+   "ad": "alt çizgiyle biten etiket",
+   "url": "https://ornek_.com",
+   "gecerli": false,
+   "alan_adi": null
+  },
+  {
+   "ad": "tek harf etiket",
+   "url": "http://a",
+   "gecerli": true,
+   "alan_adi": "a"
+  },
+  {
+   "ad": "içte alt çizgi ve çift tire",
+   "url": "https://a_b.c--d.e",
+   "gecerli": true,
+   "alan_adi": "a_b.c--d.e"
+  },
+  {
+   "ad": "geri döngü IPv4 (bilinçli geçer)",
+   "url": "https://127.0.0.1",
+   "gecerli": true,
+   "alan_adi": "127.0.0.1"
+  },
+  {
+   "ad": "geri döngü IPv6 (bilinçli geçer)",
+   "url": "http://[::1]",
+   "gecerli": true,
+   "alan_adi": "[::1]"
+  },
+  {
+   "ad": "localhost portlu (bilinçli geçer)",
+   "url": "http://localhost:8080/",
+   "gecerli": true,
+   "alan_adi": "localhost"
+  },
+  {
+   "ad": "64 karakter etiket",
+   "url": "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com",
+   "gecerli": false,
+   "alan_adi": null
+  },
+  {
+   "ad": "63 karakter etiket",
+   "url": "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com",
+   "gecerli": true,
+   "alan_adi": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com"
+  },
+  {
+   "ad": "254 karakter ana bilgisayar",
+   "url": "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+   "gecerli": false,
+   "alan_adi": null
+  },
+  {
+   "ad": "253 karakter ana bilgisayar",
+   "url": "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+   "gecerli": true,
+   "alan_adi": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  },
+  {
+   "ad": "port boş",
+   "url": "https://ornek.com:/",
+   "gecerli": false,
+   "alan_adi": null
+  },
+  {
+   "ad": "port 0",
+   "url": "https://ornek.com:0",
+   "gecerli": false,
+   "alan_adi": null
+  },
+  {
+   "ad": "port baştaki sıfır",
+   "url": "https://ornek.com:080",
+   "gecerli": false,
+   "alan_adi": null
+  },
+  {
+   "ad": "port 65536",
+   "url": "https://ornek.com:65536",
+   "gecerli": false,
+   "alan_adi": null
+  },
+  {
+   "ad": "port harfli",
+   "url": "https://ornek.com:80a",
+   "gecerli": false,
+   "alan_adi": null
+  },
+  {
+   "ad": "port 6 hane",
+   "url": "https://ornek.com:100000",
+   "gecerli": false,
+   "alan_adi": null
+  },
+  {
+   "ad": "IPv6 kapanmamış",
+   "url": "https://[2001:db8::1/",
+   "gecerli": false,
+   "alan_adi": null
+  },
+  {
+   "ad": "IPv6 iki nokta yok",
+   "url": "https://[2001db8]/",
+   "gecerli": false,
+   "alan_adi": null
+  },
+  {
+   "ad": "IPv6 sonrası port değil",
+   "url": "https://[::1]x",
+   "gecerli": false,
+   "alan_adi": null
+  },
+  {
+   "ad": "IPv6 geçersiz karakter",
+   "url": "https://[::g]/",
+   "gecerli": false,
+   "alan_adi": null
+  },
+  {
+   "ad": "yüzde ana bilgisayarda",
+   "url": "https://orn%65k.com",
+   "gecerli": false,
+   "alan_adi": null
+  }
+ ],
+ "tekil_anahtar": [
+  {
+   "ad": "bölgesiz: v2 vektörüyle aynı baytlar",
+   "girdi": {
+    "kapsam": "sohbet:ana",
+    "tur": "randevu",
+    "baslik": "Dişçi",
+    "zaman": {
+     "kesinlik": "an",
+     "tarih": "2026-11-26",
+     "saat": "15:00",
+     "saat_dilimi": "Europe/Istanbul",
+     "ifade": "yarın 3'te"
+    }
+   },
+   "anahtar": "t1:07f88f3ca81b7d654e28728abc65cdf23f5058315c5b7bb14b3dffe01c18afcf"
+  },
+  {
+   "ad": "bölgeli",
+   "girdi": {
+    "kapsam": "sohbet:ana",
+    "tur": "gorev",
+    "baslik": "Süt al",
+    "bolge": "Market"
+   },
+   "anahtar": "t1:d0b98f3c47e4fc3194448ed6079e1c1de055438c85f421abcd2384268a892b65"
+  },
+  {
+   "ad": "bölge yazılışı farklı, aynı yer",
+   "girdi": {
+    "kapsam": "sohbet:ana",
+    "tur": "gorev",
+    "baslik": "Süt al",
+    "bolge": "  MARKET "
+   },
+   "anahtar": "t1:d0b98f3c47e4fc3194448ed6079e1c1de055438c85f421abcd2384268a892b65"
+  },
+  {
+   "ad": "başka bölge",
+   "girdi": {
+    "kapsam": "sohbet:ana",
+    "tur": "gorev",
+    "baslik": "Süt al",
+    "bolge": "Bakkal"
+   },
+   "anahtar": "t1:107410b8c6b121c64170b38435b0a286f002f1b2b23f6f30ea999fb56945f1d8"
+  },
+  {
+   "ad": "bölge ve gün",
+   "girdi": {
+    "kapsam": "sohbet:ana",
+    "tur": "randevu",
+    "baslik": "İmza",
+    "zaman": {
+     "kesinlik": "gun",
+     "tarih": "2026-12-01",
+     "saat_dilimi": "Europe/Istanbul",
+     "ifade": "yarın"
+    },
+    "bolge": "İş Yeri"
+   },
+   "anahtar": "t1:5137b6e8ad537878cd3d4b37908f7c81cfac9d569923cb77ee82d46e369311a1"
+  },
+  {
+   "ad": "bölgesiz gün",
+   "girdi": {
+    "kapsam": "sohbet:ana",
+    "tur": "randevu",
+    "baslik": "İmza",
+    "zaman": {
+     "kesinlik": "gun",
+     "tarih": "2026-12-01",
+     "saat_dilimi": "Europe/Istanbul",
+     "ifade": "yarın"
+    }
+   },
+   "anahtar": "t1:baa7b8252ad45d40e630568eb6ba69c035b3fdd8dc59748d38ecda557b5866a9"
+  }
+ ],
+ "bolge_konumu": [
+  {
+   "ad": "başka ada değişince konum kalkar",
+   "kayit": {
+    "kayit_id": "k_market01",
+    "revizyon": 20,
+    "tur": "gorev",
+    "baslik": "Süt al",
+    "hatirlatmalar": [],
+    "ornekler": [],
+    "durum": "acik",
+    "taslak": false,
+    "silindi": false,
+    "elle_alanlar": [],
+    "kaynak": {
+     "yol": "elle",
+     "tur_kokeni": "insan",
+     "device_id": "cihaz_AjandaOrnek01"
+    },
+    "olusturma_ms": 1795000000000,
+    "guncelleme_ms": 1795000000000,
+    "bolge": "Market",
+    "bolge_konumu": {
+     "enlem_e6": 41008240,
+     "boylam_e6": 28978359,
+     "yaricap_m": 150
+    }
+   },
+   "degisiklik": {
+    "bolge": "Bakkal"
+   },
+   "yazar": {
+    "yol": "elle",
+    "tur_kokeni": "insan"
+   },
+   "beklenen": {
+    "uygulanan": [
+     "bolge",
+     "bolge_konumu"
+    ],
+    "korunan": [],
+    "elle_alanlar": [
+     "bolge",
+     "bolge_konumu"
+    ],
+    "kaldirilan": [
+     "bolge_konumu"
+    ],
+    "bolge": "Bakkal"
+   }
+  },
+  {
+   "ad": "bölge kaldırılınca konum kalkar",
+   "kayit": {
+    "kayit_id": "k_market01",
+    "revizyon": 20,
+    "tur": "gorev",
+    "baslik": "Süt al",
+    "hatirlatmalar": [],
+    "ornekler": [],
+    "durum": "acik",
+    "taslak": false,
+    "silindi": false,
+    "elle_alanlar": [],
+    "kaynak": {
+     "yol": "elle",
+     "tur_kokeni": "insan",
+     "device_id": "cihaz_AjandaOrnek01"
+    },
+    "olusturma_ms": 1795000000000,
+    "guncelleme_ms": 1795000000000,
+    "bolge": "Market",
+    "bolge_konumu": {
+     "enlem_e6": 41008240,
+     "boylam_e6": 28978359,
+     "yaricap_m": 150
+    }
+   },
+   "degisiklik": {
+    "bolge": null
+   },
+   "yazar": {
+    "yol": "elle",
+    "tur_kokeni": "insan"
+   },
+   "beklenen": {
+    "uygulanan": [
+     "bolge",
+     "bolge_konumu"
+    ],
+    "korunan": [],
+    "elle_alanlar": [
+     "bolge",
+     "bolge_konumu"
+    ],
+    "kaldirilan": [
+     "bolge",
+     "bolge_konumu"
+    ]
+   }
+  },
+  {
+   "ad": "yalnız yazılış değişir, konum kalır",
+   "kayit": {
+    "kayit_id": "k_market01",
+    "revizyon": 20,
+    "tur": "gorev",
+    "baslik": "Süt al",
+    "hatirlatmalar": [],
+    "ornekler": [],
+    "durum": "acik",
+    "taslak": false,
+    "silindi": false,
+    "elle_alanlar": [],
+    "kaynak": {
+     "yol": "elle",
+     "tur_kokeni": "insan",
+     "device_id": "cihaz_AjandaOrnek01"
+    },
+    "olusturma_ms": 1795000000000,
+    "guncelleme_ms": 1795000000000,
+    "bolge": "Market",
+    "bolge_konumu": {
+     "enlem_e6": 41008240,
+     "boylam_e6": 28978359,
+     "yaricap_m": 150
+    }
+   },
+   "degisiklik": {
+    "bolge": "MARKET"
+   },
+   "yazar": {
+    "yol": "elle",
+    "tur_kokeni": "insan"
+   },
+   "beklenen": {
+    "uygulanan": [
+     "bolge"
+    ],
+    "korunan": [],
+    "elle_alanlar": [
+     "bolge"
+    ],
+    "bolge": "MARKET",
+    "bolge_konumu": {
+     "enlem_e6": 41008240,
+     "boylam_e6": 28978359,
+     "yaricap_m": 150
+    }
+   }
+  },
+  {
+   "ad": "Türkçe büyük harf aynı yer",
+   "kayit": {
+    "kayit_id": "k_market01",
+    "revizyon": 20,
+    "tur": "gorev",
+    "baslik": "Süt al",
+    "hatirlatmalar": [],
+    "ornekler": [],
+    "durum": "acik",
+    "taslak": false,
+    "silindi": false,
+    "elle_alanlar": [],
+    "kaynak": {
+     "yol": "elle",
+     "tur_kokeni": "insan",
+     "device_id": "cihaz_AjandaOrnek01"
+    },
+    "olusturma_ms": 1795000000000,
+    "guncelleme_ms": 1795000000000,
+    "bolge": "iş yeri",
+    "bolge_konumu": {
+     "enlem_e6": 41008240,
+     "boylam_e6": 28978359,
+     "yaricap_m": 150
+    }
+   },
+   "degisiklik": {
+    "bolge": "İŞ YERİ"
+   },
+   "yazar": {
+    "yol": "elle",
+    "tur_kokeni": "insan"
+   },
+   "beklenen": {
+    "uygulanan": [
+     "bolge"
+    ],
+    "korunan": [],
+    "elle_alanlar": [
+     "bolge"
+    ],
+    "bolge_konumu": {
+     "enlem_e6": 41008240,
+     "boylam_e6": 28978359,
+     "yaricap_m": 150
+    }
+   }
+  },
+  {
+   "ad": "I ile i aynı yer değil",
+   "kayit": {
+    "kayit_id": "k_market01",
+    "revizyon": 20,
+    "tur": "gorev",
+    "baslik": "Süt al",
+    "hatirlatmalar": [],
+    "ornekler": [],
+    "durum": "acik",
+    "taslak": false,
+    "silindi": false,
+    "elle_alanlar": [],
+    "kaynak": {
+     "yol": "elle",
+     "tur_kokeni": "insan",
+     "device_id": "cihaz_AjandaOrnek01"
+    },
+    "olusturma_ms": 1795000000000,
+    "guncelleme_ms": 1795000000000,
+    "bolge": "ilik",
+    "bolge_konumu": {
+     "enlem_e6": 41008240,
+     "boylam_e6": 28978359,
+     "yaricap_m": 150
+    }
+   },
+   "degisiklik": {
+    "bolge": "ILIK"
+   },
+   "yazar": {
+    "yol": "elle",
+    "tur_kokeni": "insan"
+   },
+   "beklenen": {
+    "uygulanan": [
+     "bolge",
+     "bolge_konumu"
+    ],
+    "korunan": [],
+    "elle_alanlar": [
+     "bolge",
+     "bolge_konumu"
+    ],
+    "kaldirilan": [
+     "bolge_konumu"
+    ]
+   }
+  },
+  {
+   "ad": "aynı değişiklikte yeni konum",
+   "kayit": {
+    "kayit_id": "k_market01",
+    "revizyon": 20,
+    "tur": "gorev",
+    "baslik": "Süt al",
+    "hatirlatmalar": [],
+    "ornekler": [],
+    "durum": "acik",
+    "taslak": false,
+    "silindi": false,
+    "elle_alanlar": [],
+    "kaynak": {
+     "yol": "elle",
+     "tur_kokeni": "insan",
+     "device_id": "cihaz_AjandaOrnek01"
+    },
+    "olusturma_ms": 1795000000000,
+    "guncelleme_ms": 1795000000000,
+    "bolge": "Market",
+    "bolge_konumu": {
+     "enlem_e6": 41008240,
+     "boylam_e6": 28978359,
+     "yaricap_m": 150
+    }
+   },
+   "degisiklik": {
+    "bolge": "Bakkal",
+    "bolge_konumu": {
+     "enlem_e6": 40990000,
+     "boylam_e6": 29020000,
+     "yaricap_m": 300
+    }
+   },
+   "yazar": {
+    "yol": "elle",
+    "tur_kokeni": "insan"
+   },
+   "beklenen": {
+    "uygulanan": [
+     "bolge",
+     "bolge_konumu"
+    ],
+    "korunan": [],
+    "elle_alanlar": [
+     "bolge",
+     "bolge_konumu"
+    ],
+    "bolge_konumu": {
+     "enlem_e6": 40990000,
+     "boylam_e6": 29020000,
+     "yaricap_m": 300
+    }
+   }
+  },
+  {
+   "ad": "aynı değişiklikte aynı konum verilirse kalır",
+   "kayit": {
+    "kayit_id": "k_market01",
+    "revizyon": 20,
+    "tur": "gorev",
+    "baslik": "Süt al",
+    "hatirlatmalar": [],
+    "ornekler": [],
+    "durum": "acik",
+    "taslak": false,
+    "silindi": false,
+    "elle_alanlar": [],
+    "kaynak": {
+     "yol": "elle",
+     "tur_kokeni": "insan",
+     "device_id": "cihaz_AjandaOrnek01"
+    },
+    "olusturma_ms": 1795000000000,
+    "guncelleme_ms": 1795000000000,
+    "bolge": "Market",
+    "bolge_konumu": {
+     "enlem_e6": 41008240,
+     "boylam_e6": 28978359,
+     "yaricap_m": 150
+    }
+   },
+   "degisiklik": {
+    "bolge": "Bakkal",
+    "bolge_konumu": {
+     "enlem_e6": 41008240,
+     "boylam_e6": 28978359,
+     "yaricap_m": 150
+    }
+   },
+   "yazar": {
+    "yol": "elle",
+    "tur_kokeni": "insan"
+   },
+   "beklenen": {
+    "uygulanan": [
+     "bolge"
+    ],
+    "korunan": [],
+    "elle_alanlar": [
+     "bolge"
+    ],
+    "bolge_konumu": {
+     "enlem_e6": 41008240,
+     "boylam_e6": 28978359,
+     "yaricap_m": 150
+    }
+   }
+  },
+  {
+   "ad": "konumsuz kayıtta bölge değişir",
+   "kayit": {
+    "kayit_id": "k_market01",
+    "revizyon": 20,
+    "tur": "gorev",
+    "baslik": "Süt al",
+    "hatirlatmalar": [],
+    "ornekler": [],
+    "durum": "acik",
+    "taslak": false,
+    "silindi": false,
+    "elle_alanlar": [],
+    "kaynak": {
+     "yol": "elle",
+     "tur_kokeni": "insan",
+     "device_id": "cihaz_AjandaOrnek01"
+    },
+    "olusturma_ms": 1795000000000,
+    "guncelleme_ms": 1795000000000,
+    "bolge": "Market"
+   },
+   "degisiklik": {
+    "bolge": "Bakkal"
+   },
+   "yazar": {
+    "yol": "elle",
+    "tur_kokeni": "insan"
+   },
+   "beklenen": {
+    "uygulanan": [
+     "bolge"
+    ],
+    "korunan": [],
+    "elle_alanlar": [
+     "bolge"
+    ]
+   }
+  },
+  {
+   "ad": "bölgesiz kayda bölge ve konum",
+   "kayit": {
+    "kayit_id": "k_market01",
+    "revizyon": 20,
+    "tur": "gorev",
+    "baslik": "Süt al",
+    "hatirlatmalar": [],
+    "ornekler": [],
+    "durum": "acik",
+    "taslak": false,
+    "silindi": false,
+    "elle_alanlar": [],
+    "kaynak": {
+     "yol": "elle",
+     "tur_kokeni": "insan",
+     "device_id": "cihaz_AjandaOrnek01"
+    },
+    "olusturma_ms": 1795000000000,
+    "guncelleme_ms": 1795000000000
+   },
+   "degisiklik": {
+    "bolge": "Market",
+    "bolge_konumu": {
+     "enlem_e6": 41008240,
+     "boylam_e6": 28978359,
+     "yaricap_m": 150
+    }
+   },
+   "yazar": {
+    "yol": "elle",
+    "tur_kokeni": "insan"
+   },
+   "beklenen": {
+    "uygulanan": [
+     "bolge",
+     "bolge_konumu"
+    ],
+    "korunan": [],
+    "elle_alanlar": [
+     "bolge",
+     "bolge_konumu"
+    ],
+    "bolge_konumu": {
+     "enlem_e6": 41008240,
+     "boylam_e6": 28978359,
+     "yaricap_m": 150
+    }
+   }
+  },
+  {
+   "ad": "otomasyon korunmayan konumu düşürür",
+   "kayit": {
+    "kayit_id": "k_market01",
+    "revizyon": 20,
+    "tur": "gorev",
+    "baslik": "Süt al",
+    "hatirlatmalar": [],
+    "ornekler": [],
+    "durum": "acik",
+    "taslak": false,
+    "silindi": false,
+    "elle_alanlar": [],
+    "kaynak": {
+     "yol": "elle",
+     "tur_kokeni": "insan",
+     "device_id": "cihaz_AjandaOrnek01"
+    },
+    "olusturma_ms": 1795000000000,
+    "guncelleme_ms": 1795000000000,
+    "bolge": "Market",
+    "bolge_konumu": {
+     "enlem_e6": 41008240,
+     "boylam_e6": 28978359,
+     "yaricap_m": 150
+    }
+   },
+   "degisiklik": {
+    "bolge": "Bakkal"
+   },
+   "yazar": {
+    "yol": "sohbet_araci",
+    "tur_kokeni": "sentetik"
+   },
+   "beklenen": {
+    "uygulanan": [
+     "bolge",
+     "bolge_konumu"
+    ],
+    "korunan": [],
+    "elle_alanlar": [],
+    "kaldirilan": [
+     "bolge_konumu"
+    ]
+   }
+  },
+  {
+   "ad": "otomasyon korunan konumu düşüremez: bölge de korunur",
+   "kayit": {
+    "kayit_id": "k_market01",
+    "revizyon": 20,
+    "tur": "gorev",
+    "baslik": "Süt al",
+    "hatirlatmalar": [],
+    "ornekler": [],
+    "durum": "acik",
+    "taslak": false,
+    "silindi": false,
+    "elle_alanlar": [
+     "bolge_konumu"
+    ],
+    "kaynak": {
+     "yol": "elle",
+     "tur_kokeni": "insan",
+     "device_id": "cihaz_AjandaOrnek01"
+    },
+    "olusturma_ms": 1795000000000,
+    "guncelleme_ms": 1795000000000,
+    "bolge": "Market",
+    "bolge_konumu": {
+     "enlem_e6": 41008240,
+     "boylam_e6": 28978359,
+     "yaricap_m": 150
+    }
+   },
+   "degisiklik": {
+    "bolge": "Bakkal",
+    "baslik": "Ekmek al"
+   },
+   "yazar": {
+    "yol": "sohbet_araci",
+    "tur_kokeni": "sentetik"
+   },
+   "beklenen": {
+    "uygulanan": [
+     "baslik"
+    ],
+    "korunan": [
+     "bolge"
+    ],
+    "elle_alanlar": [
+     "bolge_konumu"
+    ],
+    "bolge": "Market",
+    "bolge_konumu": {
+     "enlem_e6": 41008240,
+     "boylam_e6": 28978359,
+     "yaricap_m": 150
+    }
+   }
+  },
+  {
+   "ad": "otomasyon korunan konumda yazılış değiştirebilir",
+   "kayit": {
+    "kayit_id": "k_market01",
+    "revizyon": 20,
+    "tur": "gorev",
+    "baslik": "Süt al",
+    "hatirlatmalar": [],
+    "ornekler": [],
+    "durum": "acik",
+    "taslak": false,
+    "silindi": false,
+    "elle_alanlar": [
+     "bolge_konumu"
+    ],
+    "kaynak": {
+     "yol": "elle",
+     "tur_kokeni": "insan",
+     "device_id": "cihaz_AjandaOrnek01"
+    },
+    "olusturma_ms": 1795000000000,
+    "guncelleme_ms": 1795000000000,
+    "bolge": "Market",
+    "bolge_konumu": {
+     "enlem_e6": 41008240,
+     "boylam_e6": 28978359,
+     "yaricap_m": 150
+    }
+   },
+   "degisiklik": {
+    "bolge": "market"
+   },
+   "yazar": {
+    "yol": "sohbet_araci",
+    "tur_kokeni": "sentetik"
+   },
+   "beklenen": {
+    "uygulanan": [
+     "bolge"
+    ],
+    "korunan": [],
+    "elle_alanlar": [
+     "bolge_konumu"
+    ],
+    "bolge": "market",
+    "bolge_konumu": {
+     "enlem_e6": 41008240,
+     "boylam_e6": 28978359,
+     "yaricap_m": 150
+    }
+   }
+  },
+  {
+   "ad": "otomasyon korunan bölgeyi değiştiremez",
+   "kayit": {
+    "kayit_id": "k_market01",
+    "revizyon": 20,
+    "tur": "gorev",
+    "baslik": "Süt al",
+    "hatirlatmalar": [],
+    "ornekler": [],
+    "durum": "acik",
+    "taslak": false,
+    "silindi": false,
+    "elle_alanlar": [
+     "bolge"
+    ],
+    "kaynak": {
+     "yol": "elle",
+     "tur_kokeni": "insan",
+     "device_id": "cihaz_AjandaOrnek01"
+    },
+    "olusturma_ms": 1795000000000,
+    "guncelleme_ms": 1795000000000,
+    "bolge": "Market",
+    "bolge_konumu": {
+     "enlem_e6": 41008240,
+     "boylam_e6": 28978359,
+     "yaricap_m": 150
+    }
+   },
+   "degisiklik": {
+    "bolge": "Bakkal"
+   },
+   "yazar": {
+    "yol": "sohbet_araci",
+    "tur_kokeni": "sentetik"
+   },
+   "beklenen": {
+    "uygulanan": [],
+    "korunan": [
+     "bolge"
+    ],
+    "elle_alanlar": [
+     "bolge"
+    ],
+    "bolge": "Market",
+    "bolge_konumu": {
+     "enlem_e6": 41008240,
+     "boylam_e6": 28978359,
+     "yaricap_m": 150
+    }
+   }
+  },
+  {
+   "ad": "insan turundaki araç emirdir",
+   "kayit": {
+    "kayit_id": "k_market01",
+    "revizyon": 20,
+    "tur": "gorev",
+    "baslik": "Süt al",
+    "hatirlatmalar": [],
+    "ornekler": [],
+    "durum": "acik",
+    "taslak": false,
+    "silindi": false,
+    "elle_alanlar": [
+     "bolge_konumu"
+    ],
+    "kaynak": {
+     "yol": "elle",
+     "tur_kokeni": "insan",
+     "device_id": "cihaz_AjandaOrnek01"
+    },
+    "olusturma_ms": 1795000000000,
+    "guncelleme_ms": 1795000000000,
+    "bolge": "Market",
+    "bolge_konumu": {
+     "enlem_e6": 41008240,
+     "boylam_e6": 28978359,
+     "yaricap_m": 150
+    }
+   },
+   "degisiklik": {
+    "bolge": "Bakkal"
+   },
+   "yazar": {
+    "yol": "sohbet_araci",
+    "tur_kokeni": "insan"
+   },
+   "beklenen": {
+    "uygulanan": [
+     "bolge",
+     "bolge_konumu"
+    ],
+    "korunan": [],
+    "elle_alanlar": [
+     "bolge",
+     "bolge_konumu"
+    ],
+    "kaldirilan": [
+     "bolge_konumu"
+    ]
+   }
+  },
+  {
+   "ad": "varış bölgeyle kalmaz ama kendiliğinden kalkmaz",
+   "kayit": {
+    "kayit_id": "k_market01",
+    "revizyon": 20,
+    "tur": "gorev",
+    "baslik": "Süt al",
+    "hatirlatmalar": [],
+    "ornekler": [],
+    "durum": "acik",
+    "taslak": false,
+    "silindi": false,
+    "elle_alanlar": [],
+    "kaynak": {
+     "yol": "elle",
+     "tur_kokeni": "insan",
+     "device_id": "cihaz_AjandaOrnek01"
+    },
+    "olusturma_ms": 1795000000000,
+    "guncelleme_ms": 1795000000000,
+    "bolge": "Market",
+    "bolge_konumu": {
+     "enlem_e6": 41008240,
+     "boylam_e6": 28978359,
+     "yaricap_m": 150
+    },
+    "varis": {}
+   },
+   "degisiklik": {
+    "bolge": "Bakkal"
+   },
+   "yazar": {
+    "yol": "elle",
+    "tur_kokeni": "insan"
+   },
+   "beklenen": {
+    "uygulanan": [
+     "bolge",
+     "bolge_konumu"
+    ],
+    "korunan": [],
+    "elle_alanlar": [
+     "bolge",
+     "bolge_konumu"
+    ],
+    "kaldirilan": [
+     "bolge_konumu"
+    ],
+    "varis": {}
+   }
+  },
+  {
+   "ad": "v3 alanları birleşir",
+   "kayit": {
+    "kayit_id": "k_market01",
+    "revizyon": 20,
+    "tur": "gorev",
+    "baslik": "Süt al",
+    "hatirlatmalar": [],
+    "ornekler": [],
+    "durum": "acik",
+    "taslak": false,
+    "silindi": false,
+    "elle_alanlar": [
+     "baslik"
+    ],
+    "kaynak": {
+     "yol": "elle",
+     "tur_kokeni": "insan",
+     "device_id": "cihaz_AjandaOrnek01"
+    },
+    "olusturma_ms": 1795000000000,
+    "guncelleme_ms": 1795000000000
+   },
+   "degisiklik": {
+    "simge": "market",
+    "baglantilar": [
+     {
+      "url": "https://a.example"
+     }
+    ],
+    "ekler": [
+     {
+      "ek_id": "ek_01",
+      "mime": "image/jpeg",
+      "bayt": 182044,
+      "genislik": 1600,
+      "yukseklik": 1200,
+      "ozet": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+      "kapak": true,
+      "olusturma_ms": 1795000000000
+     }
+    ]
+   },
+   "yazar": {
+    "yol": "elle",
+    "tur_kokeni": "insan"
+   },
+   "beklenen": {
+    "uygulanan": [
+     "simge",
+     "baglantilar",
+     "ekler"
+    ],
+    "korunan": [],
+    "elle_alanlar": [
+     "baslik",
+     "simge",
+     "baglantilar",
+     "ekler"
+    ]
+   }
+  },
+  {
+   "ad": "aynı bağlantı listesi atlanır",
+   "kayit": {
+    "kayit_id": "k_market01",
+    "revizyon": 20,
+    "tur": "gorev",
+    "baslik": "Süt al",
+    "hatirlatmalar": [],
+    "ornekler": [],
+    "durum": "acik",
+    "taslak": false,
+    "silindi": false,
+    "elle_alanlar": [],
+    "kaynak": {
+     "yol": "elle",
+     "tur_kokeni": "insan",
+     "device_id": "cihaz_AjandaOrnek01"
+    },
+    "olusturma_ms": 1795000000000,
+    "guncelleme_ms": 1795000000000,
+    "baglantilar": [
+     {
+      "url": "https://a.example",
+      "baslik": "A"
+     }
+    ]
+   },
+   "degisiklik": {
+    "baglantilar": [
+     {
+      "baslik": "A",
+      "url": "https://a.example"
+     }
+    ]
+   },
+   "yazar": {
+    "yol": "elle",
+    "tur_kokeni": "insan"
+   },
+   "beklenen": {
+    "uygulanan": [],
+    "korunan": [],
+    "elle_alanlar": []
+   }
+  }
+ ],
+ "yetenek_kesisimi": [
+  {
+   "ad": "istenmedi",
+   "istenen": null,
+   "sunulan": [
+    "ek_yedegi"
+   ],
+   "kesisim": []
+  },
+  {
+   "ad": "boş istek",
+   "istenen": [],
+   "sunulan": [
+    "ek_yedegi"
+   ],
+   "kesisim": []
+  },
+  {
+   "ad": "ortak",
+   "istenen": [
+    "ek_yedegi",
+    "ice_aktar"
+   ],
+   "sunulan": [
+    "eslesme_birak",
+    "ice_aktar"
+   ],
+   "kesisim": [
+    "ice_aktar"
+   ]
+  },
+  {
+   "ad": "bilinmeyen yok sayılır",
+   "istenen": [
+    "gelecek_yetenek",
+    "ek_yedegi"
+   ],
+   "sunulan": [
+    "ek_yedegi"
+   ],
+   "kesisim": [
+    "ek_yedegi"
+   ]
+  },
+  {
+   "ad": "servis hiçbirini sunmuyor",
+   "istenen": [
+    "ek_yedegi"
+   ],
+   "sunulan": [],
+   "kesisim": []
+  },
+  {
+   "ad": "sıra servisten değil kanonik",
+   "istenen": [
+    "ice_aktar",
+    "ek_yedegi",
+    "eslesme_birak"
+   ],
+   "sunulan": [
+    "ice_aktar",
+    "eslesme_birak",
+    "ek_yedegi"
+   ],
+   "kesisim": [
+    "ek_yedegi",
+    "eslesme_birak",
+    "ice_aktar"
+   ]
+  },
+  {
+   "ad": "tekrar tekilleşir",
+   "istenen": [
+    "ek_yedegi",
+    "ek_yedegi"
+   ],
+   "sunulan": [
+    "ek_yedegi"
+   ],
+   "kesisim": [
+    "ek_yedegi"
+   ]
+  }
+ ],
+ "asagi_uyarlama": [
+  {
+   "ad": "welcome yetenekler çıkar",
+   "girdi": {
+    "v": 3,
+    "type": "welcome",
+    "depo_id": "depo_01",
+    "bas_rev": 20,
+    "tam": false,
+    "server_time_ms": 1795000100000,
+    "yetenekler": [
+     "ek_yedegi"
+    ]
+   },
+   "cikti": {
+    "v": 2,
+    "type": "welcome",
+    "depo_id": "depo_01",
+    "bas_rev": 20,
+    "tam": false,
+    "server_time_ms": 1795000100000
+   },
+   "surum": 2
+  },
+  {
+   "ad": "kayit v3 alanları ve alan adları çıkar",
+   "girdi": {
+    "v": 3,
+    "type": "kayit",
+    "kayit": {
+     "kayit_id": "k_market01",
+     "revizyon": 20,
+     "tur": "gorev",
+     "baslik": "Süt al",
+     "hatirlatmalar": [],
+     "ornekler": [],
+     "durum": "acik",
+     "taslak": false,
+     "silindi": false,
+     "elle_alanlar": [
+      "tur",
+      "baslik",
+      "durum",
+      "simge",
+      "bolge",
+      "bolge_konumu",
+      "varis",
+      "baglantilar",
+      "ekler"
+     ],
+     "kaynak": {
+      "yol": "elle",
+      "tur_kokeni": "insan",
+      "device_id": "cihaz_AjandaOrnek01"
+     },
+     "olusturma_ms": 1795000000000,
+     "guncelleme_ms": 1795000000000,
+     "simge": "market",
+     "bolge": "Market",
+     "bolge_konumu": {
+      "enlem_e6": 41008240,
+      "boylam_e6": 28978359,
+      "yaricap_m": 150
+     },
+     "varis": {},
+     "baglantilar": [
+      {
+       "url": "https://ornek.com.tr/kampanya?id=42#ust",
+       "baslik": "Kampanya"
+      },
+      {
+       "url": "http://ornek.org"
+      }
+     ],
+     "ekler": [
+      {
+       "ek_id": "ek_01",
+       "mime": "image/jpeg",
+       "bayt": 182044,
+       "genislik": 1600,
+       "yukseklik": 1200,
+       "ozet": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+       "kapak": true,
+       "olusturma_ms": 1795000000000
+      },
+      {
+       "ek_id": "ek_02",
+       "mime": "image/jpeg",
+       "bayt": 4194304,
+       "ozet": "60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752",
+       "olusturma_ms": 1795000000000
+      }
+     ]
+    }
+   },
+   "cikti": {
+    "v": 2,
+    "type": "kayit",
+    "kayit": {
+     "kayit_id": "k_market01",
+     "revizyon": 20,
+     "tur": "gorev",
+     "baslik": "Süt al",
+     "hatirlatmalar": [],
+     "ornekler": [],
+     "durum": "acik",
+     "taslak": false,
+     "silindi": false,
+     "elle_alanlar": [
+      "tur",
+      "baslik",
+      "durum"
+     ],
+     "kaynak": {
+      "yol": "elle",
+      "tur_kokeni": "insan",
+      "device_id": "cihaz_AjandaOrnek01"
+     },
+     "olusturma_ms": 1795000000000,
+     "guncelleme_ms": 1795000000000
+    }
+   },
+   "surum": 2
+  },
+  {
+   "ad": "kayit v3 alansız değişmez",
+   "girdi": {
+    "v": 3,
+    "type": "kayit",
+    "kayit": {
+     "kayit_id": "k_market01",
+     "revizyon": 20,
+     "tur": "gorev",
+     "baslik": "Süt al",
+     "hatirlatmalar": [],
+     "ornekler": [],
+     "durum": "acik",
+     "taslak": false,
+     "silindi": false,
+     "elle_alanlar": [
+      "baslik"
+     ],
+     "kaynak": {
+      "yol": "elle",
+      "tur_kokeni": "insan",
+      "device_id": "cihaz_AjandaOrnek01"
+     },
+     "olusturma_ms": 1795000000000,
+     "guncelleme_ms": 1795000000000
+    }
+   },
+   "cikti": {
+    "v": 2,
+    "type": "kayit",
+    "kayit": {
+     "kayit_id": "k_market01",
+     "revizyon": 20,
+     "tur": "gorev",
+     "baslik": "Süt al",
+     "hatirlatmalar": [],
+     "ornekler": [],
+     "durum": "acik",
+     "taslak": false,
+     "silindi": false,
+     "elle_alanlar": [
+      "baslik"
+     ],
+     "kaynak": {
+      "yol": "elle",
+      "tur_kokeni": "insan",
+      "device_id": "cihaz_AjandaOrnek01"
+     },
+     "olusturma_ms": 1795000000000,
+     "guncelleme_ms": 1795000000000
+    }
+   },
+   "surum": 2
+  },
+  {
+   "ad": "islem_sonucu korunan v3 alanları süzülür",
+   "girdi": {
+    "v": 3,
+    "type": "islem_sonucu",
+    "islem_id": "i1",
+    "ok": true,
+    "kayit_id": "k1",
+    "rev": 4,
+    "korunan_alanlar": [
+     "baslik",
+     "bolge",
+     "ekler"
+    ]
+   },
+   "cikti": {
+    "v": 2,
+    "type": "islem_sonucu",
+    "islem_id": "i1",
+    "ok": true,
+    "kayit_id": "k1",
+    "rev": 4,
+    "korunan_alanlar": [
+     "baslik"
+    ]
+   },
+   "surum": 2
+  },
+  {
+   "ad": "islem_sonucu yalnız v3 alanı korunduysa boş liste",
+   "girdi": {
+    "v": 3,
+    "type": "islem_sonucu",
+    "islem_id": "i1",
+    "ok": true,
+    "kayit_id": "k1",
+    "korunan_alanlar": [
+     "simge"
+    ]
+   },
+   "cikti": {
+    "v": 2,
+    "type": "islem_sonucu",
+    "islem_id": "i1",
+    "ok": true,
+    "kayit_id": "k1",
+    "korunan_alanlar": []
+   },
+   "surum": 2
+  },
+  {
+   "ad": "islem_sonucu ret aynen",
+   "girdi": {
+    "v": 3,
+    "type": "islem_sonucu",
+    "islem_id": "i1",
+    "ok": false,
+    "code": "tutarsiz_kayit"
+   },
+   "cikti": {
+    "v": 2,
+    "type": "islem_sonucu",
+    "islem_id": "i1",
+    "ok": false,
+    "code": "tutarsiz_kayit"
+   },
+   "surum": 2
+  },
+  {
+   "ad": "gecmis parçalarından v3 alanları çıkar",
+   "girdi": {
+    "v": 3,
+    "type": "gecmis",
+    "istek_id": "g1",
+    "kayit_id": "k1",
+    "girdiler": [
+     {
+      "rev": 5,
+      "ts_ms": 1795000200000,
+      "islem": "guncelle",
+      "yazar": {
+       "yol": "sohbet_araci",
+       "tur_kokeni": "sentetik",
+       "sohbet_id": "ana"
+      },
+      "korunan_alanlar": [
+       "baslik",
+       "bolge_konumu"
+      ],
+      "onceki": {
+       "baslik": "A",
+       "bolge": "Market",
+       "bolge_konumu": {
+        "enlem_e6": 41008240,
+        "boylam_e6": 28978359,
+        "yaricap_m": 150
+       }
+      },
+      "sonraki": {
+       "baslik": "B",
+       "bolge": "Bakkal",
+       "bolge_konumu": null
+      }
+     },
+     {
+      "rev": 4,
+      "ts_ms": 1795000100000,
+      "islem": "guncelle",
+      "yazar": {
+       "yol": "elle",
+       "tur_kokeni": "insan",
+       "device_id": "cihaz_AjandaOrnek01"
+      },
+      "onceki": {
+       "simge": null
+      },
+      "sonraki": {
+       "simge": "market"
+      }
+     }
+    ],
+    "devami": true
+   },
+   "cikti": {
+    "v": 2,
+    "type": "gecmis",
+    "istek_id": "g1",
+    "kayit_id": "k1",
+    "girdiler": [
+     {
+      "rev": 5,
+      "ts_ms": 1795000200000,
+      "islem": "guncelle",
+      "yazar": {
+       "yol": "sohbet_araci",
+       "tur_kokeni": "sentetik",
+       "sohbet_id": "ana"
+      },
+      "korunan_alanlar": [
+       "baslik"
+      ],
+      "onceki": {
+       "baslik": "A"
+      },
+      "sonraki": {
+       "baslik": "B"
+      }
+     },
+     {
+      "rev": 4,
+      "ts_ms": 1795000100000,
+      "islem": "guncelle",
+      "yazar": {
+       "yol": "elle",
+       "tur_kokeni": "insan",
+       "device_id": "cihaz_AjandaOrnek01"
+      },
+      "onceki": {},
+      "sonraki": {}
+     }
+    ],
+    "devami": true
+   },
+   "surum": 2
+  },
+  {
+   "ad": "esitlendi kimlik",
+   "girdi": {
+    "v": 3,
+    "type": "esitlendi",
+    "rev": 7
+   },
+   "cikti": {
+    "v": 2,
+    "type": "esitlendi",
+    "rev": 7
+   },
+   "surum": 2
+  },
+  {
+   "ad": "error kimlik",
+   "girdi": {
+    "v": 3,
+    "type": "error",
+    "code": "zaman_asimi",
+    "detail": "x"
+   },
+   "cikti": {
+    "v": 2,
+    "type": "error",
+    "code": "zaman_asimi",
+    "detail": "x"
+   },
+   "surum": 2
+  },
+  {
+   "ad": "ek_durum v2'de yok",
+   "girdi": {
+    "v": 3,
+    "type": "ek_durum",
+    "ek_id": "ek_01",
+    "alinan": 0,
+    "tamam": false
+   },
+   "cikti": null,
+   "surum": 2
+  },
+  {
+   "ad": "ek_parca v2'de yok",
+   "girdi": {
+    "v": 3,
+    "type": "ek_parca",
+    "ek_id": "ek_01",
+    "ofset": 0,
+    "veri": "QQ=="
+   },
+   "cikti": null,
+   "surum": 2
+  },
+  {
+   "ad": "ek_ret v2'de yok",
+   "girdi": {
+    "v": 3,
+    "type": "ek_ret",
+    "ek_id": "ek_01",
+    "code": "ek_yok"
+   },
+   "cikti": null,
+   "surum": 2
+  }
+ ]
+}

@@ -98,10 +98,16 @@ fn v1_yerel_veritabani_yeni_kodla_acilir_veri_kuyruk_eslesme_korunur_alarmlar_ye
     assert!(h.alarm.iptal_edilen.lock().unwrap().is_empty());
     assert!(h.alarm.kacirilan.lock().unwrap().is_empty(), "yükseltme bildirim yağmuru yaratmaz");
 
-    // Aynı eşleşmeyle v2 servisine bağlanır: artımlı telafi (aynı depo, aynı iz), kuyruk aynı islem_id ile gider.
+    // Aynı eşleşmeyle v3 servisine (küme [2, 3]) v3'te bağlanır, kuyruk aynı islem_id ile gider. Kopya v2
+    // bağlantıyla dolmuştu: v3'teki ilk bağlantı bir kez tam telafi ister (v3 alanları değişmemiş kayıtlarda
+    // da gelsin); sonraki bağlantı artımlıdır (aynı depo, aynı iz). v2 servisle artımlı:
+    // `v2_serviste_v2ye_duser_v4_serviste_uygulama_eski`.
     pc_fikstur_gibi(&mut h);
     h.baglan();
     assert!(h.canli_mi());
+    assert_eq!(h.pc.son_welcome_tam, Some(true), "v2 döneminin kopyası: v3'te ilk bağlantı tam");
+    h.kopar();
+    h.baglan();
     assert_eq!(h.pc.son_welcome_tam, Some(false), "son_rev ve iz korunduğu için tam telafi gerekmedi");
     assert_eq!(h.pc.uygulanan, vec![KUYRUK_ISLEMI.to_string()]);
     let d = h.c.baglanti_durumu().unwrap();
@@ -120,17 +126,20 @@ fn v1_yerel_veritabani_yeni_kodla_acilir_veri_kuyruk_eslesme_korunur_alarmlar_ye
     assert!(!h.alarm.kurulular().contains(&("k_araba".to_string(), bugun(9, 0) + 3 * GUN)));
 }
 
-/// Çerçeve gelir, motor kapattırır, kabuk kapanışı (koduyla) bildirir.
-fn uyusmazlik_yasat(h: &mut Hat, cerceve: Option<&str>, kod: Option<i32>) {
+/// Elle bir bağlantı: telefonun açılış çerçevesi alınır, verilen çerçeve gelir (motor kapattırır), kabuk
+/// kapanışı (koduyla) bildirir. Döner: açılış çerçevesinin `v`'si.
+fn uyusmazlik_yasat(h: &mut Hat, cerceve: Option<&str>, kod: Option<i32>) -> i64 {
     let tasima = Arc::new(SahteTasima::default());
     let nesil = h.c.baglanti_acildi(tasima.clone()).unwrap();
     let hello = tasima.giden.lock().unwrap().pop().unwrap();
-    assert!(hello.starts_with("{") && hello.contains("\"v\":2") && hello.contains("\"type\":\"hello\""), "{hello}");
+    let v: serde_json::Value = serde_json::from_str(&hello).unwrap();
+    assert_eq!(v["type"], "hello", "{hello}");
     if let Some(c) = cerceve {
         h.c.cerceve_geldi(nesil, c.into()).unwrap();
         assert!(tasima.kapatildi.lock().unwrap().is_some(), "uyuşmazlıkta bağlantı kapatılır");
     }
     h.c.baglanti_kapandi(nesil, kod).unwrap();
+    v["v"].as_i64().unwrap()
 }
 
 #[test]
@@ -139,8 +148,8 @@ fn surum_uyusmazligi_temiz_durumdur_yonu_bilinir_veri_dokunulmaz() {
     h.c.alarmlari_yeniden_kur(YenidenKurmaNedeni::PaketGuncellendi).unwrap();
     let alarmlar = h.alarm.kurulular();
 
-    // Eski (v1) servis: v1 error çerçevesi ve 1002.
-    uyusmazlik_yasat(&mut h, Some(r#"{"v":1,"type":"error","code":"protokol_uyumsuz"}"#), Some(1002));
+    // Eski (v1) servis: v1 error çerçevesi ve 1002. Uygulama v3 ile açar; ret sürümü kümenin altında.
+    assert_eq!(uyusmazlik_yasat(&mut h, Some(r#"{"v":1,"type":"error","code":"protokol_uyumsuz"}"#), Some(1002)), 3);
     let d = h.c.baglanti_durumu().unwrap();
     assert_eq!(d.asama, BaglantiAsamasi::Kopuk);
     assert_eq!((d.son_hata, d.surum_uyusmazligi), (Some(AjandaKanalHatasi::ProtokolUyumsuz), Some(SurumUyusmazligi::ServisEski)));
@@ -148,29 +157,67 @@ fn surum_uyusmazligi_temiz_durumdur_yonu_bilinir_veri_dokunulmaz() {
     assert_eq!(h.alarm.kurulular(), alarmlar);
     assert!(h.c.kayit("k_araba".into()).unwrap().is_some());
 
-    // Daha yeni (v3) servis: uygulama eski.
-    uyusmazlik_yasat(&mut h, Some(r#"{"v":3,"type":"esitlendi","rev":1}"#), None);
+    // Daha yeni (v4, v2 ve v3'ü bırakmış) servis: ret sürümü kümenin üstünde, uygulama eski. Ret olmayan v4
+    // çerçevesi de aynı yönü verir.
+    assert_eq!(uyusmazlik_yasat(&mut h, Some(r#"{"v":4,"type":"error","code":"protokol_uyumsuz"}"#), Some(1002)), 3);
+    assert_eq!(h.c.baglanti_durumu().unwrap().surum_uyusmazligi, Some(SurumUyusmazligi::UygulamaEski));
+    uyusmazlik_yasat(&mut h, Some(r#"{"v":4,"type":"esitlendi","rev":1}"#), None);
     assert_eq!(h.c.baglanti_durumu().unwrap().surum_uyusmazligi, Some(SurumUyusmazligi::UygulamaEski));
 
-    // Yalnız kapanış 1002 (çerçevesiz): yön bilinmez ama durum yine uyuşmazlık.
-    uyusmazlik_yasat(&mut h, None, Some(1002));
+    // Yalnız kapanış 1002 (çerçevesiz): v3'te bir alt sürüme düşülür (durum yazılmaz, eski uyuşmazlık
+    // kalkar: kabuk kısa beklemeyle yeniden bağlanır); v2'de de aynısı olursa yön bilinmez.
+    assert_eq!(uyusmazlik_yasat(&mut h, None, Some(1002)), 3);
+    let d = h.c.baglanti_durumu().unwrap();
+    assert_eq!((d.son_hata, d.surum_uyusmazligi), (None, None), "geri düşüş uyuşmazlık değildir");
+    assert_eq!(uyusmazlik_yasat(&mut h, None, Some(1002)), 2, "düşülen sürümle açılır");
     let d = h.c.baglanti_durumu().unwrap();
     assert_eq!((d.son_hata, d.surum_uyusmazligi), (Some(AjandaKanalHatasi::ProtokolUyumsuz), Some(SurumUyusmazligi::Bilinmiyor)));
 
     // Sıradan kopma (kod yok, 1000) uyuşmazlık değildir ve öncekini silmez; başka kanal hatası siler.
     uyusmazlik_yasat(&mut h, None, Some(1000));
     assert_eq!(h.c.baglanti_durumu().unwrap().surum_uyusmazligi, Some(SurumUyusmazligi::Bilinmiyor));
-    uyusmazlik_yasat(&mut h, Some(r#"{"v":2,"type":"error","code":"cihaz_bilinmiyor"}"#), None);
+    assert_eq!(uyusmazlik_yasat(&mut h, Some(r#"{"v":2,"type":"error","code":"cihaz_bilinmiyor"}"#), None), 2);
     let d = h.c.baglanti_durumu().unwrap();
     assert_eq!((d.son_hata, d.surum_uyusmazligi), (Some(AjandaKanalHatasi::CihazBilinmiyor), None));
 
-    // Güncellenen servis: aynı eşleşmeyle bağlanır, durum temizlenir, kuyruk gider.
+    // v3 servis (küme [2, 3]): düşülen sürüm bir saat sonra unutulur, uygulama yeniden v3 ile açar ve v3'te
+    // bağlanır; durum temizlenir, kuyruk gider.
     uyusmazlik_yasat(&mut h, Some(r#"{"v":1,"type":"error","code":"protokol_uyumsuz"}"#), Some(1002));
+    h.zaman.ilerlet(SAAT + 1);
     pc_fikstur_gibi(&mut h);
     h.baglan();
     let d = h.c.baglanti_durumu().unwrap();
     assert_eq!((d.asama, d.son_hata, d.surum_uyusmazligi, d.kuyrukta), (BaglantiAsamasi::Canli, None, None, 0));
+    assert_eq!(h.pc.acilislar, vec![("hello", 3)]);
     assert_eq!(h.pc.uygulanan, vec![KUYRUK_ISLEMI.to_string()]);
+}
+
+/// Aynı fikstür, servis yalnız v2 (bugün canlıdaki servis) ya da yalnız v4: v2 servise ilk deneme kısa bir
+/// retle biter, ikinci bağlantı v2'de eşitlenir; v4 serviste uygulama eski, hiçbir şey değişmez.
+#[test]
+fn v2_serviste_v2ye_duser_v4_serviste_uygulama_eski() {
+    let mut h = Hat::sql_depoyla("uyusmazlik-v2-v4", V1_DEPO);
+    pc_fikstur_gibi(&mut h);
+    h.pc.surum_kumesi(&[2]);
+    h.baglan();
+    let d = h.c.baglanti_durumu().unwrap();
+    assert_eq!((d.asama, d.son_hata, d.surum_uyusmazligi, d.kuyrukta), (BaglantiAsamasi::Kopuk, None, None, 1));
+    h.baglan();
+    assert!(h.canli_mi());
+    assert_eq!(h.pc.acilislar, vec![("hello", 3), ("hello", 2)]);
+    assert_eq!(h.pc.son_welcome_tam, Some(false), "v2 bağlantı bugünkü gibi artımlı");
+    assert_eq!(h.pc.uygulanan, vec![KUYRUK_ISLEMI.to_string()]);
+
+    let mut h = Hat::sql_depoyla("uyusmazlik-v4", V1_DEPO);
+    pc_fikstur_gibi(&mut h);
+    h.pc.surum_kumesi(&[4]);
+    let alarmlar = h.alarm.kurulular();
+    h.baglan();
+    let d = h.c.baglanti_durumu().unwrap();
+    assert_eq!((d.asama, d.son_hata, d.surum_uyusmazligi), (BaglantiAsamasi::Kopuk, Some(AjandaKanalHatasi::ProtokolUyumsuz), Some(SurumUyusmazligi::UygulamaEski)));
+    assert_eq!((d.kuyrukta, d.ret_listesinde), (1, 0));
+    assert_eq!(h.alarm.kurulular(), alarmlar);
+    assert_eq!(h.pc.acilislar, vec![("hello", 3)], "uygulama eskiyken alt sürüm denenmez");
 }
 
 const V3_ESLESMESIZ: &str = include_str!("veri/v3_eslesmesiz_kuyruklu.sql");
@@ -332,11 +379,12 @@ fn goc_4_zengin_eslesmis_kurulumda_yalniz_kip_satiri_eklenir_baglanti_artimli() 
     assert_eq!((d.kuyrukta, d.ret_listesinde), (2, 1), "onaylanmış satır sayılmaz");
     assert_eq!(h.c.kayit("k_disci".into()).unwrap().unwrap().kayit.baslik, "Dişçi (kontrol)");
 
-    // Aynı servis: artımlı; yollanmış satır kopma sayılıp yeniden gider, onaylanmışın kaydı gelir.
+    // Aynı servis: v2 döneminin kopyası olduğundan v3'teki ilk bağlantı tam (sonraki artımlı); yollanmış
+    // satır kopma sayılıp yeniden gider, onaylanmışın kaydı gelir.
     pc_zengin_gibi(&mut h);
     h.baglan();
     assert!(h.canli_mi());
-    assert_eq!(h.pc.son_welcome_tam, Some(false));
+    assert_eq!(h.pc.son_welcome_tam, Some(true));
     let d = h.c.baglanti_durumu().unwrap();
     assert_eq!((h.c.kip().unwrap(), d.kuyrukta, d.ret_listesinde), (CalismaKipi::Bagli, 0, 1));
     for id in ["k_disci", "k_spor", "k_eski", "k_kargo", ZENGIN_FATURA] {

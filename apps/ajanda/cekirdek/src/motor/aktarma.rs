@@ -141,7 +141,7 @@ use crate::model::json::{GUVENLI_TAM_SAYI, Nesne, SemaHatasi, Sonuc, Yazici, hat
 use crate::model::kayit::zaman_ms_oku;
 use crate::model::metin::opak_id_oku;
 use crate::model::{KayitGovdesi, KuyrukRetNedeni};
-use crate::model::sinirlar::AJANDA_SURUMU;
+use crate::model::surum::AJANDA_SURUMU;
 use crate::model::sinirlar::ajanda::{
     ACIKLAMA, ALINTI, BASLIK, HATIRLATMA_ADET, KAYIT_ADET, ORNEK_ADET, SAAT_DILIMI, TEKIL_ANAHTAR, ZAMAN_IFADESI,
 };

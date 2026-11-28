@@ -84,6 +84,52 @@ impl Depo {
             .optional()?)
     }
 
+    /// `sira`'dan sonraki ilk onaylanmamış satır (`kuyruk_basi`'nın devamı: `motor/kanal.rs` ertelenmiş
+    /// satırları bütün kuyruğu okumadan atlar).
+    pub fn kuyruk_sonraki(&self, sira: i64) -> Result<Option<KuyrukSatiri>, CekirdekHatasi> {
+        Ok(self
+            .baglanti
+            .query_row(
+                &format!("SELECT {KUYRUK_SUTUNLARI} FROM kuyruk WHERE bekledigi_rev IS NULL AND sira > ?1 ORDER BY sira LIMIT 1"),
+                [sira],
+                kuyruk_satiri,
+            )
+            .optional()?)
+    }
+
+    /// Onaylanmamış satırlarından birinin metninde `parcalar`'dan biri geçen kayıtların bütün satırları, sırayla
+    /// (`motor/kanal.rs` erteleme sayımının SQL'deki ön süzgeci: erteleme yalnız v3 alan adı geçen kayıtlarda
+    /// olabilir; öteki satırlar okunmaz). `parcalar` boşsa boş.
+    pub fn kuyruk_parcali_kayitlar(&self, parcalar: &[&str]) -> Result<Vec<KuyrukSatiri>, CekirdekHatasi> {
+        if parcalar.is_empty() {
+            return Ok(Vec::new());
+        }
+        let kosul = (1..=parcalar.len()).map(|i| format!("instr(islem_json, ?{i}) > 0")).collect::<Vec<_>>().join(" OR ");
+        self.kuyruk_sorgusu(
+            &format!("kayit_id IN (SELECT kayit_id FROM kuyruk WHERE bekledigi_rev IS NULL AND ({kosul}))"),
+            rusqlite::params_from_iter(parcalar),
+        )
+    }
+
+    /// `sira`'ya dek (dahil) onaylanmamış satırların izi: (adet, deneme toplamı, işlem metinlerinin bayt
+    /// toplamı). `motor/kanal.rs` atlama önbelleği bununla öneki okumadan doğrular (satır silinmiş, eklenmiş
+    /// ya da yerinde değişmişse iz değişir).
+    pub fn kuyruk_onek_izi(&self, sira: i64) -> Result<(i64, i64, i64), CekirdekHatasi> {
+        Ok(self.baglanti.query_row(
+            "SELECT COUNT(*), COALESCE(SUM(deneme), 0), COALESCE(SUM(length(CAST(islem_json AS BLOB))), 0)
+             FROM kuyruk WHERE bekledigi_rev IS NULL AND sira <= ?1",
+            [sira],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )?)
+    }
+
+    /// Satırın işlemini yerinde yazar (sıra, kimlik, deneme, an aynı): ertelenen v3 kalanı atılan karma satır
+    /// v2 kısmına döner (`motor/kanal.rs` `ertelenenleri_at`).
+    pub fn kuyruk_islemini_yaz(&self, sira: i64, islem_json: &str) -> Result<(), CekirdekHatasi> {
+        self.baglanti.execute("UPDATE kuyruk SET islem_json = ?2 WHERE sira = ?1", params![sira, islem_json])?;
+        Ok(())
+    }
+
     /// Yollanmış, sonucu beklenen satırlar (en çok bir tane olmalı; süreç ölümünden kalan da dahil).
     pub fn kuyruk_yollananlar(&self) -> Result<Vec<KuyrukSatiri>, CekirdekHatasi> {
         self.kuyruk_sorgusu("yollandi != 0", [])

@@ -9,7 +9,7 @@ import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, afterEach, describe, it } from "node:test";
-import { AJANDA_PC_SINIRLARI, PC_TUR_KARARLARI, PROTOKOL_SURUMU, pcKancaYukariCoz, sha256Hex } from "@eren/protocol";
+import { AJANDA_BORU_ADI, AJANDA_PC_SINIRLARI, PC_TUR_KARARLARI, PROTOKOL_SURUMU, pcKancaYukariCoz, sha256Hex } from "@eren/protocol";
 import { depoAc } from "../src/depo.ts";
 import type { CihazYonetimliDepo } from "../src/depo.ts";
 import {
@@ -302,7 +302,12 @@ const ARAC_GIRDISI = {
 };
 
 /** Sahte servis: el sıkışma ve tek yanıt; `davranis` ile susar ya da reddeder. */
-function sahteServis(davranis: "yanit" | "sus" | "ret" | "yok" = "yanit") {
+/**
+ * `eski`: H1 öncesi servis gibi davranır (460ccbf^ `ajanda-kopru-sunucu.ts` `kancaIsle`): girdisi eski
+ * çerçevenin alanları dışında alan taşıyan isteği geçersiz çerçeve sayar, yanıt vermeden bağlantıyı kapatır
+ * (`pc_arac` işleyicisi çağrılmaz, tasdik kaydedilmez).
+ */
+function sahteServis(davranis: "yanit" | "sus" | "ret" | "yok" | "eski" = "yanit") {
   const gelen: unknown[] = [];
   let baglanti = 0;
   let kapanan = 0;
@@ -313,6 +318,12 @@ function sahteServis(davranis: "yanit" | "sus" | "ret" | "yok" = "yanit") {
     const kapanislar: Array<() => void> = [];
     let kapali = false;
     const ilet = (m: unknown) => setImmediate(() => !kapali && dinleyiciler.forEach((f) => f(JSON.stringify(m))));
+    const baglantiyiKapat = (): void => {
+      if (kapali) return;
+      kapali = true;
+      kapanan++;
+      kapanislar.forEach((f) => f());
+    };
     return {
       satirYaz: (s) => {
         const m = JSON.parse(s) as Record<string, unknown>;
@@ -321,16 +332,18 @@ function sahteServis(davranis: "yanit" | "sus" | "ret" | "yok" = "yanit") {
         if (m["type"] === "kopru_hello") {
           ilet(davranis === "ret" ? { v: PROTOKOL_SURUMU, type: "kopru_ret", code: "jeton_gecersiz" } : { v: PROTOKOL_SURUMU, type: "kopru_welcome", rol: "pc_kanca" });
         } else if (m["type"] === "istek") {
+          if (davranis === "eski") {
+            const eskiAlanlar = new Set(["oturum_id", "istem_id", "arac_cagri_id", "alt_agent", "etkilesimsiz"]);
+            if (Object.keys(m["girdi"] as object).some((k) => !eskiAlanlar.has(k))) {
+              setImmediate(() => baglantiyiKapat());
+              return;
+            }
+          }
           assert.ok(pcKancaYukariCoz(s).ok, `kanca isteği şemaya uymuyor: ${s}`);
           ilet({ v: PROTOKOL_SURUMU, type: "yanit", istek_id: m["istek_id"], ok: true, sonuc: {} });
         }
       },
-      kapat: () => {
-        if (kapali) return;
-        kapali = true;
-        kapanan++;
-        kapanislar.forEach((f) => f());
-      },
+      kapat: () => baglantiyiKapat(),
       satirDinle: (f) => void dinleyiciler.push(f),
       kapanisDinle: (f) => void kapanislar.push(f),
     };
@@ -455,6 +468,134 @@ describe("kanca gövdesi (kanca.ts)", () => {
         assert.equal(r.stdout, "", JSON.stringify(argv));
       }
     } finally {
+      rmSync(veri, { recursive: true, force: true });
+    }
+  });
+
+  it("yükseltme penceresi: eski servis yeni çerçeveyi kapatınca kanca sessiz ve hemen çıkar, eski çerçeveye düşmez", async () => {
+    // Junction çevrildi, servis henüz eski (kur.ts sırası). Eski servis isteği geçersiz sayıp kapatır;
+    // kanca yeniden denemez, eski çerçeve de yollamaz (T5'siz tasdik üretmez), süre sınırını beklemez.
+    const s = sahteServis("eski");
+    const t0 = Date.now();
+    assert.equal(await pcKancaCalistir(JSON.stringify(ARAC_GIRDISI), bag(s, { surec: "3060" })), undefined);
+    assert.ok(Date.now() - t0 < AJANDA_PC_SINIRLARI.KANCA_SURESI_MS, "kanca süre sınırını bekledi");
+    assert.deepEqual(
+      s.gelen.map((m) => (m as Record<string, unknown>)["type"]),
+      ["kopru_hello", "istek"],
+    );
+    assert.ok(Object.hasOwn(girdisi(s) as object, "cagri_id"), "yalnız normalize çerçeve gider");
+    assert.deepEqual(s.sayilar(), { baglanti: 1, kapanan: 1 });
+  });
+
+  it("gerçek süreç: surec_id kanca ortamının CLAUDE_PID'inden okunur; canlı boru ve canlı kök kullanılmaz", async () => {
+    const { spawn } = await import("node:child_process");
+    const { createServer } = await import("node:net");
+    const { writeFileSync } = await import("node:fs");
+    const { fileURLToPath, pathToFileURL } = await import("node:url");
+    const { randomBytes } = await import("node:crypto");
+    // Yalıtım: (1) veri kökü geçici dizin, içinde sahte anahtar (canlı kökün anahtarı okunmaz); (2) ön
+    // yükleme `node:net` `connect`'ini kanca yüklenmeden değiştirir: yalnız AJANDA_BORU_ADI'na bağlanma
+    // isteği kabul edilir ve bu testin benzersiz borusuna yönlendirilir, başka her hedef atar; her deneme
+    // dosyaya yazılır. Canlı boruya giden yol yoktur; sahte anahtar canlı serviste zaten geçersizdir.
+    const veri = mkdtempSync(join(tmpdir(), "eren-kanca-pid-"));
+    const anahtar = "t".repeat(43);
+    writeFileSync(ajandaPcAnahtarYolu(veri), anahtar);
+    const boru = `\\\\.\\pipe\\eren-kanca-test-${process.pid}-${randomBytes(6).toString("hex")}`;
+    assert.notEqual(boru, AJANDA_BORU_ADI);
+    const denemeler = join(veri, "baglanti-denemeleri.txt");
+    const onYukleme = join(veri, "on-yukleme.mjs");
+    writeFileSync(
+      onYukleme,
+      [
+        'import { appendFileSync } from "node:fs";',
+        'import { syncBuiltinESMExports } from "node:module";',
+        'import net from "node:net";',
+        "const asil = net.connect;",
+        `const CANLI = ${JSON.stringify(AJANDA_BORU_ADI)};`,
+        "const hedef = process.env.EREN_KANCA_TEST_BORUSU;",
+        "const yonlendir = (yol, ...geri) => {",
+        "  appendFileSync(process.env.EREN_KANCA_TEST_DENEMELER, String(yol) + '\\n');",
+        "  if (yol !== CANLI || typeof hedef !== 'string' || hedef === CANLI) throw new Error('beklenmeyen bağlantı');",
+        "  return asil.call(net, hedef, ...geri);",
+        "};",
+        "net.connect = yonlendir;",
+        "net.createConnection = yonlendir;",
+        "syncBuiltinESMExports();",
+      ].join("\n"),
+    );
+    const gelen: Array<Record<string, unknown>> = [];
+    let baglanti = 0;
+    const sunucu = createServer((soket) => {
+      baglanti++;
+      soket.setEncoding("utf8");
+      let tampon = "";
+      soket.on("error", () => {});
+      soket.on("data", (p: string) => {
+        tampon += p;
+        for (let i = tampon.indexOf("\n"); i !== -1; i = tampon.indexOf("\n")) {
+          const satir = tampon.slice(0, i);
+          tampon = tampon.slice(i + 1);
+          assert.ok(pcKancaYukariCoz(satir).ok, satir);
+          const m = JSON.parse(satir) as Record<string, unknown>;
+          gelen.push(m);
+          if (m["type"] === "kopru_hello") soket.write(`${JSON.stringify({ v: PROTOKOL_SURUMU, type: "kopru_welcome", rol: "pc_kanca" })}\n`);
+          else soket.write(`${JSON.stringify({ v: PROTOKOL_SURUMU, type: "yanit", istek_id: m["istek_id"], ok: true, sonuc: {} })}\n`);
+        }
+      });
+    });
+    await new Promise<void>((r, h) => {
+      sunucu.once("error", h);
+      sunucu.listen(boru, () => r());
+    });
+    const betik = fileURLToPath(new URL("../src/kanca.ts", import.meta.url));
+    const calistir = (ek: Record<string, string>) =>
+      new Promise<{ status: number | null; stdout: string; stderr: string }>((coz, reddet) => {
+        const c = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", "--import", pathToFileURL(onYukleme).href, betik, "arac"], {
+          env: {
+            // Test Claude Code içinde koşabilir: CLAUDE_PID, giriş ve veri kökü yalnız buradan gelsin.
+            ...Object.fromEntries(
+              Object.entries(process.env).filter(([k]) => !/^(EREN_KIT_(DATA_DIR|SERVIS_OTURUMU)|CLAUDE_PID|CLAUDE_CODE_ENTRYPOINT)$/i.test(k)),
+            ),
+            EREN_KIT_DATA_DIR: veri,
+            CLAUDE_CODE_ENTRYPOINT: "cli",
+            EREN_KANCA_TEST_BORUSU: boru,
+            EREN_KANCA_TEST_DENEMELER: denemeler,
+            ...ek,
+          },
+          windowsHide: true,
+        });
+        let stdout = "";
+        let stderr = "";
+        c.stdout.setEncoding("utf8").on("data", (d: string) => (stdout += d));
+        c.stderr.setEncoding("utf8").on("data", (d: string) => (stderr += d));
+        const zaman = setTimeout(() => c.kill(), 10_000);
+        c.once("error", reddet);
+        c.once("close", (status) => {
+          clearTimeout(zaman);
+          coz({ status, stdout, stderr });
+        });
+        c.stdin.end(JSON.stringify(ARAC_GIRDISI));
+      });
+    try {
+      const r = await calistir({ CLAUDE_PID: "4242" });
+      assert.deepEqual([r.status, r.stdout, r.stderr], [0, "", ""]);
+      assert.equal(baglanti, 1);
+      assert.deepEqual(gelen.map((m) => m["type"]), ["kopru_hello", "istek"]);
+      assert.equal(gelen[0]?.["jeton"], anahtar, "anahtar geçici kökten okunmadı");
+      assert.equal((gelen[1]?.["girdi"] as Record<string, unknown>)["surec_id"], "4242");
+      // CLAUDE_PID yoksa alan çerçeveye hiç girmez; geçersiz biçimli değer de girmez.
+      for (const ek of [{}, { CLAUDE_PID: "boş luk" }] as Array<Record<string, string>>) {
+        gelen.length = 0;
+        const r2 = await calistir(ek);
+        assert.equal(r2.status, 0);
+        assert.deepEqual(gelen.map((m) => m["type"]), ["kopru_hello", "istek"], JSON.stringify(ek));
+        assert.equal(Object.hasOwn(gelen[1]?.["girdi"] as object, "surec_id"), false, JSON.stringify(ek));
+      }
+      // Kanca yalnız AJANDA_BORU_ADI'na bağlanmayı denedi (üç süreç, üç deneme) ve hepsi yönlendirildi.
+      assert.deepEqual(readFileSync(denemeler, "utf8").trim().split("\n"), [AJANDA_BORU_ADI, AJANDA_BORU_ADI, AJANDA_BORU_ADI]);
+      assert.equal(baglanti, 3);
+    } finally {
+      await new Promise<void>((r) => sunucu.close(() => r()));
       rmSync(veri, { recursive: true, force: true });
     }
   });

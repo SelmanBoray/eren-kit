@@ -12,8 +12,11 @@
  * - `ajandaKimlikImzaMetni`, `AJANDA_KANAL_HATALARI` → "imza", her ret çerçevesi şemadan geçer.
  * - Telafi: son gönderilen revizyon, telafi sürerken doğanı sıraya alma, aynı revizyonu iki kez yollamama → "telafi", "canlı".
  * - Sürüm uyumu (YOL-HARITASI 3.3, D5): bağlantı sürümünün sabitlenmesi, aşağı uyarlama ve denetim, ret
- *   sürümü, v2 bayt eşitliği → "sürüm uyumu". Bugün `AJANDA_SURUMLERI = [2]`: iki desteklenen sürüm
- *   arasındaki sabitleme farkı ancak v3 eklenince ayrı sınanabilir.
+ *   sürümü, v2 bayt eşitliği → "sürüm uyumu". Bugün `AJANDA_SURUMLERI = [2, 3]`.
+ * - Sürüm 3: yetenek müzakeresi (`welcome.yetenekler` = kesişim) → "yetenekler". v3 alanlarının gerçek
+ *   ajanda modülüyle uçtan uca yolu ve v2/v3 istemcinin birlikte çalışması `ajanda-surum-v3.test.ts`'te.
+ * - Ek yedeği (`ek_yedegi`): ek çerçevelerinin kapısı (v3, kimlik sonrası, `esitlendi` sonrası, kesişim)
+ *   → "ek yedeği". Gerçek ek modülü, bellekte sahte disk; çekirdeğin ayrıntısı `ajanda-ekler.test.ts`'te.
  */
 import assert from "node:assert/strict";
 import { createPublicKey, generateKeyPairSync, sign as imzaAt, timingSafeEqual, verify as imzaDogrula } from "node:crypto";
@@ -39,7 +42,9 @@ import {
 import type { AjandaGecmisGirdisi, AjandaIslem, CihazKapsami, ServisBilgisi } from "@eren/protocol";
 import { depoAc } from "../src/depo.ts";
 import { gatewayKur } from "../src/gateway.ts";
-import { AJANDA_TELAFI_SAYFASI } from "../src/gateway-ajanda.ts";
+import { AJANDA_EK_SINIRLARI, ajandaEkleriKur } from "../src/ajanda-ekler.ts";
+import type { AjandaEkleriBagimliliklari } from "../src/ajanda-ekler.ts";
+import { AJANDA_TELAFI_SAYFASI, ajandaEkliYuz } from "../src/gateway-ajanda.ts";
 import type {
   AjandaGatewayYuzu,
   AjandaGecmisSayfasi,
@@ -51,6 +56,7 @@ import type {
   WsYolu,
 } from "../src/sozlesme.ts";
 import { veriyoluKur } from "../src/veriyolu.ts";
+import { sahteEkDiski } from "./sahte-ek-diski.ts";
 import { sahteGunluk, sahteRastgele, sahteWs, sahteZaman } from "./sahte.ts";
 import type { SahteWsBaglantisi } from "./sahte.ts";
 
@@ -68,7 +74,7 @@ const NONCE = Buffer.alloc(32, 7).toString("base64");
 const KOD = "ABC123XYZ9";
 const SERVIS: ServisBilgisi = { surum: "abc123def456", baslangic_ms: BASLANGIC - 5000 };
 const DEPO_ID = "depo-1";
-/** Ajanda kanalının sürümü: elle yazılan `/ajanda` çerçeveleri bununla (v2). */
+/** Ajanda kanalının sürümü: elle yazılan `/ajanda` çerçeveleri bununla (en yeni sürüm, bugün v3). */
 const AV: number = AJANDA_SURUMU;
 
 type Msg = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -170,6 +176,8 @@ function sahteAjanda(veriyolu: Veriyolu) {
     sayfaKancasi: null as null | ((n: number) => void),
     islemAtar: false,
     gecmisAtar: false,
+    /** Servisin sunduğu yetenekler (`AjandaGatewayYuzu.yetenekler`). */
+    yetenekler: [] as string[],
   };
   /** Yeni revizyonla yazar; `yayinla` yanlışsa yayınlamaz (yayını kaçırılan revizyon). */
   const yaz = (k: AjandaKaydi, yayinla = true): AjandaKaydi => {
@@ -180,6 +188,9 @@ function sahteAjanda(veriyolu: Veriyolu) {
     return yeni;
   };
   const yuz: AjandaGatewayYuzu = {
+    get yetenekler() {
+      return ayar.yetenekler;
+    },
     karsila: (h) => {
       c.karsila.push(h);
       const tam = h.depo_id !== DEPO_ID || h.son_rev > bas || (h.son_rev > 0 && h.son_rev_izi === undefined);
@@ -281,25 +292,31 @@ interface AjandaElSikma {
   anahtar?: KeyObject;
   /** Verilirse imzalanan metin bu (sunucu nonce'uyla). */
   metin?: (server_nonce: string) => string;
+  /** Bağlantının sürümü (varsayılan `AV`). */
+  v?: number;
+  /** v3 `hello.yetenekler` (verilmezse alan yok). */
+  yetenekler?: string[];
 }
 
 async function ajandaElSik(ist: Ist, s: AjandaElSikma = {}): Promise<Msg | null> {
   const device_id = s.device_id ?? "aj-1";
+  const v = s.v ?? AV;
   await ist.gonder({
-    v: AV,
+    v,
     type: "hello",
     device_id,
     son_rev: s.son_rev ?? 0,
     ...(s.depo_id !== undefined && { depo_id: s.depo_id }),
     ...(s.son_rev_izi !== undefined && { son_rev_izi: s.son_rev_izi }),
     client_nonce: NONCE,
+    ...(s.yetenekler !== undefined && { yetenekler: s.yetenekler }),
   });
   const ch = ist.tur("auth_challenge")[0];
   if (ch === undefined || ist.kapali) return null;
   const metin =
     s.metin?.(ch.server_nonce) ??
     ajandaKimlikImzaMetni({ rol: "telefon", device_id, client_nonce: NONCE, server_nonce: ch.server_nonce });
-  await ist.gonder({ v: AV, type: "auth_response", signature: imzala(s.anahtar ?? AJ1.private, metin) });
+  await ist.gonder({ v, type: "auth_response", signature: imzala(s.anahtar ?? AJ1.private, metin) });
   return ch;
 }
 
@@ -336,7 +353,7 @@ afterEach(() => {
   for (const f of acilacaklar.splice(0)) f();
 });
 
-function kur(sec: { ajanda?: boolean } = {}) {
+function kur(sec: { ajanda?: boolean; ekler?: boolean } = {}) {
   const zaman = sahteZaman(BASLANGIC);
   const gunluk = sahteGunluk();
   const veriyolu = veriyoluKur({ gunluk });
@@ -345,6 +362,22 @@ function kur(sec: { ajanda?: boolean } = {}) {
   const ws = sahteWs();
   const anahtar = gercekAnahtar();
   const aj = sahteAjanda(veriyolu);
+  // Ek yedeği: gerçek ek modülü, bellekte sahte disk; kayıtlar sahte ajandanınkiler.
+  const ekDiski = sahteEkDiski(() => zaman.saat.simdiMs());
+  const ekler =
+    sec.ekler === true
+      ? ajandaEkleriKur({
+          disk: ekDiski.disk,
+          depo: {
+            ajandaKaydiGetir: (id: string) => aj.kayitlar.get(id) ?? null,
+            ajandaKayitlari: () => [...aj.kayitlar.values()].filter((k) => !k.silindi),
+            ajandaBasRev: () => Math.max(0, ...[...aj.kayitlar.values()].map((k) => k.revizyon)),
+          } as unknown as AjandaEkleriBagimliliklari["depo"],
+          saat: zaman.saat,
+          zamanlayici: zaman.zamanlayici,
+          gunluk,
+        })
+      : null;
   const insanMesajlari: Msg[] = [];
   const baglananlar: Msg[] = [];
   const b = {
@@ -378,7 +411,7 @@ function kur(sec: { ajanda?: boolean } = {}) {
       gecmisiSil: () => ({ ok: false, code: "ic_hata" }),
       sohbetiSil: () => ({ ok: false, code: "ic_hata" }),
     },
-    ...(sec.ajanda !== false && { ajanda: aj.yuz }),
+    ...(sec.ajanda !== false && { ajanda: ekler === null ? aj.yuz : ajandaEkliYuz(aj.yuz, ekler) }),
     cihaz: { baglandi: (x: Msg) => baglananlar.push(x) },
     kilit: { durum: () => ({ tur: "serbest" }) },
     sistem: { tailscaleAdresi: () => SUNUCU_IP },
@@ -399,6 +432,8 @@ function kur(sec: { ajanda?: boolean } = {}) {
     ws,
     anahtar,
     aj,
+    ekDiski,
+    ekler,
     gw,
     insanMesajlari,
     baglananlar,
@@ -764,7 +799,8 @@ describe("gateway /ajanda: el sıkışma ve çözücü", () => {
     assert.equal(ist.c.kimlikDogrulandiMi, true);
     assert.deepEqual(o.aj.c.karsila, [{ son_rev: 1, depo_id: DEPO_ID, son_rev_izi: { kayit_id: "k1", guncelleme_ms: BASLANGIC + 1 } }]);
     const w = ist.tur("welcome")[0]!;
-    assert.deepEqual(w, { v: AV, type: "welcome", depo_id: DEPO_ID, bas_rev: 1, tam: false, server_time_ms: BASLANGIC });
+    // v3: `yetenekler` her zaman yollanır (istenmediyse boş kesişim).
+    assert.deepEqual(w, { v: AV, type: "welcome", depo_id: DEPO_ID, bas_rev: 1, tam: false, server_time_ms: BASLANGIC, yetenekler: [] });
     assert.deepEqual(ist.turler, ["auth_challenge", "welcome", "esitlendi"]);
     assert.ok(o.gunluk.bul("kimlik_tamam").some((g) => g.alanlar?.["kanal"] === "ajanda"));
   });
@@ -814,16 +850,16 @@ describe("gateway /ajanda: el sıkışma ve çözücü", () => {
     const V1_HELLO = { v: 1, type: "hello", device_id: "aj-1", son_rev: 3, depo_id: DEPO_ID, client_nonce: NONCE };
     const V1_PAIR = { v: 1, type: "pair_request", kod: KOD, public_key: AJ1.acik, platform: "android" };
 
-    it("v1 hello: {v:2, error, protokol_uyumsuz} + 1002; sınama yok, karsila yok, kayıt gitmez", async () => {
-      assert.equal(AV, 2);
+    it("v1 hello: {v:AJANDA_SURUMU, error, protokol_uyumsuz} + 1002; sınama yok, karsila yok, kayıt gitmez", async () => {
       const o = await hazir();
       o.aj.yaz(kayitUret("k1", 0));
       const ist = o.bagla("/ajanda");
       await ist.gonder(V1_HELLO);
       reddedildi(ist, "protokol_uyumsuz");
-      assert.deepEqual(ist.kare, [{ v: 2, type: "error", code: "protokol_uyumsuz" }]);
+      // Ret sürümü servisin en yüksek sürümüdür (D5 kuralı; v3'le 2'den 3'e çıktı).
+      assert.deepEqual(ist.kare, [{ v: AJANDA_SURUMU, type: "error", code: "protokol_uyumsuz" }]);
       assert.equal(ist.c.kapanis?.kod, 1002);
-      assert.equal(ajandaAsagiCoz(ist.c.gonderilenler[0]!).ok, true, "giden çerçeve v2 şemasından geçer");
+      assert.equal(ajandaAsagiCoz(ist.c.gonderilenler[0]!).ok, true, "giden çerçeve kendi sürümünün şemasından geçer");
       assert.equal(o.anahtar.imzalananlar.length, 0);
       assert.equal(o.aj.c.karsila.length, 0);
       assert.equal(ist.tur("kayit").length, 0);
@@ -840,7 +876,7 @@ describe("gateway /ajanda: el sıkışma ve çözücü", () => {
       const sayi = o.depo.eslesmeler().length;
       const ist = o.bagla("/ajanda", IP3);
       await ist.gonder(V1_PAIR);
-      assert.deepEqual(ist.kare, [{ v: 2, type: "error", code: "protokol_uyumsuz" }]);
+      assert.deepEqual(ist.kare, [{ v: AJANDA_SURUMU, type: "error", code: "protokol_uyumsuz" }]);
       assert.equal(ist.c.kapanis?.kod, 1002);
       assert.deepEqual(o.depo.eslestirmeOku(), once);
       assert.equal(o.depo.eslesmeler().length, sayi);
@@ -1247,10 +1283,87 @@ describe("gateway /ajanda: kopma, kaldırma, kapanış", () => {
   });
 });
 
+describe("gateway /ajanda: yetenekler (v3 müzakere)", () => {
+  it("welcome.yetenekler = istenenlerle sunulanların kesişimi, kanonik sırada; bilinmeyen ad girmez", async () => {
+    const o = await hazir();
+    o.aj.ayar.yetenekler = ["eslesme_birak", "ice_aktar"];
+    const a = await o.ajandaGiris(IP1, { yetenekler: ["ek_yedegi", "ice_aktar", "zz_bilinmeyen"] });
+    assert.deepEqual(a.tur("welcome")[0]!.yetenekler, ["ice_aktar"]);
+    // İstemci hiç istemediyse boş; sunulan küme kendiliğinden ilan edilmez.
+    const b = await o.ajandaGiris(IP2, { device_id: "aj-2", anahtar: AJ2.private });
+    assert.deepEqual(b.tur("welcome")[0]!.yetenekler, []);
+  });
+
+  it("sunulan küme boşsa (ek modülü kurulmamış servis): ek_yedegi istense de kesişim boş", async () => {
+    const o = await hazir();
+    assert.deepEqual(o.aj.ayar.yetenekler, []);
+    const a = await o.ajandaGiris(IP1, { yetenekler: ["ek_yedegi"] });
+    assert.deepEqual(a.tur("welcome")[0]!.yetenekler, []);
+  });
+
+  it("v2 bağlantı: welcome'da yetenekler alanı yok (baytlar v2'nin); v2 hello yetenek taşıyamaz", async () => {
+    const o = await hazir();
+    o.aj.ayar.yetenekler = ["ice_aktar"];
+    const a = await o.ajandaGiris(IP1, { v: 2 });
+    const w = JSON.parse(a.c.gonderilenler[1]!) as Msg;
+    assert.equal(w.type, "welcome");
+    assert.equal(w.v, 2);
+    assert.equal("yetenekler" in w, false);
+    // v2 şeması katı: `yetenekler`'li v2 hello şema reddidir, sınama başlamaz.
+    const b = o.bagla("/ajanda", IP2);
+    await ajandaElSik(b, { device_id: "aj-2", anahtar: AJ2.private, v: 2, yetenekler: ["ice_aktar"] });
+    reddedildi(b, "gecersiz_mesaj");
+    assert.equal(JSON.parse(b.c.gonderilenler[0]!).v, 2);
+  });
+
+  it("kanonik olmayan hello.yetenekler (sırasız ya da tekrarlı) şema reddidir", async () => {
+    const o = await hazir();
+    for (const yetenekler of [["ice_aktar", "ek_yedegi"], ["ek_yedegi", "ek_yedegi"]]) {
+      const a = o.bagla("/ajanda");
+      await ajandaElSik(a, { yetenekler });
+      reddedildi(a, "gecersiz_mesaj");
+    }
+    assert.equal(o.anahtar.imzalananlar.length, 0);
+  });
+});
+
+describe("gateway /ajanda: v3 alan listeleri v2 bağlantıya süzülür", () => {
+  it("islem_sonucu.korunan_alanlar ve geçmişin korunan_alanlar'ı v2'de yalnız v2 alanları; v3'te tam", async () => {
+    const o = await hazir();
+    o.aj.yaz(kayitUret("k1", 0));
+    const korunan = ["baslik", "bolge", "bolge_konumu", "ekler"] as const;
+    o.aj.yuz.islemUygula = () => ({ ok: true, kayit_id: "k1", korunan_alanlar: [...korunan] });
+    const girdi: AjandaGecmisGirdisi = {
+      ...GECMIS_GIRDISI,
+      yazar: { yol: "arka_plan", tur_kokeni: "insan", sohbet_id: "ana" },
+      korunan_alanlar: [...korunan],
+      onceki: { baslik: "A", bolge: "Kadıköy", bolge_konumu: { enlem_e6: 1, boylam_e6: 2, yaricap_m: 100 } },
+      sonraki: { baslik: "B", bolge: null, bolge_konumu: null },
+    };
+    o.aj.yuz.gecmis = (kayit_id) => ({ kayit_id, girdiler: [girdi], devami: false });
+    const v2 = await o.ajandaGiris(IP1, { v: 2 });
+    const v3 = await o.ajandaGiris(IP2, { device_id: "aj-2", anahtar: AJ2.private });
+    for (const [ist, v] of [[v2, 2], [v3, AV]] as const) {
+      await ist.gonder({ v, type: "islem", islem_id: "i-1", islem: ekleIslemi("k9") });
+      await ist.gonder({ v, type: "gecmis_iste", istek_id: "g1", kayit_id: "k1" });
+    }
+    const son = (ist: Ist, t: string): Msg => JSON.parse(ist.c.gonderilenler.filter((m) => m.includes(`"type":"${t}"`)).at(-1)!) as Msg;
+    assert.deepEqual(son(v2, "islem_sonucu").korunan_alanlar, ["baslik"]);
+    assert.deepEqual(son(v3, "islem_sonucu").korunan_alanlar, [...korunan]);
+    const g2 = son(v2, "gecmis").girdiler[0] as Msg;
+    assert.deepEqual(g2.korunan_alanlar, ["baslik"]);
+    assert.deepEqual([g2.onceki, g2.sonraki], [{ baslik: "A" }, { baslik: "B" }]);
+    assert.deepEqual(son(v3, "gecmis").girdiler[0], girdi);
+    // Her giden çerçeve kendi bağlantısının sürümünün şemasından geçer.
+    for (const m of v2.c.gonderilenler) assert.ok(ajandaAsagiCoz(m, 2).ok, m);
+    for (const m of v3.c.gonderilenler) assert.ok(ajandaAsagiCoz(m, 3).ok, m);
+  });
+});
+
 describe("gateway /ajanda: sürüm uyumu (D5: bağlantı sürümü, aşağı uyarlama, ret sürümü)", () => {
   const EN_KUCUK = Math.min(...AJANDA_SURUMLERI);
   const EN_BUYUK = Math.max(...AJANDA_SURUMLERI);
-  /** Bugün v1 ve v3: kümenin hemen altı ve üstü. */
+  /** Bugün v1 ve v4: kümenin hemen altı ve üstü. */
   const DESTEKSIZ = [EN_KUCUK - 1, EN_BUYUK + 1];
   const UYUMSUZ = JSON.stringify({ v: AJANDA_SURUMU, type: "error", code: "protokol_uyumsuz" });
   /** Giden çerçeveler çözücüsüz (şemadan geçmeyen çerçeve de görünsün). */
@@ -1414,10 +1527,11 @@ describe("gateway /ajanda: sürüm uyumu (D5: bağlantı sürümü, aşağı uya
   it("bayt eşitliği: v2 istemcinin gördüğü baytlar D5 öncesiyle aynı (alan sırası dahil)", async () => {
     assert.ok((AJANDA_SURUMLERI as readonly number[]).includes(2));
     const o = await hazir();
-    // v1 uygulamasının reddi.
+    // v1 uygulamasının reddi. Tek değişen bayt: `protokol_uyumsuz`'un `v`'si servisin en yüksek sürümüdür
+    // (D5), v3 ile 2'den 3'e çıktı. Bu çerçeveyi v2 telefon görmez (yalnız v1 ya da desteksiz sürüm görür).
     const eski = o.bagla("/ajanda");
     await eski.gonder({ v: 1, type: "hello", device_id: "aj-1", son_rev: 0, client_nonce: NONCE });
-    assert.deepEqual(eski.c.gonderilenler, ['{"v":2,"type":"error","code":"protokol_uyumsuz"}']);
+    assert.deepEqual(eski.c.gonderilenler, [`{"v":${AJANDA_SURUMU},"type":"error","code":"protokol_uyumsuz"}`]);
     // Eşleştirme: başarı ve ret.
     o.pencereAc("ajanda");
     const p = o.bagla("/ajanda", IP3);
@@ -1454,5 +1568,155 @@ describe("gateway /ajanda: sürüm uyumu (D5: bağlantı sürümü, aşağı uya
       `{"v":2,"type":"gecmis","istek_id":"g1","kayit_id":"k1","girdiler":[${JSON.stringify(GECMIS_GIRDISI)}],"devami":true}`,
       '{"v":2,"type":"error","code":"yetkisiz"}',
     ]);
+  });
+});
+
+describe("gateway /ajanda: ek yedeği (ek_yedegi)", () => {
+  const VERI = Uint8Array.from({ length: 1000 }, (_, i) => (i * 7) & 0xff);
+  const OZET = sha256Hex(VERI);
+  const EK = { ek_id: "ek_1", mime: "image/jpeg", bayt: VERI.length, ozet: OZET, olusturma_ms: BASLANGIC };
+  const yukle = (v = AV, ozet = OZET) => ({ v, type: "ek_yukle", istek_id: "y1", kayit_id: "k1", ek_id: "ek_1", ozet, bayt: VERI.length });
+  const parca = { v: AV, type: "ek_parca", ek_id: "ek_1", ofset: 0, veri: Buffer.from(VERI).toString("base64") };
+  const iste = { v: AV, type: "ek_iste", istek_id: "i1", ek_id: "ek_1", ozet: OZET, ofset: 0 };
+
+  /** Ek modülü kurulu (ya da değil), sunulan küme `ek_yedegi`, k1 kaydı eki taşır. */
+  const ekli = async (sec: { ekler?: boolean } = {}): Promise<Ortam> => {
+    const o = await hazir({ ekler: sec.ekler ?? true });
+    o.aj.ayar.yetenekler = ["ek_yedegi"];
+    o.aj.yaz(kayitUret("k1", 0, { ekler: [EK] } as Partial<AjandaKaydi>));
+    return o;
+  };
+
+  const gonderBekle = async (o: Ortam, ist: Ist, m: object): Promise<void> => {
+    await ist.gonder(m);
+    await o.ekler?.bekle();
+    await bosalt();
+  };
+
+  it("v3, esitlendi sonrası, kesişimde ek_yedegi: yükleme ve indirme; ek_ret bağlantıyı kapatmaz", async () => {
+    const o = await ekli();
+    const a = await o.ajandaGiris(IP1, { yetenekler: ["ek_yedegi"] });
+    assert.deepEqual(a.tur("welcome")[0]!.yetenekler, ["ek_yedegi"]);
+    await gonderBekle(o, a, yukle());
+    await gonderBekle(o, a, parca);
+    assert.deepEqual(a.tur("ek_durum"), [
+      { v: AV, type: "ek_durum", ek_id: "ek_1", alinan: 0, tamam: false },
+      { v: AV, type: "ek_durum", ek_id: "ek_1", alinan: VERI.length, tamam: true },
+    ]);
+    assert.deepEqual(o.ekDiski.tamlar.get(OZET), VERI);
+    await gonderBekle(o, a, iste);
+    assert.deepEqual(a.tur("ek_parca").map((m) => Buffer.from(m.veri, "base64").length), [VERI.length]);
+    assert.deepEqual(a.tur("ek_durum").at(-1), { v: AV, type: "ek_durum", ek_id: "ek_1", gonderilen: VERI.length, tamam: true });
+    // Üstverisi olmayan ek ve dosyası olmayan özet: ek_ret, bağlantı açık, işlem sürer.
+    await gonderBekle(o, a, { ...yukle(), kayit_id: "yok" });
+    await gonderBekle(o, a, { ...iste, ozet: "e".repeat(64) });
+    assert.deepEqual(a.tur("ek_ret"), [
+      { v: AV, type: "ek_ret", ek_id: "ek_1", code: "ek_bilinmiyor" },
+      { v: AV, type: "ek_ret", ek_id: "ek_1", code: "ek_yok" },
+    ]);
+    assert.equal(a.kapali, false);
+    await a.gonder(islemMesaji("i-1", ekleIslemi("k2")));
+    assert.equal(a.tur("islem_sonucu")[0]!.ok, true);
+  });
+
+  it("istemci ek_yedegi istemediyse kesişim boş: ek çerçevesi bugünkü gibi yetkisiz + kapanış, diske dokunulmaz", async () => {
+    const o = await ekli();
+    for (const m of [yukle(), parca, iste]) {
+      const a = await o.ajandaGiris();
+      assert.deepEqual(a.tur("welcome")[0]!.yetenekler, []);
+      await gonderBekle(o, a, m);
+      assert.equal(a.hataKodu, "yetkisiz");
+      assert.ok(a.kapali);
+    }
+    assert.deepEqual(o.ekDiski.cagrilar, []);
+  });
+
+  it("ek modülü kurulu değilse (sunulan küme ek_yedegi dese bile) ek çerçevesi yetkisiz", async () => {
+    const o = await ekli({ ekler: false });
+    const a = await o.ajandaGiris(IP1, { yetenekler: ["ek_yedegi"] });
+    await gonderBekle(o, a, yukle());
+    assert.equal(a.hataKodu, "yetkisiz");
+    assert.deepEqual(o.ekDiski.cagrilar, []);
+  });
+
+  it("esitlendi'den önce (telafi sürerken) gelen ek çerçevesi yetkisiz", async () => {
+    const o = await ekli();
+    const ist = o.bagla("/ajanda");
+    o.aj.ayar.sayfaKancasi = () => ist.c.mesajGonder(JSON.stringify(yukle()));
+    await ajandaElSik(ist, { yetenekler: ["ek_yedegi"] });
+    await o.ekler?.bekle();
+    assert.equal(ist.hataKodu, "yetkisiz");
+    assert.equal(ist.tur("esitlendi").length, 0);
+    assert.deepEqual(o.ekDiski.cagrilar, []);
+  });
+
+  it("v2 bağlantı: ek çerçevesi v2 şemasında yok (gecersiz_mesaj + kapanış); v2 welcome baytları değişmez", async () => {
+    const o = await ekli();
+    const a = await o.ajandaGiris(IP1, { v: 2 });
+    assert.equal(a.c.gonderilenler.find((m) => m.includes('"welcome"'))!.includes("yetenekler"), false);
+    await gonderBekle(o, a, yukle(2));
+    assert.equal(a.hataKodu, "gecersiz_mesaj");
+    assert.ok(a.kapali);
+    assert.equal(a.c.gonderilenler.at(-1), '{"v":2,"type":"error","code":"gecersiz_mesaj"}');
+    assert.deepEqual(o.ekDiski.cagrilar, []);
+  });
+
+  it("yol enjeksiyonu: özet olmayan ozet şemada düşer (gecersiz_mesaj + kapanış), ek modülüne ve diske ulaşmaz", async () => {
+    const o = await ekli();
+    for (const ozet of ["..\\..\\Windows\\win.ini", "../".repeat(21) + "x", "A".repeat(64)]) {
+      const a = await o.ajandaGiris(IP1, { yetenekler: ["ek_yedegi"] });
+      await gonderBekle(o, a, yukle(AV, ozet));
+      assert.equal(a.hataKodu, "gecersiz_mesaj");
+      const b = await o.ajandaGiris(IP1, { yetenekler: ["ek_yedegi"] });
+      await gonderBekle(o, b, { ...iste, ozet });
+      assert.equal(b.hataKodu, "gecersiz_mesaj");
+    }
+    assert.deepEqual(o.ekDiski.cagrilar, []);
+    assert.ok(!JSON.stringify(o.gunluk.girdiler).includes("win.ini"));
+  });
+
+  it("kimlik sonrası her ek çerçevesinde yetki: kaldırılan cihaz cihaz_bilinmiyor ile kapanır", async () => {
+    const o = await ekli();
+    const a = await o.ajandaGiris(IP1, { yetenekler: ["ek_yedegi"] });
+    o.depo.cihazKaldir("aj-1");
+    await gonderBekle(o, a, yukle());
+    assert.equal(a.hataKodu, "cihaz_bilinmiyor");
+    assert.deepEqual(o.ekDiski.cagrilar, []);
+  });
+
+  it("indirme bağlantının gönderim tamponuna bakar: doluyken ek_ret{ic_hata}, bağlantı açık; boşalınca indirir; kayıt yayını etkilenmez", async () => {
+    const o = await ekli();
+    const a = await o.ajandaGiris(IP1, { yetenekler: ["ek_yedegi"] });
+    await gonderBekle(o, a, yukle());
+    await gonderBekle(o, a, parca);
+    // Okumayan istemci: gerçek bağlantının `bekleyenBayt`'ı (`ws` `bufferedAmount`) sınırın üstünde.
+    let bekleyen = AJANDA_EK_SINIRLARI.INDIRME_TAMPONU + 1;
+    (a.c as { bekleyenBayt?: () => number }).bekleyenBayt = () => bekleyen;
+    await gonderBekle(o, a, iste);
+    assert.deepEqual(a.tur("ek_ret"), [{ v: AV, type: "ek_ret", ek_id: "ek_1", code: "ic_hata" }]);
+    assert.equal(a.tur("ek_parca").length, 0);
+    assert.equal(a.kapali, false);
+    // Canlı kayıt tampondan bağımsız gider (telafi ve yayın sınırsız).
+    o.aj.yaz(kayitUret("k9", 0));
+    await bosalt();
+    assert.ok(a.tur("kayit").some((m) => m.kayit.kayit_id === "k9"));
+    bekleyen = 0;
+    await gonderBekle(o, a, iste);
+    assert.deepEqual(a.tur("ek_parca").map((m) => Buffer.from(m.veri, "base64").length), [VERI.length]);
+    assert.deepEqual(a.tur("ek_durum").at(-1), { v: AV, type: "ek_durum", ek_id: "ek_1", gonderilen: VERI.length, tamam: true });
+  });
+
+  it("bağlantı kapanınca süren işin yanıtı yollanmaz; yeni bağlantı kaldığı yerden sürer", async () => {
+    const o = await ekli();
+    const a = await o.ajandaGiris(IP1, { yetenekler: ["ek_yedegi"] });
+    await gonderBekle(o, a, yukle());
+    a.c.mesajGonder(JSON.stringify({ ...parca, veri: Buffer.from(VERI.slice(0, 600)).toString("base64") }));
+    a.c.istemciKopar();
+    const once = a.c.gonderilenler.length;
+    await o.ekler?.bekle();
+    assert.equal(a.c.gonderilenler.length, once);
+    const b = await o.ajandaGiris(IP1, { yetenekler: ["ek_yedegi"] });
+    await gonderBekle(o, b, yukle());
+    assert.deepEqual(b.tur("ek_durum"), [{ v: AV, type: "ek_durum", ek_id: "ek_1", alinan: 600, tamam: false }]);
   });
 });

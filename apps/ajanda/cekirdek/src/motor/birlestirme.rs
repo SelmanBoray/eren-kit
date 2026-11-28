@@ -48,6 +48,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use super::iyimser::IyimserBaglam;
+use super::kanal::KOPYA_SURUMU;
 use super::yerel::{DokmePlani, DokmeSinifi, dokme_plani, kayit_coz, yereli_kuyruga_dok};
 use super::{Asama, Etkiler, Motor, Ortam};
 use crate::depo::{Depo, KopyaTablosu, anahtar};
@@ -56,9 +57,9 @@ use crate::kopru::tipler::{BirlestirmeOnizlemesi, BirlestirmeSonucu, CakisanKayi
 use crate::kural::tekil::ajanda_tekil_anahtari;
 use crate::model::AjandaKaydi;
 
-/// Kapsamsız tekil anahtar (tür, başlık, zaman çekirdeği).
+/// Kapsamsız tekil anahtar (tür, başlık, zaman çekirdeği). v3 `bolge` girmez (D4'ün v2 baytları; R1).
 fn tekil_anahtar(k: &AjandaKaydi) -> String {
-    ajanda_tekil_anahtari("", k.tur, &k.baslik, k.zaman.as_ref())
+    ajanda_tekil_anahtari("", k.tur, &k.baslik, k.zaman.as_ref(), None)
 }
 
 /// FNV-1a 64: planın izi (D3'teki gibi; güvenlik değil, tutarlılık içindir).
@@ -231,8 +232,10 @@ pub(crate) fn olasi_ciftleri(d: &Depo, kayit_id: &str) -> Result<Vec<String>, Ce
         .collect())
 }
 
-/// Planı uygular (çağıranın işleminde): dökme, olası çiftler, son eşitlenme anı. Döner: ret listesine satır
-/// eklendi mi.
+/// Planı uygular (çağıranın işleminde): dökme, olası çiftler, son eşitlenme anı ve kopya sürümü (tam telafi
+/// kopyanın yerine geçti: kopya bu bağlantının sürümüyle dolu, `kanal.rs` `KOPYA_SURUMU`). Döner: ret
+/// listesine satır eklendi mi.
+#[allow(clippy::too_many_arguments)]
 fn uygula(
     d: &Depo,
     o: &Ortam,
@@ -241,10 +244,12 @@ fn uygula(
     son_rev: i64,
     plan: &DokmePlani,
     ciftler: &[OlasiCift],
+    kopya_surumu: &str,
 ) -> Result<bool, CekirdekHatasi> {
     let ret = yereli_kuyruga_dok(d, o, b, depo_id, son_rev, plan)?;
     ciftleri_yaz(d, ciftler)?;
     d.meta_yaz(anahtar::SON_ESITLENME_MS, Some(&o.simdi_ms().to_string()))?;
+    d.meta_yaz(KOPYA_SURUMU, Some(kopya_surumu))?;
     Ok(ret)
 }
 
@@ -269,13 +274,14 @@ impl Motor {
         depo_id: &str,
         son_rev: i64,
     ) -> Result<bool, CekirdekHatasi> {
+        let kopya_surumu = self.baglanti_surumu().no().to_string();
         let ret = self.depo.yazma(|d| {
             let plan = dokme_plani(d, depo_id)?;
             if soru_gerekli(&plan) {
                 d.meta_yaz(anahtar::BIRLESTIRME, Some(depo_id))?;
                 return Ok(None);
             }
-            uygula(d, o, b, depo_id, son_rev, &plan, &[]).map(Some)
+            uygula(d, o, b, depo_id, son_rev, &plan, &[], &kopya_surumu).map(Some)
         })?;
         match ret {
             Some(ret) => {
@@ -315,6 +321,7 @@ impl Motor {
         self.telafi_tamponunu_yaz(o, e)?;
         let cevirici = o.cevirici();
         let b = self.iyimser_baglam(o, &cevirici)?;
+        let kopya_surumu = self.baglanti_surumu().no().to_string();
         let (sonuc, ret) = self.depo.yazma(|d| {
             let son_rev = d.telafi_son_rev()?;
             let plan = dokme_plani(d, &depo_id)?;
@@ -323,7 +330,7 @@ impl Motor {
             if iz != Some(onizleme.iz.as_str()) {
                 return Ok((BirlestirmeSonucu { uygulandi: false, plan: Some(onizleme), zaten_uygulandi: false }, false));
             }
-            let ret = uygula(d, o, &b, &depo_id, son_rev, &plan, &onizleme.olasi_ciftler)?;
+            let ret = uygula(d, o, &b, &depo_id, son_rev, &plan, &onizleme.olasi_ciftler, &kopya_surumu)?;
             d.meta_yaz(anahtar::SON_BIRLESTIRME_IZI, Some(&onizleme.iz))?;
             Ok((BirlestirmeSonucu { uygulandi: true, plan: Some(onizleme), zaten_uygulandi: false }, ret))
         })?;

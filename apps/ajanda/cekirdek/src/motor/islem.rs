@@ -53,6 +53,7 @@ pub(super) fn govde_farki(k: &KayitGovdesi, g: &KayitGovdesi) -> AjandaDegisikli
         zaman: uclu_fark(&k.zaman, &g.zaman),
         hatirlatmalar: (g.hatirlatmalar != k.hatirlatmalar).then(|| g.hatirlatmalar.clone()),
         tekrar: uclu_fark(&k.tekrar, &g.tekrar),
+        v3: Default::default(),
     }
 }
 
@@ -134,7 +135,7 @@ impl Motor {
         {
             kayit_id = Motor::yeni_kimlik(o, "k_")?;
         }
-        self.kuyruga_koy(o, e, AjandaIslem::Ekle { kayit_id: kayit_id.clone(), govde, girdi_yolu }, true)?;
+        self.kuyruga_koy(o, e, AjandaIslem::Ekle { kayit_id: kayit_id.clone(), govde, v3: Default::default(), girdi_yolu }, true)?;
         Ok(kayit_id)
     }
 

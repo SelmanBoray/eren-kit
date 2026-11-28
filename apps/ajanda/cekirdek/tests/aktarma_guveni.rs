@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 use ajanda_cekirdek::CekirdekHatasi;
 use ajanda_cekirdek::depo::Depo;
 use ajanda_cekirdek::kopru::tipler::{CalismaKipi, IceAktarmaOnizlemesi};
-use ajanda_cekirdek::model::sinirlar::AJANDA_SURUMU;
+use ajanda_cekirdek::model::surum::AJANDA_SURUMU;
 use ajanda_cekirdek::model::sinirlar::ajanda::KAYIT_ADET;
 use ajanda_cekirdek::model::{AjandaKaydi, GirdiYolu, KuyrukRetNedeni};
 use ortak::*;
