@@ -270,6 +270,22 @@ class YedekKabiTest {
     }
 
     @Test
+    fun belgeBaytlariTamBoyluBomsuzVeParcaSinirlariniAsar() {
+        // 64 KiB'ten 4 MiB'e büyüyen parça sınırlarını aşan (~9 MB) çok baytlı belge; BOM'lu ve BOM'suz.
+        val genis = bicim.copy(belgeAzamiBayt = 16uL shl 20)
+        val metin = buildString { var i = 0; while (length < 4_500_000) { append(if (i % 5 == 0) "ğ😀" else "a"); i++ } }
+        val utf8 = metin.toByteArray(Charsets.UTF_8)
+        val bom = byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte())
+        for (girdi in listOf(utf8, bom + utf8)) {
+            val o = YedekKabi.oku(ByteArrayInputStream(zip("ajanda.json" to girdi)), genis)
+            assertArrayEquals(utf8, o.baytlar)
+            assertEquals(metin, o.belge)
+        }
+        // Yalnız BOM: boş belge.
+        assertEquals(0, oku(zip("ajanda.json" to bom)).baytlar.size)
+    }
+
+    @Test
     fun yazilanBelgeBirebirVeBoyuKodlanmadanSayilir() {
         // Parça sınırlarını (64 Ki karakter) aşan, çok baytlı karakterli belge.
         val belge = buildString { repeat(70_000) { append(if (it % 3 == 0) "ş" else if (it % 7 == 0) "😀" else "a") } }

@@ -49,8 +49,14 @@ object YedekKabi {
 
     private val OZET = Regex("[0-9a-f]{64}")
 
-    /** Okunan kap: belgenin metni ve özeti dosya adıyla doğrulanmış ek baytları. */
-    class Okunan(val belge: String, val ekler: Map<String, ByteArray>)
+    /**
+     * Okunan kap: belgenin UTF-8 baytları (doğrulanmış, BOM'suz, tam boylu dizi; çekirdeğin bayt API'sine
+     * kopyasız verilir) ve özeti dosya adıyla doğrulanmış ek baytları.
+     */
+    class Okunan(val baytlar: ByteArray, val ekler: Map<String, ByteArray>) {
+        /** Belgenin metni (her çağrıda yeniden çözülür; büyük belgede bellek ister, akış bunu kullanmaz). */
+        val belge: String get() = String(baytlar, Charsets.UTF_8)
+    }
 
     /**
      * Dışa aktarmayı kaba yazar. Her ekin baytı [depo]'dan okunur, özeti ve boyu denetlenir.
@@ -93,7 +99,7 @@ object YedekKabi {
         val ekAzami = bicim.ekAzamiBayt.toLong()
         // Sıkıştırılmış girdi de sayılır: açılmış toplamdan büyük ham dosya okunmaz.
         val ham = SinirliGiris(giris, toplamAzamiBayt + HAM_PAYI)
-        val belge = Tutucu()
+        var belge: ByteArray? = null
         val ekler = LinkedHashMap<String, ByteArray>()
         var toplam = 0L
         var dizinGoruldu = false
@@ -106,10 +112,10 @@ object YedekKabi {
                     yoluDenetle(ad)
                     when {
                         ad == bicim.belgeAdi -> {
-                            if (g.isDirectory || belge.bayt != null) throw YedekHatasi.GecersizDosya("belge yinelenmiş")
-                            // Yerel değişkene alınmaz: dizinin tek başvurusu tutucudadır (çözülürken bırakılır).
-                            belge.bayt = sinirliOku(z, minOf(belgeAzami, toplamAzamiBayt - toplam), g.size)
-                            toplam += belge.bayt?.boy ?: 0
+                            if (g.isDirectory || belge != null) throw YedekHatasi.GecersizDosya("belge yinelenmiş")
+                            val (b, okunanBoy) = belgeyiOku(z, minOf(belgeAzami, toplamAzamiBayt - toplam))
+                            belge = b
+                            toplam += okunanBoy
                         }
                         ad == bicim.eklerDizini && g.isDirectory -> {
                             if (dizinGoruldu) throw YedekHatasi.GecersizDosya("dizin yinelenmiş")
@@ -142,8 +148,9 @@ object YedekKabi {
             // ZipInputStream geçersiz ad kodlamasında bunu atar.
             throw YedekHatasi.GecersizDosya("zip bozuk")
         }
-        if (belge.bayt == null) throw YedekHatasi.GecersizDosya("belge yok")
-        return Okunan(utf8(belge), ekler)
+        val b = belge ?: throw YedekHatasi.GecersizDosya("belge yok")
+        utf8Denetle(b)
+        return Okunan(b, ekler)
     }
 
     /**
@@ -179,9 +186,6 @@ object YedekKabi {
         /** Tam boylu dizi (ekler için; küçüktür). */
         fun tam(): ByteArray = if (boy == dizi.size) dizi else dizi.copyOf(boy)
     }
-
-    /** Belgenin baytları; UTF-8 çözülürken bırakılır ki dizi ile metin aynı anda bellekte uzun kalmasın. */
-    private class Tutucu(var bayt: Bayt? = null)
 
     /**
      * Girdiyi en çok [azami] bayta dek okur; fazlası [YedekHatasi.CokBuyuk]. Bellek: tek dizi, kopyasız döner.
@@ -219,42 +223,78 @@ object YedekKabi {
     }
 
     /**
-     * Katı UTF-8 çözümü (bozuk dizi reddedilir). Bellek: karakter sayısı önce sayılır, tam boylu `CharArray`'e
-     * doğrudan çözülür (kodlayıcının büyüyen tamponu ve `toString` kopyası yok); bayt dizisi `String` kurulmadan
-     * bırakılır. Tepe: bayt + karakter dizisi, sonra karakter dizisi + `String`.
+     * Belge girdisini en çok [azami] bayta dek okur; fazlası [YedekHatasi.CokBuyuk]. Baytlar büyüyen parçalarda
+     * (64 KiB'ten 4 MiB'e) toplanır, sonunda tam boylu tek diziye bir kez kopyalanır: tepe ~2 x belge (büyüyen tek
+     * dizinin 1,5 kat payı ve son kesme kopyası yok). Baştaki UTF-8 BOM'u atılır (BOM'suz yazılır; elle düzenlenmiş
+     * dosyada olabilir). Dönen: (BOM'suz dizi, okunan bayt sayısı BOM dahil).
      */
-    private fun utf8(t: Tutucu): String {
-        // Çözüm ayrı çerçevede: döndüğünde bayt dizisine hiçbir yerel başvuru kalmaz.
-        val (karakterler, boy) = coz(t)
-        return String(karakterler, 0, boy)
+    private fun belgeyiOku(z: InputStream, azami: Long): Pair<ByteArray, Long> {
+        val ust = minOf(azami, (Int.MAX_VALUE - 16).toLong()).coerceAtLeast(0)
+        val parcalar = ArrayList<ByteArray>()
+        var son = ByteArray(minOf(ust + 1, 64L * 1024).toInt().coerceAtLeast(1))
+        var sondaki = 0
+        var n = 0L
+        while (true) {
+            if (sondaki == son.size) {
+                parcalar += son
+                son = ByteArray(minOf(son.size.toLong() * 2, 4L shl 20, ust + 1 - n).toInt().coerceAtLeast(1))
+                sondaki = 0
+            }
+            val r = z.read(son, sondaki, son.size - sondaki)
+            if (r < 0) break
+            sondaki += r
+            n += r
+            if (n > ust) throw YedekHatasi.CokBuyuk()
+        }
+        parcalar += son
+        val bom = n >= 3 && bayt(parcalar, 0) == 0xEF.toByte() && bayt(parcalar, 1) == 0xBB.toByte() &&
+            bayt(parcalar, 2) == 0xBF.toByte()
+        val bas = if (bom) 3 else 0
+        val sonuc = ByteArray((n - bas).toInt())
+        var atla = bas
+        var yer = 0
+        for ((i, p) in parcalar.withIndex()) {
+            val dolu = if (i == parcalar.lastIndex) sondaki else p.size
+            val k = minOf(atla, dolu)
+            atla -= k
+            System.arraycopy(p, k, sonuc, yer, dolu - k)
+            yer += dolu - k
+            parcalar[i] = BOS
+        }
+        return sonuc to n
     }
 
-    private fun coz(t: Tutucu): Pair<CharArray, Int> {
-        val b = t.bayt ?: throw YedekHatasi.GecersizDosya("belge yok")
-        val d = b.dizi
-        // BOM'suz yazılır; elle düzenlenmiş dosyada başta BOM varsa atlanır.
-        val bas = if (b.boy >= 3 && d[0] == 0xEF.toByte() && d[1] == 0xBB.toByte() && d[2] == 0xBF.toByte()) 3 else 0
-        val karakterler = CharArray(utf16Boyu(d, bas, b.boy))
-        val cikti = CharBuffer.wrap(karakterler)
+    private val BOS = ByteArray(0)
+
+    /** Parçalı belgenin [i]. baytı (yalnız BOM bakışı için; i < 3). */
+    private fun bayt(parcalar: List<ByteArray>, i: Int): Byte {
+        var k = i
+        for (p in parcalar) {
+            if (k < p.size) return p[k]
+            k -= p.size
+        }
+        return 0
+    }
+
+    /** Katı UTF-8 denetimi (bozuk dizi reddedilir); çözüm küçük bir tampona akar, metin tutulmaz. */
+    private fun utf8Denetle(d: ByteArray) {
         val cozucu = Charsets.UTF_8.newDecoder()
             .onMalformedInput(CodingErrorAction.REPORT)
             .onUnmappableCharacter(CodingErrorAction.REPORT)
-        val r = cozucu.decode(ByteBuffer.wrap(d, bas, b.boy - bas), cikti, true)
-        // Geçerli UTF-8'de sayım kesindir: taşma da bozuk girdi demektir.
-        if (!r.isUnderflow || !cozucu.flush(cikti).isUnderflow) throw YedekHatasi.GecersizDosya("belge UTF-8 değil")
-        t.bayt = null
-        return karakterler to cikti.position()
-    }
-
-    /** Geçerli UTF-8'in UTF-16 boyu: devam baytı (10xxxxxx) sayılmaz, dört baytlık dizi iki karakterdir. */
-    private fun utf16Boyu(d: ByteArray, bas: Int, son: Int): Int {
-        var n = 0
-        for (i in bas until son) {
-            val x = d[i].toInt() and 0xFF
-            if (x and 0xC0 != 0x80) n++
-            if (x >= 0xF0) n++
+        val giris = ByteBuffer.wrap(d)
+        val tampon = CharBuffer.allocate(64 * 1024)
+        while (true) {
+            val r = cozucu.decode(giris, tampon, true)
+            if (r.isError) throw YedekHatasi.GecersizDosya("belge UTF-8 değil")
+            tampon.clear()
+            if (r.isUnderflow) break
         }
-        return n
+        while (true) {
+            val r = cozucu.flush(tampon)
+            if (r.isError) throw YedekHatasi.GecersizDosya("belge UTF-8 değil")
+            tampon.clear()
+            if (r.isUnderflow) break
+        }
     }
 
     /** UTF-8 boyu (yalnız sınır denetimi için; eşsiz vekil `?` yerine 3 sayılır, yukarı yuvarlar). */

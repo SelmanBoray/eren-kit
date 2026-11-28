@@ -10,7 +10,6 @@ import org.junit.Test
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
-import java.nio.CharBuffer
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
@@ -43,7 +42,7 @@ class YedekBellekTest {
         dosya.outputStream().use { YedekKabi.yaz(it, BICIM, disa(belge), EkDeposu.Yok) }
         val sonuc = listOf("oku", "oku+indir").associateWith { kip -> enAzYigin(dosya, kip) }
         println("BELLEK en az yığın: belge ${mb(boy)} MB; " + sonuc.entries.joinToString("; ") { "${it.key} ${it.value} MB" })
-        // Kaba tavan: belgenin 8 katı (önceki uygulama ~5-6 katıydı).
+        // Kaba tavan: belgenin 8 katı (String'li uygulama ~5 katıydı: 123 MB; bayt tutan ~2-3 katı).
         assertTrue("$sonuc", sonuc.getValue("oku") <= 8 * boy / (1 shl 20) + 16)
     }
 
@@ -133,16 +132,22 @@ class YedekBellekTest {
     }
 }
 
-/** Alt JVM işi: kabı okur ([args] 1 `oku+indir` ise UniFFI'nin dizeyi indirişini de taklit eder). */
+/**
+ * Alt JVM işi: kabı okur ([args] 1 `oku+indir` ise UniFFI'nin belgeyi çekirdeğe indirişini de taklit eder).
+ * Belge bayt olarak tutulur ve bayt API'sine gider: UniFFI `FfiConverterByteArray.lower` `RustBuffer`'ı yerel
+ * bellekte ayırıp baytları oraya yazar (yığında kopya yok); burada JNA `Memory` ile aynısı yapılır.
+ */
 object BellekOlcumu {
     @JvmStatic
     fun main(args: Array<String>) {
         val okunan = File(args[0]).inputStream().use { YedekKabi.oku(it, YedekBellekTest.BICIM) }
-        var n = okunan.belge.length
+        var n = okunan.baytlar.size.toLong()
         if (args[1] == "oku+indir") {
-            // UniFFI `FfiConverterString.lower`: UTF-8 kodlayıcıyla ByteBuffer (yığın), sonra yerel belleğe kopya.
-            val b = Charsets.UTF_8.newEncoder().encode(CharBuffer.wrap(okunan.belge))
-            n += b.limit()
+            val yerel = com.sun.jna.Memory(4L + okunan.baytlar.size)
+            yerel.setInt(0, okunan.baytlar.size)
+            yerel.write(4, okunan.baytlar, 0, okunan.baytlar.size)
+            n += yerel.size()
+            yerel.close()
         }
         println("TAMAM $n")
     }

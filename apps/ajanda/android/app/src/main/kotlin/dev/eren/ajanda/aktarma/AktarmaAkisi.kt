@@ -25,12 +25,17 @@ import java.time.LocalDate
  * "çok büyük ya da bozuk" denir, bekleyen dosya bırakılır) bir [Adim.Hata]'ya çevrilir. Başka [Error]'lar
  * (ör. `StackOverflowError`, `LinkageError`) yakalanmaz, çağırana çıkar.
  * Mahremiyet: dosya içeriği hiçbir günlüğe yazılmaz; metinler yalnız sayı ve tarih taşır.
+ * Bellek: belge baştan sona UTF-8 baytı olarak tutulur ve çekirdeğin bayt API'sine verilir ([AktarmaCekirdegi]).
  */
 class AktarmaAkisi(
-    private val c: CekirdekYuzu,
+    private val c: AktarmaCekirdegi,
     private val metinler: AktarmaMetinleri,
     private val depo: EkDeposu = EkDeposu.Yok,
 ) {
+    /** Ekran yüzüyle kurulum ([AktarmaCekirdegi.Yuzden]: belge çağrıda `String`'e çözülür, bellek kazancı yok). */
+    constructor(c: CekirdekYuzu, metinler: AktarmaMetinleri, depo: EkDeposu = EkDeposu.Yok) :
+        this(AktarmaCekirdegi.Yuzden(c), metinler, depo)
+
     /** Görünümün göstereceği adım. */
     sealed class Adim {
         abstract val baslik: String
@@ -82,7 +87,7 @@ class AktarmaAkisi(
         try {
             val bicim = c.aktarmaBicimi()
             val okunan = ac().use { YedekKabi.oku(it, bicim) }
-            val plan = c.iceAktarmaOnizlemesi(okunan.belge)
+            val plan = c.iceAktarmaOnizlemesiBayt(okunan.baytlar)
             // Kaptaki ekler planınkilerle birebir tutmalı (fazlası beklenmeyen girdidir).
             if (okunan.ekler.keys.any { o -> plan.ekler.none { it.ozet == o } }) throw YedekHatasi.GecersizDosya("belgede olmayan ek")
             onizlemeAdimi(okunan, plan, degisti = false)
@@ -106,7 +111,7 @@ class AktarmaAkisi(
         val s = try {
             val bicim = c.aktarmaBicimi()
             YedekKabi.ekleriYerlestir(b.ekler, b.okunan, bicim, depo)
-            c.iceAktar(b.okunan.belge, iz)
+            c.iceAktarBayt(b.okunan.baytlar, iz)
         } catch (e: Exception) {
             bekleyen = null
             return Adim.Hata(metinler.iceHataBaslik, metinler.hata(e, yazarken = false))

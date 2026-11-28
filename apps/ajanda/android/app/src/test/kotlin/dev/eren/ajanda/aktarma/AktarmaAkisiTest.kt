@@ -7,6 +7,7 @@ import dev.eren.ajanda.cekirdek.IceAktarmaOnizlemesi
 import dev.eren.ajanda.cekirdek.IceAktarmaSonucu
 import dev.eren.ajanda.ekran.CekirdekYuzu
 import dev.eren.ajanda.ekran.SahteYuz
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -221,6 +222,56 @@ class AktarmaAkisiTest {
         assertEquals("İçe aktarıldı", s.baslik)
         assertEquals("Yedekteki kayıtlar içe aktarıldı.", s.metin)
         assertFalse(a.onayBekliyor)
+    }
+
+    /** Bayt API'li sahte çekirdek: gelen baytları kaydeder, sonucu [SahteYuz]'den alır (o da çağrıyı sayar). */
+    private inner class BaytCekirdegi : AktarmaCekirdegi {
+        val gelenler = mutableListOf<ByteArray>()
+        override fun aktarmaBicimi() = yuz.aktarmaBicimi()
+        override fun disaAktar() = yuz.disaAktar()
+        override fun iceAktarmaOnizlemesiBayt(belge: ByteArray): IceAktarmaOnizlemesi {
+            gelenler += belge
+            return yuz.iceAktarmaOnizlemesi("")
+        }
+        override fun iceAktarBayt(belge: ByteArray, iz: String?): IceAktarmaSonucu {
+            gelenler += belge
+            return yuz.iceAktar("", iz)
+        }
+    }
+
+    @Test
+    fun baytYoluBelgeyiKaptakiBaytlarlaVerirAdimlarAyni() {
+        val bc = BaytCekirdegi()
+        val a = AktarmaAkisi(bc, metinler)
+        yuz.onizlemeler += plan()
+        yuz.iceSonuclari += IceAktarmaSonucu(true, plan())
+        val o = a.dosyaOku { ByteArrayInputStream(kap()) } as AktarmaAkisi.Adim.Onay
+        assertEquals(akisAdimi(), o)
+        val s = a.onayla(o)
+        assertEquals("2 yeni kayıt eklendi, 1 kayıt güncellendi.\n1 kayıt okunamadığı için alınmadı.", s.metin)
+        assertEquals(listOf("iceAktarmaOnizlemesi", "iceAktar:iz1"), yuz.cagrilar)
+        assertEquals(2, bc.gelenler.size)
+        // Önizleme ve uygulama aynı diziyi alır (kopya yok), içeriği belgenin UTF-8'i.
+        assertTrue(bc.gelenler[0] === bc.gelenler[1])
+        assertArrayEquals(belge.toByteArray(Charsets.UTF_8), bc.gelenler[0])
+    }
+
+    /** Aynı kap ve plan için eski (yüz) yolun ilk adımı. */
+    private fun akisAdimi(): AktarmaAkisi.Adim {
+        val y = SahteYuz()
+        y.onizlemeler += plan()
+        return AktarmaAkisi(y, metinler).dosyaOku { ByteArrayInputStream(kap()) }
+    }
+
+    @Test
+    fun baytYoluCekirdeginUtf8HatasiGecersizDenir() {
+        val bc = object : AktarmaCekirdegi by BaytCekirdegi() {
+            override fun iceAktarmaOnizlemesiBayt(belge: ByteArray): IceAktarmaOnizlemesi =
+                throw CekirdekHatasi.GecersizGirdi("belge", "UTF-8 değil (bayt 3)")
+        }
+        val a = AktarmaAkisi(bc, metinler).dosyaOku { ByteArrayInputStream(kap()) }
+        assertTrue(a is AktarmaAkisi.Adim.Hata)
+        assertEquals("Bu dosya bir ajanda yedeği değil ya da bozuk.", a.metin)
     }
 
     @Test
