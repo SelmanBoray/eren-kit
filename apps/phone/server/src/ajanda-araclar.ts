@@ -120,6 +120,13 @@ import type {
 type Cikti<F extends AjandaFiili> = AjandaFiilCiktisi<F>;
 
 /**
+ * İşleyici `depo.islem`'inden SONRA düştü (çıktının yüzü ya da günlük): `ic_hata`'nın `detail`'i. Boru sunucusu
+ * (`ajanda-kopru-sunucu.ts`, aynı değer) bunu yazan fiilde kabloya `belirsiz` olarak çevirir, `detail` boruya çıkmaz.
+ * Sözleşme (`AjandaFiilSonucu`) bu değeri bilmez; sunucu tanımazsa düz `ic_hata` olur (bugünkü davranış).
+ */
+const ISLEM_SONRASI_DETAYI = "islem_sonrasi";
+
+/**
  * Çağrının yolu: kim yazıyor, turu ne, kayıt hangi kapsamda tekilleşir. Telefon sohbeti
  * (`ana_oturum`): yol `sohbet_araci`, kapsam `sohbet:<id>`, gece reddi sohbet başına. PC oturumu
  * (`pc_oturumu`, AJANDA.md "PC oturumları"): yol `pc_araci`, `oturum_id`, kapsam `PC_TEKIL_KAPSAMI`,
@@ -331,8 +338,11 @@ export function ajandaAraclariKur(b: AjandaBagimliliklari, pc?: PcDefteri): Ajan
         return { ok: false, code: "ic_hata" };
       }
       const t = cagri.tur;
+      /** `depo.islem` döndü: işlem kalıcı (yazan fiilde kayıt yazılmış olabilir). */
+      let islendi = false;
       try {
         const ham = depo.islem(() => f(p.data as AjandaFiilGirdisi<F>, cagri, simdi));
+        islendi = true;
         // v2 yüzde (ayar kapalı ya da bağlantı v2 yüzlü) çıktı v2 yüzüne iner (v3 telefonun yazdığı kaydın
         // alanları modele çıkmaz); iki v2 yüzü aynıdır.
         const cikti = (cagri.v3Yuz ? ham : v2Yuzu(fiil, ham)) as Cikti<F>;
@@ -348,8 +358,10 @@ export function ajandaAraclariKur(b: AjandaBagimliliklari, pc?: PcDefteri): Ajan
         });
         return cagri.pcKarar === undefined ? { ok: true, deger: cikti } : { ok: true, deger: cikti, pc_karar: cagri.pcKarar };
       } catch (e) {
-        gunluk.hata(MODUL, "arac_hatasi", { fiil, hata: e instanceof Error ? e.name : "bilinmiyor" });
-        return { ok: false, code: "ic_hata" };
+        gunluk.hata(MODUL, "arac_hatasi", { fiil, hata: e instanceof Error ? e.name : "bilinmiyor", ...(islendi ? { islem_sonrasi: true } : {}) });
+        // İşlemden önce (işlem geri alındı): kesin yazılmadı. İşlemden sonra (yüz, günlük): yazılmış olabilir; boru
+        // sunucusu `ISLEM_SONRASI_DETAYI`'nı yazan fiilde `belirsiz` yollar (köprü "yazılmadı" demesin, model yeniden denemesin).
+        return islendi ? { ok: false, code: "ic_hata", detail: ISLEM_SONRASI_DETAYI } : { ok: false, code: "ic_hata" };
       }
     };
 

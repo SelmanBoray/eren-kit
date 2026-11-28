@@ -989,7 +989,9 @@ const AJANDA_MCP_SUNUCU_ADI: AjandaMcpSunucuAdi = "eren-ajanda";
 
 /**
  * Boru düzeyi hatanın modele giden kısa sabit metni (`isError`). Servisin `detail`'i hiç gitmez.
- * Kayıt yazılıp yazılmadığı kesin biliniyorsa söylenir; bilinmiyorsa listeye bakmaya yönlendirir.
+ * Kayıt yazılıp yazılmadığı kesin biliniyorsa söylenir; bilinmiyorsa listeye bakmaya yönlendirir. Servisin `ic_hata`'sı
+ * işlemden önce düşen istektir (kesin yazılmadı); işlemden sonra düşen yazmayı servis `belirsiz` yollar
+ * (`AJANDA_SERVIS_BELIRSIZ_EKI`). Bu ayrımdan önceki servis işlemden sonra da `ic_hata` verirdi (bilinen kalan risk).
  */
 const AJANDA_HATA_EKI: Readonly<Partial<Record<HataKodu, string>>> = {
   tur_gecersiz: "ajanda: bu çağrı açık bir konuşma turuna bağlanamadı; hiçbir şey yazılmadı.",
@@ -999,6 +1001,20 @@ const AJANDA_HATA_EKI: Readonly<Partial<Record<HataKodu, string>>> = {
 };
 
 const ajandaHataSonucu = (code: HataKodu): CallToolResult => hataSonucu(code, AJANDA_HATA_EKI[code]);
+
+/**
+ * Servisin `belirsiz` yanıtı: istek işlendi, yanıt kurulamadı (işlemden sonra düştü); kayıt yazılmış olabilir.
+ * Eski köprüler bu kodu `AJANDA_HATA_EKI.belirsiz` ile (kopuş metni) verir: neden farklı, sonuç aynı.
+ */
+const AJANDA_SERVIS_BELIRSIZ_EKI =
+  "ajanda: servis isteği işledi ama yanıtını tamamlayamadı; kayıt yazılmış olabilir. Yeniden yazma: önce ajanda_listele ile bak.";
+/**
+ * Servisin başarı yanıtı köprünün şemasına uymuyor (servis güncellenip yeni bir karar ya da alan getirmiş, köprü eski
+ * kalmış olabilir): servis isteği işledi, kayıt yazılmış olabilir.
+ */
+const AJANDA_YANIT_COZULEMEDI_EKI =
+  "ajanda: servisin yanıtı bu köprünün beklediği biçimde değil (servis güncellenmiş olabilir; oturumu yeniden açmak köprüyü günceller); " +
+  "kayıt yazılmış olabilir. Yeniden yazma: önce ajanda_listele ile bak.";
 
 /** Boru yok (servis kapalı ya da yeniden başlıyor): istek hiç çıkmadı. */
 const AJANDA_KOPUK_SONUCU = (): CallToolResult =>
@@ -1069,8 +1085,13 @@ export function pcKopruUyarlayicisiSec(argumanlar: readonly string[]): PcKopruUy
 
 /** Boru hazır değilken çağrının yeniden bağlanmayı beklediği en uzun süre (servis yeniden başlıyor olabilir). */
 export const PC_BAGLANTI_BEKLEME_MS = 3_000;
-/** O bekleme içinde boru yokken iki deneme arası. */
+/** O bekleme içinde boru yokken (ya da geçici retten sonra) iki deneme arası. */
 const PC_YENIDEN_DENEME_MS = 250;
+/**
+ * Çağrının bağlantı beklemesini bitirmeyen ret kodları: servisin PC bağlantı sınırı (`ic_hata`, `pc_baglanti_siniri`)
+ * geçicidir. Öbür engeller (anahtar yok, `jeton_gecersiz`, kapalı PC rolü `rol_fiil_izinsiz`) beklemeden döner.
+ */
+const PC_GECICI_ENGELLER: ReadonlySet<"anahtar_yok" | HataKodu> = new Set(["ic_hata"]);
 
 /**
  * PC köprüsünün bağlantısız metinleri (`isError`). Kayıt yazılmadığı kesindir; model kullanıcıya söyler,
@@ -1246,8 +1267,10 @@ export async function ajandaKopruCalistir(
 
   /**
    * PC: boru hazır değilse döngüyü uyandırıp en çok `PC_BAGLANTI_BEKLEME_MS` yeniden dener (servis yeniden
-   * başlıyor olabilir). Anahtar yoksa ya da servis anahtarı reddettiyse beklemez: engel kesindir. Çağrının iptali ya
-   * da köprünün durması (`boru.durma`) beklemeyi hemen bitirir; bitince bütün bekleme zamanlayıcıları kesilir.
+   * başlıyor olabilir). Anahtar yoksa ya da servis kalıcı bir engelle reddettiyse (anahtar geçersiz, kapalı PC rolü)
+   * beklemez: engel kesindir. Geçici ret (`PC_GECICI_ENGELLER`: PC bağlantı sınırı `ic_hata`; servis köprünün ya da
+   * başka bir oturumun kapattığı bağlantıyı henüz işlemedi) boru yokmuş gibi kısa aralarla yeniden denenir. Çağrının
+   * iptali ya da köprünün durması (`boru.durma`) beklemeyi hemen bitirir; bitince bütün bekleme zamanlayıcıları kesilir.
    */
   const pcHazirBekle = async (sinyal: AbortSignal): Promise<HataKodu | "kopuk" | null> => {
     const sure = new AbortController();
@@ -1263,8 +1286,9 @@ export async function ajandaKopruCalistir(
         boru.uyandir();
         const r = await boru.denemeBekle(sure.signal);
         if (r !== "kopuk") return r;
-        if (boru.sonEngel() !== null || sure.signal.aborted) return "kopuk";
-        // Boru yok: kısa ara, sonra yeniden dene.
+        const engel = boru.sonEngel();
+        if ((engel !== null && !PC_GECICI_ENGELLER.has(engel)) || sure.signal.aborted) return "kopuk";
+        // Boru yok ya da geçici ret: kısa ara, sonra yeniden dene.
         await Promise.race([b.bekle(PC_YENIDEN_DENEME_MS, sure.signal), ara.promise]);
       }
     } finally {
@@ -1293,26 +1317,41 @@ export async function ajandaKopruCalistir(
   };
 
   /**
+   * İstek servise gitti ama sonuç modele çevrilemedi (başarı yanıtı köprünün katı şemasına uymuyor ya da çevirirken
+   * atıldı). Yazan araçta servis kaydı yazmış olabilir: "belirsiz". "Yazılmadı" görürse model yeniden dener, kayıt çift
+   * olur. Liste hiçbir şey yazmaz: `ic_hata`'nın "yazılmadı"sı doğrudur.
+   */
+  const cevrilemedi = (fiil: AjandaFiili): CallToolResult => {
+    if (fiil === "ajanda_listele") return icHata(fiil);
+    gunluk.uyari(MODUL, "gecersiz_sonuc", { fiil, belirsiz: true });
+    return hataSonucu("belirsiz", AJANDA_YANIT_COZULEMEDI_EKI);
+  };
+
+  /**
    * Tek yol: şemadan geçen çıktı → `ajandaMcpSonucu` → yalnız onun alanları. PC köprüsünde yanıt
    * `PcAracSonucu`'dur (çıktı + servisin tur kararı); sentetik kararda yazan araçların tek metnine sabit
    * `pcTurNotu` satırı eklenir (kaydın neden taslak doğduğu; kayıt metni taşımaz), uyarlayıcının adıyla (Codex'in
-   * notu Claude Code'u anmaz). Liste metnine eklenmez.
+   * notu Claude Code'u anmaz). Liste metnine eklenmez. Çözülemeyen başarı yanıtı `cevrilemedi`'dir.
    */
   const sonucCevir = (fiil: AjandaFiili, ham: unknown): CallToolResult => {
-    let govde = ham;
-    let not: string | null = null;
-    if (pc) {
-      const s = PcAracSonucu.safeParse(ham);
-      if (!s.success) return icHata(fiil);
-      govde = s.data.cikti;
-      if (fiil !== "ajanda_listele") not = pcTurNotu(s.data.karar, uyarlayici.ad);
+    try {
+      let govde = ham;
+      let not: string | null = null;
+      if (pc) {
+        const s = PcAracSonucu.safeParse(ham);
+        if (!s.success) return cevrilemedi(fiil);
+        govde = s.data.cikti;
+        if (fiil !== "ajanda_listele") not = pcTurNotu(s.data.karar, uyarlayici.ad);
+      }
+      const sema: z.ZodType = araclar()[fiil].cikti;
+      const r = sema.safeParse(govde);
+      if (!r.success) return cevrilemedi(fiil);
+      const mcp = AjandaMcpSonucu.parse(ajandaMcpSonucu({ fiil, cikti: r.data } as AjandaAracCiktisi, citUret));
+      const content: CallToolResult["content"] = not === null ? mcp.content : [{ type: "text", text: `${mcp.content[0].text}\n${not}` }];
+      return mcp._meta === undefined ? { content } : { content, _meta: mcp._meta };
+    } catch {
+      return cevrilemedi(fiil);
     }
-    const sema: z.ZodType = araclar()[fiil].cikti;
-    const r = sema.safeParse(govde);
-    if (!r.success) return icHata(fiil);
-    const mcp = AjandaMcpSonucu.parse(ajandaMcpSonucu({ fiil, cikti: r.data } as AjandaAracCiktisi, citUret));
-    const content: CallToolResult["content"] = not === null ? mcp.content : [{ type: "text", text: `${mcp.content[0].text}\n${not}` }];
-    return mcp._meta === undefined ? { content } : { content, _meta: mcp._meta };
   };
 
   const aracCagir = async (ad: string, ham: unknown, sinyal: AbortSignal, meta: unknown): Promise<CallToolResult> => {
@@ -1323,6 +1362,8 @@ export async function ajandaKopruCalistir(
     let girdi = denetle();
     if (!girdi.success) return hataSonucu("gecersiz_mesaj", semaHatasiMetni(girdi.error.issues));
     const kopuk = pc ? pcKopukSonucu : AJANDA_KOPUK_SONUCU;
+    /** İstek boruya yazılmak üzere verildi: bundan sonraki beklenmedik hata "yazılmadı" diyemez. */
+    let yollandi = false;
     try {
       const once = yuzAcik();
       const engel = pc ? await pcHazirBekle(sinyal) : await boru.hazirBekle(sinyal, false);
@@ -1333,11 +1374,13 @@ export async function ajandaKopruCalistir(
         girdi = denetle();
         if (!girdi.success) return hataSonucu("gecersiz_mesaj", semaHatasiMetni(girdi.error.issues));
       }
+      yollandi = true;
       const y = await boru.istekYolla(fiil, girdi.data, sinyal, pc ? pcCagri(meta) : undefined);
       switch (y.tur) {
         case "basari":
           return sonucCevir(fiil, y.sonuc);
         case "hata":
+          if (y.code === "belirsiz") return hataSonucu(y.code, AJANDA_SERVIS_BELIRSIZ_EKI);
           return pc && y.code === "jeton_gecersiz" ? hataSonucu(y.code, anahtarMetni.gecersiz) : ajandaHataSonucu(y.code);
         case "koptu":
           // İstek yollandı, yanıtı gelmedi: yazılıp yazılmadığı bilinmez, engel ne olursa olsun "belirsiz". Anahtar
@@ -1350,7 +1393,7 @@ export async function ajandaKopruCalistir(
           return iptalSonucu();
       }
     } catch {
-      return icHata(fiil);
+      return yollandi ? cevrilemedi(fiil) : icHata(fiil);
     }
   };
 
