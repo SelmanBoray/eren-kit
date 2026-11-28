@@ -1118,6 +1118,15 @@ export const PC_SINIR_METNI =
   "ajanda: eren servisi açık ama bu oturumun bağlantısını şu an kabul etmiyor (büyük olasılıkla çok sayıda açık PC oturumu " +
   "bağlantı sınırını doldurdu); hiçbir şey yazılmadı. Kullanıcıya kaydın yazılmadığını söyle; biraz sonra yeniden dene, " +
   "sürerse kullanılmayan oturumları kapatmasını öner.";
+/**
+ * Servis açık ve el sıkışmayı yanıtladı, ama PC oturumlarından ajanda erişimini kapalı tutuyor (`rol_fiil_izinsiz`,
+ * servis günlüğünde `pc_kapali`): kalıcı engel, çağrı beklemeden döner; istek hiç gönderilmedi, kayıt yazılmadı.
+ * Uyarlayıcıdan bağımsızdır (Claude Code ve Codex aynı rolü kullanır). Servis kodunda adı konmuş bir ayar yoktur,
+ * o yüzden metin ayar adı uydurmaz.
+ */
+export const PC_KAPALI_METNI =
+  "ajanda: eren servisi açık ama PC oturumlarından ajanda erişimi serviste kapalı; hiçbir şey yazılmadı (istek gönderilmedi). " +
+  "Kullanıcıya söyle: kayıt yazılmadı, servis PC oturumlarının ajandaya erişimine izin vermiyor; bu açılmadan yeniden denemek işe yaramaz.";
 /** Köprü kapanırken (`durdur`) bağlantı bekleyen ya da bağlantısız kalan çağrı: istek çıkmadı. */
 export const PC_DURDU_METNI =
   "ajanda: ajanda köprüsü kapanıyor (oturum bitiyor); hiçbir şey yazılmadı. Kullanıcıya kaydın yazılmadığını söyle.";
@@ -1327,6 +1336,8 @@ export async function ajandaKopruCalistir(
     if (engel === "jeton_gecersiz") return hataSonucu("jeton_gecersiz", anahtarMetni.gecersiz);
     // Son deneme geçici retle bitti: servis açık, bağlantı sınırı dolu (servis "ulaşılamıyor" değil).
     if (engel !== null && PC_GECICI_ENGELLER.has(engel)) return hataSonucu("ic_hata", PC_SINIR_METNI);
+    // Servis açık ve PC rolünü kapalı tuttuğu için reddetti: "ulaşılamıyor" yanlış olur.
+    if (engel === "rol_fiil_izinsiz") return hataSonucu("ic_hata", PC_KAPALI_METNI);
     return hataSonucu("ic_hata", PC_KOPUK_METNI);
   };
   const citUret = (): string => rastgele.hex64() + rastgele.hex64();
