@@ -70,7 +70,11 @@ export function mcpKaydiSatirlari(y: Pick<Yollar, "nodeExe" | "kopruBetigi">, ko
   return KABUKLAR.flatMap((k) => [`   ${KABUK_ADI[k]}${OLCULMEYEN.has(k) ? " (Codex'te ölçülmedi)" : ""}:`, `     ${satir(k)}`]);
 }
 
-/** `eren eslestir --pc-ajan codex`'in anahtardan sonra yazdığı yönerge. Hiçbir şey değiştirmez, dosya okumaz. */
+/**
+ * `eren eslestir --pc-ajan codex`'in anahtardan sonra yazdığı yönerge (`--yonerge` anahtarsız yazar). Hiçbir şey
+ * değiştirmez, dosya okumaz. "Onaylanmış kayda dokunamaz" dürüst köprü varsayımıyladır ve metin bunu söyler; gerçek
+ * köprünün Codex altında uçtan uca kayıt yazması ölçülmedi, metin bunu da söyler.
+ */
 export function gosterMetni(y: Yollar, kok: string): string {
   return [
     "PC'deki Codex CLI oturumlarının ajanda kaydı (yalnız taslak; kullanıcının onayıyla, bir kez):",
@@ -85,10 +89,14 @@ export function gosterMetni(y: Yollar, kok: string): string {
     ...mcpKaydiSatirlari(y, kok),
     "   Köprü sarmalayıcısız başlar (cmd /c, npx yok). --env veri kökünü verir: köprü anahtarı oradan okur.",
     "",
-    "2. Kanca yok: kurmayın. Kayıtlar yine çalışır, yalnız taslak doğar.",
+    "2. Kanca yok: kurmayın. Kayıtlar taslak doğar. Ölçülmedi: bu köprünün Codex altında servise bağlanıp kayıt",
+    "   yazması uçtan uca denenmedi (docs/HARNESS-H3-OLCUM.md bölüm 6); 4. adımdaki sınama bunu gösterir.",
     "   Codex onaylanmış (taslak olmayan) kayda dokunamaz: \"dişçiyi 11'e al\" gibi bir değişiklik, kayıt telefonda",
     "   onaylandıysa reddedilir (sentetik_turda_izinsiz). Yalnız hâlâ taslak olan kayıt değiştirilebilir;",
     "   onaylanmış kaydı telefondan değiştirin.",
+    "   Bu, köprülerin dürüst olduğu varsayımına dayanır. Güven sınırı Windows kullanıcısıdır: kabuk erişimi olan bir",
+    "   model (sandbox izin verirse) kancaya sahte girdi verip kendi başlattığı Claude Code köprüsüyle insan turu",
+    "   üretebilir.",
     "",
     "3. codex exec (etkileşimsiz) ile kullanılacaksa: exec'te ajanda araçlarının çalışması için bu sunucunun",
     '   araçlarına approval_mode = "approve" gerekir. Ölçülen yalnız bu gerekliliktir (Codex 0.172.0,',
@@ -100,6 +108,7 @@ export function gosterMetni(y: Yollar, kok: string): string {
     "   taslak olarak görünür. Sonra: eren eslestir --pc-ajan codex --teshis  (Codex çağrısının kararı cagri_kimligi_yok:",
     "   beklenen, kayıt taslak).",
     "",
+    "Bu yönergeyi anahtara dokunmadan yeniden görmek: eren eslestir --pc-ajan codex --yonerge",
     `Kaldırma: ${MCP_KALDIR_KOMUTU}; anahtar bütün PC ajanlarında ortaktır (eren eslestir --pc-ajan codex --kaldir hepsini kapatır).`,
     "",
   ].join("\n");

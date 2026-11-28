@@ -27,6 +27,8 @@ import {
   pcKaldirMetni,
   pcListeMetni,
   pcTeshisMetni,
+  pcYonergeMetni,
+  TESHIS_KARAR_METNI,
   VARSAYILAN_PC_AJANI,
 } from "../src/eslestir.ts";
 import type { PcAjaniModulu, PcAjanKaydi } from "../src/eslestir.ts";
@@ -541,7 +543,7 @@ describe("eslestir --ajanda: --liste ve --kaldir (gerçek depo)", () => {
 
 describe("eslestir --pc-ajan: argümanlar", () => {
   it("--pc-ajan claude-code, --claude-code ile aynı komut (her alt komutta, her sırada)", () => {
-    for (const alt of [[], ["--liste"], ["--kaldir"], ["--teshis"]]) {
+    for (const alt of [[], ["--liste"], ["--kaldir"], ["--teshis"], ["--yonerge"]]) {
       const eski = argumanCoz(["--claude-code", ...alt]);
       assert.notEqual(eski.tur, "hata", JSON.stringify(alt));
       assert.deepEqual(argumanCoz(["--pc-ajan", "claude-code", ...alt]), eski, JSON.stringify(alt));
@@ -556,6 +558,8 @@ describe("eslestir --pc-ajan: argümanlar", () => {
     assert.deepEqual(argumanCoz(["--liste", "--pc-ajan", "codex"]), { tur: "pc_liste", ajan: "codex" });
     assert.deepEqual(argumanCoz(["--pc-ajan", "codex", "--kaldir"]), { tur: "pc_kaldir", ajan: "codex" });
     assert.deepEqual(argumanCoz(["--pc-ajan", "codex", "--teshis"]), { tur: "pc_teshis", ajan: "codex" });
+    assert.deepEqual(argumanCoz(["--yonerge", "--pc-ajan", "codex"]), { tur: "pc_yonerge", ajan: "codex" });
+    assert.deepEqual(argumanCoz(["--claude-code", "--yonerge"]), { tur: "pc_yonerge" });
     // Büyük/küçük harf ad sayılır: kapalı listede değil, taşınır ve reddedilir.
     assert.deepEqual(argumanCoz(["--pc-ajan", "Claude-Code"]), { tur: "pc_anahtar", ajan: "Claude-Code" });
   });
@@ -580,6 +584,8 @@ describe("eslestir --pc-ajan: argümanlar", () => {
     assert.equal(ileti(["--pc-ajan", "claude-code", "--ajanda"]), "--pc-ajan ile kullanılamaz: --ajanda");
     assert.equal(ileti(["--pc-ajan", "claude-code", "--kaldir", "cihaz1"]), "--pc-ajan ile kullanılamaz: cihaz1");
     assert.equal(ileti(["--pc-ajan", "claude-code", "--liste", "--teshis"]), "--liste ve --teshis birlikte verilmez");
+    assert.equal(ileti(["--pc-ajan", "codex", "--yonerge", "--kaldir"]), "--kaldir ve --yonerge birlikte verilmez");
+    assert.equal(ileti(["--claude-code", "--yonerge", "--yonerge"]), "--yonerge bir kez verilir");
     assert.ok(!ileti(["--pc-ajan", "claude-code", "x\u001b[2J"]).includes("\u001b"));
   });
 
@@ -605,7 +611,8 @@ describe("eslestir --pc-ajan: argümanlar", () => {
   });
 
   it("yardım metni --pc-ajan'ı, eski adı, ortak anahtarı ve bütün geçerli adları anlatır", () => {
-    assert.match(KULLANIM, /eslestir --pc-ajan <ad> \[--liste \| --kaldir \| --teshis\]/);
+    assert.match(KULLANIM, /eslestir --pc-ajan <ad> \[--liste \| --kaldir \| --teshis \| --yonerge\]/);
+    assert.match(KULLANIM, / {2}eslestir --claude-code --yonerge {2}Kayıt komutlarını yazar; anahtara dokunmaz\./);
     assert.match(KULLANIM, /--claude-code, --pc-ajan claude-code'un kısa adıdır/);
     assert.match(KULLANIM, /ikisi birlikte verilmez/);
     assert.match(KULLANIM, /Ajanda anahtarı bütün PC ajanlarında ortaktır/);
@@ -676,10 +683,17 @@ describe("eslestir --pc-ajan: uyarlayıcı seçimi", () => {
     assert.match(pcKaldirMetni(1, true, g), /^Deneme Ajanı ajanda anahtarı geçersiz kılındı ve dosyası silindi[\s\S]*hiçbiri ajandaya erişemez\.\n$/);
     assert.equal(pcKaldirMetni(0, false, g), "Deneme Ajanı ajanda anahtarı zaten yok; hiçbir şey değişmedi.\n");
     const teshis = pcTeshisMetni([], z, deneme.kancaDurumu!({}), g);
-    assert.match(teshis, /^Kurulum \(C:\\deneme\\ayar\.toml\):\n {2}araç öncesi kanca: YOK\. Bu durumda bütün kayıtlar taslak doğar\. Kurmak için kayıt yönergesine bakın \(eslestir --pc-ajan deneme;/);
+    assert.match(teshis, /^Kurulum \(C:\\deneme\\ayar\.toml\):\n {2}araç öncesi kanca: YOK\. Bu durumda bütün kayıtlar taslak doğar\. Kurmak için kayıt yönergesine bakın \(eslestir --pc-ajan deneme --yonerge;/);
     assert.match(teshis, /eski kancaları: 1/);
-    assert.match(teshis, /anahtar var mı \(eslestir --pc-ajan deneme --liste\)\?\n {2}Yeni bir Deneme Ajanı oturumunda/);
-    for (const m of [anahtar, liste, pcKaldirMetni(1, true, g), teshis]) {
+    assert.match(teshis, /MCP köprüsü kayıtlı mı \(kayıt yönergesi: eslestir --pc-ajan deneme --yonerge\), anahtar var mı \(eslestir --pc-ajan deneme --liste\)\?\n {2}Yeni bir Deneme Ajanı oturumunda/);
+    // Yönerge önerisi anahtarı yenileyen alt komutsuz çağrı değildir.
+    assert.equal(/eslestir --pc-ajan deneme[;)]/.test(teshis), false, teshis);
+    assert.equal(
+      pcYonergeMetni("DENEME YÖNERGESİ\n", g),
+      "Deneme Ajanı kayıt yönergesi. Ajanda anahtarı üretilmedi, değişmedi (durum: eslestir --pc-ajan deneme --liste; " +
+        "anahtar yoksa: eslestir --pc-ajan deneme, bu öncekini geçersiz kılar).\n\nDENEME YÖNERGESİ\n",
+    );
+    for (const m of [anahtar, liste, pcKaldirMetni(1, true, g), teshis, pcYonergeMetni("Y\n", g)]) {
       assert.ok(!/Claude Code|claude-code\.ts|PreToolUse|--claude-code/.test(m), m);
     }
     assert.match(kayitYonergesiYedegi(g), /^Deneme Ajanı kayıt yönergesi üretilemedi/);
@@ -711,13 +725,132 @@ describe("eslestir --pc-ajan: uyarlayıcı seçimi", () => {
     for (const kurulum of [undefined, null, { ayarYolu: "x", arac: true, eski: 0 }]) {
       const bos = pcTeshisMetni([], z, kurulum, g);
       assert.ok(bos.startsWith(KURULUM), bos);
-      assert.match(bos, /Servis günlüğünde PC kanca ya da PC araç olayı yok\.\n {2}MCP köprüsü kayıtlı mı \(kayıt yönergesi: eslestir --pc-ajan codex\)/);
+      // Yönerge önerisi anahtarı yenilemeyen `--yonerge`'dir (alt komutsuz çağrı ortak anahtarı yenilerdi).
+      assert.match(bos, /Servis günlüğünde PC kanca ya da PC araç olayı yok\.\n {2}MCP köprüsü kayıtlı mı \(kayıt yönergesi: eslestir --pc-ajan codex --yonerge\)/);
       const m = pcTeshisMetni([codexArac], z, kurulum, g);
       assert.ok(m.startsWith(KURULUM), m);
       assert.match(m, /son PC araç kararı: cagri_kimligi_yok \(kayıt TASLAK doğdu: Codex CLI çağrısıysa beklenen, telefondan onaylayın\)\n/);
-      assert.match(m, /Not \(Codex CLI\): köprüsü çağrı kimliğini göndermez;[\s\S]*Günlük PC ajanlarını ayırmaz/);
-      for (const yanlis of [/Kurmak için/, /kanca-ekle/, /settings\.json/, /sürüm farkı/, /YOK\. Bu durumda/]) assert.equal(yanlis.test(m), false, String(yanlis));
+      assert.match(m, /Not \(Codex CLI\): köprüsü çağrı kimliğini göndermez;[\s\S]*Bu günlük PC ajanlarını ayırmıyor/);
+      // Beklenen durum alarm gibi gösterilmez: kanca ve çağrı kimliği satırları "HAYIR" demez.
+      assert.match(m, /\n {2}araç öncesi kanca: yok, kurulmaz \(beklenen\)\n {2}çağrı kimliği: köprü okumaz \(beklenen;/);
+      for (const yanlis of [/Kurmak için/, /kanca-ekle/, /settings\.json/, /sürüm farkı/, /YOK\. Bu durumda/, /HAYIR/, /servise ulaşıyor mu/]) {
+        assert.equal(yanlis.test(m), false, String(yanlis));
+      }
     }
+    assert.match(pcYonergeMetni("YÖNERGE\n", g), /^Codex CLI kayıt yönergesi\. Ajanda anahtarı üretilmedi, değişmedi \(durum: eslestir --pc-ajan codex --liste;/);
+  });
+
+  describe("--teshis: iki PC ajanının karışık günlüğü (arac.uyarlayici)", () => {
+    const OTURUM = "9b2e4f10-1c3d-4e5f-8a7b-6c5d4e3f2a1b";
+    const s = (o: Record<string, unknown>) => JSON.stringify({ ts_ms: 1, seviye: "bilgi", ...o });
+    const tasdik = s({
+      modul: "ajanda", olay: "pc_arac", oturum_id: OTURUM, alt_agent: false, etkilesimsiz: false, istem_kimligi: "var",
+      uyarlayici: "claude-code", aktor: "ana", etkilesim: "etkilesimli", surec_kimligi: "var", cerceve: "normal",
+    });
+    /** `uyarlayici` verilmezse alan yok (eski köprü ya da düşüşte `uyarlayici`'sız basamak). */
+    const arac = (karar: string, uyarlayici?: string) =>
+      s({
+        modul: "ajanda", olay: "arac", yol: "pc_araci", oturum_id: OTURUM, fiil: "ajanda_ekle", tur_kokeni: karar === "insan" ? "insan" : "sentetik",
+        pc_karar: karar, cagri_kimligi: karar === "cagri_kimligi_yok" ? "yok" : "var", sonuc: "eklendi",
+        ...(uyarlayici === undefined ? {} : { uyarlayici }),
+      });
+    const kurulu = { ayarYolu: "x", arac: true, eski: 0, kabuk: 0, kapatan: [] as string[] };
+    const z = (ms: number) => `t${ms}`;
+    const ozetBolumu = (m: string) => m.slice(m.indexOf("Sınama"));
+    const codex = async () => {
+      const r = pcAjanSec("codex", await pcAjanKaydiYukle());
+      assert.ok(r.ok);
+      return r.ok ? r.gorunum : CLAUDE_CODE_GORUNUMU;
+    };
+
+    it("Claude teşhisi, son çağrı Codex'ten geldiyse Codex'in kararını Claude'a yüklemez; Codex'i ayrı satırda söyler", () => {
+      const satirlar = [tasdik, arac("insan", "claude-code"), arac("cagri_kimligi_yok", "codex"), arac("cagri_kimligi_yok", "codex")];
+      for (const k of [kurulu, undefined]) {
+        const m = pcTeshisMetni(satirlar, z, k);
+        const o = ozetBolumu(m);
+        assert.match(o, /^Sınama \(AJANDA\.md "Kurulumdan sonra sınama"; yalnız Claude Code çağrıları\):\n/);
+        assert.match(o, /araç öncesi kanca servise ulaşıyor mu: evet\n {2}çağrı kimliği MCP isteğinde geliyor mu: evet\n/);
+        assert.match(o, /son PC araç kararı: insan \(ana oturumun çağrısı; kayıt doğrudan \(taslaksız\) yazıldı\. Kurulum doğru\.\)\n/);
+        assert.match(o, /Öteki PC ajanlarının çağrıları \(yukarıdaki özete girmedi\):\n {2}- codex: 2 çağrı, son karar cagri_kimligi_yok\. Ayrıntı: eslestir --pc-ajan codex --teshis\n/);
+        assert.equal(/sürüm farkı|göndermiyor/.test(o), false, o);
+        // Olay satırlarında ajan görünür.
+        assert.match(m, /arac oturum=…3f2a1b fiil=ajanda_ekle tur_kokeni=sentetik pc_karar=cagri_kimligi_yok cagri_kimligi=yok sonuc=eklendi uyarlayici=codex\n/);
+      }
+    });
+
+    it("Claude'un kendi cagri_kimligi_yok'u kesin söylenir; ayrımsız (eski) günlükte başka PC ajanı ihtimali anılır", () => {
+      const kesin = ozetBolumu(pcTeshisMetni([arac("cagri_kimligi_yok", "claude-code")], z, kurulu));
+      assert.match(kesin, /son PC araç kararı: cagri_kimligi_yok \(kayıtlar TASLAK doğuyor: Claude Code çağrı kimliğini MCP isteğinde göndermiyor \(sürüm farkı\); kanca bunu düzeltemez/);
+      assert.equal(kesin.includes("başka bir PC ajanından"), false);
+      const eski = ozetBolumu(pcTeshisMetni([arac("cagri_kimligi_yok")], z, kurulu));
+      assert.match(eski, /^Sınama \(AJANDA\.md "Kurulumdan sonra sınama"\):\n/);
+      assert.ok(eski.includes(`son PC araç kararı: cagri_kimligi_yok (${TESHIS_KARAR_METNI.cagri_kimligi_yok})\n`), eski);
+      assert.match(TESHIS_KARAR_METNI.cagri_kimligi_yok, /ya da çağrı başka bir PC ajanından \(ör\. Codex CLI/);
+      assert.equal(eski.includes("Öteki PC ajanlarının"), false);
+    });
+
+    it("ters yön: son karar Claude'un tasdik_yok'u; Codex teşhisi 'kanca kurun' demez, kararı Codex'e yüklemez", async () => {
+      const g = await codex();
+      // Ayrımlı günlük: Codex özeti yalnız kendi çağrılarından; Claude'un tasdik_yok'u öteki satırda.
+      const ayrimli = pcTeshisMetni([arac("cagri_kimligi_yok", "codex"), tasdik, arac("tasdik_yok", "claude-code")], z, undefined, g);
+      const o = ozetBolumu(ayrimli);
+      assert.match(o, /^Sınama \(Codex CLI, yalnız taslak; yalnız Codex CLI çağrıları\):\n {2}araç öncesi kanca: yok, kurulmaz \(beklenen\)\n/);
+      assert.match(o, /\n {2}Codex CLI çağrısı: 1\n {2}son PC araç kararı: cagri_kimligi_yok \(kayıt TASLAK doğdu: beklenen, telefondan onaylayın\)\n/);
+      assert.match(o, /\n {2}- claude-code: 1 çağrı, son karar tasdik_yok\. Ayrıntı: eslestir --claude-code --teshis\n/);
+      // Ayrımsız günlük: son karar tasdik_yok Codex'in olamaz (köprüsü çağrı kimliği göndermez); kurulum yönlendirmesi yok.
+      const eski = pcTeshisMetni([arac("cagri_kimligi_yok"), tasdik, arac("tasdik_yok")], z, undefined, g);
+      assert.match(eski, /son PC araç kararı: tasdik_yok \(bir Codex CLI çağrısının kararı değil: köprüsü çağrı kimliği göndermez[\s\S]*eslestir --claude-code --teshis\)\n/);
+      for (const m of [ayrimli, eski]) {
+        for (const yanlis of [/Kanca kurulu değilse kurun/, /kanca-ekle/, /Olası nedenler/, /HAYIR/, /Günlükte görülen neden/]) {
+          assert.equal(yanlis.test(m), false, `${String(yanlis)}\n${m}`);
+        }
+        assert.match(m, /^Kurulum \(Codex CLI\): yalnız taslak\. Araç öncesi kanca yok ve kurulmaz/);
+      }
+    });
+
+    it("ajanı bilinmeyen çağrı (alan yok) ayrımlı günlükte ayrı söylenir, kesin neden yok; Claude özetine girmez", () => {
+      const m = pcTeshisMetni([tasdik, arac("insan", "claude-code"), arac("cagri_kimligi_yok", "codex"), arac("tasdik_yok")], z, kurulu);
+      const o = ozetBolumu(m);
+      assert.match(o, /son PC araç kararı: insan \(/);
+      assert.match(
+        o,
+        /\n {2}- codex: 1 çağrı, son karar cagri_kimligi_yok\. [^\n]*\n {2}- ajanı bilinmeyen: 1 çağrı, son karar tasdik_yok\. Köprü ajanını bildirmedi \(güncellemeden önce açılmış oturum ya da uyumluluk düşüşü\); hangi ajanın olduğu ve kararın nedeni buradan söylenemez\.\n/,
+      );
+      for (const yanlis of [/Olası nedenler/, /Kanca kurulu değilse kurun/, /Günlükte görülen neden/]) assert.equal(yanlis.test(o), false, String(yanlis));
+      // Yalnız Claude'un tasdik_yok'u nedenleriyle söylenir; bilinmeyen değil.
+      const kendi = ozetBolumu(pcTeshisMetni([tasdik, arac("tasdik_yok", "claude-code"), arac("cagri_kimligi_yok", "codex")], z, kurulu));
+      assert.match(kendi, /son PC araç kararı: tasdik_yok \(kayıtlar TASLAK doğuyor: kanca ayarda kurulu görünüyor/);
+      assert.match(kendi, /Olası nedenler \(kurulu görünüyor ama tasdik gelmedi\):/);
+    });
+
+    it("neden olayı Claude'un kendi tasdik_yok'una bağlanır; araya giren Codex çağrısı ona yanlış neden taşımaz", () => {
+      const uyusmuyor = s({ modul: "ajanda", olay: "pc_surec_uyusmuyor", seviye: "uyari", oturum_id: OTURUM, kopru_surec: "bildirildi" });
+      // Bitişik: neden Claude'un arac'ına.
+      const bitisik = ozetBolumu(pcTeshisMetni([tasdik, uyusmuyor, arac("tasdik_yok", "claude-code"), arac("cagri_kimligi_yok", "codex")], z, kurulu));
+      assert.match(bitisik, /Günlükte görülen neden \(kanca çalışıyor; kurulum sorunu değil\):\n {2}- köprünün ebeveyni harness süreci değil/);
+      // Neden ile Claude'un arac'ı arasında Codex'in çağrısı: izsiz günlükte bitişik değil, sahipsiz (bugünkü kural).
+      const arada = ozetBolumu(pcTeshisMetni([tasdik, uyusmuyor, arac("cagri_kimligi_yok", "codex"), arac("tasdik_yok", "claude-code")], z, kurulu));
+      assert.equal(arada.includes("Günlükte görülen neden"), false, arada);
+      assert.match(arada, /Olası nedenler/);
+    });
+
+    it("alanı olmayan eski günlükte Claude çıktısı ajan ayrımı olmadan bugünkü gibi (bayt bayt)", () => {
+      const eski = [tasdik, arac("insan"), arac("tasdik_yok")];
+      const m = pcTeshisMetni(eski, z, kurulu);
+      assert.equal(
+        ozetBolumu(m),
+        "Sınama (AJANDA.md \"Kurulumdan sonra sınama\"):\n" +
+          "  araç öncesi kanca servise ulaşıyor mu: evet\n" +
+          "  çağrı kimliği MCP isteğinde geliyor mu: evet\n" +
+          "  istem kimliği geliyor mu (araç öncesi): evet\n" +
+          "  son PC araç kararı: tasdik_yok (kayıtlar TASLAK doğuyor: kanca ayarda kurulu görünüyor ama bu çağrıda tasdik gelmedi; olası nedenler aşağıda)\n" +
+          "Olası nedenler (kurulu görünüyor ama tasdik gelmedi):\n" +
+          "  - kanca öteki çağrılarda ulaşıyor; bu çağrıda servis o an yanıt vermedi ya da arada yeniden başladı, ya da izin sorusu 10 dakikadan uzun bekledi\n",
+      );
+      // Ayrımlı günlükte aynı çağrılar claude-code ise özet satırları aynı, yalnız başlık ajanı söyler.
+      const yeni = ozetBolumu(pcTeshisMetni([tasdik, arac("insan", "claude-code"), arac("tasdik_yok", "claude-code")], z, kurulu));
+      assert.equal(yeni.replace("; yalnız Claude Code çağrıları", ""), ozetBolumu(m));
+    });
   });
 
   it("Claude Code çıktıları bugünkü metinle bayt bayt aynı (varsayılan, açık görünüm ve kayıttan gelen görünüm)", async () => {
@@ -838,9 +971,12 @@ describe("eslestir --pc-ajan: uyarlayıcı seçimi", () => {
           assert.ok(
             m.includes(
               `Uyarı: köprü süreç bildirmedi (eski sürüm ya da uyumluluk düşüşü; pc_kopru_surecsiz, oturum …${OTURUM.slice(-6)}, …${OTURUM_2.slice(-6)}).\n` +
-                "  En son t1'da görüldü; o andan sonra pencereyi yeniden açtıysanız ya da /mcp ile yeniden bağladıysanız geçmiştir.\n" +
+                "  En son t1'da görüldü. Olay, süreç bildirmeyen bir bağlantı ilk süreç kimlikli tasdikini\n" +
+                "  tüketirken bir kez yazılır: bağlantının hâlâ açık olduğunu göstermez, sonradan görünmemesi de düzeldiğini kanıtlamaz.\n" +
                 "  Bu bağlantılarda süreç eşitliği yalnız bağlantı içinde geçerli: her yeniden bağlanmada ilk tasdik süreç denetimsiz\n" +
-                "  tüketilir. Tam koruma için Claude Code penceresini yeniden açın ya da /mcp ile yeniden bağlayın.\n",
+                "  tüketilir. Tam koruma için Claude Code penceresini yeniden açın ya da /mcp ile yeniden bağlayın.\n" +
+                "  Servis o an yeniden başlıyorsa ya da eski sürümdeyse düşüş yeni bağlantıda yinelenebilir: servisin güncel ve\n" +
+                "  ayakta olduğundan emin olup yeniden deneyin.\n",
             ),
             m,
           );
@@ -856,7 +992,10 @@ describe("eslestir --pc-ajan: uyarlayıcı seçimi", () => {
       const zamanli = (satir: string, ms: number) => JSON.stringify({ ...(JSON.parse(satir) as object), ts_ms: ms });
       const sz = zamanli(s({ modul: "ajanda", olay: "pc_kopru_surecsiz", seviye: "uyari", oturum_id: OTURUM, surec_id: SUREC }), 100);
       const ilk = pcTeshisMetni([tasdikYeni, sz, arac("tasdik_yok")], z, kurulu);
-      assert.match(ilk, /En son t100'da görüldü; o andan sonra pencereyi yeniden açtıysanız ya da \/mcp ile yeniden bağladıysanız geçmiştir\./);
+      assert.match(ilk, /En son t100'da görüldü\. Olay, süreç bildirmeyen bir bağlantı ilk süreç kimlikli tasdikini\n/);
+      // Yeniden açmanın ya da /mcp'nin düzelttiği vaat edilmez (düşüş yinelenebilir).
+      assert.equal(/geçmiştir/.test(ilk), false);
+      assert.match(ilk, /düşüş yeni bağlantıda yinelenebilir/);
       // /mcp sonrası köprü yine süreçsiz bağlanırsa yeni zaman görünür; eski zaman değil.
       const sonra = pcTeshisMetni([tasdikYeni, sz, arac("tasdik_yok"), zamanli(sz, 250)], z, kurulu);
       assert.match(sonra, /En son t250'da görüldü/);
@@ -1283,10 +1422,39 @@ describe("eslestir: komut satırı (ayrı süreç, temiz ortam)", () => {
     assert.equal(t.kod, 0, t.tani);
     assert.match(t.cikti, /^Kurulum \(Codex CLI\): yalnız taslak\. Araç öncesi kanca yok ve kurulmaz \(bilerek\)\.\n/, t.tani);
     assert.equal(/settings\.json|Kurmak için|kanca-ekle/.test(t.cikti), false, t.tani);
+    // --yonerge: yönergeyi yazar, anahtara (dosya, depo) dokunmaz; anahtarlı ve anahtarsız.
+    const anahtarlar = () => {
+      const d = depoAc({ yol: join(kok, "eren.db"), saat: sahteZaman().saat, gunluk: sahteGunluk() });
+      try {
+        return d.ajandaPcAnahtarlari();
+      } finally {
+        d.kapat();
+      }
+    };
+    const jeton = readFileSync(anahtarYolu, "utf8");
+    const gecmis = anahtarlar();
+    const yo = calistir("--pc-ajan", "codex", "--yonerge");
+    assert.equal(yo.kod, 0, yo.tani);
+    assert.match(yo.cikti, /^Codex CLI kayıt yönergesi\. Ajanda anahtarı üretilmedi, değişmedi /, yo.tani);
+    assert.match(yo.cikti, /codex mcp add eren-ajanda --env /, yo.tani);
+    assert.equal(/anahtarı üretildi/.test(yo.cikti), false, yo.tani);
+    assert.equal(readFileSync(anahtarYolu, "utf8"), jeton, "yönerge anahtarı yeniledi");
+    assert.deepEqual(anahtarlar(), gecmis, "yönerge anahtar geçmişine dokundu");
+    assert.deepEqual(profilIcerigi(), onceki);
+    const yc = calistir("--claude-code", "--yonerge");
+    assert.equal(yc.kod, 0, yc.tani);
+    assert.match(yc.cikti, /^Claude Code kayıt yönergesi\. [\s\S]*claude mcp add eren-ajanda/, yc.tani);
+    assert.equal(readFileSync(anahtarYolu, "utf8"), jeton);
+    // Teşhisin olaysız dalı da anahtarı yenilemeyen komutu önerir.
+    assert.match(t.cikti, /kayıt yönergesi: eslestir --pc-ajan codex --yonerge\)/, t.tani);
     const k = calistir("--pc-ajan", "codex", "--kaldir");
     assert.equal(k.kod, 0, k.tani);
     assert.match(k.cikti, /^Codex CLI ajanda anahtarı geçersiz kılındı ve dosyası silindi\. .*kayıtlı MCP sunucusu durur,/, k.tani);
     assert.equal(existsSync(anahtarYolu), false);
+    const yok = calistir("--pc-ajan", "codex", "--yonerge");
+    assert.equal(yok.kod, 0, yok.tani);
+    assert.equal(existsSync(anahtarYolu), false, "anahtarsızken yönerge anahtar üretti");
+    assert.equal(anahtarlar().filter((a) => a.iptal_ms === null).length, 0);
   });
 
   it("--ajanda kod üretimi de tam ayar ister; neden stderr'e yazılır", () => {

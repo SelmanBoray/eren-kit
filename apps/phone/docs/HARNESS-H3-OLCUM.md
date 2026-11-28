@@ -160,3 +160,9 @@ Tam tasdik için önce iki şey gerekir:
 
 Ölçülemeyenler: yukarıdaki dört madde ve `trusted_hash` algoritması. Bunlar karar değiştirmez; tam tasdik
 istenirse yeniden ölçülür.
+
+Ölçülmedi: gerçek köprüyle uçtan uca kayıt. Bu ölçümde Codex'e kaydedici MCP sunucusu bağlandı (bölüm 2); canlı
+servis kullanılmadı. Gerçek `kopru.ts --rol pc_oturumu --uyarlayici codex`'in Codex altında başlayıp servise
+bağlandığı ve kaydın taslak doğduğu denenmedi. Codex köprüsünü bugün yalnız birim ve birleşim testleri sınar (bellek
+içi MCP istemcisiyle, Codex olmadan). Codex yönergesi bu yüzden "kayıtlar çalışır" demez, ölçülmediğini söyler; ilk
+gerçek sınama yönergenin 4. adımıdır.

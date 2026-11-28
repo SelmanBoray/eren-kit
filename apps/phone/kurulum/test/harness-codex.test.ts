@@ -75,6 +75,13 @@ test("yönerge dürüst: taslak doğar ve telefondan onaylanır, nedeni, kanca y
   assert.match(m, /Codex onaylanmış \(taslak olmayan\) kayda dokunamaz: "dişçiyi 11'e al" gibi bir değişiklik, kayıt telefonda\n\s+onaylandıysa reddedilir/);
   assert.match(m, /--teshis[\s\S]*cagri_kimligi_yok/);
   assert.match(m, /Kaldırma: codex mcp remove eren-ajanda;/);
+  // Ölçülmemiş olan "çalışır" diye vaat edilmez: uçtan uca kayıt ölçülmedi diye işaretli.
+  assert.equal(/Kayıtlar yine çalışır/.test(m), false, "ölçülmemiş iddia");
+  assert.match(m, /Ölçülmedi: bu köprünün Codex altında servise bağlanıp kayıt\n\s+yazması uçtan uca denenmedi/);
+  // "Onaylanmış kayda dokunamaz" dürüst köprü varsayımına dayanır; varsayım ve güven sınırı yazılı.
+  assert.match(m, /köprülerin dürüst olduğu varsayımına dayanır\. Güven sınırı Windows kullanıcısıdır: kabuk erişimi olan bir\n\s+model \(sandbox izin verirse\) kancaya sahte girdi verip/);
+  // Yönergeyi yeniden görmek anahtarı yenilemez: önerilen komut --yonerge.
+  assert.match(m, /anahtara dokunmadan yeniden görmek: eren eslestir --pc-ajan codex --yonerge\n/);
   // Kanca kurma yönergesi, Claude'a özgü komut ya da "insan" vaadi yok.
   for (const yasak of [/kanca-ekle/, /PreToolUse/, /hooks/, /claude mcp/, /--claude-code/, /"insan"/, /settings\.json/]) assert.equal(yasak.test(m), false, String(yasak));
   // MCP satırları yönergede, kabuk başına.
