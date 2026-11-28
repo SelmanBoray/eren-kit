@@ -67,6 +67,7 @@ import {
   PC_ANAHTAR_YOK_METNI,
   PC_CODEX_ANAHTAR_GECERSIZ_METNI,
   PC_CODEX_ANAHTAR_YOK_METNI,
+  PC_KAPALI_METNI,
   PC_KOPUK_METNI,
   PC_KOPRU_UYARLAYICILARI,
   PC_SINIR_METNI,
@@ -2318,7 +2319,7 @@ describe("kopru PC köprüsü: hello merdiveni (surec_id, arac_v3, uyarlayici) v
 
   for (const [code, beklenen] of [
     ["jeton_gecersiz", `hata: jeton_gecersiz\n${PC_ANAHTAR_GECERSIZ_METNI}`],
-    ["rol_fiil_izinsiz", `hata: ic_hata\n${PC_KOPUK_METNI}`],
+    ["rol_fiil_izinsiz", `hata: ic_hata\n${PC_KAPALI_METNI}`],
   ] as const) {
     it(`kalıcı engel (${code}): çağrının uyandırdığı deneme reddedilince beklemeden döner (bugünkü davranış)`, async () => {
       const { s, baglan } = pcServisi({ sema: "yeni", v3Acik: true, retSiralar: { 1: code, 2: code, 3: code } });
@@ -2328,6 +2329,24 @@ describe("kopru PC köprüsü: hello merdiveni (surec_id, arac_v3, uyarlayici) v
       const r = await istemci.callTool({ name: "ajanda_ekle", arguments: EKLE_GIRDI });
       assert.equal(metin(r), beklenen);
       assert.equal(s.baglantiSayisi, 2, "yeniden deneme yok");
+    });
+  }
+
+  for (const ad of ["claude-code", "codex"] as const) {
+    it(`kapalı PC rolü (${ad}): rol_fiil_izinsiz reddinde PC_KAPALI_METNI, beklemeden; servis kapalıyken PC_KOPUK_METNI aynen`, async () => {
+      const { s, baglan } = pcServisi({ sema: "yeni", v3Acik: true, retSiralar: { 1: "rol_fiil_izinsiz", 2: "rol_fiil_izinsiz" } });
+      const istemci = await pcKopruAc(baglan, s.olaylar, SUREC, PC_KOPRU_UYARLAYICILARI[ad], { bekle: elleBekle(s.olaylar) });
+      await sureyleBekle(() => s.baglantiSayisi === 1, "ilk deneme");
+      await bosalt(10);
+      const r = await istemci.callTool({ name: "ajanda_ekle", arguments: EKLE_GIRDI });
+      assert.equal(metin(r), `hata: ic_hata
+${PC_KAPALI_METNI}`);
+      assert.equal(s.baglantiSayisi, 2, "yeniden deneme yok");
+      assert.equal(s.hamIstekler.length, 0, "istek gönderilmedi");
+      assert.match(PC_KAPALI_METNI, /hiçbir şey yazılmadı/);
+      assert.doesNotMatch(PC_KAPALI_METNI, /Claude Code|Codex|ulaşılamıyor/);
+      assert.notEqual(PC_KAPALI_METNI, PC_KOPUK_METNI);
+      assert.match(PC_KOPUK_METNI, /ulaşılamıyor \(kapalı ya da yeniden başlıyor\); hiçbir şey yazılmadı/);
     });
   }
 
@@ -2536,7 +2555,7 @@ describe("kopru PC köprüsü: hello merdiveni (surec_id, arac_v3, uyarlayici) v
     assert.equal(zamanlayicilar(), once, "kesilmiş sinyalle zamanlayıcı kurulmaz");
     await gercekBekle(1);
   });
-  it("kapalı PC rolü, gerçek yeni servis: ret rol_fiil_izinsiz; iniş yok, döngü başına tek bağlantı, yanıltıcı günlük yok; model 'ulaşılamıyor' metnini görür", async () => {
+  it("kapalı PC rolü, gerçek yeni servis: ret rol_fiil_izinsiz; iniş yok, döngü başına tek bağlantı, yanıltıcı günlük yok; model 'PC erişimi kapalı' metnini görür (servis açık)", async () => {
     const g = sahteGunluk();
     const { kur: u, hamHellolar, sunucuGunlugu } = await pcUcKur(undefined, { pcKapali: true });
     const olaylar: Olay[] = [];
@@ -2544,7 +2563,7 @@ describe("kopru PC köprüsü: hello merdiveni (surec_id, arac_v3, uyarlayici) v
     await sureyleBekle(() => u.baglantiSayisi() >= 4, "denemeler");
     const r = await istemci.callTool({ name: "ajanda_ekle", arguments: EKLE_GIRDI });
     assert.ok(hataMi(r));
-    assert.equal(metin(r), `hata: ic_hata\n${PC_KOPUK_METNI}`);
+    assert.equal(metin(r), `hata: ic_hata\n${PC_KAPALI_METNI}`);
     await bosalt(10);
     const bekleme = olaylar.filter(donguBeklemesi).length;
     // Her bağlantı en üst basamakla: inilmedi (çağrının uyandırdığı deneme de tek bağlantıdır).

@@ -163,16 +163,31 @@ export interface AltinBasligi {
  * Fark varsa önce senaryo senaryo `deepStrictEqual` (okunur fark), sonra metin eşitliği.
  */
 export function altinDenetle(ad: string, baslik: AltinBasligi, senaryolar: Record<string, unknown>): void {
-  const yol = altinYolu(ad);
-  const govde = { kayit: `claude-${ad}`, aciklama: baslik.aciklama, yeniden_uret: ALTIN_YENIDEN_URET, senaryolar };
+  kayitDenetle({ kayit: `claude-${ad}`, yenidenUret: ALTIN_YENIDEN_URET }, baslik, senaryolar);
+}
+
+/**
+ * Bir kayıt dosyası: `test/altin/<kayit>.json` ve onu yeniden üreten komut (ipucu ve dosyadaki `yeniden_uret`).
+ * H4.0 kayıtları `claude-<ad>` ile `ALTIN_YENIDEN_URET`'tir (`altinDenetle`, `altinOku`); başka test dosyası kendi
+ * komutunu verir (H5.0 `kopru-araclar`).
+ */
+export interface KayitDosyasi {
+  kayit: string;
+  yenidenUret: string;
+}
+
+/** `altinDenetle`'nin genel hali: aynı biçim, aynı karşılaştırma; dosya adı ve komut parametre. */
+export function kayitDenetle(d: KayitDosyasi, baslik: AltinBasligi, senaryolar: Record<string, unknown>): void {
+  const yol = join(ALTIN_DIZINI, `${d.kayit}.json`);
+  const govde = { kayit: d.kayit, aciklama: baslik.aciklama, yeniden_uret: d.yenidenUret, senaryolar };
   const metin = `${bicimle(govde)}\n`;
   if (yazmaKipi()) {
     mkdirSync(ALTIN_DIZINI, { recursive: true });
     writeFileSync(yol, metin, "utf8");
     return;
   }
-  const ipucu = `Altın kayıt farklı: test/altin/claude-${ad}.json. Davranış bilerek değiştiyse yeniden üret: ${ALTIN_YENIDEN_URET}`;
-  assert.ok(existsSync(yol), `Altın kayıt yok: test/altin/claude-${ad}.json. Üret: ${ALTIN_YENIDEN_URET}`);
+  const ipucu = `Altın kayıt farklı: test/altin/${d.kayit}.json. Davranış bilerek değiştiyse yeniden üret: ${d.yenidenUret}`;
+  assert.ok(existsSync(yol), `Altın kayıt yok: test/altin/${d.kayit}.json. Üret: ${d.yenidenUret}`);
   const eski = readFileSync(yol, "utf8").replaceAll("\r\n", "\n");
   if (eski === metin) return;
   const eskiGovde = JSON.parse(eski) as { senaryolar?: Record<string, unknown> };
@@ -186,8 +201,13 @@ export function altinDenetle(ad: string, baslik: AltinBasligi, senaryolar: Recor
 
 /** Kapsam denetimi için: kayıt dosyasının senaryoları (yoksa atar). */
 export function altinOku(ad: string): Record<string, unknown> {
-  const yol = altinYolu(ad);
-  assert.ok(existsSync(yol), `Altın kayıt yok: test/altin/claude-${ad}.json. Üret: ${ALTIN_YENIDEN_URET}`);
+  return kayitOku({ kayit: `claude-${ad}`, yenidenUret: ALTIN_YENIDEN_URET });
+}
+
+/** `altinOku`'nun genel hali. */
+export function kayitOku(d: KayitDosyasi): Record<string, unknown> {
+  const yol = join(ALTIN_DIZINI, `${d.kayit}.json`);
+  assert.ok(existsSync(yol), `Altın kayıt yok: test/altin/${d.kayit}.json. Üret: ${d.yenidenUret}`);
   const g = JSON.parse(readFileSync(yol, "utf8")) as { senaryolar: Record<string, unknown> };
   return g.senaryolar;
 }
