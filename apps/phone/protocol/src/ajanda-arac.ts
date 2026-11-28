@@ -937,24 +937,35 @@ export type AjandaKopruIstek = z.infer<typeof AjandaKopruIstek>;
 
 /**
 /**
- * İlk mesaj. Rol, sohbet ve nesil yalnız jetondan türer. İki isteğe bağlı alan "zengin hello"dur; alanı tanımayan
+ * İlk mesaj. Rol, sohbet ve nesil yalnız jetondan türer. İsteğe bağlı alanlar "zengin hello"dur; alanı tanımayan
  * eski servis zengin hello'yu katı şemasıyla reddeder, köprü basamak basamak iner (`server/src/kopru.ts` `helloMerdiveni`): `pc_oturumu`
- * `{surec_id, arac_v3}` → `{surec_id}` → `{}`, `ana_oturum` `{arac_v3}` → `{}`; her basamak döngü başına en çok bir kez.
+ * `{surec_id, arac_v3, uyarlayici}` → `{surec_id, arac_v3}` → `{surec_id}` → `{}`, `ana_oturum` `{arac_v3}` → `{}`; her basamak döngü başına en çok bir kez.
  * `surec_id`'yi tanıyan servis T5'i korur. Son basamak düz hello'dur: ikisi de yoktur.
  * - `surec_id` (YALNIZ `pc_oturumu`): köprünün harness süreci (Claude: köprünün `process.ppid`'i); servis onu
  *   bağlantıya yazar, T5 tasdikin `surec_id`'siyle karşılaştırır. Öbür rollerde alan şemadan geçmez.
  * - `arac_v3` (yalnız `true`): köprü v3 araç yüzünü ister ve `kopru_welcome.arac_v3`'ü çözebilir. Bunu yollamayan
  *   köprü (v3 öncesi kod, katı şema) alanlı karşılamayı çözemez, bağlantıyı kapatıp sonsuza dek yeniden dener
  *   (ölçüldü); servis ona alanı hiç yazmaz ve o bağlantıyı v2 yüzüyle sürer.
+ * - `uyarlayici` (YALNIZ `pc_oturumu`): köprünün PC ajanı (`kopru.ts --uyarlayici`). Yalnız teşhis içindir, tasdik
+ *   kararına girmez. Şema her kısa dizgeyi geçirir (yeni bir ajanın köprüsü bağlantısını yitirmesin); servis yalnız
+ *   `AJANDA_KOPRU_UYARLAYICILARI`'ndaki değeri bağlantıya yazar, öbürünü yok sayar (günlüğe de girmez). Merdivende en
+ *   üst basamaktadır: `{surec_id, arac_v3, uyarlayici}` → `{surec_id, arac_v3}` → `{surec_id}` → `{}`.
  */
 export const AjandaKopruHello = mesaj("kopru_hello", {
   rol: AjandaKopruRolu,
   jeton: Jeton,
   surec_id: OpakId.optional(),
   arac_v3: z.literal(true).optional(),
+  uyarlayici: z.string().max(64).optional(),
 }).superRefine((m, ctx) => {
   if (m.surec_id !== undefined && m.rol !== "pc_oturumu") ctx.addIssue({ code: "custom", path: ["surec_id"], message: "surec_id yalnız pc_oturumu hello'sunda" });
+  if (m.uyarlayici !== undefined && m.rol !== "pc_oturumu") ctx.addIssue({ code: "custom", path: ["uyarlayici"], message: "uyarlayici yalnız pc_oturumu hello'sunda" });
 });
+/** `kopru_hello.uyarlayici`'nın tanınan değerleri (köprünün PC ajanları); bilinmeyen değer bağlantıya yazılmaz. */
+export const AJANDA_KOPRU_UYARLAYICILARI = ["claude-code", "codex"] as const;
+export type AjandaKopruUyarlayici = (typeof AJANDA_KOPRU_UYARLAYICILARI)[number];
+export const ajandaKopruUyarlayiciMi = (v: unknown): v is AjandaKopruUyarlayici =>
+  typeof v === "string" && (AJANDA_KOPRU_UYARLAYICILARI as readonly string[]).includes(v);
 /**
  * `arac_v3` (yalnız `true`, yalnız araç rollerinde): servisin v3 araç yüzü açık (ayar `ajanda_arac_v3`) VE
  * köprü hello'da `arac_v3` istedi. Yoksa köprü v2 yüzünü yayınlar ve girdiyi v2 şemasıyla denetler

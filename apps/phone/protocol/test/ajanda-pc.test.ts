@@ -8,6 +8,8 @@ import {
   AJANDA_ARAC_ACIKLAMALARI,
   AJANDA_AZAMI_CERCEVE,
   AjandaKopruHello,
+  AJANDA_KOPRU_UYARLAYICILARI,
+  ajandaKopruUyarlayiciMi,
   cozumle,
   mesaj,
   PcEskiAracGirdi,
@@ -45,6 +47,7 @@ import {
   pcEtkilesimsizMi,
   pcKancaYukariCoz,
   pcTurNotu,
+  PC_CODEX_TASLAK_NEDENI_METNI,
   PROTOKOL_SURUMU,
 } from "../src/index.ts";
 import { JETON } from "./ornekler.ts";
@@ -339,6 +342,23 @@ test("tur kararı: köprüye dönen sonuç katıdır; sentetik her karar sabit b
     assert.ok(n.includes(PC_TUR_NEDENI_METNI[k as Exclude<typeof k, "insan">]), k);
     assert.ok(n.includes("--teshis"));
     assert.equal(/[\n\r]/.test(n), false, "tek satır");
+    // Varsayılan Claude Code'dur: açık ad aynı metni verir.
+    assert.equal(pcTurNotu(k, "claude-code"), n, k);
+  }
+});
+
+test("tur notu: Codex (yalnız taslak) kendi nedenini ve teşhis komutunu söyler; Claude Code'u, kancasını, sürüm farkını anmaz", () => {
+  assert.equal(pcTurNotu("insan", "codex"), null);
+  assert.ok(PC_CODEX_TASLAK_NEDENI_METNI.startsWith("Codex yalnız taslak ajanıdır"));
+  for (const k of PC_TUR_KARARLARI.slice(1)) {
+    const n = pcTurNotu(k, "codex");
+    assert.ok(n !== null && n.startsWith(`pc_tur: sentetik (${k}).`), k);
+    assert.ok(n.includes(PC_CODEX_TASLAK_NEDENI_METNI), k);
+    assert.ok(n.includes("taslak olmayan (onaylanmış) kayda dokunulamaz"), k);
+    assert.ok(n.endsWith("Teşhis: eren eslestir --pc-ajan codex --teshis"), k);
+    for (const yanlis of ["Claude Code", "--claude-code", "sürüm farkı", "kanca", "ana oturum"]) assert.equal(n.includes(yanlis), false, `${k} ${yanlis}`);
+    assert.equal(/[\n\r]/.test(n), false, "tek satır");
+    assert.notEqual(n, pcTurNotu(k), k);
   }
 });
 
@@ -425,4 +445,35 @@ test("kopru_hello surec_id: yalnız pc_oturumu, OpakId biçiminde; 55948ea şema
   assert.equal(eskiCoz(hello("pc_oturumu")).ok, true);
   const istek = { v, type: "istek", istek_id: "i1", fiil: "ajanda_listele", girdi: {}, cagri: { arac_cagri_id: "toolu_1", surec_id: "3060" } };
   assert.equal(ajandaKopruYukariCoz(JSON.stringify(istek)).ok, false, "cagri'da süreç yok");
+});
+
+/**
+ * Teşhis (`docs/HARNESS.md` 4.3): köprünün hello'su isteğe bağlı `uyarlayici` taşır (köprünün PC ajanı), YALNIZ
+ * `pc_oturumu`'nda. Şema bilinmeyen kısa değeri de geçirir (yeni ajanın köprüsü düşmesin); tanınan değerler kapalı
+ * listededir, servis yalnız onları bağlantıya yazar. Alanı bilmeyen servis (3600780 şeması: `surec_id`, `arac_v3`)
+ * zengin hello'yu reddeder, köprü bir basamak iner (`server/test/kopru-ajanda.test.ts` sınar).
+ */
+test("kopru_hello uyarlayici: yalnız pc_oturumu; bilinmeyen kısa değer geçer, kapalı liste claude-code ve codex; uzun ya da dizge olmayan reddedilir", () => {
+  const JETON = "p".repeat(43);
+  const hello = (rol: string, ek: Record<string, unknown> = {}) => JSON.stringify({ v, type: "kopru_hello", rol, jeton: JETON, ...ek });
+  for (const ad of ["claude-code", "codex", "gemini-cli", ""]) {
+    const c = ajandaKopruYukariCoz(hello("pc_oturumu", { surec_id: "3060", arac_v3: true, uyarlayici: ad }));
+    assert.ok(c.ok && c.mesaj.type === "kopru_hello" && c.mesaj.uyarlayici === ad, ad);
+  }
+  for (const kotu of ["a".repeat(65), 1, null, true, { ad: "codex" }]) {
+    assert.equal(ajandaKopruYukariCoz(hello("pc_oturumu", { uyarlayici: kotu })).ok, false, JSON.stringify(kotu));
+  }
+  for (const rol of ["pc_kanca", "ana_oturum"]) assert.equal(ajandaKopruYukariCoz(hello(rol, { uyarlayici: "codex" })).ok, false, rol);
+  assert.equal(pcKancaYukariCoz(hello("pc_kanca", { uyarlayici: "codex" })).ok, false, "kanca hello'su uyarlayıcı taşımaz");
+  assert.deepEqual([...AJANDA_KOPRU_UYARLAYICILARI], ["claude-code", "codex"]);
+  for (const ad of AJANDA_KOPRU_UYARLAYICILARI) assert.equal(ajandaKopruUyarlayiciMi(ad), true, ad);
+  for (const ad of ["Codex", "gemini-cli", "", "toString", "hasOwnProperty", 1, null, undefined]) assert.equal(ajandaKopruUyarlayiciMi(ad), false, String(ad));
+  // Tasdik listesi (`PC_UYARLAYICILARI`) ayrıdır: codex hello'da tanınır, tasdik çerçevesinde tanınmaz.
+  assert.equal(pcUyarlayiciAdiMi("codex"), false);
+  // 3600780'in hello şeması (surec_id + arac_v3, katı) alanı geçirmez.
+  const OncekiHello = mesaj("kopru_hello", { rol: z.enum(["ana_oturum", "pc_oturumu", "pc_kanca"]), jeton: Jeton, surec_id: OpakId.optional(), arac_v3: z.literal(true).optional() });
+  const oncekiCoz = (s: string) => cozumle(z.discriminatedUnion("type", [OncekiHello, AjandaKopruIstek]), s, AJANDA_AZAMI_CERCEVE.BORU, v);
+  assert.equal(oncekiCoz(hello("pc_oturumu", { surec_id: "3060", arac_v3: true, uyarlayici: "codex" })).ok, false);
+  assert.equal(oncekiCoz(hello("pc_oturumu", { surec_id: "3060", arac_v3: true })).ok, true);
+  assert.equal(AjandaKopruHello.safeParse({ v, type: "kopru_hello", rol: "pc_oturumu", jeton: JETON, uyarlayici: "codex" }).success, true);
 });

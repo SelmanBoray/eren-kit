@@ -293,7 +293,15 @@ export function ajandaAraclariKur(b: AjandaBagimliliklari, pc?: PcDefteri): Ajan
       tekilKapsam: PC_TEKIL_KAPSAMI,
       geceAnahtari: `pc:${oturum_id}`,
       // `cagri_kimligi`: Claude Code'un MCP isteğinde çağrı kimliği geldi mi (teşhis; AJANDA.md "Kurulumdan sonra sınama").
-      iz: { yol: "pc_araci", oturum_id, pc_karar: karar, cagri_kimligi: baglam.arac_cagri_id === undefined ? "yok" : "var", ...(cagri_izi === undefined ? {} : { cagri_izi }) },
+      // `uyarlayici`: köprünün hello'da bildirdiği PC ajanı (kapalı liste); bildirmeyen köprüde alan yoktur.
+      iz: {
+        yol: "pc_araci",
+        oturum_id,
+        pc_karar: karar,
+        cagri_kimligi: baglam.arac_cagri_id === undefined ? "yok" : "var",
+        ...(cagri_izi === undefined ? {} : { cagri_izi }),
+        ...(baglam.uyarlayici === undefined ? {} : { uyarlayici: baglam.uyarlayici }),
+      },
       pcKarar: karar,
     };
   };

@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { KABUKLAR, KabukHatasi, kabukArgumani, komutSatiri } from "../harness/kabuk.ts";
 import type { Kabuk } from "../harness/kabuk.ts";
 import { gosterMetni, mcpEkleArgumanlari, mcpEkleKomutu, mcpKaydiSatiri, mcpKaydiSatirlari, yollar } from "../claude-code.ts";
+import * as codex from "../harness/codex.ts";
 
 const NODE = "C:\\Program Files\\nodejs\\node.exe";
 const BOSLUKLU = yollar({ LOCALAPPDATA: "C:\\Users\\Ad Soyad\\AppData\\Local", USERPROFILE: "C:\\Users\\Ad Soyad" }, NODE);
@@ -211,6 +212,9 @@ function yokla(d: Duzen, env: NodeJS.ProcessEnv, kok: string): string | undefine
 const DURUMLAR: ReadonlyArray<{ ad: string; args: string[]; psCmdHaric?: true }> = [
   { ad: "MCP kaydı, boşluklu yollar", args: mcpEkleArgumanlari(BOSLUKLU) },
   { ad: "MCP kaydı, düz yollar", args: mcpEkleArgumanlari(DUZ) },
+  // Codex (`codex mcp add … --env K=V -- …`): `=` içeren argüman ve aynı yollar.
+  { ad: "Codex MCP kaydı, boşluklu yollar", args: codex.mcpEkleArgumanlari(BOSLUKLU, "C:\\Users\\Ad Soyad\\AppData\\Local\\eren-kit") },
+  { ad: "Codex MCP kaydı, düz yollar", args: codex.mcpEkleArgumanlari(DUZ, "C:\\ornek\\Yerel\\eren-kit") },
   {
     ad: "özel karakterli yollar",
     args: ["--", "-s", "C:\\Program Files (x86)\\a,b;c=d\\node.exe", "C:\\Users\\O'Brien & Co\\ä ö\\kopru.ts", "son\\", "C:\\a b\\x’y‘z", "C:\\x!y", "C:\\a$b\\c`d", "1e3", "a,b"],
@@ -227,6 +231,10 @@ test("sahte program adı her kabukta çıplak; MCP satırı claude yerine bu adl
       const satir = mcpKaydiSatiri(y, k);
       assert.ok(satir.startsWith("claude "), k);
       assert.equal(komutSatiri(k, SAHTE, mcpEkleArgumanlari(y)), `${SAHTE}${satir.slice("claude".length)}`, k);
+      const kok = "C:\\Users\\Ad Soyad\\AppData\\Local\\eren-kit";
+      const cs = codex.mcpKaydiSatiri(y, kok, k);
+      assert.ok(cs.startsWith("codex "), k);
+      assert.equal(komutSatiri(k, SAHTE, codex.mcpEkleArgumanlari(y, kok)), `${SAHTE}${cs.slice("codex".length)}`, k);
     }
   }
 });

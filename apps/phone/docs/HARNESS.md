@@ -259,16 +259,41 @@ eşleşiyor (T5) ∧ `aktor = ana` ∧ `etkilesim = etkilesimli`. Diğer her şe
     `tasdik_yok` olur, tasdik sahibine kalır, günlüğe `pc_surec_uyusmuyor{kopru_surec: bildirildi}` yazılır.
   - Eski köprü (hello'da süreç yok): bağlantı başına ilk görüş. Bağlantı ilk tükettiği tasdikin sürecine bağlanır,
     sonra yalnız onu tüketir (ret `pc_surec_uyusmuyor{kopru_surec: ilk_gorus}`). Bağ bağlantıyla ölür (`kopruKapandi`
-    yalnız bu durumu siler).
+    yalnız bu durumu siler). Günlüğe giren bağlanma anı değildir: bağlantı ilk süreç kimlikli tasdikini tüketirken
+    bir kez `pc_kopru_surecsiz{oturum_id}` yazılır; hiç böyle tasdik tüketmeyen süreçsiz bağlantı iz bırakmaz.
+    `--teshis` bunu "köprü süreç bildirmedi (eski sürüm ya da uyumluluk düşüşü)" diye söyler, en son görüldüğü anı
+    verir ve pencereyi yeniden açmayı ya da `/mcp` ile yeniden bağlanmayı önerir; düzelttiğini vaat etmez (düşüş yeni
+    bağlantıda yinelenebilir, olayın yokluğu kanıt değildir). Burada T5 yalnız bağlantı içinde geçerlidir (aşağıda
+    "Kalan açıklar").
   - Tasdikte süreç yoksa (eski çerçeve ya da `CLAUDE_PID` yok) T5 uygulanmaz. Süreç kimliği olmayan yeni çerçeve de
     aynı kuralı alır: karşılaştırılacak süreç yoktur ve oturuma dayanan her bağ `/clear` ya da `--continue`'da kilitlenir.
   - Bağlantılar arası paylaşılan durum yoktur. Kaldırılanlar: süreç bağı, üyelik, aday ve kanıtla katılım, tam oturum
     istisnası, 2 sn eşiği; olaylar `pc_oturum_uyusmuyor`, `pc_bag_birakildi`, `pc_bag_katildi` artık yazılmaz (eski
     günlükte görünürlerse teşhis çıktısı değişmez).
   - Sürüm uyumu: alanı tanımayan eski servis zengin hello'yu katı şemasıyla reddeder (`yetkisiz`, ret satırı kapanışla
-    düşebilir). Köprü beklemeden bir kez düz hello ile yeniden dener; düz hello hemen yeniden denemeye yol açmaz, gerçek
-    bir ret döngüye girmez. Bu düşüş isteğe bağlı bütün hello alanlarının ortak yoludur (`kopru.ts` `helloEki`). Yeni
-    alan `cagri`'ya konmaz: eski servisin `AjandaPcCagri`'sı katıdır. Eski köprünün düz hello'su yeni serviste geçer.
+    düşebilir). Köprü bir düşüş merdiveninden iner (`kopru.ts` `helloMerdiveni`, `boruIstemciKur`). PC köprüsünün
+    basamakları `{surec_id, arac_v3, uyarlayici}` → `{surec_id, arac_v3}` → `{surec_id}` → `{}`; yüz v2'ye
+    kilitlenmişse `{surec_id, uyarlayici}` → `{surec_id}` → `{}`. Önce `uyarlayici` bırakılır (kaybı yalnız teşhistir),
+    sonra `arac_v3` (yalnız yüz), en son `surec_id` (T5). `uyarlayici`'yı tanımayan 3600780 `{surec_id, arac_v3}`'ü,
+    `arac_v3`'ü tanımayan d7bf303 `{surec_id}`'yi kabul eder; yalnız hiçbirini tanımayan servis (5c6759f, 55948ea)
+    düz hello'ya dek indirir.
+    - Her basamak bir döngüde en çok bir kez denenir; düz hello hemen yeniden denemeye yol açmaz, gerçek bir ret
+      (anahtar, kapalı PC rolü) döngüye girmez.
+    - Daraltma (9ce01ff): basamağı yalnız zengin hello'nun gerçek bitişi indirir, yani `kopru_ret{yetkisiz}` ya da
+      yanıtsız kapanış. Köprünün kendi el sıkışma zaman aşımı (10 sn) ve hello'dan geç gelen ret ya da kapanış
+      indirmez; olağan bekleme gelir, sonraki döngü en üst basamaktan başlar. Yeni serviste "PC kapalı" reddi
+      `rol_fiil_izinsiz`'dir, alanla ilgili değildir, basamak indirmez.
+    - Üst basamak yoklaması: alt basamağa yanıtsız kapanışla inilip bağlantı kurulduysa iniş belirsizdir (servis o an
+      kapanıyor olabilir). PC köprüsü bu bağlantıyı boştayken bir kez kapatıp en üst basamaktan yeniden dener
+      (`zengin_hello_yoklamasi`). Yoklama en üst basamak karşılanana dek yinelenmez. Köprü günlüğünde ayrıca
+      `el_sikisma_zaman_asimi` ve `zengin_hello_gec_bitti` olayları vardır.
+    - Kilit koşulu (ölçülen): MCP `initialize` ilk denemenin karşılamasını en çok 3 sn bekler. Daraltmadan sonra yüzün
+      süreç boyu v2'ye kilitlenmesi için bu 3 sn içinde iki ardışık yanıtsız kapanış ve ardından `{surec_id}`'nin
+      kabulü gerekir; tek yanıtsız kapanış kilitlemez. Bu kilitte süreç eşitliği korunur (bağlantı `{surec_id}` ile
+      kurulmuştur). Süreçsiz bağlantı ancak en alt basamağa (`{}`) inilirse oluşur; PC köprüsünde yoklama onu düzeltir. 3600780 servisinde ret satırı kapanışla düşerse
+      tek bir kapanış anı yanıtsızlığı yeter. Kilit oluşursa yoklama `surec_id`'yi ve `uyarlayici`'yı geri getirir; v3
+      yüzü süreç boyu v2 kalır.
+    - Yeni alan `cagri`'ya konmaz: eski servisin `AjandaPcCagri`'sı katıdır. Eski köprünün düz hello'su yeni serviste geçer.
   - Sarmalayıcı: köprüyü `cmd /c`, `npx` ya da `sh -c` başlatırsa ebeveyn harness olmaz ve o pencerenin kayıtları hep
     taslak doğar. Bu güvenli yöndür. `--teshis` bunu `pc_surec_uyusmuyor` adıyla "köprünün ebeveyni harness süreci
     değil" diye söyler; kurulum köprüyü sarmalayıcısız kaydeder (`mcpEkleArgumanlari`, testle). Ata yürüyüşü
@@ -292,14 +317,30 @@ eşleşiyor (T5) ∧ `aktor = ana` ∧ `etkilesim = etkilesimli`. Diğer her şe
   - PID yeniden kullanılıp ilk çağrı `/clear` sonrası gelirse yanlış ret: kural geçmişe bakmaz, kapandı. Süreç kimliği
     olmayan kancada başka pencereden `/resume` yanlış reddi: o kancada T5 uygulanmaz, kapandı.
 - Kalan açıklar:
-  - Eski köprünün ilk görüşünde kısa bir yarış penceresi var (bağlantının ilk tükettiği tasdik onu bağlar). Yeni köprüde
-    yoktur.
+  - Süreç bildirmeyen köprüde T5 yalnız bağlantı içinde geçerlidir ve her yeniden bağlanmada sıfırlanır. Bu kısa bir
+    yarış penceresi değildir: böyle bir köprünün her yeni bağlantısının (açılış, `/mcp`, kopup yeniden bağlanma,
+    servisin yeniden başlaması) ilk tükettiği tasdik süreç denetimsizdir. Örnek: A penceresi (süreç P) bağlı; B'nin
+    eski köprüsü (süreç Q) servis yeniden başlayınca yeni bir bağlantı açar; bu bağlantının ilk çağrısı P'nin bekleyen
+    tasdikinin kimliğini sunarsa tasdiki tüketir ve karar insan olur (`ajanda-pc.test.ts` "tek süreçte birden çok
+    oturum", eski köprü dalı bunu kabul olarak sabitler). Dürüst köprü başka sürecin çağrı kimliğini bilemez, bu yüzden
+    durum güven modelinin içinde kalır. Güncellemeden önce açılmış oturumlarla sınırlı değildir. Güncel köprü de
+    yukarıdaki kilit koşulunda süreç bildirmeden bağlanabilir. Yoklama o bağlantıyı bir kez kapatıp `surec_id`'yi
+    geri getirir; yoklama da yanıtsız kalırsa bağlantı yoklanmadan alt basamakta kalır. Pencereyi yeniden açmak ya da
+    `/mcp` yeni bağlantı açar, ama düşüş orada da yinelenebilir. Süreç bildiren bağlantıda bu açık yoktur.
   - Süreç beyanı köprünündür. Anahtarı olan bir istemci başka bir süreci beyan edebilir. Bu, bugünkü güven modelinin
     (sınır işletim sistemi kullanıcısı, `GUVENLIK.md`) içindedir. T5 kötü niyetli anahtar sahibine karşı değil,
     süreçler arası karışmaya karşı bir bağdır. Aynı süreçteki oturumlar (aynı `CLAUDE_PID`) birbirinden ayrılmaz.
+  - Güven varsayımı: köprüler ve kanca dürüsttür. Kabuk erişimi olan bir model (harness'ın sandbox'ı izin verirse)
+    bu kullanıcının kurulu dosyalarını çalıştırabilir. `kanca.ts`'ye sahte bir PreToolUse girdisi verip kendi
+    başlattığı `claude-code` köprüsünden aynı çağrı kimliğini sunarsa insan turu üretir; süreç beyanı da onundur.
+    Güven sınırı işletim sistemi kullanıcısıdır. 4.3'teki "Codex'in çağrısına hiçbir tasdik bağlanamaz" ve Codex
+    yönergesindeki "onaylanmış kayda dokunamaz" bu varsayımla doğrudur: Codex köprüsünün kendisi için geçerlidir,
+    aynı modelin başlattığı başka bir köprü için değil.
   - PID yeniden kullanımı: eski sürecin kapanmamış tasdiki, aynı PID'li yeni sürecin köprüsünce en çok tasdik ömrü
     (`TASDIK_OMRU_DK`) içinde tüketilebilir; çağrı kimliği yine de o köprünün kendi isteğinden gelmelidir.
-- Köprü `--uyarlayici <ad>` alır; varsayılan `claude-code`. Bilinmeyen ad 2 ile çıkar.
+- Köprü `--uyarlayici <ad>` alır; varsayılan `claude-code`. Bilinmeyen ad 2 ile çıkar. Ad hello'nun üst
+  basamaklarında `uyarlayici` olarak gider; servis onu `arac` günlük olayına yazar (karar değişmez). Bildirmeyen
+  köprüde ya da `uyarlayici`'sız basamakta alan yoktur; `--teshis` o çağrıyı "ajanı bilinmeyen" sayar.
 
 **İkinci uyarlayıcı için sonuç:** T5 her harness'ta kancayla köprüyü aynı sürece bağlayan, model dışı bir işaret
 ister. Codex için bu da ölçülür (`HARNESS-H3-OLCUM.md` Ö3).
@@ -352,6 +393,46 @@ kullanıcısı olduğu sürece aynı kullanıcının iki dosyası arasında ger�
   argümanını yutar (pwsh 7.7 ve Windows PowerShell 5.1, argüman yazan sahte betikle: `x -- a` → `x a`).
   Tırnaklı `'--'` iki sürümde de `.ps1`, `.cmd` ve `.exe` çağrısında `--` olarak geçer. Git Bash'te iki biçim
   aynıdır. cmd.exe tek tırnağı kaldırmaz, orada düz `--` gerekir (cmd ölçülmedi).
+- **Uygulanan (H3, Codex CLI: yalnız taslak; 2026-11-28).** Karar `HARNESS-H3-OLCUM.md` bölüm 6'dan: kanca
+  review alt oturumunu ana agent'tan, `codex exec`'i etkileşimli oturumdan ayıramıyor. Codex kullanıcısı ajanda
+  araçlarını kullanır; her kayıt taslak doğar ve telefondan onaylanır (3.1 T6).
+  - Arayüz: `PcAjani` artık `KancaliPcAjani | TaslakPcAjani`. Kancalı ajanın `kancaDurumu`, `kancaKur`,
+    `kancaKaldir`'ı vardır (`tasdik` yazılmayabilir; Claude Code nesnesi değişmedi). Yalnız taslak ajanın
+    `tasdik: "yalniz_taslak"` ve `taslakNedeni`'si vardır; kanca işlevi yoktur. `PC_AJAN_ADLARI` = `claude-code`,
+    `codex`. Uyarlayıcı `kurulum/harness/codex.ts`.
+  - Kurulum kullanıcının Codex yapılandırmasına (`~/.codex`, `CODEX_HOME`) yazmaz, dosya okumaz.
+    `eren eslestir --pc-ajan codex` anahtarı üretir ve kabuk başına tam `codex mcp add eren-ajanda --env
+    EREN_KIT_DATA_DIR=<kök> -- <node.exe> … kopru.ts --rol pc_oturumu --uyarlayici codex` satırını yazar
+    (PowerShell'de `'--'`; cmd satırı "Codex'te ölçülmedi" etiketli). Kullanıcı komutu kendisi çalıştırır.
+    Yazma komutu eklenmedi: gerek yok, kanca da kurulmaz. Veri kökü `--env` ile açıkça verilir: köprü anahtarı
+    oradan okur, Codex MCP sunucusunu kendi ortamıyla başlatır. Yönerge exec için `approval_mode = "approve"`
+    gerektiğini söyler, ayarı yazmaz.
+  - Köprü: `PC_KOPRU_UYARLAYICILARI.codex = { aracKimligiMeta: null, oturumOrtami: null }`. Çağrı kimliği hiç
+    okunmaz, servis her Codex çağrısında `cagri_kimligi_yok` der. Böylece hiçbir tasdik, sahtesi de, o çağrıya
+    bağlanamaz. Bu, Codex köprüsünün dürüst olduğu varsayımıyladır (4.2 "Güven varsayımı"): kabuk erişimi olan model
+    aynı kullanıcının kurulu `claude-code` köprüsünü ve kancasını kendisi çalıştırırsa o yoldan insan turu üretebilir;
+    sınır işletim sistemi kullanıcısıdır. `_meta.callId` okunsaydı karar yine taslak olurdu (tasdik yok ya da
+    uyarlayıcı tanınmıyor), ama o zaman bağlanmama `PC_UYARLAYICILARI`'nın içeriğine ve kancanın hiç kurulmamasına dayanırdı. Hello'daki
+    süreç (`process.ppid`) aynen gider ve zararsızdır.
+  - `codex`, tasdik çerçevesinin `PC_UYARLAYICILARI`'nda bilerek yoktur: sahte bir `codex` çerçevesi
+    `pc_tasdik_yetersiz{neden: uyarlayici}` ve `tasdik_yok` alır. Köprü yalnız taslak adları ayrı tutar
+    (`PC_YALNIZ_TASLAK_UYARLAYICILARI`). Testle sabit kural: tasdik listesinde olmayan köprü uyarlayıcısı çağrı
+    kimliği okumaz.
+  - `--teshis` Codex'te kanca aramaz, kullanıcı ayarını okumaz, "kurun" demez. Kurulum satırları kayıtların neden
+    taslak doğduğunu yazar. Özet kanca ve çağrı kimliği için "HAYIR" demez: ikisi bu ajanda bilerek yoktur. Son karar
+    `cagri_kimligi_yok` ise beklenen olduğu söylenir; başka bir karar Codex'in olamaz (köprüsü çağrı kimliği
+    göndermez), teşhis onu Claude Code teşhisine yollar.
+  - Ajan ayrımı (9ce01ff sonrası): `arac` olayının `uyarlayici` alanı köprünün bildirdiği ajandır. Alan günlükte
+    varsa her ajanın teşhisi özetini yalnız kendi çağrılarından kurar; öteki ajanlar ve alanı olmayan çağrılar ("ajanı
+    bilinmeyen") ayrı satırdadır, onlar için kesin neden söylenmez. Kanca olayları (`pc_arac`) yalnız Claude
+    Code'dandır. Hiçbir `arac` alanı taşımıyorsa (eski günlük) ayrım yapılmaz, çıktı bugünküdür. Tek fark Claude
+    Code'un `cagri_kimligi_yok` metnidir: başka bir PC ajanından gelme ihtimalini anar.
+  - Yönergeyi görmek anahtarı yenilememeli: `eren eslestir --pc-ajan <ad> --yonerge` (ve `--claude-code --yonerge`)
+    kayıt yönergesini veri köküne, depoya ve anahtara dokunmadan yazar. Teşhisin olaysız dalı ve kancalı başka
+    ajanın kurulum satırı bunu önerir. Alt komutsuz çağrı bugünkü gibi yeni anahtar üretir.
+  - Ölçülmedi: gerçek köprünün (`kopru.ts --uyarlayici codex`) Codex altında servise bağlanıp kayıt yazması
+    (`HARNESS-H3-OLCUM.md` bölüm 6). Yönerge bunu "ölçülmedi" diye söyler.
+  - Tam tasdik için önce bölüm 6'daki iki koşul gerekir: çerçeve değişikliği ve yeniden ölçüm.
 
 ### 4.4 Protokol ve telefon
 
@@ -421,7 +502,7 @@ bağlıdır; ölçmeden karar verilmemeli.
 |---|---|---|---|
 | **H1 – Tasdik çerçevesi** | Normalize çerçeve (`aktor`, `etkilesim`, `uyarlayici`), eski çerçeveyle geri uyum; T5 (oturum/bağlantı bağı); Claude uyarlayıcısı bugünkü kararları birebir üretir | `protocol/src/ajanda-pc*.ts`, `server/src/ajanda-pc.ts`, `kanca.ts`, `kopru.ts` (yalnız kimlik okuma), testler | C ile `protocol/src` ve servis ajanda dosyaları: sıra koordinatörden |
 | **H2 – Kurulum soyutlaması** | `kurulum/harness/`, `eslestir --pc-ajan`, `--claude-code` takma adı, kabuğa göre yönerge | `kurulum/**`, `server/src/eslestir.ts` | Az (C'nin D5'i `eslestir.ts`'te küçük bir değişiklik yapıyor; H2 onun üstüne oturur) |
-| **H3 – İkinci bağlayıcı (Codex)** | Önce ölçüm (çağrı kimliği MCP'de var mı, alt agent ve etkileşim alanları); sonra uyarlayıcı ya da "yalnız taslak" kaydı | `kurulum/harness/codex.ts`, kanca uyarlayıcısı | Yok |
+| **H3 – İkinci bağlayıcı (Codex)** | Ölçüldü (`HARNESS-H3-OLCUM.md` 6): **yalnız taslak**. Uygulandı (4.3): `kurulum/harness/codex.ts` (kancasız, yalnız MCP kaydı yönergesi), `eslestir --pc-ajan codex`, köprü `--uyarlayici codex` (çağrı kimliği okunmaz) | `kurulum/harness/codex.ts`, `tur.ts`, `server/src/eslestir.ts`, `kopru.ts` (uyarlayıcı tablosu) | Yok |
 | **H4 – Sürücü sınırı (yalnız Claude)** | `OturumSurucusu`, `NormalOlay`, yetenek beyanı; `.exe` sorunu; tur zaman aşımı; `ayarKur`'da `claude.exe` zorunluluğunun kalkması ve "motor yok" durumu (H2'den taşındı) | `konusma*.ts`, `isler*.ts`, `akis.ts`, `ayar.ts`, `sozlesme.ts` | C ile servis: C'nin D5 servis kısmından sonra |
 | **H5 – Metinler** | Telefon ve istem metinlerinde harness etiketi | `protocol/src/plan.ts`, `app/` metinleri | Telefon uygulaması koordinatörde |
 | **H6 – ACP sürücüsü** | Ölçüm sonrası karar | yeni dosya | — |
