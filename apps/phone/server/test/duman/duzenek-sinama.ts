@@ -3,9 +3,13 @@
  *
  *   node --disable-warning=ExperimentalWarning test/duman/duzenek-sinama.ts
  *
- * - Boru kuralı (`boru-kural.ts`): canlı ad alanı önekli boruya, zaten önekli aynen, başka her boru hata.
- * - Kaydedicinin kapalı başarısızlığı (`mcpYonlendir` ve gerçek kaydedici süreci): yönlendirilemeyen köprü
- *   yapılandırmasında 91 ile çıkar, "gerçek claude" (burada işaret bırakan bir betik) hiç başlamaz.
+ * - Boru kuralı (`boru-kural.ts`): canlı ad alanı önekli boruya, zaten önekli aynen, başka her boru hata;
+ *   tanınmayan biçim (UNC `\\localhost\pipe\...`, `\\?\UNC\`, GLOBALROOT, `\??\`) ve alt yollu ad da hata.
+ * - Kaydedicinin kapalı başarısızlığı (`mcpYonlendir`, `argvDenetle` ve gerçek kaydedici süreci):
+ *   yönlendirilemeyen köprü yapılandırmasında ya da `--strict-mcp-config` / `--setting-sources ""` eksikken 91
+ *   ile çıkar, "gerçek claude" (burada işaret bırakan bir betik) hiç başlamaz.
+ * - İz raporu (`iz-olcum.ts izRaporu`): `~/.claude.json`'da "başka" anahtar yolu yazılmaz, yalnız kategori ve sayı.
+ * - Canlı günlük denetimi (`canli-gunluk.ts`, yapay satırlarla): pencere, rol ayrımı, alan ayıklama.
  * - Önyükleme süreçte (`boru-yonlendir.ts`): `eren-*` adı bu sınamanın dinlediği duman borusuna ulaşır;
  *   başka uygulamanın borusu, başka belirteçli duman borusu, başka adla dinleme ve net katmanını atlayan
  *   yerel tanıtıcı çağrısı reddedilir; denetim günlüğü bunları yazar. Canlı adlar (eren-kopru, eren-ajanda,
@@ -24,7 +28,12 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { canliBoruMu, hedefCoz } from "./boru-kural.ts";
-import { mcpYonlendir, YONLENDIRME_HATASI_KODU } from "./kaydedici.ts";
+import { canliGunlukDenetle, olaylariAyikla } from "./canli-gunluk.ts";
+import type { CanliGunlukAnligi } from "./canli-gunluk.ts";
+import { basarili } from "./karsilastir.ts";
+import { izFarki, izRaporu } from "./iz-olcum.ts";
+import type { IzAnligi } from "./iz-olcum.ts";
+import { argvDenetle, mcpYonlendir, YONLENDIRME_HATASI_KODU } from "./kaydedici.ts";
 import { ArgumanHatasi, secenekleriAyristir } from "./kosu.ts";
 import type { BoruOlayi } from "./tipler.ts";
 
@@ -73,6 +82,53 @@ function kuralSinamasi(): void {
   }
   for (const g of ["\\\\.\\pipe\\baska-uygulama", "\\\\.\\pipe\\eren-duman-ffffffffffff-kopru", "//./pipe/mojo.1234"]) {
     denet(`kural: ${g} reddedilir`, atar(() => hedefCoz(g, b)) === "EREN_DUMAN_BORU_RED");
+  }
+  // E3: tanınmayan biçim. Eski kural bunları "boru değil" sayıp (null) dokunmadan geçirirdi; UNC ve aygıt
+  // ad alanı yolları aynı yerel boruya (canlı eren-ajanda) ulaşır.
+  const taninmayan = [
+    "\\\\localhost\\pipe\\eren-ajanda",
+    "//localhost/pipe/eren-ajanda",
+    "\\\\127.0.0.1\\pipe\\eren-kopru",
+    "\\\\?\\UNC\\localhost\\pipe\\eren-ajanda",
+    "\\\\.\\GLOBALROOT\\Device\\NamedPipe\\eren-ajanda",
+    "\\\\?\\GLOBALROOT\\Device\\NamedPipe\\eren-servis-tekil",
+    "\\??\\pipe\\eren-ajanda",
+    "\\\\sunucu\\paylasim\\dosya",
+    `\\\\.\\pipe\\eren-duman-${b}-x\\..\\eren-ajanda`,
+    "\\\\?\\pipe\\eren-ajanda\\..\\eren-kopru",
+  ];
+  for (const g of taninmayan) denet(`kural: ${g} reddedilir (tanınmayan biçim / alt yol)`, atar(() => hedefCoz(g, b)) === "EREN_DUMAN_BORU_RED", String(atar(() => hedefCoz(g, b))));
+  for (const g of taninmayan.slice(0, 7)) denet(`kural: ${g} kanıt adımında canlı sayılır`, canliBoruMu(g));
+}
+
+// ---------------------------------------------------------------------------------------------
+// 1b. Kaydedicinin argv denetimi (saf; E1)
+// ---------------------------------------------------------------------------------------------
+
+/** Bugünkü servis argv'sinin iskeleti (`konusma.ts` ana oturum, `isler-komut.ts` PC hafif işi). */
+const ANA_ARGV = ["--input-format", "stream-json", "--dangerously-skip-permissions", "--strict-mcp-config", "--mcp-config", "C:\\k\\mcp.json", "--setting-sources", "", "--disable-slash-commands", "--model", "haiku"];
+const IS_ARGV = ["-p", "gorev", "--dangerously-skip-permissions", "--strict-mcp-config", "--mcp-config", "C:\\k\\mcp.json", "--setting-sources", "", "--disable-slash-commands", "--disallowedTools", "x", "--settings", "{}"];
+
+function argvDenetimiSinamasi(): void {
+  denet("argvDenetle: ana oturum iskeleti → uygun", argvDenetle(ANA_ARGV) === null, String(argvDenetle(ANA_ARGV)));
+  denet("argvDenetle: PC hafif işi iskeleti → uygun", argvDenetle(IS_ARGV) === null, String(argvDenetle(IS_ARGV)));
+  const cikar = (argv: string[], i: number, n: number): string[] => [...argv.slice(0, i), ...argv.slice(i + n)];
+  const si = ANA_ARGV.indexOf("--setting-sources");
+  const durumlar: Array<[string, string[]]> = [
+    ["--strict-mcp-config yok", cikar(ANA_ARGV, ANA_ARGV.indexOf("--strict-mcp-config"), 1)],
+    ["--setting-sources yok (PC standart profili gibi)", cikar(ANA_ARGV, si, 2)],
+    ["--setting-sources user", ANA_ARGV.map((a, i) => (i === si + 1 ? "user" : a))],
+    ["--setting-sources son argüman (değer yok)", [...cikar(ANA_ARGV, si, 2), "--setting-sources"]],
+    ["--setting-sources iki kez", [...ANA_ARGV, "--setting-sources", ""]],
+    ["--strict-mcp-config iki kez", [...ANA_ARGV, "--strict-mcp-config"]],
+    ["--setting-sources= biçimi", [...cikar(ANA_ARGV, si, 2), "--setting-sources="]],
+    ["--strict-mcp-config= biçimi", [...cikar(ANA_ARGV, ANA_ARGV.indexOf("--strict-mcp-config"), 1), "--strict-mcp-config=true"]],
+    ["--mcp-config= biçimi", [...ANA_ARGV, "--mcp-config=C:\\k\\ikinci.json"]],
+    ["--mcp-config çok değerli", ANA_ARGV.flatMap((a) => (a === "C:\\k\\mcp.json" ? [a, "C:\\k\\ikinci.json"] : [a]))],
+  ];
+  for (const [ad, argv] of durumlar) {
+    const r = argvDenetle(argv);
+    denet(`argvDenetle: ${ad} → red`, r !== null, String(r));
   }
 }
 
@@ -126,10 +182,11 @@ function kaydediciSurecSinamasi(t: string): void {
   const ayar = join(t, "kaydedici-ayar.json");
   writeFileSync(ayar, JSON.stringify({ gercekClaude: process.execPath, kayitDizini: kayit, model: null, onyukleme: "file:///x?onek=0123456789ab" }));
   const isaretler = (): string[] => readdirSync(t).filter((a) => a.startsWith("isaret-"));
-  const kos = (mcp: string): { kod: number | null; stderr: string } => {
+  const YALITIM = ["--strict-mcp-config", "--setting-sources", ""];
+  const kos = (mcp: string, yalitim: readonly string[] = YALITIM): { kod: number | null; stderr: string } => {
     const yol = join(t, `mcp-${randomBytes(4).toString("hex")}.json`);
     writeFileSync(yol, mcp);
-    const r = spawnSync(process.execPath, [NODE_BAYRAK, join(DUMAN, "kaydedici.ts"), ayar, isaretci, "--mcp-config", yol], {
+    const r = spawnSync(process.execPath, [NODE_BAYRAK, join(DUMAN, "kaydedici.ts"), ayar, isaretci, ...yalitim, "--mcp-config", yol], {
       encoding: "utf8",
       timeout: 30_000,
       windowsHide: true,
@@ -143,8 +200,18 @@ function kaydediciSurecSinamasi(t: string): void {
     const r = kos(yerel(metin));
     denet(`kaydedici süreci: ${ad} → ${YONLENDIRME_HATASI_KODU} ile çıktı, gerçek claude başlamadı`, r.kod === YONLENDIRME_HATASI_KODU && isaretler().length === once, `kod ${r.kod}, ${r.stderr.trim()}`);
   }
+  // E1: köprüsü doğru olan yapılandırma, ama yalıtım bayrağı eksik → yine 91, gerçek claude başlamaz.
+  const dogruKopru = yerel(JSON.stringify({ mcpServers: { eren: kopruTanimi() } }));
+  for (const [ad, yalitim] of [
+    ["--strict-mcp-config yok", ["--setting-sources", ""]],
+    ["--setting-sources yok", ["--strict-mcp-config"]],
+  ] as const) {
+    const once = isaretler().length;
+    const r = kos(dogruKopru, yalitim);
+    denet(`kaydedici süreci: ${ad} → ${YONLENDIRME_HATASI_KODU} ile çıktı, gerçek claude başlamadı`, r.kod === YONLENDIRME_HATASI_KODU && isaretler().length === once && r.stderr.includes(ad.split(" ")[0]!), `kod ${r.kod}, ${r.stderr.trim()}`);
+  }
   const once = isaretler().length;
-  const r = kos(yerel(JSON.stringify({ mcpServers: { eren: kopruTanimi() } })));
+  const r = kos(dogruKopru);
   const yeni = isaretler().slice(once);
   let argv: string[] = [];
   if (yeni[0] !== undefined) argv = JSON.parse(readFileSync(join(t, yeni[0]), "utf8")) as string[];
@@ -157,7 +224,7 @@ function kaydediciSurecSinamasi(t: string): void {
   );
   const jsonl = readdirSync(kayit).filter((a) => /^\d+\.jsonl$/.test(a));
   const hatalar = jsonl.filter((a) => readFileSync(join(kayit, a), "utf8").includes('"yonlendirme":{"tur":"hata"'));
-  denet("kaydedici kaydı: kapalı başarısızlıklar baslat kaydında yonlendirme=hata olarak görünür", hatalar.length === 3, `${hatalar.length}/${jsonl.length}`);
+  denet("kaydedici kaydı: kapalı başarısızlıklar baslat kaydında yonlendirme=hata olarak görünür", hatalar.length === 5, `${hatalar.length}/${jsonl.length}`);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -174,6 +241,7 @@ await dene("eren_ad_alani", () => baglan("\\\\\\\\.\\\\pipe\\\\eren-sinama"));
 await dene("ileri_egik_buyuk", () => baglan("//./pipe/EREN-SINAMA"));
 await dene("baska_uygulama", () => baglan("\\\\\\\\.\\\\pipe\\\\baska-uygulama-" + process.pid));
 await dene("baska_belirtec", () => baglan("\\\\\\\\.\\\\pipe\\\\eren-duman-ffffffffffff-kopru"));
+await dene("unc_bicim", () => baglan("\\\\\\\\localhost\\\\pipe\\\\eren-sinama"));
 await dene("baska_dinleme", () => new Promise((coz, red) => { const s = net.createServer(); s.once("error", red); s.listen("\\\\\\\\.\\\\pipe\\\\baska-dinleme-" + process.pid, () => { s.close(); coz({ dinledi: true }); }); }));
 await dene("yerel_katman", () => { const { Pipe, PipeConnectWrap, constants } = process.binding("pipe_wrap"); const h = new Pipe(constants.SOCKET); const req = new PipeConnectWrap(); req.oncomplete = () => {}; const r = h.connect(req, "\\\\\\\\.\\\\pipe\\\\baska-yerel-" + process.pid); h.close(); return { donen: r }; });
 console.log(JSON.stringify(sonuc));
@@ -211,7 +279,7 @@ async function onyuklemeSinamasi(t: string): Promise<void> {
     denet("önyükleme: eren-* adı duman borusuna ulaştı (sınamanın dinleyicisi)", s["eren_ad_alani"]?.baglandi === true, JSON.stringify(s["eren_ad_alani"]));
     denet("önyükleme: //./pipe/EREN-... (eğik çizgi, büyük harf) de çevrildi", s["ileri_egik_buyuk"]?.baglandi === true, JSON.stringify(s["ileri_egik_buyuk"]));
     denet("önyükleme: dinleyiciye gelen bağlantı 2", gelen === 2, String(gelen));
-    for (const ad of ["baska_uygulama", "baska_belirtec", "baska_dinleme", "yerel_katman"]) {
+    for (const ad of ["baska_uygulama", "baska_belirtec", "unc_bicim", "baska_dinleme", "yerel_katman"]) {
       denet(`önyükleme: ${ad} reddedildi (EREN_DUMAN_BORU_RED)`, s[ad]?.atti === "EREN_DUMAN_BORU_RED", JSON.stringify(s[ad]));
     }
     const gunluk = join(kok, "boru");
@@ -230,7 +298,7 @@ async function onyuklemeSinamasi(t: string): Promise<void> {
       baglan.length === 2 && baglan.every((o) => o.hedef === `\\\\.\\pipe\\eren-duman-${b}-sinama`) && !baglan.some((o) => canliBoruMu(o.hedef)),
       baglan.map((o) => o.hedef).join(", "),
     );
-    denet("günlük: red 4", olaylar.filter((o) => o.t === "red").length === 4, String(olaylar.filter((o) => o.t === "red").length));
+    denet("günlük: red 5", olaylar.filter((o) => o.t === "red").length === 5, String(olaylar.filter((o) => o.t === "red").length));
     denet("önyüklemeli süreç 0 ile çıktı", r.kod === 0, `${r.kod} ${r.hata.slice(0, 200)}`);
   } finally {
     rmSync(kok, { recursive: true, force: true });
@@ -293,6 +361,82 @@ function argumanSinamasi(t: string): void {
   // Uçtan uca: eski kodda `--cikti --sakla` çıktıyı depo içine (`apps/phone/server/--sakla`) açardı.
   const r = spawnSync(process.execPath, [NODE_BAYRAK, join(DUMAN, "kosu.ts"), "--sahte-claude", "--cikti", "--sakla"], { cwd: SERVER, encoding: "utf8", windowsHide: true, timeout: 30_000 });
   denet("kosu.ts --sahte-claude --cikti --sakla: 2 ile çıktı, hiçbir şey başlamadı, depoda --sakla dizini yok", r.status === 2 && !existsSync(join(SERVER, "--sakla")) && !(r.stdout ?? "").includes("belirteç"), `${r.status} ${(r.stderr ?? "").trim()}`);
+
+  // E6: varsayılan çıktı yolu da denetlenir. TEMP bir çalışma ağacının içindeyse (burada `.git` dizinli
+  // yapay ağaç, gerçek depoya dokunulmaz) kuru kip bile 2 ile durur.
+  const agac = join(t, "agac");
+  const sahteTemp = join(agac, "temp");
+  mkdirSync(join(agac, ".git"), { recursive: true });
+  mkdirSync(sahteTemp, { recursive: true });
+  const ortam = Object.fromEntries(Object.entries(process.env).filter(([k]) => !["TEMP", "TMP"].includes(k.toUpperCase())));
+  const v = spawnSync(process.execPath, [NODE_BAYRAK, join(DUMAN, "kosu.ts"), "--kuru"], {
+    cwd: SERVER,
+    env: { ...ortam, TEMP: sahteTemp, TMP: sahteTemp },
+    encoding: "utf8",
+    windowsHide: true,
+    timeout: 60_000,
+  });
+  const acilan = readdirSync(sahteTemp).filter((a) => a.startsWith("eren-duman-"));
+  denet(
+    "kosu.ts --kuru, TEMP çalışma ağacında: varsayılan --cikti reddedildi (2), eren-duman-* açılmadı",
+    v.status === 2 && (v.stderr ?? "").includes("git çalışma ağacı") && acilan.length === 0,
+    `${v.status} ${(v.stderr ?? "").trim().slice(0, 160)}`,
+  );
+}
+
+// ---------------------------------------------------------------------------------------------
+// 5. İz raporu gizliliği (E4) ve canlı günlük denetimi (E2), yapay veriyle
+// ---------------------------------------------------------------------------------------------
+
+const izAnligi = (anahtarlar: Array<[string[], string]>): IzAnligi => ({
+  ms: 0,
+  ev: "C:\\Users\\ornek",
+  girdiler: new Map(),
+  okunamayan: 0,
+  claudeJson: { var: true, boyut: 1, mtimeMs: 1, anahtarlar: new Map(anahtarlar.map(([p, h]) => [JSON.stringify(p), h])), hata: null },
+  sureMs: 0,
+});
+
+function izRaporuSinamasi(): void {
+  const gizli = "C:\\Users\\ornek\\Belgeler\\gizli-musteri-projesi";
+  const bizim = "C:\\Users\\ornek\\AppData\\Local\\Temp\\eren-duman-0123456789ab\\proje";
+  const once = izAnligi([
+    [["numStartups"], "a"],
+    [["projects", gizli, "lastCost"], "a"],
+  ]);
+  const sonra = izAnligi([
+    [["numStartups"], "b"],
+    [["projects", gizli, "lastCost"], "b"],
+    [["projects", "C:\\Users\\ornek\\ikinci-gizli", "allowedTools"], "c"],
+    [["projects", bizim, "allowedTools"], "c"],
+  ]);
+  const metin = izRaporu(izFarki(once, sonra), once.ev, ["eren-duman-0123456789ab"]).join("\n");
+  denet("izRaporu: başka oturumun proje yolu raporda yok (ters örnek: eski kod yolu yazardı)", !metin.includes("gizli-musteri-projesi") && !metin.includes("ikinci-gizli"), metin.replace(/\n/g, " | "));
+  denet("izRaporu: başka anahtarlar kategori ve sayıyla görünür", metin.includes("başka  projects: 1") && metin.includes("başka  (üst düzey anahtar): 1"), "");
+  denet("izRaporu: koşuya ait yol (geçici dizin) listelenir, ev ~ ile", metin.includes("bizim  projects › ~/AppData/Local/Temp/eren-duman-0123456789ab/proje"), "");
+}
+
+function canliGunlukSinamasi(): void {
+  const satir = (ms: number, olay: string, rol: string | null, ek: Record<string, unknown> = {}): string =>
+    JSON.stringify({ ts_ms: ms, seviye: "bilgi", modul: "ajanda-kopru-sunucu", olay, ...(rol === null ? {} : { rol }), ...ek });
+  const metin = [
+    satir(100, "el_sikisma", "eren", { sohbet_id: "GIZLI-SOHBET" }),
+    satir(1_000, "el_sikisma", "pc_oturumu"),
+    satir(1_100, "el_sikisma_ret", null, { neden: "GIZLI-NEDEN", code: "jeton_gecersiz" }),
+    satir(1_200, "arac", "eren"),
+    '{"ts_ms": 1300, "olay": "el_sikisma"', // yarım satır
+  ].join("\n");
+  const olaylar = olaylariAyikla(metin);
+  denet("canlı günlük: yalnız el sıkışma olayları ayıklandı (3), başka alan alınmadı", olaylar.length === 3 && !JSON.stringify(olaylar).includes("GIZLI"), JSON.stringify(olaylar));
+  const anlik = (o: CanliGunlukAnligi["olaylar"]): CanliGunlukAnligi => ({ ms: 0, kokler: [{ kaynak: "kalici", kok: "C:\\x" }], dosyalar: 1, okunamayan: 0, olaylar: o, hata: null });
+  const temiz = canliGunlukDenetle(anlik([]), anlik(olaylar.filter((o) => o.ms < 500 || o.rol === "pc_oturumu")), 500, 2_000, true);
+  denet("canlı günlük: pencere dışı eren + pencere içi pc_oturumu → geçti (arka plan bilgi)", basarili(temiz) && temiz.bilgiler.some((b) => b.includes("koşuya atfedilmez): 1")), JSON.stringify(temiz.denetimler));
+  const ret = canliGunlukDenetle(anlik([]), anlik(olaylar), 500, 2_000, true);
+  denet("canlı günlük: pencere içi el_sikisma_ret → kaldı", !basarili(ret) && ret.denetimler.some((d) => !d.gecti && d.ad.includes("el_sikisma_ret")), "");
+  const eren = canliGunlukDenetle(anlik([]), anlik(olaylar), 50, 200, true);
+  denet("canlı günlük: pencere içi rol=eren el_sikisma → kaldı", !basarili(eren) && eren.denetimler.some((d) => !d.gecti && d.ad.includes("rol eren")), "");
+  const yok: CanliGunlukAnligi = { ...anlik([]), dosyalar: 0, hata: "canlı günlük dosyası yok" };
+  denet("canlı günlük: canlı boru varken günlük okunamazsa → kaldı", !basarili(canliGunlukDenetle(yok, yok, 0, 1, true)), "");
 }
 
 function iceAktarmaSinamasi(): void {
@@ -311,6 +455,7 @@ async function calistir(): Promise<number> {
   const t = mkdtempSync(join(tmpdir(), "eren-duzenek-sinama-"));
   try {
     kuralSinamasi();
+    argvDenetimiSinamasi();
     yonlendirmeSinamasi();
     kaydediciSurecSinamasi(t);
     if (kalan > 0) {
@@ -318,6 +463,8 @@ async function calistir(): Promise<number> {
     } else await onyuklemeSinamasi(t);
     argumanSinamasi(t);
     iceAktarmaSinamasi();
+    izRaporuSinamasi();
+    canliGunlukSinamasi();
   } finally {
     rmSync(t, { recursive: true, force: true });
   }

@@ -780,15 +780,24 @@ describe("ajanda borusu, işlemden sonra düşen yazma (gerçek ajanda modülü,
    * Gerçek `ajandaKur` (araçlar ve PC defteri) + gerçek boru sunucusu. `boz.gunluk`: modülün `arac` günlük olayı
    * (işlemden sonra yazılır) atar; `boz.cikti`: işleyicinin başarı çıktısına sunucunun katı şemasının tanımadığı alan
    * eklenir (işlem bitti, çıktı denetimi düşer). İkisi de işleyicinin `depo.islem`'inden SONRADIR: kayıt depodadır.
+   * `boz.islem`: modülün gördüğü `depo.islem`, işleyicinin yazmasından sonra AMA işlemin içinde atar: gerçek depo
+   * işlemi geri alır (işlem öncesi yol), kayıt depoda yoktur.
    */
   const gercekKur = async () => {
     const zaman = sahteZaman();
     const depo = depoKur({ yol: ":memory:", saat: zaman.saat, gunluk: sahteGunluk() });
     acilanlar.push(depo);
-    const boz = { gunluk: false, cikti: false };
+    const boz = { gunluk: false, cikti: false, islem: false };
     const g = sahteGunluk();
+    const islemIcindeAtan = <T>(f: () => T): T =>
+      depo.islem(() => {
+        const r = f();
+        if (boz.islem) throw new Error("işlem içinde düştü");
+        return r;
+      });
+    const modulDeposu = new Proxy(depo, { get: (t, k, al) => (k === "islem" ? islemIcindeAtan : Reflect.get(t, k, al)) });
     const ajanda = ajandaKur({
-      depo,
+      depo: modulDeposu,
       takvim: sahteTakvim("Europe/Istanbul"),
       saat: zaman.saat,
       rastgele: sahteRastgele(5),
@@ -861,6 +870,31 @@ describe("ajanda borusu, işlemden sonra düşen yazma (gerçek ajanda modülü,
       assert.ok(y.type === "yanit" && y.ok);
     });
   }
+
+  it("depo.islem içinde atıp geri alınan yazma (işlem öncesi yol): ekle ve guncelle ic_hata (belirsiz değil), depoda iz yok; bağlantı açık", async () => {
+    const k = await gercekKur();
+    const y1 = await k.cagir("ajanda_ekle", NOT);
+    assert.ok(y1.type === "yanit" && y1.ok, JSON.stringify(y1));
+    const kayit = k.depo.ajandaKayitlari()[0]!;
+    const onceKayitlar = JSON.stringify(k.depo.ajandaKayitlari());
+    const onceGecmis = k.depo.ajandaGecmisi({ kayit_id: kayit.kayit_id, adet: 100 }).length;
+    const onceRev = k.depo.ajandaBasRev();
+    k.boz.islem = true;
+    assert.deepEqual(await k.cagir("ajanda_ekle", { tur: "not", baslik: "Ekmek al" }), IC_HATA("i2"));
+    assert.deepEqual(await k.cagir("ajanda_guncelle", { kayit_id: kayit.kayit_id, degisiklik: { aciklama: "Yarım litre" } }), IC_HATA("i3"));
+    // Geri alındı: yeni kayıt yok, güncelleme yok, geçmiş satırı ve revizyon ilerlemedi.
+    assert.equal(k.depo.ajandaKayitSayisi(), 1);
+    assert.equal(JSON.stringify(k.depo.ajandaKayitlari()), onceKayitlar);
+    assert.equal(k.depo.ajandaGecmisi({ kayit_id: kayit.kayit_id, adet: 100 }).length, onceGecmis);
+    assert.equal(k.depo.ajandaBasRev(), onceRev);
+    assert.equal(k.b.kapandi, false);
+    assert.ok(k.b.yazilanlar.every((x) => !x.includes("belirsiz") && !x.includes("islem_sonrasi")));
+    // Bozulma kalkınca aynı bağlantıda yazma yine olur (işlem açık kalmadı).
+    k.boz.islem = false;
+    const y4 = await k.cagir("ajanda_ekle", { tur: "not", baslik: "Ekmek al" });
+    assert.ok(y4.type === "yanit" && y4.ok, JSON.stringify(y4));
+    assert.equal(k.depo.ajandaKayitSayisi(), 2);
+  });
 
   it("işlemden önce düşen (v2 yüzünde v3 alanı: bilinmeyen alan) hâlâ ic_hata: hiçbir şey yazılmadı (kesin)", async () => {
     const k = await gercekKur();

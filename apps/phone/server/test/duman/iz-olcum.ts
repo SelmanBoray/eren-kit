@@ -195,15 +195,24 @@ export function izRaporu(f: IzFarki, ev: string, isaretler: readonly string[], a
   bolum("silinen", f.silinen);
   const yol = (p: string[]): string => p.map((x) => maskele(x, ev)).join(" › ");
   satirlar.push(`~/.claude.json: dosya ${f.json.dosyaDegisti ? "DEĞİŞTİ" : "değişmedi"}${f.json.hata === null ? "" : ` (okuma hatası: ${f.json.hata})`}`);
+  // "Başka" anahtar yolları eşzamanlı canlı oturumların proje yollarını taşır: yol yazılmaz, yalnız üst
+  // anahtar (kategori) başına sayı. "Bizim" yollar koşunun geçici dizinleridir; elle silinebilsinler diye yazılır.
   for (const [baslik, liste] of [
     ["eklenen anahtar", f.json.eklenen],
     ["değişen anahtar", f.json.degisen],
     ["silinen anahtar", f.json.silinen],
   ] as const) {
-    satirlar.push(`  ${baslik}: ${liste.length}`);
-    const sirali = [...liste].sort((a, c) => Number(bizimMi(c.join("/"))) - Number(bizimMi(a.join("/"))));
-    for (const p of sirali.slice(0, azami)) satirlar.push(`    ${bizimMi(p.join("/")) ? "bizim " : "başka "} ${yol(p)}`);
-    if (liste.length > azami) satirlar.push(`    ... ${liste.length - azami} daha`);
+    const b = liste.filter((p) => bizimMi(p.join("/")));
+    const d = liste.filter((p) => !bizimMi(p.join("/")));
+    satirlar.push(`  ${baslik}: ${liste.length} (koşuya ait ${b.length}, başka ${d.length})`);
+    for (const p of b.slice(0, azami)) satirlar.push(`    bizim  ${yol(p)}`);
+    if (b.length > azami) satirlar.push(`    ... ${b.length - azami} bizim daha`);
+    const kategori = new Map<string, number>();
+    for (const p of d) {
+      const k = p.length === 0 ? "(kök)" : p.length === 1 ? "(üst düzey anahtar)" : (p[0] ?? "");
+      kategori.set(k, (kategori.get(k) ?? 0) + 1);
+    }
+    for (const [k, n] of [...kategori].sort((a, c) => c[1] - a[1] || (a[0] < c[0] ? -1 : 1))) satirlar.push(`    başka  ${k}: ${n}`);
   }
   return satirlar;
 }

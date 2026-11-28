@@ -1016,6 +1016,15 @@ const AJANDA_YANIT_COZULEMEDI_EKI =
   "ajanda: servisin yanıtı bu köprünün beklediği biçimde değil (servis güncellenmiş olabilir; oturumu yeniden açmak köprüyü günceller); " +
   "kayıt yazılmış olabilir. Yeniden yazma: önce ajanda_listele ile bak.";
 
+/**
+ * İstek boruya verildikten sonra köprünün kendisinde beklenmedik bir hata (yazma ya da bekleme sırasında atıldı):
+ * nedeni bilinmez, istek servise ulaşmış olabilir. Yazan araçta "belirsiz"; "yazılmadı" görürse model yeniden dener,
+ * kayıt çift olur. Servisin yanıtıyla ilgili bir şey söylenmez (yanıt gelmemiş olabilir).
+ */
+const AJANDA_BEKLENMEDIK_EKI =
+  "ajanda: istek servise yollanırken ya da yanıtı beklenirken köprüde beklenmedik bir hata oldu; yazılıp yazılmadığı bilinmiyor. " +
+  "Yeniden yazma: önce ajanda_listele ile bak.";
+
 /** Boru yok (servis kapalı ya da yeniden başlıyor): istek hiç çıkmadı. */
 const AJANDA_KOPUK_SONUCU = (): CallToolResult =>
   hataSonucu("ic_hata", "ajanda: servise şu an ulaşılamıyor; hiçbir şey yazılmadı, biraz sonra yeniden dene.");
@@ -1100,6 +1109,15 @@ const PC_GECICI_ENGELLER: ReadonlySet<"anahtar_yok" | HataKodu> = new Set(["ic_h
 export const PC_KOPUK_METNI =
   "ajanda: eren servisine şu an ulaşılamıyor (kapalı ya da yeniden başlıyor); hiçbir şey yazılmadı. " +
   "Kullanıcıya kaydın yazılmadığını söyle; biraz sonra yeniden dene.";
+/**
+ * Servis açık, ama bekleme süresi (`PC_BAGLANTI_BEKLEME_MS`) boyunca her bağlantı denemesini geçici retle
+ * (`PC_GECICI_ENGELLER`: `ic_hata`, çoğunlukla PC bağlantı sınırı) geri çevirdi: istek çıkmadı, kayıt yazılmadı.
+ * Uyarlayıcıdan bağımsızdır (Claude Code ve Codex aynı sınırı paylaşır).
+ */
+export const PC_SINIR_METNI =
+  "ajanda: eren servisi açık ama bu oturumun bağlantısını şu an kabul etmiyor (büyük olasılıkla çok sayıda açık PC oturumu " +
+  "bağlantı sınırını doldurdu); hiçbir şey yazılmadı. Kullanıcıya kaydın yazılmadığını söyle; biraz sonra yeniden dene, " +
+  "sürerse kullanılmayan oturumları kapatmasını öner.";
 /** Köprü kapanırken (`durdur`) bağlantı bekleyen ya da bağlantısız kalan çağrı: istek çıkmadı. */
 export const PC_DURDU_METNI =
   "ajanda: ajanda köprüsü kapanıyor (oturum bitiyor); hiçbir şey yazılmadı. Kullanıcıya kaydın yazılmadığını söyle.";
@@ -1300,13 +1318,15 @@ export async function ajandaKopruCalistir(
 
   /**
    * PC: bağlantı yokken modele giden metin, engelin nedenine göre. Hepsinde "hiçbir şey yazılmadı" (istek çıkmadı).
-   * Köprü kapanıyorsa (`durdur`) servisin durumu değil, kapanış söylenir.
+   * Bekleme geçici retle dolduysa servis açıktır: `PC_SINIR_METNI`. Köprü kapanıyorsa (`durdur`) servisin durumu değil, kapanış söylenir.
    */
   const pcKopukSonucu = (): CallToolResult => {
     if (boru.durma.aborted) return hataSonucu("ic_hata", PC_DURDU_METNI);
     const engel = boru.sonEngel();
     if (engel === "anahtar_yok") return hataSonucu("jeton_gecersiz", anahtarMetni.yok);
     if (engel === "jeton_gecersiz") return hataSonucu("jeton_gecersiz", anahtarMetni.gecersiz);
+    // Son deneme geçici retle bitti: servis açık, bağlantı sınırı dolu (servis "ulaşılamıyor" değil).
+    if (engel !== null && PC_GECICI_ENGELLER.has(engel)) return hataSonucu("ic_hata", PC_SINIR_METNI);
     return hataSonucu("ic_hata", PC_KOPUK_METNI);
   };
   const citUret = (): string => rastgele.hex64() + rastgele.hex64();
@@ -1325,6 +1345,16 @@ export async function ajandaKopruCalistir(
     if (fiil === "ajanda_listele") return icHata(fiil);
     gunluk.uyari(MODUL, "gecersiz_sonuc", { fiil, belirsiz: true });
     return hataSonucu("belirsiz", AJANDA_YANIT_COZULEMEDI_EKI);
+  };
+
+  /**
+   * İstek boruya verildikten sonra köprüde atılan beklenmedik hata (`aracCagir`'ın dış `catch`'i). Neden bilinmez:
+   * yazan araçta "belirsiz" (`AJANDA_BEKLENMEDIK_EKI`), liste hiçbir şey yazmaz: `ic_hata`.
+   */
+  const beklenmedik = (fiil: AjandaFiili): CallToolResult => {
+    if (fiil === "ajanda_listele") return icHata(fiil);
+    gunluk.uyari(MODUL, "beklenmedik_hata", { fiil, belirsiz: true });
+    return hataSonucu("belirsiz", AJANDA_BEKLENMEDIK_EKI);
   };
 
   /**
@@ -1393,7 +1423,7 @@ export async function ajandaKopruCalistir(
           return iptalSonucu();
       }
     } catch {
-      return yollandi ? cevrilemedi(fiil) : icHata(fiil);
+      return yollandi ? beklenmedik(fiil) : icHata(fiil);
     }
   };
 
