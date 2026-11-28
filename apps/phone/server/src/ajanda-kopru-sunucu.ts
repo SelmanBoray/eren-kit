@@ -82,6 +82,8 @@ type GenelIsleyici = (
   girdi: unknown,
   baglam: AjandaKopruBaglami,
   sinyal: AbortSignal,
+  /** Bağlantının yüzü (`bag.v3`): ayar açıkken işleyici çıktının yüzünü buna göre kurar (`ajanda-araclar.ts`). */
+  v3Yuz?: boolean,
 ) => Promise<Sonuc<unknown, HataKodu>>;
 
 /**
@@ -133,7 +135,9 @@ const hataYaniti = (istek_id: string, code: HataKodu): KopruYanit => ({
  * yoksa sözleşme bozuktur. Gizlilik sınırı (v3): şemalar katıdır, liste kaydı `AjandaAracKaydi`'dır;
  * `bolge_konumu` ya da `ekler` taşıyan çıktı (işleyici `ajandaAracKaydi` süzgecini atladıysa) burada
  * reddedilir ve `ic_hata` olur: konum boruya hiçbir yoldan çıkmaz. `ayarV3` (servisin ayarı) açık, `v3`
- * (bağlantının yüzü) kapalıysa çıktı v3 şemasından geçtikten sonra v2 yüzüne iner ve v2 şemasıyla denetlenir.
+ * (bağlantının yüzü) kapalıysa işleyici yüzü bilir ve v2 yüzünü (ayar kapalıykenkiyle aynı; `v2Yuzu`) verir:
+ * çıktı v2 şemasından geçer. Geçmezse (yüzü bilmeyen işleyici) v3 şemasından geçtikten sonra v2 yüzüne iner
+ * (`ajandaAracCiktisiV2`) ve v2 şemasıyla denetlenir.
  */
 const sonucYaniti = (
   fiil: AjandaFiili,
@@ -145,7 +149,7 @@ const sonucYaniti = (
 ): KopruYanit | null => {
   if (sonuc.ok === true) {
     let deger = sonuc.deger;
-    if (ayarV3 && !v3) {
+    if (ayarV3 && !v3 && !ajandaAraclari(false)[fiil].cikti.safeParse(deger).success) {
       const tam = (ajandaAraclari(true)[fiil].cikti as z.ZodType).safeParse(deger);
       if (!tam.success) return null;
       deger = ajandaAracCiktisiV2({ fiil, cikti: tam.data } as never).cikti;
@@ -318,7 +322,7 @@ export const ajandaKopruSunucuKur: AjandaKopruSunucuFabrikasi = ({
   ): Promise<KopruYanit> => {
     try {
       const isleyici = isleyiciler[istek.fiil] as unknown as GenelIsleyici;
-      const sonuc = await isleyici(istek.girdi, baglam, sinyal);
+      const sonuc = await isleyici(istek.girdi, baglam, sinyal, v3);
       const yanit = sonucYaniti(istek.fiil, istek.istek_id, sonuc, baglam.rol === "pc_oturumu", aracV3, v3);
       if (yanit !== null) return yanit;
       gunluk.hata(MODUL, "sonuc_gecersiz", { fiil: istek.fiil });

@@ -110,7 +110,9 @@ import type {
  *   yüzüne iner (`ajandaAracCiktisiV2`: özet `varis`, `bolge_yeni`, `kural`, `bolgeler` yok; liste kaydı v2
  *   görünümü; varışlı kayıtta yanlış "bildirim yok" uyarısı doğmasın diye `v2Yuzu`). v3 telefonun yazdığı
  *   v3 alanları kayıtta kalır; eş birleşmesi ve güncelleme onlara dokunmaz.
- *   Telefon sohbeti ve PC oturumu aynı yüzü görür.
+ *   Telefon sohbeti ve PC oturumu aynı yüzü görür. Ayar açıkken çıktının yüzünü bağlantının yüzü belirler
+ *   (işleyicinin dördüncü argümanı `v3Yuz`, boru sunucusu `bag.v3`'ü verir; verilmezse ayar): v2 yüzlü
+ *   bağlantı (eski köprü, düz hello'ya düşmüş köprü) ayar kapalıykenki v2 yüzünü aynen alır.
  * - Her işleyici eşzamanlıdır (araya `await` girmez) ve tek `depo.islem` içinde yazar.
  */
 
@@ -134,6 +136,8 @@ interface Cagri {
   iz: Record<string, string | number>;
   /** Yalnız PC: defterin kararı (köprüye döner). */
   pcKarar?: PcTurKarari;
+  /** Çıktının yüzü v3 mü: ayar açık ve bağlantının yüzü v3 (`isleyici`'nin `v3Yuz`'u). */
+  v3Yuz: boolean;
 }
 
 type Govde<F extends AjandaFiili> = (girdi: AjandaFiilGirdisi<F>, c: Cagri, simdi: number) => Cikti<F>;
@@ -188,7 +192,7 @@ function siraAnahtari(z: AjandaZamani | undefined): string | undefined {
 const BOS_HATIRLATMA = { toplam: 0, kurulacak: 0, saatsiz: 0, gecmis: 0 } as const;
 
 /**
- * v3 kapalıyken özet boş hatırlatmaya iner mi: varışlı kayıtta zaman hatırlatmalarından hiçbiri kurulmayacaksa
+ * v2 yüzde (ayar kapalı ya da bağlantı v2 yüzlü) özet boş hatırlatmaya iner mi: varışlı kayıtta zaman hatırlatmalarından hiçbiri kurulmayacaksa
  * (`ajandaBildirimYokMu`). v2 yüzü varışı söyleyemez; gerçek sayılarla v2 metni "hiçbir bildirim gelmeyecek"
  * derdi, oysa telefon varışta bildirim verir. Bu yanlış iddia kullanıcıya yanlış bir şey söyletir; boş hatırlatma
  * ("hatirlatma=yok") ise etkide doğrudur (zamandan bildirim gelmeyecek) ve v2 şemasında söylenebilen tek doğru
@@ -197,7 +201,7 @@ const BOS_HATIRLATMA = { toplam: 0, kurulacak: 0, saatsiz: 0, gecmis: 0 } as con
 const v2HatirlatmasizMi = (o: AjandaKayitOzeti): boolean => o.varis !== undefined && ajandaBildirimYokMu(o);
 
 /**
- * v3 kapalıyken çıktının v2 yüzü (`ajandaAracCiktisiV2`). v3 telefonun yazdığı varışlı kayıtta özetten
+ * v2 yüzde çıktının v2 yüzü (`ajandaAracCiktisiV2`). v3 telefonun yazdığı varışlı kayıtta özetten
  * `varis` düşer; `v2HatirlatmasizMi` ise özetin hatırlatması boş hatırlatmaya iner (metin `hatirlatma=yok.`
  * der, bildirim iddiası ve v3 alanı taşımaz). Güncellemenin `onceki_gun_hatirlatmasi`'sı aynı yüzden
  * hesaplanır (`guncelle`): not özetle çelişmez. Varışsız kayıtta ve öteki hallerde çıktı
@@ -251,7 +255,7 @@ export function ajandaAraclariKur(b: AjandaBagimliliklari, pc?: PcDefteri): Ajan
   };
 
   /** Telefon sohbeti: tur `turBaglami`'ndan (jetonun sohbeti + nesli); yoksa `null` (`tur_gecersiz`). */
-  const sohbetCagrisi = (fiil: AjandaFiili, baglam: Extract<AjandaKopruBaglami, { rol: "ana_oturum" }>): Cagri | null => {
+  const sohbetCagrisi = (fiil: AjandaFiili, baglam: Extract<AjandaKopruBaglami, { rol: "ana_oturum" }>): Omit<Cagri, "v3Yuz"> | null => {
     let tur: AjandaTurBaglami | null;
     try {
       tur = b.turBaglami({ sohbet_id: baglam.sohbet_id }, baglam.nesil);
@@ -273,7 +277,7 @@ export function ajandaAraclariKur(b: AjandaBagimliliklari, pc?: PcDefteri): Ajan
   };
 
   /** PC oturumu: tur PC defterinden; hiç `null` değildir (tasdik yoksa sentetik). Defter yoksa `null`. */
-  const pcCagrisi = (fiil: AjandaFiili, baglam: Extract<AjandaKopruBaglami, { rol: "pc_oturumu" }>, simdi: number): Cagri | null => {
+  const pcCagrisi = (fiil: AjandaFiili, baglam: Extract<AjandaKopruBaglami, { rol: "pc_oturumu" }>, simdi: number): Omit<Cagri, "v3Yuz"> | null => {
     if (pc === undefined) {
       gunluk.uyari(MODUL, "tur_gecersiz", { fiil, yol: "pc_araci" });
       return null;
@@ -297,11 +301,13 @@ export function ajandaAraclariKur(b: AjandaBagimliliklari, pc?: PcDefteri): Ajan
    */
   const isleyici =
     <F extends AjandaFiili>(fiil: F, f: Govde<F>): AjandaFiilIsleyici<F> =>
-    async (girdi, baglam, sinyal) => {
+    async (girdi, baglam, sinyal, v3Yuz?: boolean) => {
       if (sinyal.aborted) return { ok: false, code: "ic_hata" };
       const simdi = saat.simdiMs();
-      const cagri = baglam.rol === "pc_oturumu" ? pcCagrisi(fiil, baglam, simdi) : sohbetCagrisi(fiil, baglam);
-      if (cagri === null) return { ok: false, code: "tur_gecersiz" };
+      const yol = baglam.rol === "pc_oturumu" ? pcCagrisi(fiil, baglam, simdi) : sohbetCagrisi(fiil, baglam);
+      if (yol === null) return { ok: false, code: "tur_gecersiz" };
+      // Yüz: ayar kapalıysa hep v2; açıksa bağlantının yüzü (verilmezse v3).
+      const cagri: Cagri = { ...yol, v3Yuz: v3 && v3Yuz !== false };
       // v3 kapalıyken v2 şeması: köprü atlanırsa da v3 alanı işleyiciye geçmez.
       const semasi = araclar[fiil].girdi as unknown as { safeParse(g: unknown): { success: boolean; data?: unknown } };
       const p = semasi.safeParse(girdi);
@@ -312,8 +318,9 @@ export function ajandaAraclariKur(b: AjandaBagimliliklari, pc?: PcDefteri): Ajan
       const t = cagri.tur;
       try {
         const ham = depo.islem(() => f(p.data as AjandaFiilGirdisi<F>, cagri, simdi));
-        // v3 kapalıyken çıktı v2 yüzüne iner (v3 telefonun yazdığı kaydın alanları modele çıkmaz).
-        const cikti = (v3 ? ham : v2Yuzu(fiil, ham)) as Cikti<F>;
+        // v2 yüzde (ayar kapalı ya da bağlantı v2 yüzlü) çıktı v2 yüzüne iner (v3 telefonun yazdığı kaydın
+        // alanları modele çıkmaz); iki v2 yüzü aynıdır.
+        const cikti = (cagri.v3Yuz ? ham : v2Yuzu(fiil, ham)) as Cikti<F>;
         const c = cikti as { sonuc?: string; neden?: string; kayit?: { kayit_id: string; revizyon: number } };
         gunluk.bilgi(MODUL, "arac", {
           fiil,
@@ -539,8 +546,8 @@ export function ajandaAraclariKur(b: AjandaBagimliliklari, pc?: PcDefteri): Ajan
     if (bir.uygulanan.includes("zaman")) {
       if (zamandaKorunan.length > 0) cikti.zamanda_korunan = zamandaKorunan;
       // Gün hatırlatmasının saati değiştiyse (ya da kalktıysa) eskisi: model kullanıcıya söyler. Modelin gördüğü
-      // yüzden (kapalıyken `v2HatirlatmasizMi` özeti boşaltır): not özetle çelişmez.
-      const gorunen = (o: AjandaKayitOzeti) => (!v3 && v2HatirlatmasizMi(o) ? undefined : o.hatirlatma.gun_hatirlatmasi);
+      // yüzden (v2 yüzde `v2HatirlatmasizMi` özeti boşaltır): not özetle çelişmez.
+      const gorunen = (o: AjandaKayitOzeti) => (!c.v3Yuz && v2HatirlatmasizMi(o) ? undefined : o.hatirlatma.gun_hatirlatmasi);
       const onceki = gorunen(ozet(k, ts));
       const sonraki = gorunen(sonOzet);
       if (onceki !== undefined && (sonraki === undefined || sonraki.saat !== onceki.saat)) cikti.onceki_gun_hatirlatmasi = onceki;
