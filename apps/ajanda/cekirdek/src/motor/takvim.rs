@@ -285,6 +285,7 @@ pub(crate) fn takvim_ayi(
             taslak: y.g.kayit.taslak,
             ilk_gun: gun_no_tarih(y.ilk),
             son_gun: gun_no_tarih(y.son),
+            simge: y.g.kayit.v3.simge.clone(),
         })
         .collect();
     Ok(TakvimAyi { yil, ay, gunler, seritler })

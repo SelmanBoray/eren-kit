@@ -448,6 +448,10 @@ pub struct TakvimSeridi {
     /// İlk ve son gün (`YYYY-MM-DD`, ikisi dahil, cihaz diliminde; kırpılmamış).
     pub ilk_gun: String,
     pub son_gun: String,
+    /// Kaydın simge anahtarı (`V3Alanlari.simge`; açık küme, bilinmeyen anahtar olduğu gibi gelir). Simgesiz ve
+    /// v2 kayıtta yok: arayüz rengi ve çizimi başlıktan tahmin etmek yerine bunu kullanır.
+    #[uniffi(default)]
+    pub simge: Option<String>,
 }
 
 /// Seçili günün bir öğesi (`takvim_gunu`). Sıra çekirdektedir (ürün kuralı, `motor/takvim.rs`).
