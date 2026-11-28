@@ -28,6 +28,22 @@ export interface KaydediciAyari {
   onyukleme: string;
 }
 
+/** Kaydedicinin `--mcp-config` için verdiği karar. */
+export type YonlendirmeKaydi =
+  | { tur: "mcp_yok" }
+  | { tur: "aynen" }
+  | { tur: "kopya"; koprular: string[]; kopya: string }
+  | { tur: "hata"; neden: string };
+
+/** Boru yönlendirme önyüklemesinin denetim günlüğü satırı (`<kök>\boru\<pid>.jsonl`, `boru-yonlendir.ts`). */
+export type BoruOlayi =
+  | { ms: number; pid: number; t: "yuklendi"; betik: string | null; rol: string | null; ppid: number }
+  | { ms: number; pid: number; t: "baglan"; hedef: string }
+  | { ms: number; pid: number; t: "dinle"; hedef: string }
+  | { ms: number; pid: number; t: "baglan_cevrildi" | "dinle_cevrildi"; istenen: string; hedef: string }
+  | { ms: number; pid: number; t: "kabul"; hedef: string }
+  | { ms: number; pid: number; t: "red"; islem: "baglan" | "dinle"; katman: "net" | "yerel"; istenen: string };
+
 /** Kaydedicinin süreç başına yazdığı olay satırları (`<kayitDizini>\<pid>.jsonl`). */
 export type KaydediciOlayi =
   | {
@@ -44,6 +60,8 @@ export type KaydediciOlayi =
       ortam_degerleri: Record<string, string>;
       /** `--mcp-config` yolu ve servisin yazdığı ham metin (köprü jetonları geçici köke aittir). */
       mcp: { yol: string; icerik: string | null } | null;
+      /** Köprü yönlendirmesinin sonucu; `hata` ise gerçek claude başlatılmadı (çıkış 91). */
+      yonlendirme?: YonlendirmeKaydi;
     }
   | { t: "stdin"; ms: number; s: string }
   | { t: "stdout"; ms: number; s: string }
@@ -69,6 +87,7 @@ export interface SurecKaydi {
   cwd: string;
   ortam: { anahtarlar: string[]; degerler: Record<string, string> };
   mcp: { yol: string; icerik: string | null } | null;
+  yonlendirme?: YonlendirmeKaydi;
   stdin: string[];
   stdout: string[];
   stderr: string;
