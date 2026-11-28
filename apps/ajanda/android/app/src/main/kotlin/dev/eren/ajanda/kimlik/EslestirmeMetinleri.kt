@@ -75,6 +75,20 @@ object EslestirmeMetinleri {
             "Bu telefonun cihaz anahtarı silinir; yeniden bağlanmak için bilgisayarda yeni kod gerekir. Kaldırınca, " +
             "bu telefonu Eren servisinden de kaldıracak komut gösterilir."
 
+    /**
+     * Sayılı kaldırma onayı: gönderilmemişlerin toplamı `kuyrukta + ertelenen` (`BaglantiDurumu.kuyrukta`,
+     * `ertelenenIslem`; [GecisMetinleri.gonderilmeyenler]). `kuyrukta` `null` (okunamadı): [KALDIRMA_ONAYI].
+     */
+    fun kaldirmaOnayi(kuyrukta: Int?, ertelenen: Int = 0): String {
+        if (kuyrukta == null) return KALDIRMA_ONAYI
+        return listOfNotNull(
+            "Kayıtlarınız bu telefonda kalır; uygulama Eren servisi olmadan çalışmayı sürdürür.",
+            GecisMetinleri.gonderilmeyenler(kuyrukta, ertelenen),
+            "Eren servisindeki kopya yedek olarak durur. Bu telefonun cihaz anahtarı silinir; yeniden bağlanmak için " +
+                "bilgisayarda yeni kod gerekir. Kaldırınca, bu telefonu Eren servisinden de kaldıracak komut gösterilir.",
+        ).joinToString(" ")
+    }
+
     const val KALDIR_DUGMESI = "Kaldır"
 
     fun asama(a: BaglantiAsamasi?): String = when (a) {

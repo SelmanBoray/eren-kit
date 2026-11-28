@@ -1,5 +1,6 @@
 package dev.eren.ajanda.kimlik
 
+import dev.eren.ajanda.cekirdek.BaglantiDurumu
 import dev.eren.ajanda.cekirdek.CalismaKipi
 import dev.eren.ajanda.cekirdek.GecisNedeni
 import dev.eren.ajanda.cekirdek.GecisOzeti
@@ -26,20 +27,33 @@ object GecisMetinleri {
         "gönderilmez; birleştirmeyi onaylarsanız (Eren servisinde olmayan taslaklar hariç) oraya gider."
 
     /**
-     * Koparmadan önceki onay. `kuyrukta`: `baglantiDurumu().kuyrukta` (henüz gönderilmemiş işlem); okunamadıysa
-     * `null` (sayısız genel cümle).
+     * Koparmadan önceki onay. `kuyrukta`: `baglantiDurumu().kuyrukta`; `ertelenen`: `baglantiDurumu().ertelenenIslem`
+     * (eski servise bağlıyken bekletilen, `kuyrukta`'ya girmeyen işlemler). Gönderilmemişlerin toplamı ikisidir.
+     * Okunamadıysa `kuyrukta` `null` (sayısız genel cümle).
      */
-    fun koparmaOnayi(kuyrukta: Int?): GecisMetni = GecisMetni(
+    fun koparmaOnayi(kuyrukta: Int?, ertelenen: Int = 0): GecisMetni = GecisMetni(
         KOPARMA_BASLIGI,
         buildList {
             add("Kayıtlarınız bu telefonda kalır; uygulama Eren servisi olmadan çalışmayı sürdürür.")
-            when {
-                kuyrukta == null -> add("Henüz gönderilmemiş değişiklikler telefonda kalır ama Eren servisine gitmez.")
-                kuyrukta > 0 -> add("$kuyrukta değişiklik henüz Eren servisine gitmedi; telefonda kalır ama servise gönderilmez.")
-            }
+            gonderilmeyenler(kuyrukta, ertelenen)?.let(::add)
             add("Eren servisindeki kopya yedek olarak durur. Yeniden bağlanmak için bilgisayarda yeni kod gerekir.")
         },
     )
+
+    /** [koparmaOnayi]'nın `baglantiDurumu()`'ndan kurulanı (okunamadıysa `koparmaOnayi(null)`). */
+    fun koparmaOnayi(d: BaglantiDurumu): GecisMetni = koparmaOnayi(d.kuyrukta, d.ertelenenIslem)
+
+    /**
+     * Ayrılınca Eren servisine gitmeyecek değişikliklerin cümlesi (koparma ve eşleşmeyi kaldırma onayı):
+     * toplam `kuyrukta + ertelenen`; ertelenenler ayrıca anılır. Toplam sıfırsa `null`; `kuyrukta` `null`'sa sayısız.
+     */
+    fun gonderilmeyenler(kuyrukta: Int?, ertelenen: Int): String? {
+        if (kuyrukta == null) return "Henüz gönderilmemiş değişiklikler telefonda kalır ama Eren servisine gitmez."
+        val toplam = kuyrukta + ertelenen.coerceAtLeast(0)
+        if (toplam <= 0) return null
+        val ana = "$toplam değişiklik henüz Eren servisine gitmedi; telefonda kalır ama servise gönderilmez."
+        return if (ertelenen > 0) "$ana Bunlardan $ertelenen değişiklik Eren servisi güncellenince gönderilecekti." else ana
+    }
 
     /** `baglantiyiKopar()` döndükten hemen sonra gösterilecek sonuç. */
     fun koparma(s: KoparmaSonucu): GecisMetni = when (s.oncekiKip) {

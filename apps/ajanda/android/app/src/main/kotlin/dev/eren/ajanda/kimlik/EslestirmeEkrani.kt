@@ -318,10 +318,21 @@ class EslestirmeEkrani : Activity() {
         }
     }
 
-    private fun kaldirmaOnayi() {
+    /** Gönderilmemiş sayısı (`kuyrukta + ertelenenIslem`) arkada okunur; okunamazsa sayısız metin. */
+    private fun kaldirmaOnayi() = arkada {
+        val d = try {
+            cekirdekAl().baglantiDurumu()
+        } catch (_: Exception) {
+            null
+        }
+        val metin = EslestirmeMetinleri.kaldirmaOnayi(d?.kuyrukta, d?.ertelenenIslem ?: 0)
+        ana.post { if (!isFinishing && !isDestroyed) kaldirmaOnayiGoster(metin) }
+    }
+
+    private fun kaldirmaOnayiGoster(metin: String) {
         AlertDialog.Builder(this)
             .setTitle(EslestirmeMetinleri.KALDIRMA_BASLIGI)
-            .setMessage(EslestirmeMetinleri.KALDIRMA_ONAYI)
+            .setMessage(metin)
             .setPositiveButton(EslestirmeMetinleri.KALDIR_DUGMESI) { _, _ -> gonder(Olay.KaldirmaOnaylandi) }
             .setNegativeButton("Vazgeç", null)
             .show()

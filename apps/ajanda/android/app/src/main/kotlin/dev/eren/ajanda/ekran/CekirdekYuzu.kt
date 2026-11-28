@@ -16,7 +16,6 @@ import dev.eren.ajanda.cekirdek.Hatirlatma
 import dev.eren.ajanda.cekirdek.HatirlatmaOnizlemesi
 import dev.eren.ajanda.cekirdek.IceAktarmaOnizlemesi
 import dev.eren.ajanda.cekirdek.IceAktarmaSonucu
-import dev.eren.ajanda.cekirdek.IslemTuru
 import dev.eren.ajanda.cekirdek.KayitDurumu
 import dev.eren.ajanda.cekirdek.KayitGorunumu
 import dev.eren.ajanda.cekirdek.KayitGovdesi
@@ -52,6 +51,18 @@ interface CekirdekYuzu {
     fun sil(kayitId: String)
     fun geriYukle(kayitId: String)
     fun retAt(islemId: String)
+    /**
+     * Ret listesinden "düzelt" (çekirdek `ret_duzelt`): gövdeyi yazar, işlemin v3 kısmını korur, başarılıysa
+     * girdiyi listeden çıkarır (hata verirse girdi kalır). Hedefi çekirdek seçer: duran kaydın düzenleme reddi
+     * o kayda, öteki girdiler (ve "kayıt sonra değişti" işaretliler) yeni kayıt. `ertelenenAtildi` girdisinde
+     * `GecersizGirdi`. Döner: yazılan kaydın kimliği.
+     */
+    fun retDuzelt(islemId: String, govde: KayitGovdesi): String
+    /**
+     * Eski servise bağlıyken ertelenen v3 değişikliklerini atar (`kayitId`: o kayıt; `null`: hepsi); her biri
+     * ret listesine `ertelenenAtildi` girdisi olarak geçer. Döner: geçen girdi sayısı. Ekrana bağlı değil.
+     */
+    fun ertelenenleriAt(kayitId: String?): Int
     fun gecmisIste(kayitId: String, onceRev: Long?)
     fun gecmis(kayitId: String): GecmisSayfasi?
     fun govdeyiHazirla(govde: KayitGovdesi): KayitGovdesi
@@ -82,6 +93,8 @@ interface CekirdekYuzu {
         override fun sil(kayitId: String) = c.sil(kayitId)
         override fun geriYukle(kayitId: String) = c.geriYukle(kayitId)
         override fun retAt(islemId: String) = c.retAt(islemId)
+        override fun retDuzelt(islemId: String, govde: KayitGovdesi) = c.retDuzelt(islemId, govde)
+        override fun ertelenenleriAt(kayitId: String?) = c.ertelenenleriAt(kayitId)
         override fun gecmisIste(kayitId: String, onceRev: Long?) = c.gecmisIste(kayitId, onceRev)
         override fun gecmis(kayitId: String) = c.gecmis(kayitId)
         override fun govdeyiHazirla(govde: KayitGovdesi) = dev.eren.ajanda.cekirdek.govdeyiHazirla(govde)
@@ -173,58 +186,54 @@ object RetListesi {
         val islemMetni: String,
         val neden: String,
         val zaman: String,
+        /** Düzeltme formu sunulur mu: gövdesi var ve atılmış ertelenen değişiklik değil. */
         val duzeltilebilir: Boolean,
         val aciklama: String,
+        /** Satırın alt yazısı: "Ekleme gönderilemedi" ya da (atılmış ertelenen değişiklikte) "Düzenleme atıldı". */
+        val durum: String = "$islemMetni gönderilemedi",
+        /** "Kayıt bu yedekten sonra değişti" uyarısı (`kayitSonraDegisti`); yoksa `null`. */
+        val uyari: String? = null,
     )
+
+    /** Atılmış ertelenen değişikliğin nedeni (çekirdeğin `TeslimEdilemedi`'si bu girdide bağlantı kopması değil). */
+    fun ertelenenNedeni(ulasmisOlabilir: Boolean): String =
+        if (ulasmisOlabilir) "Eren servisi eski olduğu için atıldı. Eren servisine ulaşmış olabilir."
+        else "Eren servisi eski olduğu için gönderilmeden atıldı."
+
+    /**
+     * Yedekten gelen, kaydı sonra değişmiş girdinin uyarısı. Çekirdek böyle girdinin düzeltmesini var olan kayda
+     * uygulamaz, yeni kayıt ekler (`ret_duzelt`); atılmış ertelenen değişiklik geri alınırsa güncel kaydın üstüne gelir.
+     */
+    fun sonraDegistiUyarisi(r: RetGirdisi): String? = when {
+        !r.kayitSonraDegisti -> null
+        r.ertelenenAtildi -> "Kayıt bu yedekten sonra değişti; bu değişiklik yeniden uygulanırsa güncel kaydın üstüne gelir."
+        r.govde != null -> "Kayıt bu yedekten sonra değişti; düzeltme güncel kaydın üstüne yazılmaz, yeni bir kayıt olarak eklenir."
+        else -> "Kayıt bu yedekten sonra değişti."
+    }
 
     fun satir(r: RetGirdisi, simdiMs: Long, dilim: java.time.ZoneId): RetSatiri {
         val baslik = r.govde?.baslik ?: "Kayıt ${r.kayitId.takeLast(6)}"
         val islem = EkranMetinleri.islem(r.islem)
-        val neden = EkranMetinleri.retNedeni(r.neden)
+        val neden = if (r.ertelenenAtildi) ertelenenNedeni(r.ulasmisOlabilir) else EkranMetinleri.retNedeni(r.neden)
         val zaman = EkranMetinleri.goreliAn(r.tsMs, simdiMs, dilim)
+        val durum = if (r.ertelenenAtildi) "$islem atıldı" else "$islem gönderilemedi"
+        val uyari = sonraDegistiUyarisi(r)
         return RetSatiri(
             islemId = r.islemId,
             baslik = baslik,
             islemMetni = islem,
             neden = neden,
             zaman = zaman,
-            duzeltilebilir = r.govde != null,
-            aciklama = "$islem gönderilemedi: $baslik. $neden",
+            duzeltilebilir = r.govde != null && !r.ertelenenAtildi,
+            aciklama = "$durum: $baslik. $neden" + (uyari?.let { " $it" } ?: ""),
+            durum = durum,
+            uyari = uyari,
         )
     }
 
-    /** Düzeltilen gövde nereye yazılır. */
-    sealed class Hedef {
-        /** Yeni kayıt olarak eklenir (yeni kimlik). */
-        object YeniKayit : Hedef()
-
-        /** Kayıt telefonda duruyor: düzeltme ona uygulanır (aynı kaydın kopyası doğmasın). */
-        data class MevcutKayit(val kayitId: String) : Hedef()
-    }
-
     /**
-     * Ekleme reddi ya da kaydı artık olmayan/silinmiş düzenleme: yeni kayıt. Duran kaydın düzenlemesi:
-     * o kayda (sözleşmenin "düzeltip yeniden ekler" yolu; çift kaydı önler).
+     * Düzeltmeyi uygular ([CekirdekYuzu.retDuzelt]; hedefi çekirdek seçer, v3 kısmı korunur). Yazma hata verirse
+     * girdi durur (kaybolmaz), hata çağırana gider. Döner: yazılan kaydın kimliği.
      */
-    fun hedef(r: RetGirdisi, mevcut: AjandaKaydi?): Hedef =
-        if (r.islem == IslemTuru.GUNCELLE && mevcut != null && !mevcut.silindi) Hedef.MevcutKayit(r.kayitId) else Hedef.YeniKayit
-
-    /**
-     * Düzeltmeyi uygular: önce yaz (`ekle` ya da `duzenle`), ancak başarılıysa ret girdisini at. Yazma
-     * hata verirse girdi durur (kaybolmaz), hata çağırana gider. Döner: yazılan kaydın kimliği.
-     */
-    fun duzelt(c: CekirdekYuzu, islemId: String, govde: KayitGovdesi): String {
-        val girdi = c.retListesi().firstOrNull { it.islemId == islemId }
-            ?: throw IllegalStateException("ret girdisi artık yok")
-        val id = when (val h = hedef(girdi, c.kayit(girdi.kayitId)?.kayit)) {
-            is Hedef.YeniKayit -> c.ekle(govde)
-            is Hedef.MevcutKayit -> {
-                // Ret girdisinin gövdesi istenen tam haldir: görünen halle farkı gider.
-                c.duzenle(h.kayitId, null, govde)
-                h.kayitId
-            }
-        }
-        c.retAt(islemId)
-        return id
-    }
+    fun duzelt(c: CekirdekYuzu, islemId: String, govde: KayitGovdesi): String = c.retDuzelt(islemId, govde)
 }

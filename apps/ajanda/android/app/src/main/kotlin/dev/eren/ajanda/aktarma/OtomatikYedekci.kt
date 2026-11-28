@@ -16,7 +16,9 @@ import java.util.zip.ZipInputStream
  * [YedekAyarDeposu] ve [YedekBildiricisi] arkasında). Sahiplik ve ad kuralları [OtomatikYedekPlani]'nda:
  * yalnız bu kurulumun ([kurulum]) yazdığı dosyalara dokunulur. Akış:
  * 1. Klasörü listele (erişim burada denetlenir). Önceki denemeden kalan doğrudan yazım
- *    ([YedekDurumu.yarimYazim]) yarımsa silinir, bütünse tutulur; bu kurulumun artık geçici dosyaları silinir.
+ *    ([YedekDurumu.yarimYazim]) yarımsa silinir, bütünse tutulur; bu kurulumun artık geçici dosyaları silinir,
+ *    önceki denemenin doğruladığı dosya hariç ([YedekDurumu.sonKimlikler]: önbellekli listede geçici adıyla
+ *    görünebilir; V3).
  * 2. Yeni ad (`ajanda-otomatik-yedek-<gün>-<SSddss>-<kurulum>.zip`; klasörde varsa saniye ilerler) +
  *    `.yaziliyor` oluşturulur, `disaAktar()` belgesi D3'ün kabıyla ([YedekKabi]) yazılır, kapanınca **geri
  *    okunup doğrulanır** (zip girdilerinin CRC'si, belgenin bayt boyu, ek sayısı, dosya sonundaki merkezi dizin
@@ -66,7 +68,7 @@ class OtomatikYedekci(
         val simdi = saat()
         val sonuc = try {
             val klasor = d.klasor?.let(klasorAc) ?: throw KlasorYok()
-            yaz(klasor, simdi)
+            yaz(klasor, d.klasor, simdi)
         } catch (e: Exception) {
             YedekSonucu.Basarisiz(sorunu(e)).also { gunluk.uyari("otomatik yedek olmadı: ${it.sorun}", e) }
         } catch (e: OutOfMemoryError) {
@@ -118,12 +120,15 @@ class OtomatikYedekci(
         }
     }
 
-    private fun yaz(klasor: YedekKlasoru, simdi: Long): YedekSonucu {
+    private fun yaz(klasor: YedekKlasoru, klasorUri: String, simdi: Long): YedekSonucu {
         val k = kurulum()
         if (!OtomatikYedekPlani.kurulumGecerli(k)) throw IllegalStateException("kurulum kimliği geçersiz")
         val once = klasor.listele()
         yarimYazimiTemizle(klasor, once, k)
-        for (g in once.filter { OtomatikYedekPlani.geciciMi(it.ad, k) }) sessizSil(klasor, g)
+        // Önceki denemenin doğruladığı dosya, liste önbellekten gelirse hâlâ geçici adıyla görünebilir (az önce
+        // yeniden adlandırıldı): kimliğiyle korunur, yenisi yazılmadan silinmez (V3).
+        val oncekiKorunan = ayarlar.oku().takeIf { it.klasor == klasorUri }?.sonKimlikler.orEmpty()
+        for (g in once.filter { OtomatikYedekPlani.geciciMi(it.ad, k) && it.kimlik !in oncekiKorunan }) sessizSil(klasor, g)
 
         val bicim = kaynak.bicim()
         val disa = kaynak.disaAktar()
@@ -153,6 +158,12 @@ class OtomatikYedekci(
             ayarlar.degistir { it.copy(yarimYazim = null) }
             sessizSil(klasor, saglam)
         }
+        // Sonraki denemenin başı için saklanır (V3); saklanamazsa yedek düşmez, yalnız o koruma eksik kalır.
+        try {
+            ayarlar.degistir { if (it.klasor == klasorUri) it.copy(sonKimlikler = korunan.toSet()) else it }
+        } catch (e: Exception) {
+            gunluk.uyari("doğrulanan yedeğin kimliği saklanamadı", e)
+        }
 
         // Yazmadan sonraki temizlik geçicilere dokunmaz (onlar deneme başında silinir): liste önbellekten
         // gelirse az önce adı değişen yedek eski geçici adıyla görünebilir (T4).
@@ -173,7 +184,7 @@ class OtomatikYedekci(
         }
         return YedekSonucu.Yapildi(
             hedef, disa.kayit.toLong(), silinen, disa.retListesinde, disa.iceAktarmaSiniriniAsiyor,
-            bellekAsiyor = bellekAsiyor, eskiSurumAcamaz = disa.bicimSurumu == 2L,
+            bellekAsiyor = bellekAsiyor, eskiSurumAcamaz = disa.bicimSurumu >= 2L,
         )
     }
 

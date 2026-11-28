@@ -83,7 +83,7 @@ class AktarmaAkisiTest {
         assertEquals(
             "3 kayıt yedeğe yazıldı (1 silinmiş kayıt dahil).\n" +
                 "Eren servisine henüz gitmemiş değişiklikler de yedekte.\n" +
-                "Gönderilemeyenler listesindeki 2 değişiklik yedeğe girmedi; önce onları düzeltin ya da atın.",
+                AktarmaMetinleri.retListesinde(2),
             a.metin,
         )
         assertEquals(belge, YedekKabi.oku(ByteArrayInputStream(cikti.toByteArray()), yuz.bicim).belge)
@@ -517,7 +517,7 @@ class AktarmaAkisiTest {
         assertEquals(
             "3 kayıt yedeğe yazıldı.\n" +
                 "Gönderilemeyenler listesindeki 4 değişiklik de yedekte; içe aktarılınca o listeye geri gelir.\n" +
-                "Gönderilemeyenler listesindeki 1 değişiklik yedeğe girmedi; önce onları düzeltin ya da atın.\n" +
+                AktarmaMetinleri.retListesinde(1) + "\n" +
                 "Yedek yazıldı, ancak bu uygulama sürümünün içe aktarma sınırını aşıyor; bu sürümle geri yüklenemez.",
             a.metin,
         )
@@ -628,31 +628,65 @@ class AktarmaAkisiTest {
         assertEquals("3 kayıt yedeğe yazıldı.", b.disaAktar({ ByteArrayOutputStream() }).metin)
     }
 
-    /** Bayat ret girdileri önizlemede bir cümleyle söylenir; yalnız onlar varsa onay sorulmaz. */
+    /**
+     * Kaydı yedekten sonra değişen ret girdileri artık alınır (eklenecekler içinde alt madde); sınırı aşanlar
+     * alınmaz ve söylenir; yalnız sınırı aşanlar varsa onay sorulmaz. `retBayat` (hep 0) metne girmez.
+     */
     @Test
-    fun bayatRetGirdileriSoylenirYalnizOnlarVarsaOnaySorulmaz() {
-        yuz.onizlemeler += plan(retGelecek = 1).copy(retBayat = 2)
-        yuz.iceSonuclari += IceAktarmaSonucu(true, plan(retGelecek = 1).copy(retBayat = 2))
+    fun sonraDegisenRetAlinirSinirAsanSoylenir() {
+        yuz.onizlemeler += plan(retGelecek = 3).copy(retSonraDegisen = 2, retSinirAsan = 1, retBayat = 5)
+        yuz.iceSonuclari += IceAktarmaSonucu(true, plan(retGelecek = 3).copy(retSonraDegisen = 2, retSinirAsan = 1))
         val o = akis.dosyaOku { ByteArrayInputStream(kap()) }
         assertTrue(o.metin, o is AktarmaAkisi.Adim.Onay)
-        assertTrue(o.metin, o.metin.contains("• Yedekteki 2 gönderilemeyen değişiklik alınmayacak (kaydı bu telefonda yedekten sonra değişmiş)\n"))
+        assertTrue(
+            o.metin,
+            o.metin.contains(
+                "• Yedekteki 3 gönderilemeyen değişiklik gönderilemeyenler listesine eklenecek\n" +
+                    "   – bunlardan 2 değişikliğin kaydı bu telefonda yedekten sonra değişmiş; listede uyarıyla görünür, " +
+                    "düzeltmesi güncel kaydın üstüne yazılmaz\n",
+            ),
+        )
+        assertTrue(
+            o.metin,
+            o.metin.contains(
+                "• Yedekteki 1 gönderilemeyen değişiklik alınmayacak: gönderilemeyenler listesi dolu " +
+                    "(önce listedekileri düzeltin ya da atın)\n",
+            ),
+        )
+        assertFalse(o.metin, o.metin.contains("Yedekteki 5") || o.metin.contains("bunlardan 5"))
         temiz(o)
         val s = akis.onayla(o as AktarmaAkisi.Adim.Onay)
-        assertTrue(s.metin, s.metin.endsWith("2 gönderilemeyen değişiklik alınmadı; kaydı bu telefonda yedekten sonra değişmişti."))
+        assertTrue(
+            s.metin,
+            s.metin.contains(
+                "3 değişiklik gönderilemeyenler listesine eklendi.\n" +
+                    "Bunlardan 2 değişikliğin kaydı yedekten sonra değişmişti; listede uyarıyla görünür.",
+            ),
+        )
+        assertTrue(s.metin, s.metin.endsWith("1 gönderilemeyen değişiklik alınmadı; gönderilemeyenler listesi dolu."))
         temiz(s)
 
-        // Kayıtlar aynı, yalnız bayat ret girdileri: yazılacak bir şey yok, onay sorulmaz.
+        // Kayıtlar aynı, yalnız sınırı aşan ret girdileri: yazılacak bir şey yok, onay sorulmaz.
         val y = SahteYuz()
-        y.onizlemeler += plan(yeni = 0, guncellenecek = 0).copy(retBayat = 3)
+        y.onizlemeler += plan(yeni = 0, guncellenecek = 0).copy(retSinirAsan = 3)
         val b = AktarmaAkisi(y, metinler).dosyaOku { ByteArrayInputStream(kap()) }
         assertTrue(b.metin, b is AktarmaAkisi.Adim.Bilgi)
         assertTrue(b.metin, b.metin.contains("• Yedekteki 3 gönderilemeyen değişiklik alınmayacak"))
         assertTrue(b.metin, b.metin.endsWith("Telefona eklenecek ya da güncellenecek kayıt yok."))
-        assertFalse(AktarmaMetinleri.yapilacakVar(plan(yeni = 0, guncellenecek = 0).copy(retBayat = 3)))
+        assertFalse(AktarmaMetinleri.yapilacakVar(plan(yeni = 0, guncellenecek = 0).copy(retSinirAsan = 3)))
         assertEquals(listOf("iceAktarmaOnizlemesi"), y.cagrilar)
         // Sıfırsa cümle yok.
-        assertFalse(metinler.onizleme(plan(), false).contains("değişmiş"))
-        assertFalse(metinler.iceSonucu(plan()).contains("değişmişti"))
+        assertFalse(metinler.onizleme(plan(retGelecek = 1), false).contains("değişmiş"))
+        assertFalse(metinler.iceSonucu(plan(retGelecek = 1)).contains("değişmişti"))
+        assertFalse(metinler.iceSonucu(plan()).contains("dolu"))
+    }
+
+    /** Biçim 3 de eski sürümlerin açamadığı biçimdir. */
+    @Test
+    fun bicimUcEskiSurumUyarisi() {
+        val a = AktarmaAkisi(yuz, metinler, acmaButcesi = { Long.MAX_VALUE })
+        yuz.disa = DisaAktarma(belge, 3, 0, 0, 0, CalismaKipi.YEREL, emptyList(), retYedekte = 1, bicimSurumu = 3)
+        assertTrue(a.disaAktar({ ByteArrayOutputStream() }).metin.endsWith(AktarmaMetinleri.ESKI_SURUM_ACAMAZ))
     }
 
     @Test

@@ -1,5 +1,7 @@
 package dev.eren.ajanda.kimlik
 
+import dev.eren.ajanda.cekirdek.BaglantiAsamasi
+import dev.eren.ajanda.cekirdek.BaglantiDurumu
 import dev.eren.ajanda.cekirdek.CalismaKipi
 import dev.eren.ajanda.cekirdek.GecisNedeni
 import dev.eren.ajanda.cekirdek.GecisOzeti
@@ -124,6 +126,26 @@ class GecisMetinleriTest {
         assertTrue(GecisMetinleri.koparmaOnayi(null).govde.contains("Henüz gönderilmemiş"))
     }
 
+    /** Eski serviste ertelenen işlemler `kuyrukta`'ya girmez: onayda toplam söylenir, ertelenenler ayrıca anılır. */
+    @Test
+    fun koparmaVeKaldirmaOnayiErtelenenleriSayar() {
+        val d = BaglantiDurumu(BaglantiAsamasi.CANLI, 2, 0, null, null, null, ertelenenIslem = 3)
+        val o = GecisMetinleri.koparmaOnayi(d)
+        assertTrue(o.govde, o.govde.contains("5 değişiklik henüz Eren servisine gitmedi"))
+        assertTrue(o.govde, o.govde.contains("Bunlardan 3 değişiklik Eren servisi güncellenince gönderilecekti."))
+        // Yalnız ertelenen varsa da söylenir ("gönderilmemiş yok" ancak ikisi sıfırken).
+        assertTrue(GecisMetinleri.koparmaOnayi(0, 1).govde.contains("1 değişiklik henüz Eren servisine gitmedi"))
+        assertEquals(2, GecisMetinleri.koparmaOnayi(0, 0).satirlar.size)
+        assertFalse(GecisMetinleri.koparmaOnayi(4).govde.contains("Bunlardan"))
+        val k = EslestirmeMetinleri.kaldirmaOnayi(2, 3)
+        assertTrue(k, k.contains("5 değişiklik henüz Eren servisine gitmedi"))
+        assertTrue(k, k.contains("güncellenince gönderilecekti"))
+        assertTrue(k, k.contains("bu telefonda kalır") && k.contains("komut gösterilir") && k.contains("yedek olarak durur"))
+        assertFalse(EslestirmeMetinleri.kaldirmaOnayi(0, 0).contains("gönderilmemiş"))
+        assertFalse(EslestirmeMetinleri.kaldirmaOnayi(0, 0).contains("gitmedi"))
+        assertEquals(EslestirmeMetinleri.KALDIRMA_ONAYI, EslestirmeMetinleri.kaldirmaOnayi(null, 3))
+    }
+
     @Test
     fun gecisBirKezGosterilir() {
         val g = ozet(GecisNedeni.KOPARMA, ts = 42)
@@ -144,7 +166,8 @@ class GecisMetinleriTest {
             )
             val metinler = sonuclar.map(GecisMetinleri::koparma) +
                 GecisNedeni.entries.flatMap { n -> sonuclar.map { GecisMetinleri.gecis(t.ozet(n, it)) } } +
-                listOf(null, 0, 5).map(GecisMetinleri::koparmaOnayi)
+                listOf(null, 0, 5).map { GecisMetinleri.koparmaOnayi(it) } +
+                listOf(0, 5).map { GecisMetinleri.koparmaOnayi(it, 2) }
             return metinler.map { it.baslik + "\n" + it.govde } + listOf(GecisMetinleri.KOPAR_DUGMESI, GecisMetinleri.VAZGEC_DUGMESI)
         }
     }
