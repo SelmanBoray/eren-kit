@@ -1,0 +1,8 @@
+<!-- Ajanda / Sahne çizimi "yildiz". Kaynak: parca/50-ortak.js RESIM.yildiz.
+     Varsayılan takım: kum (levha zemini b=#E4DFD2; çizimin kendisi zemin içermez).
+     data-rol: f=figür, l=açık ayrıntı, d=koyu ayrıntı, b=zemin rengi; renk çalışma anında takımdan gelir.
+     Karakalem ve canlanan parçalar için SAHNE.md "Çizimler" bölümüne bakın. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 160" width="240" height="160">
+  <path id="pf_1" data-rol="f" d="M86 80a34 34 0 1 0 68 0a34 34 0 1 0 -68 0z" fill="#2B50E0" />
+  <path id="ps2_1" data-rol="d" d="M120 22v14M120 124v14M62 80h14M164 80h14M79 39l10 10M151 111l10 10M79 121l10-10M151 49l10-10" fill="none" stroke="#2A2618" stroke-width="7" stroke-linecap="round" />
+</svg>

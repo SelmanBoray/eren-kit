@@ -1,0 +1,1881 @@
+<title>Ajanda Yönleri</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@400;500;600;700&family=Bricolage+Grotesque:opsz,wght@12..96,200..800&display=swap">
+<style>
+/* Yerleşim: üstte yön seçici, altında tek telefon çerçevesi; üç yön aynı veriyi kendi belirteç takımıyla çizer. */
+:root{
+  --gl:max(16px,env(safe-area-inset-left,0px));
+  --gr:max(16px,env(safe-area-inset-right,0px));
+  --f-c:"Archivo","Arial Narrow",system-ui,sans-serif;
+  --f-s:"Bricolage Grotesque","Trebuchet MS",system-ui,sans-serif;
+  --f-t:"Barlow Condensed","Roboto Condensed","Arial Narrow",sans-serif;
+  --f-tm:"Barlow",system-ui,sans-serif;
+
+  /* kabuk */
+  --k-bg:#DDE0DC; --k-fg:#151917; --k-soft:#56605A; --k-line:#BCC3BD; --k-yuz:#F5F6F4; --k-golge:rgba(21,25,23,.45);
+  /* cetvel: çizim kâğıdı, grafit, mezura sarısı */
+  --c-bg:#EFF2EC; --c-yuz:#FBFCFA; --c-ink:#17201B; --c-soft:#66716A; --c-line:#C6CEC6;
+  --c-sari:#F7C600; --c-sari-ust:#1C1A05; --c-mark:#0C6A59; --c-perde:rgba(23,32,27,.38);
+  /* sahne: galeri duvarı; rengi levhalar taşır */
+  --s-bg:#FFFFFF; --s-yuz:#F1F1F3; --s-ink:#14151A; --s-soft:#676A74; --s-line:#E2E3E7;
+  --s-vurgu:#FFC83D; --s-vurgu-ust:#1A1505; --s-perde:rgba(20,21,26,.5);
+  --foto-ust:#FFFFFF; --foto-perde:rgba(8,9,12,.62);
+  /* levha takımları: b zemin, f figür, d koyu ayrıntı, l açık ayrıntı, i zemin üstü yazı */
+  --kobalt-b:#2B50E0; --kobalt-f:#FFC83D; --kobalt-d:#0F1E5E; --kobalt-l:#DDE7FF; --kobalt-i:#FFFFFF;
+  --cam-b:#0F6B4F; --cam-f:#F7B8C6; --cam-d:#06382A; --cam-l:#F6F1E3; --cam-i:#FFFFFF;
+  --hardal-b:#F2B632; --hardal-f:#D8432B; --hardal-d:#3B2A05; --hardal-l:#FFF4D2; --hardal-i:#201703;
+  --pembe-b:#F4A9BC; --pembe-f:#FFFFFF; --pembe-d:#5C1730; --pembe-l:#FFE3EA; --pembe-i:#3A0B1A;
+  --domates-b:#C93A22; --domates-f:#F3D3A0; --domates-d:#5B140A; --domates-l:#FFE8D6; --domates-i:#FFFFFF;
+  --gok-b:#BFE3EC; --gok-f:#1A8494; --gok-d:#0B3A42; --gok-l:#FFFFFF; --gok-i:#0B2A30;
+  --kum-b:#E4DFD2; --kum-f:#2B50E0; --kum-d:#2A2618; --kum-l:#FFFFFF; --kum-i:#1C1A14;
+  --gece-b:#1E2A3A; --gece-f:#F2B632; --gece-d:#0B121C; --gece-l:#C9D6E8; --gece-i:#FFFFFF;
+  /* tabela: alüminyum pano, koyu kanatlar, durum lambaları */
+  --t-bg:#D9DDE1; --t-yuz:#F3F5F6; --t-ink:#0F1418; --t-soft:#535E67; --t-line:#B9C0C6;
+  --t-kanat:#12181D; --t-kanat-yazi:#F3EFE4; --t-yarik:#000000;
+  --t-mavi:#1846C7; --t-amber:#D98200; --t-yesil:#1B8A51; --t-perde:rgba(15,20,24,.45);
+  /* ortak */
+  --isik-bg:#0A0B0C; --isik-fg:#F4F4F2;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --k-bg:#0B0D0C; --k-fg:#E9EDEA; --k-soft:#98A39C; --k-line:#2A312D; --k-yuz:#1B201D; --k-golge:rgba(0,0,0,.8);
+  --c-bg:#111614; --c-yuz:#1A211E; --c-ink:#E8EEE9; --c-soft:#8E9A93; --c-line:#2C3631;
+  --c-sari:#F7C600; --c-sari-ust:#1C1A05; --c-mark:#5CCDB6; --c-perde:rgba(0,0,0,.55);
+  --s-bg:#0E0E11; --s-yuz:#1C1C21; --s-ink:#F5F3EE; --s-soft:#9C9EA8; --s-line:#2B2C33;
+  --s-vurgu:#FFC83D; --s-vurgu-ust:#1A1505; --s-perde:rgba(0,0,0,.6);
+  --kobalt-b:#2747CC; --cam-b:#0D5F46; --hardal-b:#E3A822; --pembe-b:#E79AAE; --domates-b:#B93520;
+  --gok-b:#A9D3DD; --kum-b:#D2CCBD; --gece-b:#243347;
+  --t-bg:#0C0F12; --t-yuz:#151A1F; --t-ink:#EEEAE0; --t-soft:#8B959D; --t-line:#262D34;
+  --t-kanat:#222A32; --t-kanat-yazi:#F3EFE4; --t-yarik:#000000;
+  --t-mavi:#86A9FF; --t-amber:#FFB32E; --t-yesil:#4CCB86; --t-perde:rgba(0,0,0,.6);
+  color-scheme:dark;
+}}
+:root[data-theme="dark"]{
+  --k-bg:#0B0D0C; --k-fg:#E9EDEA; --k-soft:#98A39C; --k-line:#2A312D; --k-yuz:#1B201D; --k-golge:rgba(0,0,0,.8);
+  --c-bg:#111614; --c-yuz:#1A211E; --c-ink:#E8EEE9; --c-soft:#8E9A93; --c-line:#2C3631;
+  --c-sari:#F7C600; --c-sari-ust:#1C1A05; --c-mark:#5CCDB6; --c-perde:rgba(0,0,0,.55);
+  --s-bg:#0E0E11; --s-yuz:#1C1C21; --s-ink:#F5F3EE; --s-soft:#9C9EA8; --s-line:#2B2C33;
+  --s-vurgu:#FFC83D; --s-vurgu-ust:#1A1505; --s-perde:rgba(0,0,0,.6);
+  --kobalt-b:#2747CC; --cam-b:#0D5F46; --hardal-b:#E3A822; --pembe-b:#E79AAE; --domates-b:#B93520;
+  --gok-b:#A9D3DD; --kum-b:#D2CCBD; --gece-b:#243347;
+  --t-bg:#0C0F12; --t-yuz:#151A1F; --t-ink:#EEEAE0; --t-soft:#8B959D; --t-line:#262D34;
+  --t-kanat:#222A32; --t-kanat-yazi:#F3EFE4; --t-yarik:#000000;
+  --t-mavi:#86A9FF; --t-amber:#FFB32E; --t-yesil:#4CCB86; --t-perde:rgba(0,0,0,.6);
+  color-scheme:dark;
+}
+
+*,*::before,*::after{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--k-bg);color:var(--k-fg);font:15px/1.4 var(--f-c);overflow:hidden;-webkit-text-size-adjust:100%}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;margin:0;cursor:pointer;text-align:inherit;-webkit-tap-highlight-color:transparent;touch-action:manipulation}
+input{font:inherit;color:inherit}
+h1,h2,h3,p,ul{margin:0;padding:0}
+ul{list-style:none}
+:focus-visible{outline:2px solid var(--odak,var(--k-fg));outline-offset:2px}
+[hidden]{display:none!important}
+.gizli-yazi{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+
+.kabuk{height:100%;display:flex;flex-direction:column}
+.ust{flex:none;display:flex;align-items:center;gap:8px;padding:8px var(--gr) 6px var(--gl)}
+.yonler{flex:1;min-width:0;display:grid;grid-template-columns:repeat(3,1fr);position:relative;background:var(--k-yuz);border-radius:9px;padding:3px}
+.yonler i{position:absolute;top:3px;bottom:3px;left:3px;width:calc((100% - 6px)/3);background:var(--k-fg);border-radius:7px;transition:transform .3s cubic-bezier(.2,.8,.2,1)}
+.yonler[data-y="sahne"] i{transform:translateX(100%)}
+.yonler[data-y="tabela"] i{transform:translateX(200%)}
+.yonler button{position:relative;z-index:1;height:38px;text-align:center;font-weight:600;font-stretch:88%;font-size:15px;transition:color .2s;white-space:nowrap}
+.yonler button[aria-selected="true"]{color:var(--k-yuz)}
+.arac{flex:none;width:40px;height:44px;border-radius:9px;background:var(--k-yuz);display:grid;place-items:center}
+.arac svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+
+.alan{flex:1;min-height:0;display:flex;flex-direction:column}
+.kunye{flex:none;padding:0 var(--gr) 8px var(--gl);font-size:13.5px;line-height:1.35;color:var(--k-soft)}
+.kunye h2{display:none;font-size:44px;line-height:1;font-weight:700;font-stretch:75%;color:var(--k-fg);letter-spacing:-.01em}
+.kunye-fikir{color:var(--k-fg)}
+.kunye-ac{font-weight:600;text-decoration:underline;text-underline-offset:2px;color:var(--k-fg);min-height:28px;margin-left:4px}
+.kunye-ek{display:none;margin-top:8px}
+.kunye.acik .kunye-ek{display:grid;gap:8px}
+.kunye-ek dt{font-weight:650;color:var(--k-fg);font-stretch:88%}
+.kunye-ek dd{margin:0}
+.kunye-ek dl{margin:0;display:grid;gap:8px}
+.kunye-oneri{border-top:1px solid var(--k-line);padding-top:8px;color:var(--k-fg)}
+.kunye-sifir{font-weight:600;text-decoration:underline;text-underline-offset:2px;color:var(--k-fg);min-height:32px;justify-self:start}
+.telefon{flex:1;min-height:0;position:relative;overflow:hidden;border-radius:18px 18px 0 0}
+.app{position:absolute;inset:0;overflow:hidden;isolation:isolate;user-select:none;-webkit-user-select:none}
+.app input{user-select:text;-webkit-user-select:text}
+
+@media (min-width:860px){
+  .ust{justify-content:center;padding-top:14px}
+  .yonler{flex:none;width:420px}
+  .alan{flex-direction:row;justify-content:center;align-items:center;gap:56px;padding:8px 32px 20px}
+  .kunye{width:330px;padding:0;font-size:15px;line-height:1.45}
+  .kunye h2{display:block;margin-bottom:12px}
+  .kunye-fikir{font-size:17px;line-height:1.4}
+  .kunye-ek{display:grid;gap:12px;margin-top:16px}
+  .kunye-ek dl{gap:12px}
+  .kunye-ac{display:none}
+  .kunye-oneri{padding-top:12px}
+  .telefon{flex:none;width:392px;height:min(820px,100%);border-radius:36px;border:1px solid var(--k-line);--gl:18px;--gr:18px;box-shadow:0 34px 60px -34px var(--k-golge)}
+}
+
+/* ortak parçalar */
+.ft{display:block;width:100%;height:100%;object-fit:cover}
+.ik{width:1em;height:1em;display:block;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.tost{position:absolute;left:50%;bottom:96px;transform:translateX(-50%);z-index:70;background:var(--tb);color:var(--tf);padding:10px 14px;font-size:14px;font-weight:500;display:flex;gap:14px;align-items:center;width:max-content;max-width:calc(100% - 32px);border-radius:var(--tr,6px)}
+.tost button{font-weight:700;text-decoration:underline;text-underline-offset:2px;min-height:32px;flex:none}
+.isik{position:absolute;inset:0;z-index:80;background:var(--isik-bg);color:var(--isik-fg);display:grid;place-items:center;padding:16px}
+.isik-ic{width:100%;max-width:520px;aspect-ratio:4/3;border-radius:6px;overflow:hidden}
+.isik-kapat{position:absolute;top:12px;right:var(--gr);width:44px;height:44px;display:grid;place-items:center;font-size:24px}
+
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.01ms!important;animation-delay:0s!important;animation-iteration-count:1!important;transition-duration:.01ms!important;transition-delay:0s!important;scroll-behavior:auto!important}
+  .s-halka{opacity:.3}
+}
+
+/* ============ CETVEL ============ */
+.d-cetvel{--odak:var(--c-mark);--tb:var(--c-ink);--tf:var(--c-bg);--tr:2px;background:var(--c-bg);color:var(--c-ink);font-family:var(--f-c);font-size:15px}
+.c-ekran{position:absolute;inset:0;display:flex;flex-direction:column}
+.c-bas{flex:none;display:flex;align-items:flex-end;justify-content:space-between;gap:12px;padding:16px var(--gr) 12px var(--gl);border-bottom:1px solid var(--c-ink)}
+.c-tarih{display:flex;align-items:flex-end;gap:10px;min-width:0}
+.c-no{display:flex;font-size:78px;line-height:.78;height:.78em;font-weight:700;font-stretch:62%;font-variant-numeric:tabular-nums;overflow:hidden}
+.c-no span{display:block}
+.c-aygun{display:flex;flex-direction:column;line-height:1.15;padding-bottom:1px;min-width:0}
+.c-aygun b{font-size:21px;font-weight:650;font-stretch:85%}
+.c-aygun span{color:var(--c-soft);font-size:14px}
+.c-gecis{flex:none;display:flex;border:1px solid var(--c-ink);border-radius:3px;position:relative;overflow:hidden}
+.c-gecis i{position:absolute;inset:0 50% 0 0;background:var(--c-ink);transition:transform .32s cubic-bezier(.2,.8,.2,1)}
+.c-gecis[data-g="takvim"] i{transform:translateX(100%)}
+.c-gecis button{position:relative;z-index:1;width:52px;height:40px;text-align:center;font-weight:600;font-stretch:88%;transition:color .2s}
+.c-gecis button[aria-pressed="true"]{color:var(--c-bg)}
+
+.c-govde{flex:1;min-height:0;position:relative}
+.c-gun,.c-ay{position:absolute;inset:0;overflow-y:auto;overscroll-behavior:contain}
+.c-boyu{padding:10px var(--gr) 0 var(--gl);display:grid;gap:2px}
+.c-boyu .c-l{border-bottom:1px solid var(--c-line)}
+.c-cetvel{position:relative;margin:22px 0 40px}
+.c-gecmis{position:absolute;left:0;right:0;top:-22px;pointer-events:none;background:repeating-linear-gradient(-45deg,transparent 0 7px,var(--c-line) 7px 8px);opacity:.3}
+.c-olcek{position:absolute;left:var(--gl);top:0;bottom:0;width:44px;pointer-events:none;
+  background:
+    linear-gradient(var(--c-ink),var(--c-ink)) right top/1px 100% no-repeat,
+    repeating-linear-gradient(to bottom,var(--c-ink) 0 1px,transparent 1px 60px) right top/14px 100% no-repeat,
+    repeating-linear-gradient(to bottom,var(--c-soft) 0 1px,transparent 1px 15px) right top/7px 100% no-repeat}
+.c-sa{position:absolute;left:0;width:24px;text-align:right;font-stretch:62%;font-weight:600;font-size:20px;line-height:1;margin-top:-10px;font-variant-numeric:tabular-nums}
+.c-sure{position:absolute;left:calc(var(--gl) + 41px);width:6px;background:var(--c-mark);transform-origin:top}
+.c-bant{position:absolute;left:calc(var(--gl) + 51px);width:0;border-left:2px dotted var(--c-soft)}
+.c-bant::before,.c-bant::after{content:"";position:absolute;left:-2px;width:8px;border-top:2px dotted var(--c-soft)}
+.c-bant::before{top:0}.c-bant::after{bottom:0}
+.c-simdi{position:absolute;left:0;right:0;height:0;border-top:2px solid var(--c-sari);z-index:3;pointer-events:none}
+.c-simdi span{position:absolute;left:var(--gl);top:-12px;background:var(--c-sari);color:var(--c-sari-ust);font-weight:700;font-stretch:75%;font-size:13px;line-height:22px;padding:0 6px;white-space:nowrap}
+.c-bos{position:absolute;left:calc(var(--gl) + 66px);right:var(--gr);color:var(--c-soft)}
+
+.c-k{position:absolute;left:calc(var(--gl) + 44px);right:calc(var(--gr) - 10px);display:flex;align-items:flex-start;min-height:44px;z-index:2}
+.c-k-im{flex:none;width:20px;height:44px;position:relative}
+.c-k-im::before{content:"";position:absolute;left:0;right:5px;top:50%;margin-top:-1px;border-top:2px solid var(--c-ink);transform-origin:left}
+.c-k.bolumlu .c-k-im::before,.c-k.taslak .c-k-im::before{border-top-style:dotted;border-top-color:var(--c-soft)}
+.c-k-sim{flex:none;width:26px;height:44px;display:grid;place-items:center;font-size:22px}
+.c-k-ad{flex:1;min-width:0;min-height:44px;display:flex;flex-direction:column;justify-content:center;padding:3px 6px 3px 4px;gap:1px}
+.c-k > .c-k-ad{justify-content:flex-start;padding-top:11px}
+.c-k-b{font-weight:600;font-size:17px;line-height:1.2}
+.c-k-b b,.c-a-ad span{font-weight:inherit;background:linear-gradient(currentColor,currentColor) no-repeat 0 56%/0% 1.5px;transition:background-size .42s cubic-bezier(.3,.7,.2,1)}
+.bitti .c-k-b b,.c-a-ad.bitti span{background-size:100% 1.5px}
+.bitti .c-k-ad,.bitti .c-k-sim{color:var(--c-soft)}
+.c-k-ad small{font-size:13px;color:var(--c-soft);font-stretch:90%;line-height:1.25}
+.c-k.taslak .c-k-b,.c-k.taslak .c-k-sim{color:var(--c-soft)}
+.c-k-foto{flex:none;width:34px;height:34px;margin:5px 0;border-radius:2px;overflow:hidden}
+.c-k-tik{flex:none;width:44px;height:44px;display:grid;place-items:center}
+.c-k-tik i{width:22px;height:22px;border:1.5px solid var(--c-ink);border-radius:2px;display:grid;place-items:center;transition:background-color .18s}
+.c-k-tik svg{width:16px;height:16px;fill:none;stroke:var(--c-bg);stroke-width:2.8;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:24;stroke-dashoffset:24;transition:stroke-dashoffset .28s .08s}
+.bitti .c-k-tik i{background:var(--c-ink)}
+.bitti .c-k-tik svg{stroke-dashoffset:0}
+.c-k-onay{display:flex;gap:6px;margin-top:5px}
+.c-k-onay button{height:34px;padding:0 12px;border:1px solid var(--c-ink);border-radius:2px;font-weight:600;font-size:14px;font-stretch:90%;color:var(--c-ink)}
+.c-k-onay button[data-a="onayla"]{background:var(--c-ink);color:var(--c-bg)}
+
+.c-alt{flex:none;display:flex;border-top:1px solid var(--c-ink);background:var(--c-bg);position:relative;z-index:5}
+.c-cep{flex:1;min-width:0;height:56px;padding:0 0 0 var(--gl);display:flex;align-items:center;gap:8px;font-weight:600;font-stretch:90%}
+.c-cep .ik{font-size:20px}
+.c-cep small{font-weight:400;color:var(--c-soft);font-size:14px}
+.c-ekle{flex:none;height:56px;padding:0 var(--gr) 0 18px;display:flex;align-items:center;gap:8px;background:var(--c-sari);color:var(--c-sari-ust);font-weight:700;font-stretch:88%}
+.c-ekle .ik{font-size:20px;stroke-width:2.2}
+
+/* ay */
+.c-ay{padding:14px var(--gr) 30px var(--gl)}
+.c-ay-bas{display:flex;align-items:center;justify-content:space-between}
+.c-ay-ad{font-size:26px;font-weight:680;font-stretch:78%}
+.c-ay-ad span{color:var(--c-soft);font-weight:400}
+.c-ay-ok{display:flex}
+.c-ay-ok button{width:44px;height:44px;display:grid;place-items:center;font-size:22px}
+.c-ay-gunler{display:grid;grid-template-columns:repeat(7,1fr);font-size:12px;color:var(--c-soft);margin-top:6px;padding-bottom:4px}
+.c-ay-gunler span{padding-left:4px}
+.c-izgara{display:grid;grid-template-columns:repeat(7,1fr);position:relative;border-top:1px solid var(--c-ink);touch-action:pan-y}
+.c-h{aspect-ratio:1/1.02;border-bottom:1px solid var(--c-line);padding:6px 3px 0 4px;display:flex;flex-direction:column;align-items:flex-start;gap:5px;min-width:0}
+.c-h b{font-stretch:62%;font-size:21px;font-weight:600;line-height:1;font-variant-numeric:tabular-nums;padding:1px 3px;margin:-1px -3px}
+.c-h.dis b{color:var(--c-soft);font-weight:400;opacity:.6}
+.c-h.bugun b{background:var(--c-sari);color:var(--c-sari-ust)}
+.c-h .im{display:flex;flex-direction:column;gap:2px;width:100%}
+.c-h .im i{height:0;width:72%;border-top:2px solid var(--c-ink)}
+.c-h .im i.b{border-top-color:var(--c-soft);opacity:.45}
+.c-h .im i.t{border-top-style:dotted;border-top-color:var(--c-soft)}
+.c-h .im i.uz{width:calc(100% + 4px);border-top-color:var(--c-mark);border-top-width:3px}
+.c-sec{position:absolute;left:0;top:0;border:2px solid var(--c-ink);pointer-events:none;transition:transform .36s cubic-bezier(.2,.8,.2,1)}
+.c-ay-liste{margin-top:14px}
+.c-l-bas{font-size:15px;font-weight:650;font-stretch:88%;display:flex;justify-content:space-between;padding-bottom:6px;border-bottom:1px solid var(--c-ink)}
+.c-l-bas span{font-weight:400;color:var(--c-soft)}
+.c-l{display:flex;align-items:flex-start;min-height:48px;border-bottom:1px solid var(--c-line)}
+.c-l-z{flex:none;width:58px;padding-top:13px;font-stretch:68%;font-weight:600;font-size:17px;line-height:1.2;font-variant-numeric:tabular-nums}
+.c-l-z.yumusak{font-size:14px;font-stretch:80%;font-weight:500;color:var(--c-soft);padding-top:15px}
+.c-l .c-k-ad{min-height:48px}
+.c-l-bos{padding:14px 0;color:var(--c-soft)}
+
+/* ayrıntı */
+.c-ayr{position:absolute;inset:0;z-index:20;background:var(--c-yuz);display:flex;flex-direction:column}
+.c-a-ust{flex:none;display:flex;justify-content:space-between;align-items:center;padding:6px var(--gr) 0 calc(var(--gl) - 8px)}
+.c-a-geri{height:44px;display:flex;align-items:center;gap:2px;font-weight:600;font-stretch:90%;padding-right:10px}
+.c-a-geri .ik{font-size:22px}
+.c-a-tur{font-size:13px;color:var(--c-soft)}
+.c-a-ic{flex:1;min-height:0;overflow-y:auto;padding:6px var(--gr) 24px var(--gl);display:flex;flex-direction:column;gap:20px}
+.c-a-ic > *{flex:none}
+.c-a-kafa{display:flex;gap:12px;align-items:flex-start}
+.c-a-sim{flex:none;font-size:40px;margin-top:2px}
+.c-a-sim .ik{stroke-width:1.3;stroke-dasharray:100;animation:c-ciz 1s .15s cubic-bezier(.3,.7,.2,1) both}
+@keyframes c-ciz{from{stroke-dashoffset:100}to{stroke-dashoffset:0}}
+.c-a-ad{font-size:32px;line-height:1.04;font-weight:680;font-stretch:76%;text-wrap:balance}
+.c-a-zaman{color:var(--c-soft);margin-top:4px;font-size:15px}
+.c-serit{position:relative;height:58px;border-top:1px solid var(--c-ink);
+  background:
+    repeating-linear-gradient(to right,var(--c-ink) 0 1px,transparent 1px var(--adim)) left top/100% 12px no-repeat,
+    repeating-linear-gradient(to right,var(--c-soft) 0 1px,transparent 1px calc(var(--adim)/4)) left top/100% 6px no-repeat}
+.c-serit span{position:absolute;top:15px;font-stretch:62%;font-weight:600;font-size:15px;transform:translateX(-50%);font-variant-numeric:tabular-nums}
+.c-serit span:first-of-type{transform:none}
+.c-serit .cubuk{position:absolute;top:-3px;height:6px;background:var(--c-mark);transform-origin:left}
+.c-serit .cubuk.nokta{background:var(--c-soft);height:0;top:-1px;border-top:2px dotted var(--c-soft);background:none}
+.c-serit .igne{position:absolute;top:-8px;bottom:14px;width:2px;background:var(--c-sari)}
+.c-serit .zil{position:absolute;top:34px;font-size:16px;transform:translateX(-50%);color:var(--c-mark)}
+.c-serit .zil::before{content:"";position:absolute;left:50%;top:-36px;height:34px;border-left:1px dashed var(--c-mark)}
+.c-a-bolge{display:grid;gap:4px;font-size:15px}
+.c-a-bolge b{font-weight:650;font-stretch:88%;display:flex;align-items:center;gap:6px}
+.c-a-bolge mark{background:var(--c-sari);color:var(--c-sari-ust);padding:3px 6px;justify-self:start;font-weight:600}
+.c-a-b h3{font-size:13px;font-weight:600;color:var(--c-soft);margin-bottom:6px;font-stretch:92%}
+.c-a-not{font-size:16px;line-height:1.5;max-width:36em;user-select:text;-webkit-user-select:text}
+.c-a-fotolar{display:flex;gap:8px;overflow-x:auto;margin:0 calc(-1*var(--gr)) 0 0;padding-right:var(--gr)}
+.c-a-fotolar > *{flex:none;width:132px;height:99px;border-radius:2px;overflow:hidden}
+.c-a-fekle{border:1px dashed var(--c-ink);display:grid;place-items:center;align-content:center;gap:4px;font-size:13px;font-weight:600;text-align:center}
+.c-a-fekle .ik{font-size:22px}
+.c-a-liste li{border-top:1px solid var(--c-line)}
+.c-a-liste li:last-child{border-bottom:1px solid var(--c-line)}
+.c-a-liste button,.c-a-liste .sat{display:flex;align-items:center;gap:10px;width:100%;min-height:46px;font-size:16px}
+.c-a-liste .ik{font-size:20px;color:var(--c-mark)}
+.c-a-liste small{margin-left:auto;color:var(--c-soft);font-size:13px}
+.c-a-alt{flex:none;padding:10px var(--gr) 12px var(--gl);border-top:1px solid var(--c-ink);background:var(--c-yuz)}
+.c-a-alt button{width:100%;height:50px;background:var(--c-ink);color:var(--c-bg);font-weight:650;font-stretch:90%;font-size:16px;text-align:center;border-radius:2px}
+.c-a-alt button[aria-pressed="true"]{background:none;color:var(--c-ink);border:1px solid var(--c-ink)}
+
+/* alt kâğıtlar: cep ve yeni kayıt */
+.c-perde{position:absolute;inset:0;z-index:30;background:var(--c-perde)}
+.c-kagit{position:absolute;left:0;right:0;bottom:0;z-index:31;max-height:86%;background:var(--c-yuz);border-top:2px solid var(--c-ink);display:flex;flex-direction:column}
+.c-tutamak{flex:none;height:28px;display:grid;place-items:center;touch-action:none;cursor:grab}
+.c-tutamak::before{content:"";width:44px;border-top:2px solid var(--c-ink)}
+.c-kagit-ic{overflow-y:auto;padding:0 var(--gr) 18px var(--gl)}
+.c-kagit h2{font-size:24px;font-weight:680;font-stretch:78%;margin-bottom:10px}
+.c-yeni label{display:block;font-size:13px;color:var(--c-soft);font-weight:600;margin-bottom:4px}
+.c-yeni input{width:100%;height:48px;border:0;border-bottom:2px solid var(--c-ink);background:none;font-size:20px;font-weight:600;font-stretch:88%;padding:0;border-radius:0;outline:none}
+.c-yeni input:focus-visible{border-bottom-color:var(--c-mark);box-shadow:0 2px 0 var(--c-mark)}
+.c-yeni input::placeholder{color:var(--c-soft);font-weight:400;opacity:.8}
+.c-tur{display:grid;grid-template-columns:repeat(3,1fr);margin-top:16px;border:1px solid var(--c-ink);border-radius:3px;position:relative;overflow:hidden}
+.c-tur i{position:absolute;top:0;bottom:0;left:0;width:33.334%;background:var(--c-ink);transition:transform .3s cubic-bezier(.2,.8,.2,1)}
+.c-tur[data-t="bolum"] i{transform:translateX(100%)}
+.c-tur[data-t="tarihsiz"] i{transform:translateX(200%)}
+.c-tur button{position:relative;z-index:1;height:42px;text-align:center;font-weight:600;font-stretch:88%;transition:color .2s}
+.c-tur button[aria-checked="true"]{color:var(--c-yuz)}
+.c-tur-ic{margin-top:14px;min-height:118px}
+.c-okuma{display:block;font-size:46px;line-height:1;font-weight:700;font-stretch:62%;font-variant-numeric:tabular-nums;text-align:center}
+.c-mezura{position:relative;margin:8px calc(-1*var(--gr)) 0 calc(-1*var(--gl));height:58px;background:var(--c-sari);color:var(--c-sari-ust)}
+.c-mezura-kay{position:absolute;inset:0;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;scroll-snap-type:x mandatory;display:flex;cursor:grab}
+.c-mezura-kay::-webkit-scrollbar{display:none}
+.c-mezura-kay::before,.c-mezura-kay::after{content:"";flex:none;width:calc(50% - 9px)}
+.c-mz{flex:none;width:18px;scroll-snap-align:center;position:relative}
+.c-mz::before{content:"";position:absolute;left:8.5px;top:0;height:10px;border-left:1px solid currentColor}
+.c-mz.s::before{height:22px;border-left-width:2px;left:8px}
+.c-mz span{position:absolute;left:9px;top:28px;transform:translateX(-50%);font-stretch:62%;font-weight:700;font-size:18px;line-height:1;font-variant-numeric:tabular-nums}
+.c-mezura::after{content:"";position:absolute;left:50%;top:-6px;bottom:-6px;width:2px;margin-left:-1px;background:var(--c-ink);pointer-events:none}
+.c-yongalar{display:flex;flex-wrap:wrap;gap:6px}
+.c-yongalar button{height:42px;padding:0 13px;border:1px solid var(--c-ink);border-radius:2px;font-weight:600;font-stretch:90%}
+.c-yongalar button[aria-checked="true"]{background:var(--c-ink);color:var(--c-yuz)}
+.c-tur-ic p{color:var(--c-soft);max-width:30em}
+.c-kaydet{width:100%;height:50px;margin-top:14px;background:var(--c-ink);color:var(--c-yuz);font-weight:650;font-size:16px;text-align:center;border-radius:2px}
+.c-cep-liste .c-l:first-child{border-top:1px solid var(--c-ink)}
+
+/* ============ SAHNE ============ */
+.d-sahne{--odak:var(--s-ink);--tb:var(--s-ink);--tf:var(--s-bg);--tr:999px;background:var(--s-bg);color:var(--s-ink);font-family:var(--f-s);font-size:16px}
+.r-kobalt{--pb:var(--kobalt-b);--pf:var(--kobalt-f);--pd:var(--kobalt-d);--pl:var(--kobalt-l);--pi:var(--kobalt-i)}
+.r-cam{--pb:var(--cam-b);--pf:var(--cam-f);--pd:var(--cam-d);--pl:var(--cam-l);--pi:var(--cam-i)}
+.r-hardal{--pb:var(--hardal-b);--pf:var(--hardal-f);--pd:var(--hardal-d);--pl:var(--hardal-l);--pi:var(--hardal-i)}
+.r-pembe{--pb:var(--pembe-b);--pf:var(--pembe-f);--pd:var(--pembe-d);--pl:var(--pembe-l);--pi:var(--pembe-i)}
+.r-domates{--pb:var(--domates-b);--pf:var(--domates-f);--pd:var(--domates-d);--pl:var(--domates-l);--pi:var(--domates-i)}
+.r-gok{--pb:var(--gok-b);--pf:var(--gok-f);--pd:var(--gok-d);--pl:var(--gok-l);--pi:var(--gok-i)}
+.r-kum{--pb:var(--kum-b);--pf:var(--kum-f);--pd:var(--kum-d);--pl:var(--kum-l);--pi:var(--kum-i)}
+.r-gece{--pb:var(--gece-b);--pf:var(--gece-f);--pd:var(--gece-d);--pl:var(--gece-l);--pi:var(--gece-i)}
+
+.rs{display:block;width:100%;height:100%;overflow:visible}
+.rs *{transition:fill-opacity .6s .15s,stroke-opacity .4s}
+.rs .pf{fill:var(--pf)}.rs .pl{fill:var(--pl)}.rs .pd{fill:var(--pd)}.rs .pb2{fill:var(--pb);opacity:.45}
+.rs .ps{fill:none;stroke:var(--pd);stroke-width:4;stroke-linecap:round;opacity:.22}
+.rs .ps2{fill:none;stroke:var(--pd);stroke-width:7;stroke-linecap:round}
+.rs .ps3{fill:none;stroke:var(--pl);stroke-width:4;stroke-linecap:round;opacity:.55}
+.rs-zemin{fill:var(--pd);opacity:.28}
+.rs-kopuk circle{fill:var(--pl);opacity:.92}
+.rs-imza-cizgi{fill:none;stroke:var(--pd);stroke-width:4;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:100;stroke-dashoffset:0}
+.canli .rs-imza-cizgi{animation:s-imza 1.5s .5s cubic-bezier(.5,0,.3,1) both}
+.canli .rs-kalem{animation:s-kalem 1.5s .5s cubic-bezier(.5,0,.3,1) both}
+@keyframes s-imza{from{stroke-dashoffset:100}to{stroke-dashoffset:0}}
+@keyframes s-kalem{from{transform:translate(-60px,9px)}35%{transform:translate(-38px,-4px)}70%{transform:translate(-16px,5px)}to{transform:none}}
+.canli .rs-kopuk circle{animation:s-kopuk 3.2s ease-in-out infinite}
+.canli .rs-kopuk circle:nth-child(2){animation-delay:-.8s}.canli .rs-kopuk circle:nth-child(3){animation-delay:-1.7s}.canli .rs-kopuk circle:nth-child(4){animation-delay:-2.3s}.canli .rs-kopuk circle:nth-child(5){animation-delay:-1.1s}
+@keyframes s-kopuk{0%,100%{transform:translateY(0)}50%{transform:translateY(-7px)}}
+.canli .rs-buhar{animation:s-buhar 2.8s ease-in-out infinite}
+@keyframes s-buhar{0%,100%{transform:translateY(0);opacity:1}50%{transform:translateY(-6px);opacity:.5}}
+.canli .rs-pirilti{transform-box:fill-box;transform-origin:center;animation:s-pirilti 2.6s ease-in-out infinite}
+@keyframes s-pirilti{0%,100%{transform:scale(1)}50%{transform:scale(.6) rotate(20deg)}}
+.patla .rs-kopuk circle{transform-box:fill-box;transform-origin:center;animation:s-patla .55s cubic-bezier(.2,.8,.2,1) both}
+@keyframes s-patla{40%{transform:scale(1.9);opacity:.9}to{transform:scale(2.6);opacity:0}}
+
+.s-ekran{position:absolute;inset:0;overflow:hidden}
+.s-sayfa{position:absolute;inset:0;overflow-y:auto;overscroll-behavior:contain;padding:20px var(--gr) 120px var(--gl)}
+.s-bas{padding:4px 2px 18px}
+.s-tarih{font-size:15px;color:var(--s-soft);font-weight:500}
+.s-selam{font-size:39px;line-height:1;font-weight:700;letter-spacing:-.03em;margin-top:8px;text-wrap:balance}
+.s-selam-alt{margin-top:10px;font-size:16px;color:var(--s-soft)}
+.s-mozaik{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+
+.s-p{position:relative;border-radius:26px;color:var(--pi);overflow:hidden;min-width:0;isolation:isolate;transition:color .4s,filter .5s}
+.s-p::before{content:"";position:absolute;inset:0;z-index:-1;background:var(--pb);clip-path:circle(150% at 82% 84%);transition:clip-path .8s cubic-bezier(.3,.7,.2,1)}
+.s-p--buyuk{grid-column:1/-1;aspect-ratio:1/.84}
+.s-p--kare{aspect-ratio:1/1.2}
+.s-p--genis{grid-column:1/-1;aspect-ratio:1/.52}
+.s-p--serit{flex:none;width:64%;aspect-ratio:1/1.08;scroll-snap-align:center}
+.s-p-resim{position:absolute;inset:7% 9% 30% 9%;pointer-events:none}
+.s-p--kare .s-p-resim{inset:25% 6% 33% 6%}
+.s-p--serit .s-p-resim{inset:20% 6% 32% 6%}
+.s-p--genis .s-p-resim{inset:10% 3% 10% 50%}
+.s-p-ac{position:absolute;inset:0;display:flex;flex-direction:column;justify-content:flex-end;padding:16px 68px 16px 18px;border-radius:inherit;gap:4px}
+.s-p-ac b{font-size:28px;line-height:1;font-weight:700;letter-spacing:-.025em}
+.s-p-ac span{font-size:14px;font-weight:500;opacity:.88}
+.s-p--kare .s-p-ac,.s-p--serit .s-p-ac{padding:14px}
+.s-p--kare .s-p-ac b,.s-p--serit .s-p-ac b{font-size:21px}
+.s-p--genis .s-p-ac{padding:16px 50% 62px 18px;justify-content:flex-start}
+.s-p--genis .s-p-ac b{font-size:22px}
+.s-tik{position:absolute;right:12px;bottom:12px;width:46px;height:46px;border-radius:50%;border:2px solid currentColor;display:grid;place-items:center;transition:background-color .2s}
+.s-p--kare .s-tik,.s-p--serit .s-tik{top:10px;right:10px;bottom:auto;width:42px;height:42px}
+.s-tik svg{width:22px;height:22px;fill:none;stroke:var(--pb);stroke-width:3;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:24;stroke-dashoffset:24;transition:stroke-dashoffset .3s .1s}
+.s-tik.oldu,.bitti .s-tik{background:currentColor}
+.s-tik.oldu svg,.bitti .s-tik svg{stroke-dashoffset:0}
+.s-p.yikaniyor::after{content:"";position:absolute;top:-20%;bottom:-20%;left:0;width:55%;background:var(--pl);opacity:.5;transform:translateX(-140%) skewX(-18deg);animation:s-yika .7s cubic-bezier(.4,0,.2,1) both;pointer-events:none}
+@keyframes s-yika{to{transform:translateX(260%) skewX(-18deg)}}
+.s-p.bitti{filter:saturate(.3)}
+.s-p.kapak-foto{--pi:var(--foto-ust)}
+.s-p.kapak-foto .s-p-resim{inset:0}
+.s-p.kapak-foto .s-p-resim::after{content:"";position:absolute;inset:40% 0 0;background:linear-gradient(transparent,var(--foto-perde))}
+.s-p.kapak-foto .s-tik svg{stroke:var(--s-ink)}
+/* taslak: karakalem */
+.s-p.eskiz{color:var(--s-ink);outline:2px dashed var(--s-soft);outline-offset:-2px}
+.s-p.eskiz::before{clip-path:circle(0% at 82% 84%)}
+.eskiz .rs *{fill-opacity:0;stroke:var(--s-ink);stroke-width:2;stroke-dasharray:5 5;opacity:1}
+.eskiz .rs .ps,.eskiz .rs .ps2,.eskiz .rs .ps3{stroke-dasharray:5 5;stroke-width:2}
+.s-p-onay{position:absolute;left:18px;bottom:14px;display:flex;gap:6px;align-items:center}
+.s-p-onay button{height:40px;padding:0 16px;border-radius:999px;font-weight:650;font-size:15px;border:2px solid var(--s-ink)}
+.s-p-onay button[data-a="onayla"]{background:var(--s-ink);color:var(--s-bg)}
+
+.s-ara{font-size:15px;font-weight:600;color:var(--s-soft);margin:26px 2px 10px}
+.s-biten{display:flex;flex-wrap:wrap;gap:8px}
+.s-b{display:flex;align-items:center;gap:8px;height:44px;padding:0 16px 0 6px;border-radius:999px;background:var(--s-yuz);font-weight:550;font-size:15px;min-width:0}
+.s-b i{flex:none;width:32px;height:32px;border-radius:50%;background:var(--pb);color:var(--pi);display:grid;place-items:center;font-size:18px}
+.s-b i .ik{stroke-width:2.6}
+.s-b span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-decoration:line-through;text-decoration-thickness:1.5px;color:var(--s-soft)}
+.s-serbest{display:grid;gap:8px}
+.s-s{display:flex;align-items:center;gap:4px;background:var(--s-yuz);border-radius:20px;min-height:60px;padding:0 6px 0 8px}
+.s-s-r{flex:none;width:44px;height:44px;border-radius:14px;background:var(--pb);padding:5px}
+.s-s-ad{flex:1;min-width:0;min-height:60px;padding:0 8px;font-weight:600;font-size:17px;display:flex;align-items:center}
+.s-s .s-tik{position:static;flex:none;width:42px;height:42px;color:var(--s-ink)}
+.s-s .s-tik svg{stroke:var(--s-bg)}
+.s-s.bitti .s-s-ad{text-decoration:line-through;color:var(--s-soft)}
+.s-bos{color:var(--s-soft);padding:8px 2px}
+
+.s-alt{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);display:flex;align-items:center;gap:4px;background:var(--s-ink);color:var(--s-bg);border-radius:999px;padding:6px;z-index:10}
+.s-alt button{height:48px;padding:0 18px;border-radius:999px;display:flex;align-items:center;gap:8px;font-weight:600;font-size:15px;position:relative;z-index:1;opacity:.72;transition:opacity .2s}
+.s-alt button[aria-current="page"]{opacity:1}
+.s-alt button .ik{font-size:20px}
+.s-alt .s-arti{width:56px;padding:0;justify-content:center;background:var(--s-vurgu);color:var(--s-vurgu-ust);opacity:1;font-size:24px}
+.s-alt .s-arti .ik{font-size:24px;stroke-width:2.4}
+.s-alt-leke{position:absolute;top:6px;bottom:6px;left:0;border-radius:999px;background:var(--s-bg);opacity:.16;transition:transform .5s cubic-bezier(.34,1.4,.55,1),width .3s}
+
+/* takvim */
+.s-t-bas{display:flex;align-items:flex-end;gap:10px;padding:4px 2px 14px}
+.s-t-ay{font-size:52px;line-height:.9;font-weight:700;letter-spacing:-.035em}
+.s-t-yil{color:var(--s-soft);font-weight:500;padding-bottom:3px}
+.s-t-ok{margin-left:auto;display:flex;gap:6px}
+.s-t-ok button{width:44px;height:44px;border-radius:50%;background:var(--s-yuz);display:grid;place-items:center;font-size:22px}
+.s-t-gunler,.s-t-izgara{display:grid;grid-template-columns:repeat(7,1fr)}
+.s-t-gunler{font-size:13px;color:var(--s-soft);text-align:center;padding-bottom:4px}
+.s-t-izgara{position:relative;row-gap:2px;touch-action:pan-y}
+.s-g{aspect-ratio:1/1.08;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;position:relative;z-index:1;border-radius:50%;min-width:0;transition:color .25s}
+.s-g b{font-size:18px;font-weight:600;line-height:1}
+.s-g.dis b{color:var(--s-soft);font-weight:400;opacity:.5}
+.s-g.bugun b{text-decoration:underline;text-decoration-thickness:2.5px;text-underline-offset:4px;font-weight:800}
+.s-g .nk{display:flex;gap:3px;height:7px}
+.s-g .nk i{width:7px;height:7px;border-radius:50%;background:var(--pb)}
+.s-g .nk i.r-kum{background:var(--s-soft)}
+.s-g .nk i.r-gece{background:var(--gece-f)}
+.s-g .nk i.b{opacity:.4}
+.s-g .nk i.t{background:none;border:1.5px dashed var(--s-soft)}
+.s-g.sec{color:var(--leke-yazi,var(--s-bg))}
+.s-g.sec .nk i{background:currentColor;opacity:.9}
+.s-t-leke{position:absolute;left:0;top:0;border-radius:50%;background:var(--pb,var(--s-ink));pointer-events:none;transition:background-color .3s}
+.s-t-gun{margin-top:18px}
+.s-t-gun h2{font-size:24px;font-weight:700;letter-spacing:-.02em;margin:0 2px 10px}
+.s-serit{display:flex;gap:10px;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none;margin:0 calc(-1*var(--gr)) 0 calc(-1*var(--gl));padding:0 var(--gr) 0 var(--gl)}
+.s-serit::-webkit-scrollbar{display:none}
+
+/* ayrıntı */
+.s-ayr{position:absolute;inset:0;z-index:20;background:var(--s-bg);overflow-y:auto;overscroll-behavior:contain;border-radius:0;transform-origin:50% 0}
+.s-a-kapak{position:relative;height:46%;min-height:260px;background:var(--pb);color:var(--pi);border-radius:0 0 34px 34px;overflow:hidden;touch-action:pan-x;cursor:grab}
+.s-a-resim{position:absolute;inset:16% 10% 8%}
+.s-a-resim.foto{inset:0}
+.s-a-etiket{position:absolute;left:14px;bottom:14px;width:76px;height:76px;border-radius:22px;background:var(--pb);padding:8px;transform:rotate(-6deg)}
+.s-a-kapat{position:absolute;top:12px;left:var(--gl);width:46px;height:46px;border-radius:50%;background:var(--s-bg);color:var(--s-ink);display:grid;place-items:center;font-size:22px;z-index:2}
+.s-a-sec{position:absolute;right:var(--gr);bottom:14px;display:flex;background:var(--s-bg);color:var(--s-ink);border-radius:999px;padding:4px;z-index:2}
+.s-a-sec button{height:38px;padding:0 14px;border-radius:999px;font-weight:600;font-size:14px}
+.s-a-sec button[aria-pressed="true"]{background:var(--s-ink);color:var(--s-bg)}
+.s-a-ic{padding:22px var(--gr) 110px var(--gl);display:flex;flex-direction:column;gap:24px}
+.s-a-ic h2{font-size:38px;line-height:1;font-weight:700;letter-spacing:-.03em;text-wrap:balance}
+.s-a-zaman{margin-top:8px;font-size:17px;color:var(--s-soft);font-weight:500}
+.s-a-ic h3{font-size:15px;font-weight:600;color:var(--s-soft);margin-bottom:10px}
+.s-a-not{font-size:17px;line-height:1.5;max-width:34em;user-select:text;-webkit-user-select:text}
+.s-varis{display:flex;gap:14px;align-items:center;background:var(--pb);color:var(--pi);border-radius:24px;padding:12px 16px 12px 12px}
+.s-varis svg{flex:none;width:84px;height:84px;border-radius:16px}
+.s-varis b{display:block;font-size:19px;line-height:1.1;font-weight:700;letter-spacing:-.01em}
+.s-varis span{display:block;font-size:14px;opacity:.88;margin-bottom:4px}
+.s-halka{transform-box:fill-box;transform-origin:center;animation:s-halka 2.4s ease-out infinite}
+@keyframes s-halka{from{transform:scale(.4);opacity:.9}to{transform:scale(1.5);opacity:0}}
+.s-gal{display:flex;gap:12px;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none;margin:0 calc(-1*var(--gr)) 0 calc(-1*var(--gl));padding:6px var(--gr) 8px var(--gl)}
+.s-gal::-webkit-scrollbar{display:none}
+.s-gal > *{flex:none;width:72%;aspect-ratio:4/3;border-radius:20px;overflow:hidden;scroll-snap-align:center;transform:rotate(-1.2deg)}
+.s-gal > :nth-child(even){transform:rotate(1.4deg)}
+.s-gal-ekle{border:2px dashed var(--s-soft);display:grid;place-items:center;align-content:center;gap:6px;font-weight:600;text-align:center;width:44% !important}
+.s-gal-ekle .ik{font-size:30px}
+.s-bag{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.s-bag button{background:var(--s-yuz);border-radius:20px;padding:10px 12px 12px;display:grid;gap:8px;min-width:0;font-weight:600;font-size:15px;line-height:1.2}
+.s-bag svg{width:100%;height:auto;border-radius:12px;display:block}
+.s-bag small{display:block;font-weight:400;color:var(--s-soft);font-size:13px}
+.s-hat{display:flex;flex-wrap:wrap;gap:8px}
+.s-hat li{display:flex;align-items:center;gap:8px;height:42px;padding:0 16px 0 12px;border-radius:999px;background:var(--s-yuz);font-weight:550;font-size:15px}
+.s-hat .ik{font-size:19px}
+.s-a-alt{position:sticky;bottom:0;padding:10px var(--gr) 14px var(--gl);background:linear-gradient(transparent,var(--s-bg) 34%);margin-top:-96px;pointer-events:none}
+.s-a-alt button{pointer-events:auto;width:100%;height:56px;border-radius:999px;background:var(--s-ink);color:var(--s-bg);font-weight:700;font-size:18px;text-align:center}
+.s-a-alt button[aria-pressed="true"]{background:var(--s-yuz);color:var(--s-ink)}
+
+/* yeni kayıt */
+.s-yeni{position:absolute;inset:0;z-index:30;background:var(--pb);color:var(--pi);display:flex;flex-direction:column;transition:background-color .45s,color .3s;overflow-y:auto}
+.s-y-kapat{position:absolute;top:12px;right:var(--gr);width:46px;height:46px;border-radius:50%;border:2px solid currentColor;display:grid;place-items:center;font-size:22px;z-index:2}
+.s-y-sahne{flex:1 1 150px;min-height:110px;padding:60px 16% 6px}
+.s-y-form{flex:none;padding:8px var(--gr) 18px var(--gl);display:grid;gap:14px}
+.s-y-form label{font-size:15px;font-weight:600;opacity:.85}
+.s-y-form input{width:100%;background:none;border:0;border-bottom:3px solid currentColor;border-radius:0;font-size:30px;font-weight:700;letter-spacing:-.02em;padding:2px 0 6px;margin-top:2px;outline:none}
+.s-y-form input:focus-visible{box-shadow:0 3px 0 currentColor}
+.s-y-form input::placeholder{color:inherit;opacity:.45}
+.s-y-oneri,.s-y-ayar{display:flex;flex-wrap:wrap;gap:6px}
+.s-y-oneri button,.s-y-ayar button{height:40px;padding:0 14px;border-radius:999px;border:2px solid currentColor;font-weight:600;font-size:15px}
+.s-y-ayar button[aria-checked="true"]{background:var(--pi);color:var(--pb)}
+.s-y-tur{display:grid;grid-template-columns:repeat(3,1fr);border:2px solid currentColor;border-radius:999px;padding:3px;position:relative}
+.s-y-tur i{position:absolute;top:3px;bottom:3px;left:3px;width:calc((100% - 6px)/3);border-radius:999px;background:var(--pi);transition:transform .45s cubic-bezier(.34,1.4,.55,1),background-color .3s}
+.s-y-tur[data-t="bolum"] i{transform:translateX(100%)}
+.s-y-tur[data-t="tarihsiz"] i{transform:translateX(200%)}
+.s-y-tur button{position:relative;z-index:1;height:42px;text-align:center;font-weight:650;font-size:15px;transition:color .2s}
+.s-y-tur button[aria-checked="true"]{color:var(--pb)}
+.s-y-ayar{min-height:40px;align-items:center}
+.s-y-ekle{height:58px;border-radius:999px;background:var(--pi);color:var(--pb);font-weight:700;font-size:19px;text-align:center;transition:background-color .3s,color .3s}
+
+/* ============ TABELA ============ */
+.d-tabela{--odak:var(--t-mavi);--tb:var(--t-kanat);--tf:var(--t-kanat-yazi);--tr:3px;background:var(--t-bg);color:var(--t-ink);font-family:var(--f-t);font-size:18px}
+.t-ekran{position:absolute;inset:0;display:flex;flex-direction:column}
+.t-f{display:inline-flex;align-items:center;justify-content:center;gap:5px;background:var(--t-kanat);color:var(--t-kanat-yazi);font-weight:600;font-size:16px;letter-spacing:.035em;line-height:1;height:28px;padding:0 7px;border-radius:3px;position:relative;font-variant-numeric:tabular-nums;white-space:nowrap;transform-origin:50% 50%}
+.t-f--buyuk::after{content:"";position:absolute;left:0;right:0;top:50%;height:1px;background:var(--t-yarik);opacity:.55;pointer-events:none}
+.t-f--buyuk{height:46px;font-size:32px;padding:0 9px;font-weight:600;border-radius:4px}
+.t-f--d{height:40px;padding:0 13px;font-size:17px}
+.t-f--bos{background:none;color:var(--t-ink);border:1px solid var(--t-ink)}
+.t-f--mavi{background:var(--t-mavi);color:var(--t-yuz)}
+
+.t-bas{flex:none;display:flex;align-items:center;gap:5px;padding:12px var(--gr) 10px var(--gl)}
+.t-bas-saat{margin-left:auto;font-size:20px;font-weight:600;color:var(--t-soft);font-variant-numeric:tabular-nums;letter-spacing:.03em}
+.t-ay-d{height:44px;padding:0 4px 0 10px;display:flex;align-items:center;gap:2px;font-weight:600;font-size:18px}
+.t-ay-d .ik{font-size:20px;transition:transform .16s steps(3,end)}
+.t-ay-d[aria-expanded="true"] .ik{transform:rotate(180deg)}
+
+.t-takvim{flex:none;border-top:1px solid var(--t-line);border-bottom:2px solid var(--t-ink);touch-action:pan-y}
+.t-ay-bas{display:flex;align-items:center;justify-content:space-between;overflow:hidden;max-height:0;transition:max-height .16s steps(4,end);padding:0 calc(var(--gr) - 10px) 0 calc(var(--gl) - 10px)}
+.t-ay-bas b{font-size:20px;font-weight:600}
+.t-ay-bas button{width:44px;height:44px;display:grid;place-items:center;font-size:22px}
+.t-gunad{display:grid;grid-template-columns:repeat(7,1fr);font-size:13px;color:var(--t-soft);text-align:center;padding:4px 0 3px;font-weight:500}
+.t-hafta{display:grid;grid-template-columns:repeat(7,1fr);overflow:hidden;max-height:0;transition:max-height .16s steps(4,end);transition-delay:calc(var(--i)*26ms)}
+.t-hafta.gor,.t-takvim.acik .t-hafta{max-height:48px}
+.t-takvim.acik .t-ay-bas{max-height:46px}
+.t-g{height:46px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;border-top:1px solid var(--t-line);min-width:0}
+.t-g + .t-g{border-left:1px solid var(--t-line)}
+.t-g b{font-size:20px;font-weight:600;line-height:1;font-variant-numeric:tabular-nums}
+.t-g.dis b{color:var(--t-soft);font-weight:400;opacity:.6}
+.t-g.bugun b{box-shadow:0 2px 0 var(--t-amber)}
+.t-g.sec{background:var(--t-kanat);color:var(--t-kanat-yazi);box-shadow:inset 0 -3px 0 var(--t-mavi)}
+.t-g.sec.dis b{color:inherit;opacity:1}
+.t-g .l{display:flex;gap:2px;height:4px}
+.t-g .l i{width:4px;height:4px;background:currentColor}
+.t-g .l i.b{opacity:.32}
+.t-g .l i.t{background:var(--t-mavi)}
+
+.t-pano{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;background:var(--t-yuz)}
+.t-kolon{display:grid;grid-template-columns:66px minmax(0,1fr) auto;gap:8px;padding:6px var(--gr) 5px var(--gl);font-size:13px;color:var(--t-soft);font-weight:500;border-bottom:1px solid var(--t-line);position:sticky;top:0;background:var(--t-yuz);z-index:3}
+.t-kolon span:nth-child(2){padding-left:32px}
+.t-s{position:relative;border-bottom:1px solid var(--t-line);overflow:hidden;transform-origin:50% 0}
+.t-s-alt{position:absolute;inset:0;background:var(--t-yesil);color:var(--t-yuz);display:flex;align-items:center;padding-left:var(--gl);font-weight:700;letter-spacing:.05em;font-size:17px}
+.t-s-ic{position:relative;display:grid;grid-template-columns:66px 24px minmax(0,1fr) auto;align-items:center;gap:8px;min-height:48px;padding:0 var(--gr) 0 var(--gl);background:var(--t-yuz);touch-action:pan-y}
+.t-f-z{justify-self:start;min-width:58px}
+.t-s-im{font-size:21px;color:var(--t-soft)}
+.t-s-ad{min-width:0;display:flex;flex-direction:column;padding:5px 0}
+.t-s-ad > button{min-height:38px;display:flex;flex-direction:column;justify-content:center;font-size:20px;font-weight:500;line-height:1.08;min-width:0}
+.t-s-ad small{font-size:14.500px;color:var(--t-soft);font-weight:400;letter-spacing:.01em}
+.t-s.bitti .t-s-ad,.t-s.bitti .t-s-im,.t-s.bitti .t-f-z{opacity:.42}
+.t-s-onay{display:flex;align-items:center;gap:6px;padding:2px 0 5px;flex-wrap:wrap}
+.t-f-durum{min-width:64px;height:44px;background:none;color:var(--t-ink);padding:0}
+.t-f-durum span{display:inline-flex;align-items:center;gap:5px;height:28px;min-width:64px;justify-content:center;padding:0 7px;border-radius:3px;background:var(--t-kanat);color:var(--t-kanat-yazi);position:relative}
+.t-f-durum span::before{content:"";width:6px;height:6px;background:var(--t-soft);flex:none}
+.t-f-durum[data-d="yakin"] span::before{background:var(--t-amber)}
+.t-f-durum[data-d="bitti"] span::before{background:var(--t-yesil)}
+.t-f-durum[data-d="taslak"] span::before{background:var(--t-mavi)}
+.t-f-durum[data-d="gec"] span::before{background:var(--t-amber)}
+.t-ayrac{padding:14px var(--gr) 5px var(--gl);font-size:13px;color:var(--t-soft);font-weight:500;border-bottom:1px solid var(--t-line);background:var(--t-bg)}
+.t-bos{padding:14px var(--gr) 14px var(--gl);color:var(--t-soft);border-bottom:1px solid var(--t-line)}
+.t-pano-son{height:24px}
+
+.t-alt{flex:none;border-top:2px solid var(--t-ink);background:var(--t-bg);padding:8px var(--gr) 10px var(--gl);display:flex;align-items:center;justify-content:space-between;gap:10px}
+.t-alt .t-f{height:44px;padding:0 14px;font-size:18px}
+.t-ozet{font-size:15px;color:var(--t-soft)}
+.t-yaz{flex:none;border-top:2px solid var(--t-ink);background:var(--t-bg);padding:10px var(--gr) 12px var(--gl);display:grid;gap:8px}
+.t-yaz input{width:100%;height:46px;background:var(--t-yuz);border:1px solid var(--t-soft);border-radius:3px;padding:0 10px;font-size:21px;font-weight:500}
+.t-yaz input::placeholder{color:var(--t-soft)}
+.t-yaz-sat{display:flex;align-items:center;gap:5px;flex-wrap:wrap}
+.t-yaz-sat .t-f--d{padding:0 9px}
+.t-yaz-sat .t-f--kare,.t-yaz-ayar .t-f--bos{padding:0}
+.t-yaz-ayar{display:flex;align-items:center;gap:3px}
+.t-yaz-ayar .t-f--bos,.t-f--kare{width:38px;padding:0;font-size:22px}
+.t-f--kare .ik{font-size:20px}
+.t-yaz-son{margin-left:auto;display:flex;gap:6px}
+.t-yaz-ipucu{font-size:14.500px;color:var(--t-soft)}
+
+/* dosya */
+.t-dosya{position:absolute;left:0;right:0;bottom:0;z-index:20;display:flex;flex-direction:column;background:var(--t-yuz);transform-origin:50% 0;border-top:2px solid var(--t-ink)}
+.t-d-ust{flex:none;display:flex;align-items:center;justify-content:space-between;padding:4px var(--gr) 0 calc(var(--gl) - 8px)}
+.t-d-geri{height:44px;display:flex;align-items:center;gap:2px;font-weight:600;font-size:18px;padding-right:8px}
+.t-d-geri .ik{font-size:22px}
+.t-d-ad{padding:2px var(--gr) 10px var(--gl);font-size:30px;font-weight:600;line-height:1.02;display:flex;gap:10px;align-items:flex-start}
+.t-d-ad .ik{font-size:30px;color:var(--t-soft);margin-top:1px}
+.t-d-kanatlar{display:flex;flex-wrap:wrap;gap:5px;padding:0 var(--gr) 12px var(--gl)}
+.t-sekmeler{flex:none;display:flex;padding:0 var(--gr) 0 var(--gl);border-bottom:2px solid var(--t-ink);overflow-x:auto;scrollbar-width:none}
+.t-sekmeler::-webkit-scrollbar{display:none}
+.t-sekmeler button{flex:1 0 auto;height:44px;padding:0 9px;font-size:17px;font-weight:600;color:var(--t-soft);white-space:nowrap;text-align:center;border-radius:3px 3px 0 0}
+.t-sekmeler button[aria-selected="true"]{background:var(--t-ink);color:var(--t-yuz)}
+.t-sekmeler sup{font-size:12px;margin-left:3px;font-weight:500}
+.t-d-ic{flex:1;min-height:0;overflow-y:auto;padding:14px var(--gr) 20px var(--gl);transform-origin:50% 0}
+.t-not{font-family:var(--f-tm);font-size:15.500px;line-height:1.5;max-width:36em;user-select:text;-webkit-user-select:text}
+.t-kutu{margin-top:14px;border:1px solid var(--t-ink);border-radius:3px;padding:10px 12px;display:grid;gap:6px}
+.t-kutu b{font-size:19px;font-weight:600;line-height:1.15}
+.t-kutu small{font-size:14.500px;color:var(--t-soft)}
+.t-meta{margin-top:14px;display:grid;grid-template-columns:auto 1fr;gap:4px 14px;font-size:16px}
+.t-meta dt{color:var(--t-soft)}
+.t-meta dd{margin:0}
+.t-kareler{display:grid;grid-template-columns:repeat(3,1fr);gap:4px}
+.t-kareler > *{aspect-ratio:1;border-radius:2px;overflow:hidden;min-width:0}
+.t-kare-ekle{border:1px dashed var(--t-ink);display:grid;place-items:center;align-content:center;gap:4px;font-size:15px;font-weight:600;text-align:center;line-height:1.1}
+.t-kare-ekle .ik{font-size:24px}
+.t-dl li{border-bottom:1px solid var(--t-line)}
+.t-dl button,.t-dl .sat{display:flex;align-items:center;gap:10px;width:100%;min-height:48px;font-size:19px;font-weight:500}
+.t-dl .t-f{min-width:66px}
+.t-dl-bos{color:var(--t-soft);padding:6px 0}
+.t-d-alt{flex:none;border-top:2px solid var(--t-ink);background:var(--t-bg);padding:8px var(--gr) 10px var(--gl);display:flex;justify-content:flex-end}
+.t-d-alt .t-f{height:44px;padding:0 16px;font-size:18px}
+
+</style>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false"><defs>
+  <linearGradient id="g-gok" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8fb0c9"/><stop offset="1" stop-color="#e6e2d4"/></linearGradient>
+  <linearGradient id="g-boya" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#17338f"/><stop offset=".5" stop-color="#4a72e6"/><stop offset="1" stop-color="#132a7a"/></linearGradient>
+  <linearGradient id="g-masa" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8a6845"/><stop offset="1" stop-color="#553a24"/></linearGradient>
+  <linearGradient id="g-golge" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".5"/><stop offset=".55" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".55"/></linearGradient>
+  <linearGradient id="g-cam" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#b9cdd6"/><stop offset=".5" stop-color="#5f7480"/><stop offset="1" stop-color="#8ea3ad"/></linearGradient>
+  <filter id="f-bulanik"><feGaussianBlur stdDeviation="1.1"/></filter>
+  <filter id="f-gren" x="0" y="0" width="100%" height="100%"><feTurbulence type="fractalNoise" baseFrequency="1.1" numOctaves="2" seed="4"/><feColorMatrix values="0 0 0 0 .5  0 0 0 0 .5  0 0 0 0 .5  .7 .7 .7 0 -.85"/></filter>
+</defs></svg>
+<div class="kabuk">
+  <header class="ust">
+    <div class="yonler" role="tablist" aria-label="Tasarım yönü" data-y="sahne"><i></i>
+      <button role="tab" id="yon-cetvel" data-yon="cetvel" aria-selected="false">Cetvel</button>
+      <button role="tab" id="yon-sahne" data-yon="sahne" aria-selected="true">Sahne</button>
+      <button role="tab" id="yon-tabela" data-yon="tabela" aria-selected="false">Tabela</button>
+    </div>
+    <button class="arac" id="tema" type="button" aria-label="Açık ve koyu tema arasında geç"></button>
+  </header>
+  <main class="alan">
+    <aside class="kunye" id="kunye">
+      <h2 id="kunye-ad"></h2>
+      <p><span class="kunye-fikir" id="kunye-fikir"></span><button class="kunye-ac" id="kunye-ac" type="button" aria-expanded="false">Notlar</button></p>
+      <div class="kunye-ek">
+        <dl><dt>Hareket</dt><dd id="kunye-hareket"></dd><dt>Kaydın görseli</dt><dd id="kunye-gorsel"></dd><dt>Android</dt><dd id="kunye-android"></dd></dl>
+        <p class="kunye-oneri">Önerilen yön Sahne: kaydın kendi resmi, fotoğraf kapağı ve anlam taşıyan hareket isteğini en doğrudan o karşılıyor. Cetvel'in mezura saat seçicisi ve Tabela'nın sağa çekerek tamamlaması Sahne'ye taşınabilir.</p>
+        <button class="kunye-sifir" id="sifirla" type="button">Örnek veriyi sıfırla</button>
+      </div>
+    </aside>
+    <div class="telefon"><div class="app" id="app"></div></div>
+  </main>
+</div>
+<input type="file" id="foto-sec" accept="image/*" hidden>
+
+<script>
+'use strict';
+document.documentElement.lang = 'tr';
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const el = (html) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const YON = {};
+
+/* ---- hareket yardımcıları ---- */
+const azMQ = matchMedia('(prefers-reduced-motion: reduce)');
+const az = () => azMQ.matches;
+const BOS_AN = { finished: Promise.resolve(), cancel() {} };
+function an(e, kf, o) {
+  if (!e || !e.animate) return BOS_AN;
+  o = typeof o === 'number' ? { duration: o } : { ...o };
+  if (az()) { o.duration = 1; o.delay = 0; }
+  if (!o.fill) o.fill = 'backwards';
+  const a = e.animate(kf, o);
+  a.finished.catch(() => {});
+  return a;
+}
+const bekle = (ms) => new Promise((r) => setTimeout(r, az() ? 0 : ms));
+function surukle(hedef, h) {
+  hedef.addEventListener('pointerdown', (e) => {
+    if (e.button) return;
+    if (h.filtre && !h.filtre(e)) return;
+    const x0 = e.clientX, y0 = e.clientY;
+    let aktif = false, son = { x: x0, y: y0, t: e.timeStamp }, v = { x: 0, y: 0 };
+    const birak = () => { removeEventListener('pointermove', mv); removeEventListener('pointerup', up); removeEventListener('pointercancel', up); };
+    const mv = (ev) => {
+      const dx = ev.clientX - x0, dy = ev.clientY - y0;
+      if (!aktif) {
+        if (Math.hypot(dx, dy) < 8) return;
+        if (h.eksen === 'x' && Math.abs(dx) < Math.abs(dy)) return birak();
+        if (h.eksen === 'y' && Math.abs(dy) < Math.abs(dx)) return birak();
+        aktif = true;
+        try { hedef.setPointerCapture(e.pointerId); } catch (_) {}
+        if (h.basla) h.basla(ev);
+      }
+      const dt = Math.max(1, ev.timeStamp - son.t);
+      v = { x: (ev.clientX - son.x) / dt, y: (ev.clientY - son.y) / dt };
+      son = { x: ev.clientX, y: ev.clientY, t: ev.timeStamp };
+      h.tasi(dx, dy, ev);
+    };
+    const up = (ev) => {
+      birak();
+      if (!aktif) return;
+      hedef._surukledi = true; setTimeout(() => { hedef._surukledi = false; }, 60);
+      h.bitir(ev.clientX - x0, ev.clientY - y0, v.x, v.y, ev);
+    };
+    addEventListener('pointermove', mv); addEventListener('pointerup', up); addEventListener('pointercancel', up);
+  });
+}
+
+/* ---- tarih ve metin ---- */
+const BUGUN = '2026-11-27', SIMDI = '12:40';
+const AYLAR = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
+const GUNLER = ['Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi', 'Pazar'];
+const KGUN = ['Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt', 'Paz'];
+const BOLUM = { sabah: 'sabah', ogle: 'öğle', ogleden_sonra: 'öğleden sonra', aksam: 'akşam', gece: 'gece' };
+const BOLUM_SIRA = ['sabah', 'ogle', 'ogleden_sonra', 'aksam', 'gece'];
+const iki = (n) => String(n).padStart(2, '0');
+const T = (s) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); };
+const iso = (d) => `${d.getFullYear()}-${iki(d.getMonth() + 1)}-${iki(d.getDate())}`;
+const gunEkle = (s, n) => { const d = T(s); d.setDate(d.getDate() + n); return iso(d); };
+const haftaGunu = (s) => (T(s).getDay() + 6) % 7;
+const uzunTarih = (s) => `${GUNLER[haftaGunu(s)]}, ${T(s).getDate()} ${AYLAR[T(s).getMonth()]}`;
+const goreli = (s) => (s === BUGUN ? 'Bugün' : s === gunEkle(BUGUN, 1) ? 'Yarın' : s === gunEkle(BUGUN, -1) ? 'Dün' : uzunTarih(s));
+const dk = (s) => { const [h, m] = s.split(':').map(Number); return h * 60 + m; };
+const hhmm = (n) => `${iki(Math.floor(n / 60))}:${iki(n % 60)}`;
+const kucuk = (s) => s.toLocaleLowerCase('tr');
+const buyuk = (s) => s.toLocaleUpperCase('tr');
+function ayIzgarasi(y, m) {
+  const ilk = new Date(y, m, 1), bas = new Date(y, m, 1 - ((ilk.getDay() + 6) % 7));
+  const g = Array.from({ length: 42 }, (_, i) => { const d = new Date(bas); d.setDate(bas.getDate() + i); return iso(d); });
+  return T(g[35]).getMonth() === m ? g : g.slice(0, 35);
+}
+
+/* ---- örnek veri (hepsi uydurma) ---- */
+function ornekVeri() {
+  const v = (id, tarih, bitti) => ({ id, baslik: 'İş yerinde vardiya', tarih, saat: '09:00', bitis: '17:00', gorsel: 'imza', renk: 'cam', bolge: 'İş yeri', varis: 'Giriş çizelgesini imzala', bitti, not: 'Girişte çizelgeyi imzala.', fotolar: [], baglantilar: [{ tip: 'belge', ad: 'Vardiya çizelgesi' }], hatirlatmalar: ['30 dk önce'] });
+  return [
+    { id: 'kargo', baslik: 'Kargo teslimi', tarih: BUGUN, saat: '09:30', gorsel: 'kutu', renk: 'domates', bitti: true, not: 'Kapıcıya bırakılmasın, teslimde imza isteniyor. Koli gelince içindeki faturayı ayır.', fotolar: [], baglantilar: [{ tip: 'belge', ad: 'Gönderi takip sayfası' }], hatirlatmalar: ['15 dk önce'] },
+    { id: 'araba', baslik: 'Araba yıkama', tarih: BUGUN, bolum: 'sabah', gorsel: 'araba', renk: 'kobalt', bolge: 'Oto yıkama', varis: 'Bagajdaki koliyi çıkar', kapak: 'cizim', not: 'İç temizlik de yapılsın. Bagajdaki koli çıkmadan teslim etme. Sağ arka kapıdaki çiziği göster, pasta cila fiyatını sor. Ön sol lastik biraz inik, basınca da baksınlar.', fotolar: ['araba', 'cizik'], baglantilar: [{ tip: 'harita', ad: 'Yıkamacının yeri' }, { tip: 'belge', ad: 'Geçen ayki fiş' }], hatirlatmalar: ['Sabah 08:00'] },
+    { id: 'eczane', baslik: 'Eczaneden ilaç al', tarih: BUGUN, bolum: 'ogle', taslak: true, yazar: 'Asistan önerdi', gorsel: 'ilac', renk: 'gok', not: 'Dünkü konuşmadan çıkarıldı: reçetenin süresi cuma günü doluyor.', fotolar: [], baglantilar: [], hatirlatmalar: ['Öğle 11:00'] },
+    { id: 'vardiya', baslik: 'İş yerinde vardiya', tarih: BUGUN, saat: '13:00', bitis: '21:00', gorsel: 'imza', renk: 'cam', bolge: 'İş yeri', varis: 'Giriş çizelgesini imzala', not: 'Girişte çizelgeyi imzalamadan soyunma odasına geçme; geçen hafta unutuldu, mesai eksik göründü. Bugün depo sayımı var, sayım formu fotoğraflarda. 17:30 yemek molası, 21:00 kasa devri.', fotolar: ['form', 'kapi'], baglantilar: [{ tip: 'belge', ad: 'Vardiya çizelgesi' }, { tip: 'belge', ad: 'Sayım formu' }, { tip: 'harita', ad: 'Yol tarifi' }], hatirlatmalar: ['30 dk önce'] },
+    { id: 'market', baslik: 'Market', tarih: BUGUN, bolum: 'aksam', gorsel: 'sepet', renk: 'hardal', not: 'Süt, yumurta, kahve, bulaşık deterjanı, limon. Pazar kahvaltısı için peynir ve zeytin. Poşet götür.', fotolar: ['liste'], baglantilar: [], hatirlatmalar: ['Akşam 19:00'] },
+    { id: 'vesikalik', baslik: 'Vesikalık fotoğraf çektir', gorsel: 'yildiz', renk: 'kum', not: 'Biyometrik, altı adet.', fotolar: [], baglantilar: [], hatirlatmalar: [] },
+    { id: 'lastik', baslik: 'Bisiklet lastiğini şişir', gorsel: 'yildiz', renk: 'kum', not: '', fotolar: [], baglantilar: [], hatirlatmalar: [] },
+    { id: 'kitaplik', baslik: 'Kitaplığı düzenle', gorsel: 'yildiz', renk: 'kum', not: 'Okunmayanları ayır, kutuya koy.', fotolar: [], baglantilar: [], hatirlatmalar: [] },
+    { id: 'kahvalti', baslik: 'Kahvaltı', tarih: '2026-11-28', saat: '10:30', gorsel: 'fincan', renk: 'hardal', not: 'Dört kişilik yer ayrıldı. Rezervasyon numarası mesajda.', fotolar: [], baglantilar: [{ tip: 'harita', ad: 'Kahvaltıcının yeri' }], hatirlatmalar: ['1 saat önce'] },
+    { id: 'camasir', baslik: 'Çamaşırları kuru temizlemeden al', tarih: '2026-11-28', bolum: 'aksam', gorsel: 'yildiz', renk: 'kum', not: 'Fiş cüzdanda.', fotolar: [], baglantilar: [], hatirlatmalar: ['Akşam 19:00'] },
+    { id: 'disci', baslik: 'Dişçi randevusu', tarih: '2026-11-30', saat: '10:15', bitis: '11:00', gorsel: 'dis', renk: 'pembe', bolge: 'Diş kliniği', varis: 'Eski röntgeni danışmaya ver', not: 'Kontrol ve diş taşı temizliği. Eski röntgen filmini götür. Randevudan iki saat önce bir şey yeme.', fotolar: [], baglantilar: [{ tip: 'harita', ad: 'Kliniğin yeri' }, { tip: 'belge', ad: 'Randevu onayı' }], hatirlatmalar: ['1 gün önce', '1 saat önce'] },
+    v('v1201', '2026-12-01', false), v('v1202', '2026-12-02', false), v('v1208', '2026-12-08', false), v('v1209', '2026-12-09', false),
+    { id: 'fatura', baslik: 'Elektrik faturası son gün', tarih: '2026-12-03', gorsel: 'fatura', renk: 'gece', not: 'Otomatik ödeme kapalı, elle yatır.', fotolar: [], baglantilar: [{ tip: 'belge', ad: 'Fatura' }], hatirlatmalar: ['Sabah 09:00'] },
+    { id: 'gezi', baslik: 'Hafta sonu gezisi', tarih: '2026-12-05', bitisTarih: '2026-12-06', gorsel: 'cadir', renk: 'gece', not: 'Cumartesi sabah erken çıkış. Termos, yağmurluk, şarj aleti.', fotolar: [], baglantilar: [{ tip: 'harita', ad: 'Kamp alanı' }], hatirlatmalar: ['1 gün önce'] },
+    { id: 'hediye', baslik: 'Doğum günü hediyesi al', tarih: '2026-12-12', bolum: 'ogleden_sonra', gorsel: 'kutu', renk: 'domates', not: '', fotolar: [], baglantilar: [], hatirlatmalar: [] },
+    { id: 'kira', baslik: 'Kira ödemesi', tarih: '2026-11-03', gorsel: 'fatura', renk: 'gece', bitti: true, not: '', fotolar: [], baglantilar: [], hatirlatmalar: [] },
+    v('v1110', '2026-11-10', true), v('v1111', '2026-11-11', true), v('v1117', '2026-11-17', true), v('v1118', '2026-11-18', true), v('v1124', '2026-11-24', true), v('v1125', '2026-11-25', true),
+    { id: 'sac', baslik: 'Saç kesimi', tarih: '2026-11-14', saat: '16:00', gorsel: 'yildiz', renk: 'kum', bitti: true, not: '', fotolar: [], baglantilar: [], hatirlatmalar: [] },
+    { id: 'muayene', baslik: 'Araç muayenesi', tarih: '2026-11-20', saat: '11:00', gorsel: 'araba', renk: 'kobalt', bitti: true, not: 'Ruhsat ve sigorta poliçesi yanında olsun.', fotolar: [], baglantilar: [], hatirlatmalar: ['1 gün önce'] },
+  ];
+}
+const D = { kayitlar: ornekVeri(), secili: BUGUN, ay: { y: 2026, m: 10 } };
+const kayit = (id) => D.kayitlar.find((k) => k.id === id);
+const siraNo = (k) => (k.saat ? 2000 + dk(k.saat) : k.bolum ? 1000 + BOLUM_SIRA.indexOf(k.bolum) : 0);
+const sirala = (l) => [...l].sort((a, b) => siraNo(a) - siraNo(b));
+const gunun = (t) => sirala(D.kayitlar.filter((k) => k.tarih && (k.tarih === t || (k.bitisTarih && k.tarih <= t && t <= k.bitisTarih))));
+const tarihsiz = () => D.kayitlar.filter((k) => !k.tarih);
+const zamanMetni = (k) => (k.saat ? (k.bitis ? `${k.saat}–${k.bitis}` : k.saat) : k.bolum ? BOLUM[k.bolum] : k.bitisTarih ? `${T(k.tarih).getDate()}–${T(k.bitisTarih).getDate()} ${AYLAR[T(k.tarih).getMonth()]}` : k.tarih ? 'gün boyu' : 'tarihsiz');
+const turAdi = (k) => (k.saat ? 'Randevu' : k.tarih ? 'Gün kaydı' : 'Yapılacak');
+function oner(baslik) {
+  const s = kucuk(baslik);
+  const K = [[/araba|oto|yıka|muayene|lastik/, 'araba', 'kobalt'], [/diş|dişçi/, 'dis', 'pembe'], [/market|alışveriş|bakkal|pazar/, 'sepet', 'hardal'], [/vardiya|imza|toplantı|iş yeri|mesai/, 'imza', 'cam'], [/kargo|paket|koli|hediye/, 'kutu', 'domates'], [/ilaç|eczane|vitamin/, 'ilac', 'gok'], [/kahve|kahvaltı|çay/, 'fincan', 'hardal'], [/fatura|kira|ödeme|aidat/, 'fatura', 'gece'], [/gezi|kamp|tatil|yürüyüş/, 'cadir', 'gece']];
+  const e = K.find((x) => x[0].test(s));
+  return e ? { gorsel: e[1], renk: e[2] } : { gorsel: 'yildiz', renk: 'kum' };
+}
+let sayac = 0;
+function yeniKayit(baslik, zaman) {
+  const k = { id: 'y' + (++sayac), baslik, not: '', fotolar: [], baglantilar: [], hatirlatmalar: [], ...oner(baslik), ...zaman };
+  if (k.saat) k.hatirlatmalar = ['30 dk önce'];
+  D.kayitlar.push(k);
+  return k;
+}
+const kayitSil = (id) => { D.kayitlar = D.kayitlar.filter((k) => k.id !== id); };
+
+/* ---- simgeler (24'lük çizgi) ---- */
+const IK = {
+  araba: '<path d="M3 13.5l1.7-4.2A2 2 0 0 1 6.6 8h8.2a2 2 0 0 1 1.6.8l2.4 3.2 2 .6a1.5 1.5 0 0 1 1.2 1.5V16a1 1 0 0 1-1 1h-1.6M3 13.5V16a1 1 0 0 0 1 1h.6M9.6 17h4.8"/><circle cx="7.2" cy="17" r="2.2"/><circle cx="16.8" cy="17" r="2.2"/>',
+  dis: '<path d="M7.6 3.5c1.7 0 2.6 1 4.4 1s2.7-1 4.4-1C18.6 3.5 20 5.3 20 7.7c0 2.6-1.2 4-1.7 6.8-.4 2.4-.7 6-2.3 6-1.7 0-1.2-5-4-5s-2.3 5-4 5c-1.6 0-1.9-3.6-2.3-6C5.2 11.700 4 10.300 4 7.700 4 5.300 5.400 3.500 7.600 3.500z"/>',
+  sepet: '<path d="M4 9.500h16l-1.500 8.700a2 2 0 0 1-2 1.800H7.500a2 2 0 0 1-2-1.800L4 9.500zM8 9.500l3-5.500M16 9.500L13 4M9.500 13v3.500M14.500 13v3.500"/>',
+  imza: '<path d="M6.500 5.500h11v15h-11zM9.500 3.500h5v3.500h-5zM9 16.500c.8-1.800 1.500-2.300 2-1.200.5 1 .9 1.500 1.700.300.6-1 1.200-.9 2.300.300"/><path d="M9.500 10.500h5"/>',
+  kutu: '<path d="M3.500 8L12 3.500 20.500 8v8.500L12 21l-8.500-4.500V8zM3.500 8l8.500 4.500L20.500 8M12 12.500V21"/>',
+  ilac: '<path d="M7.200 16.800a4.200 4.200 0 0 1 0-6l3.600-3.600a4.200 4.200 0 0 1 6 6l-3.600 3.600a4.200 4.200 0 0 1-6 0zM9 9l6 6"/>',
+  fincan: '<path d="M5 9.500h11v4.500a5 5 0 0 1-5 5h-1a5 5 0 0 1-5-5V9.500zM16 11h1.500a2.500 2.500 0 0 1 0 5H16M8.500 6c0-1 1-1 1-2.200M12.500 6c0-1 1-1 1-2.200"/>',
+  fatura: '<path d="M6.500 3.500h11v17l-2.200-1.500-2.200 1.500-1.100-.800-1.100.800-2.200-1.500-2.200 1.500v-17zM9.500 8.500h5M9.500 12.500h5"/>',
+  cadir: '<path d="M3 19.500L12 5l9 14.500H3zM12 5v14.500M12 12l-3.500 7.500"/>',
+  yildiz: '<circle cx="12" cy="12" r="3.200"/><path d="M12 3.500v3M12 17.500v3M3.500 12h3M17.500 12h3M6 6l2 2M16 16l2 2M6 18l2-2M16 8l2-2"/>',
+  arti: '<path d="M12 5v14M5 12h14"/>',
+  tik: '<path d="M5 12.500l4.500 4.500L19 7.500"/>',
+  geri: '<path d="M14.500 5.500L8 12l6.500 6.500"/>',
+  ileri: '<path d="M9.500 5.500L16 12l-6.500 6.500"/>',
+  asagi: '<path d="M5.500 9.500L12 16l6.500-6.500"/>',
+  yukari: '<path d="M5.500 14.500L12 8l6.500 6.500"/>',
+  kapat: '<path d="M6 6l12 12M18 6L6 18"/>',
+  takvim: '<path d="M4.500 6.500h15v13h-15zM4.500 10.500h15M8.500 4v4M15.500 4v4"/>',
+  gun: '<path d="M5 7h14M5 12h14M5 17h9"/>',
+  harita: '<path d="M12 21s6.500-5.800 6.500-11a6.500 6.500 0 1 0-13 0c0 5.200 6.500 11 6.500 11z"/><circle cx="12" cy="10" r="2.300"/>',
+  belge: '<path d="M7 3.500h7l4 4v13H7zM14 3.500v4h4M9.500 12.500h5M9.500 16h5"/>',
+  zil: '<path d="M6.500 16.500V11a5.500 5.500 0 0 1 11 0v5.500l1.500 2h-14l1.500-2zM10.300 20.500a1.800 1.800 0 0 0 3.400 0"/>',
+  foto: '<path d="M4 7.500h3.500l1.500-2h6l1.500 2H20V19H4z"/><circle cx="12" cy="13" r="3.300"/>',
+  gunes: '<circle cx="12" cy="12" r="4"/><path d="M12 2.500v2.500M12 19v2.500M2.500 12H5M19 12h2.500M5.300 5.300l1.800 1.800M16.900 16.900l1.800 1.800M5.300 18.700l1.800-1.800M16.900 7.100l1.800-1.800"/>',
+  ay: '<path d="M19.500 14.200A8 8 0 0 1 9.800 4.500a8 8 0 1 0 9.700 9.700z"/>',
+};
+const ik = (ad) => `<svg class="ik" viewBox="0 0 24 24" aria-hidden="true">${IK[ad] || IK.yildiz}</svg>`;
+const TIK_SVG = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.500l4.500 4.500L19 7.500"/></svg>`;
+
+/* ---- büyük çizimler (Sahne) ---- */
+const RESIM = {
+  araba: `<rect class="rs-zemin" x="20" y="137" width="200" height="5" rx="2.500"/>
+    <g class="rs-kopuk"><circle cx="50" cy="52" r="9"/><circle cx="68" cy="34" r="5"/><circle cx="190" cy="42" r="7"/><circle cx="206" cy="62" r="4"/><circle cx="122" cy="24" r="6"/></g>
+    <g class="rs-govde"><path class="pf" d="M28 118v-16q0-11 11-13l24-5 21-27q6-8 16-8h46q10 0 16 8l20 27 21 5q11 3 11 14v15q0 6-6 6H34q-6 0-6-6z"/>
+    <path class="pl" d="M93 82l14-19q3-4 8-4h11v23z"/><path class="pl" d="M134 59h10q5 0 8 4l14 19h-32z"/>
+    <rect class="pd" x="138" y="92" width="14" height="4" rx="2"/><rect class="pl" x="201" y="94" width="10" height="9" rx="3"/><rect class="pd" x="28" y="96" width="6" height="10" rx="2"/></g>
+    <g><circle class="pd" cx="78" cy="122" r="17"/><circle class="pl" cx="78" cy="122" r="6.500"/></g>
+    <g><circle class="pd" cx="170" cy="122" r="17"/><circle class="pl" cx="170" cy="122" r="6.500"/></g>`,
+  dis: `<path class="pf" d="M84 36q18-14 36-2 18-12 36 2 16 14 6 46-6 18-9 40-3 16-12 2-6-22-21-22t-21 22q-9 14-12-2-3-22-9-40-10-32 6-46z"/>
+    <path class="ps" d="M97 54q-7 9-3 24"/>
+    <path class="pf rs-pirilti" d="M192 28q2 11 13 13-11 2-13 13-2-11-13-13 11-2 13-13z"/>
+    <path class="pf rs-pirilti" d="M50 88q1.500 7 8 8-6.500 1-8 8-1.500-7-8-8 6.500-1 8-8z"/>`,
+  sepet: `<rect class="pl" x="92" y="28" width="18" height="72" rx="9" transform="rotate(-14 101 64)"/>
+    <path class="pd" d="M132 88V52q0-6 4-9v-10h10v10q4 3 4 9v36z"/>
+    <circle class="pl" cx="168" cy="72" r="13"/>
+    <path class="ps2" d="M82 84q38-60 76 0"/>
+    <path class="pf" d="M62 84h116l-11 46q-2 10-12 10H85q-10 0-12-10z"/>
+    <rect class="pd" x="56" y="78" width="128" height="13" rx="6.500"/>
+    <path class="ps3" d="M96 102v26M120 102v26M144 102v26"/>`,
+  imza: `<rect class="pf" x="70" y="20" width="100" height="128" rx="12"/>
+    <rect class="pl" x="80" y="36" width="80" height="102" rx="5"/>
+    <rect class="pd" x="100" y="12" width="40" height="20" rx="7"/>
+    <rect class="pb2" x="90" y="52" width="58" height="6" rx="3"/><rect class="pb2" x="90" y="68" width="40" height="6" rx="3"/><rect class="pb2" x="90" y="84" width="50" height="6" rx="3"/>
+    <path class="rs-imza-cizgi" pathLength="100" d="M90 124q7-20 13-5 4 11 10-6 4-11 8 4 3 9 9-2 5-9 9 2 3 6 9 0"/>
+    <g class="rs-kalem"><path class="pd" d="M189 69l10 10-34 34-13 3 3-13z"/></g>`,
+  kutu: `<path class="pf" d="M64 62l56-24 56 24v60l-56 24-56-24z"/>
+    <path class="pd" opacity=".28" d="M120 86v60l56-24V62z"/>
+    <path class="pl" d="M64 62l56 24 56-24-56-24z"/>
+    <path class="pd" opacity=".5" d="M88 51.700l56 24v18l8-3.400v-18l-56-24z"/>`,
+  ilac: `<g transform="rotate(-32 120 84)"><rect class="pl" x="56" y="58" width="128" height="52" rx="26"/><path class="pf" d="M120 58h38a26 26 0 0 1 0 52h-38z"/><rect class="pd" opacity=".16" x="74" y="68" width="34" height="7" rx="3.500"/></g>
+    <path class="pf rs-pirilti" d="M190 22h10v10h10v10h-10v10h-10V42h-10V32h10z"/>`,
+  fincan: `<path class="ps2 rs-buhar" d="M100 46q-8-10 0-22M126 46q-8-10 0-22"/>
+    <path class="pf" d="M68 62h104v32q0 36-36 36h-32q-36 0-36-36z"/>
+    <path class="ps2" d="M172 74h6q16 0 16 15t-16 15h-8"/>
+    <rect class="pd" x="56" y="136" width="128" height="8" rx="4"/>`,
+  fatura: `<path class="pl" d="M78 18h84v122l-14-9-14 9-14-9-14 9-14-9-14 9z"/>
+    <path class="pf" d="M127 40l-24 36h17l-9 32 28-40h-17z"/>`,
+  cadir: `<circle class="pf" cx="182" cy="42" r="15"/>
+    <path class="pl" d="M36 134l84-100 84 100z"/><path class="pd" opacity=".8" d="M120 34l-24 100h48z"/>
+    <rect class="pd" x="24" y="132" width="192" height="6" rx="3"/>`,
+  yildiz: `<circle class="pf" cx="120" cy="80" r="34"/>
+    <path class="ps2" d="M120 22v14M120 124v14M62 80h14M164 80h14M79 39l10 10M151 111l10 10M79 121l10-10M151 49l10-10"/>`,
+};
+const resim = (ad) => `<svg class="rs rs-${RESIM[ad] ? ad : 'yildiz'}" viewBox="0 0 240 160" aria-hidden="true">${RESIM[ad] || RESIM.yildiz}</svg>`;
+
+/* ---- fotoğraf yerine geçen çizimler (dış servis yok) ---- */
+const FOTO = {
+  araba: `<rect width="160" height="120" fill="url(#g-gok)"/>
+    <g filter="url(#f-bulanik)"><rect x="-4" y="20" width="56" height="62" fill="#878d94"/><rect x="50" y="34" width="46" height="48" fill="#aaa699"/><rect x="94" y="12" width="70" height="70" fill="#737a85"/>
+    <g fill="#c9d3da" opacity=".7"><rect x="6" y="30" width="8" height="10"/><rect x="22" y="30" width="8" height="10"/><rect x="6" y="48" width="8" height="10"/><rect x="104" y="24" width="9" height="12"/><rect x="122" y="24" width="9" height="12"/><rect x="140" y="24" width="9" height="12"/><rect x="104" y="46" width="9" height="12"/><rect x="140" y="46" width="9" height="12"/></g></g>
+    <rect y="80" width="160" height="40" fill="#3b3e44"/><rect y="80" width="160" height="3" fill="#bdb9ac"/>
+    <ellipse cx="80" cy="104" rx="58" ry="5" fill="#1b1c1f" opacity=".6"/>
+    <g transform="translate(17 39) scale(.52)"><path fill="#1f3f9f" d="M28 118v-16q0-11 11-13l24-5 21-27q6-8 16-8h46q10 0 16 8l20 27 21 5q11 3 11 14v15q0 6-6 6H34q-6 0-6-6z"/><path fill="#9cc2dc" d="M93 82l14-19q3-4 8-4h11v23zM134 59h10q5 0 8 4l14 19h-32z"/><path fill="#fff" opacity=".22" d="M40 92l150 0 14 4H36z"/><circle cx="78" cy="122" r="17" fill="#15161a"/><circle cx="78" cy="122" r="7" fill="#9aa0a8"/><circle cx="170" cy="122" r="17" fill="#15161a"/><circle cx="170" cy="122" r="7" fill="#9aa0a8"/></g>`,
+  cizik: `<rect width="160" height="120" fill="url(#g-boya)"/>
+    <path d="M-10 30Q60 10 170 44" stroke="#fff" stroke-width="16" opacity=".16" fill="none" filter="url(#f-bulanik)"/>
+    <path d="M104 -4q-6 60 4 128" stroke="#0b1a52" stroke-width="2.500" fill="none" opacity=".8"/>
+    <path d="M30 78l18-5 14 3 20-7 16 2" stroke="#e9eefc" stroke-width="1.400" fill="none" stroke-linecap="round"/>
+    <path d="M36 84l22-4 12 2" stroke="#e9eefc" stroke-width=".8" fill="none" stroke-linecap="round" opacity=".8"/>
+    <rect x="118" y="58" width="26" height="7" rx="3.500" fill="#0b1a52" opacity=".7"/>`,
+  form: `<rect width="160" height="120" fill="url(#g-masa)"/>
+    <g transform="rotate(-7 80 60)"><rect x="34" y="10" width="92" height="112" fill="#f6f4ee"/><rect x="42" y="20" width="50" height="7" fill="#2c2f36"/>
+    <g stroke="#9a9ca3" stroke-width=".8"><path d="M42 36h76M42 46h76M42 56h76M42 66h76M42 76h76M42 86h76M42 96h76M68 36v60M94 36v60"/></g>
+    <g stroke="#27408f" stroke-width="1.200" fill="none" stroke-linecap="round"><path d="M46 42l4 2 6-5M46 52l4 2 6-5M46 72l4 2 6-5"/><path d="M72 62h14M98 42h12M98 82h10"/></g></g>
+    <rect x="128" y="70" width="8" height="52" rx="4" fill="#20232a" transform="rotate(18 132 96)"/>`,
+  kapi: `<rect width="160" height="120" fill="#c8b9a2"/>
+    <rect width="160" height="120" fill="url(#g-golge)" opacity=".5"/>
+    <rect x="48" y="16" width="64" height="94" fill="#2a2d33"/><rect x="53" y="21" width="25" height="89" fill="url(#g-cam)"/><rect x="82" y="21" width="25" height="89" fill="url(#g-cam)"/>
+    <rect x="74" y="60" width="3" height="16" fill="#d9dadc"/><rect x="83" y="60" width="3" height="16" fill="#d9dadc"/>
+    <rect x="120" y="40" width="26" height="16" fill="#f1efe8"/><rect x="124" y="45" width="18" height="2" fill="#555"/><rect x="124" y="50" width="12" height="2" fill="#555"/>
+    <rect y="110" width="160" height="10" fill="#8d8375"/><rect x="40" y="106" width="80" height="5" fill="#a59a8a"/>`,
+  liste: `<rect width="160" height="120" fill="#dfe3e6"/><rect width="160" height="120" fill="url(#g-golge)" opacity=".35"/>
+    <g transform="rotate(4 80 60)"><rect x="44" y="14" width="74" height="92" fill="#f7e27a"/><rect x="44" y="14" width="74" height="10" fill="#e9d163"/>
+    <g stroke="#3a3f55" stroke-width="1.500" fill="none" stroke-linecap="round"><path d="M54 36q6-4 10 0t10 0 8 1"/><path d="M54 48q8-3 14 0t16-1"/><path d="M54 60q5-4 9 0t9 0"/><path d="M54 72q9-3 16 0t18 0 8-1"/><path d="M54 84q6-3 11 0t10 0"/></g></g>
+    <circle cx="84" cy="14" r="7" fill="#c93a22"/>`,
+};
+const FOTO_AD = { araba: 'Araba, sokakta park hâlinde', cizik: 'Kapıdaki çizik, yakından', form: 'Sayım formu', kapi: 'İş yeri girişi', liste: 'Alışveriş listesi' };
+function fotoHTML(f) {
+  if (typeof f === 'object') return `<img class="ft" src="${f.url}" alt="Eklediğin fotoğraf">`;
+  return `<svg class="ft" viewBox="0 0 160 120" preserveAspectRatio="xMidYMid slice" role="img" aria-label="${FOTO_AD[f] || 'Fotoğraf'}">${FOTO[f] || ''}<rect width="160" height="120" filter="url(#f-gren)" opacity=".55"/></svg>`;
+}
+function fotoSec() {
+  return new Promise((coz) => {
+    const g = $('#foto-sec');
+    g.value = '';
+    g.onchange = () => {
+      const d = g.files && g.files[0];
+      if (!d) return coz(null);
+      const o = new FileReader();
+      o.onload = () => coz({ url: o.result });
+      o.onerror = () => coz(null);
+      o.readAsDataURL(d);
+    };
+    g.click();
+  });
+}
+
+/* ---- tost, ışık kutusu, kapatma yığını ---- */
+const app = () => $('#app');
+let tostZaman = 0;
+function tost(metin, eylem) {
+  $$('.tost', app()).forEach((t) => t.remove());
+  const t = el(`<div class="tost" role="status"><span>${esc(metin)}</span>${eylem ? `<button type="button">${esc(eylem.ad)}</button>` : ''}</div>`);
+  if (eylem) $('button', t).onclick = () => { t.remove(); eylem.yap(); };
+  app().append(t);
+  an(t, [{ opacity: 0, transform: 'translateX(-50%) translateY(12px)' }, { opacity: 1, transform: 'translateX(-50%) translateY(0)' }], { duration: 220, easing: 'cubic-bezier(.2,.8,.2,1)' });
+  clearTimeout(tostZaman);
+  tostZaman = setTimeout(() => { an(t, [{ opacity: 1 }, { opacity: 0 }], { duration: 200, fill: 'forwards' }).finished.then(() => t.remove()); }, eylem ? 4200 : 2200);
+}
+const yigin = [];
+const yiginEkle = (f) => { yigin.push(f); return f; };
+const yiginCikar = (f) => { const i = yigin.indexOf(f); if (i >= 0) yigin.splice(i, 1); };
+addEventListener('keydown', (e) => { if (e.key === 'Escape' && yigin.length) { e.preventDefault(); yigin[yigin.length - 1](); } });
+function fotoAc(kaynak, f) {
+  const r = kaynak.getBoundingClientRect();
+  const k = el(`<div class="isik" role="dialog" aria-label="Fotoğraf"><div class="isik-ic">${fotoHTML(f)}</div><button class="isik-kapat" type="button" aria-label="Kapat">${ik('kapat')}</button></div>`);
+  app().append(k);
+  const ic = $('.isik-ic', k), h = ic.getBoundingClientRect();
+  const ilk = { transformOrigin: '0 0', transform: `translate(${r.left - h.left}px,${r.top - h.top}px) scale(${r.width / h.width},${r.height / h.height})` };
+  an(k, [{ backgroundColor: 'transparent' }, {}], { duration: 260 });
+  an(ic, [ilk, { transformOrigin: '0 0', transform: 'none' }], { duration: 340, easing: 'cubic-bezier(.2,.8,.2,1)' });
+  const kapat = yiginEkle(() => {
+    yiginCikar(kapat);
+    an(k, [{}, { backgroundColor: 'transparent' }], { duration: 220, fill: 'forwards' });
+    an(ic, [{ transformOrigin: '0 0', transform: 'none' }, ilk], { duration: 240, easing: 'cubic-bezier(.4,0,.6,1)', fill: 'forwards' }).finished.then(() => k.remove());
+  });
+  k.onclick = kapat;
+}
+const baglantiTost = (b) => tost(b.tip === 'harita' ? 'Uygulamada harita açılır' : 'Uygulamada belge açılır');
+
+/* ============ CETVEL ============ */
+YON.cetvel = (() => {
+  const B = 7, S = 23, SP = 60, YUM = 'cubic-bezier(.2,.8,.2,1)';
+  const BANT = { sabah: [7, 11, 8.5], ogle: [11, 13, 11.5], ogleden_sonra: [13, 17, 14.5], aksam: [17, 21, 19], gece: [21, 23, 21.75] };
+  const yy = (dakika) => (dakika / 60 - B) * SP;
+  let kok, gor = 'gun';
+
+  const altMetin = (k) => `${k.taslak ? BOLUM[k.bolum] || zamanMetni(k) : zamanMetni(k)}${k.bolge ? ` @ ${esc(k.bolge)}` : ''}${k.taslak ? ', asistan önerdi' : ''}`;
+  const tikD = (k) => `<button class="c-k-tik" data-a="bitir" aria-pressed="${!!k.bitti}" aria-label="${k.bitti ? 'Geri al' : 'Tamamla'}: ${esc(k.baslik)}"><i>${TIK_SVG}</i></button>`;
+  const adD = (k, alt) => `<button class="c-k-ad" data-a="ac"><span class="c-k-b"><b>${esc(k.baslik)}</b></span>${alt ? `<small>${alt}</small>` : ''}</button>`;
+
+  function kur(root) {
+    kok = root; gor = 'gun';
+    kok.innerHTML = `<div class="c-ekran">
+      <header class="c-bas">
+        <div class="c-tarih"><div class="c-no" aria-hidden="true"></div><div class="c-aygun"><b></b><span></span></div></div>
+        <div class="c-gecis" data-g="gun"><i></i><button data-a="gor" data-g="gun" aria-pressed="true">Gün</button><button data-a="gor" data-g="takvim" aria-pressed="false">Ay</button></div>
+      </header>
+      <div class="c-govde"><section class="c-gun" aria-label="Gün"></section><section class="c-ay" aria-label="Ay takvimi" hidden></section></div>
+      <footer class="c-alt"><button class="c-cep" data-a="cep"></button><button class="c-ekle" data-a="ekle">${ik('arti')}Yeni</button></footer>
+    </div>`;
+    basCiz(false); gunCiz(); cepCiz();
+    kok.onclick = tik;
+    acilis();
+  }
+
+  function basCiz(hareketli) {
+    const d = T(D.secili), no = $('.c-no', kok), yeni = iki(d.getDate()), eski = no.textContent;
+    no.innerHTML = [...yeni].map((c) => `<span>${c}</span>`).join('');
+    if (hareketli && eski !== yeni) $$('span', no).forEach((s, i) => { if (eski[i] !== yeni[i]) an(s, [{ transform: 'translateY(90%)' }, { transform: 'none' }], { duration: 380, delay: i * 50, easing: YUM }); });
+    $('.c-aygun b', kok).textContent = AYLAR[d.getMonth()];
+    $('.c-aygun span', kok).textContent = GUNLER[haftaGunu(D.secili)] + (D.secili === BUGUN ? ', bugün' : '');
+  }
+
+  function gunCiz() {
+    const g = $('.c-gun', kok), t = D.secili, liste = gunun(t);
+    const boyu = liste.filter((k) => !k.saat && !k.bolum), yerli = liste.filter((k) => k.saat || k.bolum);
+    const konum = yerli.map((k) => ({ k, y: k.saat ? yy(dk(k.saat)) : yy(BANT[k.bolum][2] * 60) })).sort((a, b) => a.y - b.y);
+    for (let i = 1; i < konum.length; i++) { const bosluk = konum[i - 1].k.taslak ? 86 : 52; if (konum[i].y < konum[i - 1].y + bosluk) konum[i].y = konum[i - 1].y + bosluk; }
+    const saatler = Array.from({ length: S - B + 1 }, (_, i) => B + i);
+    const gecmisY = t < BUGUN ? (S - B) * SP + 44 : t === BUGUN ? yy(dk(SIMDI)) + 22 : 0;
+    const cubuklar = yerli.map((k) => (k.saat && k.bitis ? `<div class="c-sure" style="top:${yy(dk(k.saat))}px;height:${yy(dk(k.bitis)) - yy(dk(k.saat))}px"></div>` : !k.saat ? `<div class="c-bant" style="top:${yy(BANT[k.bolum][0] * 60) + 4}px;height:${(BANT[k.bolum][1] - BANT[k.bolum][0]) * SP - 8}px"></div>` : '')).join('');
+    g.innerHTML = `${boyu.length ? `<div class="c-boyu">${boyu.map((k) => `<article class="c-l ${k.bitti ? 'bitti' : ''}" data-id="${k.id}"><span class="c-l-z yumusak">${k.bitisTarih ? 'dönem' : 'gün boyu'}</span>${adD(k, k.bitisTarih ? zamanMetni(k) : '')}${tikD(k)}</article>`).join('')}</div>` : ''}
+      <div class="c-cetvel" style="height:${(S - B) * SP + 1}px">
+        ${gecmisY ? `<div class="c-gecmis" style="height:${gecmisY}px"></div>` : ''}
+        <div class="c-olcek">${saatler.map((h) => `<span class="c-sa" style="top:${(h - B) * SP}px">${iki(h)}</span>`).join('')}</div>
+        ${cubuklar}
+        ${konum.map(satir).join('')}
+        ${!liste.length ? `<p class="c-bos" style="top:${yy(12 * 60) - 10}px">Bu güne kayıt yok. Alttaki Yeni ile ekle.</p>` : ''}
+        ${t === BUGUN ? `<div class="c-simdi" style="top:${yy(dk(SIMDI))}px"><span>şimdi ${SIMDI}</span></div>` : ''}
+      </div>`;
+  }
+  function satir({ k, y }) {
+    return `<article class="c-k ${k.bitti ? 'bitti' : ''} ${k.taslak ? 'taslak' : ''} ${k.saat ? '' : 'bolumlu'}" data-id="${k.id}" style="top:${y - 22}px">
+      <span class="c-k-im"></span><span class="c-k-sim">${ik(k.gorsel)}</span>
+      ${k.taslak ? `<div class="c-k-ad"><button data-a="ac"><span class="c-k-b"><b>${esc(k.baslik)}</b></span></button><small>${altMetin(k)}</small><span class="c-k-onay"><button data-a="onayla">Onayla</button><button data-a="sil">Sil</button></span></div>` : adD(k, altMetin(k))}
+      ${k.fotolar.length ? `<span class="c-k-foto">${fotoHTML(k.fotolar[0])}</span>` : ''}
+      ${k.taslak ? '' : tikD(k)}
+    </article>`;
+  }
+  function cepCiz() {
+    const n = tarihsiz().filter((k) => !k.bitti).length;
+    $('.c-cep', kok).innerHTML = `${ik('yukari')}Cepte ${n} iş <small>tarihi yok</small>`;
+  }
+
+  function kaydirHedef() {
+    const g = $('.c-gun', kok), c = $('.c-cetvel', g);
+    let y = yy(9 * 60);
+    if (D.secili === BUGUN) y = yy(dk(SIMDI)); else { const ilk = $('.c-k', g); if (ilk) y = parseFloat(ilk.style.top); }
+    return Math.max(0, c.offsetTop + y - g.clientHeight * 0.36);
+  }
+  function kaydir(g, hedef, sure) {
+    if (az() || !sure) { g.scrollTop = hedef; return; }
+    const bas = g.scrollTop, t0 = performance.now();
+    const adim = (t) => { const p = Math.min(1, (t - t0) / sure), e = 1 - Math.pow(1 - p, 4); g.scrollTop = bas + (hedef - bas) * e; if (p < 1 && g.isConnected) requestAnimationFrame(adim); };
+    requestAnimationFrame(adim);
+  }
+  function satirGiris(gecikme) {
+    $$('.c-k', kok).forEach((s, i) => {
+      an($('.c-k-im', s), [{ transform: 'scaleX(0)', transformOrigin: 'left' }, { transform: 'scaleX(1)', transformOrigin: 'left' }], { duration: 300, delay: gecikme + i * 70, easing: YUM });
+      $$('.c-k-sim,.c-k-ad,.c-k-foto,.c-k-tik', s).forEach((p) => an(p, [{ opacity: 0, transform: 'translateX(-10px)' }, { opacity: 1, transform: 'none' }], { duration: 340, delay: gecikme + 80 + i * 70, easing: YUM }));
+    });
+    $$('.c-sure', kok).forEach((c) => an(c, [{ transform: 'scaleY(0)' }, { transform: 'scaleY(1)' }], { duration: 700, delay: gecikme + 200, easing: YUM }));
+  }
+  function acilis() {
+    const g = $('.c-gun', kok);
+    g.scrollTop = 0;
+    kaydir(g, kaydirHedef(), 900);
+    satirGiris(260);
+    an($('.c-simdi', kok), [{ clipPath: 'inset(-20px 100% -20px 0)' }, { clipPath: 'inset(-20px 0 -20px 0)' }], { duration: 700, delay: 500, easing: YUM });
+    $$('.c-no span', kok).forEach((s, i) => an(s, [{ transform: 'translateY(90%)' }, { transform: 'none' }], { duration: 480, delay: i * 70, easing: YUM }));
+  }
+
+  /* ---- ay ---- */
+  function ayCiz() {
+    const a = $('.c-ay', kok), { y, m } = D.ay, gunler = ayIzgarasi(y, m);
+    a.innerHTML = `<div class="c-ay-bas"><h2 class="c-ay-ad">${AYLAR[m]} <span>${y}</span></h2><div class="c-ay-ok"><button data-a="ay" data-d="-1" aria-label="Önceki ay">${ik('geri')}</button><button data-a="ay" data-d="1" aria-label="Sonraki ay">${ik('ileri')}</button></div></div>
+      <div class="c-ay-gunler" aria-hidden="true">${KGUN.map((x) => `<span>${x}</span>`).join('')}</div>
+      <div class="c-izgara">${gunler.map((t) => { const l = gunun(t), d = T(t); return `<button class="c-h ${d.getMonth() !== m ? 'dis' : ''} ${t === BUGUN ? 'bugun' : ''}" data-a="gun" data-t="${t}" aria-label="${uzunTarih(t)}, ${l.length} kayıt"><b>${d.getDate()}</b><span class="im">${l.slice(0, 4).map((k) => `<i class="${k.bitisTarih ? 'uz' : k.bitti ? 'b' : k.taslak ? 't' : ''}"></i>`).join('')}</span></button>`; }).join('')}<i class="c-sec"></i></div>
+      <div class="c-ay-liste"></div>`;
+    secimKoy(false); listeCiz();
+    surukle($('.c-izgara', a), { eksen: 'x',
+      tasi: (dx) => { $('.c-izgara', a).style.transform = `translateX(${dx * 0.5}px)`; },
+      bitir: (dx) => { const iz = $('.c-izgara', a); iz.style.transform = ''; if (Math.abs(dx) > 56) ayDegis(dx < 0 ? 1 : -1); else an(iz, [{ transform: `translateX(${dx * 0.5}px)` }, { transform: 'none' }], { duration: 260, easing: YUM }); } });
+  }
+  function secimKoy(hareketli) {
+    const sec = $('.c-sec', kok), h = $(`.c-h[data-t="${D.secili}"]`, kok);
+    if (!sec) return;
+    if (!h) { sec.hidden = true; return; }
+    sec.hidden = false;
+    if (!hareketli) sec.style.transition = 'none';
+    sec.style.width = h.offsetWidth + 'px'; sec.style.height = h.offsetHeight + 'px';
+    sec.style.transform = `translate(${h.offsetLeft}px,${h.offsetTop}px)`;
+    if (!hareketli) { sec.offsetWidth; sec.style.transition = ''; }
+  }
+  function listeCiz(hareketli) {
+    const l = gunun(D.secili), kutu = $('.c-ay-liste', kok);
+    kutu.innerHTML = `<h3 class="c-l-bas">${uzunTarih(D.secili)} <span>${l.length ? l.length + ' kayıt' : ''}</span></h3>${l.length ? l.map((k) => `<article class="c-l ${k.bitti ? 'bitti' : ''} ${k.taslak ? 'taslak' : ''}" data-id="${k.id}"><span class="c-l-z ${k.saat ? '' : 'yumusak'}">${k.saat || (k.bolum ? BOLUM[k.bolum] : k.bitisTarih ? 'dönem' : 'gün boyu')}</span>${adD(k, [k.bolge ? '@ ' + esc(k.bolge) : '', k.taslak ? 'taslak, onay bekliyor' : '', k.saat && k.bitis ? k.bitis + ' bitiş' : ''].filter(Boolean).join(', '))}${k.taslak ? '' : tikD(k)}</article>`).join('') : '<p class="c-l-bos">Bu güne kayıt yok.</p>'}`;
+    if (hareketli) $$('.c-l,.c-l-bos', kutu).forEach((s, i) => an(s, [{ opacity: 0, transform: 'translateY(8px)' }, { opacity: 1, transform: 'none' }], { duration: 260, delay: i * 35, easing: YUM }));
+  }
+  function ayDegis(d) {
+    let { y, m } = D.ay; m += d; if (m < 0) { m = 11; y--; } if (m > 11) { m = 0; y++; }
+    D.ay = { y, m };
+    ayCiz();
+    an($('.c-izgara', kok), [{ opacity: 0, transform: `translateX(${d * 36}px)` }, { opacity: 1, transform: 'none' }], { duration: 320, easing: YUM });
+    an($('.c-ay-ad', kok), [{ opacity: 0, transform: `translateX(${d * 14}px)` }, { opacity: 1, transform: 'none' }], { duration: 320, easing: YUM });
+  }
+  function gorDegis(g) {
+    if (g === gor) return;
+    const eski = $(gor === 'gun' ? '.c-gun' : '.c-ay', kok), yeni = $(g === 'gun' ? '.c-gun' : '.c-ay', kok), yon = g === 'takvim' ? 1 : -1;
+    gor = g;
+    $('.c-gecis', kok).dataset.g = g;
+    $$('.c-gecis button', kok).forEach((x) => x.setAttribute('aria-pressed', x.dataset.g === g));
+    yeni.hidden = false;
+    if (g === 'gun') { gunCiz(); yeni.scrollTop = kaydirHedef(); satirGiris(140); } else { D.ay = { y: T(D.secili).getFullYear(), m: T(D.secili).getMonth() }; ayCiz(); }
+    eski.hidden = true;
+    an(yeni, [{ opacity: 0, transform: `translateY(${16 * yon}px)` }, { opacity: 1, transform: 'none' }], { duration: 340, easing: YUM });
+  }
+
+  /* ---- tamamla, taslak ---- */
+  function bitir(id) {
+    const k = kayit(id); k.bitti = !k.bitti;
+    $$(`[data-id="${id}"]`, kok).forEach((s) => {
+      s.classList.toggle('bitti', k.bitti);
+      const t = $('[data-a="bitir"]', s); if (t) { t.setAttribute('aria-pressed', k.bitti); t.setAttribute('aria-label', `${k.bitti ? 'Geri al' : 'Tamamla'}: ${k.baslik}`); an($('i', t), [{ transform: 'scale(.78)' }, { transform: 'scale(1)' }], { duration: 240, easing: YUM }); }
+    });
+    cepCiz();
+    return k;
+  }
+  function onayla(id, s) {
+    const k = kayit(id); k.taslak = false;
+    const r = s.getBoundingClientRect();
+    gor === 'gun' ? gunCiz() : listeCiz();
+    const y = $(`[data-id="${id}"]`, kok);
+    if (y) { an($('.c-k-im', y), [{ transform: 'scaleX(0)', transformOrigin: 'left' }, { transform: 'scaleX(1)', transformOrigin: 'left' }], { duration: 360, easing: YUM }); an(y, [{ opacity: .4 }, { opacity: 1 }], { duration: 360 }); }
+    tost('Onaylandı, takvime işlendi');
+    void r;
+  }
+  function sil(id, s) {
+    const k = kayit(id);
+    an(s, [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateX(24px)' }], { duration: 220, easing: 'ease-in', fill: 'forwards' }).finished.then(() => {
+      kayitSil(id); gor === 'gun' ? gunCiz() : (ayCiz());
+      tost('Taslak silindi', { ad: 'Geri al', yap: () => { D.kayitlar.push(k); gor === 'gun' ? gunCiz() : ayCiz(); } });
+    });
+  }
+
+  /* ---- ayrıntı ---- */
+  function serit(k) {
+    if (!k.tarih || (!k.saat && !k.bolum)) return '';
+    let a, b, bas, son;
+    if (k.saat) { bas = dk(k.saat) / 60; son = k.bitis ? dk(k.bitis) / 60 : bas; } else { [bas, son] = BANT[k.bolum]; }
+    a = Math.max(0, Math.floor(bas) - 2); b = Math.min(24, Math.ceil(son) + 1);
+    if (b - a < 5) b = Math.min(24, a + 5);
+    const p = (h) => ((h - a) / (b - a)) * 100;
+    const saatler = []; for (let h = a; h <= b; h += (b - a > 8 ? 2 : 1)) saatler.push(h);
+    const zil = k.hatirlatmalar.map((h) => { const m = /(\d+) dk önce/.exec(h), s = /(\d+) saat önce/.exec(h), n = /(\d\d):(\d\d)/.exec(h); if (k.saat && m) return bas - m[1] / 60; if (k.saat && s) return bas - s[1]; if (n) return +n[1] + n[2] / 60; return null; }).filter((x) => x !== null && x >= a && x <= b);
+    const simdi = dk(SIMDI) / 60;
+    return `<div class="c-a-b c-serit" style="--adim:${100 / (b - a)}%">
+      ${saatler.map((h) => `<span style="left:${p(h)}%">${iki(h)}</span>`).join('')}
+      <i class="cubuk ${k.saat ? '' : 'nokta'}" style="left:${p(bas)}%;width:${Math.max(k.saat && !k.bitis ? 1.5 : 0, p(son) - p(bas))}%"></i>
+      ${zil.map((z) => `<i class="zil" style="left:${p(z)}%">${ik('zil')}</i>`).join('')}
+      ${k.tarih === BUGUN && simdi >= a && simdi <= b ? `<i class="igne" style="left:${p(simdi)}%"></i>` : ''}
+    </div>`;
+  }
+  function ayrHTML(k) {
+    const zaman = k.tarih ? `${goreli(k.tarih)}${k.tarih === BUGUN ? ', ' + uzunTarih(k.tarih).split(', ')[1] : ''}, ${zamanMetni(k)}` : 'Tarihi yok, cepte bekliyor';
+    return `<div class="c-ayr" role="dialog" aria-label="Kayıt ayrıntısı" data-id="${k.id}">
+      <div class="c-a-ust"><button class="c-a-geri" data-a="kapat">${ik('geri')}Geri</button><span class="c-a-tur">${turAdi(k)}${k.taslak ? ', taslak' : ''}</span></div>
+      <div class="c-a-ic">
+        <div class="c-a-kafa"><span class="c-a-sim">${ik(k.gorsel)}</span><div><h2 class="c-a-ad ${k.bitti ? 'bitti' : ''}"><span>${esc(k.baslik)}</span></h2><p class="c-a-zaman">${zaman}</p></div></div>
+        ${serit(k)}
+        ${k.bolge ? `<div class="c-a-b c-a-bolge"><b>${ik('harita')}@ ${esc(k.bolge)}</b>${k.varis ? `<mark>Varınca hatırlat: ${esc(k.varis)}</mark>` : ''}</div>` : ''}
+        ${k.not ? `<section class="c-a-b"><h3>Not</h3><p class="c-a-not">${esc(k.not)}</p></section>` : ''}
+        <section class="c-a-b"><h3>Fotoğraflar</h3><div class="c-a-fotolar">${k.fotolar.map((f, i) => `<button data-a="foto" data-i="${i}" aria-label="Fotoğrafı büyüt">${fotoHTML(f)}</button>`).join('')}<button class="c-a-fekle" data-a="foto-ekle">${ik('foto')}Fotoğraf ekle</button></div></section>
+        ${k.baglantilar.length ? `<section class="c-a-b"><h3>Bağlantılar</h3><ul class="c-a-liste">${k.baglantilar.map((b, i) => `<li><button data-a="baglanti" data-i="${i}">${ik(b.tip)}${esc(b.ad)}<small>${b.tip === 'harita' ? 'Harita' : 'Belge'}</small></button></li>`).join('')}</ul></section>` : ''}
+        ${k.hatirlatmalar.length || k.varis ? `<section class="c-a-b"><h3>Hatırlatmalar</h3><ul class="c-a-liste">${k.hatirlatmalar.map((h) => `<li><span class="sat">${ik('zil')}${esc(h)}</span></li>`).join('')}${k.varis ? `<li><span class="sat">${ik('harita')}${esc(k.bolge)} bölgesine varınca</span></li>` : ''}</ul></section>` : ''}
+      </div>
+      ${k.taslak ? '' : `<div class="c-a-alt"><button data-a="bitir-a" aria-pressed="${!!k.bitti}">${k.bitti ? 'Tamamlandı, geri al' : 'Tamamlandı olarak işaretle'}</button></div>`}
+    </div>`;
+  }
+  function ac(id, s) {
+    const k = kayit(id), o = el(ayrHTML(k)), ekran = $('.c-ekran', kok);
+    ekran.append(o);
+    const er = ekran.getBoundingClientRect(), r = s && s.getBoundingClientRect();
+    if (!r) an(o, [{ clipPath: 'inset(100% 0 0 0)' }, { clipPath: 'inset(0 0 0 0)' }], { duration: 360, easing: YUM });
+    if (r) {
+      an(o, [{ clipPath: `inset(${r.top - er.top}px 0 ${er.bottom - r.bottom}px 0)` }, { clipPath: 'inset(0 0 0 0)' }], { duration: 400, easing: YUM });
+      const kb = $('.c-k-b', s), hb = $('.c-a-ad', o);
+      if (kb) { const x = kb.getBoundingClientRect(), z = hb.getBoundingClientRect(); an(hb, [{ transformOrigin: '0 0', transform: `translate(${x.left - z.left}px,${x.top - z.top}px) scale(${17 / 32})` }, { transformOrigin: '0 0', transform: 'none' }], { duration: 400, easing: YUM }); }
+    }
+    $$('.c-a-b,.c-a-zaman,.c-a-sim', o).forEach((b, i) => an(b, [{ opacity: 0, transform: 'translateY(12px)' }, { opacity: 1, transform: 'none' }], { duration: 320, delay: 160 + i * 45, easing: YUM }));
+    an($('.c-serit .cubuk', o), [{ transform: 'scaleX(0)' }, { transform: 'scaleX(1)' }], { duration: 520, delay: 300, easing: YUM });
+    const kapat = yiginEkle(() => {
+      yiginCikar(kapat);
+      const hedef = $(`.c-k[data-id="${id}"], .c-l[data-id="${id}"]`, kok), h = hedef && hedef.getBoundingClientRect();
+      const son = h && h.height ? { clipPath: `inset(${h.top - er.top}px 0 ${er.bottom - h.bottom}px 0)`, opacity: .6 } : { clipPath: 'inset(100% 0 0 0)', opacity: 1 };
+      an(o, [{ clipPath: 'inset(0 0 0 0)', opacity: 1 }, son], { duration: 280, easing: 'cubic-bezier(.4,0,.7,.2)', fill: 'forwards' }).finished.then(() => o.remove());
+    });
+    o._kapat = kapat;
+  }
+  function ayrTik(a, b, o) {
+    const k = kayit(o.dataset.id);
+    if (a === 'kapat') o._kapat();
+    else if (a === 'foto') fotoAc(b, k.fotolar[+b.dataset.i]);
+    else if (a === 'baglanti') baglantiTost(k.baglantilar[+b.dataset.i]);
+    else if (a === 'foto-ekle') fotoSec().then((f) => { if (!f) return; k.fotolar.push(f); const y = el(`<button data-a="foto" data-i="${k.fotolar.length - 1}" aria-label="Fotoğrafı büyüt">${fotoHTML(f)}</button>`); b.before(y); an(y, [{ opacity: 0, transform: 'scale(.85)' }, { opacity: 1, transform: 'none' }], { duration: 300, easing: YUM }); gor === 'gun' && gunCiz(); });
+    else if (a === 'bitir-a') { bitir(k.id); $('.c-a-ad', o).classList.toggle('bitti', k.bitti); b.setAttribute('aria-pressed', !!k.bitti); b.textContent = k.bitti ? 'Tamamlandı, geri al' : 'Tamamlandı olarak işaretle'; }
+  }
+
+  /* ---- alt kâğıt ---- */
+  function kagitAc(icerik, sinif) {
+    const ekran = $('.c-ekran', kok);
+    const perde = el('<div class="c-perde"></div>'), kagit = el(`<div class="c-kagit ${sinif}" role="dialog"><div class="c-tutamak" aria-hidden="true"></div><div class="c-kagit-ic">${icerik}</div></div>`);
+    ekran.append(perde, kagit);
+    an(perde, [{ opacity: 0 }, { opacity: 1 }], { duration: 220 });
+    an(kagit, [{ transform: 'translateY(100%)' }, { transform: 'none' }], { duration: 380, easing: YUM });
+    const kapat = yiginEkle(() => {
+      yiginCikar(kapat);
+      an(perde, [{ opacity: 1 }, { opacity: 0 }], { duration: 200, fill: 'forwards' }).finished.then(() => perde.remove());
+      const m = new DOMMatrix(getComputedStyle(kagit).transform).m42;
+      an(kagit, [{ transform: `translateY(${m}px)` }, { transform: 'translateY(100%)' }], { duration: 240, easing: 'cubic-bezier(.4,0,.8,.3)', fill: 'forwards' }).finished.then(() => kagit.remove());
+    });
+    perde.onclick = kapat;
+    surukle($('.c-tutamak', kagit), { eksen: 'y',
+      tasi: (dx, dy) => { kagit.style.transform = `translateY(${Math.max(0, dy)}px)`; },
+      bitir: (dx, dy, vx, vy) => { if (dy > 90 || vy > 0.6) kapat(); else { an(kagit, [{ transform: `translateY(${Math.max(0, dy)}px)` }, { transform: 'none' }], { duration: 260, easing: YUM }); kagit.style.transform = ''; } } });
+    return { kagit, kapat };
+  }
+  function cepAc() {
+    const l = tarihsiz();
+    const { kagit } = kagitAc(`<h2>Cepte</h2><div class="c-cep-liste">${l.map((k) => `<article class="c-l ${k.bitti ? 'bitti' : ''}" data-id="${k.id}"><span class="c-k-sim">${ik(k.gorsel)}</span>${adD(k, '')}${tikD(k)}</article>`).join('')}</div>`, 'c-cepk');
+    kagit.setAttribute('aria-label', 'Tarihi olmayan işler');
+  }
+  function ekleAc() {
+    const marks = []; for (let m = B * 60; m <= S * 60; m += 15) marks.push(m);
+    const ilk = Math.min(S * 60, Math.ceil((dk(SIMDI) + 20) / 15) * 15);
+    const { kagit, kapat } = kagitAc(`<form class="c-yeni" novalidate>
+      <h2>Yeni kayıt</h2>
+      <label for="c-baslik">Ne yapılacak?</label><input id="c-baslik" autocomplete="off" enterkeyhint="done" placeholder="Örn. lastik değişimi">
+      <div class="c-tur" role="radiogroup" aria-label="Zaman türü" data-t="saatli"><i></i><button type="button" role="radio" aria-checked="true" data-a="tur" data-t="saatli">Saatli</button><button type="button" role="radio" aria-checked="false" data-a="tur" data-t="bolum">Gün içinde</button><button type="button" role="radio" aria-checked="false" data-a="tur" data-t="tarihsiz">Tarihsiz</button></div>
+      <div class="c-tur-ic" data-t="saatli"><output class="c-okuma" for="c-baslik">${hhmm(ilk)}</output><div class="c-mezura"><div class="c-mezura-kay" tabindex="0" role="slider" aria-label="Saat" aria-valuetext="${hhmm(ilk)}">${marks.map((m) => `<div class="c-mz ${m % 60 ? '' : 's'}">${m % 60 ? '' : `<span>${iki(m / 60)}</span>`}</div>`).join('')}</div></div></div>
+      <div class="c-tur-ic" data-t="bolum" hidden><div class="c-yongalar" role="radiogroup" aria-label="Gün bölümü">${BOLUM_SIRA.map((b, i) => `<button type="button" role="radio" aria-checked="${i === 3}" data-a="bolum" data-b="${b}">${BOLUM[b]}</button>`).join('')}</div></div>
+      <div class="c-tur-ic" data-t="tarihsiz" hidden><p>Tarih verilmez; cepte bekler, istediğin gün cetvele alırsın.</p></div>
+      <button type="submit" class="c-kaydet">Kaydı ekle</button>
+    </form>`, 'c-yenik');
+    kagit.setAttribute('aria-label', 'Yeni kayıt');
+    const kay = $('.c-mezura-kay', kagit), okuma = $('.c-okuma', kagit);
+    let secSaat = ilk, tur = 'saatli', bolum = 'aksam';
+    kay.scrollLeft = ((ilk - B * 60) / 15) * 18;
+    kay.addEventListener('scroll', () => {
+      const m = B * 60 + Math.max(0, Math.min(marks.length - 1, Math.round(kay.scrollLeft / 18))) * 15;
+      if (m !== secSaat) { secSaat = m; okuma.textContent = hhmm(m); kay.setAttribute('aria-valuetext', hhmm(m)); an(okuma, [{ transform: 'translateY(-2px)' }, { transform: 'none' }], 90); }
+    }, { passive: true });
+    kay.addEventListener('keydown', (e) => { if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { e.preventDefault(); kay.scrollLeft += e.key === 'ArrowRight' ? 18 : -18; } });
+    let bas0 = 0;
+    surukle(kay, { eksen: 'x', filtre: (e) => e.pointerType === 'mouse',
+      basla: () => { bas0 = kay.scrollLeft; kay.style.scrollSnapType = 'none'; },
+      tasi: (dx) => { kay.scrollLeft = bas0 - dx; },
+      bitir: () => { kay.scrollTo({ left: Math.round(kay.scrollLeft / 18) * 18, behavior: az() ? 'auto' : 'smooth' }); setTimeout(() => { kay.style.scrollSnapType = ''; }, 320); } });
+    kagit.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-a]'); if (!b) return;
+      if (b.dataset.a === 'tur') { tur = b.dataset.t; $('.c-tur', kagit).dataset.t = tur; $$('.c-tur button', kagit).forEach((x) => x.setAttribute('aria-checked', x === b)); $$('.c-tur-ic', kagit).forEach((x) => { x.hidden = x.dataset.t !== tur; if (!x.hidden) an(x, [{ opacity: 0, transform: 'translateY(8px)' }, { opacity: 1, transform: 'none' }], { duration: 260, easing: YUM }); }); }
+      if (b.dataset.a === 'bolum') { bolum = b.dataset.b; $$('.c-yongalar button', kagit).forEach((x) => x.setAttribute('aria-checked', x === b)); }
+    });
+    $('form', kagit).addEventListener('submit', (e) => {
+      e.preventDefault();
+      const giris = $('#c-baslik', kagit), ad = giris.value.trim();
+      if (!ad) { giris.focus(); an(giris, [{ transform: 'translateX(0)' }, { transform: 'translateX(-6px)' }, { transform: 'translateX(5px)' }, { transform: 'none' }], 240); return; }
+      const k = yeniKayit(ad, tur === 'saatli' ? { tarih: D.secili, saat: hhmm(secSaat) } : tur === 'bolum' ? { tarih: D.secili, bolum } : {});
+      kapat();
+      cepCiz();
+      if (!k.tarih) { tost('Cebe kondu'); an($('.c-cep', kok), [{ transform: 'translateY(0)' }, { transform: 'translateY(-5px)' }, { transform: 'none' }], { duration: 320, easing: YUM }); return; }
+      if (gor !== 'gun') { ayCiz(); tost(`${uzunTarih(k.tarih)} gününe eklendi`); return; }
+      gunCiz();
+      const s = $(`.c-k[data-id="${k.id}"]`, kok), g = $('.c-gun', kok);
+      kaydir(g, Math.max(0, $('.c-cetvel', g).offsetTop + parseFloat(s.style.top) - g.clientHeight * 0.4), 500);
+      an($('.c-k-im', s), [{ transform: 'scaleX(0)', transformOrigin: 'left' }, { transform: 'scaleX(1)', transformOrigin: 'left' }], { duration: 420, delay: 240, easing: YUM });
+      $$('.c-k-sim,.c-k-ad,.c-k-tik', s).forEach((p) => an(p, [{ opacity: 0, transform: 'translateX(-12px)' }, { opacity: 1, transform: 'none' }], { duration: 380, delay: 380, easing: YUM }));
+    });
+    setTimeout(() => { try { $('#c-baslik', kagit).focus({ preventScroll: true }); } catch (_) {} }, az() ? 0 : 400);
+  }
+
+  function tik(e) {
+    const b = e.target.closest('[data-a]'); if (!b || !kok.contains(b)) return;
+    const a = b.dataset.a, ayr = b.closest('.c-ayr');
+    if (ayr) return ayrTik(a, b, ayr);
+    if (b.closest('.c-yeni')) return;
+    const s = b.closest('[data-id]'), id = s && s.dataset.id;
+    if (a === 'gor') gorDegis(b.dataset.g);
+    else if (a === 'ac') { if (b.closest('.c-kagit')) { yigin[yigin.length - 1](); ac(id, null); } else ac(id, s); }
+    else if (a === 'bitir') bitir(id);
+    else if (a === 'onayla') onayla(id, s);
+    else if (a === 'sil') sil(id, s);
+    else if (a === 'cep') cepAc();
+    else if (a === 'ekle') ekleAc();
+    else if (a === 'ay') ayDegis(+b.dataset.d);
+    else if (a === 'gun') { if (b.parentElement._surukledi) return; D.secili = b.dataset.t; secimKoy(true); basCiz(true); listeCiz(true); }
+  }
+  return { kur };
+})();
+
+/* ============ SAHNE ============ */
+YON.sahne = (() => {
+  const YAY = 'cubic-bezier(.34,1.45,.55,1)', YUM = 'cubic-bezier(.2,.8,.2,1)';
+  let kok, gor = 'bugun';
+  const fotoKapak = (k) => k.kapak === 'foto' && k.fotolar.length > 0;
+  const kapak = (k) => (fotoKapak(k) ? fotoHTML(k.fotolar[0]) : resim(k.gorsel));
+  const tikD = (k) => `<button class="s-tik ${k.bitti ? 'oldu' : ''}" data-a="bitir" aria-pressed="${!!k.bitti}" aria-label="${k.bitti ? 'Geri al' : 'Tamamla'}: ${esc(k.baslik)}">${TIK_SVG}</button>`;
+  const HARITA = `<svg viewBox="0 0 84 84" aria-hidden="true"><rect width="84" height="84" fill="var(--pl)"/><path d="M-4 30h92M-4 64h62M26-4v92M60 22v70M38 30l32-36" stroke="var(--pb)" stroke-width="7" opacity=".4" fill="none"/><circle class="s-halka" cx="52" cy="46" r="20" fill="var(--pd)"/><circle cx="52" cy="46" r="7" fill="var(--pd)"/></svg>`;
+  const bagResim = (tip) => (tip === 'harita'
+    ? `<svg viewBox="0 0 120 56" aria-hidden="true"><rect width="120" height="56" fill="var(--s-line)"/><path d="M-4 18h128M-4 44h70M30-4v64M90 10v50M50 18l34-24" stroke="var(--s-bg)" stroke-width="6" fill="none"/><path d="M72 28c0-7-5-11-10-11s-10 4-10 11c0 8 10 16 10 16s10-8 10-16z" fill="var(--s-ink)"/><circle cx="62" cy="28" r="3.500" fill="var(--s-bg)"/></svg>`
+    : `<svg viewBox="0 0 120 56" aria-hidden="true"><rect width="120" height="56" fill="var(--s-line)"/><rect x="34" y="9" width="52" height="56" rx="4" fill="var(--s-bg)"/><path d="M43 21h26M43 31h34M43 41h34M43 51h20" stroke="var(--s-soft)" stroke-width="3" stroke-linecap="round"/></svg>`);
+
+  function plaka(k, tip, canli) {
+    return `<article class="s-p s-p--${tip} r-${k.renk} ${k.taslak ? 'eskiz' : ''} ${k.bitti ? 'bitti' : ''} ${fotoKapak(k) ? 'kapak-foto' : ''} ${canli ? 'canli' : ''}" data-id="${k.id}">
+      <div class="s-p-resim">${kapak(k)}</div>
+      <button class="s-p-ac" data-a="ac"><b>${esc(k.baslik)}</b><span>${k.taslak ? 'Asistan önerdi, ' : ''}${zamanMetni(k)}${k.bolge ? ` @ ${esc(k.bolge)}` : ''}</span></button>
+      ${k.taslak ? '<div class="s-p-onay"><button data-a="onayla">Onayla</button><button data-a="sil">Vazgeç</button></div>' : tikD(k)}
+    </article>`;
+  }
+
+  function kur(root) {
+    kok = root; gor = 'bugun';
+    kok.innerHTML = `<div class="s-ekran">
+      <div class="s-sayfa s-bugun"></div><div class="s-sayfa s-takvim" hidden></div>
+      <nav class="s-alt" aria-label="Görünüm"><i class="s-alt-leke"></i><button data-a="gor" data-g="bugun" aria-current="page">${ik('gun')}<span>Bugün</span></button><button class="s-arti" data-a="ekle" aria-label="Yeni kayıt">${ik('arti')}</button><button data-a="gor" data-g="takvim">${ik('takvim')}<span>Takvim</span></button></nav>
+    </div>`;
+    bugunCiz(); altLeke();
+    kok.onclick = tik;
+    acilis();
+  }
+  function altLeke() {
+    const b = $(`.s-alt [data-g="${gor}"]`, kok), l = $('.s-alt-leke', kok);
+    l.style.width = b.offsetWidth + 'px'; l.style.transform = `translateX(${b.offsetLeft}px)`;
+    $$('.s-alt [data-g]', kok).forEach((x) => (x === b ? x.setAttribute('aria-current', 'page') : x.removeAttribute('aria-current')));
+  }
+  function acilis() {
+    an($('.s-bas', kok), [{ opacity: 0, transform: 'translateY(18px)' }, { opacity: 1, transform: 'none' }], { duration: 460, easing: YUM });
+    $$('.s-mozaik > *', kok).forEach((p, i) => an(p, [{ opacity: 0, transform: 'translateY(46px) scale(.88) rotate(-2.5deg)' }, { opacity: 1, transform: 'none' }], { duration: 620, delay: 140 + i * 90, easing: YAY }));
+    an($('.s-alt', kok), [{ transform: 'translateX(-50%) translateY(96px)' }, { transform: 'translateX(-50%) translateY(0)' }], { duration: 560, delay: 380, easing: YAY });
+  }
+
+  function bugunCiz() {
+    const l = gunun(BUGUN), acik = l.filter((k) => !k.bitti && !k.taslak), taslak = l.filter((k) => k.taslak), biten = l.filter((k) => k.bitti);
+    const sira = acik.find((k) => k.saat && dk(k.saat) >= dk(SIMDI)) || acik[0], diger = acik.filter((k) => k !== sira);
+    let bas, alt;
+    if (sira && sira.saat && dk(sira.saat) >= dk(SIMDI)) { const f = dk(sira.saat) - dk(SIMDI); bas = `Sırada ${kucuk(sira.baslik)} var.`; alt = `${f < 60 ? f + ' dakika' : Math.round(f / 60) + ' saat'} sonra, ${sira.saat}`; }
+    else if (sira) { bas = `Sırada ${kucuk(sira.baslik)} var.`; alt = `Bugün, ${zamanMetni(sira)}`; }
+    else { bas = 'Bugünlük bu kadar.'; alt = biten.length ? `${biten.length} iş bitti.` : 'Yeni bir şey eklemek için artıya dokun.'; }
+    const ts = tarihsiz();
+    $('.s-bugun', kok).innerHTML = `<header class="s-bas"><p class="s-tarih">${uzunTarih(BUGUN)}</p><h1 class="s-selam">${esc(bas)}</h1><p class="s-selam-alt">${esc(alt)}</p></header>
+      <div class="s-mozaik">${sira ? plaka(sira, 'buyuk', true) : ''}${diger.map((k, i) => plaka(k, diger.length % 2 && i === diger.length - 1 ? 'genis' : 'kare')).join('')}${taslak.map((k) => plaka(k, 'genis')).join('')}</div>
+      ${biten.length ? `<h2 class="s-ara">Bitenler</h2><div class="s-biten">${biten.map((k) => `<button class="s-b r-${k.renk}" data-id="${k.id}" data-a="ac"><i>${ik('tik')}</i><span>${esc(k.baslik)}</span></button>`).join('')}</div>` : ''}
+      <h2 class="s-ara">Tarihi olmayanlar</h2>
+      <div class="s-serbest">${ts.length ? ts.map((k) => `<article class="s-s r-${k.renk} ${k.bitti ? 'bitti' : ''}" data-id="${k.id}"><span class="s-s-r">${resim(k.gorsel)}</span><button class="s-s-ad" data-a="ac">${esc(k.baslik)}</button>${tikD(k)}</article>`).join('') : '<p class="s-bos">Tarihsiz iş yok.</p>'}</div>`;
+  }
+  function dizAnim(ciz) {
+    const sayfa = $(`.s-${gor}`, kok);
+    const once = new Map($$('[data-id]', sayfa).map((e) => [e.dataset.id, e.getBoundingClientRect()]));
+    ciz();
+    $$('[data-id]', sayfa).forEach((e) => {
+      const o = once.get(e.dataset.id), n = e.getBoundingClientRect();
+      if (!o) return an(e, [{ opacity: 0, transform: 'scale(.5) rotate(-6deg)' }, { opacity: 1, transform: 'none' }], { duration: 560, easing: YAY });
+      if (Math.abs(o.left - n.left) < 1 && Math.abs(o.top - n.top) < 1 && Math.abs(o.width - n.width) < 1) return;
+      an(e, [{ transformOrigin: '0 0', transform: `translate(${o.left - n.left}px,${o.top - n.top}px) scale(${o.width / n.width},${o.height / n.height})` }, { transformOrigin: '0 0', transform: 'none' }], { duration: 560, easing: 'cubic-bezier(.3,1.25,.45,1)' });
+    });
+    an($('.s-bas', sayfa), [{ opacity: .3 }, { opacity: 1 }], { duration: 400 });
+  }
+  const ciz = () => (gor === 'bugun' ? bugunCiz() : takvimCiz());
+  const yenile = () => dizAnim(ciz);
+
+  async function bitir(id, s) {
+    const k = kayit(id);
+    if (s._mesgul) return;
+    if (k.bitti) { k.bitti = false; return yenile(); }
+    s._mesgul = true;
+    const t = $('.s-tik', s);
+    if (t) { t.classList.add('oldu'); an(t, [{ transform: 'scale(.6)' }, { transform: 'scale(1)' }], { duration: 460, easing: YAY }); }
+    if (s.classList.contains('s-p')) { s.classList.add('yikaniyor', 'patla'); await bekle(720); } else await bekle(300);
+    k.bitti = true;
+    yenile();
+    tost(`Bitti: ${k.baslik}`, { ad: 'Geri al', yap: () => { k.bitti = false; yenile(); } });
+  }
+  async function onayla(id, s) {
+    const k = kayit(id); k.taslak = false;
+    s.classList.remove('eskiz');
+    const o = $('.s-p-onay', s); if (o) an(o, [{ opacity: 1 }, { opacity: 0 }], { duration: 200, fill: 'forwards' });
+    await bekle(900);
+    yenile();
+    tost('Onaylandı');
+  }
+  function sil(id, s) {
+    const k = kayit(id);
+    an(s, [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'scale(.7) rotate(4deg)' }], { duration: 260, easing: 'ease-in', fill: 'forwards' }).finished.then(() => {
+      kayitSil(id); yenile();
+      tost('Öneriden vazgeçildi', { ad: 'Geri al', yap: () => { D.kayitlar.push(k); yenile(); } });
+    });
+  }
+
+  /* ---- takvim ---- */
+  function takvimCiz() {
+    const { y, m } = D.ay, gunler = ayIzgarasi(y, m), sayfa = $('.s-takvim', kok);
+    sayfa.innerHTML = `<header class="s-t-bas"><h1 class="s-t-ay">${AYLAR[m]}</h1><span class="s-t-yil">${y}</span><div class="s-t-ok"><button data-a="ay" data-d="-1" aria-label="Önceki ay">${ik('geri')}</button><button data-a="ay" data-d="1" aria-label="Sonraki ay">${ik('ileri')}</button></div></header>
+      <div class="s-t-gunler" aria-hidden="true">${KGUN.map((x) => `<span>${x}</span>`).join('')}</div>
+      <div class="s-t-izgara"><i class="s-t-leke"></i>${gunler.map((t) => { const l = gunun(t), d = T(t); return `<button class="s-g ${d.getMonth() !== m ? 'dis' : ''} ${t === BUGUN ? 'bugun' : ''}" data-a="gun" data-t="${t}" aria-label="${uzunTarih(t)}, ${l.length} kayıt"><b>${d.getDate()}</b><span class="nk">${l.slice(0, 3).map((k) => `<i class="r-${k.renk} ${k.bitti ? 'b' : ''} ${k.taslak ? 't' : ''}"></i>`).join('')}</span></button>`; }).join('')}</div>
+      <section class="s-t-gun"></section>`;
+    lekeKoy(false); seritCiz(false);
+    const iz = $('.s-t-izgara', sayfa);
+    surukle(iz, { eksen: 'x',
+      tasi: (dx) => { iz.style.transform = `translateX(${dx * 0.6}px)`; },
+      bitir: (dx) => { iz.style.transform = ''; if (Math.abs(dx) > 56) ayDegis(dx < 0 ? 1 : -1); else an(iz, [{ transform: `translateX(${dx * 0.6}px)` }, { transform: 'none' }], { duration: 420, easing: YAY }); } });
+  }
+  function lekeKoy(hareketli) {
+    const leke = $('.s-t-leke', kok), h = $(`.s-g[data-t="${D.secili}"]`, kok);
+    $$('.s-g.sec', kok).forEach((x) => { x.className = x.className.replace(/\s*\br-\w+/g, '').replace(/\s*\bsec\b/, ''); });
+    if (!h) { leke.hidden = true; return; }
+    const ilk = gunun(D.secili)[0], renk = ilk ? ilk.renk : null;
+    leke.hidden = false;
+    leke.className = 's-t-leke' + (renk ? ' r-' + renk : '');
+    h.classList.add('sec'); if (renk) h.classList.add('r-' + renk);
+    h.style.color = renk ? `var(--${renk}-i)` : '';
+    $$('.s-g:not(.sec)', kok).forEach((x) => { x.style.color = ''; });
+    const b = Math.min(h.offsetWidth, h.offsetHeight) - 2, eski = leke.style.transform;
+    const yeni = `translate(${h.offsetLeft + (h.offsetWidth - b) / 2}px,${h.offsetTop + (h.offsetHeight - b) / 2}px)`;
+    leke.style.width = leke.style.height = b + 'px'; leke.style.transform = yeni;
+    if (hareketli && eski) an(leke, [{ transform: eski + ' scale(.7)' }, { transform: yeni + ' scale(1)' }], { duration: 520, easing: YAY });
+  }
+  function seritCiz(hareketli) {
+    const l = gunun(D.secili), kutu = $('.s-t-gun', kok);
+    kutu.innerHTML = `<h2>${goreli(D.secili) === uzunTarih(D.secili) ? uzunTarih(D.secili) : goreli(D.secili) + ', ' + uzunTarih(D.secili).split(', ')[1]}</h2>${l.length ? `<div class="s-serit">${l.map((k) => plaka(k, 'serit')).join('')}</div>` : '<p class="s-bos">Bu gün boş. Artıya dokunup bir şey ekle.</p>'}`;
+    if (hareketli) $$('.s-p,.s-bos', kutu).forEach((p, i) => an(p, [{ opacity: 0, transform: 'translateX(60px) scale(.9)' }, { opacity: 1, transform: 'none' }], { duration: 520, delay: i * 70, easing: YAY }));
+  }
+  function ayDegis(d) {
+    let { y, m } = D.ay; m += d; if (m < 0) { m = 11; y--; } if (m > 11) { m = 0; y++; }
+    D.ay = { y, m };
+    takvimCiz();
+    an($('.s-t-izgara', kok), [{ opacity: 0, transform: `translateX(${d * 70}px)` }, { opacity: 1, transform: 'none' }], { duration: 520, easing: YAY });
+    an($('.s-t-ay', kok), [{ opacity: 0, transform: `translateY(${d * 24}px)` }, { opacity: 1, transform: 'none' }], { duration: 460, easing: YAY });
+  }
+  function gorDegis(g) {
+    if (g === gor) return;
+    const eski = $(`.s-${gor}`, kok), yeni = $(`.s-${g}`, kok), yon = g === 'takvim' ? 1 : -1;
+    gor = g; altLeke();
+    if (g === 'takvim') { D.ay = { y: T(D.secili).getFullYear(), m: T(D.secili).getMonth() }; takvimCiz(); } else bugunCiz();
+    eski.hidden = true; yeni.hidden = false; yeni.scrollTop = 0;
+    if (g === 'takvim') lekeKoy(false);
+    an(yeni, [{ opacity: 0, transform: `translateX(${yon * 34}%)` }, { opacity: 1, transform: 'none' }], { duration: 520, easing: YAY });
+  }
+
+  /* ---- ayrıntı ---- */
+  function kapakIc(k) {
+    const fk = fotoKapak(k);
+    return `<div class="s-a-resim ${fk ? 'foto' : ''}">${kapak(k)}</div>${fk ? `<div class="s-a-etiket">${resim(k.gorsel)}</div>` : ''}`;
+  }
+  function ayrHTML(k) {
+    const fk = fotoKapak(k);
+    const zaman = k.tarih ? `${goreli(k.tarih) === uzunTarih(k.tarih) ? uzunTarih(k.tarih) : goreli(k.tarih)}, ${zamanMetni(k)}` : 'Tarihi yok';
+    return `<div class="s-ayr r-${k.renk}" role="dialog" aria-label="Kayıt ayrıntısı" data-id="${k.id}">
+      <div class="s-a-kapak canli"><div class="s-a-kapak-ic">${kapakIc(k)}</div>
+        <button class="s-a-kapat" data-a="kapat" aria-label="Kapat">${ik('asagi')}</button>
+        ${k.fotolar.length ? `<div class="s-a-sec" role="group" aria-label="Kapak görseli"><button data-a="kapak" data-k="cizim" aria-pressed="${!fk}">Çizim</button><button data-a="kapak" data-k="foto" aria-pressed="${fk}">Fotoğraf</button></div>` : ''}
+      </div>
+      <div class="s-a-ic">
+        <div><h2>${esc(k.baslik)}</h2><p class="s-a-zaman">${zaman}${k.taslak ? ', asistan önerdi' : ''}</p></div>
+        ${k.varis ? `<div class="s-varis">${HARITA}<div><span>${esc(k.bolge)} bölgesine varınca</span><b>${esc(k.varis)}</b></div></div>` : ''}
+        ${k.not ? `<section><h3>Not</h3><p class="s-a-not">${esc(k.not)}</p></section>` : ''}
+        <section><h3>Fotoğraflar</h3><div class="s-gal">${k.fotolar.map((f, i) => `<button data-a="foto" data-i="${i}" aria-label="Fotoğrafı büyüt">${fotoHTML(f)}</button>`).join('')}<button class="s-gal-ekle" data-a="foto-ekle">${ik('foto')}Fotoğraf ekle</button></div></section>
+        ${k.baglantilar.length ? `<section><h3>Bağlantılar</h3><div class="s-bag">${k.baglantilar.map((b, i) => `<button data-a="baglanti" data-i="${i}">${bagResim(b.tip)}<span>${esc(b.ad)}<small>${b.tip === 'harita' ? 'Harita' : 'Belge'}</small></span></button>`).join('')}</div></section>` : ''}
+        ${k.hatirlatmalar.length ? `<section><h3>Hatırlatmalar</h3><ul class="s-hat">${k.hatirlatmalar.map((h) => `<li>${ik('zil')}${esc(h)}</li>`).join('')}${k.varis ? `<li>${ik('harita')}Varınca</li>` : ''}</ul></section>` : ''}
+      </div>
+      ${k.taslak ? '' : `<div class="s-a-alt"><button data-a="bitir-a" aria-pressed="${!!k.bitti}">${k.bitti ? 'Bitti, geri al' : 'Bitti'}</button></div>`}
+    </div>`;
+  }
+  function ac(id, s) {
+    const k = kayit(id), ekran = $('.s-ekran', kok), o = el(ayrHTML(k));
+    ekran.append(o);
+    const er = ekran.getBoundingClientRect(), r = s && s.getBoundingClientRect(), kp = $('.s-a-kapak', o), kr = kp.getBoundingClientRect();
+    an(o, [{ backgroundColor: 'transparent' }, {}], { duration: 320 });
+    if (r && r.width) an(kp, [{ transformOrigin: '0 0', transform: `translate(${r.left - kr.left}px,${r.top - kr.top}px) scale(${r.width / kr.width},${r.height / kr.height})`, borderRadius: '40px' }, { transformOrigin: '0 0', transform: 'none', borderRadius: '0 0 34px 34px' }], { duration: 560, easing: 'cubic-bezier(.3,1.2,.4,1)' });
+    else an(kp, [{ transform: 'translateY(-100%)' }, { transform: 'none' }], { duration: 440, easing: YUM });
+    $$('.s-a-ic > *', o).forEach((b, i) => an(b, [{ opacity: 0, transform: 'translateY(40px)' }, { opacity: 1, transform: 'none' }], { duration: 560, delay: 140 + i * 60, easing: YAY }));
+    an($('.s-a-alt', o), [{ opacity: 0, transform: 'translateY(30px)' }, { opacity: 1, transform: 'none' }], { duration: 420, delay: 360, easing: YAY });
+    const kapat = yiginEkle(() => {
+      yiginCikar(kapat);
+      if (o._kirli) ciz();
+      const hedef = $(`.s-${gor} [data-id="${id}"]`, kok), h = hedef && hedef.getBoundingClientRect(), m = getComputedStyle(o).transform;
+      const son = h && h.width ? { transformOrigin: '0 0', transform: `translate(${h.left - er.left}px,${h.top - er.top}px) scale(${h.width / er.width},${h.height / er.height})`, opacity: 0, borderRadius: '80px' } : { transformOrigin: '0 0', transform: `translate(0px,${er.height}px) scale(1,1)`, opacity: 1, borderRadius: '0px' };
+      o.style.overflow = 'hidden';
+      an(o, [{ transformOrigin: '0 0', transform: m === 'none' ? 'translate(0px,0px) scale(1,1)' : m, opacity: 1, borderRadius: o.style.borderRadius || '0px' }, { ...son, opacity: 1, offset: .7 }, son], { duration: 380, easing: 'cubic-bezier(.4,0,.3,1)', fill: 'forwards' }).finished.then(() => o.remove());
+      if (hedef) an(hedef, [{ transform: 'scale(.94)' }, { transform: 'none' }], { duration: 460, delay: 240, easing: YAY });
+    });
+    o._kapat = kapat;
+    surukle(kp, { eksen: 'y', filtre: (e) => o.scrollTop <= 0 && !e.target.closest('button'),
+      tasi: (dx, dy) => { const d = Math.max(0, dy), c = Math.max(.8, 1 - d / 1600); o.style.transformOrigin = '0 0'; o.style.transform = `translate(${((1 - c) * er.width) / 2}px,${d}px) scale(${c})`; o.style.borderRadius = Math.min(40, d / 3) + 'px'; o.style.overflow = 'hidden'; },
+      bitir: (dx, dy, vx, vy) => { if (dy > 110 || vy > 0.6) return kapat(); const m = o.style.transform; o.style.transform = ''; o.style.borderRadius = ''; o.style.overflow = ''; an(o, [{ transformOrigin: '0 0', transform: m }, { transformOrigin: '0 0', transform: 'none' }], { duration: 460, easing: YAY }); } });
+  }
+  function ayrTik(a, b, o) {
+    const k = kayit(o.dataset.id);
+    if (a === 'kapat') o._kapat();
+    else if (a === 'foto') fotoAc(b, k.fotolar[+b.dataset.i]);
+    else if (a === 'baglanti') baglantiTost(k.baglantilar[+b.dataset.i]);
+    else if (a === 'kapak') {
+      k.kapak = b.dataset.k; o._kirli = true;
+      $$('.s-a-sec button', o).forEach((x) => x.setAttribute('aria-pressed', x === b));
+      const ic = $('.s-a-kapak-ic', o); ic.innerHTML = kapakIc(k);
+      an($('.s-a-resim', ic), [{ opacity: 0, transform: 'scale(1.12)' }, { opacity: 1, transform: 'none' }], { duration: 520, easing: YUM });
+      an($('.s-a-etiket', ic), [{ transform: 'scale(0) rotate(30deg)' }, { transform: 'rotate(-6deg)' }], { duration: 560, delay: 160, easing: YAY });
+    } else if (a === 'foto-ekle') fotoSec().then((f) => {
+      if (!f) return;
+      k.fotolar.push(f); o._kirli = true;
+      const y = el(`<button data-a="foto" data-i="${k.fotolar.length - 1}" aria-label="Fotoğrafı büyüt">${fotoHTML(f)}</button>`); b.before(y);
+      an(y, [{ opacity: 0, transform: 'scale(.6) rotate(8deg)' }, { opacity: 1, transform: 'rotate(-1.2deg)' }], { duration: 560, easing: YAY });
+      y.scrollIntoView({ behavior: az() ? 'auto' : 'smooth', inline: 'center', block: 'nearest' });
+      if (!$('.s-a-sec', o)) { k.kapak = 'cizim'; $('.s-a-kapak', o).append(el('<div class="s-a-sec" role="group" aria-label="Kapak görseli"><button data-a="kapak" data-k="cizim" aria-pressed="true">Çizim</button><button data-a="kapak" data-k="foto" aria-pressed="false">Fotoğraf</button></div>')); }
+    });
+    else if (a === 'bitir-a') {
+      k.bitti = !k.bitti; o._kirli = true;
+      b.setAttribute('aria-pressed', !!k.bitti); b.textContent = k.bitti ? 'Bitti, geri al' : 'Bitti';
+      an(b, [{ transform: 'scale(.94)' }, { transform: 'none' }], { duration: 420, easing: YAY });
+      if (k.bitti) { const kp = $('.s-a-kapak', o); kp.classList.remove('patla'); void kp.offsetWidth; kp.classList.add('patla'); setTimeout(() => o.isConnected && o._kapat(), az() ? 0 : 520); }
+    }
+  }
+
+  /* ---- yeni kayıt ---- */
+  function ekleAc(dugme) {
+    const ekran = $('.s-ekran', kok), er = ekran.getBoundingClientRect(), br = dugme.getBoundingClientRect();
+    const cx = br.left + br.width / 2 - er.left, cy = br.top + br.height / 2 - er.top, R = Math.hypot(er.width, er.height);
+    const SAATLER = ['09:00', '12:00', '15:00', '18:00', '20:00'];
+    const o = el(`<div class="s-yeni r-kum" role="dialog" aria-label="Yeni kayıt">
+      <button class="s-y-kapat" type="button" data-a="yeni-kapat" aria-label="Vazgeç">${ik('kapat')}</button>
+      <div class="s-y-sahne canli">${resim('yildiz')}</div>
+      <form class="s-y-form" novalidate>
+        <div><label for="s-baslik">Ne yapacaksın?</label><input id="s-baslik" autocomplete="off" enterkeyhint="done" placeholder="Yaz ya da aşağıdan seç"></div>
+        <div class="s-y-oneri">${['Araba yıkama', 'Dişçi', 'Market', 'Kargo', 'Kahvaltı'].map((x) => `<button type="button" data-a="ornek">${x}</button>`).join('')}</div>
+        <div class="s-y-tur" role="radiogroup" aria-label="Zaman türü" data-t="saatli"><i></i><button type="button" role="radio" aria-checked="true" data-a="tur" data-t="saatli">Saatli</button><button type="button" role="radio" aria-checked="false" data-a="tur" data-t="bolum">Gün içinde</button><button type="button" role="radio" aria-checked="false" data-a="tur" data-t="tarihsiz">Tarihsiz</button></div>
+        <div class="s-y-ayar" role="radiogroup" aria-label="Zaman"></div>
+        <button type="submit" class="s-y-ekle">Ekle</button>
+      </form></div>`);
+    ekran.append(o);
+    let tur = 'saatli', saat = '15:00', bolum = 'aksam', gorsel = 'yildiz', renk = 'kum';
+    const giris = $('#s-baslik', o), ayar = $('.s-y-ayar', o);
+    const ayarCiz = () => {
+      ayar.innerHTML = tur === 'saatli' ? SAATLER.map((x) => `<button type="button" role="radio" aria-checked="${x === saat}" data-a="saat" data-v="${x}">${x}</button>`).join('')
+        : tur === 'bolum' ? BOLUM_SIRA.map((x) => `<button type="button" role="radio" aria-checked="${x === bolum}" data-a="bolum" data-v="${x}">${BOLUM[x]}</button>`).join('')
+        : '<span>Tarih vermeden listeye girer.</span>';
+      $$(':scope > *', ayar).forEach((c, i) => an(c, [{ opacity: 0, transform: 'scale(.7)' }, { opacity: 1, transform: 'none' }], { duration: 380, delay: i * 35, easing: YAY }));
+    };
+    const onerCiz = () => {
+      const n = oner(giris.value);
+      if (n.gorsel === gorsel) return;
+      gorsel = n.gorsel; o.classList.remove('r-' + renk); renk = n.renk; o.classList.add('r-' + renk);
+      const sahne = $('.s-y-sahne', o); sahne.innerHTML = resim(gorsel);
+      an(sahne.firstElementChild, [{ opacity: 0, transform: 'scale(.4) rotate(-14deg)' }, { opacity: 1, transform: 'none' }], { duration: 620, easing: YAY });
+    };
+    ayarCiz();
+    an(o, [{ clipPath: `circle(0px at ${cx}px ${cy}px)` }, { clipPath: `circle(${R}px at ${cx}px ${cy}px)` }], { duration: 560, easing: 'cubic-bezier(.3,.7,.2,1)' });
+    an($('.s-y-sahne', o), [{ opacity: 0, transform: 'scale(.5)' }, { opacity: 1, transform: 'none' }], { duration: 620, delay: 200, easing: YAY });
+    $$('.s-y-form > *', o).forEach((c, i) => an(c, [{ opacity: 0, transform: 'translateY(30px)' }, { opacity: 1, transform: 'none' }], { duration: 520, delay: 180 + i * 50, easing: YAY }));
+    const kapat = yiginEkle(() => {
+      yiginCikar(kapat);
+      an(o, [{ clipPath: `circle(${R}px at ${cx}px ${cy}px)` }, { clipPath: `circle(0px at ${cx}px ${cy}px)` }], { duration: 380, easing: 'cubic-bezier(.5,0,.7,.3)', fill: 'forwards' }).finished.then(() => o.remove());
+    });
+    giris.addEventListener('input', onerCiz);
+    o.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-a]'); if (!b) return;
+      const a = b.dataset.a;
+      if (a === 'yeni-kapat') kapat();
+      else if (a === 'ornek') { giris.value = b.textContent; onerCiz(); }
+      else if (a === 'tur') { tur = b.dataset.t; $('.s-y-tur', o).dataset.t = tur; $$('.s-y-tur button', o).forEach((x) => x.setAttribute('aria-checked', x === b)); ayarCiz(); }
+      else if (a === 'saat') { saat = b.dataset.v; $$('button', ayar).forEach((x) => x.setAttribute('aria-checked', x === b)); }
+      else if (a === 'bolum') { bolum = b.dataset.v; $$('button', ayar).forEach((x) => x.setAttribute('aria-checked', x === b)); }
+    });
+    $('form', o).addEventListener('submit', (e) => {
+      e.preventDefault();
+      const ad = giris.value.trim();
+      if (!ad) { giris.focus(); an(giris, [{ transform: 'translateX(0)' }, { transform: 'translateX(-8px)' }, { transform: 'translateX(7px)' }, { transform: 'none' }], 300); return; }
+      const tarih = gor === 'takvim' ? D.secili : BUGUN;
+      const k = yeniKayit(ad, tur === 'saatli' ? { tarih, saat } : tur === 'bolum' ? { tarih, bolum } : {});
+      kapat();
+      setTimeout(() => {
+        yenile();
+        if (gor === 'takvim') lekeKoy(false);
+        const y = $(`.s-${gor} [data-id="${k.id}"]`, kok);
+        if (y) y.scrollIntoView({ behavior: az() ? 'auto' : 'smooth', block: 'center', inline: 'center' });
+        else tost('Tarihi olmayanlara eklendi');
+      }, az() ? 0 : 240);
+    });
+  }
+
+  function tik(e) {
+    const b = e.target.closest('[data-a]'); if (!b || !kok.contains(b)) return;
+    const a = b.dataset.a, ayr = b.closest('.s-ayr');
+    if (ayr) return ayrTik(a, b, ayr);
+    if (b.closest('.s-yeni')) return;
+    const s = b.closest('[data-id]'), id = s && s.dataset.id;
+    if (a === 'gor') gorDegis(b.dataset.g);
+    else if (a === 'ac') ac(id, s);
+    else if (a === 'bitir') bitir(id, s);
+    else if (a === 'onayla') onayla(id, s);
+    else if (a === 'sil') sil(id, s);
+    else if (a === 'ekle') ekleAc(b);
+    else if (a === 'ay') ayDegis(+b.dataset.d);
+    else if (a === 'gun') { if (b.parentElement._surukledi) return; D.secili = b.dataset.t; lekeKoy(true); seritCiz(true); }
+  }
+  return { kur };
+})();
+
+/* ============ TABELA ============ */
+YON.tabela = (() => {
+  const MEK = 'cubic-bezier(.3,0,.2,1)', P = 'perspective(700px) ';
+  const KBOLUM = { sabah: 'SABAH', ogle: 'ÖĞLE', ogleden_sonra: 'Ö.SONRA', aksam: 'AKŞAM', gece: 'GECE' };
+  const KAY = ['OCA', 'ŞUB', 'MAR', 'NİS', 'MAY', 'HAZ', 'TEM', 'AĞU', 'EYL', 'EKİ', 'KAS', 'ARA'];
+  const HARF = 'ABCDEGHKLMNORSTUYZ0123456789';
+  let kok, ayAcik = false, yazAcik = false;
+
+  const zamanK = (k) => k.saat || (k.bolum ? KBOLUM[k.bolum] : k.bitisTarih ? 'DÖNEM' : k.tarih ? 'GÜN' : '––');
+  function durum(k) {
+    if (k.bitti) return ['bitti', 'BİTTİ'];
+    if (k.taslak) return ['taslak', 'TASLAK'];
+    if (k.tarih === BUGUN && k.saat) { const f = dk(k.saat) - dk(SIMDI); if (f >= 0 && f <= 90) return ['yakin', f + ' DK']; if (f < 0) return ['gec', 'GEÇTİ']; }
+    return ['acik', 'AÇIK'];
+  }
+  const karis = (m) => [...m].map((c) => (c === ' ' || c === ':' ? c : HARF[Math.floor(Math.random() * HARF.length)])).join('');
+  function cevir(e, metin, tur = 2) {
+    if (!e) return;
+    if (e._hedef === metin || (e._hedef == null && e.textContent === metin)) return;
+    if (az()) { e._cv = (e._cv || 0) + 1; e._hedef = null; e.textContent = metin; return; }
+    e._hedef = metin;
+    const adimlar = [...Array.from({ length: tur }, () => karis(metin)), metin];
+    const benim = (e._cv = (e._cv || 0) + 1);
+    let i = 0;
+    const bir = () => {
+      if (e._cv !== benim) return;
+      an(e, [{ transform: P + 'rotateX(0deg)' }, { transform: P + 'rotateX(-90deg)' }], { duration: 65, easing: 'ease-in', fill: 'forwards' }).finished.then(() => {
+        if (e._cv !== benim) return;
+        e.textContent = adimlar[i++];
+        an(e, [{ transform: P + 'rotateX(90deg)' }, { transform: P + 'rotateX(0deg)' }], { duration: 85, easing: 'ease-out', fill: 'forwards' }).finished.then(() => { if (e._cv !== benim) return; if (i < adimlar.length) bir(); else { e._hedef = null; e.getAnimations().forEach((x) => x.cancel()); } });
+      });
+    };
+    bir();
+  }
+  const panoSirasi = (l) => [...sirala(l.filter((k) => !k.bitti)), ...sirala(l.filter((k) => k.bitti))];
+
+  function kur(root) {
+    kok = root; ayAcik = false; yazAcik = false;
+    kok.innerHTML = `<div class="t-ekran">
+      <header class="t-bas"><span class="t-f t-f--buyuk" data-b="gun"></span><span class="t-f t-f--buyuk" data-b="no"></span><span class="t-f t-f--buyuk" data-b="ay"></span><span class="t-bas-saat" aria-label="Saat">${SIMDI}</span><button class="t-ay-d" data-a="ay-ac" aria-expanded="false">Ay${ik('asagi')}</button></header>
+      <div class="t-takvim"></div>
+      <div class="t-pano"></div>
+      <div class="t-alt-yuva"></div>
+    </div>`;
+    D.ay = { y: T(D.secili).getFullYear(), m: T(D.secili).getMonth() };
+    basCiz(false); takvimCiz(); panoCiz(true, 320); altCiz();
+    kok.onclick = tik;
+    $$('.t-bas .t-f', kok).forEach((f, i) => { const m = f.textContent; f.textContent = karis(m); setTimeout(() => cevir(f, m, 3), az() ? 0 : 80 + i * 120); });
+    surukle($('.t-takvim', kok), { eksen: 'x', tasi: () => {}, bitir: (dx) => { if (Math.abs(dx) < 50) return; if (ayAcik) ayDegis(dx < 0 ? 1 : -1); else gunSec(gunEkle(D.secili, dx < 0 ? 7 : -7)); } });
+  }
+  function basMetin() { const d = T(D.secili); return { gun: buyuk(KGUN[haftaGunu(D.secili)]), no: iki(d.getDate()), ay: KAY[d.getMonth()] }; }
+  function basCiz(hareketli) {
+    const m = basMetin();
+    $$('.t-bas .t-f', kok).forEach((f, i) => { const y = m[f.dataset.b]; if (hareketli) setTimeout(() => cevir(f, y, 1), i * 60); else f.textContent = y; });
+    $('.t-bas', kok).setAttribute('aria-label', uzunTarih(D.secili));
+  }
+
+  function takvimCiz() {
+    const { y, m } = D.ay, g = ayIzgarasi(y, m), haftalar = [];
+    for (let i = 0; i < g.length; i += 7) haftalar.push(g.slice(i, i + 7));
+    const tk = $('.t-takvim', kok);
+    tk.innerHTML = `<div class="t-ay-bas"><button data-a="ay" data-d="-1" aria-label="Önceki ay">${ik('geri')}</button><b>${AYLAR[m]} ${y}</b><button data-a="ay" data-d="1" aria-label="Sonraki ay">${ik('ileri')}</button></div>
+      <div class="t-gunad" aria-hidden="true">${KGUN.map((x) => `<span>${x}</span>`).join('')}</div>
+      ${haftalar.map((h, i) => `<div class="t-hafta ${h.includes(D.secili) ? 'gor' : ''}" style="--i:${i}">${h.map((t) => { const l = gunun(t), d = T(t); return `<button class="t-g ${d.getMonth() !== m ? 'dis' : ''} ${t === BUGUN ? 'bugun' : ''} ${t === D.secili ? 'sec' : ''}" data-a="gun" data-t="${t}" aria-label="${uzunTarih(t)}, ${l.length} kayıt" aria-pressed="${t === D.secili}"><b>${d.getDate()}</b><span class="l">${l.slice(0, 4).map((k) => `<i class="${k.bitti ? 'b' : k.taslak ? 't' : ''}"></i>`).join('')}</span></button>`; }).join('')}</div>`).join('')}`;
+    tk.classList.toggle('acik', ayAcik);
+  }
+  function satir(k) {
+    const [d, dm] = durum(k), alt = [k.bitis ? '–' + k.bitis : '', k.bolge ? '@ ' + esc(k.bolge) : '', k.bitisTarih ? zamanMetni(k) : ''].filter(Boolean).join(' ');
+    return `<div class="t-s ${k.bitti ? 'bitti' : ''} ${k.taslak ? 'taslak' : ''}" data-id="${k.id}">
+      <div class="t-s-alt" aria-hidden="true">${k.bitti ? 'GERİ AL' : 'BİTTİ'}</div>
+      <div class="t-s-ic"><span class="t-f t-f-z">${zamanK(k)}</span><span class="t-s-im">${ik(k.gorsel)}</span>
+        <div class="t-s-ad"><button data-a="ac"><span>${esc(k.baslik)}</span>${alt || k.taslak ? `<small>${k.taslak ? 'asistan önerdi, onay bekliyor' : alt}</small>` : ''}</button>${k.taslak ? '<span class="t-s-onay"><button class="t-f t-f--d" data-a="onayla">ONAYLA</button><button class="t-f t-f--d t-f--bos" data-a="sil">SİL</button></span>' : ''}</div>
+        <button class="t-f t-f-durum" data-a="${k.taslak ? 'ac' : 'bitir'}" data-d="${d}" aria-label="${k.taslak ? 'Taslak' : k.bitti ? 'Geri al' : 'Tamamla'}: ${esc(k.baslik)}"><span>${dm}</span></button>
+      </div></div>`;
+  }
+  function panoCiz(hareketli, gecikme = 0) {
+    const l = panoSirasi(gunun(D.secili)), ts = panoSirasi(tarihsiz()), p = $('.t-pano', kok);
+    p.innerHTML = `<div class="t-kolon"><span>Saat</span><span>Kayıt</span><span>Durum</span></div>${l.length ? l.map(satir).join('') : '<p class="t-bos">Bu güne kayıt yok.</p>'}<div class="t-ayrac">Tarihsiz</div>${ts.map(satir).join('')}<div class="t-pano-son"></div>`;
+    $$('.t-s:not(.taslak) .t-s-ic', p).forEach((ic) => {
+      const id = ic.parentElement.dataset.id;
+      surukle(ic, { eksen: 'x', filtre: (e) => !e.target.closest('.t-f-durum'),
+        tasi: (dx) => { ic.style.transform = `translateX(${Math.max(0, Math.min(150, dx))}px)`; },
+        bitir: (dx) => { const x = Math.max(0, Math.min(150, dx)); ic.style.transform = ''; an(ic, [{ transform: `translateX(${x}px)` }, { transform: 'none' }], { duration: 180, easing: 'steps(4,end)' }); if (dx > 84) bitir(id); } });
+      ic.addEventListener('click', (e) => { if (ic._surukledi) { e.stopPropagation(); e.preventDefault(); } }, true);
+    });
+    if (hareketli) $$('.t-s,.t-bos', p).forEach((s, i) => an(s, [{ transform: P + 'rotateX(-90deg)', opacity: .3 }, { transform: P + 'rotateX(0deg)', opacity: 1 }], { duration: 190, delay: gecikme + i * 42, easing: MEK }));
+  }
+  function altCiz() {
+    const y = $('.t-alt-yuva', kok), l = gunun(D.secili), acik = l.filter((k) => !k.bitti && !k.taslak).length, bitti = l.filter((k) => k.bitti).length;
+    if (yazAcik) return;
+    y.innerHTML = `<footer class="t-alt"><button class="t-f t-f--mavi" data-a="yaz">+ YENİ KAYIT</button><span class="t-ozet">${acik} açık, ${bitti} bitti</span></footer>`;
+  }
+
+  function gunSec(t) {
+    if (t === D.secili) return;
+    D.secili = t;
+    const d = T(t);
+    if (d.getMonth() !== D.ay.m && !$(`.t-g[data-t="${t}"]`, kok)) D.ay = { y: d.getFullYear(), m: d.getMonth() };
+    if (!ayAcik) D.ay = { y: d.getFullYear(), m: d.getMonth() };
+    takvimCiz(); basCiz(true); panoCiz(true); altCiz();
+  }
+  function ayDegis(d) {
+    let { y, m } = D.ay; m += d; if (m < 0) { m = 11; y--; } if (m > 11) { m = 0; y++; }
+    D.ay = { y, m };
+    takvimCiz();
+    $$('.t-hafta', kok).forEach((h, i) => an(h, [{ transform: P + 'rotateX(-90deg)', transformOrigin: '50% 0' }, { transform: P + 'rotateX(0deg)', transformOrigin: '50% 0' }], { duration: 170, delay: i * 36, easing: MEK }));
+  }
+  function ayAc() {
+    ayAcik = !ayAcik;
+    if (!ayAcik) { const d = T(D.secili); if (d.getMonth() !== D.ay.m || !$(`.t-g[data-t="${D.secili}"]`, kok)) { D.ay = { y: d.getFullYear(), m: d.getMonth() }; takvimCiz(); } }
+    $('.t-takvim', kok).classList.toggle('acik', ayAcik);
+    const b = $('.t-ay-d', kok); b.setAttribute('aria-expanded', ayAcik);
+  }
+
+  function siraAnim() {
+    const p = $('.t-pano', kok), once = new Map($$('.t-s', p).map((s) => [s.dataset.id, s.getBoundingClientRect().top]));
+    panoCiz(false);
+    $$('.t-s', p).forEach((s) => { const o = once.get(s.dataset.id), n = s.getBoundingClientRect().top; if (o == null) an(s, [{ transform: P + 'rotateX(-90deg)' }, { transform: P + 'rotateX(0deg)' }], { duration: 220, easing: MEK }); else if (Math.abs(o - n) > 1) an(s, [{ transform: `translateY(${o - n}px)` }, { transform: 'none' }], { duration: 300, easing: 'steps(5,end)' }); });
+    altCiz(); takvimCiz();
+  }
+  function bitir(id) {
+    const k = kayit(id); k.bitti = !k.bitti;
+    const s = $(`.t-s[data-id="${id}"]`, kok);
+    if (s) { const f = $('.t-f-durum', s), [d, dm] = durum(k); s.classList.toggle('bitti', k.bitti); f.dataset.d = d; cevir($('span', f), dm, 2); }
+    setTimeout(siraAnim, az() ? 0 : 560);
+    const dos = $('.t-dosya', kok); if (dos && dos.dataset.id === id) { const b = $('[data-a="bitir-a"]', dos); cevir(b, k.bitti ? 'GERİ AL' : 'BİTTİ OLARAK İŞARETLE', 1); }
+  }
+  function onayla(id) {
+    const k = kayit(id); k.taslak = false;
+    const s = $(`.t-s[data-id="${id}"]`, kok), f = s && $('.t-f-durum span', s);
+    if (f) { f.parentElement.dataset.d = 'acik'; cevir(f, 'AÇIK', 2); }
+    setTimeout(() => { siraAnim(); tost('Onaylandı'); }, az() ? 0 : 520);
+  }
+  function sil(id) {
+    const k = kayit(id), s = $(`.t-s[data-id="${id}"]`, kok);
+    an(s, [{ transform: P + 'rotateX(0deg)' }, { transform: P + 'rotateX(90deg)' }], { duration: 160, easing: 'ease-in', fill: 'forwards' }).finished.then(() => {
+      kayitSil(id); siraAnim();
+      tost('Taslak silindi', { ad: 'Geri al', yap: () => { D.kayitlar.push(k); siraAnim(); } });
+    });
+  }
+
+  /* ---- dosya (ayrıntı) ---- */
+  function sekmeHTML(k, s) {
+    if (s === 'ayr') return `${k.not ? `<p class="t-not">${esc(k.not)}</p>` : '<p class="t-dl-bos">Not yok.</p>'}
+      ${k.varis ? `<div class="t-kutu"><small>${esc(k.bolge)} bölgesine varınca hatırlat</small><b>${esc(k.varis)}</b></div>` : ''}
+      <dl class="t-meta"><dt>Tür</dt><dd>${turAdi(k)}</dd><dt>Zaman</dt><dd>${k.tarih ? uzunTarih(k.tarih) + ', ' + zamanMetni(k) : 'Tarihi yok'}</dd><dt>Ekleyen</dt><dd>${k.yazar || 'Elle'}</dd></dl>`;
+    if (s === 'foto') return `<div class="t-kareler">${k.fotolar.map((f, i) => `<button data-a="foto" data-i="${i}" aria-label="Fotoğrafı büyüt">${fotoHTML(f)}</button>`).join('')}<button class="t-kare-ekle" data-a="foto-ekle">${ik('foto')}Fotoğraf ekle</button></div>`;
+    if (s === 'bag') return k.baglantilar.length ? `<ul class="t-dl">${k.baglantilar.map((b, i) => `<li><button data-a="baglanti" data-i="${i}"><span class="t-f">${b.tip === 'harita' ? 'HARİTA' : 'BELGE'}</span>${esc(b.ad)}</button></li>`).join('')}</ul>` : '<p class="t-dl-bos">Bağlantı yok.</p>';
+    const h = k.hatirlatmalar.map((x) => { const m = /(\d\d:\d\d)/.exec(x), dkOnce = /(\d+) dk önce/.exec(x); return `<li><span class="sat"><span class="t-f">${m ? m[1] : k.saat && dkOnce ? hhmm(dk(k.saat) - +dkOnce[1]) : 'ZİL'}</span>${esc(x)}</span></li>`; }).join('') + (k.varis ? `<li><span class="sat"><span class="t-f">VARIŞ</span>${esc(k.bolge)}: ${esc(k.varis)}</span></li>` : '');
+    return h ? `<ul class="t-dl">${h}</ul>` : '<p class="t-dl-bos">Hatırlatma yok.</p>';
+  }
+  function ac(id) {
+    const k = kayit(id), ekran = $('.t-ekran', kok), ust = $('.t-bas', kok).offsetHeight;
+    const say = (n) => (n ? `<sup>${n}</sup>` : '');
+    const o = el(`<div class="t-dosya" role="dialog" aria-label="Kayıt ayrıntısı" data-id="${k.id}" style="top:${ust}px">
+      <div class="t-d-ust"><button class="t-d-geri" data-a="kapat">${ik('geri')}Pano</button><span class="t-f">${durum(k)[1]}</span></div>
+      <h2 class="t-d-ad">${ik(k.gorsel)}<span>${esc(k.baslik)}</span></h2>
+      <div class="t-d-kanatlar"><span class="t-f">${zamanK(k)}</span>${k.bitis ? `<span class="t-f">${k.bitis}</span>` : ''}${k.bolge ? `<span class="t-f">@ ${buyuk(k.bolge)}</span>` : ''}</div>
+      <div class="t-sekmeler" role="tablist"><button role="tab" aria-selected="true" data-a="sekme" data-s="ayr">Ayrıntılar</button><button role="tab" aria-selected="false" data-a="sekme" data-s="foto">Fotolar${say(k.fotolar.length)}</button><button role="tab" aria-selected="false" data-a="sekme" data-s="bag">Bağlantılar${say(k.baglantilar.length)}</button><button role="tab" aria-selected="false" data-a="sekme" data-s="hat">Hatırlatma${say(k.hatirlatmalar.length + (k.varis ? 1 : 0))}</button></div>
+      <div class="t-d-ic" role="tabpanel">${sekmeHTML(k, 'ayr')}</div>
+      ${k.taslak ? '' : `<div class="t-d-alt"><button class="t-f t-f--mavi" data-a="bitir-a">${k.bitti ? 'GERİ AL' : 'BİTTİ OLARAK İŞARETLE'}</button></div>`}
+    </div>`);
+    ekran.append(o);
+    an(o, [{ transform: 'perspective(1400px) rotateX(-88deg)', opacity: .4 }, { transform: 'perspective(1400px) rotateX(0deg)', opacity: 1 }], { duration: 330, easing: 'cubic-bezier(.2,.7,.25,1)' });
+    $$('.t-d-kanatlar .t-f, .t-d-ust .t-f', o).forEach((f, i) => { const m = f.textContent; f.textContent = karis(m); setTimeout(() => cevir(f, m, 1), az() ? 0 : 260 + i * 70); });
+    const kapat = yiginEkle(() => {
+      yiginCikar(kapat);
+      an(o, [{ transform: 'perspective(1400px) rotateX(0deg)', opacity: 1 }, { transform: 'perspective(1400px) rotateX(-88deg)', opacity: .4 }], { duration: 220, easing: 'ease-in', fill: 'forwards' }).finished.then(() => o.remove());
+    });
+    o._kapat = kapat;
+  }
+  function dosyaTik(a, b, o) {
+    const k = kayit(o.dataset.id);
+    if (a === 'kapat') o._kapat();
+    else if (a === 'sekme') {
+      if (b.getAttribute('aria-selected') === 'true') return;
+      $$('.t-sekmeler button', o).forEach((x) => x.setAttribute('aria-selected', x === b));
+      const ic = $('.t-d-ic', o);
+      an(ic, [{ transform: P + 'rotateX(0deg)' }, { transform: P + 'rotateX(-90deg)' }], { duration: 90, easing: 'ease-in', fill: 'forwards' }).finished.then(() => {
+        ic.innerHTML = sekmeHTML(k, b.dataset.s); ic.scrollTop = 0; ic.dataset.s = b.dataset.s;
+        an(ic, [{ transform: P + 'rotateX(90deg)' }, { transform: P + 'rotateX(0deg)' }], { duration: 130, easing: 'ease-out', fill: 'forwards' }).finished.then(() => ic.getAnimations().forEach((x) => x.cancel()));
+      });
+    } else if (a === 'foto') fotoAc(b, k.fotolar[+b.dataset.i]);
+    else if (a === 'baglanti') baglantiTost(k.baglantilar[+b.dataset.i]);
+    else if (a === 'foto-ekle') fotoSec().then((f) => {
+      if (!f) return;
+      k.fotolar.push(f);
+      const y = el(`<button data-a="foto" data-i="${k.fotolar.length - 1}" aria-label="Fotoğrafı büyüt">${fotoHTML(f)}</button>`); b.before(y);
+      an(y, [{ transform: P + 'rotateX(-90deg)' }, { transform: P + 'rotateX(0deg)' }], { duration: 200, easing: MEK });
+      const sup = $('.t-sekmeler [data-s="foto"]', o); sup.innerHTML = `Fotolar<sup>${k.fotolar.length}</sup>`;
+    });
+    else if (a === 'bitir-a') { bitir(k.id); cevir($('.t-d-ust .t-f', o), durum(k)[1], 2); }
+  }
+
+  /* ---- yeni kayıt satırı ---- */
+  function yazAc() {
+    yazAcik = true;
+    const yuva = $('.t-alt-yuva', kok);
+    const MODLAR = ['saatli', 'bolum', 'tarihsiz'], MOD_AD = { saatli: 'SAATLİ', bolum: 'GÜN İÇİ', tarihsiz: 'TARİHSİZ' };
+    let mod = 'saatli', saat = Math.min(23 * 60, Math.ceil((dk(SIMDI) + 20) / 15) * 15), bolum = 'aksam';
+    yuva.innerHTML = `<form class="t-yaz" novalidate>
+      <label class="gizli-yazi" for="t-baslik">Yeni kayıt</label><input id="t-baslik" autocomplete="off" enterkeyhint="done" placeholder="Yeni kayıt">
+      <div class="t-yaz-sat">
+        <button type="button" class="t-f t-f--d" data-y="mod" aria-label="Zaman türünü değiştir">${MOD_AD[mod]}</button>
+        <span class="t-yaz-ayar"></span>
+        <span class="t-yaz-son"><button type="button" class="t-f t-f--d t-f--bos t-f--kare" data-y="vazgec" aria-label="Vazgeç">${ik('kapat')}</button><button type="submit" class="t-f t-f--d t-f--mavi">EKLE</button></span>
+      </div>
+      <p class="t-yaz-ipucu">${uzunTarih(D.secili)} gününe eklenir. Türü değiştirmek için ilk kanada dokun.</p>
+    </form>`;
+    const form = $('form', yuva), ayar = $('.t-yaz-ayar', form), giris = $('#t-baslik', form);
+    const ayarCiz = () => {
+      ayar.innerHTML = mod === 'saatli' ? `<button type="button" class="t-f t-f--d t-f--bos" data-y="eksi" aria-label="15 dakika geri">−</button><span class="t-f t-f--d" data-y="okuma">${hhmm(saat)}</span><button type="button" class="t-f t-f--d t-f--bos" data-y="arti" aria-label="15 dakika ileri">+</button>`
+        : mod === 'bolum' ? `<button type="button" class="t-f t-f--d" data-y="bolum" aria-label="Gün bölümünü değiştir">${KBOLUM[bolum]}</button>` : '';
+      $('.t-yaz-ipucu', form).textContent = mod === 'tarihsiz' ? 'Tarihsiz listeye eklenir.' : `${uzunTarih(D.secili)} gününe eklenir. Türü değiştirmek için ilk kanada dokun.`;
+    };
+    ayarCiz();
+    an(form, [{ transform: 'translateY(100%)' }, { transform: 'none' }], { duration: 200, easing: 'steps(5,end)' });
+    const kapat = yiginEkle(() => { yiginCikar(kapat); yazAcik = false; altCiz(); });
+    form.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-y]'); if (!b) return;
+      const y = b.dataset.y;
+      if (y === 'mod') { mod = MODLAR[(MODLAR.indexOf(mod) + 1) % 3]; cevir(b, MOD_AD[mod], 1); ayarCiz(); $$('.t-f', ayar).forEach((f) => an(f, [{ transform: P + 'rotateX(-90deg)' }, { transform: P + 'rotateX(0deg)' }], { duration: 160, easing: MEK })); }
+      else if (y === 'eksi' || y === 'arti') { saat = Math.max(0, Math.min(23 * 60 + 45, saat + (y === 'arti' ? 15 : -15))); cevir($('[data-y="okuma"]', ayar), hhmm(saat), 0); }
+      else if (y === 'bolum') { bolum = BOLUM_SIRA[(BOLUM_SIRA.indexOf(bolum) + 1) % 5]; cevir(b, KBOLUM[bolum], 0); }
+      else if (y === 'vazgec') kapat();
+    });
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const ad = giris.value.trim();
+      if (!ad) { giris.focus(); an(giris, [{ transform: 'translateX(0)' }, { transform: 'translateX(-6px)' }, { transform: 'translateX(6px)' }, { transform: 'none' }], { duration: 200, easing: 'steps(4,end)' }); return; }
+      const k = yeniKayit(ad, mod === 'saatli' ? { tarih: D.secili, saat: hhmm(saat) } : mod === 'bolum' ? { tarih: D.secili, bolum } : {});
+      kapat();
+      siraAnim();
+      const s = $(`.t-s[data-id="${k.id}"]`, kok);
+      if (s) { s.scrollIntoView({ block: 'nearest', behavior: az() ? 'auto' : 'smooth' }); const f = $('.t-f-z', s), m = f.textContent; f.textContent = karis(m); cevir(f, m, 2); }
+    });
+    setTimeout(() => { try { giris.focus({ preventScroll: true }); } catch (_) {} }, az() ? 0 : 220);
+  }
+
+  function tik(e) {
+    const b = e.target.closest('[data-a]'); if (!b || !kok.contains(b)) return;
+    const a = b.dataset.a, dos = b.closest('.t-dosya');
+    if (dos) return dosyaTik(a, b, dos);
+    const s = b.closest('[data-id]'), id = s && s.dataset.id;
+    if (a === 'ac') ac(id);
+    else if (a === 'bitir') bitir(id);
+    else if (a === 'onayla') onayla(id);
+    else if (a === 'sil') sil(id);
+    else if (a === 'yaz') yazAc();
+    else if (a === 'ay-ac') ayAc();
+    else if (a === 'ay') ayDegis(+b.dataset.d);
+    else if (a === 'gun') { if ($('.t-takvim', kok)._surukledi) return; gunSec(b.dataset.t); }
+  }
+  return { kur };
+})();
+
+/* ============ kabuk ============ */
+const YONLER = {
+  cetvel: {
+    ad: 'Cetvel',
+    fikir: 'Gün bir ölçü şeridi: saat çizgisi yerinde durur, kayıtlar zamanlarına asılır, saatsiz olanlar gün bölümünün kesikli bandında bekler.',
+    hareket: 'Sönümlü ve kesin, hiçbir şey zıplamaz. Kayıt durduğu yerden açılır, bitince üstü çizilir, saat mezura kaydırılarak seçilir.',
+    gorsel: 'Küçük bir çizgi simge, satırın ucunda fotoğraf karesi. Görsel süs değil, işaret.',
+    android: 'Compose ile doğrudan yapılır: Canvas ölçek, paylaşılan sınır geçişi, snap’li yatay kaydırma. Pahalı yeri yok; değişken genişlikli yazı tipi uygulamaya gömülmeli.',
+  },
+  sahne: {
+    ad: 'Sahne',
+    fikir: 'Her kaydın bir resmi var: gün, sıradaki iş en büyük olacak şekilde resimli levhalardan kurulur; taslak karakalemdir, onaylanınca boyanır.',
+    hareket: 'Yaylı ve oyuncu. Levha büyüyerek ayrıntıya dönüşür, aşağı çekince geri küçülür; başlığı yazarken çizim kendiliğinden gelir.',
+    gorsel: 'Başlığa göre önerilen çizim ya da eklediğin fotoğraf kapak olur; ayrıntıda ikisi arasında geçilir.',
+    android: 'Compose’da yapılır. Asıl maliyet çizim takımı: 20–30 vektör çizim ve anahtar sözcük tablosu. Çizimin parça parça canlanması AnimatedVectorDrawable ya da Lottie ister; karakalemden boyamaya geçiş ve dairesel açılma özel çizim kodu gerektirir.',
+  },
+  tabela: {
+    ad: 'Tabela',
+    fikir: 'Gün bir kalkış tabelası: sık satırlar, hafta şeridi hep görünür, değişen her şey kanat çevrilerek gelir.',
+    hareket: 'Mekanik ve adımlı. Durum kanadı çevrilir, satırlar basamak basamak yer değiştirir, gün değişince tabela baştan aşağı döner; satırı sağa çekmek tamamlar.',
+    gorsel: 'Tek renk piktogram; fotoğraflar ayrıntının Fotolar sekmesinde küçük karelerle durur.',
+    android: 'En ucuz yön: düz liste ve graphicsLayer ile rotationX. Harf harf kanat çevirme çok satırda pahalılaşır, hücre başına tek çevirme yeter. Büyük yazı ayarında sık satırlar iki satıra bölünmeli.',
+  },
+};
+const YON_SIRA = ['cetvel', 'sahne', 'tabela'];
+let yon = 'sahne';
+
+function kunyeCiz() {
+  const y = YONLER[yon];
+  $('#kunye-ad').textContent = y.ad;
+  $('#kunye-fikir').textContent = y.fikir;
+  $('#kunye-hareket').textContent = y.hareket;
+  $('#kunye-gorsel').textContent = y.gorsel;
+  $('#kunye-android').textContent = y.android;
+}
+function yonSec(y) {
+  yon = y;
+  const a = app();
+  yigin.length = 0;
+  a.className = 'app d-' + y;
+  a.innerHTML = '';
+  $('.yonler').dataset.y = y;
+  $$('.yonler button').forEach((b) => b.setAttribute('aria-selected', b.dataset.yon === y));
+  kunyeCiz();
+  YON[y].kur(a);
+  an(a, [{ opacity: 0 }, { opacity: 1 }], { duration: 220 });
+}
+function temaSimdi() {
+  return document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+}
+function temaIkon() { $('#tema').innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${temaSimdi() === 'dark' ? IK.gunes : IK.ay}</svg>`; }
+
+$('.yonler').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-yon]'); if (!b || b.dataset.yon === yon) return;
+  try { location.hash = b.dataset.yon; } catch (_) {}
+  yonSec(b.dataset.yon);
+});
+$('.yonler').addEventListener('keydown', (e) => {
+  if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+  const i = (YON_SIRA.indexOf(yon) + (e.key === 'ArrowRight' ? 1 : 2)) % 3;
+  $('#yon-' + YON_SIRA[i]).focus(); $('#yon-' + YON_SIRA[i]).click();
+});
+addEventListener('hashchange', () => { const h = location.hash.slice(1); if (YON_SIRA.includes(h) && h !== yon) yonSec(h); });
+$('#tema').addEventListener('click', () => { document.documentElement.dataset.theme = temaSimdi() === 'dark' ? 'light' : 'dark'; temaIkon(); });
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', temaIkon);
+$('#kunye-ac').addEventListener('click', (e) => { const k = $('#kunye'), acik = k.classList.toggle('acik'); e.currentTarget.setAttribute('aria-expanded', acik); e.currentTarget.textContent = acik ? 'Kapat' : 'Notlar'; });
+$('#sifirla').addEventListener('click', () => { D.kayitlar = ornekVeri(); D.secili = BUGUN; D.ay = { y: 2026, m: 10 }; yonSec(yon); });
+
+(() => {
+  const h = location.hash.slice(1);
+  temaIkon();
+  yonSec(YON_SIRA.includes(h) ? h : 'sahne');
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { const l = $('.s-alt-leke'); if (l && yon === 'sahne') { const b = $('.s-alt [aria-current="page"]'); l.style.width = b.offsetWidth + 'px'; l.style.transform = `translateX(${b.offsetLeft}px)`; } });
+})();
+
+</script>

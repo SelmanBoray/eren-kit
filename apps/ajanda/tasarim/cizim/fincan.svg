@@ -1,0 +1,10 @@
+<!-- Ajanda / Sahne çizimi "fincan". Kaynak: parca/50-ortak.js RESIM.fincan.
+     Varsayılan takım: hardal (levha zemini b=#F2B632; çizimin kendisi zemin içermez).
+     data-rol: f=figür, l=açık ayrıntı, d=koyu ayrıntı, b=zemin rengi; renk çalışma anında takımdan gelir.
+     Karakalem ve canlanan parçalar için SAHNE.md "Çizimler" bölümüne bakın. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 160" width="240" height="160">
+  <path id="buhar_1" data-rol="d" d="M100 46q-8-10 0-22M126 46q-8-10 0-22" fill="none" stroke="#3B2A05" stroke-width="7" stroke-linecap="round" />
+  <path id="pf_1" data-rol="f" d="M68 62h104v32q0 36-36 36h-32q-36 0-36-36z" fill="#D8432B" />
+  <path id="ps2_1" data-rol="d" d="M172 74h6q16 0 16 15t-16 15h-8" fill="none" stroke="#3B2A05" stroke-width="7" stroke-linecap="round" />
+  <path id="pd_1" data-rol="d" d="M60 136h120a4 4 0 0 1 4 4v0a4 4 0 0 1 -4 4h-120a4 4 0 0 1 -4 -4v-0a4 4 0 0 1 4 -4z" fill="#3B2A05" />
+</svg>
