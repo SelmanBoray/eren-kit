@@ -69,6 +69,15 @@ const ILK_GECIKME_MS = 1_000;
 const AZAMI_GECIKME_MS = 30_000;
 /** Servisin `kopru_hello` için tanıdığı süreyle aynı. */
 const EL_SIKISMA_MS = 10_000;
+/** Belirsiz düşüşle (zengin hello yanıtsız kapandı, düz hello geçti) kurulan bağlantıda zengin hello yoklamasına dek. */
+const ZENGIN_YOKLAMA_MS = 5_000;
+/** Seyrek kipte (ret alandan değil) arka plan döngüsü düz denemeyi her bu kadar düşüşte bir yapar. */
+const SEYREK_DUSUS_DONGU = 4;
+
+const gercekZamanla = (ms: number, f: () => void): (() => void) => {
+  const t = setTimeout(f, ms);
+  return () => clearTimeout(t);
+};
 
 interface AracSemasi {
   readonly girdi: z.ZodType;
@@ -127,6 +136,11 @@ export interface KopruBagimliliklari {
   gunluk: Gunluk;
   /** Yeniden bağlanma aralığı. */
   bekle: (ms: number) => Promise<void>;
+  /**
+   * Bağlantıya bağlı zamanlayıcılar (el sıkışma süresi, belirsiz düşüşten sonra zengin hello yoklaması): `ms`
+   * sonra `f`; dönen işlev iptal eder. Verilmezse gerçek saat (`setTimeout`); testte elle tetiklenir.
+   */
+  zamanla?: (ms: number, f: () => void) => () => void;
 }
 
 export interface KopruCalisani {
@@ -171,10 +185,22 @@ type AsagiCozucu = (satir: string) => CozumSonucu<KopruAsagi | AjandaKopruAsagi>
  * `helloEki` (isteğe bağlı): her denemede hello'ya eklenecek isteğe bağlı alanlar (zengin hello; PC köprüsünde
  * `surec_id`). Alanı tanımayan eski servis zengin hello'yu katı şemasıyla reddeder (`kopru_ret{yetkisiz}`, sonra
  * kapatır; ret satırı adlı boruda kapanışla birlikte düşebilir). Zengin hello karşılanmadan `yetkisiz` ile ya da
- * hiç yanıtsız kapanırsa köprü beklemeden BİR KEZ düz (eksiz) hello ile yeniden dener. Düz hello hiçbir zaman
- * hemen yeniden denemeye yol açmaz: gerçek bir ret (anahtar, kapalı PC rolü) her döngüde en çok bir düz deneme
- * ekler, sonra olağan bekleme gelir. Sonraki deneme yine zengindir (servis güncellenip yeniden başlamış olabilir).
+ * hiç yanıtsız kapanırsa köprü beklemeden BİR KEZ düz (eksiz) hello ile yeniden dener (düşüş). Düz hello hiçbir
+ * zaman hemen yeniden denemeye yol açmaz. Sonraki deneme yine zengindir (servis güncellenip yeniden başlamış olabilir).
  * Yeni isteğe bağlı hello alanları aynı yoldan geçer; alan başına ayrı düşüş yoktur.
+ *
+ * Geçici hata yeni köprüyü eski kipe düşürmez:
+ * - Köprünün kendi el sıkışma süresi dolarsa (servis yoğun) düşüş yoktur: olağan bekleme, sonra yine zengin.
+ * - Belirsiz düşüş (zengin hello ret satırı olmadan kapandı: eski servisin düşen ret satırı ya da kapanan servis)
+ *   düz hello ile bağlanırsa bağlantı boştayken `ZENGIN_YOKLAMA_MS` sonra BİR KEZ kapatılıp zengin hello yeniden
+ *   denenir. Yeni servis onu karşılar (süreç bildirilir); eski servis yine düşürür, ikinci yoklama olmaz (zengin
+ *   hello karşılanana dek). Açık `yetkisiz` ardından geçen düz hello eski servistir, yoklanmaz.
+ *
+ * Gerçek ret (kapalı PC rolü da `yetkisiz` döner) gürültü üretmez: ret alandan değilse — bu köprü zengin hello'nun
+ * karşılandığını gördü ya da art arda iki düşüşte düz hello da reddedildi — arka plan döngüsü düşüşü yalnız her
+ * `SEYREK_DUSUS_DONGU` düşüşte bir yapar (geri alınmış ya da PC'si sonradan açılan eski servis yine bulunur).
+ * Bağlantı bekleyen bir çağrı (`uyandir`) varsa o döngü hep düşer. Ret her denemede `boru_reddedildi` ile
+ * günlüğe gider; `zengin_hello_desteklenmiyor` yalnız düz hello zengin hello'nun reddinden sonra geçince yazılır.
  */
 function boruIstemciKur(
   ayar: KopruIstemciAyari | AjandaKopruIstemciAyari,
@@ -197,10 +223,21 @@ function boruIstemciKur(
   const bekleyenler = new Map<string, (y: BoruYaniti) => void>();
   const denemeDinleyicileri = new Set<() => void>();
   const biriken = new Set<string>();
-  /** Sıradaki hello düz (zengin hello az önce reddedildi). */
-  let duzSira = false;
-  /** Zengin hello reddedildi: sıradaki (düz) deneme beklemeden. */
+  const zamanla = b.zamanla ?? gercekZamanla;
+  /** Sıradaki hello düz (düşüş): zengin hello'nun reddinin nedeni (`yanitsiz`: ret satırı gelmedi). */
+  let dusus: HataKodu | "yanitsiz" | null = null;
+  /** Sıradaki deneme beklemeden (düşüş ya da zengin hello yoklaması). */
   let hemenYeniden = false;
+  /** Bu köprünün ömründe servis zengin hello'yu karşıladı (sonradan geri alınmış olabilir). */
+  let zenginTanindi = false;
+  /** Art arda düz hello'nun da reddedildiği düşüşler: ret alandan değil. */
+  let bosDusus = 0;
+  /** Seyrek kipte arka planda atlanan düşüşler. */
+  let atlananDusus = 0;
+  /** Bağlantı bekleyen bir çağrı var (`uyandir`): bu döngü düşüşü atlamaz. */
+  let cagriBekliyor = false;
+  /** Belirsiz düşüşün zengin hello yoklaması yapıldı (zengin hello karşılanınca sıfırlanır). */
+  let yoklandi = false;
 
   const denemeBitti = (): void => {
     for (const f of [...denemeDinleyicileri]) f();
@@ -239,13 +276,42 @@ function boruIstemciKur(
   const baglantiYurut = (bag: BoruBaglantisi, jeton: string): Promise<boolean> =>
     new Promise((coz) => {
       let karsilandi = false;
-      const elSikisma = setTimeout(() => bag.kapat(), EL_SIKISMA_MS);
+      /** Köprünün el sıkışma süresi doldu (servis yanıt vermedi): geçici, düşüş değil. */
+      let zamanAsimi = false;
+      const elSikismaIptal = zamanla(EL_SIKISMA_MS, () => {
+        zamanAsimi = true;
+        bag.kapat();
+      });
       acik = bag;
-      const ek = duzSira ? {} : (helloEki?.() ?? {});
-      duzSira = false;
+      /** Bu bağlantı düşüşün düz denemesiyse zengin hello'nun reddinin nedeni. */
+      const duzNedeni = dusus;
+      dusus = null;
+      const ek = duzNedeni !== null ? {} : (helloEki?.() ?? {});
       const zengin = Object.keys(ek).length > 0;
-      /** Zengin hello'ya gelen ret kodu (yoksa `null`: hiç ret gelmedi). */
+      /** El sıkışmadan önce gelen ret kodu (yoksa `null`: hiç ret gelmedi). */
       let ret: HataKodu | null = null;
+      let yoklamaIptal: (() => void) | null = null;
+
+      /** Belirsiz düşüşle kurulan bağlantı: boştayken bir kez kapatıp zengin hello'yu yeniden dener. */
+      const yoklamaKur = (): void => {
+        const dene = (): void => {
+          yoklamaIptal = null;
+          if (hazir !== bag || durdu) return;
+          // Süren istek kesilmez: boşalınca yeniden bakılır.
+          if (bekleyenler.size > 0) {
+            yoklamaIptal = zamanla(ZENGIN_YOKLAMA_MS, dene);
+            return;
+          }
+          yoklandi = true;
+          gunluk.bilgi(MODUL, "zengin_hello_yoklamasi");
+          // Bu andan sonra gelen çağrı bu bağlantıya yazmaz, yoklama denemesinin sonucunu bekler.
+          hazir = null;
+          denemede = true;
+          hemenYeniden = true;
+          bag.kapat();
+        };
+        yoklamaIptal = zamanla(ZENGIN_YOKLAMA_MS, dene);
+      };
 
       bag.satirDinle((satir) => {
         const cozum = asagiCoz(satir);
@@ -261,11 +327,24 @@ function boruIstemciKur(
         if (m.type === "kopru_welcome") {
           if (karsilandi) return;
           karsilandi = true;
-          clearTimeout(elSikisma);
+          elSikismaIptal();
           hazir = bag;
           denemede = false;
           sonEngel = null;
           gunluk.bilgi(MODUL, "boru_baglandi", { rol: ayar.rol });
+          if (zengin) {
+            zenginTanindi = true;
+            bosDusus = 0;
+            atlananDusus = 0;
+            yoklandi = false;
+          } else if (duzNedeni !== null) {
+            // Düz hello geçti: servis alanı tanımıyor (eski sürüm) ya da zengin hello geçici bir hatayla düştü.
+            gunluk.uyari(MODUL, "zengin_hello_desteklenmiyor", { code: duzNedeni });
+            zenginTanindi = false;
+            bosDusus = 0;
+            atlananDusus = 0;
+            if (duzNedeni === "yanitsiz" && !yoklandi) yoklamaKur();
+          }
           biriktirilenleriYolla(bag);
           denemeBitti();
         } else if (m.type === "kopru_ret") {
@@ -294,19 +373,30 @@ function boruIstemciKur(
       });
 
       bag.kapanisDinle(() => {
-        clearTimeout(elSikisma);
+        elSikismaIptal();
+        yoklamaIptal?.();
         acik = null;
         hazir = null;
         const kopanlar = [...bekleyenler.values()];
         bekleyenler.clear();
         for (const f of kopanlar) f({ tur: "koptu" });
         // Zengin hello karşılanmadı: eski servisin katı şeması (yetkisiz) ya da ret satırı kapanışla düştü.
-        if (zengin && !karsilandi && (ret === null || ret === "yetkisiz")) {
-          gunluk.uyari(MODUL, "zengin_hello_reddedildi", { code: ret ?? "yanitsiz" });
-          duzSira = true;
-          hemenYeniden = true;
-          // Engel zengin alanındır, bağlantının değil: düz denemenin sonucu belirler.
-          sonEngel = null;
+        // Köprünün kendi süresi dolduysa servis yanıt vermemiştir (yoğun): geçicidir, düşülmez.
+        if (zengin && !karsilandi && !zamanAsimi && (ret === null || ret === "yetkisiz")) {
+          const seyrek = zenginTanindi || bosDusus >= 2;
+          if (!seyrek || cagriBekliyor || atlananDusus >= SEYREK_DUSUS_DONGU - 1) {
+            atlananDusus = 0;
+            dusus = ret ?? "yanitsiz";
+            hemenYeniden = true;
+            // Engel zengin alanında olabilir, bağlantıda değil: düz denemenin sonucu belirler.
+            sonEngel = null;
+          } else {
+            // Ret alandan değil (gerçek ret): düz deneme aynı reddi yineler, arka planda atlanır.
+            atlananDusus += 1;
+          }
+        } else if (duzNedeni !== null && !karsilandi && ret !== null) {
+          // Düşüşün düz hello'su da reddedildi: ret alandan değil.
+          bosDusus += 1;
         }
         coz(karsilandi);
       });
@@ -364,26 +454,28 @@ function boruIstemciKur(
             sonEngel = null;
           }
         }
+        if (karsilandi) gecikme = ILK_GECIKME_MS;
         if (hemenYeniden && !durdu && kaliciHata === null) {
-          // Tek seferlik düz deneme (`helloEki`); düz hello bunu yeniden kuramaz. Deneme sürüyor sayılır:
-          // bekleyen çağrı (`denemeBekle`) zengin hello'nun retini değil, düz denemenin sonucunu görür.
+          // Tek seferlik düz deneme (`helloEki`) ya da zengin hello yoklaması; düz hello bunu yeniden kuramaz,
+          // yoklama bağlantı başına birdir. Deneme sürüyor sayılır: bekleyen çağrı (`denemeBekle`) zengin
+          // hello'nun retini değil, sıradaki denemenin sonucunu görür.
           hemenYeniden = false;
           continue;
         }
         hemenYeniden = false;
         denemede = false;
+        cagriBekliyor = false;
         denemeBitti();
         if (durdu || kaliciHata !== null) break;
-        if (karsilandi) {
-          gunluk.uyari(MODUL, "boru_koptu");
-          gecikme = ILK_GECIKME_MS;
-        }
+        if (karsilandi) gunluk.uyari(MODUL, "boru_koptu");
         await aralikBekle(gecikme);
         gecikme = Math.min(gecikme * 2, AZAMI_GECIKME_MS);
       }
     },
 
     uyandir: () => {
+      // Çağrı bağlantı bekliyor: bu döngü (süren ya da sıradaki) gerekirse düz hello'ya da düşer.
+      if (hazir === null) cagriBekliyor = true;
       uyandirici?.();
     },
 

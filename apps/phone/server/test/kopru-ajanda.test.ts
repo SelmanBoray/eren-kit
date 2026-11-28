@@ -884,10 +884,10 @@ describe("kopru PC köprüsü: uyarlayıcı (--uyarlayici)", () => {
 
 /**
  * Yeni köprü hello'da harness sürecini bildirir (`surec_id`, `giris`'te `process.ppid`; T5). Sürüm farkının iki
- * yönü sınanır. Eski servis (bu değişiklikten hemen önceki sürüm, 55948ea) burada satır düzeyinde temsil edilir:
- * yukarı çözücüsü 55948ea'nın şemasıdır (`EskiHello` = `git show 55948ea:apps/phone/protocol/src/ajanda-arac.ts`'teki
+ * yönü sınanır. Eski servis (kullanıcılarda kurulu sürüm, 5c6759f) burada satır düzeyinde temsil edilir:
+ * yukarı çözücüsü 5c6759f'nin şemasıdır (`EskiHello` = `git show 5c6759f:apps/phone/protocol/src/ajanda-arac.ts`'teki
  * `AjandaKopruHello`, bugünkü yapı taşlarıyla; istek ve iptal şemaları o zamandan beri değişmedi) ve hello reddi
- * 55948ea `ajanda-kopru-sunucu.ts` `helloIsle`'ninkidir: şemadan geçmeyen hello → `kopru_ret{yetkisiz}` yazıp hemen
+ * 5c6759f `ajanda-kopru-sunucu.ts` `helloIsle`'ninkidir: şemadan geçmeyen hello → `kopru_ret{yetkisiz}` yazıp hemen
  * kapatır (`reddet`; adlı boruda ret satırı kapanışla birlikte düşebilir, ölçüldü: yaz + destroy yarı yarıya teslim).
  * Son test bu iki olguyu git'ten okuyarak denetler. Kanıtlanan: köprü zengin hello'nun reddinde BİR KEZ düz hello'ya
  * düşer ve eski serviste çalışır; gerçek bir retle (düz hello da reddedilir) döngü sıkışmaz; yeni alan hello dışında
@@ -898,7 +898,7 @@ describe("kopru PC köprüsü: zengin hello (surec_id) ve sürüm uyumu", () => 
   const SUREC = "3060";
   const OTURUM_PC = "3f1c2a9e-7b4d-4c1a-9e2f-0a1b2c3d4e5f";
   const PC_LISTE = { cikti: LISTE_CIKTI, karar: "insan" };
-  /** 55948ea'nın hello şeması (rol + jeton, katı); istek ve iptal bugünküyle aynı. */
+  /** 5c6759f'nin hello şeması (rol + jeton, katı); istek ve iptal bugünküyle aynı. */
   const EskiHello = mesaj("kopru_hello", { rol: AjandaKopruRolu, jeton: Jeton });
   const EskiYukari = z.discriminatedUnion("type", [EskiHello, AjandaKopruIstek, KopruIptal]);
   const eskiCoz = (s: string) => cozumle(EskiYukari, s, AJANDA_AZAMI_CERCEVE.BORU, PROTOKOL_SURUMU);
@@ -907,14 +907,33 @@ describe("kopru PC köprüsü: zengin hello (surec_id) ve sürüm uyumu", () => 
   type Olay = { hello: "zengin" | "duz" } | { bekle: number };
 
   /**
-   * Satır düzeyinde PC servisi. `eski`: 55948ea şeması (zengin hello'yu reddeder); `retDuser`: ret satırı
+   * Satır düzeyinde PC servisi. `eski`: 5c6759f şeması (zengin hello'yu reddeder); `retDuser`: ret satırı
    * kapanışla düşer (yalnız kapanış görünür); `hepsiniReddet`: her hello'ya bu kodla ret (gerçek ret).
+   * Geçici hatalar: `yanitsiz` ilk bu kadar hello yanıtsız kapanır (servis kapanırken); `asili` ilk bu kadar hello
+   * hiç yanıt almaz (servis yoğun). `red`: geçerli hello'ya o anki ret kodu (`null`: kabul). `istekTut`: yanıtlar
+   * `s.tutulan`'da bekler.
    */
-  const pcServisi = (sec: { eski: boolean; retDuser?: boolean; hepsiniReddet?: string }) => {
-    const s = { olaylar: [] as Olay[], hamHellolar: [] as string[], hamIstekler: [] as string[], baglantiSayisi: 0, kapat: (): void => {} };
+  const pcServisi = (sec: {
+    eski: boolean;
+    retDuser?: boolean;
+    hepsiniReddet?: string;
+    yanitsiz?: number;
+    asili?: number;
+    red?: () => string | null;
+    istekTut?: boolean;
+  }) => {
+    const s = {
+      olaylar: [] as Olay[],
+      hamHellolar: [] as string[],
+      hamIstekler: [] as string[],
+      baglantiSayisi: 0,
+      kapat: (): void => {},
+      tutulan: [] as Array<() => void>,
+    };
     const baglan = async (ad: string): Promise<BoruBaglantisi> => {
       assert.equal(ad, AJANDA_BORU_ADI);
       s.baglantiSayisi += 1;
+      const sira = s.baglantiSayisi;
       const satirlar: Array<(x: string) => void> = [];
       const kapanislar: Array<() => void> = [];
       let kapandi = false;
@@ -939,8 +958,10 @@ describe("kopru PC köprüsü: zengin hello (surec_id) ve sürüm uyumu", () => 
             if (!karsilandi) {
               s.hamHellolar.push(x);
               s.olaylar.push({ hello: "surec_id" in ham ? "zengin" : "duz" });
+              if (sira <= (sec.asili ?? 0)) return;
+              if (sira <= (sec.yanitsiz ?? 0)) return kapat();
               const c = sec.eski ? eskiCoz(x) : ajandaKopruYukariCoz(x);
-              const red = !c.ok || c.mesaj.type !== "kopru_hello" ? "yetkisiz" : (sec.hepsiniReddet ?? null);
+              const red = !c.ok || c.mesaj.type !== "kopru_hello" ? "yetkisiz" : (sec.red?.() ?? sec.hepsiniReddet ?? null);
               if (red !== null) {
                 if (sec.retDuser !== true) yolla({ type: "kopru_ret", code: red });
                 kapat();
@@ -953,7 +974,11 @@ describe("kopru PC köprüsü: zengin hello (surec_id) ve sürüm uyumu", () => 
             s.hamIstekler.push(x);
             const c = sec.eski ? eskiCoz(x) : ajandaKopruYukariCoz(x);
             if (!c.ok) return kapat();
-            if (c.mesaj.type === "istek") yolla({ type: "yanit", istek_id: c.mesaj.istek_id, ok: true, sonuc: PC_LISTE });
+            if (c.mesaj.type !== "istek") return;
+            const { istek_id } = c.mesaj;
+            const yanitla = (): void => yolla({ type: "yanit", istek_id, ok: true, sonuc: PC_LISTE });
+            if (sec.istekTut === true) s.tutulan.push(yanitla);
+            else yanitla();
           });
         },
         kapat,
@@ -965,7 +990,13 @@ describe("kopru PC köprüsü: zengin hello (surec_id) ve sürüm uyumu", () => 
   };
 
   /** Gerçek PC köprüsü (`pc_oturumu`), anahtar bellekten; `surecId` verilirse yeni köprü (hello'da süreç). */
-  async function pcKopruAc(baglan: (ad: string) => Promise<BoruBaglantisi>, olaylar: Olay[], surecId?: string, uyarlayici?: PcKopruUyarlayicisi) {
+  async function pcKopruAc(
+    baglan: (ad: string) => Promise<BoruBaglantisi>,
+    olaylar: Olay[],
+    surecId?: string,
+    uyarlayici?: PcKopruUyarlayicisi,
+    ek: { gunluk?: ReturnType<typeof sahteGunluk>; zamanla?: (ms: number, f: () => void) => () => void } = {},
+  ) {
     const [mcpKopru, mcpIstemci] = InMemoryTransport.createLinkedPair();
     const calisan = await ajandaKopruCalistir(
       { rol: "pc_oturumu", jeton: "", boruAdi: AJANDA_BORU_ADI, jetonOku: () => PC_JETON, oturumId: OTURUM_PC },
@@ -973,11 +1004,12 @@ describe("kopru PC köprüsü: zengin hello (surec_id) ve sürüm uyumu", () => 
         transport: mcpKopru,
         baglan,
         rastgele: sahteRastgele(),
-        gunluk: sahteGunluk(),
+        gunluk: ek.gunluk ?? sahteGunluk(),
         bekle: (ms: number) => {
           olaylar.push({ bekle: ms });
           return new Promise<void>((r) => setTimeout(r, Math.min(ms, 30)));
         },
+        ...(ek.zamanla === undefined ? {} : { zamanla: ek.zamanla }),
       },
       uyarlayici,
       surecId,
@@ -1004,7 +1036,7 @@ describe("kopru PC köprüsü: zengin hello (surec_id) ve sürüm uyumu", () => 
     olaylar.filter((o) => "hello" in o || donguBeklemesi(o)).map((o) => ("hello" in o ? o.hello : "B"));
 
   for (const retDuser of [false, true]) {
-    it(`yeni köprü → eski servis (55948ea şeması): zengin hello reddedilir, köprü beklemeden bir kez düz hello'ya düşer ve çalışır${retDuser ? " (ret satırı kapanışla düştü)" : ""}`, async () => {
+    it(`yeni köprü → eski servis (5c6759f şeması): zengin hello reddedilir, köprü beklemeden bir kez düz hello'ya düşer ve çalışır${retDuser ? " (ret satırı kapanışla düştü)" : ""}`, async () => {
       const { s, baglan } = pcServisi({ eski: true, retDuser });
       const istemci = await pcKopruAc(baglan, s.olaylar, SUREC);
       // İlk çağrı düşüş sürerken gelir: düz denemenin sonucunu bekler, "ulaşılamıyor" demez.
@@ -1069,7 +1101,7 @@ describe("kopru PC köprüsü: zengin hello (surec_id) ve sürüm uyumu", () => 
     assert.equal(u.baglantiSayisi(), 1);
     assert.equal(hamHellolar.length, 1);
     assert.equal(hamHellolar[0]!.includes("surec"), false, "süreç bildirmeyen köprü düz hello yollar");
-    assert.equal(eskiCoz(hamHellolar[0]!).ok, true, "55948ea köprüsünün hello'su ile aynı biçim");
+    assert.equal(eskiCoz(hamHellolar[0]!).ok, true, "5c6759f köprüsünün hello'su ile aynı biçim");
     assert.deepEqual(baglamlar.map((b) => ({ ...b, baglanti_id: "?" })), [{ rol: "pc_oturumu", baglanti_id: "?", arac_cagri_id: "toolu_y2", oturum_id: OTURUM_PC }]);
   });
 
@@ -1084,10 +1116,10 @@ describe("kopru PC köprüsü: zengin hello (surec_id) ve sürüm uyumu", () => 
     assert.equal("surec_id" in ana.son.gelen[0]!, false);
   });
 
-  it("temsil denetimi (git): 55948ea'nın hello şeması, AjandaPcCagri'si ve hello reddi bu testteki kopyayla aynı", (t) => {
+  it("temsil denetimi (git): 5c6759f'nin hello şeması, AjandaPcCagri'si ve hello reddi bu testteki kopyayla aynı", (t) => {
     const goster = (yol: string): string | null => {
       try {
-        return execFileSync("git", ["show", `55948ea:${yol}`], { encoding: "utf8", cwd: fileURLToPath(new URL(".", import.meta.url)), stdio: ["ignore", "pipe", "ignore"] });
+        return execFileSync("git", ["show", `5c6759f:${yol}`], { encoding: "utf8", cwd: fileURLToPath(new URL(".", import.meta.url)), stdio: ["ignore", "pipe", "ignore"] });
       } catch {
         return null;
       }
@@ -1095,7 +1127,7 @@ describe("kopru PC köprüsü: zengin hello (surec_id) ve sürüm uyumu", () => 
     const protokol = goster("apps/phone/protocol/src/ajanda-arac.ts");
     const sunucu = goster("apps/phone/server/src/ajanda-kopru-sunucu.ts");
     if (protokol === null || sunucu === null) {
-      t.skip("git ya da 55948ea yok");
+      t.skip("git ya da 5c6759f yok");
       return;
     }
     assert.ok(protokol.includes('export const AjandaKopruHello = mesaj("kopru_hello", { rol: AjandaKopruRolu, jeton: Jeton });'));
@@ -1103,8 +1135,172 @@ describe("kopru PC köprüsü: zengin hello (surec_id) ve sürüm uyumu", () => 
     assert.ok(protokol.includes('export const AjandaKopruYukari = z.discriminatedUnion("type", [AjandaKopruHello, AjandaKopruIstek, KopruIptal]);'));
     assert.ok(sunucu.includes('reddet(bag, cozum.kod === "protokol_uyumsuz" ? "protokol_uyumsuz" : "yetkisiz", "cerceve_gecersiz");'));
     assert.match(sunucu, /const reddet = [^\n]*\n[^\n]*el_sikisma_ret[^\n]*\n\s*yaz\(bag, \{ v: PROTOKOL_SURUMU, type: "kopru_ret", code \}\);\n\s*baglantiKapat\(bag\);/);
-    // Bugünkü istek şeması 55948ea'dakiyle aynı alanları taşır (cagri katı: arac_cagri_id, oturum_id).
+    // Kapalı PC rolü de `yetkisiz` döner (gerçek ret alandan ayırt edilemez; seyrek düşüş testlerinin dayanağı).
+    assert.ok(sunucu.includes('pcReddet(bag, "yetkisiz", "pc_kapali", { rol: m.rol });'));
+    // Bugünkü istek şeması 5c6759f'dekiyle aynı alanları taşır (cagri katı: arac_cagri_id, oturum_id).
     assert.deepEqual(Object.keys(AjandaPcCagri.shape).sort(), ["arac_cagri_id", "oturum_id"]);
+  });
+
+  // --- Geçici hata eski kipe düşürmez; gerçek ret gürültü üretmez -----------------------------------------
+
+  /** Elle tetiklenen zamanlayıcı (köprünün `zamanla`'sı): el sıkışma süresi ve zengin hello yoklaması. */
+  const elleZamanlayici = () => {
+    const kayitlar: Array<{ ms: number; f: () => void; bitti: boolean }> = [];
+    const acik = (ms: number) => kayitlar.filter((k) => k.ms === ms && !k.bitti);
+    return {
+      zamanla: (ms: number, f: () => void): (() => void) => {
+        const k = { ms, f, bitti: false };
+        kayitlar.push(k);
+        return () => {
+          k.bitti = true;
+        };
+      },
+      acik,
+      tetikle: (ms: number): void => {
+        const a = acik(ms);
+        assert.equal(a.length, 1, `tek açık ${ms} ms zamanlayıcısı`);
+        a[0]!.bitti = true;
+        a[0]!.f();
+      },
+    };
+  };
+  const EL_SIKISMA = 10_000;
+  const YOKLAMA = 5_000;
+  const zenginHelloSureci = (x: string): unknown => (JSON.parse(x) as Record<string, unknown>)["surec_id"];
+
+  it("geçici hata (köprünün el sıkışma süresi doldu, servis yoğun): düşüş yok; olağan bekleme, sonraki hello yine zengin", async () => {
+    const z = elleZamanlayici();
+    const g = sahteGunluk();
+    const { s, baglan } = pcServisi({ eski: false, asili: 1 });
+    const istemci = await pcKopruAc(baglan, s.olaylar, SUREC, undefined, { gunluk: g, zamanla: z.zamanla });
+    await sureyleBekle(() => s.hamHellolar.length === 1 && z.acik(EL_SIKISMA).length === 1, "asılı hello");
+    z.tetikle(EL_SIKISMA);
+    await sureyleBekle(() => s.baglantiSayisi >= 2 && g.bul("boru_baglandi").length === 1, "yeniden bağlanma");
+    assert.deepEqual(helloSirasi(s.olaylar), ["zengin", "B", "zengin"], "düz hello yok");
+    assert.equal(zenginHelloSureci(s.hamHellolar[1]!), SUREC);
+    assert.equal(g.bul("zengin_hello_desteklenmiyor").length, 0);
+    assert.ok(!hataMi(await istemci.callTool({ name: "ajanda_listele", arguments: {} })));
+  });
+
+  it("geçici hata (yanıtsız kapanış) yeni serviste: düz bağlantı boştayken bir kez kapatılıp zengin hello yeniden denenir, süreç bildirilir; yoklama yinelenmez", async () => {
+    const z = elleZamanlayici();
+    const g = sahteGunluk();
+    const { s, baglan } = pcServisi({ eski: false, yanitsiz: 1 });
+    const istemci = await pcKopruAc(baglan, s.olaylar, SUREC, undefined, { gunluk: g, zamanla: z.zamanla });
+    await sureyleBekle(() => s.baglantiSayisi === 2 && z.acik(YOKLAMA).length === 1, "belirsiz düşüş ve yoklama");
+    assert.deepEqual(helloSirasi(s.olaylar), ["zengin", "duz"]);
+    assert.deepEqual(g.bul("zengin_hello_desteklenmiyor").map((x) => x.alanlar), [{ code: "yanitsiz" }]);
+    z.tetikle(YOKLAMA);
+    await sureyleBekle(() => s.baglantiSayisi === 3 && g.bul("boru_baglandi").length === 2, "yoklama bağlantısı");
+    assert.deepEqual(helloSirasi(s.olaylar), ["zengin", "duz", "zengin"], "yoklama beklemesiz");
+    assert.equal(zenginHelloSureci(s.hamHellolar[2]!), SUREC, "yeni servis süreci bağlantı boyunca bilir");
+    assert.equal(g.bul("zengin_hello_yoklamasi").length, 1);
+    assert.equal(g.bul("boru_koptu").length, 0, "yoklama kopuş sayılmaz");
+    assert.ok(!hataMi(await istemci.callTool({ name: "ajanda_listele", arguments: {} })));
+    // Zengin bağlantıda yoklama yok; servis koparsa yine zengin.
+    assert.equal(z.acik(YOKLAMA).length, 0);
+    s.kapat();
+    await sureyleBekle(() => s.baglantiSayisi === 4 && g.bul("boru_baglandi").length === 3, "olağan yeniden bağlanma");
+    assert.deepEqual(helloSirasi(s.olaylar), ["zengin", "duz", "zengin", "B", "zengin"]);
+    assert.equal(z.acik(YOKLAMA).length, 0);
+  });
+
+  it("eski servis (ret satırı düştü): belirsiz düşüşün yoklaması tek seferlik; ikinci düz bağlantı açık kalır, döngü yok", async () => {
+    const z = elleZamanlayici();
+    const g = sahteGunluk();
+    const { s, baglan } = pcServisi({ eski: true, retDuser: true });
+    const istemci = await pcKopruAc(baglan, s.olaylar, SUREC, undefined, { gunluk: g, zamanla: z.zamanla });
+    await sureyleBekle(() => s.baglantiSayisi === 2 && z.acik(YOKLAMA).length === 1, "düşüş");
+    z.tetikle(YOKLAMA);
+    await sureyleBekle(() => s.baglantiSayisi === 4 && g.bul("boru_baglandi").length === 2, "yoklama ve yine düşüş");
+    await bosalt(20);
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal(s.baglantiSayisi, 4, "yoklama yinelenmez");
+    assert.deepEqual(helloSirasi(s.olaylar), ["zengin", "duz", "zengin", "duz"]);
+    assert.equal(z.acik(YOKLAMA).length, 0);
+    assert.equal(g.bul("zengin_hello_yoklamasi").length, 1);
+    assert.ok(!hataMi(await istemci.callTool({ name: "ajanda_listele", arguments: {} })));
+    // Servis yeniden başladı: olağan döngü (zengin, düz), yoklama yine yok.
+    s.kapat();
+    await sureyleBekle(() => s.baglantiSayisi === 6 && g.bul("boru_baglandi").length === 3, "yeniden bağlanma");
+    assert.deepEqual(helloSirasi(s.olaylar), ["zengin", "duz", "zengin", "duz", "B", "zengin", "duz"]);
+    assert.equal(z.acik(YOKLAMA).length, 0);
+  });
+
+  it("açık yetkisiz ardından geçen düz hello eski servistir: yoklanmaz", async () => {
+    const z = elleZamanlayici();
+    const g = sahteGunluk();
+    const { s, baglan } = pcServisi({ eski: true });
+    await pcKopruAc(baglan, s.olaylar, SUREC, undefined, { gunluk: g, zamanla: z.zamanla });
+    await sureyleBekle(() => g.bul("boru_baglandi").length === 1, "düşüş");
+    assert.deepEqual(g.bul("zengin_hello_desteklenmiyor").map((x) => x.alanlar), [{ code: "yetkisiz" }]);
+    assert.equal(z.acik(YOKLAMA).length, 0);
+  });
+
+  it("yoklama süren isteği kesmez: istek bitene dek ertelenir, sonra yapılır", async () => {
+    const z = elleZamanlayici();
+    const g = sahteGunluk();
+    const { s, baglan } = pcServisi({ eski: false, yanitsiz: 1, istekTut: true });
+    const istemci = await pcKopruAc(baglan, s.olaylar, SUREC, undefined, { gunluk: g, zamanla: z.zamanla });
+    await sureyleBekle(() => z.acik(YOKLAMA).length === 1, "düşüş");
+    const cagri = istemci.callTool({ name: "ajanda_listele", arguments: {} });
+    await sureyleBekle(() => s.tutulan.length === 1, "istek serviste");
+    z.tetikle(YOKLAMA);
+    await bosalt(10);
+    assert.equal(s.baglantiSayisi, 2, "süren istekte kapatılmadı");
+    assert.equal(z.acik(YOKLAMA).length, 1, "ertelendi");
+    s.tutulan[0]!();
+    assert.ok(!hataMi(await cagri));
+    z.tetikle(YOKLAMA);
+    await sureyleBekle(() => s.baglantiSayisi === 3 && g.bul("boru_baglandi").length === 2, "yoklama");
+    assert.equal(zenginHelloSureci(s.hamHellolar[2]!), SUREC);
+  });
+
+  it("gerçek ret, servis zengin hello'yu tanıyor (PC sonradan kapandı): arka planda düz deneme her 4. döngüde; yanıltıcı günlük yok; çağrı gelince tam düşüş", async () => {
+    let pcKapali = false;
+    const g = sahteGunluk();
+    const { s, baglan } = pcServisi({ eski: false, red: () => (pcKapali ? "yetkisiz" : null) });
+    const istemci = await pcKopruAc(baglan, s.olaylar, SUREC, undefined, { gunluk: g });
+    await sureyleBekle(() => g.bul("boru_baglandi").length === 1, "ilk bağlantı");
+    pcKapali = true;
+    s.kapat();
+    await sureyleBekle(() => s.baglantiSayisi >= 7, "denemeler");
+    assert.deepEqual(helloSirasi(s.olaylar).slice(0, 11), ["zengin", "B", "zengin", "B", "zengin", "B", "zengin", "B", "zengin", "duz", "B"]);
+    assert.equal(g.bul("zengin_hello_desteklenmiyor").length, 0, "yanıltıcı günlük yok");
+    assert.ok(g.bul("boru_reddedildi").every((x) => x.alanlar?.["code"] === "yetkisiz"), "ret gizlenmez");
+    // Bekleyen çağrı: o döngü düz hello'yu da dener (geri alınmış eski servis bulunur), sonra ret metni.
+    const onceki = s.hamHellolar.length;
+    const r = await istemci.callTool({ name: "ajanda_listele", arguments: {} });
+    assert.ok(hataMi(r));
+    assert.equal(metin(r).includes("ulaşılamıyor"), true, metin(r));
+    const yeni = s.olaylar.filter((o): o is { hello: "zengin" | "duz" } => "hello" in o).slice(onceki).map((o) => o.hello);
+    assert.deepEqual(yeni.slice(-2), ["zengin", "duz"], "çağrının döngüsü tam düşer");
+  });
+
+  it("gerçek ret, servis bilinmiyor (PC baştan kapalı): iki düşüşte düz de reddedilince düz deneme her 4. döngüye seyrekleşir", async () => {
+    const g = sahteGunluk();
+    const { s, baglan } = pcServisi({ eski: false, hepsiniReddet: "yetkisiz" });
+    await pcKopruAc(baglan, s.olaylar, SUREC, undefined, { gunluk: g });
+    await sureyleBekle(() => s.baglantiSayisi >= 9, "denemeler");
+    assert.deepEqual(helloSirasi(s.olaylar).slice(0, 15), [
+      "zengin", "duz", "B", "zengin", "duz", "B", "zengin", "B", "zengin", "B", "zengin", "B", "zengin", "duz", "B",
+    ]);
+    assert.equal(g.bul("zengin_hello_desteklenmiyor").length, 0);
+  });
+
+  it("geri alma: zengin hello'yu tanıyan servis eski sürüme döndü; seyrek düşüş eski servisi yine bulur (çağrısız)", async () => {
+    let eski = false;
+    const g = sahteGunluk();
+    const servis = pcServisi({ eski: false });
+    const eskiServis = pcServisi({ eski: true });
+    const baglan = (ad: string) => (eski ? eskiServis.baglan(ad) : servis.baglan(ad));
+    const olaylar: Olay[] = [];
+    await pcKopruAc(baglan, olaylar, SUREC, undefined, { gunluk: g });
+    await sureyleBekle(() => g.bul("boru_baglandi").length === 1, "yeni servis");
+    eski = true;
+    servis.s.kapat();
+    await sureyleBekle(() => g.bul("boru_baglandi").length === 2, "eski servis");
+    assert.deepEqual(eskiServis.s.olaylar.map((o) => ("hello" in o ? o.hello : "?")), ["zengin", "zengin", "zengin", "zengin", "duz"]);
   });
 
   /** Gerçek ajanda boru sunucusu (PC açık), bellek içi boru; ham yukarı satırlar ve bağlamlar kaydedilir. */
