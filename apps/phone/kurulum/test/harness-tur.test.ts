@@ -9,13 +9,16 @@ import * as giris from "../claude-code.ts";
 
 const NODE = "C:\\Program Files\\nodejs\\node.exe";
 
-test("kapalı ad listesi: yalnız claude-code; bilinmeyen ad, nesne anahtarı ve harf farkı null", () => {
-  assert.deepEqual(PC_AJAN_ADLARI, ["claude-code"]);
+test("kapalı ad listesi: claude-code ve codex; bilinmeyen ad, nesne anahtarı ve harf farkı null", () => {
+  assert.deepEqual(PC_AJAN_ADLARI, ["claude-code", "codex"]);
   const a = pcAjani("claude-code");
   assert.ok(a !== null);
   assert.equal(a.ad, "claude-code");
   assert.equal(a.gorunenAd, "Claude Code");
-  for (const ad of ["codex", "Claude-Code", "", "__proto__", "toString", "constructor"]) assert.equal(pcAjani(ad), null, ad);
+  const c = pcAjani("codex");
+  assert.ok(c !== null);
+  assert.equal(c.ad, "codex");
+  for (const ad of ["Codex", "codex-cli", "Claude-Code", "", "__proto__", "toString", "constructor"]) assert.equal(pcAjani(ad), null, ad);
 });
 
 test("uyarlayıcı bugünkü dışa verimlerin aynısıdır; kurulum/claude-code.ts bütün adları korur", async () => {

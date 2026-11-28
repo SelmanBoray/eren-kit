@@ -146,10 +146,29 @@ describe("ajanda borusu, PC rolleri: kimlik", () => {
     assert.deepEqual(cikanlar(await baglan(k, "ana_oturum", anaJeton)), [WELCOME("ana_oturum")]);
   });
 
-  it("pcKanca verilmeden başlatılan sunucu PC rollerini yetkisiz reddeder (PC öncesi davranış)", async () => {
+  it("pcKanca verilmeden başlatılan sunucu PC rollerini rol_fiil_izinsiz ile reddeder (yetkisiz değil: köprü yetkisizi katı şemanın reddi sayıp hello merdiveninden iner); neden günlükte pc_kapali", async () => {
     const k = await kur({ pcKanca: null });
     k.depo.ajandaPcAnahtariYaz(ozetle(PC_JETON), 1);
-    for (const rol of ["pc_oturumu", "pc_kanca"]) assert.deepEqual(cikanlar(await baglan(k, rol)), [RET("yetkisiz")], rol);
+    for (const rol of ["pc_oturumu", "pc_kanca"]) {
+      const b = await baglan(k, rol);
+      assert.deepEqual(cikanlar(b), [RET("rol_fiil_izinsiz")], rol);
+      // PC reddi gibi kapanış köprüye bırakılır (ret satırı düşmesin); en geç 2 sn sonra servis kapatır.
+      assert.equal(b.kapandi, false, rol);
+    }
+    // Zengin hello da (bugünkü köprü) aynı kodu alır: alanla ilgili değildir.
+    const zengin = k.boru.baglan(AJANDA_BORU_ADI);
+    gonder(zengin, { ...hello("pc_oturumu", PC_JETON), surec_id: "3060", arac_v3: true, uyarlayici: "codex" });
+    await bosalt();
+    assert.deepEqual(cikanlar(zengin), [RET("rol_fiil_izinsiz")]);
+    assert.deepEqual(
+      k.gunluk.bul("el_sikisma_ret").map((g) => g.alanlar),
+      ["pc_oturumu", "pc_kanca", "pc_oturumu"].map((rol) => ({ code: "rol_fiil_izinsiz", neden: "pc_kapali", rol })),
+    );
+    // Şemadan geçmeyen hello yine yetkisiz (katı şemanın reddi; köprünün indiği tek ret).
+    const bozuk = k.boru.baglan(AJANDA_BORU_ADI);
+    gonder(bozuk, { ...hello("pc_oturumu", PC_JETON), bilinmeyen: true });
+    await bosalt();
+    assert.deepEqual(cikanlar(bozuk), [RET("yetkisiz")]);
   });
 
   it("aynı anahtarla çok bağlantı açılır (çok oturum), sayısı sınırlıdır; sınırda geçici ret", async () => {
@@ -441,7 +460,7 @@ describe("ajanda borusu, PC: T5 süreç eşitliği ve kilit yok (gerçek defter,
      * Köprü bağlantısı: `tur` yeni ise hello `surec_id: ebeveyn` taşır. `kopar`: uzak uç kapandı; sunucunun
      * `kapat`'ı yalnız işaretler (geri yansıtmaz).
      */
-    const kopru = async (tur: Tur, ebeveyn: string, jeton = PC_JETON) => {
+    const kopru = async (tur: Tur, ebeveyn: string, jeton = PC_JETON, ek: Record<string, unknown> = {}) => {
       const satirlar: Array<(s: string) => void> = [];
       const kapanislar: Array<() => void> = [];
       const yazilanlar: string[] = [];
@@ -468,7 +487,7 @@ describe("ajanda borusu, PC: T5 süreç eşitliği ve kilit yok (gerçek defter,
           assert.ok(c.ok, s);
           return c.mesaj;
         });
-      gonderHam(JSON.stringify({ ...hello("pc_oturumu", jeton), ...(tur === "yeni" ? { surec_id: ebeveyn } : {}) }));
+      gonderHam(JSON.stringify({ ...hello("pc_oturumu", jeton), ...(tur === "yeni" ? { surec_id: ebeveyn } : {}), ...ek }));
       await bosalt();
       assert.deepEqual(cik(), [WELCOME("pc_oturumu")]);
       const el = gunluk.girdiler.filter((g) => g.olay === "el_sikisma" && g.alanlar?.["rol"] === "pc_oturumu").at(-1);
@@ -528,6 +547,38 @@ describe("ajanda borusu, PC: T5 süreç eşitliği ve kilit yok (gerçek defter,
     gonder(bozuk, { ...hello("pc_oturumu", PC_JETON), surec_id: "12 34" });
     await bosalt();
     assert.deepEqual(cikanlar(bozuk), [RET("yetkisiz")]);
+  });
+
+  it("hello'nun uyarlayici'si bağlantıya yazılır, her isteğin bağlamına geçer; kapalı listede olmayan değer bağlantıyı düşürmez, bağlama ve günlüğe girmez; tur kararını değiştirmez", async () => {
+    const k = await defterli();
+    const adlar = [undefined, "claude-code", "codex", "gemini-cli", ""] as const;
+    const kararlar: string[] = [];
+    for (const [i, ad] of adlar.entries()) {
+      const u = await k.kopru("yeni", P, PC_JETON, ad === undefined ? {} : { uyarlayici: ad });
+      // Aynı tasdik her köprüde aynı kararı verir: alan karara girmez (Codex'i taslakta tutan, köprünün çağrı kimliğini okumamasıdır).
+      kararlar.push(await k.cagri(u, await k.tasdik(A1, P), A1));
+      kararlar.push(await k.cagri(u, `toolu_yok${i}`, A1));
+    }
+    assert.deepEqual(kararlar, adlar.flatMap(() => ["insan", "tasdik_yok"]));
+    const pcBaglamlari = k.baglamlar.filter((b) => b.rol === "pc_oturumu");
+    assert.deepEqual(
+      pcBaglamlari.map((b) => ("uyarlayici" in b ? b.uyarlayici : "(yok)")),
+      ["(yok)", "(yok)", "claude-code", "claude-code", "codex", "codex", "(yok)", "(yok)", "(yok)", "(yok)"],
+    );
+    assert.equal(JSON.stringify(k.gunluk.girdiler).includes("gemini"), false, "bilinmeyen değer günlükte");
+    // Uzun ya da dizge olmayan değer şemadan geçmez (yetkisiz: köprü bir basamak iner); öbür roller taşıyamaz.
+    for (const kotu of ["a".repeat(65), 1, null]) {
+      const b = k.boru.baglan(AJANDA_BORU_ADI);
+      gonder(b, { ...hello("pc_oturumu", PC_JETON), uyarlayici: kotu });
+      await bosalt();
+      assert.deepEqual(cikanlar(b), [RET("yetkisiz")], String(kotu));
+    }
+    for (const [rol, jeton] of [["pc_kanca", PC_JETON], ["ana_oturum", k.sunucu.jetonUret(KAPSAM)]] as const) {
+      const b = k.boru.baglan(AJANDA_BORU_ADI);
+      gonder(b, { ...hello(rol, jeton), uyarlayici: "codex" });
+      await bosalt();
+      assert.deepEqual(cikanlar(b), [RET("yetkisiz")], rol);
+    }
   });
 
   for (const tur of TURLER) {
