@@ -95,8 +95,6 @@ class TarihsizDenetleyici(private val c: CekirdekYuzu) {
                 zaman = (k.zaman as? AjandaZamani.Belirsiz)?.let { "“${it.ifade}”" } ?: ilkSatir(k.aciklama),
                 hal = KayitKurucu.hal(k.durum, k.taslak), gecti = false, ornekTarihi = null, gonderim = gonderim,
                 durumMetni = KayitKurucu.durumMetni(k.durum), iptal = k.durum == KayitDurumu.IPTAL,
-                // v3 BAĞLANTI NOKTASI: `bolge = k.bolge?.ad`.
-                bolge = null,
             ).let { if (it.tekrar && it.ornekTarihi == null) it.copy(tamamlanabilir = false) else it }
         }
         return TarihsizModeli(

@@ -55,7 +55,8 @@ class CizimBaglamaTest {
     fun kayitSimgesiOneridenOnceGelir() {
         // v3: kaydın simge alanı verilince başlık önerisi yok sayılır.
         assertEquals("araba", Gorunus.cizim("araba", "Kahve molası"))
-        assertEquals("araba", Gorunus.cizim(" ARABA ", "Kahve molası"))
+        // Biçim dışı simge (sözleşme deseni dışı: büyük harf, boşluk) öneriye düşmez, genel çizer (v3 okuma).
+        assertEquals("genel", Gorunus.cizim(" ARABA ", "Kahve molası"))
         // Bilinmeyen simge (yeni sürümden) genel çizer, öneriye düşmez.
         assertEquals("genel", Gorunus.cizim("uzay_gemisi", "Kahve molası"))
         // Boş simge "yok" sayılır: öneri çalışır.

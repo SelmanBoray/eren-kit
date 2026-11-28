@@ -44,6 +44,13 @@ data class BugunKaydi(
     val aciklama: String = baslik,
     /** [LevhaHali.BITTI] ama tamamlanmadı, iptal edildi (PC'den): biten hap'ında ayrı durum; geri alma iptale döner. */
     val iptal: Boolean = false,
+    /** v3 `ekler` sayısı (yalnız işaret; fotoğrafın kendisi sonraki dilimde). */
+    val ekSayisi: Int = 0,
+    /**
+     * Ertelenen v3 değişikliği var (`KayitGorunumu.ertelenen`): eski servise bağlıyken yapılan değişiklik
+     * telefonda bekliyor, servis güncellenince eşitlenecek.
+     */
+    val ertelenen: Boolean = false,
 )
 
 /**
@@ -191,17 +198,37 @@ object Gorunus {
         return LevhaRengi.entries[Math.floorMod(h, LevhaRengi.entries.size)]
     }
 
+    /** Sözleşmedeki simge deseni (`AjandaSimge`). */
+    private val SIMGE_DESENI = Regex("^[a-z][a-z0-9_]{0,31}$")
+
     /**
-     * Kaydın çizim anahtarı. Sıra: kaydın kendi [simge]'si (sözleşme v3; bilinmeyen anahtar `genel`),
-     * yoksa başlıktan öneri ([CizimOnerisi.oner]), o da yoksa `genel`.
-     *
-     * v3 BAĞLANTI NOKTASI: kaydın simge alanı geldiğinde tek değişiklik `BugunDenetleyici.kaydet` içindeki
-     * `simge = null` satırıdır (`simge = k.simge`). Öneri o zaman yalnız simgesi boş kayıtlarda çalışır.
+     * Kaydın çizim anahtarı. Sıra: kaydın kendi [simge]'si (sözleşme v3 `simge`), yoksa başlıktan öneri
+     * ([CizimOnerisi.oner]), o da yoksa `genel`. Simge varsa öneri hiç çalışmaz: biçim dışı simge (desene
+     * uymayan, ör. büyük harf ya da boşluklu) ve takımda olmayan simge (yeni sürümden) `genel` çizer.
+     * Boş ya da yalnız boşluk simge "yok" sayılır (çekirdek böylesini zaten taşımaz).
      */
     fun cizim(simge: String?, baslik: String): String {
-        val s = simge?.trim()
-        if (!s.isNullOrEmpty()) return cizimAnahtari(s)
+        if (simge != null && simge.isNotBlank()) {
+            return if (SIMGE_DESENI.matches(simge)) cizimAnahtari(simge) else CizimOnerisi.GENEL
+        }
         return cizimAnahtari(CizimOnerisi.oner(baslik) ?: CizimOnerisi.GENEL)
+    }
+
+    /** Levha ya da satırdaki ek işareti: "2 fotoğraf". */
+    fun ekIsareti(n: Int): String? = if (n > 0) "$n fotoğraf" else null
+
+    /** Ertelenen değişikliğin levhadaki kısa işareti; ekran okuyucu uzun hâlini okur ([isaretOkunusu]). */
+    const val ERTELENEN_ISARETI = "eşitlenecek"
+    const val ERTELENEN_OKUNUSU = "PC'deki servis güncellenince eşitlenecek"
+
+    /**
+     * Levhanın ya da satırın alt satırı: zaman (bölgeli kayıtta "@ ⟨ad⟩" dahil), sonra küçük işaretler
+     * ("13:00 @ İş yeri · 2 fotoğraf · eşitlenecek"). İşaret yoksa zaman olduğu gibi kalır.
+     */
+    fun altSatir(zaman: String?, ekSayisi: Int, ertelenen: Boolean): String? {
+        val isaretler = listOfNotNull(ekIsareti(ekSayisi), ERTELENEN_ISARETI.takeIf { ertelenen })
+        if (isaretler.isEmpty()) return zaman
+        return (listOfNotNull(zaman) + isaretler).joinToString(" · ")
     }
 
     /** Anahtarın varsayılan takımı (kayıtta renk seçimi yok); komşu kuralı sonra uygulanır ([KomsuRenk]). */
@@ -219,7 +246,9 @@ object Gorunus {
         if (k.gecti) append(", saati geçti")
         if (k.tekrar) append(", tekrarlıyor")
         if (k.asistan) append(", asistan ekledi")
+        if (k.ekSayisi > 0) append(", ").append(k.ekSayisi).append(" fotoğraf eki")
         k.bekleyen?.let { append(", ").append(it) }
+        if (k.ertelenen) append(", ").append(ERTELENEN_OKUNUSU)
     }
 }
 

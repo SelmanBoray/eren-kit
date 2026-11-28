@@ -207,6 +207,44 @@ class CizimOnerisiTest {
         hepsi(null, "Saçsız", "Dişsiz")
     }
 
+    // --- G9: adlar ve ek kuralının yanlış eşleşmeleri ---
+
+    @Test fun adlarAsiVeHaliyeDusmez() {
+        // "Asım'ı": kesmeden önceki kök "asım", aşı değil. "Asiye", "Halim", "Halime": düz yazılmış ı ekle eşleşmez.
+        hepsi(null, "Asım'ı ara", "Asiye", "Halim", "Halime", "Asiye'yi ara", "Halime'ye uğra", "ASIYE")
+        // Doğruları yerinde: yalın düz yazım, gerçek ı ile ekli biçim, kesmeli kısaltma.
+        hepsi("doktor", "asi", "Aşıya git", "aşısı", "Grip aşısı")
+        hepsi("temizlik", "hali", "Halıyı yıkat", "HALIM")
+    }
+
+    @Test fun dizimDizDirDoktorKazanir() {
+        hepsi("doktor", "Dizim ağrıyor, doktora git")
+        hepsi("eglence", "Dizi izle", "Diziyi bitir", "dizileri")
+    }
+
+    @Test fun tarifeVeKonserveTuzagi() {
+        hepsi("telefon", "Telefon tarifesi")
+        hepsi(null, "Tarife değişikliği", "Konserve al", "konserveler")
+        hepsi("yemek", "Tarifi dene", "Kek tarifi")
+        hepsi("eglence", "Konser bileti", "Konsere git")
+    }
+
+    @Test fun kesmeKokuAyirirYSiYalnizUnludenSonra() {
+        hepsi("seyahat", "Romanya'ya bilet", "Romanya bileti")
+        hepsi(null, "Romanya")
+        hepsi("kitap", "Romanı bitir", "Romana başla", "Roman'ı")
+        // Kesmeli kısaltma ünlü uyumuna bakılmadan ek alır.
+        hepsi("mektup", "PTT'ye git")
+        hepsi("banka", "ATM'ye uğra", "IBAN'ı gönder")
+    }
+
+    @Test fun unluUyumu() {
+        // Kalın kök + ince ek (ya da tersi) ad çekimi değildir.
+        hepsi(null, "Kirene", "Kurse")
+        hepsi("fatura", "Kirayı öde", "Kiraya ver")
+        hepsi("ev", "Eve git", "Evdeki işler")
+    }
+
     // --- öncelik ---
 
     @Test fun oncelikIlkGecenKazanir() {

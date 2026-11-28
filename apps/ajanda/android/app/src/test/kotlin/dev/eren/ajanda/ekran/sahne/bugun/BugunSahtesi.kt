@@ -39,6 +39,7 @@ class BugunCekirdegi(val sahte: SahteYuz = SahteYuz()) : CekirdekYuzu by sahte {
     var eslesme: EslesmeDurumu = EslesmeDurumu.Eslesti("d_test", "100.64.0.1", 8765)
     var asama: BaglantiAsamasi = BaglantiAsamasi.CANLI
     var kuyrukta = 0
+    var ertelenenIslem = 0
     /** Tekrar örneği gibi: kayıt kimliği -> örnek tarihi (takvimGunu'nde öğeye yazılır). */
     val ornekTarihleri = mutableMapOf<String, String>()
     val cagrilar get() = sahte.cagrilar
@@ -59,7 +60,7 @@ class BugunCekirdegi(val sahte: SahteYuz = SahteYuz()) : CekirdekYuzu by sahte {
 
     override fun eslesmeDurumu(): EslesmeDurumu = eslesme
     override fun baglantiAdresi(): String? = if (eslesme is EslesmeDurumu.Yok) null else "ws://100.64.0.1:8765"
-    override fun baglantiDurumu(): BaglantiDurumu = BaglantiDurumu(asama, kuyrukta, sahte.ret.size, SIMDI.toInstant().toEpochMilli() - 120_000, null, null)
+    override fun baglantiDurumu(): BaglantiDurumu = BaglantiDurumu(asama, kuyrukta, sahte.ret.size, SIMDI.toInstant().toEpochMilli() - 120_000, null, null, ertelenenIslem = ertelenenIslem)
 
     override fun takvimGunu(tarih: String, kapalilarDahil: Boolean): List<TakvimOgesi> {
         sahte.cagrilar += "takvimGunu:$tarih"
@@ -79,7 +80,7 @@ class BugunCekirdegi(val sahte: SahteYuz = SahteYuz()) : CekirdekYuzu by sahte {
             }
             if (t < konum.ilkGun || t > sonGun) return@mapNotNull null
             TakvimOgesi(
-                gorunum = gor(k),
+                gorunum = gor(k, ertelenen = k.kayitId in sahte.ertelenenler),
                 ornekTarihi = ornekTarihleri[k.kayitId],
                 durum = k.durum,
                 ilkGun = konum.ilkGun.toString(),

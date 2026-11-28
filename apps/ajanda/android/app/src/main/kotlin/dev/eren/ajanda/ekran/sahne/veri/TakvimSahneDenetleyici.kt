@@ -228,7 +228,7 @@ class TakvimSahneDenetleyici(private val c: CekirdekYuzu, private val saat: () -
                     o.gorunum.kayit.taslak -> Takvim.Nokta.TASLAK
                     else -> Takvim.Nokta.ACIK
                 }
-                TakvimNoktasi(Gorunus.renkAnahtardan(Gorunus.cizim(null, o.gorunum.kayit.baslik)), tur)
+                TakvimNoktasi(Gorunus.renkAnahtardan(Gorunus.cizim(o.gorunum.kayit.v3.simge, o.gorunum.kayit.baslik)), tur)
             }
         } else {
             val i = Takvim.isaretler(ozet)
@@ -262,8 +262,6 @@ class TakvimSahneDenetleyici(private val c: CekirdekYuzu, private val saat: () -
             gonderim = gonderim,
             durumMetni = KayitKurucu.durumMetni(o.durum),
             iptal = o.durum == KayitDurumu.IPTAL,
-            // v3 BAĞLANTI NOKTASI: `bolge = k.bolge?.ad` (bölgeli kayıtta yalnız "@ ⟨ad⟩" etiketi).
-            bolge = null,
         )
         // Tekrarlı kaydın örnek tarihi yoksa (olmamalı: takvim örnekleri tarihli) seri korunur.
         return if (kayit.tekrar && kayit.ornekTarihi == null) kayit.copy(tamamlanabilir = false) else kayit

@@ -18,8 +18,12 @@ import dev.eren.ajanda.ekran.Liste
 internal object KayitKurucu {
 
     /**
-     * Çekirdek görünümünden ekran kaydı. [zaman] ekranın zaman metni (günü kendisi seçer). [bolge]: v3 BAĞLANTI
-     * NOKTASI: kaydın bölge alanı gelince yalnız adı verilir; zaman satırına "@ ⟨ad⟩" olarak eklenir (YOL-HARITASI 4.3).
+     * Çekirdek görünümünden ekran kaydı. [zaman] ekranın zaman metni (günü kendisi seçer).
+     *
+     * v3 alanları yalnız okunur (sözleşme v3; yazan yol yok): çizim kaydın `simge`'sinden ([Gorunus.cizim]),
+     * bölgeli kayıtta zaman satırına yalnız "@ ⟨ad⟩" (YOL-HARITASI 4.3; konum hiç gösterilmez), ek varsa ve
+     * değişiklik eski servis yüzünden ertelendiyse ([KayitGorunumu.ertelenen]) satırın sonunda küçük işaret
+     * ([Gorunus.altSatir]).
      */
     fun kur(
         g: KayitGorunumu,
@@ -31,18 +35,18 @@ internal object KayitKurucu {
         gonderim: Liste.Gonderim,
         durumMetni: String?,
         iptal: Boolean = false,
-        bolge: String? = null,
     ): BugunKaydi {
         val k = g.kayit
+        val v3 = k.v3
         val bekleyen = gonderim.okunus.takeIf { g.bekleyen }
-        // v3 BAĞLANTI NOKTASI: kaydın simge alanı gelince `simge = k.simge` olur; öneriden önce gelir.
-        val cizim = Gorunus.cizim(simge = null, baslik = k.baslik)
-        val zamanSatiri = bolgeli(zaman, bolge)
+        val cizim = Gorunus.cizim(simge = v3.simge, baslik = k.baslik)
+        val zamanSatiri = bolgeli(zaman, v3.bolge)
+        val ekSayisi = v3.ekler.size
         val ham = BugunKaydi(
             anahtar = anahtar,
             kayitId = k.kayitId,
             baslik = k.baslik,
-            zaman = zamanSatiri,
+            zaman = Gorunus.altSatir(zamanSatiri, ekSayisi, g.ertelenen),
             renk = Gorunus.renkAnahtardan(cizim),
             cizim = cizim,
             hal = hal,
@@ -53,6 +57,8 @@ internal object KayitKurucu {
             tekrar = k.tekrar != null,
             asistan = Liste.otomatikMi(k.kaynak),
             iptal = iptal,
+            ekSayisi = ekSayisi,
+            ertelenen = g.ertelenen,
         )
         val aciklama = buildString {
             append(k.baslik)

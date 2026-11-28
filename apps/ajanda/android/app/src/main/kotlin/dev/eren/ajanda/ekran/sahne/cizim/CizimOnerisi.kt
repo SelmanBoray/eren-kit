@@ -13,6 +13,13 @@ package dev.eren.ajanda.ekran.sahne.cizim
  * - Kısa ya da başka sözcüğün başı olan sözcükler "tam" kiptedir: arkasından yalnız ad çekim
  *   ekleri gelebilir ("kirayı" evet, "kiraz" hayır). Öteki sözcükler "önek" kiptedir: arkası serbesttir
  *   ("dişçiye", "markete", "temizlikçi").
+ * - Tam kipte ek, adlarla karışmasın diye sıkıdır (G9):
+ *   - Kesme işareti kökü ayırır: kesmeden önceki kısım sözcüğün kendisi olmalı ("PTT'ye" evet; "Asım'ı" aşı,
+ *     "Romanya'ya" roman değil). Kesmeden sonraki ek ünlü uyumuna bakılmadan kabul edilir (kısaltma okunuşa uyar).
+ *   - Kesme yoksa ek ünlü uyumuna uyar (kökün son ünlüsü kalınsa ekte `e`, inceyse `a` yok: "Asiye" aşı değil) ve
+ *     kaynaştırma `y`'si yalnız ünlüyle biten köke gelir ("romanya" roman+ya değil).
+ *   - Başlıkta düz yazılmış `ı` (`i`) yalnız yalın hâlde eşleşir ("hali" halı) ama ekle eşleşmez: "Halim",
+ *     "Halime" ad, halı+m değil. Önek kipinde düz `i` serbesttir ("toplantiya").
  * - Birden çok eşleşmede: önce güçlü anahtar (bağlam anahtarları `is`, `ev`, `okul`, `telefon`
  *   zayıftır), sonra başlıkta önce geçen, aynı yerden başlıyorsa daha uzun eşleşme kazanır.
  *
@@ -126,6 +133,9 @@ object CizimOnerisi {
         "taksi" to listOf("taksim"),
         "süt" to listOf("sütun"),
         "kombi" to listOf("kombine"),
+        "dizi" to listOf("dizim", "dizin"), // "Dizim ağrıyor": diz (dizi+m de olabilir ama ajandada diz çoktur)
+        "tarif" to listOf("tarife"), // "Telefon tarifesi"
+        "konser" to listOf("konserve"),
     )
 
     /** Anahtar -> anahtar sözcükleri (işaretsiz, okunur biçim). Belge ve asistan aracı açıklaması için. */
@@ -133,13 +143,14 @@ object CizimOnerisi {
         HAM.mapValues { (_, liste) -> liste.map { it.trimEnd('*', '+') } }
 
     fun oner(baslik: String): String? {
-        val sozcukler = parcala(baslik)
+        val kesmeler = ArrayList<Int>(8)
+        val sozcukler = parcala(baslik, kesmeler)
         var enIyi: Kelime? = null
         var enIyiYer = -1
         for (i in sozcukler.indices) {
             val aday = dizin[katla(sozcukler[i][0])] ?: continue
             for (k in aday) {
-                if (!eslesir(sozcukler, i, k)) continue
+                if (!eslesir(sozcukler, kesmeler, i, k)) continue
                 val e = enIyi
                 val daha = when {
                     e == null -> true
@@ -193,8 +204,11 @@ object CizimOnerisi {
     )
 
     private const val UNLU = "aeiou"
+    private const val KALIN = "aıou"
+    private const val INCE = "eiöü"
 
-    private fun eslesir(s: List<String>, i: Int, k: Kelime): Boolean {
+    /** [kesme]: sözcük başına kesme işaretinden önceki harf sayısı (kesme yoksa -1). */
+    private fun eslesir(s: List<String>, kesme: List<Int>, i: Int, k: Kelime): Boolean {
         val n = k.parcalar.size
         if (i + n > s.size) return false
         for (j in 0 until n - 1) {
@@ -207,12 +221,42 @@ object CizimOnerisi {
         if (!basiUyar(t, p)) return false
         if (k.haric.any { basiUyar(t, it) }) return false
         if (k.onek) return true
+        val kes = kesme[i + n - 1]
+        // Kesmeden önceki kök sözcüğün kendisi olmalı: "Asım'ı" aşı+mı değil, "Romanya'ya" roman+ya değil.
+        if (kes >= 0 && kes != p.length) return false
         if (t.length == p.length) return !k.yalinOlmaz
         val ek = katla(t.substring(p.length))
+        val unluyleBiter = katla(p.last()) in UNLU
         // Ünsüzle biten köke m/n/s ile başlayan ek doğrudan gelmez ("saçma" saç+ma değildir; doğrusu "saçıma").
-        // y serbest bırakıldı: kısaltmalar ünlüyle okunur ("PTT'ye", "ATM'ye").
-        if (katla(p.last()) !in UNLU && ek[0] in "mns") return false
+        if (!unluyleBiter && ek[0] in "mns") return false
+        if (kes < 0) {
+            // Kesmesiz ekte: düz yazılmış ı ("Halim", "Halime" halı değil), kaynaştırma y'si yalnız ünlüden sonra
+            // ("romanya"), ünlü uyumu ("Asiye" aşı+ye değil). Kesmeli ekte ("PTT'ye", "ATM'ye") bunlar aranmaz:
+            // kısaltma okunuşuna göre ek alır.
+            if (duzI(t, p)) return false
+            if (ek[0] == 'y' && !unluyleBiter) return false
+            if (!uyumlu(p, ek)) return false
+        }
         return EK.matches(ek)
+    }
+
+    /** Sözcükteki `ı` başlıkta düz `i` yazılmış mı (büyük `I` belirsizdir, sayılmaz). */
+    private fun duzI(t: String, p: String): Boolean {
+        for (x in p.indices) if (p[x] == 'ı' && t[x] == 'i') return true
+        return false
+    }
+
+    /**
+     * Ekin ünlüleri kökün son ünlüsüne uyuyor mu (yalnız a/e ayrımı: düz yazımda ı/i ve ö/o seçilemez).
+     * Ünlüsüz kök (kısaltma: "dr", "ptt") her eki alır.
+     */
+    private fun uyumlu(p: String, ek: String): Boolean {
+        for (x in p.indices.reversed()) {
+            val c = p[x]
+            if (c in KALIN) return 'e' !in ek
+            if (c in INCE) return 'a' !in ek
+        }
+        return true
     }
 
     /** `t` sözcüğü `p` ile başlıyor mu (başlıkta Türkçe harf düz yazılmış olabilir, tersi olamaz). */
@@ -241,10 +285,14 @@ object CizimOnerisi {
         return String(b)
     }
 
-    /** Türkçe küçük harfe çevirip harf/rakam dizilerine böler; kesme işareti sözcüğü bölmez ("kargo'yu"). */
-    private fun parcala(baslik: String): List<String> {
+    /**
+     * Türkçe küçük harfe çevirip harf/rakam dizilerine böler; kesme işareti sözcüğü bölmez ("kargo'yu") ama yeri
+     * [kesmeler]'e yazılır (sözcük başına ilk kesmeden önceki harf sayısı, yoksa -1).
+     */
+    private fun parcala(baslik: String, kesmeler: MutableList<Int>): List<String> {
         val sonuc = ArrayList<String>(8)
         val b = StringBuilder()
+        var kesme = -1
         for (c in baslik) {
             val h = when (c) {
                 'I' -> BUYUK_I
@@ -256,14 +304,21 @@ object CizimOnerisi {
             }
             when {
                 h == BUYUK_I || h.isLetterOrDigit() -> b.append(h)
-                h == '̇' || h == '\'' || h == '’' || h == '‘' || h == '`' -> Unit
+                h == '̇' -> Unit
+                h == '\'' || h == '’' || h == '‘' || h == '`' -> if (kesme < 0 && b.isNotEmpty()) kesme = b.length
                 b.isNotEmpty() -> {
                     sonuc.add(b.toString())
+                    kesmeler.add(kesme)
                     b.setLength(0)
+                    kesme = -1
                 }
+                else -> kesme = -1
             }
         }
-        if (b.isNotEmpty()) sonuc.add(b.toString())
+        if (b.isNotEmpty()) {
+            sonuc.add(b.toString())
+            kesmeler.add(kesme)
+        }
         return sonuc
     }
 }
