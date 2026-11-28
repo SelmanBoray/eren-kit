@@ -1,0 +1,12 @@
+<!-- Ajanda / Sahne çizimi "ilac". Kaynak: parca/50-ortak.js RESIM.ilac.
+     Varsayılan takım: gok (levha zemini b=#BFE3EC; çizimin kendisi zemin içermez).
+     data-rol: f=figür, l=açık ayrıntı, d=koyu ayrıntı, b=zemin rengi; renk çalışma anında takımdan gelir.
+     Karakalem ve canlanan parçalar için SAHNE.md "Çizimler" bölümüne bakın. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 160" width="240" height="160">
+  <g transform="rotate(-32 120 84)">
+    <path id="pl_1" data-rol="l" d="M82 58h76a26 26 0 0 1 26 26v0a26 26 0 0 1 -26 26h-76a26 26 0 0 1 -26 -26v-0a26 26 0 0 1 26 -26z" fill="#FFFFFF" />
+    <path id="pf_1" data-rol="f" d="M120 58h38a26 26 0 0 1 0 52h-38z" fill="#1A8494" />
+    <path id="pd_1" data-rol="d" d="M77.5 68h27a3.5 3.5 0 0 1 3.5 3.5v0a3.5 3.5 0 0 1 -3.5 3.5h-27a3.5 3.5 0 0 1 -3.5 -3.5v-0a3.5 3.5 0 0 1 3.5 -3.5z" fill="#0B3A42" fill-opacity=".16" />
+  </g>
+  <path id="pirilti_1" data-rol="f" d="M190 22h10v10h10v10h-10v10h-10V42h-10V32h10z" fill="#1A8494" />
+</svg>

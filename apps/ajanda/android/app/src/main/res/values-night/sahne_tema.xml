@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Sahne pencere teması, koyu (bkz. values/sahne_tema.xml). -->
+<resources>
+    <color name="sahne_pencere_zemini">#0E0E11</color>
+
+    <style name="SahneTema" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/sahne_pencere_zemini</item>
+        <item name="android:colorBackground">@color/sahne_pencere_zemini</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>

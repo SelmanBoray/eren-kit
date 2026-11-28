@@ -948,7 +948,9 @@ function taslakOzeti(ajan: PcAjanGorunumu, araclar: readonly TeshisOlayi[], ayri
           : ` (kayıt TASLAK doğdu: ${ajan.gorunenAd} çağrısıysa beklenen, telefondan onaylayın)`
         : ayrim
           ? sonKarar === "insan"
-            ? ` (UYARI: kayıt DOĞRUDAN, taslaksız yazıldı; ${ajan.gorunenAd} köprüsü çağrı kimliği okumaz, bu kararı üretemez)`
+            ? okumaMi(araclar.at(-1))
+              ? ` (UYARI: okuma çağrısı insan kararı aldı; ${ajan.gorunenAd} köprüsü bunu üretmez)`
+              : ` (UYARI: kayıt DOĞRUDAN, taslaksız yazıldı; ${ajan.gorunenAd} köprüsü çağrı kimliği okumaz, bu kararı üretemez)`
             : ` (beklenmeyen: ${ajan.gorunenAd} köprüsü çağrı kimliği okumaz; bu karar doğru kurulmuş bir ${ajan.gorunenAd} ` +
               "köprüsünden gelemez, köprünün kaydını denetleyin)"
           : ` (bir ${ajan.gorunenAd} çağrısının kararı değil: köprüsü çağrı kimliği göndermez, çağrıları hep cagri_kimligi_yok olur; ` +
@@ -968,16 +970,31 @@ function taslakOzeti(ajan: PcAjanGorunumu, araclar: readonly TeshisOlayi[], ayri
  * köprüsü çağrı kimliği okumaz, bu kararı üretemez: yumuşatılmadan söylenir, nereye bakılacağıyla.
  */
 function dogrudanKayitUyarisi(ajan: PcAjanGorunumu, araclar: readonly TeshisOlayi[]): string[] {
-  const sayi = araclar.filter((o) => o.alanlar["pc_karar"] === "insan").length;
-  if (sayi === 0) return [];
+  const insanlar = araclar.filter((o) => o.alanlar["pc_karar"] === "insan");
+  const sayi = insanlar.filter((o) => !okumaMi(o)).length;
+  const okuma = insanlar.length - sayi;
+  const okumaSatiri =
+    okuma === 0
+      ? []
+      : [
+          `UYARI (${ajan.gorunenAd}): ${ajan.ad} diye bildirilen ${okuma} okuma çağrısı insan kararı aldı; ${ajan.gorunenAd} köprüsü bunu üretmez.`,
+          "  Ortak ajanda anahtarını kullanan, köprü olmayan ya da değiştirilmiş bir istemci olabilir; anahtarı yenilemeyi düşünün.",
+        ];
+  if (sayi === 0) return okumaSatiri;
   return [
     `UYARI (${ajan.gorunenAd}): ${ajan.ad} diye bildirilen ${sayi} çağrı kaydı DOĞRUDAN (taslaksız) yazdı.`,
     `  Doğru kurulmuş bir ${ajan.gorunenAd} köprüsü çağrı kimliği okumaz; bu kaydı üretemez. Bu bir kurulum ayrıntısı değil, denetlenmeli:`,
-    `  - --uyarlayici ${ajan.ad} ile kaydedilmiş köprüler: ${ajan.gorunenAd} dışında bir harness'te (ör. Claude Code) bu bayrakla kayıt`,
-    `    var mı; ${ajan.gorunenAd}'nin kaydını yönergesiyle karşılaştırın (eslestir ${pcSecenegi(ajan)} --yonerge).`,
-    "  - ajanda anahtarını kullanan başka bir süreç (anahtar bütün PC ajanlarında ortaktır). Şüphe varsa anahtarı",
-    `    yenileyin (eslestir ${pcSecenegi(ajan)}) ve doğrudan yazılan kayıtları telefonda gözden geçirin.`,
+    `  - ortak ajanda anahtarını kullanan, köprü olmayan ya da değiştirilmiş bir istemci kendini ${ajan.ad} diye tanıtıyor olabilir`,
+    "    (anahtar bütün PC ajanlarında ortaktır; bu bayrakla kaydedilmiş bir köprü de çağrı kimliğini okumaz, bu kararı üretemez).",
+    `  - Anahtarı yenileyin (eslestir ${pcSecenegi(ajan)}) ve doğrudan yazılan kayıtları telefonda gözden geçirin.`,
+    ...okumaSatiri,
   ];
+}
+
+/** Okuma çağrısı: `fiil` yazan fiillerden (`ajanda_ekle`, `ajanda_guncelle`) biri değil. `fiil` alanı yoksa (eski günlük) yazma sayılır. */
+function okumaMi(o: TeshisOlayi | undefined): boolean {
+  const f = o?.alanlar["fiil"];
+  return f !== undefined && f !== "ajanda_ekle" && f !== "ajanda_guncelle";
 }
 
 /**

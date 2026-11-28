@@ -290,14 +290,25 @@ eşleşiyor (T5) ∧ `aktor = ana` ∧ `etkilesim = etkilesimli`. Diğer her şe
       - Yoklama kapattığı bağlantıyı hemen bırakır (deneme sürer). Node'da `destroy`'un `close` olayı olay döngüsünün
         kapanış evresinde gelir (gerçek adlı boruda ölçüldü: mikro görev, `nextTick` ve `setImmediate`'ten sonra).
         Eskiden bu arada gelen çağrı yok edilmiş sokete gidiyor, istek hiç yazılmadığı hâlde "belirsiz" dönüyordu;
-        şimdi yeni bağlantıyı bekler ve doğru sonucu alır (gerçek soketli test). Köprünün kendi kapattığı her bağlantı
-        (ret, geçersiz çerçeve, anahtar iptali) aynı biçimde bırakılır.
-      - Yoklama hakkı en üst basamak karşılanınca ya da döngü olağan beklemeye düşünce geri gelir. Olağan bekleme
-        yalnız bağlantı köprünün yoklaması dışında bir nedenle bittiğinde ya da hiç kurulamadığında gelir; servisin
-        yeniden başlaması (güncelleme dahil) bağlantıyı her zaman böyle bitirir. Böylece eski serviste harcanan hak,
-        servis güncellenince geri gelir: yeniden başlama anındaki tek yanıtsız kapanış bağlantıyı alt basamakta
-        bırakmaz. Döngü olmaz: her yoklama bir dış bitişle ödenir; ret satırı düşen eski serviste dış bitiş başına en
-        çok bir yoklama (iki ek bağlantı) olur. Servis kimliği ölçütü seçilmedi, çünkü eski servisler kimlik bildirmez.
+        şimdi yeni bağlantıyı bekler ve doğru sonucu alır (gerçek soketli test; çağrının kapanış aralığında geldiği
+        testte ayrıca iddia edilir). Köprünün kendi kapattığı öbür bağlantılar (ret, geçersiz çerçeve, anahtar iptali)
+        aynı biçimde bırakılır; her yol gerçek soketle sınanır. Tek istisna aşırı uzun satırdır: soketi `soketBaglantisi`
+        kendisi kapatır, bırakılmaz. O aralıkta gelen çağrı yazılmamış isteği "belirsiz" alır; bu güvenli yöndür.
+      - Anahtar iptali (isteğin `jeton_gecersiz` yanıtı) süren isteklerin yanıtlarını düşürmez. Servis iptalden önce
+        başlattığı isteği yazıp yanıtını iptal yanıtından sonra yollayabilir. Bu yüzden köprü bağlantıyı yeni isteğe
+        kapatır, süren yanıtları okumayı sürdürür, son yanıtla ya da en geç 2 sn sonra kapatır. Yanıtı gelmeyen istek her
+        engelde "belirsiz" alır, hiçbir zaman "yazılmadı" almaz: model "yazılmadı" görürse anahtar yenilenince yeniden
+        dener ve kayıt iki kez yazılır.
+      - Köprü durunca (`durdur`) bağlantı bekleyen PC çağrısı 3 sn'lik bağlantı beklemesini sürdürmez, hemen "köprü
+        kapanıyor; hiçbir şey yazılmadı" alır; yanıt MCP kapanmadan gider. Bekleme zamanlayıcıları kesilir, süreci tutmaz.
+      - Yoklama hakkı en üst basamak karşılanınca ya da dış bitişte geri gelir. Dış bitiş, karşılanmış bir bağlantının
+        köprünün yoklaması dışında bir nedenle bitmesidir; servisin yeniden başlaması (güncelleme dahil) bağlantıyı her
+        zaman böyle bitirir. Böylece eski serviste harcanan hak, servis güncellenince geri gelir: yeniden başlama anındaki
+        tek yanıtsız kapanış bağlantıyı alt basamakta bırakmaz. Yoklamanın kendi bağlantı denemeleri karşılanmadan bitip
+        olağan beklemeye düşse de hak geri gelmez. Örnek: eski servis eski bağlantının kapanışını işlemeden yoklamanın düz
+        hello'suna bağlantı sınırı (`ic_hata`) verir. Döngü olmaz: her yoklama bir dış bitişle ödenir; ret satırı düşen
+        eski serviste dış bitiş başına en çok bir yoklama (iki ek bağlantı) olur. Servis kimliği ölçütü seçilmedi,
+        çünkü eski servisler kimlik bildirmez.
         Süre ölçütü de seçilmedi: eski serviste dış olay olmadan dönemsel yeniden bağlanma üretir, güncellemeyi de geç
         fark eder.
     - Kilit koşulu (ölçülen): MCP `initialize` ilk denemenin karşılamasını en çok 3 sn bekler. Yüz süreç boyu v2'ye
