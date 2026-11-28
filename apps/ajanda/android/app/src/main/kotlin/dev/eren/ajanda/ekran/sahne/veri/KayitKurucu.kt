@@ -3,6 +3,7 @@ package dev.eren.ajanda.ekran.sahne.veri
 import dev.eren.ajanda.cekirdek.KayitDurumu
 import dev.eren.ajanda.cekirdek.KayitGorunumu
 import dev.eren.ajanda.cekirdek.KayitTuru
+import dev.eren.ajanda.cekirdek.OrnekDurumu
 import dev.eren.ajanda.ekran.CekirdekYuzu
 import dev.eren.ajanda.ekran.EkranMetinleri
 import dev.eren.ajanda.ekran.GeriAlma
@@ -107,7 +108,8 @@ internal object KayitKurucu {
 
     private fun durumuDegistir(c: CekirdekYuzu, k: BugunKaydi, tamam: Boolean, bugun: java.time.LocalDate?): IslemSonucu = yap {
         val yeni = if (tamam) KayitDurumu.TAMAM else KayitDurumu.ACIK
-        val onceki = when {
+        // Önceki durum çekirdekten (G3): ekranın kopyası bayat olabilir (bu arada PC iptal etti); okunamazsa kopyadan.
+        val onceki = cekirdektekiDurum(c, k.kayitId, k.ornekTarihi) ?: when {
             k.hal != LevhaHali.BITTI -> KayitDurumu.ACIK
             k.iptal -> KayitDurumu.IPTAL
             else -> KayitDurumu.TAMAM
@@ -138,7 +140,37 @@ internal object KayitKurucu {
         IslemSonucu("Öneriden vazgeçildi", GeriAlma.GeriYukle(id))
     }
 
-    fun geriAl(c: CekirdekYuzu, g: GeriAlma): IslemSonucu = yap {
+    /**
+     * Kaydın (tekrarda o örneğin) çekirdekteki şimdiki durumu; okunamaz ya da kayıt yoksa `null`. Örneğin satırı
+     * yoksa serinin durumu geçer (kapalı seri bütün örnekleriyle kapalı).
+     */
+    fun cekirdektekiDurum(c: CekirdekYuzu, id: String, ornekTarihi: String?): KayitDurumu? = try {
+        c.kayit(id)?.kayit?.let { k ->
+            if (ornekTarihi == null || k.durum != KayitDurumu.ACIK) {
+                k.durum
+            } else {
+                when (k.ornekler.firstOrNull { it.tarih == ornekTarihi }?.durum) {
+                    OrnekDurumu.TAMAM -> KayitDurumu.TAMAM
+                    OrnekDurumu.IPTAL -> KayitDurumu.IPTAL
+                    null -> KayitDurumu.ACIK
+                }
+            }
+        }
+    } catch (_: Exception) {
+        null
+    }
+
+    const val DEGISTI_UYARISI = "Kayıt bu arada değişti; geri alınmadı."
+
+    /**
+     * Geri alır. [beklenen] (durum işleminin bıraktığı hâl) verilmişse önce çekirdekteki şimdiki durum denetlenir:
+     * bu arada başka yerden (PC) değiştiyse geri alma uygulanmaz (G3: bayat geri alma başkasının değişikliğini ezmez).
+     */
+    fun geriAl(c: CekirdekYuzu, g: GeriAlma, beklenen: GeriAlmaBeklentisi? = null): IslemSonucu = yap {
+        if (g is GeriAlma.Durum && beklenen != null && beklenen.kayitId == g.kayitId) {
+            val simdi = cekirdektekiDurum(c, g.kayitId, g.ornekTarihi)
+            if (simdi != null && simdi != beklenen.durum) return@yap IslemSonucu(DEGISTI_UYARISI, hata = true)
+        }
         when (g) {
             is GeriAlma.Durum -> c.durumDegistir(g.kayitId, g.durum, g.ornekTarihi)
             is GeriAlma.GeriYukle -> c.geriYukle(g.kayitId)
@@ -147,9 +179,16 @@ internal object KayitKurucu {
         IslemSonucu("Geri alındı")
     }
 
+    /** Durum işleminin çekirdekte bıraktığı hâl: geri alma ancak kayıt hâlâ böyleyse uygulanır. */
+    fun beklenti(k: BugunKaydi, tamam: Boolean, s: IslemSonucu): GeriAlmaBeklentisi? =
+        if (s.geriAlma is GeriAlma.Durum) GeriAlmaBeklentisi(k.kayitId, k.ornekTarihi, if (tamam) KayitDurumu.TAMAM else KayitDurumu.ACIK) else null
+
     fun kimlik(g: GeriAlma): String = when (g) {
         is GeriAlma.Durum -> g.kayitId
         is GeriAlma.GeriYukle -> g.kayitId
         is GeriAlma.Sil -> g.kayitId
     }
 }
+
+/** Geri almanın ön koşulu: kayıt ([ornekTarihi]'nde) hâlâ [durum]'da olmalı. */
+data class GeriAlmaBeklentisi(val kayitId: String, val ornekTarihi: String?, val durum: KayitDurumu)

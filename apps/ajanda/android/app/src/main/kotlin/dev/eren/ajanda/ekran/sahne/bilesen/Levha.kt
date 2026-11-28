@@ -60,6 +60,9 @@ enum class LevhaBoyu(val oran: Float) {
     BUYUK(0.84f),
     KARE(1.2f),
     GENIS(0.52f),
+
+    /** Takvimin seçili gün şeridindeki kart (§3.2 tablo: 1 : 1.08, genişlik ekranın %64'ü). */
+    SERIT(1.08f),
 }
 
 /**
@@ -195,7 +198,7 @@ fun Levha(
             val yazi = Sahne.yazi
             val (stil, ic) = when (boy) {
                 LevhaBoyu.BUYUK -> yazi.levhaBuyuk to Modifier.padding(start = 18.dp, end = 68.dp, top = 16.dp, bottom = 16.dp)
-                LevhaBoyu.KARE -> yazi.levhaKare to Modifier.padding(14.dp)
+                LevhaBoyu.KARE, LevhaBoyu.SERIT -> yazi.levhaKare to Modifier.padding(14.dp)
                 LevhaBoyu.GENIS -> yazi.levhaGenis to Modifier.padding(start = 18.dp, end = 0.dp, top = 16.dp, bottom = 62.dp)
             }
             Column(
@@ -217,15 +220,18 @@ fun Levha(
                     Modifier
                         .align(
                             when {
+                                // Şerit kartında yazı altta: taslağın onay düğmeleri üstte (çizim kutusunun üstü boş).
+                                taslak && boy == LevhaBoyu.SERIT -> Alignment.TopStart
                                 taslak -> Alignment.BottomStart
-                                boy == LevhaBoyu.KARE -> Alignment.TopEnd
+                                boy == LevhaBoyu.KARE || boy == LevhaBoyu.SERIT -> Alignment.TopEnd
                                 else -> Alignment.BottomEnd
                             },
                         )
                         .then(
                             when {
+                                taslak && boy == LevhaBoyu.SERIT -> Modifier.padding(start = 10.dp, top = 10.dp, end = 10.dp)
                                 taslak -> Modifier.padding(start = 18.dp, bottom = 14.dp)
-                                boy == LevhaBoyu.KARE -> Modifier.padding(7.dp) // 42 dp daire, 48 dp dokunma alanı: görünür pay 10 dp
+                                boy == LevhaBoyu.KARE || boy == LevhaBoyu.SERIT -> Modifier.padding(7.dp) // 42 dp daire, 48 dp dokunma alanı: görünür pay 10 dp
                                 else -> Modifier.padding(11.dp) // 46 dp daire: görünür pay 12 dp
                             },
                         ),
@@ -336,6 +342,7 @@ private fun Modifier.figurAlani(boy: LevhaBoyu): Modifier = layout { m, c ->
         LevhaBoyu.BUYUK -> listOf(0.07f, 0.09f, 0.30f, 0.09f)
         LevhaBoyu.KARE -> listOf(0.25f, 0.06f, 0.33f, 0.06f)
         LevhaBoyu.GENIS -> listOf(0.10f, 0.03f, 0.10f, 0.50f)
+        LevhaBoyu.SERIT -> listOf(0.20f, 0.06f, 0.32f, 0.06f)
     }
     val gw = (w * (1 - sag - sol)).roundToInt().coerceAtLeast(0)
     val gh = (h * (1 - ust - alt)).roundToInt().coerceAtLeast(0)

@@ -446,16 +446,24 @@ private fun Bitenler(
 
 @Composable
 private fun BitenFazlasi(n: Int, onClick: () -> Unit) {
+    // Görünür hap 44 dp; dokunma alanı 48 dp (§3.1, G6).
     Box(
         Modifier
-            .heightIn(min = 44.dp)
+            .heightIn(min = Sahne.olcu.dokunma)
             .clip(Sahne.olcu.hap)
-            .background(Sahne.renk.yuz)
-            .clickable(role = Role.Button, onClickLabel = "Hepsini göster", onClick = onClick)
-            .padding(horizontal = 16.dp),
+            .clickable(role = Role.Button, onClickLabel = "Hepsini göster", onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Metin("ve $n iş daha", stil = Sahne.yazi.etiket.copy(fontWeight = FontWeight.SemiBold), renk = Sahne.renk.soluk)
+        Box(
+            Modifier
+                .heightIn(min = 44.dp)
+                .clip(Sahne.olcu.hap)
+                .background(Sahne.renk.yuz)
+                .padding(horizontal = 16.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Metin("ve $n iş daha", stil = Sahne.yazi.etiket.copy(fontWeight = FontWeight.SemiBold), renk = Sahne.renk.soluk)
+        }
     }
 }
 

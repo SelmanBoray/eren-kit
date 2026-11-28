@@ -79,9 +79,11 @@ class BugunDenetleyici(private val c: CekirdekYuzu, private val saat: () -> Zone
     /** Son modelde kalanlar ve yaklaşanlardaki kayıtların yeri (tamamlanınca [tutulanlar]'a geçer). */
     private var sonYerler: Map<String, Pair<String, BugunKaydi>> = emptyMap()
 
-    /** Açılış ve öne geliş: her şeyi okur. */
+    /**
+     * Açılış ve öne geliş: her şeyi okur. Listeler önceden boşaltılmaz (G5): okunamayan liste eski hâliyle kalır,
+     * hata ayrıca söylenir (kalanlar, taslaklar, yaklaşanlar ekrandan kalkmaz).
+     */
     fun hepsiniOku() {
-        listeler.clear()
         durumuOku(eslesmeDe = true)
         retiOku()
         for (s in izlenen) listeyiOku(s)
@@ -451,14 +453,7 @@ class BugunDenetleyici(private val c: CekirdekYuzu, private val saat: () -> Zone
         IslemSonucu("Gönderilemeyen değişiklik atıldı")
     }
 
-    fun geriAl(g: GeriAlma): IslemSonucu = yap {
-        when (g) {
-            is GeriAlma.Durum -> c.durumDegistir(g.kayitId, g.durum, g.ornekTarihi)
-            is GeriAlma.GeriYukle -> c.geriYukle(g.kayitId)
-            is GeriAlma.Sil -> c.sil(g.kayitId)
-        }
-        IslemSonucu("Geri alındı")
-    }
+    fun geriAl(g: GeriAlma, beklenen: GeriAlmaBeklentisi? = null): IslemSonucu = KayitKurucu.geriAl(c, g, beklenen)
 }
 
 private const val KALAN = "kalan"

@@ -18,6 +18,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsPropertyReceiver
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -108,18 +109,20 @@ fun KompaktSatir(
 
 /** Kaydın küçük resmi: takım zemini üstünde çizim (§3.4: köşe 14 dp, 5 dp iç boşluk). */
 @Composable
-fun KucukResim(renk: LevhaRengi, cizim: LevhaCizimYuvasi?, boyut: Dp, modifier: Modifier = Modifier) {
+fun KucukResim(renk: LevhaRengi, cizim: LevhaCizimYuvasi?, boyut: Dp, modifier: Modifier = Modifier, boyama: Float = 1f) {
     val takim = Sahne.levha(renk)
+    val sekil = RoundedCornerShape(boyut * 14f / 44f)
     Box(
         modifier
             .size(boyut)
-            .clip(RoundedCornerShape(boyut * 14f / 44f))
-            .background(takim.zemin)
+            .clip(sekil)
+            .background(takim.zemin.copy(alpha = takim.zemin.alpha * boyama.coerceIn(0f, 1f)))
+            .then(if (boyama < 1f) Modifier.kesikCerceve(Sahne.renk.soluk.copy(alpha = 1f - boyama), boyut.value * 14f / 44f) else Modifier)
             .padding(boyut * 5f / 44f)
             .clearAndSetSemantics {},
         contentAlignment = Alignment.Center,
     ) {
-        if (cizim != null) Box(Modifier.fillMaxSize()) { cizim(LevhaCizimi(takim, 1f, false)) }
+        if (cizim != null) Box(Modifier.fillMaxSize()) { cizim(LevhaCizimi(takim, boyama, false)) }
     }
 }
 
@@ -190,17 +193,24 @@ fun BitenHapi(
     erisim: (SemanticsPropertyReceiver.() -> Unit)? = null,
 ) {
     val takim = Sahne.levha(renk)
-    Row(
+    // Görünür hap 44 dp (§3.4); dokunma alanı en az 48 dp (§3.1): tıklama dış kutuda.
+    Box(
         modifier
-            .heightIn(min = 44.dp)
+            .heightIn(min = Sahne.olcu.dokunma)
             .clip(Sahne.olcu.hap)
-            .background(Sahne.renk.yuz)
             .clickable(role = Role.Button, onClickLabel = "Aç", onClick = onAc)
             .semantics(mergeDescendants = true) {
                 contentDescription = aciklama ?: ad
                 stateDescription = if (iptal) "iptal edildi" else "tamamlandı"
                 erisim?.invoke(this)
-            }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+    Row(
+        Modifier
+            .heightIn(min = 44.dp)
+            .clip(Sahne.olcu.hap)
+            .background(Sahne.renk.yuz)
             .padding(start = 6.dp, end = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -213,5 +223,70 @@ fun BitenHapi(
             stil = Sahne.yazi.etiket.copy(fontWeight = Agirlik.Orta550, textDecoration = TextDecoration.LineThrough),
             renk = Sahne.renk.soluk, satirSiniri = 1,
         )
+    }
+    }
+}
+
+/**
+ * Asistanın önerdiği (taslak) kaydın satırı: karakalem (SAHNE.md §3.3): boyasız, 2 dp kesikli çerçeveli; küçük
+ * resim de karakalem. Başlığın altında "Asistan önerdi, …" ve Onayla / Vazgeç. Onayda ([boyama]) satır yüzey rengine
+ * boyanır, resim boyanır, düğmeler söner ([dugmeAlfa]); vazgeçte ([cikis]) söner, küçülür, döner. Sağa çekme yok
+ * (§8.3: taslaklarda kapalı). TalkBack: tek düğüm, durum "asistan önerisi, onay bekliyor"; [erisim] ile Onayla /
+ * Vazgeç özel eylemleri.
+ */
+@Composable
+fun TaslakSatir(
+    baslik: String,
+    alt: String?,
+    renk: LevhaRengi,
+    cizim: LevhaCizimYuvasi?,
+    onAc: () -> Unit,
+    onOnayla: () -> Unit,
+    onVazgec: () -> Unit,
+    modifier: Modifier = Modifier,
+    boyama: Boyama = Boyama.KARAKALEM,
+    dugmeAlfa: Float = 1f,
+    cikis: Float = 0f,
+    kilitli: Boolean = false,
+    aciklama: String? = null,
+    erisim: (SemanticsPropertyReceiver.() -> Unit)? = null,
+) {
+    val renkler = Sahne.renk
+    val sekil = Sahne.olcu.satir
+    val boyali = boyama.daire >= 1f
+    Column(
+        modifier
+            .graphicsLayer {
+                alpha = 1f - cikis
+                scaleX = 1f - 0.3f * cikis; scaleY = scaleX
+                rotationZ = 3f * cikis
+            }
+            .fillMaxWidth()
+            .heightIn(min = 60.dp)
+            .clip(sekil)
+            .background(renkler.yuz.copy(alpha = boyama.daire.coerceIn(0f, 1f)))
+            .then(if (!boyali) Modifier.kesikCerceve(renkler.soluk.copy(alpha = 1f - boyama.daire), Sahne.olcu.satirYaricapi.value) else Modifier)
+            .clickable(enabled = !kilitli, onClickLabel = "Aç", onClick = onAc)
+            .semantics(mergeDescendants = true) {
+                contentDescription = aciklama ?: listOfNotNull(baslik, alt).joinToString(", ")
+                if (!boyali) stateDescription = "asistan önerisi, onay bekliyor"
+                erisim?.invoke(this)
+            }
+            .padding(start = 8.dp, end = 10.dp, top = 8.dp, bottom = 6.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            KucukResim(renk, cizim, 44.dp, boyama = boyama.cizim)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Metin(baslik, stil = Sahne.yazi.satirAd, renk = renkler.murekkep, satirSiniri = 2)
+                Metin(listOfNotNull("Asistan önerdi", alt).joinToString(", "), stil = Sahne.yazi.levhaAlt, renk = renkler.soluk, satirSiniri = 2)
+            }
+        }
+        Row(
+            Modifier.padding(start = 56.dp).graphicsLayer { alpha = dugmeAlfa },
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            HapDugme("Onayla", onClick = { if (!kilitli) onOnayla() }, onayDugmesi = true)
+            HapDugme("Vazgeç", onClick = { if (!kilitli) onVazgec() }, dolu = false, onayDugmesi = true)
+        }
     }
 }

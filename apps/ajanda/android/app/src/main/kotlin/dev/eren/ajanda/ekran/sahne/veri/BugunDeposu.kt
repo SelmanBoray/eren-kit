@@ -13,24 +13,26 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.time.ZonedDateTime
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executor
 import java.util.concurrent.RejectedExecutionException
-import java.util.concurrent.atomic.AtomicLong
 
 /** Ekranın göstereceği tost isteği; [no] her istekte artar (aynı metin art arda da gösterilsin). */
 data class TostIstegi(val no: Long, val mesaj: String, val geriAlma: GeriAlma?, val hata: Boolean = false)
 
 /**
- * Çekirdek ile Compose arasındaki durum tutucu (Bugün sekmesi).
+ * Çekirdek ile Compose arasındaki durum tutucu (Bugün sekmesi) ve kardeşlerinin (Takvim [takvim], Tarihsizler
+ * [tarihsiz]) sahibi.
  *
- * İş parçacığı: bütün çekirdek çağrıları [calistirici]'da (üretimde tek iş parçacıklı); [BugunDenetleyici]
- * yalnız orada yaşar. Sonuç değişmez bir [BugunModeli] olarak [model]'e yazılır; `StateFlow` her iş
- * parçacığından yazılabilir, Compose onu `collectAsState` ile ana iş parçacığında okur. Böylece ana iş
- * parçacığı çekirdeğe hiç girmez, arka iş parçacığı Compose durumuna hiç dokunmaz.
+ * İş parçacığı: bütün çekirdek çağrıları [calistirici]'da (üretimde tek iş parçacıklı); [BugunDenetleyici] ve
+ * kardeşlerin denetleyicileri yalnız orada yaşar. Sonuç değişmez bir model olarak `StateFlow`'a yazılır; Compose onu
+ * ana iş parçacığında okur. Ana iş parçacığı çekirdeğe hiç girmez, arka iş parçacığı Compose durumuna dokunmaz.
  *
- * Gözlemci: çekirdek [gozlemci]'yi kendi etki kilidi altında çağırır; burada yalnız değişiklik biriktirilir
- * ve [calistirici]'ya tek iş atılır (çekirdeğe yeniden girilmez; arka arkaya gelen bildirimler birleşir).
- * Kaydı yaşam döngüsü yapar ([basla]/[dur]); [baglan] gözlemciyi çekirdeğe ekleyip çıkaran işlevdir.
+ * Gözlemci: tek kayıt buradadır. Çekirdek [gozlemci]'yi kendi etki kilidi altında çağırır; burada yalnız değişiklik
+ * biriktirilir ve [calistirici]'ya tek iş atılır; o iş Bugün'ü ve kardeşleri yeniler. Yaşam döngüsü ([basla],
+ * [dur], [dakika], [yenile]) kardeşlere de dağıtılır: etkinlik yalnız bu depoyu tanır.
+ *
+ * Tost: uygulamanın tek kanalı ([tostKanali]); "Geri al" tostu çıkaran depoya döner.
  *
  * İşlem sonrası tamamlama: [bitince] ana iş parçacığında ([anaya]) ve yeni model yazıldıktan sonra çağrılır;
  * ekran levhanın kilidini o zaman açar.
@@ -44,13 +46,15 @@ class BugunDeposu(
     private val baglan: ((Gozlemci) -> (() -> Unit))? = null,
     bitenleriGizle: Boolean = false,
     private val bitenleriGizleYaz: (Boolean) -> Unit = {},
+    val tostKanali: TostKanali = TostKanali(),
 ) : KayitIslemleri {
     private val _model = MutableStateFlow(BugunModeli.yukleniyor(saat().toLocalDate()).copy(bitenleriGizle = bitenleriGizle))
     val model: StateFlow<BugunModeli> = _model.asStateFlow()
 
-    private val _tost = MutableStateFlow<TostIstegi?>(null)
-    val tost: StateFlow<TostIstegi?> = _tost.asStateFlow()
-    private val tostNo = AtomicLong()
+    val tost: StateFlow<TostIstegi?> get() = tostKanali.tost
+
+    /** "Bitenler: Gizle" seçimi; her iş parçacığından okunur (kardeşler de uyar). */
+    @Volatile private var gizle: Boolean = bitenleriGizle
 
     /**
      * Açılış hareketi (SAHNE.md §5.1) oynadı mı. Yalnız soğuk açılışta oynar: sekmeden dönüşte ve ekran
@@ -62,37 +66,17 @@ class BugunDeposu(
     private var imzaGunu: java.time.LocalDate? = null
     private val imzaOynayanlar = HashSet<String>()
 
-    /** Ekranda gösterilen son tost ve kalan süresi (ms); eylemi kullanıldıysa kalan 0. */
-    private var gosterilenNo = 0L
-    private var gosterilenKalan = 0L
-    private var geriAlinanNo = 0L
-
     /**
-     * Tostun ekranda kalacağı süre (SAHNE.md §5.13). Yeni tostta [ilkSure]'yi verir; ekran yeniden kurulunca
-     * (döndürme, ayrıntıdan dönüş) aynı tost kalan süresiyle döner (ekran yokken süre işlemez: kullanıcı
-     * dönünce geri alma hâlâ elindedir). Süresi dolmuş, eylemi kullanılmış ya da yerini yenisine bırakmış tost
-     * için `null`.
+     * Tostun ekranda kalacağı süre (SAHNE.md §5.13; [TostKanali.tostSuresi]): ekran yeniden kurulunca aynı tost
+     * kalan süresiyle döner, gerçek saatle üst sınırı vardır.
      */
-    fun tostSuresi(no: Long, ilkSure: () -> Long): Long? {
-        if (no < gosterilenNo) return null
-        if (no == gosterilenNo) return gosterilenKalan.takeIf { it > 0 }
-        gosterilenNo = no
-        return ilkSure().also { gosterilenKalan = it }
-    }
+    fun tostSuresi(no: Long, ilkSure: () -> Long): Long? = tostKanali.tostSuresi(no, ilkSure)
 
-    /** Gösterilen tostun kalan süresi (ekran sayar, [TostDurumu]). */
-    fun tostKalani(no: Long, kalan: Long) {
-        if (no == gosterilenNo) gosterilenKalan = kalan
-    }
+    /** Gösterilen tostun kalan süresi (ekran sayar, `TostDurumu`). */
+    fun tostKalani(no: Long, kalan: Long) = tostKanali.tostKalani(no, kalan)
 
-    /** Tostun "Geri al"ı: her tost için bir kez (aynı tosta ikinci dokunuş, yeniden kurulan ekran) çekirdeğe gider. */
-    fun tostuGeriAl(t: TostIstegi) {
-        val g = t.geriAlma ?: return
-        if (t.no <= geriAlinanNo) return
-        geriAlinanNo = t.no
-        if (t.no == gosterilenNo) gosterilenKalan = 0
-        geriAl(g)
-    }
+    /** Tostun "Geri al"ı: her tost için bir kez, tostu çıkaran depoya. */
+    fun tostuGeriAl(t: TostIstegi) = tostKanali.tostuGeriAl(t) { geriAl(it) }
 
     /**
      * Bir kez oynayan imza ve kalem (SAHNE.md §5.15) bu gösterimde oynasın mı: kayıt başına **gün içinde bir
@@ -105,6 +89,30 @@ class BugunDeposu(
             imzaOynayanlar.clear()
         }
         return imzaOynayanlar.add(anahtar)
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Kardeşler
+    // ---------------------------------------------------------------------------------------------
+
+    private val ortam = DepoOrtami(yuz, saat, calistirici, anaya, tostKanali, { gizle }, ::bitenleriGizle)
+    private val kardesler = CopyOnWriteArrayList<KardesDepo<*>>()
+
+    /** Takvim sekmesinin deposu: ilk istendiğinde kurulur, sonra gözlemciden ve yaşam döngüsünden pay alır. */
+    val takvim: TakvimDeposu by lazy { TakvimDeposu(ortam).also { kardesler += it } }
+
+    /** Tarihsizler sekmesinin deposu. */
+    val tarihsiz: TarihsizDeposu by lazy { TarihsizDeposu(ortam).also { kardesler += it } }
+
+    /** Kardeşlerin her birine (arka iş parçacığında) iş: birinin hatası ötekini durdurmaz. */
+    private inline fun kardeslere(f: (KardesDepo<*>) -> Unit) {
+        for (k in kardesler) {
+            try {
+                f(k)
+            } catch (e: Exception) {
+                tostGoster(KayitFormu.hataMesaji(e).mesaj, null, hata = true)
+            }
+        }
     }
 
     // Yalnız [calistirici]'da.
@@ -129,8 +137,12 @@ class BugunDeposu(
                     bekleyen.also { bekleyen = null }
                 }
                 if (d != null) {
-                    denetleyici().degisti(d)
-                    yayinla()
+                    try {
+                        denetleyici().degisti(d)
+                        yayinla()
+                    } finally {
+                        kardeslere { it.degistiArkada(d) }
+                    }
                 }
             }
         }
@@ -160,11 +172,15 @@ class BugunDeposu(
         _model.value = denetleyici().model()
     }
 
-    /** Gözlemciyi ekler ve her şeyi okur (öne geliş). */
+    /** Gözlemciyi ekler ve her şeyi okur (öne geliş); kardeşler de okur (sekmeye geçiş beklemesin). */
     fun basla() = arkada {
         if (baglantiyiKes == null) baglantiyiKes = baglan?.invoke(gozlemci)
-        denetleyici().hepsiniOku()
-        yayinla()
+        try {
+            denetleyici().hepsiniOku()
+            yayinla()
+        } finally {
+            kardeslere { it.baslaArkada() }
+        }
     }
 
     /** Gözlemciyi çıkarır (arka plana geçiş). */
@@ -175,51 +191,80 @@ class BugunDeposu(
 
     /** Gözlemciye bakmadan her şeyi yeniden okur (eşleştirmeden dönüş gibi). */
     fun yenile() = arkada {
-        denetleyici().hepsiniOku()
-        yayinla()
+        try {
+            denetleyici().hepsiniOku()
+            yayinla()
+        } finally {
+            kardeslere { it.baslaArkada() }
+        }
     }
 
     /** Dakikada bir: "geçti", gün cümlesi ve gün değişimi için yeniden kurar (gün değiştiyse çekirdeğe sorar). */
-    fun dakika() = arkada { yayinla() }
+    fun dakika() = arkada {
+        try {
+            yayinla()
+        } finally {
+            kardeslere { it.dakikaArkada() }
+        }
+    }
 
     fun hatirlatmaVer(h: HatirlatmaDurumu?) = arkada {
         denetleyici().hatirlatma = h
         yayinla()
     }
 
+    /** "Bitenler: Gizle/Göster" (Bugün, Takvim ve Tarihsizler ortak; kalıcı). */
     fun bitenleriGizle(b: Boolean) {
+        gizle = b
         bitenleriGizleYaz(b)
         _model.value = _model.value.copy(bitenleriGizle = b)
         arkada {
-            denetleyici().bitenleriGizle = b
-            yayinla()
+            try {
+                denetleyici().bitenleriGizle = b
+                yayinla()
+            } finally {
+                kardeslere { it.gizleArkada(b) }
+            }
         }
     }
 
     fun tostGoster(mesaj: String, geriAlma: GeriAlma?, hata: Boolean = false) {
-        _tost.value = TostIstegi(tostNo.incrementAndGet(), mesaj, geriAlma, hata)
+        tostKanali.goster(mesaj, geriAlma, hata) { geriAl(it) }
     }
 
     /**
      * İşlemi yapar, etkilediği kayıtları hemen yeniden okur ([etki]; gözlemci de birazdan aynısını bildirir,
      * ama levhanın kilidi model güncellenmeden açılmasın), modeli yazar, sonra [bitince] ve tost.
+     *
+     * G4: işlemin tostu (geri almasıyla) model kurulamasa da gösterilir: çekirdekte iş olmuştur, geri alma yolu
+     * kaybolmamalı. Kurulamama önce hata tostu olur, işlemin tostu onun yerini alır. [beklenti]: geri almanın ön koşulu (G3).
      */
-    private fun islem(bitince: () -> Unit, etki: Degisim, f: (BugunDenetleyici) -> IslemSonucu) {
-        val is_ = {
-            val s = try {
-                f(denetleyici())
-            } finally {
-                // Model kurulamasa da kilit açılır (levha kalıcı kilitli kalmasın); hata tost olur ([arkada]).
-                try {
-                    runCatching { denetleyici().degisti(etki) }
-                    yayinla()
-                } finally {
-                    anaya(bitince)
-                }
-            }
-            if (s.mesaj != null) tostGoster(s.mesaj, s.geriAlma, s.hata)
+    private fun islem(
+        bitince: () -> Unit,
+        etki: Degisim,
+        beklenti: ((IslemSonucu) -> GeriAlmaBeklentisi?)? = null,
+        f: (BugunDenetleyici) -> IslemSonucu,
+    ): Unit = arkada {
+        val s = try {
+            f(denetleyici())
+        } catch (e: Exception) {
+            IslemSonucu(KayitFormu.hataMesaji(e).mesaj, hata = true)
         }
-        arkada(is_)
+        var yenilemeHatasi: Exception? = null
+        try {
+            runCatching { denetleyici().degisti(etki) }
+            yayinla()
+        } catch (e: Exception) {
+            yenilemeHatasi = e
+        } finally {
+            anaya(bitince)
+        }
+        // Tek tost görünür: yenileme hatası önce, işlemin tostu (geri almasıyla) üstüne; hata göstergede de kalır.
+        yenilemeHatasi?.let { tostGoster(KayitFormu.hataMesaji(it).mesaj, null, hata = true) }
+        if (s.mesaj != null) {
+            val b = beklenti?.invoke(s)
+            tostKanali.goster(s.mesaj, s.geriAlma, s.hata) { geriAl(it, b) }
+        }
     }
 
     /** Ayrıntı için kaydı çekirdekten okur (Bugün modelinde değilse); [sonuc] ana iş parçacığında. */
@@ -230,20 +275,15 @@ class BugunDeposu(
 
     private fun kayitlar(vararg id: String) = Degisim(id.toList(), false, false, false, false, emptyList())
 
-    override fun tamamla(k: BugunKaydi, tamam: Boolean, bitince: () -> Unit) = islem(bitince, kayitlar(k.kayitId)) { it.tamamla(k, tamam) }
+    override fun tamamla(k: BugunKaydi, tamam: Boolean, bitince: () -> Unit) =
+        islem(bitince, kayitlar(k.kayitId), { s -> KayitKurucu.beklenti(k, tamam, s) }) { it.tamamla(k, tamam) }
     override fun onayla(id: String, bitince: () -> Unit) = islem(bitince, kayitlar(id)) { it.onayla(id) }
     override fun hepsiniOnayla(idler: List<String>, bitince: () -> Unit) = islem(bitince, kayitlar(*idler.toTypedArray())) { it.hepsiniOnayla(idler) }
     override fun vazgec(id: String, bitince: () -> Unit) = islem(bitince, kayitlar(id)) { it.vazgec(id) }
     fun retAt(islemId: String, bitince: () -> Unit = {}) =
         islem(bitince, Degisim(emptyList(), false, true, false, false, emptyList())) { it.retAt(islemId) }
-    fun geriAl(g: GeriAlma, bitince: () -> Unit = {}) = islem(
-        bitince,
-        kayitlar(
-            when (g) {
-                is GeriAlma.Durum -> g.kayitId
-                is GeriAlma.GeriYukle -> g.kayitId
-                is GeriAlma.Sil -> g.kayitId
-            },
-        ),
-    ) { it.geriAl(g) }
+
+    /** Geri alır; [beklenen] verilmişse kayıt bu arada başka yerden değiştiyse uygulanmaz (G3). */
+    fun geriAl(g: GeriAlma, beklenen: GeriAlmaBeklentisi? = null, bitince: () -> Unit = {}): Unit =
+        islem(bitince, kayitlar(KayitKurucu.kimlik(g))) { it.geriAl(g, beklenen) }
 }

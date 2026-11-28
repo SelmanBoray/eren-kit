@@ -44,8 +44,9 @@ import dev.eren.ajanda.ekran.sahne.ekranlar.BugunEkrani
 import dev.eren.ajanda.ekran.sahne.ekranlar.BugunEylemleri
 import dev.eren.ajanda.ekran.sahne.ekranlar.DuzenleYerTutucu
 import dev.eren.ajanda.ekran.sahne.ekranlar.Ornekler
-import dev.eren.ajanda.ekran.sahne.ekranlar.TakvimYerTutucu
-import dev.eren.ajanda.ekran.sahne.ekranlar.TarihsizYerTutucu
+import dev.eren.ajanda.ekran.sahne.ekranlar.TakvimEkrani
+import dev.eren.ajanda.ekran.sahne.ekranlar.TarihsizEkrani
+import dev.eren.ajanda.ekran.sahne.veri.KayitIslemleri
 import dev.eren.ajanda.ekran.sahne.gezinme.Gezgin
 import dev.eren.ajanda.ekran.sahne.gezinme.Hedef
 import dev.eren.ajanda.ekran.sahne.gezinme.SahneGezinme
@@ -75,7 +76,7 @@ fun SahneKok(
     acilacakKayit: String? = null,
     kayitAcildi: () -> Unit = {},
 ) {
-    SistemCubuklari(gezgin.ust, bugunDeposu)
+    SistemCubuklari(gezgin.ust, bugunDeposu, gezgin.alttaki())
     LaunchedEffect(acilacakKayit) {
         if (acilacakKayit != null) {
             gezgin.ac(Hedef.Ayrinti(acilacakKayit))
@@ -126,11 +127,11 @@ fun SahneKok(
                     onAyarlar = { gezgin.ac(Hedef.Ayarlar) },
                     eylemler = bugunEylemleri,
                 )
-                Hedef.Sekme.TAKVIM -> TakvimYerTutucu(bugun, onKayit = { gezgin.ac(Hedef.Ayrinti(it)) })
-                Hedef.Sekme.TARIHSIZ -> TarihsizYerTutucu(onKayit = { gezgin.ac(Hedef.Ayrinti(it)) })
+                Hedef.Sekme.TAKVIM -> TakvimEkrani(bugunDeposu?.takvim, bugun, onKayit = { gezgin.ac(Hedef.Ayrinti(it)) })
+                Hedef.Sekme.TARIHSIZ -> TarihsizEkrani(bugunDeposu?.tarihsiz, onKayit = { gezgin.ac(Hedef.Ayrinti(it)) })
                 is Hedef.Ayrinti -> {
                     val kapat = { gezgin.geri(); Unit }
-                    AyrintiYerTutucu(h.kayitId, onKapat = kapat, kaynak = ayrintiKaynagi(bugunDeposu, h.kayitId, kapat))
+                    AyrintiYerTutucu(h.kayitId, onKapat = kapat, kaynak = ayrintiKaynagi(bugunDeposu, h.kayitId, kapat, gezgin.alttaki()))
                 }
                 is Hedef.Duzenle -> DuzenleYerTutucu(h.kayitId, onKapat = { gezgin.geri() })
                 Hedef.Ayarlar -> AyarlarYerTutucu(onKapat = { gezgin.geri() })
@@ -140,14 +141,27 @@ fun SahneKok(
 }
 
 /**
- * Ayrıntının kaydı: Bugün modelinde varsa oradan (renk levhayla aynı: anahtardan ve komşu kuralından), yoksa
- * çekirdekten okunur. Depo yoksa ya da kimlik yer tutucu örneğiyse `null` (örnek gösterilir).
+ * Ayrıntının kaydı: ayrıntıyı açan sekmenin ([alttaki]) modelinde varsa oradan (renk o levhayla aynı: anahtardan ve
+ * komşu kuralından; takvimde o günün örneği), sonra Bugün modelinden, yoksa çekirdekten okunur. "Bitti" kaydı
+ * gösteren deponun işlemidir (o ekran hemen yenilenir). Depo yoksa ya da kimlik yer tutucu örneğiyse `null`.
  */
 @Composable
-private fun ayrintiKaynagi(depo: BugunDeposu?, kayitId: String, onKapat: () -> Unit): AyrintiKaynagi? {
+private fun ayrintiKaynagi(depo: BugunDeposu?, kayitId: String, onKapat: () -> Unit, alttaki: Hedef?): AyrintiKaynagi? {
     if (depo == null) return null
     val model by depo.model.collectAsState()
-    val modelde = model.ayrintiOzeti(kayitId)
+    val sekmede: Pair<AyrintiOzeti, KayitIslemleri>? = when (alttaki) {
+        Hedef.Sekme.TAKVIM -> {
+            val m by depo.takvim.model.collectAsState()
+            m.ayrintiOzeti(kayitId)?.let { it to depo.takvim }
+        }
+        Hedef.Sekme.TARIHSIZ -> {
+            val m by depo.tarihsiz.model.collectAsState()
+            m.ayrintiOzeti(kayitId)?.let { it to depo.tarihsiz }
+        }
+        else -> null
+    }
+    val islemler: KayitIslemleri = sekmede?.second ?: depo
+    val modelde = sekmede?.first ?: model.ayrintiOzeti(kayitId)
     val ornek = Ornekler.bul(kayitId) != null
     var okunan by remember(kayitId) { mutableStateOf<AyrintiOzeti?>(null) }
     var okundu by remember(kayitId) { mutableStateOf(false) }
@@ -158,7 +172,7 @@ private fun ayrintiKaynagi(depo: BugunDeposu?, kayitId: String, onKapat: () -> U
     val ozet = modelde ?: okunan
     return when {
         // Tamamlanamayan kayıtta (not; hangi günü olduğu belli olmayan tekrar) "Bitti" yok: tek dokunuş seriyi kapatmasın.
-        ozet != null -> AyrintiKaynagi.Gercek(ozet, if (ozet.kayit.tamamlanabilir) { tamam -> depo.tamamla(ozet.kayit, tamam); onKapat() } else null)
+        ozet != null -> AyrintiKaynagi.Gercek(ozet, if (ozet.kayit.tamamlanabilir) { tamam -> islemler.tamamla(ozet.kayit, tamam); onKapat() } else null)
         ornek -> null
         okundu -> AyrintiKaynagi.Bulunamadi
         else -> AyrintiKaynagi.Okunuyor
@@ -171,13 +185,13 @@ private fun ayrintiKaynagi(depo: BugunDeposu?, kayitId: String, onKapat: () -> U
  * [ayrintiRengi]).
  */
 @Composable
-private fun SistemCubuklari(ust: Hedef, depo: BugunDeposu?) {
+private fun SistemCubuklari(ust: Hedef, depo: BugunDeposu?, alttaki: Hedef?) {
     if (LocalInspectionMode.current) return
     val view = LocalView.current
     val pencere = (view.context as? Activity)?.window ?: return
     val koyuZemin = Sahne.renk.koyu
     val ustRengi = when (ust) {
-        is Hedef.Ayrinti -> ayrintiRengi(ust.kayitId, ayrintiKaynagi(depo, ust.kayitId, onKapat = {}))
+        is Hedef.Ayrinti -> ayrintiRengi(ust.kayitId, ayrintiKaynagi(depo, ust.kayitId, onKapat = {}, alttaki))
         is Hedef.Duzenle -> Ornekler.bul(ust.kayitId)?.renk ?: LevhaRengi.KUM
         else -> null
     }
