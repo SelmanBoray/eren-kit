@@ -1,19 +1,29 @@
 /**
  * Geri almada ajanda sürümü koruması (docs/AJANDA.md "Geri alma kısıtı", "Sürüm uyumu" kural 8).
  *
- * Eski ajanda sürümünün servisi depoda kendi kayıt şemasına uymayan tek bir kayıt görünce tam telafiyi
- * bütün kayıtlar için `ic_hata` ile keser: telefonun ajanda eşitlemesi sessiz bir yeniden bağlanma
- * döngüsüne girer. Veri bozulmaz (şema değişmedi). Bu modül geri alınacak sürümün `AJANDA_SURUMU`'nu
- * ve depoda o sürümün çözemeyeceği kayıt olup olmadığını bulur, kurulum da buna göre uyarır.
+ * Eski ajanda sürümünün servisi depodaki kaydı şemasız okur (depo.ts `ajandaKaydiSatiri`), ama kabloya
+ * çıkan her kaydı ve değişiklik sonrası her kaydı kendi katı şemasıyla doğrular. Depoda o şemaya uymayan
+ * (ör. v3 alanlı) kayıt varsa: (1) tam telafi bütün kayıtlar için `ic_hata` ile kesilir, telefonun
+ * ajanda eşitlemesi yeniden bağlanma döngüsüne girer; (2) o kayda telefondan gelen işlem uygulanır, son
+ * doğrulamada `tutarsiz_kayit` olur ve bu ret kalıcıdır (`ajanda_islemleri`, yalnız `ic_hata` geçicidir),
+ * ileri sürüme dönülünce de aynı `islem_id` önbellekteki reddi alır; (3) düzenleme yine de kaybolmaz,
+ * telefonun ret listesine ve düzeltme formuna düşer (`ajandaKuyrukKarari`). Depodaki satırlar bozulmaz.
+ * Bu modül geri alınacak sürümün `AJANDA_SURUMU`'nu ve depoda o sürümün çözemeyeceği kayıt olup
+ * olmadığını bulur, kurulum da buna göre uyarır.
  *
  * - Eski sürümün ajanda sürümü: `surumler/<sha>/protocol/src/sinirlar.ts` METİN olarak okunur (kod
- *   çalıştırılmaz, `sohbetSurumu` ile aynı düzen). Sabit 3f02bfc'den beri bu dosyadadır.
+ *   çalıştırılmaz, `sohbetSurumu` ile aynı düzen). Sabit 3f02bfc'den beri bu dosyadadır. Dosya yoksa ya
+ *   da sabit tanınmayan biçimdeyse denetim yapılmaz ve bu açıkça söylenir; sabitin hiç geçmediği dosya
+ *   ajanda öncesi sürümdür, uyarı yoktur.
  * - Eski sürümün kayıt şeması: kaynak ağacının protokolündeki `AJANDA_GOVDE_SEMALARI[eski].Kaydi`.
  *   Servisin eski bağlantılara indirdiği şema budur; kaynak protokol eski sürümleri birebir taşır.
  *   v1 tabloda yoktur: v2 şeması ve `zaman.gun_bolumu` yokluğu (v2'nin v1'e eklediği tek kayıt alanı).
  * - Depo: `eren.db` salt okunur açılır (`readOnly`, `busy_timeout`); göç çalışmaz, yazılmaz. WAL
- *   kipinde servis açıkken de kapalıyken de okunabilir, okuyucu yazıcıyı beklemez. Silinmiş kayıtlar da
- *   sayılır: tam telafide onlar da gider.
+ *   kipinde servis açıkken de kapalıyken de okunabilir, okuyucu yazıcıyı beklemez. Servis kapalıyken
+ *   açılış boş `-wal` ve `-shm` bırakır (SQLite'ın WAL okuyucusu bunlarsız okuyamaz); zararsızdır: servis
+ *   sonra açınca kullanır, kapanınca siler. `immutable=1` bunları yaratmaz ama WAL'ı hiç okumaz, çalışan
+ *   servisin henüz aktarılmamış satırlarını kaçırır; kurulum denetimi servis başladıktan sonra yaptığı
+ *   için kullanılmaz. Silinmiş kayıtlar da sayılır: tam telafide onlar da gider.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -21,14 +31,26 @@ import type { DatabaseSync as DatabaseSyncTipi } from "node:sqlite";
 import { AJANDA_GOVDE_SEMALARI } from "../protocol/src/ajanda.ts";
 import { AJANDA_SURUMLERI, AJANDA_SURUMU } from "../protocol/src/sinirlar.ts";
 
-/** Sürüm dizinindeki `AJANDA_SURUMU`; dosya ya da sabit yoksa (ajanda öncesi sürüm) null. */
-export const ajandaSurumuOku = (surumDizini: string): number | null => {
+export type AjandaSurumuOkumasi =
+  | { readonly tur: "surum"; readonly surum: number }
+  /** `sinirlar.ts` var, `AJANDA_SURUMU` hiç geçmiyor: ajanda öncesi sürüm. */
+  | { readonly tur: "ajandasiz" }
+  /** Dosya yok ya da okunamadı, ya da sabit tanınmayan biçimde: denetim yapılamaz. */
+  | { readonly tur: "okunamadi"; readonly sebep: string };
+
+/** Sürüm dizinindeki `AJANDA_SURUMU`; fırlatmaz. */
+export const ajandaSurumuOku = (surumDizini: string): AjandaSurumuOkumasi => {
+  let metin: string;
   try {
-    const m = /^export const AJANDA_SURUMU\s*=\s*(\d+)/m.exec(readFileSync(join(surumDizini, "protocol", "src", "sinirlar.ts"), "utf8"));
-    return m?.[1] === undefined ? null : Number(m[1]);
-  } catch {
-    return null;
+    metin = readFileSync(join(surumDizini, "protocol", "src", "sinirlar.ts"), "utf8");
+  } catch (e) {
+    const kod = (e as NodeJS.ErrnoException | null)?.code;
+    return { tur: "okunamadi", sebep: kod === "ENOENT" ? "protocol/src/sinirlar.ts yok" : `protocol/src/sinirlar.ts okunamadı (${kod ?? "?"})` };
   }
+  const m = /^export const AJANDA_SURUMU\s*=\s*(\d+)/m.exec(metin);
+  if (m?.[1] !== undefined) return { tur: "surum", surum: Number(m[1]) };
+  if (!/\bAJANDA_SURUMU\b/.test(metin)) return { tur: "ajandasiz" };
+  return { tur: "okunamadi", sebep: "sinirlar.ts'te AJANDA_SURUMU tanınmayan biçimde" };
 };
 
 /**
@@ -106,24 +128,34 @@ export const depoyuDenetle = (vtYolu: string, surum: number): DepoDenetimi => {
   }
 };
 
+/** Eski servisin, kendi şemasına uymayan kayıtla davranışı (modül başı): uyarının ortak gövdesi. */
+const ETKI =
+  `eski servis ajanda tam telafisini ic_hata ile keser, telefonun ajanda eşitlemesi ajanda v${AJANDA_SURUMU} servisine ` +
+  `dönülene kadar yeniden bağlanma döngüsünde kalır; bu kayıtlara telefondan gelen düzenleme eski serviste tutarsiz_kayit ile ` +
+  `kalıcı reddedilir (ajanda v${AJANDA_SURUMU} servisinde de aynı islem_id bu reddi alır), ama kaybolmaz: telefonun ret listesine ve ` +
+  `düzeltme formuna düşer; depodaki kayıtlar bozulmaz (AJANDA.md "Geri alma kısıtı")`;
+
 /**
  * Geri alınan sürüm (`geriAlinanDizini`) depodaki ajanda kayıtlarını çözemiyorsa ya da bu
- * denetlenemediyse tek satır uyarı metni; sorun yoksa null. Geri almayı engellemez (gerekçe kur.ts
- * `etkinlestir`): veri bozulmaz, kararsız sürümde kalmak servisin tamamını düşürür.
+ * denetlenemediyse (ajanda sürümü okunamadıysa da) tek satır uyarı metni; sorun yoksa null. Geri
+ * almayı engellemez (gerekçe kur.ts `etkinlestir`).
  */
 export const ajandaGeriAlmaUyarisi = (geriAlinan: string, geriAlinanDizini: string, vtYolu: string): string | null => {
-  const eski = ajandaSurumuOku(geriAlinanDizini);
-  if (eski === null || eski >= AJANDA_SURUMU) return null;
+  const o = ajandaSurumuOku(geriAlinanDizini);
+  if (o.tur === "ajandasiz") return null;
+  if (o.tur === "okunamadi") {
+    return `Uyarı: geri alınan sürümün (${geriAlinan}) ajanda sürümü okunamadı (${o.sebep}), ajanda denetimi yapılmadı; ` +
+      `o sürüm depodaki ajanda kayıtlarını çözemiyorsa ${ETKI}.`;
+  }
+  const eski = o.surum;
+  if (eski >= AJANDA_SURUMU) return null;
   const d = depoyuDenetle(vtYolu, eski);
-  const etki =
-    `eski servis ajanda tam telafisini bütün kayıtlar için ic_hata ile keser, telefonun ajanda eşitlemesi ` +
-    `ajanda v${AJANDA_SURUMU} servisine dönülene kadar yeniden bağlanma döngüsünde kalır (veri bozulmaz; AJANDA.md "Geri alma kısıtı")`;
   if (d.tur === "uyumlu") return null;
   if (d.tur === "okunamadi") {
     return `Uyarı: geri alınan sürüm (${geriAlinan}, ajanda v${eski}) için depodaki ajanda kayıtları denetlenemedi (${d.sebep}); ` +
-      `v${eski} şemasına uymayan kayıt varsa ${etki}.`;
+      `v${eski} şemasına uymayan kayıt varsa ${ETKI}.`;
   }
   const sil = d.silinmis > 0 ? `, ${d.silinmis}'i silinmiş` : "";
   return `Uyarı: geri alınan sürüm (${geriAlinan}, ajanda v${eski}) depodaki ${d.toplam} ajanda kaydından ${d.adet}'ini çözemez` +
-    `${sil} (alanlar: ${d.alanlar.join(", ")}): ${etki}.`;
+    `${sil} (alanlar: ${d.alanlar.join(", ")}): ${ETKI}.`;
 };

@@ -519,13 +519,21 @@ test("veriKokuHatasindanCik: v3 alanlı kayıt varken ajanda v2 sürümüne geri
     // geri alınacak A ajanda v2 konuşur, B (düşen) v3
     yaz(path.join(hedef, "surumler", A), "protocol/src/sinirlar.ts", "export const AJANDA_SURUMU = 2 as const;\n");
     yaz(path.join(hedef, "surumler", B), "protocol/src/sinirlar.ts", "export const AJANDA_SURUMU = 3 as const;\n");
+    let durduruldu = false;
     const bagla = (vt: string): KokHatasiBag => ({
-      durdur: async () => "servis durduruldu",
+      durdur: async () => {
+        durduruldu = true;
+        return "servis durduruldu";
+      },
       geriAl: (h, _d, o) => guncelYap(h, o),
-      vt: () => vt,
+      vt: () => {
+        assert.ok(durduruldu, "ajanda denetimi servis durdurulduktan sonra");
+        return vt;
+      },
     });
     const hataMetni = async (vt: string): Promise<{ mesaj: string; akan: string }> => {
       guncelYap(hedef, B);
+      durduruldu = false;
       const akan: string[] = [];
       const error = console.error;
       console.error = (...a: unknown[]) => void akan.push(a.join(" "));
@@ -544,6 +552,7 @@ test("veriKokuHatasindanCik: v3 alanlı kayıt varken ajanda v2 sürümüne geri
       assert.ok(m.includes(`geri alınan sürüm (${A}, ajanda v2) depodaki 2 ajanda kaydından 1'ini çözemez`), m);
       assert.match(m, /alanlar: bolge, varis/);
       assert.match(m, /yeniden bağlanma döngüsünde/);
+      assert.match(m, /tutarsiz_kayit ile kalıcı reddedilir/);
     }
     assert.match(v3li.mesaj, /otomatik geri alındı/);
     assert.doesNotMatch(v3li.mesaj, /\.\./, "çift nokta olmamalı");

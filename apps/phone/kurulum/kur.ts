@@ -531,8 +531,10 @@ const sohbetUyarisi = (hedefKok: string, geriAlinan: string, simdiki: string): v
 const vtYolu = (): string => join(veriKoku(process.env), "eren.db");
 
 /**
- * Geri alınan sürüm depodaki ajanda kayıtlarını çözemiyorsa (ajanda-geri.ts) uyarıyı yazar ve döner;
- * sorun yoksa null. Depo salt okunur açılır. Geri almayı engellemez (gerekçe `etkinlestir`).
+ * Geri alınan sürüm depodaki ajanda kayıtlarını çözemiyorsa ya da ajanda sürümü okunamadıysa
+ * (ajanda-geri.ts) uyarıyı yazar ve döner; sorun yoksa null. Depo salt okunur açılır. Geri almayı
+ * engellemez (gerekçe `etkinlestir`). Eşzamanlıdır ve büyük depoda zaman alır (50 000 kayıtta ~0,5-0,7 sn): servis
+ * başlatıldıktan (ya da başlatılmayacağı anlaşıldıktan) SONRA çağrılır, servisi kapalı tutmasın.
  */
 const ajandaUyarisi = (hedefKok: string, geriAlinan: string, vt: string): string | null => {
   const u = ajandaGeriAlmaUyarisi(geriAlinan, join(surumlerDizini(resolve(hedefKok)), geriAlinan), vt);
@@ -1441,12 +1443,20 @@ export const veriKokuHatasindanCik = async (
  * geri alınan sürüm de ayakta kalmazsa durumu söyleyip durur (döngü yok). Başarısızlıkta hep fırlatır.
  *
  * Ajanda koruması: geri alınan sürümün ajanda sürümü depodaki bir kaydı çözemiyorsa (v3 alanlı kayıt,
- * v3 öncesi servis) geri alma YİNE yapılır, ama uyarı hem anında hem son hata metninde yazılır. Durmak
- * yerine uyarma gerekçesi: (1) veri bozulmaz, eski servis yalnız ajanda eşitlemesini keser (AJANDA.md
- * "Geri alma kısıtı"); (2) geri almamak doğrulanamamış sürümü guncel bırakır ya da servisi tümden
- * kapatır, yani sohbet dahil her şeyi düşürür; (3) ajanda kaybı geri dönüşlüdür: ileri sürüm yeniden
- * kurulunca telafi düzelir. Eski serviste v3 alanları kaldırılamaz (güncelleme `tutarsiz_kayit`),
- * çare yalnız ileri sürümdür; uyarı bunu söyler.
+ * v3 öncesi servis) geri alma YİNE yapılır, ama uyarı hem anında hem son hata metninde yazılır. Eski
+ * servisin bu kayıtlarla davranışı (ajanda-geri.ts başı): tam telafi `ic_hata` ile kesilir, eşitleme
+ * yeniden bağlanma döngüsüne girer; o kayda telefondan gelen işlem uygulanır ama son doğrulamada
+ * `tutarsiz_kayit` olur ve ret `ajanda_islemleri`'ne kalıcı yazılır, ileri sürüme dönülünce aynı
+ * `islem_id` önbellekteki reddi alır; düzenleme kaybolmaz, telefonun ret listesine ve düzeltme formuna
+ * düşer. Durmak yerine uyarma gerekçesi: (1) depodaki kayıtlar bozulmaz, eski servis ajanda eşitlemesini
+ * keser ve bu kayıtlara düzenlemeyi reddeder; (2) geri almamak doğrulanamamış sürümü guncel bırakır ya
+ * da servisi tümden kapatır, yani sohbet dahil her şeyi düşürür; (3) telafi ileri sürümde düzelir,
+ * reddedilen düzenleme ret listesinden düzeltilip yeniden yollanabilir. Eski serviste v3 alanları
+ * kaldırılamaz (güncelleme `tutarsiz_kayit`), çare ileri sürümdür; uyarı bunu söyler.
+ *
+ * Denetim eski servis başlatıldıktan (kararlılık beklemesi bittikten) sonra yapılır: eşzamanlı
+ * ayrıştırma (50 000 kayıtta ~0,5-0,7 sn) servisi kapalı tutmasın, kararlılık beklemesinin zamanlayıcısını
+ * da geciktirmesin. Yanlış kökte açılan servis önce durdurulur, sonra denetlenir.
  */
 const etkinlestir = async (kaynak: string, hedef: string, sha: string): Promise<void> => {
   // guncel değişmeden ÖNCE
@@ -1467,24 +1477,29 @@ const etkinlestir = async (kaynak: string, hedef: string, sha: string): Promise<
   otomatikGeriAl(hedef, sha, onceki);
   console.error(`otomatik geri alındı: ${sha} → ${onceki}`);
   sohbetUyarisi(hedef, onceki, sha);
-  const ajanda = ajandaUyarisi(hedef, onceki, vtYolu());
+  // Ajanda denetimi servis yeniden başlatıldıktan sonra (yukarıdaki not); başlatılmayacaksa hemen.
+  const ajandaDenetimi = (): string | null => ajandaUyarisi(hedef, onceki, vtYolu());
   if (s.asama === "kapanma") {
     throw new KurHatasi(
-      ajandaEki(`${s.sebep}; otomatik geri alındı: ${sha} → ${onceki} (eski bekçi kapanmadığı için yeniden başlatılmadı)`, ajanda),
+      ajandaEki(
+        `${s.sebep}; otomatik geri alındı: ${sha} → ${onceki} (eski bekçi kapanmadığı için yeniden başlatılmadı)`,
+        ajandaDenetimi(),
+      ),
     );
   }
   const g = await servisiYenile(kaynak, onceki);
+  if (!g.tamam && g.asama === "veri_koku") {
+    const durdurma = await yanlisKoktekiServisiDurdur();
+    throw new KurHatasi(
+      ajandaEki(
+        `${s.sebep}; otomatik geri alındı: ${sha} → ${onceki}, ama ${g.sebep}; servis yeniden başlatılmadı: ${durdurma}. ` +
+          "Ortamı düzeltip (oturumu kapatıp açın) `eren baslat` ile başlatın",
+        ajandaDenetimi(),
+      ),
+    );
+  }
+  const ajanda = ajandaDenetimi();
   if (!g.tamam) {
-    if (g.asama === "veri_koku") {
-      const durdurma = await yanlisKoktekiServisiDurdur();
-      throw new KurHatasi(
-        ajandaEki(
-          `${s.sebep}; otomatik geri alındı: ${sha} → ${onceki}, ama ${g.sebep}; servis yeniden başlatılmadı: ${durdurma}. ` +
-            "Ortamı düzeltip (oturumu kapatıp açın) `eren baslat` ile başlatın",
-          ajanda,
-        ),
-      );
-    }
     throw new KurHatasi(
       ajandaEki(
         `${s.sebep}; otomatik geri alındı: ${sha} → ${onceki}, ama ${onceki} de ayakta kalmadı: ${g.sebep}; servis kapalı olabilir, elle bakılmalı`,
@@ -1566,16 +1581,20 @@ const geriAl = async (eskiKokuYoksay: boolean): Promise<number> => {
   guncelYap(hedef, o);
   console.log(`guncel: ${g ?? "yok"} → ${o}`);
   if (g !== null) sohbetUyarisi(hedef, o, g);
-  ajandaUyarisi(hedef, o, vtYolu()); // elle geri alma bilinçli: uyarır, durmaz
   const s = await servisiYenile(kaynakKoku(), o);
   if (!s.tamam && s.asama === "veri_koku") {
     const durdurma = await yanlisKoktekiServisiDurdur();
     throw new KurHatasi(
-      `${s.sebep} (guncel ${o}); servis yanlış köke yazmasın diye durduruldu: ${durdurma}. ` +
-        "Ortamı düzeltip (oturumu kapatıp açın) `eren baslat` ile başlatın",
+      ajandaEki(
+        `${s.sebep} (guncel ${o}); servis yanlış köke yazmasın diye durduruldu: ${durdurma}. ` +
+          "Ortamı düzeltip (oturumu kapatıp açın) `eren baslat` ile başlatın",
+        ajandaUyarisi(hedef, o, vtYolu()),
+      ),
     );
   }
-  if (!s.tamam) throw new KurHatasi(`${s.sebep} (guncel ${o}; elle geri almada otomatik geri dönüş yapılmaz)`);
+  // Elle geri alma bilinçli: uyarır, durmaz. Denetim servis başladıktan sonra (`etkinlestir` notu).
+  const ajanda = ajandaUyarisi(hedef, o, vtYolu());
+  if (!s.tamam) throw new KurHatasi(ajandaEki(`${s.sebep} (guncel ${o}; elle geri almada otomatik geri dönüş yapılmaz)`, ajanda));
   return 0;
 };
 

@@ -70,11 +70,14 @@ test("örnek kayıtlar: v2 kaydı iki şemaya uyar, v3 kaydı yalnız v3'e", () 
   assert.equal(AJANDA_GOVDE_SEMALARI[2].Kaydi.safeParse(v3Kaydi("k_v3")).success, false);
 });
 
-test("ajandaSurumuOku: sinirlar.ts metninden; sabit ya da dosya yoksa null", () => {
+test("ajandaSurumuOku: sinirlar.ts metninden; sabitsiz dosya ajanda öncesi; dosya yoksa ya da biçim tanınmazsa okunamadı", () => {
   try {
-    assert.equal(ajandaSurumuOku(surumDizini(2)), 2);
-    assert.equal(ajandaSurumuOku(surumDizini(null)), null);
-    assert.equal(ajandaSurumuOku(gecici("bos")), null);
+    assert.deepEqual(ajandaSurumuOku(surumDizini(2)), { tur: "surum", surum: 2 });
+    assert.deepEqual(ajandaSurumuOku(surumDizini(null)), { tur: "ajandasiz" });
+    assert.deepEqual(ajandaSurumuOku(gecici("bos")), { tur: "okunamadi", sebep: "protocol/src/sinirlar.ts yok" });
+    const bicim = surumDizini(null);
+    fs.writeFileSync(path.join(bicim, "protocol", "src", "sinirlar.ts"), "export const AJANDA_SURUMU: number = 2;\n");
+    assert.equal(ajandaSurumuOku(bicim).tur, "okunamadi");
   } finally {
     temizle();
   }
@@ -143,6 +146,11 @@ test("ajandaGeriAlmaUyarisi: v3 kayıt varken v2'ye dönüş uyarır; yokken, ay
     assert.match(u, /alanlar: bolge, simge/);
     assert.match(u, /ic_hata/);
     assert.match(u, /ajanda v3 servisine dönülene kadar/);
+    // eski servisteki gerçek davranış: kalıcı ret, ileri sürümde de aynı ret, düzenleme ret listesinde
+    assert.match(u, /tutarsiz_kayit ile kalıcı reddedilir/);
+    assert.match(u, /aynı islem_id bu reddi alır/);
+    assert.match(u, /kaybolmaz: telefonun ret listesine ve düzeltme formuna düşer/);
+    assert.doesNotMatch(u, /kayıp yok|veri bozulmaz/);
 
     assert.equal(ajandaGeriAlmaUyarisi("abc1234", surumDizini(2), depoKur([v2Kaydi()]).yol), null);
     assert.equal(ajandaGeriAlmaUyarisi("abc1234", surumDizini(3), v3li), null);
@@ -151,6 +159,44 @@ test("ajandaGeriAlmaUyarisi: v3 kayıt varken v2'ye dönüş uyarır; yokken, ay
     const bozuk = path.join(gecici("bozuk"), "eren.db");
     fs.writeFileSync(bozuk, "veritabanı değil".repeat(100));
     assert.match(ajandaGeriAlmaUyarisi("abc1234", surumDizini(2), bozuk) ?? "", /denetlenemedi/);
+  } finally {
+    temizle();
+  }
+});
+
+test("ajandaGeriAlmaUyarisi: ajanda sürümü okunamazsa (dosya yok, biçim değişmiş) denetimin yapılmadığını söyler", () => {
+  try {
+    const v2li = depoKur([v2Kaydi()]).yol;
+    const yok = ajandaGeriAlmaUyarisi("abc1234", gecici("sinirsiz"), v2li);
+    assert.ok(yok !== null);
+    assert.match(yok, /^Uyarı: geri alınan sürümün \(abc1234\) ajanda sürümü okunamadı \(protocol\/src\/sinirlar\.ts yok\), ajanda denetimi yapılmadı/);
+    const bicim = surumDizini(null);
+    fs.writeFileSync(path.join(bicim, "protocol", "src", "sinirlar.ts"), "export const AJANDA_SURUMU = SURUM;\n");
+    assert.match(ajandaGeriAlmaUyarisi("abc1234", bicim, v2li) ?? "", /ajanda sürümü okunamadı \(.*tanınmayan biçimde\), ajanda denetimi yapılmadı/);
+  } finally {
+    temizle();
+  }
+});
+
+test("depoyuDenetle: servis kapalıyken salt okunur açılış boş -wal/-shm bırakır; servis sonra açınca zararsız (kullanır, kapanınca siler)", () => {
+  try {
+    const { yol } = depoKur([v2Kaydi(), v3Kaydi("k_a")]);
+    const dizin = path.dirname(yol);
+    const dosyalar = (): string[] => fs.readdirSync(dizin).sort();
+    assert.deepEqual(dosyalar(), ["eren.db"], "servis temiz kapandı");
+    const once = fs.readFileSync(yol);
+    assert.equal(depoyuDenetle(yol, 2).tur, "uyumsuz");
+    assert.deepEqual(dosyalar(), ["eren.db", "eren.db-shm", "eren.db-wal"]);
+    assert.equal(fs.statSync(`${yol}-wal`).size, 0, "WAL boş: hiçbir şey yazılmadı");
+    assert.deepEqual(fs.readFileSync(yol), once, "ana dosya değişmedi");
+    // servis sonra açar, yazar, kapanır: artıkları kullanır ve siler
+    const servis = new DatabaseSync(yol);
+    servis.exec("PRAGMA journal_mode = WAL");
+    servis.prepare("INSERT INTO ajanda_kayitlari VALUES ('k_s', 9, 9, NULL, 'gorev', 'acik', 0, ?)").run(JSON.stringify(v2Kaydi()));
+    servis.close();
+    assert.deepEqual(dosyalar(), ["eren.db"]);
+    const d = depoyuDenetle(yol, 2);
+    assert.equal(d.tur === "uyumsuz" ? d.toplam : -1, 3);
   } finally {
     temizle();
   }
