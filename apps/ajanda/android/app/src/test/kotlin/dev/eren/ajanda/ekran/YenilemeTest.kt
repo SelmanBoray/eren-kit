@@ -260,6 +260,52 @@ class YenilemeTest {
         assertTrue(y.ertelenenler.isEmpty())
     }
 
+    /** Ret satırı kuralı: düzeltme formu yalnız gövdesi olan ve atılmış ertelenen olmayan girdide. */
+    @Test
+    fun duzeltilebilirGovdeVarVeErtelenenAtilmamisken() {
+        val g = ret(IslemTuru.GUNCELLE, "k6")
+        val durumlar = listOf(
+            Triple(g, true, "gövdeli sıradan ret"),
+            Triple(g.copy(govde = null), false, "gövdesiz"),
+            Triple(g.copy(ertelenenAtildi = true), false, "atılmış ertelenen (gövdeli)"),
+            Triple(g.copy(govde = null, ertelenenAtildi = true), false, "atılmış ertelenen (gövdesiz)"),
+        )
+        for ((r, beklenen, ad) in durumlar) {
+            assertEquals(ad, beklenen, RetListesi.satir(r, 0, simdi.zone).duzeltilebilir)
+        }
+        assertEquals("Eren servisi eski olduğu için gönderilmeden atıldı.", RetListesi.ertelenenNedeni(false))
+        assertEquals("Eren servisi eski olduğu için atıldı. Eren servisine ulaşmış olabilir.", RetListesi.ertelenenNedeni(true))
+        listOf(true, false).forEach { assertFalse(RetListesi.ertelenenNedeni(it).contains("PC")) }
+    }
+
+    @Test
+    fun ertelenenGeriAlDenetimliSahtedeCakismaZorlaVeYokluk() {
+        val y = SahteYuz()
+        val atilan = ret(IslemTuru.GUNCELLE, "k7").copy(neden = KuyrukRetNedeni.TESLIM_EDILEMEDI, ertelenenAtildi = true)
+        y.ret += atilan
+        // Listede yok: hiçbir şey olmaz.
+        val yok = y.ertelenenGeriAlDenetimli("i_yok", false)
+        assertFalse(yok.bulundu)
+        assertFalse(yok.uygulandi)
+        // Çakışma, zorla yanlış: değişmez, girdi kalır.
+        y.geriAlCakisan = listOf("simge")
+        val cakisti = y.ertelenenGeriAlDenetimli(atilan.islemId, false)
+        assertTrue(cakisti.bulundu)
+        assertFalse(cakisti.uygulandi)
+        assertEquals(listOf("simge"), cakisti.cakisan)
+        assertEquals(1, y.ret.size)
+        // Zorla: uygulanır, girdi çıkar.
+        val zorlu = y.ertelenenGeriAlDenetimli(atilan.islemId, true)
+        assertTrue(zorlu.uygulandi)
+        assertEquals(listOf("simge"), zorlu.degisen)
+        assertTrue(y.ret.isEmpty())
+        assertEquals(listOf("ertelenenGeriAl:i_yok", "ertelenenGeriAl:i_k7", "ertelenenGeriAl:i_k7:zorla"), y.cagrilar)
+        // Atılmış ertelenen olmayan girdi geri alınmaz.
+        y.ret += ret(IslemTuru.GUNCELLE, "k8")
+        assertFalse(y.ertelenenGeriAlDenetimli("i_k8", false).bulundu)
+        assertEquals(1, y.ret.size)
+    }
+
     @Test
     fun retGorunumuModeli() {
         val (y, a) = hazir()

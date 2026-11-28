@@ -11,6 +11,7 @@ import dev.eren.ajanda.cekirdek.CalismaKipi
 import dev.eren.ajanda.cekirdek.CekirdekHatasi
 import dev.eren.ajanda.cekirdek.DisaAktarma
 import dev.eren.ajanda.cekirdek.DuzenlemeTemeli
+import dev.eren.ajanda.cekirdek.ErtelenenGeriAlma
 import dev.eren.ajanda.cekirdek.EslesmeDurumu
 import dev.eren.ajanda.cekirdek.GecmisSayfasi
 import dev.eren.ajanda.cekirdek.GunBolumu
@@ -213,6 +214,27 @@ class SahteYuz : CekirdekYuzu {
         cagrilar += "ertelenenleriAt:${kayitId ?: "*"}"
         if (kayitId == null) ertelenenler.clear() else ertelenenler.remove(kayitId)
         return atilanErtelenen
+    }
+
+    /**
+     * Atılmış ertelenen girdisi geri alınırken çakışan alanlar (testte kurulur). Çekirdeğin kuralıyla: girdi
+     * yoksa ya da `ertelenenAtildi` değilse `bulundu` yanlış (gerçeği `GecersizGirdi` verir; sahte burada
+     * yalınlaştırır); çakışma varsa ve `zorla` yanlışsa hiçbir şey değişmez, girdi kalır; öteki halde girdi
+     * listeden çıkar. Çağrı kaydı `ertelenenGeriAl:<islemId>[:zorla]`.
+     */
+    var geriAlCakisan: List<String> = emptyList()
+
+    /** Geri almada değişen alanlar (testte kurulur). */
+    var geriAlDegisen: List<String> = listOf("simge")
+
+    override fun ertelenenGeriAlDenetimli(islemId: String, zorla: Boolean): ErtelenenGeriAlma {
+        cagrilar += "ertelenenGeriAl:$islemId" + if (zorla) ":zorla" else ""
+        val r = ret.firstOrNull { it.islemId == islemId && it.ertelenenAtildi } ?: return ErtelenenGeriAlma()
+        if (geriAlCakisan.isNotEmpty() && !zorla) {
+            return ErtelenenGeriAlma(bulundu = true, uygulandi = false, cakisan = geriAlCakisan)
+        }
+        ret.remove(r)
+        return ErtelenenGeriAlma(bulundu = true, uygulandi = true, degisen = geriAlDegisen, cakisan = geriAlCakisan)
     }
 
     override fun gecmisIste(kayitId: String, onceRev: Long?) {

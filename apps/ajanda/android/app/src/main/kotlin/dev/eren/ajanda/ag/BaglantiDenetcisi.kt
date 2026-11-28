@@ -135,9 +135,12 @@ class BaglantiDenetcisi(
     private var acilisZamani: Iptal? = null
     private var bekleme: Iptal? = null
 
-    /** Düşülen alt sürümdeki canlı bağlantının yukarı deneme yoklaması ([yukariDenemesiniKur]). */
+    /**
+     * Durum yoklaması ([yukariDenemesiniKur]): düşülen alt sürümdeki canlı bağlantının yukarı deneme anı ve
+     * yanıtı beklenen geçmiş isteğinin zaman aşımı anı, tek zamanlayıcıda; [yukariAni] kurulduğu (yukarı, geçmiş) çifti.
+     */
     private var yukariZamani: Iptal? = null
-    private var yukariAni: Long? = null
+    private var yukariAni: Pair<Long?, Long?>? = null
 
     /** Art arda başarısız bağlantı sayısı; `CANLI`'da ve yeni ağda sıfırlanır. */
     private var deneme = 0
@@ -315,17 +318,27 @@ class BaglantiDenetcisi(
      * sıradan kopma gibi yeniden bağlanır). An geçmişse (yolda işlem vardı, kapatılmadı) [AgAyarlari.yukariTekrarMs]
      * sonra yeniden yoklanır: döngü dönmez. An kalkınca ya da soket kapanınca yoklama iptal edilir.
      */
+    /**
+     * Aynı kalıpla geçmiş isteğinin zaman aşımı: `gecmisBeklemeMs` doluysa (soket açıkken, aşamadan bağımsız;
+     * kapanışta çekirdek istekleri temizler) o ana da yoklama gerekir. İki an tek zamanlayıcıda birleşir: en
+     * yakın olan kurulur, yoklamadan sonra okunan durum bir sonrakini kurar (ikisi ayrı ayrı yarışmaz).
+     */
     private fun yukariDenemesiniKur(d: BaglantiDurumu) {
-        val an = d.yukariDenemeMs.takeIf { d.asama == BaglantiAsamasi.CANLI && soket != null }
-        if (an == null) {
+        val yukari = d.yukariDenemeMs.takeIf { d.asama == BaglantiAsamasi.CANLI && soket != null }
+        val gecmis = d.gecmisBeklemeMs.takeIf { soket != null }
+        if (yukari == null && gecmis == null) {
             yukariDenemesiniIptal()
             return
         }
-        if (an == yukariAni && yukariZamani != null) return
+        val anlar = Pair(yukari, gecmis)
+        if (anlar == yukariAni && yukariZamani != null) return
         yukariZamani?.iptal()
-        yukariAni = an
-        val kalan = an - duvarSaati()
-        val ms = if (kalan > 0) kalan else ayar.yukariTekrarMs
+        yukariAni = anlar
+        val simdi = duvarSaati()
+        val ms = listOfNotNull(yukari, gecmis).minOf { an ->
+            val kalan = an - simdi
+            if (kalan > 0) kalan else ayar.yukariTekrarMs
+        }
         yukariZamani = zaman.sonra(ms) {
             korumali {
                 yukariZamani = null

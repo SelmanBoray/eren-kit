@@ -155,6 +155,30 @@ class GecisMetinleriTest {
         assertTrue(GecisMetinleri.gosterilmeli(g, 41))
     }
 
+    /** E3: bildirim işareti ile uygulama işareti ayrı; `DEPO_DEGISTI` uygulamada bildirime rağmen bir kez. */
+    @Test
+    fun uygulamaVeBildirimIsaretleriAyri() {
+        val d = ozet(GecisNedeni.DEPO_DEGISTI, ts = 50)
+        assertFalse(GecisMetinleri.uygulamadaGosterilmeli(null, null, null))
+        assertTrue(GecisMetinleri.uygulamadaGosterilmeli(d, null, null))
+        assertTrue("bildirim söylemiş olsa da", GecisMetinleri.uygulamadaGosterilmeli(d, null, 50))
+        assertTrue("eski geçişin uygulama işareti", GecisMetinleri.uygulamadaGosterilmeli(d, 49, 50))
+        assertFalse("uygulama gösterdi: bir kez", GecisMetinleri.uygulamadaGosterilmeli(d, 50, 50))
+        assertFalse(GecisMetinleri.uygulamadaGosterilmeli(d, 50, null))
+        for (n in listOf(GecisNedeni.KOPARMA, GecisNedeni.ESLESME_KALDIRILDI)) {
+            val g = ozet(n, ts = 60)
+            assertTrue(GecisMetinleri.uygulamadaGosterilmeli(g, null, null))
+            assertFalse("$n: bildirim söylediyse yinelenmez", GecisMetinleri.uygulamadaGosterilmeli(g, null, 60))
+            assertFalse(GecisMetinleri.uygulamadaGosterilmeli(g, 60, null))
+        }
+        // Bildirim: ne kendisi ne uygulama söylediyse.
+        assertTrue(GecisMetinleri.bildirimdeGosterilmeli(d, null, null))
+        assertFalse(GecisMetinleri.bildirimdeGosterilmeli(d, 50, null))
+        assertFalse(GecisMetinleri.bildirimdeGosterilmeli(d, null, 50))
+        assertTrue(GecisMetinleri.bildirimdeGosterilmeli(d, 49, 49))
+        assertFalse(GecisMetinleri.bildirimdeGosterilmeli(null, null, null))
+    }
+
     /** Bütün dallar; `KullaniciMetniTest` bunları "PC" için tarar. */
     internal companion object {
         fun ornekMetinler(): List<String> {

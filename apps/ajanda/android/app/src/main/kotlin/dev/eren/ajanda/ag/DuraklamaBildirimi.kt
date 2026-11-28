@@ -14,8 +14,11 @@ import dev.eren.ajanda.kimlik.GecisMetni
  * arkasında) bunu duraklama başına **bir kez** bildirir. Duraklamanın kimliği, öncelik sırasıyla:
  * 1. **Onay bekleyen plan** (`birlestirmeOnizlemesi()?.iz`): her yeni plan bir kez ("onayınızı bekliyor"); geçiş
  *    olsun olmasın, geçiş gösterilmiş olsun olmasın.
- * 2. **Henüz söylenmemiş geçiş** (`sonGecis()`; `GecisMetinleri.gosterilmeli` + saklı `tsMs`; arayüz
+ * 2. **Henüz söylenmemiş geçiş** (`sonGecis()`; `GecisMetinleri.bildirimdeGosterilmeli` + saklı `tsMs`; arayüz
  *    [gecisGosterildi] ile işaretlediyse söylenmiş sayılır): geçiş başına bir kez, `GecisMetinleri.duraklama` metni.
+ *    E3: bildirimin "söyledim" işareti ([gosterilen]) ile uygulamanın "gösterdim" işareti ([uygulamada]) iki ayrı
+ *    kayıttır; bildirim yalnız kendininkine yazar, uygulamanın penceresi bu yüzden susmaz
+ *    (`GecisMetinleri.uygulamadaGosterilmeli`; `DEPO_DEGISTI` uygulamada hep bir kez gösterilir).
  * 3. **Eşleşme** (`eslesmeDurumu()`): geçiş yoksa (ilk eşleşme) ya da söylendiyse (arayüz gösterdi; koparmadan sonra
  *    yeniden eşleşme): eşleşme başına bir kez, genel metin ([ESITLEME_BEKLIYOR]).
  * Plan ya da geçiş bildirildiyse o eşleşmenin duraklaması da söylenmiş sayılır (plan düşünce yinelenmez).
@@ -32,6 +35,8 @@ class DuraklamaBildirimi(
     private val gorunur: () -> Boolean,
     private val gunluk: Gunluk,
     private val duraklama: GosterilenDuraklama = GosterilenDuraklama.Yok,
+    /** Uygulamanın "gösterdim" işareti (E3): yalnız okunur; bildirim ona hiç yazmaz. */
+    private val uygulamada: GosterilenGecis = GosterilenGecis.Yok,
 ) {
     fun arkaPlanBitti(sonuc: ArkaPlanSonucu) {
         try {
@@ -60,7 +65,7 @@ class DuraklamaBildirimi(
             }
             return
         }
-        if (g != null && GecisMetinleri.gosterilmeli(g, gosterilen.oku())) {
+        if (g != null && GecisMetinleri.bildirimdeGosterilmeli(g, gosterilen.oku(), uygulamada.oku())) {
             // Henüz söylenmemiş geçiş: onun metni; o eşleşmenin duraklaması da söylenmiş sayılır.
             if (bildirici.goster(GecisMetinleri.duraklama(g, birlestirmeBekliyor = false))) {
                 gosterilen.yaz(g.tsMs)
@@ -76,7 +81,15 @@ class DuraklamaBildirimi(
 
     companion object {
         private const val TERCIHLER = "ajanda_durum_bildirimi"
+        /**
+         * Bildirimin "söyledim" işareti. Eski kurulumlardaki tek ortak kayıt budur (E3 öncesi); geçişte olduğu gibi
+         * bildirim işareti sayılır, uygulamanın işareti ([UYGULAMADA_GOSTERILEN_TS]) boş başlar: geçiş uygulamada
+         * en çok bir kez yeniden görünür, hiçbir geçiş kaybolmaz.
+         */
         private const val GOSTERILEN_TS = "gosterilen_gecis_ts"
+
+        /** Uygulamanın "gösterdim" işareti (E3). */
+        private const val UYGULAMADA_GOSTERILEN_TS = "uygulamada_gosterilen_gecis_ts"
         private const val GOSTERILEN_PLAN = "gosterilen_duraklama_plani"
         private const val GOSTERILEN_ESLESME = "gosterilen_duraklama_eslesmesi"
 
@@ -113,7 +126,8 @@ class DuraklamaBildirimi(
                     }
                 },
                 duraklama = TercihGosterilenDuraklama(uygulama),
-                gosterilen = TercihGosterilenGecis(uygulama),
+                gosterilen = TercihGosterilenGecis(uygulama, GOSTERILEN_TS),
+                uygulamada = TercihGosterilenGecis(uygulama, UYGULAMADA_GOSTERILEN_TS),
                 bildirici = object : DuraklamaBildiricisi {
                     override fun goster(m: GecisMetni): Boolean =
                         Bildirimler.durumGoster(uygulama, Bildirimler.DURUM_ESITLEME, m.baslik, m.govde)
@@ -125,20 +139,42 @@ class DuraklamaBildirimi(
             )
         }
 
-        /** Arayüz bu geçişi (`GecisOzeti.tsMs`) kullanıcıya gösterdi: bildirimi gösterilmez, varsa kaldırılır. */
+        /**
+         * Arayüz bu geçişi (`GecisOzeti.tsMs`) kullanıcıya gösterdi: uygulamanın işaretine yazılır (bildirimin
+         * işaretine değil), bildirim artık onu söylemez, varsa kaldırılır.
+         */
         fun gecisGosterildi(context: Context, tsMs: Long) {
-            TercihGosterilenGecis(context.applicationContext).yaz(tsMs)
+            TercihGosterilenGecis(context.applicationContext, UYGULAMADA_GOSTERILEN_TS).yaz(tsMs)
             Bildirimler.durumKaldir(context.applicationContext, Bildirimler.DURUM_ESITLEME)
         }
 
-        /** Bildirimle ya da [gecisGosterildi] ile gösterilmiş son geçişin `tsMs`'i (yoksa `null`). */
-        fun gosterilenGecis(context: Context): Long? = TercihGosterilenGecis(context.applicationContext).oku()
+        /**
+         * Uygulama içi geçiş penceresi bu geçiş için açılmalı mı (`GecisMetinleri.uygulamadaGosterilmeli`; iki
+         * işaretle). Gösterince [gecisGosterildi] çağrılır. Çekirdek çağrısı yok; tercih okur (ana iş parçacığında
+         * kısa disk okuması olabilir).
+         */
+        fun uygulamadaGosterilmeli(context: Context, g: GecisOzeti?): Boolean {
+            val u = context.applicationContext
+            return GecisMetinleri.uygulamadaGosterilmeli(
+                g,
+                uygulamadaTsMs = TercihGosterilenGecis(u, UYGULAMADA_GOSTERILEN_TS).oku(),
+                bildirimdeTsMs = TercihGosterilenGecis(u, GOSTERILEN_TS).oku(),
+            )
+        }
 
-        private class TercihGosterilenGecis(context: Context) : GosterilenGecis {
+        /** Uygulamanın [gecisGosterildi] ile işaretlediği son geçişin `tsMs`'i (yoksa `null`). */
+        fun uygulamadaGosterilenGecis(context: Context): Long? =
+            TercihGosterilenGecis(context.applicationContext, UYGULAMADA_GOSTERILEN_TS).oku()
+
+        /** Bildirimin söylediği son geçişin `tsMs`'i (eski kurulumun tek kaydı dahil; yoksa `null`). */
+        fun bildirimdeGosterilenGecis(context: Context): Long? =
+            TercihGosterilenGecis(context.applicationContext, GOSTERILEN_TS).oku()
+
+        private class TercihGosterilenGecis(context: Context, private val anahtar: String) : GosterilenGecis {
             private val p = context.getSharedPreferences(TERCIHLER, Context.MODE_PRIVATE)
-            override fun oku(): Long? = if (p.contains(GOSTERILEN_TS)) p.getLong(GOSTERILEN_TS, 0) else null
+            override fun oku(): Long? = if (p.contains(anahtar)) p.getLong(anahtar, 0) else null
             override fun yaz(tsMs: Long) {
-                p.edit().putLong(GOSTERILEN_TS, tsMs).commit()
+                p.edit().putLong(anahtar, tsMs).commit()
             }
         }
 
@@ -183,10 +219,16 @@ interface GosterilenDuraklama {
     }
 }
 
-/** Gösterilmiş son geçişin `tsMs`'i (üretimde `SharedPreferences`). */
+/** Gösterilmiş son geçişin `tsMs`'i (üretimde `SharedPreferences`; bildirimin ve uygulamanın ayrı ayrı). */
 interface GosterilenGecis {
     fun oku(): Long?
     fun yaz(tsMs: Long)
+
+    /** Saklamayan (testler; uygulama işareti verilmemiş kurulum). */
+    object Yok : GosterilenGecis {
+        override fun oku(): Long? = null
+        override fun yaz(tsMs: Long) = Unit
+    }
 }
 
 /** Durum kanalında eşitleme bildirimi. `goster` `false`: izin ya da kanal kapalı, gösterilmedi. */

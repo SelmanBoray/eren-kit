@@ -212,8 +212,16 @@ class SahteCekirdek : KanalCekirdegi {
     }
 
     /** Durumu değiştirip gözlemcilere `baglanti` değişimi bildirir (motorun yapacağı gibi). */
-    fun durumYaz(asama: BaglantiAsamasi, kuyrukta: Int, surum: SurumUyusmazligi? = null, yukariDenemeMs: Long? = null) {
-        synchronized(this) { durum = durumOlustur(asama, kuyrukta, surum).copy(yukariDenemeMs = yukariDenemeMs) }
+    fun durumYaz(
+        asama: BaglantiAsamasi,
+        kuyrukta: Int,
+        surum: SurumUyusmazligi? = null,
+        yukariDenemeMs: Long? = null,
+        gecmisBeklemeMs: Long? = null,
+    ) {
+        synchronized(this) {
+            durum = durumOlustur(asama, kuyrukta, surum).copy(yukariDenemeMs = yukariDenemeMs, gecmisBeklemeMs = gecmisBeklemeMs)
+        }
         val d = Degisim(emptyList(), false, false, true, false, emptyList())
         gozlemciler.toList().forEach { it.degisti(d) }
     }

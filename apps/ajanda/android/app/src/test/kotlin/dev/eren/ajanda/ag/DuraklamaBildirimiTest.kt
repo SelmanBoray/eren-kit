@@ -26,6 +26,8 @@ class DuraklamaBildirimiTest {
     private var gorunur = false
     private var izin = true
     private var saklanan: Long? = null
+    private var uygulamadaSaklanan: Long? = null
+    private var uygulamadaYazildi = 0
     private var saklananPlan: String? = null
     private var saklananEslesme: String? = null
     private val gosterilen = mutableListOf<GecisMetni>()
@@ -48,6 +50,10 @@ class DuraklamaBildirimiTest {
         gosterilen = object : GosterilenGecis {
             override fun oku() = saklanan
             override fun yaz(tsMs: Long) { saklanan = tsMs }
+        },
+        uygulamada = object : GosterilenGecis {
+            override fun oku() = uygulamadaSaklanan
+            override fun yaz(tsMs: Long) { uygulamadaYazildi++; uygulamadaSaklanan = tsMs }
         },
         bildirici = object : DuraklamaBildiricisi {
             override fun goster(m: GecisMetni): Boolean {
@@ -208,6 +214,55 @@ class DuraklamaBildirimiTest {
         planIzi = "plan-4"
         b.arkaPlanBitti(ArkaPlanSonucu.YEREL_KIP)
         assertEquals(3, gosterilen.size)
+    }
+
+    /**
+     * E3: bildirim `DEPO_DEGISTI`'yi söyledi diye uygulamanın geçiş penceresi susmaz. Bildirim yalnız kendi
+     * işaretine yazar; uygulama penceresi yine bir kez açılır, gösterince kendi işaretine yazar ve bir daha açılmaz.
+     */
+    @Test
+    fun bildirimDepoDegistiSoylesedeUygulamaBirKezGosterir() {
+        b.arkaPlanBitti(ArkaPlanSonucu.YEREL_KIP)
+        assertEquals(1, gosterilen.size)
+        assertEquals(1_000L, saklanan)
+        assertEquals("bildirim uygulamanın işaretine yazmaz", 0, uygulamadaYazildi)
+        assertNull(uygulamadaSaklanan)
+        val g = gecis
+        assertTrue("uygulama penceresi açılır", GecisMetinleri.uygulamadaGosterilmeli(g, uygulamadaSaklanan, saklanan))
+        // Arayüz gösterdi (üretimde `DuraklamaBildirimi.gecisGosterildi`): uygulamanın işareti.
+        uygulamadaSaklanan = g!!.tsMs
+        assertFalse("bir kez", GecisMetinleri.uygulamadaGosterilmeli(g, uygulamadaSaklanan, saklanan))
+        b.arkaPlanBitti(ArkaPlanSonucu.YEREL_KIP)
+        assertEquals("bildirim de yinelemez", 1, gosterilen.size)
+    }
+
+    /** E3: uygulama geçişi gösterdiyse bildirim onu söylemez (yalnız duran eşitlemeyi, eşleşme başına bir kez). */
+    @Test
+    fun uygulamaGosterdiyseBildirimGecisiSoylemez() {
+        uygulamadaSaklanan = 1_000
+        repeat(2) { b.arkaPlanBitti(ArkaPlanSonucu.YEREL_KIP) }
+        assertEquals(listOf(DuraklamaBildirimi.ESITLEME_BEKLIYOR), gosterilen)
+        assertNull("bildirimin işareti geçişle doldurulmaz", saklanan)
+        assertEquals(0, uygulamadaYazildi)
+    }
+
+    /**
+     * E3 geçişi: eski kurulumdaki tek kayıt bildirim işareti sayılır (`gosterilen_gecis_ts` anahtarı aynı kaldı),
+     * uygulama işareti boş başlar. Eski kayıttaki `DEPO_DEGISTI` uygulamada bir kez gösterilir, bildirim yinelemez.
+     */
+    @Test
+    fun eskiTekKayitBildirimIsaretiSayilirUygulamaBosBaslar() {
+        saklanan = 1_000
+        uygulamadaSaklanan = null
+        val g = gecis!!
+        assertTrue(GecisMetinleri.uygulamadaGosterilmeli(g, uygulamadaSaklanan, saklanan))
+        b.arkaPlanBitti(ArkaPlanSonucu.YEREL_KIP)
+        assertEquals(listOf(DuraklamaBildirimi.ESITLEME_BEKLIYOR), gosterilen)
+        assertEquals(1_000L, saklanan)
+        // Koparma geçişini bildirim söylediyse uygulama yinelemez (kullanıcının uygulamada yaptığı iş).
+        val k = ozet(GecisNedeni.KOPARMA, 1_000)
+        assertFalse(GecisMetinleri.uygulamadaGosterilmeli(k, null, 1_000))
+        assertTrue(GecisMetinleri.uygulamadaGosterilmeli(k, null, null))
     }
 
     @Test

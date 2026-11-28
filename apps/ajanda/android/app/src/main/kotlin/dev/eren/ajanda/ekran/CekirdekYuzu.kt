@@ -9,6 +9,7 @@ import dev.eren.ajanda.cekirdek.Cekirdek
 import dev.eren.ajanda.cekirdek.Degisim
 import dev.eren.ajanda.cekirdek.DisaAktarma
 import dev.eren.ajanda.cekirdek.DuzenlemeTemeli
+import dev.eren.ajanda.cekirdek.ErtelenenGeriAlma
 import dev.eren.ajanda.cekirdek.EslesmeDurumu
 import dev.eren.ajanda.cekirdek.GecmisSayfasi
 import dev.eren.ajanda.cekirdek.GirdiYolu
@@ -63,6 +64,13 @@ interface CekirdekYuzu {
      * ret listesine `ertelenenAtildi` girdisi olarak geçer. Döner: geçen girdi sayısı. Ekrana bağlı değil.
      */
     fun ertelenenleriAt(kayitId: String?): Int
+    /**
+     * Ret listesindeki atılmış ertelenen değişikliği (`ertelenenAtildi` girdisi) kaydın şimdiki haline yeniden
+     * uygular (çekirdek `ertelenen_geri_al_denetimli`, C1). Atıldıktan sonra değişmiş alan varsa ve [zorla]
+     * yanlışsa hiçbir şey yapılmaz, `cakisan` dolu döner (girdi kalır); [zorla] doğruysa o alanlar da yazılır.
+     * Girdi listede yoksa `bulundu` yanlış. Ekrana bağlı değil.
+     */
+    fun ertelenenGeriAlDenetimli(islemId: String, zorla: Boolean): ErtelenenGeriAlma
     fun gecmisIste(kayitId: String, onceRev: Long?)
     fun gecmis(kayitId: String): GecmisSayfasi?
     fun govdeyiHazirla(govde: KayitGovdesi): KayitGovdesi
@@ -95,6 +103,7 @@ interface CekirdekYuzu {
         override fun retAt(islemId: String) = c.retAt(islemId)
         override fun retDuzelt(islemId: String, govde: KayitGovdesi) = c.retDuzelt(islemId, govde)
         override fun ertelenenleriAt(kayitId: String?) = c.ertelenenleriAt(kayitId)
+        override fun ertelenenGeriAlDenetimli(islemId: String, zorla: Boolean) = c.ertelenenGeriAlDenetimli(islemId, zorla)
         override fun gecmisIste(kayitId: String, onceRev: Long?) = c.gecmisIste(kayitId, onceRev)
         override fun gecmis(kayitId: String) = c.gecmis(kayitId)
         override fun govdeyiHazirla(govde: KayitGovdesi) = dev.eren.ajanda.cekirdek.govdeyiHazirla(govde)

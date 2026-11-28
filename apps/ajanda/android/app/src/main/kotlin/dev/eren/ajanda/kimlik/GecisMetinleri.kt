@@ -79,6 +79,25 @@ object GecisMetinleri {
      */
     fun gosterilmeli(g: GecisOzeti?, gosterilenTsMs: Long?): Boolean = g != null && g.tsMs != gosterilenTsMs
 
+    /**
+     * E3: iki ayrı işaret. Arka plan bildiriminin "söyledim" işareti ([bildirimdeTsMs]) ile uygulamanın "gösterdim"
+     * işareti ([uygulamadaTsMs]) ayrı saklanır; biri ötekini susturmaz.
+     *
+     * Uygulama içi geçiş penceresi açılmalı mı: uygulama bu geçişi göstermediyse. `DEPO_DEGISTI` uygulama içinde
+     * mutlaka bir kez gösterilir (bildirim söylemiş olsa da: bildirim kısa bir "eşitleme durdu"dur, bağlanılan
+     * servisin değiştiğini ve neyin nerede durduğunu ancak pencere anlatır). Öteki geçişleri (koparma, eşleşmeyi
+     * kaldırma: kullanıcının uygulamada yaptığı, sonucu o an gösterilen) bildirim söylediyse uygulama yinelemez.
+     */
+    fun uygulamadaGosterilmeli(g: GecisOzeti?, uygulamadaTsMs: Long?, bildirimdeTsMs: Long?): Boolean = when {
+        !gosterilmeli(g, uygulamadaTsMs) -> false
+        g!!.neden == GecisNedeni.DEPO_DEGISTI -> true
+        else -> gosterilmeli(g, bildirimdeTsMs)
+    }
+
+    /** Arka plan bildirimi geçişi söylemeli mi: ne kendisi söyledi ne uygulama gösterdi. */
+    fun bildirimdeGosterilmeli(g: GecisOzeti?, bildirimdeTsMs: Long?, uygulamadaTsMs: Long?): Boolean =
+        gosterilmeli(g, bildirimdeTsMs) && gosterilmeli(g, uygulamadaTsMs)
+
     private const val UYGULAMAYI_ACIN = "Uygulamayı açtığınızda yeniden bağlanır; gönderilecek bir şey varsa birleştirmeyi size sorar."
 
     /**
