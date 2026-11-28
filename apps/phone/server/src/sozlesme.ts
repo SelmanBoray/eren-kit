@@ -2455,6 +2455,12 @@ export interface AjandaPcBaglami {
   baglanti_id: string;
   arac_cagri_id?: string;
   oturum_id?: string;
+  /**
+   * Köprünün hello'da bildirdiği harness süreci (`kopru_hello.surec_id`; Claude: köprünün `process.ppid`'i),
+   * bağlantının ömrü boyunca sabit. Yoksa eski köprü. T5 (`ajanda-pc` `surecUyusmazligi`) tasdikin `surec_id`'siyle
+   * karşılaştırır.
+   */
+  kopru_surec_id?: string;
 }
 
 /** `ana_oturum` bağlamı bugünkü gibi yalnız jetonun kapsamıdır (ek alan yok); PC çağrısınınki ayrıdır. */

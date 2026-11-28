@@ -48,6 +48,21 @@ test("uyarlayıcı bugünkü dışa verimlerin aynısıdır; kurulum/claude-code
   assert.deepEqual(giris.mcpEkleArgumanlari({ nodeExe: "N", kopruBetigi: "K" }), ["mcp", "add", "eren-ajanda", "-s", "user", "--", "N", "--disable-warning=ExperimentalWarning", "K", "--rol", "pc_oturumu"]);
 });
 
+test("MCP kaydı köprüyü sarmalayıcısız başlatır: '--'dan sonra node.exe'nin kendisi (T5: köprünün ebeveyni Claude Code)", () => {
+  // Köprü hello'da `process.ppid`'i bildirir; servis onu kancanın `CLAUDE_PID`'iyle karşılaştırır. Arada
+  // cmd /c, npx ya da sh -c olursa ebeveyn harness olmaz ve o pencerenin kayıtları taslak doğar.
+  const y = uyarlayici.yollar({ LOCALAPPDATA: "C:\\Users\\Ad\\AppData\\Local", USERPROFILE: "C:\\Users\\Ad" }, NODE);
+  const args = uyarlayici.mcpEkleArgumanlari(y);
+  const komut = args.slice(args.indexOf("--") + 1);
+  assert.equal(komut[0], NODE, "komut node.exe'nin kendisi");
+  assert.match(komut[0]!, /\\node\.exe$/i);
+  assert.deepEqual(komut.slice(1), ["--disable-warning=ExperimentalWarning", y.kopruBetigi, "--rol", "pc_oturumu"]);
+  const SARMALAYICI = /^(cmd(\.exe)?|npx(\.cmd)?|npm(\.cmd)?|sh|bash|pwsh|powershell|wsl|start|env|\/c|-c|\/k)$/i;
+  for (const a of komut) assert.equal(SARMALAYICI.test(a), false, `sarmalayıcı öğesi: ${a}`);
+  // Kabuklara yazılan satırlar aynı komutu taşır (kabuk yalnız `claude mcp add`'i çalıştırır, köprüyü değil).
+  for (const satir of uyarlayici.mcpKaydiSatirlari(y)) assert.equal(/\b(npx|cmd \/c|sh -c)\b/i.test(satir), false, satir);
+});
+
 test("uyarlayıcı yolları yalnız ortamdan türetir: harness kaynaklarında import.meta yolu yok", () => {
   const dizin = new URL("../harness/", import.meta.url);
   const dosyalar = readdirSync(dizin).filter((d) => d.endsWith(".ts"));
