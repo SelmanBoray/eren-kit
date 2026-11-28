@@ -2502,7 +2502,8 @@ export type AjandaFiilCiktisi<F extends AjandaFiili> = z.infer<(typeof AJANDA_AR
 /**
  * Boru düzeyi sonuç. Alan kararları (`ret` dahil) `ok:true` ile çıktının içindedir (`sonuc:"ret"`,
  * `neden`, `mesaj_ani`); `ok:false` yalnız çıktı kurulamadığında: `tur_gecersiz` (bu nesilde açık tur
- * yok, mesaj anı bilinmiyor), `ic_hata`. `pc_karar` yalnız `pc_oturumu` çağrısında: PC defterinin tur
+ * yok, mesaj anı bilinmiyor), `ic_hata`. İşleyici işlem sonrası hatayı `ic_hata` + `detail:"islem_sonrasi"`
+ * ile bildirir; boru sunucusu bunu yazan araçta (`ajanda_ekle`/`ajanda_guncelle`) `belirsiz`'e çevirir. `pc_karar` yalnız `pc_oturumu` çağrısında: PC defterinin tur
  * kararı (`PcTurKarari`); boru sunucusu bunu köprüye `PcAracSonucu` olarak verir (AJANDA.md "PC oturumları").
  */
 export type AjandaFiilSonucu<F extends AjandaFiili> =
