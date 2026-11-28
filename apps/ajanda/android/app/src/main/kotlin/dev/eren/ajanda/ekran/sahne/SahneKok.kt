@@ -157,7 +157,8 @@ private fun ayrintiKaynagi(depo: BugunDeposu?, kayitId: String, onKapat: () -> U
     }
     val ozet = modelde ?: okunan
     return when {
-        ozet != null -> AyrintiKaynagi.Gercek(ozet) { tamam -> depo.tamamla(ozet.kayit, tamam); onKapat() }
+        // Tamamlanamayan kayıtta (not; hangi günü olduğu belli olmayan tekrar) "Bitti" yok: tek dokunuş seriyi kapatmasın.
+        ozet != null -> AyrintiKaynagi.Gercek(ozet, if (ozet.kayit.tamamlanabilir) { tamam -> depo.tamamla(ozet.kayit, tamam); onKapat() } else null)
         ornek -> null
         okundu -> AyrintiKaynagi.Bulunamadi
         else -> AyrintiKaynagi.Okunuyor

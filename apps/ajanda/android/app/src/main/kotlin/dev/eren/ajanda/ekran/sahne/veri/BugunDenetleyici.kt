@@ -8,7 +8,7 @@ import dev.eren.ajanda.cekirdek.Degisim
 import dev.eren.ajanda.cekirdek.EslesmeDurumu
 import dev.eren.ajanda.cekirdek.KayitDurumu
 import dev.eren.ajanda.cekirdek.KayitGorunumu
-import dev.eren.ajanda.cekirdek.KayitTuru
+import dev.eren.ajanda.cekirdek.OrnekDurumu
 import dev.eren.ajanda.cekirdek.RetGirdisi
 import dev.eren.ajanda.cekirdek.Sekme
 import dev.eren.ajanda.cekirdek.TakvimOgesi
@@ -189,13 +189,15 @@ class BugunDenetleyici(private val c: CekirdekYuzu, private val saat: () -> Zone
             if (k.taslak || k.kayitId in taslakIdleri || k.durum != KayitDurumu.ACIK) continue
             val konum = Liste.konum(k.zaman, simdi.zone) ?: continue
             val (grup, gun) = Liste.tarihliGrup(k, konum, bugun)
+            // Tekrarlı kaydın liste satırı çapa örneğidir (çapa bugünden sonra); "Tekrarlayanlar"da örnek belli değil.
+            val ornek = capaOrnegi(k, bugun)
             val (yer, kayit) = when (grup) {
                 Liste.Grup.GECIKMIS -> KALAN to listeKaydi(g, simdi, grup, konum, gonderim, gecikme = true).also { kalanlar += gun to it }
                 Liste.Grup.YARIN, Liste.Grup.BU_HAFTA, Liste.Grup.SONRASI ->
                     if (gun < haftaSiniri) {
-                        gun.toString() to listeKaydi(g, simdi, Liste.Grup.YARIN, konum, gonderim).also { gunler.getOrPut(gun) { mutableListOf() } += konum to it }
+                        gun.toString() to listeKaydi(g, simdi, Liste.Grup.YARIN, konum, gonderim, ornek = ornek).also { gunler.getOrPut(gun) { mutableListOf() } += konum to it }
                     } else {
-                        SONRASI to listeKaydi(g, simdi, Liste.Grup.SONRASI, konum, gonderim).also { sonrasi += konum to it }
+                        SONRASI to listeKaydi(g, simdi, Liste.Grup.SONRASI, konum, gonderim, ornek = ornek).also { sonrasi += konum to it }
                     }
                 Liste.Grup.TEKRARLAYAN -> TEKRARLAYANLAR to listeKaydi(g, simdi, grup, konum, gonderim).also { tekrarlayanlar += it }
                 else -> continue // Bugün takvimden; Geçmiş yalnız kapalılar dahilken.
@@ -274,16 +276,25 @@ class BugunDenetleyici(private val c: CekirdekYuzu, private val saat: () -> Zone
             konum == null -> (k.zaman as? AjandaZamani.Belirsiz)?.let { "“${it.ifade}”" }
             else -> Liste.zamanMetni(k, konum, grup ?: Liste.Grup.SONRASI, simdi)
         }
+        // Tekrarlı kayıtta yalnız çapa örneği (bugün ya da sonrası) hedeflenebilir; değilse tamamlanamaz.
+        val ornek = if (k.durum == KayitDurumu.ACIK) capaOrnegi(k, simdi.toLocalDate()) else null
+        val ornekDurumu = ornek?.let { o -> k.ornekler.firstOrNull { it.tarih == o }?.durum }
+        val durum = when {
+            k.durum != KayitDurumu.ACIK -> k.durum
+            ornekDurumu == OrnekDurumu.TAMAM -> KayitDurumu.TAMAM
+            ornekDurumu == OrnekDurumu.IPTAL -> KayitDurumu.IPTAL
+            else -> KayitDurumu.ACIK
+        }
         val hal = when {
             k.taslak -> LevhaHali.TASLAK
-            k.durum == KayitDurumu.ACIK -> LevhaHali.ACIK
+            durum == KayitDurumu.ACIK -> LevhaHali.ACIK
             else -> LevhaHali.BITTI
         }
         val kayit = kaydet(
-            g, anahtar = k.kayitId, zaman = zaman, hal = hal, gecti = false, ornekTarihi = null,
-            gonderim = Liste.Gonderim.hesapla(adresVar, baglanti?.asama), durumMetni = durumMetni(k.durum),
-            iptal = k.durum == KayitDurumu.IPTAL,
-        )
+            g, anahtar = k.kayitId, zaman = zaman, hal = hal, gecti = false, ornekTarihi = ornek,
+            gonderim = Liste.Gonderim.hesapla(adresVar, baglanti?.asama), durumMetni = durumMetni(durum),
+            iptal = durum == KayitDurumu.IPTAL,
+        ).seriKorumasi()
         val yer = when {
             k.zaman == null -> "Tarihsiz"
             grup == Liste.Grup.BUGUN -> "Bugün"
@@ -293,11 +304,7 @@ class BugunDenetleyici(private val c: CekirdekYuzu, private val saat: () -> Zone
         return AyrintiOzeti(kayit, yer)
     }
 
-    private fun durumMetni(d: KayitDurumu): String? = when (d) {
-        KayitDurumu.TAMAM -> "tamamlandı"
-        KayitDurumu.IPTAL -> "iptal edildi"
-        KayitDurumu.ACIK -> null
-    }
+    private fun durumMetni(d: KayitDurumu): String? = KayitKurucu.durumMetni(d)
 
     // ---------------------------------------------------------------------------------------------
     // Kayıttan ekran kaydına
@@ -333,10 +340,44 @@ class BugunDenetleyici(private val c: CekirdekYuzu, private val saat: () -> Zone
         konum: Liste.Konum,
         gonderim: Liste.Gonderim,
         gecikme: Boolean = false,
-    ): BugunKaydi = kaydet(
-        g, anahtar = g.kayit.kayitId, zaman = Liste.zamanMetni(g.kayit, konum, grup, simdi),
-        hal = LevhaHali.ACIK, gecti = gecikme, ornekTarihi = null, gonderim = gonderim, durumMetni = null,
-    )
+        ornek: String? = null,
+    ): BugunKaydi {
+        val k = g.kayit
+        // Çapa örneği kapandıysa (seri açık) satır o örneğin hâlini gösterir.
+        val ornekDurumu = ornek?.let { o -> k.ornekler.firstOrNull { it.tarih == o }?.durum }
+        val durum = when (ornekDurumu) {
+            OrnekDurumu.TAMAM -> KayitDurumu.TAMAM
+            OrnekDurumu.IPTAL -> KayitDurumu.IPTAL
+            null -> KayitDurumu.ACIK
+        }
+        return kaydet(
+            g, anahtar = k.kayitId, zaman = Liste.zamanMetni(k, konum, grup, simdi),
+            hal = if (durum == KayitDurumu.ACIK) LevhaHali.ACIK else LevhaHali.BITTI, gecti = gecikme, ornekTarihi = ornek,
+            gonderim = gonderim, durumMetni = durumMetni(durum), iptal = durum == KayitDurumu.IPTAL,
+        ).seriKorumasi()
+    }
+
+    /**
+     * Tekrarlı kaydın örnek tarihi yoksa tamamlanamaz: çekirdek örneksiz durum değişikliğini serinin kendisine
+     * uygular (bütün gelecek örnekler kapanır). Satır ayrıntıyı açar; tamamlama günün örneğinden (Bugün, Takvim).
+     */
+    private fun BugunKaydi.seriKorumasi(): BugunKaydi = if (tekrar && ornekTarihi == null && tamamlanabilir) copy(tamamlanabilir = false) else this
+
+    /**
+     * Tekrarlı kaydın liste satırının gösterdiği örnek: çapası bugün ya da sonrasındaysa çapa günü (serinin ilk
+     * örneği odur; tarih kaydın kendi takvimindeki gün, çekirdeğin `ornekTarihi` biçimi). Çapa geçmişteyse
+     * sıradaki örnek liste sorgusundan bilinmez: `null`.
+     */
+    private fun capaOrnegi(k: AjandaKaydi, bugun: LocalDate): String? {
+        if (k.tekrar == null) return null
+        val t = when (val z = k.zaman) {
+            is AjandaZamani.An -> z.tarih
+            is AjandaZamani.Gun -> z.tarih
+            else -> null
+        } ?: return null
+        val gun = runCatching { LocalDate.parse(t) }.getOrNull() ?: return null
+        return t.takeIf { gun >= bugun }
+    }
 
     private fun taslakKaydi(g: KayitGorunumu, simdi: ZonedDateTime, gonderim: Liste.Gonderim): BugunKaydi {
         val k = g.kayit
@@ -359,42 +400,12 @@ class BugunDenetleyici(private val c: CekirdekYuzu, private val saat: () -> Zone
         gonderim: Liste.Gonderim,
         durumMetni: String?,
         iptal: Boolean = false,
-    ): BugunKaydi {
-        val k = g.kayit
-        val bekleyen = gonderim.okunus.takeIf { g.bekleyen }
-        // v3 BAĞLANTI NOKTASI: kaydın simge alanı gelince `simge = k.simge` olur; öneriden önce gelir.
-        val cizim = Gorunus.cizim(simge = null, baslik = k.baslik)
-        val ham = BugunKaydi(
-            anahtar = anahtar,
-            kayitId = k.kayitId,
-            baslik = k.baslik,
-            zaman = zaman,
-            renk = Gorunus.renkAnahtardan(cizim),
-            cizim = cizim,
-            hal = hal,
-            gecti = gecti,
-            tamamlanabilir = k.tur != KayitTuru.NOT && !k.silindi,
-            ornekTarihi = ornekTarihi,
-            bekleyen = bekleyen,
-            tekrar = k.tekrar != null,
-            asistan = Liste.otomatikMi(k.kaynak),
-            iptal = iptal,
-        )
-        val aciklama = buildString {
-            append(k.baslik)
-            zaman?.let { append(", ").append(it) }
-            if (k.tur != KayitTuru.GOREV) append(", ").append(Gorunus.kucuk(EkranMetinleri.tur(k.tur)))
-            durumMetni?.let { append(", ").append(it) }
-            append(Gorunus.isaretOkunusu(ham))
-        }
-        return ham.copy(aciklama = aciklama)
-    }
+    ): BugunKaydi = KayitKurucu.kur(g, anahtar, zaman, hal, gecti, ornekTarihi, gonderim, durumMetni, iptal)
 
     // ---------------------------------------------------------------------------------------------
     // İşlemler: çekirdek önce yerelde uygular; ekran gözlemciyle yenilenir.
     // ---------------------------------------------------------------------------------------------
 
-    private fun kisalt(s: String) = if (s.length > 40) s.take(39) + "…" else s
 
     private inline fun yap(blok: () -> IslemSonucu): IslemSonucu = try {
         blok()
@@ -407,24 +418,14 @@ class BugunDenetleyici(private val c: CekirdekYuzu, private val saat: () -> Zone
      * durumuna döner (iptal edilmiş iş yeniden açılıp geri alınınca iptal kalır). Kalan ya da yaklaşan iş
      * tamamlanınca gün boyu yerinde solmuş durur.
      */
-    fun tamamla(k: BugunKaydi, tamam: Boolean = true): IslemSonucu = yap {
-        val yeni = if (tamam) KayitDurumu.TAMAM else KayitDurumu.ACIK
-        val onceki = when {
-            k.hal != LevhaHali.BITTI -> KayitDurumu.ACIK
-            k.iptal -> KayitDurumu.IPTAL
-            else -> KayitDurumu.TAMAM
-        }
-        c.durumDegistir(k.kayitId, yeni, k.ornekTarihi)
-        if (tamam) {
+    fun tamamla(k: BugunKaydi, tamam: Boolean = true): IslemSonucu {
+        val s = KayitKurucu.tamamla(c, k, tamam, saat().toLocalDate())
+        if (tamam && !s.hata) {
             sonYerler[k.kayitId]?.takeIf { it.second.anahtar == k.anahtar }?.let { (yer, kayit) ->
                 tutulanlar[k.kayitId] = Tutulan(saat().toLocalDate(), yer, kayit.copy(hal = LevhaHali.BITTI))
             }
         }
-        val b = kisalt(k.baslik)
-        IslemSonucu(
-            if (tamam) "Bitti: $b" else "Yeniden açıldı: $b",
-            GeriAlma.Durum(k.kayitId, onceki, k.ornekTarihi).takeIf { onceki != yeni },
-        )
+        return s
     }
 
     /** Taslağı onaylar (karakalemden boyamaya). Çekirdekte onayın tersi yok: geri alma sunulmaz. */

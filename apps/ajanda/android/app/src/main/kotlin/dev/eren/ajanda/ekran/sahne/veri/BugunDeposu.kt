@@ -44,7 +44,7 @@ class BugunDeposu(
     private val baglan: ((Gozlemci) -> (() -> Unit))? = null,
     bitenleriGizle: Boolean = false,
     private val bitenleriGizleYaz: (Boolean) -> Unit = {},
-) {
+) : KayitIslemleri {
     private val _model = MutableStateFlow(BugunModeli.yukleniyor(saat().toLocalDate()).copy(bitenleriGizle = bitenleriGizle))
     val model: StateFlow<BugunModeli> = _model.asStateFlow()
 
@@ -98,7 +98,7 @@ class BugunDeposu(
      * Bir kez oynayan imza ve kalem (SAHNE.md §5.15) bu gösterimde oynasın mı: kayıt başına **gün içinde bir
      * kez**. İlk soruşta `true` döner ve kaydı işaretler; aynı gün sonraki gösterimlerde imza çizili gelir.
      */
-    fun imzaOynasin(anahtar: String): Boolean {
+    override fun imzaOynasin(anahtar: String): Boolean {
         val gun = saat().toLocalDate()
         if (gun != imzaGunu) {
             imzaGunu = gun
@@ -230,10 +230,10 @@ class BugunDeposu(
 
     private fun kayitlar(vararg id: String) = Degisim(id.toList(), false, false, false, false, emptyList())
 
-    fun tamamla(k: BugunKaydi, tamam: Boolean = true, bitince: () -> Unit = {}) = islem(bitince, kayitlar(k.kayitId)) { it.tamamla(k, tamam) }
-    fun onayla(id: String, bitince: () -> Unit = {}) = islem(bitince, kayitlar(id)) { it.onayla(id) }
-    fun hepsiniOnayla(idler: List<String>, bitince: () -> Unit = {}) = islem(bitince, kayitlar(*idler.toTypedArray())) { it.hepsiniOnayla(idler) }
-    fun vazgec(id: String, bitince: () -> Unit = {}) = islem(bitince, kayitlar(id)) { it.vazgec(id) }
+    override fun tamamla(k: BugunKaydi, tamam: Boolean, bitince: () -> Unit) = islem(bitince, kayitlar(k.kayitId)) { it.tamamla(k, tamam) }
+    override fun onayla(id: String, bitince: () -> Unit) = islem(bitince, kayitlar(id)) { it.onayla(id) }
+    override fun hepsiniOnayla(idler: List<String>, bitince: () -> Unit) = islem(bitince, kayitlar(*idler.toTypedArray())) { it.hepsiniOnayla(idler) }
+    override fun vazgec(id: String, bitince: () -> Unit) = islem(bitince, kayitlar(id)) { it.vazgec(id) }
     fun retAt(islemId: String, bitince: () -> Unit = {}) =
         islem(bitince, Degisim(emptyList(), false, true, false, false, emptyList())) { it.retAt(islemId) }
     fun geriAl(g: GeriAlma, bitince: () -> Unit = {}) = islem(

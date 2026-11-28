@@ -8,9 +8,13 @@ import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.hapticfeedback.HapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -18,8 +22,8 @@ import dev.eren.ajanda.ekran.sahne.bilesen.Boyama
 import dev.eren.ajanda.ekran.sahne.cizim.KOPUK_PATLAMA_MS
 import dev.eren.ajanda.ekran.sahne.tema.Sahne
 import dev.eren.ajanda.ekran.sahne.tema.SahneHareket
-import dev.eren.ajanda.ekran.sahne.veri.BugunDeposu
 import dev.eren.ajanda.ekran.sahne.veri.BugunKaydi
+import dev.eren.ajanda.ekran.sahne.veri.KayitIslemleri
 import dev.eren.ajanda.ekran.sahne.veri.LevhaHali
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.coroutineScope
@@ -30,21 +34,27 @@ import kotlinx.coroutines.launch
 enum class Surec { TAMAMLANIYOR, ONAYLANIYOR, VAZGECILIYOR }
 
 /**
- * Bugün ekranının durum değiştiren hareketleri (SAHNE.md §5.2, §5.4, §5.5): hareket oynar, sonra çekirdeğe
- * gidilir; o arada kayıt dokunmaya kapalıdır. "Hareketi azalt"ta ([SahneHareket.azalt]) hiçbir bekleme yoktur:
- * çekirdeğe hemen gidilir, levha son hâline hemen geçer (§6). Depo yoksa (vitrin) hareket oynar, veri değişmez.
+ * Kayıt ekranlarının (Bugün, Takvim, Tarihsizler) durum değiştiren hareketleri (SAHNE.md §5.2, §5.4, §5.5).
+ *
+ * **Eylem harekete bağlı değildir.** Çekirdek çağrısı dokunuş anında gider; hareket yalnız görüntüdür. Ekran
+ * arka plana geçince Compose kare saatini durdurur ve hareket askıda kalır: eylem hareketin sonunu bekleseydi
+ * telefonu kilitleyen kullanıcının tamamladığı iş çekirdekte açık kalır, süreç ölünce de kaybolurdu. Hareket
+ * sürerken ekran, hareketin başladığı andaki modeli gösterir ([dondur]); yeni model (iş Bitenler'e indi, öneri
+ * boyandı, taslak silindi) hareket de çekirdek de bitince gelir. O arada kayıt dokunmaya kapalıdır ([surec]).
+ * "Hareketi azalt"ta ([SahneHareket.azalt]) hareket yoktur; model çekirdek bitince gelir (§6). İşlem yapan depo
+ * yoksa (vitrin) hareket oynar, veri değişmez.
  *
  * Durum anahtarı kaydın [BugunKaydi.anahtar]'ıdır; değerler Compose durumu (çizim okur).
  *
  * Ekranda depo başına tek nesne yaşar ([rememberBugunHareketleri]); hareket ayarı ve titreşim değişince
- * yalnız bu alanlar güncellenir. Ayar değişince yeni nesne kurulsaydı kilitler ([surec]) boşalır, süren
- * hareketin eşyordamı işini yine yapar ve aynı levhaya ikinci dokunuş çift tamamlama ya da çift onay olurdu.
+ * yalnız bu alanlar güncellenir. Ayar değişince yeni nesne kurulsaydı kilitler ([surec]) boşalır ve aynı levhaya
+ * ikinci dokunuş çift tamamlama ya da çift onay olurdu.
  */
 @Stable
 class BugunHareketleri internal constructor(
     private val kapsam: CoroutineScope,
     hareket: SahneHareket,
-    private val depo: BugunDeposu?,
+    private val depo: KayitIslemleri?,
     titresim: HapticFeedback,
 ) {
     /** "Hareketi azalt" ayarı; her işlemin başında okunur (süren hareket kendi kararıyla biter). */
@@ -68,9 +78,30 @@ class BugunHareketleri internal constructor(
     /** Vazgeç: çıkış ilerlemesi (0..1: söner, küçülür, döner). */
     val cikis = mutableStateMapOf<String, Float>()
 
+    /** Bitmemiş işlem sayısı (hareketi ya da çekirdek çağrısı sürüyor); sıfırdan büyükken ekran [donuk]'u gösterir. */
+    private var acikIs by mutableIntStateOf(0)
+    private var donuk: Any? by mutableStateOf(null)
+
+    /** Ekranın en son gösterdiği model (yalnız ana iş parçacığında; çizimi tetiklemez). */
+    private var sonGosterilen: Any? = null
+
+    /**
+     * Ekranın göstereceği model: bir işlemin hareketi ya da çekirdek çağrısı sürüyorsa işlemin başladığı andaki
+     * model, değilse [canli]. Ekran her çizimde çağırır.
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun <M : Any> dondur(canli: M): M {
+        val m = if (acikIs > 0) (donuk as? M ?: canli) else canli
+        sonGosterilen = m
+        return m
+    }
+
+    /** Bir işlem sürüyor (hareketi ya da çekirdek çağrısı bitmedi). */
+    val suruyor: Boolean get() = acikIs > 0
+
     fun kilitli(anahtar: String) = anahtar in surec
 
-    /** Daire dolu görünsün mü (tamamlama hareketi sürerken model henüz değişmedi). */
+    /** Daire dolu görünsün mü (tamamlama hareketi sürerken ekrandaki model henüz eski). */
     fun tamamGorunsun(k: BugunKaydi): Boolean = when (surec[k.anahtar]) {
         Surec.TAMAMLANIYOR -> k.hal != LevhaHali.BITTI
         else -> k.hal == LevhaHali.BITTI
@@ -86,34 +117,37 @@ class BugunHareketleri internal constructor(
     }
 
     /**
-     * Tamamlar ya da yeniden açar. [levha]: büyük/kare levhada yıkama bandı geçer ve 720 ms sonra kayıt
-     * biter; köpüklü çizimde köpükler aynı anda patlar. Satır ve kartlarda bant ve köpük yok, 300 ms sonra (§5.2).
-     * Hareket azaltılmışsa bant yok, köpük patlaması anında son hâlinde (köpükler sönmüş), bekleme yok (§6).
+     * Tamamlar ya da yeniden açar; çekirdeğe hemen gider. [levha]: büyük/kare levhada yıkama bandı geçer ve
+     * köpüklü çizimde köpükler aynı anda patlar; ekran 720 ms sonra yeni modele geçer. Satır ve kartlarda bant
+     * ve köpük yok, 300 ms (§5.2). Hareket azaltılmışsa bant yok, köpük patlaması anında son hâlinde (§6).
+     * Tamamlanamayan kayıtta (not; hangi günü olduğu belli olmayan tekrar) hiçbir şey yapmaz.
      */
     fun tamamla(k: BugunKaydi, tamam: Boolean = k.hal != LevhaHali.BITTI, levha: Boolean = false) {
-        if (kilitli(k.anahtar)) return
+        if (kilitli(k.anahtar) || !k.tamamlanabilir) return
         if (tamam) titresim.performHapticFeedback(HapticFeedbackType.Confirm)
-        if (!tamam || hareket.azalt) {
-            surec[k.anahtar] = Surec.TAMAMLANIYOR
-            if (tamam && levha) patlama[k.anahtar] = 1f
-            git(k.anahtar) { depo?.tamamla(k, tamam, it) }
-            return
-        }
         surec[k.anahtar] = Surec.TAMAMLANIYOR
-        sonra(listOf(k.anahtar), { depo?.tamamla(k, true, it) }) {
-            if (levha) {
-                launch {
-                    val a = Animatable(0f)
-                    a.animateTo(1f, tween(700, easing = BANT)) { yikama[k.anahtar] = value }
+        val gorunus: (suspend CoroutineScope.() -> Unit)? = when {
+            !tamam -> null
+            hareket.azalt -> {
+                if (levha) patlama[k.anahtar] = 1f
+                null
+            }
+            levha -> {
+                {
+                    launch {
+                        Animatable(0f).animateTo(1f, tween(700, easing = BANT)) { yikama[k.anahtar] = value }
+                    }
+                    launch {
+                        Animatable(0f).animateTo(1f, tween(KOPUK_PATLAMA_MS, easing = SahneHareket.YUMUSAK)) { patlama[k.anahtar] = value }
+                    }
+                    delay(720)
                 }
-                launch {
-                    Animatable(0f).animateTo(1f, tween(KOPUK_PATLAMA_MS, easing = SahneHareket.YUMUSAK)) { patlama[k.anahtar] = value }
-                }
-                delay(720)
-            } else {
-                delay(300)
+            }
+            else -> {
+                { delay(300) }
             }
         }
+        yurut(listOf(k.anahtar), { depo?.tamamla(k, tamam, it) }, gorunus)
     }
 
     /**
@@ -122,7 +156,7 @@ class BugunHareketleri internal constructor(
      */
     fun imzaOynasin(k: BugunKaydi): Boolean = depo?.imzaOynasin(k.anahtar) ?: true
 
-    /** Taslağı onaylar: karakalemden boyamaya (§5.4), 900 ms sonra çekirdeğe. */
+    /** Taslağı onaylar: çekirdeğe hemen; ekran karakalemden boyamaya geçer (§5.4, 900 ms). */
     fun onayla(kayitlar: List<BugunKaydi>) {
         val bos = kayitlar.filterNot { kilitli(it.anahtar) }
         if (bos.isEmpty()) return
@@ -132,10 +166,10 @@ class BugunHareketleri internal constructor(
         val cagir: (() -> Unit) -> Unit = { son -> if (idler.size == 1) depo?.onayla(idler.first(), son) else depo?.hepsiniOnayla(idler, son) }
         if (hareket.azalt) {
             bos.forEach { boyama[it.anahtar] = Boyama.BOYALI; dugmeAlfa[it.anahtar] = 0f }
-            git(bos.map { it.anahtar }, cagir)
+            yurut(bos.map { it.anahtar }, cagir, null)
             return
         }
-        sonra(bos.map { it.anahtar }, cagir) {
+        yurut(bos.map { it.anahtar }, cagir) {
             for (k in bos) {
                 val a = k.anahtar
                 boyama[a] = Boyama.KARAKALEM
@@ -148,49 +182,59 @@ class BugunHareketleri internal constructor(
         }
     }
 
-    /** Öneriden vazgeç (§5.5): levha 260 ms'de söner, küçülür, döner; sonra silinir. */
+    /** Öneriden vazgeç (§5.5): çekirdeğe hemen; levha 260 ms'de söner, küçülür, döner. */
     fun vazgec(k: BugunKaydi) {
         if (kilitli(k.anahtar)) return
         surec[k.anahtar] = Surec.VAZGECILIYOR
         if (hareket.azalt) {
             cikis[k.anahtar] = 1f
-            git(k.anahtar) { depo?.vazgec(k.kayitId, it) }
+            yurut(listOf(k.anahtar), { depo?.vazgec(k.kayitId, it) }, null)
             return
         }
-        sonra(listOf(k.anahtar), { depo?.vazgec(k.kayitId, it) }) {
+        yurut(listOf(k.anahtar), { depo?.vazgec(k.kayitId, it) }) {
             Animatable(0f).animateTo(1f, tween(260, easing = FastOutLinearInEasing)) { cikis[k.anahtar] = value }
         }
     }
 
     /**
-     * [hareketi] oynatır, sonra çekirdeğe gider. Ekran o arada bestecilikten çıkarsa (sekme değişti) hareket
-     * kesilir ama işlem yine yapılır: kullanıcının dokunuşu kaybolmaz.
+     * İşlemi yürütür: çekirdek çağrısı ([cagri]) **hemen**, [gorunus] (varsa) aynı anda. İkisi de bitince kilit
+     * açılır, hareketin ara değerleri silinir ve (başka işlem sürmüyorsa) ekran canlı modele döner. Ekran o
+     * arada bestecilikten çıkarsa hareket kesilir (`finally`); çekirdek çağrısı zaten gitmiştir.
      */
-    private fun sonra(anahtarlar: List<String>, cagri: (() -> Unit) -> Unit, hareketi: suspend CoroutineScope.() -> Unit) {
-        kapsam.launch {
-            var gitti = false
-            try {
-                coroutineScope { hareketi() }
-                gitti = true
-                git(anahtarlar, cagri)
-            } finally {
-                if (!gitti) git(anahtarlar, cagri)
+    private fun yurut(anahtarlar: List<String>, cagri: (() -> Unit) -> Unit, gorunus: (suspend CoroutineScope.() -> Unit)?) {
+        if (acikIs == 0) donuk = sonGosterilen
+        acikIs++
+        var kalan = 2
+        val parcaBitti = {
+            kalan--
+            if (kalan == 0) {
+                anahtarlar.forEach(::bitir)
+                acikIs--
+                if (acikIs == 0) donuk = null
             }
         }
-    }
-
-    private fun git(anahtar: String, cagri: (() -> Unit) -> Unit) = git(listOf(anahtar), cagri)
-
-    private fun git(anahtarlar: List<String>, cagri: (() -> Unit) -> Unit) {
-        val son = { anahtarlar.forEach(::bitir) }
         if (depo == null) {
             // Vitrin: veri yok; hareketin son hâli bir an görünür, sonra eski hâline döner.
             kapsam.launch {
-                delay(if (hareket.azalt) 0L else 400L)
-                son()
+                try {
+                    delay(if (hareket.azalt) 0L else 400L)
+                } finally {
+                    parcaBitti()
+                }
             }
         } else {
-            cagri(son)
+            cagri { parcaBitti() }
+        }
+        if (gorunus == null) {
+            parcaBitti()
+        } else {
+            kapsam.launch {
+                try {
+                    coroutineScope { gorunus() }
+                } finally {
+                    parcaBitti()
+                }
+            }
         }
     }
 
@@ -201,7 +245,7 @@ class BugunHareketleri internal constructor(
 }
 
 @Composable
-fun rememberBugunHareketleri(depo: BugunDeposu?): BugunHareketleri {
+fun rememberBugunHareketleri(depo: KayitIslemleri?): BugunHareketleri {
     val kapsam = rememberCoroutineScope()
     val hareket = Sahne.hareket
     val titresim = LocalHapticFeedback.current

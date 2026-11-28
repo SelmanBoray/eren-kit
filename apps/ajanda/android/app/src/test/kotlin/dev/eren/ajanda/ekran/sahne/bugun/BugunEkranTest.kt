@@ -113,14 +113,21 @@ class BugunEkranTest {
         assertEquals("kahve", acilan)
     }
 
+    /**
+     * G1: çekirdek çağrısı dokunuş anında gider; hareket (720 ms bant) yalnız görüntüdür. Hareket sürerken ekran
+     * eski modeli gösterir (levha mozaikte, kilitli), hareket bitince iş Bitenler'e iner. Tost geri alır.
+     */
     @Test
-    fun daireyleTamamlama720msSonraCekirdegeGiderTostlaGeriAlinir() {
+    fun daireyleTamamlamaCekirdegeHemenGiderEkran720msSonraDizilirTostlaGeriAlinir() {
         ornekGun()
         ac()
         kural.mainClock.autoAdvance = false
         kural.onNodeWithContentDescription("Tamamla: Kahve molası").performClick()
+        assertEquals("kare saati hiç ilerlemeden çekirdeğe gidildi", listOf("durum:kahve:TAMAM"), durumCagrilari())
+        assertTrue(depo.model.value.bitenler.any { it.kayitId == "kahve" })
         kural.mainClock.advanceTimeBy(500)
-        assertTrue("hareket sürerken çekirdeğe gidilmez", durumCagrilari().isEmpty())
+        // Hareket sürüyor: ekran hâlâ levhayı (sıradaki iş) gösterir.
+        levha("Kahve molası, 15:30").assertIsDisplayed()
         kural.mainClock.advanceTimeBy(400)
         assertEquals(listOf("durum:kahve:TAMAM"), durumCagrilari())
         kural.mainClock.autoAdvance = true
@@ -150,16 +157,46 @@ class BugunEkranTest {
         assertTrue(depo.model.value.acikler.any { it.kayitId == "eczane" })
     }
 
+    /** G1: onay çekirdeğe hemen gider; ekran 900 ms boyanır, sonra öneri günün işleri arasına dizilir. */
     @Test
-    fun onayKarakalemdenBoyamaya900msSonra() {
+    fun onayCekirdegeHemenGiderKarakalemdenBoyamaya900ms() {
         ornekGun()
         ac()
         kural.mainClock.autoAdvance = false
         kural.onNodeWithText("Onayla").performClick()
-        kural.mainClock.advanceTimeBy(600)
-        assertFalse(durumCagrilari().contains("onayla:eczane"))
-        kural.mainClock.advanceTimeBy(400)
         assertTrue(durumCagrilari().contains("onayla:eczane"))
+        kural.mainClock.advanceTimeBy(600)
+        // Boyanıyor: levha hâlâ öneri yerinde (onay eylemleri, kilitli).
+        assertTrue(levha("Eczaneden ilaç al").fetchSemanticsNode().config[SemanticsActions.CustomActions].any { it.label == "Onayla" })
+        kural.mainClock.advanceTimeBy(500)
+        kural.mainClock.autoAdvance = true
+        kural.waitForIdle()
+        assertEquals(listOf("Tamamla"), levha("Eczaneden ilaç al").fetchSemanticsNode().config[SemanticsActions.CustomActions].map { it.label })
+    }
+
+    /**
+     * G1: ekran arka plana geçince Compose kare saatini durdurur; eylem hareketin bitmesini beklemez. Saat hiç
+     * ilerlemeden tamamlama, onay ve vazgeç çekirdeğe gitmiş olmalı (telefon kilitlense de, süreç ölse de iş kaybolmaz).
+     */
+    @Test
+    fun kareSaatiDururkenDeEylemlerCekirdegeGider() {
+        ornekGun()
+        ac()
+        kural.mainClock.autoAdvance = false
+        kural.onNodeWithContentDescription("Tamamla: Diş kontrolü").performClick()
+        kural.onNodeWithText("Onayla").performClick()
+        assertEquals(listOf("durum:dis:TAMAM", "onayla:eczane"), durumCagrilari())
+        assertEquals(KayitDurumu.TAMAM, c.sahte.kayitlar.getValue("dis").durum)
+        assertFalse(c.sahte.kayitlar.getValue("eczane").taslak)
+    }
+
+    @Test
+    fun kareSaatiDururkenVazgecCekirdegeGider() {
+        ornekGun()
+        ac()
+        kural.mainClock.autoAdvance = false
+        kural.onNodeWithText("Vazgeç").performClick()
+        assertEquals(listOf("sil:eczane"), durumCagrilari())
     }
 
     @Test

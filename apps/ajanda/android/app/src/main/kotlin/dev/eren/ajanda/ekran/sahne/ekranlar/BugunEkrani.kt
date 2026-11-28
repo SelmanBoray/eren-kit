@@ -114,9 +114,10 @@ fun BugunEkrani(
     eylemler: BugunEylemleri = BugunEylemleri(),
 ) {
     val modelDurumu: State<BugunModeli> = depo?.model?.collectAsState() ?: remember(bugun) { mutableStateOf(vitrinModeli(bugun)) }
-    val model = modelDurumu.value
     val hareket = Sahne.hareket
     val hareketler = rememberBugunHareketleri(depo)
+    // Bir işlemin hareketi sürerken ekran işlemin başladığı andaki modeli gösterir; çekirdek çağrısı çoktan gitti.
+    val model = hareketler.dondur(modelDurumu.value)
     val tost = remember { TostDurumu() }
 
     // Depodan gelen tostlar (işlem sonucu, hata). Süresini depo tutar: ekran yeniden kurulunca (döndürme,
