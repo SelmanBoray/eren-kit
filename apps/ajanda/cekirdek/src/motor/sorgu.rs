@@ -12,13 +12,14 @@
 //! Bu sorgular yalnız `Depo` okur: köprü onları motor kilidini almadan ayrı bir okuma bağlantısında da
 //! çalıştırabilir (`kopru::Cekirdek`), böylece uzun bir telafi yazması arayüzü bekletmez.
 
-use super::kanal::{ERTELENEN_ATILDI, SatirErtelemesi, erteleme_surumu, kuyruk_ertelemeleri};
+use super::iyimser::islem_coz;
+use super::kanal::{ERTELENEN_ATILDI_YOLLANMIS, SatirErtelemesi, ertelenen_atildi_mi, erteleme_surumu, kuyruk_ertelemeleri};
 use super::{Etkiler, Motor, Ortam};
 use crate::depo::{Depo, GorunenSuzgec};
 use crate::hata::CekirdekHatasi;
-use crate::kopru::tipler::{GecmisSayfasi, KayitGorunumu, ListeSorgusu, RetGirdisi, Sekme};
+use crate::kopru::tipler::{GecmisSayfasi, KayitGorunumu, ListeSorgusu, RetGirdisi, Sekme, V3DegisiklikOzeti};
 use crate::model::metin::opak_id_mi;
-use crate::model::{AjandaKaydi, AjandaYukari, IslemTuru, KayitGovdesi, KuyrukRetNedeni, Surum};
+use crate::model::{AjandaIslem, AjandaKaydi, AjandaYukari, Alan, IslemTuru, KayitGovdesi, KuyrukRetNedeni, Surum, V3Alanlari};
 
 fn suzgec(sorgu: &ListeSorgusu) -> GorunenSuzgec {
     let k = sorgu.kapalilar_dahil;
@@ -69,9 +70,44 @@ pub(crate) fn kayit(d: &Depo, kayit_id: &str) -> Result<Option<KayitGorunumu>, C
     d.gorunen_kayit(kayit_id)?.map(|g| c.gorunum(d, g.kayit, g.bekleyen)).transpose()
 }
 
+/// İşlemin v3 alanlarındaki değişikliğinin okunur hali (`RetGirdisi.v3_degisikligi`): `guncelle`'de
+/// değişiklik, `ekle`'de konan v3 alanları. v3 alanına dokunmayan işlemde yok.
+pub(crate) fn v3_ozeti(islem: &AjandaIslem) -> Option<V3DegisiklikOzeti> {
+    let d = match islem {
+        AjandaIslem::Guncelle { degisiklik, .. } => degisiklik.v3.clone(),
+        AjandaIslem::Ekle { v3, .. } => v3.degisiklik(),
+        _ => return None,
+    };
+    if d.bos_mu() {
+        return None;
+    }
+    fn al<T>(a: Alan<T>, ad: &str, kaldirilan: &mut Vec<String>) -> Option<T> {
+        match a {
+            Alan::Deger(v) => Some(v),
+            Alan::Kaldir => {
+                kaldirilan.push(ad.to_string());
+                None
+            }
+            Alan::Yok => None,
+        }
+    }
+    let mut k = Vec::new();
+    let konan = V3Alanlari {
+        simge: al(d.simge, "simge", &mut k),
+        bolge: al(d.bolge, "bolge", &mut k),
+        bolge_konumu: al(d.bolge_konumu, "bolge_konumu", &mut k),
+        varis: al(d.varis, "varis", &mut k),
+        baglantilar: al(d.baglantilar, "baglantilar", &mut k).unwrap_or_default(),
+        ekler: al(d.ekler, "ekler", &mut k).unwrap_or_default(),
+    };
+    Some(V3DegisiklikOzeti { konan, kaldirilan: k })
+}
+
 /// Ret listesi, eskiden yeniye. Çözülemeyen satır da gösterilir (hiçbir işlem sessizce kaybolmaz):
-/// türü okunamazsa `guncelle`, nedeni okunamazsa `gecersiz_islem` sayılır, gövdesi yoktur. Kullanıcının attığı
-/// ertelenen v3 değişikliği (`ERTELENEN_ATILDI`) `teslim_edilemedi` ve `ertelenen_atildi` ile gelir.
+/// türü okunamazsa `guncelle`, nedeni okunamazsa `gecersiz_islem` sayılır, gövdesi ve v3 özeti yoktur. Kullanıcının
+/// attığı ertelenen v3 değişikliği (`ERTELENEN_ATILDI`, daha önce yollanmışsa `ERTELENEN_ATILDI_YOLLANMIS`)
+/// `teslim_edilemedi` ve `ertelenen_atildi` ile (ikincisi `ulasmis_olabilir` ile de) gelir. Her girdinin v3
+/// değişikliği `v3_degisikligi`'ndedir (`v3_ozeti`).
 pub(crate) fn ret_listesi(d: &Depo) -> Result<Vec<RetGirdisi>, CekirdekHatasi> {
     Ok(d.ret_listesi()?
         .into_iter()
@@ -90,13 +126,24 @@ pub(crate) fn ret_listesi(d: &Depo) -> Result<Vec<RetGirdisi>, CekirdekHatasi> {
                 n.bitir().ok()?;
                 Some(g)
             });
-            let ertelenen_atildi = r.neden == ERTELENEN_ATILDI;
+            let ertelenen_atildi = ertelenen_atildi_mi(&r.neden);
+            let v3_degisikligi = islem_coz(&r.islem_json).as_ref().and_then(v3_ozeti);
             let neden = if ertelenen_atildi {
                 KuyrukRetNedeni::TeslimEdilemedi
             } else {
                 KuyrukRetNedeni::coz(&r.neden).unwrap_or(KuyrukRetNedeni::GecersizIslem)
             };
-            RetGirdisi { islem_id: r.islem_id, kayit_id: r.kayit_id, islem, neden, govde, ts_ms: r.ts_ms, ertelenen_atildi }
+            RetGirdisi {
+                islem_id: r.islem_id,
+                kayit_id: r.kayit_id,
+                islem,
+                neden,
+                govde,
+                ts_ms: r.ts_ms,
+                ertelenen_atildi,
+                v3_degisikligi,
+                ulasmis_olabilir: r.neden == ERTELENEN_ATILDI_YOLLANMIS,
+            }
         })
         .collect())
 }
@@ -120,7 +167,7 @@ impl Motor {
             return Err(CekirdekHatasi::GecersizDurum { mesaj: "bağlantı canlı değil".into() });
         }
         let istek_id = Motor::yeni_kimlik(o, "g_")?;
-        self.gecmis_istekleri.insert(istek_id.clone(), kayit_id.to_string());
+        self.gecmis_istekleri.insert(istek_id.clone(), (kayit_id.to_string(), o.simdi_ms()));
         let sayfa = self.gecmis.entry(kayit_id.to_string()).or_insert_with(|| GecmisSayfasi {
             kayit_id: kayit_id.to_string(),
             satirlar: Vec::new(),
