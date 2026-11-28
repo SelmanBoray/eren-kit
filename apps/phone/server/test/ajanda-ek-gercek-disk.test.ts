@@ -188,8 +188,13 @@ describe("ek yedeği: çekirdek + gerçek disk (geçici dizin)", () => {
     assert.equal((await t.ekler.temizle()).isaretlenen, 1);
     const isaretDosyasi = (): Record<string, any> => JSON.parse(readFileSync(join(t.kok, "basvurusuz.json"), "utf8")); // eslint-disable-line @typescript-eslint/no-explicit-any
     assert.equal(isaretDosyasi()[e.ozet], BASLANGIC);
+    // Gözlenen süre yeni bir porttan (süreç yeniden başlamış gibi) okunur: büyük dosya ile küçük sayaç birlikte.
+    const gozlenen = async (): Promise<number | undefined> =>
+      (await ajandaEkDiskiKur(t.kok).isaretleriOku()).get(e.ozet)?.gozlenen_ms;
+    const ilkMetin = readFileSync(join(t.kok, "basvurusuz.json"), "utf8");
     await t.calis(10 * GUN);
-    assert.equal(isaretDosyasi().gozlem[e.ozet].ms, 10 * GUN);
+    assert.equal(await gozlenen(), 10 * GUN);
+    assert.equal(readFileSync(join(t.kok, "basvurusuz.json"), "utf8"), ilkMetin, "yalnız gözlem ilerledi: büyük dosya yeniden yazılmadı");
     // PC 40 gün kapalı; açılışta (telefon henüz bağlanmadan) birkaç tur: silinmez.
     await t.yenidenAc();
     t.zaman.ilerlet(40 * GUN);
@@ -197,7 +202,7 @@ describe("ek yedeği: çekirdek + gerçek disk (geçici dizin)", () => {
     assert.equal((await t.ekler.temizle()).silinen, 0);
     assert.equal((await t.calis(19 * GUN)).silinen, 0);
     assert.ok(existsSync(t.tamYolu(e)));
-    assert.equal(isaretDosyasi().gozlem[e.ozet].ms, 29 * GUN);
+    assert.equal(await gozlenen(), 29 * GUN);
     // Bir yeniden açılış daha; kalan gün gözlenince silinir.
     await t.yenidenAc();
     await t.ekler.temizle();
@@ -205,6 +210,23 @@ describe("ek yedeği: çekirdek + gerçek disk (geçici dizin)", () => {
     assert.equal(s.silinen, 1);
     assert.equal(existsSync(t.tamYolu(e)), false);
     assert.equal(isaretDosyasi()[e.ozet], undefined);
+    await t.ekler.kapat();
+  });
+
+  it("kısa ömürlü süreç: kapanış son turdan beri gözleneni diske yazar, sonraki süreç kaldığı yerden sürer", async () => {
+    const t = ortam();
+    const e = ekUret("ek_1", 2000);
+    t.kayitKoy(kayit("k1", [e]));
+    await t.oturum().hepsi("k1", e);
+    t.kayitKoy(kayit("k1", [e], { silindi: true }));
+    await t.ekler.temizle();
+    for (let i = 0; i < 3; i++) {
+      t.zaman.ilerlet(40 * 60 * 1000);
+      await t.yenidenAc();
+      t.zaman.ilerlet(GUN); // PC kapalı: sayılmaz
+      await t.ekler.temizle();
+    }
+    assert.equal((await ajandaEkDiskiKur(t.kok).isaretleriOku()).get(e.ozet)?.gozlenen_ms, 3 * 40 * 60 * 1000);
     await t.ekler.kapat();
   });
 

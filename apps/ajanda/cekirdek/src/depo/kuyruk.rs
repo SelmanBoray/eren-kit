@@ -111,6 +111,25 @@ impl Depo {
         )
     }
 
+    /// `sira`'ya dek (dahil) onaylanmamış satırların izi: (adet, deneme toplamı, işlem metinlerinin bayt
+    /// toplamı). `motor/kanal.rs` atlama önbelleği bununla öneki okumadan doğrular (satır silinmiş, eklenmiş
+    /// ya da yerinde değişmişse iz değişir).
+    pub fn kuyruk_onek_izi(&self, sira: i64) -> Result<(i64, i64, i64), CekirdekHatasi> {
+        Ok(self.baglanti.query_row(
+            "SELECT COUNT(*), COALESCE(SUM(deneme), 0), COALESCE(SUM(length(CAST(islem_json AS BLOB))), 0)
+             FROM kuyruk WHERE bekledigi_rev IS NULL AND sira <= ?1",
+            [sira],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )?)
+    }
+
+    /// Satırın işlemini yerinde yazar (sıra, kimlik, deneme, an aynı): ertelenen v3 kalanı atılan karma satır
+    /// v2 kısmına döner (`motor/kanal.rs` `ertelenenleri_at`).
+    pub fn kuyruk_islemini_yaz(&self, sira: i64, islem_json: &str) -> Result<(), CekirdekHatasi> {
+        self.baglanti.execute("UPDATE kuyruk SET islem_json = ?2 WHERE sira = ?1", params![sira, islem_json])?;
+        Ok(())
+    }
+
     /// Yollanmış, sonucu beklenen satırlar (en çok bir tane olmalı; süreç ölümünden kalan da dahil).
     pub fn kuyruk_yollananlar(&self) -> Result<Vec<KuyrukSatiri>, CekirdekHatasi> {
         self.kuyruk_sorgusu("yollandi != 0", [])

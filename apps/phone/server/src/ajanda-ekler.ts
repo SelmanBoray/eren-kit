@@ -34,7 +34,8 @@
  * - Saklama: bir özet silinmemiş bir kaydın `ekler`'inde geçtiği sürece tutulur. Başvurusuzluk periyodik
  *   taramayla izlenir (`temizle`): kayıtlarda geçmeyen dosya ilk görüldüğü an işaretlenir (portun kalıcı
  *   işaret kümesi). Silme için iki koşul birlikte gerekir: servisin işaretten beri ÇALIŞIRKEN gözlediği süre
- *   (`gozlenen_ms`: ardışık turlar arası, tur başına en çok `GOZLEM_ADIMI_MS`) ve duvar saatinde geçen süre
+ *   (`gozlenen_ms`: ardışık turlar arası ve son turdan nazik kapanışa, adım başına en çok
+ *   `GOZLEM_ADIMI_MS`) ve duvar saatinde geçen süre
  *   en az `EK_SAKLAMA_GUN`. PC kapalıyken, uykudayken ya da saat sıçradığında geçen süre sayılmaz: telefonun
  *   çevrimdışı kuyruğundaki `geri_yukle`'nin PC açıldıktan sonra gelmesine yer kalır. Geleceğe düşen işaret
  *   anı şimdiye kırpılır. Yeniden başvurulursa işaret kalkar; turlar arasında yeniden başvurulup yine
@@ -116,7 +117,8 @@ export const AJANDA_EK_SINIRLARI = {
   /**
    * İki tur arasında gözlenen süreye eklenebilecek en çok süre (iki temizlik aralığı: zamanlayıcının
    * gecikmesine pay). Turlar arası daha uzun boşluk (uyku, askıya alma, saat ileri sıçradı) yalnız bu kadar
-   * sayılır; geri giden saat hiç saymaz. Süreç başındaki ilk tur 0 sayar (PC kapalı geçen süre girmez).
+   * sayılır; geri giden saat hiç saymaz. Süreç başındaki ilk tur 0 sayar (PC kapalı geçen süre girmez);
+   * kapanış son turdan beri geçeni aynı sınırla ekler (kısa ömürlü süreçte de sayaç ilerler).
    */
   GOZLEM_ADIMI_MS: 2 * 60 * 60 * 1000,
   /**
@@ -269,7 +271,10 @@ export interface AjandaEkleri {
   baslat(): void;
   /** Süren bütün işler bitince çözülür. Atmaz. */
   bekle(): Promise<void>;
-  /** Yeni çerçeveyi `ic_hata` ile reddeder, periyodu keser, süren işleri bekler. */
+  /**
+   * Yeni çerçeveyi `ic_hata` ile reddeder, periyodu keser, süren işleri bekler, son turdan beri gözlenen
+   * süreyi işaretlere yazar (yazamazsa günlüğe yazar). Atmaz.
+   */
   kapat(): Promise<void>;
 }
 
@@ -663,10 +668,28 @@ ${ozet}`;
       }
       enEski = Math.min(enEski, i.rev);
     }
-    const aralik = depo.ajandaRevAraligi?.bind(depo);
-    if (enEski === Infinity || aralik === undefined) return { degisti, taranan: basRev };
+    if (enEski === Infinity) return { degisti, taranan: basRev };
     // Daha önce taranan aralık yeniden taranmaz: ondan önceki işaretler oraya kadar karşılaştırıldı.
-    let sonRev = taranmis !== null && taranmis <= basRev ? Math.max(enEski, taranmis) : enEski;
+    const sonRev = taranmis !== null && taranmis <= basRev ? Math.max(enEski, taranmis) : enEski;
+    if (mezarTaslariniTara(isaretler, sonRev, basRev, yeni)) degisti = true;
+    return { degisti, taranan: basRev };
+  };
+
+  /**
+   * `(sonRev, basRev]` aralığında yazılmış mezar taşları: taşıdıkları özetin işareti mezar taşından eskiyse
+   * işaret `yeni` olur (turlar arası yeniden başvuru). Yalnız aralığı okur, işaretleri dolaşmaz. Döner:
+   * değişti mi. `ajandaRevAraligi` yoksa bir şey yapmaz.
+   */
+  const mezarTaslariniTara = (
+    isaretler: Map<string, AjandaEkIsareti>,
+    baslangic: number,
+    basRev: number,
+    yeni: AjandaEkIsareti,
+  ): boolean => {
+    const aralik = depo.ajandaRevAraligi?.bind(depo);
+    if (aralik === undefined) return false;
+    let degisti = false;
+    let sonRev = baslangic;
     while (sonRev < basRev) {
       const sayfa = aralik({ sonRev, ustRev: basRev, adet: S.REV_SAYFASI });
       for (const kayit of sayfa) {
@@ -682,7 +705,7 @@ ${ozet}`;
       if (sayfa.length < S.REV_SAYFASI || son === undefined) break;
       sonRev = son.revizyon;
     }
-    return { degisti, taranan: basRev };
+    return degisti;
   };
 
   // ------------------------------------------------------------------------------------------
@@ -922,6 +945,9 @@ ${ozet}`;
         return ret(o, y.ek_id, "ozet_uyusmuyor");
       }
       const yeni = await disk.yarimaEkle(y.ozet, alinan, veri);
+      // Yazım bitince de dokunulur: tur, yazım sürerken (eski değişme anıyla) listelemiş olabilir; yarımın
+      // silinmesi bu parçanın arkasında sıradadır ve az önce yazılan ilerlemeyi silmemeli.
+      dokun(y.ozet);
       yarimYaz(y.ozet, yeni);
       if (yeni > alinan) y.ilerleme_ms = saat.simdiMs();
       if (yeni < y.bayt) return alindi(o, y.ek_id, yeni, false);
@@ -1005,8 +1031,11 @@ ${ozet}`;
   const silmeHatasi = (e: unknown): void => yaz("uyari", "ek_silme_hatasi", { hata_turu: hataTuru(e) });
 
   /**
-   * Silmeden hemen önce (özetin sırasında): işaretler tazelendikten sonra kayıtlar değiştiyse yeniden
-   * tazelenir (turlar arası yeniden başvuru). Döner: dosya hâlâ silinebilir mi; değişiklik `taranan`'a.
+   * Silmeden hemen önce (özetin sırasında): işaretler tazelendikten sonra kayıtlar değiştiyse yalnız arada
+   * yazılan kayıtlar taranır (turlar arası yeniden başvuru); işaretler yeniden dolaşılmaz (kayıtlar her
+   * silmede değişse de silme döngüsü O(işaret × dosya) olmaz). Saat aynı (`simdi`), kırpma zaten yapıldı.
+   * Baş revizyon geri gittiyse (depo yedekten döndü) işaretler baştan tazelenir. Döner: dosya hâlâ silinebilir
+   * mi; değişiklik `taranan`'a.
    */
   const halaSilinebilir = (
     isaretler: Map<string, AjandaEkIsareti>,
@@ -1014,10 +1043,15 @@ ${ozet}`;
     simdi: number,
     taranan: { rev: number; degisti: boolean },
   ): boolean => {
-    if (depo.ajandaBasRev() !== taranan.rev) {
+    const basRev = depo.ajandaBasRev();
+    if (basRev < taranan.rev) {
       const t = isaretleriTazele(isaretler, simdi, taranan.rev);
       taranan.rev = t.taranan;
       if (t.degisti) taranan.degisti = true;
+    } else if (basRev > taranan.rev) {
+      const yeni: AjandaEkIsareti = { ilk_ms: simdi, gozlenen_ms: 0, rev: basRev };
+      if (mezarTaslariniTara(isaretler, taranan.rev, basRev, yeni)) taranan.degisti = true;
+      taranan.rev = basRev;
     }
     const i = isaretler.get(ozet);
     return i !== undefined && suresiDoldu(i, simdi);
@@ -1079,11 +1113,36 @@ ${ozet}`;
     return silinen;
   };
 
+  /**
+   * Önceki başarılı turdan (ya da kapanış kaydından) beri gözlenen süre: süreçte henüz tur yoksa 0, geri
+   * giden saatte 0, uzun boşlukta en çok `GOZLEM_ADIMI_MS` (PC kapalı, uyku, saat sıçraması saklamaya
+   * sayılmaz).
+   */
+  const gozlemAdimi = (simdi: number): number =>
+    sonGozlem === null ? 0 : Math.min(Math.max(simdi - sonGozlem, 0), S.GOZLEM_ADIMI_MS);
+
+  /**
+   * Kapanışta (`BAKIM` sırasında): son turdan beri gözlenen süre işaretlere yazılır. Yoksa hep bir turdan
+   * kısa yaşayan süreçte (açılış turu 0 sayar, sonraki tur hiç gelmez) saklama sayacı hiç ilerlemezdi.
+   * Süreç başından ilk tura kadarki süre sayılmaz (ilk tur açılışta hemen koşar); kapanış PC'nin kapalı
+   * geçireceği süreyi bilmez, yalnız çalışırken geçeni yazar. Ani ölümde (kapanış yok) en çok bir tur aralığı
+   * kaybolur: saklama uzar, kısalmaz.
+   */
+  const gozlemiKaydet = async (): Promise<void> => {
+    const simdi = saat.simdiMs();
+    const adim = gozlemAdimi(simdi);
+    if (adim === 0) return;
+    const isaretler = await disk.isaretleriOku();
+    if (isaretler.size > 0) {
+      for (const [ozet, i] of [...isaretler]) isaretler.set(ozet, { ...i, gozlenen_ms: i.gozlenen_ms + adim });
+      await disk.isaretleriYaz(isaretler);
+    }
+    sonGozlem = simdi;
+  };
+
   const temizlikTuru = async (): Promise<AjandaEkTemizlikSonucu> => {
     const bas = saat.simdiMs();
-    // Önceki başarılı turdan beri gözlenen süre: süreç başında 0, geri giden saatte 0, uzun boşlukta en çok
-    // `GOZLEM_ADIMI_MS` (PC kapalı, uyku, saat sıçraması saklamaya sayılmaz).
-    const adim = sonGozlem === null ? 0 : Math.min(Math.max(bas - sonGozlem, 0), S.GOZLEM_ADIMI_MS);
+    const adim = gozlemAdimi(bas);
     const sonuc: AjandaEkTemizlikSonucu = { silinen: 0, silinen_bayt: 0, yarim_silinen: 0, isaretlenen: 0, tutulan: 0, hatali: 0 };
     // Tur başından sonra bir çerçevenin dokunduğu özet bu turda silinmez.
     const dokunuldu = (ozet: string): boolean => (dokunulan.get(ozet) ?? -Infinity) >= bas;
@@ -1284,6 +1343,11 @@ ${ozet}`;
       periyot?.();
       periyot = null;
       await bekle();
+      try {
+        await sirada(BAKIM, gozlemiKaydet);
+      } catch (e) {
+        yaz("hata", "ek_gozlem_hatasi", { hata_turu: hataTuru(e) });
+      }
     },
   };
 };
