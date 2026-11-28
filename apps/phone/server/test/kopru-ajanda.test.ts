@@ -891,10 +891,10 @@ describe("kopru PC köprüsü: uyarlayıcı (--uyarlayici)", () => {
 
 /**
  * Yeni köprü hello'da harness sürecini bildirir (`surec_id`, `giris`'te `process.ppid`; T5). Sürüm farkının iki
- * yönü sınanır. Eski servis (bu değişiklikten hemen önceki sürüm, 55948ea) burada satır düzeyinde temsil edilir:
- * yukarı çözücüsü 55948ea'nın şemasıdır (`EskiHello` = `git show 55948ea:apps/phone/protocol/src/ajanda-arac.ts`'teki
+ * yönü sınanır. Eski servis (kullanıcılarda kurulu sürüm, 5c6759f) burada satır düzeyinde temsil edilir:
+ * yukarı çözücüsü 5c6759f'nin şemasıdır (`EskiHello` = `git show 5c6759f:apps/phone/protocol/src/ajanda-arac.ts`'teki
  * `AjandaKopruHello`, bugünkü yapı taşlarıyla; istek ve iptal şemaları o zamandan beri değişmedi) ve hello reddi
- * 55948ea `ajanda-kopru-sunucu.ts` `helloIsle`'ninkidir: şemadan geçmeyen hello → `kopru_ret{yetkisiz}` yazıp hemen
+ * 5c6759f `ajanda-kopru-sunucu.ts` `helloIsle`'ninkidir: şemadan geçmeyen hello → `kopru_ret{yetkisiz}` yazıp hemen
  * kapatır (`reddet`; adlı boruda ret satırı kapanışla birlikte düşebilir, ölçüldü: yaz + destroy yarı yarıya teslim).
  * Son test bu iki olguyu git'ten okuyarak denetler. Kanıtlanan: köprü zengin hello'nun reddinde BİR KEZ düz hello'ya
  * düşer ve eski serviste çalışır; gerçek bir retle (düz hello da reddedilir) döngü sıkışmaz; yeni alan hello dışında
@@ -905,7 +905,7 @@ describe("kopru PC köprüsü: zengin hello (surec_id) ve sürüm uyumu", () => 
   const SUREC = "3060";
   const OTURUM_PC = "3f1c2a9e-7b4d-4c1a-9e2f-0a1b2c3d4e5f";
   const PC_LISTE = { cikti: LISTE_CIKTI, karar: "insan" };
-  /** 55948ea'nın hello şeması (rol + jeton, katı); istek ve iptal bugünküyle aynı. */
+  /** 5c6759f'nin hello şeması (rol + jeton, katı); istek ve iptal bugünküyle aynı. */
   const EskiHello = mesaj("kopru_hello", { rol: AjandaKopruRolu, jeton: Jeton });
   const EskiYukari = z.discriminatedUnion("type", [EskiHello, AjandaKopruIstek, KopruIptal]);
   const eskiCoz = (s: string) => cozumle(EskiYukari, s, AJANDA_AZAMI_CERCEVE.BORU, PROTOKOL_SURUMU);
@@ -914,7 +914,7 @@ describe("kopru PC köprüsü: zengin hello (surec_id) ve sürüm uyumu", () => 
   type Olay = { hello: "zengin" | "duz" } | { bekle: number };
 
   /**
-   * Satır düzeyinde PC servisi. `eski`: 55948ea şeması (zengin hello'yu reddeder); `retDuser`: ret satırı
+   * Satır düzeyinde PC servisi. `eski`: 5c6759f şeması (zengin hello'yu reddeder); `retDuser`: ret satırı
    * kapanışla düşer (yalnız kapanış görünür); `hepsiniReddet`: her hello'ya bu kodla ret (gerçek ret).
    */
   const pcServisi = (sec: { eski: boolean; retDuser?: boolean; hepsiniReddet?: string }) => {
@@ -1017,7 +1017,7 @@ describe("kopru PC köprüsü: zengin hello (surec_id) ve sürüm uyumu", () => 
     olaylar.filter((o) => "hello" in o || donguBeklemesi(o)).map((o) => ("hello" in o ? o.hello : "B"));
 
   for (const retDuser of [false, true]) {
-    it(`yeni köprü → eski servis (55948ea şeması): zengin hello reddedilir, köprü beklemeden bir kez düz hello'ya düşer ve çalışır${retDuser ? " (ret satırı kapanışla düştü)" : ""}`, async () => {
+    it(`yeni köprü → eski servis (5c6759f şeması): zengin hello reddedilir, köprü beklemeden bir kez düz hello'ya düşer ve çalışır${retDuser ? " (ret satırı kapanışla düştü)" : ""}`, async () => {
       const { s, baglan } = pcServisi({ eski: true, retDuser });
       const istemci = await pcKopruAc(baglan, s.olaylar, SUREC);
       // İlk çağrı düşüş sürerken gelir: düz denemenin sonucunu bekler, "ulaşılamıyor" demez.
@@ -1082,7 +1082,7 @@ describe("kopru PC köprüsü: zengin hello (surec_id) ve sürüm uyumu", () => 
     assert.equal(u.baglantiSayisi(), 1);
     assert.equal(hamHellolar.length, 1);
     assert.equal(hamHellolar[0]!.includes("surec"), false, "süreç bildirmeyen köprü düz hello yollar");
-    assert.equal(eskiCoz(hamHellolar[0]!).ok, true, "55948ea köprüsünün hello'su ile aynı biçim");
+    assert.equal(eskiCoz(hamHellolar[0]!).ok, true, "5c6759f köprüsünün hello'su ile aynı biçim");
     assert.deepEqual(baglamlar.map((b) => ({ ...b, baglanti_id: "?" })), [{ rol: "pc_oturumu", baglanti_id: "?", arac_cagri_id: "toolu_y2", oturum_id: OTURUM_PC }]);
   });
 
@@ -1097,10 +1097,10 @@ describe("kopru PC köprüsü: zengin hello (surec_id) ve sürüm uyumu", () => 
     assert.equal("surec_id" in ana.son.gelen[0]!, false);
   });
 
-  it("temsil denetimi (git): 55948ea'nın hello şeması, AjandaPcCagri'si ve hello reddi bu testteki kopyayla aynı", (t) => {
+  it("temsil denetimi (git): 5c6759f'nin hello şeması, AjandaPcCagri'si ve hello reddi bu testteki kopyayla aynı", (t) => {
     const goster = (yol: string): string | null => {
       try {
-        return execFileSync("git", ["show", `55948ea:${yol}`], { encoding: "utf8", cwd: fileURLToPath(new URL(".", import.meta.url)), stdio: ["ignore", "pipe", "ignore"] });
+        return execFileSync("git", ["show", `5c6759f:${yol}`], { encoding: "utf8", cwd: fileURLToPath(new URL(".", import.meta.url)), stdio: ["ignore", "pipe", "ignore"] });
       } catch {
         return null;
       }
@@ -1108,7 +1108,7 @@ describe("kopru PC köprüsü: zengin hello (surec_id) ve sürüm uyumu", () => 
     const protokol = goster("apps/phone/protocol/src/ajanda-arac.ts");
     const sunucu = goster("apps/phone/server/src/ajanda-kopru-sunucu.ts");
     if (protokol === null || sunucu === null) {
-      t.skip("git ya da 55948ea yok");
+      t.skip("git ya da 5c6759f yok");
       return;
     }
     assert.ok(protokol.includes('export const AjandaKopruHello = mesaj("kopru_hello", { rol: AjandaKopruRolu, jeton: Jeton });'));
@@ -1116,7 +1116,9 @@ describe("kopru PC köprüsü: zengin hello (surec_id) ve sürüm uyumu", () => 
     assert.ok(protokol.includes('export const AjandaKopruYukari = z.discriminatedUnion("type", [AjandaKopruHello, AjandaKopruIstek, KopruIptal]);'));
     assert.ok(sunucu.includes('reddet(bag, cozum.kod === "protokol_uyumsuz" ? "protokol_uyumsuz" : "yetkisiz", "cerceve_gecersiz");'));
     assert.match(sunucu, /const reddet = [^\n]*\n[^\n]*el_sikisma_ret[^\n]*\n\s*yaz\(bag, \{ v: PROTOKOL_SURUMU, type: "kopru_ret", code \}\);\n\s*baglantiKapat\(bag\);/);
-    // Bugünkü istek şeması 55948ea'dakiyle aynı alanları taşır (cagri katı: arac_cagri_id, oturum_id).
+    // Kapalı PC rolü (pc_kapali) de `yetkisiz` döner.
+    assert.ok(sunucu.includes('pcReddet(bag, "yetkisiz", "pc_kapali", { rol: m.rol });'));
+    // Bugünkü istek şeması 5c6759f'dekiyle aynı alanları taşır (cagri katı: arac_cagri_id, oturum_id).
     assert.deepEqual(Object.keys(AjandaPcCagri.shape).sort(), ["arac_cagri_id", "oturum_id"]);
   });
 
