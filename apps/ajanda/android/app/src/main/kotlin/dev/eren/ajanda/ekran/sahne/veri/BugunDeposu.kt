@@ -61,6 +61,23 @@ class BugunDeposu(
     /** Ekranın en son gösterdiği tostun numarası (sekmeye dönüşte aynı tost yeniden çıkmasın). */
     @Volatile var gosterilenTost: Long = 0
 
+    // Yalnız ana iş parçacığında (Compose).
+    private var imzaGunu: java.time.LocalDate? = null
+    private val imzaOynayanlar = HashSet<String>()
+
+    /**
+     * Bir kez oynayan imza ve kalem (SAHNE.md §5.15) bu gösterimde oynasın mı: kayıt başına **gün içinde bir
+     * kez**. İlk soruşta `true` döner ve kaydı işaretler; aynı gün sonraki gösterimlerde imza çizili gelir.
+     */
+    fun imzaOynasin(anahtar: String): Boolean {
+        val gun = saat().toLocalDate()
+        if (gun != imzaGunu) {
+            imzaGunu = gun
+            imzaOynayanlar.clear()
+        }
+        return imzaOynayanlar.add(anahtar)
+    }
+
     // Yalnız [calistirici]'da.
     private var denetleyici: BugunDenetleyici? = null
     private var baglantiyiKes: (() -> Unit)? = null

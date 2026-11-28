@@ -4,6 +4,9 @@ import androidx.compose.runtime.Immutable
 import dev.eren.ajanda.ekran.DurumGostergesi
 import dev.eren.ajanda.ekran.HatirlatmaUyarilari
 import dev.eren.ajanda.ekran.RetListesi
+import dev.eren.ajanda.ekran.sahne.cizim.CizimOnerisi
+import dev.eren.ajanda.ekran.sahne.cizim.cizimAnahtari
+import dev.eren.ajanda.ekran.sahne.cizim.varsayilanLevhaRengi
 import dev.eren.ajanda.ekran.sahne.tema.LevhaRengi
 import java.time.LocalDate
 
@@ -15,8 +18,8 @@ enum class LevhaHali { ACIK, BITTI, TASLAK }
  * Saf veri; çekirdekten [BugunDenetleyici] kurar.
  *
  * - [anahtar] ekranda benzersizdir: tekrarın örneği aynı kaydın başka günü olabilir (`kayitId@ornekTarihi`).
- * - [cizim]: çizim anahtarı. Kayıtta simge alanı sözleşme v3 ile gelecek; o gelene dek başlıktan tahmin
- *   edilir ([Gorunus.cizimTahmini]). v3 gelince yalnız orası değişir.
+ * - [cizim]: çizim anahtarı ([Gorunus.cizim]: kaydın simgesi, yoksa başlıktan öneri, yoksa `genel`).
+ * - [renk]: levha takımı; anahtarın varsayılanı, komşusuyla çakışırsa yakın bir takım ([KomsuRenk]).
  * - [aciklama]: TalkBack'in levha için okuduğu tek cümle.
  */
 @Immutable
@@ -153,8 +156,8 @@ object Gorunus {
     fun kucuk(s: String): String = s.lowercase(TR)
 
     /**
-     * Kaydın levha rengi. Kayıtta renk alanı yok (sözleşme v3 simge anahtarıyla gelecek): kimlikten sabit
-     * bir seçim; aynı kayıt her açılışta aynı renkte.
+     * Kimlikten sabit bir takım. Bugün levhaları bunu kullanmaz (renk çizim anahtarından gelir, [cizim]);
+     * yalnız anahtarı bilinmeyen eski yer tutucuların yedeği.
      */
     fun renk(kayitId: String): LevhaRengi {
         var h = 0x811C9DC5.toInt()
@@ -165,26 +168,21 @@ object Gorunus {
         return LevhaRengi.entries[Math.floorMod(h, LevhaRengi.entries.size)]
     }
 
-    private val TAHMIN = listOf(
-        listOf("kahve", "çay", "mola", "kahvaltı") to "fincan",
-        listOf("diş") to "dis",
-        listOf("market", "alışveriş", "manav", "pazar") to "sepet",
-        listOf("kargo", "paket", "teslim", "posta") to "kutu",
-        listOf("ilaç", "eczane", "vitamin", "doktor", "hastane") to "ilac",
-        listOf("fatura", "ödeme", "kira", "aidat", "vergi") to "fatura",
-        listOf("imza", "form", "dilekçe", "başvuru", "belge", "evrak") to "imza",
-        listOf("kamp", "çadır", "tatil", "gezi") to "cadir",
-        listOf("zil", "alarm", "hatırlat") to "zil",
-    )
-
     /**
-     * Geçici: kayıtta simge anahtarı yokken başlıktan çizim tahmini. Sözleşme v3'te kaydın kendi anahtarı
-     * gelir; bu işlev o zaman yalnız anahtar boşken çalışır.
+     * Kaydın çizim anahtarı. Sıra: kaydın kendi [simge]'si (sözleşme v3; bilinmeyen anahtar `genel`),
+     * yoksa başlıktan öneri ([CizimOnerisi.oner]), o da yoksa `genel`.
+     *
+     * v3 BAĞLANTI NOKTASI: kaydın simge alanı geldiğinde tek değişiklik `BugunDenetleyici.kaydet` içindeki
+     * `simge = null` satırıdır (`simge = k.simge`). Öneri o zaman yalnız simgesi boş kayıtlarda çalışır.
      */
-    fun cizimTahmini(baslik: String): String {
-        val b = kucuk(baslik)
-        return TAHMIN.firstOrNull { (kelimeler, _) -> kelimeler.any { it in b } }?.second ?: "yildiz"
+    fun cizim(simge: String?, baslik: String): String {
+        val s = simge?.trim()
+        if (!s.isNullOrEmpty()) return cizimAnahtari(s)
+        return cizimAnahtari(CizimOnerisi.oner(baslik) ?: CizimOnerisi.GENEL)
     }
+
+    /** Anahtarın varsayılan takımı (kayıtta renk seçimi yok); komşu kuralı sonra uygulanır ([KomsuRenk]). */
+    fun renkAnahtardan(cizim: String): LevhaRengi = varsayilanLevhaRengi(cizim)
 
     /** "20 dakika sonra" / "3 saat sonra" (SAHNE.md §3.2: 60 dakikadan azsa dakika, değilse yuvarlanmış saat). */
     fun kalanSure(dk: Long): String = when {
@@ -200,4 +198,64 @@ object Gorunus {
         if (k.asistan) append(", asistan ekledi")
         k.bekleyen?.let { append(", ").append(it) }
     }
+}
+
+/**
+ * Komşu levhalar aynı takıma düşmesin (renk anahtardan geldiği için iki kahve, ya da kahve ile market
+ * — ikisi de hardal — yan yana gelebilir). Kural, ekranın okuma sırasıyla verilen bir listede:
+ *
+ * - Her kayıt önceki [PENCERE] kaydın takımından farklı olur. Mozaikte iki sütunlu sırada bu, yan yana
+ *   ve üst üste her komşuyu kapsar (büyük → kare, kare | kare, kare ↓ kare); satırda ve şeritte ardışık
+ *   kayıtları.
+ * - Çakışan kayıt önce anahtarının kendi takımını ister, olmazsa [YAKIN] sırasıyla ona en yakın takıma kayar
+ *   (kobalt → gece → gök …): kaydın "rengi" tanınır kalır. Seçim belirlenimci: aynı liste aynı renkleri verir.
+ * - Kaymayı yalnız çakışan kayıt yapar; ilk kayıt (sıradaki iş) her zaman kendi takımındadır.
+ */
+object KomsuRenk {
+    const val PENCERE = 2
+
+    /** Her takım için yakınlık sırası (ton ve sıcaklık): ilk uygun olan seçilir. */
+    val YAKIN: Map<LevhaRengi, List<LevhaRengi>> = mapOf(
+        LevhaRengi.KOBALT to listOf(LevhaRengi.GECE, LevhaRengi.GOK, LevhaRengi.CAM),
+        LevhaRengi.CAM to listOf(LevhaRengi.GOK, LevhaRengi.GECE, LevhaRengi.KOBALT),
+        LevhaRengi.HARDAL to listOf(LevhaRengi.DOMATES, LevhaRengi.KUM, LevhaRengi.PEMBE),
+        LevhaRengi.PEMBE to listOf(LevhaRengi.DOMATES, LevhaRengi.KUM, LevhaRengi.HARDAL),
+        LevhaRengi.DOMATES to listOf(LevhaRengi.PEMBE, LevhaRengi.HARDAL, LevhaRengi.KUM),
+        LevhaRengi.GOK to listOf(LevhaRengi.KOBALT, LevhaRengi.CAM, LevhaRengi.KUM),
+        LevhaRengi.KUM to listOf(LevhaRengi.HARDAL, LevhaRengi.GOK, LevhaRengi.PEMBE),
+        LevhaRengi.GECE to listOf(LevhaRengi.KOBALT, LevhaRengi.CAM, LevhaRengi.GOK),
+    )
+
+    /** [istenen] ya da [yasak]ta olmayan en yakın takım. */
+    fun sec(istenen: LevhaRengi, yasak: Set<LevhaRengi>): LevhaRengi =
+        sequenceOf(istenen).plus(YAKIN.getValue(istenen)).plus(LevhaRengi.entries).first { it !in yasak }
+
+    /** Okuma sırasındaki [liste]nin renklerini kurala göre düzeltir; değişmeyen kayıt aynı nesne kalır. */
+    fun ayir(liste: List<BugunKaydi>): List<BugunKaydi> {
+        if (liste.size < 2) return liste
+        val sonuc = ArrayList<BugunKaydi>(liste.size)
+        val yasak = HashSet<LevhaRengi>(PENCERE)
+        for (k in liste) {
+            yasak.clear()
+            for (i in maxOf(0, sonuc.size - PENCERE) until sonuc.size) yasak += sonuc[i].renk
+            val r = sec(k.renk, yasak)
+            sonuc += if (r == k.renk) k else k.copy(renk = r)
+        }
+        return sonuc
+    }
+}
+
+/**
+ * Modelin bütün görünür sıralarına komşu kuralını uygular: taslaklar ve günün mozaiği tek sıra (ekranda öyle
+ * dizilir), kalanlar şeridi, bitenler ve her yaklaşan gün ayrı sıra.
+ */
+fun BugunModeli.komsuRenkleriAyir(): BugunModeli {
+    val sahne = KomsuRenk.ayir(taslaklar + acikler)
+    return copy(
+        kalanlar = KomsuRenk.ayir(kalanlar),
+        taslaklar = sahne.subList(0, taslaklar.size).toList(),
+        acikler = sahne.subList(taslaklar.size, sahne.size).toList(),
+        bitenler = KomsuRenk.ayir(bitenler),
+        yaklasanlar = yaklasanlar.map { g -> KomsuRenk.ayir(g.kayitlar).let { if (it === g.kayitlar) g else g.copy(kayitlar = it) } },
+    )
 }

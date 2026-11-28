@@ -14,6 +14,7 @@ import androidx.compose.ui.hapticfeedback.HapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import dev.eren.ajanda.ekran.sahne.bilesen.Boyama
+import dev.eren.ajanda.ekran.sahne.cizim.KOPUK_PATLAMA_MS
 import dev.eren.ajanda.ekran.sahne.tema.Sahne
 import dev.eren.ajanda.ekran.sahne.tema.SahneHareket
 import dev.eren.ajanda.ekran.sahne.veri.BugunDeposu
@@ -47,6 +48,9 @@ class BugunHareketleri internal constructor(
     /** Tamamlama: yıkama bandının ilerlemesi. */
     val yikama = mutableStateMapOf<String, Float>()
 
+    /** Tamamlama: çizimdeki köpüklerin patlaması (0..1, [KOPUK_PATLAMA_MS]; bantla aynı anda başlar). */
+    val patlama = mutableStateMapOf<String, Float>()
+
     /** Onay: boyama ve düğmelerin saydamlığı. */
     val boyama = mutableStateMapOf<String, Boyama>()
     val dugmeAlfa = mutableStateMapOf<String, Float>()
@@ -65,6 +69,7 @@ class BugunHareketleri internal constructor(
     private fun bitir(anahtar: String) {
         surec.remove(anahtar)
         yikama.remove(anahtar)
+        patlama.remove(anahtar)
         boyama.remove(anahtar)
         dugmeAlfa.remove(anahtar)
         cikis.remove(anahtar)
@@ -72,13 +77,15 @@ class BugunHareketleri internal constructor(
 
     /**
      * Tamamlar ya da yeniden açar. [levha]: büyük/kare levhada yıkama bandı geçer ve 720 ms sonra kayıt
-     * biter; satır ve kartlarda bant yok, 300 ms sonra (§5.2).
+     * biter; köpüklü çizimde köpükler aynı anda patlar. Satır ve kartlarda bant ve köpük yok, 300 ms sonra (§5.2).
+     * Hareket azaltılmışsa bant yok, köpük patlaması anında son hâlinde (köpükler sönmüş), bekleme yok (§6).
      */
     fun tamamla(k: BugunKaydi, tamam: Boolean = k.hal != LevhaHali.BITTI, levha: Boolean = false) {
         if (kilitli(k.anahtar)) return
         if (tamam) titresim.performHapticFeedback(HapticFeedbackType.Confirm)
         if (!tamam || hareket.azalt) {
             surec[k.anahtar] = Surec.TAMAMLANIYOR
+            if (tamam && levha) patlama[k.anahtar] = 1f
             git(k.anahtar) { depo?.tamamla(k, tamam, it) }
             return
         }
@@ -89,12 +96,21 @@ class BugunHareketleri internal constructor(
                     val a = Animatable(0f)
                     a.animateTo(1f, tween(700, easing = BANT)) { yikama[k.anahtar] = value }
                 }
+                launch {
+                    Animatable(0f).animateTo(1f, tween(KOPUK_PATLAMA_MS, easing = SahneHareket.YUMUSAK)) { patlama[k.anahtar] = value }
+                }
                 delay(720)
             } else {
                 delay(300)
             }
         }
     }
+
+    /**
+     * Bir kez oynayan imza (§5.15) bu gösterimde oynasın mı: gün içinde bir kez (depo sayar). Depo yoksa
+     * (vitrin) her gösterimde.
+     */
+    fun imzaOynasin(k: BugunKaydi): Boolean = depo?.imzaOynasin(k.anahtar) ?: true
 
     /** Taslağı onaylar: karakalemden boyamaya (§5.4), 900 ms sonra çekirdeğe. */
     fun onayla(kayitlar: List<BugunKaydi>) {

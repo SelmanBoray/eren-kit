@@ -41,7 +41,14 @@ import dev.eren.ajanda.ekran.sahne.tema.Metin
 import dev.eren.ajanda.ekran.sahne.tema.Sahne
 import dev.eren.ajanda.ekran.sahne.tema.Simge
 
-/** Yuvarlak simge düğmesi (kapat, ay değiştir, ayarlar). [aciklama] TalkBack'in okuduğu ad, zorunlu. */
+/**
+ * Yuvarlak simge düğmesi (kapat, ay değiştir, ayarlar). [aciklama] TalkBack'in okuduğu ad, zorunlu.
+ *
+ * [boyut] görünür dairedir (SAHNE.md §3.7, §3.8: 46 dp). Dokunma alanı dairenin çevresindeki kutudur ve en az
+ * 48 dp ([HapDugme]'deki iç/dış ayrımı gibi): tıklama dış kutuda olduğu için Compose'un küçük öğe
+ * genişletmesine güvenilmez (altta dokunma alan bir kardeş varsa genişletme ona kaybeder). Dış kutu görünür
+ * daireden her yana 1 dp taşar; [modifier]'daki konum payı dış kutuya uygulanır.
+ */
 @Composable
 fun YuvarlakDugme(
     simge: ImageVector,
@@ -51,21 +58,32 @@ fun YuvarlakDugme(
     zemin: Color = Sahne.renk.yuz,
     renk: Color = Sahne.renk.murekkep,
     cerceve: Boolean = false,
-    boyut: Dp = Sahne.olcu.yuvarlakDugme,
+    boyut: Dp = YUVARLAK_DUGME_GORUNUR,
 ) {
+    val alan = if (boyut > Sahne.olcu.dokunma) boyut else Sahne.olcu.dokunma
     Box(
         modifier
-            .size(boyut)
+            .size(alan)
             .clip(CircleShape)
-            .background(zemin)
-            .then(if (cerceve) Modifier.border(2.dp, renk, CircleShape) else Modifier)
             .clickable(role = Role.Button, onClickLabel = null, onClick = onClick)
             .semantics { contentDescription = aciklama },
         contentAlignment = Alignment.Center,
     ) {
-        Simge(simge, aciklama = null, modifier = Modifier.size(22.dp), renk = renk)
+        Box(
+            Modifier
+                .size(boyut)
+                .clip(CircleShape)
+                .background(zemin)
+                .then(if (cerceve) Modifier.border(2.dp, renk, CircleShape) else Modifier),
+            contentAlignment = Alignment.Center,
+        ) {
+            Simge(simge, aciklama = null, modifier = Modifier.size(22.dp), renk = renk)
+        }
     }
 }
+
+/** Yuvarlak düğmenin görünür boyu (prototipte 46 dp); dokunma alanı [Sahne.olcu] `dokunma` (48 dp). */
+val YUVARLAK_DUGME_GORUNUR: Dp = 46.dp
 
 /**
  * Hap biçimli yazılı düğme. [dolu]: mürekkep zemin; değilse içinde bulunduğu yüzeyin yazı rengiyle 2 dp

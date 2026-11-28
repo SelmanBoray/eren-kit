@@ -206,6 +206,9 @@ private fun AcikLevha(k: BugunKaydi, boy: LevhaBoyu, siradaki: Boolean, h: Bugun
     val takim = Sahne.levha(k.renk)
     val tamam = h.tamamGorunsun(k)
     val kilitli = h.kilitli(k.anahtar)
+    // Canlı parçalar yalnız büyük levhada (§5.15); imza orada gün içinde bir kez, sonra çizili gelir.
+    val canli = boy == LevhaBoyu.BUYUK && Sahne.hareket.surekli
+    val imza = if (canli) remember(k.anahtar) { h.imzaOynasin(k) } else false
     SagaCek(
         etkin = k.tamamlanabilir && !kilitli,
         tamam = tamam,
@@ -225,8 +228,10 @@ private fun AcikLevha(k: BugunKaydi, boy: LevhaBoyu, siradaki: Boolean, h: Bugun
             kayitId = k.kayitId,
             isaret = if (k.gecti) "Geçti" else null,
             yikama = h.yikama[k.anahtar] ?: 0f,
+            patlama = h.patlama[k.anahtar] ?: 0f,
             kilitli = kilitli,
-            canli = boy == LevhaBoyu.BUYUK && Sahne.hareket.surekli,
+            canli = canli,
+            imzaOynasin = imza,
             aciklama = k.aciklama + if (siradaki) ", sıradaki iş" else "",
             erisim = { tamamlaEylemi(k, h, levha = true) },
             kose = if (k.tamamlanabilir) {

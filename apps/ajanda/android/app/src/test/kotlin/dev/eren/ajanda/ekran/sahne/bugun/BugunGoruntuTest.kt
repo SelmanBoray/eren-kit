@@ -60,6 +60,7 @@ class BugunGoruntuTest {
         when (g) {
             Gun.NORMAL -> {
                 ekle(
+                    kayit("araba", "Arabayı yıkat", an(bugun, "14:45")),
                     kayit("toplanti", "Ekip toplantısı", an(bugun, "09:30")),
                     kayit("kahve", "Kahve molası", an(bugun, "15:30")),
                     kayit("dis", "Diş kontrolü", an(bugun, "17:00")),

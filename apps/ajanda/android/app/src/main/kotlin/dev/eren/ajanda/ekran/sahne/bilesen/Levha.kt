@@ -77,10 +77,18 @@ data class Boyama(val daire: Float, val yazi: Float, val cizim: Float) {
 
 /**
  * Çizim yuvasına verilen durum. [boyama]: 0 karakalem, 1 boyalı (§7.3); [canli]: sürekli hareketler oynasın mı
- * (yalnız Bugün'ün büyük levhasında, §5.15). Çizim takımı (`ekran/sahne/cizim/KayitCizimi`) bu üçünü alır.
+ * (yalnız Bugün'ün büyük levhasında, §5.15); [patlama]: tamamlamada köpük patlaması 0..1 (§5.2);
+ * [imzaOynasin]: bir kez oynayan imza bu gösterimde oynasın mı (§5.15 "gün içinde bir kez").
+ * Çizim takımı (`ekran/sahne/cizim/KayitCizimi`) bunları alır ([cizimYuvasi]).
  */
 @Immutable
-data class LevhaCizimi(val takim: LevhaTakimi, val boyama: Float, val canli: Boolean)
+data class LevhaCizimi(
+    val takim: LevhaTakimi,
+    val boyama: Float,
+    val canli: Boolean,
+    val patlama: Float = 0f,
+    val imzaOynasin: Boolean = true,
+)
 
 /** Levhanın çizim yuvası: verilen alanı (§3.2 "çizim kutusu") doldurur. Dekoratiftir; TalkBack okumaz. */
 typealias LevhaCizimYuvasi = @Composable BoxScope.(LevhaCizimi) -> Unit
@@ -92,6 +100,7 @@ typealias LevhaCizimYuvasi = @Composable BoxScope.(LevhaCizimi) -> Unit
  * - [bitti]: renkleri solar (takvim ve tarihsizlerde; Bugün'de biten levha hap'a dönüşür).
  * - [isaret]: başlığın üstünde küçük çerçeveli işaret ("Geçti"); renk taşımaz, solmaz.
  * - [yikama]: tamamlama hareketinin yıkama bandı (0..1; §5.2). 0 ve 1'de görünmez.
+ * - [patlama]: çizimdeki köpüklerin tamamlanma patlaması (0..1; §5.2); köpüksüz çizimde etkisiz.
  * - [kilitli]: hareket sürerken dokunmaya kapalı (§5.2 [A]).
  * - [kayitId] verilirse levha ayrıntının kapağıyla paylaşılan öğe olur ([paylasilanLevha]).
  * - [kose]: büyük ve geniş levhada sağ alt, karede sağ üst köşedeki denetim (ör. [TamamlaDugmesi]);
@@ -117,8 +126,10 @@ fun Levha(
     isaret: String? = null,
     boyama: Boyama = if (taslak) Boyama.KARAKALEM else Boyama.BOYALI,
     yikama: Float = 0f,
+    patlama: Float = 0f,
     kilitli: Boolean = false,
     canli: Boolean = false,
+    imzaOynasin: Boolean = true,
     aciklama: String? = null,
     erisim: (SemanticsPropertyReceiver.() -> Unit)? = null,
     kose: (@Composable () -> Unit)? = null,
@@ -177,7 +188,7 @@ fun Levha(
     ) {
         if (cizim != null) {
             Box(Modifier.figurAlani(boy).clearAndSetSemantics {}) {
-                cizim(LevhaCizimi(takim, boyama.cizim, canli))
+                cizim(LevhaCizimi(takim, boyama.cizim, canli, patlama, imzaOynasin))
             }
         }
         YaziRengi(yaziRengi) {
@@ -261,7 +272,8 @@ fun Isaret(yazi: String, renk: Color, modifier: Modifier = Modifier) {
 /**
  * Yer tutucu çizim: simge afiş boyunda, levhanın figür renginde; arkasında koyu ayrıntı renginde yumuşak bir
  * leke. [boyama] 0'da karakalem (boyasız, kesik daire, mürekkep çizgi), 1'de boyalı; aradaki değerlerde
- * ikisi üst üste geçer. Çizim takımı (SAHNE.md §7) gelince yerini `KayitCizimi` alır.
+ * ikisi üst üste geçer. Yalnız eski imzalı levhalar (takvim, tarihsiz yer tutucuları) kullanır; Bugün
+ * levhaları gerçek çizimi ([cizimYuvasi] → `KayitCizimi`) çizer.
  */
 @Composable
 fun LevhaFiguru(figur: ImageVector, takim: LevhaTakimi, boyama: Float, modifier: Modifier = Modifier) {

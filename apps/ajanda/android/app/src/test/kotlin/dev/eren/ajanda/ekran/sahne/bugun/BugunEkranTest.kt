@@ -247,6 +247,51 @@ class BugunEkranTest {
         assertTrue("vazgeç (§5.5) anında", hemenSonHalinde(1000))
     }
 
+    /** Köpüklü çizim (araba): büyük levhada köpük süzülür; kare levhada çizim durağandır (SAHNE.md §5.15). */
+    @Test
+    fun canliParcalarYalnizBuyukLevhadaOynar() {
+        c.ekle(
+            kayit("araba", "Arabayı yıkat", an(GUN.toString(), "15:00")),
+            kayit("kargo", "Kargo teslimi", an(GUN.toString(), "16:00")),
+            kayit("kitap", "Kitap iadesi", an(GUN.toString(), "17:00")),
+        )
+        ac(SahneHareket.Tam, saatDursun = true)
+        assertFalse("büyük levhada köpük oynar", hemenSonHalinde(800))
+    }
+
+    @Test
+    fun kareLevhadaCizimDuragan() {
+        c.ekle(
+            kayit("kargo", "Kargo teslimi", an(GUN.toString(), "15:00")),
+            kayit("araba", "Arabayı yıkat", an(GUN.toString(), "16:00")),
+            kayit("kitap", "Kitap iadesi", an(GUN.toString(), "17:00")),
+        )
+        ac(SahneHareket.Tam, saatDursun = true)
+        kural.mainClock.advanceTimeBy(100)
+        assertTrue("kare levhada köpük oynamaz", hemenSonHalinde(800))
+    }
+
+    /** "Hareketi azalt": köpük durağan, tamamlamada patlama ve onayda boyama anında son hâlinde (§6). */
+    @Test
+    fun hareketiAzaltKopukluLevhadaPatlamaVeBoyamaAninda() {
+        c.ekle(
+            kayit("araba", "Arabayı yıkat", an(GUN.toString(), "15:00")),
+            kayit("kitap", "Kitap iadesi", an(GUN.toString(), "17:00")),
+            kayit("oto", "Oto yıkama randevusu", gun(GUN.toString()), taslak = true),
+        )
+        ac(SahneHareket.Azaltilmis, saatDursun = true)
+        kural.mainClock.advanceTimeByFrame()
+        assertTrue("köpük durağan", hemenSonHalinde())
+        kural.onNodeWithContentDescription("Tamamla: Arabayı yıkat").performClick()
+        kural.mainClock.advanceTimeByFrame()
+        assertEquals(listOf("durum:araba:TAMAM"), durumCagrilari())
+        assertTrue("tamamlama ve köpük patlaması anında", hemenSonHalinde(1000))
+        kural.onNodeWithText("Onayla").performClick()
+        kural.mainClock.advanceTimeByFrame()
+        assertTrue(durumCagrilari().contains("onayla:oto"))
+        assertTrue("karakalemden boyamaya anında", hemenSonHalinde(1000))
+    }
+
     @Test
     fun tamHareketteAcilisZamanAlir() {
         // Karşılaştırma: aynı ölçüm tam harekette açılışın sürdüğünü görür (ölçümün kendisi doğru).

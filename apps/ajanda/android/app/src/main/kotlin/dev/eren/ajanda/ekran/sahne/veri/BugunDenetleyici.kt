@@ -211,7 +211,7 @@ class BugunDenetleyici(private val c: CekirdekYuzu, private val saat: () -> Zone
                 hatirlatmaSeritMetni = h?.let { HatirlatmaUyarilari.seritMetni(it) },
             ),
             okumaHatasi = okumaHatasi,
-        )
+        ).komsuRenkleriAyir()
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -280,13 +280,15 @@ class BugunDenetleyici(private val c: CekirdekYuzu, private val saat: () -> Zone
     ): BugunKaydi {
         val k = g.kayit
         val bekleyen = gonderim.okunus.takeIf { g.bekleyen }
+        // v3 BAĞLANTI NOKTASI: kaydın simge alanı gelince `simge = k.simge` olur; öneriden önce gelir.
+        val cizim = Gorunus.cizim(simge = null, baslik = k.baslik)
         val ham = BugunKaydi(
             anahtar = anahtar,
             kayitId = k.kayitId,
             baslik = k.baslik,
             zaman = zaman,
-            renk = Gorunus.renk(k.kayitId),
-            cizim = Gorunus.cizimTahmini(k.baslik),
+            renk = Gorunus.renkAnahtardan(cizim),
+            cizim = cizim,
             hal = hal,
             gecti = gecti,
             tamamlanabilir = k.tur != KayitTuru.NOT && !k.silindi,
