@@ -298,7 +298,19 @@ eşleşiyor (T5) ∧ `aktor = ana` ∧ `etkilesim = etkilesimli`. Diğer her şe
         başlattığı isteği yazıp yanıtını iptal yanıtından sonra yollayabilir. Bu yüzden köprü bağlantıyı yeni isteğe
         kapatır, süren yanıtları okumayı sürdürür, son yanıtla ya da en geç 2 sn sonra kapatır. Yanıtı gelmeyen istek her
         engelde "belirsiz" alır, hiçbir zaman "yazılmadı" almaz: model "yazılmadı" görürse anahtar yenilenince yeniden
-        dener ve kayıt iki kez yazılır.
+        dener ve kayıt iki kez yazılır. Servisin iki yanıtı ayrı parçalarda gelse de (servis iki ayrı yazma yapar) köprü
+        ikisini de okur (gerçek soketli test).
+      - "Yazılmadı" yalnız kesinse: servisin başarı yanıtı köprünün katı şemasına uymazsa (servis güncellenip yeni bir
+        tur kararı ya da çıktı alanı getirmiş, açık oturumun köprüsü eski kalmış) yazan araç `belirsiz` alır, liste
+        `ic_hata`. Servis de işlemden sonra düşen yazmayı (`depo.islem`'den sonra yüz, günlük ya da çıktı denetimi)
+        `belirsiz` yollar; `ic_hata` yalnız işlemden önce düşen istektir. `belirsiz` her protokol sürümünde vardır: eski
+        köprüler onu kopuş metniyle ("yazılıp yazılmadığı bilinmiyor, ajanda_listele ile bak") gösterir. Yeni bir hata
+        kodu bunun yerine seçilmedi: eski köprü tanımadığı kodu geçersiz çerçeve sayar, bağlantıyı bırakır (istek yine
+        `belirsiz` alır, ama bağlantı boşuna kopar). Bu ayrımdan önceki servis işlemden sonra da `ic_hata` verir: yeni
+        köprü o servisle "yazılmadı" görebilir (kalan risk).
+      - Servisin geçici reddi (PC bağlantı sınırı `ic_hata`; servis kapatılan bağlantıyı henüz işlemedi) çağrının 3 sn'lik
+        bağlantı beklemesini bitirmez: çağrı kısa aralarla yeniden dener. Kalıcı engel (anahtar yok ya da geçersiz,
+        kapalı PC rolü) bugünkü gibi beklemeden döner.
       - Köprü durunca (`durdur`) bağlantı bekleyen PC çağrısı 3 sn'lik bağlantı beklemesini sürdürmez, hemen "köprü
         kapanıyor; hiçbir şey yazılmadı" alır; yanıt MCP kapanmadan gider. Bekleme zamanlayıcıları kesilir, süreci tutmaz.
       - Yoklama hakkı en üst basamak karşılanınca ya da dış bitişte geri gelir. Dış bitiş, karşılanmış bir bağlantının

@@ -11,6 +11,7 @@
  * - `{"komut":"is_hafif", ...}`: onaylı bir PC planını depoya yazıp `isler.baslat(..., "hafif")` çağırır
  *   (`altin-duzen.ts` `islerDuzeni.baslat` ile aynı yol). Planı modele önerdirmek pahalı ve belirsiz olurdu;
  *   ölçülen iş sürecinin argv'si ve ortamıdır, plan önerme yolu değil.
+ * - Transkript silme portu sahtedir (`transkriptSar`): ürününki gerçek `~/.claude/projects`'te siler.
  *
  * Ayar argv'den gelir (`servis.ts <ayar.json>`); servisin ortamına düzenek değişkeni eklenmez, çünkü ortam
  * `claude` süreçlerine geçer ve kayda girer.
@@ -57,6 +58,24 @@ const agSar = (d: DisDunya, port: number): DisDunya => ({
   ws: { dinle: (istek) => d.ws.dinle({ ...istek, host: "127.0.0.1", port, baglanti: (b) => istek.baglanti(baglantiSar(b)) }) },
 });
 
+/**
+ * Transkript silme portunun duman karşılığı. Ürün portunun kökü gerçek `~/.claude/projects`'tir
+ * (`ayar.ts` `claudeProjeleri`); yalnız duman oturumlarının UUID'lerini silerdi ve senaryo onu tetiklemez
+ * (yeni sayfa yok). Yine de duman `~/.claude`'da yalnız `--izleri-sil` ile siler: bu port hiçbir şey silmez,
+ * çağrıyı kontrol günlüğüne sayar ve her kimliği `silinemeyen` döner (temizlik oturum kayıtlarını korur,
+ * üründeki "silinemedi" yolu). Bedeli: duman bu yolun gerçek dosya sistemi davranışını sınamaz
+ * (`dis-dunya.test.ts` "transkript.sil" sınar).
+ */
+const transkriptSar = (d: DisDunya, kontrol: (o: Record<string, unknown>) => void): DisDunya => ({
+  ...d,
+  transkript: {
+    sil: async (oturumlar) => {
+      kontrol({ olay: "transkript_sil_engellendi", adet: oturumlar.length });
+      return { silinen: 0, bulunamayan: 0, silinemeyen: oturumlar.length, reddedilen: 0 };
+    },
+  },
+});
+
 const ortamKopyasi = (): Ortam => {
   const kopya: Record<string, string> = {};
   for (const [ad, deger] of Object.entries(process.env)) if (deger !== undefined) kopya[ad] = deger;
@@ -85,7 +104,7 @@ const giris = async (): Promise<void> => {
   const ayar = await ayarKur({ dosya: dosyaPortuKur(), ortam: ortamKopyasi(), execPath: process.execPath, baslangicMs });
   const izin = await veriKokuIzniHazirla(ayar.yollar.kok);
   if (!izin.guvenli) throw new AyarHatasi(kokIzniHataMetni(izin.sorunlar));
-  const dunya = agSar(await disDunyaKur({ yollar: ayar.yollar }), da.port);
+  const dunya = transkriptSar(agSar(await disDunyaKur({ yollar: ayar.yollar }), da.port), kontrol);
   const g = gunlukKur({ kayit: dunya.kayit, saat: dunya.saat, azamiBayt: 10 * 1024 * 1024, azamiDosya: 5 });
   const { kok, log, islerDizini, erenCwd, erenMcpDizini, vt } = ayar.yollar;
   for (const dizin of [kok, win32.dirname(log), islerDizini, erenCwd, erenMcpDizini]) await dunya.dosya.dizinOlustur(dizin);

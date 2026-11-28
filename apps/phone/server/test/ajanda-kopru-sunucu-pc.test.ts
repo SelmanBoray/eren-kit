@@ -14,6 +14,7 @@ import {
   sha256Hex,
 } from "@eren/protocol";
 import type { AjandaFiili, AjandaKopruAsagi } from "@eren/protocol";
+import { ajandaKur } from "../src/ajanda.ts";
 import { pcDefteriKur } from "../src/ajanda-pc.ts";
 import { ajandaKopruSunucuKur } from "../src/ajanda-kopru-sunucu.ts";
 import { depoKur } from "../src/depo.ts";
@@ -769,5 +770,135 @@ describe("ajanda borusu, PC: T5 süreç eşitliği ve kilit yok (gerçek defter,
         }
       });
     }
+  });
+});
+
+// --- K1 servis tarafı: işlemden SONRA düşen yazma "yazılmadı" demez -----------------------------------
+
+describe("ajanda borusu, işlemden sonra düşen yazma (gerçek ajanda modülü, gerçek depo)", () => {
+  /**
+   * Gerçek `ajandaKur` (araçlar ve PC defteri) + gerçek boru sunucusu. `boz.gunluk`: modülün `arac` günlük olayı
+   * (işlemden sonra yazılır) atar; `boz.cikti`: işleyicinin başarı çıktısına sunucunun katı şemasının tanımadığı alan
+   * eklenir (işlem bitti, çıktı denetimi düşer). İkisi de işleyicinin `depo.islem`'inden SONRADIR: kayıt depodadır.
+   * `boz.islem`: modülün gördüğü `depo.islem`, işleyicinin yazmasından sonra AMA işlemin içinde atar: gerçek depo
+   * işlemi geri alır (işlem öncesi yol), kayıt depoda yoktur.
+   */
+  const gercekKur = async () => {
+    const zaman = sahteZaman();
+    const depo = depoKur({ yol: ":memory:", saat: zaman.saat, gunluk: sahteGunluk() });
+    acilanlar.push(depo);
+    const boz = { gunluk: false, cikti: false, islem: false };
+    const g = sahteGunluk();
+    const islemIcindeAtan = <T>(f: () => T): T =>
+      depo.islem(() => {
+        const r = f();
+        if (boz.islem) throw new Error("işlem içinde düştü");
+        return r;
+      });
+    const modulDeposu = new Proxy(depo, { get: (t, k, al) => (k === "islem" ? islemIcindeAtan : Reflect.get(t, k, al)) });
+    const ajanda = ajandaKur({
+      depo: modulDeposu,
+      takvim: sahteTakvim("Europe/Istanbul"),
+      saat: zaman.saat,
+      rastgele: sahteRastgele(5),
+      gunluk: {
+        ...g,
+        bilgi: (modul, olay, alanlar) => {
+          if (boz.gunluk && olay === "arac") throw new Error("günlük yazılamadı");
+          g.bilgi(modul, olay, alanlar);
+        },
+      },
+      turBaglami: () => null,
+    });
+    ajanda.baslat();
+    const araclar: Record<string, unknown> = {};
+    for (const fiil of AJANDA_FIILLERI) {
+      const asil = ajanda.araclar[fiil] as unknown as (...a: unknown[]) => Promise<{ ok: boolean; deger?: object }>;
+      araclar[fiil] = async (...a: unknown[]) => {
+        const s = await asil(...a);
+        return boz.cikti && s.ok ? { ...s, deger: { ...s.deger, yeni_alan: 1 } } : s;
+      };
+    }
+    const boru = sahteBoru();
+    const sunucuGunlugu = sahteGunluk();
+    const sunucu = ajandaKopruSunucuKur({
+      boru,
+      depo,
+      rastgele: sahteRastgele(77),
+      anahtar: { sabitZamanEsit: (a: string, b: string) => a === b },
+      zamanlayici: zaman.zamanlayici,
+      gunluk: sunucuGunlugu,
+    });
+    await sunucu.baslat(araclar as unknown as AjandaFiilIsleyiciler, ajanda.pcKanca);
+    depo.ajandaPcAnahtariYaz(ozetle(PC_JETON), 1);
+    const b = boru.baglan(AJANDA_BORU_ADI);
+    gonder(b, hello("pc_oturumu", PC_JETON));
+    await bosalt();
+    assert.deepEqual(cikanlar(b), [WELCOME("pc_oturumu")]);
+    let n = 0;
+    const cagir = async (fiil: AjandaFiili, girdi: unknown): Promise<AjandaKopruAsagi> => {
+      const istek_id = `i${++n}`;
+      gonder(b, istek(istek_id, fiil, girdi));
+      await bosalt();
+      const y = cikanlar(b).at(-1)!;
+      assert.ok(y.type === "yanit" && y.istek_id === istek_id, JSON.stringify(y));
+      return y;
+    };
+    return { depo, boz, b, cagir, sunucuGunlugu };
+  };
+  const BELIRSIZ = (istek_id: string) => ({ v: PROTOKOL_SURUMU, type: "yanit", istek_id, ok: false, code: "belirsiz" });
+  const IC_HATA = (istek_id: string) => ({ v: PROTOKOL_SURUMU, type: "yanit", istek_id, ok: false, code: "ic_hata" });
+  const NOT = { tur: "not", baslik: "Süt al" };
+
+  for (const yol of ["gunluk", "cikti"] as const) {
+    const ad = yol === "gunluk" ? "işleyici işlemden sonra düştü (arac günlüğü attı)" : "işlem bitti, sunucunun çıktı denetimi düştü";
+    it(`${ad}: kayıt depoda, yanıt belirsiz (ic_hata değil: köprü 'yazılmadı' der, model yeniden dener, kayıt çift olur); bağlantı açık`, async () => {
+      const k = await gercekKur();
+      k.boz[yol] = true;
+      assert.deepEqual(await k.cagir("ajanda_ekle", NOT), BELIRSIZ("i1"));
+      assert.equal(k.depo.ajandaKayitSayisi(), 1, "kayıt yazıldı");
+      const kayit = k.depo.ajandaKayitlari()[0]!;
+      assert.deepEqual(await k.cagir("ajanda_guncelle", { kayit_id: kayit.kayit_id, degisiklik: { aciklama: "Yarım litre" } }), BELIRSIZ("i2"));
+      assert.equal(k.depo.ajandaKaydiGetir(kayit.kayit_id)?.aciklama, "Yarım litre", "güncelleme yazıldı");
+      // Liste hiçbir şey yazmaz: işlem sonrası düşse de "yazılmadı" doğrudur.
+      assert.deepEqual(await k.cagir("ajanda_listele", {}), IC_HATA("i3"));
+      assert.equal(k.b.kapandi, false);
+      // Çerçevede ayrıntı yok (detail modele gitmez, işaret yalnız servis içinde).
+      assert.ok(k.b.yazilanlar.every((s) => !s.includes("islem_sonrasi")));
+      k.boz[yol] = false;
+      const y = await k.cagir("ajanda_listele", {});
+      assert.ok(y.type === "yanit" && y.ok);
+    });
+  }
+
+  it("depo.islem içinde atıp geri alınan yazma (işlem öncesi yol): ekle ve guncelle ic_hata (belirsiz değil), depoda iz yok; bağlantı açık", async () => {
+    const k = await gercekKur();
+    const y1 = await k.cagir("ajanda_ekle", NOT);
+    assert.ok(y1.type === "yanit" && y1.ok, JSON.stringify(y1));
+    const kayit = k.depo.ajandaKayitlari()[0]!;
+    const onceKayitlar = JSON.stringify(k.depo.ajandaKayitlari());
+    const onceGecmis = k.depo.ajandaGecmisi({ kayit_id: kayit.kayit_id, adet: 100 }).length;
+    const onceRev = k.depo.ajandaBasRev();
+    k.boz.islem = true;
+    assert.deepEqual(await k.cagir("ajanda_ekle", { tur: "not", baslik: "Ekmek al" }), IC_HATA("i2"));
+    assert.deepEqual(await k.cagir("ajanda_guncelle", { kayit_id: kayit.kayit_id, degisiklik: { aciklama: "Yarım litre" } }), IC_HATA("i3"));
+    // Geri alındı: yeni kayıt yok, güncelleme yok, geçmiş satırı ve revizyon ilerlemedi.
+    assert.equal(k.depo.ajandaKayitSayisi(), 1);
+    assert.equal(JSON.stringify(k.depo.ajandaKayitlari()), onceKayitlar);
+    assert.equal(k.depo.ajandaGecmisi({ kayit_id: kayit.kayit_id, adet: 100 }).length, onceGecmis);
+    assert.equal(k.depo.ajandaBasRev(), onceRev);
+    assert.equal(k.b.kapandi, false);
+    assert.ok(k.b.yazilanlar.every((x) => !x.includes("belirsiz") && !x.includes("islem_sonrasi")));
+    // Bozulma kalkınca aynı bağlantıda yazma yine olur (işlem açık kalmadı).
+    k.boz.islem = false;
+    const y4 = await k.cagir("ajanda_ekle", { tur: "not", baslik: "Ekmek al" });
+    assert.ok(y4.type === "yanit" && y4.ok, JSON.stringify(y4));
+    assert.equal(k.depo.ajandaKayitSayisi(), 2);
+  });
+
+  it("işlemden önce düşen (v2 yüzünde v3 alanı: bilinmeyen alan) hâlâ ic_hata: hiçbir şey yazılmadı (kesin)", async () => {
+    const k = await gercekKur();
+    assert.deepEqual(await k.cagir("ajanda_ekle", { ...NOT, bolge: "market" }), IC_HATA("i1"));
+    assert.equal(k.depo.ajandaKayitSayisi(), 0);
   });
 });

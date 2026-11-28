@@ -24,6 +24,7 @@ import {
   AjandaKopruIstek,
   AjandaKopruRolu,
   AjandaPcCagri,
+  ajandaKopruAsagiCoz,
   ajandaKopruYukariCoz,
   cozumle,
   Jeton,
@@ -68,6 +69,7 @@ import {
   PC_CODEX_ANAHTAR_YOK_METNI,
   PC_KOPUK_METNI,
   PC_KOPRU_UYARLAYICILARI,
+  PC_SINIR_METNI,
   PC_YALNIZ_TASLAK_UYARLAYICILARI,
   pcKopruUyarlayicisiSec,
 } from "../src/kopru.ts";
@@ -176,6 +178,20 @@ const metin = (r: AracSonucu): string => {
   return c[0]!.text!;
 };
 const hataMi = (r: AracSonucu): boolean => r.isError === true;
+
+/** Servisin `ic_hata`'sı: istek işlenmeden düştü (yeni serviste işlemden önce), kayıt yazılmadı. */
+const IC_HATA = "hata: ic_hata\najanda: servis isteği tamamlayamadı; hiçbir şey yazılmadı.";
+/** Servisin `belirsiz`'i: işlemden sonra düştü (kayıt yazılmış olabilir). */
+const SERVIS_BELIRSIZ =
+  "hata: belirsiz\najanda: servis isteği işledi ama yanıtını tamamlayamadı; kayıt yazılmış olabilir. Yeniden yazma: önce ajanda_listele ile bak.";
+/** Köprü servisin başarı yanıtını kendi şemasıyla çözemedi (yeni karar, yeni alan): servis yazmış olabilir. */
+const YANIT_COZULEMEDI =
+  "hata: belirsiz\najanda: servisin yanıtı bu köprünün beklediği biçimde değil (servis güncellenmiş olabilir; oturumu yeniden açmak köprüyü günceller); kayıt yazılmış olabilir. Yeniden yazma: önce ajanda_listele ile bak.";
+/** İstek boruya verildikten sonra köprüde beklenmedik hata: neden bilinmez, kayıt yazılmış olabilir. */
+const BEKLENMEDIK =
+  "hata: belirsiz\najanda: istek servise yollanırken ya da yanıtı beklenirken köprüde beklenmedik bir hata oldu; yazılıp yazılmadığı bilinmiyor. Yeniden yazma: önce ajanda_listele ile bak.";
+/** Bağlantı yanıttan önce koptu (bugünkü metin; eski köprülerin servis `belirsiz`'ine verdiği metin de bu). */
+const KOPTU_BELIRSIZ = "hata: belirsiz\najanda: bağlantı yanıttan önce koptu; yazılıp yazılmadığı bilinmiyor, ajanda_listele ile bak.";
 
 /** Modele giden sonuç yalnız `content` (+ listede `_meta`) taşır; yapılandırılmış içerik yok. */
 const yalnizMetin = (r: AracSonucu, meta: boolean): void => {
@@ -560,7 +576,7 @@ describe("kopru ajanda kipi: sonuç metni", () => {
     assert.equal(citiAl(t), "bbbbbbbbbbbbbbbbcccccccccccccccc");
   });
 
-  it("şemaya uymayan servis sonucu (özette kayıt metni, gizli karakterli başlık, eksik mesaj anı) ic_hata; içerik sızmaz", async () => {
+  it("şemaya uymayan servis sonucu (özette kayıt metni, gizli karakterli başlık, eksik mesaj anı): içerik sızmaz; yazan araçta belirsiz (servis yazmış olabilir), listede ic_hata", async () => {
     const kotuler = [
       ["ajanda_ekle", EKLE_GIRDI, { sonuc: "eklendi", mesaj_ani: AN, kayit: { ...OZET, baslik: "GIZLI-baslik" } }],
       ["ajanda_ekle", EKLE_GIRDI, { sonuc: "eklendi", kayit: OZET }],
@@ -572,7 +588,8 @@ describe("kopru ajanda kipi: sonuç metni", () => {
       const { istemci } = await sahteKur((s) => s.yanitla({ ok: true, sonuc }));
       const r = await istemci.callTool({ name: ad, arguments: args });
       assert.ok(hataMi(r), ad);
-      assert.ok(metin(r).startsWith("hata: ic_hata"), metin(r));
+      // Başarı yanıtı geldi: servis isteği işledi. Yazan araçta "yazılmadı" yeniden denemeyle çift kayıt yapar.
+      assert.equal(metin(r), ad === "ajanda_listele" ? IC_HATA : YANIT_COZULEMEDI, ad);
       assert.ok(!JSON.stringify(r).includes("GIZLI"));
       assert.equal("structuredContent" in r, false);
     }
@@ -598,6 +615,24 @@ describe("kopru ajanda kipi: boru hataları ve bağlantı", () => {
     const d = await sahteKur((s) => s.yanitla({ ok: false, code: "rol_fiil_izinsiz", detail: "GIZLI" }));
     const r2 = await d.istemci.callTool({ name: "ajanda_listele", arguments: {} });
     assert.equal(metin(r2), "hata: rol_fiil_izinsiz");
+  });
+
+  it("servisin belirsiz'i (işlemden sonra düştü): kayıt yazılmış olabilir metni, 'yazılmadı' yok; detail sızmaz", async () => {
+    for (const fiil of ["ajanda_ekle", "ajanda_guncelle"] as const) {
+      const { istemci } = await sahteKur((s) => s.yanitla({ ok: false, code: "belirsiz", detail: "GIZLI-AYRINTI" }));
+      const r = await istemci.callTool({ name: fiil, arguments: fiil === "ajanda_ekle" ? EKLE_GIRDI : GUNCELLE_GIRDI });
+      assert.ok(hataMi(r));
+      assert.equal(metin(r), SERVIS_BELIRSIZ, fiil);
+      assert.doesNotMatch(metin(r), /yazılmadı/);
+      assert.ok(!JSON.stringify(r).includes("GIZLI"));
+    }
+  });
+
+  it("yanıtta köprünün tanımadığı hata kodu (sonraki servis sürümü): çerçeve geçersiz, bağlantı bırakılır; istek 'belirsiz' alır (köprünün koptu metni), 'yazılmadı' almaz; köprü yeniden bağlanır", async () => {
+    const { servis, istemci } = await sahteKur((s) => s.yanitla({ ok: false, code: "yazildi_ama_yanit_yok" }));
+    const r = await istemci.callTool({ name: "ajanda_ekle", arguments: EKLE_GIRDI });
+    assert.equal(metin(r), KOPTU_BELIRSIZ);
+    await bekleKosul(() => servis.baglantilar.length === 2, "yeniden bağlanma");
   });
 
   it("istek gittikten sonra boru koparsa: belirsiz, yeniden denenmez; köprü yeniden bağlanır", async () => {
@@ -909,7 +944,7 @@ describe("kopru ajanda kipi: v3 araç yüzü kapalı", () => {
     assert.equal(metin(r), ajandaEkleMetni(EKLE_CIKTI));
   });
 
-  it("kapalı servis: v3 alanlı çıktı (bolge_yeni, özette varis, liste bolgeler) modele hiç gitmez (ic_hata)", async () => {
+  it("kapalı servis: v3 alanlı çıktı (bolge_yeni, özette varis, liste bolgeler) modele hiç gitmez (yazan araçta belirsiz, listede ic_hata)", async () => {
     for (const [fiil, sonuc, girdi] of [
       ["ajanda_ekle", { ...EKLE_CIKTI, bolge_yeni: true }, EKLE_GIRDI],
       ["ajanda_ekle", { ...EKLE_CIKTI, kayit: { ...OZET, varis: {} } }, EKLE_GIRDI],
@@ -922,7 +957,7 @@ describe("kopru ajanda kipi: v3 araç yüzü kapalı", () => {
       });
       const r = await istemci.callTool({ name: fiil, arguments: girdi });
       assert.ok(hataMi(r), fiil);
-      assert.equal(metin(r), "hata: ic_hata\najanda: servis isteği tamamlayamadı; hiçbir şey yazılmadı.");
+      assert.equal(metin(r), fiil === "ajanda_listele" ? IC_HATA : YANIT_COZULEMEDI, fiil);
     }
   });
 
@@ -1057,6 +1092,107 @@ describe("ajanda-kopru-sunucu: v3 öncesi köprü (hello'da arac_v3 yok) açık 
     const u = await ucKur({ ajanda_listele: { ok: true, deger: { ...LISTE_CIKTI, kayitlar: [{ ...kayit(), bolge_konumu: { enlem: 41, boylam: 29 } }] } } }, true);
     const y = await eskiKopru(u, "ajanda_listele", {});
     assert.deepEqual([y["ok"], y["code"]], [false, "ic_hata"]);
+  });
+
+  // --- İşlemden sonra düşen yazma: eski ve yeni köprü ne görür --------------------------------------
+
+  /**
+   * Eski köprülerin (5c6759f, 3600780, 03766ed; kurulu sürümler dahil) boru hatası metinleri ve yolu: yanıt
+   * `ajandaKopruAsagiCoz` ile (protokolde değişmedi) çözülür, `ok:false` ise `ajandaHataSonucu(code)`:
+   * `hata: <code>` + bu tablodaki ek. Tablo git'teki sürümlerle aşağıdaki testte karşılaştırılır.
+   */
+  const ESKI_KOPRU_HATA_EKI: Readonly<Record<string, string>> = {
+    tur_gecersiz: "ajanda: bu çağrı açık bir konuşma turuna bağlanamadı; hiçbir şey yazılmadı.",
+    ic_hata: "ajanda: servis isteği tamamlayamadı; hiçbir şey yazılmadı.",
+    belirsiz: "ajanda: bağlantı yanıttan önce koptu; yazılıp yazılmadığı bilinmiyor, ajanda_listele ile bak.",
+    jeton_gecersiz: "ajanda: bu oturumun ajanda yetkisi yok.",
+  };
+  const ESKI_KOPRU_HATA_YOLU = ": ajandaHataSonucu(y.code);";
+  const eskiKopruHataMetni = (y: Record<string, unknown>): string => {
+    const c = ajandaKopruAsagiCoz(JSON.stringify(y));
+    assert.ok(c.ok && c.mesaj.type === "yanit" && !c.mesaj.ok, `eski köprünün çözücüsü hata yanıtı görmedi: ${JSON.stringify(y)}`);
+    const code = c.mesaj.code!;
+    const ek = ESKI_KOPRU_HATA_EKI[code];
+    return ek === undefined ? `hata: ${code}` : `hata: ${code}\n${ek}`;
+  };
+  /** Yeni servisin, işlemden sonra düşen yazma için verdikleri (modül sahtesi ajanda-araclar.ts'in iki yolunu taklit eder). */
+  const ISLEM_SONRASI: ReadonlyArray<{ ad: string; fiil: AjandaFiili; girdi: unknown; sonuc: unknown; kod: string; yeni: string }> = [
+    {
+      ad: "işleyici işlemden sonra düştü (islem_sonrasi)",
+      fiil: "ajanda_ekle",
+      girdi: EKLE_GIRDI,
+      sonuc: { ok: false, code: "ic_hata", detail: "islem_sonrasi" },
+      kod: "belirsiz",
+      yeni: SERVIS_BELIRSIZ,
+    },
+    {
+      ad: "işlem bitti, çıktı denetimi düştü (servisin katı şeması)",
+      fiil: "ajanda_guncelle",
+      girdi: GUNCELLE_GIRDI,
+      sonuc: { ok: true, deger: { ...GUNCELLE_CIKTI, yeni_alan: 1 } },
+      kod: "belirsiz",
+      yeni: SERVIS_BELIRSIZ,
+    },
+    {
+      ad: "liste: işlem sonrası düşse de yazılan yok",
+      fiil: "ajanda_listele",
+      girdi: {},
+      sonuc: { ok: true, deger: { ...LISTE_CIKTI, yeni_alan: 1 } },
+      kod: "ic_hata",
+      yeni: IC_HATA,
+    },
+    {
+      ad: "işlemden önce düştü (düz ic_hata)",
+      fiil: "ajanda_ekle",
+      girdi: EKLE_GIRDI,
+      sonuc: { ok: false, code: "ic_hata" },
+      kod: "ic_hata",
+      yeni: IC_HATA,
+    },
+  ];
+  for (const d of ISLEM_SONRASI) {
+    it(`yeni servis, ${d.ad}: kablo kodu ${d.kod} (detail yok); eski köprü ve yeni köprü 'yazılmadı'yı yalnız kesin olduğunda görür`, async () => {
+      const u = await ucKur({ [d.fiil]: d.sonuc }, true);
+      const y = await eskiKopru(u, d.fiil, d.girdi);
+      assert.deepEqual(y, { v: 1, type: "yanit", istek_id: "i1", ok: false, code: d.kod });
+      const eski = eskiKopruHataMetni(y);
+      if (d.kod === "belirsiz") {
+        // Eski köprü servisin `belirsiz`'ini kopuş metniyle verir: neden yanlış ama sonuç doğru ("bilinmiyor, bak").
+        assert.equal(eski, KOPTU_BELIRSIZ);
+        assert.doesNotMatch(eski, /hiçbir şey yazılmadı/);
+      } else assert.equal(eski, IC_HATA);
+      const { istemci } = await kopruAc(u.boru.baglan);
+      const r = await istemci.callTool({ name: d.fiil, arguments: d.girdi as Record<string, unknown> });
+      assert.equal(metin(r), d.yeni);
+    });
+  }
+
+  it("eski köprülerin hata tablosu ve yolu git'teki sürümlerle aynı; servis belirsiz'i her eski protokolde tanınan kod; git ya da commit yoksa görünür atlanır", (t) => {
+    const cwd = fileURLToPath(new URL(".", import.meta.url));
+    const git = (...args: string[]): string | null => {
+      try {
+        return execFileSync("git", args, { encoding: "utf8", cwd, stdio: ["ignore", "pipe", "ignore"] });
+      } catch {
+        return null;
+      }
+    };
+    const SURUMLER = ["5c6759f", "3600780", "03766ed"];
+    const eksik = SURUMLER.filter((c) => git("cat-file", "-e", `${c}^{commit}`) === null);
+    if (eksik.length > 0) {
+      const not = `eski köprü tablosu git'le doğrulanamadı (git ya da commit yok: ${eksik.join(", ")})`;
+      t.diagnostic(not);
+      console.warn(`UYARI kopru-ajanda: ${not}`);
+      t.skip(not);
+      return;
+    }
+    for (const c of SURUMLER) {
+      const kopru = git("show", `${c}:apps/phone/server/src/kopru.ts`);
+      const hatalar = git("show", `${c}:apps/phone/protocol/src/hatalar.ts`);
+      assert.ok(kopru !== null && hatalar !== null, c);
+      for (const [k, v] of Object.entries(ESKI_KOPRU_HATA_EKI)) assert.ok(kopru.includes(`  ${k}: "${v}",`), `${c} ${k}`);
+      assert.ok(kopru.includes(ESKI_KOPRU_HATA_YOLU), `${c} hata yolu`);
+      assert.ok(hatalar.includes('  "belirsiz",'), `${c} HataKodu belirsiz`);
+    }
   });
 });
 
@@ -1289,6 +1425,8 @@ describe("kopru PC köprüsü: hello merdiveni (surec_id, arac_v3, uyarlayici) v
     istekTut?: boolean;
     /** Bu sıradaki bağlantının hello'su şemadan geçer ama bu kodla açık ret alır (ret satırı düşmez; ör. PC bağlantı sınırı `ic_hata`). */
     retSiralar?: Readonly<Record<number, string>>;
+    /** Verilirse isteğin yanıtını bu kurar (verilmezse liste başarısı); `yolla` satır yazar, `kapat` bağlantıyı kapatır. */
+    istekYaniti?: (m: { istek_id: string; fiil: string }, yolla: (m: Record<string, unknown>) => void, kapat: () => void) => void;
   }) => {
     const coz = (x: string) => semaCoz(sec.sema)(x);
     const s = {
@@ -1364,6 +1502,7 @@ describe("kopru PC köprüsü: hello merdiveni (surec_id, arac_v3, uyarlayici) v
             if (!c.ok) return kapat();
             if (c.mesaj.type !== "istek") return;
             const { istek_id } = c.mesaj;
+            if (sec.istekYaniti !== undefined) return sec.istekYaniti({ istek_id, fiil: c.mesaj.fiil }, yolla, kapat);
             const yanitla = (): void => yolla({ type: "yanit", istek_id, ok: true, sonuc: PC_LISTE });
             if (sec.istekTut === true) s.tutulan.push(yanitla);
             else yanitla();
@@ -2090,6 +2229,218 @@ describe("kopru PC köprüsü: hello merdiveni (surec_id, arac_v3, uyarlayici) v
     assert.doesNotMatch(metin(rB), /yazılmadı/, "B yazıldı: 'yazılmadı' metni yeniden denemeyle çift kayıt yapar");
     assert.ok(!hataMi(rB), metin(rB));
     assert.match(metin(rB), /ajanda_ekle: eklendi/);
+  });
+
+  it("anahtar iptali yarışı, ayrı parçalar (gerçek soket, servisin iki ayrı yazması): A'nın jeton_gecersiz'i önce, B'nin yanıtı A model'e döndükten sonra ayrı write'la; köprü B'yi okur", async () => {
+    const z = elleZamanlayici();
+    let tutulan: { b: GercekBag; istek_id: string } | null = null;
+    const { istemci, baglantilar } = await gercekKur(
+      (b, m) => {
+        if (m.tur === "hello") return karsila(b, m);
+        if (tutulan === null) {
+          tutulan = { b, istek_id: m.istek_id };
+          return;
+        }
+        b.yaz({ type: "yanit", istek_id: m.istek_id, ok: false, code: "jeton_gecersiz" });
+      },
+      { zamanla: z.zamanla },
+    );
+    const pB = istemci.callTool({ name: "ajanda_ekle", arguments: EKLE_GIRDI, _meta: { [CLAUDE_CODE_ARAC_KIMLIGI]: "toolu_b2" } });
+    await sureyleBekle(() => baglantilar[0]?.istekler.length === 1, "B serviste");
+    const rA = await istemci.callTool({ name: "ajanda_ekle", arguments: EKLE_GIRDI, _meta: { [CLAUDE_CODE_ARAC_KIMLIGI]: "toolu_a2" } });
+    assert.equal(metin(rA), ANAHTAR_GECERSIZ, "A gerçekten yazılmadı: kesin metin");
+    // A'nın yanıtı köprüde işlendi (model gördü), bağlantı bırakıldı ama B için açık: B'nin yanıtı ayrı parçada gelir.
+    assert.equal(z.acik(BIRAKILAN_YANIT).length, 1, "bırakılan bağlantı B'nin yanıtını bekliyor");
+    const t = tutulan as { b: GercekBag; istek_id: string } | null;
+    assert.ok(t !== null);
+    t.b.yaz({ type: "yanit", istek_id: t.istek_id, ok: true, sonuc: { cikti: EKLE_CIKTI, karar: "insan" } });
+    const rB = await pB;
+    assert.ok(!hataMi(rB), metin(rB));
+    assert.match(metin(rB), /ajanda_ekle: eklendi/);
+    assert.equal(baglantilar[0]!.istekler.length, 2);
+  });
+
+  // --- K1 köprü tarafı: servisin başarı yanıtı köprünün şemasına uymuyor (servis güncellendi, köprü eski) ---
+
+  const COZULEMEYEN_BASARILAR: ReadonlyArray<{ ad: string; sonuc: Record<string, unknown> }> = [
+    { ad: "tanınmayan tur kararı", sonuc: { cikti: EKLE_CIKTI, karar: "yeni_bir_karar" } },
+    { ad: "çıktıda tanınmayan alan", sonuc: { cikti: { ...EKLE_CIKTI, yeni_alan: 1 }, karar: "insan" } },
+    { ad: "zarfta tanınmayan alan", sonuc: { cikti: EKLE_CIKTI, karar: "insan", yeni_zarf_alani: true } },
+    { ad: "zarf yok (yalnız çıktı)", sonuc: EKLE_CIKTI as unknown as Record<string, unknown> },
+  ];
+  for (const d of COZULEMEYEN_BASARILAR) {
+    it(`PC köprüsü, başarı yanıtı çözülemez (${d.ad}): yazan araçta 'belirsiz', 'yazılmadı' yok; listede ic_hata; bağlantı açık kalır`, async () => {
+      const { istemci, baglantilar } = await gercekKur((b, m) => {
+        if (m.tur === "hello") return karsila(b, m);
+        b.yaz({ type: "yanit", istek_id: m.istek_id, ok: true, sonuc: d.sonuc });
+      });
+      for (const fiil of ["ajanda_ekle", "ajanda_guncelle"] as const) {
+        const r = await istemci.callTool({ name: fiil, arguments: fiil === "ajanda_ekle" ? EKLE_GIRDI : GUNCELLE_GIRDI });
+        assert.ok(hataMi(r));
+        assert.equal(metin(r), YANIT_COZULEMEDI, fiil);
+        assert.doesNotMatch(metin(r), /yazılmadı/);
+      }
+      const l = await istemci.callTool({ name: "ajanda_listele", arguments: {} });
+      assert.equal(metin(l), IC_HATA);
+      assert.equal(baglantilar.length, 1);
+    });
+  }
+
+  // --- K2: geçici ret (PC bağlantı sınırı ic_hata) çağrıyı hemen düşürmez; kalıcı engel düşürür ---------
+
+  /** Döngünün olağan beklemesi yalnız uyandırmayla biter; çağrının kısa beklemeleri kısaltılmış, uzun beklemesi 2 sn. */
+  const elleBekle = (olaylar: Olay[]) => (ms: number, sinyal?: AbortSignal): Promise<void> => {
+    olaylar.push({ bekle: ms });
+    return new Promise<void>((coz) => {
+      if (sinyal?.aborted === true) return coz();
+      const t = ms === PC_BAGLANTI_BEKLEME_MS ? setTimeout(coz, 2_000) : ms >= 1_000 ? undefined : setTimeout(coz, 5);
+      sinyal?.addEventListener(
+        "abort",
+        () => {
+          clearTimeout(t);
+          coz();
+        },
+        { once: true },
+      );
+    });
+  };
+
+  it("geçici ret (PC bağlantı sınırı ic_hata): çağrının uyandırdığı deneme de sınıra takılsa çağrı beklemeyi sürdürür, sonraki denemede bağlanır ve sonuç alır", async () => {
+    const { s, baglan } = pcServisi({ sema: "yeni", v3Acik: true, retSiralar: { 1: "ic_hata", 2: "ic_hata" } });
+    const istemci = await pcKopruAc(baglan, s.olaylar, SUREC, undefined, { bekle: elleBekle(s.olaylar) });
+    await sureyleBekle(() => s.baglantiSayisi === 1, "ilk deneme");
+    await bosalt(10);
+    assert.equal(s.baglantiSayisi, 1, "döngü olağan beklemede");
+    const r = await istemci.callTool({ name: "ajanda_listele", arguments: {} });
+    assert.ok(!hataMi(r), metin(r));
+    assert.equal(s.baglantiSayisi, 3, "ikinci deneme sınıra takıldı, üçüncüsü bağlandı");
+  });
+
+  for (const [code, beklenen] of [
+    ["jeton_gecersiz", `hata: jeton_gecersiz\n${PC_ANAHTAR_GECERSIZ_METNI}`],
+    ["rol_fiil_izinsiz", `hata: ic_hata\n${PC_KOPUK_METNI}`],
+  ] as const) {
+    it(`kalıcı engel (${code}): çağrının uyandırdığı deneme reddedilince beklemeden döner (bugünkü davranış)`, async () => {
+      const { s, baglan } = pcServisi({ sema: "yeni", v3Acik: true, retSiralar: { 1: code, 2: code, 3: code } });
+      const istemci = await pcKopruAc(baglan, s.olaylar, SUREC, undefined, { bekle: elleBekle(s.olaylar) });
+      await sureyleBekle(() => s.baglantiSayisi === 1, "ilk deneme");
+      await bosalt(10);
+      const r = await istemci.callTool({ name: "ajanda_ekle", arguments: EKLE_GIRDI });
+      assert.equal(metin(r), beklenen);
+      assert.equal(s.baglantiSayisi, 2, "yeniden deneme yok");
+    });
+  }
+
+  /** Her bağlantı denemesi PC bağlantı sınırına takılır (servis açık, sınır dolu). */
+  const HEP_SINIR: Readonly<Record<number, string>> = Object.fromEntries(Array.from({ length: 1_000 }, (_, i) => [i + 1, "ic_hata"]));
+
+  it("geçici ret 3 sn boyunca sürerse (gerçek süre): 'servis açık, bağlantı sınırı dolu; yazılmadı' metni; deneme sayısı 250 ms aralıkla sınırlı; istek hiç yollanmaz", async (t) => {
+    const { s, baglan } = pcServisi({ sema: "yeni", v3Acik: true, retSiralar: HEP_SINIR });
+    const bekle = (ms: number, sinyal?: AbortSignal): Promise<void> => {
+      s.olaylar.push({ bekle: ms });
+      return gercekBekle(ms, sinyal);
+    };
+    const istemci = await pcKopruAc(baglan, s.olaylar, SUREC, undefined, { bekle });
+    await sureyleBekle(() => s.baglantiSayisi === 1, "ilk deneme");
+    await bosalt(10);
+    const once = s.baglantiSayisi;
+    const baslangic = performance.now();
+    const r = await istemci.callTool({ name: "ajanda_ekle", arguments: EKLE_GIRDI });
+    const sure = performance.now() - baslangic;
+    const deneme = s.baglantiSayisi - once;
+    assert.ok(hataMi(r));
+    assert.equal(metin(r), `hata: ic_hata\n${PC_SINIR_METNI}`);
+    assert.doesNotMatch(metin(r), /kapalı ya da yeniden başlıyor/);
+    assert.ok(sure >= PC_BAGLANTI_BEKLEME_MS - 50 && sure < PC_BAGLANTI_BEKLEME_MS + 1_500, `süre ${Math.round(sure)} ms`);
+    // Her denemeden sonra 250 ms ara: 3 sn'de en çok 3000/250 + 1 deneme (döngünün kendi uyanışları için +2 pay).
+    assert.ok(deneme >= 2 && deneme <= PC_BAGLANTI_BEKLEME_MS / 250 + 3, `${deneme} deneme`);
+    t.diagnostic(`${deneme} deneme, ${Math.round(sure)} ms`);
+    assert.equal(s.hamIstekler.length, 0, "istek hiç yollanmadı: 'yazılmadı' doğru");
+  });
+
+  for (const ad of ["claude-code", "codex"] as const) {
+    it(`geçici ret bekleme boyunca sürerse metin uyarlayıcıdan bağımsız (${ad}); üç araçta da aynı, istek yollanmaz`, async () => {
+      const { s, baglan } = pcServisi({ sema: "yeni", v3Acik: true, retSiralar: HEP_SINIR });
+      const bekle = (ms: number, sinyal?: AbortSignal): Promise<void> =>
+        new Promise<void>((coz) => {
+          if (sinyal?.aborted === true) return coz();
+          // Bekleme kısaltılmış (50 ms); döngünün olağan beklemesi yalnız uyandırmayla biter.
+          const t = ms === PC_BAGLANTI_BEKLEME_MS ? setTimeout(coz, 50) : ms >= 1_000 ? undefined : setTimeout(coz, 5);
+          sinyal?.addEventListener(
+            "abort",
+            () => {
+              clearTimeout(t);
+              coz();
+            },
+            { once: true },
+          );
+        });
+      const istemci = await pcKopruAc(baglan, s.olaylar, SUREC, PC_KOPRU_UYARLAYICILARI[ad], { bekle });
+      await sureyleBekle(() => s.baglantiSayisi === 1, "ilk deneme");
+      for (const fiil of ["ajanda_ekle", "ajanda_guncelle", "ajanda_listele"] as const) {
+        const girdi = fiil === "ajanda_ekle" ? EKLE_GIRDI : fiil === "ajanda_guncelle" ? GUNCELLE_GIRDI : {};
+        const r = await istemci.callTool({ name: fiil, arguments: girdi });
+        assert.equal(metin(r), `hata: ic_hata\n${PC_SINIR_METNI}`, fiil);
+      }
+      assert.equal(s.hamIstekler.length, 0);
+      assert.doesNotMatch(PC_SINIR_METNI, /Claude Code|Codex/);
+    });
+  }
+
+  for (const fiil of ["ajanda_ekle", "ajanda_guncelle"] as const) {
+    for (const yanit of ["basari", "ic_hata", "koptu"] as const) {
+      it(`geçici retten sonra bağlanan yazan araç (${fiil}, yanıt ${yanit}): servise tam bir kez istek gider; yeniden deneme isteği yeniden yollamaz`, async () => {
+        const istekler: string[] = [];
+        const { s, baglan } = pcServisi({
+          sema: "yeni",
+          v3Acik: true,
+          retSiralar: { 1: "ic_hata", 2: "ic_hata", 3: "ic_hata" },
+          istekYaniti: (m, yolla, kapat) => {
+            istekler.push(m.fiil);
+            if (yanit === "koptu") return kapat();
+            if (yanit === "ic_hata") return yolla({ type: "yanit", istek_id: m.istek_id, ok: false, code: "ic_hata" });
+            const cikti = m.fiil === "ajanda_ekle" ? EKLE_CIKTI : GUNCELLE_CIKTI;
+            yolla({ type: "yanit", istek_id: m.istek_id, ok: true, sonuc: { cikti, karar: "insan" } });
+          },
+        });
+        const istemci = await pcKopruAc(baglan, s.olaylar, SUREC, undefined, { bekle: elleBekle(s.olaylar) });
+        await sureyleBekle(() => s.baglantiSayisi === 1, "ilk deneme");
+        await bosalt(10);
+        const r = await istemci.callTool({ name: fiil, arguments: fiil === "ajanda_ekle" ? EKLE_GIRDI : GUNCELLE_GIRDI });
+        await bosalt(20);
+        assert.equal(s.baglantiSayisi, 4, "iki geçici ret, sonra bağlandı");
+        if (yanit === "basari") assert.ok(!hataMi(r), metin(r));
+        else assert.equal(metin(r), yanit === "ic_hata" ? IC_HATA : KOPTU_BELIRSIZ);
+        assert.deepEqual(istekler, [fiil], "tam bir istek");
+        assert.equal(s.hamIstekler.length, 1, "boruya tek istek satırı");
+      });
+    }
+  }
+
+  it("istek boruya verildikten sonra köprüde beklenmedik hata (yazma atar): yazan araçta 'belirsiz', metin servisin yanıtını suçlamaz; listede ic_hata", async () => {
+    const g = sahteGunluk();
+    const { s, baglan } = pcServisi({ sema: "yeni", v3Acik: true });
+    const atan = async (ad: string): Promise<BoruBaglantisi> => {
+      const b = await baglan(ad);
+      return {
+        ...b,
+        satirYaz: (x) => {
+          if ((JSON.parse(x) as { type?: unknown }).type === "istek") throw new Error("yazma atar");
+          b.satirYaz(x);
+        },
+      };
+    };
+    const istemci = await pcKopruAc(atan, s.olaylar, SUREC, undefined, { gunluk: g });
+    for (const fiil of ["ajanda_ekle", "ajanda_guncelle"] as const) {
+      const r = await istemci.callTool({ name: fiil, arguments: fiil === "ajanda_ekle" ? EKLE_GIRDI : GUNCELLE_GIRDI });
+      assert.ok(hataMi(r));
+      assert.equal(metin(r), BEKLENMEDIK, fiil);
+      assert.doesNotMatch(metin(r), /hiçbir şey yazılmadı|beklediği biçimde/);
+    }
+    const l = await istemci.callTool({ name: "ajanda_listele", arguments: {} });
+    assert.equal(metin(l), IC_HATA);
+    assert.equal(g.bul("beklenmedik_hata").length, 2);
+    assert.equal(s.hamIstekler.length, 0);
   });
 
   it("anahtar iptali, yanıtı gelmeyen süren istek (gerçek soket): köprü en geç BIRAKILAN_YANIT_MS sonra kapatır; istek 'belirsiz' alır, 'yazılmadı' almaz", async () => {

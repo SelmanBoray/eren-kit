@@ -8,8 +8,10 @@
  * PC oturumları (AJANDA.md "PC oturumları", MODULLER.md "PC oturumları"): `baslat`'a `pcKanca` verilirse
  * `pc_oturumu` (MCP köprüsü) ve `pc_kanca` (Claude Code'un araç öncesi kancası) rolleri PC anahtarıyla
  * (`ajanda_pc_anahtarlari`, yalnız özet) bağlanır. Anahtar el sıkışmada VE her istekte yeniden denetlenir:
- * `eslestir --claude-code` anahtarı yenileyince ya da kaldırınca açık bağlantı bir sonraki isteğinde
- * `kopru_ret{jeton_gecersiz}` alır ve kapanır. PC bağlantılarında tek bağlantı kuralı yoktur (çok oturum);
+ * `eslestir --claude-code` anahtarı yenileyince ya da kaldırınca açık bağlantının bir sonraki isteği kendi
+ * `jeton_gecersiz` yanıtını alır (`kopru_ret` değil: köprü kesin metni o isteğe verir; 2ae4998'den beri), bağlantıyı
+ * köprü kapatır ya da en geç `PC_RET_KAPANIS_MS` sonra servis kapatır; arada gelen istekler de `jeton_gecersiz` alır.
+ * PC bağlantılarında tek bağlantı kuralı yoktur (çok oturum);
  * köprüler `AJANDA_PC_SINIRLARI.BAGLANTI_ADET`, kancalar ayrı olarak `KANCA_BAGLANTI_ADET` ile sınırlıdır
  * (çok oturum açıkken kanca tıkanmasın) ve kanca bağlantısı `KANCA_BAGLANTI_OMRU_MS` sonra kapatılır. `pc_oturumu` isteğinin `cagri`'sı bağlama
  * (`AjandaPcBaglami`) geçer; `ana_oturum` isteğinin `cagri`'sı yok sayılır (bağlam bugünkü gibi yalnız
@@ -20,7 +22,7 @@
  * v3 araç yüzü (`aracV3`, ayar `ajanda_arac_v3`) bağlantı başınadır: ayar açık VE araç rolünün (`ana_oturum`,
  * `pc_oturumu`) köprüsü hello'da `arac_v3` istediyse `kopru_welcome` `arac_v3:true` taşır (köprü v3 şemalarını
  * ve tanımlarını yayınlar). Öteki bağlantılarda alan yazılmaz (çerçeve bugünkü baytlarla) ve çıktı v2 şemasıyla
- * denetlenir. Ayar kapalıyken v3 alanı taşıyan çıktı `ic_hata` olur; ayar açıkken istemeyen köprünün (v3
+ * denetlenir. Ayar kapalıyken v3 alanı taşıyan çıktı reddedilir (yazan fiilde `belirsiz`, listede `ic_hata`); ayar açıkken istemeyen köprünün (v3
  * öncesi kod: alanlı karşılamayı çözemez) çıktısı önce v3 şemasıyla denetlenir, sonra v2 yüzüne iner
  * (`ajandaAracCiktisiV2`).
  */
@@ -79,6 +81,11 @@ const PC_RET_KAPANIS_MS = 2_000;
  * (bağlantı ondan önce açılır); bu süre dolduğunda kanca zaten vazgeçmiştir, servis bağlantıyı kapatır.
  */
 const KANCA_BAGLANTI_OMRU_MS = AJANDA_PC_SINIRLARI.KANCA_SURESI_MS + 1_000;
+/**
+ * Ajanda modülünün (`ajanda-araclar.ts`, aynı değer) `ic_hata` işareti: işleyici `depo.islem`'inden SONRA düştü,
+ * kayıt yazılmış olabilir. `yanitUret` yazan fiilde `belirsiz` yollar; `detail` boruya çıkmaz.
+ */
+const ISLEM_SONRASI_DETAYI = "islem_sonrasi";
 
 type GenelIsleyici = (
   girdi: unknown,
@@ -132,11 +139,11 @@ const hataYaniti = (istek_id: string, code: HataKodu): KopruYanit => ({
 });
 
 /**
- * `null`: işleyici sözleşmeye uymadı, çağıran `ic_hata` yollar. `detail` hiç taşınmaz. `pc` (yalnız
+ * `null`: işleyici sözleşmeye uymadı, çağıran `ic_hata` (başarı döndüyse yazan fiilde `belirsiz`, `yanitUret`) yollar. `detail` hiç taşınmaz. `pc` (yalnız
  * `pc_oturumu` çağrısı): başarılı yanıtın `sonuc`'u `PcAracSonucu`'dur (çıktı + defterin kararı); karar
  * yoksa sözleşme bozuktur. Gizlilik sınırı (v3): şemalar katıdır, liste kaydı `AjandaAracKaydi`'dır;
  * `bolge_konumu` ya da `ekler` taşıyan çıktı (işleyici `ajandaAracKaydi` süzgecini atladıysa) burada
- * reddedilir ve `ic_hata` olur: konum boruya hiçbir yoldan çıkmaz. `ayarV3` (servisin ayarı) açık, `v3`
+ * reddedilir (`ic_hata`; yazan fiilde `belirsiz`): konum boruya hiçbir yoldan çıkmaz. `ayarV3` (servisin ayarı) açık, `v3`
  * (bağlantının yüzü) kapalıysa işleyici yüzü bilir ve v2 yüzünü (ayar kapalıykenkiyle aynı; `v2Yuzu`) verir:
  * çıktı v2 şemasından geçer. Geçmezse (yüzü bilmeyen işleyici) v3 şemasından geçtikten sonra v2 yüzüne iner
  * (`ajandaAracCiktisiV2`) ve v2 şemasıyla denetlenir.
@@ -319,7 +326,13 @@ export const ajandaKopruSunucuKur: AjandaKopruSunucuFabrikasi = ({
     yaz(bag, karsilama(baglam.rol, bag.v3));
   };
 
-  /** Hiç reddetmez: atan ya da sözleşmeye uymayan işleyici `ic_hata`dır, `detail` taşımaz. */
+  /**
+   * Hiç reddetmez: atan ya da sözleşmeye uymayan işleyici hatadır, `detail` taşımaz. Hata işlemden önceyse (işleyici
+   * düz `ic_hata` döndü ya da attı) `ic_hata`: hiçbir şey yazılmadı, köprü bunu kesin söyler. İşlemden sonraysa
+   * (işleyici başarı döndü ama çıktı denetimi düştü, ya da `ISLEM_SONRASI_DETAYI`) yazan fiilde `belirsiz`: kayıt
+   * yazılmış olabilir; "yazılmadı" gören model yeniden dener, kayıt çift olur. `belirsiz` her protokol sürümünde
+   * vardır: eski köprü de çözer ve "yazılıp yazılmadığı bilinmiyor" der. Liste hiçbir şey yazmaz: hep `ic_hata`.
+   */
   const yanitUret = async (
     istek: AjandaKopruIstek,
     baglam: AjandaKopruBaglami,
@@ -327,16 +340,22 @@ export const ajandaKopruSunucuKur: AjandaKopruSunucuFabrikasi = ({
     sinyal: AbortSignal,
     v3: boolean,
   ): Promise<KopruYanit> => {
+    let islendi = false;
     try {
       const isleyici = isleyiciler[istek.fiil] as unknown as GenelIsleyici;
       const sonuc = await isleyici(istek.girdi, baglam, sinyal, v3);
-      const yanit = sonucYaniti(istek.fiil, istek.istek_id, sonuc, baglam.rol === "pc_oturumu", aracV3, v3);
-      if (yanit !== null) return yanit;
-      gunluk.hata(MODUL, "sonuc_gecersiz", { fiil: istek.fiil });
+      if (sonuc.ok === false && sonuc.code === "ic_hata" && sonuc.detail === ISLEM_SONRASI_DETAYI) {
+        islendi = true;
+      } else {
+        islendi = sonuc.ok === true;
+        const yanit = sonucYaniti(istek.fiil, istek.istek_id, sonuc, baglam.rol === "pc_oturumu", aracV3, v3);
+        if (yanit !== null) return yanit;
+        gunluk.hata(MODUL, "sonuc_gecersiz", { fiil: istek.fiil, ...(islendi ? { islem_sonrasi: true } : {}) });
+      }
     } catch {
-      gunluk.hata(MODUL, "isleyici_atti", { fiil: istek.fiil });
+      gunluk.hata(MODUL, "isleyici_atti", { fiil: istek.fiil, ...(islendi ? { islem_sonrasi: true } : {}) });
     }
-    return hataYaniti(istek.istek_id, "ic_hata");
+    return hataYaniti(istek.istek_id, islendi && istek.fiil !== "ajanda_listele" ? "belirsiz" : "ic_hata");
   };
 
   const istekBaslat = (

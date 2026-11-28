@@ -534,7 +534,7 @@ describe("ajanda-kopru-sunucu: fiiller", () => {
     assert.equal(a.sinyaller[1]!.reason, "baglanti_koptu");
   });
 
-  it("cikti dogrulamasi: sema disi cikti (ozette kayit metni, silinmis kayit, gorunmez karakter) ic_hata, detail yok", async () => {
+  it("cikti dogrulamasi: sema disi cikti (ozette kayit metni, silinmis kayit, gorunmez karakter) ic_hata (listele) / belirsiz (yazan araclar), detail yok", async () => {
     const kotuCiktilar: Array<[AjandaFiili, unknown]> = [
       ["ajanda_ekle", { sonuc: "eklendi", mesaj_ani: AN, kayit: { ...OZET, baslik: GIZLI_BASLIK } }],
       ["ajanda_ekle", { sonuc: "eklendi", mesaj_ani: AN, kayit: { ...OZET, zaman: { ...OZET.zaman, ifade: "yarın" } } }],
@@ -547,7 +547,7 @@ describe("ajanda-kopru-sunucu: fiiller", () => {
       const { b } = await yetkiliBaglan(k);
       gonder(b, istek("i1", fiil, GIRDI[fiil]));
       await bosalt();
-      assert.deepEqual(sonYanit(b), { v: PROTOKOL_SURUMU, type: "yanit", istek_id: "i1", ok: false, code: "ic_hata" });
+      assert.deepEqual(sonYanit(b), { v: PROTOKOL_SURUMU, type: "yanit", istek_id: "i1", ok: false, code: fiil === "ajanda_listele" ? "ic_hata" : "belirsiz" });
       assert.equal(k.gunluk.bul("sonuc_gecersiz").length, 1);
       assert.ok(!JSON.stringify(k.gunluk.girdiler).includes(GIZLI_BASLIK));
     }
