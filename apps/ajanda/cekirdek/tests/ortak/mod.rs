@@ -5,8 +5,14 @@
 //! Sahte PC servisin (`apps/phone/server/src/gateway-ajanda.ts`, `ajanda.ts`) davranışını kuralların
 //! kendisiyle (`kural::birlesim`, `kural::ornek`, `kural::telafi`) yeniden kurar: tek sayaçtan revizyon,
 //! `(device_id, islem_id)` tekrarsızlığı (geçici ret yazılmaz), telafi kararı, sayfa sayfa telafi, canlı
-//! `kayit`. Gelen her çerçeveyi `ajanda_yukari_coz` ile denetler: uygulama geçersiz çerçeve yollarsa test
-//! düşer.
+//! `kayit`. Gelen her çerçeveyi bağlantının sürümüyle `ajanda_yukari_coz_surum` ile denetler: uygulama
+//! geçersiz çerçeve yollarsa test düşer.
+//!
+//! Sürüm uyumu (`gateway-ajanda.ts`): servisin bir sürüm kümesi vardır (`SahtePc.surumler`, varsayılan
+//! `[2, 3]`). Bağlantının sürümü ilk çözülen `hello`/`pair_request`'in `v`'siyle sabitlenir; kümede olmayan
+//! (ya da sabitlenmiş bağlantıda başka) `v` `{v: kümenin en büyüğü, type:"error", code:"protokol_uyumsuz"}`
+//! ve kapanış 1002 alır (`cercevesiz_ret`: yalnız 1002). Giden her çerçeve `ajanda_asagi_surume` ile
+//! bağlantının sürümüne uyarlanır ve denetlenir. `surumler: vec![2]` bugün canlıdaki v2 servisin davranışıdır.
 
 #![allow(dead_code)]
 
@@ -24,8 +30,8 @@ use ajanda_cekirdek::model::kanonik::{base64_coz, base64_yaz};
 use ajanda_cekirdek::model::{
     AjandaAlani, AjandaAsagi, AjandaEslestirmeQr, AjandaGecmisGirdisi, AjandaIslem, AjandaKanalHatasi, AjandaKaydi,
     AjandaKaynagi, AjandaParca, AjandaRetNedeni, AjandaYazar, AjandaYukari, AjandaZamani, AlanDegisikligi, Hatirlatma,
-    ImzaRolu, KayitDurumu, KayitGovdesi, KayitTuru, KaynakYolu, TurKokeni, YazarKimligi, YerelAn, ajanda_kimlik_imza_metni,
-    ajanda_yukari_coz,
+    ImzaRolu, KayitDurumu, KayitGovdesi, KayitTuru, KaynakYolu, Surum, TurKokeni, YazarKimligi, YerelAn,
+    ajanda_asagi_surume, ajanda_kimlik_imza_metni, ajanda_yetenek_kesisimi, ajanda_yukari_coz_surum,
 };
 use ajanda_cekirdek::{Cekirdek, KabukHatasi};
 
@@ -254,11 +260,30 @@ impl Sonuc {
     }
 }
 
-/// PC'nin bir bağlantı için tuttuğu.
+/// PC'nin bir bağlantı için tuttuğu. `HelloBekliyor` dışındakiler bağlantının sabitlenmiş sürümünü taşır.
 pub enum PcAsama {
     HelloBekliyor,
-    YanitBekliyor { hello_son_rev: i64, depo_id: Option<String>, iz: Option<(String, i64)>, client_nonce: String, server_nonce: String },
-    Ajandada { son_rev: i64 },
+    /// `pair_request` kabul edildi; `hello` aynı bağlantıda, aynı sürümle beklenir.
+    Eslesti { surum: Surum },
+    YanitBekliyor {
+        hello_son_rev: i64,
+        depo_id: Option<String>,
+        iz: Option<(String, i64)>,
+        client_nonce: String,
+        server_nonce: String,
+        surum: Surum,
+    },
+    Ajandada { son_rev: i64, surum: Surum },
+}
+
+impl PcAsama {
+    /// Bağlantının sabitlenmiş sürümü.
+    pub fn surum(&self) -> Option<Surum> {
+        match self {
+            PcAsama::HelloBekliyor => None,
+            PcAsama::Eslesti { surum } | PcAsama::YanitBekliyor { surum, .. } | PcAsama::Ajandada { surum, .. } => Some(*surum),
+        }
+    }
 }
 
 pub struct PcCikti {
@@ -302,6 +327,21 @@ pub struct SahtePc {
     pub sonuc_once: bool,
     pub telafi_sayisi: u32,
     pub son_welcome_tam: Option<bool>,
+    // Sürüm uyumu
+    /// Servisin sürüm kümesi (artan). Yalnız 2 ve 3 çözülür; kümede olmayan sürüm hep reddedilir.
+    pub surumler: Vec<i64>,
+    /// Servisin sunduğu yetenekler (`welcome.yetenekler` kesişimi bununla).
+    pub sunulan_yetenekler: Vec<String>,
+    /// `protokol_uyumsuz` reddi çerçevesiz (yalnız kapanış 1002) olsun.
+    pub cercevesiz_ret: bool,
+    /// Bir sonraki kapanışın kodu (ret 1002 yazar; `Hat::kopar` tüketir).
+    pub kapanis_kodu: Option<i32>,
+    /// Gelen her `hello`/`pair_request`: (tür, `v`), reddedilenler dahil.
+    pub acilislar: Vec<(&'static str, i64)>,
+    /// Kabul edilen `hello`'ların `yetenekler`'i.
+    pub hello_yetenekleri: Vec<Option<Vec<String>>>,
+    /// `protokol_uyumsuz` ile reddedilen çerçeve sayısı.
+    pub surum_retleri: u32,
 }
 
 impl SahtePc {
@@ -327,7 +367,20 @@ impl SahtePc {
             sonuc_once: false,
             telafi_sayisi: 0,
             son_welcome_tam: None,
+            surumler: ajanda_cekirdek::model::AJANDA_SURUMLERI.to_vec(),
+            sunulan_yetenekler: vec![],
+            cercevesiz_ret: false,
+            kapanis_kodu: None,
+            acilislar: vec![],
+            hello_yetenekleri: vec![],
+            surum_retleri: 0,
         }
+    }
+
+    /// Yalnız bu sürüm kümesini konuşan servis (`[2]`: bugünkü v2 servis; `[4]`: v2 ve v3'ü bırakmış bir
+    /// gelecek servis).
+    pub fn surum_kumesi(&mut self, kume: &[i64]) {
+        self.surumler = kume.to_vec();
     }
 
     pub fn qr() -> AjandaEslestirmeQr {
@@ -338,8 +391,10 @@ impl SahtePc {
         self.zaman.simdi_ms()
     }
 
-    fn cerceve(m: AjandaAsagi) -> String {
-        m.kodla()
+    /// Servisin `cerceveYaz`'ı: bağlantının sürümüne uyarlar ve denetler (uyarlanamayan çerçeve sahte PC'nin
+    /// hatasıdır).
+    fn cerceve(m: AjandaAsagi, s: Surum) -> String {
+        ajanda_asagi_surume(&m, s).unwrap_or_else(|h| panic!("sahte PC uyarlanamayan çerçeve yazdı: {h:?} {m:?}")).to_string()
     }
 
     /// Değişikliği tek sayaçtan revizyonla yazar; `kayit` çerçevesini döner.
@@ -400,7 +455,19 @@ impl SahtePc {
             },
             olusturma_ms: ts,
             guncelleme_ms: ts,
+            v3: Default::default(),
         };
+        self.yaz(k, ts, ajanda_cekirdek::model::IslemTuru::Ekle, Self::arac_yazari())
+    }
+
+    /// PC tarafında (araç ya da v3 istemci) v3 alanlarıyla yeni kayıt.
+    pub fn disaridan_v3_ekle(&mut self, kayit_id: &str, g: &KayitGovdesi, v3: ajanda_cekirdek::model::V3Alanlari) -> AjandaKaydi {
+        let ts = self.simdi();
+        let mut k = AjandaKaydi { v3, ..self.disaridan_ekle(kayit_id, g, false) };
+        // `disaridan_ekle`'nin yazdığı revizyonun yerine aynı revizyonla v3'lü hal.
+        self.d.rev -= 1;
+        k.revizyon = 1;
+        self.d.gecmis.get_mut(kayit_id).unwrap().remove(0);
         self.yaz(k, ts, ajanda_cekirdek::model::IslemTuru::Ekle, Self::arac_yazari())
     }
 
@@ -423,7 +490,7 @@ impl SahtePc {
         let yazar = AjandaYazar { yol: yazar_yolu, tur_kokeni: TurKokeni::Insan, device_id: Some(CIHAZ.into()), sohbet_id: None, oturum_id: None };
         let kimlik = YazarKimligi { yol: yazar_yolu, tur_kokeni: TurKokeni::Insan };
         let kayit_id = islem.kayit_id().to_string();
-        if let AjandaIslem::Ekle { govde: g, girdi_yolu, .. } = islem {
+        if let AjandaIslem::Ekle { govde: g, girdi_yolu, v3, .. } = islem {
             if self.d.kayitlar.contains_key(&kayit_id) {
                 return (Sonuc::ret(Some(&kayit_id), AjandaRetNedeni::KimlikCakisiyor), None);
             }
@@ -440,6 +507,18 @@ impl SahtePc {
             elle.push(AjandaAlani::Hatirlatmalar);
             if g.tekrar.is_some() {
                 elle.push(AjandaAlani::Tekrar);
+            }
+            for (var, a) in [
+                (v3.simge.is_some(), AjandaAlani::Simge),
+                (v3.bolge.is_some(), AjandaAlani::Bolge),
+                (v3.bolge_konumu.is_some(), AjandaAlani::BolgeKonumu),
+                (v3.varis.is_some(), AjandaAlani::Varis),
+                (!v3.baglantilar.is_empty(), AjandaAlani::Baglantilar),
+                (!v3.ekler.is_empty(), AjandaAlani::Ekler),
+            ] {
+                if var {
+                    elle.push(a);
+                }
             }
             let k = AjandaKaydi {
                 kayit_id: kayit_id.clone(),
@@ -467,6 +546,7 @@ impl SahtePc {
                 },
                 olusturma_ms: simdi,
                 guncelleme_ms: simdi,
+                v3: v3.clone(),
             };
             let k = self.yaz(k, simdi, T::Ekle, yazar);
             return (Sonuc::ok(&kayit_id, Some(k.revizyon)), Some(k));
@@ -511,22 +591,25 @@ impl SahtePc {
         (Sonuc::ok(&kayit_id, Some(y.revizyon)), Some(y))
     }
 
-    fn sonuc_cercevesi(islem_id: &str, s: &Sonuc) -> String {
-        Self::cerceve(AjandaAsagi::IslemSonucu {
-            islem_id: islem_id.into(),
-            ok: s.ok,
-            kayit_id: s.kayit_id.clone(),
-            rev: s.rev,
-            korunan_alanlar: None,
-            code: s.code,
-        })
+    fn sonuc_cercevesi(islem_id: &str, s: &Sonuc, surum: Surum) -> String {
+        Self::cerceve(
+            AjandaAsagi::IslemSonucu {
+                islem_id: islem_id.into(),
+                ok: s.ok,
+                kayit_id: s.kayit_id.clone(),
+                rev: s.rev,
+                korunan_alanlar: None,
+                code: s.code,
+            },
+            surum,
+        )
     }
 
     fn kayit_yolla(b: &mut PcAsama, k: &AjandaKaydi, cikti: &mut Vec<String>) {
-        if let PcAsama::Ajandada { son_rev } = b
+        if let PcAsama::Ajandada { son_rev, surum } = b
             && k.revizyon > *son_rev
         {
-            cikti.push(Self::cerceve(AjandaAsagi::Kayit { kayit: k.clone() }));
+            cikti.push(Self::cerceve(AjandaAsagi::Kayit { kayit: k.clone() }, *surum));
             *son_rev = k.revizyon;
         }
     }
@@ -538,19 +621,51 @@ impl SahtePc {
         c
     }
 
-    fn hata(code: AjandaKanalHatasi) -> PcCikti {
-        PcCikti { cerceveler: vec![Self::cerceve(AjandaAsagi::Error { code, detail: None })], kapat: true }
+    /// Ret çerçevesi bağlantının sürümüyle (`retSurumu`: sabitlenmiş sürüm; bu çerçeve sabitledi).
+    fn hata(code: AjandaKanalHatasi, surum: Surum) -> PcCikti {
+        PcCikti { cerceveler: vec![Self::cerceve(AjandaAsagi::Error { code, detail: None }, surum)], kapat: true }
+    }
+
+    /// `protokol_uyumsuz`: `v`'si servisin en yüksek sürümü, kapanış 1002 (`cercevesiz_ret`: yalnız 1002).
+    fn surum_reddi(&mut self) -> PcCikti {
+        self.surum_retleri += 1;
+        self.kapanis_kodu = Some(1002);
+        if self.cercevesiz_ret {
+            return PcCikti { cerceveler: vec![], kapat: true };
+        }
+        let v = *self.surumler.iter().max().expect("servisin sürüm kümesi boş değil");
+        let ret = serde_json::json!({"v": v, "type": "error", "code": "protokol_uyumsuz"});
+        PcCikti { cerceveler: vec![ret.to_string()], kapat: true }
     }
 
     /// Telefondan gelen bir çerçeve.
     pub fn isle(&mut self, b: &mut PcAsama, ham: &str) -> PcCikti {
-        let m = ajanda_yukari_coz(ham).unwrap_or_else(|h| panic!("uygulama geçersiz çerçeve yolladı: {h:?} {ham}"));
+        // Önce sürüm (`ajandaYukariCoz(ham, g.surum)`): sabitlenmişse yalnız o, değilse servisin kümesi.
+        let deger: serde_json::Value = serde_json::from_str(ham).unwrap_or_else(|_| panic!("uygulama JSON olmayan çerçeve yolladı: {ham}"));
+        let v = deger["v"].as_i64().unwrap_or_else(|| panic!("uygulama sayı olmayan v yolladı: {ham}"));
+        let tur = match deger["type"].as_str() {
+            Some("hello") => Some("hello"),
+            Some("pair_request") => Some("pair_request"),
+            _ => None,
+        };
+        if let Some(t) = tur {
+            self.acilislar.push((t, v));
+        }
+        let kabul = match b.surum() {
+            Some(s) => s.no() == v,
+            None => self.surumler.contains(&v),
+        };
+        if !kabul {
+            return self.surum_reddi();
+        }
+        let s = Surum::coz(v).unwrap_or_else(|| panic!("sahte PC {v} sürümünü çözemez"));
+        let (_, m) = ajanda_yukari_coz_surum(ham, Some(s)).unwrap_or_else(|h| panic!("uygulama geçersiz çerçeve yolladı: {h:?} {ham}"));
         let mut c = Vec::new();
         match (&*b, m) {
             (PcAsama::HelloBekliyor, AjandaYukari::PairRequest { kod, public_key, .. }) => {
                 if kod != ESLESTIRME_KODU {
                     let r = AjandaAsagi::PairResult { ok: false, device_id: None, server_public_key: None, code: Some(AjandaKanalHatasi::EslestirmeKoduGecersiz) };
-                    return PcCikti { cerceveler: vec![Self::cerceve(r)], kapat: true };
+                    return PcCikti { cerceveler: vec![Self::cerceve(r, s)], kapat: true };
                 }
                 self.cihaz_public_key = Some(public_key);
                 let r = AjandaAsagi::PairResult {
@@ -559,29 +674,32 @@ impl SahtePc {
                     server_public_key: Some(base64_yaz(&PC_ANAHTARI)),
                     code: None,
                 };
-                c.push(Self::cerceve(r));
+                c.push(Self::cerceve(r, s));
+                *b = PcAsama::Eslesti { surum: s };
             }
-            (PcAsama::HelloBekliyor, AjandaYukari::Hello { device_id, son_rev, depo_id, son_rev_izi, client_nonce }) => {
+            (PcAsama::HelloBekliyor | PcAsama::Eslesti { .. }, AjandaYukari::Hello { device_id, son_rev, depo_id, son_rev_izi, client_nonce, yetenekler }) => {
                 if device_id != CIHAZ || self.cihaz_public_key.is_none() {
-                    return Self::hata(AjandaKanalHatasi::CihazBilinmiyor);
+                    return Self::hata(AjandaKanalHatasi::CihazBilinmiyor, s);
                 }
+                self.hello_yetenekleri.push(yetenekler);
                 let server_nonce = base64_yaz(&[self.d.rev as u8 ^ 0x5a; 32]);
                 let mut imza = ajanda_kimlik_imza_metni(ImzaRolu::Pc, CIHAZ, &client_nonce, &server_nonce).into_bytes();
                 imza.reverse();
-                c.push(Self::cerceve(AjandaAsagi::AuthChallenge { server_nonce: server_nonce.clone(), server_signature: base64_yaz(&imza) }));
+                c.push(Self::cerceve(AjandaAsagi::AuthChallenge { server_nonce: server_nonce.clone(), server_signature: base64_yaz(&imza) }, s));
                 *b = PcAsama::YanitBekliyor {
                     hello_son_rev: son_rev,
                     depo_id,
                     iz: son_rev_izi.map(|i| (i.kayit_id, i.guncelleme_ms)),
                     client_nonce,
                     server_nonce,
+                    surum: s,
                 };
             }
-            (PcAsama::YanitBekliyor { hello_son_rev, depo_id, iz, client_nonce, server_nonce }, AjandaYukari::AuthResponse { signature }) => {
+            (PcAsama::YanitBekliyor { hello_son_rev, depo_id, iz, client_nonce, server_nonce, .. }, AjandaYukari::AuthResponse { signature }) => {
                 let mut beklenen = ajanda_kimlik_imza_metni(ImzaRolu::Telefon, CIHAZ, client_nonce, server_nonce).into_bytes();
                 beklenen.reverse();
                 if base64_coz(&signature) != Some(beklenen) {
-                    return Self::hata(AjandaKanalHatasi::ImzaGecersiz);
+                    return Self::hata(AjandaKanalHatasi::ImzaGecersiz, s);
                 }
                 let hello_son_rev = *hello_son_rev;
                 let tam = ajanda_telafi_tam_mi(&TelafiGirdisi {
@@ -594,7 +712,12 @@ impl SahtePc {
                 });
                 self.telafi_sayisi += 1;
                 self.son_welcome_tam = Some(tam);
-                c.push(Self::cerceve(AjandaAsagi::Welcome { depo_id: self.d.depo_id.clone(), bas_rev: self.d.rev, tam, server_time_ms: self.simdi() }));
+                let istenen = self.hello_yetenekleri.last().cloned().flatten();
+                let yetenekler = Some(ajanda_yetenek_kesisimi(istenen.as_deref(), &self.sunulan_yetenekler));
+                c.push(Self::cerceve(
+                    AjandaAsagi::Welcome { depo_id: self.d.depo_id.clone(), bas_rev: self.d.rev, tam, server_time_ms: self.simdi(), yetenekler },
+                    s,
+                ));
                 let alt = if tam { 0 } else { hello_son_rev.min(self.d.rev) };
                 let mut sirali: Vec<&AjandaKaydi> = self.d.kayitlar.values().filter(|k| k.revizyon > alt).collect();
                 sirali.sort_by_key(|k| k.revizyon);
@@ -603,25 +726,25 @@ impl SahtePc {
                         self.telafi_kes = None;
                         return PcCikti { cerceveler: c, kapat: true };
                     }
-                    c.push(Self::cerceve(AjandaAsagi::Kayit { kayit: k.clone() }));
+                    c.push(Self::cerceve(AjandaAsagi::Kayit { kayit: k.clone() }, s));
                 }
-                c.push(Self::cerceve(AjandaAsagi::Esitlendi { rev: self.d.rev }));
-                *b = PcAsama::Ajandada { son_rev: self.d.rev };
+                c.push(Self::cerceve(AjandaAsagi::Esitlendi { rev: self.d.rev }, s));
+                *b = PcAsama::Ajandada { son_rev: self.d.rev, surum: s };
             }
             (PcAsama::Ajandada { .. }, AjandaYukari::Islem { islem_id, islem }) => {
                 if self.islem_yut > 0 {
                     self.islem_yut -= 1;
                     return PcCikti { cerceveler: vec![], kapat: false };
                 }
-                if let Some(s) = self.d.sonuclar.get(&islem_id) {
-                    c.push(Self::sonuc_cercevesi(&islem_id, s));
+                if let Some(sonuc) = self.d.sonuclar.get(&islem_id) {
+                    c.push(Self::sonuc_cercevesi(&islem_id, sonuc, s));
                     return PcCikti { cerceveler: c, kapat: false };
                 }
                 let kayit_id = islem.kayit_id().to_string();
                 if self.gecersiz.contains(&kayit_id) {
-                    let s = Sonuc::ret(None, AjandaRetNedeni::GecersizIslem);
-                    self.d.sonuclar.insert(islem_id.clone(), s.clone());
-                    c.push(Self::sonuc_cercevesi(&islem_id, &s));
+                    let sonuc = Sonuc::ret(None, AjandaRetNedeni::GecersizIslem);
+                    self.d.sonuclar.insert(islem_id.clone(), sonuc.clone());
+                    c.push(Self::sonuc_cercevesi(&islem_id, &sonuc, s));
                     return PcCikti { cerceveler: c, kapat: false };
                 }
                 for anahtar in [kayit_id.as_str(), "*"] {
@@ -629,18 +752,18 @@ impl SahtePc {
                         && *n > 0
                     {
                         *n -= 1;
-                        c.push(Self::sonuc_cercevesi(&islem_id, &Sonuc::ret(None, AjandaRetNedeni::IcHata)));
+                        c.push(Self::sonuc_cercevesi(&islem_id, &Sonuc::ret(None, AjandaRetNedeni::IcHata), s));
                         return PcCikti { cerceveler: c, kapat: false };
                     }
                 }
-                let (s, kayit) = self.islem_calistir(&islem);
+                let (sonuc, kayit) = self.islem_calistir(&islem);
                 self.uygulanan.push(islem_id.clone());
-                self.d.sonuclar.insert(islem_id.clone(), s.clone());
+                self.d.sonuclar.insert(islem_id.clone(), sonuc.clone());
                 if self.yanitsiz_kopar > 0 {
                     self.yanitsiz_kopar -= 1;
                     return PcCikti { cerceveler: vec![], kapat: true };
                 }
-                let sonuc = Self::sonuc_cercevesi(&islem_id, &s);
+                let sonuc = Self::sonuc_cercevesi(&islem_id, &sonuc, s);
                 if self.sonuc_once {
                     c.push(sonuc.clone());
                 }
@@ -664,7 +787,7 @@ impl SahtePc {
                     .get(&kayit_id)
                     .map(|l| l.iter().filter(|g| once_rev.is_none_or(|r| g.rev < r)).count() > 2)
                     .unwrap_or(false);
-                c.push(Self::cerceve(AjandaAsagi::Gecmis { istek_id, kayit_id, girdiler, devami, code: None }));
+                c.push(Self::cerceve(AjandaAsagi::Gecmis { istek_id, kayit_id, girdiler, devami, code: None }, s));
             }
             (_, m) => panic!("sahte PC: beklenmeyen çerçeve {}", m.tur()),
         }
@@ -767,10 +890,11 @@ impl Hat {
         self.pompala();
     }
 
-    /// Bağlantı koptu (iki taraf da kapanışı görür).
+    /// Bağlantı koptu (iki taraf da kapanışı görür). Kapanış kodu PC'nin son reddininki (1002), yoksa yok.
     pub fn kopar(&mut self) {
         if let Some(b) = self.baglanti.take() {
-            self.c.baglanti_kapandi(b.nesil, None).unwrap();
+            let kod = self.pc.kapanis_kodu.take();
+            self.c.baglanti_kapandi(b.nesil, kod).unwrap();
         }
     }
 

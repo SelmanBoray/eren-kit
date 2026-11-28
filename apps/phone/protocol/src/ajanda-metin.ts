@@ -1,6 +1,8 @@
 import { z } from "zod";
-import type { AjandaKaydi } from "./ajanda.ts";
+import type { AjandaVaris } from "./ajanda-alan.ts";
 import type {
+  AjandaAracKaydi,
+  AjandaAracKurali,
   AjandaEkleCikti,
   AjandaGuncelleCikti,
   AjandaKayitOzeti,
@@ -127,32 +129,101 @@ function zamanMetni(z: AjandaZamani | AjandaZamanOzeti, ifadeli: boolean): strin
   return `${metin} ifade="${ajandaKacir(z.ifade, AJANDA_SINIRLARI.ZAMAN_IFADESI)}"`;
 }
 
-/** `[kimlik] tur durum[ taslak] zaman=... baslik="..."[ aciklama="..."] hatirlatma=n kaynak=yol` */
-export function ajandaKaydiSatiri(k: AjandaKaydi): string {
+/**
+ * Varış kuralının modele giden hali (v3): `giris`, pencere varsa `,08:00-10:00`, çıkış varsa `,cikista`.
+ * Kapalı biçimlerdir (saat deseni, sabit sözcük); bir varış anı değil, kuralın kendisidir.
+ */
+function varisMetni(v: AjandaVaris): string {
+  return `giris${v.pencere === undefined ? "" : `,${v.pencere.bas}-${v.pencere.bit}`}${v.cikista === true ? ",cikista" : ""}`;
+}
+
+/**
+ * `[kimlik] tur durum[ taslak] zaman=... baslik="..."[ aciklama="..."] hatirlatma=n[ tekrar=..][ v3][ elle=..] kaynak=yol`.
+ * v3 (yalnız alan varsa; yoksa satır v2 ile bayt bayt aynı): `simge=anahtar` (kapalı biçim),
+ * `bolge="..."` (kullanıcı metni, kaçışlı), `varis=giris[,bas-bit][,cikista]`, her bağlantı için
+ * `baglantiN="url"` ve varsa `baglantiN_baslik="..."` (ikisi de kaçışlı), `ek_sayisi=n`. Girdi
+ * `AjandaAracKaydi`'dır: konum ve ek üstverisi bu satıra hiçbir yoldan giremez.
+ */
+export function ajandaKaydiSatiri(k: AjandaAracKaydi): string {
   let satir = `[${k.kayit_id}] ${k.tur} ${k.durum}${k.taslak ? " taslak" : ""}`;
   satir += ` zaman=${k.zaman === undefined ? "yok" : zamanMetni(k.zaman, true)}`;
   satir += ` baslik="${ajandaKacir(k.baslik, AJANDA_SINIRLARI.BASLIK)}"`;
   if (k.aciklama !== undefined) satir += ` aciklama="${ajandaKacir(k.aciklama, AJANDA_SINIRLARI.MODEL_ACIKLAMA)}"`;
   satir += ` hatirlatma=${k.hatirlatmalar.length}`;
   if (k.tekrar !== undefined) satir += ` tekrar=${k.tekrar.siklik}/${k.tekrar.aralik}`;
+  if (k.simge !== undefined) satir += ` simge=${k.simge}`;
+  if (k.bolge !== undefined) satir += ` bolge="${ajandaKacir(k.bolge, AJANDA_SINIRLARI.BOLGE)}"`;
+  if (k.varis !== undefined) satir += ` varis=${varisMetni(k.varis)}`;
+  k.baglantilar?.forEach((b, i) => {
+    satir += ` baglanti${i + 1}="${ajandaKacir(b.url, AJANDA_SINIRLARI.BAGLANTI_URL)}"`;
+    if (b.baslik !== undefined) satir += ` baglanti${i + 1}_baslik="${ajandaKacir(b.baslik, AJANDA_SINIRLARI.BAGLANTI_BASLIK)}"`;
+  });
+  if (k.ek_sayisi !== undefined) satir += ` ek_sayisi=${k.ek_sayisi}`;
   if (k.elle_alanlar.length > 0) satir += ` elle=${k.elle_alanlar.join(",")}`;
   return satir + ` kaynak=${k.kaynak.yol}`;
 }
 
-/** `cit` her çağrıda güvenli üreteçten yeni üretilir ve gövdede geçmemelidir (`ajandaMcpSonucu` denetler). */
+/** Kullanılan bölge adları satırı (v3, çit içinde): `bolgeler: "market", "iş yeri"`; ad kullanıcı metnidir. */
+function bolgelerSatiri(adlar: readonly string[]): string {
+  return `bolgeler: ${adlar.map((a) => `"${ajandaKacir(a, AJANDA_SINIRLARI.BOLGE)}"`).join(", ")}`;
+}
+
+/** Listenin çitlenen gövdesi: kayıt satırları, sonra (v3, varsa) bölge adları. Boşsa `""`. */
+function listeGovdesi(c: AjandaListeleCikti): string {
+  const satirlar = c.kayitlar.map(ajandaKaydiSatiri);
+  if (c.bolgeler !== undefined) satirlar.push(bolgelerSatiri(c.bolgeler));
+  return satirlar.join("\n");
+}
+
+/**
+ * `cit` her çağrıda güvenli üreteçten yeni üretilir ve gövdede geçmemelidir (`ajandaMcpSonucu` denetler).
+ * v3: bölge adları (`bolgeler`) çitin içinde, kayıtlardan sonra; kayıt yoksa da çitli gider.
+ */
 export function ajandaListesiMetni(cit: string, c: AjandaListeleCikti): string {
   const baslik = `ajanda: mesaj_ani=${yerelAnMetni(c.mesaj_ani)} gosterilen=${c.kayitlar.length} toplam=${c.toplam}`;
-  if (c.kayitlar.length === 0) return `${baslik}\neslesen kayit yok`;
+  if (c.kayitlar.length === 0) {
+    const bos = `${baslik}\neslesen kayit yok`;
+    return c.bolgeler === undefined ? bos : `${bos}\n${citleSar(cit, listeGovdesi(c))}`;
+  }
   const not = c.toplam > c.kayitlar.length ? "\nkesildi: daha fazlası var; tarih ya da ara ile daralt" : "";
-  return `${baslik}${not}\n${citleSar(cit, c.kayitlar.map(ajandaKaydiSatiri).join("\n"))}`;
+  return `${baslik}${not}\n${citleSar(cit, listeGovdesi(c))}`;
 }
 
 const TASLAK_NOTU =
   " Taslak: onaylanmadı, hatırlatma kurulmaz. Kullanıcı isterse onaylar (uygulamadan ya da sohbette " +
   "açıkça isteyince ajanda_guncelle onayla:true); kullanıcıya kaydedildi deme, taslak olduğunu söyle.";
 
+/**
+ * Varışlı kaydın özet notu (v3): kural ve ne zaman çalacağı. Bölge adı özette yoktur (kayıt metni); konum
+ * yoksa `bolge_yeni` notu ayrıca söyler.
+ */
+function varisNotu(v: AjandaVaris): string {
+  const pencere = v.pencere === undefined ? "" : ` (yalnız ${v.pencere.bas}-${v.pencere.bit} arasında)`;
+  const cikis = v.cikista === true ? "; çıkışta iş hâlâ bitmediyse ikinci bildirim" : "";
+  return ` varis=${varisMetni(v)}: kullanıcı bölgeye girince telefon bildirim verir${pencere}${cikis}.`;
+}
+
+const BOLGE_YENI_NOTU =
+  " Bu yerin konumu ajandada henüz yok: kullanıcıya bu yerin konumunu telefondaki ajanda uygulamasında " +
+  "kaydetmesini söyle; konum kaydedilene kadar varınca hatırlatma çalışmaz.";
+
+const bolgeYeniMetni = (c: { bolge_yeni?: true | undefined }): string => (c.bolge_yeni === true ? BOLGE_YENI_NOTU : "");
+
 const BILDIRIM_YOK_NOTU =
   " Bu kayıt için şu an hiçbir bildirim gelmeyecek; bunu kullanıcıya söyle (isterse saat ya da hatırlatma verebilir).";
+
+/**
+ * Özet metni "hiçbir bildirim gelmeyecek" uyarısını taşır mı (varışa bakmadan): günü belli (an, gun), açık,
+ * taslak ve silinmiş olmayan kayıtta hatırlatma var ama hiçbiri kurulmayacak. Yalnız günü belli kayıtta:
+ * orada hatırlatma beklenir; dönem, belirsiz ve zamansızda bekleyen yeter. Varışlı kayıtta (v3) bildirim
+ * varıştan gelir: `ozetMetni` uyarıyı orada vermez. Servis, v3 kapalıyken özetten `varis` düşünce aynı
+ * yanlış uyarının doğmaması için de buna bakar (`ajanda-araclar.ts` `v2Yuzu`).
+ */
+export function ajandaBildirimYokMu(k: Pick<AjandaKayitOzeti, "zaman" | "hatirlatma" | "taslak" | "silindi" | "durum">): boolean {
+  const z = k.zaman;
+  const gunlu = z !== undefined && (z.kesinlik === "an" || z.kesinlik === "gun");
+  return gunlu && !k.taslak && !k.silindi && k.durum === "acik" && k.hatirlatma.toplam > 0 && k.hatirlatma.kurulacak === 0;
+}
 
 /** Kaydın gününün kullanıcıya söylenecek hali: `27 Kasım Cuma`, dönemde `30 Kasım Pazartesi - 6 Aralık Pazar`. */
 function insanZamani(z: AjandaZamanOzeti): string | undefined {
@@ -184,10 +255,10 @@ function ozetMetni(k: AjandaKayitOzeti, an: AjandaYerelAn): string {
       metin += g.gecti ? " (geçti)" : " (saatsiz kayıt: günün yaklaşık saatinde)";
     }
     metin += ".";
-    // Yalnız günü belli kayıtta (an, gun): orada hatırlatma beklenir; dönem, belirsiz ve zamansızda bekleyen yeter.
-    const gunlu = z !== undefined && (z.kesinlik === "an" || z.kesinlik === "gun");
-    if (gunlu && !k.taslak && !k.silindi && k.durum === "acik" && h.kurulacak === 0) metin += BILDIRIM_YOK_NOTU;
+    // Varışlı kayıtta (v3) bildirim varıştan gelir: uyarı yok.
+    if (k.varis === undefined && ajandaBildirimYokMu(k)) metin += BILDIRIM_YOK_NOTU;
   }
+  if (k.varis !== undefined) metin += varisNotu(k.varis);
   const insan = z === undefined ? undefined : insanZamani(z);
   if (insan !== undefined) {
     metin += ` Yanıtında kaydın gününü adıyla ve tarihiyle söyle (${insan}); göreli ifadeyi nasıl çözdüğün böyle görünür.`;
@@ -223,7 +294,19 @@ function geceAyniTurNotu(an: AjandaYerelAn): string {
   );
 }
 
-function retMetni(fiil: string, eylem: string, neden: string, an: AjandaYerelAn, ayniTur = false): string {
+const KURAL_METNI: Readonly<Record<AjandaAracKurali, string>> = {
+  varis_bolge_ister: " Varış hatırlatması bölge ister: bölgeyi kaldırırken varis:null da ver ya da bölgeyi bırak.",
+  tekrar_varis_ister:
+    " Asistanın kurduğu tekrar yalnız varışlı kayıtta olur: tekrar için bolge ve varis de ver. Bu kayıttan varışı " +
+    "kaldırmak seriyi (yinelenmeyi ve işaretlenmiş günlerini) de kaldırır: tekrarı kendiliğinden kaldırma; " +
+    "kullanıcıya bunu söyle, yalnız kullanıcı seriyi de kaldırmayı açıkça isterse tekrarı da kaldırarak yeniden çağır.",
+  tekrar_kullanicinin:
+    " Bu kaydın tekrarını kullanıcı kendisi kurmuş; asistan onu değiştiremez ve kaldıramaz. Tekrara dokunmadan " +
+    "yeniden çağır (varış ve bölge tekrara dokunmadan kaldırılabilir); tekrarın değişmesi gerekiyorsa kullanıcıya " +
+    "bunu telefondaki ajanda uygulamasından yapmasını söyle.",
+};
+
+function retMetni(fiil: string, eylem: string, neden: string, an: AjandaYerelAn, ayniTur = false, kural?: AjandaAracKurali): string {
   let ek = "";
   if (neden === "dayanak_uyusmuyor") {
     ek =
@@ -232,7 +315,10 @@ function retMetni(fiil: string, eylem: string, neden: string, an: AjandaYerelAn,
   } else if (neden === "gece_teyidi_gerekli") {
     ek = ayniTur ? geceAyniTurNotu(an) : geceNotu(an);
   } else if (neden === "tutarsiz_kayit") {
-    ek = " Değişiklik kaydın kurallarını bozuyor: tekrar eden kayıtta zaman an ya da gun olmalı, tekrar bitişi çapadan önce olamaz.";
+    ek =
+      kural === undefined
+        ? " Değişiklik kaydın kurallarını bozuyor: tekrar eden kayıtta zaman an ya da gun olmalı, tekrar bitişi çapadan önce olamaz."
+        : " Değişiklik kaydın kurallarını bozuyor." + KURAL_METNI[kural];
   } else if (neden === "ic_hata") {
     ek = " Geçici hata; biraz sonra yeniden dene.";
   }
@@ -244,21 +330,22 @@ function uygulananMetni(alanlar: readonly string[]): string {
 }
 
 export function ajandaEkleMetni(c: AjandaEkleCikti): string {
-  if (c.sonuc === "ret") return retMetni("ajanda_ekle", "eklenmedi", c.neden, c.mesaj_ani, c.ayni_tur === true);
+  if (c.sonuc === "ret") return retMetni("ajanda_ekle", "eklenmedi", c.neden, c.mesaj_ani, c.ayni_tur === true, c.kural);
   const an = anMetni(c.mesaj_ani);
-  if (c.sonuc === "eklendi") return `ajanda_ekle: eklendi ${ozetMetni(c.kayit, c.mesaj_ani)}${an}`;
+  const bolge = bolgeYeniMetni(c);
+  if (c.sonuc === "eklendi") return `ajanda_ekle: eklendi ${ozetMetni(c.kayit, c.mesaj_ani)}${bolge}${an}`;
   const uygulanan = uygulananMetni(c.uygulanan_alanlar);
   if (c.sonuc === "onaylandi") {
-    return `ajanda_ekle: aynı kayıt taslak olarak vardı, kullanıcının isteğiyle onaylandı; yeni kayıt açılmadı ${ozetMetni(c.kayit, c.mesaj_ani)}${uygulanan}${an}`;
+    return `ajanda_ekle: aynı kayıt taslak olarak vardı, kullanıcının isteğiyle onaylandı; yeni kayıt açılmadı ${ozetMetni(c.kayit, c.mesaj_ani)}${uygulanan}${bolge}${an}`;
   }
   if (c.kayit.silindi) {
     return `ajanda_ekle: kullanıcı bu kaydı silmiş; yeniden eklenmedi (kayit ${c.kayit.kayit_id}).${an}`;
   }
-  return `ajanda_ekle: zaten kayıtlı, yeni kayıt açılmadı ${ozetMetni(c.kayit, c.mesaj_ani)}${uygulanan}${an}`;
+  return `ajanda_ekle: zaten kayıtlı, yeni kayıt açılmadı ${ozetMetni(c.kayit, c.mesaj_ani)}${uygulanan}${bolge}${an}`;
 }
 
 export function ajandaGuncelleMetni(c: AjandaGuncelleCikti): string {
-  if (c.sonuc === "ret") return retMetni("ajanda_guncelle", "uygulanmadı", c.neden, c.mesaj_ani, c.ayni_tur === true);
+  if (c.sonuc === "ret") return retMetni("ajanda_guncelle", "uygulanmadı", c.neden, c.mesaj_ani, c.ayni_tur === true, c.kural);
   const korunan =
     c.korunan_alanlar.length === 0
       ? ""
@@ -266,7 +353,7 @@ export function ajandaGuncelleMetni(c: AjandaGuncelleCikti): string {
         `uygulanmadı: ${c.korunan_alanlar.join(",")}. Değişmesi gerekiyorsa kullanıcıya sor.`;
   const ozet = c.sonuc === "guncellendi" ? "güncellendi" : "değişiklik yok";
   const zaman = c.sonuc === "guncellendi" ? zamanDegisimiMetni(c) : "";
-  return `ajanda_guncelle: ${ozet} ${ozetMetni(c.kayit, c.mesaj_ani)}${zaman}${korunan}${anMetni(c.mesaj_ani)}`;
+  return `ajanda_guncelle: ${ozet} ${ozetMetni(c.kayit, c.mesaj_ani)}${zaman}${korunan}${bolgeYeniMetni(c)}${anMetni(c.mesaj_ani)}`;
 }
 
 const KALDIRMA_YOLU: Readonly<Record<string, string>> = { saat: "saat:null", sure_dk: "sure_dk:null", gun_bolumu: "gun_bolumu:null" };
@@ -318,7 +405,7 @@ const CIT_DENEME = 8;
 export function ajandaMcpSonucu(g: AjandaAracCiktisi, citUret: () => string): AjandaMcpSonucu {
   if (g.fiil === "ajanda_ekle") return { content: [{ type: "text", text: ajandaEkleMetni(g.cikti) }] };
   if (g.fiil === "ajanda_guncelle") return { content: [{ type: "text", text: ajandaGuncelleMetni(g.cikti) }] };
-  const govde = g.cikti.kayitlar.map(ajandaKaydiSatiri).join("\n");
+  const govde = listeGovdesi(g.cikti);
   for (let i = 0; i < CIT_DENEME; i++) {
     const cit = citUret();
     if (!/^[A-Za-z0-9_-]{16,64}$/.test(cit)) throw new RangeError("geçersiz çit");

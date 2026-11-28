@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { AJANDA_ARAC_ACIKLAMALARI, AjandaKopruHello, AracCagriId, type AjandaFiili } from "./ajanda-arac.ts";
+import { AJANDA_ARAC_ACIKLAMALARI, AJANDA_ARAC_ACIKLAMALARI_V2, AjandaKopruHello, AracCagriId, type AjandaFiili } from "./ajanda-arac.ts";
 import { AJANDA_PC_SINIRLARI, PC_AKTORLER, PC_ETKILESIMLER } from "./ajanda-pc-kanca.ts";
 import { cozumle } from "./cozumle.ts";
 import { AJANDA_AZAMI_CERCEVE, PROTOKOL_SURUMU } from "./sinirlar.ts";
@@ -73,6 +73,18 @@ export const AJANDA_PC_ARAC_ACIKLAMALARI: Readonly<Record<AjandaFiili, string>> 
   ajanda_guncelle: AJANDA_ARAC_ACIKLAMALARI.ajanda_guncelle + PC_ZAMAN_EKI,
   ajanda_listele: AJANDA_ARAC_ACIKLAMALARI.ajanda_listele,
 };
+
+/** v3 araç yüzü kapalıyken PC tanımları: v3 öncesi metin (`AJANDA_ARAC_ACIKLAMALARI_V2`) + aynı PC eki. */
+export const AJANDA_PC_ARAC_ACIKLAMALARI_V2: Readonly<Record<AjandaFiili, string>> = {
+  ajanda_ekle: AJANDA_ARAC_ACIKLAMALARI_V2.ajanda_ekle + PC_ZAMAN_EKI,
+  ajanda_guncelle: AJANDA_ARAC_ACIKLAMALARI_V2.ajanda_guncelle + PC_ZAMAN_EKI,
+  ajanda_listele: AJANDA_ARAC_ACIKLAMALARI_V2.ajanda_listele,
+};
+
+/** Ayarın seçtiği yüzün PC tanımları (telefonunki `ajandaAracAciklamalari`). */
+export function ajandaPcAracAciklamalari(v3: boolean): Readonly<Record<AjandaFiili, string>> {
+  return v3 ? AJANDA_PC_ARAC_ACIKLAMALARI : AJANDA_PC_ARAC_ACIKLAMALARI_V2;
+}
 
 // Kanca çerçeveleri (rol `pc_kanca`)
 
@@ -189,11 +201,32 @@ export const PC_TUR_NEDENI_METNI: Readonly<Record<Exclude<PcTurKarari, "insan">,
 };
 
 /**
- * Köprünün yazan araçların metnine eklediği satır (yalnız sentetik kararda; `insan`'da `null`). Sabit
- * metindir: kayıt metni ya da kimlik taşımaz.
+ * Notun hangi PC ajanı için yazıldığı. `claude-code` kancalıdır (nedenler `PC_TUR_NEDENI_METNI`); `codex`
+ * yalnız taslaktır (`server/src/kopru.ts` `PC_YALNIZ_TASLAK_UYARLAYICILARI`): köprüsü çağrı kimliğini hiç
+ * okumaz, her çağrısı sentetiktir, kancası yoktur; nedeni karardan bağımsız tek metindir.
  */
-export function pcTurNotu(karar: PcTurKarari): string | null {
+export type PcTurNotuAjani = "claude-code" | "codex";
+
+/** Codex'in (yalnız taslak) modele giden nedeni; `docs/HARNESS-H3-OLCUM.md` bölüm 6. */
+export const PC_CODEX_TASLAK_NEDENI_METNI =
+  "Codex yalnız taslak ajanıdır: ajanda, Codex'in çağrısının kullanıcının kendi etkileşimli isteği olduğunu " +
+  "doğrulayamaz, bu yüzden Codex'in eklediği her kayıt taslak doğar ve telefondaki ajanda uygulamasından onaylanır";
+
+/**
+ * Köprünün yazan araçların metnine eklediği satır (yalnız sentetik kararda; `insan`'da `null`). Sabit
+ * metindir: kayıt metni ya da kimlik taşımaz. `ajan` köprünün uyarlayıcısıdır; varsayılan `claude-code`
+ * (metni değişmedi). Codex notu Claude Code'u ve kancasını anmaz, kendi teşhis komutunu verir.
+ */
+export function pcTurNotu(karar: PcTurKarari, ajan: PcTurNotuAjani = "claude-code"): string | null {
   if (karar === "insan") return null;
+  if (ajan === "codex") {
+    return (
+      `pc_tur: sentetik (${karar}). Bu çağrı Codex'ten geldi: eklenen kayıt taslak doğar (telefondaki ajanda ` +
+      "uygulamasında onay bekler, onaylanana dek hatırlatma çalmaz), taslak olmayan (onaylanmış) kayda dokunulamaz. " +
+      `Kullanıcıya bunu ve nedenini tek cümleyle söyle: ${PC_CODEX_TASLAK_NEDENI_METNI}. ` +
+      "Teşhis: eren eslestir --pc-ajan codex --teshis"
+    );
+  }
   return (
     `pc_tur: sentetik (${karar}). Bu çağrı ana oturumun etkileşimli bir çağrısı olarak doğrulanamadı: eklenen kayıt ` +
     "taslak doğar (ajanda uygulamasında onay bekler, onaylanana dek hatırlatma çalmaz), taslak olmayan kayda " +

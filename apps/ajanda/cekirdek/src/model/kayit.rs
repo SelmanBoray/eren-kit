@@ -8,6 +8,8 @@ use super::takvim::gercek_tarih_mi;
 use super::tekrar::{Tekrar, ornek_gunleri_mi};
 use super::zaman::{AjandaZamani, Hatirlatma, hatirlatmalari_oku, hatirlatmalari_yaz, tarih_oku, zaman_kurallari};
 use super::json::GUVENLI_TAM_SAYI;
+use super::alan::V3Alanlari;
+use super::surum::{Surum, surumun_alani};
 use serde_json::Value;
 
 sabit_liste! { KayitTuru { Gorev = "gorev", Randevu = "randevu", Not = "not" } }
@@ -35,8 +37,20 @@ sabit_liste! {
 sabit_liste! { TurKokeni { Insan = "insan", Sentetik = "sentetik" } }
 
 sabit_liste! {
-    /// `AJANDA_ALANLARI`: alan izinin ve değişikliklerin alan kümesi; bildirim sırası kanoniktir.
-    AjandaAlani { Tur = "tur", Baslik = "baslik", Aciklama = "aciklama", Zaman = "zaman", Hatirlatmalar = "hatirlatmalar", Tekrar = "tekrar", Durum = "durum" }
+    /// `AJANDA_ALANLARI`: alan izinin ve değişikliklerin alan kümesi (en yeni sürüm); bildirim sırası
+    /// kanoniktir. Yeni sürümün alanları sona eklenir: her eski sürümün kümesi bunun önekidir
+    /// (`Surum::alanlar`). v3: `simge` ve sonrası (`AJANDA_V3_ALANLARI`).
+    AjandaAlani {
+        Tur = "tur", Baslik = "baslik", Aciklama = "aciklama", Zaman = "zaman", Hatirlatmalar = "hatirlatmalar",
+        Tekrar = "tekrar", Durum = "durum",
+        Simge = "simge", Bolge = "bolge", BolgeKonumu = "bolge_konumu", Varis = "varis", Baglantilar = "baglantilar",
+        Ekler = "ekler",
+    }
+}
+
+impl AjandaAlani {
+    /// v2'nin alan sayısı (`AJANDA_ALANLARI_V2`): `HEPSI`'nin bu kadarlık öneki.
+    pub const V2_ADEDI: usize = 7;
 }
 
 impl GirdiYolu {
@@ -65,14 +79,25 @@ pub struct YazarKimligi {
     pub tur_kokeni: TurKokeni,
 }
 
-/// `AlanListesi`: kanonik sırada ve tekil.
+/// `AlanListesi` (en yeni sürüm): kanonik sırada ve tekil.
 pub fn alan_listesi_oku(v: &Value, yol: &str) -> Sonuc<Vec<AjandaAlani>> {
-    let l = dizi_oku(v, yol, AjandaAlani::HEPSI.len(), AjandaAlani::oku)?;
+    alan_listesi_oku_surum(v, yol, Surum::EN_YENI)
+}
+
+/// Sürümün `AlanListesi`'i: yalnız o sürümün alanları, kanonik sırada ve tekil.
+pub fn alan_listesi_oku_surum(v: &Value, yol: &str, s: Surum) -> Sonuc<Vec<AjandaAlani>> {
+    let l = dizi_oku(v, yol, s.alanlar().len(), |v, y| surumun_alani(AjandaAlani::oku(v, y)?, s, y))?;
     if l.windows(2).all(|w| w[0] < w[1]) { Ok(l) } else { hata(yol, "alanlar kanonik sırada ve tekil") }
 }
 
 pub fn alan_listesi_yaz(l: &[AjandaAlani]) -> Value {
     dizi_yaz(l, |a| a.json())
+}
+
+/// Listeyi sürümün kümesine süzerek yazar (`alanListesiniSuz`; genişleme kuralı 6: bu listeleri yalnız
+/// servis yazar). Kanonik sıra korunur (eski küme yeninin önekidir).
+pub fn alan_listesi_yaz_surum(l: &[AjandaAlani], s: Surum) -> Value {
+    Value::Array(l.iter().filter(|a| s.alanlar().contains(a)).map(|a| a.json()).collect())
 }
 
 /// `TekilAnahtar`: 1-128, `^[A-Za-z0-9:._-]+$`.
@@ -269,10 +294,19 @@ pub struct AjandaKaydi {
     pub kaynak: AjandaKaynagi,
     pub olusturma_ms: i64,
     pub guncelleme_ms: i64,
+    /// v3 alanları (`simge`, `bolge`, ...); v2 kayıtta hepsi yok.
+    #[uniffi(default)]
+    pub v3: V3Alanlari,
 }
 
 impl AjandaKaydi {
+    /// En yeni sürümün şemasıyla (depo ve iç kullanım).
     pub fn oku(v: &Value, yol: &str) -> Sonuc<Self> {
+        AjandaKaydi::oku_surum(v, yol, Surum::EN_YENI)
+    }
+
+    /// Sürümün şemasıyla: v2'de v3 alanı bilinmeyen alandır, `elle_alanlar` o sürümün kümesindendir.
+    pub fn oku_surum(v: &Value, yol: &str, s: Surum) -> Sonuc<Self> {
         let mut n = Nesne::ac(v, yol)?;
         let k = AjandaKaydi {
             kayit_id: n.zorunlu("kayit_id", opak_id_oku)?,
@@ -287,10 +321,11 @@ impl AjandaKaydi {
             durum: n.zorunlu("durum", KayitDurumu::oku)?,
             taslak: n.zorunlu("taslak", mantik)?,
             silindi: n.zorunlu("silindi", mantik)?,
-            elle_alanlar: n.zorunlu("elle_alanlar", alan_listesi_oku)?,
+            elle_alanlar: n.zorunlu("elle_alanlar", |v, y| alan_listesi_oku_surum(v, y, s))?,
             kaynak: n.zorunlu("kaynak", AjandaKaynagi::oku)?,
             olusturma_ms: n.zorunlu("olusturma_ms", zaman_ms_oku)?,
             guncelleme_ms: n.zorunlu("guncelleme_ms", zaman_ms_oku)?,
+            v3: V3Alanlari::alanlari_oku(&mut n, s)?,
         };
         n.bitir()?;
         if let Err((alan, neden)) = k.kurallar() {
@@ -303,6 +338,7 @@ impl AjandaKaydi {
     /// doğrulanır (`tutarsiz_kayit`), ama alan şemaları da gerekiyorsa `gecerli_mi` kullan.
     pub fn kurallar(&self) -> Result<(), (&'static str, &'static str)> {
         zaman_kurallari(self.zaman.as_ref(), self.tekrar.as_ref())?;
+        self.v3.kurallar()?;
         if !self.ornekler.is_empty() {
             let Some(t) = &self.tekrar else { return Err(("ornekler", "ornekler yalnız tekrar eden kayıtta")) };
             if !self.ornekler.windows(2).all(|w| w[0].tarih < w[1].tarih) {
@@ -331,8 +367,14 @@ impl AjandaKaydi {
         AjandaKaydi::oku(&self.json(), "").map(|_| ())
     }
 
+    /// En yeni sürümün biçimi (depo ve iç kullanım).
     pub fn json(&self) -> Value {
-        Yazici::yeni()
+        self.json_surum(Surum::EN_YENI)
+    }
+
+    /// Sürümün biçimi: o sürümün bilmediği alanlar yazılmaz, `elle_alanlar` süzülür (`v3tenV2ye`).
+    pub fn json_surum(&self, s: Surum) -> Value {
+        let y = Yazici::yeni()
             .alan("kayit_id", self.kayit_id.as_str())
             .alan("revizyon", self.revizyon)
             .alan("tur", self.tur.json())
@@ -345,11 +387,11 @@ impl AjandaKaydi {
             .alan("durum", self.durum.json())
             .alan("taslak", self.taslak)
             .alan("silindi", self.silindi)
-            .alan("elle_alanlar", alan_listesi_yaz(&self.elle_alanlar))
+            .alan("elle_alanlar", alan_listesi_yaz_surum(&self.elle_alanlar, s))
             .alan("kaynak", self.kaynak.json())
             .alan("olusturma_ms", self.olusturma_ms)
-            .alan("guncelleme_ms", self.guncelleme_ms)
-            .bitir()
+            .alan("guncelleme_ms", self.guncelleme_ms);
+        self.v3.alanlari_yaz(y, s).bitir()
     }
 }
 

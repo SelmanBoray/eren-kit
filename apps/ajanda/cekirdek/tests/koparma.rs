@@ -248,7 +248,7 @@ fn ayni_servise_yeniden_baglanma_uc_yollu_birlesir_silinmis_kayit_ret_listesine_
         code: None,
     };
     let nesil = h.baglanti.as_ref().unwrap().nesil;
-    h.c.cerceve_geldi(nesil, sonuc.kodla()).unwrap();
+    h.c.cerceve_geldi(nesil, sonuc.kodla_surum(ajanda_cekirdek::model::Surum::V3)).unwrap();
     let s = h.c.baglantiyi_kopar().unwrap();
     assert_eq!((s.gonderilmeyen_kayit, s.gonderilmeyen_islem, s.yanitsiz_islem), (0, 0, 0), "onaylanan gönderilmiş sayılır");
     h.pompala();
@@ -397,6 +397,10 @@ fn canli_kurulum_bagli_kipte_aynen_calisir() {
     assert_eq!(h.c.baglanti_durumu().unwrap().kuyrukta, 2);
     h.baglan();
     assert!(h.canli_mi());
+    // v2 döneminin kopyası: v3'teki ilk bağlantı bir kez tam telafi ister; sonraki artımlı (hello izi taşır).
+    assert_eq!(h.pc.son_welcome_tam, Some(true), "v2 kopyası, v3'te ilk bağlantı");
+    h.kopar();
+    h.baglan();
     assert_eq!(h.pc.son_welcome_tam, Some(false), "bağlı kipte hello izi taşır: artımlı");
     assert_eq!(h.c.kip().unwrap(), CalismaKipi::Bagli);
     assert_eq!(h.c.baglanti_durumu().unwrap().kuyrukta, 0);

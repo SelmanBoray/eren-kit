@@ -67,7 +67,7 @@ use crate::kopru::tipler::{
 };
 use crate::model::json::{GUVENLI_TAM_SAYI, Nesne, SemaHatasi, Sonuc, hata, metin, tam_sayi};
 use crate::model::kayit::zaman_ms_oku;
-use crate::model::sinirlar::AJANDA_SURUMU;
+use crate::model::surum::AJANDA_SURUMU;
 use crate::model::sinirlar::ajanda::KAYIT_ADET;
 use crate::model::{AjandaGecmisGirdisi, AjandaIslem, AjandaKaydi, AjandaParca, AjandaYazar, Hatirlatma, IslemTuru, KaynakYolu, TurKokeni};
 

@@ -2,7 +2,7 @@
 
 Yalnız Android. İş mantığı Rust'ta (`cekirdek/`), ekranlar ve Android API'leri Kotlin'de
 (`android/`). Köprü: [UniFFI](https://mozilla.github.io/uniffi-rs/) 0.32 (proc-macro, Kotlin+JNA).
-Sözleşme: `apps/phone/docs/AJANDA.md` (**sürüm 2**: saatsiz günde gün hatırlatması, gün bölümü; v1 servisle
+Sözleşme: `apps/phone/docs/AJANDA.md` (**sürüm 2 ve 3**: kanal v3 ile açılır, v2 servise düşer; v1 servisle
 bağlanmaz, "güncelle" der). **Mimari, iş bölümü ve ikinci dalganın iş parçaları: [MIMARI.md](MIMARI.md).**
 
 Durum: sözleşme v2'ye uygun (vektörler 464 geçti, 0 kaldı; MIMARI.md "Sürüm 2"). Rust çekirdeği tam (ikinci dalga R1-R4): veri modeli ve şema, saf kurallar (vektörlerin tamamı

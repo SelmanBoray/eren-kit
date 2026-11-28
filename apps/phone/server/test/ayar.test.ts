@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import win32 from "node:path/win32";
+import { AJANDA_SINIRLARI } from "@eren/protocol";
 import { asistanAdiUret, ayarKur, AyarHatasi, medyaKapaliNedeni, yollariUret } from "../src/ayar.ts";
 import type { Ayar, Ortam } from "../src/sozlesme.ts";
 import { sahteDosya } from "./sahte.ts";
@@ -370,6 +371,38 @@ describe("ayar: eksik ve bozuk dosyalar", () => {
     assert.equal((await kur(hazir({ ws_port: 1 }))).wsPort, 1);
     assert.equal((await kur(hazir({ ws_port: 65535 }))).wsPort, 65535);
     assert.equal((await kur(hazir({ ram_dusuk_mb: 0 }))).ramDusukMb, 0);
+  });
+
+  it("ajanda_ek_kota_mb: yoksa EK_TOPLAM_BAYT, verilirse MiB; 64 ve 1048576 sınır, dışı ve kesirli AyarHatasi", async () => {
+    const kota = async (yerel?: unknown): Promise<number> =>
+      (await ayarKur({ dosya: hazir(yerel).dosya, ortam: hazir(yerel).ortam, execPath: NODE, baslangicMs: BASLANGIC })).ajandaEkKotaBayt;
+    assert.equal(await kota(), AJANDA_SINIRLARI.EK_TOPLAM_BAYT);
+    assert.equal(await kota({ ajanda_ek_kota_mb: 512 }), 512 * 1024 * 1024);
+    assert.equal(await kota({ ajanda_ek_kota_mb: 64 }), 64 * 1024 * 1024);
+    assert.equal(await kota({ ajanda_ek_kota_mb: 1_048_576 }), 1024 ** 4);
+    for (const y of [63, 1_048_577, 0, -1, 1.5, "512", null]) {
+      const h = await hataAl(() => kur(hazir({ ajanda_ek_kota_mb: y })));
+      assert.ok(h instanceof AyarHatasi, JSON.stringify(y));
+      assert.match(h.message, /ajanda_ek_kota_mb/);
+    }
+  });
+
+  it("ajanda_arac_v3: yoksa false; true ve false okunur; başka her değer AyarHatasi (alan adıyla, değersiz)", async () => {
+    const v3 = async (yerel?: unknown): Promise<boolean> =>
+      (await ayarKur({ dosya: hazir(yerel).dosya, ortam: hazir(yerel).ortam, execPath: NODE, baslangicMs: BASLANGIC })).ajandaAracV3;
+    assert.equal(await v3(), false);
+    assert.equal(await v3({}), false);
+    assert.equal(await v3({ ajanda_arac_v3: false }), false);
+    assert.equal(await v3({ ajanda_arac_v3: true }), true);
+    for (const y of ["true", "acik", 1, 0, null, [], {}]) {
+      const h = await hataAl(() => kur(hazir({ ajanda_arac_v3: y })));
+      assert.ok(h instanceof AyarHatasi, JSON.stringify(y));
+      assert.equal(h.message, "ayar.local.json: ajanda_arac_v3 true ya da false olmalı");
+    }
+    // Yanlış yazılmış anahtar bilinmeyen alandır (sessizce kapalı kalmaz).
+    const h = await hataAl(() => kur(hazir({ ajanda_arac_v3s: true })));
+    assert.ok(h instanceof AyarHatasi);
+    assert.equal(h.message, "ayar.local.json: ajanda_arac_v3s bilinmeyen alan");
   });
 
   it("dosya portu okuma hatası başlangıçta yayılır", async () => {

@@ -98,12 +98,12 @@ fn eslestirme_reddi_ve_pc_imzasi_gecersiz() {
         server_nonce: ajanda_cekirdek::model::kanonik::base64_yaz(&[1; 32]),
         server_signature: ajanda_cekirdek::model::kanonik::base64_yaz(b"imza degil"),
     };
-    h.c.cerceve_geldi(nesil, sahte.kodla()).unwrap();
+    h.c.cerceve_geldi(nesil, sahte.kodla_surum(ajanda_cekirdek::model::Surum::V3)).unwrap();
     assert!(t.kapatildi.lock().unwrap().is_some());
     let d = h.c.baglanti_durumu().unwrap();
     assert_eq!((d.asama, d.son_hata), (BaglantiAsamasi::Kopuk, Some(AjandaKanalHatasi::ImzaGecersiz)));
     // Kapanırken gelen başka çerçeve yok sayılır.
-    h.c.cerceve_geldi(nesil, ajanda_cekirdek::model::AjandaAsagi::Esitlendi { rev: 1 }.kodla()).unwrap();
+    h.c.cerceve_geldi(nesil, ajanda_cekirdek::model::AjandaAsagi::Esitlendi { rev: 1 }.kodla_surum(ajanda_cekirdek::model::Surum::V3)).unwrap();
     h.c.baglanti_kapandi(nesil, None).unwrap();
     assert_eq!(h.c.baglanti_durumu().unwrap().asama, BaglantiAsamasi::Kopuk);
 }
@@ -120,7 +120,7 @@ fn yarin(saat: i64) -> i64 {
 }
 
 fn asagi(m: ajanda_cekirdek::model::AjandaAsagi) -> String {
-    m.kodla()
+    m.kodla_surum(ajanda_cekirdek::model::Surum::V3)
 }
 
 #[test]
@@ -747,7 +747,7 @@ fn govdesi(k: &ajanda_cekirdek::model::AjandaKaydi) -> KayitGovdesi {
 #[test]
 fn duzenleme_yalniz_kullanicinin_degistirdigi_alanlari_gonderir() {
     use ajanda_cekirdek::kopru::tipler::DuzenlemeTemeli;
-    use ajanda_cekirdek::model::{AjandaDegisiklik, AjandaIslem, AjandaYukari, Alan, ajanda_yukari_coz};
+    use ajanda_cekirdek::model::{AjandaDegisiklik, AjandaIslem, AjandaYukari, Alan, Surum, ajanda_yukari_coz_surum};
     let mut h = eslesmis("duzenleme-temel");
     let k = h.pc.disaridan_ekle("k_dis", &govde("Dişçi", Some(an("2026-11-26", "15:00"))), false);
     h.pc_degisti(k);
@@ -769,7 +769,7 @@ fn duzenleme_yalniz_kullanicinin_degistirdigi_alanlari_gonderir() {
     h.c.duzenle("k_dis".into(), Some(temel.clone()), yeni).unwrap();
     let giden = std::mem::take(&mut *h.baglanti.as_ref().unwrap().tasima.giden.lock().unwrap());
     assert_eq!(giden.len(), 1);
-    let Ok(AjandaYukari::Islem { islem: AjandaIslem::Guncelle { degisiklik, temel_revizyon, .. }, .. }) = ajanda_yukari_coz(&giden[0]) else {
+    let Ok((_, AjandaYukari::Islem { islem: AjandaIslem::Guncelle { degisiklik, temel_revizyon, .. }, .. })) = ajanda_yukari_coz_surum(&giden[0], Some(Surum::V3)) else {
         panic!("guncelle bekleniyordu: {}", giden[0])
     };
     assert_eq!(degisiklik, AjandaDegisiklik { aciklama: Alan::Deger("Dolgu".into()), ..Default::default() });

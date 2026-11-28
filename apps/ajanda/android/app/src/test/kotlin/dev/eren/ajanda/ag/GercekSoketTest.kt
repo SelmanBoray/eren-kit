@@ -197,7 +197,7 @@ class GercekSoketTest {
                 assertTrue(sv.baglantiyiBekle())
                 val istek = sv.gelen() ?: error("pair_request gelmedi")
                 assertTrue(istek.contains("\"type\":\"pair_request\""))
-                sv.gonder("""{"v":2,"type":"pair_result","ok":false,"code":"eslestirme_kodu_gecersiz"}""")
+                sv.gonder("""{"v":3,"type":"pair_result","ok":false,"code":"eslestirme_kodu_gecersiz"}""")
                 // Çekirdek `Tasima.kapat` dedi: kapanış çerçevesi sunucuya ulaştı.
                 assertEquals(1000, sv.kapanisKodlari.poll(5, TimeUnit.SECONDS))
                 assertEquals(

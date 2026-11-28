@@ -1,0 +1,81 @@
+{
+  "aciklama": "kopru-ajanda.test.ts 'temsil denetimi' için sabit kopya: eski servis sürümlerinin hello şeması, AjandaPcCagri'si ve hello reddi, kapalı PC rolünün reddi (git show <commit>:<yol> kesitleri, blob kimlikleriyle). Git'e bağımlı değildir; git varsa ayrı test kesitleri ve blob kimliklerini git'le doğrular.",
+  "surumler": {
+    "55948ea": {
+      "commit": "55948ea4818bf72999d3d908753739e0c014ae2a",
+      "protokol": {
+        "yol": "apps/phone/protocol/src/ajanda-arac.ts",
+        "blob": "7e4832cfe6275181b950db2490e47b642ccf6b86",
+        "arac_v3_geciyor": false,
+        "kesitler": {
+          "hello": "export const AjandaKopruHello = mesaj(\"kopru_hello\", { rol: AjandaKopruRolu, jeton: Jeton });",
+          "pc_cagri": "export const AjandaPcCagri = z.strictObject({ arac_cagri_id: AracCagriId.optional(), oturum_id: OpakId.optional() });",
+          "yukari": "export const AjandaKopruYukari = z.discriminatedUnion(\"type\", [AjandaKopruHello, AjandaKopruIstek, KopruIptal]);"
+        },
+        "uyarlayici_geciyor": false
+      },
+      "sunucu": {
+        "yol": "apps/phone/server/src/ajanda-kopru-sunucu.ts",
+        "blob": "2818e1dc29be524eb60a9bf96fea290ed9839dc9",
+        "kesitler": {
+          "ret_cagrisi": "      reddet(bag, cozum.kod === \"protokol_uyumsuz\" ? \"protokol_uyumsuz\" : \"yetkisiz\", \"cerceve_gecersiz\");",
+          "reddet": "  const reddet = (bag: Baglanti, code: HataKodu, neden: string, ek: GunlukAlanlari = {}): void => {\n    gunluk.uyari(MODUL, \"el_sikisma_ret\", { code, neden, ...ek });\n    yaz(bag, { v: PROTOKOL_SURUMU, type: \"kopru_ret\", code });\n    baglantiKapat(bag);",
+          "pc_kapali_reddi": "        pcReddet(bag, \"yetkisiz\", \"pc_kapali\", { rol: m.rol });"
+        }
+      }
+    },
+    "5c6759f": {
+      "commit": "5c6759f2a07e2d230ebf797469d2f9785d666535",
+      "ayni": "55948ea",
+      "aciklama": "Kullanıcılarda kurulu sürüm. İki dosyası 55948ea'nınkiyle bayt bayt aynıdır (aynı blob); kesitler 55948ea'dadır, git testi blob eşitliğini denetler."
+    },
+    "d7bf303": {
+      "commit": "d7bf30325a1b553b8c45e22df32df94d58557d88",
+      "protokol": {
+        "yol": "apps/phone/protocol/src/ajanda-arac.ts",
+        "blob": "93b4cf423d148ae2da1502972d8d524213ad50b4",
+        "arac_v3_geciyor": false,
+        "kesitler": {
+          "hello": "export const AjandaKopruHello = mesaj(\"kopru_hello\", { rol: AjandaKopruRolu, jeton: Jeton, surec_id: OpakId.optional() }).superRefine((m, ctx) => {",
+          "pc_cagri": "export const AjandaPcCagri = z.strictObject({ arac_cagri_id: AracCagriId.optional(), oturum_id: OpakId.optional() });",
+          "yukari": "export const AjandaKopruYukari = z.discriminatedUnion(\"type\", [AjandaKopruHello, AjandaKopruIstek, KopruIptal]);",
+          "surec_id_kurali": "  if (m.surec_id !== undefined && m.rol !== \"pc_oturumu\") ctx.addIssue({ code: \"custom\", path: [\"surec_id\"], message: \"surec_id yalnız pc_oturumu hello'sunda\" });"
+        },
+        "uyarlayici_geciyor": false
+      },
+      "sunucu": {
+        "yol": "apps/phone/server/src/ajanda-kopru-sunucu.ts",
+        "blob": "d9db2c3c498ea317cca51a0710d94136904af7b8",
+        "kesitler": {
+          "ret_cagrisi": "      reddet(bag, cozum.kod === \"protokol_uyumsuz\" ? \"protokol_uyumsuz\" : \"yetkisiz\", \"cerceve_gecersiz\");",
+          "reddet": "  const reddet = (bag: Baglanti, code: HataKodu, neden: string, ek: GunlukAlanlari = {}): void => {\n    gunluk.uyari(MODUL, \"el_sikisma_ret\", { code, neden, ...ek });\n    yaz(bag, { v: PROTOKOL_SURUMU, type: \"kopru_ret\", code });\n    baglantiKapat(bag);",
+          "pc_kapali_reddi": "        pcReddet(bag, \"yetkisiz\", \"pc_kapali\", { rol: m.rol });"
+        }
+      }
+    },
+    "3600780": {
+      "commit": "3600780956c5343b8fa7a9323d5eeb451663cc28",
+      "protokol": {
+        "yol": "apps/phone/protocol/src/ajanda-arac.ts",
+        "blob": "4d17abced740db4b171cd006178613e9aa59e2dd",
+        "arac_v3_geciyor": true,
+        "uyarlayici_geciyor": false,
+        "kesitler": {
+          "hello": "export const AjandaKopruHello = mesaj(\"kopru_hello\", {\n  rol: AjandaKopruRolu,\n  jeton: Jeton,\n  surec_id: OpakId.optional(),\n  arac_v3: z.literal(true).optional(),\n}).superRefine((m, ctx) => {",
+          "pc_cagri": "export const AjandaPcCagri = z.strictObject({ arac_cagri_id: AracCagriId.optional(), oturum_id: OpakId.optional() });",
+          "yukari": "export const AjandaKopruYukari = z.discriminatedUnion(\"type\", [AjandaKopruHello, AjandaKopruIstek, KopruIptal]);",
+          "surec_id_kurali": "  if (m.surec_id !== undefined && m.rol !== \"pc_oturumu\") ctx.addIssue({ code: \"custom\", path: [\"surec_id\"], message: \"surec_id yalnız pc_oturumu hello'sunda\" });"
+        }
+      },
+      "sunucu": {
+        "yol": "apps/phone/server/src/ajanda-kopru-sunucu.ts",
+        "blob": "b40482a56ca03c4adf6a1dfd991123b290a002f4",
+        "kesitler": {
+          "ret_cagrisi": "      reddet(bag, cozum.kod === \"protokol_uyumsuz\" ? \"protokol_uyumsuz\" : \"yetkisiz\", \"cerceve_gecersiz\");",
+          "reddet": "  const reddet = (bag: Baglanti, code: HataKodu, neden: string, ek: GunlukAlanlari = {}): void => {\n    gunluk.uyari(MODUL, \"el_sikisma_ret\", { code, neden, ...ek });\n    yaz(bag, { v: PROTOKOL_SURUMU, type: \"kopru_ret\", code });\n    baglantiKapat(bag);",
+          "pc_kapali_reddi": "        pcReddet(bag, \"yetkisiz\", \"pc_kapali\", { rol: m.rol });"
+        }
+      }
+    }
+  }
+}

@@ -18,11 +18,12 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {
   AJANDA_BORU_ADI,
-  AJANDA_PC_ARAC_ACIKLAMALARI,
+  AJANDA_PC_ARAC_ACIKLAMALARI_V2,
   AJANDA_ROL_FIILLERI,
   AJANDA_SURUMU,
   AjandaKaydi,
   type AjandaYerelAn,
+  PROTOKOL_SURUMU,
   GUVENILMEZ_META,
   ajandaAsagiCoz,
   ajandaKimlikImzaMetni,
@@ -37,7 +38,9 @@ import {
   PC_ANAHTAR_GECERSIZ_METNI,
   PC_ANAHTAR_YOK_METNI,
   PC_KOPUK_METNI,
+  PC_KOPRU_UYARLAYICILARI,
 } from "../src/kopru.ts";
+import type { PcKopruUyarlayicisi } from "../src/kopru.ts";
 import { pcKancaCalistir } from "../src/kanca.ts";
 import type { AnahtarPortu, Ayar, BoruBaglantisi, BoruSunucuIstegi } from "../src/sozlesme.ts";
 import { sahteDunya, sahteGunluk, sahteRastgele } from "./sahte.ts";
@@ -236,13 +239,14 @@ async function ortamKur(sec: { depoYolu?: string } = {}) {
     /**
      * Kullanıcının Claude Code'una kayıtlı PC köprüsü: gerçek `kopru.ts`, model tarafı bellek içi MCP. `surecId`:
      * köprünün ebeveyni (hello'da bildirir, `giris`'teki `process.ppid`); verilmezse süreç bildirmez (eski köprü gibi).
+     * `uyarlayici`: köprünün PC ajanı (`--uyarlayici`); verilmezse varsayılan (`claude-code`).
      */
-    pcKoprusu: async (oturumId: string = OTURUM, surecId?: string): Promise<Client> => {
+    pcKoprusu: async (oturumId: string = OTURUM, surecId?: string, uyarlayici?: PcKopruUyarlayicisi): Promise<Client> => {
       const [mcpKopru, mcpIstemci] = InMemoryTransport.createLinkedPair();
       const calisan = await ajandaKopruCalistir(
         { rol: "pc_oturumu", jeton: "", boruAdi: AJANDA_BORU_ADI, jetonOku: () => dosya.anahtar, oturumId },
         { transport: mcpKopru, baglan, rastgele: sahteRastgele(901), gunluk: sahteGunluk(), bekle: (ms) => uyu(Math.min(ms, 20)) },
-        undefined,
+        uyarlayici,
         surecId,
       );
       const istemci = new Client({ name: "sahte-claude-code", version: "0.0.0" }, { capabilities: {} });
@@ -348,8 +352,9 @@ describe("birleşim: PC oturumu (araç öncesi kancalı Claude Code)", () => {
 
     const { tools } = await istemci.listTools();
     assert.deepEqual(tools.map((t) => t.name).sort(), [...AJANDA_ROL_FIILLERI.pc_oturumu].sort());
+    // Ayar `ajanda_arac_v3` verilmedi: PC tanımları v2 yüzünün (v3 öncesi metin + PC eki).
     for (const t of tools) {
-      assert.equal(t.description, AJANDA_PC_ARAC_ACIKLAMALARI[t.name as keyof typeof AJANDA_PC_ARAC_ACIKLAMALARI]);
+      assert.equal(t.description, AJANDA_PC_ARAC_ACIKLAMALARI_V2[t.name as keyof typeof AJANDA_PC_ARAC_ACIKLAMALARI_V2]);
       assert.equal(t.outputSchema, undefined);
     }
 
@@ -482,6 +487,84 @@ describe("birleşim: PC oturumu (araç öncesi kancalı Claude Code)", () => {
     const a3 = await o.arac(a, "ajanda_ekle", { ...simdi, baslik: "Temizden sonra" }, "toolu_t3");
     assert.ok(!a3.metin.includes("pc_tur:"), a3.metin);
     assert.equal(ajanda.kayitlar().at(-1)!.taslak, false);
+  });
+});
+
+/**
+ * Uçtan uca: gerçek köprü (`ajandaKopruCalistir`, iki uyarlayıcı), gerçek boru sunucusu, gerçek PC defteri, gerçek
+ * araç işleyicisi (`ajanda-araclar`) ve depo. Codex yalnız taslak ajanıdır: köprüsü çağrı kimliğini hiç okumaz, aynı
+ * çağrı kimliğine aynı süreçten geçerli bir Claude Code tasdiki olsa da kayıt depoda taslaktır. Claude Code köprüsü
+ * eşleşen tasdikle taslaksız yazar. `arac` günlük olayı köprünün uyarlayıcısını taşır (teşhis için).
+ */
+describe("birleşim: Codex köprüsü yalnız taslak, Claude Code köprüsü tasdikle taslaksız (gerçek köprü → defter → araç → depo)", () => {
+  const SUREC = "3060";
+  const simdi = disci({ tarih: "2026-11-25", saat: "14:30" });
+  /** Codex'in `tools/call` `_meta`'sı (HARNESS-H3-OLCUM.md 1, 6) ve olası Claude anahtarı aynı kimlikle. */
+  const codexMeta = (id: string): J => ({ callId: id, threadId: "thr_1", turn_trigger: "user", [CLAUDE_CODE_ARAC_KIMLIGI]: id });
+  const kayitId = (metin: string): string => {
+    const m = /eklendi \(kayit (\S+)\)/.exec(metin);
+    assert.ok(m, metin);
+    return m[1]!;
+  };
+  const aracOlaylari = (o: Ortam, bas: number): J[] =>
+    o.d.kayit.satirlar.slice(bas).map((x) => JSON.parse(x) as J).filter((x) => x["olay"] === "arac" && x["yol"] === "pc_araci");
+
+  it("Codex köprüsüyle ajanda_ekle: kayıt depoda taslak (aynı kimliğe Claude tasdiki olsa da); Claude köprüsüyle eşleşen tasdik: kayıt taslaksız; arac olayı uyarlayıcıyı taşır", async () => {
+    const o = await ortamKur();
+    await o.baslat();
+    o.anahtarUret();
+    const codex = await o.pcKoprusu(OTURUM, SUREC, PC_KOPRU_UYARLAYICILARI.codex);
+    const claude = await o.pcKoprusu(OTURUM, SUREC);
+    const bas = o.d.kayit.satirlar.length;
+
+    // Codex: araç öncesi kancanın eşdeğeri bile (aynı süreçten, aynı çağrı kimliğiyle Claude Code tasdiki) işe yaramaz.
+    await o.kanca(aracGirdisi("ajanda_ekle", "call_cx1", "istem-1"), "cli", SUREC);
+    const r = await codex.callTool({ name: "ajanda_ekle", arguments: simdi, _meta: codexMeta("call_cx1") });
+    await bosalt();
+    const cx = (r.content as Array<{ text: string }>)[0]!.text;
+    assert.match(cx, /ajanda_ekle: eklendi/, cx);
+    assert.match(cx, /pc_tur: sentetik \(cagri_kimligi_yok\)\. .*Codex yalnız taslak ajanıdır/);
+    const taslak = o.servis.depo.ajandaKaydiGetir(kayitId(cx));
+    assert.ok(taslak !== null);
+    assert.equal(taslak.taslak, true, "Codex'in kaydı depoda taslak değil");
+    assert.deepEqual([taslak.kaynak.yol, taslak.kaynak.tur_kokeni], ["pc_araci", "sentetik"]);
+
+    // Claude Code: eşleşen tasdik (aynı süreç, aynı çağrı kimliği) → insan, taslaksız.
+    const c = await anaCagrisi(o, claude, "ajanda_ekle", { ...simdi, baslik: "Claude'dan" }, "toolu_cc1");
+    assert.ok(!c.metin.includes("pc_tur:"), c.metin);
+    const kesin = o.servis.depo.ajandaKaydiGetir(kayitId(c.metin));
+    assert.ok(kesin !== null);
+    assert.equal(kesin.taslak, false);
+    assert.deepEqual([kesin.kaynak.yol, kesin.kaynak.tur_kokeni], ["pc_araci", "insan"]);
+
+    // Günlük: her çağrının `arac` olayı kendi köprüsünün uyarlayıcısını taşır (teşhis yanlış ajana neden söylemesin).
+    const olaylar = aracOlaylari(o, bas);
+    assert.deepEqual(olaylar.map((x) => [x["uyarlayici"], x["pc_karar"], x["cagri_kimligi"]]), [
+      ["codex", "cagri_kimligi_yok", "yok"],
+      ["claude-code", "insan", "var"],
+    ]);
+  });
+
+  it("uyarlayıcı bildirmeyen köprü (eski köprünün ham hello'su): arac olayında uyarlayici alanı yok", async () => {
+    const o = await ortamKur();
+    await o.baslat();
+    const jeton = o.anahtarUret();
+    const bas = o.d.kayit.satirlar.length;
+    const istek = o.d.boru.istek(AJANDA_BORU_ADI);
+    assert.ok(istek !== null);
+    const bag = boruCifti(istek);
+    const gelen: J[] = [];
+    bag.satirDinle((x) => void gelen.push(JSON.parse(x) as J));
+    bag.satirYaz(JSON.stringify({ v: PROTOKOL_SURUMU, type: "kopru_hello", rol: "pc_oturumu", jeton, surec_id: SUREC }));
+    await bosalt();
+    assert.equal(gelen[0]?.["type"], "kopru_welcome");
+    bag.satirYaz(JSON.stringify({ v: PROTOKOL_SURUMU, type: "istek", istek_id: "i1", fiil: "ajanda_listele", girdi: {}, cagri: { oturum_id: OTURUM } }));
+    await bosalt();
+    assert.equal(gelen[1]?.["ok"], true, JSON.stringify(gelen[1]));
+    const olaylar = aracOlaylari(o, bas);
+    assert.equal(olaylar.length, 1);
+    assert.equal("uyarlayici" in olaylar[0]!, false, JSON.stringify(olaylar[0]));
+    bag.kapat();
   });
 });
 

@@ -9,8 +9,8 @@ import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { afterEach, describe, it } from "node:test";
 import {
-  AJANDA_ARACLARI,
   AJANDA_PC_SINIRLARI,
+  ajandaAraclari,
   type AjandaFiili,
   type AjandaKaydi,
   AjandaKaydi as AjandaKaydiSemasi,
@@ -53,7 +53,8 @@ const DISCI: AjandaFiilGirdisi<"ajanda_ekle"> = {
 
 let aracNo = 0;
 
-const kur = (simdi = T0) => {
+/** `aracV3`: ayar `ajanda_arac_v3` (bu dosyanın testleri bugünkü v3 yüzüyle; kapalı yüz ayrıca sınanır). */
+const kur = (simdi = T0, aracV3 = true) => {
   const zaman = sahteZaman(simdi);
   const gunluk = sahteGunluk();
   const depo = depoAc({ yol: ":memory:", saat: zaman.saat, gunluk });
@@ -66,6 +67,7 @@ const kur = (simdi = T0) => {
     rastgele: sahteRastgele(),
     gunluk,
     turBaglami: () => telefonTuru.tur,
+    aracV3,
   });
   ajanda.baslat();
 
@@ -125,7 +127,7 @@ const kur = (simdi = T0) => {
     >;
     const s = await isleyici(girdi, baglam, new AbortController().signal);
     assert.ok(s.ok, `boru hatası: ${s.ok ? "" : s.code}`);
-    AJANDA_ARACLARI[fiil].cikti.parse(s.deger);
+    ajandaAraclari(aracV3)[fiil].cikti.parse(s.deger);
     // PC çağrısında karar her zaman döner; telefon çağrısında hiç dönmez.
     assert.equal(s.pc_karar === undefined, baglam.rol !== "pc_oturumu");
     sonKarar = s.pc_karar;
@@ -442,6 +444,145 @@ describe("PC oturumu: tekilleştirme kapsamı ve telefon yolu", () => {
   });
 });
 
+describe("PC oturumu: başka oturumun eş taslağı (oturumlar arası tekilleştirme)", () => {
+  /** Alt agent'ın taslağı: insanın görmediği açıklama, hatırlatma, bağlantı, simge, varış. */
+  const ALT_EKI = {
+    aciklama: "ALT-AGENT-ACIKLAMASI",
+    hatirlatmalar: [{ tur: "once" as const, dk: 15 }],
+    baglantilar: [{ url: "https://alt-agent.example/x" }],
+    simge: "is",
+    bolge: "İŞ YERİ",
+    varis: { cikista: true as const },
+  };
+  const INSAN: AjandaFiilGirdisi<"ajanda_ekle"> = { ...DISCI, bolge: "iş yeri", zaman: { ...DISCI.zaman!, ifade: "26'sı 15:00" } as typeof DISCI.zaman };
+
+  it("başka oturumun ana ajanı onaylar ama taslağın alanları taşınmaz: kayıt insanın çağrısının doğuracağı hal; kimlik ve geçmiş korunur", async () => {
+    const o = kur();
+    const taslakC = await o.ekle({ ...DISCI, ...ALT_EKI }, o.pcBaglam(o.tasdik({ alt_agent: true })));
+    const id = kimlik(taslakC);
+    const taslak = o.kayit(id);
+    assert.equal(taslak.taslak, true);
+
+    const c = await o.ekle(INSAN, o.pcBaglam(o.tasdik({ oturum_id: OTURUM_2, istem_id: "istem-b" })));
+    assert.equal(c.sonuc, "onaylandi");
+    assert.equal(kimlik(c), id, "aynı kayıt");
+    assert.ok(c.sonuc === "onaylandi");
+    assert.deepEqual(c.uygulanan_alanlar, ["zaman", "bolge"], "yalnız insanın söylediği");
+    const k = o.kayit(id);
+    // İnsanın çağrısı tek başına ne doğuracaksa (yeni bir depoda aynı çağrı).
+    const tek = kur();
+    const tekK = tek.kayit(kimlik(await tek.ekle(INSAN, tek.pcBaglam(tek.tasdik({ oturum_id: OTURUM_2, istem_id: "istem-b" })))));
+    for (const a of ["tur", "baslik", "aciklama", "zaman", "hatirlatmalar", "tekrar", "simge", "bolge", "bolge_konumu", "varis", "baglantilar", "ekler", "durum", "elle_alanlar", "ornekler"] as const) {
+      assert.deepEqual(k[a], tekK[a], a);
+    }
+    assert.equal(k.taslak, false);
+    assert.deepEqual(k.hatirlatmalar, [{ tur: "once", dk: 60 }]);
+    assert.equal(k.aciklama, undefined);
+    // Kimlik, kaynak izi (taslağı doğuran alt agent) ve oluşturma anı korunur.
+    assert.deepEqual(k.kaynak, taslak.kaynak);
+    assert.equal(k.olusturma_ms, taslak.olusturma_ms);
+    // Geçmiş: doğum satırı yerinde; onay satırı taşınmayanları öncesi ve sonrasıyla (kalkan null) gösterir.
+    const g = o.depo.ajandaGecmisi({ kayit_id: id, adet: 5 });
+    assert.equal(g.length, 2);
+    const onay = g.find((x) => x.islem === "onayla");
+    assert.ok(onay !== undefined);
+    assert.deepEqual(onay.yazar, { yol: "pc_araci", tur_kokeni: "insan", oturum_id: OTURUM_2 });
+    assert.deepEqual(onay.onceki, {
+      aciklama: "ALT-AGENT-ACIKLAMASI",
+      zaman: taslak.zaman,
+      hatirlatmalar: [{ tur: "once", dk: 15 }],
+      simge: "is",
+      bolge: "İŞ YERİ",
+      varis: { cikista: true },
+      baglantilar: [{ url: "https://alt-agent.example/x" }],
+      taslak: true,
+    });
+    assert.deepEqual(onay.sonraki, {
+      aciklama: null,
+      zaman: k.zaman,
+      hatirlatmalar: [{ tur: "once", dk: 60 }],
+      simge: null,
+      bolge: "iş yeri",
+      varis: null,
+      baglantilar: null,
+      taslak: false,
+    });
+    assert.ok(g.some((x) => x.islem === "ekle" && x.yazar.tur_kokeni === "sentetik" && x.yazar.oturum_id === OTURUM));
+  });
+
+  it("aynı oturumun ana ajanı kendi alt agent'ının taslağını onaylayınca alanlar taşınır (bugünkü kural)", async () => {
+    const o = kur();
+    const id = kimlik(await o.ekle({ ...DISCI, ...ALT_EKI }, o.pcBaglam(o.tasdik({ alt_agent: true }))));
+    const c = await o.ekle(INSAN, o.pcBaglam(o.tasdik()));
+    assert.equal(c.sonuc, "onaylandi");
+    assert.ok(c.sonuc === "onaylandi");
+    assert.deepEqual(c.uygulanan_alanlar, []);
+    const k = o.kayit(id);
+    assert.equal(k.taslak, false);
+    assert.equal(k.aciklama, "ALT-AGENT-ACIKLAMASI");
+    assert.deepEqual(k.hatirlatmalar, [{ tur: "once", dk: 15 }]);
+    assert.deepEqual(k.varis, { cikista: true });
+    assert.equal(k.bolge, "İŞ YERİ", "aynı yer, taslağın yazılışı");
+    assert.equal(k.zaman?.kesinlik === "an" && k.zaman.ifade, "yarın 3'te", "eşin sözü korunur");
+  });
+
+  it("başka oturumun tasdiksiz (sentetik) taslağı da: insan hatırlatma verirse o yazılır; varışlıda varsayılan zamana göre", async () => {
+    const o = kur();
+    const sut = { tur: "gorev" as const, baslik: "Süt al", bolge: "market" };
+    const id = kimlik(await o.ekle({ ...sut, aciklama: "taslak", varis: {}, hatirlatmalar: [{ tur: "once", dk: 5 }] }, o.pcBaglam(undefined, OTURUM)));
+    assert.equal(o.karar(), "cagri_kimligi_yok");
+    const c = await o.ekle({ ...sut, varis: {} }, o.pcBaglam(o.tasdik({ oturum_id: OTURUM_2 })));
+    assert.equal(c.sonuc, "onaylandi");
+    const k = o.kayit(id);
+    assert.deepEqual(k.hatirlatmalar, [], "zamansız varışlı: varsayılan []");
+    assert.equal(k.aciklama, undefined);
+    assert.deepEqual(k.elle_alanlar, ["tur", "baslik", "bolge", "varis"]);
+  });
+});
+
+describe("PC oturumu: v3 araç yüzü kapalı (ayar ajanda_arac_v3 verilmedi)", () => {
+  /** Alt agent'ın v2 taslağı: insanın görmediği açıklama ve hatırlatma. */
+  const ALT_V2 = { aciklama: "ALT-AGENT-ACIKLAMASI", hatirlatmalar: [{ tur: "once" as const, dk: 15 }] };
+  const INSAN: AjandaFiilGirdisi<"ajanda_ekle"> = { ...DISCI, zaman: { ...DISCI.zaman!, ifade: "26'sı 15:00" } as typeof DISCI.zaman };
+
+  it("ana ajanın v3 alanlı çağrısı (bölge, varış, simge, bağlantı) işleyiciye geçmez, kayıt doğmaz", async () => {
+    const o = kur(T0, false);
+    for (const g of [
+      { ...DISCI, bolge: "iş yeri", varis: {} },
+      { ...DISCI, simge: "saglik" },
+      { ...DISCI, baglantilar: [{ url: "https://ornek.com" }] },
+    ]) {
+      const isleyici = o.ajanda.araclar.ajanda_ekle as (g: unknown, b: AjandaKopruBaglami, s: AbortSignal) => Promise<unknown>;
+      assert.deepEqual(await isleyici(g, o.pcBaglam(o.tasdik()), new AbortController().signal), { ok: false, code: "ic_hata" });
+    }
+    assert.equal(o.depo.ajandaKayitlari({}).length, 0);
+    const c = await o.ekle(DISCI, o.pcBaglam(o.tasdik()));
+    assert.equal(c.sonuc, "eklendi");
+    assert.equal(o.karar(), "insan");
+    assert.equal("bolge_yeni" in c, false);
+  });
+
+  it("başka oturumun eş taslağı (9b85b09) kapalıyken de: insanın vermediği alan taşınmaz, varsayılan hatırlatma yazılır", async () => {
+    const o = kur(T0, false);
+    const id = kimlik(await o.ekle({ ...DISCI, ...ALT_V2 }, o.pcBaglam(o.tasdik({ alt_agent: true }))));
+    assert.equal(o.kayit(id).taslak, true);
+    const c = await o.ekle(INSAN, o.pcBaglam(o.tasdik({ oturum_id: OTURUM_2, istem_id: "istem-b" })));
+    assert.equal(c.sonuc, "onaylandi");
+    assert.ok(c.sonuc === "onaylandi");
+    assert.deepEqual(c.uygulanan_alanlar, ["zaman"]);
+    const k = o.kayit(id);
+    assert.equal(k.taslak, false);
+    assert.equal(k.aciklama, undefined);
+    assert.deepEqual(k.hatirlatmalar, [{ tur: "once", dk: 60 }]);
+    // Aynı oturumun ana ajanı onaylarsa taslağın alanları taşınır (bugünkü kural).
+    const p = kur(T0, false);
+    const id2 = kimlik(await p.ekle({ ...DISCI, ...ALT_V2 }, p.pcBaglam(p.tasdik({ alt_agent: true }))));
+    assert.equal((await p.ekle(INSAN, p.pcBaglam(p.tasdik()))).sonuc, "onaylandi");
+    assert.equal(p.kayit(id2).aciklama, "ALT-AGENT-ACIKLAMASI");
+    assert.deepEqual(p.kayit(id2).hatirlatmalar, [{ tur: "once", dk: 15 }]);
+  });
+});
+
 describe("PC oturumu: normalize tasdik çerçevesi (harness'tan bağımsız karar)", () => {
   it("eski çerçeve (H1 öncesi kanca) bugünkü kararı birebir verir: insan, cagri_kimligi_yok, tasdik_yok, alt_agent, etkilesimsiz; T5 uygulanmaz (eski ve yeni köprü)", async () => {
     // `undefined`: eski köprü (hello'da süreç yok); "4242": yeni köprü, hangi süreci bildirirse bildirsin.
@@ -499,6 +640,58 @@ describe("PC oturumu: normalize tasdik çerçevesi (harness'tan bağımsız kara
       const g = o.gunluk.girdiler as ReadonlyArray<{ olay: string }>;
       assert.ok(g.some((x) => x.olay === "pc_tasdik_yetersiz"), JSON.stringify(sec));
     }
+  });
+});
+
+/**
+ * Codex CLI yalnız taslaktır (`docs/HARNESS.md` 3.1 T6; ölçüm `HARNESS-H3-OLCUM.md` bölüm 6). Köprüsü
+ * (`kopru.ts --uyarlayici codex`) çağrı kimliğini okumaz, `codex` tasdik çerçevesinin uyarlayıcı listesinde yoktur.
+ * Hiçbir yoldan insan turu olmaz, kayıt hep taslaktır; taslak olmayan kayda dokunamaz.
+ */
+describe("PC oturumu, Codex: hiçbir yoldan insan turu yok (yalnız taslak)", () => {
+  const P = "4242";
+
+  it("kanca yok: Codex köprüsünün çağrısı (çağrı kimliksiz, süreçli) cagri_kimligi_yok, kayıt taslak", async () => {
+    const o = kur();
+    const k = o.kayit(kimlik(await o.ekle(DISCI, o.pcBaglam(undefined, undefined, "pcb_codex", P))));
+    assert.equal(o.karar(), "cagri_kimligi_yok");
+    assert.equal(k.taslak, true);
+    assert.equal(k.kaynak.tur_kokeni, "sentetik");
+  });
+
+  it("sahte codex tasdiki (aynı süreç, ana, etkileşimli, her sürüm): çağrı kimliği gelse bile tasdik_yok, kayıt taslak", async () => {
+    for (const surum of [1, 2, 1_000_000]) {
+      for (const kopruSurec of [P, undefined]) {
+        const o = kur();
+        const id = o.tasdikNormal({ uyarlayici: { ad: "codex", surum }, surec_id: P });
+        const k = o.kayit(kimlik(await o.ekle(DISCI, o.pcBaglam(id, OTURUM, "pcb_codex", kopruSurec))));
+        assert.equal(o.karar(), "tasdik_yok", `sürüm ${surum}, köprü süreci ${String(kopruSurec)}`);
+        assert.equal(k.taslak, true);
+        const g = o.gunluk.girdiler as ReadonlyArray<{ olay: string; alanlar?: Record<string, unknown> }>;
+        assert.deepEqual(
+          g.filter((x) => x.olay === "pc_tasdik_yetersiz").map((x) => [x.alanlar?.["neden"], x.alanlar?.["uyarlayici"]]),
+          [["uyarlayici", "codex"]],
+        );
+      }
+    }
+  });
+
+  it("aynı süreçte geçerli claude-code tasdiki olsa da Codex köprüsü (çağrı kimliği yok) onu tüketemez; taslak kayda dokunamaz", async () => {
+    const o = kur();
+    const korunan = kimlik(await o.ekle({ ...DISCI, baslik: "İnsan" }, o.pcBaglam(o.tasdikNormal({ surec_id: P }), OTURUM, "pcb_claude", P)));
+    assert.equal(o.karar(), "insan", "denetim: düzenek insan turu üretebiliyor");
+    const id = o.tasdikNormal({ surec_id: P });
+    const k = o.kayit(kimlik(await o.ekle({ ...DISCI, baslik: "Codex" }, o.pcBaglam(undefined, undefined, "pcb_codex", P))));
+    assert.equal(o.karar(), "cagri_kimligi_yok");
+    assert.equal(k.taslak, true);
+    // Codex'in sentetik turu taslak olmayan (insan) kayda dokunamaz.
+    const g = await o.guncelle({ kayit_id: korunan, degisiklik: { durum: "tamam" } }, o.pcBaglam(undefined, undefined, "pcb_codex", P));
+    assert.equal(o.karar(), "cagri_kimligi_yok");
+    assert.deepEqual(g, { sonuc: "ret", mesaj_ani: MESAJ_ANI, neden: "sentetik_turda_izinsiz" });
+    assert.equal(o.kayit(korunan).durum, "acik");
+    // Claude'un tasdiki sahibine kaldı (Codex onu görmedi).
+    await o.ekle({ ...DISCI, baslik: "Sahibi" }, o.pcBaglam(id, OTURUM, "pcb_claude", P));
+    assert.equal(o.karar(), "insan");
   });
 });
 
@@ -711,15 +904,19 @@ describe("PC oturumu, T5: kilit yok (her yol, yeni ve eski köprü)", () => {
       assert.equal(d.kopru(tur, Q, S1, "pcb_resume")(yabanci), "insan", "tasdik sahibine kaldı");
     });
 
-    it(`tek süreçte birden çok oturum (her birinin köprüsü, hepsi aynı süreç): ikisi de defalarca /clear yapar, kilitlenmez; ${tur} köprü`, () => {
+    it(`tek süreçte birden çok oturum (her birinin köprüsü, hepsi aynı süreç): ikisi de defalarca /clear yapar, kilitlenmez; başka süreç: yeni köprü tüketemez, eski köprünün yeni bağlantısı ilk tasdikte tüketir (kabul edilen zayıflama); ${tur} köprü`, () => {
       const d = defter();
       const ka = d.kopru(tur, P, S1, "pcb_a");
       const kb = d.kopru(tur, P, S4, "pcb_b");
       // B'nin ilk çağrısı /clear'dan sonra gelir; A'nınki önce.
       const sira: Array<[typeof ka, string]> = [[ka, S1], [kb, S3], [ka, S2], [kb, S4], [ka, S3], [kb, S2], [kb, S1], [ka, S4]];
       hepsiInsan(sira.map(([k, s]) => k(d.tasdik(s, P))), tur);
-      // Başka süreç yine tüketemez.
+      // Başka süreç: yeni köprü tüketemez. KABUL EDİLEN ZAYIFLAMA (eski köprü): süreç bildirmeyen köprünün yeni
+      // bağlantısının İLK tasdiki süreç denetimsizdir; başka sürecin bekleyen tasdikinin kimliğini sunarsa tüketir ve
+      // karar insan olur. Her yeniden bağlanmada tekrarlanır (HARNESS.md 4.2); dürüst köprü o kimliği bilemez.
       assert.equal(d.kopru(tur, Q, S1, "pcb_c")(d.tasdik(S1, P)), tur === "yeni" ? "tasdik_yok" : "insan");
+      // Bağlanma anı günlükte: yalnız eski köprüde, bağlantı başına bir kez (pcb_a, pcb_b, pcb_c).
+      assert.equal(d.olaylar("pc_kopru_surecsiz").length, tur === "yeni" ? 0 : 3);
     });
 
     it(`saatin geri gitmesi: o anki tasdik taslak (gelecekten), sonrakiler insan; ${tur} köprü`, () => {
@@ -756,6 +953,26 @@ describe("PC oturumu, T5: kilit yok (her yol, yeni ve eski köprü)", () => {
     // Kaldırılan olaylar hiç yazılmaz.
     for (const ad of ["pc_oturum_uyusmuyor", "pc_bag_birakildi", "pc_bag_katildi"]) assert.equal(d.olaylar(ad).length, 0, ad);
     assert.deepEqual(d.olaylar("pc_surec_uyusmuyor").map((a) => a?.["kopru_surec"]), ["ilk_gorus", "bildirildi", "bildirildi"]);
+    // Süreç bildirmeyen köprünün bağlanma anları (pcb_1, pcb_2, kapanıştan sonra yine pcb_1): yalnız tasdikin oturumu;
+    // süreç, bağlantı ve çağrı kimliği girmez. Yeni köprü (pcb_3) yazmaz.
+    assert.deepEqual(d.olaylar("pc_kopru_surecsiz"), [{ oturum_id: S1 }, { oturum_id: S1 }, { oturum_id: S1 }]);
+  });
+
+  it("pc_kopru_surecsiz: süreçsiz tasdikte (T5 uygulanmaz) ya da yeni köprüde yazılmaz; karar olaydan bağımsız", () => {
+    const d = defter();
+    const eski = d.kopru("eski", P, S1, "pcb_1");
+    const yeni = d.kopru("yeni", P, S1, "pcb_2");
+    assert.equal(yeni(d.tasdik(S1, P)), "insan");
+    assert.equal(d.olaylar("pc_kopru_surecsiz").length, 0, "yeni köprü");
+    d.pc.kanca.pc_arac(
+      PC_KANCA_ARACLARI.pc_arac.girdi.parse({ uyarlayici: { ad: "claude-code", surum: 1 }, cagri_id: "toolu_surecsiz", oturum_id: S1, istem_id: ISTEM, aktor: "ana", etkilesim: "etkilesimli" }),
+    );
+    assert.equal(eski("toolu_surecsiz"), "insan");
+    assert.equal(d.olaylar("pc_kopru_surecsiz").length, 0, "süreçsiz tasdik bağlamaz");
+    assert.equal(eski(d.tasdik(S2, P)), "insan");
+    assert.deepEqual(d.olaylar("pc_kopru_surecsiz"), [{ oturum_id: S2 }]);
+    assert.equal(eski(d.tasdik(S3, P)), "insan");
+    assert.equal(d.olaylar("pc_kopru_surecsiz").length, 1, "aynı bağlantıda bir kez");
   });
 
   it("sarmalayıcı (köprünün ebeveyni harness değil): o pencere hep taslak (güvenli yön), tasdik sahibine kalır", () => {

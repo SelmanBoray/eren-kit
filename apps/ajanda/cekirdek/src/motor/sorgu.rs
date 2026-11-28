@@ -12,12 +12,13 @@
 //! Bu sorgular yalnız `Depo` okur: köprü onları motor kilidini almadan ayrı bir okuma bağlantısında da
 //! çalıştırabilir (`kopru::Cekirdek`), böylece uzun bir telafi yazması arayüzü bekletmez.
 
+use super::kanal::{ERTELENEN_ATILDI, SatirErtelemesi, erteleme_surumu, kuyruk_ertelemeleri};
 use super::{Etkiler, Motor, Ortam};
 use crate::depo::{Depo, GorunenSuzgec};
 use crate::hata::CekirdekHatasi;
 use crate::kopru::tipler::{GecmisSayfasi, KayitGorunumu, ListeSorgusu, RetGirdisi, Sekme};
 use crate::model::metin::opak_id_mi;
-use crate::model::{AjandaYukari, IslemTuru, KayitGovdesi, KuyrukRetNedeni};
+use crate::model::{AjandaKaydi, AjandaYukari, IslemTuru, KayitGovdesi, KuyrukRetNedeni, Surum};
 
 fn suzgec(sorgu: &ListeSorgusu) -> GorunenSuzgec {
     let k = sorgu.kapalilar_dahil;
@@ -29,16 +30,48 @@ fn suzgec(sorgu: &ListeSorgusu) -> GorunenSuzgec {
     }
 }
 
+/// Görünen satırları köprünün kayıt görünümüne çevirir (liste, kayıt, takvim günü): ertelemede ("Erteleme",
+/// `kanal.rs`) kayıt başına `ertelenen` (bu serviste gitmeyen bekleyen satırı var: v3 değişikliği ya da
+/// arkasında sırası tutulan, `kuyruk_ertelemeleri`) ve `bekleyen` (bu serviste gidecek bekleyen satırı var).
+/// Erteleme yokken ya da kaydın bekleyen satırı yokken saklı `bekleyen` olduğu gibidir; kuyruk yalnız bekleyen
+/// kayıtlar için okunur.
+pub(crate) struct Gorunumcu(Option<Surum>);
+
+impl Gorunumcu {
+    pub(crate) fn ac(d: &Depo) -> Result<Self, CekirdekHatasi> {
+        Ok(Gorunumcu(erteleme_surumu(d)?))
+    }
+
+    pub(crate) fn gorunum(&self, d: &Depo, kayit: AjandaKaydi, bekleyen: bool) -> Result<KayitGorunumu, CekirdekHatasi> {
+        if self.0.is_none() || !bekleyen {
+            return Ok(KayitGorunumu { kayit, bekleyen, ertelenen: false });
+        }
+        let (mut gidecek, mut ertelenen) = (false, false);
+        let satirlar = d.kuyruk_kaydin(&kayit.kayit_id)?;
+        for (s, hal) in satirlar.iter().zip(kuyruk_ertelemeleri(&satirlar, self.0)) {
+            match hal {
+                SatirErtelemesi::Tam => ertelenen = true,
+                SatirErtelemesi::Kismen => (gidecek, ertelenen) = (true, true),
+                SatirErtelemesi::Yok => gidecek |= s.bekledigi_rev.is_none(),
+            }
+        }
+        Ok(KayitGorunumu { kayit, bekleyen: gidecek, ertelenen })
+    }
+}
+
 pub(crate) fn liste(d: &Depo, sorgu: &ListeSorgusu) -> Result<Vec<KayitGorunumu>, CekirdekHatasi> {
-    Ok(d.gorunen_liste(&suzgec(sorgu))?.into_iter().map(|g| KayitGorunumu { kayit: g.kayit, bekleyen: g.bekleyen }).collect())
+    let c = Gorunumcu::ac(d)?;
+    d.gorunen_liste(&suzgec(sorgu))?.into_iter().map(|g| c.gorunum(d, g.kayit, g.bekleyen)).collect()
 }
 
 pub(crate) fn kayit(d: &Depo, kayit_id: &str) -> Result<Option<KayitGorunumu>, CekirdekHatasi> {
-    Ok(d.gorunen_kayit(kayit_id)?.map(|g| KayitGorunumu { kayit: g.kayit, bekleyen: g.bekleyen }))
+    let c = Gorunumcu::ac(d)?;
+    d.gorunen_kayit(kayit_id)?.map(|g| c.gorunum(d, g.kayit, g.bekleyen)).transpose()
 }
 
 /// Ret listesi, eskiden yeniye. Çözülemeyen satır da gösterilir (hiçbir işlem sessizce kaybolmaz):
-/// türü okunamazsa `guncelle`, nedeni okunamazsa `gecersiz_islem` sayılır, gövdesi yoktur.
+/// türü okunamazsa `guncelle`, nedeni okunamazsa `gecersiz_islem` sayılır, gövdesi yoktur. Kullanıcının attığı
+/// ertelenen v3 değişikliği (`ERTELENEN_ATILDI`) `teslim_edilemedi` ve `ertelenen_atildi` ile gelir.
 pub(crate) fn ret_listesi(d: &Depo) -> Result<Vec<RetGirdisi>, CekirdekHatasi> {
     Ok(d.ret_listesi()?
         .into_iter()
@@ -57,14 +90,13 @@ pub(crate) fn ret_listesi(d: &Depo) -> Result<Vec<RetGirdisi>, CekirdekHatasi> {
                 n.bitir().ok()?;
                 Some(g)
             });
-            RetGirdisi {
-                islem_id: r.islem_id,
-                kayit_id: r.kayit_id,
-                islem,
-                neden: KuyrukRetNedeni::coz(&r.neden).unwrap_or(KuyrukRetNedeni::GecersizIslem),
-                govde,
-                ts_ms: r.ts_ms,
-            }
+            let ertelenen_atildi = r.neden == ERTELENEN_ATILDI;
+            let neden = if ertelenen_atildi {
+                KuyrukRetNedeni::TeslimEdilemedi
+            } else {
+                KuyrukRetNedeni::coz(&r.neden).unwrap_or(KuyrukRetNedeni::GecersizIslem)
+            };
+            RetGirdisi { islem_id: r.islem_id, kayit_id: r.kayit_id, islem, neden, govde, ts_ms: r.ts_ms, ertelenen_atildi }
         })
         .collect())
 }
@@ -102,7 +134,7 @@ impl Motor {
         }
         sayfa.yukleniyor = true;
         sayfa.hata = None;
-        e.gonderilecek.push(AjandaYukari::GecmisIste { istek_id, kayit_id: kayit_id.to_string(), once_rev }.kodla());
+        e.gonderilecek.push(AjandaYukari::GecmisIste { istek_id, kayit_id: kayit_id.to_string(), once_rev }.kodla_surum(self.baglanti_surumu()));
         e.degisim.gecmis.push(kayit_id.to_string());
         Ok(())
     }
