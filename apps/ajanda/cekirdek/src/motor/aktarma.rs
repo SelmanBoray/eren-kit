@@ -154,7 +154,7 @@ use crate::kopru::tipler::{
 use crate::model::json::{GUVENLI_TAM_SAYI, Nesne, SemaHatasi, Sonuc, Yazici, alt_yol, hata, mantik, metin, tam_sayi};
 use crate::model::kayit::zaman_ms_oku;
 use crate::model::metin::opak_id_oku;
-use crate::model::{KayitGovdesi, KuyrukRetNedeni};
+use crate::model::{AjandaAlani, KayitGovdesi, KuyrukRetNedeni, Surum};
 use crate::model::surum::AJANDA_SURUMU;
 use crate::model::sinirlar::ajanda::{
     ACIKLAMA, ALINTI, BASLIK, HATIRLATMA_ADET, KAYIT_ADET, ORNEK_ADET, SAAT_DILIMI, TEKIL_ANAHTAR, ZAMAN_IFADESI,
@@ -345,6 +345,8 @@ struct Belge<'a> {
     ekler: Vec<EkDosyasi>,
     /// `bicim_surumu` (ret öğesinin şeması ona bağlıdır: `ret_oku`).
     bicim: i64,
+    /// `sozlesme_surumu`: v3 öncesinde (1, 2) kayıtta olmayan v3 alanı bilinmiyor sayılır (`v3_bilinmeyeni_doldur`).
+    sozlesme: i64,
 }
 
 /// `ofset`'teki konum, serde_json'un sayışıyla (satır 1'den, sütun satırdaki bayt sayısı).
@@ -811,7 +813,8 @@ fn belge_coz(metin_: &str) -> Result<Belge<'_>, CekirdekHatasi> {
     if bicim_surumu > BICIM_SURUMU {
         return Err(belge_hatasi("bicim_surumu", "daha yeni bir biçim: uygulamayı güncelleyin"));
     }
-    if surum(harita, "sozlesme_surumu")? > AJANDA_SURUMU {
+    let sozlesme_surumu = surum(harita, "sozlesme_surumu")?;
+    if sozlesme_surumu > AJANDA_SURUMU {
         return Err(belge_hatasi("sozlesme_surumu", "daha yeni bir sözleşme: uygulamayı güncelleyin"));
     }
     // Büyük diziler kopyalanmadan alınır; kalan üst düzey katı okunur.
@@ -869,6 +872,7 @@ fn belge_coz(metin_: &str) -> Result<Belge<'_>, CekirdekHatasi> {
         retler,
         ekler,
         bicim: bicim_surumu,
+        sozlesme: sozlesme_surumu,
     })
 }
 
@@ -1055,6 +1059,43 @@ fn yerelde_ayni(a: &AjandaKaydi, b: &AjandaKaydi) -> bool {
     n(a) == n(b)
 }
 
+/// v3 öncesi sözleşmenin (`sozlesme_surumu` 1, 2) kaydı `k`'da olmayan v3 alanları telefondaki halden (`t`) alınır,
+/// elle işaretleriyle (R6): o sözleşme v3 alanlarını bilmez, yokluk bilinmiyor demektir. Bölge, konum ve varış tek
+/// birimdir (biri dosyada varsa üçü de dosyadandır). Sonuç geçerli bir kayıt değilse `k` olduğu gibi kalır.
+fn v3_bilinmeyeni_doldur(k: AjandaKaydi, t: &AjandaKaydi) -> AjandaKaydi {
+    let mut d = k.clone();
+    let mut alinan = Vec::new();
+    let (v, tv) = (&mut d.v3, &t.v3);
+    if v.simge.is_none() && tv.simge.is_some() {
+        v.simge.clone_from(&tv.simge);
+        alinan.push(AjandaAlani::Simge);
+    }
+    if v.bolge.is_none() && v.bolge_konumu.is_none() && v.varis.is_none() && tv.bolge.is_some() {
+        v.bolge.clone_from(&tv.bolge);
+        v.bolge_konumu.clone_from(&tv.bolge_konumu);
+        v.varis.clone_from(&tv.varis);
+        alinan.extend([AjandaAlani::Bolge, AjandaAlani::BolgeKonumu, AjandaAlani::Varis]);
+    }
+    if v.baglantilar.is_empty() && !tv.baglantilar.is_empty() {
+        v.baglantilar.clone_from(&tv.baglantilar);
+        alinan.push(AjandaAlani::Baglantilar);
+    }
+    if v.ekler.is_empty() && !tv.ekler.is_empty() {
+        v.ekler.clone_from(&tv.ekler);
+        alinan.push(AjandaAlani::Ekler);
+    }
+    if alinan.is_empty() {
+        return k;
+    }
+    for a in alinan {
+        if t.elle_alanlar.contains(&a) && !d.elle_alanlar.contains(&a) {
+            d.elle_alanlar.push(a);
+        }
+    }
+    d.elle_alanlar.sort_unstable();
+    if d.gecerli_mi().is_ok() { d } else { k }
+}
+
 /// Dosyadaki onaylı mezar taşı telefondaki taslağın yerine geçiyorsa kayıt taslak kalır (`motor/aktarma.rs`
 /// başı, taslağın onaylanması): silinmiş kaydın onayı görünmez, bağlı kipte `onayla` gitmez.
 fn taslagi_koru(k: &AjandaKaydi, once_taslak: bool) -> AjandaKaydi {
@@ -1177,6 +1218,12 @@ fn plan_kur(
                 iz.kat(&[Sinif::Gecersiz as u8]);
                 continue;
             }
+        };
+        // v3 öncesi sözleşmenin kaydında v3 alanının yokluğu "kaldırıldı" değil "bilinmiyor"dur (R6): telefondaki
+        // (okunabilen) kaydın v3 değerleri korunur; yoksa yerelde silinir, bağlı kipte `null` ile kaldırılırdı.
+        let k = match telefondaki.get(&k.kayit_id).filter(|_| belge.sozlesme < Surum::V3.no()).and_then(|j| kayit_coz(j)) {
+            Some(t) => v3_bilinmeyeni_doldur(k, &t),
+            None => k,
         };
         gorulen.insert(k.kayit_id.clone());
         if k.silindi {

@@ -724,3 +724,36 @@ fn v3_alanli_kayit_gidis_donuste_korunur() {
     // Aynı belge yeniden: hiçbir şey yazılmaz.
     assert_eq!(sayilar(&b.c.ice_aktarma_onizlemesi(belge(&a)).unwrap()), (0, 0, 1, 0, 0, 0));
 }
+
+/// R6: v3 öncesi sözleşmenin (`sozlesme_surumu` 2) yedeğinde v3 alanının yokluğu "kaldırıldı" değil
+/// "bilinmiyor"dur: dosyadaki daha yeni hal uygulanır ama telefondaki v3 değeri (simge) kalır. Aynı belge v3
+/// sözleşmesiyle gelirse yokluk kaldırmadır.
+#[test]
+fn eski_sozlesme_yedeginde_v3_yoklugu_telefondaki_degeri_korur() {
+    let h = Hat::yeni("aktarma-eski-sozlesme-v3");
+    let x = h.c.ekle(govde("X", None), GirdiYolu::Elle).unwrap();
+    h.zaman.ilerlet(10 * DK);
+    let mut v = json_belge(&h);
+    kaydi_bul(&mut v, &x)["simge"] = json!("is");
+    kaydi_bul(&mut v, &x)["guncelleme_ms"] = json!(SIMDI + DK);
+    uygula(&h, &v.to_string());
+    assert_eq!(kayit(&h, &x).v3.simge.as_deref(), Some("is"));
+
+    let mut eski = json_belge(&h);
+    eski["sozlesme_surumu"] = json!(2);
+    {
+        let k = kaydi_bul(&mut eski, &x);
+        assert!(k.as_object_mut().unwrap().remove("simge").is_some());
+        k["baslik"] = json!("X (eski uygulama)");
+        k["guncelleme_ms"] = json!(SIMDI + 2 * DK);
+    }
+    assert_eq!(sayilar(&uygula(&h, &eski.to_string())), (0, 1, 0, 0, 0, 0));
+    let k = kayit(&h, &x);
+    assert_eq!((k.baslik.as_str(), k.v3.simge.as_deref()), ("X (eski uygulama)", Some("is")), "telefondaki simge kaldı");
+
+    let mut yeni = eski.clone();
+    yeni["sozlesme_surumu"] = json!(AJANDA_SURUMU);
+    kaydi_bul(&mut yeni, &x)["guncelleme_ms"] = json!(SIMDI + 3 * DK);
+    uygula(&h, &yeni.to_string());
+    assert_eq!(kayit(&h, &x).v3.simge, None, "v3 sözleşmesinde yokluk kaldırmadır");
+}

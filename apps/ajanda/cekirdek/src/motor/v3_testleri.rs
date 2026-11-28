@@ -105,3 +105,51 @@ fn dokme_kurali_v3_alanlarini_tasir() {
     let [(AjandaIslem::Guncelle { degisiklik, .. }, _)] = l.as_slice() else { panic!("tek guncelle: {l:?}") };
     assert_eq!(degisiklik.v3.bolge_konumu, Alan::Yok);
 }
+
+/// R5: silinecek (temelde canlı, telefonda silinmiş) kaydın v3 farkı dökülmez: v2 serviste ertelenir ve
+/// arkasındaki `sil`'in sırasını tutardı (silme süresiz beklerdi). Gövde farkı ve `sil` gider; silinmeyen kayıtta
+/// v3 farkı yine gider.
+#[test]
+fn silinecek_kaydin_v3_farki_dokulmez() {
+    use super::yerel::kuyruga_islemler;
+    let t = kayit(json!({"simge": "is"}));
+    let mut k = t.clone();
+    k.baslik = "Süt al!".into();
+    k.v3.simge = Some("ev".into());
+    let l = kuyruga_islemler(Some(&t), &k, false);
+    let [(AjandaIslem::Guncelle { degisiklik, .. }, _)] = l.as_slice() else { panic!("tek guncelle: {l:?}") };
+    assert!(!degisiklik.v3.bos_mu(), "canlı kayıtta v3 farkı gider");
+    k.silindi = true;
+    let l = kuyruga_islemler(Some(&t), &k, false);
+    let [(AjandaIslem::Guncelle { degisiklik, .. }, _), (AjandaIslem::Sil { .. }, _)] = l.as_slice() else {
+        panic!("guncelle ve sil: {l:?}")
+    };
+    assert!(degisiklik.v3.bos_mu(), "silinecek kaydın v3 farkı yok: {degisiklik:?}");
+    assert_eq!(degisiklik.baslik.as_deref(), Some("Süt al!"));
+    // Yalnız v3 farkı olan silinecek kayıtta yalnız `sil`.
+    k.baslik = t.baslik.clone();
+    let l = kuyruga_islemler(Some(&t), &k, false);
+    assert!(matches!(l.as_slice(), [(AjandaIslem::Sil { .. }, _)]), "{l:?}");
+}
+
+/// R10: temelsiz birleşmede PC'nin `varis`'i telefonun başka bir bölgesine taşınmaz (varış bölgesine bağlıdır);
+/// telefonda bölge yoksa PC'nin bölgesi, konumu ve varışı birlikte gelir; aynı yerse eksik varış PC'den.
+#[test]
+fn temelsiz_birlesmede_varis_bolgesinden_kopmaz() {
+    use super::yerel::pc_v3_alanlariyla;
+    let pc = kayit(json!({"varis": {"cikista": true}}));
+    let mut tel = kayit(json!({}));
+    tel.v3.bolge = Some("Ev".into());
+    tel.v3.bolge_konumu = None;
+    let b = pc_v3_alanlariyla(&tel, &pc);
+    assert_eq!((b.v3.bolge.as_deref(), b.v3.bolge_konumu, b.v3.varis.as_ref()), (Some("Ev"), None, None));
+    assert!(b.gecerli_mi().is_ok());
+
+    tel.v3.bolge = None;
+    let b = pc_v3_alanlariyla(&tel, &pc);
+    assert_eq!((&b.v3.bolge, &b.v3.bolge_konumu, &b.v3.varis), (&pc.v3.bolge, &pc.v3.bolge_konumu, &pc.v3.varis));
+
+    tel.v3.bolge = Some("MARKET".into());
+    let b = pc_v3_alanlariyla(&tel, &pc);
+    assert_eq!((b.v3.bolge.as_deref(), &b.v3.varis), (Some("MARKET"), &pc.v3.varis), "aynı yer: varış PC'den");
+}

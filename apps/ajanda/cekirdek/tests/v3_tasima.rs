@@ -7,11 +7,17 @@
 //!   alanlarıyla yeniden gider.
 //! - v2 servise dökülen v3 alanlı kayıt: v2 kısmı gider, v3 kalanı ertelenir (ret listesine düşmez), servis
 //!   v3'e geçince gider.
+//! - Ret düzeltmesi (`ret_duzelt`): v3 yüzünden reddedilen `guncelle`'nin düzeltmesi aynı v3'ü yeniden yollayıp
+//!   döngüye girmez (R4); gövdesiz girdi (`sil`, `durum`...) formla düzeltilmez (R8).
 
 mod ortak;
 
+use ajanda_cekirdek::hata::CekirdekHatasi;
 use ajanda_cekirdek::kopru::tipler::CalismaKipi;
-use ajanda_cekirdek::model::{AjandaBaglanti, AjandaBolgeKonumu, AjandaIslem, AjandaKaydi, GirdiYolu, V3Alanlari};
+use ajanda_cekirdek::model::{
+    AjandaBaglanti, AjandaBolgeKonumu, AjandaDegisiklik, AjandaIslem, AjandaKaydi, AjandaVaris, Alan, GirdiYolu, IslemTuru,
+    KayitDurumu, KuyrukRetNedeni, V3Alanlari, V3Degisikligi,
+};
 use ortak::*;
 
 fn kayit(h: &Hat, id: &str) -> AjandaKaydi {
@@ -163,4 +169,86 @@ fn v2_servise_dokulen_v3_alanli_kayit_ertelenir_ret_listesine_dusmez() {
     assert_eq!(&kayit(&h, &a), &h.pc.d.kayitlar[&a]);
     let d = h.c.baglanti_durumu().unwrap();
     assert_eq!((d.kuyrukta, d.ertelenen_islem, d.ret_listesinde), (0, 0, 0));
+}
+
+/// Kuyruğa doğrudan satır (v3 alanlı işlemi bugün Kotlin formu üretemez).
+fn kuyruga_yaz(h: &Hat, islem_id: &str, islem: &AjandaIslem) {
+    rusqlite::Connection::open(&h.yol)
+        .unwrap()
+        .execute(
+            "INSERT INTO kuyruk (islem_id, kayit_id, islem_json, olusturma_ms) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![islem_id, islem.kayit_id(), islem.json().to_string(), SIMDI],
+        )
+        .unwrap();
+}
+
+/// R4: v3 yüzünden reddedilen `guncelle` (varışı olan kayıtta bölgeyi kaldırır: `tutarsiz_kayit`). Düzeltmesi
+/// aynı v3'ü yeniden yollamaz: formun gövdesi gider, girdi listeden çıkar ve yeniden ret listesine düşmez (döngü
+/// yok); kaydın v3 alanları PC'deki gibi kalır.
+#[test]
+fn v3_yuzunden_reddedilen_guncellemenin_duzeltmesi_donguye_girmez() {
+    let mut h = Hat::yeni("v3-ret-dongu");
+    let v3 = V3Alanlari { varis: Some(AjandaVaris { pencere: None, cikista: true }), ..v3_alanlari() };
+    h.pc.disaridan_v3_ekle("k_market01", &govde("Süt al", None), v3.clone());
+    h.eslestir();
+    let a = "k_market01".to_string();
+    assert_eq!(kayit(&h, &a).v3, v3);
+    h.kopar();
+    let bolgesiz = AjandaIslem::Guncelle {
+        kayit_id: a.clone(),
+        temel_revizyon: 1,
+        degisiklik: AjandaDegisiklik {
+            baslik: Some("Süt al!".into()),
+            v3: V3Degisikligi { bolge: Alan::Kaldir, ..Default::default() },
+            ..Default::default()
+        },
+    };
+    kuyruga_yaz(&h, "i_bolgesiz", &bolgesiz);
+    h.sureci_oldur_ve_ac();
+    h.baglan();
+    assert!(h.canli_mi());
+    let ret = h.c.ret_listesi().unwrap();
+    assert_eq!(
+        ret.iter().map(|r| (r.islem_id.as_str(), r.neden)).collect::<Vec<_>>(),
+        [("i_bolgesiz", KuyrukRetNedeni::TutarsizKayit)]
+    );
+    assert_eq!(h.pc.d.kayitlar[&a].baslik, "Süt al");
+
+    assert_eq!(h.c.ret_duzelt("i_bolgesiz".into(), govde("Süt al!", None)).unwrap(), a);
+    h.pompala();
+    assert!(h.c.ret_listesi().unwrap().is_empty(), "düzeltme yeniden reddedilmedi");
+    let pc = &h.pc.d.kayitlar[&a];
+    assert_eq!((pc.baslik.as_str(), &pc.v3), ("Süt al!", &v3), "gövde gitti, uygulanamayan v3 gitmedi");
+    assert_eq!(&kayit(&h, &a), pc);
+    let d = h.c.baglanti_durumu().unwrap();
+    assert_eq!((d.kuyrukta, d.ret_listesinde), (0, 0));
+}
+
+/// R8: gövdesiz ret girdisi (`durum`, `sil`; `onayla`, `geri_yukle` de) formla düzeltilmez:
+/// `GecersizGirdi{alan:"islem_id"}`, girdi kalır, yeni kayıt doğmaz (eskiden form gövdesi yeni kayıt olarak
+/// eklenirdi).
+#[test]
+fn govdesiz_ret_girdisi_formla_duzeltilmez() {
+    let mut h = Hat::yeni("ret-govdesiz");
+    h.eslestir();
+    let a = h.c.ekle(govde("A", None), GirdiYolu::Elle).unwrap();
+    h.pompala();
+    assert!(h.pc.d.kayitlar.contains_key(&a));
+    h.pc.gecersiz.insert(a.clone());
+    h.c.durum_degistir(a.clone(), KayitDurumu::Tamam, None).unwrap();
+    h.pompala();
+    h.c.sil(a.clone()).unwrap();
+    h.pompala();
+    h.pc.gecersiz.clear();
+    let ret = h.c.ret_listesi().unwrap();
+    assert_eq!(ret.iter().map(|r| r.islem).collect::<Vec<_>>(), [IslemTuru::Durum, IslemTuru::Sil]);
+    for r in &ret {
+        let s = h.c.ret_duzelt(r.islem_id.clone(), govde("Yeni", None));
+        assert!(matches!(&s, Err(CekirdekHatasi::GecersizGirdi { alan, .. }) if alan == "islem_id"), "{:?}: {s:?}", r.islem);
+    }
+    h.pompala();
+    assert_eq!(h.c.ret_listesi().unwrap().len(), 2, "girdiler kaldı");
+    assert!(!h.pc.d.kayitlar.values().any(|k| k.baslik == "Yeni"), "yeni kayıt doğmadı");
+    assert_eq!(h.c.baglanti_durumu().unwrap().kuyrukta, 0);
+    assert_eq!(kayit(&h, &a).baslik, "A");
 }
