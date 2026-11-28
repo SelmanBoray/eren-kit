@@ -100,6 +100,7 @@ tests/donus_denetimi.rs  yedekten dönen PC: yazım kimliği ve `DonusAnalizi` s
 tests/aktarma.rs   dışa ve içe aktarma: biçim, plan, yerel ve bağlı kip, ölçüm        [D3]
 tests/aktarma_guveni.rs  içe aktarma güvenliği: bellek sınırları, gelecek tarihli an, içerikli iz, taslaklar [D3]
 tests/aktarma_bellek.rs  içe aktarma bellek ölçümü (önizleme tepe belleği, kayıtlar tutulmuyor) [D3]
+tests/aktarma_ret_yedegi.rs  ret listesinin yedeğe girmesi: biçim 2 `retler`, yinelenmeme, sayılar    [D3]
 tests/birlestirme.rs  birleştirme önizlemesi: onay, vazgeç, kopma, olası çift, taslak     [D4]
 tests/ortak/        sahte kabuklar ve `/ajanda` konuşan sahte PC servisi        [R4]
 ```
@@ -129,6 +130,7 @@ kimlik/                KeystoreKimlik.kt (KimlikKabugu), EslestirmeEkrani.kt (+ 
                        EslestirmeVerisi, EslestirmeMetinleri, P256) — yazıldı   [K1, kapandı]
                        GecisMetinleri.kt (koparma ve geçiş metinleri, saf)      [D6]
 ag/                    AjandaSoketi.kt (Tasima), BaglantiYoneticisi.kt, EsitlemeIsi.kt — İSKELET  [K2]
+                       DuraklamaBildirimi.kt (YEREL_KIP duraklama bildirimi, saf)              [K5]
                        BaglantiKusagi.kt (açılan soket sayacı; "Şimdi değil" kuşağı)           [D4]
 alarm/                 AlarmPlanlayici.kt (AlarmKabugu), AlarmAlici.kt, AcilisAlici.kt (+ Bildirimler,
                        BildirimIcerigi, HatirlatmaDurumu, SorunKaydi, AlarmIsParcacigi) — yazıldı [K3, kapandı]
@@ -402,8 +404,9 @@ bölümde ve `surum` uyuşmazlığında çıkış 1 verir: sözleşmeye bölüm 
   da aynı (`KoparmaSonucu`, `sonGecis`, D4 önizlemesi sayar).
 - **Arka plan oturumu.** Kotlin `ag/` yerel kipte eşleşme varken arka planda bağlanmaz
   (`ArkaPlanSonucu.YEREL_KIP`; alarmlar yine kurulur): birleştirme sorusu yalnız görünür uygulamada çıkar.
-  Açık (öneri, koordinatör kararı bekliyor): bağlı kipte farklı `depo_id` sonrası arka plan eşitlemesi
-  sessizce durur; geçiş başına bir bildirim önerildi (yeni düşük önemli kanal; manifest gerekmez).
+  Kapandı (K5): bağlı kipte farklı `depo_id` sonrası arka plan eşitlemesi `YEREL_KIP` ile bitince geçiş başına
+  bir kez bildirim gösterilir (`ag/DuraklamaBildirimi`, durum kanalı). "Onayınızı bekliyor" yalnız
+  birleştirme önizlemesi doluysa söylenir; uygulama görünürken bildirim gösterilmez.
 - **Servis değişmezleri.** Telefonun dönüş saptaması (`DonusAnalizi`) üç servis değişmezine dayanır: (1) geçmiş
   hiç budanmaz; (2) kaydın `guncelleme_ms`'i, o yazımın geçmiş satırının `ts_ms`'iyle aynıdır; (3)
   `guncelleme_ms` kayıt başına geriye gitmez. Kol C bunları `apps/phone/docs/AJANDA.md`'de "telefonun
@@ -418,28 +421,42 @@ Kotlin yazar ve okur. Kurallar `motor/aktarma.rs` başındadır.
 
 - **Belge** (`ajanda.json`, UTF-8, anahtarlar sıralı): `bicim` (`eren_ajanda_yedegi`), `bicim_surumu`,
   `sozlesme_surumu`, `uygulama_surumu` (yalnız tanı), `olusturma_ms`, `kip`, `kayitlar` (modelin kendi kayıt
-  JSON'u, mezar taşları dahil), `ekler`, `bolgeler`. **Sürüm kuralı:** `bicim`, `bicim_surumu` ve
+  JSON'u, mezar taşları dahil), `ekler`, `bolgeler`, `retler` (yalnız biçim 2). **Sürüm kuralı:** `bicim`, `bicim_surumu` ve
   `sozlesme_surumu` katı okumadan önce bakılır; `bicim_surumu` ya da `sozlesme_surumu` bu uygulamanınkinden
   büyükse belge bütünüyle reddedilir (okuyamayacağı alanı sessizce atmaz). Eski sözleşme sürümü okunur; kendi
   sürümünde şema katıdır. `ekler`, kaydın başvurduğu dosyaların tekil dizinidir (`{ozet, bayt, mime}`;
   `ozet` sha256 küçük harf hex, dosya kapta `ekler/<ozet>`); ek üstverisi kaydın içindedir (v3). Bugün hep
-  boştur. `bolgeler` biçim 1'de hep boştur (dolu dizi reddedilir); bölgeler gelince öğe şeması tanımlanır ve
-  biçim sürümü 2'ye ayrılır.
+  boştur. `bolgeler` hep boştur (dolu dizi reddedilir); bölgeler gelince öğe şeması tanımlanır ve
+  biçim sürümü 3'e ayrılır. **Biçim 2 ve `retler`:** yazıcı gereken en düşük sürümü yazar (ret girdisi
+  yoksa 1, varsa 2); okuyucu 2'ye dek okur. `retler` yalnız biçim 2'de vardır ve orada zorunludur; biçim 1
+  okuyucusu onu (alan bilinmiyor) reddeder, biçim 1 okuyan eski uygulama da biçim 2 belgesini sürüm
+  hatasıyla reddeder. Öğe: `{govde, islem, islem_id, kayit_id, neden, ts_ms}`.
 - **Zip kabı** (`aktarma/YedekKabi.kt`): kökte `ajanda.json`, ekler `ekler/<ozet>`; ad, dizin ve sınırlar
-  çekirdekten gelir (`aktarmaBicimi`). Sınırlar: bir ek 4 MiB, ek sayısı 10 000, belge sınırı modelden
-  hesaplanır (aşağıda), açılmış toplam belge sınırı (+1 MiB ham payı). Okurken her girdi adı beyaz listeden geçer; yol kaçışı (`..`, mutlak
+  çekirdekten gelir (`aktarmaBicimi`). Sınırlar: bir ek 4 MiB, ek sayısı 10 000, ekler toplamı 16 MiB, belge
+  64 MiB (aşağıda), açılmış toplam 80 MiB (+ham payı). Eski köprüden 0 gelen alan en dar sınır sayılır.
+  Kotlin okuması yığın bütçesine de bağlıdır (aşağıda). Okurken her girdi adı beyaz listeden geçer; yol kaçışı (`..`, mutlak
   yol, ters bölü), beklenmeyen ve yinelenen girdi reddedilir. Boyutlar başlığa güvenilmeden açılırken sayılır
   (şişirme saldırısı reddi); `ekler/` girdileri de açılmış toplama girer (saklanmayan dizin girdisinin
   okunmamış kalanı da sayılarak tüketilir).
 - **Bellek ve sınırlar (çekirdek).** Belge ağaca çevrilmez: `yapi_tara` metni ağaç kurmadan bir kez geçer
-  ve sınırları uygular: `kayitlar` en çok 100 000 öğe, kayıtlar dışındaki sözcükler (anahtar ya da değer)
-  100 000, iç içelik 127 (serde_json ile aynı), `ekler` 10 000 öğe. Bir kayıt en çok 256 KiB; büyüğü yalnız
+  ve sınırları uygular: `kayitlar` en çok 100 000 öğe, `retler` en çok `RET_DIZISI_AZAMI` öğe, bu iki dizinin
+  dışındaki bölüm en çok 4 MiB (ağaç kurulmadan önce denetlenir) ve 100 000 sözcük (anahtar ya da değer),
+  iç içelik 127 (serde_json ile aynı), `ekler` 10 000 öğe. Bir kayıt en çok 256 KiB; büyüğü yalnız
   kendini geçersiz kılar. Kayıtlar `plan_kur`'da tek tek çözülür (bellek: belge metni + öğe aralıkları + o
   anki kaydın ağacı). Öğenin içindeki sözdizimi hatası bütün belgeyi reddeder.
-- **Belge sınırı** modelden hesaplanır (eski 32 MiB kaldırıldı): geçerli bir kayıt sıkışık JSON'da en çok
-  37 960 bayt; `50 000 × 37 961 + 10 000 × 256 + 4096 = 1 900 614 096` bayt (~1,77 GiB). Dışa aktarmanın
-  yazdığı belge içe aktarmada boyutla reddedilmez. Sınır bellek koruması değildir. Dışa aktarma boyut
-  denetlemez, belgeyi ağaç kurmadan yazar.
+- **Belge sınırı** 64 MiB. Rust'ta ayırma hatası süreci düşürür (`catch_unwind` yakalamaz), bu yüzden
+  güvenilmeyen belgenin çekirdekteki payı belge sınırıyla sınırlıdır. Modelden hesaplanan en büyük belge
+  (`50 000 × 37 961 + 10 000 × 256 + 4096` ≈ 1,77 GiB) artık yalnız bilgidir: telefona sığmaz.
+  **Takas:** dolu telefonda (`KAYIT_ADET` = 50 000) kayıt başına ortalama 1342 bayt sınırı vardır (ölçülen
+  olağan kayıt 472 bayt, ağır gerçekçi kayıt 2875 bayt). Sınırı aşan telefonun yedeği bu sürümde içe
+  aktarılamaz; dışa aktarma onu yine yazar (yazarken boyut sınırı uygulanmaz, belge ağaç kurmadan yazılır) ve
+  `DisaAktarma.ice_aktarma_sinirini_asiyor` ile uyarır. Bunun dışında dışa aktarmanın yazdığı belge
+  boyutla reddedilmez.
+- **Uygulama iki geçişlidir** (`ice_aktar`): önce yalnız iz, tutarsa aynı plan yeniden kurulurken her yazılacak
+  sınıflandığı anda yazılır; yazılacaklar bellekte birikmez.
+- **Kotlin yığın bütçesi** (`YedekKabi`): kullanılabilir bellekten (`maxMemory - kullanılan`) pay düşülür; pay
+  32 MiB ile yığının dörtte birinden büyük olanıdır. Belge iki kat sayılır (bayt + metin). Bütçe aşılırsa
+  `YedekHatasi.BellekYetmez` (kullanıcıya `BELLEK_BUTCESI`); `OutOfMemoryError` yakalaması yalnız son çaredir.
 - **Ön tarama.** Dizide fazladan iki nokta (`[:1]`, `[1,:2]`) reddedilir; 256 KiB üstü öğenin içi ağaç
   kurulmadan denetlenir (`sozdizimi_denetle`). Tarama ile serde_json'un kabulü aynıdır: 40 000 adımlık
   bulanıklaştırma testi ve iç içelik sınırının iki yanı testlidir.
@@ -447,12 +464,13 @@ Kotlin yazar ve okur. Kurallar `motor/aktarma.rs` başındadır.
   reddedilir): "daha yeni kazanır" kuralı o anı her yerel kayda üstün sayar (uzak tarihli mezar taşı
   telefonu siler) ve servisin `max(önceki, şimdi)` kuralı onu yapışkan kılar.
 - **Köprü yüzeyi.** `aktarmaBicimi()` (kap düzeni ve sınırlar); `disaAktar()` (`DisaAktarma`: belge, kayıt,
-  silinmiş, okunamayan, `retListesinde`, kip, ekler); `iceAktarmaOnizlemesi(belge)` (`IceAktarmaOnizlemesi`:
+  silinmiş, okunamayan, `retListesinde`, `retYedekte`, `iceAktarmaSiniriniAsiyor` bayrağı, kip, ekler); `iceAktarmaOnizlemesi(belge)` (`IceAktarmaOnizlemesi`:
   yeni, güncellenecek (içinde `silinecek`, `geriYuklenecek`), aynı, atlanacak, geçersiz (ilk 20'si
   konumla), sınır aşan, gönderilmeyecek, `taslakGonderilmeyecek`, `taslakOnaylanacak`,
-  `okunamayanRetListesine`, kuyruğa girecek işlem, ekler, `iz`); `iceAktar(belge, iz)`. Bayt karşılıkları
+  `taslagaDonecek`, `okunamayanRetListesine`, `retListesineGelecek`, `retGecersiz`, kuyruğa girecek işlem,
+  ekler, `iz`); `iceAktar(belge, iz)`. Bayt karşılıkları
   `iceAktarmaOnizlemesiBayt`, `iceAktarBayt`: belge `String`'e çevrilmeden geçer; ikisi karıştırılabilir (aynı
-  belge, aynı sonuç; Kotlin'e henüz bağlanmadı). `iz` içeriği kapsar (kip, her öğenin metni ve sınıfı,
+  belge, aynı sonuç; Kotlin `AktarmaAkisi` bayt yolunu kullanır). `iz` içeriği kapsar (kip, her öğenin metni ve sınıfı,
   güncellenecek kaydın telefondaki satırı): başka dosya ya da önizlemeden sonra değişen kayıt eski izle
   uygulanmaz. `iz` zorunludur: iz yoksa ya da işlem içinde yeniden kurulan plan onunla tutmuyorsa hiçbir şey
   yazılmaz: `uygulandi` yanlış, `plan` güncel önizlemedir (kullanıcıya yeniden gösterilip onayıyla yeni
@@ -460,7 +478,13 @@ Kotlin yazar ve okur. Kurallar `motor/aktarma.rs` başındadır.
 - **Yeni önizleme alanları.** `taslakOnaylanacak`: telefonda taslak olan kaydın dosyada daha yeni ve onaylı
   hali; uygulanınca telefondaki taslağı onaylar, ayrı sayılır (kullanıcı onaylamadan uygulanmaz).
   `okunamayanRetListesine`: yerel kipte satırı okunamayan telefon kaydı dosyadakiyle onarılırken eski
-  metni ret listesine düşer (bağlı kipte atlanır).
+  metni ret listesine düşer (bağlı kipte atlanır). `taslagaDonecek`: yerel kipte telefonda onaylı, dosyada daha
+  yeni ve taslak olan kayıt (bağlı kipte hep 0). `retListesineGelecek`, `retGecersiz`: biçim 2 `retler`
+  girdileri (aşağıda). Yalnız gönderilemeyen değişiklik içeren bir yedekte de onay sorulur. **Mezar taşı
+  kuralı:** dosyadaki onaylı mezar taşı telefondaki taslağın yerine geçiyorsa kayıt yalnız `silinecek` sayılır
+  (`onayla` gönderilmez, taslak kalır). Okunamayan satırın bayrakları (`silindi`, `taslak`) dört sayıda
+  (`taslakOnaylanacak`, `taslagaDonecek`, `silinecek`, `geriYuklenecek`) aynı kuralla sayılır. Tarama ve
+  önizleme sayıları serde_json'un kabul kuralıyla aynıdır.
 - **Çakışma kuralı.** Aynı `kayit_id` telefonda da varsa `guncelleme_ms`'i büyük olan kazanır (mezar taşları
   dahil); eşitse telefondaki kalır. Her kayıt ayrı sınıflanır: tek bozuk kayıt (şema, kural, dosyada yinelenen
   kimlik, bilinmeyen dilim) aktarmayı düşürmez, geçersiz sayılır; kayıt sınırı dolunca yeniler `sinir_asan`.
@@ -475,46 +499,62 @@ Kotlin yazar ve okur. Kurallar `motor/aktarma.rs` başındadır.
   taslak atlanır (`taslakGonderilmeyecek`): servisin `ekle`'si onaylanmış kayıt doğurur, kullanıcının
   onaylamadığı öneri onaylanmış gibi gitmesin (dosyada kalır; yerel kipte taslak olarak alınabilir).
   Servisin reddettiği işlem ret listesine düşer.
-- **Belgeye girmeyenler.** Kuyruk: etkisi görünen kopyadadır (bağlı kipte iyimser hal aktarılır). Ret listesi:
-  kayıt değil, belli bir servise ve revizyona bağlı reddedilmiş istektir, başka telefonda anlamı yoktur;
-  sayısı `retListesinde` ile söylenir (önce düzeltilsin). Yerel geçmiş: yeni telefonda içe aktarma satırıyla
-  başlar.
+- **Ret listesi ve belgeye girmeyenler.** Kuyruk belgeye girmez: etkisi görünen kopyadadır (bağlı kipte iyimser
+  hal aktarılır). Ret listesinin düzeltme gövdesi olan girdileri biçim 2 `retler`'e girer (D3 gözden geçirmesi
+  Y4): birleştirme ya da içe aktarmadan sonra taslaklar, okunamayan satırların okunabilen hali ve servisin
+  silip telefonun düzenlediği kayıtlar yalnız orada yaşar; yedeğe girmeselerdi telefonla giderlerdi. İçe
+  aktarmada her öğe ayrı okunur; geçersiz ya da dosyada yinelenen `islem_id` `retGecersiz` sayılır, telefonun
+  ret listesinde aynı `islem_id` varsa yinelenmez, kalanlar (`retListesineGelecek`) iki kipte de ret listesine
+  yazılır. Gövdesi olmayan girdi (`sil`, `durum`, okunamayan metin: düzeltilemez, yalnız atılabilir) girmez;
+  sayısı `retListesinde`, girenlerinki `retYedekte`. Yerel geçmiş belgeye girmez: yeni telefonda içe aktarma
+  satırıyla başlar.
 - **Mahremiyet.** Belge içeriği (başlık, açıklama, ileride bölge) günlüğe, hata mesajına ya da
   `GecersizKayit`'e girmez. Hatalar yalnız konum (şemanın alan adları ve sıra numaraları, `guvenli_yol`) ve
   sabit neden taşır; JSON sözdizimi hatası yalnız satır ve sütun. Kotlin metinleri yalnız sayı ve tarih
   taşır.
 - **Ölçüm** (`tests/aktarma.rs`, 5000 kayıt, hata ayıklama/yayın): önizleme 162/50 ms; yerel uygulama
   844/301 ms; dışa aktarma 302/94 ms; bağlı kipte dökme 1,16/0,50 s. Bellek (`tests/aktarma_bellek.rs`):
-  önizleme yazılacak kayıtları tutmaz; 20 000 kayıtlık 13,6 MB'lık belgede tepe 42,4 MB'tan 1,85 MB'a indi.
-  Kotlin tarafı (`test/aktarma/YedekBellekTest.kt`, `AJANDA_BELLEK_OLC=1` ile): ~24,4 MB belgede tepe yığın
-  150 MB'tan 123 MB'a indi; bayt API'si Kotlin'e bağlanınca yeniden ölçülecek.
+  önizleme yazılacak kayıtları tutmaz; 20 000 kayıtlık 13,6 MB'lık belgede önizleme tepesi 1,85 MB; uygulama
+  tepesi 35,1 MB, bunun 33,7 MB'ı alarm senkronu. 20 MiB'lık bir dış alan 0,5 MB tepeyle reddedilir.
+  Kotlin tarafı (`test/aktarma/YedekBellekTest.kt`, `AJANDA_BELLEK_OLC=1`, en küçük yığın): 24,4 MB belgede
+  okuma tek başına 55 MB, bütçe kuralıyla 83 MB; 61,5 MiB belgede 127 MB ve 166 MB.
 - **Kotlin** (`aktarma/`, saf mantık, JVM testli): `YedekKabi` (zip), `AktarmaAkisi` (adım adım: dışa
   aktarma; dosya oku -> `Adim.Onay` -> `onayla` ya da `vazgec` -> `Adim.Bilgi`/`Hata`; önizlemeden sonra
-  telefon değiştiyse yeni planla yeniden onay; `OutOfMemoryError` Hata adımına çevrilir), `AktarmaMetinleri`. Görünüm bugün `AnaEkran`'ın ⋮ menüsünde
+  telefon değiştiyse yeni planla yeniden onay; bellek bütçesi aşılırsa `BellekYetmez` Hata adımı, `OutOfMemoryError`
+  yalnız son çare), `AktarmaMetinleri`. Görünüm bugün `AnaEkran`'ın ⋮ menüsünde
   SAF (`ACTION_CREATE_DOCUMENT`/`OPEN_DOCUMENT`) bağlantısıdır (eski görünüm; yeni arayüz `AktarmaAkisi`'ni
   çağıracak).
 - **Açık kalanlar.** Ek deposu yer tutucudur (ek yok; `kayit_ekleri` v3 alanları gelince dolacak). Ekran
   döndürmede bekleyen içe aktarma (okunmuş dosya, önizleme) kaybolur. Gelecek tarih kuralı yalnız içe
-  aktarmada uygulanır: eski bir içe aktarmadan zaten girmiş gelecek tarihli an onarılmaz. Yerel kipte
-  dosyadaki daha yeni `taslak: true` kayıt, telefondaki onaylı kaydı taslağa geri çevirir ve önizlemede ayrı
-  sayılmaz (açık nokta).
+  aktarmada uygulanır: eski bir içe aktarmadan zaten girmiş gelecek tarihli an onarılmaz.
 
 ### Otomatik klasör yedeği (D6)
 
 - Varsayılan kapalı. Açıksa ve klasör seçilmişse günde bir yedek alınır (son başarılı yedeğin cihaz günü bugün
-  değilse zamanı gelmiştir; başarısız denemeden sonra 30 dk beklenir). Son 7 dosya tutulur. Ad kalıbı
-  `ajanda-yedegi-<gün>.zip`; temizlik yalnız bu kalıba birebir uyan dosyalara (ve artık `.yaziliyor` geçicilerine)
-  dokunur, kullanıcının başka dosyası sayılmaz.
-- **Tetikleyici:** `EsitlemeIsi` hizmetinde ağ koşulu olmayan ayrı iş (`YEDEK_ISI`, saatte bir); eşitleme
-  işleri ve manifest değişmedi.
-- **Yazma:** önce `<gün>.zip.yaziliyor` adıyla yazılır, bitince yeniden adlandırılır (hata olursa yarım dosya
-  silinir; sağlayıcı yeniden adlandırmayı desteklemiyorsa son ad doğrudan yazılır).
+  değilse zamanı gelmiştir). Son 7 gün tutulur (gün başına en yenisi). **Ad kalıbı**
+  `ajanda-otomatik-yedek-<gün>-<SSddss>-<kurulum>.zip`; her deneme yeni ad alır. Kurulum kimliği (8 küçük hex)
+  `noBackupFilesDir`'de tutulur.
+- **Sahiplik:** temizlik yalnız bu kurulumun kalıbına uyan dosyalara (ve artık `.yaziliyor` geçicilerine)
+  dokunur. Elle alınan yedeklere, başka telefonların yedeklerine ve eski biçimli adlara dokunulmaz.
+- **Tetikleyici:** `EsitlemeIsi` hizmetinde ağ koşulu olmayan ayrı iş (`YEDEK_ISI`). Saatlik iş kaldırıldı;
+  yerine bir sonraki gerekli anda çalışan tek seferlik iş var (en az 1 dk, en çok 24 sa sonra). Hatada geri
+  çekilir: 30 dk, 1 sa, 2 sa, 4 sa, en çok 6 sa. Eşitleme işleri ve manifest değişmedi.
+- **Yazma ve doğrulama:** önce `<ad>.yaziliyor` adıyla yazılır, bitince yeniden adlandırılır (sağlayıcı
+  yeniden adlandırmayı desteklemiyorsa son ad doğrudan yazılır). Yazılan dosya geri okunup doğrulanır (CRC,
+  bayt boyu, ek sayısı); tutmazsa dosya silinir ve sonuç `DOGRULANAMADI`. Sağlam eski dosya ancak yenisi
+  doğrulandıktan sonra silinir; yarım yazımın izi sonraki denemede temizlenir. Gelecek tarihli dosyalar en
+  eski sayılır; az önce yazılan dosya her zaman kalır. Klasör değişince durum sıfırlanır.
+- **Bildirim:** kanal `ajanda_durum` ("Eşitleme ve yedek durumu", düşük önem). Her sorun için bir kez
+  bildirim gösterilir; izin ya da kanal yoksa durum saklanır ve ekran söyler. `YedekGorunumu` yeni alanları:
+  `sonYedekGunOnce` (son başarılı yedekten bu yana gün), `soylenmemis` (kullanıcıya henüz söylenmemiş sorun).
 - **Sınıflar:** `OtomatikYedekPlani` (saf kurallar: zaman, ad, silinecekler), `OtomatikYedekci` (saf akış, tek
   deneme `@Synchronized`), `OtomatikYedek` (SAF katmanı, ayarlar, iş kurma; ayarlar ekranı için giriş noktaları).
-- **Hata türleri** (`YedekSorunu`): `KLASOR_YOK`, `ERISIM_YOK`, `YER_YOK`, `YAZILAMADI`, `COK_BUYUK`,
-  `EK_BOZUK`, `BELLEK`, `CEKIRDEK`, `BEKLENMEYEN`; son hata ve anı ayarlarda tutulur.
-- **Açık kalanlar.** SAF katmanı (`OtomatikYedek.kt`) cihazda denenmedi; açılış alıcısına bağlı değil
-  (iş yeniden kurulumu yalnız ekran açılışında `isiDenetle` ile).
+- **Hata türleri** (`YedekSorunu`): `KLASOR_YOK`, `ERISIM_YOK`, `YER_YOK`, `YAZILAMADI`, `DOGRULANAMADI`,
+  `COK_BUYUK`, `EK_BOZUK`, `BELLEK`, `CEKIRDEK`, `BEKLENMEYEN`; son hata ve anı ayarlarda tutulur.
+- **Açık kalanlar.** SAF katmanı ve `JobScheduler` cihazda denenmedi; açılış alıcısına bağlı değil (iş
+  yeniden kurulumu yalnız ekran açılışında `isiDenetle` ile). Eski biçimli `ajanda-yedegi-*.zip` dosyaları ve
+  yeniden kurulumdan önceki yedekler hiç silinmez. Ekler okunurken belleğe alınır; en çok 16 MiB ve yığın
+  bütçesiyle sınırlıdır.
 
 ## Birleştirme önizlemesi (D4)
 
@@ -529,7 +569,8 @@ Yerel kipten servise bağlanırken (yeni eşleşme, koparmadan sonra yeniden eş
 - **Onay** (`birlestirmeyiOnayla(iz)`): tek SQLite işleminde plan yeniden kurulur; `iz` şimdiki planla tutmazsa
   hiçbir şey yazılmaz, yeni plan döner (D3 kalıbı). Tutarsa D2 dökme kuralları işler, olası çiftler kaydedilir,
   kip `Bagli`, bağlantı `Canli`. Kalıcı onaydan sonra gelen hata (ör. alarm senkronu, kuyruk) başarıyı
-  bozmaz. `BirlestirmeSonucu.zatenUygulandi`: bekleyen yokken aynı izle gelen onay (ikinci ya da gecikmiş).
+  bozmaz. `BirlestirmeSonucu.zatenUygulandi`: bekleyen yokken aynı izle gelen onay (ikinci ya da gecikmiş);
+  gecikmiş onaya "daha önce yapıldı" denir.
   `plan == null` ve `zatenUygulandi == false` ise bağlantı kopmuştur, hiçbir şey yazılmamıştır.
 - **Vazgeç** (`birlestirmedenVazgec`): yerel kipte süren bağlanmanın iptali: eşleşme ve cihaz anahtarı silinir,
   bağlantı kapanır; kayıt, ret listesi, PC temeli ve alarm değişmez. Yeniden bağlanmak için QR gerekir (eşleşme
@@ -572,8 +613,12 @@ Yerel kipten servise bağlanırken (yeni eşleşme, koparmadan sonra yeniden eş
   önce bildirim izni (Android 13+; reddedilmişse kayıtta yeniden sorulmaz), sonra kesin alarm (yalnız
   Android 12/12L'de kapatılabilir; sistem penceresi yoktur, ayara yönlendiren açıklama bir kez); ret sonrası
   ana ekrandaki uyarı şeridi sürer, uyarıya dokunmak açık istektir (sistem penceresi ya da ilgili ayar).
+  **İzin kuralı:** güncellenmiş kurulumda kalıcı ret ayar ekranına götürür (kalıcı ret ile "hiç sorulmadı"
+  Android'de ayırt edilemez; işaret güvenilmezse kalıcı ret sayılır). Bu karar kurulum ve güncelleme zamanına
+  göre bir kez verilir ve saklanır.
 - **Ekran işi Kol U'da.** Bu bölüm yalnız mantıktır.
-- **Açık kalan.** `AnaEkran.onStart` hâlâ açılışta izin istiyor (U `IzinPlani`'na bağlayacak).
+- **Açık kalan.** `AnaEkran.onStart` hâlâ açılışta izin istiyor (U `IzinPlani`'na bağlayacak). Kol U'ya
+  düşen: `AnaEkran`'daki izin istekleri `IzinPlani.bildirimIzniIste` üzerinden geçmeli.
 
 ## İkinci dalga iş parçaları
 
