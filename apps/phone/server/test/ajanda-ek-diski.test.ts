@@ -4,6 +4,7 @@
  * bağ izlememe, işaret dosyası.
  */
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -198,7 +199,7 @@ describe("ajandaEkDiskiKur", () => {
     // Üst düzey `<ozet>: ilk_ms` eski biçimdir (eski servis de okur); gözlem ayrı anahtarda.
     assert.equal(
       readFileSync(join(kok, "basvurusuz.json"), "utf8"),
-      JSON.stringify({ [a]: 1, [b]: 2, gozlem: { [a]: { ms: 0 }, [b]: { ms: 7, rev: 3 } } }),
+      JSON.stringify({ [a]: 1, [b]: 2, gozlem: { [a]: { ms: 0 }, [b]: { ms: 7, rev: 3 } }, gozlem_baz: 0 }),
     );
     writeFileSync(join(kok, "basvurusuz.json"), JSON.stringify({ [a]: 5, "../x": 1, [b]: "2" }));
     assert.deepEqual(await disk.isaretleriOku(), new Map([[a, isaret(5, 0, null)]]), "eski biçim: gözlenen 0, revizyon yok");
@@ -210,6 +211,108 @@ describe("ajandaEkDiskiKur", () => {
     writeFileSync(join(kok, "basvurusuz.json"), "{bozuk");
     assert.deepEqual(await disk.isaretleriOku(), new Map());
     await assert.rejects(disk.isaretleriYaz(new Map([[a, isaret(Number.NaN)]])), /gecersiz_isaret/);
+  });
+
+  it("işaretler: okuyucunun 0/null sayacağı değer yazılmaz (eksi gözlenen süre, eksi ya da kesirli rev atar)", async () => {
+    const { kok, disk } = ortam();
+    const a = "a".repeat(64);
+    for (const i of [isaret(1, 0, -1), isaret(1, 0, 1.5), isaret(1, -1, 0)]) {
+      await assert.rejects(disk.isaretleriYaz(new Map([[a, i]])), /gecersiz_isaret/, JSON.stringify(i));
+    }
+    assert.equal(existsSync(join(kok, "basvurusuz.json")), false);
+  });
+
+  it("işaretler: yalnız gözlenen süre hepsinde aynı kadar arttıysa büyük dosya yeniden yazılmaz, küçük sayaç yazılır", async () => {
+    const { kok, disk } = ortam();
+    const a = "a".repeat(64);
+    const b = "b".repeat(64);
+    const c = "c".repeat(64);
+    const dosya = join(kok, "basvurusuz.json");
+    const sayac = join(kok, "basvurusuz-gozlem.json");
+    await disk.isaretleriYaz(new Map([[a, isaret(1, 0, 2)], [b, isaret(2, 5, null)]]));
+    const ilk = readFileSync(dosya, "utf8");
+    const arttir = (m: Map<string, AjandaEkIsareti>, d: number) =>
+      new Map([...m].map(([o, i]) => [o, { ...i, gozlenen_ms: i.gozlenen_ms + d }] as const));
+    // Saatlik turlar: okunur, hepsine aynı adım eklenir, yazılır.
+    let m = await disk.isaretleriOku();
+    for (let tur = 0; tur < 3; tur++) {
+      m = arttir(m, 3600);
+      await disk.isaretleriYaz(m);
+      assert.equal(readFileSync(dosya, "utf8"), ilk, "büyük dosya olduğu gibi");
+      assert.deepEqual(await disk.isaretleriOku(), m);
+    }
+    assert.deepEqual(m, new Map([[a, isaret(1, 3 * 3600, 2)], [b, isaret(2, 5 + 3 * 3600, null)]]));
+    assert.ok(readFileSync(sayac, "utf8").length < 64);
+    // Yeni süreç (önbelleksiz port) aynı değeri okur; yazmadan önce okumadıysa tam yazar.
+    assert.deepEqual(await ajandaEkDiskiKur(kok).isaretleriOku(), m);
+    // Küme değişince (yeni işaret) tam yazım; değerler korunur, sonra yine yalnız sayaç.
+    const yeni = new Map([...m, [c, isaret(9, 0, 4)] as const]);
+    await disk.isaretleriYaz(yeni);
+    assert.notEqual(readFileSync(dosya, "utf8"), ilk);
+    assert.deepEqual(await ajandaEkDiskiKur(kok).isaretleriOku(), yeni);
+    const ikinci = readFileSync(dosya, "utf8");
+    await disk.isaretleriYaz(arttir(yeni, 7));
+    assert.equal(readFileSync(dosya, "utf8"), ikinci);
+    assert.deepEqual(await ajandaEkDiskiKur(kok).isaretleriOku(), arttir(yeni, 7));
+    // Yalnız bir işaret değişirse (tazeleme) tam yazım.
+    const bir = new Map(arttir(yeni, 7));
+    bir.set(a, isaret(50, 0, 6));
+    await disk.isaretleriYaz(bir);
+    assert.deepEqual(await ajandaEkDiskiKur(kok).isaretleriOku(), bir);
+  });
+
+  it("işaretler: sayaç bozuk, yok ya da tabandan geride ya da dosyayı tabanı bilmeyen eski servis yazdıysa yalnız dosyadaki süre okunur (saklama uzar, kısalmaz)", async () => {
+    const { kok, disk } = ortam();
+    const a = "a".repeat(64);
+    const dosya = join(kok, "basvurusuz.json");
+    const sayac = join(kok, "basvurusuz-gozlem.json");
+    await disk.isaretleriYaz(new Map([[a, isaret(1, 10, 0)]]));
+    await disk.isaretleriOku();
+    await disk.isaretleriYaz(new Map([[a, isaret(1, 110, 0)]]));
+    assert.deepEqual(await disk.isaretleriOku(), new Map([[a, isaret(1, 110, 0)]]));
+    // Sayaç bozuk: yalnız büyük dosyadaki değer (saklama uzar).
+    writeFileSync(sayac, "{bozuk");
+    assert.deepEqual(await disk.isaretleriOku(), new Map([[a, isaret(1, 10, 0)]]));
+    // Bozuk sayaçla sürer: sonraki artış yine doğru birikir.
+    await disk.isaretleriYaz(new Map([[a, isaret(1, 20, 0)]]));
+    assert.deepEqual(await ajandaEkDiskiKur(kok).isaretleriOku(), new Map([[a, isaret(1, 20, 0)]]));
+    // Sayaç yok.
+    rmSync(sayac);
+    assert.deepEqual(await disk.isaretleriOku(), new Map([[a, isaret(1, 10, 0)]]));
+    // Sayaç tabandan geride (yedekten dönmüş): fark sayılmaz, sonraki yazım tamdır.
+    writeFileSync(dosya, JSON.stringify({ [a]: 1, gozlem: { [a]: { ms: 10, rev: 0 } }, gozlem_baz: 500 }));
+    writeFileSync(sayac, JSON.stringify({ toplam: 100 }));
+    assert.deepEqual(await disk.isaretleriOku(), new Map([[a, isaret(1, 10, 0)]]));
+    await disk.isaretleriYaz(new Map([[a, isaret(1, 15, 0)]]));
+    assert.deepEqual(await ajandaEkDiskiKur(kok).isaretleriOku(), new Map([[a, isaret(1, 15, 0)]]));
+    // Dosyayı tabanı bilmeyen eski servis yazdı (sayaç duruyor): fark sayılmaz, sonraki yazım tamdır.
+    writeFileSync(dosya, JSON.stringify({ [a]: 1, gozlem: { [a]: { ms: 40, rev: 0 } } }));
+    writeFileSync(sayac, JSON.stringify({ toplam: 900 }));
+    assert.deepEqual(await disk.isaretleriOku(), new Map([[a, isaret(1, 40, 0)]]));
+    await disk.isaretleriYaz(new Map([[a, isaret(1, 45, 0)]]));
+    assert.deepEqual(await ajandaEkDiskiKur(kok).isaretleriOku(), new Map([[a, isaret(1, 45, 0)]]));
+  });
+
+  it("okunamayan tek önek dizini taramayı düşürmez: öteki dosyalar listelenir", { skip: process.platform !== "win32" }, async () => {
+    const { kok, disk } = ortam();
+    const v1 = veri(10, 1);
+    const v2 = veri(10, 2);
+    const o1 = sha(v1);
+    let o2 = sha(v2);
+    let t = 3;
+    while (o2.slice(0, 2) === o1.slice(0, 2)) o2 = sha(veri(10, t++));
+    for (const o of [o1, o2]) {
+      mkdirSync(join(kok, o.slice(0, 2)), { recursive: true });
+      writeFileSync(join(kok, o.slice(0, 2), o), v1);
+    }
+    const kapali = join(kok, o1.slice(0, 2));
+    execFileSync("icacls", [kapali, "/deny", "*S-1-1-0:(RD)"]);
+    try {
+      assert.deepEqual(await disk.tamListesi(), [{ ozet: o2, bayt: 10 }]);
+    } finally {
+      execFileSync("icacls", [kapali, "/remove:d", "*S-1-1-0"]);
+    }
+    assert.deepEqual((await disk.tamListesi()).map((f) => f.ozet).sort(), [o1, o2].sort());
   });
 
   it("tamOzeti: tam dosyanın boyu ve sha256'sı; dosya yoksa atar; diskte bozulan dosya adıyla tutmaz", async () => {

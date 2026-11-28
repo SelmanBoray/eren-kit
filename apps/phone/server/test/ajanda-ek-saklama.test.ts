@@ -12,7 +12,7 @@ import { describe, it } from "node:test";
 import { AJANDA_SINIRLARI, AJANDA_SURUMU, sha256Hex } from "@eren/protocol";
 import type { AjandaKaydi } from "@eren/protocol";
 import { AJANDA_EK_SINIRLARI, ajandaEkleriKur } from "../src/ajanda-ekler.ts";
-import type { AjandaEkCercevesi, AjandaEkleri, AjandaEkleriBagimliliklari, AjandaEkYaniti } from "../src/ajanda-ekler.ts";
+import type { AjandaEkCercevesi, AjandaEkIsareti, AjandaEkleri, AjandaEkleriBagimliliklari, AjandaEkYaniti } from "../src/ajanda-ekler.ts";
 import { sahteEkDiski } from "./sahte-ek-diski.ts";
 import { sahteGunluk, sahteZaman } from "./sahte.ts";
 
@@ -264,5 +264,170 @@ describe("E3: turlar arasında yeniden başvurulan dosyanın süresi baştan", (
     assert.ok(t.sd.tamlar.has(g.ozet));
     await calis(t, 3 * SAAT);
     assert.equal(t.sd.tamlar.has(g.ozet), false);
+  });
+});
+
+describe("İkinci tur (1): kısa ömürlü süreçte gözlenen süre ilerler (PC kapalı süre yine sayılmaz)", () => {
+  it("süreç her açılışta 50 dk yaşar: kapanış son turdan beri gözleneni yazar, 30 gözlenen günde silinir", async () => {
+    const t = kur();
+    const g = await geriAlinabilir(t);
+    const OMUR = 50 * 60 * 1000;
+    const KAPALI = 10 * 60 * 1000;
+    const adet = SAKLAMA / OMUR;
+    for (let i = 1; i <= adet; i++) {
+      t.zaman.ilerlet(OMUR);
+      await t.yenidenAc(); // kapanış: son turdan bu yana 50 dk
+      t.zaman.ilerlet(KAPALI); // PC kapalı: sayılmaz
+      const s = await t.ekler.temizle(); // açılış turu: 0 sayar
+      if (i < adet) {
+        assert.equal(s.silinen, 0, `açılış ${i}`);
+        assert.equal(t.sd.isaretler.get(g.ozet)?.gozlenen_ms, i * OMUR, `açılış ${i}: yalnız çalışılan süre`);
+      } else {
+        assert.equal(s.silinen, 1);
+      }
+    }
+    assert.equal(t.sd.tamlar.has(g.ozet), false);
+  });
+
+  it("kapanışta sayım da tur adımıyla sınırlı; turu olmamış süreç ve geri giden saat hiç saymaz", async () => {
+    const t = kur();
+    const g = await geriAlinabilir(t);
+    // Son turdan 10 sa sonra kapanış (uyku, askıya alma): en çok GOZLEM_ADIMI_MS.
+    t.zaman.ilerlet(10 * SAAT);
+    await t.yenidenAc();
+    assert.equal(t.sd.isaretler.get(g.ozet)?.gozlenen_ms, AJANDA_EK_SINIRLARI.GOZLEM_ADIMI_MS);
+    // Bu süreçte hiç tur olmadı: kapanış saymaz.
+    t.zaman.ilerlet(SAAT);
+    await t.yenidenAc();
+    assert.equal(t.sd.isaretler.get(g.ozet)?.gozlenen_ms, AJANDA_EK_SINIRLARI.GOZLEM_ADIMI_MS);
+    // Saat geri gitti: kapanış saymaz.
+    await t.ekler.temizle();
+    t.kayma.ms = -5 * SAAT;
+    await t.yenidenAc();
+    assert.equal(t.sd.isaretler.get(g.ozet)?.gozlenen_ms, AJANDA_EK_SINIRLARI.GOZLEM_ADIMI_MS);
+    // Kapanış yinelenirse yeniden saymaz.
+    t.kayma.ms = 0;
+    await t.ekler.temizle();
+    t.zaman.ilerlet(30 * 60 * 1000);
+    await t.ekler.kapat();
+    await t.ekler.kapat();
+    assert.equal(t.sd.isaretler.get(g.ozet)?.gozlenen_ms, AJANDA_EK_SINIRLARI.GOZLEM_ADIMI_MS + 30 * 60 * 1000);
+  });
+});
+
+describe("İkinci tur (2): yarım silme kararı parçadan sonra yeniden denetlenir", () => {
+  it("tur başlamadan sıraya girmiş parça listeden sonra biterse yeni yazılan yarım silinmez", async () => {
+    const t = kur();
+    const e = ekUret("ek_y", 300);
+    t.kayitKoy(kayit("k_y", [e]));
+    const gelen: Msg[] = [];
+    const o = t.ekler.oturumAc({ gonder: (m: AjandaEkYaniti) => gelen.push(m as Msg) });
+    const cerceve = (m: Msg): void => o.cerceve({ v: AJANDA_SURUMU, ...m } as AjandaEkCercevesi);
+    const yukle = { type: "ek_yukle", istek_id: "i", kayit_id: "k_y", ek_id: e.ek_id, ozet: e.ozet, bayt: e.bayt };
+    const parca = (ofset: number, n: number) => ({
+      type: "ek_parca",
+      ek_id: e.ek_id,
+      ofset,
+      veri: Buffer.from(e.veri.slice(ofset, ofset + n)).toString("base64"),
+    });
+    cerceve(yukle);
+    await t.ekler.bekle();
+    cerceve(parca(0, 100));
+    await t.ekler.bekle();
+    // Yarım bir günden eski; istemci kaldığı yerden sürer.
+    t.zaman.ilerlet(25 * SAAT);
+    cerceve(yukle);
+    await t.ekler.bekle();
+    assert.equal(gelen.at(-1)?.alinan, 100);
+
+    // Parça diske yazılırken (sırada, turdan önce) bekletilir.
+    let birak = (): void => {};
+    const kapi = new Promise<void>((coz) => (birak = coz));
+    let ulasti = false;
+    const asil = t.sd.disk.yarimaEkle;
+    t.sd.disk.yarimaEkle = async (ozet, ofset, veri) => {
+      ulasti = true;
+      await kapi;
+      return asil(ozet, ofset, veri);
+    };
+    const tik = () => new Promise<void>((coz) => setImmediate(coz));
+    cerceve(parca(100, 100));
+    while (!ulasti) await tik();
+    t.zaman.ilerlet(1);
+    const listeler = () => t.sd.cagrilar.filter((c) => c === "tamListesi").length;
+    const once = listeler();
+    const tur = t.ekler.temizle();
+    while (listeler() === once) await tik();
+    for (let i = 0; i < 10; i++) await tik();
+    birak();
+    const s = await tur;
+    await t.ekler.bekle();
+    assert.equal(s.yarim_silinen, 0);
+    assert.equal(t.sd.yarimlar.get(e.ozet)?.onay, 200, "parçanın yazdığı ilerleme duruyor");
+    assert.equal(gelen.at(-1)?.alinan, 200);
+  });
+});
+
+describe("İkinci tur (4): silme döngüsü işaretleri her dosyada baştan dolaşmaz", () => {
+  it("her silmede kayıtlar değişse de dolaşma sabit; arada geri yüklenip yeniden silinen dosya korunur", async () => {
+    const t = kur();
+    const N = 60;
+    const dosyalar: Ek[] = [];
+    for (let i = 0; i < N; i++) {
+      const e = ekUret(`ek_${i}`, 10, i + 1);
+      dosyalar.push(e);
+      t.sd.tamlar.set(e.ozet, e.veri);
+      t.kayitKoy(kayit(`k_${i}`, [e], { silindi: true }));
+    }
+    assert.equal((await t.ekler.temizle()).isaretlenen, N);
+    // Süresi dolmuş say (duvar saati ve gözlenen süre).
+    const simdi = t.zaman.saat.simdiMs();
+    for (const [ozet, i] of t.sd.isaretler) t.sd.isaretler.set(ozet, { ...i, ilk_ms: simdi - SAKLAMA, gozlenen_ms: SAKLAMA });
+
+    // Turun okuduğu işaret kümesinin kaç kez baştan dolaşıldığı.
+    const sayim = { dolasma: 0, okuma: 0 };
+    class SayanMap<K, V> extends Map<K, V> {
+      override [Symbol.iterator](): MapIterator<[K, V]> {
+        sayim.dolasma += 1;
+        return super[Symbol.iterator]();
+      }
+    }
+    t.sd.disk.isaretleriOku = async () => {
+      sayim.okuma += 1;
+      return new SayanMap(t.sd.isaretler);
+    };
+    const z = dosyalar[N - 1]!;
+    const asilSil = t.sd.disk.tamSil;
+    let ilk = true;
+    t.sd.disk.tamSil = async (ozet) => {
+      await asilSil(ozet);
+      // Her silmede kayıtlar değişir (başka cihaz yazıyor); ilk silmede son dosya geri yüklenip yeniden silinir.
+      t.kayitKoy(kayit(`k_baska_${ozet.slice(0, 8)}`, []));
+      if (ilk) {
+        ilk = false;
+        t.kayitKoy(kayit(`k_${N - 1}`, [z]));
+        t.kayitKoy(kayit(`k_${N - 1}`, [z], { silindi: true }));
+      }
+    };
+    const s = await t.ekler.temizle();
+    assert.equal(s.silinen, N - 1);
+    assert.ok(t.sd.tamlar.has(z.ozet), "arada yeniden başvurulan dosyanın süresi baştan");
+    assert.equal(sayim.okuma, 1);
+    assert.ok(sayim.dolasma < 10, `dolaşma ${sayim.dolasma}`);
+  });
+});
+
+describe("İkinci tur (7): sahte disk gerçek port gibi geçersiz işareti reddeder", () => {
+  it("eksi ya da tam sayı olmayan rev, eksi gözlenen süre atar; hiçbir şey yazılmaz", async () => {
+    const t = kur();
+    const a = "a".repeat(64);
+    for (const i of [
+      { ilk_ms: 1, gozlenen_ms: 0, rev: -1 },
+      { ilk_ms: 1, gozlenen_ms: 0, rev: 1.5 },
+      { ilk_ms: 1, gozlenen_ms: -1, rev: 0 },
+    ]) {
+      await assert.rejects(t.sd.disk.isaretleriYaz(new Map([[a, i]])), /gecersiz_isaret/, JSON.stringify(i));
+    }
+    assert.equal(t.sd.isaretler.size, 0);
   });
 });

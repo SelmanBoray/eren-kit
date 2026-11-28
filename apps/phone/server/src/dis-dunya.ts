@@ -1474,6 +1474,15 @@ const EK_ISARET_DOSYASI = "basvurusuz.json";
  * dosyada gözlenen süre 0, revizyon yok: saklama uzar, kısalmaz.
  */
 const EK_GOZLEM_ANAHTARI = "gozlem";
+/**
+ * Gözlem tabanı (`gozlem_baz: B`, işaret dosyasında) ve gözlem sayacı (`basvurusuz-gozlem.json`,
+ * `{"toplam": G}`). Her tur bütün işaretlerin gözlenen süresine aynı adımı ekler; 50 000 işaretlik dosyayı
+ * (~9 MB) her saat yeniden yazmamak için o zaman yalnız küçük sayaç ilerler. Okunan gözlenen süre
+ * `ms + (G - B)`'dir; taban yoksa, sayaç yoksa ya da bozuksa ya da tabandan gerideyse yalnız `ms` (saklama
+ * uzar, kısalmaz). Tabanı bilmeyen eski servis yalnız `ms`'yi okur ve yazar: yine uzar yönde.
+ */
+const EK_GOZLEM_BAZI = "gozlem_baz";
+const EK_GOZLEM_DOSYASI = "basvurusuz-gozlem.json";
 const EK_ONAY = ".onay";
 const EK_GECICI = ".tmp";
 const EK_OKUMA_PARCASI = 256 * 1024;
@@ -1630,6 +1639,54 @@ export const ajandaEkDiskiKur = (kok: string): AjandaEkDiski => {
     return Number.isSafeInteger(n) ? n : null;
   };
 
+  const isaretYolu = join(kok, EK_ISARET_DOSYASI);
+  const sayacYolu = join(kok, EK_GOZLEM_DOSYASI);
+
+  /** Gözlem sayacı (`toplam`); yoksa ya da bozuksa `null`. Bağsa ya da dizinse atar. */
+  const sayacOku = async (): Promise<number | null> => {
+    let metin: string;
+    try {
+      if ((await ekDuzDosya(sayacYolu)) === null) return null;
+      metin = await readFile(sayacYolu, "utf8");
+    } catch (e) {
+      if (hataKodu(e) === "ENOENT") return null;
+      throw e;
+    }
+    try {
+      const d: unknown = JSON.parse(metin);
+      const t = typeof d === "object" && d !== null ? (d as Record<string, unknown>).toplam : undefined;
+      return typeof t === "number" && Number.isFinite(t) && t >= 0 ? t : null;
+    } catch {
+      return null;
+    }
+  };
+
+  /**
+   * Diskteki işaret kümesinin bu portun bildiği hali (son tutarlı okuma ya da yazım) ve o andaki sayaç.
+   * Yoksa sonraki yazım tamdır. Yazım başlarken düşer, yalnız başarıyla biterse yeniden kurulur.
+   */
+  let isaretOnbellegi: { isaretler: Map<string, AjandaEkIsareti>; toplam: number } | null = null;
+
+  /**
+   * `yeni`, `eski`'den yalnız bütün işaretlerin gözlenen süresine aynı `d >= 0` eklenerek mi elde edildi
+   * (aynı özetler, aynı `ilk_ms` ve `rev`); öyleyse `d`, değilse `null`. Boş küme hep `null` (tam yazım ucuz).
+   */
+  const tekduzeArtis = (
+    eski: ReadonlyMap<string, AjandaEkIsareti>,
+    yeni: ReadonlyMap<string, AjandaEkIsareti>,
+  ): number | null => {
+    if (yeni.size === 0 || yeni.size !== eski.size) return null;
+    let d: number | null = null;
+    for (const [ozet, y] of yeni) {
+      const e = eski.get(ozet);
+      if (e === undefined || e.ilk_ms !== y.ilk_ms || e.rev !== y.rev) return null;
+      const fark = y.gozlenen_ms - e.gozlenen_ms;
+      if (d === null) d = fark;
+      else if (fark !== d) return null;
+    }
+    return d !== null && d >= 0 ? d : null;
+  };
+
   const yarimDurumu = async (ozet: string): Promise<number | null> => {
     const yol = yarimYolu(ozet);
     if (!(await ekDizinVar(kok)) || !(await ekDizinVar(yarimDizini))) return null;
@@ -1685,7 +1742,16 @@ export const ajandaEkDiskiKur = (kok: string): AjandaEkDiski => {
       if (!(await ekDizinVar(kok))) return liste;
       for (const d of await ekDizinListesi(kok)) {
         if (!d.isDirectory() || d.isSymbolicLink() || !EK_ONEKI.test(d.name)) continue;
-        for (const f of await ekDizinListesi(join(kok, d.name))) {
+        let dosyalar: Dirent[];
+        try {
+          dosyalar = await ekDizinListesi(join(kok, d.name));
+        } catch {
+          // Okunamayan tek önek dizini (izin, paylaşım ihlali) bütün taramayı düşürmez: yalnız o dizinin
+          // dosyaları bu turda görünmez (kotaya sayılmaz, işaretlenmez, silinmez; işareti varsa düşer ve
+          // yeniden görülünce baştan başlar: saklama uzar).
+          continue;
+        }
+        for (const f of dosyalar) {
           if (!f.isFile() || !EK_OZETI.test(f.name) || !f.name.startsWith(d.name)) continue;
           const durum = await ekDuzDosya(join(kok, d.name, f.name)).catch(() => null);
           if (durum !== null) liste.push({ ozet: f.name, bayt: durum.size });
@@ -1769,9 +1835,10 @@ export const ajandaEkDiskiKur = (kok: string): AjandaEkDiski => {
     },
 
     isaretleriOku: async () => {
+      isaretOnbellegi = null;
       const sonuc = new Map<string, AjandaEkIsareti>();
       if (!(await ekDizinVar(kok))) return sonuc;
-      const yol = join(kok, EK_ISARET_DOSYASI);
+      const yol = isaretYolu;
       let metin: string;
       try {
         if ((await ekDuzDosya(yol)) === null) return sonuc;
@@ -1790,6 +1857,12 @@ export const ajandaEkDiskiKur = (kok: string): AjandaEkDiski => {
       if (!nesneMi(deger)) return sonuc;
       const gozlemHam = deger[EK_GOZLEM_ANAHTARI];
       const gozlem: Record<string, unknown> = nesneMi(gozlemHam) ? gozlemHam : {};
+      const bazHam = deger[EK_GOZLEM_BAZI];
+      const baz = typeof bazHam === "number" && Number.isFinite(bazHam) && bazHam >= 0 ? bazHam : null;
+      const toplam = await sayacOku();
+      // Taban ile sayaç tutarlıysa sayacın tabandan beri ilerlediği kadar her işarete eklenir.
+      const tutarli = baz !== null && (toplam === null || toplam >= baz);
+      const ek = tutarli && toplam !== null ? toplam - baz : 0;
       for (const [ozet, ms] of Object.entries(deger)) {
         if (!EK_OZETI.test(ozet) || typeof ms !== "number" || !Number.isFinite(ms)) continue;
         const g = Object.hasOwn(gozlem, ozet) ? gozlem[ozet] : undefined;
@@ -1797,25 +1870,49 @@ export const ajandaEkDiskiKur = (kok: string): AjandaEkDiski => {
         const grev = nesneMi(g) ? g.rev : undefined;
         sonuc.set(ozet, {
           ilk_ms: ms,
-          gozlenen_ms: typeof gms === "number" && Number.isFinite(gms) && gms >= 0 ? gms : 0,
+          gozlenen_ms: (typeof gms === "number" && Number.isFinite(gms) && gms >= 0 ? gms : 0) + ek,
           rev: typeof grev === "number" && Number.isSafeInteger(grev) && grev >= 0 ? grev : null,
         });
       }
+      if (tutarli) isaretOnbellegi = { isaretler: new Map(sonuc), toplam: toplam ?? baz };
       return sonuc;
     },
 
     isaretleriYaz: async (isaretler) => {
+      const ozetler = [...isaretler.keys()].sort();
+      for (const ozet of ozetler) {
+        ozetli(ozet);
+        const i = isaretler.get(ozet) as AjandaEkIsareti;
+        // Okuyucunun 0/`null` sayacağı değer yazılmaz: yazılan okunanla aynı kalmalı.
+        const revGecerli = i.rev === null || (Number.isSafeInteger(i.rev) && i.rev >= 0);
+        if (!Number.isFinite(i.ilk_ms) || !Number.isFinite(i.gozlenen_ms) || i.gozlenen_ms < 0 || !revGecerli) {
+          throw new Error("gecersiz_isaret");
+        }
+      }
+      const onceki = isaretOnbellegi;
+      isaretOnbellegi = null;
+      await ekDizinHazirla(kok);
+      const artis = onceki === null ? null : tekduzeArtis(onceki.isaretler, isaretler);
+      if (onceki !== null && artis !== null) {
+        // Yalnız gözlenen süre ilerledi: büyük dosya olduğu gibi kalır, sayaç ilerler.
+        const toplam = onceki.toplam + artis;
+        if (artis > 0) await ekAtomikYaz(sayacYolu, JSON.stringify({ toplam }));
+        isaretOnbellegi = { isaretler: new Map(isaretler), toplam };
+        return;
+      }
+      // Tam yazım: taban o anki sayaçtır (okunan gözlenen süre `ms`'nin kendisi).
+      const toplam = onceki?.toplam ?? (await sayacOku()) ?? 0;
       const nesne: Record<string, unknown> = {};
       const gozlem: Record<string, { ms: number; rev?: number }> = {};
-      for (const ozet of [...isaretler.keys()].sort()) {
+      for (const ozet of ozetler) {
         const i = isaretler.get(ozet) as AjandaEkIsareti;
-        if (!Number.isFinite(i.ilk_ms) || !Number.isFinite(i.gozlenen_ms)) throw new Error("gecersiz_isaret");
-        nesne[ozetli(ozet)] = i.ilk_ms;
+        nesne[ozet] = i.ilk_ms;
         gozlem[ozet] = { ms: i.gozlenen_ms, ...(i.rev !== null && { rev: i.rev }) };
       }
       nesne[EK_GOZLEM_ANAHTARI] = gozlem;
-      await ekDizinHazirla(kok);
-      await ekAtomikYaz(join(kok, EK_ISARET_DOSYASI), JSON.stringify(nesne));
+      nesne[EK_GOZLEM_BAZI] = toplam;
+      await ekAtomikYaz(isaretYolu, JSON.stringify(nesne));
+      isaretOnbellegi = { isaretler: new Map(isaretler), toplam };
     },
   };
 };
