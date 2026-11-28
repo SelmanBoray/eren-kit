@@ -188,7 +188,7 @@ class KopruTest {
 
             // PC reddi: durum Reddedildi, bağlantı kapattırılır, gözlemci bildirilir.
             gozlemci.gelen.clear()
-            c.cerceveGeldi(nesil, """{"v":2,"type":"pair_result","ok":false,"code":"eslestirme_kodu_gecersiz"}""")
+            c.cerceveGeldi(nesil, """{"v":3,"type":"pair_result","ok":false,"code":"eslestirme_kodu_gecersiz"}""")
             assertEquals(EslesmeDurumu.Reddedildi(AjandaKanalHatasi.ESLESTIRME_KODU_GECERSIZ), c.eslesmeDurumu())
             assertEquals(1, tasima.kapatilan.size)
             assertTrue(gozlemci.gelen.any { it.eslesme })

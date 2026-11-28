@@ -8,6 +8,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { DatabaseSync } from "node:sqlite";
 import {
   uygulamaKoku,
   surumKopyala,
@@ -446,6 +447,7 @@ test("veriKokuHatasindanCik: geri alma fırlatsa da servis durur; mesaj kök sor
         olaylar.push("geriAl");
         throw new Error("junction değiştirilemedi (EPERM)");
       },
+      vt: () => path.join(gecici("vt"), "eren.db"),
     };
     const hata = await sessizce(() => veriKokuHatasindanCik(hedef, B, A, KOK_SEBEBI, bag).then(() => null, (e: unknown) => e));
     assert.ok(hata instanceof Error, "fırlatmalı");
@@ -467,12 +469,97 @@ test("veriKokuHatasindanCik: geri alma fırlatsa da servis durur; mesaj kök sor
         guncelYap(h, o);
         void d;
       },
+      vt: bag.vt,
     };
     const h2 = await sessizce(() => veriKokuHatasindanCik(hedef, B, A, KOK_SEBEBI, gercekGeriAl).then(() => null, (e: unknown) => e));
     assert.ok(h2 instanceof Error);
     assert.deepEqual(olaylar, ["durdur", "geriAl"]);
     assert.match(h2.message, new RegExp(`otomatik geri alındı: ${B} → ${A}`));
     assert.equal(guncelSha(hedef), A);
+  } finally {
+    temizle();
+  }
+});
+
+/** Servisin ajanda tablosuyla (depo.ts ek göç 6) geçici depo; canlı veri köküne dokunmaz. */
+function ajandaDeposu(kayitlar: readonly Record<string, unknown>[]): string {
+  const yol = path.join(gecici("vt"), "eren.db");
+  const db = new DatabaseSync(yol);
+  db.exec(`CREATE TABLE ajanda_kayitlari (kayit_id TEXT PRIMARY KEY, revizyon INTEGER NOT NULL, olusturma_rev INTEGER NOT NULL,
+    tekil_anahtar TEXT, tur TEXT NOT NULL, durum TEXT NOT NULL, silindi INTEGER NOT NULL, veri TEXT NOT NULL) STRICT`);
+  const ekle = db.prepare("INSERT INTO ajanda_kayitlari VALUES (?, ?, ?, NULL, 'gorev', 'acik', 0, ?)");
+  kayitlar.forEach((k, i) => ekle.run(String(k.kayit_id), i + 1, i + 1, JSON.stringify(k)));
+  db.close();
+  return yol;
+}
+
+const ajandaKaydi = (kayit_id: string, v3: boolean): Record<string, unknown> => ({
+  kayit_id,
+  revizyon: 1,
+  tur: "gorev",
+  baslik: "Süt al",
+  hatirlatmalar: [],
+  ornekler: [],
+  durum: "acik",
+  taslak: false,
+  silindi: false,
+  elle_alanlar: [],
+  kaynak: { yol: "elle", tur_kokeni: "insan", device_id: "d_telefon01" },
+  olusturma_ms: 1795000000000,
+  guncelleme_ms: 1795000000000,
+  ...(v3 ? { bolge: "market", varis: {} } : {}),
+});
+
+test("veriKokuHatasindanCik: v3 alanlı kayıt varken ajanda v2 sürümüne geri alma uyarır (geri alma yine yapılır); yokken uyarı yok", async () => {
+  try {
+    const kaynak = sahteKaynak();
+    const hedef = gecici("hedef");
+    kopyala(kaynak, hedef, A, 1000);
+    kopyala(kaynak, hedef, B, 2000);
+    // geri alınacak A ajanda v2 konuşur, B (düşen) v3
+    yaz(path.join(hedef, "surumler", A), "protocol/src/sinirlar.ts", "export const AJANDA_SURUMU = 2 as const;\n");
+    yaz(path.join(hedef, "surumler", B), "protocol/src/sinirlar.ts", "export const AJANDA_SURUMU = 3 as const;\n");
+    let durduruldu = false;
+    const bagla = (vt: string): KokHatasiBag => ({
+      durdur: async () => {
+        durduruldu = true;
+        return "servis durduruldu";
+      },
+      geriAl: (h, _d, o) => guncelYap(h, o),
+      vt: () => {
+        assert.ok(durduruldu, "ajanda denetimi servis durdurulduktan sonra");
+        return vt;
+      },
+    });
+    const hataMetni = async (vt: string): Promise<{ mesaj: string; akan: string }> => {
+      guncelYap(hedef, B);
+      durduruldu = false;
+      const akan: string[] = [];
+      const error = console.error;
+      console.error = (...a: unknown[]) => void akan.push(a.join(" "));
+      try {
+        const h = await veriKokuHatasindanCik(hedef, B, A, KOK_SEBEBI, bagla(vt)).then(() => null, (e: unknown) => e);
+        assert.ok(h instanceof Error);
+        return { mesaj: h.message, akan: akan.join("\n") };
+      } finally {
+        console.error = error;
+      }
+    };
+
+    const v3li = await hataMetni(ajandaDeposu([ajandaKaydi("k_a", false), ajandaKaydi("k_b", true)]));
+    assert.equal(guncelSha(hedef), A, "geri alma yine yapılmalı");
+    for (const m of [v3li.mesaj, v3li.akan]) {
+      assert.ok(m.includes(`geri alınan sürüm (${A}, ajanda v2) depodaki 2 ajanda kaydından 1'ini çözemez`), m);
+      assert.match(m, /alanlar: bolge, varis/);
+      assert.match(m, /yeniden bağlanma döngüsünde/);
+      assert.match(m, /tutarsiz_kayit ile kalıcı reddedilir/);
+    }
+    assert.match(v3li.mesaj, /otomatik geri alındı/);
+    assert.doesNotMatch(v3li.mesaj, /\.\./, "çift nokta olmamalı");
+
+    const v2li = await hataMetni(ajandaDeposu([ajandaKaydi("k_a", false)]));
+    assert.equal(guncelSha(hedef), A);
+    assert.doesNotMatch(v2li.mesaj + v2li.akan, /ajanda/);
   } finally {
     temizle();
   }

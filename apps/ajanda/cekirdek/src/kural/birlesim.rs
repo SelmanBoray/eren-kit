@@ -1,19 +1,21 @@
 //! SAHİBİ: R2 (birleştirme, tekilleştirme, kuyruk, eşitleme kuralları). Alan düzeyinde birleştirme
-//! (`ajanda.ts` `ajandaDegisikligiUygula`, `ornekleriBuda`). Motorun iyimser uygulaması ve kuyruğun
-//! taze kopya üstüne yeniden uygulanması bunu kullanır.
-//! Vektör: `ajanda-kurallar.json` `birlestirme`.
+//! (`ajanda.ts` `ajandaDegisikligiUygula`, `ornekleriBuda`). Motorun iyimser uygulaması, kuyruğun taze
+//! kopya üstüne yeniden uygulanması ve yerel kipin yazarı (`motor/yerel.rs`, `islem_uygula` üzerinden)
+//! bunu kullanır: v3 bölge/konum kuralı da burada olduğu için üçü aynı sonucu verir.
+//! Vektörler: `ajanda-kurallar.json` `birlestirme`, `ajanda-v3.json` `bolge_konumu`.
 //!
 //! Uygulama biçimi: her alan için "istenen" (verilmedi / kaldır / değer) ve "şimdiki" değer JSON
 //! olarak alınır ve başvurudaki gibi kanonik JSON ile karşılaştırılır; uygulama ise tipli alana
 //! doğrudan yapılır (JSON'dan geri okuma yok). Böylece "aynı mı" kararı TypeScript ile birebir
 //! aynı tanımı kullanır, yeni hal ise şemadan geçmemiş olsa da tipli kalır.
 
+use crate::model::alan::{baglantilar_yaz, ekler_yaz};
 use crate::model::kanonik::kanonik_json;
 use crate::model::tekrar::ornek_gunu_mu;
 use crate::model::zaman::hatirlatmalari_yaz;
 use crate::model::{
-    Alan, AjandaAlani, AjandaKaydi, AjandaOrnegi, AjandaZamani, AlanDegisikligi, Tekrar, YazarKimligi,
-    kullanici_emri_mi,
+    Alan, AjandaAlani, AjandaBolgeKonumu, AjandaKaydi, AjandaOrnegi, AjandaVaris, AjandaZamani, AlanDegisikligi, Tekrar,
+    YazarKimligi, ajanda_bolge_yeri_degisir_mi, kullanici_emri_mi,
 };
 use serde_json::Value;
 
@@ -52,6 +54,12 @@ fn istenen(d: &AlanDegisikligi, alan: AjandaAlani) -> Option<Istenen> {
         AjandaAlani::Hatirlatmalar => d.hatirlatmalar.as_deref().map(|h| Istenen::Deger(hatirlatmalari_yaz(h))),
         AjandaAlani::Tekrar => alan_istenen(&d.tekrar, Tekrar::json),
         AjandaAlani::Durum => d.durum.map(|s| Istenen::Deger(s.json())),
+        AjandaAlani::Simge => alan_istenen(&d.v3.simge, |s| Value::String(s.clone())),
+        AjandaAlani::Bolge => alan_istenen(&d.v3.bolge, |s| Value::String(s.clone())),
+        AjandaAlani::BolgeKonumu => alan_istenen(&d.v3.bolge_konumu, AjandaBolgeKonumu::json),
+        AjandaAlani::Varis => alan_istenen(&d.v3.varis, AjandaVaris::json),
+        AjandaAlani::Baglantilar => alan_istenen(&d.v3.baglantilar, |l| baglantilar_yaz(l)),
+        AjandaAlani::Ekler => alan_istenen(&d.v3.ekler, |l| ekler_yaz(l)),
     }
 }
 
@@ -65,6 +73,12 @@ fn simdiki(k: &AjandaKaydi, alan: AjandaAlani) -> Option<Value> {
         AjandaAlani::Hatirlatmalar => Some(hatirlatmalari_yaz(&k.hatirlatmalar)),
         AjandaAlani::Tekrar => k.tekrar.as_ref().map(Tekrar::json),
         AjandaAlani::Durum => Some(k.durum.json()),
+        AjandaAlani::Simge => k.v3.simge.clone().map(Value::String),
+        AjandaAlani::Bolge => k.v3.bolge.clone().map(Value::String),
+        AjandaAlani::BolgeKonumu => k.v3.bolge_konumu.as_ref().map(AjandaBolgeKonumu::json),
+        AjandaAlani::Varis => k.v3.varis.as_ref().map(AjandaVaris::json),
+        AjandaAlani::Baglantilar => (!k.v3.baglantilar.is_empty()).then(|| baglantilar_yaz(&k.v3.baglantilar)),
+        AjandaAlani::Ekler => (!k.v3.ekler.is_empty()).then(|| ekler_yaz(&k.v3.ekler)),
     }
 }
 
@@ -74,6 +88,15 @@ fn uclu_uygula<T: Clone>(hedef: &mut Option<T>, a: &Alan<T>) {
         Alan::Yok => {}
         Alan::Kaldir => *hedef = None,
         Alan::Deger(d) => *hedef = Some(d.clone()),
+    }
+}
+
+/// Liste alanına uygular: modelde boş liste "alan yok"tur (`Kaldir`).
+fn liste_uygula<T: Clone>(hedef: &mut Vec<T>, a: &Alan<Vec<T>>) {
+    match a {
+        Alan::Yok => {}
+        Alan::Kaldir => hedef.clear(),
+        Alan::Deger(d) => *hedef = d.clone(),
     }
 }
 
@@ -103,7 +126,22 @@ fn alani_yaz(k: &mut AjandaKaydi, d: &AlanDegisikligi, alan: AjandaAlani) {
                 k.durum = s;
             }
         }
+        AjandaAlani::Simge => uclu_uygula(&mut k.v3.simge, &d.v3.simge),
+        AjandaAlani::Bolge => uclu_uygula(&mut k.v3.bolge, &d.v3.bolge),
+        AjandaAlani::BolgeKonumu => uclu_uygula(&mut k.v3.bolge_konumu, &d.v3.bolge_konumu),
+        AjandaAlani::Varis => uclu_uygula(&mut k.v3.varis, &d.v3.varis),
+        AjandaAlani::Baglantilar => liste_uygula(&mut k.v3.baglantilar, &d.v3.baglantilar),
+        AjandaAlani::Ekler => liste_uygula(&mut k.v3.ekler, &d.v3.ekler),
     }
+}
+
+/// `bolge` değişikliği konumu düşürür mü (`ajandaBolgeYeriDegisirMi(kayit.bolge, deger)`).
+fn bolge_yeri_degisir(kayit: &AjandaKaydi, bolge: &Alan<String>) -> bool {
+    let yeni = match bolge {
+        Alan::Deger(b) => Some(b.as_str()),
+        _ => None,
+    };
+    ajanda_bolge_yeri_degisir_mi(kayit.v3.bolge.as_deref(), yeni)
 }
 
 /// `ornekleriBuda`: seriye artık ait olmayan örnek satırları. Tekrar yoksa hepsi; zamanın günü yoksa
@@ -119,6 +157,12 @@ fn ornekleri_buda(k: &AjandaKaydi) -> (Vec<AjandaOrnegi>, Vec<AjandaOrnegi>) {
 /// değişiklikte (`kullanici_emri_mi` yanlış) `elle_alanlar`'daki alan değişmez, `korunan`'a girer.
 /// Emirde her alan uygulanır ve `elle_alanlar`'a eklenir. `tekrar` ya da `zaman` uygulanınca seriye
 /// ait olmayan örnek satırları budanır. Hatırlatma listesine dokunulmaz.
+///
+/// Bölge ve konum (v3): `bolge` başka bir yere (`ajanda_bolge_yeri_degisir_mi`) değişir ya da kaldırılırsa
+/// ve aynı değişiklikte `bolge_konumu` verilmediyse konum da kalkar (`uygulanan`'a girer). Yalnız yazılışı
+/// değişen ad aynı yerdir, konum kalır. Emir olmayan otomasyonda `bolge_konumu` korunuyorsa (`elle_alanlar`)
+/// ve kayıtta konum varsa, konumu düşürecek `bolge` değişikliği de korunur. `varis` kendiliğinden kalkmaz:
+/// `bolge` kaldırılıp `varis` bırakılırsa sonuç `gecerli_mi`'den geçmez (`tutarsiz_kayit`).
 pub fn ajanda_degisikligi_uygula(
     kayit: &AjandaKaydi,
     degisiklik: &AlanDegisikligi,
@@ -128,6 +172,8 @@ pub fn ajanda_degisikligi_uygula(
     let mut yeni = kayit.clone();
     let mut uygulanan = Vec::new();
     let mut korunan = Vec::new();
+    let konum_korunur =
+        otomasyon && kayit.v3.bolge_konumu.is_some() && kayit.elle_alanlar.contains(&AjandaAlani::BolgeKonumu);
     for &alan in AjandaAlani::HEPSI {
         let Some(deger) = istenen(degisiklik, alan) else { continue };
         let simdi = simdiki(kayit, alan);
@@ -139,12 +185,22 @@ pub fn ajanda_degisikligi_uygula(
         if ayni {
             continue;
         }
-        if otomasyon && kayit.elle_alanlar.contains(&alan) {
+        let konumu_dusurur = alan == AjandaAlani::Bolge && bolge_yeri_degisir(kayit, &degisiklik.v3.bolge);
+        if otomasyon && (kayit.elle_alanlar.contains(&alan) || (konumu_dusurur && konum_korunur)) {
             korunan.push(alan);
             continue;
         }
         alani_yaz(&mut yeni, degisiklik, alan);
         uygulanan.push(alan);
+    }
+    if uygulanan.contains(&AjandaAlani::Bolge)
+        && degisiklik.v3.bolge_konumu.yok_mu()
+        && yeni.v3.bolge_konumu.is_some()
+        && ajanda_bolge_yeri_degisir_mi(kayit.v3.bolge.as_deref(), yeni.v3.bolge.as_deref())
+    {
+        yeni.v3.bolge_konumu = None;
+        uygulanan.push(AjandaAlani::BolgeKonumu);
+        uygulanan.sort();
     }
     if !otomasyon {
         yeni.elle_alanlar = AjandaAlani::HEPSI
@@ -212,6 +268,7 @@ mod testler {
             },
             olusturma_ms: 1,
             guncelleme_ms: 1,
+            v3: Default::default(),
         }
     }
 

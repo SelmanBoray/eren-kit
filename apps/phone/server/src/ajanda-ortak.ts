@@ -135,7 +135,7 @@ export function degisiklikAni(simdi: number, onceki: Pick<AjandaKaydi, "guncelle
   return onceki === null ? simdi : Math.max(simdi, onceki.guncelleme_ms);
 }
 
-/** Araç çıktısının kayıt özeti: metin taşımaz (`AjandaKayitOzeti`). */
+/** Araç çıktısının kayıt özeti: metin, bölge adı ve konum taşımaz (`AjandaKayitOzeti`). */
 export function kayitOzeti(k: AjandaKaydi, simdiMs: number, takvim: TakvimPortu): AjandaKayitOzeti {
   const ozet: AjandaKayitOzeti = {
     kayit_id: k.kayit_id,
@@ -146,5 +146,7 @@ export function kayitOzeti(k: AjandaKaydi, simdiMs: number, takvim: TakvimPortu)
     hatirlatma: hatirlatmaOzeti(k, simdiMs, takvim.anCevir),
   };
   if (k.zaman !== undefined) ozet.zaman = ajandaZamanOzeti(k.zaman);
+  // v3: varış kuralı (pencere, çıkış bayrağı); bölge adı ve konum özete girmez.
+  if (k.varis !== undefined) ozet.varis = k.varis;
   return ozet;
 }

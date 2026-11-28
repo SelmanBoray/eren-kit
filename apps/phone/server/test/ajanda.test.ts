@@ -331,6 +331,124 @@ describe("ajanda: elle güncelleme, durum, onay, silme", () => {
   });
 });
 
+describe("ajanda: sürüm 3 alanları (simge, bölge, konum, varış, bağlantılar, ekler)", () => {
+  const KONUM = { enlem_e6: 41_017_623, boylam_e6: 28_973_519, yaricap_m: 150 };
+  const EK = { ek_id: "ek_0001", mime: "image/jpeg", bayt: 2048, ozet: "cd".repeat(32), olusturma_ms: T0 - 1 };
+  const bolgeli = (kayit_id = "k_v3", ek: Partial<Extract<AjandaIslem, { islem: "ekle" }>> = {}): AjandaIslem =>
+    disci(kayit_id, {
+      simge: "dis",
+      bolge: "Kadıköy  Dişçi",
+      bolge_konumu: KONUM,
+      varis: {},
+      baglantilar: [{ url: "https://ornek.example/r" }],
+      ekler: [EK],
+      ...ek,
+    });
+  const guncelle = (o: ReturnType<typeof kur>, id: string, degisiklik: Record<string, unknown>) =>
+    o.islem(yeniIslemId(), { islem: "guncelle", kayit_id: id, temel_revizyon: 1, degisiklik } as AjandaIslem);
+
+  it("ekle: v3 alanları saklanır, elle_alanlar'a kanonik sırada girer, geçmiş doğum parçasında; tekil anahtar yok", () => {
+    const o = kur();
+    assert.deepEqual(o.islem("i1", bolgeli()), { ok: true, kayit_id: "k_v3", rev: 1 });
+    const k = o.kayit("k_v3");
+    AjandaKaydiSemasi.parse(k);
+    assert.equal(k.simge, "dis");
+    assert.equal(k.bolge, "Kadıköy  Dişçi");
+    assert.deepEqual(k.bolge_konumu, KONUM);
+    assert.deepEqual(k.varis, {});
+    assert.deepEqual(k.baglantilar, [{ url: "https://ornek.example/r" }]);
+    assert.deepEqual(k.ekler, [EK]);
+    assert.deepEqual(k.elle_alanlar, ["tur", "baslik", "zaman", "hatirlatmalar", "simge", "bolge", "bolge_konumu", "varis", "baglantilar", "ekler"]);
+    // Elle ekleme otomatik ekleme değildir: bölge olsa da tekil anahtar almaz.
+    assert.equal(k.kaynak.tekil_anahtar, undefined);
+    const g = o.gecmisi("k_v3")[0]!;
+    assert.deepEqual(
+      [g.sonraki.simge, g.sonraki.bolge, g.sonraki.bolge_konumu, g.sonraki.varis, g.sonraki.baglantilar, g.sonraki.ekler],
+      [k.simge, k.bolge, k.bolge_konumu, k.varis, k.baglantilar, k.ekler],
+    );
+  });
+
+  it("ekle: bölgesiz konum ya da varış, geçersiz URL, tekrarlı ek_id şema reddidir (gecersiz_islem), kayıt doğmaz", () => {
+    const o = kur();
+    const { bolge: _b, ...bolgesiz } = bolgeli("k_1") as Extract<AjandaIslem, { islem: "ekle" }>;
+    const { bolge: _b2, bolge_konumu: _k, ...yalnizVaris } = bolgeli("k_2") as Extract<AjandaIslem, { islem: "ekle" }>;
+    for (const islem of [
+      bolgesiz,
+      yalnizVaris,
+      bolgeli("k_3", { baglantilar: [{ url: "javascript:alert(1)" }] }),
+      bolgeli("k_4", { ekler: [EK, EK] }),
+    ]) {
+      assert.equal(o.islem(yeniIslemId(), islem as AjandaIslem).code, "gecersiz_islem");
+    }
+    assert.equal(o.depo.ajandaKayitSayisi(), 0);
+  });
+
+  it("guncelle: null kaldırır, geçmiş öncesi/sonrası taşır; kaldırılan alan elle izine girer", () => {
+    const o = kur();
+    o.islem("i1", bolgeli());
+    const s = guncelle(o, "k_v3", { simge: null, baglantilar: null, ekler: null });
+    assert.deepEqual(s, { ok: true, kayit_id: "k_v3", rev: 2 });
+    const k = o.kayit("k_v3");
+    for (const a of ["simge", "baglantilar", "ekler"] as const) assert.equal(a in k, false, a);
+    assert.equal(k.bolge, "Kadıköy  Dişçi");
+    assert.deepEqual(k.bolge_konumu, KONUM);
+    const g = o.gecmisi("k_v3")[0]!;
+    assert.deepEqual(g.onceki, { simge: "dis", baglantilar: [{ url: "https://ornek.example/r" }], ekler: [EK] });
+    assert.deepEqual(g.sonraki, { simge: null, baglantilar: null, ekler: null });
+    assert.ok(k.elle_alanlar.includes("simge"));
+    // Olmayan alanı kaldırmak yan etkisiz.
+    assert.deepEqual(guncelle(o, "k_v3", { simge: null }), { ok: true, kayit_id: "k_v3" });
+  });
+
+  it("bölge başka ada değişince konum düşer (geçmişte de); yalnız yazılışı değişen ad aynı yer, konum kalır", () => {
+    const o = kur();
+    o.islem("i1", bolgeli());
+    // Büyük/küçük harf ve boşluk farkı (`ajandaBolgeAnahtari` aynı): konum kalır.
+    assert.equal(guncelle(o, "k_v3", { bolge: "KADIKÖY dişçi" }).ok, true);
+    assert.deepEqual(o.kayit("k_v3").bolge_konumu, KONUM);
+    assert.deepEqual(o.gecmisi("k_v3")[0]!.sonraki, { bolge: "KADIKÖY dişçi" });
+    // Başka yer: konum kendiliğinden kalkar, geçmişe yazılır, elle izine girer.
+    assert.equal(guncelle(o, "k_v3", { bolge: "Beşiktaş Dişçi" }).ok, true);
+    const k = o.kayit("k_v3");
+    assert.equal(k.bolge_konumu, undefined);
+    assert.ok(k.elle_alanlar.includes("bolge_konumu"));
+    const g = o.gecmisi("k_v3")[0]!;
+    assert.deepEqual(g.onceki, { bolge: "KADIKÖY dişçi", bolge_konumu: KONUM });
+    assert.deepEqual(g.sonraki, { bolge: "Beşiktaş Dişçi", bolge_konumu: null });
+    // Aynı değişiklikte yeni konum verilirse o yazılır.
+    const yeniKonum = { ...KONUM, enlem_e6: 41_043_000 };
+    assert.equal(guncelle(o, "k_v3", { bolge: "Üsküdar Dişçi", bolge_konumu: yeniKonum }).ok, true);
+    assert.deepEqual(o.kayit("k_v3").bolge_konumu, yeniKonum);
+  });
+
+  it("bölge kalkınca varış kalırsa tutarsiz_kayit (hiçbir şey yazılmaz); varışla birlikte kalkarsa konum da düşer", () => {
+    const o = kur();
+    o.islem("i1", bolgeli());
+    assert.deepEqual(guncelle(o, "k_v3", { bolge: null }), { ok: false, kayit_id: "k_v3", code: "tutarsiz_kayit" });
+    assert.equal(o.kayit("k_v3").revizyon, 1);
+    assert.equal(guncelle(o, "k_v3", { bolge: null, varis: null }).ok, true);
+    const k = o.kayit("k_v3");
+    for (const a of ["bolge", "bolge_konumu", "varis"] as const) assert.equal(a in k, false, a);
+    assert.deepEqual(o.gecmisi("k_v3")[0]!.sonraki, { bolge: null, bolge_konumu: null, varis: null });
+    // Bölgesiz kayda konum eklemek tutarsız.
+    assert.equal(guncelle(o, "k_v3", { bolge_konumu: KONUM }).code, "tutarsiz_kayit");
+  });
+
+  it("v2 biçimli işlemler (v3 alanı taşımayan guncelle, durum, sil, geri_yukle) v3 alanlarına dokunmaz", () => {
+    const o = kur();
+    o.islem("i1", bolgeli());
+    const once = o.kayit("k_v3");
+    guncelle(o, "k_v3", { baslik: "Başka", hatirlatmalar: [] });
+    o.islem(yeniIslemId(), { islem: "durum", kayit_id: "k_v3", durum: "tamam" });
+    o.islem(yeniIslemId(), { islem: "sil", kayit_id: "k_v3" });
+    o.islem(yeniIslemId(), { islem: "geri_yukle", kayit_id: "k_v3" });
+    const sonra = o.kayit("k_v3");
+    assert.equal(sonra.revizyon, 5);
+    for (const a of ["simge", "bolge", "bolge_konumu", "varis", "baglantilar", "ekler"] as const) assert.deepEqual(sonra[a], once[a], a);
+    for (const g of o.gecmisi("k_v3").slice(0, 4)) assert.equal("bolge" in g.onceki || "bolge" in g.sonraki, false);
+  });
+});
+
 describe("ajanda: tekrarsızlık (device_id, islem_id)", () => {
   it("aynı kimlik aynı sonucu alır, ikinci kez uygulanmaz", () => {
     const o = kur();

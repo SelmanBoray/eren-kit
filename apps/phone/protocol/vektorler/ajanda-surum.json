@@ -1,6 +1,6 @@
 {
- "aciklama": "/ajanda sürüm uyumu için dil bağımsız vektörler (docs/AJANDA.md \"Kanal akışı\"). surumler: AJANDA_SURUMLERI (artan, bitişik, en büyüğü AJANDA_SURUMU). qr_surumu: AJANDA_QR_SURUMU, kanal sürümünden ayrı ve dondurulmuş; ajanda-kurallar.json qr vektörlerinin v'si budur. cozum: bağlantı sürümünü bilen çözücüler; yon yukari/asagi, baglanti null ise sürüm henüz sabitlenmedi (kümedeki herhangi biri kabul), sayıysa yalnız o; sonuç ajanda-mesaj.json biçiminde (gecerli, tur ya da kod). ret_surumu: ajandaRetSurumuOku(ham); dondurulmuş error zarfı {v: tam sayı >= 1, type: \"error\", code, detail?} (fazla alan yok) ve code protokol_uyumsuz ise v, değilse null. geri_dusus: ajandaGeriDusus(denenen, ret, kume); ret null: çerçeve yok ya da okunamadı (yalnız kapanış 1002). karar yeniden_dene (surum ile), uygulama_eski, servis_eski ya da bilinmiyor.",
- "surumler": [2],
+ "aciklama": "/ajanda sürüm uyumu için dil bağımsız vektörler (docs/AJANDA.md \"Kanal akışı\"). surumler: AJANDA_SURUMLERI (artan, bitişik, en büyüğü AJANDA_SURUMU). qr_surumu: AJANDA_QR_SURUMU, kanal sürümünden ayrı ve dondurulmuş; ajanda-kurallar.json qr vektörlerinin v'si budur. cozum: bağlantı sürümünü bilen çözücüler; yon yukari/asagi, baglanti null ise sürüm henüz sabitlenmedi (kümedeki herhangi biri kabul), sayıysa yalnız o; sonuç ajanda-mesaj.json biçiminde (gecerli, tur ya da kod). ret_surumu: ajandaRetSurumuOku(ham); dondurulmuş error zarfı {v: tam sayı >= 1, type: \"error\", code, detail?} (fazla alan yok) ve code protokol_uyumsuz ise v, değilse null. geri_dusus: ajandaGeriDusus(denenen, ret, kume); ret null: çerçeve yok ya da okunamadı (yalnız kapanış 1002). karar yeniden_dene (surum ile), uygulama_eski, servis_eski ya da bilinmiyor. donmus_hata: ajandaDonmusHataOku(ham); dondurulmuş error zarfına uyuyorsa {v, code, detail?} (code her metin), değilse null. Sürümü henüz sabitlenmemiş bağlantıda protokol_uyumsuz dışındaki kod geri düşüş değil o kodun kendisidir.",
+ "surumler": [2, 3],
  "qr_surumu": 2,
  "cozum": [
   {
@@ -28,10 +28,10 @@
    "kod": "protokol_uyumsuz"
   },
   {
-   "ad": "hello v3 kümede değil",
+   "ad": "hello v4 kümede değil",
    "yon": "yukari",
    "baglanti": null,
-   "ham": "{\"v\":3,\"type\":\"hello\",\"device_id\":\"cihaz_AjandaOrnek01\",\"son_rev\":0,\"client_nonce\":\"QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVowMTIzNA==\"}",
+   "ham": "{\"v\":4,\"type\":\"hello\",\"device_id\":\"cihaz_AjandaOrnek01\",\"son_rev\":0,\"client_nonce\":\"QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVowMTIzNA==\"}",
    "gecerli": false,
    "kod": "protokol_uyumsuz"
   },
@@ -90,10 +90,73 @@
    "ham": "{\"v\":2,\"type\":\"welcome\",\"depo_id\":\"depo1\",\"bas_rev\":0,\"tam\":false,\"server_time_ms\":1,\"yetenekler\":[]}",
    "gecerli": false,
    "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "hello v3, sürüm sabitlenmedi",
+   "yon": "yukari",
+   "baglanti": null,
+   "ham": "{\"v\":3,\"type\":\"hello\",\"device_id\":\"cihaz_AjandaOrnek01\",\"son_rev\":0,\"client_nonce\":\"QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVowMTIzNA==\",\"yetenekler\":[\"ek_yedegi\"]}",
+   "gecerli": true,
+   "tur": "hello"
+  },
+  {
+   "ad": "hello v3, bağlantı v3",
+   "yon": "yukari",
+   "baglanti": 3,
+   "ham": "{\"v\":3,\"type\":\"hello\",\"device_id\":\"cihaz_AjandaOrnek01\",\"son_rev\":0,\"client_nonce\":\"QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVowMTIzNA==\"}",
+   "gecerli": true,
+   "tur": "hello"
+  },
+  {
+   "ad": "bağlantı v3 iken v2 çerçeve",
+   "yon": "yukari",
+   "baglanti": 3,
+   "ham": "{\"v\":2,\"type\":\"gecmis_iste\",\"istek_id\":\"istek1\",\"kayit_id\":\"kayit1\"}",
+   "gecerli": false,
+   "kod": "protokol_uyumsuz"
+  },
+  {
+   "ad": "v2 hello v3 alanıyla, sürüm sabitlenmedi",
+   "yon": "yukari",
+   "baglanti": null,
+   "ham": "{\"v\":2,\"type\":\"hello\",\"device_id\":\"cihaz_AjandaOrnek01\",\"son_rev\":0,\"client_nonce\":\"QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVowMTIzNA==\",\"yetenekler\":[]}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "v2 bağlantıda v3 ek çerçevesi v2 biçiminde",
+   "yon": "yukari",
+   "baglanti": 2,
+   "ham": "{\"v\":2,\"type\":\"ek_iste\",\"istek_id\":\"y1\",\"ek_id\":\"ek_01\",\"ozet\":\"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08\",\"ofset\":0}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "v2 bağlantıda v3 kaydı v2 biçiminde",
+   "yon": "asagi",
+   "baglanti": 2,
+   "ham": "{\"v\":2,\"type\":\"kayit\",\"kayit\":{\"kayit_id\":\"k1\",\"revizyon\":1,\"tur\":\"gorev\",\"baslik\":\"Süt al\",\"hatirlatmalar\":[],\"bolge\":\"Market\",\"ornekler\":[],\"durum\":\"acik\",\"taslak\":false,\"silindi\":false,\"elle_alanlar\":[],\"kaynak\":{\"yol\":\"elle\",\"tur_kokeni\":\"insan\",\"device_id\":\"d1\"},\"olusturma_ms\":1,\"guncelleme_ms\":1}}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "v3 welcome yeteneksiz",
+   "yon": "asagi",
+   "baglanti": 3,
+   "ham": "{\"v\":3,\"type\":\"welcome\",\"depo_id\":\"depo1\",\"bas_rev\":0,\"tam\":false,\"server_time_ms\":1}",
+   "gecerli": false,
+   "kod": "gecersiz_mesaj"
+  },
+  {
+   "ad": "v3 welcome yetenekli",
+   "yon": "asagi",
+   "baglanti": 3,
+   "ham": "{\"v\":3,\"type\":\"welcome\",\"depo_id\":\"depo1\",\"bas_rev\":0,\"tam\":false,\"server_time_ms\":1,\"yetenekler\":[\"ek_yedegi\"]}",
+   "gecerli": true,
+   "tur": "welcome"
   }
  ],
- "ret_surumu": [
-  { "ad": "v2 ret", "ham": "{\"v\":2,\"type\":\"error\",\"code\":\"protokol_uyumsuz\"}", "surum": 2 },
+ "ret_surumu": [  { "ad": "v2 ret", "ham": "{\"v\":2,\"type\":\"error\",\"code\":\"protokol_uyumsuz\"}", "surum": 2 },
   { "ad": "bilinmeyen v3 ret", "ham": "{\"v\":3,\"type\":\"error\",\"code\":\"protokol_uyumsuz\"}", "surum": 3 },
   { "ad": "v1 ret", "ham": "{\"v\":1,\"type\":\"error\",\"code\":\"protokol_uyumsuz\"}", "surum": 1 },
   { "ad": "detail'li ret", "ham": "{\"v\":4,\"type\":\"error\",\"code\":\"protokol_uyumsuz\",\"detail\":\"sürüm\"}", "surum": 4 },
@@ -124,5 +187,24 @@
   { "ad": "yalnız 1002, büyük küme", "denenen": 4, "ret": null, "kume": [2, 3, 4], "karar": { "karar": "yeniden_dene", "surum": 3 } },
   { "ad": "yalnız 1002, en düşükte", "denenen": 2, "ret": null, "kume": [2, 3], "karar": { "karar": "bilinmiyor" } },
   { "ad": "yalnız 1002, bugünkü küme", "denenen": 2, "ret": null, "kume": [2], "karar": { "karar": "bilinmiyor" } }
+ ],
+ "donmus_hata": [
+  { "ad": "v3 protokol_uyumsuz", "ham": "{\"v\":3,\"type\":\"error\",\"code\":\"protokol_uyumsuz\"}", "hata": { "v": 3, "code": "protokol_uyumsuz" } },
+  { "ad": "başka sürümden zaman_asimi", "ham": "{\"v\":4,\"type\":\"error\",\"code\":\"zaman_asimi\"}", "hata": { "v": 4, "code": "zaman_asimi" } },
+  { "ad": "eski sürümden gecersiz_mesaj ve detail", "ham": "{\"v\":2,\"type\":\"error\",\"code\":\"gecersiz_mesaj\",\"detail\":\"hello\"}", "hata": { "v": 2, "code": "gecersiz_mesaj", "detail": "hello" } },
+  { "ad": "bilinmeyen kod metni", "ham": "{\"v\":9,\"type\":\"error\",\"code\":\"gelecekteki_kod\"}", "hata": { "v": 9, "code": "gelecekteki_kod" } },
+  { "ad": "boş kod metni", "ham": "{\"v\":3,\"type\":\"error\",\"code\":\"\"}", "hata": { "v": 3, "code": "" } },
+  { "ad": "alan sırası önemsiz", "ham": "{\"code\":\"ic_hata\",\"detail\":\"\",\"type\":\"error\",\"v\":3}", "hata": { "v": 3, "code": "ic_hata", "detail": "" } },
+  { "ad": "v yok", "ham": "{\"type\":\"error\",\"code\":\"zaman_asimi\"}", "hata": null },
+  { "ad": "v sıfır", "ham": "{\"v\":0,\"type\":\"error\",\"code\":\"zaman_asimi\"}", "hata": null },
+  { "ad": "v kesirli", "ham": "{\"v\":3.5,\"type\":\"error\",\"code\":\"zaman_asimi\"}", "hata": null },
+  { "ad": "v metin", "ham": "{\"v\":\"3\",\"type\":\"error\",\"code\":\"zaman_asimi\"}", "hata": null },
+  { "ad": "kod sayı", "ham": "{\"v\":3,\"type\":\"error\",\"code\":7}", "hata": null },
+  { "ad": "kod yok", "ham": "{\"v\":3,\"type\":\"error\"}", "hata": null },
+  { "ad": "detail null", "ham": "{\"v\":3,\"type\":\"error\",\"code\":\"ic_hata\",\"detail\":null}", "hata": null },
+  { "ad": "fazla alan", "ham": "{\"v\":3,\"type\":\"error\",\"code\":\"ic_hata\",\"yollar\":[]}", "hata": null },
+  { "ad": "error değil", "ham": "{\"v\":3,\"type\":\"esitlendi\",\"rev\":1}", "hata": null },
+  { "ad": "JSON değil", "ham": "error", "hata": null },
+  { "ad": "nesne değil", "ham": "\"error\"", "hata": null }
  ]
 }

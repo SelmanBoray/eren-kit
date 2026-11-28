@@ -313,7 +313,7 @@ pub(super) fn kuyruga_islemler(temel: Option<&AjandaKaydi>, k: &AjandaKaydi, ger
         None if k.silindi => return l,
         None => {
             let girdi_yolu = if k.kaynak.yol == KaynakYolu::SesliNot { GirdiYolu::SesliNot } else { GirdiYolu::Elle };
-            l.push((AjandaIslem::Ekle { kayit_id: kayit_id(), govde: kayittan_govde(k), girdi_yolu }, k.olusturma_ms));
+            l.push((AjandaIslem::Ekle { kayit_id: kayit_id(), govde: kayittan_govde(k), v3: Default::default(), girdi_yolu }, k.olusturma_ms));
             &bos
         }
         Some(t) if t.silindi && k.silindi => return l,
@@ -762,12 +762,20 @@ pub(crate) fn yereli_kuyruga_dok(
 /// Yitirmemişse kayda dokunulmaz: bekleyen satırlar taze kopya üstüne yeniden uygulanır (PC'de ilerlemiş
 /// alanlar ezilmez). Saklı `depo_id` yoksa ya da başkaysa hiçbir şey yapmaz (başka depo `welcome`'da yerel
 /// kip yoluna döner).
-pub(crate) fn geri_donenleri_kuyruga_koy(d: &Depo, o: &Ortam, b: &IyimserBaglam, depo_id: &str) -> Result<(), CekirdekHatasi> {
+pub(crate) fn geri_donenleri_kuyruga_koy(
+    d: &Depo,
+    o: &Ortam,
+    b: &IyimserBaglam,
+    depo_id: &str,
+    iz_yollandi: bool,
+) -> Result<(), CekirdekHatasi> {
     if d.depo_id()?.as_deref() != Some(depo_id) {
         return Ok(());
     }
     let son_rev = d.son_rev()?;
-    let iz_kaybi = son_rev > 0 && d.hello_alanlari()?.son_rev_izi.is_some();
+    // `iz_yollandi` yanlış: `hello` izsiz gitti (`kanal.rs` kopya eski, ilk v3 bağlantının bir kezlik tam
+    // telafisi); servisin iz kararı yoktur, kanıt yalnız kopyalardandır (`yereli_kuyruga_dok` gibi).
+    let iz_kaybi = iz_yollandi && son_rev > 0 && d.hello_alanlari()?.son_rev_izi.is_some();
     let sunucu_satirlari = d.kopya_satirlari(KopyaTablosu::Sunucu)?;
     let sunucu = izler(&sunucu_satirlari);
     let yeni = izler(&d.kopya_satirlari(KopyaTablosu::Telafi)?);

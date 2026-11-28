@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { AJANDA_ARAC_ACIKLAMALARI, AjandaKopruHello, AracCagriId, type AjandaFiili } from "./ajanda-arac.ts";
+import { AJANDA_ARAC_ACIKLAMALARI, AJANDA_ARAC_ACIKLAMALARI_V2, AjandaKopruHello, AracCagriId, type AjandaFiili } from "./ajanda-arac.ts";
 import { AJANDA_PC_SINIRLARI, PC_AKTORLER, PC_ETKILESIMLER } from "./ajanda-pc-kanca.ts";
 import { cozumle } from "./cozumle.ts";
 import { AJANDA_AZAMI_CERCEVE, PROTOKOL_SURUMU } from "./sinirlar.ts";
@@ -73,6 +73,18 @@ export const AJANDA_PC_ARAC_ACIKLAMALARI: Readonly<Record<AjandaFiili, string>> 
   ajanda_guncelle: AJANDA_ARAC_ACIKLAMALARI.ajanda_guncelle + PC_ZAMAN_EKI,
   ajanda_listele: AJANDA_ARAC_ACIKLAMALARI.ajanda_listele,
 };
+
+/** v3 araç yüzü kapalıyken PC tanımları: v3 öncesi metin (`AJANDA_ARAC_ACIKLAMALARI_V2`) + aynı PC eki. */
+export const AJANDA_PC_ARAC_ACIKLAMALARI_V2: Readonly<Record<AjandaFiili, string>> = {
+  ajanda_ekle: AJANDA_ARAC_ACIKLAMALARI_V2.ajanda_ekle + PC_ZAMAN_EKI,
+  ajanda_guncelle: AJANDA_ARAC_ACIKLAMALARI_V2.ajanda_guncelle + PC_ZAMAN_EKI,
+  ajanda_listele: AJANDA_ARAC_ACIKLAMALARI_V2.ajanda_listele,
+};
+
+/** Ayarın seçtiği yüzün PC tanımları (telefonunki `ajandaAracAciklamalari`). */
+export function ajandaPcAracAciklamalari(v3: boolean): Readonly<Record<AjandaFiili, string>> {
+  return v3 ? AJANDA_PC_ARAC_ACIKLAMALARI : AJANDA_PC_ARAC_ACIKLAMALARI_V2;
+}
 
 // Kanca çerçeveleri (rol `pc_kanca`)
 

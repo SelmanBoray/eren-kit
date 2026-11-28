@@ -8,19 +8,19 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 import {
-  AJANDA_ARAC_ACIKLAMALARI,
-  AJANDA_ARACLARI,
   AJANDA_AZAMI_CERCEVE,
   AJANDA_BORU_ADI,
-  AJANDA_PC_ARAC_ACIKLAMALARI,
   AJANDA_ROL_FIILLERI,
   AracCagriId,
   OpakId,
   PcAracSonucu,
   pcTurNotu,
+  ajandaAracAciklamalari,
+  ajandaAraclari,
   ajandaKopruAsagiCoz,
   AjandaKopruRolu,
   ajandaMcpSonucu,
+  ajandaPcAracAciklamalari,
   AjandaMcpSonucu,
   AZAMI_CERCEVE,
   CmdAdi,
@@ -168,20 +168,49 @@ interface BoruIstemci {
 /** Borunun aşağı çözücüsü: `eren` borusunda `kopruAsagiCoz`, ajanda borusunda `ajandaKopruAsagiCoz`. */
 type AsagiCozucu = (satir: string) => CozumSonucu<KopruAsagi | AjandaKopruAsagi>;
 
+/** Hello'nun isteğe bağlı alanları: hello merdiveninin bir basamağı (`{}`: düz hello). */
+type HelloEki = Readonly<Record<string, unknown>>;
+
 /**
- * `helloEki` (isteğe bağlı): her denemede hello'ya eklenecek isteğe bağlı alanlar (zengin hello; PC köprüsünde
- * `surec_id`). Alanı tanımayan eski servis zengin hello'yu katı şemasıyla reddeder (`kopru_ret{yetkisiz}`, sonra
- * kapatır; ret satırı adlı boruda kapanışla birlikte düşebilir). Zengin hello karşılanmadan `yetkisiz` ile ya da
- * hiç yanıtsız kapanırsa köprü beklemeden BİR KEZ düz (eksiz) hello ile yeniden dener. Düz hello hiçbir zaman
- * hemen yeniden denemeye yol açmaz: gerçek bir ret (anahtar, kapalı PC rolü) her döngüde en çok bir düz deneme
- * ekler, sonra olağan bekleme gelir. Sonraki deneme yine zengindir (servis güncellenip yeniden başlamış olabilir).
- * Yeni isteğe bağlı hello alanları aynı yoldan geçer; alan başına ayrı düşüş yoktur.
+ * Zengin hello'nun karşılanmadan bitişi. `ret`: servis `kopru_ret{yetkisiz}` verdi (katı şemada bilinmeyen alan).
+ * `yanitsiz`: hiç ret satırı gelmeden kapandı (adlı boruda ret satırı kapanışla birlikte düşebilir; servis başka
+ * nedenle de kapatmış olabilir). Başka kodlu ret (`jeton_gecersiz`, `protokol_uyumsuz`...) alanla ilgili değildir:
+ * bitiş sayılmaz, basamak inilmez.
+ */
+type ZenginBitis = "ret" | "yanitsiz";
+
+/**
+ * Hangi bitiş bir alt basamağa iner (beklemeden). Bugün ikisi de iner; yanıtsız kapanışın inmemesi için yalnız bu
+ * tablo değişir (`yanitsiz: false`), merdiven ve döngü aynı kalır.
+ */
+const BASAMAK_INDIREN_BITIS: Readonly<Record<ZenginBitis, boolean>> = { ret: true, yanitsiz: true };
+
+/** Basamağın imzası: alan adları (değerler yazılmaz; günlüğe de bu gider). Düz hello `""`. */
+const basamakImzasi = (ek: HelloEki): string => Object.keys(ek).sort().join("+");
+
+/**
+ * `helloMerdiveni` (isteğe bağlı): hello'nun isteğe bağlı alanları, en zenginden düze sıralı basamaklar (ajanda
+ * kipinde `arac_v3`, PC köprüsünde ayrıca `surec_id`; ör. `{surec_id, arac_v3}` → `{surec_id}` → `{}`). Alanı
+ * tanımayan eski servis zengin hello'yu katı şemasıyla reddeder (`kopru_ret{yetkisiz}`, sonra kapatır; ret satırı
+ * adlı boruda kapanışla birlikte düşebilir). Zengin hello karşılanmadan biterse (`ZenginBitis`,
+ * `BASAMAK_INDIREN_BITIS`) köprü beklemeden bu döngüde denenmemiş sıradaki basamakla yeniden dener; basamaklar
+ * bitince düz hello (`{}`; merdivende olmasa da en sonda denenir). Her basamak bir döngüde (olağan beklemeye dek) en
+ * çok bir kez denenir, düz hello hiçbir zaman hemen yeniden denemeye yol açmaz: döngü başına deneme sayısı
+ * basamak sayısı + 1 ile sınırlıdır. Gerçek bir ret (anahtar, kapalı PC rolü) böylece her döngüde en çok merdiven
+ * boyu kadar deneme ekler, sonra olağan bekleme gelir. Merdiven her denemede yeniden sorulur (`v2Kilitli`
+ * değişebilir); denenmiş basamaklar imzalarıyla atlanır. Sonraki döngü yine en üst basamaktan başlar (servis
+ * güncellenip yeniden başlamış olabilir).
+ *
+ * `aracV3Dinle` (yalnız ajanda kipi): her `kopru_welcome`'da servisin bu bağlantıya v3 araç yüzü verip vermediğini
+ * (`arac_v3`) bekleyenler uyanmadan önce alır. `arac_v3`'süz basamakta istenmemiştir: servis alanı yazmaz,
+ * dinleyici `false` alır (yüz v2).
  */
 function boruIstemciKur(
   ayar: KopruIstemciAyari | AjandaKopruIstemciAyari,
   b: KopruBagimliliklari,
   asagiCoz: AsagiCozucu = kopruAsagiCoz,
-  helloEki?: () => Readonly<Record<string, unknown>>,
+  helloMerdiveni?: () => readonly HelloEki[],
+  aracV3Dinle?: (acik: boolean) => void,
 ): BoruIstemci {
   const { gunluk, rastgele } = b;
   let acik: BoruBaglantisi | null = null;
@@ -198,10 +227,16 @@ function boruIstemciKur(
   const bekleyenler = new Map<string, (y: BoruYaniti) => void>();
   const denemeDinleyicileri = new Set<() => void>();
   const biriken = new Set<string>();
-  /** Sıradaki hello düz (zengin hello az önce reddedildi). */
-  let duzSira = false;
-  /** Zengin hello reddedildi: sıradaki (düz) deneme beklemeden. */
+  /** Bu döngüde denenmiş basamakların imzaları (`basamakImzasi`); olağan beklemeden önce boşalır. */
+  const denenenBasamaklar = new Set<string>();
+  /** Zengin hello karşılanmadan bitti (`BASAMAK_INDIREN_BITIS`): sıradaki basamak beklemeden. */
   let hemenYeniden = false;
+
+  /** Merdivenin bu döngüde denenmemiş ilk basamağı; kalmadıysa düz hello. */
+  const basamakSec = (): HelloEki => {
+    for (const ek of helloMerdiveni?.() ?? []) if (!denenenBasamaklar.has(basamakImzasi(ek))) return ek;
+    return {};
+  };
 
   const denemeBitti = (): void => {
     for (const f of [...denemeDinleyicileri]) f();
@@ -242,8 +277,8 @@ function boruIstemciKur(
       let karsilandi = false;
       const elSikisma = setTimeout(() => bag.kapat(), EL_SIKISMA_MS);
       acik = bag;
-      const ek = duzSira ? {} : (helloEki?.() ?? {});
-      duzSira = false;
+      const ek = basamakSec();
+      denenenBasamaklar.add(basamakImzasi(ek));
       const zengin = Object.keys(ek).length > 0;
       /** Zengin hello'ya gelen ret kodu (yoksa `null`: hiç ret gelmedi). */
       let ret: HataKodu | null = null;
@@ -263,6 +298,7 @@ function boruIstemciKur(
           if (karsilandi) return;
           karsilandi = true;
           clearTimeout(elSikisma);
+          aracV3Dinle?.((m as { arac_v3?: unknown }).arac_v3 === true);
           hazir = bag;
           denemede = false;
           sonEngel = null;
@@ -301,12 +337,13 @@ function boruIstemciKur(
         const kopanlar = [...bekleyenler.values()];
         bekleyenler.clear();
         for (const f of kopanlar) f({ tur: "koptu" });
-        // Zengin hello karşılanmadı: eski servisin katı şeması (yetkisiz) ya da ret satırı kapanışla düştü.
-        if (zengin && !karsilandi && (ret === null || ret === "yetkisiz")) {
-          gunluk.uyari(MODUL, "zengin_hello_reddedildi", { code: ret ?? "yanitsiz" });
-          duzSira = true;
+        // Zengin hello karşılanmadı: eski servisin katı şeması (ret) ya da ret satırı kapanışla düştü (yanıtsız).
+        const bitis: ZenginBitis | null =
+          !zengin || karsilandi ? null : ret === null ? "yanitsiz" : ret === "yetkisiz" ? "ret" : null;
+        if (bitis !== null && BASAMAK_INDIREN_BITIS[bitis]) {
+          gunluk.uyari(MODUL, "zengin_hello_reddedildi", { code: ret ?? "yanitsiz", basamak: basamakImzasi(ek) });
           hemenYeniden = true;
-          // Engel zengin alanındır, bağlantının değil: düz denemenin sonucu belirler.
+          // Engel zengin alanındır, bağlantının değil: alt basamağın sonucu belirler.
           sonEngel = null;
         }
         coz(karsilandi);
@@ -366,12 +403,14 @@ function boruIstemciKur(
           }
         }
         if (hemenYeniden && !durdu && kaliciHata === null) {
-          // Tek seferlik düz deneme (`helloEki`); düz hello bunu yeniden kuramaz. Deneme sürüyor sayılır:
-          // bekleyen çağrı (`denemeBekle`) zengin hello'nun retini değil, düz denemenin sonucunu görür.
+          // Merdivenin alt basamağı (`helloMerdiveni`); her basamak döngüde bir kez, düz hello bunu yeniden
+          // kuramaz. Deneme sürüyor sayılır: bekleyen çağrı (`denemeBekle`) üst basamağın retini değil, alt
+          // basamağın sonucunu görür.
           hemenYeniden = false;
           continue;
         }
         hemenYeniden = false;
+        denenenBasamaklar.clear();
         denemede = false;
         denemeBitti();
         if (durdu || kaliciHata !== null) break;
@@ -717,17 +756,43 @@ ${govde}`,
   return mcpBaslat(`eren-${ayar.rol}`, tools, aracCagir, boru, b);
 }
 
+/**
+ * Araç listesi bağlantıya göre değişebilen kip (ajanda: servisin v3 araç yüzü). `ilan` MCP bağlanmadan önce
+ * bir kez çağrılır, `listChanged` ilan edilip edilmeyeceğini verir; `listele` `tools/list`'te çağrılır;
+ * `degisince` listenin değiştiğini bildirecek işlevi alır (`notifications/tools/list_changed`).
+ */
+interface DegisenAraclar {
+  ilan(): Promise<boolean>;
+  listele(): Tool[];
+  degisince(bildir: () => void): void;
+}
+
 /** MCP sunucusunu kurar, boru döngüsünü başlatır; iki kip (`eren|soru|telefon` ve ajanda) için aynı. */
 async function mcpBaslat(
   ad: string,
-  tools: Tool[],
+  tools: Tool[] | DegisenAraclar,
   aracCagir: (ad: string, ham: unknown, sinyal: AbortSignal, meta: unknown) => Promise<CallToolResult>,
   boru: BoruIstemci,
   b: KopruBagimliliklari,
 ): Promise<KopruCalisani> {
   const { gunluk } = b;
-  const server = new Server({ name: ad, version: "1.0.0" }, { capabilities: { tools: {} } });
-  server.setRequestHandler(ListToolsRequestSchema, () => ({ tools }));
+  // Boru önce: değişebilen kipte `initialize` yanıtı (yetenekler) ilk el sıkışmayı bekler.
+  boru.calistir().catch(() => gunluk.hata(MODUL, "boru_dongusu_bitti"));
+  const degisebilir = Array.isArray(tools) ? false : await tools.ilan();
+  const server = new Server(
+    { name: ad, version: "1.0.0" },
+    { capabilities: { tools: degisebilir ? { listChanged: true } : {} } },
+  );
+  if (Array.isArray(tools)) {
+    server.setRequestHandler(ListToolsRequestSchema, () => ({ tools }));
+  } else {
+    server.setRequestHandler(ListToolsRequestSchema, () => ({ tools: tools.listele() }));
+    if (degisebilir) {
+      tools.degisince(() => {
+        server.sendToolListChanged().catch(() => gunluk.uyari(MODUL, "arac_listesi_bildirilemedi"));
+      });
+    }
+  }
   // `notifications/cancelled` SDK'da `ekstra.signal`'i keser, oradan `iptal` çerçevesi çıkar.
   // `_meta` yalnız PC köprüsünde okunur (Claude Code'un çağrı kimliği); öteki kipler yok sayar.
   server.setRequestHandler(CallToolRequestSchema, (istek, ekstra) =>
@@ -749,7 +814,6 @@ async function mcpBaslat(
   };
   server.onclose = () => void kapat();
 
-  boru.calistir().catch(() => gunluk.hata(MODUL, "boru_dongusu_bitti"));
   await server.connect(b.transport);
   return { kapandi: kapanis.promise, kapat };
 }
@@ -824,19 +888,44 @@ export const PC_ANAHTAR_GECERSIZ_METNI =
   "yeni anahtar `eren eslestir --claude-code` ile üretilir.";
 
 /**
+ * MCP `initialize` yanıtının ilk bağlantı denemesinin karşılamasını en çok bekleyeceği süre (servis açıksa
+ * milisaniyeler sürer, servis yoksa deneme hemen biter); dolarsa yüz bilinmez: v2 yayınlanır, `listChanged`
+ * ilan edilir.
+ */
+export const ARAC_LISTESI_BEKLEME_MS = 3_000;
+
+/**
  * Stdio köprünün ajanda kipi: `AJANDA_BORU_ADI`'na `ana_oturum` jetonuyla bağlanır, yalnız
- * `AJANDA_ROL_FIILLERI[rol]` araçlarını `jsonSemasi(AJANDA_ARACLARI[fiil].girdi)` ile yayınlar
- * (`outputSchema` yok); `description` sözleşmedeki `AJANDA_ARAC_ACIKLAMALARI[fiil]`'dir, birebir (v2:
- * gece sorusu ve günü adıyla söyleme kuralı orada durur, köprüde ayrı metin yoktur). Girdi boruya çıkmadan şemayla denetlenir; sonuç `AJANDA_ARACLARI[fiil].cikti`
+ * `AJANDA_ROL_FIILLERI[rol]` araçlarını `jsonSemasi(ajandaAraclari(v3)[fiil].girdi)` ile yayınlar
+ * (`outputSchema` yok); `description` sözleşmedeki `ajandaAracAciklamalari(v3)[fiil]`'dir (PC'de
+ * `ajandaPcAracAciklamalari`), birebir (v2: gece sorusu ve günü adıyla söyleme kuralı orada durur, köprüde
+ * ayrı metin yoktur). Girdi boruya çıkmadan şemayla denetlenir; sonuç `ajandaAraclari(v3)[fiil].cikti`
  * ile yeniden doğrulanır ve modele YALNIZ `ajandaMcpSonucu`'nun tek metin içeriği gider (çit her
  * çağrıda güvenli üreteçten, 128 bit). Bir kez gider, yeniden denenmez. Boru koparsa `eren` kipiyle
  * aynı aralıkla yeniden bağlanır.
+ *
+ * Araç yüzü (v2 ya da v3) servisin ayarıdır (`ajanda_arac_v3`): köprü hello'da `arac_v3` ister, servisin
+ * cevabını her `kopru_welcome`'dan öğrenir (`arac_v3`); hiç karşılanmadıysa v2. MCP `initialize` ilk denemenin
+ * karşılamasını bekler (`ARAC_LISTESI_BEKLEME_MS`):
+ * - ayar kapalı (karşılama alansız): yetenek `tools: {}`, liste beklemeden v2; v3 öncesiyle aynı. Köprü bu
+ *   süreç boyunca bir daha `arac_v3` istemez: ayar sonra açılsa da servis bu bağlantıyı v2 yüzüyle sürer,
+ *   v3 için oturum yeniden açılır.
+ * - ayar açık ya da karşılama gelmedi (servis yok): `listChanged` ilan edilir; yüz sonra değişirse (servis
+ *   başka ayarla yeniden başladı) `notifications/tools/list_changed` gider.
+ * Girdi ve çıktı her çağrıda o anki yüzün şemasıyla denetlenir: eski listeye güvenip v3 alanı veren çağrı
+ * kapalı serviste "bilinmeyen alan" alır.
  *
  * `surecId` (yalnız `pc_oturumu`): köprünün harness süreci, hello'nun `surec_id`'si (T5: servis tasdikin
  * sürecine eşit olanı tüketir). Claude Code'da köprünün ebeveynidir (`process.ppid`; kancanın `CLAUDE_PID`'i,
  * MCP ortamında `CLAUDE_PID` yoktur). Köprüyü bir sarmalayıcı (`cmd /c`, `npx`, `sh -c`) başlatırsa ebeveyn
  * harness olmaz ve o pencerenin kayıtları taslak doğar (güvenli yön; kurulum köprüyü sarmalayıcısız kaydeder).
- * Alanı tanımayan eski servise bir kez düz hello ile bağlanır (`boruIstemciKur` `helloEki`).
+ *
+ * `arac_v3` ve `surec_id` hello'ya `helloMerdiveni`'nden girer: `{surec_id, arac_v3}` → `{surec_id}` → `{}`
+ * (`ana_oturum`: `{arac_v3}` → `{}`; `v2Kilitli`: `arac_v3`'lü basamak yok). Alanı tanımayan eski servis zengin
+ * hello'yu reddederse köprü beklemeden bir alt basamağa iner. `surec_id`'yi tanıyıp `arac_v3`'ü tanımayan servis
+ * (d7bf303) `{surec_id}`'yi kabul eder: süreç eşitliği korunur, yüz v2. Yalnız ikisini de tanımayan servis
+ * (55948ea) düz hello'ya dek iner: `surec_id` gitmediğinden bağlantıyı eski köprü sayar, T5 bağlantı başına ilk
+ * görüşle kurulur.
  */
 export async function ajandaKopruCalistir(
   ayar: AjandaKopruIstemciAyari,
@@ -848,14 +937,68 @@ export async function ajandaKopruCalistir(
   const pc = ayar.rol === "pc_oturumu";
   // Yalnız PC: harness süreci hello'da (T5); `cagri`'ya girmez (eski servisin katı `AjandaPcCagri`'sı).
   const surec = pc && surecId !== undefined && OpakId.safeParse(surecId).success ? { surec_id: surecId } : undefined;
-  const boru = boruIstemciKur(ayar, b, ajandaKopruAsagiCoz, surec === undefined ? undefined : () => surec);
   const fiiller: readonly AjandaFiili[] = AJANDA_ROL_FIILLERI[ayar.rol];
-  const aciklamalar = pc ? AJANDA_PC_ARAC_ACIKLAMALARI : AJANDA_ARAC_ACIKLAMALARI;
-  const tools: Tool[] = fiiller.map((fiil) => ({
-    name: fiil,
-    description: aciklamalar[fiil],
-    inputSchema: jsonSemasi(AJANDA_ARACLARI[fiil].girdi) as Tool["inputSchema"],
-  }));
+  const yuzKur = (acik: boolean): Tool[] => {
+    const aciklamalar = pc ? ajandaPcAracAciklamalari(acik) : ajandaAracAciklamalari(acik);
+    return fiiller.map((fiil) => ({
+      name: fiil,
+      description: aciklamalar[fiil],
+      inputSchema: jsonSemasi(ajandaAraclari(acik)[fiil].girdi) as Tool["inputSchema"],
+    }));
+  };
+  const yuzler = { v2: yuzKur(false), v3: yuzKur(true) };
+  /** Son `kopru_welcome`'ın `arac_v3`'ü; hiç karşılanmadıysa `null` (v2 sayılır). */
+  let v3: boolean | null = null;
+  /** Modele en son verilen listenin yüzü; `null`: henüz listelenmedi. */
+  let listelenen: boolean | null = null;
+  let listeDegisti: (() => void) | null = null;
+  /** `initialize`'da yüz kapalı bilindi: `listChanged` ilan edilmedi, köprü v3 istemez (v2'de kalır). */
+  let v2Kilitli = false;
+  // Hello merdiveni: önce `arac_v3` bırakılır (kaybı yalnız yüzdür, v2), en son `surec_id` (T5 süreç eşitliği).
+  // `arac_v3` yalnız yüz v2'ye kilitlenmediyse istenir. Düz hello (`{}`) son basamaktır.
+  const helloMerdiveni = (): readonly HelloEki[] => {
+    const basamaklar: HelloEki[] = [];
+    if (!v2Kilitli) basamaklar.push({ ...surec, arac_v3: true });
+    if (surec !== undefined) basamaklar.push(surec);
+    basamaklar.push({});
+    return basamaklar;
+  };
+  const boru = boruIstemciKur(
+    ayar,
+    b,
+    ajandaKopruAsagiCoz,
+    helloMerdiveni,
+    (acik) => {
+      v3 = acik;
+      if (listelenen !== null && listelenen !== acik) {
+        listelenen = acik;
+        gunluk.bilgi(MODUL, "arac_yuzu_degisti", { arac_v3: acik });
+        listeDegisti?.();
+      }
+    },
+  );
+  const yuzAcik = (): boolean => v3 === true;
+  const araclar = (): ReturnType<typeof ajandaAraclari> => ajandaAraclari(yuzAcik());
+  const degisenAraclar: DegisenAraclar = {
+    ilan: async (): Promise<boolean> => {
+      const sure = new AbortController();
+      const zaman = setTimeout(() => sure.abort(), ARAC_LISTESI_BEKLEME_MS);
+      try {
+        await boru.hazirBekle(sure.signal, false);
+      } finally {
+        clearTimeout(zaman);
+      }
+      v2Kilitli = v3 === false;
+      return !v2Kilitli;
+    },
+    listele: (): Tool[] => {
+      listelenen = yuzAcik();
+      return listelenen ? yuzler.v3 : yuzler.v2;
+    },
+    degisince: (bildir: () => void): void => {
+      listeDegisti = bildir;
+    },
+  };
   const oturumId = ayar.oturumId !== undefined && OpakId.safeParse(ayar.oturumId).success ? ayar.oturumId : undefined;
 
   /** PC: `cagri` zarfı. Çağrı kimliği uyarlayıcının `_meta` anahtarından; geçersizse yok (tur sentetik olur). */
@@ -921,7 +1064,7 @@ export async function ajandaKopruCalistir(
       govde = s.data.cikti;
       if (fiil !== "ajanda_listele") not = pcTurNotu(s.data.karar);
     }
-    const sema: z.ZodType = AJANDA_ARACLARI[fiil].cikti;
+    const sema: z.ZodType = araclar()[fiil].cikti;
     const r = sema.safeParse(govde);
     if (!r.success) return icHata(fiil);
     const mcp = AjandaMcpSonucu.parse(ajandaMcpSonucu({ fiil, cikti: r.data } as AjandaAracCiktisi, citUret));
@@ -932,15 +1075,21 @@ export async function ajandaKopruCalistir(
   const aracCagir = async (ad: string, ham: unknown, sinyal: AbortSignal, meta: unknown): Promise<CallToolResult> => {
     const fiil = fiiller.find((f) => f === ad);
     if (fiil === undefined) return hataSonucu("rol_fiil_izinsiz");
-    // Servis şemaya uymayan çerçevede boruyu kapatır: bozuk girdi boruya çıkmamalı.
-    const sema: z.ZodType = AJANDA_ARACLARI[fiil].girdi;
-    const girdi = sema.safeParse(ham ?? {});
+    // Servis şemaya uymayan çerçevede boruyu kapatır: bozuk girdi boruya çıkmamalı. Şema o anki yüzün.
+    const denetle = () => (araclar()[fiil].girdi as z.ZodType).safeParse(ham ?? {});
+    let girdi = denetle();
     if (!girdi.success) return hataSonucu("gecersiz_mesaj", semaHatasiMetni(girdi.error.issues));
     const kopuk = pc ? pcKopukSonucu : AJANDA_KOPUK_SONUCU;
     try {
+      const once = yuzAcik();
       const engel = pc ? await pcHazirBekle(sinyal) : await boru.hazirBekle(sinyal, false);
       if (pc && sinyal.aborted) return iptalSonucu();
       if (engel !== null) return engel === "kopuk" ? kopuk() : ajandaHataSonucu(engel);
+      // Beklerken yeniden karşılandı ve yüz değişti: yeni yüzün şemasıyla yeniden denetlenir.
+      if (yuzAcik() !== once) {
+        girdi = denetle();
+        if (!girdi.success) return hataSonucu("gecersiz_mesaj", semaHatasiMetni(girdi.error.issues));
+      }
       const y = await boru.istekYolla(fiil, girdi.data, sinyal, pc ? pcCagri(meta) : undefined);
       switch (y.tur) {
         case "basari":
@@ -960,7 +1109,7 @@ export async function ajandaKopruCalistir(
     }
   };
 
-  return mcpBaslat(AJANDA_MCP_SUNUCU_ADI, tools, aracCagir, boru, b);
+  return mcpBaslat(AJANDA_MCP_SUNUCU_ADI, degisenAraclar, aracCagir, boru, b);
 }
 
 function soketBaglantisi(soket: Socket, azamiSatir: number = AZAMI_CERCEVE.KOPRU): BoruBaglantisi {

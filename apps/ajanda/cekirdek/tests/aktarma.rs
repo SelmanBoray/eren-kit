@@ -11,7 +11,7 @@ use ajanda_cekirdek::depo::Depo;
 use ajanda_cekirdek::kopru::aktarma_bicimi;
 use ajanda_cekirdek::kopru::kabuklar::ZamanKabugu;
 use ajanda_cekirdek::kopru::tipler::{CalismaKipi, IceAktarmaOnizlemesi};
-use ajanda_cekirdek::model::sinirlar::AJANDA_SURUMU;
+use ajanda_cekirdek::model::surum::AJANDA_SURUMU;
 use ajanda_cekirdek::model::sinirlar::ajanda::KAYIT_ADET;
 use ajanda_cekirdek::model::{
     AjandaKaydi, GirdiYolu, IslemTuru, KayitDurumu, KaynakYolu, OrnekDurumu, Tekrar, TekrarSikligi, TurKokeni,
@@ -668,4 +668,53 @@ fn buyuk_kopyada_aktarma_sureleri() {
     for (ad, sure) in [("önizleme", onizleme), ("yerel", yerel), ("dışa", disa), ("yeniden", yeniden), ("bağlı", bagli)] {
         assert!(sure < sinir, "{ad}: {sure:?}");
     }
+}
+
+/// Sözleşme 3: v3 alanlı kayıt (simge, bölge, konum, varış, bağlantılar, ekler; kayıt `ajanda-v3.json`
+/// `asagi_uyarlama`'dan) yerel kipte içe alınır, dışa aktarılır ve boş telefona içe alınınca alan alan aynı
+/// kalır (belge en yeni sürümle yazılır ve okunur; v3 alanları düşmez).
+#[test]
+fn v3_alanli_kayit_gidis_donuste_korunur() {
+    let kayit_json = json!({
+        "kayit_id": "k_market01", "revizyon": 20, "tur": "gorev", "baslik": "Süt al", "hatirlatmalar": [],
+        "ornekler": [], "durum": "acik", "taslak": false, "silindi": false,
+        "elle_alanlar": ["tur", "baslik", "durum", "simge", "bolge", "bolge_konumu", "varis", "baglantilar", "ekler"],
+        "kaynak": {"yol": "elle", "tur_kokeni": "insan", "device_id": "cihaz_AjandaOrnek01"},
+        "olusturma_ms": 1_795_000_000_000_i64, "guncelleme_ms": 1_795_000_000_000_i64,
+        "simge": "market", "bolge": "Market",
+        "bolge_konumu": {"enlem_e6": 41_008_240, "boylam_e6": 28_978_359, "yaricap_m": 150},
+        "varis": {},
+        "baglantilar": [{"url": "https://ornek.com.tr/kampanya?id=42#ust", "baslik": "Kampanya"}, {"url": "http://ornek.org"}],
+        "ekler": [
+            {"ek_id": "ek_01", "mime": "image/jpeg", "bayt": 182_044, "genislik": 1600, "yukseklik": 1200,
+             "ozet": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", "kapak": true,
+             "olusturma_ms": 1_795_000_000_000_i64},
+            {"ek_id": "ek_02", "mime": "image/jpeg", "bayt": 4_194_304,
+             "ozet": "60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752", "olusturma_ms": 1_795_000_000_000_i64}
+        ]
+    });
+    let beklenen = AjandaKaydi::oku(&kayit_json, "").unwrap();
+    assert!(!beklenen.v3.bos_mu());
+
+    let a = Hat::yeni("v3-gidis-a");
+    assert_eq!(a.c.kip().unwrap(), CalismaKipi::Yerel);
+    let girdi = degistir(&json_belge(&a), |v| kayitlar_mut(v).push(kayit_json.clone()));
+    assert_eq!(sayilar(&uygula(&a, &girdi)), (1, 0, 0, 0, 0, 0));
+    assert_eq!(kayit(&a, "k_market01").v3, beklenen.v3);
+
+    let v = json_belge(&a);
+    assert_eq!(v["sozlesme_surumu"].as_i64(), Some(AJANDA_SURUMU));
+    let disa = &v["kayitlar"][0];
+    for ad in ["simge", "bolge", "bolge_konumu", "varis", "baglantilar", "ekler"] {
+        assert_eq!(disa[ad], kayit_json[ad], "{ad} dışa aktarmada korunur");
+    }
+    assert_eq!(disa["elle_alanlar"], kayit_json["elle_alanlar"]);
+
+    let b = Hat::yeni("v3-gidis-b");
+    assert_eq!(sayilar(&uygula(&b, &belge(&a))), (1, 0, 0, 0, 0, 0));
+    assert_eq!(normal(&a), normal(&b));
+    assert_eq!(kayit(&b, "k_market01").v3, beklenen.v3);
+    assert_eq!(AjandaKaydi { revizyon: 0, ..kayit(&b, "k_market01") }, AjandaKaydi { revizyon: 0, ..beklenen });
+    // Aynı belge yeniden: hiçbir şey yazılmaz.
+    assert_eq!(sayilar(&b.c.ice_aktarma_onizlemesi(belge(&a)).unwrap()), (0, 0, 1, 0, 0, 0));
 }

@@ -6,7 +6,7 @@
  */
 import win32 from "node:path/win32";
 import { fileURLToPath } from "node:url";
-import { PC_SERVIS_OTURUMU_ORTAMI, ProjelerCikti } from "@eren/protocol";
+import { AJANDA_SINIRLARI, PC_SERVIS_OTURUMU_ORTAMI, ProjelerCikti } from "@eren/protocol";
 import type { McpProfili, ServisBilgisi } from "@eren/protocol";
 import { ortamDegeri, veriKokuCoz, VERI_KOKU_ORTAMI } from "./veri-koku.ts";
 import type {
@@ -57,6 +57,13 @@ const VARSAYILAN_KULLANICI_ADI = "kullanıcı";
 const ASISTAN_ADI_ORTAMI = "EREN_KIT_ASSISTANT_NAME";
 const VARSAYILAN_ASISTAN_ADI = "Claude";
 const ASISTAN_ADI_SINIRI = 40;
+const MIB = 1024 * 1024;
+/**
+ * `ajanda_ek_kota_mb`: ek yedeğine (`ajanda-ekler.ts`) ayrılan alan, MiB, tam sayı. Alt sınır bir kaydın
+ * bütün eklerinin (`EK_ADET` × `EK_BAYT` = 32 MiB) iki katı; üst sınır 1 TiB. Varsayılan `EK_TOPLAM_BAYT`.
+ */
+const EK_KOTA_MB_EN_AZ = 64;
+const EK_KOTA_MB_EN_COK = 1_048_576;
 
 /**
  * PC iş ortamının (tam ve hafif) kapatma anahtarları. Ölçüm (2026-11-09, boş cwd, tam profil): `isler-komut.ts`
@@ -96,6 +103,8 @@ const IZINLI_ANAHTARLAR = new Set([
   "telegram",
   "computer_use",
   "rea",
+  "ajanda_ek_kota_mb",
+  "ajanda_arac_v3",
 ]);
 
 const VARSAYILAN_MEDYA_KOTA_MB = 10240;
@@ -424,7 +433,23 @@ export function yollariUret(ortam: Ortam): ErenYollari {
   };
 }
 
-export const ayarKur: AyarFabrikasi = async (b: AyarBagimliliklari): Promise<Ayar> => {
+/**
+ * Sözleşmedeki `Ayar`'a ek, yalnız `ana`'nın okuduğu servis ayarları. `Ayar`'ın kendisi değişmez (sözleşme
+ * dosyası bu dilimin dışında): `ayarKur` bunu döner ve hâlâ bir `AyarFabrikasi`'dir.
+ */
+export interface ServisEkAyari {
+  /** Ek yedeği kotası, bayt (`ajanda_ek_kota_mb` × 1 MiB; yoksa `EK_TOPLAM_BAYT`). */
+  readonly ajandaEkKotaBayt: number;
+  /**
+   * `ajanda_arac_v3` (true ya da false; yoksa false): asistan araçlarının sözleşme 3 alanları (bölge, varış,
+   * bağlantılar, simge, dar tekrar, `bolge_yeni`, listede bölge süzgeci, `bolgeler`, `ek_sayisi`). Kapalıyken
+   * araç yüzü v3 öncesiyle bayt bayt aynıdır (`docs/SERVIS.md` "Ayar"). Açılışta okunur; değişince servis
+   * yeniden başlatılır.
+   */
+  readonly ajandaAracV3: boolean;
+}
+
+export const ayarKur = (async (b: AyarBagimliliklari): Promise<Ayar & ServisEkAyari> => {
   const yollar = yollariUret(b.ortam);
   const yerel = await yerelAyarOku(b.dosya, yollar.yerelAyar);
 
@@ -434,10 +459,12 @@ export const ayarKur: AyarFabrikasi = async (b: AyarBagimliliklari): Promise<Aya
   const ramDusukMb = tamSayiAlani(yerel, "ram_dusuk_mb", 0, 10_000_000) ?? VARSAYILAN_RAM_DUSUK_MB;
   const erenCanliAzami = tamSayiAlani(yerel, "eren_canli_azami", 1, 4) ?? VARSAYILAN_EREN_CANLI_AZAMI;
   const erenBostaKapatDk = tamSayiAlani(yerel, "eren_bosta_kapat_dk", 1, 1440) ?? VARSAYILAN_EREN_BOSTA_KAPAT_DK;
+  const ekKotaMb = tamSayiAlani(yerel, "ajanda_ek_kota_mb", EK_KOTA_MB_EN_AZ, EK_KOTA_MB_EN_COK);
   const erenModeli = modelAlani(yerel, "eren_modeli") ?? VARSAYILAN_EREN_MODELI;
   const pcIsModeli = modelAlani(yerel, "pc_is_modeli") ?? null;
   const telefonIsModeli = modelAlani(yerel, "telefon_is_modeli") ?? VARSAYILAN_TELEFON_IS_MODELI;
   const tamYetki = mantikAlani(yerel, "tam_yetki") ?? true;
+  const ajandaAracV3 = mantikAlani(yerel, "ajanda_arac_v3") ?? false;
   const computerUse = mcpTanimi(yerel, "computer_use");
   const rea = mcpTanimi(yerel, "rea");
   const telegram = telegramTanimi(yerel);
@@ -453,7 +480,7 @@ export const ayarKur: AyarFabrikasi = async (b: AyarBagimliliklari): Promise<Aya
 
   const kapatmali = (): Ortam => ({ ...claudeSil(ortamKopyasi), ...KAPATMA_ANAHTARLARI });
 
-  const ayar: Ayar = {
+  const ayar: Ayar & ServisEkAyari = {
     yollar,
     servis,
     isYollari(is_id: IsNo): IsYollari {
@@ -513,7 +540,9 @@ export const ayarKur: AyarFabrikasi = async (b: AyarBagimliliklari): Promise<Aya
     async telegram(): Promise<TelegramAyari | null> {
       return telegram === null ? null : { ...telegram };
     },
+    ajandaEkKotaBayt: ekKotaMb === undefined ? AJANDA_SINIRLARI.EK_TOPLAM_BAYT : ekKotaMb * MIB,
+    ajandaAracV3,
   };
   if (kapaliNedeni !== null) medyaKapaliNedenleri.set(ayar, kapaliNedeni);
   return ayar;
-};
+}) satisfies AyarFabrikasi;
