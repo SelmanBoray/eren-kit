@@ -1,8 +1,8 @@
-# H3 ölçüm planı: Codex CLI bağlayıcısı
+# H3 ölçümü: Codex CLI bağlayıcısı
 
-Durum: **ölçüldü (2026-11-28); sonuç bölüm 6'da: yalnız taslak.** Kol H, `HARNESS.md` dilim H3'ün ilk adımı. Bu belge neyin, nasıl ve hangi
-güvenlik koşullarıyla ölçüleceğini söyler; ölçümü başlatmak koordinatörün (ve gereken yerde kullanıcının)
-onayına bağlıdır. Tarih: 2026-11-27.
+Durum: **ölçüldü (2026-11-28, kullanıcı onayıyla); sonuç bölüm 6'da: yalnız taslak.** Kol H, `HARNESS.md`
+dilim H3'ün ilk adımı. Belge neyin, nasıl ve hangi güvenlik koşullarıyla ölçüldüğünü (bölüm 1–5, plan
+2026-11-27) ve ne çıktığını (bölüm 6) söyler.
 
 Amaç: Codex CLI'de, `HARNESS.md` 4.2'deki normalize tasdik çerçevesinin (`cagri_id`, `oturum_id`, `aktor`,
 `etkilesim`) güvenilir biçimde doldurulup doldurulamayacağını gerçek araçla göstermek. Sonuç iki taneden
