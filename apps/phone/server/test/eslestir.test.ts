@@ -838,6 +838,7 @@ describe("eslestir --pc-ajan: uyarlayıcı seçimi", () => {
           assert.ok(
             m.includes(
               `Uyarı: köprü süreç bildirmedi (eski sürüm ya da uyumluluk düşüşü; pc_kopru_surecsiz, oturum …${OTURUM.slice(-6)}, …${OTURUM_2.slice(-6)}).\n` +
+                "  En son t1'da görüldü; o andan sonra pencereyi yeniden açtıysanız ya da /mcp ile yeniden bağladıysanız geçmiştir.\n" +
                 "  Bu bağlantılarda süreç eşitliği yalnız bağlantı içinde geçerli: her yeniden bağlanmada ilk tasdik süreç denetimsiz\n" +
                 "  tüketilir. Tam koruma için Claude Code penceresini yeniden açın ya da /mcp ile yeniden bağlayın.\n",
             ),
@@ -849,6 +850,17 @@ describe("eslestir --pc-ajan: uyarlayıcı seçimi", () => {
           assert.equal(ozetsiz(m), ozetBolumu(pcTeshisMetni([tasdikYeni, son, tasdikYeni, son], z, k)));
         }
       }
+    });
+
+    it("pc_kopru_surecsiz: uyarı olayın en son görüldüğü zamanı söyler; yeniden teşhiste yeni olay zamanı ilerletir", () => {
+      const zamanli = (satir: string, ms: number) => JSON.stringify({ ...(JSON.parse(satir) as object), ts_ms: ms });
+      const sz = zamanli(s({ modul: "ajanda", olay: "pc_kopru_surecsiz", seviye: "uyari", oturum_id: OTURUM, surec_id: SUREC }), 100);
+      const ilk = pcTeshisMetni([tasdikYeni, sz, arac("tasdik_yok")], z, kurulu);
+      assert.match(ilk, /En son t100'da görüldü; o andan sonra pencereyi yeniden açtıysanız ya da \/mcp ile yeniden bağladıysanız geçmiştir\./);
+      // /mcp sonrası köprü yine süreçsiz bağlanırsa yeni zaman görünür; eski zaman değil.
+      const sonra = pcTeshisMetni([tasdikYeni, sz, arac("tasdik_yok"), zamanli(sz, 250)], z, kurulu);
+      assert.match(sonra, /En son t250'da görüldü/);
+      assert.equal(sonra.includes("En son t100'da"), false);
     });
 
     it("kaldırılan olaylar (pc_bag_birakildi, pc_bag_katildi) eski günlükte görünürse gösterilmez, çıktı onlarsız günlükle aynı", () => {

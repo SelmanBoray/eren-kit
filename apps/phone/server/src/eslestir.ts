@@ -638,12 +638,13 @@ const SURECSIZ_COZUM = "Tam koruma için Claude Code penceresini yeniden açın 
  * satırları; yoksa boş (eski günlükte bu olay yoktur, çıktı değişmez). Olay bağlanma anıdır: bağlantının hâlâ açık
  * olduğunu göstermez. "Eski sürüm" kesin denmez: güncel köprü de geçici bir hatada süreç bildirmeden bağlanabilir.
  */
-function surecsizKopruSatirlari(olaylar: ReadonlyArray<TeshisOlayi & { oturum: string | null }>): string[] {
+function surecsizKopruSatirlari(olaylar: ReadonlyArray<TeshisOlayi & { oturum: string | null; ts: number }>, zaman: (ms: number) => string): string[] {
   const goruldu = olaylar.filter((o) => o.olay === "pc_kopru_surecsiz");
   if (goruldu.length === 0) return [];
   const oturumlar = [...new Set(goruldu.map((o) => o.oturum).filter((v): v is string => v !== null))];
   return [
     `Uyarı: köprü süreç bildirmedi (eski sürüm ya da uyumluluk düşüşü; pc_kopru_surecsiz${oturumlar.length === 0 ? "" : `, oturum ${oturumlar.join(", ")}`}).`,
+    `  En son ${zaman(Math.max(...goruldu.map((o) => o.ts)))}'da görüldü; o andan sonra pencereyi yeniden açtıysanız ya da /mcp ile yeniden bağladıysanız geçmiştir.`,
     "  Bu bağlantılarda süreç eşitliği yalnız bağlantı içinde geçerli: her yeniden bağlanmada ilk tasdik süreç denetimsiz",
     `  tüketilir. ${SURECSIZ_COZUM}`,
   ];
@@ -939,7 +940,7 @@ export function pcTeshisMetni(
     ozet.push("Günlükte görülen neden:");
     for (const n of kancaRetNedenleri(son)) ozet.push(`  - ${n}`);
   }
-  ozet.push(...surecsizKopruSatirlari(son));
+  ozet.push(...surecsizKopruSatirlari(son, zaman));
   if (yalnizTaslakMi(ajan)) ozet.push(...taslakOzetSatirlari(ajan));
   return `${bas}Son PC olayları (en yeni sonda; metin ve kayıt alanı yazılmaz):\n${satir.join("\n")}\n\n${ozet.join("\n")}\n`;
 }
