@@ -1135,20 +1135,24 @@ describe("kopru PC köprüsü: uyarlayıcı (--uyarlayici)", () => {
   });
 });
 
-// --- (3) PC köprüsü: zengin hello (surec_id) ve iki yönlü sürüm uyumu -----------------------------
+// --- (3) PC köprüsü: hello merdiveni (surec_id, arac_v3) ve iki yönlü sürüm uyumu ------------------
 
 /**
- * Yeni köprü hello'da harness sürecini bildirir (`surec_id`, `giris`'te `process.ppid`; T5). Sürüm farkının iki
- * yönü sınanır. Eski servis (bu değişiklikten hemen önceki sürüm, 55948ea) burada satır düzeyinde temsil edilir:
- * yukarı çözücüsü 55948ea'nın şemasıdır (`EskiHello` = `git show 55948ea:apps/phone/protocol/src/ajanda-arac.ts`'teki
- * `AjandaKopruHello`, bugünkü yapı taşlarıyla; istek ve iptal şemaları o zamandan beri değişmedi) ve hello reddi
- * 55948ea `ajanda-kopru-sunucu.ts` `helloIsle`'ninkidir: şemadan geçmeyen hello → `kopru_ret{yetkisiz}` yazıp hemen
- * kapatır (`reddet`; adlı boruda ret satırı kapanışla birlikte düşebilir, ölçüldü: yaz + destroy yarı yarıya teslim).
- * Son test bu iki olguyu git'ten okuyarak denetler. Kanıtlanan: köprü zengin hello'nun reddinde BİR KEZ düz hello'ya
- * düşer ve eski serviste çalışır; gerçek bir retle (düz hello da reddedilir) döngü sıkışmaz; yeni alan hello dışında
- * hiçbir çerçeveye (`cagri`) konmaz; eski köprünün düz hello'su yeni serviste geçer.
+ * Yeni köprü hello'da harness sürecini (`surec_id`, `giris`'te `process.ppid`; T5) ve v3 yüzü (`arac_v3`) ister.
+ * Servis isteğe bağlı bir alanı tanımazsa köprü merdivenden iner: `{surec_id, arac_v3}` → `{surec_id}` → `{}`.
+ * Eski servisler burada satır düzeyinde temsil edilir; yukarı çözücüleri o sürümlerin şemasıdır (`git show
+ * <sürüm>:apps/phone/protocol/src/ajanda-arac.ts`'teki `AjandaKopruHello`, bugünkü yapı taşlarıyla; istek ve iptal
+ * şemaları o zamandan beri değişmedi):
+ * - 55948ea (T5 öncesi): `{rol, jeton}`, katı.
+ * - d7bf303 (Kol H, T5): `{rol, jeton, surec_id?}`, katı; `surec_id` yalnız `pc_oturumu`'nda; `arac_v3` yok.
+ * Hello reddi ikisinde de `ajanda-kopru-sunucu.ts` `helloIsle`'ninkidir: şemadan geçmeyen hello →
+ * `kopru_ret{yetkisiz}` yazıp hemen kapatır (`reddet`; adlı boruda ret satırı kapanışla birlikte düşebilir, ölçüldü:
+ * yaz + destroy yarı yarıya teslim). Son test bu olguları git'ten okuyarak denetler. Kanıtlanan: d7bf303'te süreç
+ * eşitliği korunur (yüz v2), `initialize`'da servis yokken de; 55948ea'da köprü düz hello'ya dek iner ve çalışır;
+ * yeni serviste zengin hello ilk denemede geçer; her basamak döngüde en çok bir kez denenir, gerçek bir retle döngü
+ * sıkışmaz; yeni alan hello dışında hiçbir çerçeveye (`cagri`) konmaz; eski köprünün düz hello'su yeni serviste geçer.
  */
-describe("kopru PC köprüsü: zengin hello (surec_id) ve sürüm uyumu", () => {
+describe("kopru PC köprüsü: hello merdiveni (surec_id, arac_v3) ve sürüm uyumu", () => {
   const PC_JETON = "p".repeat(43);
   const SUREC = "3060";
   const OTURUM_PC = "3f1c2a9e-7b4d-4c1a-9e2f-0a1b2c3d4e5f";
@@ -1157,18 +1161,34 @@ describe("kopru PC köprüsü: zengin hello (surec_id) ve sürüm uyumu", () => 
   const EskiHello = mesaj("kopru_hello", { rol: AjandaKopruRolu, jeton: Jeton });
   const EskiYukari = z.discriminatedUnion("type", [EskiHello, AjandaKopruIstek, KopruIptal]);
   const eskiCoz = (s: string) => cozumle(EskiYukari, s, AJANDA_AZAMI_CERCEVE.BORU, PROTOKOL_SURUMU);
+  /** d7bf303'ün hello şeması (Kol H T5: `surec_id` var, `arac_v3` yok; katı). */
+  const T5Hello = mesaj("kopru_hello", { rol: AjandaKopruRolu, jeton: Jeton, surec_id: OpakId.optional() }).superRefine((m, ctx) => {
+    if (m.surec_id !== undefined && m.rol !== "pc_oturumu") ctx.addIssue({ code: "custom", path: ["surec_id"], message: "surec_id yalnız pc_oturumu hello'sunda" });
+  });
+  const T5Yukari = z.discriminatedUnion("type", [T5Hello, AjandaKopruIstek, KopruIptal]);
+  const t5Coz = (s: string) => cozumle(T5Yukari, s, AJANDA_AZAMI_CERCEVE.BORU, PROTOKOL_SURUMU);
+  type Sema = "55948ea" | "d7bf303" | "yeni";
+  const semaCoz = (sema: Sema) => (sema === "55948ea" ? eskiCoz : sema === "d7bf303" ? t5Coz : ajandaKopruYukariCoz);
 
-  /** Olay sırası: her hello (zengin mi) ve köprünün her yeniden bağlanma beklemesi. */
-  type Olay = { hello: "zengin" | "duz" } | { bekle: number };
+  /** Hello'nun basamağı: isteğe bağlı alanları (`s`: surec_id, `v3`: arac_v3); alansızsa `duz`. */
+  type Basamak = "s+v3" | "s" | "v3" | "duz";
+  const basamak = (ham: Record<string, unknown>): Basamak =>
+    ((["surec_id", "arac_v3"] as const).filter((k) => k in ham).map((k) => (k === "surec_id" ? "s" : "v3")).join("+") || "duz") as Basamak;
+  /** Olay sırası: her hello (basamağı) ve köprünün her yeniden bağlanma beklemesi. */
+  type Olay = { hello: Basamak } | { bekle: number };
 
   /**
-   * Satır düzeyinde PC servisi. `eski`: 55948ea şeması (zengin hello'yu reddeder); `retDuser`: ret satırı
-   * kapanışla düşer (yalnız kapanış görünür); `hepsiniReddet`: her hello'ya bu kodla ret (gerçek ret).
+   * Satır düzeyinde PC servisi. `sema`: hello'yu hangi sürümün şemasıyla çözer (eskiler bilmediği alanı reddeder);
+   * `retDuser`: ret satırı kapanışla düşer (yalnız kapanış görünür); `hepsiniReddet`: her hello'ya bu kodla ret
+   * (gerçek ret); `v3Acik` (yalnız yeni): `arac_v3` isteyene `kopru_welcome{arac_v3:true}`. `s.yok`: boru yok
+   * (bağlantı açılamaz).
    */
-  const pcServisi = (sec: { eski: boolean; retDuser?: boolean; hepsiniReddet?: string }) => {
-    const s = { olaylar: [] as Olay[], hamHellolar: [] as string[], hamIstekler: [] as string[], baglantiSayisi: 0, kapat: (): void => {} };
+  const pcServisi = (sec: { sema: Sema; retDuser?: boolean; hepsiniReddet?: string; v3Acik?: boolean }) => {
+    const coz = semaCoz(sec.sema);
+    const s = { olaylar: [] as Olay[], hamHellolar: [] as string[], hamIstekler: [] as string[], baglantiSayisi: 0, yok: false, kapat: (): void => {} };
     const baglan = async (ad: string): Promise<BoruBaglantisi> => {
       assert.equal(ad, AJANDA_BORU_ADI);
+      if (s.yok) throw new Error("boru yok");
       s.baglantiSayisi += 1;
       const satirlar: Array<(x: string) => void> = [];
       const kapanislar: Array<() => void> = [];
@@ -1193,8 +1213,8 @@ describe("kopru PC köprüsü: zengin hello (surec_id) ve sürüm uyumu", () => 
             const ham = JSON.parse(x) as Record<string, unknown>;
             if (!karsilandi) {
               s.hamHellolar.push(x);
-              s.olaylar.push({ hello: "surec_id" in ham ? "zengin" : "duz" });
-              const c = sec.eski ? eskiCoz(x) : ajandaKopruYukariCoz(x);
+              s.olaylar.push({ hello: basamak(ham) });
+              const c = coz(x);
               const red = !c.ok || c.mesaj.type !== "kopru_hello" ? "yetkisiz" : (sec.hepsiniReddet ?? null);
               if (red !== null) {
                 if (sec.retDuser !== true) yolla({ type: "kopru_ret", code: red });
@@ -1202,11 +1222,12 @@ describe("kopru PC köprüsü: zengin hello (surec_id) ve sürüm uyumu", () => 
                 return;
               }
               karsilandi = true;
-              yolla({ type: "kopru_welcome", rol: "pc_oturumu" });
+              const v3 = sec.sema === "yeni" && sec.v3Acik === true && ham["arac_v3"] === true;
+              yolla({ type: "kopru_welcome", rol: "pc_oturumu", ...(v3 ? { arac_v3: true } : {}) });
               return;
             }
             s.hamIstekler.push(x);
-            const c = sec.eski ? eskiCoz(x) : ajandaKopruYukariCoz(x);
+            const c = coz(x);
             if (!c.ok) return kapat();
             if (c.mesaj.type === "istek") yolla({ type: "yanit", istek_id: c.mesaj.istek_id, ok: true, sonuc: PC_LISTE });
           });
@@ -1258,65 +1279,139 @@ describe("kopru PC köprüsü: zengin hello (surec_id) ve sürüm uyumu", () => 
   const helloSirasi = (olaylar: readonly Olay[]): string[] =>
     olaylar.filter((o) => "hello" in o || donguBeklemesi(o)).map((o) => ("hello" in o ? o.hello : "B"));
 
+  /** İstek çerçeveleri eski servisin katı şemasından geçer, süreç taşımaz (yeni alan yalnız hello'dadır). */
+  const isteklerSurecsiz = (s: { hamIstekler: string[] }, coz: (x: string) => { ok: boolean }): void => {
+    assert.ok(s.hamIstekler.length >= 1);
+    for (const x of s.hamIstekler) {
+      assert.equal(coz(x).ok, true, x);
+      assert.equal(x.includes("surec"), false, x);
+      assert.equal(x.includes(SUREC), false, x);
+    }
+  };
+  const hamAlanlar = (x: string): string[] => Object.keys(JSON.parse(x) as object).sort();
+  /** Döngü başına (iki olağan bekleme arası) hello sayısı. */
+  const donguBoylari = (sira: readonly string[]): number[] => {
+    const boylar: number[] = [0];
+    for (const o of sira) {
+      if (o === "B") boylar.push(0);
+      else boylar[boylar.length - 1]! += 1;
+    }
+    return boylar;
+  };
+
   for (const retDuser of [false, true]) {
-    it(`yeni köprü → eski servis (55948ea şeması): zengin hello reddedilir, köprü beklemeden bir kez düz hello'ya düşer ve çalışır${retDuser ? " (ret satırı kapanışla düştü)" : ""}`, async () => {
-      const { s, baglan } = pcServisi({ eski: true, retDuser });
+    const not = retDuser ? " (ret satırı kapanışla düştü)" : "";
+    it(`yeni köprü → d7bf303 servisi (surec_id var, arac_v3 yok): {surec_id, arac_v3} reddedilir, {surec_id} kabul; süreç eşitliği korunur, yüz v2${not}`, async () => {
+      const { s, baglan } = pcServisi({ sema: "d7bf303", retDuser });
       const istemci = await pcKopruAc(baglan, s.olaylar, SUREC);
-      // İlk çağrı düşüş sürerken gelir: düz denemenin sonucunu bekler, "ulaşılamıyor" demez.
+      const r = await istemci.callTool({ name: "ajanda_listele", arguments: {}, _meta: { [CLAUDE_CODE_ARAC_KIMLIGI]: "toolu_t1" } });
+      assert.ok(!hataMi(r), metin(r));
+      assert.deepEqual(helloSirasi(s.olaylar), ["s+v3", "s"], "bir basamak inildi, arada bekleme yok, düz hello yok");
+      assert.equal(s.baglantiSayisi, 2);
+      assert.equal(t5Coz(s.hamHellolar[0]!).ok, false, "d7bf303 şeması arac_v3'ü reddeder");
+      const kabul = t5Coz(s.hamHellolar[1]!);
+      assert.ok(kabul.ok && kabul.mesaj.type === "kopru_hello" && kabul.mesaj.surec_id === SUREC, "kabul edilen hello süreci taşır (T5 süreç eşitliği)");
+      assert.deepEqual(hamAlanlar(s.hamHellolar[1]!), ["jeton", "rol", "surec_id", "type", "v"]);
+      assert.deepEqual(istemci.getServerCapabilities()?.tools, {}, "arac_v3'süz basamak: yüz v2, listChanged yok");
+      for (const t of (await istemci.listTools()).tools) assert.equal(t.description, AJANDA_PC_ARAC_ACIKLAMALARI_V2[t.name as AjandaFiili], t.name);
+      isteklerSurecsiz(s, t5Coz);
+      // Servis koptu (yeniden başladı): yüz v2'ye kilitli, merdiven `{surec_id}`'den başlar ve ilk denemede geçer.
+      s.kapat();
+      await sureyleBekle(() => s.baglantiSayisi >= 3, "yeniden bağlanma");
+      await bosalt(10);
+      assert.deepEqual(helloSirasi(s.olaylar), ["s+v3", "s", "B", "s"]);
+      assert.equal(t5Coz(s.hamHellolar[2]!).ok, true);
+      assert.ok(!hataMi(await istemci.callTool({ name: "ajanda_listele", arguments: {} })));
+    });
+
+    it(`yeni köprü → 55948ea servisi (T5 öncesi): merdiven düz hello'ya dek iner ({surec_id, arac_v3} → {surec_id} → {}), beklemeden; çalışır${not}`, async () => {
+      const { s, baglan } = pcServisi({ sema: "55948ea", retDuser });
+      const istemci = await pcKopruAc(baglan, s.olaylar, SUREC);
+      // İlk çağrı iniş sürerken gelir: alt basamağın sonucunu bekler, "ulaşılamıyor" demez.
       const r = await istemci.callTool({ name: "ajanda_listele", arguments: {}, _meta: { [CLAUDE_CODE_ARAC_KIMLIGI]: "toolu_e1" } });
       assert.ok(!hataMi(r), metin(r));
-      assert.deepEqual(helloSirasi(s.olaylar), ["zengin", "duz"], "tek seferlik düşüş, arada bekleme yok");
-      assert.equal(s.baglantiSayisi, 2);
+      assert.deepEqual(helloSirasi(s.olaylar), ["s+v3", "s", "duz"], "her basamak bir kez, arada bekleme yok");
+      assert.equal(s.baglantiSayisi, 3);
       assert.equal((JSON.parse(s.hamHellolar[0]!) as Record<string, unknown>)["surec_id"], SUREC);
-      assert.equal(eskiCoz(s.hamHellolar[0]!).ok, false, "eski şema zengin hello'yu reddeder");
-      assert.equal(eskiCoz(s.hamHellolar[1]!).ok, true, "düz hello eski şemadan geçer");
-      // Tek düşüş yolu: zengin hello `surec_id` ve `arac_v3`'ü birlikte taşır, düz hello ikisini de bırakır; yüz v2.
       assert.equal((JSON.parse(s.hamHellolar[0]!) as Record<string, unknown>)["arac_v3"], true);
-      assert.deepEqual(Object.keys(JSON.parse(s.hamHellolar[1]!) as object).sort(), ["jeton", "rol", "type", "v"]);
+      assert.equal(eskiCoz(s.hamHellolar[0]!).ok, false, "eski şema zengin hello'yu reddeder");
+      assert.equal(eskiCoz(s.hamHellolar[1]!).ok, false, "eski şema surec_id'yi de reddeder");
+      assert.equal(eskiCoz(s.hamHellolar[2]!).ok, true, "düz hello eski şemadan geçer");
+      assert.deepEqual(hamAlanlar(s.hamHellolar[2]!), ["jeton", "rol", "type", "v"]);
       assert.deepEqual(istemci.getServerCapabilities()?.tools, {}, "düz hello: v3 istenmedi, listChanged yok");
-      // Yeni alan yalnız hello'dadır: istek çerçevesi (cagri) eski servisin katı şemasından geçer, süreç taşımaz.
       assert.equal(s.hamIstekler.length, 1);
-      for (const x of s.hamIstekler) {
-        assert.equal(eskiCoz(x).ok, true, x);
-        assert.equal(x.includes("surec"), false, x);
-        assert.equal(x.includes(SUREC), false, x);
-      }
-      // Servis koptu (yeniden başladı): sonraki deneme yine zengin ister, eski serviste yine bir kez düşer.
+      isteklerSurecsiz(s, eskiCoz);
+      // Servis koptu (yeniden başladı): yüz `initialize`'da v2'ye kilitlendi; merdiven `{surec_id}` → `{}`.
       s.kapat();
-      await sureyleBekle(() => s.baglantiSayisi >= 4, "yeniden bağlanma");
+      await sureyleBekle(() => s.baglantiSayisi >= 5, "yeniden bağlanma");
       await bosalt(10);
-      assert.deepEqual(helloSirasi(s.olaylar), ["zengin", "duz", "B", "zengin", "duz"]);
-      // Yüz `initialize`'da v2'ye kilitlendi: sonraki zengin hello yalnız süreci taşır.
-      assert.equal("arac_v3" in (JSON.parse(s.hamHellolar[2]!) as object), false);
+      assert.deepEqual(helloSirasi(s.olaylar), ["s+v3", "s", "duz", "B", "s", "duz"]);
       assert.ok(!hataMi(await istemci.callTool({ name: "ajanda_listele", arguments: {} })));
     });
   }
 
+  it("initialize'da servis yok, sonra d7bf303 servisi: yüz kilitlenmez; her yeniden bağlanmada {surec_id, arac_v3} → {surec_id}, süreç eşitliği hep korunur", async () => {
+    const { s, baglan } = pcServisi({ sema: "d7bf303" });
+    s.yok = true;
+    const istemci = await pcKopruAc(baglan, s.olaylar, SUREC);
+    assert.deepEqual(istemci.getServerCapabilities()?.tools, { listChanged: true }, "yüz bilinmiyor: listChanged ilan edildi");
+    s.yok = false;
+    await sureyleBekle(() => s.baglantiSayisi >= 2, "bağlanma");
+    await bosalt(10);
+    const r = await istemci.callTool({ name: "ajanda_listele", arguments: {}, _meta: { [CLAUDE_CODE_ARAC_KIMLIGI]: "toolu_t2" } });
+    assert.ok(!hataMi(r), metin(r));
+    s.kapat();
+    await sureyleBekle(() => s.baglantiSayisi >= 4, "yeniden bağlanma");
+    await bosalt(10);
+    const hellolar = s.olaylar.flatMap((o) => ("hello" in o ? [o.hello] : []));
+    assert.deepEqual(hellolar, ["s+v3", "s", "s+v3", "s"], "kilitsiz yüzde her bağlanma v3'ü yeniden sorar; düz hello'ya hiç inilmez");
+    for (const x of [s.hamHellolar[1]!, s.hamHellolar[3]!]) {
+      const c = t5Coz(x);
+      assert.ok(c.ok && c.mesaj.type === "kopru_hello" && c.mesaj.surec_id === SUREC, x);
+    }
+    isteklerSurecsiz(s, t5Coz);
+  });
+
+  it("yeni köprü → yeni servis (v3 açık): zengin hello {surec_id, arac_v3} ilk denemede kabul; iniş yok, yüz v3", async () => {
+    const { s, baglan } = pcServisi({ sema: "yeni", v3Acik: true });
+    const istemci = await pcKopruAc(baglan, s.olaylar, SUREC);
+    const r = await istemci.callTool({ name: "ajanda_listele", arguments: {}, _meta: { [CLAUDE_CODE_ARAC_KIMLIGI]: "toolu_y0" } });
+    assert.ok(!hataMi(r), metin(r));
+    assert.deepEqual(helloSirasi(s.olaylar), ["s+v3"]);
+    assert.equal(s.baglantiSayisi, 1);
+    assert.deepEqual(istemci.getServerCapabilities()?.tools, { listChanged: true });
+    for (const t of (await istemci.listTools()).tools) assert.equal(t.description, AJANDA_PC_ARAC_ACIKLAMALARI[t.name as AjandaFiili], t.name);
+  });
+
   for (const kod of ["yetkisiz", "jeton_gecersiz"]) {
-    it(`gerçek ret (her hello ${kod}): sonsuz döngü yok; düşüş tek seferlik, sonra olağan artan bekleme`, async () => {
-      const { s, baglan } = pcServisi({ eski: false, hepsiniReddet: kod });
+    it(`gerçek ret (her hello ${kod}): merdiven sonlu, sonsuz döngü yok; her basamak döngüde bir kez, sonra olağan artan bekleme`, async () => {
+      const { s, baglan } = pcServisi({ sema: "yeni", hepsiniReddet: kod });
       await pcKopruAc(baglan, s.olaylar, SUREC);
-      await sureyleBekle(() => s.baglantiSayisi >= 6, "denemeler");
-      const sira = helloSirasi(s.olaylar).slice(0, 8);
+      await sureyleBekle(() => s.baglantiSayisi >= 10, "denemeler");
+      await bosalt(10);
+      const sira = helloSirasi(s.olaylar);
       if (kod === "yetkisiz") {
-        // Zengin reddi bir düz deneme ekler; düz reddi hemen yeniden denemeye yol açmaz.
-        assert.deepEqual(sira.slice(0, 7), ["zengin", "duz", "B", "zengin", "duz", "B", "zengin"]);
+        // Her döngü üç basamağın her birini bir kez dener; düz reddi hemen yeniden denemeye yol açmaz.
+        assert.deepEqual(sira.slice(0, 9), ["s+v3", "s", "duz", "B", "s+v3", "s", "duz", "B", "s+v3"]);
       } else {
-        // Başka kod (anahtar): alanla ilgisi yok, düşüş olmaz.
-        assert.deepEqual(sira.slice(0, 5), ["zengin", "B", "zengin", "B", "zengin"]);
+        // Başka kod (anahtar): alanla ilgisi yok, inilmez.
+        assert.deepEqual(sira.slice(0, 5), ["s+v3", "B", "s+v3", "B", "s+v3"]);
       }
+      // Sonluluk: hiçbir döngü basamak sayısından (3) fazla hello içermez.
+      assert.ok(donguBoylari(sira).every((n) => n <= (kod === "yetkisiz" ? 3 : 1)), sira.join(","));
       const beklemeler = s.olaylar.filter(donguBeklemesi).map((o) => ("bekle" in o ? o.bekle : 0));
       assert.deepEqual(beklemeler.slice(0, 3), [1_000, 2_000, 4_000], "olağan artan bekleme");
     });
   }
 
   it("yeni köprü → yeni servis: hello surec_id taşır, servis onu bağlama yazar (kopru_surec_id); düşüş yok; cagri süreç taşımaz", async () => {
-    const { kur: u, baglamlar, hamIstekler } = await pcUcKur();
+    const { kur: u, baglamlar, hamHellolar, hamIstekler } = await pcUcKur();
     const olaylar: Olay[] = [];
     const istemci = await pcKopruAc(u.baglan, olaylar, SUREC);
     const r = await istemci.callTool({ name: "ajanda_listele", arguments: {}, _meta: { [CLAUDE_CODE_ARAC_KIMLIGI]: "toolu_y1" } });
     assert.ok(!hataMi(r), metin(r));
     assert.equal(u.baglantiSayisi(), 1, "düşüş yok");
+    assert.deepEqual(hamAlanlar(hamHellolar[0]!), ["arac_v3", "jeton", "rol", "surec_id", "type", "v"], "zengin hello ilk denemede kabul");
     assert.deepEqual(baglamlar.map((b) => ({ ...b, baglanti_id: "?" })), [
       { rol: "pc_oturumu", baglanti_id: "?", arac_cagri_id: "toolu_y1", oturum_id: OTURUM_PC, kopru_surec_id: SUREC },
     ]);
@@ -1344,7 +1439,7 @@ describe("kopru PC köprüsü: zengin hello (surec_id) ve sürüm uyumu", () => 
   });
 
   it("geçersiz süreç kimliği hello'ya konmaz (düz hello); ana_oturum köprüsü süreç bildirmez", async () => {
-    const { s, baglan } = pcServisi({ eski: false });
+    const { s, baglan } = pcServisi({ sema: "yeni" });
     await pcKopruAc(baglan, s.olaylar, "12 34");
     await sureyleBekle(() => s.hamHellolar.length >= 1, "hello");
     assert.equal(s.hamHellolar[0]!.includes("surec"), false);
@@ -1354,10 +1449,10 @@ describe("kopru PC köprüsü: zengin hello (surec_id) ve sürüm uyumu", () => 
     assert.equal("surec_id" in ana.son.gelen[0]!, false);
   });
 
-  it("temsil denetimi (git): 55948ea'nın hello şeması, AjandaPcCagri'si ve hello reddi bu testteki kopyayla aynı", (t) => {
-    const goster = (yol: string): string | null => {
+  it("temsil denetimi (git): 55948ea ve d7bf303'ün hello şeması, AjandaPcCagri'si ve hello reddi bu testteki kopyalarla aynı", (t) => {
+    const goster = (yol: string, surum = "55948ea"): string | null => {
       try {
-        return execFileSync("git", ["show", `55948ea:${yol}`], { encoding: "utf8", cwd: fileURLToPath(new URL(".", import.meta.url)), stdio: ["ignore", "pipe", "ignore"] });
+        return execFileSync("git", ["show", `${surum}:${yol}`], { encoding: "utf8", cwd: fileURLToPath(new URL(".", import.meta.url)), stdio: ["ignore", "pipe", "ignore"] });
       } catch {
         return null;
       }
@@ -1375,6 +1470,20 @@ describe("kopru PC köprüsü: zengin hello (surec_id) ve sürüm uyumu", () => 
     assert.match(sunucu, /const reddet = [^\n]*\n[^\n]*el_sikisma_ret[^\n]*\n\s*yaz\(bag, \{ v: PROTOKOL_SURUMU, type: "kopru_ret", code \}\);\n\s*baglantiKapat\(bag\);/);
     // Bugünkü istek şeması 55948ea'dakiyle aynı alanları taşır (cagri katı: arac_cagri_id, oturum_id).
     assert.deepEqual(Object.keys(AjandaPcCagri.shape).sort(), ["arac_cagri_id", "oturum_id"]);
+    // d7bf303 (Kol H T5): hello `surec_id`'yi tanır, `arac_v3`'ü tanımaz; ret aynı yoldan; cagri aynı.
+    const t5Protokol = goster("apps/phone/protocol/src/ajanda-arac.ts", "d7bf303");
+    const t5Sunucu = goster("apps/phone/server/src/ajanda-kopru-sunucu.ts", "d7bf303");
+    if (t5Protokol === null || t5Sunucu === null) {
+      t.skip("d7bf303 yok");
+      return;
+    }
+    assert.ok(t5Protokol.includes('export const AjandaKopruHello = mesaj("kopru_hello", { rol: AjandaKopruRolu, jeton: Jeton, surec_id: OpakId.optional() }).superRefine((m, ctx) => {'));
+    assert.ok(t5Protokol.includes(`if (m.surec_id !== undefined && m.rol !== "pc_oturumu") ctx.addIssue({ code: "custom", path: ["surec_id"], message: "surec_id yalnız pc_oturumu hello'sunda" });`));
+    assert.equal(t5Protokol.includes("arac_v3"), false, "d7bf303 arac_v3'ü bilmez");
+    assert.ok(t5Protokol.includes("export const AjandaPcCagri = z.strictObject({ arac_cagri_id: AracCagriId.optional(), oturum_id: OpakId.optional() });"));
+    assert.ok(t5Protokol.includes('export const AjandaKopruYukari = z.discriminatedUnion("type", [AjandaKopruHello, AjandaKopruIstek, KopruIptal]);'));
+    assert.ok(t5Sunucu.includes('reddet(bag, cozum.kod === "protokol_uyumsuz" ? "protokol_uyumsuz" : "yetkisiz", "cerceve_gecersiz");'));
+    assert.match(t5Sunucu, /const reddet = [^\n]*\n[^\n]*el_sikisma_ret[^\n]*\n\s*yaz\(bag, \{ v: PROTOKOL_SURUMU, type: "kopru_ret", code \}\);\n\s*baglantiKapat\(bag\);/);
   });
 
   /** Gerçek ajanda boru sunucusu (PC açık), bellek içi boru; ham yukarı satırlar ve bağlamlar kaydedilir. */
