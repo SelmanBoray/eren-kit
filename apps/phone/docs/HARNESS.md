@@ -259,7 +259,9 @@ eşleşiyor (T5) ∧ `aktor = ana` ∧ `etkilesim = etkilesimli`. Diğer her şe
     `tasdik_yok` olur, tasdik sahibine kalır, günlüğe `pc_surec_uyusmuyor{kopru_surec: bildirildi}` yazılır.
   - Eski köprü (hello'da süreç yok): bağlantı başına ilk görüş. Bağlantı ilk tükettiği tasdikin sürecine bağlanır,
     sonra yalnız onu tüketir (ret `pc_surec_uyusmuyor{kopru_surec: ilk_gorus}`). Bağ bağlantıyla ölür (`kopruKapandi`
-    yalnız bu durumu siler).
+    yalnız bu durumu siler). Bağlanma anı günlüğe bağlantı başına bir kez `pc_kopru_surecsiz{oturum_id}` olarak girer;
+    `--teshis` bunu "köprü süreç bildirmedi (eski sürüm ya da uyumluluk düşüşü)" diye söyler ve pencereyi yeniden
+    açmayı ya da `/mcp` ile yeniden bağlanmayı önerir. Burada T5 yalnız bağlantı içinde geçerlidir (aşağıda "Kalan açıklar").
   - Tasdikte süreç yoksa (eski çerçeve ya da `CLAUDE_PID` yok) T5 uygulanmaz. Süreç kimliği olmayan yeni çerçeve de
     aynı kuralı alır: karşılaştırılacak süreç yoktur ve oturuma dayanan her bağ `/clear` ya da `--continue`'da kilitlenir.
   - Bağlantılar arası paylaşılan durum yoktur. Kaldırılanlar: süreç bağı, üyelik, aday ve kanıtla katılım, tam oturum
@@ -292,8 +294,14 @@ eşleşiyor (T5) ∧ `aktor = ana` ∧ `etkilesim = etkilesimli`. Diğer her şe
   - PID yeniden kullanılıp ilk çağrı `/clear` sonrası gelirse yanlış ret: kural geçmişe bakmaz, kapandı. Süreç kimliği
     olmayan kancada başka pencereden `/resume` yanlış reddi: o kancada T5 uygulanmaz, kapandı.
 - Kalan açıklar:
-  - Eski köprünün ilk görüşünde kısa bir yarış penceresi var (bağlantının ilk tükettiği tasdik onu bağlar). Yeni köprüde
-    yoktur.
+  - Süreç bildirmeyen köprüde T5 yalnız bağlantı içinde geçerlidir ve her yeniden bağlanmada sıfırlanır. Bu kısa bir
+    yarış penceresi değildir: böyle bir köprünün her yeni bağlantısının (açılış, `/mcp`, kopup yeniden bağlanma,
+    servisin yeniden başlaması) ilk tükettiği tasdik süreç denetimsizdir. Örnek: A penceresi (süreç P) bağlı; B'nin
+    eski köprüsü (süreç Q) servis yeniden başlayınca yeni bir bağlantı açar; bu bağlantının ilk çağrısı P'nin bekleyen
+    tasdikinin kimliğini sunarsa tasdiki tüketir ve karar insan olur (`ajanda-pc.test.ts` "tek süreçte birden çok
+    oturum", eski köprü dalı bunu kabul olarak sabitler). Dürüst köprü başka sürecin çağrı kimliğini bilemez, bu yüzden
+    durum güven modelinin içinde kalır. Güncellemeden önce açılmış oturumlar kapanana kadar sürer; güncel köprü de
+    sürüm uyumu düşüşünde süreç bildirmeden bağlanabilir. Yeni köprünün süreç bildiren bağlantısında yoktur.
   - Süreç beyanı köprünündür. Anahtarı olan bir istemci başka bir süreci beyan edebilir. Bu, bugünkü güven modelinin
     (sınır işletim sistemi kullanıcısı, `GUVENLIK.md`) içindedir. T5 kötü niyetli anahtar sahibine karşı değil,
     süreçler arası karışmaya karşı bir bağdır. Aynı süreçteki oturumlar (aynı `CLAUDE_PID`) birbirinden ayrılmaz.

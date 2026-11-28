@@ -162,7 +162,7 @@ export const ajandaKopruSunucuKur: AjandaKopruSunucuFabrikasi = ({
       denetleyici.abort("baglanti_koptu" satisfies KopruIptalNedeni);
     }
     bag.suren.clear();
-    // Köprü kapandı (her kapanış yolu buradan, bir kez geçer): PC defteri bu bağlantının T5 bağını bırakır.
+    // Köprü kapandı (her kapanış yolu buradan, bir kez geçer): PC defteri bu bağlantının durumunu (süreç bildirmeyen köprünün ilk görüşü) siler.
     if (bag.kimlik?.tur === "pc" && bag.kimlik.rol === "pc_oturumu") {
       try {
         bag.pcKanca?.kopruKapandi?.(bag.kimlik.baglanti_id);

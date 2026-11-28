@@ -200,6 +200,12 @@ export function pcDefteriKur(b: PcDefteriBagimliliklari): PcDefteri {
    *   değildir ve o pencere hep taslak kalır: güvenli yön.
    * - Eski köprü (süreç bildirmeyen): bağlantı başına ilk görüş. Bağlantı ilk tükettiği tasdikin sürecine
    *   bağlanır ve sonra yalnız onu tüketir (`ilk_gorus`). Bağ bağlantıyla ölür (`kopruKapandi`).
+   *   Bu bir zayıflamadır, kısa bir yarış penceresi değil: süreç bildirmeyen köprünün HER yeni bağlantısının
+   *   (açılış, /mcp, kopup yeniden bağlanma, servisin yeniden başlaması) ilk tükettiği tasdik süreç denetimsizdir;
+   *   o bağlantının ilk çağrısı başka bir sürecin bekleyen tasdikinin kimliğini sunarsa tüketir (karar o
+   *   tasdike göre, `insan` olabilir). T5 burada yalnız bağlantı içinde geçerlidir ve her yeniden bağlanmada
+   *   sıfırlanır; güncellemeden önce açılmış oturumlar kapanana kadar sürer. Dürüst köprü başka sürecin çağrı
+   *   kimliğini bilemez (güven modelinin içinde); bağlanma anı günlüğe girer (`pc_kopru_surecsiz`, teşhis söyler).
    * Ret tasdiki silmez: sahibi (kendi sürecinin köprüsü) hâlâ kullanabilir.
    *
    * Neden oturum kimliği değil: Claude Code `/clear`'da oturum kimliğini yeniler, MCP sürecini yeniden
@@ -212,12 +218,15 @@ export function pcDefteriKur(b: PcDefteriBagimliliklari): PcDefteri {
     const bagli = ilkGorus.get(baglam.baglanti_id);
     if (bagli === undefined) {
       sinirliKoy(ilkGorus, baglam.baglanti_id, tasdik.surec_id, ILK_GORUS_ADET);
+      // Bağlantı başına bir kez: bu bağlantının ilk tasdiki süreç denetimsiz tüketildi. Kimlik (süreç, çağrı,
+      // bağlantı) girmez; yalnız tasdikin oturumu (teşhis son 6 karakterini gösterir). Karar değişmez.
+      gunluk.uyari(MODUL, "pc_kopru_surecsiz", { oturum_id: tasdik.oturum_id });
       return null;
     }
     return bagli === tasdik.surec_id ? null : "ilk_gorus";
   };
 
-  /** Bağlantı başına durumu (eski köprünün ilk görüşü) temizler; tasdiklere dokunmaz. */
+  /** Bağlantı başına durumu (eski köprünün ilk görüşü) temizler; tasdiklere dokunmaz. Aynı köprünün yeni bağlantısı yeniden ilk görüştür. */
   const kopruKapandi = (baglanti_id: string): void => {
     ilkGorus.delete(baglanti_id);
   };

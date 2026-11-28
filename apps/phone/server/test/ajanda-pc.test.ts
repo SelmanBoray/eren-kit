@@ -763,15 +763,19 @@ describe("PC oturumu, T5: kilit yok (her yol, yeni ve eski köprü)", () => {
       assert.equal(d.kopru(tur, Q, S1, "pcb_resume")(yabanci), "insan", "tasdik sahibine kaldı");
     });
 
-    it(`tek süreçte birden çok oturum (her birinin köprüsü, hepsi aynı süreç): ikisi de defalarca /clear yapar, kilitlenmez; ${tur} köprü`, () => {
+    it(`tek süreçte birden çok oturum (her birinin köprüsü, hepsi aynı süreç): ikisi de defalarca /clear yapar, kilitlenmez; başka süreç: yeni köprü tüketemez, eski köprünün yeni bağlantısı ilk tasdikte tüketir (kabul edilen zayıflama); ${tur} köprü`, () => {
       const d = defter();
       const ka = d.kopru(tur, P, S1, "pcb_a");
       const kb = d.kopru(tur, P, S4, "pcb_b");
       // B'nin ilk çağrısı /clear'dan sonra gelir; A'nınki önce.
       const sira: Array<[typeof ka, string]> = [[ka, S1], [kb, S3], [ka, S2], [kb, S4], [ka, S3], [kb, S2], [kb, S1], [ka, S4]];
       hepsiInsan(sira.map(([k, s]) => k(d.tasdik(s, P))), tur);
-      // Başka süreç yine tüketemez.
+      // Başka süreç: yeni köprü tüketemez. KABUL EDİLEN ZAYIFLAMA (eski köprü): süreç bildirmeyen köprünün yeni
+      // bağlantısının İLK tasdiki süreç denetimsizdir; başka sürecin bekleyen tasdikinin kimliğini sunarsa tüketir ve
+      // karar insan olur. Her yeniden bağlanmada tekrarlanır (HARNESS.md 4.2); dürüst köprü o kimliği bilemez.
       assert.equal(d.kopru(tur, Q, S1, "pcb_c")(d.tasdik(S1, P)), tur === "yeni" ? "tasdik_yok" : "insan");
+      // Bağlanma anı günlükte: yalnız eski köprüde, bağlantı başına bir kez (pcb_a, pcb_b, pcb_c).
+      assert.equal(d.olaylar("pc_kopru_surecsiz").length, tur === "yeni" ? 0 : 3);
     });
 
     it(`saatin geri gitmesi: o anki tasdik taslak (gelecekten), sonrakiler insan; ${tur} köprü`, () => {
@@ -808,6 +812,26 @@ describe("PC oturumu, T5: kilit yok (her yol, yeni ve eski köprü)", () => {
     // Kaldırılan olaylar hiç yazılmaz.
     for (const ad of ["pc_oturum_uyusmuyor", "pc_bag_birakildi", "pc_bag_katildi"]) assert.equal(d.olaylar(ad).length, 0, ad);
     assert.deepEqual(d.olaylar("pc_surec_uyusmuyor").map((a) => a?.["kopru_surec"]), ["ilk_gorus", "bildirildi", "bildirildi"]);
+    // Süreç bildirmeyen köprünün bağlanma anları (pcb_1, pcb_2, kapanıştan sonra yine pcb_1): yalnız tasdikin oturumu;
+    // süreç, bağlantı ve çağrı kimliği girmez. Yeni köprü (pcb_3) yazmaz.
+    assert.deepEqual(d.olaylar("pc_kopru_surecsiz"), [{ oturum_id: S1 }, { oturum_id: S1 }, { oturum_id: S1 }]);
+  });
+
+  it("pc_kopru_surecsiz: süreçsiz tasdikte (T5 uygulanmaz) ya da yeni köprüde yazılmaz; karar olaydan bağımsız", () => {
+    const d = defter();
+    const eski = d.kopru("eski", P, S1, "pcb_1");
+    const yeni = d.kopru("yeni", P, S1, "pcb_2");
+    assert.equal(yeni(d.tasdik(S1, P)), "insan");
+    assert.equal(d.olaylar("pc_kopru_surecsiz").length, 0, "yeni köprü");
+    d.pc.kanca.pc_arac(
+      PC_KANCA_ARACLARI.pc_arac.girdi.parse({ uyarlayici: { ad: "claude-code", surum: 1 }, cagri_id: "toolu_surecsiz", oturum_id: S1, istem_id: ISTEM, aktor: "ana", etkilesim: "etkilesimli" }),
+    );
+    assert.equal(eski("toolu_surecsiz"), "insan");
+    assert.equal(d.olaylar("pc_kopru_surecsiz").length, 0, "süreçsiz tasdik bağlamaz");
+    assert.equal(eski(d.tasdik(S2, P)), "insan");
+    assert.deepEqual(d.olaylar("pc_kopru_surecsiz"), [{ oturum_id: S2 }]);
+    assert.equal(eski(d.tasdik(S3, P)), "insan");
+    assert.equal(d.olaylar("pc_kopru_surecsiz").length, 1, "aynı bağlantıda bir kez");
   });
 
   it("sarmalayıcı (köprünün ebeveyni harness değil): o pencere hep taslak (güvenli yön), tasdik sahibine kalır", () => {

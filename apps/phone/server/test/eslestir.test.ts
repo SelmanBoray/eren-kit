@@ -810,9 +810,12 @@ describe("eslestir --pc-ajan: uyarlayıcı seçimi", () => {
           assert.ok(!m.includes(SUREC), "süreç kimliği sızdı");
         }
         const ilk = pcTeshisMetni([tasdikYeni, surecUyusmuyor("ilk_gorus"), arac("tasdik_yok")], z, k);
-        assert.match(ilk, /- eski köprü başka bir Claude Code sürecine bağlı \(pc_surec_uyusmuyor, ilk_gorus\)/);
-        assert.match(ilk, /Claude Code oturumunu yeniden açın/);
+        assert.match(ilk, /- süreç bildirmeyen köprü başka bir Claude Code sürecine bağlı \(pc_surec_uyusmuyor, ilk_gorus\)/);
+        assert.match(ilk, /sürecini bildirmedi \(eski sürüm ya da uyumluluk düşüşü\)/);
+        assert.match(ilk, /her yeniden bağlanmada ilk tasdik süreç denetimsiz tüketilir/);
+        assert.match(ilk, /Claude Code penceresini yeniden açın ya da \/mcp ile yeniden bağlayın/);
         assert.equal(ilk.includes("köprünün ebeveyni harness süreci değil"), false);
+        assert.equal(ilk.includes("eski bir sürüm"), false, "eski sürüm kesin denmez");
       }
       // Olay satırı: yalnız izinli alan (kopru_surec), kısa oturum.
       assert.match(pcTeshisMetni([tasdikYeni, surecUyusmuyor("bildirildi"), arac("tasdik_yok")], z, kurulu), new RegExp(`pc_surec_uyusmuyor oturum=…${OTURUM.slice(-6)} kopru_surec=bildirildi\\n`));
@@ -820,6 +823,32 @@ describe("eslestir --pc-ajan: uyarlayıcı seçimi", () => {
       const izli = (satir: string, iz: string) => JSON.stringify({ ...(JSON.parse(satir) as object), cagri_izi: iz });
       const izliM = pcTeshisMetni([tasdikYeni, izli(surecUyusmuyor("bildirildi"), "0123456789ab"), tasdikYeni, izli(arac("tasdik_yok"), "0123456789ab")], z, kurulu);
       assert.match(izliM, /- köprünün ebeveyni harness süreci değil \(pc_surec_uyusmuyor\)/);
+    });
+
+    it("pc_kopru_surecsiz (süreç bildirmeyen köprü): olay satırı ve kesin olmayan uyarı, oturum kısa; olaysız günlükte çıktı aynı", () => {
+      const OTURUM_2 = "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d";
+      const surecsiz = (oturum_id: string) => s({ modul: "ajanda", olay: "pc_kopru_surecsiz", seviye: "uyari", oturum_id, baglanti_id: "pcb_GIZLIBAG", surec_id: SUREC });
+      for (const son of [arac("insan"), arac("tasdik_yok")]) {
+        for (const k of [kurulu, undefined]) {
+          const temiz = pcTeshisMetni([tasdikYeni, son], z, k);
+          assert.equal(temiz.includes("pc_kopru_surecsiz"), false);
+          assert.equal(temiz.includes("süreç bildirmedi"), false);
+          const m = pcTeshisMetni([tasdikYeni, surecsiz(OTURUM), son, tasdikYeni, surecsiz(OTURUM_2), surecsiz(OTURUM), son], z, k);
+          assert.match(m, new RegExp(`  t1  pc_kopru_surecsiz oturum=…${OTURUM.slice(-6)}\\n`));
+          assert.ok(
+            m.includes(
+              `Uyarı: köprü süreç bildirmedi (eski sürüm ya da uyumluluk düşüşü; pc_kopru_surecsiz, oturum …${OTURUM.slice(-6)}, …${OTURUM_2.slice(-6)}).\n` +
+                "  Bu bağlantılarda süreç eşitliği yalnız bağlantı içinde geçerli: her yeniden bağlanmada ilk tasdik süreç denetimsiz\n" +
+                "  tüketilir. Tam koruma için Claude Code penceresini yeniden açın ya da /mcp ile yeniden bağlayın.\n",
+            ),
+            m,
+          );
+          for (const gizli of [SUREC, "GIZLIBAG", OTURUM, OTURUM_2]) assert.ok(!m.includes(gizli), `sızdı: ${gizli}`);
+          // Uyarı dışındaki özet olaysız günlüğünkiyle aynı (karar ve nedenleri değişmez).
+          const ozetsiz = (x: string) => ozetBolumu(x).split("Uyarı: köprü süreç bildirmedi")[0];
+          assert.equal(ozetsiz(m), ozetBolumu(pcTeshisMetni([tasdikYeni, son, tasdikYeni, son], z, k)));
+        }
+      }
     });
 
     it("kaldırılan olaylar (pc_bag_birakildi, pc_bag_katildi) eski günlükte görünürse gösterilmez, çıktı onlarsız günlükle aynı", () => {

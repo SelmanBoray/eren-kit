@@ -568,6 +568,8 @@ const TESHIS_ALANLARI: Readonly<Record<string, readonly string[]>> = {
   // `pc_oturum_uyusmuyor`: eski servis sürümünün T5 olayı (eski günlükte görünür, gösterimi değişmedi).
   pc_oturum_uyusmuyor: ["surec_kimligi"],
   pc_surec_uyusmuyor: ["kopru_surec"],
+  // Süreç bildirmeyen köprü bağlantısının ilk tasdiki (süreç denetimsiz) tüketildi; bağlantı başına bir kez.
+  pc_kopru_surecsiz: [],
   el_sikisma: ["rol"],
   el_sikisma_ret: ["rol", "code", "neden"],
 };
@@ -627,6 +629,25 @@ const kancaRetNedenleri = (olaylar: readonly TeshisOlayi[]): string[] =>
 
 /** Tasdik geldi ama karar yine `tasdik_yok`: servisin günlüğe yazdığı neden olayları (ajanda-pc `kararVer`). */
 const TASDIK_REDDI_OLAYLARI: ReadonlySet<string> = new Set(["pc_tasdik_yetersiz", "pc_oturum_uyusmuyor", "pc_surec_uyusmuyor"]);
+
+/** Süreç bildirmeyen köprünün (`pc_kopru_surecsiz`, `ilk_gorus`) kullanıcıya önerisi. */
+const SURECSIZ_COZUM = "Tam koruma için Claude Code penceresini yeniden açın ya da /mcp ile yeniden bağlayın.";
+
+/**
+ * Günlükte süreç bildirmeyen köprü bağlantısı görüldüyse (`pc_kopru_surecsiz`, ajanda-pc `surecUyusmazligi`) uyarı
+ * satırları; yoksa boş (eski günlükte bu olay yoktur, çıktı değişmez). Olay bağlanma anıdır: bağlantının hâlâ açık
+ * olduğunu göstermez. "Eski sürüm" kesin denmez: güncel köprü de geçici bir hatada süreç bildirmeden bağlanabilir.
+ */
+function surecsizKopruSatirlari(olaylar: ReadonlyArray<TeshisOlayi & { oturum: string | null }>): string[] {
+  const goruldu = olaylar.filter((o) => o.olay === "pc_kopru_surecsiz");
+  if (goruldu.length === 0) return [];
+  const oturumlar = [...new Set(goruldu.map((o) => o.oturum).filter((v): v is string => v !== null))];
+  return [
+    `Uyarı: köprü süreç bildirmedi (eski sürüm ya da uyumluluk düşüşü; pc_kopru_surecsiz${oturumlar.length === 0 ? "" : `, oturum ${oturumlar.join(", ")}`}).`,
+    "  Bu bağlantılarda süreç eşitliği yalnız bağlantı içinde geçerli: her yeniden bağlanmada ilk tasdik süreç denetimsiz",
+    `  tüketilir. ${SURECSIZ_COZUM}`,
+  ];
+}
 
 /** Neden olayı ile kendi `arac`'ı arasındaki en uzun süre (aynı eşzamanlı blok; `depo.islem` bekleyebilir). */
 const TASDIK_REDDI_ARALIK_MS = 2000;
@@ -699,10 +720,11 @@ function tasdikReddiNedenleri(zincir: TeshisZinciri): string[] {
     if (o.olay === "pc_surec_uyusmuyor") {
       if (o.alanlar["kopru_surec"] === "ilk_gorus") {
         return (
-          "eski köprü başka bir Claude Code sürecine bağlı (pc_surec_uyusmuyor, ilk_gorus): bu çağrıyı getiren MCP köprüsü " +
-          "sürecini bildirmeyen eski bir sürüm; bağlantısı ilk tükettiği tasdikin Claude Code sürecine bağlandı, bu tasdik " +
-          "başka bir süreçten (tasdik silinmez, sahibine kalır). Claude Code oturumunu yeniden açın: yeni köprü sürecini " +
-          "kendisi bildirir. Kanca kurulumu doğru, yeniden kurmak gerekmez."
+          "süreç bildirmeyen köprü başka bir Claude Code sürecine bağlı (pc_surec_uyusmuyor, ilk_gorus): bu çağrıyı getiren " +
+          "MCP köprüsü sürecini bildirmedi (eski sürüm ya da uyumluluk düşüşü); bağlantısı ilk tükettiği tasdikin Claude Code " +
+          "sürecine bağlandı, bu tasdik başka bir süreçten (tasdik silinmez, sahibine kalır). Böyle bir köprüde süreç " +
+          `eşitliği yalnız bağlantı içinde geçerlidir: her yeniden bağlanmada ilk tasdik süreç denetimsiz tüketilir. ${SURECSIZ_COZUM} ` +
+          "Kanca kurulumu doğru, yeniden kurmak gerekmez."
         );
       }
       return (
@@ -917,6 +939,7 @@ export function pcTeshisMetni(
     ozet.push("Günlükte görülen neden:");
     for (const n of kancaRetNedenleri(son)) ozet.push(`  - ${n}`);
   }
+  ozet.push(...surecsizKopruSatirlari(son));
   if (yalnizTaslakMi(ajan)) ozet.push(...taslakOzetSatirlari(ajan));
   return `${bas}Son PC olayları (en yeni sonda; metin ve kayıt alanı yazılmaz):\n${satir.join("\n")}\n\n${ozet.join("\n")}\n`;
 }
