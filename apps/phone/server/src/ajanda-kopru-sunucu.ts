@@ -96,7 +96,7 @@ type Kimlik =
   /** Telefon sohbetinin ana oturumu: bağlam yalnız jetonun kapsamı. */
   | { tur: "ana"; baglam: Readonly<AjandaJetonKapsami> }
   /** PC: anahtarın özeti (her istekte yeniden denetlenir) ve servisin verdiği bağlantı kimliği. */
-  | { tur: "pc"; rol: AjandaPcRolu; ozet: string; baglanti_id: string };
+  | { tur: "pc"; rol: AjandaPcRolu; ozet: string; baglanti_id: string; kopru_surec_id?: string };
 
 interface Baglanti {
   readonly port: BoruBaglantisi;
@@ -277,7 +277,9 @@ export const ajandaKopruSunucuKur: AjandaKopruSunucuFabrikasi = ({
       // Kanca bağlantısı tek iş içindir: takılan ya da kapatmayı unutan kanca sınırı tutamasın.
       bag.sureIptal = kanca ? zamanlayici.sonra(KANCA_BAGLANTI_OMRU_MS, () => baglantiKapat(bag)) : null;
       const baglanti_id = rastgele.opakId("pcb");
-      bag.kimlik = { tur: "pc", rol: m.rol, ozet, baglanti_id };
+      // Köprünün bildirdiği harness süreci (yalnız `pc_oturumu`; şema öbür rollerde geçirmez): bağlantı boyunca sabit (T5).
+      const surec = m.rol === "pc_oturumu" && m.surec_id !== undefined ? { kopru_surec_id: m.surec_id } : {};
+      bag.kimlik = { tur: "pc", rol: m.rol, ozet, baglanti_id, ...surec };
       bag.v3 = baglantiV3(m.rol, m.arac_v3 === true);
       gunluk.bilgi(MODUL, "el_sikisma", { rol: m.rol, baglanti_id, ...(aracV3 && !kanca && !bag.v3 ? { arac_v3_istenmedi: true } : {}) });
       yaz(bag, karsilama(m.rol, bag.v3));
@@ -351,14 +353,15 @@ export const ajandaKopruSunucuKur: AjandaKopruSunucuFabrikasi = ({
     });
   };
 
-  /** `pc_oturumu` çağrısının bağlamı: rol ve bağlantı kimliği servisten, `cagri` köprüden (doğrulanmamış). */
+  /** `pc_oturumu` çağrısının bağlamı: rol, bağlantı kimliği ve hello'nun süreci servisten, `cagri` köprüden (doğrulanmamış). */
   const pcBaglami = (k: Extract<Kimlik, { tur: "pc" }>, istek: AjandaKopruIstek): AjandaKopruBaglami => {
-    const b: { rol: "pc_oturumu"; baglanti_id: string; arac_cagri_id?: string; oturum_id?: string } = {
+    const b: { rol: "pc_oturumu"; baglanti_id: string; arac_cagri_id?: string; oturum_id?: string; kopru_surec_id?: string } = {
       rol: "pc_oturumu",
       baglanti_id: k.baglanti_id,
     };
     if (istek.cagri?.arac_cagri_id !== undefined) b.arac_cagri_id = istek.cagri.arac_cagri_id;
     if (istek.cagri?.oturum_id !== undefined) b.oturum_id = istek.cagri.oturum_id;
+    if (k.kopru_surec_id !== undefined) b.kopru_surec_id = k.kopru_surec_id;
     return Object.freeze(b);
   };
 

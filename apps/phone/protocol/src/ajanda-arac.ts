@@ -936,13 +936,24 @@ export const AjandaKopruIstek = z.discriminatedUnion("fiil", [
 export type AjandaKopruIstek = z.infer<typeof AjandaKopruIstek>;
 
 /**
- * İlk mesaj. Rol, sohbet ve nesil yalnız jetondan türer. `arac_v3` (yalnız `true`): köprü v3 araç yüzünü
- * ister ve `kopru_welcome.arac_v3`'ü çözebilir. Bunu yollamayan köprü (v3 öncesi kod, katı şema) alanlı
- * karşılamayı çözemez, bağlantıyı kapatıp sonsuza dek yeniden dener (ölçüldü); servis ona alanı hiç yazmaz
- * ve o bağlantıyı v2 yüzüyle sürer. v3 öncesi servis alanlı hello'yu `kopru_ret{yetkisiz}` ile reddeder;
- * köprü hemen alansız hello ile yeniden dener.
+/**
+ * İlk mesaj. Rol, sohbet ve nesil yalnız jetondan türer. İki isteğe bağlı alan "zengin hello"dur; alanı tanımayan
+ * eski servis zengin hello'yu katı şemasıyla reddeder, köprü BİR KEZ alansız (düz) hello'ya düşer (tek düşüş yolu:
+ * `server/src/kopru.ts` `helloEki`). Düz hello'da ikisi de yoktur.
+ * - `surec_id` (YALNIZ `pc_oturumu`): köprünün harness süreci (Claude: köprünün `process.ppid`'i); servis onu
+ *   bağlantıya yazar, T5 tasdikin `surec_id`'siyle karşılaştırır. Öbür rollerde alan şemadan geçmez.
+ * - `arac_v3` (yalnız `true`): köprü v3 araç yüzünü ister ve `kopru_welcome.arac_v3`'ü çözebilir. Bunu yollamayan
+ *   köprü (v3 öncesi kod, katı şema) alanlı karşılamayı çözemez, bağlantıyı kapatıp sonsuza dek yeniden dener
+ *   (ölçüldü); servis ona alanı hiç yazmaz ve o bağlantıyı v2 yüzüyle sürer.
  */
-export const AjandaKopruHello = mesaj("kopru_hello", { rol: AjandaKopruRolu, jeton: Jeton, arac_v3: z.literal(true).optional() });
+export const AjandaKopruHello = mesaj("kopru_hello", {
+  rol: AjandaKopruRolu,
+  jeton: Jeton,
+  surec_id: OpakId.optional(),
+  arac_v3: z.literal(true).optional(),
+}).superRefine((m, ctx) => {
+  if (m.surec_id !== undefined && m.rol !== "pc_oturumu") ctx.addIssue({ code: "custom", path: ["surec_id"], message: "surec_id yalnız pc_oturumu hello'sunda" });
+});
 /**
  * `arac_v3` (yalnız `true`, yalnız araç rollerinde): servisin v3 araç yüzü açık (ayar `ajanda_arac_v3`) VE
  * köprü hello'da `arac_v3` istedi. Yoksa köprü v2 yüzünü yayınlar ve girdiyi v2 şemasıyla denetler

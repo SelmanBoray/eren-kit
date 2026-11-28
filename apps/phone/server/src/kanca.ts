@@ -68,6 +68,14 @@ export async function pcKancaCalistir(hamGirdi: string, b: PcKancaBagimliliklari
   } catch {
     ham = null;
   }
+  // Yalnız normalize çerçeve (`PcTasdikGirdi`) yollanır. Sürüm farkının yönü: bu süreç her ajanda
+  // çağrısında `<veri kökü>\uygulama\guncel\...`'dan taze başlar (`kurulum/harness/claude-code.ts`
+  // `yollar`), yani junction'ın o anki sürümüdür; uzun ömürlü olan köprü ve servistir. `kur.ts` önce
+  // junction'ı çevirir, sonra servisi yeniden başlatır: o arada YENİ kanca ESKİ servise gider, H1 öncesi
+  // servisin katı şeması bu çerçeveyi geçirmez, bağlantıyı kapatır, çağrı tasdiksiz kalır (taslak; güvenli
+  // taraf, `protocol/test/ajanda-pc.test.ts` sınar). Ters yön (eski kanca, yeni servis) yalnız geri almada
+  // (`--geri-al`, otomatik geri alma) junction eski sürüme dönüp servis henüz yeniden başlamamışken olur;
+  // servisin eski çerçeveyi (`PcEskiAracGirdi`) kabul etmesi bunun içindir.
   const istek = pcAracKancaGirdisi(ham, b.giris, b.surec);
   if (istek === null) return;
   let jeton: string | null = null;

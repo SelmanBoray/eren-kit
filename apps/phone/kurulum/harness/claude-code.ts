@@ -56,6 +56,14 @@ export interface Yollar {
   anahtarDosyasi: string;
 }
 
+/**
+ * Komutlar `guncel` junction'ından geçer; ömürleri farklıdır. Kanca (`kanca.ts`) her ajanda çağrısında Claude
+ * Code'un başlattığı yeni bir süreçtir: junction'ın O ANKİ sürümünü çalıştırır, açık oturumda bile
+ * güncellemeden hemen sonra yeni koddur. Köprü (`kopru.ts`, MCP süreci) oturum açılışında bir kez başlar ve
+ * oturum boyunca başladığı sürümde kalır (Node junction'ı gerçek yola çözer). Bu yüzden sürüm farkı iki
+ * yöndedir: yeni kanca ile henüz yeniden başlamamış eski servis (`kur.ts` junction'ı servisten önce çevirir;
+ * eski servis yeni çerçeveyi geçirmez, çağrı taslak kalır) ve eski köprü ile yeni servis.
+ */
 export const yollar = (ortam: Ortam, nodeExe: string): Yollar => {
   const kok = veriKoku(ortam);
   const src = win32.join(uygulamaKoku(kok), "guncel", "server", "src");

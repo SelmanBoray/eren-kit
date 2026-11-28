@@ -1,6 +1,6 @@
 # H3 ölçüm planı: Codex CLI bağlayıcısı
 
-Durum: **plan; ölçüm yapılmadı.** Kol H, `HARNESS.md` dilim H3'ün ilk adımı. Bu belge neyin, nasıl ve hangi
+Durum: **ölçüldü (2026-11-28); sonuç bölüm 6'da: yalnız taslak.** Kol H, `HARNESS.md` dilim H3'ün ilk adımı. Bu belge neyin, nasıl ve hangi
 güvenlik koşullarıyla ölçüleceğini söyler; ölçümü başlatmak koordinatörün (ve gereken yerde kullanıcının)
 onayına bağlıdır. Tarih: 2026-11-27.
 
@@ -114,3 +114,49 @@ taslak alır ve teşhis bunu söyler.
 3. Global Codex'in 0.120.0'dan yükseltilmesi **bu planın parçası değil**. Kullanıcının kendi kurulumu için
    gerekirse makine geneli değişiklik olarak ayrıca sorulur.
 4. Ölçüm araçları atılabilir mi kalsın, yoksa depoda ayrı bir ölçüm klasörü mü olsun.
+
+Kararlar (2026-11-28): (1) kullanıcı onayladı; (4) araçlar atılabilir, geçici dizinde kaldı, depoya yalnız
+bu belge girer.
+
+## 6. Sonuç (2026-11-28)
+
+Codex CLI 0.172.0, geçici dizine yerel kuruldu. Global 0.120.0'a dokunulmadı. Her koşuda boş `CODEX_HOME`
+kullanıldı; kullanıcının `~/.codex`'i okunmadı. Sahte sağlayıcı (yerel Responses API akışı) ilk denemede
+çalıştı. Dışarı giden her istek kaydedici vekilde reddedildi:
+- exec: ilk koşu `github.com`, `api.github.com` ve `chatgpt.com`'u denedi. `plugins`, `apps`, `remote_plugin`,
+  `tool_suggest` ve `skill_mcp_dependency_install` kapatılınca sıfıra indi.
+- Etkileşimli arayüz: her açılışta `raw.githubusercontent.com`'u deniyor.
+
+| No | Sonuç | Gözlem |
+|---|---|---|
+| Ö0 | geçti | Düzen çalıştı. Bir koşuda MCP sunucusu ilk model isteğine yetişmedi; tekrarı temiz |
+| Ö1 | geçti | Kancada `tool_name` = `mcp__<sunucu>__<araç>`. Tam ad, düzenli ifade, `*` ve eşleyicisiz grup tetikliyor; düz araç adı tetiklemiyor |
+| Ö2 | geçti | Kanca `tool_use_id` = MCP `_meta.callId`: her çağrıda eşit, çağrılar arasında farklı, aynı yanıttaki paralel çağrılarda da. Değeri sağlayıcı seçer. Yinelenen kimliği Codex iki kez yürütür; tekilliği servisin tek kullanımlık kuralı sağlar |
+| Ö3 | kısmen | MCP süreç ortamında oturum kimliği yok. `_meta.sessionId` = kanca `session_id`; alt agent'larda kök oturum gelir. Ortak süreç: kancanın büyük ebeveyni ile MCP sunucusunun ebeveyni aynı `codex.exe` (kancanın ebeveyni bir kabuk). Alt agent'lar ayrı MCP süreci alır. `/clear` ölçülemedi |
+| Ö4 | geçti | ThreadSpawn alt agent'ında kanca `agent_id`/`agent_type` verir; `_meta`'da `thread_source=subagent` ve farklı `threadId` |
+| Ö5 | kancada kaldı | review alt oturumu MCP aracını çağırabiliyor ve kancada `agent_id` yok, yani ana agent gibi görünüyor. `_meta`'da `subagent_kind=review` ile ayrılıyor. Compact araç çağıramıyor |
+| Ö6 | kancada kaldı | exec ile etkileşimli koşunun kanca girdisi alan alana aynı. `_meta.turn_trigger` exec'te `exec`, etkileşimlide `user`. Ama bu istemci beyanı: etkileşimsiz bir app-server istemcisi `user` bildirebiliyor |
+| Ö7 | geçti | MCP isteği her zaman kanca bitiminden sonra gelir. Kanca zaman aşımında ya da 1/2 çıkışında araç yine çalışır; tasdik olmadığı için kayıt taslak doğar |
+| Ö8 | ölçüldü | exec'te güvenilmemiş kanca uyarısız atlanır. Etkileşimli arayüz açılışta "Hooks need review" sorar; onay `config.toml`'a `hooks.state.'<yol>:pre_tool_use:0:0'.trusted_hash` yazar. Karma algoritması bilinmiyor, kurulum bunu yazamaz |
+| Ö9 | geçti | Kanca komutu Windows'ta `powershell.exe -NoProfile -Command` ile çalışır. Başında `&` olmayan tırnaklı exe yolu sessizce hiç başlamaz. Çalışan biçim: `commandWindows = '& "<node.exe>" "<kanca>" …'` |
+| Ö10 | geçti | `codex mcp add <ad> [--env K=V] -- <komut>…`: PowerShell 7, 5.1 ve Git Bash'te, `--` ile ve `--` olmadan aynı `config.toml` çıktı. exec'te araç onayı için `approval_mode = "approve"` gerekir |
+| Ö11 | geçti | Modelin argümanlara, metne ve iç içe `_meta` taklidine koyduğu kimlik alanları kanca girdisine ve `_meta`'nın kimlik alanlarına geçmedi |
+
+**Karar: yalnız taslak** (bölüm 4, ikinci satır). Çağrı kimliği eşleşmesi ve sıra var. Engeller:
+- Kanca tek başına `aktor`'u (review alt oturumu) ve `etkilesim`'i (exec ile etkileşimli) güvenilir biçimde veremiyor.
+- İkisinin ayrımı yalnız MCP `_meta`'sında var. Bunu kullanmak, köprünün de `aktor`/`etkilesim` bildirmesini, yani çerçevenin değişmesini gerektirir.
+- Etkileşim işareti (`turn_trigger`) istemcinin kendi beyanı, model dışı ama harness dışı istemcilerce de üretilebilir.
+
+T5 için ortak süreç işareti var (ebeveyn `codex.exe`). Okuması 1,6–4,5 sn sürüyor ve kancanın 2 sn sınırına
+sığmıyor. Codex uyarlayıcısında süreç kaynağı bu yüzden ayrıca tasarlanmalı.
+
+Tam tasdik için önce iki şey gerekir:
+1. Çerçeve değişikliğine karar verilmeli: köprü tarafından `aktor`/`etkilesim`, harness başına izin listesiyle.
+2. Şunlar yeniden ölçülmeli:
+   - Codex'in varsayılan daemon kipi (bu ölçüm `--no-daemon` ile yapıldı; geçici dizin yolu Unix soket uzunluk sınırını aştı).
+   - VS Code ve masaüstü istemcileri.
+   - MemoryConsolidation, guardian ve Other alt oturumları.
+   - `/clear` (sözde terminalde yapılamadı).
+
+Ölçülemeyenler: yukarıdaki dört madde ve `trusted_hash` algoritması. Bunlar karar değiştirmez; tam tasdik
+istenirse yeniden ölçülür.
