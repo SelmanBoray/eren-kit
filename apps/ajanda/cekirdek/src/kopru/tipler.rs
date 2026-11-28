@@ -477,8 +477,9 @@ pub struct DisaAktarma {
     pub silinmis: i32,
     /// Telefonda okunamayan satırlar: belgeye olduğu gibi kondu, içe aktarmada geçersiz sayılırlar.
     pub okunamayan: i32,
-    /// Belgeye girmeyen ret listesi girdileri: düzeltme gövdesi olmayanlar (yalnız atılabilir: `sil`, `durum`,
-    /// okunamayan metin). Kullanıcı önce düzeltmeli ya da atmalı.
+    /// Belgeye girmeyen, yalnız telefonun ret listesinde kalan girdiler: düzeltme gövdesi olmayanlar (yalnız
+    /// atılabilir: `sil`, `durum`, okunamayan metin), gövdesi, kimliği ya da anı okunamayanlar ve öğe sınırını
+    /// (50 000 girdi, `KAYIT_ADET`) aşanlar. Kullanıcı önce düzeltmeli ya da atmalı.
     pub ret_listesinde: i32,
     /// Aktarmanın yapıldığı kip (bağlı kipte görünen kopya, gönderilmemiş değişiklikler dahil).
     pub kip: CalismaKipi,
@@ -492,6 +493,12 @@ pub struct DisaAktarma {
     /// söylenmeli.
     #[uniffi(default = false)]
     pub ice_aktarma_sinirini_asiyor: bool,
+    /// Belgenin biçim sürümü (`bicim_surumu`): 1 ya da 2. 2 yalnız ret girdisi yedeğe girdiyse (`ret_yedekte`
+    /// sıfırdan büyük): biçim 1 okuyan eski uygulama bu dosyayı bütünüyle reddeder ("daha yeni bir biçim"),
+    /// kayıtlarını da alamaz. Kullanıcıya söylenmeli (yedek yalnız bu sürüm ve sonrasıyla geri yüklenir; ret girdileri
+    /// düzeltilir ya da atılırsa biçim 1 yazılır).
+    #[uniffi(default = 0)]
+    pub bicim_surumu: i64,
 }
 
 /// Önizlemede geçersiz sayılan bir kayıt: yalnız konum ve neden (içerik yoktur).
@@ -572,12 +579,20 @@ pub struct IceAktarmaOnizlemesi {
     #[uniffi(default = 0)]
     pub taslaga_donecek: i32,
     /// Biçim 2: dosyadan ret listesine eklenecek girdiler (iki kipte de; telefonun ret listesinde aynı
-    /// `islem_id`'li olanlar sayılmaz, yinelenmez). Kayıt sayılarının (`toplam`) dışındadır.
+    /// `islem_id`'li olanlar sayılmaz, yinelenmez; bayatlar `ret_bayat`'tadır). Kayıt sayılarının (`toplam`)
+    /// dışındadır.
     #[uniffi(default = 0)]
     pub ret_listesine_gelecek: i32,
     /// Biçim 2: okunamayan ya da dosyada `islem_id`'si yinelenen ret girdileri (uygulanmaz).
     #[uniffi(default = 0)]
     pub ret_gecersiz: i32,
+    /// Biçim 2: bayat ret girdileri, ret listesine yazılmaz (`ret_listesine_gelecek`'in dışında). Kaydı
+    /// telefonda dosyadan sonra değişmiştir (dosyadaki hali atlanır; dosyada geçerli hali yoksa telefondaki
+    /// kayıt girdinin anından sonra güncellenmiştir): girdi çoğunlukla kullanıcının bu telefonda düzeltip
+    /// attığıdır, düzeltilseydi kaydın yeni hali yedekteki eski istekle ezilirdi. Bilgi içindir; yalnız
+    /// bunlar varsa yazılacak bir şey yoktur.
+    #[uniffi(default = 0)]
+    pub ret_bayat: i32,
 }
 
 /// `Cekirdek::ice_aktar`'ın sonucu.

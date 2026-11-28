@@ -476,7 +476,8 @@ impl Cekirdek {
 
     /// Bütün kayıtların (mezar taşları dahil) belgesi; iki kipte de çalışır (bağlı kipte görünen kopya,
     /// gönderilmemiş değişiklikler dahil). Kuyruk girmez; ret listesinin düzeltme gövdesi olan girdileri girer
-    /// (`ret_yedekte`; gövdesizlerin sayısı `ret_listesinde`). İçe aktarma sınırını aşan belge de döner
+    /// (`ret_yedekte`; girmeyenlerin, gövdesiz ya da gövdesi okunamayan ve öğe sınırını aşanların sayısı
+    /// `ret_listesinde`). İçe aktarma sınırını aşan belge de döner
     /// (`ice_aktarma_sinirini_asiyor`: yazılmalı, kullanıcıya söylenmeli). Hiçbir şey yazmaz. Kotlin `belge`'yi
     /// zip'e `ajanda.json` olarak (UTF-8), `ekler`'i `yol`'larıyla koyar.
     pub fn disa_aktar(&self) -> Result<DisaAktarma, CekirdekHatasi> {

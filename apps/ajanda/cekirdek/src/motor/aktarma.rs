@@ -89,9 +89,13 @@
 //! kalmasın). Geri yüklenirse yine taslaktır.
 //!
 //! Ret girdileri (biçim 2 `retler`): her öğe ayrı okunur; geçersiz ya da dosyada yinelenen `islem_id`
-//! `ret_gecersiz` sayılır, telefonun ret listesinde aynı `islem_id` varsa yinelenmez, kalanlar
-//! (`ret_listesine_gelecek`) iki kipte de ret listesine `islem_id`, an, neden ve gövdeleriyle yazılır
-//! (`islem_json` yalnız işlemin türünü taşır: `{"islem": ...}`; ret listesi türü oradan okur).
+//! `ret_gecersiz` sayılır, telefonun ret listesinde aynı `islem_id` varsa yinelenmez, kaydı dosyadan sonra
+//! değişmiş olan bayattır (`ret_bayat`, `ret_bayat_mi`: yazılmaz; kullanıcının çözüp attığı girdi eski yedekle
+//! geri gelip düzeltmesi kaydın yeni halini ezmesin), kalanlar (`ret_listesine_gelecek`) iki kipte de ret
+//! listesine `islem_id`, an, neden ve gövdeleriyle yazılır (`islem_json` yalnız işlemin türünü taşır:
+//! `{"islem": ...}`; ret listesi türü oradan okur). Çözülmüş `ekle` reddi ayırt edilemez (düzeltmesi yeni
+//! kimlikle eklenir, girdinin `kayit_id`'si hiçbir kayda bağlanmaz): geri gelirse yeniden düzeltilmesi
+//! kopya kayıt doğurur, bir şey ezmez.
 //!
 //! Uygulama (`ice_aktar`) tek SQLite işlemidir: plan işlemin içinde yeniden kurulur, `iz` zorunludur: yoksa
 //! ya da şimdiki planınkiyle tutmazsa hiçbir şey yazılmaz (`uygulandi` yanlış, şimdiki plan döner). İz: kip, ek
@@ -116,9 +120,10 @@
 //! düzeltme gövdesi olan girdileri girer (karar, D3 gözden geçirmesi Y4): birleştirmeden (D4) ya da içe
 //! aktarmadan sonra taslaklar, okunamayan satırların okunabilen hali ve servisin silip telefonun düzenlediği
 //! kayıtlar yalnız orada yaşar; yedeğe girmeselerdi telefonla birlikte giderlerdi. Gövdesi olmayan girdi
-//! (düzeltilemez, yalnız atılabilir: `sil`, `durum`, okunamayan metin) girmez; sayısı
-//! `DisaAktarma.ret_listesinde`'dir, girenlerinki `ret_yedekte`. Yerel geçmiş de girmez (yeni telefonda içe
-//! aktarma satırıyla başlar).
+//! (düzeltilemez, yalnız atılabilir: `sil`, `durum`, okunamayan metin) ve gövdesi okunamayan girmez, öğe
+//! sınırını (`RET_DIZISI_AZAMI`) aşan da; girmeyenlerin sayısı `DisaAktarma.ret_listesinde`'dir, girenlerinki
+//! `ret_yedekte` (belgenin biçim sürümü `bicim_surumu`). Yerel geçmiş de girmez (yeni telefonda içe aktarma
+//! satırıyla başlar).
 //!
 //! Mahremiyet: belge içeriği (başlık, açıklama, ileride bölge) hata mesajına, `GecersizKayit`'e ya da
 //! günlüğe girmez. Hatalar yalnız konum (şemanın alan adları ve sıra numaraları: `guvenli_yol`) ve sabit
@@ -361,6 +366,19 @@ fn cok_fazla(alan: &str, azami: usize) -> CekirdekHatasi {
 const KOK_DIZILERI: [(&str, usize); 2] = [("kayitlar", KAYIT_DIZISI_AZAMI), ("retler", RET_DIZISI_AZAMI)];
 const KAYITLAR: usize = 0;
 const RETLER: usize = 1;
+/// Kök dizi adlarından birine çözülebilecek kaçışlı anahtarın en uzun ham metni (tırnaklar dahil): en uzun
+/// ad, her harfi altı baytlık `\uXXXX` kaçışıyla. ASCII harfin en uzun kaçışı budur (`\/` gibi iki baytlıklar
+/// daha kısadır; vekil çifti ASCII'ye çözülmez).
+const KOK_ADI_KACISLI_AZAMI: usize = {
+    let (mut n, mut i) = (0, 0);
+    while i < KOK_DIZILERI.len() {
+        if KOK_DIZILERI[i].0.len() > n {
+            n = KOK_DIZILERI[i].0.len();
+        }
+        i += 1;
+    }
+    2 + 6 * n
+};
 
 /// `yapi_tara`'nın sonucu.
 #[derive(Debug, Default, PartialEq)]
@@ -388,7 +406,7 @@ fn bosluk(b: u8) -> bool {
 /// dizilerinin öğe aralıkları ve sınırlar (`KOK_DIZILERI`'nin öğe sınırları: sayım aşınca hemen durur;
 /// `DIS_SOZCUK_AZAMI`, `DERINLIK_AZAMI`). Sayılar, sabitler ve nesnelerin iç dizilişi burada denetlenmez: iki
 /// dizinin dışını ve her öğeyi serde_json okur. Bellek: parantez yığını (en çok `DERINLIK_AZAMI`) ve öğe
-/// aralıkları.
+/// aralıkları; anahtar ve dizgi kopyalanmaz (dış bölüm sınırı taramadan sonra uygulanır).
 fn yapi_tara(metin_: &str) -> Result<Tarama, CekirdekHatasi> {
     let b = metin_.as_bytes();
     let mut t = Tarama::default();
@@ -497,9 +515,19 @@ fn yapi_tara(metin_: &str) -> Result<Tarama, CekirdekHatasi> {
                 if anahtar {
                     anahtar_bekleniyor = false;
                     let ham = &metin_[bas..i];
-                    // Kaçışlı anahtar (bir harfi `\u` kaçışıyla yazılmış) çözülür: serde_json onu da o adla okur.
-                    let ad = if ham.contains('\\') { serde_json::from_str::<String>(ham).ok() } else { Some(ham[1..ham.len() - 1].to_string()) };
-                    if let Some(d) = KOK_DIZILERI.iter().position(|(a, _)| ad.as_deref() == Some(*a)) {
+                    // Anahtar kopyalanmadan karşılaştırılır (dış bölüm sınırı taramadan sonradır: dev anahtar
+                    // belgenin bir katı daha ayırmasın). Kaçışlı anahtar (bir harfi `\u` kaçışıyla yazılmış)
+                    // serde_json onu da o adla okuduğu için çözülür, ama yalnız bir kök dizi adı olabilecek
+                    // uzunluktaysa (`KOK_ADI_KACISLI_AZAMI`); daha uzunu o adlardan biri değildir.
+                    let kok_dizisi = |ad: &str| KOK_DIZILERI.iter().position(|(a, _)| ad == *a);
+                    let d = if !ham.contains('\\') {
+                        kok_dizisi(&ham[1..ham.len() - 1])
+                    } else if ham.len() <= KOK_ADI_KACISLI_AZAMI {
+                        serde_json::from_str::<String>(ham).ok().and_then(|ad| kok_dizisi(&ad))
+                    } else {
+                        None
+                    };
+                    if let Some(d) = d {
                         if goruldu[d] {
                             return Err(belge_hatasi(KOK_DIZILERI[d].0, "yinelenen alan"));
                         }
@@ -915,6 +943,8 @@ enum RetSinifi {
     /// Telefonun ret listesinde aynı `islem_id` var: yinelenmez.
     Var = 0x41,
     Gecersiz = 0x42,
+    /// Kaydı yedekten sonra değişmiş: düzeltmesi kaydın yeni halini ezerdi, alınmaz (`ret_bayat`).
+    Bayat = 0x43,
 }
 
 /// FNV-1a 64: planın izi (aynı süreçte ve sürümde karşılaştırılır; güvenlik değil, tutarlılık içindir).
@@ -994,6 +1024,10 @@ fn plan_kur(
     };
     let gelecek_siniri = simdi.saturating_add(GELECEK_TOLERANSI_MS);
     let mut gorulen: HashSet<String> = HashSet::new();
+    // Telefondaki (okunabilen) hali dosyadakinden farklı olup kalan kayıtlar: dosyadan sonra değişmişlerdir.
+    // Yalnız ret öğesi varsa tutulur (bayat ret girdisi).
+    let retler_var = !belge.retler.is_empty();
+    let mut sonra_degisen: HashSet<String> = HashSet::new();
     let mut iz = Iz::yeni();
     iz.kat(kip_adi(yerel).as_bytes());
     for e in &belge.ekler {
@@ -1023,6 +1057,7 @@ fn plan_kur(
         taslaga_donecek: 0,
         ret_listesine_gelecek: 0,
         ret_gecersiz: 0,
+        ret_bayat: 0,
     };
     for (i, &(bas, son)) in belge.kayitlar.iter().enumerate() {
         // Dosyadaki içerik ize girer: aynı sınıflı başka bir dosya eski izle uygulanmaz.
@@ -1087,7 +1122,12 @@ fn plan_kur(
                 }
                 None => (Sinif::Atlanacak, None),
                 Some(t) if ayni(&t) => (Sinif::Ayni, None),
-                Some(t) if k.guncelleme_ms <= t.guncelleme_ms => (Sinif::Atlanacak, None),
+                Some(t) if k.guncelleme_ms <= t.guncelleme_ms => {
+                    if retler_var {
+                        sonra_degisen.insert(k.kayit_id.clone());
+                    }
+                    (Sinif::Atlanacak, None)
+                }
                 Some(t) => {
                     once = Some((t.silindi, t.taslak));
                     let kayit = taslagi_koru(&k, t.taslak);
@@ -1141,8 +1181,9 @@ fn plan_kur(
             yaz(Yazim::Kayit(Box::new(y)))?;
         }
     }
-    // Ret girdileri: telefonda aynı `islem_id` varsa yinelenmez; dosyada yinelenen ve okunamayan geçersizdir.
-    if !belge.retler.is_empty() {
+    // Ret girdileri: telefonda aynı `islem_id` varsa yinelenmez; dosyada yinelenen ve okunamayan geçersizdir;
+    // kaydı dosyadan (dosyada geçerli hali yoksa girdiden) sonra değişmiş olan bayattır.
+    if retler_var {
         let telefondaki_retler: HashSet<String> = d.ret_islem_idleri()?.into_iter().collect();
         let mut dosyadaki_retler: HashSet<String> = HashSet::new();
         for (i, &(bas, son)) in belge.retler.iter().enumerate() {
@@ -1152,20 +1193,37 @@ fn plan_kur(
                 None => RetSinifi::Gecersiz,
                 Some(r) if !dosyadaki_retler.insert(r.islem_id.clone()) => RetSinifi::Gecersiz,
                 Some(r) if telefondaki_retler.contains(&r.islem_id) => RetSinifi::Var,
+                Some(r) if ret_bayat_mi(&r, &sonra_degisen, &gorulen, &telefondaki) => RetSinifi::Bayat,
                 Some(r) => {
                     p.ret_listesine_gelecek += 1;
                     yaz(Yazim::Ret(r))?;
                     RetSinifi::Gelecek
                 }
             };
-            if let RetSinifi::Gecersiz = sinif {
-                p.ret_gecersiz += 1;
+            match sinif {
+                RetSinifi::Gecersiz => p.ret_gecersiz += 1,
+                RetSinifi::Bayat => p.ret_bayat += 1,
+                RetSinifi::Gelecek | RetSinifi::Var => {}
             }
             iz.kat(&[sinif as u8]);
         }
     }
     p.iz = format!("{:016x}", iz.0);
     Ok(p)
+}
+
+/// Ret girdisi bayat mı: telefondaki kaydı girdiden sonra değişti, düzeltmesi (Kotlin: gövde kaydın istenen
+/// tam hali, `duzenle(kayit_id, None, govde)`) kaydın yeni halini eskisiyle ezerdi. Girdi dosya yazılırken ret
+/// listesindeydi: kayıt dosyada geçerliyse telefondaki hali dosyadakinden farklı olup kalıyorsa (`atlanacak`,
+/// `sonra_degisen`) kayıt dosyadan, dolayısıyla girdiden sonra değişmiştir (iki an aynı kaydın anıdır: saat
+/// kayması yanıltmaz). Dosyada geçerli hali yoksa telefondaki okunabilen kaydın `guncelleme_ms`'i girdinin
+/// `ts_ms`'iyle karşılaştırılır. Kayıt telefonda yoksa ya da dosyadaki halle yazılacaksa (yeni, güncellenecek,
+/// aynı) girdi taze sayılır: düzeltmesi girdinin yazıldığı halin üstüne gelir.
+fn ret_bayat_mi(r: &RetSatiri, sonra_degisen: &HashSet<String>, dosyada: &HashSet<String>, telefondaki: &HashMap<String, String>) -> bool {
+    if dosyada.contains(&r.kayit_id) {
+        return sonra_degisen.contains(&r.kayit_id);
+    }
+    telefondaki.get(&r.kayit_id).and_then(|j| kayit_coz(j)).is_some_and(|t| t.guncelleme_ms > r.ts_ms)
 }
 
 /// İçe aktarmanın yerel geçmiş satırı: yeni kayıtta doğum parçası (mezar taşı ve örnekler dahil), var olanda
@@ -1295,6 +1353,7 @@ impl Motor {
             kip: if yerel { CalismaKipi::Yerel } else { CalismaKipi::Bagli },
             ekler,
             ret_yedekte: sayi(retler.len()),
+            bicim_surumu,
         })
     }
 
@@ -1546,6 +1605,15 @@ mod testler {
             assert!(yapi_tara(bozuk).is_err(), "{bozuk}");
         }
         assert!(matches!(yapi_tara(r#"{"retler":[],"retler":[]}"#), Err(CekirdekHatasi::GecersizGirdi { alan, .. }) if alan == "retler"));
+        // Her harfi kaçışlı ad (kök dizi adının en uzun kaçışlı yazımı) tanınır; daha uzun kaçışlı anahtar ad değildir.
+        let kacisli = |s: &str| s.bytes().map(|b| format!("\\u{b:04x}")).collect::<String>();
+        let ad = format!("\"{}\"", kacisli("kayitlar"));
+        assert_eq!(ad.len(), KOK_ADI_KACISLI_AZAMI);
+        let t = yapi_tara(&format!(r#"{{{ad}:[1,2],"{}etler":[3]}}"#, kacisli("r"))).unwrap();
+        assert_eq!((t.ogeler[KAYITLAR].len(), t.ogeler[RETLER].len()), (2, 1));
+        let uzun = format!(r#"{{"{}x":[1]}}"#, kacisli("kayitlar"));
+        assert_eq!(yapi_tara(&uzun).unwrap(), Tarama::default());
+        assert_eq!(yapi_tara(r#"{"kayitlarx":[1]}"#).unwrap(), Tarama::default());
         // Kesik ofseti: iki kesikten sonraki konum asıl metindeki yerine düşer.
         let m = r#"{"kayitlar":[1,2],"x":1,"retler":[3],"y":bozuk}"#;
         let k = yapi_tara(m).unwrap().kesikler();

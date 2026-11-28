@@ -74,7 +74,7 @@ fn red(h: &Hat, metin: &str) -> (String, String) {
 fn ret_girdisi_yedege_girer_ve_geri_yazilir() {
     let a = retli_telefon("ret-a");
     let d = a.c.disa_aktar().unwrap();
-    assert_eq!((d.ret_yedekte, d.ret_listesinde, d.ice_aktarma_sinirini_asiyor), (1, 1, false));
+    assert_eq!((d.ret_yedekte, d.ret_listesinde, d.ice_aktarma_sinirini_asiyor, d.bicim_surumu), (1, 1, false, 2));
     let v: Value = serde_json::from_str(&d.belge).unwrap();
     assert_eq!(v["bicim_surumu"], json!(2));
     assert_eq!(v.to_string(), d.belge, "sıkışık, anahtarlar sıralı");
@@ -105,7 +105,7 @@ fn ret_girdisi_yedege_girer_ve_geri_yazilir() {
     b.c.ret_at(r.islem_id.clone()).unwrap();
     let d = b.c.disa_aktar().unwrap();
     let v: Value = serde_json::from_str(&d.belge).unwrap();
-    assert_eq!((v["bicim_surumu"].clone(), v.get("retler").is_none(), d.ret_yedekte), (json!(1), true, 0));
+    assert_eq!((v["bicim_surumu"].clone(), v.get("retler").is_none(), d.ret_yedekte, d.bicim_surumu), (json!(1), true, 0, 1));
     b.sureci_oldur_ve_ac();
 
     // Bağlı kipte de ret listesine yazılır.
@@ -183,4 +183,47 @@ fn ret_bicim_surumu_kurali() {
     // Biçim 1'deki dev `retler` de sayılır (tarama durur), ağaca çevrilmez.
     let bir = fazla.replace(r#""bicim_surumu":2"#, r#""bicim_surumu":1"#);
     assert_eq!(red(&h, &bir).0, "retler");
+}
+
+/// Çözülmüş ret girdisi eski yedekle geri gelmez (T1). Kullanıcı girdiyi düzeltip attı, kayıt sonra yine
+/// değişti; aynı telefona eski yedek içe aktarılınca kayıt "daha yeni kazanır"la atlanır, girdi de bayat
+/// sayılır (yedekten sonra değişen kayda ait: düzeltilirse kaydın yeni hali eskisiyle ezilirdi) ve ret
+/// listesine yazılmaz. Kayıt değişmediyse (girdi yalnız atıldı) girdi geri gelir. Dosyada kaydın geçerli hali
+/// yoksa telefondaki kaydın güncelleme anı girdinin anıyla karşılaştırılır.
+#[test]
+fn bayat_ret_girdisi_geri_gelmez() {
+    let a = retli_telefon("ret-bayat");
+    let eski = a.c.disa_aktar().unwrap().belge;
+    let r = a.c.ret_listesi().unwrap().into_iter().find(|r| r.govde.is_some()).unwrap();
+    let x = r.kayit_id.clone();
+
+    // Girdi yalnız atıldı (kayıt değişmedi): eski yedek onu geri getirir, düzeltmesi kaydın yedekteki halinin
+    // üstüne gelir (bir şey ezilmez).
+    a.c.ret_at(r.islem_id.clone()).unwrap();
+    let p = a.c.ice_aktarma_onizlemesi(eski.clone()).unwrap();
+    assert_eq!((p.ayni, p.ret_listesine_gelecek, p.ret_bayat), (2, 1, 0));
+
+    // Kullanıcı düzeltti (kayda uygulandı, girdi atıldı), kayıt sonra yine düzenlendi.
+    a.zaman.ilerlet(DK);
+    a.c.duzenle(x.clone(), None, r.govde.clone().unwrap()).unwrap();
+    a.zaman.ilerlet(DK);
+    a.c.duzenle(x.clone(), None, govde("X (en yeni)", None)).unwrap();
+    assert!(a.c.ret_listesi().unwrap().iter().all(|g| g.islem_id != r.islem_id));
+
+    let p = a.c.ice_aktarma_onizlemesi(eski.clone()).unwrap();
+    assert_eq!((p.atlanacak, p.ayni, p.ret_listesine_gelecek, p.ret_bayat, p.ret_gecersiz), (1, 1, 0, 1, 0));
+    let s = a.c.ice_aktar(eski.clone(), Some(p.iz)).unwrap();
+    assert!(s.uygulandi);
+    assert!(a.c.ret_listesi().unwrap().iter().all(|g| g.islem_id != r.islem_id), "bayat girdi geri gelmedi");
+    assert_eq!(a.c.kayit(x.clone()).unwrap().unwrap().kayit.baslik, "X (en yeni)");
+
+    // Dosyada kaydın geçerli hali yok: telefondaki kayıt girdiden sonra değişti, girdi bayat; kayıt girdiden
+    // önceyse (girdinin anı ileride) girdi gelir.
+    let mut v: Value = serde_json::from_str(&eski).unwrap();
+    v["kayitlar"].as_array_mut().unwrap().retain(|k| k["kayit_id"] != x.as_str());
+    let p = a.c.ice_aktarma_onizlemesi(v.to_string()).unwrap();
+    assert_eq!((p.ret_listesine_gelecek, p.ret_bayat), (0, 1));
+    v["retler"][0]["ts_ms"] = json!(SIMDI + 3 * DK);
+    let p = a.c.ice_aktarma_onizlemesi(v.to_string()).unwrap();
+    assert_eq!((p.ret_listesine_gelecek, p.ret_bayat), (1, 0));
 }

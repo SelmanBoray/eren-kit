@@ -1,7 +1,7 @@
 //! D3 bellek iddiası, ayırma ölçüsüyle: içe aktarma önizlemesi belgeyi ağaca çevirmez (tepe ayırma belge
 //! metninin küçük bir kesridir), uygulama yazılacakları biriktirmez (tepe: alarm senkronu + önizlemenin payı),
-//! kayıtlar dışındaki dev değer kopyalanmadan reddedilir, dışa aktarma belgeyi ağaçsız yazar (tepe: satırlar +
-//! belge). Süre ölçüsü (`aktarma_guveni.rs` dev dizi) yerine Rust ayırıcısının kendisi sayılır. SQLite'ın
+//! kayıtlar dışındaki dev değer ve dev kök anahtarı kopyalanmadan reddedilir, dışa aktarma belgeyi ağaçsız
+//! yazar (tepe: satırlar + belge). Süre ölçüsü (`aktarma_guveni.rs` dev dizi) yerine Rust ayırıcısının kendisi sayılır. SQLite'ın
 //! kendi ayırmaları sayılmaz (C ayırıcısı); ölçülen ağaçlar Rust'tadır.
 //!
 //! Sayaç süreç genelidir: bu dosyada tek test vardır (paralel test ölçüyü bozmasın).
@@ -122,6 +122,15 @@ fn aktarma_belgeyi_agaca_cevirmez() {
     assert!(matches!(sonuc, Err(ajanda_cekirdek::CekirdekHatasi::GecersizGirdi { ref neden, .. }) if neden.contains("kayıtlar dışı")), "{sonuc:?}");
     eprintln!("dev kayıtlar dışı değer: tepe {dev_tepe}");
     assert!(dev_tepe < 4 << 20, "dev değerin tepesi {dev_tepe}");
+    // Kökteki dev anahtar (~60 MB, kaçışsız ve kaçışlı): adı kök dizilerin adlarıyla kopyası çıkarılmadan
+    // karşılaştırılır, belge dış bölüm sınırında reddedilir (eskiden anahtarın kopyası: belge + ~1 kat).
+    for kacis in ["", "\\u0078"] {
+        let dev = format!(r#"{{"{kacis}{}":1,"bicim":"eren_ajanda_yedegi","kayitlar":[]}}"#, "x".repeat(60_000_000));
+        let (sonuc, anahtar_tepe) = tepe(|| c.c.ice_aktarma_onizlemesi(dev));
+        assert!(matches!(sonuc, Err(ajanda_cekirdek::CekirdekHatasi::GecersizGirdi { ref neden, .. }) if neden.contains("kayıtlar dışı")), "{sonuc:?}");
+        eprintln!("dev kök anahtar (kaçış {kacis:?}): tepe {anahtar_tepe}");
+        assert!(anahtar_tepe < 4 << 20, "dev anahtarın tepesi {anahtar_tepe}");
+    }
 
     // Dışa aktarma: satırlar + belge (+ tek kaydın ağacı); ağaçlı yazım bütün kayıtların ağacını tutardı.
     let (d, disa_tepe) = tepe(|| c.c.disa_aktar().unwrap());
