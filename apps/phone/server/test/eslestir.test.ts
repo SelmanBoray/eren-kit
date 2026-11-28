@@ -825,6 +825,26 @@ describe("eslestir --pc-ajan: uyarlayıcı seçimi", () => {
       }
     });
 
+    it("okuma çağrısı (ajanda_listele) insan aldıysa 'doğrudan yazdı' sayılmaz; ayrı satırda söylenir; fiilsiz eski günlük yazma sayılır", async () => {
+      const g = await codex();
+      const liste = (karar: string, uyarlayici: string) =>
+        s({ modul: "ajanda", olay: "arac", yol: "pc_araci", oturum_id: OTURUM, fiil: "ajanda_listele", tur_kokeni: "insan", pc_karar: karar, cagri_kimligi: "var", sonuc: "liste", uyarlayici });
+      const karisik = ozetBolumu(pcTeshisMetni([arac("insan", "codex"), liste("insan", "codex"), liste("insan", "codex"), arac("insan", "codex")], z, undefined, g));
+      assert.match(karisik, /UYARI \(Codex CLI\): codex diye bildirilen 2 çağrı kaydı DOĞRUDAN/);
+      assert.match(karisik, /UYARI \(Codex CLI\): codex diye bildirilen 2 okuma çağrısı insan kararı aldı; Codex CLI köprüsü bunu üretmez\./);
+      assert.equal(karisik.includes("--uyarlayici codex ile kaydedilmiş"), false, karisik);
+      // Yalnız okuma: yazdı uyarısı yok, son karar satırı okuma diliyle.
+      const yalnizOkuma = ozetBolumu(pcTeshisMetni([liste("insan", "codex")], z, undefined, g));
+      assert.match(yalnizOkuma, /son PC araç kararı: insan \(UYARI: okuma çağrısı insan kararı aldı; Codex CLI köprüsü bunu üretmez\)\n/);
+      assert.equal(yalnizOkuma.includes("DOĞRUDAN"), false, yalnizOkuma);
+      assert.match(yalnizOkuma, /1 okuma çağrısı insan kararı aldı/);
+      // Fiil alanı olmayan eski günlük: yazma sayılır (bugünkü sayım).
+      const fiilsiz = s({ modul: "ajanda", olay: "arac", yol: "pc_araci", oturum_id: OTURUM, tur_kokeni: "insan", pc_karar: "insan", cagri_kimligi: "var", sonuc: "eklendi", uyarlayici: "codex" });
+      const e = ozetBolumu(pcTeshisMetni([fiilsiz], z, undefined, g));
+      assert.match(e, /1 çağrı kaydı DOĞRUDAN/);
+      assert.equal(e.includes("okuma çağrısı"), false, e);
+    });
+
     it("codex diye bildirilen çağrı insan aldıysa Codex teşhisi yumuşatmadan uyarır: doğru kurulmuş Codex köprüsü bunu üretemez", async () => {
       const g = await codex();
       const m = pcTeshisMetni([tasdik, arac("insan", "codex"), arac("insan", "claude-code")], z, undefined, g);
@@ -835,10 +855,9 @@ describe("eslestir --pc-ajan: uyarlayıcı seçimi", () => {
             "  son PC araç kararı: insan (UYARI: kayıt DOĞRUDAN, taslaksız yazıldı; Codex CLI köprüsü çağrı kimliği okumaz, bu kararı üretemez)\n" +
             "UYARI (Codex CLI): codex diye bildirilen 1 çağrı kaydı DOĞRUDAN (taslaksız) yazdı.\n" +
             "  Doğru kurulmuş bir Codex CLI köprüsü çağrı kimliği okumaz; bu kaydı üretemez. Bu bir kurulum ayrıntısı değil, denetlenmeli:\n" +
-            "  - --uyarlayici codex ile kaydedilmiş köprüler: Codex CLI dışında bir harness'te (ör. Claude Code) bu bayrakla kayıt\n" +
-            "    var mı; Codex CLI'nin kaydını yönergesiyle karşılaştırın (eslestir --pc-ajan codex --yonerge).\n" +
-            "  - ajanda anahtarını kullanan başka bir süreç (anahtar bütün PC ajanlarında ortaktır). Şüphe varsa anahtarı\n" +
-            "    yenileyin (eslestir --pc-ajan codex) ve doğrudan yazılan kayıtları telefonda gözden geçirin.\n" +
+            "  - ortak ajanda anahtarını kullanan, köprü olmayan ya da değiştirilmiş bir istemci kendini codex diye tanıtıyor olabilir\n" +
+            "    (anahtar bütün PC ajanlarında ortaktır; bu bayrakla kaydedilmiş bir köprü de çağrı kimliğini okumaz, bu kararı üretemez).\n" +
+            "  - Anahtarı yenileyin (eslestir --pc-ajan codex) ve doğrudan yazılan kayıtları telefonda gözden geçirin.\n" +
             "Öteki PC ajanlarının çağrıları (yukarıdaki özete girmedi):\n",
         ),
         o,

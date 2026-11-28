@@ -78,10 +78,31 @@ const GEC_BITIS_MS = 5_000;
 /** Belirsiz inişle (yanıtsız kapanış, sonra alt basamak karşılandı) kurulan bağlantıda üst basamak yoklamasına dek. */
 const ZENGIN_YOKLAMA_MS = 4_000;
 
+/**
+ * Anahtar iptalinde (isteğin `jeton_gecersiz` yanıtı) bağlantı bırakılır ama süren isteklerin yanıtları okunur: servis
+ * iptalden önce başlamış isteği yazıp yanıtını iptal yanıtından sonra yollayabilir (`ajanda-kopru-sunucu`
+ * `pcAnahtariDusur`; servis bağlantıyı 2 sn sonra kendisi kapatır). Son yanıt gelince ya da en geç bu kadar sonra
+ * köprü kapatır; yanıtı gelmeyen istek "belirsiz" alır.
+ */
+const BIRAKILAN_YANIT_MS = 2_000;
+
 const gercekZamanla = (ms: number, f: () => void): (() => void) => {
   const t = setTimeout(f, ms);
   return () => clearTimeout(t);
 };
+
+/** Gerçek bekleme (`bekle`): `sinyal` kesilince zamanlayıcı silinir ve hemen çözülür; bekleyen zamanlayıcı süreci tutmaz. */
+export const gercekBekle = (ms: number, sinyal?: AbortSignal): Promise<void> =>
+  new Promise((coz) => {
+    if (sinyal?.aborted === true) return coz();
+    const bitti = (): void => {
+      clearTimeout(t);
+      sinyal?.removeEventListener("abort", bitti);
+      coz();
+    };
+    const t = setTimeout(bitti, ms);
+    sinyal?.addEventListener("abort", bitti, { once: true });
+  });
 
 interface AracSemasi {
   readonly girdi: z.ZodType;
@@ -138,8 +159,11 @@ export interface KopruBagimliliklari {
   baglan: (boruAdi: string) => Promise<BoruBaglantisi>;
   rastgele: Pick<RastgelePortu, "opakId" | "hex64">;
   gunluk: Gunluk;
-  /** Yeniden bağlanma aralığı. */
-  bekle: (ms: number) => Promise<void>;
+  /**
+   * Yeniden bağlanma aralığı ve PC çağrısının bağlantı beklemesi. `sinyal` kesilince hemen çözülmeli ve zamanlayıcısını
+   * silmelidir (`gercekBekle`): durdurmada bekleyen zamanlayıcı süreci tutmasın.
+   */
+  bekle: (ms: number, sinyal?: AbortSignal) => Promise<void>;
   /**
    * Bağlantıya bağlı zamanlayıcılar (el sıkışma süresi, geç bitiş eşiği, üst basamak yoklaması): `ms` sonra `f`;
    * dönen işlev iptal eder. Verilmezse gerçek saat (`setTimeout`); testte elle tetiklenir.
@@ -180,6 +204,8 @@ interface BoruIstemci {
   denemeBekle(sinyal: AbortSignal): Promise<HataKodu | "kopuk" | null>;
   /** Son bağlanma denemesinin engeli: anahtar yok ya da servis `kopru_ret` verdi (PC metni için). */
   sonEngel(): "anahtar_yok" | HataKodu | null;
+  /** `durdur`'la kesilir: bekleyen PC çağrısı beklemeyi hemen bırakır. */
+  readonly durma: AbortSignal;
 }
 
 /** Borunun aşağı çözücüsü: `eren` borusunda `kopruAsagiCoz`, ajanda borusunda `ajandaKopruAsagiCoz`. */
@@ -225,11 +251,11 @@ const basamakImzasi = (ek: HelloEki): string => Object.keys(ek).sort().join("+")
  * ömrü boyunca alt basamakta (ör. `surec_id`'siz) kalmasın diye bağlantı `ZENGIN_YOKLAMA_MS` sonra, süren istek
  * yoksa (varsa yine o kadar sonra) BİR KEZ kapatılır ve merdiven beklemeden en üst basamaktan yeniden denenir
  * (`zengin_hello_yoklamasi`; kopuş sayılmaz). Kapatılan bağlantı hemen bırakılır (`hazir` boşalır, deneme sürer):
- * arada gelen çağrı yeni bağlantıyı bekler. Yoklama en üst basamak karşılanana ya da döngü olağan beklemeye düşene
- * dek bir daha yapılmaz: ret satırı kapanışla düşen eski servis yine iner, ikinci yoklama olmaz, döngü oluşmaz.
- * Olağan bekleme yalnız bağlantı köprünün yoklaması dışında bir nedenle bittiğinde ya da kurulamadığında gelir
- * (servisin yeniden başlaması, güncelleme dahil): yoklama hakkı orada geri gelir, her yoklama böyle bir dış bitişle
- * ödenir. Açık `yetkisiz` ardından kurulan
+ * arada gelen çağrı yeni bağlantıyı bekler. Yoklama en üst basamak karşılanana ya da karşılanmış bir bağlantı
+ * köprünün yoklaması dışında bir nedenle bitene (dış bitiş: servisin yeniden başlaması, güncelleme dahil) dek bir daha
+ * yapılmaz: ret satırı kapanışla düşen eski servis yine iner, ikinci yoklama olmaz. Yoklamanın kendi bağlantı
+ * denemeleri karşılanmadan bitip olağan beklemeye düşse de (ör. eski servisin bağlantı sınırı) hak geri gelmez: her
+ * yoklama bir dış bitişle ödenir, döngü oluşmaz. Açık `yetkisiz` ardından kurulan
  * bağlantı (servis alanı gerçekten tanımıyor) yoklanmaz. `ana_oturum` köprüsü yoklamaz: kaybı yalnız yüzdür, ve
  * köprünün kendi kapattığı bağlantıdan hemen sonraki hello, servis eski bağlantının kapanışını işlemeden gelirse tek
  * bağlantı kuralına (`jeton_kullanimda`) takılır; o kipte `jeton_gecersiz` kalıcıdır.
@@ -252,6 +278,7 @@ function boruIstemciKur(
   let hazir: BoruBaglantisi | null = null;
   let denemede = false;
   let durdu = false;
+  const durma = new AbortController();
   let kaliciHata: HataKodu | null = null;
   // PC köprüsü (`jetonOku` verildi): anahtar her denemede dosyadan okunur, `jeton_gecersiz` kalıcı değildir
   // (kullanıcı anahtarı yenileyince köprü yeniden başlamadan bağlanır); engel yalnız metin içindir.
@@ -268,7 +295,7 @@ function boruIstemciKur(
   const zamanla = b.zamanla ?? gercekZamanla;
   /** Bu döngünün son inişi yanıtsız kapanıştandı (belirsiz); açık ret ya da olağan bekleme sıfırlar. */
   let belirsizInis = false;
-  /** Üst basamak yoklaması yapıldı; en üst basamak karşılanınca ya da olağan beklemede sıfırlanır. */
+  /** Üst basamak yoklaması yapıldı; en üst basamak karşılanınca ya da dış bitişte (karşılanmış bağlantı bitti) sıfırlanır. */
   let yoklandi = false;
   /** Bağlantı yoklama için kapatıldı: merdiven beklemeden en üstten. */
   let yoklamaKapatti = false;
@@ -339,13 +366,24 @@ function boruIstemciKur(
       /** Zengin hello'ya gelen ret kodu (yoksa `null`: hiç ret gelmedi). */
       let ret: HataKodu | null = null;
 
+      /** Bırakılan bağlantının süren yanıtlarını bekleme süresi (`BIRAKILAN_YANIT_MS`); `null`: bekleme yok. */
+      let birakilanIptal: (() => void) | null = null;
+
       /**
-       * Köprünün kendi kapattığı bağlantı hemen bırakılır: `destroy`'un `close` olayı olay döngüsünün kapanış
-       * evresinde gelir (gerçek adlı boruda ölçüldü: mikro görev, `nextTick` ve `setImmediate`'ten sonra), arada
-       * gelen çağrı yok edilmiş sokete yazılamayan isteği "belirsiz" sanmasın.
+       * Köprünün kendi kapattığı bağlantı (yoklama, ret, geçersiz çerçeve, anahtar iptali) hemen bırakılır: `destroy`'un
+       * `close` olayı olay döngüsünün kapanış evresinde gelir (gerçek adlı boruda ölçüldü: mikro görev, `nextTick` ve
+       * `setImmediate`'ten sonra), arada gelen çağrı yok edilmiş sokete yazılamayan isteği "belirsiz" sanmasın.
+       * Aşırı uzun satırda soketi `soketBaglantisi` kendisi kapatır, bu yoldan geçmez: o aralıkta gelen çağrı
+       * yazılmamış isteği "belirsiz" alır (güvenli yön; satır sınırı yalnız bozuk serviste aşılır).
+       * `yanitlariOku` (anahtar iptali): süren istek varsa bağlantı yeni isteğe kapanır ama yanıtları okunur (son yanıtla
+       * ya da `BIRAKILAN_YANIT_MS` sonra kapanır; yanıtı gelmeyen istek "belirsiz" alır, "yazılmadı" değil).
        */
-      const birak = (): void => {
+      const birak = (yanitlariOku = false): void => {
         if (hazir === bag) hazir = null;
+        if (yanitlariOku && bekleyenler.size > 0) {
+          birakilanIptal ??= zamanla(BIRAKILAN_YANIT_MS, () => bag.kapat());
+          return;
+        }
         bag.kapat();
       };
 
@@ -399,18 +437,22 @@ function boruIstemciKur(
           birak();
         } else {
           const bekleyen = bekleyenler.get(m.istek_id);
-          if (bekleyen === undefined) return;
-          bekleyenler.delete(m.istek_id);
-          bekleyen(
-            m.ok
-              ? { tur: "basari", sonuc: m.sonuc }
-              : { tur: "hata", code: m.code ?? "ic_hata", detail: m.detail },
-          );
-          // PC: anahtar bağlantı açıkken iptal edildi. Bağlantı bırakılır; yeniden bağlanma dosyayı yeniden okur.
-          if (!m.ok && m.code === "jeton_gecersiz" && jetonOku !== undefined) {
-            sonEngel = "jeton_gecersiz";
-            birak();
+          if (bekleyen !== undefined) {
+            bekleyenler.delete(m.istek_id);
+            bekleyen(
+              m.ok
+                ? { tur: "basari", sonuc: m.sonuc }
+                : { tur: "hata", code: m.code ?? "ic_hata", detail: m.detail },
+            );
+            // PC: anahtar bağlantı açıkken iptal edildi. Bağlantı bırakılır; yeniden bağlanma dosyayı yeniden okur.
+            // Servis iptalden önce başlattığı isteği yazmış, yanıtını bu yanıttan sonra yollayabilir: süren
+            // isteklerin yanıtları okunur, bağlantı ancak sonra kapanır.
+            if (!m.ok && m.code === "jeton_gecersiz" && jetonOku !== undefined) {
+              sonEngel = "jeton_gecersiz";
+              birak(true);
+            }
           }
+          if (birakilanIptal !== null && bekleyenler.size === 0) bag.kapat();
         }
       });
 
@@ -418,6 +460,7 @@ function boruIstemciKur(
         elSikismaIptal();
         gecIptal();
         yoklamaIptal?.();
+        birakilanIptal?.();
         acik = null;
         hazir = null;
         const kopanlar = [...bekleyenler.values()];
@@ -457,14 +500,16 @@ function boruIstemciKur(
       );
     });
 
-  /** Bekleme ya da `uyandir`: hangisi önce. */
+  /** Bekleme ya da `uyandir` (`durdur` da uyandırır): hangisi önce. Bitince bekleme kesilir, zamanlayıcı kalmaz. */
   const aralikBekle = async (ms: number): Promise<void> => {
     const uyan = Promise.withResolvers<void>();
+    const kes = new AbortController();
     uyandirici = uyan.resolve;
     try {
-      await Promise.race([b.bekle(ms), uyan.promise]);
+      await Promise.race([b.bekle(ms, kes.signal), uyan.promise]);
     } finally {
       uyandirici = null;
+      kes.abort();
     }
   };
 
@@ -518,10 +563,11 @@ function boruIstemciKur(
         hemenYeniden = false;
         belirsizInis = false;
         denenenBasamaklar.clear();
-        // Olağan bekleme: bağlantı köprünün yoklaması dışında bir nedenle bitti ya da hiç kurulamadı (servis
-        // yeniden başlarken bağlantı hep böyle biter). Servis değişmiş olabilir: yoklama hakkı geri gelir. Döngü
-        // olmaz: her yoklama bir olağan beklemeyle (dış bir bitişle) ödenir.
-        yoklandi = false;
+        // Olağan bekleme. Yoklama hakkı yalnız dış bitişle geri gelir: karşılanmış bağlantı köprünün yoklaması
+        // dışında bir nedenle bitti (servis yeniden başlarken, güncelleme dahil, bağlantı hep böyle biter; servis
+        // değişmiş olabilir). Yoklamanın kendi bağlantı denemelerinin karşılanmadan bitişi (ör. eski servisin bağlantı
+        // sınırı `ic_hata`, kurulamayan boru) hakkı geri getirmez: her yoklama bir dış bitişle ödenir, döngü olmaz.
+        if (karsilandi) yoklandi = false;
         denemede = false;
         denemeBitti();
         if (durdu || kaliciHata !== null) break;
@@ -547,6 +593,8 @@ function boruIstemciKur(
     },
 
     sonEngel: () => sonEngel,
+
+    durma: durma.signal,
 
     hazirBekle: async (sinyal, surekli) => {
       for (;;) {
@@ -585,7 +633,11 @@ function boruIstemciKur(
 
     durdur: () => {
       durdu = true;
+      // Kapanan bağlantıya yeni istek yazılmaz (yazılmadığı kesin istek "belirsiz" almasın); bekleyenler hemen uyanır.
+      hazir = null;
+      durma.abort();
       acik?.kapat();
+      uyandirici?.();
       denemeBitti();
     },
   };
@@ -918,6 +970,8 @@ async function mcpBaslat(
       kapaniyor = true;
       // Önce boru: süreç biterken süren soru `model_iptal` sayılmasın, `baglanti_koptu` görsün.
       boru.durdur();
+      // Durmayla hemen sonuçlanan çağrıların (bağlantı bekleyen PC çağrısı) yanıtı MCP kapanmadan gitsin.
+      await new Promise<void>((coz) => setImmediate(coz));
       await server.close().catch(() => gunluk.uyari(MODUL, "mcp_kapanis_hatasi"));
       kapanis.resolve();
     }
@@ -1025,6 +1079,9 @@ const PC_YENIDEN_DENEME_MS = 250;
 export const PC_KOPUK_METNI =
   "ajanda: eren servisine şu an ulaşılamıyor (kapalı ya da yeniden başlıyor); hiçbir şey yazılmadı. " +
   "Kullanıcıya kaydın yazılmadığını söyle; biraz sonra yeniden dene.";
+/** Köprü kapanırken (`durdur`) bağlantı bekleyen ya da bağlantısız kalan çağrı: istek çıkmadı. */
+export const PC_DURDU_METNI =
+  "ajanda: ajanda köprüsü kapanıyor (oturum bitiyor); hiçbir şey yazılmadı. Kullanıcıya kaydın yazılmadığını söyle.";
 export const PC_ANAHTAR_YOK_METNI =
   "ajanda: bu bilgisayarda Claude Code ajanda anahtarı yok; hiçbir şey yazılmadı. Kullanıcıya söyle: " +
   "anahtar `eren eslestir --claude-code` ile üretilir.";
@@ -1189,13 +1246,16 @@ export async function ajandaKopruCalistir(
 
   /**
    * PC: boru hazır değilse döngüyü uyandırıp en çok `PC_BAGLANTI_BEKLEME_MS` yeniden dener (servis yeniden
-   * başlıyor olabilir). Anahtar yoksa ya da servis anahtarı reddettiyse beklemez: engel kesindir.
+   * başlıyor olabilir). Anahtar yoksa ya da servis anahtarı reddettiyse beklemez: engel kesindir. Çağrının iptali ya
+   * da köprünün durması (`boru.durma`) beklemeyi hemen bitirir; bitince bütün bekleme zamanlayıcıları kesilir.
    */
   const pcHazirBekle = async (sinyal: AbortSignal): Promise<HataKodu | "kopuk" | null> => {
     const sure = new AbortController();
     const bitir = (): void => sure.abort();
     sinyal.addEventListener("abort", bitir, { once: true });
-    void b.bekle(PC_BAGLANTI_BEKLEME_MS).then(bitir);
+    boru.durma.addEventListener("abort", bitir, { once: true });
+    if (sinyal.aborted || boru.durma.aborted) bitir();
+    void b.bekle(PC_BAGLANTI_BEKLEME_MS, sure.signal).then(bitir);
     const ara = Promise.withResolvers<void>();
     sure.signal.addEventListener("abort", () => ara.resolve(), { once: true });
     try {
@@ -1205,15 +1265,21 @@ export async function ajandaKopruCalistir(
         if (r !== "kopuk") return r;
         if (boru.sonEngel() !== null || sure.signal.aborted) return "kopuk";
         // Boru yok: kısa ara, sonra yeniden dene.
-        await Promise.race([b.bekle(PC_YENIDEN_DENEME_MS), ara.promise]);
+        await Promise.race([b.bekle(PC_YENIDEN_DENEME_MS, sure.signal), ara.promise]);
       }
     } finally {
       sinyal.removeEventListener("abort", bitir);
+      boru.durma.removeEventListener("abort", bitir);
+      bitir();
     }
   };
 
-  /** PC: bağlantı yokken modele giden metin, engelin nedenine göre. Hepsinde "hiçbir şey yazılmadı". */
+  /**
+   * PC: bağlantı yokken modele giden metin, engelin nedenine göre. Hepsinde "hiçbir şey yazılmadı" (istek çıkmadı).
+   * Köprü kapanıyorsa (`durdur`) servisin durumu değil, kapanış söylenir.
+   */
   const pcKopukSonucu = (): CallToolResult => {
+    if (boru.durma.aborted) return hataSonucu("ic_hata", PC_DURDU_METNI);
     const engel = boru.sonEngel();
     if (engel === "anahtar_yok") return hataSonucu("jeton_gecersiz", anahtarMetni.yok);
     if (engel === "jeton_gecersiz") return hataSonucu("jeton_gecersiz", anahtarMetni.gecersiz);
@@ -1274,8 +1340,10 @@ export async function ajandaKopruCalistir(
         case "hata":
           return pc && y.code === "jeton_gecersiz" ? hataSonucu(y.code, anahtarMetni.gecersiz) : ajandaHataSonucu(y.code);
         case "koptu":
-          // PC: anahtar istek sırasında iptal edildiyse servis `kopru_ret` verip kapatır.
-          return pc && boru.sonEngel() === "jeton_gecersiz" ? hataSonucu("jeton_gecersiz", anahtarMetni.gecersiz) : ajandaHataSonucu("belirsiz");
+          // İstek yollandı, yanıtı gelmedi: yazılıp yazılmadığı bilinmez, engel ne olursa olsun "belirsiz". Anahtar
+          // iptal edilmiş olsa da ("anahtar geçersiz" engeli) servis bu isteği iptalden önce yazmış olabilir;
+          // "yazılmadı" görürse model anahtar yenilenince yeniden dener, kayıt iki kez yazılır.
+          return ajandaHataSonucu("belirsiz");
         case "yollanmadi":
           return kopuk();
         case "iptal":
@@ -1398,7 +1466,7 @@ async function giris(): Promise<void> {
       hex64: () => randomBytes(8).toString("hex"),
     },
     gunluk: stderrGunluk(),
-    bekle: (ms) => new Promise((coz) => setTimeout(coz, ms)),
+    bekle: gercekBekle,
   });
   const calisan = rol.success
     ? await kopruCalistir(
