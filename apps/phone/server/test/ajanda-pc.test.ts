@@ -503,6 +503,58 @@ describe("PC oturumu: normalize tasdik çerçevesi (harness'tan bağımsız kara
 });
 
 /**
+ * Codex CLI yalnız taslaktır (`docs/HARNESS.md` 3.1 T6; ölçüm `HARNESS-H3-OLCUM.md` bölüm 6). Köprüsü
+ * (`kopru.ts --uyarlayici codex`) çağrı kimliğini okumaz, `codex` tasdik çerçevesinin uyarlayıcı listesinde yoktur.
+ * Hiçbir yoldan insan turu olmaz, kayıt hep taslaktır; taslak olmayan kayda dokunamaz.
+ */
+describe("PC oturumu, Codex: hiçbir yoldan insan turu yok (yalnız taslak)", () => {
+  const P = "4242";
+
+  it("kanca yok: Codex köprüsünün çağrısı (çağrı kimliksiz, süreçli) cagri_kimligi_yok, kayıt taslak", async () => {
+    const o = kur();
+    const k = o.kayit(kimlik(await o.ekle(DISCI, o.pcBaglam(undefined, undefined, "pcb_codex", P))));
+    assert.equal(o.karar(), "cagri_kimligi_yok");
+    assert.equal(k.taslak, true);
+    assert.equal(k.kaynak.tur_kokeni, "sentetik");
+  });
+
+  it("sahte codex tasdiki (aynı süreç, ana, etkileşimli, her sürüm): çağrı kimliği gelse bile tasdik_yok, kayıt taslak", async () => {
+    for (const surum of [1, 2, 1_000_000]) {
+      for (const kopruSurec of [P, undefined]) {
+        const o = kur();
+        const id = o.tasdikNormal({ uyarlayici: { ad: "codex", surum }, surec_id: P });
+        const k = o.kayit(kimlik(await o.ekle(DISCI, o.pcBaglam(id, OTURUM, "pcb_codex", kopruSurec))));
+        assert.equal(o.karar(), "tasdik_yok", `sürüm ${surum}, köprü süreci ${String(kopruSurec)}`);
+        assert.equal(k.taslak, true);
+        const g = o.gunluk.girdiler as ReadonlyArray<{ olay: string; alanlar?: Record<string, unknown> }>;
+        assert.deepEqual(
+          g.filter((x) => x.olay === "pc_tasdik_yetersiz").map((x) => [x.alanlar?.["neden"], x.alanlar?.["uyarlayici"]]),
+          [["uyarlayici", "codex"]],
+        );
+      }
+    }
+  });
+
+  it("aynı süreçte geçerli claude-code tasdiki olsa da Codex köprüsü (çağrı kimliği yok) onu tüketemez; taslak kayda dokunamaz", async () => {
+    const o = kur();
+    const korunan = kimlik(await o.ekle({ ...DISCI, baslik: "İnsan" }, o.pcBaglam(o.tasdikNormal({ surec_id: P }), OTURUM, "pcb_claude", P)));
+    assert.equal(o.karar(), "insan", "denetim: düzenek insan turu üretebiliyor");
+    const id = o.tasdikNormal({ surec_id: P });
+    const k = o.kayit(kimlik(await o.ekle({ ...DISCI, baslik: "Codex" }, o.pcBaglam(undefined, undefined, "pcb_codex", P))));
+    assert.equal(o.karar(), "cagri_kimligi_yok");
+    assert.equal(k.taslak, true);
+    // Codex'in sentetik turu taslak olmayan (insan) kayda dokunamaz.
+    const g = await o.guncelle({ kayit_id: korunan, degisiklik: { durum: "tamam" } }, o.pcBaglam(undefined, undefined, "pcb_codex", P));
+    assert.equal(o.karar(), "cagri_kimligi_yok");
+    assert.deepEqual(g, { sonuc: "ret", mesaj_ani: MESAJ_ANI, neden: "sentetik_turda_izinsiz" });
+    assert.equal(o.kayit(korunan).durum, "acik");
+    // Claude'un tasdiki sahibine kaldı (Codex onu görmedi).
+    await o.ekle({ ...DISCI, baslik: "Sahibi" }, o.pcBaglam(id, OTURUM, "pcb_claude", P));
+    assert.equal(o.karar(), "insan");
+  });
+});
+
+/**
  * T5 (`docs/HARNESS.md` 4.2 "Uygulanan (H1)"), durumsuz kural: yeni köprü hello'da harness sürecini bildirir
  * (`kopru_surec_id`, Claude: köprünün `process.ppid`'i); tasdikin `surec_id`'si (kancanın `CLAUDE_PID`'i) ona
  * eşitse tüketilir, değilse taslak (`pc_surec_uyusmuyor`, tasdik sahibine kalır). Eski köprü (süreç bildirmeyen):

@@ -352,6 +352,33 @@ kullanıcısı olduğu sürece aynı kullanıcının iki dosyası arasında ger�
   argümanını yutar (pwsh 7.7 ve Windows PowerShell 5.1, argüman yazan sahte betikle: `x -- a` → `x a`).
   Tırnaklı `'--'` iki sürümde de `.ps1`, `.cmd` ve `.exe` çağrısında `--` olarak geçer. Git Bash'te iki biçim
   aynıdır. cmd.exe tek tırnağı kaldırmaz, orada düz `--` gerekir (cmd ölçülmedi).
+- **Uygulanan (H3, Codex CLI: yalnız taslak; 2026-11-28).** Karar `HARNESS-H3-OLCUM.md` bölüm 6'dan: kanca
+  review alt oturumunu ana agent'tan, `codex exec`'i etkileşimli oturumdan ayıramıyor. Codex kullanıcısı ajanda
+  araçlarını kullanır; her kayıt taslak doğar ve telefondan onaylanır (3.1 T6).
+  - Arayüz: `PcAjani` artık `KancaliPcAjani | TaslakPcAjani`. Kancalı ajanın `kancaDurumu`, `kancaKur`,
+    `kancaKaldir`'ı vardır (`tasdik` yazılmayabilir; Claude Code nesnesi değişmedi). Yalnız taslak ajanın
+    `tasdik: "yalniz_taslak"` ve `taslakNedeni`'si vardır; kanca işlevi yoktur. `PC_AJAN_ADLARI` = `claude-code`,
+    `codex`. Uyarlayıcı `kurulum/harness/codex.ts`.
+  - Kurulum kullanıcının Codex yapılandırmasına (`~/.codex`, `CODEX_HOME`) yazmaz, dosya okumaz.
+    `eren eslestir --pc-ajan codex` anahtarı üretir ve kabuk başına tam `codex mcp add eren-ajanda --env
+    EREN_KIT_DATA_DIR=<kök> -- <node.exe> … kopru.ts --rol pc_oturumu --uyarlayici codex` satırını yazar
+    (PowerShell'de `'--'`; cmd satırı "Codex'te ölçülmedi" etiketli). Kullanıcı komutu kendisi çalıştırır.
+    Yazma komutu eklenmedi: gerek yok, kanca da kurulmaz. Veri kökü `--env` ile açıkça verilir: köprü anahtarı
+    oradan okur, Codex MCP sunucusunu kendi ortamıyla başlatır. Yönerge exec için `approval_mode = "approve"`
+    gerektiğini söyler, ayarı yazmaz.
+  - Köprü: `PC_KOPRU_UYARLAYICILARI.codex = { aracKimligiMeta: null, oturumOrtami: null }`. Çağrı kimliği hiç
+    okunmaz, servis her Codex çağrısında `cagri_kimligi_yok` der. Böylece hiçbir tasdik, sahtesi de, o çağrıya
+    bağlanamaz. `_meta.callId` okunsaydı karar yine taslak olurdu (tasdik yok ya da uyarlayıcı tanınmıyor), ama
+    o zaman bağlanmama `PC_UYARLAYICILARI`'nın içeriğine ve kancanın hiç kurulmamasına dayanırdı. Hello'daki
+    süreç (`process.ppid`) aynen gider ve zararsızdır.
+  - `codex`, tasdik çerçevesinin `PC_UYARLAYICILARI`'nda bilerek yoktur: sahte bir `codex` çerçevesi
+    `pc_tasdik_yetersiz{neden: uyarlayici}` ve `tasdik_yok` alır. Köprü yalnız taslak adları ayrı tutar
+    (`PC_YALNIZ_TASLAK_UYARLAYICILARI`). Testle sabit kural: tasdik listesinde olmayan köprü uyarlayıcısı çağrı
+    kimliği okumaz.
+  - `--teshis` Codex'te kanca aramaz, kullanıcı ayarını okumaz, "kurun" demez. Kurulum satırları kayıtların neden
+    taslak doğduğunu yazar. Son karar `cagri_kimligi_yok` ise beklenen olduğu söylenir. Günlük PC ajanlarını
+    ayırmadığı için öteki kararların başka bir ajanın olduğu not edilir.
+  - Tam tasdik için önce bölüm 6'daki iki koşul gerekir: çerçeve değişikliği ve yeniden ölçüm.
 
 ### 4.4 Protokol ve telefon
 
@@ -421,7 +448,7 @@ bağlıdır; ölçmeden karar verilmemeli.
 |---|---|---|---|
 | **H1 – Tasdik çerçevesi** | Normalize çerçeve (`aktor`, `etkilesim`, `uyarlayici`), eski çerçeveyle geri uyum; T5 (oturum/bağlantı bağı); Claude uyarlayıcısı bugünkü kararları birebir üretir | `protocol/src/ajanda-pc*.ts`, `server/src/ajanda-pc.ts`, `kanca.ts`, `kopru.ts` (yalnız kimlik okuma), testler | C ile `protocol/src` ve servis ajanda dosyaları: sıra koordinatörden |
 | **H2 – Kurulum soyutlaması** | `kurulum/harness/`, `eslestir --pc-ajan`, `--claude-code` takma adı, kabuğa göre yönerge | `kurulum/**`, `server/src/eslestir.ts` | Az (C'nin D5'i `eslestir.ts`'te küçük bir değişiklik yapıyor; H2 onun üstüne oturur) |
-| **H3 – İkinci bağlayıcı (Codex)** | Önce ölçüm (çağrı kimliği MCP'de var mı, alt agent ve etkileşim alanları); sonra uyarlayıcı ya da "yalnız taslak" kaydı | `kurulum/harness/codex.ts`, kanca uyarlayıcısı | Yok |
+| **H3 – İkinci bağlayıcı (Codex)** | Ölçüldü (`HARNESS-H3-OLCUM.md` 6): **yalnız taslak**. Uygulandı (4.3): `kurulum/harness/codex.ts` (kancasız, yalnız MCP kaydı yönergesi), `eslestir --pc-ajan codex`, köprü `--uyarlayici codex` (çağrı kimliği okunmaz) | `kurulum/harness/codex.ts`, `tur.ts`, `server/src/eslestir.ts`, `kopru.ts` (uyarlayıcı tablosu) | Yok |
 | **H4 – Sürücü sınırı (yalnız Claude)** | `OturumSurucusu`, `NormalOlay`, yetenek beyanı; `.exe` sorunu; tur zaman aşımı; `ayarKur`'da `claude.exe` zorunluluğunun kalkması ve "motor yok" durumu (H2'den taşındı) | `konusma*.ts`, `isler*.ts`, `akis.ts`, `ayar.ts`, `sozlesme.ts` | C ile servis: C'nin D5 servis kısmından sonra |
 | **H5 – Metinler** | Telefon ve istem metinlerinde harness etiketi | `protocol/src/plan.ts`, `app/` metinleri | Telefon uygulaması koordinatörde |
 | **H6 – ACP sürücüsü** | Ölçüm sonrası karar | yeni dosya | — |

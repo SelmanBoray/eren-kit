@@ -1,12 +1,14 @@
 // PC ajanı (harness) uyarlayıcılarının kurulum arayüzü (docs/HARNESS.md 4.3). Her harness'ın kurulum
 // tarafı (MCP kaydı yönergesi, araç öncesi kancasının kurulması, kaldırılması ve durumu) bir uyarlayıcının
-// arkasındadır; servis (`eren eslestir`) uyarlayıcıyı adıyla bulur. Kapalı ad listesi: bugün yalnız Claude
-// Code. Yeni harness ölçülüp uyarlayıcısı yazılınca buraya eklenir.
+// arkasındadır; servis (`eren eslestir`) uyarlayıcıyı adıyla bulur. Kapalı ad listesi: Claude Code (kancalı,
+// insan turunu tasdik edebilir) ve Codex CLI (yalnız taslak: kanca yok, kayıtlar telefondan onaylanır;
+// docs/HARNESS.md 3.1 T6). Yeni harness ölçülüp uyarlayıcısı yazılınca buraya eklenir.
 import type { Ortam } from "../ortam.ts";
 import type { Kabuk } from "./kabuk.ts";
 import { CLAUDE_CODE } from "./claude-code.ts";
+import { CODEX } from "./codex.ts";
 
-export const PC_AJAN_ADLARI = ["claude-code"] as const;
+export const PC_AJAN_ADLARI = ["claude-code", "codex"] as const;
 export type PcAjanAdi = (typeof PC_AJAN_ADLARI)[number];
 
 /**
@@ -43,7 +45,7 @@ export interface KancaSonucu {
   satirlar: string[];
 }
 
-export interface PcAjani {
+interface PcAjaniTemeli {
   readonly ad: PcAjanAdi;
   /** Kullanıcıya görünen ad (ör. "Claude Code"). */
   readonly gorunenAd: string;
@@ -55,6 +57,14 @@ export interface PcAjani {
   mcpKaydiYonergesi(ortam: Ortam, nodeExe: string, kabuk?: Kabuk): string;
   /** `eren eslestir`'in anahtardan sonra yazdığı tam kayıt yönergesi (MCP kaydı, kanca, sınama, kaldırma). */
   kayitYonergesi(ortam: Ortam, nodeExe: string): string;
+}
+
+/**
+ * Araç öncesi kancası insan turunu tasdik edebilen ajan (Claude Code). `tasdik` yazılmayabilir (Claude Code
+ * uyarlayıcısı bu alan eklenmeden önce yazıldı); yokluğu "kanca" demektir.
+ */
+export interface KancaliPcAjani extends PcAjaniTemeli {
+  readonly tasdik?: "kanca";
   /** Kullanıcı ayarındaki kanca durumu; hiç atmaz. */
   kancaDurumu(ortam: Ortam): KancaDurumu;
   /** Araç öncesi kancayı kurar (idempotent, yedekli); hata durumunda atar, dosya değişmez. */
@@ -63,8 +73,26 @@ export interface PcAjani {
   kancaKaldir(ortam: Ortam, secenek?: KancaSecenegi): KancaSonucu;
 }
 
-const UYARLAYICILAR: Readonly<Record<PcAjanAdi, PcAjani>> = { "claude-code": CLAUDE_CODE };
+/**
+ * Yalnız taslak ajan (T6): kancası yok ya da güvenilir değil; kurulum yalnız MCP kaydı yönergesini yazar,
+ * kullanıcının harness yapılandırmasına dokunmaz. Kayıtları her zaman taslak doğar.
+ */
+export interface TaslakPcAjani extends PcAjaniTemeli {
+  readonly tasdik: "yalniz_taslak";
+  /** Kayıtların neden hep taslak doğduğu; teşhis bunu olduğu gibi yazar. */
+  readonly taslakNedeni: string;
+}
+
+export type PcAjani = KancaliPcAjani | TaslakPcAjani;
+
+/** Ajan yalnız taslak mı (kancasız; T6). */
+export const yalnizTaslakMi = (a: PcAjani): a is TaslakPcAjani => a.tasdik === "yalniz_taslak";
+
+const UYARLAYICILAR: Readonly<Record<PcAjanAdi, PcAjani>> = { "claude-code": CLAUDE_CODE, codex: CODEX };
 
 /** Adı kapalı listede olan uyarlayıcı; değilse `null` (nesne anahtarları ve büyük/küçük harf farkı ad sayılmaz). */
-export const pcAjani = (ad: string): PcAjani | null =>
-  (PC_AJAN_ADLARI as readonly string[]).includes(ad) ? UYARLAYICILAR[ad as PcAjanAdi] : null;
+export function pcAjani(ad: "claude-code"): KancaliPcAjani;
+export function pcAjani(ad: string): PcAjani | null;
+export function pcAjani(ad: string): PcAjani | null {
+  return (PC_AJAN_ADLARI as readonly string[]).includes(ad) ? UYARLAYICILAR[ad as PcAjanAdi] : null;
+}

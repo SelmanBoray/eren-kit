@@ -15,7 +15,8 @@
  * teşhis eder. Ad kapalı listededir (`kurulum/harness/tur.ts` `PC_AJAN_ADLARI`); uyarlayıcı aynı sürümün
  * kurulum dizininden göreli yüklenir. `--claude-code`, `--pc-ajan claude-code`'un eski adıdır, çıktısı aynı.
  * Anahtar ajandan bağımsızdır (tek ortak anahtar); ada göre değişen yalnız kayıt yönergesi, kanca teşhisi
- * ve görünen metindir.
+ * ve görünen metindir. Yalnız taslak ajan (Codex CLI; uyarlayıcının `taslakNedeni`'si var, kancası yok):
+ * yönerge yalnız MCP kaydını gösterir, teşhis kanca aramaz, kayıtların neden taslak doğduğunu söyler.
  */
 import {
   AJANDA_PC_MCP_ADI,
@@ -142,10 +143,11 @@ export const KULLANIM = [
   "",
   "PC ajanları (harness'lar; docs/HARNESS.md 4.3):",
   "  eslestir --pc-ajan <ad> [--liste | --kaldir | --teshis]",
-  "      Yukarıdakilerin aynısı, adı verilen PC ajanı için. Geçerli adlar: claude-code.",
+  "      Yukarıdakilerin aynısı, adı verilen PC ajanı için. Geçerli adlar: claude-code, codex.",
   "      --claude-code, --pc-ajan claude-code'un kısa adıdır (çıktısı aynı); ikisi birlikte verilmez.",
   "      Ajanda anahtarı bütün PC ajanlarında ortaktır: hangi adla üretilse ya da kaldırılsa hepsini etkiler.",
   "      Ada göre değişen kayıt yönergesi ve kanca teşhisidir. Bilinmeyen ad geçerli adlarla reddedilir.",
+  "      codex (Codex CLI) yalnız taslaktır: kanca kurulmaz, Codex'ten gelen kayıtlar telefondan onaylanır.",
 ].join("\n");
 
 /**
@@ -439,12 +441,18 @@ export interface ClaudeCodeKancaDurumu {
 
 /**
  * Bir PC ajanı uyarlayıcısının eslestir'in kullandığı yüzü (`kurulum/harness/tur.ts` `PcAjani`'nin alt kümesi;
- * yapısal, kurulum modülü tip olarak içe aktarılmaz).
+ * yapısal, kurulum modülü tip olarak içe aktarılmaz). Kancalı ajanda `kancaDurumu` vardır; yalnız taslak ajanda
+ * (`TaslakPcAjani`) yoktur, onun yerine `taslakNedeni` vardır.
  */
-export interface PcAjaniModulu extends KayitYonergesiModulu {
+export interface PcAjaniModulu {
   readonly ad: string;
   /** Kullanıcıya görünen ad (ör. "Claude Code"). */
   readonly gorunenAd: string;
+  kayitYonergesi(ortam: Readonly<Record<string, string | undefined>>, nodeExe: string): string;
+  /** Kullanıcı ayarındaki kanca durumu (`--teshis`; yalnız okur). Yalnız taslak ajanda yok. */
+  kancaDurumu?(ortam: Readonly<Record<string, string | undefined>>): ClaudeCodeKancaDurumu;
+  /** Yalnız taslak ajan (T6): kayıtların neden hep taslak doğduğu. */
+  readonly taslakNedeni?: string;
 }
 
 /** `kurulum/harness/tur.ts`: kapalı ad listesi ve adla uyarlayıcı (`null`: listede yok). */
@@ -469,14 +477,18 @@ export const pcAjanKaydiYukle = async (): Promise<PcAjanKaydi> =>
  */
 export const kayitYonergesiYukle = async (): Promise<KayitYonergesiModulu> => {
   const ajan = (await pcAjanKaydiYukle()).pcAjani(VARSAYILAN_PC_AJANI);
-  if (ajan === null) throw new Error(`${VARSAYILAN_PC_AJANI} uyarlayıcısı kayıtta yok`);
-  return ajan;
+  if (ajan === null || ajan.kancaDurumu === undefined) throw new Error(`${VARSAYILAN_PC_AJANI} uyarlayıcısı kayıtta yok`);
+  return ajan as KayitYonergesiModulu;
 };
 
-/** Çıktılarda ajana göre değişen parçalar: ad (seçenek) ve görünen ad. */
+/**
+ * Çıktılarda ajana göre değişen parçalar: ad (seçenek), görünen ad ve yalnız taslak ajanda kayıtların neden hep
+ * taslak doğduğu (`taslakNedeni`; kancalı ajanda alan yoktur).
+ */
 export interface PcAjanGorunumu {
   readonly ad: string;
   readonly gorunenAd: string;
+  readonly taslakNedeni?: string;
 }
 
 /** Claude Code'un görünümü; kurulum dizini yokken de bilinir ve bugünkü bütün çıktılar bununla yazılır. */
@@ -507,8 +519,13 @@ export function pcAjanSec(
   }
   const ajan = kayit.pcAjani(ad);
   if (ajan === null) return { ok: false, ileti: `bilinmeyen PC ajanı: ${gorunur(ad)} (geçerli adlar: ${kayit.PC_AJAN_ADLARI.join(", ")})` };
-  return { ok: true, ajan, gorunum: { ad: ajan.ad, gorunenAd: ajan.gorunenAd } };
+  const taslak = typeof ajan.taslakNedeni === "string" && ajan.taslakNedeni !== "" ? { taslakNedeni: ajan.taslakNedeni } : {};
+  return { ok: true, ajan, gorunum: { ad: ajan.ad, gorunenAd: ajan.gorunenAd, ...taslak } };
 }
+
+/** Yalnız taslak ajanın görünümü mü (kancasız; kayıtları her zaman taslak). */
+const yalnizTaslakMi = (g: PcAjanGorunumu): g is PcAjanGorunumu & { taslakNedeni: string } =>
+  typeof g.taslakNedeni === "string" && g.taslakNedeni !== "";
 
 /** Yönerge yüklenemezse (kurulum dizini yok): elle nereye bakılacağı. */
 export const KAYIT_YONERGESI_YEDEK =
@@ -744,6 +761,7 @@ function tasdikYokNedenleri(olaylar: readonly TeshisOlayi[], kurulum: ClaudeCode
  * gösterilir (uyarlayıcı sözleşmesi bunları henüz vermiyor).
  */
 function kurulumSatirlari(k: ClaudeCodeKancaDurumu | null, ajan: PcAjanGorunumu): string[] {
+  if (yalnizTaslakMi(ajan)) return taslakKurulumSatirlari(ajan);
   if (k === null) return ["Kurulum: kanca durumu okunamadı (kurulum dizini yok)."];
   const claude = claudeCodeMu(ajan);
   const kanca = claude ? "araç öncesi kanca (PreToolUse, mcp__eren-ajanda__.*)" : "araç öncesi kanca";
@@ -784,6 +802,25 @@ function kurulumSatirlari(k: ClaudeCodeKancaDurumu | null, ajan: PcAjanGorunumu)
 }
 
 /**
+ * Yalnız taslak ajanın (Codex CLI) kurulum satırları: kanca aranmaz ve "kurun" denmez; kayıtların neden hep
+ * taslak doğduğu uyarlayıcının metniyle (`taslakNedeni`) yazılır.
+ */
+function taslakKurulumSatirlari(ajan: PcAjanGorunumu & { taslakNedeni: string }): string[] {
+  return [
+    `Kurulum (${ajan.gorunenAd}): yalnız taslak. Araç öncesi kanca yok ve kurulmaz (bilerek).`,
+    "  Bu ajanın bütün kayıtları TASLAK doğar ve telefondan onaylanır; bu bir kurulum hatası değildir.",
+    `  Neden: ${ajan.taslakNedeni}`,
+  ];
+}
+
+/** Yalnız taslak ajanın sınama özetine eklenen satırlar (günlük PC ajanlarını ayırmaz). */
+const taslakOzetSatirlari = (ajan: PcAjanGorunumu): string[] => [
+  `Not (${ajan.gorunenAd}): köprüsü çağrı kimliğini göndermez; çağrıları günlükte pc_karar=cagri_kimligi_yok olarak`,
+  "  görünür, kayıt taslak doğar (beklenen). Günlük PC ajanlarını ayırmaz: insan, tasdik_yok, alt_agent ya da",
+  "  etkilesimsiz kararları başka bir PC ajanının (ör. Claude Code) çağrılarıdır.",
+];
+
+/**
  * Servis günlüğünün (JSON satırları) PC kanca ve PC araç olaylarından teşhis metni: önce kanca kurulumu
  * (`kurulum`; verilmezse yazılmaz), sonra en yeni `TESHIS_SATIR` olay, her biri izin listesindeki
  * alanlarla; sonra özet (araç öncesi kanca servise ulaşıyor mu, çağrı kimliği geliyor mu, son karar ve
@@ -796,7 +833,8 @@ export function pcTeshisMetni(
   kurulum?: ClaudeCodeKancaDurumu | null,
   ajan: PcAjanGorunumu = CLAUDE_CODE_GORUNUMU,
 ): string {
-  const bas = kurulum === undefined ? "" : `${kurulumSatirlari(kurulum, ajan).join("\n")}\n\n`;
+  // Yalnız taslak ajanda kurulum satırları kanca durumundan bağımsızdır, her zaman yazılır.
+  const bas = kurulum === undefined && !yalnizTaslakMi(ajan) ? "" : `${kurulumSatirlari(kurulum ?? null, ajan).join("\n")}\n\n`;
   const olaylar: Array<{ ts: number; olay: string; alanlar: Record<string, string>; oturum: string | null; iz: string | null }> = [];
   // Neden olaylarını kendi `arac`'ına bağlamak için teşhis modüllerinin bütün satırları (`tasdikReddiNedenleri`).
   const zincir: Array<(typeof olaylar)[number] | null> = [];
@@ -854,6 +892,8 @@ export function pcTeshisMetni(
     reddiNedenleri.length === 0 && sonKarar === "tasdik_yok" && kurulum !== undefined && kurulum !== null && kurulum.arac === true;
   const anlam = reddiNedenleri.length > 0
     ? " (kayıtlar TASLAK doğuyor: kanca bu çağrıyı bildirdi ama servis tasdiki kullanmadı; neden aşağıda)"
+    : yalnizTaslakMi(ajan) && sonKarar === "cagri_kimligi_yok"
+    ? ` (kayıt TASLAK doğdu: ${ajan.gorunenAd} çağrısıysa beklenen, telefondan onaylayın)`
     : kuruluAmaTasdiksiz
     ? " (kayıtlar TASLAK doğuyor: kanca ayarda kurulu görünüyor ama bu çağrıda tasdik gelmedi; olası nedenler aşağıda)"
     : sonKarar !== undefined && Object.hasOwn(TESHIS_KARAR_METNI, sonKarar)
@@ -877,6 +917,7 @@ export function pcTeshisMetni(
     ozet.push("Günlükte görülen neden:");
     for (const n of kancaRetNedenleri(son)) ozet.push(`  - ${n}`);
   }
+  if (yalnizTaslakMi(ajan)) ozet.push(...taslakOzetSatirlari(ajan));
   return `${bas}Son PC olayları (en yeni sonda; metin ve kayıt alanı yazılmaz):\n${satir.join("\n")}\n\n${ozet.join("\n")}\n`;
 }
 
@@ -909,7 +950,7 @@ export function pcKaldirMetni(iptalEdilen: number, dosyaSilindi: boolean, ajan: 
   return (
     `${ajan.gorunenAd} ajanda anahtarı geçersiz kılındı` +
     (dosyaSilindi ? " ve dosyası silindi" : "") +
-    ". Açık PC oturumlarının köprüsü bir sonraki çağrıda reddedilir; kayıtlı MCP sunucusu ve kanca durur, " +
+    `. Açık PC oturumlarının köprüsü bir sonraki çağrıda reddedilir; kayıtlı MCP sunucusu ${yalnizTaslakMi(ajan) ? "" : "ve kanca "}durur, ` +
     (claude
       ? "kaldırmak için docs/SERVIS.md \"Claude Code oturumları\".\n"
       : `kaldırmak için ajanın kayıt yönergesindeki kaldırma adımı.\nAnahtar bütün PC ajanlarında ortaktı: hiçbiri ajandaya erişemez.\n`)
@@ -963,10 +1004,11 @@ async function pcKomutu(komut: PcKomutu): Promise<number> {
       }
     };
     const eski = yollar.log.replace(/\.log$/, ".1.log");
-    // Kanca kurulumu: ajanın kullanıcı ayarı yalnız okunur (uyarlayıcı; yoksa ya da atarsa `null`).
+    // Kanca kurulumu: ajanın kullanıcı ayarı yalnız okunur (uyarlayıcı; yoksa ya da atarsa `null`). Yalnız
+    // taslak ajanın kancası yoktur: ayarı hiç okunmaz, teşhis kurulum satırlarını görünümden yazar.
     let kurulum: ClaudeCodeKancaDurumu | null = null;
     try {
-      kurulum = ajan === null ? null : ajan.kancaDurumu(ortam);
+      kurulum = ajan === null || ajan.kancaDurumu === undefined ? null : ajan.kancaDurumu(ortam);
     } catch {
       kurulum = null;
     }

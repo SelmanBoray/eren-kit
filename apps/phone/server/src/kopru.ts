@@ -39,7 +39,6 @@ import {
   TELEFON_ARACLARI,
   UygulamalarCikti,
   PC_VARSAYILAN_UYARLAYICI,
-  pcUyarlayiciAdiMi,
 } from "@eren/protocol";
 import type {
   PcUyarlayiciAdi,
@@ -787,21 +786,39 @@ export const CLAUDE_CODE_ARAC_KIMLIGI = "claudecode/toolUseId";
  * sunucusunu `CLAUDE_CODE_SESSION_ID` ile başlatır (2.1.332 ikili dosyası: stdio sunucusunun ortamı
  * `CLAUDE_CODE_SESSION_ID: <o anki oturum>`); `/clear` sonrası bu değer eskir. Oturum yalnız iz ve yedektir:
  * T5 hello'daki süreçle kurulur (`ajandaKopruCalistir` `surecId`).
+ *
+ * `null` alan "okunmaz" demektir. Yalnız taslak uyarlayıcı (`PC_YALNIZ_TASLAK_UYARLAYICILARI`) çağrı kimliğini
+ * hiç okumaz: istek `arac_cagri_id` taşımaz, servis kararı `cagri_kimligi_yok` olur (taslak); hiçbir tasdik,
+ * sahtesi de, bu köprünün çağrısına bağlanamaz.
  */
 export interface PcKopruUyarlayicisi {
-  aracKimligiMeta: string;
-  oturumOrtami: string;
+  aracKimligiMeta: string | null;
+  oturumOrtami: string | null;
 }
-export const PC_KOPRU_UYARLAYICILARI: Readonly<Record<PcUyarlayiciAdi, PcKopruUyarlayicisi>> = {
+
+/**
+ * Yalnız taslak uyarlayıcılar (`docs/HARNESS.md` 3.1 T6): köprü onları tanır, tasdik çerçevesi tanımaz
+ * (`PC_UYARLAYICILARI`'nda bilerek yoklar). Codex CLI: araç öncesi kancası review alt oturumunu ana agent'tan
+ * ve `codex exec`'i etkileşimli oturumdan ayıramıyor (`docs/HARNESS-H3-OLCUM.md` bölüm 6); MCP sürecinin
+ * ortamında oturum kimliği yok (Ö3).
+ */
+export const PC_YALNIZ_TASLAK_UYARLAYICILARI = ["codex"] as const;
+export type PcKopruUyarlayiciAdi = PcUyarlayiciAdi | (typeof PC_YALNIZ_TASLAK_UYARLAYICILARI)[number];
+
+export const PC_KOPRU_UYARLAYICILARI: Readonly<Record<PcKopruUyarlayiciAdi, PcKopruUyarlayicisi>> = {
   "claude-code": { aracKimligiMeta: CLAUDE_CODE_ARAC_KIMLIGI, oturumOrtami: "CLAUDE_CODE_SESSION_ID" },
+  codex: { aracKimligiMeta: null, oturumOrtami: null },
 };
+
+const pcKopruUyarlayiciAdiMi = (ad: unknown): ad is PcKopruUyarlayiciAdi =>
+  typeof ad === "string" && Object.hasOwn(PC_KOPRU_UYARLAYICILARI, ad);
 
 /** `--uyarlayici` argümanı: bayrak yoksa varsayılan; bilinmeyen ad ya da değersiz bayrak `null` (kullanım hatası). */
 export function pcKopruUyarlayicisiSec(argumanlar: readonly string[]): PcKopruUyarlayicisi | null {
   const i = argumanlar.indexOf("--uyarlayici");
   if (i < 0) return PC_KOPRU_UYARLAYICILARI[PC_VARSAYILAN_UYARLAYICI];
   const ad = argumanlar[i + 1];
-  return pcUyarlayiciAdiMi(ad) ? PC_KOPRU_UYARLAYICILARI[ad] : null;
+  return pcKopruUyarlayiciAdiMi(ad) ? PC_KOPRU_UYARLAYICILARI[ad] : null;
 }
 
 /** Boru hazır değilken çağrının yeniden bağlanmayı beklediği en uzun süre (servis yeniden başlıyor olabilir). */
@@ -858,9 +875,13 @@ export async function ajandaKopruCalistir(
   }));
   const oturumId = ayar.oturumId !== undefined && OpakId.safeParse(ayar.oturumId).success ? ayar.oturumId : undefined;
 
-  /** PC: `cagri` zarfı. Çağrı kimliği uyarlayıcının `_meta` anahtarından; geçersizse yok (tur sentetik olur). */
+  /**
+   * PC: `cagri` zarfı. Çağrı kimliği uyarlayıcının `_meta` anahtarından; geçersizse ya da uyarlayıcı okumuyorsa
+   * (`aracKimligiMeta: null`, yalnız taslak) yok: tur sentetik olur.
+   */
   const pcCagri = (meta: unknown): Record<string, unknown> => {
-    const id = typeof meta === "object" && meta !== null ? (meta as Record<string, unknown>)[uyarlayici.aracKimligiMeta] : undefined;
+    const anahtar = uyarlayici.aracKimligiMeta;
+    const id = anahtar !== null && typeof meta === "object" && meta !== null ? (meta as Record<string, unknown>)[anahtar] : undefined;
     const r = AracCagriId.safeParse(id);
     const cagri: AjandaPcCagri = {};
     if (r.success) cagri.arac_cagri_id = r.data;
@@ -1086,7 +1107,9 @@ async function giris(): Promise<void> {
                 jeton: "",
                 boruAdi: AJANDA_BORU_ADI,
                 jetonOku: pcAnahtariOku,
-                oturumId: (uyarlayici !== null ? process.env[uyarlayici.oturumOrtami] : undefined) ?? `pck_${randomBytes(16).toString("base64url")}`,
+                oturumId:
+                  (uyarlayici !== null && uyarlayici.oturumOrtami !== null ? process.env[uyarlayici.oturumOrtami] : undefined) ??
+                  `pck_${randomBytes(16).toString("base64url")}`,
               }
             : { rol: ajandaRol.data, jeton: jeton.data, boruAdi: AJANDA_BORU_ADI },
           ortak((ad) => boruyaBaglan(ad, AJANDA_AZAMI_CERCEVE.BORU)),
