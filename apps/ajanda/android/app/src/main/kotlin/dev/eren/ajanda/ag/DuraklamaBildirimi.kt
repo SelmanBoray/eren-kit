@@ -3,23 +3,26 @@ package dev.eren.ajanda.ag
 import android.content.Context
 import dev.eren.ajanda.CekirdekErisimi
 import dev.eren.ajanda.alarm.Bildirimler
+import dev.eren.ajanda.cekirdek.EslesmeDurumu
 import dev.eren.ajanda.cekirdek.GecisOzeti
 import dev.eren.ajanda.kimlik.GecisMetinleri
 import dev.eren.ajanda.kimlik.GecisMetni
 
 /**
- * K5: bağlı kipten yerel kipe geçtikten sonra (en çok servis farklı `depo_id` getirince, `GecisNedeni.DEPO_DEGISTI`)
- * eşleşme kalır ama her arka plan eşitlemesi `ArkaPlanSonucu.YEREL_KIP` ile biter; kullanıcı uygulamayı açana dek
- * eşitleme sessizce durur. Bu sınıf (saf; Android'e dokunan kısım arayüzlerin arkasında) bunu **geçiş başına bir
- * kez** bildirir:
- * - Yalnız `YEREL_KIP` sonucunda, `sonGecis()` varsa ve bu geçiş daha önce gösterilmediyse
- *   (`GecisMetinleri.gosterilmeli` + saklı `tsMs`). Geçiş yoksa (hiç bağlı olmamış kurulum) bildirim yok.
+ * K5: yerel kipte eşleşme varken her arka plan eşitlemesi `ArkaPlanSonucu.YEREL_KIP` ile biter (bağlanılmaz);
+ * kullanıcı uygulamayı açana dek eşitleme sessizce durur. Bu sınıf (saf; Android'e dokunan kısım arayüzlerin
+ * arkasında) bunu duraklama başına **bir kez** bildirir. Duraklamanın kimliği, öncelik sırasıyla:
+ * 1. **Onay bekleyen plan** (`birlestirmeOnizlemesi()?.iz`): her yeni plan bir kez ("onayınızı bekliyor"); geçiş
+ *    olsun olmasın, geçiş gösterilmiş olsun olmasın.
+ * 2. **Henüz söylenmemiş geçiş** (`sonGecis()`; `GecisMetinleri.gosterilmeli` + saklı `tsMs`; arayüz
+ *    [gecisGosterildi] ile işaretlediyse söylenmiş sayılır): geçiş başına bir kez, `GecisMetinleri.duraklama` metni.
+ * 3. **Eşleşme** (`eslesmeDurumu()`): geçiş yoksa (ilk eşleşme) ya da söylendiyse (arayüz gösterdi; koparmadan sonra
+ *    yeniden eşleşme): eşleşme başına bir kez, genel metin ([ESITLEME_BEKLIYOR]).
+ * Plan ya da geçiş bildirildiyse o eşleşmenin duraklaması da söylenmiş sayılır (plan düşünce yinelenmez).
  * - Uygulama görünürken gösterilmez (arayüz durumu kendisi söyler; saklanmaz, uygulama gizlenince sonraki iş gösterir).
- * - Metin `GecisMetinleri.duraklama`: "onayınızı bekliyor" yalnız `birlestirmeOnizlemesi()` doluysa.
- * - Gösterilemediyse (bildirim izni ya da kanal kapalı) sessizce atlanır, saklanmaz; durum `sonGecis()`'te saklıdır.
+ * - Gösterilemediyse (bildirim izni ya da kanal kapalı) sessizce atlanır, saklanmaz.
  * - `ESITLENDI` ya da `ESLESME_YOK`: duraklama bitti, bildirim (varsa) kaldırılır.
  *
- * Arayüz aynı geçişi kendisi gösterdiyse [gecisGosterildi] ile işaretler (bildirim yinelenmez).
  * Çağrı `EsitlemeIsi`'nin iş parçacığında (çekirdek çağrısı; ana iş parçacığı değil). Hiçbir hata dışarı çıkmaz.
  */
 class DuraklamaBildirimi(
@@ -28,6 +31,7 @@ class DuraklamaBildirimi(
     private val bildirici: DuraklamaBildiricisi,
     private val gorunur: () -> Boolean,
     private val gunluk: Gunluk,
+    private val duraklama: GosterilenDuraklama = GosterilenDuraklama.Yok,
 ) {
     fun arkaPlanBitti(sonuc: ArkaPlanSonucu) {
         try {
@@ -43,15 +47,57 @@ class DuraklamaBildirimi(
 
     private fun duraklamayiBildir() {
         if (gorunur()) return
-        val g = cekirdek.sonGecis() ?: return
-        if (!GecisMetinleri.gosterilmeli(g, gosterilen.oku())) return
-        val metin = GecisMetinleri.duraklama(g, cekirdek.birlestirmeBekliyor())
-        if (bildirici.goster(metin)) gosterilen.yaz(g.tsMs)
+        val plan = cekirdek.bekleyenPlan()
+        val g = cekirdek.sonGecis()
+        val eslesme = cekirdek.eslesme()
+        if (plan != null) {
+            if (plan == duraklama.plan()) return
+            val metin = if (g != null) GecisMetinleri.duraklama(g, birlestirmeBekliyor = true) else ONAY_BEKLIYOR
+            if (bildirici.goster(metin)) {
+                duraklama.planYaz(plan)
+                eslesme?.let(duraklama::eslesmeYaz)
+                g?.let { gosterilen.yaz(it.tsMs) }
+            }
+            return
+        }
+        if (g != null && GecisMetinleri.gosterilmeli(g, gosterilen.oku())) {
+            // Henüz söylenmemiş geçiş: onun metni; o eşleşmenin duraklaması da söylenmiş sayılır.
+            if (bildirici.goster(GecisMetinleri.duraklama(g, birlestirmeBekliyor = false))) {
+                gosterilen.yaz(g.tsMs)
+                eslesme?.let(duraklama::eslesmeYaz)
+            }
+            return
+        }
+        // Geçiş yok (ilk eşleşme) ya da söylendi (arayüz gösterdi; koparmadan sonra yeniden eşleşme): eşleşme başına bir kez.
+        val e = eslesme ?: return
+        if (e == duraklama.eslesme()) return
+        if (bildirici.goster(ESITLEME_BEKLIYOR)) duraklama.eslesmeYaz(e)
     }
 
     companion object {
         private const val TERCIHLER = "ajanda_durum_bildirimi"
         private const val GOSTERILEN_TS = "gosterilen_gecis_ts"
+        private const val GOSTERILEN_PLAN = "gosterilen_duraklama_plani"
+        private const val GOSTERILEN_ESLESME = "gosterilen_duraklama_eslesmesi"
+
+        /** Geçiş özeti yokken onay bekleyen plan (metin `GecisMetinleri.duraklama`'nınkiyle aynı). */
+        internal val ONAY_BEKLIYOR = GecisMetni(
+            "Birleştirme onayınızı bekliyor",
+            listOf(
+                "Eren servisiyle eşitleme, birleştirmeyi onaylayana ya da vazgeçene dek duruyor.",
+                "Kayıtlarınız bu telefonda duruyor; onaylamadan servise gönderilmez.",
+            ),
+        )
+
+        /** Söylenecek geçiş yokken (ilk eşleşme, yeniden eşleşme, arayüzün gösterdiği geçiş) duran eşitleme. */
+        internal val ESITLEME_BEKLIYOR = GecisMetni(
+            "Eşitleme bekliyor",
+            listOf(
+                "Eren servisiyle eşitleme arka planda yapılmıyor; bağlantı uygulama açıkken kurulur.",
+                "Kayıtlarınız bu telefonda duruyor; sorulmadan servise gönderilmez.",
+                "Uygulamayı açtığınızda bağlanır; gönderilecek bir şey varsa birleştirmeyi size sorar.",
+            ),
+        )
 
         /** Üretim örneği (her çağrıda kurulur: yalnız tercih ve çekirdek erişimi). */
         fun uretim(context: Context): DuraklamaBildirimi {
@@ -59,8 +105,14 @@ class DuraklamaBildirimi(
             return DuraklamaBildirimi(
                 cekirdek = object : DuraklamaCekirdegi {
                     override fun sonGecis(): GecisOzeti? = CekirdekErisimi.al(uygulama).sonGecis()
-                    override fun birlestirmeBekliyor(): Boolean = CekirdekErisimi.al(uygulama).birlestirmeOnizlemesi() != null
+                    override fun bekleyenPlan(): String? = CekirdekErisimi.al(uygulama).birlestirmeOnizlemesi()?.iz
+                    override fun eslesme(): String? = when (val d = CekirdekErisimi.al(uygulama).eslesmeDurumu()) {
+                        is EslesmeDurumu.Eslesti -> "eslesti:${d.deviceId}"
+                        is EslesmeDurumu.Bekliyor -> "bekliyor:${d.host}:${d.port}"
+                        else -> null
+                    }
                 },
+                duraklama = TercihGosterilenDuraklama(uygulama),
                 gosterilen = TercihGosterilenGecis(uygulama),
                 bildirici = object : DuraklamaBildiricisi {
                     override fun goster(m: GecisMetni): Boolean =
@@ -89,15 +141,46 @@ class DuraklamaBildirimi(
                 p.edit().putLong(GOSTERILEN_TS, tsMs).commit()
             }
         }
+
+        private class TercihGosterilenDuraklama(context: Context) : GosterilenDuraklama {
+            private val p = context.getSharedPreferences(TERCIHLER, Context.MODE_PRIVATE)
+            override fun plan(): String? = p.getString(GOSTERILEN_PLAN, null)
+            override fun planYaz(iz: String) {
+                p.edit().putString(GOSTERILEN_PLAN, iz).commit()
+            }
+            override fun eslesme(): String? = p.getString(GOSTERILEN_ESLESME, null)
+            override fun eslesmeYaz(kimlik: String) {
+                p.edit().putString(GOSTERILEN_ESLESME, kimlik).commit()
+            }
+        }
     }
 }
 
-/** Duraklama bildiriminin çekirdekten okuduğu (üretimde `Cekirdek.sonGecis`, `birlestirmeOnizlemesi`). */
+/** Duraklama bildiriminin çekirdekten okuduğu (üretimde `Cekirdek.sonGecis`, `birlestirmeOnizlemesi`, `eslesmeDurumu`). */
 interface DuraklamaCekirdegi {
     fun sonGecis(): GecisOzeti?
 
-    /** `birlestirmeOnizlemesi() != null`: onay gerçekten bekleniyor. */
-    fun birlestirmeBekliyor(): Boolean
+    /** `birlestirmeOnizlemesi()?.iz`: onay gerçekten bekleyen planın izi; yoksa `null`. */
+    fun bekleyenPlan(): String?
+
+    /** Eşleşmenin kimliği (eşleşti: cihaz kimliği; QR okundu, bekliyor: adres); eşleşme yoksa `null`. */
+    fun eslesme(): String?
+}
+
+/** Bildirimle söylenmiş son onay planı ve son eşleşme (üretimde `SharedPreferences`; içerik değil, yalnız iz ve kimlik). */
+interface GosterilenDuraklama {
+    fun plan(): String?
+    fun planYaz(iz: String)
+    fun eslesme(): String?
+    fun eslesmeYaz(kimlik: String)
+
+    /** Saklamayan (eski kurulum ve testler). */
+    object Yok : GosterilenDuraklama {
+        override fun plan(): String? = null
+        override fun planYaz(iz: String) = Unit
+        override fun eslesme(): String? = null
+        override fun eslesmeYaz(kimlik: String) = Unit
+    }
 }
 
 /** Gösterilmiş son geçişin `tsMs`'i (üretimde `SharedPreferences`). */

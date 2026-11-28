@@ -24,6 +24,7 @@ import java.util.concurrent.Executors
  * - [YEDEK_ISI] (D6): otomatik yedek açıkken tek seferlik, ağ koşulsuz, bir sonraki gerekli ana kurulu
  *   (`OtomatikYedekPlani.isGecikmesiMs`); yalnız `OtomatikYedek.arkaPlanda`, bitince `jobFinished` ve
  *   `OtomatikYedek.sonrakiniKur` (eşleşme, bağlantı ve eşitlemeden bağımsız). Kurup kaldıran `OtomatikYedek`.
+ *   Eşitleme işlerinin her çalışması `OtomatikYedek.isiDenetle`'yi de çağırır (silinen yedek işi yeniden kurulur).
  * Eşitleme oturumu bitince sonuç [DuraklamaBildirimi]'ne gider (K5: yerel kipte eşleşme varken duran eşitleme
  * geçiş başına bir kez bildirilir; `CANLI` eşitlenince bildirim kalkar).
  */
@@ -58,6 +59,8 @@ class EsitlemeIsi : JobService() {
                 jobFinished(params, false)
             },
             gunluk = LogGunluk,
+            // T3: zorla durdurma ya da pil yöneticisi yedek işini sildiyse yeniden kurulur.
+            yedekDenetle = { OtomatikYedek.isiDenetle(uygulama) },
         )
         calisanlar[id] = is_
         is_.baslat()

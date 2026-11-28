@@ -92,6 +92,65 @@ object YedekKabi {
     }
 
     /**
+     * Yeni açılmış uygulamanın içe aktarma başlamadan yığında zaten tuttuğu (arayüz, çekirdek bağlamaları, OkHttp).
+     * Tahmindir, cihazda ölçülmedi; JVM testinde taban ~2 MB'tır (MIMARI.md ölçümü), View tabanlı küçük bir
+     * uygulamanın açılışta 10-25 MB tuttuğu varsayıldı, üst yanı alındı.
+     */
+    const val TABAN_KULLANIM = 32L shl 20
+
+    /**
+     * Bu telefonda [oku]'nun en iyi durumda (uygulama yeni açılmış, yalnız [TABAN_KULLANIM] dolu) alabileceği bütçe:
+     * `maxMemory - pay - taban` (pay [bellekButcesi]'ndekiyle aynı). `maxMemory` sınırsızsa sınırsız. 128 MiB'lık
+     * yığında 64 MiB: [acmaBellegi] 64 MiB'ı (32 MiB belge) aşan dosya bu telefonda açılmaz; 192 MiB'ta 112 MiB
+     * (56 MiB belge); 256 MiB'ta 160 MiB (80 MiB belge: çekirdeğin 64 MiB sınırının üstü, uyarı çıkmaz).
+     */
+    fun buTelefondaAcmaButcesi(azami: Long = Runtime.getRuntime().maxMemory()): Long {
+        if (azami == Long.MAX_VALUE) return Long.MAX_VALUE
+        val pay = maxOf(BELLEK_PAYI_EN_AZ, azami / BELLEK_PAYI_BOLEN)
+        return (azami - pay - TABAN_KULLANIM).coerceAtLeast(0)
+    }
+
+    /**
+     * [oku]'nun bu kabı açmak için isteyeceği bütçe (yazıldığı sırayla: önce belge, sonra özeti tekil ekler).
+     * Belge okunurken 2 kat sayılır; her ek okunurken o ana dek tutulan + 2 x ek. [belgeBayt]: belgenin UTF-8 boyu
+     * ([utf8Boyu]).
+     */
+    fun acmaBellegi(belgeBayt: Long, ekler: List<EkDosyasi>): Long {
+        var en = GECICI_CARPAN * belgeBayt
+        var tutulan = belgeBayt
+        for (ek in ekler.distinctBy { it.ozet }) {
+            en = maxOf(en, tutulan + GECICI_CARPAN * ek.bayt)
+            tutulan += ek.bayt
+        }
+        return en
+    }
+
+    /** [yaz]'ın yazdığı UTF-8 boyu: eşsiz vekil `?` (1 bayt) olur. */
+    fun utf8Boyu(s: String): Long {
+        var n = 0L
+        var i = 0
+        while (i < s.length) {
+            val c = s[i]
+            n += when {
+                c.code < 0x80 -> 1
+                c.code < 0x800 -> 2
+                Character.isHighSurrogate(c) && i + 1 < s.length && Character.isLowSurrogate(s[i + 1]) -> { i++; 4 }
+                Character.isSurrogate(c) -> 1
+                else -> 3
+            }
+            i++
+        }
+        return n
+    }
+
+    /**
+     * Yazılan belge içe aktarma sınırının altında ama bu telefonda açmaya gereken bellek [butce]'yi aşıyor mu
+     * (sınır aşılıyorsa yanlış: o uyarı ayrıdır ve daha güçlüdür).
+     */
+    fun buTelefondaAcilamayabilir(disa: DisaAktarma, butce: Long): Boolean =
+        !disa.iceAktarmaSiniriniAsiyor && acmaBellegi(utf8Boyu(disa.belge), disa.ekler) > butce
+
+    /**
      * Ham (sıkıştırılmış) dosyanın açılmış toplamı aşabileceği sabit pay: sıkışmayan verinin deflate ek yükü
      * (65 535 baytlık saklı blok başına 5 bayt: 32 MiB'de ~2,6 KB), `ZipInputStream`'in önden okuması (~1 KB) ve
      * ilk girdinin başlığı. Girdi başlıkları ayrıca [GIRDI_PAYI] ile her girdide eklenir.

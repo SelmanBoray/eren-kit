@@ -18,9 +18,12 @@ import java.io.FileNotFoundException
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.time.ZoneId
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * SAHİBİ: D6. Otomatik yedeğin Android girişi (ince; kurallar [OtomatikYedekPlani] ve [OtomatikYedekci]'de).
@@ -28,20 +31,23 @@ import java.util.concurrent.Executors
  * Ayarlar ekranı için:
  * - [klasorSecmeNiyeti] ile `startActivityForResult`; dönen ağaç URI'si [klasorSecildi]'ye (ana iş
  *   parçacığında çağrılabilir; kalıcı izni alır, eskisini bırakır; başka klasörse son yedek sıfırlanır ve
- *   açıksa iş yakın bir ana kurulur).
- * - [acKapat]: açınca iş kurulur, kapatınca kaldırılır. Klasör yoksa açılmaz (`false`).
+ *   açıksa iş yakın bir ana kurulur; eski yedek bildirimi kalkar).
+ * - [acKapat]: açınca iş kurulur, kapatınca kaldırılır (bildirimi de). Klasör yoksa açılmaz (`false`).
  * - [gorunum]: açık/kapalı, klasör adı, erişim, son yedek (kaç gün önce), son hata, son yedeğin uyarıları ve
  *   henüz söylenmemiş sorun (arka planda çağır: sağlayıcıya sorar).
  * - [simdiYedekle]: arka planda dener, [bitti] o iş parçacığında çağrılır; sonucu ekran gösterir (söylendi sayılır).
  * - [soylendi]: ekran [YedekGorunumu.soylenmemis]'i gösterince çağırır (aynısı yeniden bildirilmez).
- * - [isiDenetle]: ekran açılışında; açıksa iş kurulu değilse kurar (tekrarlı çağrıya dayanıklı).
  *
  * İş: `EsitlemeIsi`'nin [EsitlemeIsi.YEDEK_ISI] işi; ağ koşulsuz, **tek seferlik**, bir sonraki gerekli ana
  * kurulur (`OtomatikYedekPlani.isGecikmesiMs`: bugün yedek varsa yarın, hata varsa artan bekleme). İş
  * [arkaPlanda]'yı çağırır, bitince [sonrakiniKur]. Eşitleme işleri değişmez. Bütün denemeler tek iş parçacığında.
+ * Silinen işi (zorla durdurma, pil yöneticisi) [isiDenetle] yeniden kurar; ekrana bağlı değildir, çağıranlar:
+ * `BaglantiYoneticisi.izle` (ilk ekran görünür olunca, [isiDenetleArkaPlanda]), `EsitlemeIsi`'nin eşitleme işleri,
+ * `AcilisAlici` (açılış, güncelleme, saat). Kural [YedekIsDenetcisi]'nde.
  *
  * Bildirim: arka plan denemesinde söylenecek bir şey varsa (`OtomatikYedekPlani.soylenecek`) durum kanalında
- * bir kez (`Bildirimler.DURUM_YEDEK`); izin yoksa sessizce atlanır, durum saklı kalır.
+ * bir kez (`Bildirimler.DURUM_YEDEK`); arayüz görünürken de gösterilir (ayar ekranı yok). İzin yoksa sessizce
+ * atlanır, durum saklı kalır.
  */
 object OtomatikYedek {
     private const val TERCIHLER = "ajanda_otomatik_yedek"
@@ -53,6 +59,21 @@ object OtomatikYedek {
 
     @Volatile
     private var ornek: OtomatikYedekci? = null
+
+    /** Yedek işi bu süreçte çalışıyor ([arkaPlanda] başından [arkaPlanda]'nın `bitti`'si dönene dek). */
+    private val isCalisiyor = AtomicBoolean(false)
+
+    private fun denetci(context: Context): YedekIsDenetcisi {
+        val uygulama = context.applicationContext
+        return YedekIsDenetcisi(
+            ayarlar = ayarlar(uygulama),
+            planlayici = JobYedekPlanlayici(uygulama),
+            saat = System::currentTimeMillis,
+            dilim = ZoneId::systemDefault,
+            calisiyor = isCalisiyor::get,
+            ayarYazilamadi = { TercihYedekAyarlari.sonYazimBasarisiz },
+        )
+    }
 
     private fun yedekci(context: Context): OtomatikYedekci = ornek ?: synchronized(this) {
         ornek ?: run {
@@ -72,19 +93,34 @@ object OtomatikYedek {
 
     /**
      * Bu kurulumun kimliği: `noBackupFilesDir`'de (yedeğe ve cihazdan cihaza aktarıma girmez; iki telefon aynı
-     * kimliği taşımasın). Yoksa ya da bozuksa yenisi yazılır (geçici dosya + yeniden adlandırma).
+     * kimliği taşımasın). Yalnız dosya yoksa (ilk açılış, "verileri sil") ya da içeriği kimlik değilse yenisi
+     * yazılır (geçici dosya + yeniden adlandırma). Okuma hatası (dosya varken) yeni kimlik üretmez, atar: deneme
+     * başarısız olur, sonra yeniden denenir (k1: yeni kimlik eski yedekleri sahipsiz bırakırdı, hiç silinmezlerdi).
      */
+    private fun kurulumKimligi(context: Context): String =
+        kurulumDosyasi(File(context.noBackupFilesDir, KURULUM_DOSYASI))
+
+    /** [kurulumKimligi]'nin dosya kuralı (JVM testli). */
     @Synchronized
-    private fun kurulumKimligi(context: Context): String {
-        val f = File(context.noBackupFilesDir, KURULUM_DOSYASI)
-        val var_ = runCatching { f.readText().trim() }.getOrNull()
-        if (var_ != null && OtomatikYedekPlani.kurulumGecerli(var_)) return var_
-        val yeni = OtomatikYedekPlani.yeniKurulum()
-        val gecici = File(f.parentFile, "$KURULUM_DOSYASI.yeni")
+    internal fun kurulumDosyasi(
+        f: File,
+        yeniKimlik: () -> String = { OtomatikYedekPlani.yeniKurulum() },
+        gunluk: Gunluk = YedekGunlugu,
+    ): String {
+        if (f.exists()) {
+            // Okunamazsa (izin, G/Ç, dizin) atar: yeni kimlik üretilmez.
+            val var_ = f.readText().trim()
+            if (OtomatikYedekPlani.kurulumGecerli(var_)) return var_
+            gunluk.uyari("kurulum kimliği bozuk, yenisi yazılıyor", null)
+        }
+        val yeni = yeniKimlik()
+        val gecici = File(f.parentFile, f.name + ".yeni")
         gecici.writeText(yeni)
-        if (!gecici.renameTo(f)) {
+        try {
+            Files.move(gecici.toPath(), f.toPath(), StandardCopyOption.ATOMIC_MOVE)
+        } catch (e: Exception) {
             gecici.delete()
-            throw IOException("kurulum kimliği yazılamadı")
+            throw IOException("kurulum kimliği yazılamadı", e)
         }
         return yeni
     }
@@ -110,21 +146,35 @@ object OtomatikYedek {
         }
         val a = ayarlar(context)
         val eski = a.oku().klasor
+        try {
+            a.degistir { it.klasorle(agac.toString()) }
+        } catch (e: IOException) {
+            YedekGunlugu.uyari("klasör kaydedilemedi", e)
+            if (eski != agac.toString()) runCatching { cr.releasePersistableUriPermission(agac, bayrak) }
+            return false
+        }
         if (eski != null && eski != agac.toString()) {
             runCatching { cr.releasePersistableUriPermission(Uri.parse(eski), bayrak) }
         }
-        a.degistir { it.klasorle(agac.toString()) }
+        // Hata ve bildirim durumu sıfırlandı (aynı klasör de): eski sorun bildirimi kalmasın.
+        Bildirimler.durumKaldir(context.applicationContext, Bildirimler.DURUM_YEDEK)
         // Yeni klasöre ilk yedek ertesi günü beklemesin.
-        if (a.oku().acik) isKur(context, yenile = true)
+        isKurulamadiysaYaz { denetci(context).yenidenKur() }
         return true
     }
 
-    /** Döner: istenen hale geçildi mi (açmak için klasör gerekir). */
+    /** Döner: istenen hale geçildi mi (açmak için klasör gerekir; ayar yazılamadıysa `false`). */
     fun acKapat(context: Context, acik: Boolean): Boolean {
         val a = ayarlar(context)
         if (acik && a.oku().klasor == null) return false
-        a.degistir { it.copy(acik = acik) }
-        if (acik) isKur(context, yenile = true) else isIptal(context)
+        try {
+            a.degistir { it.copy(acik = acik) }
+        } catch (e: IOException) {
+            YedekGunlugu.uyari("ayar kaydedilemedi", e)
+            return false
+        }
+        if (!acik) Bildirimler.durumKaldir(context.applicationContext, Bildirimler.DURUM_YEDEK)
+        isKurulamadiysaYaz { denetci(context).yenidenKur() }
         return true
     }
 
@@ -147,7 +197,11 @@ object OtomatikYedek {
 
     /** Ekran [YedekGorunumu.soylenmemis]'i kullanıcıya gösterdi: aynısı bildirimle yinelenmez. */
     fun soylendi(context: Context, b: YedekBildirimi) {
-        ayarlar(context).degistir { it.bildirildi(b) }
+        try {
+            ayarlar(context).degistir { it.bildirildi(b) }
+        } catch (e: IOException) {
+            YedekGunlugu.uyari("ayar kaydedilemedi", e)
+        }
         Bildirimler.durumKaldir(context, Bildirimler.DURUM_YEDEK)
     }
 
@@ -155,11 +209,7 @@ object OtomatikYedek {
         val uygulama = context.applicationContext
         ISCI.execute {
             val s = yedekci(uygulama).simdiYedekle()
-            try {
-                if (ayarlar(uygulama).oku().acik) isKur(uygulama, yenile = true)
-            } catch (e: Exception) {
-                YedekGunlugu.uyari("yedek işi kurulamadı", e)
-            }
+            isKurulamadiysaYaz { denetci(uygulama).yenidenKur() }
             bitti(s)
         }
     }
@@ -169,58 +219,80 @@ object OtomatikYedek {
      * kapalıysa kaldırır. Durumu okur: ana iş parçacığında da çağrılabilir (yalnız tercih ve JobScheduler).
      */
     fun sonrakiniKur(context: Context) {
-        try {
-            if (ayarlar(context).oku().acik) isKur(context, yenile = true) else isIptal(context)
-        } catch (e: Exception) {
-            YedekGunlugu.uyari("yedek işi kurulamadı", e)
-        }
+        isKurulamadiysaYaz { denetci(context).sonrakiniKur() }
     }
 
     /** Arka plan işi: zamanı geldiyse yedekler; [bitti] yedek iş parçacığında, tam bir kez. */
     fun arkaPlanda(context: Context, bitti: (YedekSonucu) -> Unit) {
         val uygulama = context.applicationContext
-        ISCI.execute {
-            var sonuc: YedekSonucu = YedekSonucu.Gerekmedi
-            try {
-                if (!ayarlar(uygulama).oku().acik) {
-                    isIptal(uygulama)
-                } else {
-                    sonuc = yedekci(uygulama).gerekirseYedekle()
+        isCalisiyor.set(true)
+        try {
+            ISCI.execute {
+                var sonuc: YedekSonucu = YedekSonucu.Gerekmedi
+                try {
+                    if (!ayarlar(uygulama).oku().acik) {
+                        denetci(uygulama).kaldir()
+                    } else {
+                        sonuc = yedekci(uygulama).gerekirseYedekle()
+                    }
+                } catch (t: Throwable) {
+                    YedekGunlugu.uyari("otomatik yedek işi düştü", t)
+                    sonuc = YedekSonucu.Basarisiz(YedekSorunu.BEKLENMEYEN)
+                } finally {
+                    try {
+                        bitti(sonuc)
+                    } finally {
+                        isCalisiyor.set(false)
+                    }
                 }
-            } catch (t: Throwable) {
-                YedekGunlugu.uyari("otomatik yedek işi düştü", t)
-                sonuc = YedekSonucu.Basarisiz(YedekSorunu.BEKLENMEYEN)
-            } finally {
-                bitti(sonuc)
             }
+        } catch (t: Throwable) {
+            isCalisiyor.set(false)
+            throw t
         }
-    }
-
-    /** Açıksa ve iş kurulu değilse kurar (eski sürümün saatlik periyodik işi tek seferliğe çevrilir). */
-    fun isiDenetle(context: Context) {
-        if (ayarlar(context).oku().acik) isKur(context, yenile = false)
     }
 
     /**
-     * Tek seferlik işi bir sonraki gerekli ana kurar. [yenile] yanlışsa kurulu tek seferlik iş olduğu gibi
-     * bırakılır (ekran açılışı zamanlamayı ötelemesin). Çalışan iş aynı numarayla yeniden kurulursa sistem onu
-     * durdurur: [sonrakiniKur] bu yüzden `jobFinished`'den sonra çağrılır.
+     * Açıksa ve iş kurulu değilse kurar; kuruluysa zamanlamasına dokunmaz (eski sürümün periyodik işi tek
+     * seferliğe çevrilir; çalışan işe dokunulmaz). Tekrarlı çağrıya dayanıklı, hata atmaz. Yalnız tercih ve
+     * JobScheduler: her iş parçacığından çağrılabilir; ana iş parçacığında [isiDenetleArkaPlanda].
      */
-    private fun isKur(context: Context, yenile: Boolean) {
-        val js = context.getSystemService(JobScheduler::class.java) ?: return
-        val d = ayarlar(context).oku()
-        val gecikme = OtomatikYedekPlani.isGecikmesiMs(d, System.currentTimeMillis(), ZoneId.systemDefault())
-        if (gecikme == null) {
-            isIptal(context)
-            return
-        }
-        val mevcut = js.getPendingJob(EsitlemeIsi.YEDEK_ISI)
-        if (!yenile && mevcut != null && !mevcut.isPeriodic && mevcut.isPersisted) return
-        js.schedule(EsitlemeIsi.yedekIsi(context, gecikme))
+    fun isiDenetle(context: Context) {
+        isKurulamadiysaYaz { denetci(context).denetle() }
     }
 
-    private fun isIptal(context: Context) {
-        context.getSystemService(JobScheduler::class.java)?.cancel(EsitlemeIsi.YEDEK_ISI)
+    /** [isiDenetle] yedek iş parçacığında (ana iş parçacığı, ör. ekran görünür olunca); hemen döner. */
+    fun isiDenetleArkaPlanda(context: Context) {
+        val uygulama = context.applicationContext
+        try {
+            ISCI.execute { isiDenetle(uygulama) }
+        } catch (e: Exception) {
+            YedekGunlugu.uyari("yedek işi denetlenemedi", e)
+        }
+    }
+
+    private inline fun isKurulamadiysaYaz(f: () -> Unit) {
+        try {
+            f()
+        } catch (e: Exception) {
+            YedekGunlugu.uyari("yedek işi kurulamadı", e)
+        }
+    }
+}
+
+/** Yedek işi `JobScheduler`'da ([EsitlemeIsi.YEDEK_ISI]). */
+private class JobYedekPlanlayici(private val context: Context) : YedekIsPlanlayici {
+    private val js: JobScheduler? get() = context.getSystemService(JobScheduler::class.java)
+
+    override fun kurulu(): KuruluYedekIsi? =
+        js?.getPendingJob(EsitlemeIsi.YEDEK_ISI)?.let { KuruluYedekIsi(periyodik = it.isPeriodic, kalici = it.isPersisted) }
+
+    override fun kur(gecikmeMs: Long) {
+        js?.schedule(EsitlemeIsi.yedekIsi(context, gecikmeMs))
+    }
+
+    override fun kaldir() {
+        js?.cancel(EsitlemeIsi.YEDEK_ISI)
     }
 }
 
@@ -228,9 +300,10 @@ object OtomatikYedek {
  * Ekranın göstereceği: ayar ve son sonuç, klasörün görünen adı, kalıcı izin hâlâ var mı.
  * - [sonYedekGunOnce]: son başarılı yedekten bu yana cihaz günü (bugün 0; hiç yoksa `null`);
  *   metni `OtomatikYedekMetinleri.gunOnce`.
- * - Son yedeğin uyarıları (yedeğe girmeyen ret girdileri, içe aktarma sınırı): `OtomatikYedekMetinleri.uyarilar(durum)`.
- * - [soylenmemis]: kullanıcıya henüz söylenmemiş sorun ya da sınır uyarısı (bildirim izni yoktu, kanal
- *   kapalıydı ya da ekran açıktı). Ekran gösterince [OtomatikYedek.soylendi] çağırır. Metni
+ * - Son yedeğin uyarıları (yedeğe girmeyen ret girdileri, içe aktarma sınırı, bu telefonun açma belleği):
+ *   `OtomatikYedekMetinleri.uyarilar(durum)`.
+ * - [soylenmemis]: kullanıcıya henüz söylenmemiş sorun ya da büyüklük uyarısı (bildirim izni yoktu ya da kanal
+ *   kapalıydı; arayüz görünürken de bildirim gösterilir). Ekran gösterince [OtomatikYedek.soylendi] çağırır. Metni
  *   `OtomatikYedekMetinleri.bildirim(soylenmemis, sonYedekGunOnce)`.
  */
 data class YedekGorunumu(
@@ -287,13 +360,15 @@ internal class TercihYedekAyarlari(private val p: SharedPreferences) : YedekAyar
             sinirBildirildi = p.getBoolean(SINIR_BILDIRILDI, false),
             sonRetDisarida = p.getInt(RET, 0),
             yarimYazim = p.getString(YARIM, null),
+            sonBellekAsiyor = p.getBoolean(BELLEK, false),
+            bellekBildirildi = p.getBoolean(BELLEK_BILDIRILDI, false),
         )
     }
 
     override fun degistir(f: (YedekDurumu) -> YedekDurumu) {
         synchronized(KILIT) {
             val d = f(oku())
-            p.edit()
+            val yazildi = p.edit()
                 .putBoolean(ACIK, d.acik)
                 .koy(KLASOR, d.klasor)
                 .koy(SON_MS, d.sonBasariliMs)
@@ -307,7 +382,13 @@ internal class TercihYedekAyarlari(private val p: SharedPreferences) : YedekAyar
                 .putBoolean(SINIR_BILDIRILDI, d.sinirBildirildi)
                 .putInt(RET, d.sonRetDisarida)
                 .koy(YARIM, d.yarimYazim)
+                .putBoolean(BELLEK, d.sonBellekAsiyor)
+                .putBoolean(BELLEK_BILDIRILDI, d.bellekBildirildi)
                 .commit()
+            // `commit` yanlış: diske geçmedi (iç bellek dolu). Bellekteki değer bu süreçte durur, soğuk başlayan
+            // süreç bilmez: iş en az `AYAR_YAZILAMADI_BEKLEMESI_MS` sonraya kurulur (k2), çağıran öğrenir.
+            sonYazimBasarisiz = !yazildi
+            if (!yazildi) throw IOException("yedek ayarı saklanamadı")
         }
     }
 
@@ -320,8 +401,15 @@ internal class TercihYedekAyarlari(private val p: SharedPreferences) : YedekAyar
 
     private fun SharedPreferences.Editor.koy(k: String, v: Long?) = if (v == null) remove(k) else putLong(k, v)
 
-    private companion object {
-        val KILIT = Any()
+    companion object {
+        /** Bu süreçte son ayar yazımı diske geçmedi (`commit` yanlış); sonraki başarılı yazımda kalkar. */
+        @Volatile
+        var sonYazimBasarisiz = false
+            private set
+
+        private val KILIT = Any()
+        private const val BELLEK = "son_bellek_asiyor"
+        private const val BELLEK_BILDIRILDI = "bellek_bildirildi"
         const val ACIK = "acik"
         const val KLASOR = "klasor"
         const val SON_MS = "son_basarili_ms"

@@ -25,8 +25,9 @@ import java.util.Random
  * - Her deneme yeni bir ad alır (aynı gün ikinci yedek ayrı dosyadır); sağlam eski dosya, yenisi yazılıp geri
  *   okunarak doğrulanmadan silinmez. Yazılırken geçici ad (`<ad>.yaziliyor`) taşır.
  * - Temizlik: bu kurulumun yedeklerinden gün başına en yenisi, en yeni [TUTULAN] gün kalır; az önce yazılan
- *   her zaman kalır; geleceğe tarihli olanlar (saat ileri gitmişti) en eski sayılır. Bu kurulumun artık
- *   geçici dosyaları (sağlayıcının eklediği ` (1)` gibi eklerle de) silinir.
+ *   her zaman kalır (adıyla ve sağlayıcı kimliğiyle: liste önbellekten eski adı gösterse de); geleceğe tarihli
+ *   olanlar (saat ileri gitmişti) en eski sayılır. Bu kurulumun artık geçici dosyaları (sağlayıcının eklediği
+ *   ` (1)` gibi eklerle de) yalnız deneme başında silinir, yazmadan sonra değil (T4).
  */
 object OtomatikYedekPlani {
     const val TUTULAN = 7
@@ -45,6 +46,12 @@ object OtomatikYedekPlani {
 
     /** Tek seferlik iş en çok bu kadar sonraya kurulur (saat ya da dilim değişirse günde bir yeniden hesaplanır). */
     const val AZAMI_GECIKME_MS = 24L * 60 * 60 * 1000
+
+    /**
+     * Ayar dosyası yazılamadıysa (iç bellek dolu; `commit()` yanlış) iş en az bu kadar sonraya kurulur: sonuç
+     * diske geçmediğinden soğuk başlayan süreç onu bilmez, her dakika yeniden denerdi (k2).
+     */
+    const val AYAR_YAZILAMADI_BEKLEMESI_MS = AZAMI_BEKLEME_MS
 
     const val GECICI_EK = ".yaziliyor"
     const val ONEK = "ajanda-otomatik-yedek-"
@@ -86,9 +93,15 @@ object OtomatikYedekPlani {
         return an
     }
 
-    /** Tek seferlik işin gecikmesi ([ASGARI_GECIKME_MS]..[AZAMI_GECIKME_MS]); `null`: iş gerekmez. */
-    fun isGecikmesiMs(d: YedekDurumu, simdiMs: Long, dilim: ZoneId): Long? =
-        sonrakiDenemeMs(d, simdiMs, dilim)?.let { (it - simdiMs).coerceIn(ASGARI_GECIKME_MS, AZAMI_GECIKME_MS) }
+    /**
+     * Tek seferlik işin gecikmesi ([ASGARI_GECIKME_MS]..[AZAMI_GECIKME_MS]); `null`: iş gerekmez. [ayarYazilamadi]:
+     * son ayar yazımı diske geçmedi, en az [AYAR_YAZILAMADI_BEKLEMESI_MS] beklenir.
+     */
+    fun isGecikmesiMs(d: YedekDurumu, simdiMs: Long, dilim: ZoneId, ayarYazilamadi: Boolean = false): Long? =
+        sonrakiDenemeMs(d, simdiMs, dilim)?.let {
+            val g = (it - simdiMs).coerceIn(ASGARI_GECIKME_MS, AZAMI_GECIKME_MS)
+            if (ayarYazilamadi) maxOf(g, AYAR_YAZILAMADI_BEKLEMESI_MS) else g
+        }
 
     fun gun(ms: Long, dilim: ZoneId): LocalDate = Instant.ofEpochMilli(ms).atZone(dilim).toLocalDate()
 
@@ -131,8 +144,11 @@ object OtomatikYedekPlani {
 
     /**
      * Silinecekler: bu kurulumun yedeklerinden gün başına en yenisi dışındakiler, en yeni [tut] gün dışındakiler
-     * ve bu kurulumun bütün artık geçici dosyaları. [koru] (az önce yazılan) hep kalır ve kendi gününü tutar.
-     * Geleceğe tarihli yedekler ([bugun]'den sonra) en eski sayılır. Kalıba birebir uymayana dokunulmaz.
+     * ve ([geciciDahil] ise) bu kurulumun bütün artık geçici dosyaları. [koru] (az önce yazılan) hep kalır ve
+     * kendi gününü tutar. Sağlayıcı kimliği [koruKimlikler]'de olan dosya hiçbir adla silinmez: yeniden
+     * adlandırmada kimliği koruyup listeyi önbellekten veren sağlayıcı (Drive benzeri) az önce doğrulanan yedeği
+     * eski geçici adıyla gösterebilir (T4). Geleceğe tarihli yedekler ([bugun]'den sonra) en eski sayılır. Kalıba
+     * birebir uymayana dokunulmaz.
      */
     fun silinecekler(
         dosyalar: List<KlasorDosyasi>,
@@ -140,28 +156,36 @@ object OtomatikYedekPlani {
         bugun: LocalDate,
         koru: String? = null,
         tut: Int = TUTULAN,
+        koruKimlikler: Set<String> = emptySet(),
+        geciciDahil: Boolean = true,
     ): List<KlasorDosyasi> {
-        val yedekler = dosyalar.mapNotNull { d -> yedekAni(d.ad, kurulum)?.let { d to it } }
+        val adaylar = dosyalar.filterNot { it.kimlik in koruKimlikler }
+        val yedekler = adaylar.mapNotNull { d -> yedekAni(d.ad, kurulum)?.let { d to it } }
         val sirali = yedekler.sortedWith(
             compareBy<Pair<KlasorDosyasi, LocalDateTime>> { it.second.toLocalDate() > bugun }
                 .thenByDescending { it.second }
                 .thenByDescending { it.first.ad },
         )
         val gunler = HashSet<LocalDate>()
-        yedekler.firstOrNull { it.first.ad == koru }?.let { gunler += it.second.toLocalDate() }
+        // Az önce yazılan, listede (önbellek yüzünden) o adla görünmese de kendi gününü tutar.
+        koru?.let { yedekAni(it, kurulum) }?.let { gunler += it.toLocalDate() }
+        // Kimliğiyle korunan yedek de (hangi adla görünürse) kendi gününü tutar.
+        for (d in dosyalar) if (d.kimlik in koruKimlikler) yedekAni(d.ad, kurulum)?.let { gunler += it.toLocalDate() }
         val fazla = mutableListOf<KlasorDosyasi>()
         for ((d, an) in sirali) {
             if (d.ad == koru) continue
             val g = an.toLocalDate()
             if (g in gunler || gunler.size >= tut.coerceAtLeast(1)) fazla += d else gunler += g
         }
-        return dosyalar.filter { geciciMi(it.ad, kurulum) && it.ad != koru } + fazla
+        val geciciler = if (geciciDahil) adaylar.filter { geciciMi(it.ad, kurulum) && it.ad != koru } else emptyList()
+        return geciciler + fazla
     }
 
     /**
      * Şimdi kullanıcıya söylenmesi gereken (bildirim ya da uygulama açılınca): henüz söylenmemiş son sorun
-     * (kalıcıysa hemen, geçiciyse [GECICI_BILDIRIM_ESIGI_MS] sürdüyse) ya da son yedeğin içe aktarma sınırını
-     * aştığı. Söylendiyse ([YedekDurumu.bildirildi]) aynısı yeniden dönmez.
+     * (kalıcıysa hemen, geçiciyse [GECICI_BILDIRIM_ESIGI_MS] sürdüyse), son yedeğin içe aktarma sınırını aştığı
+     * ya da (sınırın altındaysa) bu telefonun açma belleğini aştığı. Söylendiyse ([YedekDurumu.bildirildi])
+     * aynısı yeniden dönmez.
      */
     fun soylenecek(d: YedekDurumu, simdiMs: Long): YedekBildirimi? {
         if (!d.acik) return null
@@ -171,7 +195,11 @@ object OtomatikYedekPlani {
             val basi = d.hataBasiMs ?: d.sonHataMs ?: simdiMs
             return if (s.kalici || simdiMs - basi >= GECICI_BILDIRIM_ESIGI_MS) YedekBildirimi.Sorun(s) else null
         }
-        return if (d.sonSinirAsiyor && !d.sinirBildirildi) YedekBildirimi.SinirAsiyor else null
+        return when {
+            d.sonSinirAsiyor -> if (!d.sinirBildirildi) YedekBildirimi.SinirAsiyor else null
+            d.sonBellekAsiyor -> if (!d.bellekBildirildi) YedekBildirimi.BellekAsiyor else null
+            else -> null
+        }
     }
 }
 
@@ -181,6 +209,12 @@ sealed class YedekBildirimi {
 
     /** Son yedek yazıldı ama bu sürümün içe aktarma sınırını aşıyor (`DisaAktarma.iceAktarmaSiniriniAsiyor`). */
     object SinirAsiyor : YedekBildirimi()
+
+    /**
+     * Son yedek sınırın altında ama bu telefonda açmak için gereken bellek, uygulamanın en iyi durumda
+     * ayırabileceğini aşıyor (`YedekKabi.buTelefondaAcmaButcesi`).
+     */
+    object BellekAsiyor : YedekBildirimi()
 }
 
 /** Klasördeki bir dosya: görünen ad ve sağlayıcının kimliği (SAF'ta belge URI'si). */
@@ -190,9 +224,9 @@ data class KlasorDosyasi(val ad: String, val kimlik: String)
  * Kalıcı ayar ve son sonuç. [klasor]: SAF ağaç URI'si. [sonHata] ve [sonHataMs] son denemenin hatası
  * (başarılı yedek ikisini temizler). [ardisikHata]: son başarıdan bu yana ardışık hata; [hataBasiMs] bu
  * dizinin ilk hatası. [bildirilenSorun]/[sinirBildirildi]: kullanıcıya söylenen (aynısı yinelenmez).
- * [sonSinirAsiyor], [sonRetDisarida]: son başarılı yedeğin uyarıları. [yarimYazim]: yeniden adlandırmayı
- * desteklemeyen sağlayıcıda son ada doğrudan yazılan, henüz doğrulanmamış dosyanın adı (süreç ölürse sonraki
- * deneme onu siler; bozuk dosya yedek sayılmaz).
+ * [sonSinirAsiyor], [sonBellekAsiyor], [sonRetDisarida]: son başarılı yedeğin uyarıları ([bellekBildirildi]: bellek
+ * uyarısı söylendi). [yarimYazim]: yeniden adlandırmayı desteklemeyen sağlayıcıda son ada doğrudan yazılan
+ * dosyanın adı (süreç ölürse sonraki deneme onu bütünse tutar, yarımsa siler; bozuk dosya yedek sayılmaz).
  *
  * Geçişler saftır ([klasorle], [basariliOldu], [basarisizOldu], [bildirildi]); depo yalnız saklar.
  */
@@ -210,6 +244,8 @@ data class YedekDurumu(
     val sinirBildirildi: Boolean = false,
     val sonRetDisarida: Int = 0,
     val yarimYazim: String? = null,
+    val sonBellekAsiyor: Boolean = false,
+    val bellekBildirildi: Boolean = false,
 ) {
     /**
      * Klasör seçildi. Başka klasörse o klasörün geçmişi yoktur: son yedek, hata ve bildirim durumu sıfırlanır
@@ -226,6 +262,8 @@ data class YedekDurumu(
         bildirilenSorun = null,
         sonSinirAsiyor = s.sinirAsiyor,
         sinirBildirildi = s.sinirAsiyor && sinirBildirildi,
+        sonBellekAsiyor = s.bellekAsiyor,
+        bellekBildirildi = s.bellekAsiyor && bellekBildirildi,
         sonRetDisarida = s.retDisarida,
     )
 
@@ -239,6 +277,7 @@ data class YedekDurumu(
     fun bildirildi(b: YedekBildirimi): YedekDurumu = when (b) {
         is YedekBildirimi.Sorun -> copy(bildirilenSorun = b.sorun)
         YedekBildirimi.SinirAsiyor -> copy(sinirBildirildi = true)
+        YedekBildirimi.BellekAsiyor -> copy(bellekBildirildi = true)
     }
 
     private fun hataTemiz() = copy(sonHata = null, sonHataMs = null, ardisikHata = 0, hataBasiMs = null)
@@ -269,7 +308,9 @@ sealed class YedekSonucu {
 
     /**
      * [retDisarida]: yedeğe girmeyen gövdesiz ret girdileri (`DisaAktarma.retListesinde`). [sinirAsiyor]: yedek
-     * yazıldı ama bu sürümün içe aktarma sınırını aşıyor, bu sürümde geri yüklenemez.
+     * yazıldı ama bu sürümün içe aktarma sınırını aşıyor, bu sürümde geri yüklenemez. [bellekAsiyor]: sınırın
+     * altında ama bu telefonda açmaya bellek yetmeyebilir (sınır aşılıyorsa hep yanlış). [eskiSurumAcamaz]: belge
+     * biçim 2 (`DisaAktarma.bicimSurumu`), uygulamanın eski sürümleri bu dosyayı bütünüyle reddeder.
      */
     data class Yapildi(
         val dosya: String,
@@ -277,6 +318,8 @@ sealed class YedekSonucu {
         val silinen: Int,
         val retDisarida: Int = 0,
         val sinirAsiyor: Boolean = false,
+        val bellekAsiyor: Boolean = false,
+        val eskiSurumAcamaz: Boolean = false,
     ) : YedekSonucu()
 
     data class Basarisiz(val sorun: YedekSorunu) : YedekSonucu()
@@ -307,19 +350,20 @@ class OtomatikYedekMetinleri(private val dilim: ZoneId) {
     fun uyarilar(d: YedekDurumu): List<String> = buildList {
         if (d.sonBasariliMs == null) return@buildList
         if (d.sonRetDisarida > 0) add(retDisarida(d.sonRetDisarida))
-        if (d.sonSinirAsiyor) add(sinirMetni)
+        if (d.sonSinirAsiyor) add(sinirMetni) else if (d.sonBellekAsiyor) add(AktarmaMetinleri.BELLEK_YETMEYEBILIR)
     }
 
     /** Bildirimin başlığı ve metni. [gunOnce]: `OtomatikYedekPlani.gunOnce`. */
     fun bildirim(b: YedekBildirimi, gunOnce: Int?): Pair<String, String> = when (b) {
         is YedekBildirimi.Sorun -> "Otomatik yedek alınamıyor" to "${sorun(b.sorun)} ${gunOnce(gunOnce)}"
         YedekBildirimi.SinirAsiyor -> "Yedek geri yüklenemeyecek kadar büyük" to sinirMetni
+        YedekBildirimi.BellekAsiyor -> "Yedek bu telefonda açılamayabilir" to AktarmaMetinleri.BELLEK_YETMEYEBILIR
     }
 
     private fun retDisarida(n: Int) =
         "Gönderilemeyenler listesindeki $n değişiklik yedeğe girmedi; önce onları düzeltin ya da atın."
 
-    private val sinirMetni = "Yedek yazıldı, ancak bu uygulama sürümünün içe aktarma sınırını aşıyor; bu sürümle geri yüklenemez."
+    private val sinirMetni = AktarmaMetinleri.SINIR_ASIYOR
 
     /** Son denemenin hatası; yoksa `null`. */
     fun sonHata(d: YedekDurumu): String? {
@@ -346,7 +390,8 @@ class OtomatikYedekMetinleri(private val dilim: ZoneId) {
         is YedekSonucu.Yapildi -> buildList {
             add("${s.kayit} kayıt yedeğe yazıldı: ${s.dosya}")
             if (s.retDisarida > 0) add(retDisarida(s.retDisarida))
-            if (s.sinirAsiyor) add(sinirMetni)
+            if (s.sinirAsiyor) add(sinirMetni) else if (s.bellekAsiyor) add(AktarmaMetinleri.BELLEK_YETMEYEBILIR)
+            if (s.eskiSurumAcamaz) add(AktarmaMetinleri.ESKI_SURUM_ACAMAZ)
         }.joinToString("\n")
         is YedekSonucu.Basarisiz -> sorun(s.sorun)
     }

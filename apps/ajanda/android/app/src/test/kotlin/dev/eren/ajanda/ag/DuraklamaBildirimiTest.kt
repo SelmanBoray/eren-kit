@@ -21,9 +21,13 @@ class DuraklamaBildirimiTest {
 
     private var gecis: GecisOzeti? = ozet(GecisNedeni.DEPO_DEGISTI, 1_000)
     private var bekliyor = false
+    private var planIzi = "plan-1"
+    private var eslesme: String? = "eslesti:cihaz-1"
     private var gorunur = false
     private var izin = true
     private var saklanan: Long? = null
+    private var saklananPlan: String? = null
+    private var saklananEslesme: String? = null
     private val gosterilen = mutableListOf<GecisMetni>()
     private var kaldirilan = 0
     private var cekirdekHatasi: Exception? = null
@@ -32,7 +36,14 @@ class DuraklamaBildirimiTest {
     private val b = DuraklamaBildirimi(
         cekirdek = object : DuraklamaCekirdegi {
             override fun sonGecis(): GecisOzeti? { cekirdekHatasi?.let { throw it }; return gecis }
-            override fun birlestirmeBekliyor() = bekliyor
+            override fun bekleyenPlan() = if (bekliyor) planIzi else null
+            override fun eslesme() = eslesme
+        },
+        duraklama = object : GosterilenDuraklama {
+            override fun plan() = saklananPlan
+            override fun planYaz(iz: String) { saklananPlan = iz }
+            override fun eslesme() = saklananEslesme
+            override fun eslesmeYaz(kimlik: String) { saklananEslesme = kimlik }
         },
         gosterilen = object : GosterilenGecis {
             override fun oku() = saklanan
@@ -106,22 +117,97 @@ class DuraklamaBildirimiTest {
         assertEquals(1, gosterilen.size)
     }
 
+    /** k5: arayüz geçişi gösterdiyse geçiş metni yinelenmez, ama duran eşitleme eşleşme başına bir kez söylenir. */
     @Test
-    fun arayuzGosterdiyseYinelenmez() {
+    fun arayuzGosterdiyseGecisYinelenmezDuraklamaBirKez() {
         saklanan = 1_000
         b.arkaPlanBitti(ArkaPlanSonucu.YEREL_KIP)
-        assertTrue(gosterilen.isEmpty())
+        b.arkaPlanBitti(ArkaPlanSonucu.YEREL_KIP)
+        assertEquals(listOf(DuraklamaBildirimi.ESITLEME_BEKLIYOR), gosterilen)
+        assertEquals(1_000L, saklanan)
     }
 
     @Test
-    fun gecisYoksaYaDaBaskaSonuctaBildirimYok() {
+    fun eslesmeYoksaYaDaBaskaSonuctaBildirimYok() {
         gecis = null
+        eslesme = null
         b.arkaPlanBitti(ArkaPlanSonucu.YEREL_KIP)
         gecis = ozet(GecisNedeni.DEPO_DEGISTI, 5)
+        eslesme = "eslesti:cihaz-1"
         for (s in ArkaPlanSonucu.entries - ArkaPlanSonucu.YEREL_KIP) b.arkaPlanBitti(s)
         assertTrue(gosterilen.isEmpty())
         // Eşitlenince ya da eşleşme kalkınca duraklama bildirimi kalkar.
         assertEquals(2, kaldirilan)
+    }
+
+    /** k5: ilk eşleşmede geçiş yok; duran eşitleme eşleşme başına bir kez, yeni eşleşmede yeniden. */
+    @Test
+    fun ilkEslesmedeGecisYokkenDeBirKezBildirilir() {
+        gecis = null
+        repeat(3) { b.arkaPlanBitti(ArkaPlanSonucu.YEREL_KIP) }
+        assertEquals(listOf(DuraklamaBildirimi.ESITLEME_BEKLIYOR), gosterilen)
+        assertEquals("eslesti:cihaz-1", saklananEslesme)
+        assertNull(saklanan)
+        eslesme = "eslesti:cihaz-2"
+        b.arkaPlanBitti(ArkaPlanSonucu.YEREL_KIP)
+        assertEquals(2, gosterilen.size)
+        // İzin yoksa saklanmaz, izin gelince gösterilir.
+        izin = false
+        eslesme = "bekliyor:10.0.0.2:8443"
+        b.arkaPlanBitti(ArkaPlanSonucu.YEREL_KIP)
+        assertEquals("eslesti:cihaz-2", saklananEslesme)
+        izin = true
+        b.arkaPlanBitti(ArkaPlanSonucu.YEREL_KIP)
+        assertEquals(3, gosterilen.size)
+    }
+
+    /** k5: koparmadan sonra yeniden eşleşme; koparma geçişini arayüz göstermişti. */
+    @Test
+    fun koparmadanSonraYenidenEslesmeBildirilir() {
+        gecis = ozet(GecisNedeni.KOPARMA, 7_000)
+        saklanan = 7_000
+        b.arkaPlanBitti(ArkaPlanSonucu.YEREL_KIP)
+        assertEquals(listOf(DuraklamaBildirimi.ESITLEME_BEKLIYOR), gosterilen)
+        // Arayüz göstermemişse koparma geçişinin kendi metni ("yeniden bağlanma tamamlanmadı"), sonra yinelenmez.
+        gosterilen.clear()
+        saklanan = null
+        saklananEslesme = null
+        repeat(2) { b.arkaPlanBitti(ArkaPlanSonucu.YEREL_KIP) }
+        assertEquals(1, gosterilen.size)
+        assertTrue(gosterilen[0].govde.contains("yeniden bağlanma tamamlanmadı"))
+        assertEquals(7_000L, saklanan)
+        assertEquals("eslesti:cihaz-1", saklananEslesme)
+    }
+
+    /** k5: onay bekleyen her plan bir kez; geçiş yoksa ya da gösterilmişse de. Plan düşünce yinelenmez. */
+    @Test
+    fun onayBekleyenHerPlanBirKez() {
+        gecis = null
+        bekliyor = true
+        repeat(2) { b.arkaPlanBitti(ArkaPlanSonucu.YEREL_KIP) }
+        assertEquals(listOf(DuraklamaBildirimi.ONAY_BEKLIYOR), gosterilen)
+        assertEquals("plan-1", saklananPlan)
+        // Yeni bağlanmada yeni plan: yeniden bir kez.
+        planIzi = "plan-2"
+        repeat(2) { b.arkaPlanBitti(ArkaPlanSonucu.YEREL_KIP) }
+        assertEquals(2, gosterilen.size)
+        // Bağlantı kapanınca plan düşer: aynı eşleşmenin duraklaması söylenmiş sayılır.
+        bekliyor = false
+        b.arkaPlanBitti(ArkaPlanSonucu.YEREL_KIP)
+        assertEquals(2, gosterilen.size)
+        // Gösterilmiş geçişle de plan bildirilir (geçişin metniyle).
+        gecis = ozet(GecisNedeni.DEPO_DEGISTI, 9_000)
+        saklanan = 9_000
+        bekliyor = true
+        planIzi = "plan-3"
+        b.arkaPlanBitti(ArkaPlanSonucu.YEREL_KIP)
+        assertEquals("Birleştirme onayınızı bekliyor", gosterilen.last().baslik)
+        assertEquals(3, gosterilen.size)
+        // Görünürken hiçbiri.
+        gorunur = true
+        planIzi = "plan-4"
+        b.arkaPlanBitti(ArkaPlanSonucu.YEREL_KIP)
+        assertEquals(3, gosterilen.size)
     }
 
     @Test
@@ -140,5 +226,11 @@ class DuraklamaBildirimiTest {
             assertFalse(pc.containsMatchIn(m.baslik + m.govde))
             assertTrue(m.satirlar.isNotEmpty())
         }
+        for (m in listOf(DuraklamaBildirimi.ONAY_BEKLIYOR, DuraklamaBildirimi.ESITLEME_BEKLIYOR)) {
+            assertFalse(pc.containsMatchIn(m.baslik + m.govde))
+            assertTrue(m.satirlar.isNotEmpty())
+        }
+        // Geçişsiz onay metni geçişlininkiyle aynı.
+        assertEquals(GecisMetinleri.duraklama(ozet(GecisNedeni.KOPARMA, 1), true), DuraklamaBildirimi.ONAY_BEKLIYOR)
     }
 }

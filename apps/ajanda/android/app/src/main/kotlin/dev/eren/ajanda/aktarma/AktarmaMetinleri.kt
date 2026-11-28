@@ -29,7 +29,11 @@ open class AktarmaMetinleri(private val dilim: ZoneId) {
 
     fun tarih(ms: Long): String = tarihBicimi.format(Instant.ofEpochMilli(ms).atZone(dilim))
 
-    fun disaSonucu(d: DisaAktarma): String = buildList {
+    /**
+     * [bellekAsiyor]: belge içe aktarma sınırının altında ama bu telefonda açmaya gereken bellek uygulamanın en iyi
+     * durumda ayırabileceğini aşıyor (`YedekKabi.buTelefondaAcmaButcesi`); sınır aşılıyorsa yok sayılır.
+     */
+    fun disaSonucu(d: DisaAktarma, bellekAsiyor: Boolean = false): String = buildList {
         add(
             if (d.silinmis > 0) "${d.kayit} kayıt yedeğe yazıldı (${d.silinmis} silinmiş kayıt dahil)."
             else "${d.kayit} kayıt yedeğe yazıldı.",
@@ -42,9 +46,8 @@ open class AktarmaMetinleri(private val dilim: ZoneId) {
         if (d.retListesinde > 0) {
             add("Gönderilemeyenler listesindeki ${d.retListesinde} değişiklik yedeğe girmedi; önce onları düzeltin ya da atın.")
         }
-        if (d.iceAktarmaSiniriniAsiyor) {
-            add("Yedek yazıldı, ancak bu uygulama sürümünün içe aktarma sınırını aşıyor; bu sürümle geri yüklenemez.")
-        }
+        if (d.iceAktarmaSiniriniAsiyor) add(SINIR_ASIYOR) else if (bellekAsiyor) add(BELLEK_YETMEYEBILIR)
+        if (d.bicimSurumu == 2L) add(ESKI_SURUM_ACAMAZ)
     }.joinToString("\n")
 
     fun onizleme(p: IceAktarmaOnizlemesi, degisti: Boolean): String = buildList {
@@ -90,6 +93,9 @@ open class AktarmaMetinleri(private val dilim: ZoneId) {
                 add("• Yedekteki ${p.retListesineGelecek} gönderilemeyen değişiklik gönderilemeyenler listesine eklenecek")
             }
             if (p.retGecersiz > 0) add("• Yedekteki ${p.retGecersiz} gönderilemeyen değişiklik okunamadı, alınmayacak")
+            if (p.retBayat > 0) {
+                add("• Yedekteki ${p.retBayat} gönderilemeyen değişiklik alınmayacak (kaydı bu telefonda yedekten sonra değişmiş)")
+            }
         }
         addAll(satirlar)
         val kayitVar = p.yeni + p.guncellenecek > 0
@@ -128,15 +134,15 @@ open class AktarmaMetinleri(private val dilim: ZoneId) {
         if (p.sinirAsan > 0) add("${p.sinirAsan} kayıt sınır dolduğu için eklenmedi.")
         if (p.taslakGonderilmeyecek > 0) add("${p.taslakGonderilmeyecek} taslak alınmadı; Eren servisi taslak kabul etmez.")
         if (p.retGecersiz > 0) add("${p.retGecersiz} gönderilemeyen değişiklik okunamadığı için alınmadı.")
+        if (p.retBayat > 0) add("${p.retBayat} gönderilemeyen değişiklik alınmadı; kaydı bu telefonda yedekten sonra değişmişti.")
     }.joinToString("\n")
 
     fun hata(e: Throwable, yazarken: Boolean): String = when (sorunu(e, yazarken)) {
         AktarmaSorunu.GECERSIZ -> "Bu dosya bir ajanda yedeği değil ya da bozuk."
         AktarmaSorunu.DAHA_YENI -> "Bu yedek uygulamanın daha yeni bir sürümüyle yapılmış. İçe aktarmak için uygulamayı güncelleyin."
-        AktarmaSorunu.COK_BUYUK -> "Dosya çok büyük; bir ajanda yedeği bu kadar büyük olamaz."
+        AktarmaSorunu.COK_BUYUK -> COK_BUYUK_METNI
         AktarmaSorunu.BELLEK -> "Dosya çok büyük ya da bozuk; telefonun belleği açmaya yetmedi."
-        AktarmaSorunu.BELLEK_BUTCESI ->
-            "Dosya, telefonun şu an ayırabildiği bellek için çok büyük; açılmadı. Uygulamayı kapatıp yeniden açarak deneyin."
+        AktarmaSorunu.BELLEK_BUTCESI -> BELLEK_BUTCESI_METNI
         AktarmaSorunu.EK_BOZUK -> "Yedekteki ek dosyalarından biri bozuk; yedek kullanılamıyor."
         AktarmaSorunu.OKUNAMADI -> "Dosya okunamadı. Yeniden deneyin."
         AktarmaSorunu.YAZILAMADI -> "Dosya yazılamadı. Başka bir yer seçip yeniden deneyin."
@@ -145,9 +151,31 @@ open class AktarmaMetinleri(private val dilim: ZoneId) {
     }
 
     companion object {
+        /** Yazılan belge bu sürümün içe aktarma sınırını aşıyor (`DisaAktarma.iceAktarmaSiniriniAsiyor`). */
+        const val SINIR_ASIYOR = "Yedek yazıldı, ancak bu uygulama sürümünün içe aktarma sınırını aşıyor; bu sürümle geri yüklenemez."
+
+        /** Yazılan belge sınırın altında ama bu telefonun açma belleğini aşıyor (`YedekKabi.buTelefondaAcmaButcesi`). */
+        const val BELLEK_YETMEYEBILIR = "Yedek yazıldı, ancak bu telefonda geri yüklemeye uygulamanın belleği yetmeyebilir; " +
+            "daha çok belleği olan bir cihazda açılabilir."
+
+        /** Belge biçim 2 (`DisaAktarma.bicimSurumu`): biçim 1 okuyan eski uygulama dosyayı bütünüyle reddeder. */
+        const val ESKI_SURUM_ACAMAZ = "Bu yedek uygulamanın eski sürümleriyle açılamaz; bu ya da daha yeni bir sürümle geri yüklenir."
+
+        /**
+         * Biçim sınırı (kap ya da çekirdeğin belge sınırı). Dosya bu uygulamanın kendi yedeği olabilir: dışa aktarma
+         * sınırı aşan belgeyi de yazar.
+         */
+        const val COK_BUYUK_METNI = "Dosya, bu uygulama sürümünün açabileceğinden büyük; açılmadı. Bu uygulamanın büyük bir " +
+            "yedeği olabilir (uygulama sınırı aşan yedeği de yazar), ancak bu sürümle geri yüklenemez."
+
+        /** Yığın bütçesi o an yetmedi ([YedekHatasi.BellekYetmez]); dosya bozuk sayılmaz. */
+        const val BELLEK_BUTCESI_METNI = "Dosya bu telefonda şu an açılamıyor: uygulamanın ayırabildiği bellek yetmedi. " +
+            "Uygulamayı kapatıp yeniden açarak deneyin; yine olmazsa daha çok belleği olan bir cihazda açılabilir."
+
         /**
          * Uygulanınca bir şey yazılacak mı: kayıt (yeni ya da güncellenecek) ya da ret listesine gelecek girdi
-         * (`retListesineGelecek`: kayıtlar aynı olsa da yazılır). Yoksa onay istenmez.
+         * (`retListesineGelecek`: kayıtlar aynı olsa da yazılır). Yoksa onay istenmez. Bayat ret girdileri
+         * (`retBayat`) yazılmaz: yalnız onlar varsa onay sorulmaz.
          */
         fun yapilacakVar(p: IceAktarmaOnizlemesi): Boolean = p.yeni + p.guncellenecek + p.retListesineGelecek > 0
     }

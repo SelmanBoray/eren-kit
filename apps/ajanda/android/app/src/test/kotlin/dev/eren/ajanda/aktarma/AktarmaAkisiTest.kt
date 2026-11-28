@@ -354,7 +354,7 @@ class AktarmaAkisiTest {
     fun hataMetinleri() {
         val gecersiz = "Bu dosya bir ajanda yedeği değil ya da bozuk."
         val dahaYeni = "Bu yedek uygulamanın daha yeni bir sürümüyle yapılmış. İçe aktarmak için uygulamayı güncelleyin."
-        val buyuk = "Dosya çok büyük; bir ajanda yedeği bu kadar büyük olamaz."
+        val buyuk = AktarmaMetinleri.COK_BUYUK_METNI
 
         // Zip değil.
         assertEquals(gecersiz, akis.dosyaOku { ByteArrayInputStream("düz metin".toByteArray()) }.metin)
@@ -537,12 +537,12 @@ class AktarmaAkisiTest {
         assertTrue(a.metin, a is AktarmaAkisi.Adim.Bilgi)
         assertTrue(a.metin, a.metin.contains("geri yüklenemez"))
         // Aynı sürümde geri okunmaz: biçim sınırı.
-        assertEquals("Dosya çok büyük; bir ajanda yedeği bu kadar büyük olamaz.", akis.dosyaOku { ByteArrayInputStream(cikti.toByteArray()) }.metin)
+        assertEquals(AktarmaMetinleri.COK_BUYUK_METNI, akis.dosyaOku { ByteArrayInputStream(cikti.toByteArray()) }.metin)
     }
 
     @Test
     fun cekirdeginCokBuyukNedeniOnekleTaninir() {
-        val buyuk = "Dosya çok büyük; bir ajanda yedeği bu kadar büyük olamaz."
+        val buyuk = AktarmaMetinleri.COK_BUYUK_METNI
         // Çekirdeğin gerçek nedenleri (`motor/aktarma.rs`): sayı taşır, önekle karşılaştırılır.
         for (neden in listOf("çok büyük (en çok 64 MiB)", "çok büyük (kayıtlar dışı en çok 4 MiB)")) {
             assertEquals(neden, buyuk, metinler.hata(CekirdekHatasi.GecersizGirdi("belge", neden), yazarken = false))
@@ -557,10 +557,102 @@ class AktarmaAkisiTest {
     fun bellekButcesiAsilincaAyriMetin() {
         val m = metinler.hata(YedekHatasi.BellekYetmez(), yazarken = false)
         assertEquals(
-            "Dosya, telefonun şu an ayırabildiği bellek için çok büyük; açılmadı. Uygulamayı kapatıp yeniden açarak deneyin.",
+            "Dosya bu telefonda şu an açılamıyor: uygulamanın ayırabildiği bellek yetmedi. Uygulamayı kapatıp yeniden " +
+                "açarak deneyin; yine olmazsa daha çok belleği olan bir cihazda açılabilir.",
             m,
         )
         assertFalse(Regex("\\bPC\\b").containsMatchIn(m))
+        // Bozuk ya da sahte dosya denmez.
+        assertFalse(m.contains("bozuk"))
+    }
+
+    /** T5: kendi büyük yedeğinin metni dosyanın bu uygulamanın yedeği olabileceğini kabul eder. */
+    @Test
+    fun sinirAsanDosyaninMetniKendiYedegiOlabilirDer() {
+        val m = metinler.hata(YedekHatasi.CokBuyuk(), yazarken = false)
+        assertEquals(
+            "Dosya, bu uygulama sürümünün açabileceğinden büyük; açılmadı. Bu uygulamanın büyük bir yedeği olabilir " +
+                "(uygulama sınırı aşan yedeği de yazar), ancak bu sürümle geri yüklenemez.",
+            m,
+        )
+        assertFalse(m.contains("olamaz"))
+        assertFalse(Regex("\\bPC\\b").containsMatchIn(m))
+    }
+
+    /** T5: ikinci eşik, bu telefonun en iyi durumdaki açma bütçesi (yığın - pay - taban). */
+    @Test
+    fun buTelefonunAcmaButcesiVeKabinIstedigi() {
+        val mib = 1L shl 20
+        assertEquals(64 * mib, YedekKabi.buTelefondaAcmaButcesi(128 * mib))
+        assertEquals(112 * mib, YedekKabi.buTelefondaAcmaButcesi(192 * mib))
+        assertEquals(160 * mib, YedekKabi.buTelefondaAcmaButcesi(256 * mib))
+        assertEquals(0L, YedekKabi.buTelefondaAcmaButcesi(48 * mib))
+        assertEquals(Long.MAX_VALUE, YedekKabi.buTelefondaAcmaButcesi(Long.MAX_VALUE))
+        // Belge 2 kat; her ek o ana dek tutulan + 2 kat ek; aynı özetli ek bir kez.
+        val ek = { o: String, b: Long -> dev.eren.ajanda.cekirdek.EkDosyasi(o, b, "image/png", "ekler/$o") }
+        assertEquals(20L, YedekKabi.acmaBellegi(10, emptyList()))
+        assertEquals(10L + 4 + 2 * 50, YedekKabi.acmaBellegi(10, listOf(ek("a", 4), ek("b", 50), ek("a", 4))))
+        // 128 MiB'lık telefonda 33 MiB'lık belge açılamaz, 31 MiB'lık açılır.
+        val disa = { n: Int -> DisaAktarma("x".repeat(n), 1, 0, 0, 0, CalismaKipi.YEREL, emptyList()) }
+        assertTrue(YedekKabi.buTelefondaAcilamayabilir(disa((33 * mib).toInt()), 64 * mib))
+        assertFalse(YedekKabi.buTelefondaAcilamayabilir(disa((31 * mib).toInt()), 64 * mib))
+        // Sınır aşılıyorsa bu uyarı yok (sınırınki daha güçlü).
+        assertFalse(YedekKabi.buTelefondaAcilamayabilir(disa(100).copy(iceAktarmaSiniriniAsiyor = true), 1))
+        assertEquals(6L, YedekKabi.utf8Boyu("aç€"))
+    }
+
+    /** T5 ve biçim 2: dışa aktarma sonucu bu telefonun belleğini ve eski sürümleri söyler. */
+    @Test
+    fun disaAktarBellekVeEskiSurumUyarisi() {
+        var butce = 1L
+        val a = AktarmaAkisi(yuz, metinler, acmaButcesi = { butce })
+        yuz.disa = DisaAktarma(belge, 3, 0, 0, 0, CalismaKipi.YEREL, emptyList(), retYedekte = 2, bicimSurumu = 2)
+        val s = a.disaAktar({ ByteArrayOutputStream() })
+        assertTrue(s.metin, s is AktarmaAkisi.Adim.Bilgi)
+        assertEquals(
+            "3 kayıt yedeğe yazıldı.\n" +
+                "Gönderilemeyenler listesindeki 2 değişiklik de yedekte; içe aktarılınca o listeye geri gelir.\n" +
+                "Yedek yazıldı, ancak bu telefonda geri yüklemeye uygulamanın belleği yetmeyebilir; daha çok belleği olan bir cihazda açılabilir.\n" +
+                "Bu yedek uygulamanın eski sürümleriyle açılamaz; bu ya da daha yeni bir sürümle geri yüklenir.",
+            s.metin,
+        )
+        temiz(s)
+        // Sınır aşılıyorsa yalnız sınır; bütçe yetiyorsa bellek cümlesi yok; biçim 1'de sürüm cümlesi yok.
+        yuz.disa = DisaAktarma(belge, 3, 0, 0, 0, CalismaKipi.YEREL, emptyList(), iceAktarmaSiniriniAsiyor = true, bicimSurumu = 1)
+        assertEquals("3 kayıt yedeğe yazıldı.\n" + AktarmaMetinleri.SINIR_ASIYOR, a.disaAktar({ ByteArrayOutputStream() }).metin)
+        butce = Long.MAX_VALUE
+        yuz.disa = DisaAktarma(belge, 3, 0, 0, 0, CalismaKipi.YEREL, emptyList(), bicimSurumu = 1)
+        assertEquals("3 kayıt yedeğe yazıldı.", a.disaAktar({ ByteArrayOutputStream() }).metin)
+        // Bütçe okunamazsa yalnız uyarı eksik kalır; yazıldı denir.
+        val b = AktarmaAkisi(yuz, metinler, acmaButcesi = { throw IllegalStateException("x") })
+        assertEquals("3 kayıt yedeğe yazıldı.", b.disaAktar({ ByteArrayOutputStream() }).metin)
+    }
+
+    /** Bayat ret girdileri önizlemede bir cümleyle söylenir; yalnız onlar varsa onay sorulmaz. */
+    @Test
+    fun bayatRetGirdileriSoylenirYalnizOnlarVarsaOnaySorulmaz() {
+        yuz.onizlemeler += plan(retGelecek = 1).copy(retBayat = 2)
+        yuz.iceSonuclari += IceAktarmaSonucu(true, plan(retGelecek = 1).copy(retBayat = 2))
+        val o = akis.dosyaOku { ByteArrayInputStream(kap()) }
+        assertTrue(o.metin, o is AktarmaAkisi.Adim.Onay)
+        assertTrue(o.metin, o.metin.contains("• Yedekteki 2 gönderilemeyen değişiklik alınmayacak (kaydı bu telefonda yedekten sonra değişmiş)\n"))
+        temiz(o)
+        val s = akis.onayla(o as AktarmaAkisi.Adim.Onay)
+        assertTrue(s.metin, s.metin.endsWith("2 gönderilemeyen değişiklik alınmadı; kaydı bu telefonda yedekten sonra değişmişti."))
+        temiz(s)
+
+        // Kayıtlar aynı, yalnız bayat ret girdileri: yazılacak bir şey yok, onay sorulmaz.
+        val y = SahteYuz()
+        y.onizlemeler += plan(yeni = 0, guncellenecek = 0).copy(retBayat = 3)
+        val b = AktarmaAkisi(y, metinler).dosyaOku { ByteArrayInputStream(kap()) }
+        assertTrue(b.metin, b is AktarmaAkisi.Adim.Bilgi)
+        assertTrue(b.metin, b.metin.contains("• Yedekteki 3 gönderilemeyen değişiklik alınmayacak"))
+        assertTrue(b.metin, b.metin.endsWith("Telefona eklenecek ya da güncellenecek kayıt yok."))
+        assertFalse(AktarmaMetinleri.yapilacakVar(plan(yeni = 0, guncellenecek = 0).copy(retBayat = 3)))
+        assertEquals(listOf("iceAktarmaOnizlemesi"), y.cagrilar)
+        // Sıfırsa cümle yok.
+        assertFalse(metinler.onizleme(plan(), false).contains("değişmiş"))
+        assertFalse(metinler.iceSonucu(plan()).contains("değişmişti"))
     }
 
     @Test

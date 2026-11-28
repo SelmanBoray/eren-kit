@@ -267,6 +267,12 @@ class OtomatikYedekTest {
         var okurkenBoz: Int? = null
         /** Bir dosya yazmaya açılınca (adıyla). */
         var yazmaAcildi: (String) -> Unit = {}
+        /**
+         * Drive benzeri: yeniden adlandırmada kimlik korunur, ama yeniden adlandırmadan sonraki ilk liste önbellekten
+         * gelir (dosya eski adıyla görünür).
+         */
+        var listeOnbellekli = false
+        private val bayatAdlar = HashMap<String, String>()
 
         fun adlar() = dosyalar.values.map { it.ad }.sorted()
         fun ekle(ad: String, veri: ByteArray = byteArrayOf(1)) { dosyalar["d${sayac++}"] = Dosya(ad, veri) }
@@ -282,7 +288,7 @@ class OtomatikYedekTest {
 
         override fun listele(): List<KlasorDosyasi> {
             denetle()
-            return dosyalar.map { (k, d) -> KlasorDosyasi(d.ad, k) }
+            return dosyalar.map { (k, d) -> KlasorDosyasi(bayatAdlar[k] ?: d.ad, k) }.also { bayatAdlar.clear() }
         }
 
         override fun olustur(ad: String, mime: String): KlasorDosyasi {
@@ -322,6 +328,7 @@ class OtomatikYedekTest {
         override fun yenidenAdlandir(d: KlasorDosyasi, yeniAd: String): KlasorDosyasi? {
             if (!adlandirmaVar) return null
             val f = dosyalar[d.kimlik] ?: return null
+            if (listeOnbellekli) bayatAdlar[d.kimlik] = f.ad
             f.ad = if (adlandirmaEkKoyar) "$yeniAd (1)" else bosAd(yeniAd)
             return KlasorDosyasi(f.ad, d.kimlik)
         }
@@ -834,5 +841,319 @@ class OtomatikYedekTest {
         assertNull(m.sonHata(acik))
         assertNotNull(m.sonHata(acik.copy(sonHata = YedekSorunu.ERISIM_YOK)))
         assertEquals(YedekSorunu.entries.size, YedekSorunu.entries.map { m.sorun(it) }.toSet().size)
+        // Yeni uyarılar ve bildirimler.
+        val yeni = listOf(
+            m.sonuc(YedekSonucu.Yapildi(bugun, 3, 0, bellekAsiyor = true, eskiSurumAcamaz = true)),
+            m.bildirim(YedekBildirimi.BellekAsiyor, 0).first, m.bildirim(YedekBildirimi.BellekAsiyor, 0).second,
+        ) + m.uyarilar(acik.copy(sonBasariliMs = 1, sonBellekAsiyor = true))
+        yeni.forEach { assertFalse(it, pc.containsMatchIn(it)); assertTrue(it.isNotBlank()) }
+    }
+
+    // --- T3: silinen yedek işi yeniden kurulur (ekrana bağlı değil) ---------------------------------
+
+    private class SahtePlanlayici : YedekIsPlanlayici {
+        var is_: KuruluYedekIsi? = null
+        val kurulan = mutableListOf<Long>()
+        var kaldirilan = 0
+        override fun kurulu() = is_
+        override fun kur(gecikmeMs: Long) {
+            kurulan += gecikmeMs
+            is_ = KuruluYedekIsi(periyodik = false, kalici = true)
+        }
+        override fun kaldir() {
+            kaldirilan++
+            is_ = null
+        }
+    }
+
+    /**
+     * T3: zorla durdurma ya da pil yöneticisi işi siler; [YedekIsDenetcisi.denetle] (uygulama açılışı, eşitleme
+     * işi, açılış alıcısı) onu kurar, kurulu olana dokunmaz, çalışanı durdurmaz.
+     */
+    @Test
+    fun silinenYedekIsiDenetimdeYenidenKurulur() {
+        val p = SahtePlanlayici()
+        var calisiyor = false
+        var yazilamadi = false
+        val d = YedekIsDenetcisi(ayarlar, p, { simdi }, { dilim }, { calisiyor }, { yazilamadi })
+        // Açık, iş yok (silindi): kurulur; zamanı gelmişse en kısa gecikmeyle.
+        d.denetle()
+        assertEquals(listOf(OtomatikYedekPlani.ASGARI_GECIKME_MS), p.kurulan)
+        // Kurulu tek seferlik kalıcı iş: zamanlamasına dokunulmaz (her açılışta çağrılır).
+        repeat(3) { d.denetle() }
+        assertEquals(1, p.kurulan.size)
+        // Eski sürümün periyodik işi ya da kalıcı olmayan iş tek seferlik kalıcıya çevrilir.
+        p.is_ = KuruluYedekIsi(periyodik = true, kalici = true)
+        d.denetle()
+        p.is_ = KuruluYedekIsi(periyodik = false, kalici = false)
+        d.denetle()
+        assertEquals(3, p.kurulan.size)
+        // Çalışan işe dokunulmaz (yeniden kurmak onu durdururdu); bitince sonrakiniKur kurar.
+        p.is_ = null
+        calisiyor = true
+        d.denetle()
+        d.yenidenKur()
+        assertEquals(3, p.kurulan.size)
+        d.sonrakiniKur()
+        assertEquals(4, p.kurulan.size)
+        calisiyor = false
+        // Bugün yedek alındıysa yarının başına.
+        ayarlar.d = acik.copy(sonBasariliMs = an(28, 8))
+        p.is_ = null
+        d.denetle()
+        assertEquals(an(29, 0) - simdi, p.kurulan.last())
+        // k2: ayar diske yazılamadıysa en az 6 saat (soğuk süreç her dakika denemesin).
+        ayarlar.d = acik.copy(sonHata = YedekSorunu.YER_YOK, sonHataMs = simdi, ardisikHata = 1)
+        d.yenidenKur()
+        assertEquals(30 * dk, p.kurulan.last())
+        yazilamadi = true
+        d.yenidenKur()
+        assertEquals(OtomatikYedekPlani.AYAR_YAZILAMADI_BEKLEMESI_MS, p.kurulan.last())
+        assertEquals(6 * 60 * dk, OtomatikYedekPlani.isGecikmesiMs(acik, simdi, dilim, ayarYazilamadi = true))
+        // Kapalıyken denetim dokunmaz; ayar değişince kaldırılır; klasörsüz açık iş de kaldırılır.
+        ayarlar.d = acik.copy(acik = false)
+        val n = p.kurulan.size
+        d.denetle()
+        assertEquals(n, p.kurulan.size)
+        assertEquals(0, p.kaldirilan)
+        d.yenidenKur()
+        assertEquals(1, p.kaldirilan)
+        ayarlar.d = YedekDurumu(acik = true)
+        d.denetle()
+        assertEquals(n, p.kurulan.size)
+        assertEquals(2, p.kaldirilan)
+    }
+
+    // --- k2: ayar yazılamazsa çağıran öğrenir ------------------------------------------------------
+
+    /** Bellekte `SharedPreferences`: platformunki gibi `commit` başarısız olsa da bellekteki değer değişir. */
+    private class SahteTercihler : android.content.SharedPreferences {
+        val m = HashMap<String, Any?>()
+        var commitSonucu = true
+
+        override fun getAll(): MutableMap<String, *> = m
+        override fun getString(key: String?, defValue: String?): String? = m[key] as String? ?: defValue
+        override fun getStringSet(key: String?, defValues: MutableSet<String>?): MutableSet<String>? = defValues
+        override fun getInt(key: String?, defValue: Int): Int = m[key] as Int? ?: defValue
+        override fun getLong(key: String?, defValue: Long): Long = m[key] as Long? ?: defValue
+        override fun getFloat(key: String?, defValue: Float): Float = defValue
+        override fun getBoolean(key: String?, defValue: Boolean): Boolean = m[key] as Boolean? ?: defValue
+        override fun contains(key: String?): Boolean = key in m
+        override fun registerOnSharedPreferenceChangeListener(l: android.content.SharedPreferences.OnSharedPreferenceChangeListener?) = Unit
+        override fun unregisterOnSharedPreferenceChangeListener(l: android.content.SharedPreferences.OnSharedPreferenceChangeListener?) = Unit
+
+        override fun edit(): android.content.SharedPreferences.Editor = object : android.content.SharedPreferences.Editor {
+            private val degisen = HashMap<String, Any?>()
+            private val silinen = HashSet<String>()
+            private fun koy(k: String?, v: Any?) = apply { degisen[k!!] = v }
+            override fun putString(key: String?, value: String?) = koy(key, value)
+            override fun putStringSet(key: String?, values: MutableSet<String>?) = koy(key, values)
+            override fun putInt(key: String?, value: Int) = koy(key, value)
+            override fun putLong(key: String?, value: Long) = koy(key, value)
+            override fun putFloat(key: String?, value: Float) = koy(key, value)
+            override fun putBoolean(key: String?, value: Boolean) = koy(key, value)
+            override fun remove(key: String?) = apply { silinen += key!! }
+            override fun clear() = apply { silinen += m.keys }
+            override fun commit(): Boolean {
+                apply()
+                return commitSonucu
+            }
+            override fun apply() {
+                silinen.forEach { m.remove(it) }
+                m.putAll(degisen)
+            }
+        }
+    }
+
+    @Test
+    fun ayarYazilamazsaCagiranOgrenirIsGeciktirilir() {
+        val t = SahteTercihler()
+        val a = TercihYedekAyarlari(t)
+        val d = acik.copy(sonBasariliMs = an(27), sonDosya = bugun, sonBellekAsiyor = true, bellekBildirildi = true)
+        a.degistir { d }
+        assertEquals(d, a.oku())
+        assertFalse(TercihYedekAyarlari.sonYazimBasarisiz)
+        t.commitSonucu = false
+        try {
+            a.degistir { it.copy(ardisikHata = 2) }
+            org.junit.Assert.fail("IOException bekleniyordu")
+        } catch (_: IOException) {
+        }
+        assertTrue(TercihYedekAyarlari.sonYazimBasarisiz)
+        // Deneme sonucu saklanamasa da yedek sonucu döner; günlüğe yazılır.
+        val y = OtomatikYedekci(kaynak, { klasor }, a, { simdi }, { dilim }, gunluk, { kurulum }, bildirici)
+        assertTrue(y.simdiYedekle() is YedekSonucu.Yapildi)
+        assertTrue(gunluk.satirlar.any { it.startsWith("yedek sonucu saklanamadı") })
+        t.commitSonucu = true
+        a.degistir { it }
+        assertFalse(TercihYedekAyarlari.sonYazimBasarisiz)
+    }
+
+    // --- k1: kurulum kimliği yalnız dosya yoksa üretilir ---------------------------------------------
+
+    @Test
+    fun kurulumKimligiYalnizDosyaYoksaUretilir() {
+        val dizin = java.nio.file.Files.createTempDirectory("kurulum").toFile()
+        try {
+            val f = java.io.File(dizin, "otomatik_yedek_kurulum")
+            var uretilen = 0
+            val uret = { uretilen++; "%08x".format(uretilen) }
+            assertEquals("00000001", OtomatikYedek.kurulumDosyasi(f, uret, gunluk))
+            assertEquals("00000001", OtomatikYedek.kurulumDosyasi(f, uret, gunluk))
+            assertEquals(1, uretilen)
+            // Dosya var ama okunamıyor (burada dizin): yeni kimlik üretilmez, atar, dosyaya dokunulmaz.
+            val okunamaz = java.io.File(dizin, "okunamaz").apply { mkdirs() }
+            try {
+                OtomatikYedek.kurulumDosyasi(okunamaz, uret, gunluk)
+                org.junit.Assert.fail("IOException bekleniyordu")
+            } catch (_: IOException) {
+            }
+            assertTrue(okunamaz.isDirectory)
+            assertEquals(1, uretilen)
+            // İçeriği kimlik değilse (bozuk) yenisi yazılır.
+            f.writeText("bozuk")
+            assertEquals("00000002", OtomatikYedek.kurulumDosyasi(f, uret, gunluk))
+            assertEquals("00000002", f.readText())
+            assertEquals("00000002", OtomatikYedek.kurulumDosyasi(f, uret, gunluk))
+        } finally {
+            dizin.deleteRecursively()
+        }
+    }
+
+    // --- T4: liste önbellekten gelse de az önce yazılan yedek silinmez -------------------------------
+
+    /**
+     * T4: Drive benzeri sağlayıcı yeniden adlandırmada kimliği korur, sonraki listeyi önbellekten verir: yeni yedek
+     * eski geçici adıyla görünür. Eskiden yazmadan sonraki temizlik onu geçici sanıp siliyordu, sonuç yine
+     * `Yapildi`'ydı; günler sonra klasörde yalnız eski yedekler kalırdı.
+     */
+    @Test
+    fun onbellekliListedeAzOnceYazilanYedekSilinmez() {
+        klasor.listeOnbellekli = true
+        for (g in 15..28) {
+            simdi = an(g, 9)
+            val s = yedekci.gerekirseYedekle()
+            assertTrue("$g: $s", s is YedekSonucu.Yapildi)
+            assertTrue("$g", ad(an(g, 9)) in klasor.adlar())
+            gecerliYedek(ad(an(g, 9)))
+        }
+        assertEquals((22..28).map { ad(an(it, 9)) }, bizimkiler())
+        assertTrue(klasor.adlar().none { it.endsWith(OtomatikYedekPlani.GECICI_EK) })
+    }
+
+    @Test
+    fun kimligiKorunanSilinmezYazmadanSonraGeciciyeDokunulmaz() {
+        val yeni = KlasorDosyasi(ad(an(28, 9)) + ".yaziliyor", "yeni") // önbellekten eski adıyla
+        val artik = KlasorDosyasi(ad(an(27, 9)) + ".yaziliyor", "artik")
+        val eskiler = (20..27).map { KlasorDosyasi(ad(an(it, 9)), "e$it") }
+        val hepsi = eskiler + yeni + artik
+        val koru = ad(an(28, 9))
+        val sil = OtomatikYedekPlani.silinecekler(hepsi, kurulum, bugunGun, koru = koru, koruKimlikler = setOf("yeni"), geciciDahil = false)
+        // Bugünün günü korunanındır (listede o adla görünmese de): en yeni 6 eski gün kalır.
+        assertEquals(setOf("e20", "e21"), sil.map { it.kimlik }.toSet())
+        val geciciyle = OtomatikYedekPlani.silinecekler(hepsi, kurulum, bugunGun, koru = koru, koruKimlikler = setOf("yeni"))
+        assertEquals(setOf("e20", "e21", "artik"), geciciyle.map { it.kimlik }.toSet())
+        // Kimliği korunan, kalıba uyan başka bir adla görünse de silinmez.
+        val baskaAdla = KlasorDosyasi(ad(an(10, 9)), "yeni")
+        assertFalse(OtomatikYedekPlani.silinecekler(eskiler + baskaAdla, kurulum, bugunGun, koruKimlikler = setOf("yeni")).any { it.kimlik == "yeni" })
+    }
+
+    // --- k3: adlandırmasız sağlayıcıda doğrulanmış son dosya korunur ----------------------------------
+
+    private fun tamKap(): ByteArray = ByteArrayOutputStream().also { YedekKabi.yaz(it, bicim, kaynak.disa, EkDeposu.Yok) }.toByteArray()
+
+    /** Merkezi dizinin başladığı konum (`PK\u0001\u0002`): öncesi girdi sınırında kesik bir zip'tir. */
+    private fun merkeziDizinKonumu(z: ByteArray): Int =
+        (0 until z.size - 3).first { z[it] == 0x50.toByte() && z[it + 1] == 0x4b.toByte() && z[it + 2] == 1.toByte() && z[it + 3] == 2.toByte() }
+
+    /** k3: süreç son ada yazıp doğruladıktan sonra, iz silinmeden öldü: sonraki deneme sağlam son dosyayı silmez. */
+    @Test
+    fun izSilinmedenOlenSurecinSaglamSonDosyasiKorunur() {
+        val son = ad(an(27, 9))
+        val tam = tamKap()
+        klasor.ekle(son, tam)
+        klasor.ekle(OtomatikYedekPlani.geciciAd(son), tam)
+        ayarlar.d = acik.copy(yarimYazim = son)
+        assertTrue(yedekci.gerekirseYedekle() is YedekSonucu.Yapildi)
+        assertTrue(tam.contentEquals(klasor.veri(son)))
+        assertEquals(listOf(son, bugun), klasor.adlar())
+        assertNull(ayarlar.d.yarimYazim)
+        // Girdi sınırında kesik (merkezi dizini yok) dosya bütün sayılmaz: silinir.
+        val kesik = ad(an(26, 9))
+        klasor.ekle(kesik, tam.copyOf(merkeziDizinKonumu(tam)))
+        ayarlar.d = ayarlar.d.copy(yarimYazim = kesik)
+        simdi = an(29, 9)
+        assertTrue(yedekci.gerekirseYedekle() is YedekSonucu.Yapildi)
+        assertFalse(kesik in klasor.adlar())
+        assertNull(ayarlar.d.yarimYazim)
+    }
+
+    /** Doğrulama dosyanın sonunu da arar: girdi sınırında kesilip merkezi dizini düşen yazım yedek sayılmaz. */
+    @Test
+    fun merkeziDiziniDusenYazimDogrulanamaz() {
+        klasor.sessizKes = merkeziDizinKonumu(tamKap())
+        assertEquals(YedekSonucu.Basarisiz(YedekSorunu.DOGRULANAMADI), yedekci.gerekirseYedekle())
+        assertTrue(klasor.dosyalar.isEmpty())
+        // Tam kap geçer; kesiği ve sonuna eklenmiş açıklaması olan geçmez.
+        val tam = tamKap()
+        assertEquals(OtomatikYedekci.utf8Boyu(kaynak.disa.belge) to 0, OtomatikYedekci.butunlukDenetle(ByteArrayInputStream(tam), bicim))
+        for (bozuk in listOf(tam.copyOf(tam.size - 1), tam.copyOf(merkeziDizinKonumu(tam)))) {
+            try {
+                OtomatikYedekci.butunlukDenetle(ByteArrayInputStream(bozuk), bicim)
+                org.junit.Assert.fail("doğrulanamadı bekleniyordu")
+            } catch (_: OtomatikYedekci.Dogrulanamadi) {
+            }
+        }
+    }
+
+    // --- T5 ve biçim 2: büyüklük ve sürüm uyarıları ------------------------------------------------
+
+    /** T5: belge sınırın altında ama bu telefonun açma bütçesini aşıyor: söylenir, bir kez bildirilir; sınır önce gelir. */
+    @Test
+    fun buTelefondaAcilamayacakYedekSoylenirSinirUyarisiOnceGelir() {
+        var butce = 1L
+        val y = OtomatikYedekci(kaynak, { klasor }, ayarlar, { simdi }, { dilim }, gunluk, { kurulum }, bildirici, acmaButcesi = { butce })
+        val m = OtomatikYedekMetinleri(dilim)
+        val s = y.gerekirseYedekle() as YedekSonucu.Yapildi
+        assertTrue(s.bellekAsiyor)
+        assertFalse(s.sinirAsiyor)
+        assertTrue(m.sonuc(s), m.sonuc(s).endsWith(AktarmaMetinleri.BELLEK_YETMEYEBILIR))
+        assertEquals(listOf(AktarmaMetinleri.BELLEK_YETMEYEBILIR), m.uyarilar(ayarlar.d))
+        assertEquals(listOf("Yedek bu telefonda açılamayabilir"), bildirici.gosterilen.map { it.first })
+        simdi = an(29, 9)
+        y.gerekirseYedekle()
+        assertEquals(1, bildirici.gosterilen.size)
+        // Sınır da aşılıyorsa yalnız sınır uyarısı (daha güçlüsü), o da bir kez.
+        kaynak.disa = kaynak.disa.copy(iceAktarmaSiniriniAsiyor = true)
+        simdi = an(30, 9)
+        val s2 = y.gerekirseYedekle() as YedekSonucu.Yapildi
+        assertFalse(s2.bellekAsiyor)
+        assertEquals(listOf(AktarmaMetinleri.SINIR_ASIYOR), m.uyarilar(ayarlar.d))
+        assertEquals(listOf("Yedek bu telefonda açılamayabilir", "Yedek geri yüklenemeyecek kadar büyük"), bildirici.gosterilen.map { it.first })
+        // Bütçe yetiyorsa uyarı yok.
+        butce = Long.MAX_VALUE
+        kaynak.disa = kaynak.disa.copy(iceAktarmaSiniriniAsiyor = false)
+        simdi = an(1, 9, ay = 12)
+        assertFalse((y.gerekirseYedekle() as YedekSonucu.Yapildi).bellekAsiyor)
+        assertTrue(m.uyarilar(ayarlar.d).isEmpty())
+        // "Şimdi yedekle" sonucu ekranda görüldü: söylendi sayılır.
+        butce = 1L
+        assertTrue((y.simdiYedekle() as YedekSonucu.Yapildi).bellekAsiyor)
+        assertTrue(ayarlar.d.bellekBildirildi)
+        assertNull(OtomatikYedekPlani.soylenecek(ayarlar.d, simdi))
+    }
+
+    @Test
+    fun bicim2YedekEskiSurumlerleAcilamazDenir() {
+        val m = OtomatikYedekMetinleri(dilim)
+        kaynak.disa = kaynak.disa.copy(bicimSurumu = 2, retYedekte = 1)
+        val s = yedekci.gerekirseYedekle() as YedekSonucu.Yapildi
+        assertTrue(s.eskiSurumAcamaz)
+        assertEquals("3 kayıt yedeğe yazıldı: $bugun\n" + AktarmaMetinleri.ESKI_SURUM_ACAMAZ, m.sonuc(s))
+        kaynak.disa = kaynak.disa.copy(bicimSurumu = 1, retYedekte = 0)
+        simdi = an(29, 9)
+        val s2 = yedekci.gerekirseYedekle() as YedekSonucu.Yapildi
+        assertFalse(s2.eskiSurumAcamaz)
+        assertFalse(m.sonuc(s2).contains("eski sürüm"))
     }
 }

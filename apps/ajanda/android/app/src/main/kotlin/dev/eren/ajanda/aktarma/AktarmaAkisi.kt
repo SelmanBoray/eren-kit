@@ -29,15 +29,23 @@ import java.time.LocalDate
  * Kap, çekirdeğin sınırları ve yığının o an ayırabildiği bütçeyle okunur ([YedekKabi.bellekButcesi]): asıl koruma
  * budur; `OutOfMemoryError`'ı yakalamak yalnız son çaredir (o sırada başka iş parçacığı da düşebilir).
  * Dışa aktarma içe aktarma sınırını aşan belgeyi de yazar; sonuç metni bunu söyler ([AktarmaMetinleri.disaSonucu]).
+ * Sınırın altındaki belge bu telefonun en iyi durumdaki açma bütçesini ([YedekKabi.buTelefondaAcmaButcesi]) aşıyorsa
+ * da söylenir; biçim 2 belgesi eski sürümlerle açılamaz, o da söylenir.
  */
 class AktarmaAkisi(
     private val c: AktarmaCekirdegi,
     private val metinler: AktarmaMetinleri,
     private val depo: EkDeposu = EkDeposu.Yok,
+    /** Bu telefonda içe aktarmanın en iyi durumda alabileceği bellek ([YedekKabi.buTelefondaAcmaButcesi]). */
+    private val acmaButcesi: () -> Long = { YedekKabi.buTelefondaAcmaButcesi() },
 ) {
     /** Ekran yüzüyle kurulum ([AktarmaCekirdegi.Yuzden]: belge çağrıda `String`'e çözülür, bellek kazancı yok). */
-    constructor(c: CekirdekYuzu, metinler: AktarmaMetinleri, depo: EkDeposu = EkDeposu.Yok) :
-        this(AktarmaCekirdegi.Yuzden(c), metinler, depo)
+    constructor(
+        c: CekirdekYuzu,
+        metinler: AktarmaMetinleri,
+        depo: EkDeposu = EkDeposu.Yok,
+        acmaButcesi: () -> Long = { YedekKabi.buTelefondaAcmaButcesi() },
+    ) : this(AktarmaCekirdegi.Yuzden(c), metinler, depo, acmaButcesi)
 
     /** Görünümün göstereceği adım. */
     sealed class Adim {
@@ -74,7 +82,9 @@ class AktarmaAkisi(
             val bicim = c.aktarmaBicimi()
             val disa = c.disaAktar()
             ac().use { YedekKabi.yaz(it, bicim, disa, depo) }
-            Adim.Bilgi(metinler.disaBaslik, metinler.disaSonucu(disa))
+            // Yazıldı: bellek tahmini düşerse yalnız uyarı eksik kalır, "yazılamadı" denmez.
+            val bellekAsiyor = runCatching { YedekKabi.buTelefondaAcilamayabilir(disa, acmaButcesi()) }.getOrDefault(false)
+            Adim.Bilgi(metinler.disaBaslik, metinler.disaSonucu(disa, bellekAsiyor))
         } catch (e: Exception) {
             runCatching(basarisizsa)
             Adim.Hata(metinler.disaHataBaslik, metinler.hata(e, yazarken = true))
