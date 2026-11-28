@@ -31,7 +31,7 @@
 //!
 //! Olası çift (`OlasiCift`): planda `Yeni` (servise `ekle` ile gidecek) bir telefon kaydı ile servisin
 //! kopyasında olup telefonda bulunmayan bir kayıt, ikisi de silinmemiş, kimlikleri farklı ve tekil anahtarları
-//! (`kural::tekil::ajanda_tekil_anahtari`: tür, başlık, zaman çekirdeği; kapsamsız) aynı. Durum (açık,
+//! (`kural::tekil::ajanda_tekil_anahtari`: tür, başlık, zaman çekirdeği, v3 bölgesi; kapsamsız) aynı. Durum (açık,
 //! tamam), `ifade`, süre, açıklama ve hatırlatmalar anahtara girmez. İkisi de tutulur, birleştirilmez;
 //! onayda `meta.olasi_ciftler`'e yazılır, `olasi_ciftler()` yalnız ikisi de görünen kopyada canlı olanları
 //! döndürür (biri silinir ya da `ekle`'si reddedilirse işaret kendiliğinden düşer).
@@ -57,9 +57,10 @@ use crate::kopru::tipler::{BirlestirmeOnizlemesi, BirlestirmeSonucu, CakisanKayi
 use crate::kural::tekil::ajanda_tekil_anahtari;
 use crate::model::AjandaKaydi;
 
-/// Kapsamsız tekil anahtar (tür, başlık, zaman çekirdeği). v3 `bolge` girmez (D4'ün v2 baytları; R1).
+/// Kapsamsız tekil anahtar (tür, başlık, zaman çekirdeği; v3 `bolge` varsa eşleşme anahtarıyla, servisin
+/// tekilleştirmesi gibi). Bölgesiz kayıtta baytlar v2'ninkiyle aynıdır; bölgesi farklı iki kayıt çift sayılmaz.
 fn tekil_anahtar(k: &AjandaKaydi) -> String {
-    ajanda_tekil_anahtari("", k.tur, &k.baslik, k.zaman.as_ref(), None)
+    ajanda_tekil_anahtari("", k.tur, &k.baslik, k.zaman.as_ref(), k.v3.bolge.as_deref())
 }
 
 /// FNV-1a 64: planın izi (D3'teki gibi; güvenlik değil, tutarlılık içindir).
@@ -355,5 +356,34 @@ impl Motor {
             return Err(CekirdekHatasi::GecersizDurum { mesaj: "bağlı kipte bekleyen birleştirme yok".into() });
         }
         self.kopar_nedeniyle(o, e, GecisNedeni::Koparma)
+    }
+}
+
+#[cfg(test)]
+mod testler {
+    use super::*;
+    use serde_json::json;
+
+    fn kayit(bolge: Option<&str>) -> AjandaKaydi {
+        let mut v = json!({
+            "kayit_id": "k_a", "revizyon": 1, "tur": "gorev", "baslik": "Süt al", "hatirlatmalar": [],
+            "ornekler": [], "durum": "acik", "taslak": false, "silindi": false, "elle_alanlar": [],
+            "kaynak": {"yol": "elle", "tur_kokeni": "insan", "device_id": "cihaz1"},
+            "olusturma_ms": 100, "guncelleme_ms": 200
+        });
+        if let Some(b) = bolge {
+            v["bolge"] = json!(b);
+        }
+        AjandaKaydi::oku(&v, "").unwrap()
+    }
+
+    /// R1: olası çift anahtarı v3 bölgesini sayar (eşleşme anahtarıyla); bölgesiz kayıtta v2 baytları.
+    #[test]
+    fn olasi_cift_anahtari_bolgeyi_sayar() {
+        assert_ne!(tekil_anahtar(&kayit(Some("Market"))), tekil_anahtar(&kayit(Some("Bakkal"))));
+        assert_eq!(tekil_anahtar(&kayit(Some("Market"))), tekil_anahtar(&kayit(Some("MARKET"))));
+        assert_ne!(tekil_anahtar(&kayit(Some("Market"))), tekil_anahtar(&kayit(None)));
+        let k = kayit(None);
+        assert_eq!(tekil_anahtar(&k), ajanda_tekil_anahtari("", k.tur, &k.baslik, None, None));
     }
 }

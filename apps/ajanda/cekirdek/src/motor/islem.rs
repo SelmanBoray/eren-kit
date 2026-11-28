@@ -21,7 +21,8 @@ use crate::kopru::tipler::DuzenlemeTemeli;
 use crate::kural::metin::govdeyi_hazirla;
 use crate::kural::ornek::{OrnekDurumuSonucu, ajanda_ornek_durumu_uygula};
 use crate::model::{
-    AjandaDegisiklik, AjandaIslem, AjandaKaydi, Alan, AjandaZamani, GirdiYolu, KayitDurumu, KayitGovdesi,
+    AjandaDegisiklik, AjandaIslem, AjandaKaydi, Alan, AjandaZamani, GirdiYolu, KayitDurumu, KayitGovdesi, V3Alanlari,
+    V3Degisikligi, ajanda_bolge_yeri_degisir_mi,
 };
 
 /// İki seçenekli alanın farkı (`null` kaldırır).
@@ -55,6 +56,44 @@ pub(super) fn govde_farki(k: &KayitGovdesi, g: &KayitGovdesi) -> AjandaDegisikli
         tekrar: uclu_fark(&k.tekrar, &g.tekrar),
         v3: Default::default(),
     }
+}
+
+/// Liste alanının farkı (boş liste alan yoktur: boşa inen liste `null` ile kaldırılır).
+fn liste_farki<T: PartialEq + Clone>(eski: &[T], yeni: &[T]) -> Alan<Vec<T>> {
+    match (eski, yeni) {
+        (a, b) if a == b => Alan::Yok,
+        (_, []) => Alan::Kaldir,
+        (_, b) => Alan::Deger(b.to_vec()),
+    }
+}
+
+/// İki halin v3 alanlarının farkı (`eski` -> `yeni`): yalnız `yeni`'de farklı olanlar; `eski`'de olup
+/// `yeni`'de olmayan alan `null` ile kaldırılır (`eski` farkın uygulanacağı hal olmalıdır: yokluk ancak
+/// orada vardıysa kaldırmadır, Kol C kuralı). Bölge başka bir yere değişirken konum değişmemişse de açıkça
+/// gider: servis konumu verilmemiş yer değişikliğinde düşürür (`ajandaDegisikligiUygula`).
+pub(super) fn v3_farki(eski: &V3Alanlari, yeni: &V3Alanlari) -> V3Degisikligi {
+    let mut d = V3Degisikligi {
+        simge: uclu_fark(&eski.simge, &yeni.simge),
+        bolge: uclu_fark(&eski.bolge, &yeni.bolge),
+        bolge_konumu: uclu_fark(&eski.bolge_konumu, &yeni.bolge_konumu),
+        varis: uclu_fark(&eski.varis, &yeni.varis),
+        baglantilar: liste_farki(&eski.baglantilar, &yeni.baglantilar),
+        ekler: liste_farki(&eski.ekler, &yeni.ekler),
+    };
+    if let Some(konum) = &yeni.bolge_konumu
+        && d.bolge_konumu.yok_mu()
+        && ajanda_bolge_yeri_degisir_mi(eski.bolge.as_deref(), yeni.bolge.as_deref())
+    {
+        d.bolge_konumu = Alan::Deger(*konum);
+    }
+    d
+}
+
+/// İki kaydın gövde ve v3 alanlarının farkı (`eski` -> `yeni`; durum, örnekler, taslak, silindi ayrı
+/// işlemlerdir). Arayüzün formu (`duzenle`) yalnız gövdeyi taşır, v3 farkı dökme yollarınındır
+/// (`yerel::kuyruga_islemler`).
+pub(super) fn kayit_farki(eski: &AjandaKaydi, yeni: &AjandaKaydi) -> AjandaDegisiklik {
+    AjandaDegisiklik { v3: v3_farki(&eski.v3, &yeni.v3), ..govde_farki(&kaydin_govdesi(eski), &kaydin_govdesi(yeni)) }
 }
 
 /// `d`'nin yalnız `maske`'de de değişen alanları (ikisi de aynı hedef gövdeye doğru olduğundan değerler
