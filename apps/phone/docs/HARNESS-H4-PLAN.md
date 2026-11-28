@@ -200,7 +200,7 @@ H4.0 ─► H4.1 ─► H4.2 ─► H4.3 ─► H4.4 ─► H4.5 ─► H4.6
   içermeli ve dilim tek commit kalmalı.
 - **Altın kaydın kör noktası:** Kayıt sahte süreçle alınır. Ölçülecek: H4.5'ten sonra, canlı kurulumdan
   önce, ayrı bir veri kökünde gerçek `claude` ile duman koşusu (bir mesaj, bir PC hafif işi, bir kesme);
-  gerçek sürecin argv ve stdin kaydı altınla aynı olmalı.
+  gerçek sürecin argv ve stdin kaydı altınla aynı olmalı. Düzenek ve ölçüt bölüm 8'de.
 - **Kol C birleşmesi:** `sozlesme.ts`, `konusma.ts` ve `ayar.ts` (bölüm 4).
 - **Tur zaman aşımı süresi:** Ölçülecek: Uzun bir araç çağrısında (PowerShell, WebFetch) akışa ara satır
   gelip gelmediği. Gelmiyorsa sessizlik süresi en uzun meşru araç süresinden büyük olmalı. Varsayılanı açmak
@@ -221,3 +221,92 @@ H4.0 ─► H4.1 ─► H4.2 ─► H4.3 ─► H4.4 ─► H4.5 ─► H4.6
 | `ayarKur` `claude.exe` istiyor; motorsuz servis ve eşleşme yok | H4.8 | H2'den taşınan madde |
 | Kimlik politikası konuşmaya gömülü | H4.1, H4.4 | Sürücüye taşınır, karar aynı |
 | İşlerde kimlik denetimi yok | — | Açık kalır; bölüm 5'teki alt soruya bağlı |
+
+## 8. Duman koşusu (bölüm 6, "Altın kaydın kör noktası")
+
+Durum: **hazır, koşulmadı.** Gerçek koşu model çağrısı yapar; kullanıcı onayıyla, H4.5'ten sonra ve canlı
+kuruluma geçmeden önce yapılır. Dosyalar `server/test/duman/` altında. Hiçbiri `.test.ts` ile bitmez,
+`npm test` (`test/**/*.test.ts`) onları koşturmaz; tip denetimine girerler.
+
+**Komutlar** (`apps/phone/server` içinde, `node --disable-warning=ExperimentalWarning` ile):
+- `test/duman/kosu.ts --kuru`: Ne yapılacağını yazar. Salt okunur yoklama yapar (claude.exe, csc.exe,
+  canlı boru adları). Hiçbir şey başlatmaz.
+- `test/duman/kosu.ts --sahte-claude`: Prova. Akış aynıdır, ama kaydedicinin arkasında `sahte-claude.ts`
+  durur; model çağrısı yoktur. Servisin argv'si, ortamı ve stdin'i gerçektir; stdout sahtedir.
+- `test/duman/kosu.ts --evet`: Gerçek koşu. Ek seçenekler: `--claude <exe>`, `--is-modeli-koru`,
+  `--cikti <dizin>`, `--sakla`. Yarıda kalırsa `--temizle <belirteç>`.
+- `test/duman/karsilastir.ts <kayit.json>`: Karşılaştırmayı yeniden koşar. `--oz-sinama` altından sahte bir
+  kayıt üretir; önce "aynı" sonucunu, sonra on bozmanın her birinde farkı bekler. `--alanlar` ayrılan alanları
+  listeler.
+
+**Neden `ana.ts` doğrudan başlatılmıyor:** Canlı servis `\\.\pipe\eren-servis-tekil`, `eren-kopru` ve
+`eren-ajanda` borularını tutuyor; adlar kaynakta sabit. İkinci örnek tekil kilitte `ikinci_ornek` ile çıkar.
+Kilit boştaysa canlı borular alınır ve bekçi canlı servisi başlatamaz. Gateway ayrıca Tailscale adresinde
+dinler ve uzak IP'yi denetler. Çözüm `src`'ye dokunmaz:
+- `servis.ts`, `ana.ts` `giris`'in sırasını izler (ayar, kök izni, dış dünya, dizinler, tekil kilit, ek
+  yedekli `servisKur`, `baslat`).
+- Süreç `--import boru-yonlendir.ts?onek=<belirteç>` ile açılır. Önyükleme `\\.\pipe\eren-*` adlarını
+  `eren-duman-<belirteç>-*` olarak değiştirir. Köprüler (`node kopru.ts`) aynı önyüklemeyi kaydedicinin
+  mcp kopyasından alır.
+- Ağ `e2e/servis-giris.ts`'teki gibi sarılır: `127.0.0.1`, boş port.
+- Bekçi ve Görev Zamanlayıcı kullanılmaz; kapanış stdin'den gelir.
+- `LOCALAPPDATA` geçici köke çevrilir; canlı limit kilidi okunmaz.
+- Veri kökü `kurulum/izin.ts`'in kuralıyla dar ACL'li oluşturulur. %TEMP%'ten kalıtılan izinlerle servis açılmaz.
+
+**Kaydedici:** Servisin `claude_exe`'si geçici dizinde derlenen `baslatici.cs`'tir (.NET Framework `csc.exe`;
+`ayar.ts` yalnız `.exe` kabul eder). Başlatıcı komut satırını yeniden tırnaklamaz, olduğu gibi
+`kaydedici.ts`'e verir. Kaydedici argv'yi, cwd'yi, ortamı ve mcp dosyasının ham metnini kaydeder; ardından
+stdin, stdout ve çıkış satırlarını yazar. Ortamdan yalnız anahtar adları kaydedilir. Değer yalnız
+`CLAUDE_CODE_DISABLE_*`, `EREN_KIT_SERVIS_OTURUMU` ve `EREN_KIT_DATA_DIR` için yazılır; sızan bir anahtar fark
+olarak görünür, değeri kayda girmez. Gerçek `claude`'a giden argv'de değişen iki şey var: `--model haiku` ve
+köprülere önyükleme eklenmiş mcp kopyası. Servisin verdiği argv kayda değişmeden girer.
+
+**Senaryo** (modele giden metin kısa ve kişisel veri içermez):
+1. Mesaj gönderilir: "Merhaba. Bu bir bağlantı denemesi; tek kısa cümleyle cevap ver."
+2. PC hafif işi başlatılır: servis stdin'ine komut gider, ardından depoya onaylı plan ve
+   `isler.baslat(hafif)`. Plan modelden önerilmez. Ardından ana oturumun sentetik iş turu beklenir.
+3. "Uzun bir şey anlat." gönderilir; ilk metin parçasında telefondan `interrupt` yollanır.
+
+Sonra temizlik yapılır: servis kapatılır, komut satırında belirteç geçen süreçler öldürülür, geçici kök ve
+`~/.claude/projects/*eren-duman-<belirteç>*` silinir. Kayıt ve rapor `%TEMP%\eren-duman-sonuc-<belirteç>`'te
+kalır.
+
+**Maliyet:** Ana oturum `haiku` ile koşar (`eren_modeli`). PC hafif işinin modeli serviste sabit `sonnet`;
+kaydedici gerçek sürece `haiku` verir. Beklenen istek sayısı 4-7: mesaj 1, iş 1-3, sentetik tur 1-2,
+yarıda kesilen tur 1. Kimlik denetimi `apiKeySource: none` istediği için koşu abonelik kotasından düşer.
+Gerçek tutar ölçülür: rapor `result.total_cost_usd` toplamını ve istek sayısını yazar.
+
+**Karşılaştırma** (`karsilastir.ts`):
+- Altında karşılığı olan dört kayıt var. `baslatma.yeni_takvim` ile exe, argv (sistem istemi bayt bayt),
+  cwd, ortam ve mcp karşılaştırılır. `konusma.kesme` ile insan ve kesme satırları, `konusma.sentetik_ve_birlesik`
+  ile sentetik satırın biçimi, `isler.pc_hafif` ile argv (JSON şeması bayt bayt), ortam, `mcp.json` ve
+  `gorev.txt` karşılaştırılır.
+- Yöntem: gerçek değer önce altının sahte değerine eşlenir. Ardından H4.0 normalleştirmesi uygulanır
+  (`normallestir`, `YerTutucular`). Son olarak iki tarafa da aynı kurallar uygulanır ve anahtar sırası dahil
+  karşılaştırılır.
+- Ayrılan alanlar (`--alanlar`): yollar, uuid, `request_id`, köprü jetonu, `--model`, damga, insan ve sentetik
+  metin, ortamın Claude dışı kısmı, görev metni, işte `computer-use-windows` (düzenekte yok), stdout ve pid.
+  Her birinin ayrı denetimi var: biçim, gönderilen metinle eşitlik, jetonların dolu ve farklı olması.
+
+**Başarı ölçütü:** `SONUC: BASARILI` için dört koşul gerekir:
+- (a) altınla AYNI,
+- (b) bütün denetimler GECTI,
+- (c) davranış denetimleri GECTI: init `apiKeySource: none`; `eren` ve `eren-ajanda` köprüleri yönlendirilmiş
+  boruyla `connected`; mesaj turu `success`; kesilen tur `aborted_*`; iş `structured_output` dolu ve çıkış 0,
+- (d) koşu hatası yok.
+
+Ek olarak temizlik raporunda belirteçli süreç kalmamalı, duman boruları kapanmış olmalı ve canlı boru
+listesi değişmemiş olmalı. Fark çıkarsa iki ihtimal var: ya altın kayıt sahte süreçte gerçekte olmayan bir
+şeyi kaydetmiştir (kör nokta), ya da süreç sınırında (tırnaklama, ortam) bir kayıp vardır. Her iki durumda
+fark ilgili dilimin girdisidir.
+
+**Ölçülen (2026-11-28, prova, `--sahte-claude`):** Canlı servis açıkken akış baştan sona çalıştı.
+Altınla AYNI çıktı, bütün denetimler GECTI. Stdin sırası: insan → sentetik → insan → kesme. Temizlikten
+sonra süreç ve boru kalmadı. Bu sonuç servisin argv'sinin ve stdin'inin süreç sınırından bayt bayt geçtiğini
+gösteriyor. Gerçek `claude`'un bu argv'yi kabul edip etmediğini ve çıktısının servisle uyuşup uyuşmadığını
+göstermiyor; o soru gerçek koşuda yanıtlanır.
+
+**Bilinen izler ve ölçülmeyenler:** Gerçek `claude` `~/.claude.json`'a geçici cwd'ler için proje girdisi
+yazabilir; düzenek bu dosyayı düzenlemez. `LOCALAPPDATA` geçici köke çevrildiğinde Claude girişinin
+etkilenmediği ölçülmedi. Etkilenirse init reddedilir ve ilk mesajda koşu durur. Ana oturum açılışta model
+çağrısı yapıyor mu, ölçülmedi.
