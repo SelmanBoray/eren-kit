@@ -30,6 +30,7 @@ import { bosPort, surecler, tekOldur, torunlar, uyu } from "../../e2e/ortak.ts";
 import { Baglanti, elSik, eslestir, kimlikUret, msgId, ustMesaj } from "../../e2e/telefon.ts";
 import type { Msg } from "../../e2e/telefon.ts";
 import { canliBoruMu, dumanBoruOneki } from "./boru-kural.ts";
+import { canliGunlukAnligiAl, canliGunlukDenetle, canliGunlukOzeti } from "./canli-gunluk.ts";
 import { izAnligiAl, izFarki, izOzeti, izRaporu, kendiIzleriniSil } from "./iz-olcum.ts";
 import type { IzAnligi } from "./iz-olcum.ts";
 import { basarili, gozlemle, karsilastir, raporla } from "./karsilastir.ts";
@@ -264,7 +265,8 @@ function duzenKur(belirtec: string, kokTabani = tmpdir()): Duzen {
     kayitDizini: join(kok, "kayit"),
     proje: join(kok, "proje"),
     duman: join(kok, "duman"),
-    cikti: S.cikti ?? join(kokTabani, `${DUMAN_ONEKI}sonuc-${belirtec}`),
+    // Varsayılan da aynı denetimden geçer (TEMP bir çalışma ağacının, canlı kökün ya da ~/.claude'un içinde olabilir).
+    cikti: S.cikti ?? ciktiDenetle(join(kokTabani, `${DUMAN_ONEKI}sonuc-${belirtec}`)),
     boruGunlugu: join(kok, "boru"),
     onyukleme: `${pathToFileURL(ONYUKLEME).href}?onek=${belirtec}`,
   };
@@ -318,6 +320,10 @@ function kuruYaz(y: Yoklama, d: Duzen): void {
   satir("    belirteç ya da koşunun oturum kimliği geçen girdiler; ~/.claude.json'a hiç dokunulmaz.");
   satir("  - Köprü yönlendirmesinin kanıtı: süreç listesi (köprünün komut satırında onek=), önyükleme günlüğü");
   satir("    (<kök>\\boru\\<pid>.jsonl: bağlanan/dinleyen ad, red) ve köprünün boru_baglandi olayı. Canlı boruya bağlantı 0 olmalı.");
+  satir("  - Önyüklemesiz alt süreçler: modelin PowerShell/Bash ile başlattığı node ya da eren süreci yönlendirilmez ve");
+  satir("    önyükleme günlüğünde görünmez. Kanıtı canlı servis günlüğü: koşu penceresinde el_sikisma_ret 0 ve");
+  satir("    eren/ana_oturum/soru/telefon rolünde el_sikisma 0 olmalı (salt okuma; bkz. aşağıdaki bugünkü sayılar).");
+  satir("  - Servisin transkript silme portu (kökü gerçek ~/.claude/projects) duman servisinde sahtedir: silmez, sayar.");
   satir();
   satir("Dizinler:");
   for (const [k, v] of Object.entries({ kok: d.kok, veriKoku: d.veriKoku, baslatici: d.stub, kayit: d.kayitDizini, proje: d.proje, cikti: d.cikti })) {
@@ -335,8 +341,9 @@ function kuruYaz(y: Yoklama, d: Duzen): void {
     onyukleme: d.onyukleme,
   };
   satir(`     kaydedici ayarı: ${JSON.stringify(ka)}`);
-  satir("     köprü yönlendirilemezse (sarmalayıcı, adı değişmiş node, ayrıştırılamayan mcp) kaydedici 91 ile çıkar,");
-  satir("     gerçek claude başlamaz (kapalı başarısızlık).");
+  satir("     köprü yönlendirilemezse (sarmalayıcı, adı değişmiş node, ayrıştırılamayan mcp) ya da servisin argv'sinde");
+  satir("     --strict-mcp-config ve --setting-sources \"\" tam bir kez yoksa kaydedici 91 ile çıkar, gerçek claude başlamaz");
+  satir("     (kapalı başarısızlık; bu bayraklar olmadan kullanıcının kancaları ve MCP'leri canlı borulara bağlanırdı).");
   satir(`  3. Servis: node ${NODE_BAYRAK} --import ${d.onyukleme} ${SERVIS_GIRISI} <duman\\servis-ayar.json>`);
   satir(`     ortam: kullanıcınınki; EREN_KIT_DATA_DIR=${d.veriKoku}, LOCALAPPDATA=${d.kok}; EREN_KIT_ASSISTANT_NAME ve NODE_OPTIONS silinir`);
   satir("  4. Eşleştirme: e2e/eslestir-kod.ts (aynı ortam) → sahte telefon /sohbet el sıkışma.");
@@ -361,6 +368,9 @@ function kuruYaz(y: Yoklama, d: Duzen): void {
   const b = izAnligiAl();
   satir(`  Fark adımının taban sınaması (iki anlık arası ${Math.round((b.ms - a.ms) / 1000)} sn, koşu yok; görülen her şey canlı oturumlardır):`);
   for (const s of izRaporu(izFarki(a, b), a.ev, [`${DUMAN_ONEKI}${d.belirtec}`], 5)) satir(`    ${s}`);
+  satir();
+  satir("Canlı servis günlüğü (salt okuma; yalnız olay, rol ve sayı):");
+  for (const s of canliGunlukOzeti(canliGunlukAnligiAl())) satir(`  ${s}`);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -798,10 +808,15 @@ async function ana(): Promise<number> {
   log(`canlı eren boruları (dokunulmaz): ${y.canliBorular.join(", ") || "yok"}`);
   const izOnce = izAnligiAl();
   log(`iz ölçümü (salt okuma) koşu öncesi: ~/.claude ${izOnce.girdiler.size} girdi, ~/.claude.json ${izOnce.claudeJson.anahtarlar.size} anahtar yolu (${izOnce.sureMs} ms)`);
+  // Canlı servis günlüğü (salt okuma): pencere duman servisinden önce başlar, temizlikten sonra biter.
+  const canliOnce = canliGunlukAnligiAl();
+  const pencereBas = Date.now();
+  log(`canlı servis günlüğü (salt okuma) koşu öncesi: ${canliOnce.dosyalar} dosya, el sıkışma ${canliOnce.olaylar.length}${canliOnce.hata === null ? "" : ` (${canliOnce.hata})`}`);
   const k = new Kosu(d, y);
   let kayit: DumanKaydi | null = null;
   let hata: string | null = null;
   let boru: Sonuc | null = null;
+  let canli: Sonuc | null = null;
   const izSatirlari: string[] = [];
   try {
     const port = await bosPort();
@@ -846,7 +861,14 @@ async function ana(): Promise<number> {
     const isaretler = izIsaretleri(belirtec, kayit);
     const izSonra = izAnligiAl();
     izSatirlari.push("koşu öncesi → kapanış sonrası (temizlikten önce):", ...izRaporu(izFarki(izOnce, izSonra), izOnce.ev, isaretler));
+    // Kontrol günlüğü geçici kökte: temizlikten önce okunur.
+    const transkript = k.kontrolOlaylari().filter((o) => o["olay"] === "transkript_sil_engellendi");
+    izSatirlari.push(`servisin transkript silme portu (duman servisinde sahte; ~/.claude/projects'e dokunmaz): çağrı ${transkript.length}`);
     for (const s of await temizle(belirtec, S.sakla, S.izleriSil ? { once: izOnce, isaretler } : null)) log(`temizlik: ${s}`);
+    // Canlı servisin son satırları yazabilsin diye kısa bekleme; sonra pencere kapanır.
+    await uyu(1500);
+    const pencereBit = Date.now();
+    canli = canliGunlukDenetle(canliOnce, canliGunlukAnligiAl(), pencereBas, pencereBit, y.canliBorular.length > 0);
     const izSon = izAnligiAl();
     const kalan = izFarki(izOnce, izSon);
     const bizimMi = (x: string): boolean => isaretler.some((i) => x.toLowerCase().includes(i.toLowerCase()));
@@ -864,11 +886,12 @@ async function ana(): Promise<number> {
     `${sahte ? "PROVA (sahte claude): model çıktısı sahte, davranış denetimleri model kanıtı değildir; köprüler gerçek\n" : ""}` +
     `${raporla("argv / stdin / ortam / mcp ↔ altın", s)}\n${raporla("davranış (stdout)", g)}\n` +
     `${raporla("boru yönlendirmesi (canlı boruya bağlantı yok)", boru ?? { farklar: [], denetimler: [{ ad: "boru kanıtı", gecti: false, detay: "hesaplanmadı" }], bilgiler: [] })}\n` +
+    `${raporla("canlı servis günlüğü (önyüklemesiz süreçler dahil; salt okuma)", canli ?? { farklar: [], denetimler: [{ ad: "canlı günlük denetimi", gecti: false, detay: "hesaplanmadı" }], bilgiler: [] })}\n` +
     `== ~/.claude ve ~/.claude.json izleri (salt okuma; değer yazılmaz)\n${izSatirlari.join("\n")}\n` +
     `${hata === null ? "" : `koşu hatası: ${hata}\n`}`;
   writeFileSync(join(d.cikti, "rapor.txt"), rapor);
   process.stdout.write(`\n${rapor}`);
-  const ok = hata === null && basarili(s) && basarili(g) && boru !== null && basarili(boru);
+  const ok = hata === null && basarili(s) && basarili(g) && boru !== null && basarili(boru) && canli !== null && basarili(canli);
   process.stdout.write(`SONUC: ${ok ? "BASARILI" : "BASARISIZ"} (kayıt ve rapor: ${d.cikti})\n`);
   return ok ? 0 : 1;
 }

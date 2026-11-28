@@ -14,6 +14,9 @@
  * - `--mcp-config`: komutu node olan sunuculara (köprüler) `--import <boru-yonlendir>` eklenmiş bir kopya.
  *   Köprü canlı servisin borusuna değil, duman servisinin borusuna bağlanır. Bir köprü yönlendirilemiyorsa
  *   (`mcpYonlendir` → `hata`) kaydedici `baslat` + `cikis` yazar ve 91 ile çıkar; gerçek `claude` başlamaz.
+ * - Aynı kapalı başarısızlık argv için (`argvDenetle`): `--strict-mcp-config` ve `--setting-sources ""` tam bir
+ *   kez yoksa, `=` biçimli ya da çok değerli `--mcp-config` varsa 91. Bu bayraklar olmadan kullanıcının kancaları
+ *   (`kanca.ts`) ve kullanıcı kapsamlı MCP'leri önyüklemesiz açılır ve canlı `eren-ajanda` borusuna bağlanır.
  *
  * stdin: `--input-format` varsa (ana oturum) boru; satırlar kaydedilir ve aynen geçer. Yoksa (iş oturumu,
  * servis `ignore` verir) kaydedicinin stdin tanıtıcısı doğrudan devredilir: üretimdeki gibi.
@@ -31,6 +34,33 @@ const degerAl = (argv: readonly string[], bayrak: string): string | null => {
 
 /** Yönlendirme kapalı başarısızlığının çıkış kodu: gerçek `claude` hiç başlatılmaz. */
 export const YONLENDIRME_HATASI_KODU = 91;
+
+/**
+ * Servisin argv'sinin yalıtım bayrakları (kapalı başarısızlık; `null` = uygun, değilse neden):
+ * - `--strict-mcp-config` tam bir kez: yoksa kullanıcı kapsamlı MCP'ler (`~/.claude.json`, `eren-ajanda` dahil)
+ *   `--mcp-config`'e eklenir ve önyüklemesiz başlar.
+ * - `--setting-sources` tam bir kez ve değeri boş dize: değilse kullanıcının kancaları (`kanca.ts` canlı
+ *   `eren-ajanda`'ya bağlanır) ve eklentileri yüklenir.
+ * - Bu üç bayrakta `--x=değer` biçimi reddedilir (sayım onu görmezdi).
+ * - `--mcp-config` çok değer alır (`<configs...>`): değerinden sonra `-` ile başlamayan ikinci bir değer gelirse
+ *   kaydedici yalnız ilkini yönlendirirdi; reddedilir.
+ * Bugünkü servis argv'si (ana oturum `konusma.ts`, PC hafif işi `isler-komut.ts`) ikisini de taşır. Standart PC
+ * profili `--setting-sources` taşımaz: duman onu koşmaz, koşsaydı burada 91 ile dururdu.
+ */
+export function argvDenetle(argv: readonly string[]): string | null {
+  const adet = (b: string): number => argv.filter((a) => a === b).length;
+  for (const b of ["--strict-mcp-config", "--setting-sources", "--mcp-config"]) {
+    if (argv.some((a) => a.startsWith(`${b}=`))) return `${b}= biçimi`;
+  }
+  if (adet("--strict-mcp-config") !== 1) return `--strict-mcp-config ${adet("--strict-mcp-config")} kez (1 olmalı)`;
+  if (adet("--setting-sources") !== 1) return `--setting-sources ${adet("--setting-sources")} kez (1 olmalı)`;
+  const si = argv.indexOf("--setting-sources");
+  if (argv[si + 1] !== "") return "--setting-sources değeri boş dize değil";
+  const mi = argv.indexOf("--mcp-config");
+  const ikinci = mi >= 0 ? argv[mi + 2] : undefined;
+  if (ikinci !== undefined && !ikinci.startsWith("-")) return "--mcp-config birden çok değer";
+  return null;
+}
 
 /** Bir sunucu tanımı köprü mü: tanımın herhangi bir yerinde `kopru.ts` ya da köprü jetonu anahtarı geçer. */
 const kopruMu = (s: unknown): boolean => /kopru\.ts|EREN_KOPRU_JETON/i.test(JSON.stringify(s) ?? "");
@@ -152,12 +182,15 @@ function calistir(): void {
   const mi = gercekArgv.indexOf("--model");
   if (ayar.model !== null && mi >= 0 && mi + 1 < gercekArgv.length) gercekArgv[mi + 1] = ayar.model;
 
-  // Kapalı başarısızlık: yönlendirilemeyen köprü varsa gerçek claude hiç başlamaz (köprü canlı boruya gider).
+  // Kapalı başarısızlık: yalıtım bayrağı eksikse ya da yönlendirilemeyen köprü varsa gerçek claude hiç
+  // başlamaz (kanca ya da köprü canlı boruya giderdi).
   const mcpYolu = degerAl(argv, "--mcp-config");
   let mcp: { yol: string; icerik: string | null } | null = null;
   let yonlendirme: YonlendirmeKaydi = { tur: "mcp_yok" };
   const mcpAdedi = argv.filter((a) => a === "--mcp-config").length;
-  if (mcpAdedi > 1) yonlendirme = { tur: "hata", neden: "birden çok --mcp-config" };
+  const argvNedeni = argvDenetle(argv);
+  if (argvNedeni !== null) yonlendirme = { tur: "hata", neden: argvNedeni };
+  else if (mcpAdedi > 1) yonlendirme = { tur: "hata", neden: "birden çok --mcp-config" };
   else if (mcpAdedi === 1 && mcpYolu === null) yonlendirme = { tur: "hata", neden: "--mcp-config değeri yok" };
   else if (mcpYolu !== null) {
     const icerik = existsSync(mcpYolu) ? readFileSync(mcpYolu, "utf8") : null;

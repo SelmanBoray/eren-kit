@@ -205,6 +205,8 @@ H4.0 ─► H4.1 ─► H4.2 ─► H4.3 ─► H4.4 ─► H4.5 ─► H4.6
   yazar. PC hafif işi `--dangerously-skip-permissions` ile koşar; araç kullanımını yalnız istem sınırlar.
   `--evet`'ten önce kullanıcıya bölüm 8'deki risk özeti sunulur. Ölçülecek: `CLAUDE_CONFIG_DIR` ve
   `CLAUDE_SECURESTORAGE_CONFIG_DIR` ile yalıtımın girişi bozmadan çalışıp çalışmadığı (bölüm 8, "Yalıtım").
+  Boru yönlendirmesi süreç başınadır: modelin araçla başlattığı bir `node` ya da `eren` süreci yönlendirilmez.
+  Bu yüzden koşu penceresinde canlı servisin günlüğü de denetlenir (bölüm 8, "Önyüklemesiz alt süreçler").
 - **Kol C birleşmesi:** `sozlesme.ts`, `konusma.ts` ve `ayar.ts` (bölüm 4).
 - **Tur zaman aşımı süresi:** Ölçülecek: Uzun bir araç çağrısında (PowerShell, WebFetch) akışa ara satır
   gelip gelmediği. Gelmiyorsa sessizlik süresi en uzun meşru araç süresinden büyük olmalı. Varsayılanı açmak
@@ -247,9 +249,12 @@ verilir. Dosyalar `server/test/duman/` altında. Hiçbiri `.test.ts` ile bitmez,
   kip hata verir (çıkış 2, hiçbir şey başlamaz). `--cikti` git çalışma ağacı, canlı veri kökü ya da `~/.claude`
   içindeyse reddedilir; kayıt jeton ve tam argv taşır.
 - `test/duman/duzenek-sinama.ts`: Düzeneğin kendi sınaması. Model yok, canlı boru adı kullanılmaz. İçinde boru
-  kuralı, kaydedicinin kapalı başarısızlığı (süreçle), süreç içinde önyükleme ve denetim günlüğü, argümanlar ve
-  `sahte-claude.ts`'in içe aktarma güvenliği var.
+  kuralı (tanınmayan biçimler dahil), kaydedicinin argv ve mcp kapalı başarısızlığı (süreçle), süreç içinde
+  önyükleme ve denetim günlüğü, argümanlar (varsayılan çıktı yolu dahil), `sahte-claude.ts`'in içe aktarma
+  güvenliği, iz raporunun gizliliği ve canlı günlük denetimi (yapay satırlarla) var.
 - `test/duman/iz-olcum.ts`: İz ölçümünün tek başına hâli (bugünkü özet ve taban fark).
+- `test/duman/canli-gunluk.ts`: Canlı servis günlüğündeki el sıkışma sayıları (salt okuma; bugünkü durum).
+  `--kuru` aynı sayıları yazar.
 - `test/duman/karsilastir.ts <kayit.json>`: Karşılaştırmayı yeniden koşar. `--oz-sinama` altından sahte bir
   kayıt üretir; önce "aynı" sonucunu, sonra on bozmanın her birinde farkı bekler. `--alanlar` ayrılan alanları
   listeler.
@@ -262,7 +267,9 @@ dinler ve uzak IP'yi denetler. Çözüm `src`'ye dokunmaz:
   yedekli `servisKur`, `baslat`).
 - Süreç `--import boru-yonlendir.ts?onek=<belirteç>` ile açılır. Önyükleme `\\.\pipe\eren-*` adlarını
   `eren-duman-<belirteç>-*` olarak değiştirir (`boru-kural.ts`). Bu belirteçle önekli ad olduğu gibi kalır.
-  Başka her boru adı (başka uygulama, başka belirteç) reddedilir. Kural iki katmanda uygulanır: `net` ve
+  Başka her boru adı (başka uygulama, başka belirteç) reddedilir. Tanınmayan biçim de reddedilir: UNC
+  (`\\localhost\pipe\eren-ajanda`), `\\?\UNC\`, `GLOBALROOT`, `\??\` ve adında `\` geçen boru
+  (`..` ile canlı ada inebilirdi). Eski kural bunları "boru değil" sayıp dokunmadan geçirirdi. Kural iki katmanda uygulanır: `net` ve
   altındaki yerel `pipe_wrap` tanıtıcısı. Köprüler (`node kopru.ts`) aynı önyüklemeyi kaydedicinin mcp
   kopyasından alır. Önyükleme her sürecin bağlandığı, dinlediği ve reddettiği adı denetim günlüğüne yazar
   (`<kök>\boru\<pid>.jsonl`; jeton ve değer yazılmaz).
@@ -281,7 +288,11 @@ köprülere önyükleme eklenmiş mcp kopyası. Servisin verdiği argv kayda de�
 Kapalı başarısızlık: bir köprü sunucusu (`kopru.ts` ya da `EREN_KOPRU_JETON` geçen tanım) doğrudan
 `node.exe … kopru.ts` biçiminde değilse kaydedici 91 ile çıkar ve gerçek `claude` hiç başlamaz. Aynısı mcp
 metni ayrıştırılamazsa, dosya yoksa ya da `--mcp-config` birden çok verilmişse de olur. Önceden kopya
-yapılamayınca köprü sessizce canlı boruya bağlanırdı.
+yapılamayınca köprü sessizce canlı boruya bağlanırdı. Aynı kapalı başarısızlık argv için de var (`argvDenetle`):
+`--strict-mcp-config` ve `--setting-sources ""` tam bir kez olmalı. `=` biçimi ve çok değerli `--mcp-config`
+reddedilir. Bu bayraklar olmazsa kullanıcının kancaları ve kullanıcı kapsamlı MCP'leri önyüklemesiz açılır;
+`kanca.ts` canlı `eren-ajanda`'ya bağlanır. Bugünkü ana oturum ve PC hafif işi argv'si ikisini de taşır.
+Standart PC profili `--setting-sources` taşımaz; duman onu koşmaz, koşsaydı 91 ile dururdu.
 
 **Senaryo** (modele giden metin kısa ve kişisel veri içermez):
 1. Mesaj gönderilir: "Merhaba. Bu bir bağlantı denemesi; tek kısa cümleyle cevap ver."
@@ -290,7 +301,9 @@ yapılamayınca köprü sessizce canlı boruya bağlanırdı.
 3. "Uzun bir şey anlat." gönderilir; ilk metin parçasında telefondan `interrupt` yollanır.
 
 Sonra temizlik yapılır: servis kapatılır, komut satırında belirteç geçen süreçler öldürülür, geçici kök
-silinir. `~/.claude`'da yalnız `--izleri-sil` verilirse silme yapılır. Silinen girdi koşudan önce olmamalı ve
+silinir. Düzenek `~/.claude`'da yalnız `--izleri-sil` verilirse siler. Servisin kendi transkript silme portu
+(ürün kodunda kökü gerçek `~/.claude/projects`, `ayar.ts` `claudeProjeleri`) duman servisinde sahtedir
+(`servis.ts` `transkriptSar`): hiçbir şey silmez, çağrıyı sayar. Bu sayı raporda görünür. Silinen girdi koşudan önce olmamalı ve
 adında belirteç ya da koşunun oturum kimliği geçmelidir. `~/.claude.json`'a hiç dokunulmaz. İz farkı (koşu
 öncesi → kapanış → temizlik sonrası) `rapor.txt`'e yazılır. Kayıt ve rapor
 `%TEMP%\eren-duman-sonuc-<belirteç>`'te kalır.
@@ -312,7 +325,7 @@ Gerçek tutar ölçülür: rapor `result.total_cost_usd` toplamını ve istek sa
   metin, ortamın Claude dışı kısmı, görev metni, işte `computer-use-windows` (düzenekte yok), stdout ve pid.
   Her birinin ayrı denetimi var: biçim, gönderilen metinle eşitlik, jetonların dolu ve farklı olması.
 
-**Başarı ölçütü:** `SONUC: BASARILI` için beş koşul gerekir:
+**Başarı ölçütü:** `SONUC: BASARILI` için altı koşul gerekir:
 - (a) altınla AYNI,
 - (b) bütün denetimler GECTI,
 - (c) davranış denetimleri GECTI: init `apiKeySource: none`; `eren` ve `eren-ajanda` köprüleri yönlendirilmiş
@@ -322,6 +335,7 @@ Gerçek tutar ölçülür: rapor `result.total_cost_usd` toplamını ve istek sa
   satırında `onek=<belirteç>` görünür. Denetim günlüğünde canlı ad alanına bağlantı 0, red 0 olur; köprüler
   duman `kopru` ve `ajanda` borularına bağlanır, duman servisi bağlantıyı kabul eder. Köprünün `boru_baglandi`
   olayı da gelir. Canlı servis duman jetonunu reddederdi, o yüzden bu olay ancak duman servisinden gelir.
+- (f) canlı servis günlüğü denetimi GECTI (aşağıda, "Önyüklemesiz alt süreçler").
 
 Ek olarak temizlik raporunda belirteçli süreç kalmamalı, duman boruları kapanmış olmalı ve canlı boru
 listesi değişmemiş olmalı. Fark çıkarsa iki ihtimal var: ya altın kayıt sahte süreçte gerçekte olmayan bir
@@ -348,6 +362,44 @@ göstermiyor; o soru gerçek koşuda yanıtlanır.
 
 Kapalı başarısızlık `duzenek-sinama.ts`'te gösterildi (59/59 GECTI). Sarmalayıcı (`cmd /c`), adı değişmiş node
 ve PATH'ten `node` ile kaydedici süreci 91 ile çıktı; gerçek claude yerine konan işaretçi betik hiç başlamadı.
+Aynı gün argv denetimi, tanınmayan boru biçimleri, varsayılan çıktı yolu, iz raporu gizliliği ve canlı günlük
+denetimi eklendi (100/100 GECTI). `--strict-mcp-config` ya da `--setting-sources ""` eksikken kaydedici süreci
+91 ile çıktı. UNC biçimli bağlantı süreç içinde reddedildi. Bu eklerden sonra `--sahte-claude` provası
+koşulmadı (derleme kilidi doluydu).
+
+**Önyüklemesiz alt süreçler.** Önyükleme süreç başınadır: `--import` yalnız düzeneğin başlattığı süreçlerde
+var, `NODE_OPTIONS` silinir. Modelin `--dangerously-skip-permissions` altında PowerShell ya da Bash ile
+başlattığı bir `node` ya da `eren` süreci yönlendirilmez ve canlı borulara bağlanabilir. Denetim günlüğü bu
+süreçleri görmez; "canlı boruya bağlantı 0" kanıtı yalnız önyüklemeli süreçleri kapsar. Bu süreçlerin ortamında
+`EREN_KIT_DATA_DIR` ve `LOCALAPPDATA` duman köküne çevrilidir, jetonları duman servisinindir. Canlı servis
+onları reddeder, ama bağlantının kendisi kurulur.
+
+Bu yüzden koşu penceresinde CANLI servis günlüğü salt okunur (`canli-gunluk.ts`). Pencere duman servisinden
+hemen önce açılır, temizlikten sonra kapanır.
+- Kök: kalıcı `EREN_KIT_DATA_DIR` (`HKCU\Environment`) ve sürecin ortamı, `veri-koku.ts` kuralıyla. Bugün
+  ikisi de aynı köke çıkıyor.
+- Günlük: `<kök>\logs\servis.log` ve döndürülmüşleri `servis.<n>.log`. Önce `servis.log`, sonra numaralılar
+  okunur. Okuma sırasında döndürme olursa bir satır iki kez sayılabilir; bu fazla sayımdır, temkinli yöndür.
+- Dosya `readFileSync` ile açılır, hiçbir şey yazılmaz. libuv okuma, yazma ve silme paylaşımıyla açar.
+- Satırlardan yalnız zaman, modül, olay ve rol alınır. Rapor yalnız olay, rol ve sayı yazar.
+- Ölçüt: pencerede `el_sikisma_ret` 0 olmalı. `eren`, `ana_oturum`, `soru`, `telefon` ya da bilinmeyen
+  rolde `el_sikisma` da 0 olmalı.
+- `pc_oturumu` ve `pc_kanca` bilgi olarak yazılır. Bunlar canlı Claude Code oturumlarıdır ve gün boyu bağlanır;
+  duman ortamında bu rollerin anahtarı yoktur.
+- Atfetme yoktur. Pencerede canlı taraftan bir ret gelirse ya da telefon kullanılırsa koşu başarısız olur;
+  bu yanlış alarmdır ve koşu yinelenir.
+- Kapsam dışı: el sıkışmadan, süre dolmadan kapanan sessiz bir bağlantı. Açık kalan sessiz bağlantı
+  `sure_doldu` reti olarak görünür.
+
+Bugünkü sayılar (2026-11-28, `--kuru`): 1 günlük dosyası, toplam 159 el sıkışma, son 24 saatte 41, son
+1 saatte 3.
+- `el_sikisma`: `eren` 84 (24 sa 6), `pc_oturumu` 24 (24 sa 24, 1 sa 3), `telefon` 21, `soru` 14,
+  `ana_oturum` 11 (24 sa 6), `pc_kanca` 1.
+- `el_sikisma_ret`: 4, hepsi son 24 saatte ve rolsüz.
+Yanlış alarm olasılığı bu hızlardan kabaca kestirilebilir. Son 24 saatte ölçüte giren olay 16'ydı: ret 4,
+`eren` 6, `ana_oturum` 6. Olaylar düzgün dağılsaydı 10 dakikalık bir pencerede en az biri için olasılık
+yaklaşık %10 olurdu. Telefonla konuşulurken bu olaylar kümelenir. Bu bir kestirimdir, ölçülmedi. Koşu
+sırasında telefondan konuşmamak yanlış alarmı azaltır.
 
 **İzler** (`--evet`; gerçek `claude` 2.1.332, yalıtımsız). Fark adımı (`iz-olcum.ts`) koşu öncesinde,
 kapanıştan sonra ve temizlikten sonra salt okuma anlık alır. `~/.claude` için her girdinin göreli yolu, boyutu
@@ -424,10 +476,25 @@ göstermeli. Giriş bilgisi kopyalanmaz, bu bir sır kopyası olurdu. Bu adım h
   - Geçici kök `%TEMP%\eren-duman-<b>` (silinir).
   - Çıktı `%TEMP%\eren-duman-sonuc-<b>` (kalır). Jeton ve tam argv taşır, depo dışındadır.
   - Yukarıdaki "İzler".
-  - Canlı veri kökü, canlı borular ve canlı limit kilidi yazılmaz.
+  - Düzenek canlı veri köküne ve canlı limit kilidine yazmaz. Düzeneğin başlattığı süreçler (servis,
+    eşleştirme, köprüler) önyüklemeyle canlı borulara bağlanamaz.
+  - **Bu, modelin başlattığı süreçleri kapsamaz.** Ana oturum ve PC hafif işi `--dangerously-skip-permissions`
+    ile koşar. Modelin PowerShell ya da Bash ile başlattığı bir `node` ya da `eren` süreci önyüklemesizdir ve
+    canlı borulara bağlanabilir. Araçlarla canlı veri köküne de yazabilir. Bunu yalnız istem sınırlar.
+    Ortamları duman köküne çevrili olduğu için canlı servis onların jetonlarını reddeder. Bağlantı canlı servis
+    günlüğünde `el_sikisma_ret` olarak görünür ve koşu başarısız sayılır ("Önyüklemesiz alt süreçler").
+    Sessiz bir bağlantı ya da doğrudan dosya yazımı bu denetimde görünmez.
+  - Servisin transkript silme portunun kökü üründe gerçek `~/.claude/projects`'tir. Port yalnız oturum
+    UUID'leriyle siler ve senaryo onu tetiklemez. Duman servisinde bu port sahtedir: silmez, sayar. Bu yüzden
+    `~/.claude`'daki her silme yalnız `--izleri-sil` ile olur. Bedeli, bu silme yolunun gerçek dosya sisteminde
+    dumanla sınanmamasıdır; birim testi sınıyor (`dis-dunya.test.ts`, "transkript.sil").
+  - Gerçek `claude`, `~/.claude.json`'ı canlı oturumlarla aynı anda yeniden yazar. Yarışta canlı bir oturumun
+    yazımı kaybolabilir. Claude Code'un bu dosyada kilit ya da birleştirme yapıp yapmadığı DOĞRULANMADI.
+    Kayıp sayaç, proje ayarı ya da izin olabilir. Yalıtım (`CLAUDE_CONFIG_DIR`) bu yarışı ortadan kaldırırdı.
 - **Nasıl geri alınır:**
   - Süreçler: `kosu.ts --temizle <b>`.
   - `~/.claude` izleri: `--izleri-sil`.
-  - `~/.claude.json` geri yüklenmez, çünkü canlı oturumların yazdığını ezerdi. Eklenen `projects` girdileri
-    raporda listelenir, istenirse elle silinir.
+  - `~/.claude.json` geri yüklenmez, çünkü canlı oturumların yazdığını ezerdi. Koşunun eklediği `projects`
+    girdileri raporda listelenir, istenirse elle silinir. Başka oturumların değişen anahtarları raporda yol
+    olarak yazılmaz; yalnız üst anahtar başına sayı yazılır (proje yolları kalıcı `rapor.txt`'e düşmesin).
   - Değişen sayaçlar ve harcanan kota geri alınmaz.
