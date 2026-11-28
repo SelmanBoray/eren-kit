@@ -645,7 +645,7 @@ describe("ek yedeği: temizlik ve saklama", () => {
     for (const e of [a, b, c]) t.sd.tamlar.set(e.ozet, e.veri);
 
     const s1 = await t.ekler.temizle();
-    assert.deepEqual(s1, { silinen: 0, silinen_bayt: 0, yarim_silinen: 0, isaretlenen: 2, tutulan: 1, hatali: 0 });
+    assert.deepEqual(s1, { silinen: 0, silinen_bayt: 0, yarim_silinen: 0, isaretlenen: 2, tutulan: 1, hatali: 0, eksik_onek: 0 });
     assert.deepEqual([...t.sd.isaretler.keys()].sort(), [b.ozet, c.ozet].sort());
     assert.deepEqual(t.sd.isaretler.get(b.ozet), { ilk_ms: BASLANGIC, gozlenen_ms: 0, rev: t.sayac.rev });
 
@@ -654,7 +654,7 @@ describe("ek yedeği: temizlik ve saklama", () => {
     assert.equal(t.sd.isaretler.get(b.ozet)!.gozlenen_ms, SAKLAMA - 1);
 
     const s3 = await t.calis(1);
-    assert.deepEqual(s3, { silinen: 2, silinen_bayt: 500, yarim_silinen: 0, isaretlenen: 0, tutulan: 1, hatali: 0 });
+    assert.deepEqual(s3, { silinen: 2, silinen_bayt: 500, yarim_silinen: 0, isaretlenen: 0, tutulan: 1, hatali: 0, eksik_onek: 0 });
     assert.deepEqual([...t.sd.tamlar.keys()], [a.ozet]);
     assert.equal(t.sd.isaretler.size, 0);
     assert.deepEqual(t.gunluk.bul("ek_temizlik").at(-1)!.alanlar, s3);
@@ -760,7 +760,7 @@ describe("ek yedeği: günlük", () => {
       assert.equal(metin.includes(yasak), false, `günlükte "${yasak.slice(0, 20)}" var`);
     }
     assert.equal(/[0-9a-f]{64}/.test(metin), false);
-    const izinli = new Set(["ek_id", "bayt", "code", "adet", "hata_turu", "silinen", "silinen_bayt", "yarim_silinen", "isaretlenen", "tutulan", "hatali"]);
+    const izinli = new Set(["ek_id", "bayt", "code", "adet", "hata_turu", "silinen", "silinen_bayt", "yarim_silinen", "isaretlenen", "tutulan", "hatali", "eksik_onek"]);
     for (const g of t.gunluk.girdiler) {
       assert.equal(g.modul, "ajanda_ekler");
       for (const anahtar of Object.keys(g.alanlar ?? {})) assert.ok(izinli.has(anahtar), `izinsiz alan ${g.olay}.${anahtar}`);
@@ -839,6 +839,7 @@ describe("ek yedeği: kaynak sınırları (inceleme bulguları)", () => {
       ayrilan_adet: 0,
       dokunulan_adet: 0,
       kota_bayt: 8 * BLOK,
+      eksik_onek: 0,
     });
 
     const t2 = kur();
@@ -1152,5 +1153,35 @@ describe("ek yedeği: inceleme bulguları E4–E8", () => {
     const s = await t.ekler.temizle();
     assert.equal(s.yarim_silinen, 1);
     assert.deepEqual([...t.sd.yarimlar.keys()], [e.ozet], "dolu yarım kalır");
+  });
+});
+
+describe("ek yedeği: okunamayan önek dizini (üçüncü tur A3)", () => {
+  it("günlüğe yalnız sayı ve hata türü yazılır; tur sonucu ve ölçüm eksik sayımı taşır; düzelince sıfırlanır", async () => {
+    const t = kur();
+    const a = ekUret("ek_a", 100, 1);
+    const b = ekUret("ek_b", 200, 2);
+    for (const e of [a, b]) t.sd.tamlar.set(e.ozet, e.veri);
+    t.kayitKoy(kayit("k1", [a, b]));
+    t.sd.okunamayanOnekler.add(b.ozet.slice(0, 2));
+    const s = await t.ekler.temizle();
+    assert.equal(s.eksik_onek, 1);
+    assert.equal(s.tutulan, 1, "okunamayan dizindeki dosya bu tur görünmez");
+    assert.equal(t.ekler.olcum().eksik_onek, 1);
+    assert.equal(t.ekler.olcum().dosya_adet, 1, "kota eksik sayılıyor");
+    const g = t.gunluk.bul("ek_onek_okunamadi", "uyari");
+    assert.equal(g.length, 1);
+    assert.deepEqual(g[0]!.alanlar, { adet: 1, hata_turu: "Error" });
+    const metin = JSON.stringify(t.gunluk.bul("ek_onek_okunamadi"));
+    // Alanlar yukarıda birebir: önek de yol da yok.
+    for (const e of [a, b]) assert.ok(!metin.includes(e.ozet), "özet yazılmaz");
+    assert.equal(t.gunluk.bul("ek_temizlik").at(-1)!.alanlar!["eksik_onek"], 1);
+
+    t.sd.okunamayanOnekler.clear();
+    const s2 = await t.ekler.temizle();
+    assert.equal(s2.eksik_onek, 0);
+    assert.equal(t.ekler.olcum().eksik_onek, 0);
+    assert.equal(t.ekler.olcum().dosya_adet, 2);
+    assert.equal(t.gunluk.bul("ek_onek_okunamadi").length, 1, "düzelince yeniden yazılmaz");
   });
 });

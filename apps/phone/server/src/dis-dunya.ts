@@ -107,6 +107,12 @@ const bos = (): void => {};
 
 const saatKur = (): SaatPortu => ({ simdiMs: () => Date.now() });
 
+/**
+ * Tekdüze saat (`performance.now`, süreç başından ms): duvar saati düzeltmesinden (NTP, elle) etkilenmez,
+ * geri gitmez. Yalnız süre ölçümü içindir, an değildir; ek yedeğinin gözlenen süresi (`ana` bağlar).
+ */
+export const tekduzeSaatKur = (): SaatPortu => ({ simdiMs: () => performance.now() });
+
 const zamanlayiciKur = (): ZamanlayiciPortu => ({
   sonra: (ms, f): IptalEt => {
     const t = setTimeout(f, ms);
@@ -1737,7 +1743,7 @@ export const ajandaEkDiskiKur = (kok: string): AjandaEkDiski => {
       if (yol !== null) await ekVarsaSil(yol);
     },
 
-    tamListesi: async () => {
+    tamListesi: async (okunamadi) => {
       const liste: AjandaEkDosyasi[] = [];
       if (!(await ekDizinVar(kok))) return liste;
       for (const d of await ekDizinListesi(kok)) {
@@ -1745,10 +1751,15 @@ export const ajandaEkDiskiKur = (kok: string): AjandaEkDiski => {
         let dosyalar: Dirent[];
         try {
           dosyalar = await ekDizinListesi(join(kok, d.name));
-        } catch {
+        } catch (e) {
           // Okunamayan tek önek dizini (izin, paylaşım ihlali) bütün taramayı düşürmez: yalnız o dizinin
           // dosyaları bu turda görünmez (kotaya sayılmaz, işaretlenmez, silinmez; işareti varsa düşer ve
-          // yeniden görülünce baştan başlar: saklama uzar).
+          // yeniden görülünce baştan başlar: saklama uzar). Çağıran bilsin (günlük, eksik sayım).
+          try {
+            okunamadi?.(e);
+          } catch {
+            // bildirim atsa da tarama sürer
+          }
           continue;
         }
         for (const f of dosyalar) {

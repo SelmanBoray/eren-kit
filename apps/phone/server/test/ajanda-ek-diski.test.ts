@@ -307,12 +307,18 @@ describe("ajandaEkDiskiKur", () => {
     }
     const kapali = join(kok, o1.slice(0, 2));
     execFileSync("icacls", [kapali, "/deny", "*S-1-1-0:(RD)"]);
+    const okunamayan: unknown[] = [];
     try {
-      assert.deepEqual(await disk.tamListesi(), [{ ozet: o2, bayt: 10 }]);
+      assert.deepEqual(await disk.tamListesi((e) => okunamayan.push(e)), [{ ozet: o2, bayt: 10 }]);
+      // Çağıran bilir (üçüncü tur A3): dizin başına bir bildirim, hatasıyla.
+      assert.equal(okunamayan.length, 1);
+      assert.ok(okunamayan[0] instanceof Error);
     } finally {
       execFileSync("icacls", [kapali, "/remove:d", "*S-1-1-0"]);
     }
-    assert.deepEqual((await disk.tamListesi()).map((f) => f.ozet).sort(), [o1, o2].sort());
+    okunamayan.length = 0;
+    assert.deepEqual((await disk.tamListesi((e) => okunamayan.push(e))).map((f) => f.ozet).sort(), [o1, o2].sort());
+    assert.equal(okunamayan.length, 0);
   });
 
   it("tamOzeti: tam dosyanın boyu ve sha256'sı; dosya yoksa atar; diskte bozulan dosya adıyla tutmaz", async () => {
