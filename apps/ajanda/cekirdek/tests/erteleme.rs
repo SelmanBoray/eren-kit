@@ -1011,3 +1011,34 @@ fn yanitsiz_gecmis_istegi_yukari_denemesini_suresiz_bekletmez() {
     assert!(h.canli_mi());
     assert_eq!(h.pc.acilislar.last(), Some(&("hello", 3)));
 }
+
+/// V1 (Kol C ile kesişim): v2 serviste ertelenen simge değişikliği atılır, kullanıcı sonra başlığı değiştirir,
+/// dışa aktarır, yeni telefona içe aktarır. Atılan değişiklik ret listesinde aynı haliyle gelir (neden, işaret,
+/// v3 özeti, gövde; yedek biçim 3), "yeniden uygula" çalışır ve başlığı eskiye döndürmez; düzeltme formu bu
+/// girdiye uygulanmaz (`ret_duzelt` `GecersizGirdi`).
+#[test]
+fn atilan_ertelenen_degisiklik_yedekten_gecer_ve_geri_alinir() {
+    let mut h = Hat::yeni("erteleme-yedek");
+    let a = v2ye_inen_kurulum(&mut h);
+    kuyruga_yaz(&h, "i_v3", &yalniz_v3(&a, simge("ev")));
+    v2de_baglan(&mut h);
+    assert_eq!(h.c.ertelenenleri_at(None).unwrap(), 1);
+    h.c.duzenle(a.clone(), None, govde("A (yeni başlık)", None)).unwrap();
+    h.pompala();
+    assert_eq!(h.pc.d.kayitlar[&a].baslik, "A (yeni başlık)");
+    let once = h.c.ret_listesi().unwrap();
+    assert!(once.len() == 1 && once[0].ertelenen_atildi && once[0].v3_degisikligi.is_some(), "{once:?}");
+    let d = h.c.disa_aktar().unwrap();
+    assert_eq!((d.ret_yedekte, d.ret_listesinde, d.bicim_surumu), (1, 0, 3));
+
+    let b = Hat::yeni("erteleme-yedek-b");
+    let p = b.c.ice_aktarma_onizlemesi(d.belge.clone()).unwrap();
+    assert_eq!((p.yeni, p.ret_listesine_gelecek, p.ret_gecersiz, p.ret_sonra_degisen), (1, 1, 0, 0));
+    assert!(b.c.ice_aktar(d.belge, Some(p.iz)).unwrap().uygulandi);
+    assert_eq!(b.c.ret_listesi().unwrap(), once, "girdi bütünüyle geldi");
+    assert!(matches!(b.c.ret_duzelt("i_v3".into(), govde("A (eski)", None)), Err(CekirdekHatasi::GecersizGirdi { .. })));
+    assert!(b.c.ertelenen_geri_al("i_v3".into()).unwrap());
+    let k = kayit(&b, &a);
+    assert_eq!((k.baslik.as_str(), k.v3.simge.as_deref()), ("A (yeni başlık)", Some("ev")));
+    assert!(b.c.ret_listesi().unwrap().is_empty());
+}

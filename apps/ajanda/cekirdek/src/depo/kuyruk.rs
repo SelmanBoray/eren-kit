@@ -9,7 +9,9 @@
 //!
 //! Sıra `sira`'dır (AUTOINCREMENT). Satırın işlemi `AjandaIslem::json()` metnidir.
 
-use super::Depo;
+use std::collections::BTreeSet;
+
+use super::{Depo, anahtar};
 use crate::hata::CekirdekHatasi;
 use rusqlite::{OptionalExtension, Row, params};
 
@@ -263,9 +265,43 @@ impl Depo {
             .optional()?)
     }
 
-    /// Döner: silindi mi.
+    /// Döner: silindi mi. Girdinin "kayıt sonra değişti" işareti de silinir.
     pub fn ret_sil(&self, islem_id: &str) -> Result<bool, CekirdekHatasi> {
-        Ok(self.baglanti.execute("DELETE FROM ret_listesi WHERE islem_id = ?1", [islem_id])? > 0)
+        let silindi = self.baglanti.execute("DELETE FROM ret_listesi WHERE islem_id = ?1", [islem_id])? > 0;
+        let mut isaretler = self.ret_sonra_degisenler()?;
+        if isaretler.remove(islem_id) {
+            self.ret_isaretlerini_yaz(&isaretler)?;
+        }
+        Ok(silindi)
+    }
+
+    /// İçe aktarmada kaydı yedekten sonra değişmiş bulunan ret girdileri (`motor/aktarma.rs`
+    /// `kayit_sonra_degisti_mi`; köprüde `RetGirdisi.kayit_sonra_degisti`). Göç açmamak için ayrı sütun yerine
+    /// `meta`'da (`anahtar::RET_SONRA_DEGISEN`): `islem_id`'lerin sıralı JSON dizisi; `islem_json` olduğu gibi
+    /// kalır (girdinin işlemi ve nedeni başka okuyucularındır). Okunamayan değer boş sayılır.
+    pub fn ret_sonra_degisenler(&self) -> Result<BTreeSet<String>, CekirdekHatasi> {
+        Ok(self
+            .meta_oku(anahtar::RET_SONRA_DEGISEN)?
+            .and_then(|m| serde_json::from_str::<BTreeSet<String>>(&m).ok())
+            .unwrap_or_default())
+    }
+
+    /// Girdileri işaretler (`ret_sonra_degisenler`); listede olmayan kimlik yazılmaz.
+    pub fn ret_sonra_degisti_isaretle(&self, idler: &[String]) -> Result<(), CekirdekHatasi> {
+        if idler.is_empty() {
+            return Ok(());
+        }
+        let listede: BTreeSet<String> = self.ret_islem_idleri()?.into_iter().collect();
+        let mut isaretler = self.ret_sonra_degisenler()?;
+        isaretler.retain(|i| listede.contains(i));
+        isaretler.extend(idler.iter().filter(|i| listede.contains(*i)).cloned());
+        self.ret_isaretlerini_yaz(&isaretler)
+    }
+
+    fn ret_isaretlerini_yaz(&self, isaretler: &BTreeSet<String>) -> Result<(), CekirdekHatasi> {
+        let deger = (!isaretler.is_empty()).then(|| serde_json::to_string(isaretler).unwrap_or_default());
+        self.meta_yaz(anahtar::RET_SONRA_DEGISEN, deger.as_deref())?;
+        Ok(())
     }
 
     /// Ret listesindeki işlem kimlikleri (içe aktarma girdileri yinelemesin diye).

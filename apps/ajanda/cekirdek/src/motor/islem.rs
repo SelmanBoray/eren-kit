@@ -14,15 +14,18 @@
 //! - Yerel kipte (`motor/yerel.rs`) işlem kuyruğa girmez: aynı denetimlerden sonra servis kurallarıyla
 //!   doğrudan ve kalıcı uygulanır (yerel revizyon, yerel geçmiş); yukarıdaki kurallar aynen geçerlidir.
 
-use super::iyimser::{gorunen_yenile, iyimser_uygula};
+use super::iyimser::{gorunen_yenile, islem_coz, iyimser_uygula};
+use super::kanal::ertelenen_atildi_mi;
+use super::yerel::kayit_coz;
 use super::{Etkiler, Motor, Ortam};
 use crate::hata::CekirdekHatasi;
 use crate::kopru::tipler::DuzenlemeTemeli;
 use crate::kural::metin::govdeyi_hazirla;
 use crate::kural::ornek::{OrnekDurumuSonucu, ajanda_ornek_durumu_uygula};
+use crate::model::metin::opak_id_mi;
 use crate::model::{
-    AjandaDegisiklik, AjandaIslem, AjandaKaydi, Alan, AjandaZamani, GirdiYolu, KayitDurumu, KayitGovdesi, V3Alanlari,
-    V3Degisikligi, ajanda_bolge_yeri_degisir_mi,
+    AjandaDegisiklik, AjandaIslem, AjandaKaydi, Alan, AjandaZamani, GirdiYolu, IslemTuru, KayitDurumu, KayitGovdesi,
+    V3Alanlari, V3Degisikligi, ajanda_bolge_yeri_degisir_mi,
 };
 
 /// İki seçenekli alanın farkı (`null` kaldırır).
@@ -87,6 +90,43 @@ pub(super) fn v3_farki(eski: &V3Alanlari, yeni: &V3Alanlari) -> V3Degisikligi {
         d.bolge_konumu = Alan::Deger(*konum);
     }
     d
+}
+
+/// Değişikliği v3 alanlarına uygular (`Kaldir` kaldırır, `Yok` dokunmaz; servisin kuralıyla: bölge başka bir
+/// yere değişip konum verilmemişse konum düşer, bölgesiz kalan konum ve varış düşer). `ret_duzelt`.
+fn v3_uygula(a: &V3Alanlari, d: &V3Degisikligi) -> V3Alanlari {
+    fn tek<T: Clone>(h: &mut Option<T>, d: &Alan<T>) {
+        match d {
+            Alan::Deger(v) => *h = Some(v.clone()),
+            Alan::Kaldir => *h = None,
+            Alan::Yok => {}
+        }
+    }
+    fn liste<T: Clone>(h: &mut Vec<T>, d: &Alan<Vec<T>>) {
+        match d {
+            Alan::Deger(v) => h.clone_from(v),
+            Alan::Kaldir => h.clear(),
+            Alan::Yok => {}
+        }
+    }
+    let mut v = a.clone();
+    if let Alan::Deger(yeni) = &d.bolge
+        && d.bolge_konumu.yok_mu()
+        && ajanda_bolge_yeri_degisir_mi(a.bolge.as_deref(), Some(yeni.as_str()))
+    {
+        v.bolge_konumu = None;
+    }
+    tek(&mut v.simge, &d.simge);
+    tek(&mut v.bolge, &d.bolge);
+    tek(&mut v.bolge_konumu, &d.bolge_konumu);
+    tek(&mut v.varis, &d.varis);
+    liste(&mut v.baglantilar, &d.baglantilar);
+    liste(&mut v.ekler, &d.ekler);
+    if v.bolge.is_none() {
+        v.bolge_konumu = None;
+        v.varis = None;
+    }
+    v
 }
 
 /// İki kaydın gövde ve v3 alanlarının farkı (`eski` -> `yeni`; durum, örnekler, taslak, silindi ayrı
@@ -165,6 +205,11 @@ impl Motor {
 
     /// Yeni kayıt; döner: üretilen `kayit_id`.
     pub(crate) fn ekle(&mut self, o: &Ortam, e: &mut Etkiler, govde: KayitGovdesi, girdi_yolu: GirdiYolu) -> Result<String, CekirdekHatasi> {
+        self.ekle_v3(o, e, govde, V3Alanlari::default(), girdi_yolu)
+    }
+
+    /// `ekle`, v3 alanlarıyla (`ret_duzelt`; `v3` kurallardan geçmiş olmalı).
+    fn ekle_v3(&mut self, o: &Ortam, e: &mut Etkiler, govde: KayitGovdesi, v3: V3Alanlari, girdi_yolu: GirdiYolu) -> Result<String, CekirdekHatasi> {
         let govde = govdeyi_hazirla(govde)?;
         // Güvenli rastgelede çakışma beklenmez; yine de var olan kimlik asla yeniden verilmez.
         let mut kayit_id = Motor::yeni_kimlik(o, "k_")?;
@@ -174,7 +219,7 @@ impl Motor {
         {
             kayit_id = Motor::yeni_kimlik(o, "k_")?;
         }
-        self.kuyruga_koy(o, e, AjandaIslem::Ekle { kayit_id: kayit_id.clone(), govde, v3: Default::default(), girdi_yolu }, true)?;
+        self.kuyruga_koy(o, e, AjandaIslem::Ekle { kayit_id: kayit_id.clone(), govde, v3, girdi_yolu }, true)?;
         Ok(kayit_id)
     }
 
@@ -191,10 +236,23 @@ impl Motor {
         temel: Option<DuzenlemeTemeli>,
         govde: KayitGovdesi,
     ) -> Result<(), CekirdekHatasi> {
+        self.duzenle_v3(o, e, kayit_id, temel, govde, V3Degisikligi::default())
+    }
+
+    /// `duzenle`, ayrıca bir v3 değişikliğiyle (`ret_duzelt`: reddedilen işlemin v3 kısmı kaybolmasın).
+    fn duzenle_v3(
+        &mut self,
+        o: &Ortam,
+        e: &mut Etkiler,
+        kayit_id: &str,
+        temel: Option<DuzenlemeTemeli>,
+        govde: KayitGovdesi,
+        v3: V3Degisikligi,
+    ) -> Result<(), CekirdekHatasi> {
         let govde = govdeyi_hazirla(govde)?;
         let k = self.gorunen_ya_da_hata(kayit_id, false)?;
         let gorunenden = govde_farki(&kaydin_govdesi(&k), &govde);
-        let (degisiklik, temel_revizyon) = match temel {
+        let (mut degisiklik, temel_revizyon) = match temel {
             None => (gorunenden, k.revizyon),
             Some(t) => {
                 // Temel kayıttan geldiği için hazırlıktan geçer; geçmezse (kural sonradan sıkılaştı) olduğu gibi.
@@ -202,6 +260,7 @@ impl Motor {
                 (yalniz_degisenler(gorunenden, &govde_farki(&temel_govde, &govde)), t.revizyon)
             }
         };
+        degisiklik.v3 = v3;
         if degisiklik.bos_mu() {
             return Ok(());
         }
@@ -257,6 +316,66 @@ impl Motor {
         self.gorunen_ya_da_hata(kayit_id, true)?;
         self.kuyruga_koy(o, e, AjandaIslem::GeriYukle { kayit_id: kayit_id.to_string() }, false)?;
         Ok(())
+    }
+
+    /// Ret listesindeki girdinin düzeltmesi (köprü `ret_duzelt`): formun gövdesi yazılır, reddedilen işlemin v3
+    /// kısmı korunur, yazım başarılıysa girdi listeden çıkar (yazım hata verirse girdi kalır). Döner: yazılan
+    /// kaydın kimliği. Hedef (Kotlin'in eski `RetListesi.hedef` kuralı, artı işaret):
+    /// - girdi bir `guncelle` ise, kaydı telefonda canlıysa ve girdi "kayıt sonra değişti" işaretli değilse
+    ///   (`RetGirdisi.kayit_sonra_degisti`) var olan kayda: gövdenin tamamı istenen haldir (`duzenle(None)`),
+    ///   ayrıca işlemin v3 değişikliği; girdi kaydın bir hali ise (`tutarsiz_kayit`: okunamayan satır, D4'ün
+    ///   telefon hali) o halin v3 alanları (yokluk kaldırma sayılmaz);
+    /// - yoksa yeni kayıt olarak (yeni kimlik; aynı kaydın kopyası doğmasın diye yalnız yukarıdaki durumda
+    ///   var olan kayda yazılır): `ekle`'nin v3 alanları ve girdi yolu, `guncelle`'nin v3 değişikliği kaydın
+    ///   (varsa) şimdiki v3 alanlarına uygulanmış hali, kayıt halinin v3 alanları. İşaretli girdide kaydın
+    ///   şimdiki hali ezilmez, girdinin içeriği de kaybolmaz.
+    ///
+    /// Hata (girdi kalır): `GecersizGirdi{alan:"islem_id"}` (geçersiz kimlik, listede yok ya da atılmış ertelenen
+    /// değişiklik: onun yolu `ertelenen_geri_al`), form hataları (`GecersizGirdi`). Gözlemciye kaydın
+    /// değişimi ve `ret_listesi`.
+    pub(crate) fn ret_duzelt(&mut self, o: &Ortam, e: &mut Etkiler, islem_id: &str, govde: KayitGovdesi) -> Result<String, CekirdekHatasi> {
+        let gecersiz = |neden: &str| CekirdekHatasi::GecersizGirdi { alan: "islem_id".into(), neden: neden.into() };
+        if !opak_id_mi(islem_id) {
+            return Err(gecersiz("geçersiz kimlik"));
+        }
+        let r = self.depo.ret_girdisi(islem_id)?.ok_or_else(|| gecersiz("ret listesinde yok"))?;
+        if ertelenen_atildi_mi(&r.neden) {
+            return Err(gecersiz("atılmış ertelenen değişiklik: ertelenen_geri_al ile uygulanır"));
+        }
+        let islem = islem_coz(&r.islem_json);
+        let kayit_hali = if islem.is_none() { kayit_coz(&r.islem_json) } else { None };
+        let tur = islem.as_ref().map(AjandaIslem::tur).or_else(|| {
+            serde_json::from_str::<serde_json::Value>(&r.islem_json).ok()?.get("islem")?.as_str().and_then(IslemTuru::coz)
+        });
+        let tur = tur.unwrap_or(IslemTuru::Guncelle);
+        let sonra_degisti = self.depo.ret_sonra_degisenler()?.contains(islem_id);
+        let mevcut = self.depo.gorunen_kayit(&r.kayit_id)?.map(|g| g.kayit);
+        let kayit_id = match mevcut.as_ref().filter(|k| tur == IslemTuru::Guncelle && !k.silindi && !sonra_degisti) {
+            Some(k) => {
+                let v3 = match (&islem, &kayit_hali) {
+                    (Some(AjandaIslem::Guncelle { degisiklik, .. }), _) => degisiklik.v3.clone(),
+                    (_, Some(h)) => v3_farki(&k.v3, &v3_uygula(&k.v3, &h.v3.degisiklik())),
+                    _ => V3Degisikligi::default(),
+                };
+                self.duzenle_v3(o, e, &r.kayit_id, None, govde, v3)?;
+                r.kayit_id.clone()
+            }
+            None => {
+                let taban = mevcut.map(|k| k.v3).unwrap_or_default();
+                let (v3, girdi_yolu) = match (islem, kayit_hali) {
+                    (Some(AjandaIslem::Ekle { v3, girdi_yolu, .. }), _) => (v3, girdi_yolu),
+                    (Some(AjandaIslem::Guncelle { degisiklik, .. }), _) => (v3_uygula(&taban, &degisiklik.v3), GirdiYolu::Elle),
+                    (_, Some(h)) => (h.v3, GirdiYolu::Elle),
+                    _ => (V3Alanlari::default(), GirdiYolu::Elle),
+                };
+                self.ekle_v3(o, e, govde, v3, girdi_yolu)?
+            }
+        };
+        if self.depo.ret_sil(islem_id)? {
+            e.degisim.ret_listesi = true;
+            e.degisim.baglanti = true;
+        }
+        Ok(kayit_id)
     }
 
     /// Ret listesinden atar (kullanıcı vazgeçti ya da düzeltip yeniden ekledi). Listede yoksa hiçbir şey.

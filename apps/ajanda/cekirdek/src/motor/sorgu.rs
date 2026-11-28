@@ -109,6 +109,8 @@ pub(crate) fn v3_ozeti(islem: &AjandaIslem) -> Option<V3DegisiklikOzeti> {
 /// `teslim_edilemedi` ve `ertelenen_atildi` ile (ikincisi `ulasmis_olabilir` ile de) gelir. Her girdinin v3
 /// değişikliği `v3_degisikligi`'ndedir (`v3_ozeti`).
 pub(crate) fn ret_listesi(d: &Depo) -> Result<Vec<RetGirdisi>, CekirdekHatasi> {
+    // İçe aktarmanın "kayıt sonra değişti" işaretleri (`Depo::ret_sonra_degisenler`).
+    let sonra_degisen = d.ret_sonra_degisenler()?;
     Ok(d.ret_listesi()?
         .into_iter()
         .map(|r| {
@@ -133,6 +135,7 @@ pub(crate) fn ret_listesi(d: &Depo) -> Result<Vec<RetGirdisi>, CekirdekHatasi> {
             } else {
                 KuyrukRetNedeni::coz(&r.neden).unwrap_or(KuyrukRetNedeni::GecersizIslem)
             };
+            let kayit_sonra_degisti = sonra_degisen.contains(&r.islem_id);
             RetGirdisi {
                 islem_id: r.islem_id,
                 kayit_id: r.kayit_id,
@@ -143,6 +146,7 @@ pub(crate) fn ret_listesi(d: &Depo) -> Result<Vec<RetGirdisi>, CekirdekHatasi> {
                 ertelenen_atildi,
                 v3_degisikligi,
                 ulasmis_olabilir: r.neden == ERTELENEN_ATILDI_YOLLANMIS,
+                kayit_sonra_degisti,
             }
         })
         .collect())
