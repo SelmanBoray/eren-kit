@@ -196,6 +196,16 @@ fn gun_ici_sira_bolumsuz_saatsiz_sonra_bolum_sirasi_sonra_saat() {
 }
 
 #[test]
+fn serit_kaydin_simgesini_tasir_simgesizde_yok() {
+    let d = depo();
+    yaz(&d, &kayit("k_simgeli", Some(donem("2026-12-02", "2026-12-04")), json!({"simge": "ucak"})));
+    yaz(&d, &kayit("k_simgesiz", Some(donem("2026-12-03", "2026-12-06")), json!({})));
+    let a = ayi(&d, IST, 2026, 12, false);
+    let simgeler: Vec<(&str, Option<&str>)> = a.seritler.iter().map(|s| (s.kayit_id.as_str(), s.simge.as_deref())).collect();
+    assert_eq!(simgeler, [("k_simgeli", Some("ucak")), ("k_simgesiz", None)]);
+}
+
+#[test]
 fn gece_yarisini_asan_kayit_iki_gunde_ve_ay_yil_sinirinda() {
     let d = depo();
     yaz(&d, &kayit("k_gece", Some(sureli("2026-11-30", "23:00", 120, IST)), json!({})));
