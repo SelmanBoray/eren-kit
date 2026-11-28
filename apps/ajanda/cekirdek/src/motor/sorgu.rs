@@ -12,8 +12,7 @@
 //! Bu sorgular yalnız `Depo` okur: köprü onları motor kilidini almadan ayrı bir okuma bağlantısında da
 //! çalıştırabilir (`kopru::Cekirdek`), böylece uzun bir telafi yazması arayüzü bekletmez.
 
-use super::iyimser::islem_coz;
-use super::kanal::{ERTELENEN_ATILDI_YOLLANMIS, SatirErtelemesi, ertelenen_atildi_mi, erteleme_surumu, kuyruk_ertelemeleri};
+use super::kanal::{ERTELENEN_ATILDI_YOLLANMIS, SatirErtelemesi, atilan_coz, ertelenen_atildi_mi, erteleme_surumu, kuyruk_ertelemeleri};
 use super::{Etkiler, Motor, Ortam};
 use crate::depo::{Depo, GorunenSuzgec};
 use crate::hata::CekirdekHatasi;
@@ -129,7 +128,7 @@ pub(crate) fn ret_listesi(d: &Depo) -> Result<Vec<RetGirdisi>, CekirdekHatasi> {
                 Some(g)
             });
             let ertelenen_atildi = ertelenen_atildi_mi(&r.neden);
-            let v3_degisikligi = islem_coz(&r.islem_json).as_ref().and_then(v3_ozeti);
+            let v3_degisikligi = atilan_coz(&r.islem_json).and_then(|(i, _)| v3_ozeti(&i));
             let neden = if ertelenen_atildi {
                 KuyrukRetNedeni::TeslimEdilemedi
             } else {
@@ -171,7 +170,7 @@ impl Motor {
             return Err(CekirdekHatasi::GecersizDurum { mesaj: "bağlantı canlı değil".into() });
         }
         let istek_id = Motor::yeni_kimlik(o, "g_")?;
-        self.gecmis_istekleri.insert(istek_id.clone(), (kayit_id.to_string(), o.simdi_ms()));
+        self.gecmis_istekleri.insert(istek_id.clone(), (kayit_id.to_string(), o.simdi_ms(), std::time::Instant::now()));
         let sayfa = self.gecmis.entry(kayit_id.to_string()).or_insert_with(|| GecmisSayfasi {
             kayit_id: kayit_id.to_string(),
             satirlar: Vec::new(),

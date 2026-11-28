@@ -73,8 +73,19 @@ function kur(sec: { kotaBayt?: number } = {}) {
   /** Duvar saatinin sahte zamandan farkı (ms); yanlış ayarlı ya da sıçrayan saat. */
   const kayma = { ms: 0 };
   const saat = { simdiMs: () => zaman.saat.simdiMs() + kayma.ms };
+  /**
+   * Tarama süresi (ms): her `tamListesi` çağrısı tekdüze saati bu kadar ilerletir (uzun süren tarama
+   * taklidi; tur içinde zaman geçer). Varsayılan 0: tekdüze saat sahte zamanın kendisi.
+   */
+  const tarama = { ms: 0, birikim: 0 };
+  const tekduze = { simdiMs: () => zaman.saat.simdiMs() + tarama.birikim };
   const gunluk = sahteGunluk();
   const sd = sahteEkDiski(() => saat.simdiMs());
+  const tamListesi = sd.disk.tamListesi;
+  sd.disk.tamListesi = async (okunamadi) => {
+    tarama.birikim += tarama.ms;
+    return tamListesi(okunamadi);
+  };
   const kayitlar = new Map<string, AjandaKaydi>();
   const sayac = { rev: 0 };
   const depo = {
@@ -93,8 +104,8 @@ function kur(sec: { kotaBayt?: number } = {}) {
       disk: sd.disk,
       depo,
       saat,
-      // Tekdüze saat sahte zamanın kendisi: `kayma` (duvar saati düzeltmesi) onu etkilemez.
-      tekduze: zaman.saat,
+      // Tekdüze saat sahte zaman (artı tarama süresi): `kayma` (duvar saati düzeltmesi) onu etkilemez.
+      tekduze,
       zamanlayici: zaman.zamanlayici,
       gunluk,
       ...(sec.kotaBayt !== undefined && { kotaBayt: sec.kotaBayt }),
@@ -102,6 +113,7 @@ function kur(sec: { kotaBayt?: number } = {}) {
   const t = {
     zaman,
     kayma,
+    tarama,
     gunluk,
     sd,
     kayitlar,
@@ -521,5 +533,66 @@ describe("Üçüncü tur A2: gözlenen süre tekdüze saatle sayılır", () => {
     t.zaman.ilerlet(20 * DK);
     await t.ekler.temizle();
     assert.equal(gozlenen(t, g.ozet), 20 * DK);
+  });
+});
+
+describe("Dördüncü tur C3: tur içinde sıfırlanan ya da konan işaretin adımı o andan sayılır", () => {
+  const DK = 60 * 1000;
+  const gozlenen = (t: Ortam, ozet: string): number | undefined => t.sd.isaretler.get(ozet)?.gozlenen_ms;
+
+  it("tarama 10 dk sürer: o turda konan işarete sonraki tur yalnız konmadan beri geçeni ekler", async () => {
+    const t = kur();
+    t.tarama.ms = 10 * DK;
+    await t.ekler.temizle(); // açılış turu: adım 0, `sonGozlem` tur başı
+    const g = await geriAlinabilir(t); // işaret taramadan sonra, tur başından 10 dk sonra konar
+    assert.equal(gozlenen(t, g.ozet), 0);
+    t.zaman.ilerlet(SAAT);
+    await t.ekler.temizle();
+    // Konmadan bu turun başına kadar gerçekte geçen: 60 dk (ikinci taramanın 10 dk'sı bu turun başından sonra).
+    assert.equal(gozlenen(t, g.ozet), SAAT, "tarama süresi fazladan sayılmadı");
+  });
+
+  it("tarama 10 dk sürer: o turda sıfırlanan işarete sonraki tur ve kapanış yalnız sıfırlamadan beri geçeni ekler", async () => {
+    const t = kur();
+    const g = await geriAlinabilir(t);
+    t.zaman.ilerlet(40 * DK);
+    // Tur arasında geri yükle ve yeniden sil: mezar taşı işaretten yeni, sonraki tur işareti sıfırlar.
+    t.kayitKoy(kayit("k_ek_g", [g]));
+    t.kayitKoy(kayit("k_ek_g", [g], { silindi: true }));
+    t.tarama.ms = 10 * DK;
+    await t.ekler.temizle(); // tazeleme taramadan sonra: sıfırlama tur başından 10 dk sonra
+    assert.equal(gozlenen(t, g.ozet), 0, "işaret sıfırlandı");
+    t.tarama.ms = 0;
+    t.zaman.ilerlet(SAAT);
+    await t.ekler.temizle();
+    assert.equal(gozlenen(t, g.ozet), SAAT, "sıfırlamadan önceki tarama süresi sayılmadı");
+    t.zaman.ilerlet(20 * DK);
+    await t.ekler.kapat();
+    assert.equal(gozlenen(t, g.ozet), SAAT + 20 * DK);
+  });
+
+  it("o turda sıfırlanıp hemen kapanış: kapanış yalnız sıfırlamadan beri geçeni ekler", async () => {
+    const t = kur();
+    const g = await geriAlinabilir(t);
+    t.zaman.ilerlet(40 * DK);
+    t.kayitKoy(kayit("k_ek_g", [g]));
+    t.kayitKoy(kayit("k_ek_g", [g], { silindi: true }));
+    t.tarama.ms = 10 * DK;
+    await t.ekler.temizle();
+    t.tarama.ms = 0;
+    t.zaman.ilerlet(5 * DK);
+    await t.ekler.kapat();
+    assert.equal(gozlenen(t, g.ozet), 5 * DK);
+  });
+
+  it("sıfırlanmamış işaret tarama süresini kaybetmez: adım tur başından tur başına", async () => {
+    const t = kur();
+    t.tarama.ms = 10 * DK;
+    const g = await geriAlinabilir(t);
+    t.zaman.ilerlet(SAAT);
+    await t.ekler.temizle(); // konmadan beri 60 dk
+    t.zaman.ilerlet(SAAT);
+    await t.ekler.temizle(); // artık sıfırlanmış değil: tur başından tur başına 70 dk
+    assert.equal(gozlenen(t, g.ozet), SAAT + 70 * DK);
   });
 });

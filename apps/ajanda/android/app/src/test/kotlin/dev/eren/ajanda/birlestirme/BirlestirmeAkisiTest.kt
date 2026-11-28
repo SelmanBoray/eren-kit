@@ -608,6 +608,84 @@ class BirlestirmeAkisiTest {
     }
 
     @Test
+    fun ilkOkumaHatasindaSeritOkunamadiDerYenidenDenenir() {
+        // Q6: hiçbir şey bilinmiyorken önizleme okunamadı: şerit çıkar (yeniden deneme yolu), soru sayılmaz.
+        yuz.onizlemeler += CekirdekHatasi.Depo("k_gizli")
+        assertTrue(akis.denetle() is BirlestirmeAkisi.Adim.Hata)
+        val b = akis.sonBekleyen!!
+        assertTrue(b.okunamadi)
+        assertFalse(b.ertelendi)
+        assertEquals("Eren servisiyle birleştirmenin durumu okunamadı; birleştirme onayınızı bekliyor olabilir.", b.serit)
+        assertEquals("Yeniden dene", b.dugme)
+        assertFalse(akis.onayBekliyor)
+        // Şeritten yeniden deneme: plan okundu, soru gelir; şerit olağan bekleyen metnine döner.
+        yuz.onizlemeler += plan()
+        onay(akis.denetle(zorla = true))
+        assertFalse(akis.sonBekleyen!!.okunamadi)
+        // Bilinen soru varken okuma hatası onu silmez, "okunamadı"ya da çevirmez.
+        yuz.onizlemeler += CekirdekHatasi.Depo("k_gizli")
+        akis.denetle()
+        assertFalse(akis.sonBekleyen!!.okunamadi)
+        assertTrue(akis.onayBekliyor)
+        // Bekleyen yokmuş: "okunamadı" şeridi kalkar.
+        val ikinci = BirlestirmeAkisi(yuz, kusak = { kusakNo })
+        yuz.onizlemeler += CekirdekHatasi.Depo("k_gizli")
+        ikinci.denetle()
+        yuz.onizlemeler += null
+        assertNull(ikinci.denetle())
+        assertNull(ikinci.sonBekleyen)
+    }
+
+    @Test
+    fun vazgecHatasindaDurumSilinmezSeritKalirSoruKendiligindenAcilmaz() {
+        // Q2: çekirdek koparamadı; eşleşme ve bekleyen birleştirme sürüyor.
+        yuz.onizlemeler += plan(iz = "iz1")
+        onay(akis.denetle())
+        yuz.vazgecSonucu = CekirdekHatasi.Depo("k_gizli")
+        yuz.onizlemeler += plan(iz = "iz1")
+        val h = akis.vazgec()
+        assertTrue(h is BirlestirmeAkisi.Adim.Hata)
+        temiz(h)
+        assertTrue(akis.onayBekliyor)
+        val b = akis.sonBekleyen!!
+        assertTrue(b.ertelendi)
+        assertFalse(b.okunamadi)
+        // Aynı bağlantıda pencere kendiliğinden yeniden açılmaz; şeritten (zorla) açılır.
+        yuz.onizlemeler += plan(iz = "iz1")
+        assertNull(akis.denetle())
+        yuz.onizlemeler += plan(iz = "iz1")
+        onay(akis.denetle(zorla = true))
+        // Canlı okuma da okunamazsa bilinen hal korunur.
+        yuz.onizlemeler += CekirdekHatasi.Depo("k_gizli")
+        akis.vazgec()
+        assertTrue(akis.onayBekliyor)
+        assertTrue(akis.sonBekleyen!!.ertelendi)
+        // Bekleyen kalkmışsa (ör. zaten bağlı) şerit de kalkar.
+        yuz.vazgecSonucu = CekirdekHatasi.GecersizDurum("bağlı kipte")
+        yuz.onizlemeler += null
+        akis.vazgec()
+        assertFalse(akis.onayBekliyor)
+        assertNull(akis.sonBekleyen)
+        // Başarıda durum sıfırlanır.
+        yuz.onizlemeler += plan(iz = "iz2")
+        onay(akis.denetle(zorla = true))
+        yuz.vazgecSonucu = koparma(true)
+        assertEquals("Bağlanma iptal edildi", akis.vazgec().baslik)
+        assertNull(akis.sonBekleyen)
+    }
+
+    @Test
+    fun kaldirmaOnayMetniNeyinGeriAlinamazOldugunuSoyler() {
+        // Q5: geri alınamaz olan eşleşmenin kaldırılmasıdır (kayıtlar değişmez).
+        assertEquals(
+            "Hiçbir kayıt değişmez; kayıtlar bu telefonda olduğu gibi kalır. Bu telefonun Eren servisiyle eşleşmesi " +
+                "silinir. Eşleşmeyi kaldırmak geri alınamaz: yeniden bağlanmak için Eren servisinin QR kodunu yeniden " +
+                "okutmanız gerekir.",
+            BirlestirmeMetinleri().vazgecOnayMetni,
+        )
+    }
+
+    @Test
     fun ilgiliBildirimler() {
         fun d(tumu: Boolean = false, baglanti: Boolean = false, eslesme: Boolean = false, kayitlar: List<String> = emptyList()) =
             Degisim(kayitlar, tumu, false, baglanti, eslesme, emptyList())

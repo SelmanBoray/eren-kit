@@ -36,8 +36,11 @@
  *   işaret kümesi). Silme için iki koşul birlikte gerekir: servisin işaretten beri ÇALIŞIRKEN gözlediği süre
  *   (`gozlenen_ms`: ardışık turlar arası ve son turdan nazik kapanışa, adım başına en çok
  *   `GOZLEM_ADIMI_MS`; tekdüze saatle ölçülür, duvar saati düzeltmesi hayali süre eklemez) ve duvar saatinde
- *   geçen süre en az `EK_SAKLAMA_GUN`. PC kapalıyken, uykudayken ya da saat sıçradığında geçen süre
- *   sayılmaz: telefonun çevrimdışı kuyruğundaki `geri_yukle`'nin PC açıldıktan sonra gelmesine yer kalır.
+ *   geçen süre en az `EK_SAKLAMA_GUN`. PC kapalıyken geçen süre ve saat sıçraması sayılmaz; uyku ya da
+ *   hazırda bekletmeden her uyanışta en çok `GOZLEM_ADIMI_MS` sayılır (Windows'ta `performance.now` =
+ *   libuv `uv_hrtime` = `QueryPerformanceCounter`, Microsoft belgesine göre uykuda da ilerler; ölçülmedi).
+ *   Her adım hem `GOZLEM_ADIMI_MS`'ten hem gerçekte geçen süreden küçük ya da eşittir: telefonun çevrimdışı
+ *   kuyruğundaki `geri_yukle`'nin PC açıldıktan sonra gelmesine yer kalır.
  *   Geleceğe düşen işaret anı şimdiye kırpılır. Yeniden başvurulursa işaret kalkar; turlar arasında yeniden başvurulup yine
  *   silinen kayıt da (mezar taşının revizyonu işaretinkinden büyük) süreyi baştan başlatır. Tarama kaydın
  *   değiştiği yoldan (araç, uygulama, geri yükleme) bağımsızdır, göç gerektirmez.
@@ -384,9 +387,11 @@ export const ajandaEkleriKur = (d: AjandaEkleriBagimliliklari): AjandaEkleri => 
    */
   let sonGozlem: number | null = null;
   /**
-   * `sonGozlem`'den sonra baştan başlatılan işaretler (yer açmada ya da silme öncesi denetimde yeniden
-   * başvuru, depo değişimi): özet → sıfırlandığı an (tekdüze). Sonraki adım bunlara yalnız o andan beri
-   * geçeni ekler; adım yazılınca boşalır. Boyu işaret sayısıyla sınırlı.
+   * `sonGozlem`'den sonra baştan başlatılan ya da yeni konan işaretler (turda tazeleme ve işaretleme, yer
+   * açmada ya da silme öncesi denetimde yeniden başvuru, depo değişimi): özet → sıfırlandığı ya da konduğu an
+   * (tekdüze). Sonraki adım bunlara yalnız o andan beri geçeni ekler. Adım yazılınca `sonGozlem`'e kadarki
+   * girdiler düşer; turun kendi içinde (tur başından sonra) konanlar sonraki adıma kalır. Boyu işaret
+   * sayısıyla sınırlı.
    */
   const sifirlanan = new Map<string, number>();
   /** Son taramada okunamayan önek dizini (`olcum`, tur sonucu). */
@@ -1156,8 +1161,10 @@ ${ozet}`;
 
   /**
    * Önceki başarılı turdan (ya da kapanış kaydından) beri gözlenen süre, tekdüze saatle (`simdiT`): süreçte
-   * henüz tur yoksa 0, uzun boşlukta en çok `GOZLEM_ADIMI_MS` (uyku, zamanlayıcı gecikmesi). Duvar saati
-   * düzeltmesi adıma girmez: geride kalmış saatte koşan turdan sonra saat ileri alınsa da hayali süre eklenmez.
+   * henüz tur yoksa 0, uzun boşlukta en çok `GOZLEM_ADIMI_MS` (uyku ya da hazırda bekletme: Windows'ta
+   * tekdüze saat, QPC, uykuda da ilerler, ölçülmedi; zamanlayıcı gecikmesi). Adım gerçekte geçen süreyi
+   * aşmaz. Duvar saati düzeltmesi adıma girmez: geride kalmış saatte koşan turdan sonra saat ileri alınsa da
+   * hayali süre eklenmez.
    */
   const gozlemAdimi = (simdiT: number): number =>
     sonGozlem === null ? 0 : Math.min(Math.max(simdiT - sonGozlem, 0), S.GOZLEM_ADIMI_MS);
@@ -1252,7 +1259,8 @@ ${ozet}`;
         }
         const i = isaretler.get(f.ozet);
         if (i === undefined) {
-          isaretler.set(f.ozet, yeni);
+          // Konma anı tutulur: tarama uzun sürdüyse sonraki adım tur başından değil buradan sayılır.
+          sifirla(isaretler, f.ozet, yeni);
           degisti = true;
           sonuc.isaretlenen += 1;
         } else if (suresiDoldu(i, bas)) {
@@ -1264,9 +1272,10 @@ ${ozet}`;
       // İşaretler silmeden önce yazılır: çökme olursa silinmemiş dosyanın işareti kalır, sonraki tur siler.
       // Gözlenen süre ve taranan revizyon yalnız yazıldıktan sonra ilerler.
       if (degisti) await disk.isaretleriYaz(isaretler);
-      // Bu turda sıfırlananlar tur başında (adımdan sonra) sıfırlandı: sonraki adım `basT`'den sayılır.
+      // Sonraki adım `basT`'den sayılır; bu turda (adımdan sonra) sıfırlanan ya da konan işaretler ise kendi
+      // anlarından: onların girdisi kalır, tur başına kadarki (bu adımda sayılmış) girdiler düşer.
       sonGozlem = basT;
-      sifirlanan.clear();
+      for (const [ozet, t] of sifirlanan) if (t <= basT) sifirlanan.delete(ozet);
       sonTaranRev = taranan.rev;
       degisti = false;
       for (const f of silinecek) {
