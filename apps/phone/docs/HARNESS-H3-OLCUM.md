@@ -161,8 +161,50 @@ Tam tasdik için önce iki şey gerekir:
 Ölçülemeyenler: yukarıdaki dört madde ve `trusted_hash` algoritması. Bunlar karar değiştirmez; tam tasdik
 istenirse yeniden ölçülür.
 
-Ölçülmedi: gerçek köprüyle uçtan uca kayıt. Bu ölçümde Codex'e kaydedici MCP sunucusu bağlandı (bölüm 2); canlı
-servis kullanılmadı. Gerçek `kopru.ts --rol pc_oturumu --uyarlayici codex`'in Codex altında başlayıp servise
-bağlandığı ve kaydın taslak doğduğu denenmedi. Codex köprüsünü bugün yalnız birim ve birleşim testleri sınar (bellek
-içi MCP istemcisiyle, Codex olmadan). Codex yönergesi bu yüzden "kayıtlar çalışır" demez, ölçülmediğini söyler; ilk
-gerçek sınama yönergenin 4. adımıdır.
+Gerçek köprüyle uçtan uca kayıt sonradan ölçüldü (aşağıda, "Uçtan uca"): gerçek `kopru.ts --rol pc_oturumu
+--uyarlayici codex` Codex 0.172.0 altında başlıyor, servise bağlanıyor, kayıt taslak doğuyor. Bölüm 6'nın yukarısındaki
+ölçümlerde Codex'e kaydedici MCP sunucusu bağlıydı (bölüm 2). Codex yönergesi (`kurulum/harness/codex.ts`) hâlâ
+"ölçülmedi" diyor ve `approval_mode`'un yerini bilinmiyor diye yazıyor; bu sonuca göre güncellenmeli.
+
+### Uçtan uca (2026-11-28)
+
+Düzen:
+- Codex 0.172.0, `codex exec --strict-config`. Her koşuda boş `CODEX_HOME`, sahte sağlayıcı ve kaydedici vekil.
+  Sahte sağlayıcı sırayla `ajanda_ekle`, `ajanda_listele` ve aynı kayda `ajanda_guncelle` çağırdı.
+- Model tarafında gerçek köprü çalıştı. Servis tarafı küçük bir test servisiydi: gerçek ajanda yöneticisi ve PC
+  defteri, gerçek ajanda borusu sunucusu, gerçek SQLite depo ve dosya günlüğü. Ayrı veri kökü, ayrı adlı boru.
+- Tam servis (`ana.ts`) kurulmadı: tekil kilit, gateway ve `claude` yok.
+- PC anahtarı test kökünde `eslestir --pc-ajan codex` ile üretildi.
+- Köprü, yönergedeki yoldan (`<veri kökü>\uygulama\guncel\…`) başladı. Test kökünde o klasör depo çalışma kopyasına
+  bağlantıydı.
+
+Yalıtım:
+- Köprüye `--env NODE_OPTIONS=--import=<ön modül>` ile `kopru-ajanda.test.ts`'teki yönlendirmenin dosya hali yüklendi.
+  Bu ön modül yalnız `\\.\pipe\eren-ajanda`'yı kabul eder ve test borusuna çevirir; başka her hedef hata verir.
+- Sonuç: 4 köprü süreci, 4 bağlantı denemesi. Hepsi canlı boru adını istedi ve test borusuna çevrildi. Başka hedef 0.
+  ESM bağı denetimi her süreçte geçti.
+- Test servisi 4 el sıkışma gördü; anahtar test kökününkiydi. Canlı servise, veri köküne ve boruya dokunulmadı.
+- Dışarı giden istek 5 koşuda 0.
+
+| | Sonuç | Gözlem |
+|---|---|---|
+| (a) kayıt | geçti | `ajanda_ekle` ile eklenen kayıt depoda `taslak=true`, kaynak `pc_araci`/`sentetik`. `arac` olayında `pc_karar=cagri_kimligi_yok`, `cagri_kimligi=yok`, `uyarlayici=codex`. `ajanda_listele` ve taslak kayda `ajanda_guncelle` de çalıştı; kayıt taslak kaldı |
+| (b) araç metni | geçti | `ajanda_ekle` ve `ajanda_guncelle` çıktısında `pc_tur: sentetik (cagri_kimligi_yok). Bu çağrı Codex'ten geldi: …` satırı var: "Codex yalnız taslak ajanıdır …" ve "Teşhis: eren eslestir --pc-ajan codex --teshis". `ajanda_listele`'de bu not yok |
+| (c) teşhis | geçti | Test günlüğüyle `eslestir --pc-ajan codex --teshis`: "Kurulum (Codex CLI): yalnız taslak", 7 Codex çağrısı, "son PC araç kararı: cagri_kimligi_yok (kayıt TASLAK doğdu: beklenen …)" |
+| (d) kayıt satırı | geçti | `eslestir --pc-ajan codex --yonerge`'in PowerShell satırı PowerShell 7'de çalıştı (tek ek: `NODE_OPTIONS`). Çıktı `Added global MCP server 'eren-ajanda'`; `config.toml`'da `[mcp_servers.eren-ajanda]` ve `[mcp_servers.eren-ajanda.env]`. Codex `env` tablosunu köprüye geçirdi: köprü test kökünün anahtarını okudu, el sıkışma kabul edildi |
+
+`approval_mode`'un yeri (exec, `approval_policy = "never"`, katı ayar):
+- Ayar yoksa araç çalışmaz: "MCP tool call requires approval, but approval policy is never".
+- Araç başına: `[mcp_servers.eren-ajanda.tools.<araç>]` altında `approval_mode = "approve"`. Üç araçla çalıştı.
+- Sunucu geneli: `[mcp_servers.eren-ajanda]` altında `default_tools_approval_mode = "approve"`. Çalıştı.
+- Kökte `default_tools_approval_mode` "unknown configuration field" ile reddedildi (denetim).
+- `approve` dışındaki değerler denenmedi.
+
+Yan gözlem: aynı içerikli `ajanda_ekle`, başka bir Codex oturumundan ikinci kez gelince `zaten_var` döndü. Yani PC
+tekilleştirmesi oturumlar arasında ortak.
+
+Ölçülmeyenler:
+- Etkileşimli arayüz.
+- Tam servis ve telefondan onay akışı.
+- Gerçek kurulum kopyası.
+- PowerShell 5.1 ve Git Bash satırları.
