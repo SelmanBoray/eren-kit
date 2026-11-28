@@ -60,7 +60,8 @@ class AktarmaGercekTest {
             val yuz = CekirdekYuzu.Gercek(c)
             assertEquals(CalismaKipi.YEREL, yuz.kip())
             assertTrue(yuz.liste(Sekme.TARIHLI, true).isEmpty())
-            val akis = AktarmaAkisi(yuz, metinler)
+            // Üretimdeki yol: çekirdeğin bayt API'si.
+            val akis = AktarmaAkisi(AktarmaCekirdegi.Gercek(c), metinler)
 
             val o = akis.dosyaOku { ByteArrayInputStream(kap.toByteArray()) }
             assertTrue(o.metin, o is AktarmaAkisi.Adim.Onay)

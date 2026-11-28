@@ -11,7 +11,7 @@
 //!
 //! Dosyalar: `kanal.rs` (bağlantı, telafi, kuyruğun yollanması ve sonuçları), `islem.rs` (kullanıcı
 //! işlemleri), `iyimser.rs` (görünen kopyanın hesabı), `yerel.rs` (yerel kipin yazarı ve geçmişi), `aktarma.rs`
-//! (D3 dışa ve içe aktarma), `eslesme.rs`, `sorgu.rs`, `alarm.rs` (R3).
+//! (D3 dışa ve içe aktarma), `birlestirme.rs` (D4 birleştirme önizlemesi ve onayı), `eslesme.rs`, `sorgu.rs`, `alarm.rs` (R3).
 //!
 //! Değişiklik yayma kuralı (`gorunenler_degisti`): görünen kopyası değişen kayıtlar, yazan SQLite işlemi
 //! kalıcı olduktan SONRA R3'ün `alarm_senkronu`'na verilir ve `Degisim.kayitlar`'a bir kez girer. Tam
@@ -19,6 +19,7 @@
 
 pub(crate) mod alarm;
 mod aktarma;
+pub(crate) mod birlestirme;
 mod eslesme;
 mod islem;
 mod iyimser;
@@ -94,9 +95,10 @@ pub(crate) struct Motor {
     /// Bağlantının sürümü, düşülen sürüm, `welcome.yetenekler` (`kanal.rs` "Sürüm uyumu").
     surum: kanal::KanalSurumu,
     /// Geçmiş önbelleği (`kayit_id` -> sayfa) ve yanıt bekleyen istekler (`istek_id` -> (`kayit_id`, yollandığı
-    /// an ms); an yukarı denemenin bekleme süresi içindir: `kanal.rs` `GECMIS_BEKLEME_MS`).
+    /// an ms, yollandığı tekdüze an); anlar yanıtın bekleme süresi içindir: `kanal.rs` `GECMIS_BEKLEME_MS`,
+    /// `gecmis_beklemesi`).
     gecmis: BTreeMap<String, GecmisSayfasi>,
-    gecmis_istekleri: BTreeMap<String, (String, i64)>,
+    gecmis_istekleri: BTreeMap<String, (String, i64, std::time::Instant)>,
 }
 
 impl Motor {

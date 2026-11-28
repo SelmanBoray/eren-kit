@@ -76,6 +76,14 @@ impl Depo {
         json.map(|j| kayit_json_oku(&j)).transpose()
     }
 
+    /// Sunucu kopyasındaki satırın metni, çözülmeden (okunamayan satırı depo hatasından ayırmak için).
+    pub fn sunucu_ham(&self, kayit_id: &str) -> Result<Option<String>, CekirdekHatasi> {
+        Ok(self
+            .baglanti
+            .query_row("SELECT json FROM sunucu_kayitlari WHERE kayit_id = ?1", [kayit_id], |s| s.get(0))
+            .optional()?)
+    }
+
     pub fn sunucu_revizyonu(&self, kayit_id: &str) -> Result<Option<i64>, CekirdekHatasi> {
         Ok(self
             .baglanti
@@ -87,13 +95,16 @@ impl Depo {
         Ok(self.baglanti.query_row("SELECT COUNT(*) FROM sunucu_kayitlari", [], |s| s.get(0))?)
     }
 
-    /// Süren tam telafinin topladıklarını atar (kopma, süreç yeniden açıldı, yeni tam telafi).
+    /// Süren tam telafinin topladıklarını atar (kopma, süreç yeniden açıldı, yeni tam telafi). Onay bekleyen
+    /// birleştirmenin işareti (D4, `anahtar::BIRLESTIRME`) de gider: o, toplanan kopyanın önizlemesidir.
     pub fn telafiyi_sil(&self) -> Result<(), CekirdekHatasi> {
         self.baglanti.execute("DELETE FROM telafi_kayitlari", [])?;
+        self.meta_yaz(anahtar::BIRLESTIRME, None)?;
         Ok(())
     }
 
-    /// Tam telafinin sonu: toplanan kopya sunucu kopyasının yerine geçer (gelmeyen kayıt düşer).
+    /// Tam telafinin sonu: toplanan kopya sunucu kopyasının yerine geçer (gelmeyen kayıt düşer); onay
+    /// bekleyen birleştirmenin işareti (D4) gider.
     pub fn telafiyi_sunucuya_gecir(&self) -> Result<(), CekirdekHatasi> {
         self.baglanti.execute_batch(
             "DELETE FROM sunucu_kayitlari;
@@ -101,7 +112,14 @@ impl Depo {
                SELECT kayit_id, revizyon, guncelleme_ms, json FROM telafi_kayitlari;
              DELETE FROM telafi_kayitlari;",
         )?;
+        self.meta_yaz(anahtar::BIRLESTIRME, None)?;
         Ok(())
+    }
+
+    /// Toplanan kopyanın ulaştığı revizyon (en büyük kayıt revizyonu; boşsa 0): süren tam telafinin
+    /// `son_rev`'i (`kanal.rs` `Telafi.tam` aynı değeri tamponla biriktirir).
+    pub fn telafi_son_rev(&self) -> Result<i64, CekirdekHatasi> {
+        Ok(self.baglanti.query_row("SELECT COALESCE(MAX(revizyon), 0) FROM telafi_kayitlari", [], |s| s.get(0))?)
     }
 
     pub fn son_rev(&self) -> Result<i64, CekirdekHatasi> {

@@ -7,7 +7,7 @@ tek yerde toplar. Bir kol, bu dosya ile `apps/phone/docs/AJANDA.md` (ürün söz
 
 Kod bu belgeyle çelişirse kod ve sözleşme kazanır; çelişkiyi koordinatöre bildirin, belge düzeltilir.
 
-Son güncelleme: 2026-11-27 (akşam).
+Son güncelleme: 2026-11-28 (sabah).
 
 ## İçindekiler
 
@@ -23,7 +23,7 @@ Son güncelleme: 2026-11-27 (akşam).
 
 ---
 
-## 1. Bugünkü durum (2026-11-27 akşamı)
+## 1. Bugünkü durum (2026-11-28 sabahı)
 
 | Parça | Durum |
 |---|---|
@@ -32,18 +32,46 @@ Son güncelleme: 2026-11-27 (akşam).
 | PC'deki Claude Code oturumlarından ajanda ("yalın yol") | Kod ana dalda ve canlı serviste; kullanıcının makinesinde etkin (anahtar, MCP kaydı, tek araç öncesi kanca, talimat kuralı). Etkileşimsiz oturumla uçtan uca sınandı (karar: `etkilesimsiz`, beklenen). Etkileşimli oturumda `insan` kararı henüz gözlenmedi |
 | Takvim: çekirdek sorguları (`takvimAyi`, `takvimGunu`) | Ana dalda. Sözleşme ve yerel şema (3) değişmedi |
 | Takvim: Kotlin ekranı (üçüncü sekme) | Ana dalda; bu telefonda kurulu (takvim sekmeli sürüm) |
-| Ana dalda, canlıya ve telefona kurulmadı | D5'in servis dilimi (çok sürümlü çözücü, bağlantı başına sürüm, aşağı uyarlama; kablo değişmedi, küme [2]) ve gözden geçirme düzeltmeleri; D1 (yerel kip: göç 4, yerel yazar, yerel geçmiş, koparma, yerelden bağlanma); D2 (eşleşmeyi kaldırma artık koparmadır, başka servise geçiş veri düşürmez); harness H2 (kurulum soyutlaması: `kurulum/harness/`, `eslestir --pc-ajan`, kabuğa göre yönerge) |
-| Canlı servis ve telefon sürümleri | Canlı servis hâlâ PC oturumu yolunun kurulduğu sürümde; telefondaki uygulama takvim sekmeli sürümde. Sonraki canlı kurulum sözleşme v3 ile birlikte planlanıyor |
-| Dallarda süren işler | Kol C: sözleşme v3 (protokol, servis, asistan araçları, Rust model/kural katmanı) ve ek yedeği servis dilimi. Kol B: D2 gözden geçirme düzeltmeleri ve D3. Kol H: H1 (tasdik çerçevesi ve tasdikin oturuma bağlanması) |
-| Arayüz yönü | Üç yönlü prototipten kullanıcı "Sahne"yi seçti (bölüm 4A); Kol U başlıyor |
+| Ana dalda (`17f7fc2`), canlıya ve telefona kurulmadı | D5'in servis dilimi (çok sürümlü çözücü, bağlantı başına sürüm, aşağı uyarlama) ve gözden geçirme düzeltmeleri; D1 (yerel kip: göç 4, yerel yazar, yerel geçmiş, koparma, yerelden bağlanma); D2 (eşleşmeyi kaldırma artık koparmadır, başka servise geçiş veri düşürmez); harness H2 (kurulum soyutlaması); 27-28 Kasım gecesi girenler: H1 (`5c6759f`, harness'tan bağımsız tasdik çerçevesi), T5 süreç eşitliği (`d7bf303`; tasdikin süreç kimliği köprünün ebeveyn süreciyle eşitse tüketilir, bağlantılar arası "bağ" makinesi kalktı, kalıcı kilit yolu kapandı), sözleşme v3 (`3600780`; ayrıntı, bağlantılar, simge, ekler, bölge/varış, ek yedeği servis dilimi, Rust'ta sürüm pazarlığı ve erteleme) ve düzeltme turları (`ad8cb2d`, `b9b5da0`, `17f7fc2`), Codex "yalnız taslak" uyarlayıcısı (`ab3fdd1`), köprü düzeltmeleri ve H4.0 altın kayıtlar (`f9c9952`, `052b147`), Sahne arayüzü (`03766ed`) |
+| v3 durumu | Ana dalda; servis bağlantı başına sürüm konuşur. Asistan araçlarındaki v3 alanları `ajanda_arac_v3` ayarıyla açılır, varsayılan kapalı. Açılması için aşağıdaki "v3 kapısı" kapanmalı |
+| Codex uyarlayıcısı | Ana dalda (`ab3fdd1`): ikinci harness Codex CLI; köprü `--uyarlayici codex`, her kayıt taslak doğar; kurulum yalnız yönerge gösterir. Köprü hello "merdiveni"nin düşüşü daraltıldı |
+| Sahne arayüzü (Kol U) | Ana dalda (`03766ed`), yalnız debug derlemesindeki ikinci başlatıcıdan ("Ajanda Sahne") açılır; release'te etkinlik dışa kapalı. Compose zemini, 29 çizimlik takım ve başlıktan çizim önerisi, gerçek veriye bağlı Bugün, Takvim ve Tarihsizler ekranları. Ayrıntı, yeni kayıt/düzenleme ve ayarlar yer tutucu |
+| Canlı servis ve telefon sürümleri | DEĞİŞMEDİ: canlı servis hâlâ PC oturumu yolunun kurulduğu sürümde; telefondaki uygulama takvim sekmeli v2 sürümde. Sonraki canlı kurulum sözleşme v3 ile birlikte planlanıyor |
+| Telefona gönderilen deneme APK'ları | Telegram'dan, koordinatör: 28.11 gece `cfb0687` (ilk Sahne), ardından `60ca53d` (çizimli; tamamlama dokunuş anında, tekrarlı işte seri korunur). İkisi de v3 ÖNCESİ çekirdekle derlendi; yerel şema göçü 4'ü (yerel kip) getirir. Takvim'li APK, Kol U'nun üç düzeltmesi (yanlış örnek, art arda işlem, süresi dolan geri al) kapanınca gönderilecek. Telefon gözlemleri bekleniyor. Sahne dalı artık v3 çekirdeğini içerdiği için sıradaki APK v3 çekirdeğiyle gelir; v3 çekirdeğinin gerçek telefonda canlı v2 servisle ilk çalışması ayrı ve kullanıcıya açıkça söylenen bir adımdır |
+| Dallarda süren işler | Kol B (`ajanda-yerel-kip`): ana dalda OLMAYAN teslim (D4 birleştirme önizlemesi ve onayı, D6 mantığı, içe aktarma güvenliği, ret listesinin yedeğe girmesi: yedek "biçim 2", bölgeler "biçim 3"e kaydı; otomatik klasör yedeği; eski ana ekrana geçici birleştirme onay penceresi); üç tur gözden geçirildi, son turda eski ana ekrandaki pencerede üç düzeltme bekliyor; ardından ayrı teslim "R1". Kol C: liste alanları tasarım önerisi ve geri alma düzeltmeleri. Kol H ve Kol U: bölüm 7.1 |
+| Arayüz yönü | Üç yönlü prototipten kullanıcı "Sahne"yi seçti (bölüm 4A); Sahne ana dalda (yukarıda), Kol U üç düzeltme ve U3 ile sürüyor |
 | Bölge ölçüm uygulaması (`apps/ajanda-bolge-olcum`) | Ana dalda; telefonda kurulu (kullanıcı 2026-11-28'de teyit etti; 4 günlük kısa plan), rapor bekleniyor |
 | Alarm ölçüm uygulaması (`apps/ajanda-olcum`) | Telefonda kurulu; günlüğü bekleniyor |
-| Bağımsız kip, sürüm uyumu, bölge hatırlatması, yayın derlemesi | Tasarım bitti (bu belge); kod başlamadı |
-| Eren'in harness'tan bağımsızlığı | Yalnız yön kararı var; döküm ve tasarım yapılmadı |
+| Bağımsız kip, sürüm uyumu, bölge hatırlatması, yayın derlemesi | Tasarım bitti (bu belge). Sürüm uyumu (v3) ana dalda; yerel kipin büyük kısmı kodlandı (D1, D2 ana dalda; D4 ve D6 Kol B dalında). Bölge hatırlatmasının telefon tarafı ve yayın derlemesi başlamadı |
+| Eren'in harness'tan bağımsızlığı | Döküm ve tasarım yapıldı (`HARNESS.md`); H1, T5, Codex uyarlayıcısı ve H4.0 (altın kayıtlar, yalnız test) ana dalda; sürücü sınırı (H4.1 ve sonrası) kullanıcı onayını bekliyor |
+
+### v3 kapısı
+
+v3'e yazan her yüzey için geçerli; hepsi kapanmadan `ajanda_arac_v3` açılmaz, v3 düzenleme ekranı ve
+"Bekleyen değişikliği at / Yeniden uygula" ekranı çekirdeğe bağlanmaz.
+
+1. R1 (Kol B): v3 alanlarının yerel yazarda ve kurtarma/bağlanma yollarında taşınması (bugün düşüyorlar);
+   Kol C'nin üç `#[ignore]` testi bunun kabul testi. Aynı teslimde: Kol C'nin v3 ret alanlarının yedekten
+   geçince düşmemesi.
+2. Uygulamanın `ertelenenIslem`'i göstermesi ve kaldırma/koparma onayında sayması (Sahne ve eski
+   `DurumGostergesi` tarafı ana dalda; kaldırma/koparma onayı Kol B'nin R1 tesliminde).
+3. Liste alanları (`ekler`, `baglantilar`): bugün servise bütün liste olarak yazılıyor ve servis sürüm
+   denetimi yapmıyor; eşzamanlı düzenlemede sonra yazan öncekinin öğesini düşürüyor ve düşen ekin 30
+   günlük silme sayacı başlıyor. Karar (2026-11-28): serviste `temel_revizyon`'a göre üç yönlü
+   birleşim (kablo biçimi değişmez; eklenen öğe düşmez, bir öğeyi yalnız tabana göre onu çıkaran
+   taraf çıkarır) ve `liste_birlesimi` yeteneği; asistan aracında `baglanti_ekle` /
+   `baglanti_cikar`. Kol C uyguluyor.
+4. Geri almada `zorla`'nın onaylanan çakışma kümesini doğrulaması; iki kapak ya da ek sınırı aşımında
+   nedenin gösterilmesi; `bolge_konumu`'nun bölge değişmişken çakışma bildirmesi (Kol C).
+
+Canlı kurulum için notlar: kurulumdan sonra açık Claude Code oturumları yeniden açılmalı (eski köprüde T5
+zayıf kipte kalır; eski köprü yeni servisin başarı yanıtını tanıyamazsa "yazılmadı" diyebilir, düzeltmesi
+Kol H'de); kurulum geri alırken depoda eski sürümün okuyamayacağı kayıt varsa uyarır.
 
 Bugünkü mimarinin özeti: PC'deki eren-servis tek yazar ve doğruluk kaynağıdır; telefon tam kopya ve
-çevrimdışı işlem kuyruğu tutar; sözleşme sürümü uyuşmazsa servis istemciyi el sıkışmada
-`protokol_uyumsuz` ile reddeder (servis ve uygulama birlikte yükseltilmek zorunda). Uygulama hata
+çevrimdışı işlem kuyruğu tutar; canlı servis hâlâ eski olduğu için sözleşme sürümü uyuşmazsa
+istemci el sıkışmada `protokol_uyumsuz` ile reddedilir; ana dalda (v3) servis bağlantı başına sürüm konuşur ve
+v2 uygulama yeni servisle çalışır, yani servis ve uygulamanın birlikte yükseltilmesi gerekmez. Uygulama hata
 ayıklama anahtarıyla imzalı, paket kimliği `dev.eren.ajanda`.
 
 Sürüm 2'den sürüm 1'e geri alma kısıtlıdır (`gun_bolumu` taşıyan kayıtlar v1 kodunu bozar); ayrıntı
@@ -82,6 +110,17 @@ koordinatör üzerinden teyit ister):
 - Arayüz: notlarda tamamlama halkası; kaydırarak silme.
 - Eşleştirmede QR mı yapıştırma mı.
 - Bölüm 3 ve 4'ün sonundaki "sorulacak ürün kararları".
+
+Kullanıcıdan bekleyen kararlar (2026-11-28):
+
+- Harness H4 (sürücü sınırı): H4.0 (altın kayıtlar, yalnız test) yapıldı; H4.1 ve sonrası kullanıcı
+  onayını bekliyor. Plan: `apps/phone/docs/HARNESS-H4-PLAN.md`.
+- Başka harness'ta API anahtarına izin (H6'yı etkiler).
+- İşlerde (PC ve telefon işleri) kimlik denetiminin zorlanması.
+- H4 duman koşusunun gerçek `claude` ile (`--evet`) çalıştırılması: araçtaki iki bulgu (köprü
+  yönlendirmesinin sessiz düşmesi; `~/.claude` izleri) kapanmadan çalıştırılmaz.
+- C: diski dolu (943 GB'lık diskte 3-7 GB boş): yer açma kullanıcıda.
+- Daha önce açık olanlar aynen sürüyor (Play hesabı ve 12 testçi, uygulama adı, vb.).
 
 ---
 
@@ -582,11 +621,11 @@ Sürüm uyumu sözleşmesi (D5) "Eren'e bağlan" yolunu belli bir harness'a bağ
 
 | Kol | İş | Sıra |
 |---|---|---|
-| **A – koordinatör** | Birleştirme, ana dala gönderme, canlı servise kurulum, telefona APK; takvim ekranı; PC oturumu yolunun izlenmesi; sonra yayın hazırlığı (D7) | Sürekli |
-| **B – bağımsız kip** | D1 ve D2 birleşti; sıra D2 düzeltmeleri → D3 → D4 → D6. D3, D4 ve D6'daki ekran işi U'ya geçti: B mantığı, köprü yüzeyini ve denetleyici düzeyinde sınanabilir arayüzü teslim eder, gereken ekranı U'ya tarif eder | D2 düzeltmeleri ve D3 sürüyor |
-| **C – sürüm uyumu** | D5 servis dilimi birleşti; sözleşme v3 (ayrıntı, bağlantılar, ek üstverisi, simge, bölge ve varış) ve ek yedeği dalında sürüyor; Rust kanal aşaması D2'den sonra; sonra D8 | Sürüyor |
-| **U – arayüz** | Görünüm katmanının "Sahne" yönünde yeniden yazımı: Compose'a geçiş, bugün/takvim/ayrıntı/yeni kayıt ekranları, çizim takımı, hareketler; fotoğraf seçme, küçültme ve telefonda saklama; sonra B'nin teslim ettiği mantık için ekranlar (ayarlar, ilk açılış, dışa/içe aktarma, birleştirme önizlemesi, geçmiş) | B ve C ile paralel |
-| **H – harness bağımsızlığı** | Tasarım ve H2 birleşti; H1 (tasdik çerçevesi, tasdikin oturuma bağlanması) sürüyor; H3 ölçümü kullanıcı onayı bekliyor | Bağımsız |
+| **A – koordinatör** | Birleştirme, ana dala gönderme, canlı servise kurulum, telefona APK; takvim ekranı; PC oturumu yolunun izlenmesi; sonra yayın hazırlığı (D7). Oturum adı `claude-e6` (27.11'deki `claude-32`'nin yerine); doğrulama ağacı `C:\eren-kit-ara` | Sürekli |
+| **B – bağımsız kip** (`ajanda-yerel-kip`, `C:\eren-kit-yerel`) | D1 ve D2 birleşti. D3 ve sonrasının teslimi (D4 birleştirme önizlemesi ve onayı, D6 mantığı, içe aktarma güvenliği, yedek biçim 2/3, otomatik klasör yedeği, geçici birleştirme onay penceresi) ana dalda değil, düzeltme turunda; sırada R1 (kapı 1). Ekran işi U'ya geçti: B mantığı, köprü yüzeyini ve denetleyici düzeyinde sınanabilir arayüzü teslim eder, gereken ekranı U'ya tarif eder | Teslim düzeltme turunda; sırada R1 |
+| **C – sürüm uyumu** (`ajanda-surum-uyumu`, `C:\eren-kit-surum`) | D5 servis dilimi ve sözleşme v3 ana dalda; sırada liste alanları tasarım önerisi ve geri alma düzeltmeleri (v3 kapısı 3 ve 4); sonra D8 | Sürüyor |
+| **U – arayüz** (`ajanda-arayuz`, `C:\eren-kit-arayuz`) | Sahne (Bugün, Takvim, Tarihsizler) ana dalda; sırada üç düzeltme (yanlış örnek, art arda işlem, süresi dolan geri al) ve U3 (ayrıntı, yeni kayıt/düzenleme, mezura saat seçici, fotoğraf hattı); sonra B'nin teslim ettiği mantık için ekranlar (ayarlar, ilk açılış, dışa/içe aktarma, birleştirme önizlemesi, geçmiş) | B ve C ile paralel |
+| **H – harness bağımsızlığı** (`eren-harness`, `C:\eren-kit-harness`) | H1, T5, Codex uyarlayıcısı ve H4.0 ana dalda; sırada köprüde "başarı yanıtı çözülemezse belirsiz" düzeltmesi ve duman aracının iki bulgusu; H4.1 ve sonrası kullanıcı onayını bekliyor; H3 ölçümü yapıldı (`HARNESS-H3-OLCUM.md`) | Bağımsız |
 
 Sırada bekleyenler (kol atanmadı): bölge hatırlatmasının uygulama tarafı (Rust `kural/varis`, Kotlin
 `konum/`, ekranlar; B'nin D1'i ve C'nin D5'i ile v3 sözleşmesinden sonra), sesli hızlı not, tekrar
@@ -706,6 +745,10 @@ dokunabileceğini sınırlar; yeni servis modülü bu kısıtlara uyar.
    ağ adı, gerçek IP girmez. Sır ve anahtar girmez.
 10. **Makine geneli değişiklik** (Node/Python sürümü, global paket, SDK bileşeni, sürücü) öncesinde
     kullanıcıya sorulur; açık oturumları etkileyebilir.
+
+    *Koordinatör uygulaması (kullanıcı kararı değil):* koordinatör teslimleri kendi testleri ve bağımsız
+    gözden geçirmeyle alır; "düzeltmeyle alınabilir" hükmünde, bulgu ulaşılamaz bir yüzeydeyse ve kapıya
+    yazıldıysa ana dala alabilir.
 11. **`node_modules`:** çalışma ağacında en güvenlisi `apps/phone` içinde kendi kurulumunu yapmaktır. Ana
     kopyanın `node_modules` klasörüne bağlantı (junction) kurulursa, çalışma ağacı kaldırılmadan önce
     bağlantılar **tek tek çözülmelidir**; özyinelemeli silme bağlantının hedefini, yani ana kopyanın
@@ -720,6 +763,12 @@ dokunabileceğini sınırlar; yeni servis modülü bu kısıtlara uyar.
 ---
 
 ## 8. Bilinen küçük işler ve açık kalanlar
+
+**Testler**
+
+- Servis testlerinde bilinen tek kırmızı: `dis-dunya › tekilKilit.al`. Makine yük altındayken gerçek süreç
+  başlatan testler (`tekOldur`, köprü süreç testleri, kurulum alt süreç testleri) zaman aşımıyla düşebiliyor;
+  tek başına koşunca geçiyorlar.
 
 **PC oturumu yolu**
 

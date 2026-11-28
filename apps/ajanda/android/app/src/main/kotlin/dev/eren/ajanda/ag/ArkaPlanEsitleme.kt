@@ -7,6 +7,8 @@ import java.util.concurrent.atomic.AtomicInteger
  * Bir `EsitlemeIsi` çalışmasının mantığı (Android'siz, birim testli): oturum aç (bağlan, eşitlen, kuyruğu
  * boşalt, kapat) -> alarmları yeniden kurdur -> işi bitir. Alarm işi [yurutucu]'de yapılır (ne ana iş
  * parçacığı ne bağlantı yöneticisininki). Sistem durdurursa ([durdur]) bağlantı bırakılır, iş bitirilmez.
+ * Alarmlardan sonra otomatik yedek işi de denetlenir ([yedekDenetle], `OtomatikYedek.isiDenetle`: silinmişse
+ * yeniden kurulur, T3); hatası işi düşürmez.
  */
 class ArkaPlanEsitleme(
     private val oturumAc: ((ArkaPlanSonucu) -> Unit) -> Iptal,
@@ -14,6 +16,7 @@ class ArkaPlanEsitleme(
     private val yurutucu: Executor,
     private val bitir: (ArkaPlanSonucu) -> Unit,
     private val gunluk: Gunluk,
+    private val yedekDenetle: () -> Unit = {},
 ) {
     private val durum = AtomicInteger(SURUYOR)
 
@@ -38,6 +41,11 @@ class ArkaPlanEsitleme(
             alarmlariKur()
         } catch (e: Exception) {
             gunluk.uyari("alarmlar yeniden kurulamadı", e)
+        }
+        try {
+            yedekDenetle()
+        } catch (e: Exception) {
+            gunluk.uyari("yedek işi denetlenemedi", e)
         }
         if (durum.compareAndSet(SURUYOR, BITTI)) bitir(sonuc)
     }

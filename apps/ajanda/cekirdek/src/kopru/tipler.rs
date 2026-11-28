@@ -37,6 +37,11 @@ pub struct KoparmaSonucu {
     pub ret_listesinde: i32,
     /// Yerel kipte çağrıldıysa: bir eşleşme ya da bekleyen eşleştirme (süren bağlanma) iptal edildi mi.
     pub baglanma_iptal: bool,
+    /// Geçişte PC temelinin (koparma anındaki PC kopyası) okunamayan satırları. Bu kayıtların PC'deki son
+    /// hali bilinmez: sonraki bağlanmada telefonun PC'den farklı her alanı gider (PC'nin değeri PC
+    /// geçmişinde kalır). Yerel kipte hep 0.
+    #[uniffi(default = 0)]
+    pub okunamayan_pc_temeli: i32,
 }
 
 /// Bağlı kipten yerel kipe son geçişin nedeni (D2).
@@ -153,6 +158,33 @@ pub struct V3DegisiklikOzeti {
     pub kaldirilan: Vec<String>,
 }
 
+/// `Cekirdek::ertelenen_geri_al_denetimli`'nin sonucu (C1): atılmış ertelenen v3 değişikliği, atıldıktan sonra
+/// (PC'de ya da telefonda, gönderilmemiş değişiklikler dahil) değişmiş bir alanı sessizce ezmez. Alan adları
+/// kablodaki adlardır (`simge`, `bolge`, `bolge_konumu`, `varis`, `baglantilar`, `ekler`), bu sırayla.
+#[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
+pub struct ErtelenenGeriAlma {
+    /// Girdi ret listesindeydi. Yanlışsa hiçbir şey olmadı (öteki alanlar boş).
+    #[uniffi(default)]
+    pub bulundu: bool,
+    /// Girdi listeden çıktı: değişiklik uygulandı ya da kayıtta zaten duruyordu (`degisen` boş: hiçbir şey
+    /// yazılmadı, işlem gitmedi). Yanlışsa (çakışma, `zorla` yanlış) hiçbir şey değişmedi, girdi kalır.
+    #[uniffi(default)]
+    pub uygulandi: bool,
+    /// Değeri değişen (bağlı kipte kuyruğa, yerel kipte yerel gerçeğe yazılan) alanlar.
+    #[uniffi(default)]
+    pub degisen: Vec<String>,
+    /// Atıldıktan sonra değişmiş ve değişikliğin üzerine yazacağı alanlar: tekil alanda (`simge`, `bolge`,
+    /// `bolge_konumu`, `varis`) şimdiki değer atma anındakinden farklı; listede (`baglantilar`, `ekler`)
+    /// değişikliğin değiştirdiği ya da çıkardığı bir öğe o andan beri değişmiş. `zorla` yanlışken doluysa
+    /// hiçbir şey yapılmadı; doğruyken bu alanlara değişikliğin değeri yazıldı.
+    #[uniffi(default)]
+    pub cakisan: Vec<String>,
+    /// Birleştirilen listeler: yazılan liste değişikliğin listesinden farklıdır, çünkü atıldıktan sonra eklenen
+    /// öğeler korundu (listeden hiçbir öğe `zorla` ile de sessizce düşmez; yalnız değişikliğin çıkardığı düşer).
+    #[uniffi(default)]
+    pub birlesen: Vec<String>,
+}
+
 /// Geçmişin bir satırı (servisin `gecmis` çerçevesinden).
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct GecmisSatiri {
@@ -239,6 +271,13 @@ pub struct BaglantiDurumu {
     /// ana bir `baglanti_durumu` yoklaması kurmalı (yoksa deneme ilk olaya kalır). Öteki hallerde yok.
     #[uniffi(default)]
     pub yukari_deneme_ms: Option<i64>,
+    /// Yanıtı beklenen geçmiş isteği varken en eskisinin yanıtsız sayılacağı an (ms, kabuğun saati; C5): bu
+    /// andan sonraki ilk köprü çağrısında istek düşer, sayfası `ic_hata` ile biter (`Degisim.gecmis`; yeniden
+    /// istenebilir). Bağlantının sürümünden bağımsızdır. Geçmiş ekranı boşta açıksa kabuk bu ana bir yoklama
+    /// (`baglanti_durumu` ya da `gecmis`) kurmalı; yoksa düşme ilk olaya kalır. Saat geri giderse istek yine
+    /// en geç bir dakikada (tekdüze saatle) düşer. İstek yoksa yok.
+    #[uniffi(default)]
+    pub gecmis_bekleme_ms: Option<i64>,
 }
 
 /// Sürüm uyuşmazlığının yönü (`AJANDA_SURUMU` karşılaştırması).
@@ -414,6 +453,10 @@ pub struct TakvimSeridi {
     /// İlk ve son gün (`YYYY-MM-DD`, ikisi dahil, cihaz diliminde; kırpılmamış).
     pub ilk_gun: String,
     pub son_gun: String,
+    /// Kaydın simge anahtarı (`V3Alanlari.simge`; açık küme, bilinmeyen anahtar olduğu gibi gelir). Simgesiz ve
+    /// v2 kayıtta yok: arayüz rengi ve çizimi başlıktan tahmin etmek yerine bunu kullanır.
+    #[uniffi(default)]
+    pub simge: Option<String>,
 }
 
 /// Seçili günün bir öğesi (`takvim_gunu`). Sıra çekirdektedir (ürün kuralı, `motor/takvim.rs`).
@@ -448,12 +491,26 @@ pub struct AktarmaBicimi {
     pub belge_adi: String,
     /// Ek dosyalarının dizini (`ekler/`): her ek `ekler/<ozet>` yolunda, içerik adresli.
     pub ekler_dizini: String,
-    /// Bu uygulamanın yazdığı (ve okuyabildiği en yeni) biçim sürümü.
+    /// Bu uygulamanın okuyabildiği en yeni biçim sürümü (yazdığı, içeriğin gerektirdiği en düşüğüdür: ret
+    /// girdisi yoksa 1, varsa 2).
     pub bicim_surumu: i64,
-    /// Belgenin en çok bayt uzunluğu; daha büyüğü okunmadan reddedilmeli (çekirdek de reddeder).
+    /// İçe aktarmada belgenin en çok bayt uzunluğu (64 MiB; `motor/aktarma.rs` `BELGE_AZAMI_BAYT`): bellek
+    /// koruması. Kap okunurken belge bu sınırla sayılır, daha büyüğü belleğe alınmadan reddedilmeli (çekirdek
+    /// de reddeder). Dışa aktarma bunu aşan belgeyi de yazar (`DisaAktarma.ice_aktarma_sinirini_asiyor`):
+    /// yazarken sınır olarak kullanılmamalı.
     pub belge_azami_bayt: u64,
     /// Bir ek dosyasının en çok bayt uzunluğu.
     pub ek_azami_bayt: u64,
+    /// Kap okunurken belleğe alınan bütün ek dosyalarının toplam sınırı (16 MiB; bugün hiçbir sürüm ek yazmaz).
+    #[uniffi(default = 0)]
+    pub ekler_toplam_azami_bayt: u64,
+    /// Kap okunurken açılmış bütün girdilerin (belge + ekler + saklanmayanlar) toplam sınırı:
+    /// `belge_azami_bayt` + `ekler_toplam_azami_bayt` (80 MiB). Şişirme saldırısı bu sınırda kesilir.
+    #[uniffi(default = 0)]
+    pub acilmis_toplam_azami_bayt: u64,
+    /// Kaptaki ek dosyası sayısının sınırı (10 000; belgenin `ekler` dizisininkiyle aynı).
+    #[uniffi(default = 0)]
+    pub ek_azami_adet: u32,
 }
 
 /// Kaba girecek (ya da kaptan okunacak) bir ek dosyası. Bugün hiç yoktur (ek alanları sözleşme v3'le gelir).
@@ -479,12 +536,28 @@ pub struct DisaAktarma {
     pub silinmis: i32,
     /// Telefonda okunamayan satırlar: belgeye olduğu gibi kondu, içe aktarmada geçersiz sayılırlar.
     pub okunamayan: i32,
-    /// Belgeye girmeyen ret listesi işlemleri (kayıt değil, servise bağlı istek; kullanıcı önce düzeltmeli).
+    /// Belgeye girmeyen, yalnız telefonun ret listesinde kalan girdiler: düzeltme gövdesi olmayanlar (yalnız
+    /// atılabilir: `sil`, `durum`, okunamayan metin), gövdesi, kimliği ya da anı okunamayanlar ve öğe sınırını
+    /// (50 000 girdi, `KAYIT_ADET`) aşanlar. Kullanıcı önce düzeltmeli ya da atmalı.
     pub ret_listesinde: i32,
     /// Aktarmanın yapıldığı kip (bağlı kipte görünen kopya, gönderilmemiş değişiklikler dahil).
     pub kip: CalismaKipi,
     /// Kaba `yol`'larıyla konacak ek dosyaları (bugün hep boş).
     pub ekler: Vec<EkDosyasi>,
+    /// Belgeye giren ret listesi girdileri (düzeltme gövdesiyle; içe aktarmada ret listesine geri yazılır).
+    #[uniffi(default = 0)]
+    pub ret_yedekte: i32,
+    /// Belge bu sürümün içe aktarma sınırlarını aşıyor (`AktarmaBicimi.belge_azami_bayt` ya da kayıt öğesi
+    /// sınırı): yazılmalı (veri yalnız telefonda kalmasın) ama bu sürümde geri yüklenemez; kullanıcıya
+    /// söylenmeli.
+    #[uniffi(default = false)]
+    pub ice_aktarma_sinirini_asiyor: bool,
+    /// Belgenin biçim sürümü (`bicim_surumu`): 1 ya da 2. 2 yalnız ret girdisi yedeğe girdiyse (`ret_yedekte`
+    /// sıfırdan büyük): biçim 1 okuyan eski uygulama bu dosyayı bütünüyle reddeder ("daha yeni bir biçim"),
+    /// kayıtlarını da alamaz. Kullanıcıya söylenmeli (yedek yalnız bu sürüm ve sonrasıyla geri yüklenir; ret girdileri
+    /// düzeltilir ya da atılırsa biçim 1 yazılır).
+    #[uniffi(default = 0)]
+    pub bicim_surumu: i64,
 }
 
 /// Önizlemede geçersiz sayılan bir kayıt: yalnız konum ve neden (içerik yoktur).
@@ -503,7 +576,8 @@ pub struct GecersizKayit {
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct IceAktarmaOnizlemesi {
     /// Uygulanacağı kip. `Yerel`: kayıtlar alanlarıyla doğrudan yazılır. `Bagli`: servise kuyrukla
-    /// gider (servis yazar; kaynak izi, taslak işareti, zamanlar servisin olur).
+    /// gider (servis yazar; kaynak izi ve zamanlar servisin olur; telefonda olmayan taslak gitmez:
+    /// `taslak_gonderilmeyecek`).
     pub kip: CalismaKipi,
     /// Dosyanın dışa aktarıldığı an (ms).
     pub disa_aktarma_ms: i64,
@@ -519,7 +593,8 @@ pub struct IceAktarmaOnizlemesi {
     pub ayni: i32,
     /// Telefondaki daha yeni (ya da aynı anlı): telefondaki kalır.
     pub atlanacak: i32,
-    /// Şemadan ya da kurallardan geçmeyen, dosyada yinelenen ya da dilimi bilinmeyen: uygulanmaz.
+    /// Şemadan ya da kurallardan geçmeyen, dosyada yinelenen, dilimi bilinmeyen, çok büyük (256 KiB üstü) ya
+    /// da gelecek tarihli (`guncelleme_ms` şimdi + 1 günden büyük): uygulanmaz.
     pub gecersiz: i32,
     /// Kayıt sınırı (`KAYIT_ADET`, mezar taşları dahil) dolduğu için eklenemeyecek yeniler.
     pub sinir_asan: i32,
@@ -535,14 +610,139 @@ pub struct IceAktarmaOnizlemesi {
     pub ekler: Vec<EkDosyasi>,
     /// Planın izi: `ice_aktar`'a verilirse telefon bu arada plan değişecek kadar değiştiyse uygulanmaz.
     pub iz: String,
+    /// `guncellenecek`'lerden telefonda canlı olup dosyadaki daha yeni mezar taşıyla silinecekler.
+    #[uniffi(default = 0)]
+    pub silinecek: i32,
+    /// `guncellenecek`'lerden telefonda silinmiş olup dosyadaki daha yeni canlı halle geri yüklenecekler.
+    #[uniffi(default = 0)]
+    pub geri_yuklenecek: i32,
+    /// Bağlı kipte: telefonda olmayan taslaklar. Servis kaydı taslak olarak alamaz (`ekle` onaylanmış kayıt
+    /// doğurur): gönderilmez. Yerel kipte hep 0 (taslak taslak olarak yazılır).
+    #[uniffi(default = 0)]
+    pub taslak_gonderilmeyecek: i32,
+    /// `guncellenecek`'lerden telefonda taslak (onaylanmamış öneri) olup dosyadaki daha yeni onaylı halle
+    /// onaylanacaklar: bağlı kipte `onayla` işlemi servise gider (hatırlatma kurulur), yerel kipte doğrudan.
+    /// Kullanıcıya ayrıca söylenmeli (onaylamak, yedekteki onaylı hali seçmektir). Dosyadaki hal onaylı bir
+    /// mezar taşıysa sayılmaz: kayıt yalnız `silinecek`'tir ve taslak kalır (`onayla` gönderilmez).
+    #[uniffi(default = 0)]
+    pub taslak_onaylanacak: i32,
+    /// Yerel kipte: `guncellenecek`'lerden telefondaki satırı okunamayanlar. Dosyadaki hal yazılır, telefondaki
+    /// eski metin kaybolmasın diye ret listesine düşer (`tutarsiz_kayit`; oradan düzeltilebilir ya da
+    /// atılabilir). Bağlı kipte hep 0 (okunamayan satır atlanır: `atlanacak`).
+    #[uniffi(default = 0)]
+    pub okunamayan_ret_listesine: i32,
+    /// Yerel kipte: `guncellenecek`'lerden telefonda onaylı olup dosyadaki daha yeni `taslak: true` halle
+    /// taslağa dönecekler (onaylanmamış öneri olur; hatırlatması kurulmaz). Telefondaki satır okunamıyorsa
+    /// metnin `taslak`'ı doğru değilse onaylı sayılır. Kullanıcıya ayrıca söylenmeli. Bağlı kipte hep 0
+    /// (servis kaydı taslağa döndürmez; dökme kuralı bu farkı göndermez).
+    #[uniffi(default = 0)]
+    pub taslaga_donecek: i32,
+    /// Biçim 2: dosyadan ret listesine eklenecek girdiler (iki kipte de; telefonun ret listesinde aynı
+    /// `islem_id`'li olanlar sayılmaz, yinelenmez; bayatlar `ret_bayat`'tadır). Kayıt sayılarının (`toplam`)
+    /// dışındadır.
+    #[uniffi(default = 0)]
+    pub ret_listesine_gelecek: i32,
+    /// Biçim 2: okunamayan ya da dosyada `islem_id`'si yinelenen ret girdileri (uygulanmaz).
+    #[uniffi(default = 0)]
+    pub ret_gecersiz: i32,
+    /// Biçim 2: bayat ret girdileri, ret listesine yazılmaz (`ret_listesine_gelecek`'in dışında). Kaydı
+    /// telefonda dosyadan sonra değişmiştir (dosyadaki hali atlanır; dosyada geçerli hali yoksa telefondaki
+    /// kayıt girdinin anından sonra güncellenmiştir): girdi çoğunlukla kullanıcının bu telefonda düzeltip
+    /// attığıdır, düzeltilseydi kaydın yeni hali yedekteki eski istekle ezilirdi. Bilgi içindir; yalnız
+    /// bunlar varsa yazılacak bir şey yoktur.
+    #[uniffi(default = 0)]
+    pub ret_bayat: i32,
 }
 
 /// `Cekirdek::ice_aktar`'ın sonucu.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct IceAktarmaSonucu {
-    /// Yanlışsa hiçbir şey yazılmadı: verilen iz şimdiki planınkiyle tutmadı (telefon önizlemeden sonra
-    /// değişti). `plan` yeni önizlemedir; kullanıcıya yeniden gösterilip onayıyla yeni `iz`'le çağrılır.
+    /// Yanlışsa hiçbir şey yazılmadı: iz verilmedi ya da şimdiki planınkiyle tutmadı (telefon önizlemeden
+    /// sonra değişti; aynı belgenin ikinci uygulamasında da: plan artık "aynı"lardır). `plan` şimdiki
+    /// önizlemedir; kullanıcıya yeniden gösterilip onayıyla yeni `iz`'le çağrılır.
     pub uygulandi: bool,
     /// Uygulanan (ya da `uygulandi` yanlışsa uygulanacak) planın sayıları.
     pub plan: IceAktarmaOnizlemesi,
+}
+
+// -------------------------------------------------------------------------------------------------
+// Birleştirme önizlemesi (D4; kurallar `motor/birlestirme.rs` başında)
+// -------------------------------------------------------------------------------------------------
+
+/// Yerel kipten servise bağlanmanın önizlemesi (`birlestirme_onizlemesi`; onay `birlestirmeyi_onayla`).
+/// Servisin tam kopyası elde edildi; telefonun kayıtları henüz hiçbir yere gitmedi. Sayılar telefonun görünen
+/// kopyasının (mezar taşları dahil) sınıflarıdır; toplamları telefondaki satır sayısıdır.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct BirlestirmeOnizlemesi {
+    /// Servisin `depo_id`'si.
+    pub depo_id: String,
+    /// Telefonun PC temeli bu servisten (aynı servise dönüş; `false`: yeni servis ya da sıfırdan kurulmuş).
+    pub ayni_depo: bool,
+    /// Serviste yok, Eren servisine yeni kayıt olarak gidecek.
+    pub yeni: i32,
+    /// Serviste var, telefonun değişikliği gidecek (`cakisanlar` bunların içindedir).
+    pub degisen: i32,
+    /// `degisen`'lerden iki tarafın da aynı alanı değiştirdiği kayıtlar: telefonun değeri kazanacak (PC'nin
+    /// değeri PC geçmişinde kalır).
+    pub cakisanlar: Vec<CakisanKayit>,
+    /// Serviste silinmiş ama telefonda değişmiş kayıtlar (`kayit_id`): değişiklikleri gider, servis reddeder,
+    /// ret listesine düşer (düzeltip yeni kayıt olarak eklenebilir).
+    pub pc_silmisler: Vec<String>,
+    /// Dökmede hemen ret listesine düşecek kayıtlar (`kayit_id`; okunamayan satır ya da birleşemeyen hal).
+    pub ret_listesine: Vec<String>,
+    /// Telefonda silinmiş, serviste hiç olmamış: gönderilmez, Silinenler'den düşer.
+    pub dusecek_mezar: i32,
+    /// Gidecek bir şey yok (serviste aynı ya da yalnız servis ilerlemiş: servisin hali görünür).
+    pub ayni: i32,
+    /// Yalnız serviste olan canlı kayıtlar: telefona gelecek.
+    pub servisten_gelecek: i32,
+    /// Kuyruğa girecek işlem sayısı.
+    pub islem: i32,
+    /// Olası çiftler (ikisi de tutulur, otomatik birleştirme yok). Onaydan sonra `olasi_ciftler` ile okunur.
+    pub olasi_ciftler: Vec<OlasiCift>,
+    /// Planın izi: `birlestirmeyi_onayla`'ya verilir; plan bu arada değiştiyse uygulanmaz.
+    pub iz: String,
+    /// Serviste olmayan taslaklar (`kayit_id`): servis kaydı taslak olarak alamaz (`ekle` onaylanmış kayıt
+    /// doğurur). Gönderilmez; ret listesine düşer, görünen kopyadan çıkar (düzeltilirse yeni, onaylı kayıt
+    /// olarak eklenir; atılırsa gider).
+    #[uniffi(default)]
+    pub taslaklar: Vec<String>,
+    /// Telefon kayıtlarından PC temeli satırı okunamayanlar: temel bilinmiyor sayılır, telefonun servistekinden
+    /// farklı her alanı gider (`degisen` ya da `pc_silmisler` içindedir).
+    #[uniffi(default = 0)]
+    pub okunamayan_pc_temeli: i32,
+}
+
+/// İki tarafın da değiştirdiği alanları olan kayıt.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct CakisanKayit {
+    pub kayit_id: String,
+    /// Kayıt JSON'unun alan adları (`baslik`, `zaman`, `ornekler`...).
+    pub alanlar: Vec<String>,
+}
+
+/// Olası çift: tekil anahtarı (tür, başlık, zaman çekirdeği) aynı, kimlikleri farklı iki kayıt; biri
+/// telefonda doğmuş (servise yeni gidecek), öteki serviste olup telefonda olmayan. İkisi de tutulur.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct OlasiCift {
+    /// Telefondan gelen kayıt.
+    pub telefondaki: String,
+    /// Servisten gelen kayıt (önizlemede henüz telefonda yok: `kayit` ile okunamaz).
+    pub servisteki: String,
+}
+
+/// `Cekirdek::birlestirmeyi_onayla`'nın sonucu.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct BirlestirmeSonucu {
+    /// Yanlışsa bu çağrı hiçbir şey yazmadı. Doğruysa birleştirme kalıcıdır (sonraki adımın, kuyruğun
+    /// yollanmasının hatası bunu değiştirmez).
+    pub uygulandi: bool,
+    /// Uygulanan plan; `uygulandi` yanlışsa: `Some` iz verilmedi ya da plan önizlemeden sonra değişti (şimdiki
+    /// plan, onun `iz`'iyle yeniden onaylanır), `None` onay bekleyen birleştirme yok: `zaten_uygulandi`
+    /// doğruysa bu iz daha önce uygulandı, değilse bağlantı koptu (sonraki bağlantıda yeniden sorulur).
+    pub plan: Option<BirlestirmeOnizlemesi>,
+    /// Bekleyen birleştirme yok ve verilen `iz` en son uygulanan birleştirmeninki: ikinci (ya da gecikmiş)
+    /// onay çağrısı. "Bağlantı koptu" değildir; birleştirme yapılmıştır.
+    #[uniffi(default = false)]
+    pub zaten_uygulandi: bool,
 }

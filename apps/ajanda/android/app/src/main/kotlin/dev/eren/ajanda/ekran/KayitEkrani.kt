@@ -839,6 +839,7 @@ class KayitEkrani : Activity() {
         mesgul = true
         val acilan = temel
         arkada {
+            var hatirlatmaVar = false
             val sorun = try {
                 val c = c()
                 val g = c.govdeyiHazirla(f.govde())
@@ -850,6 +851,8 @@ class KayitEkrani : Activity() {
                     Mod.RET -> RetListesi.duzelt(c, islemId!!, g)
                 }
                 sonra?.invoke(c)
+                // Ana ekranın izin kararı için (IzinPlani, KAYIT_KAYDEDILDI); okunamazsa yok sayılır.
+                hatirlatmaVar = runCatching { c.hatirlatmaOnizlemesi(g).kurulacak > 0u }.getOrDefault(false)
                 null
             } catch (e: Exception) {
                 KayitFormu.hataMesaji(e, f)
@@ -863,6 +866,7 @@ class KayitEkrani : Activity() {
                             Mod.DUZENLE -> "Kaydedildi"
                             Mod.RET -> "Düzeltildi ve yeniden gönderilecek"
                         },
+                        hatirlatma = hatirlatmaVar,
                     )
                 } else {
                     if (sorun.alan == FormAlani.DILIM) dilimTanindi = false
@@ -908,8 +912,9 @@ class KayitEkrani : Activity() {
             .show()
     }
 
-    private fun bitir(mesaj: String, geriYukle: Boolean = false, ac: Boolean = false) {
+    private fun bitir(mesaj: String, geriYukle: Boolean = false, ac: Boolean = false, hatirlatma: Boolean = false) {
         val i = Intent().putExtra(SONUC_MESAJI, mesaj)
+        if (hatirlatma) i.putExtra(SONUC_HATIRLATMA, true)
         kayitId?.let { id ->
             if (geriYukle) i.putExtra(SONUC_GERI_YUKLE, id)
             if (ac) i.putExtra(SONUC_YENIDEN_AC, id)
@@ -922,3 +927,6 @@ class KayitEkrani : Activity() {
 /** [KayitEkrani] sonucu: geri alınabilir işlemin kaydı (ana ekranın geri alma çubuğu için). */
 const val SONUC_GERI_YUKLE = "dev.eren.ajanda.ekran.SONUC_GERI_YUKLE"
 const val SONUC_YENIDEN_AC = "dev.eren.ajanda.ekran.SONUC_YENIDEN_AC"
+
+/** [KayitEkrani] sonucu: kaydedilen kaydın kurulacak hatırlatması var (ana ekran izin kararını verir). */
+const val SONUC_HATIRLATMA = "dev.eren.ajanda.ekran.SONUC_HATIRLATMA"

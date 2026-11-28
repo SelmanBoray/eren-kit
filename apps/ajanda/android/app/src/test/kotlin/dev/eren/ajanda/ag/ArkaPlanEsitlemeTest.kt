@@ -109,4 +109,41 @@ class ArkaPlanEsitlemeTest {
         assertEquals(listOf("bitti ESLESME_YOK"), sira)
         assertTrue(gunluk.satirlar.any { it.startsWith("alarmlar yeniden kurulamadı") })
     }
+
+    /** T3: her eşitleme çalışması (sonuç ne olursa olsun) otomatik yedek işini de denetler; hatası işi düşürmez. */
+    @Test
+    fun herCalismadaYedekIsiDenetlenirHatasiIsiDusurmez() {
+        var atsin = false
+        val is2 = ArkaPlanEsitleme(
+            oturumAc = { bitti -> denetci.arkaPlanOturumu(bitti) },
+            alarmlariKur = { sira += "alarmlar" },
+            yurutucu = yurutucu,
+            bitir = { sira += "bitti $it" },
+            gunluk = gunluk,
+            yedekDenetle = {
+                sira += "yedek"
+                if (atsin) throw IllegalStateException("JobScheduler")
+            },
+        )
+        cekirdek.adres = null
+        is2.baslat()
+        zaman.bosalt()
+        alarmIsiniCalistir()
+        assertEquals(listOf("alarmlar", "yedek", "bitti ESLESME_YOK"), sira)
+        sira.clear()
+        atsin = true
+        val is3 = ArkaPlanEsitleme(
+            oturumAc = { bitti -> denetci.arkaPlanOturumu(bitti) },
+            alarmlariKur = { throw IllegalStateException("kurulamadı") },
+            yurutucu = yurutucu,
+            bitir = { sira += "bitti $it" },
+            gunluk = gunluk,
+            yedekDenetle = { sira += "yedek"; throw IllegalStateException("JobScheduler") },
+        )
+        is3.baslat()
+        zaman.bosalt()
+        alarmIsiniCalistir()
+        assertEquals(listOf("yedek", "bitti ESLESME_YOK"), sira)
+        assertTrue(gunluk.satirlar.any { it.startsWith("yedek işi denetlenemedi") })
+    }
 }

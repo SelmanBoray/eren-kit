@@ -20,6 +20,25 @@ object DurumGostergesi {
     data class Gosterge(val kisa: String, val ayrinti: String, val ton: Ton, val eylem: Eylem)
 
     /**
+     * Onay bekleyen birleştirme (D4). Çekirdek bu sırada `TELAFI` aşamasındadır ama hiçbir şey eşitlenmez
+     * ("Eşitleniyor…" yanlış olur): kayıtlar onaya dek ne gider ne gelir.
+     */
+    val BIRLESTIRME_BEKLIYOR = Gosterge(
+        "Onay bekliyor",
+        "Eren servisine bağlandı; kayıtların birleştirilmesi onayınızı bekliyor. Onaylayana dek hiçbir şey " +
+            "eşitlenmez: bu telefondaki değişiklikler servise gitmez, servisteki değişiklikler de bu telefona gelmez.",
+        Ton.UYARI, Eylem.YOK,
+    )
+
+    /**
+     * [bekliyor] (görünümün `BirlestirmeAkisi`'nden bildiği) doğruysa süren ([Ton.SURUYOR]) bir göstergenin yerine
+     * [BIRLESTIRME_BEKLIYOR]; değilse [g] olduğu gibi. Bağlı, çevrimdışı ve uyarı göstergelerine dokunmaz (bayat
+     * bir "bekliyor" bilgisi onları örtmez). [hesapla]'nın davranışı değişmez.
+     */
+    fun birlestirmeyle(g: Gosterge, bekliyor: Boolean): Gosterge =
+        if (bekliyor && g.ton == Ton.SURUYOR) BIRLESTIRME_BEKLIYOR else g
+
+    /**
      * @param adresVar `baglantiAdresi() != null`: eski eşleşme dururken yeni QR reddedilince durum
      *   `Reddedildi` görünür ama bağlantı eskisiyle sürer (MIMARI "K1").
      * @param okumaHatasi çekirdek okunamadıysa kısa neden.

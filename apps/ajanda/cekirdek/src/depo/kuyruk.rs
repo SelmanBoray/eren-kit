@@ -268,6 +268,13 @@ impl Depo {
         Ok(self.baglanti.execute("DELETE FROM ret_listesi WHERE islem_id = ?1", [islem_id])? > 0)
     }
 
+    /// Ret listesindeki işlem kimlikleri (içe aktarma girdileri yinelemesin diye).
+    pub fn ret_islem_idleri(&self) -> Result<Vec<String>, CekirdekHatasi> {
+        let mut sorgu = self.baglanti.prepare("SELECT islem_id FROM ret_listesi")?;
+        let satirlar = sorgu.query_map([], |r| r.get(0))?;
+        Ok(satirlar.collect::<rusqlite::Result<_>>()?)
+    }
+
     pub fn ret_sayisi(&self) -> Result<i64, CekirdekHatasi> {
         Ok(self.baglanti.query_row("SELECT COUNT(*) FROM ret_listesi", [], |s| s.get(0))?)
     }

@@ -77,7 +77,7 @@ fn degistir(taban: &Value, f: impl FnOnce(&mut Value)) -> String {
 }
 
 fn uygula(h: &Hat, b: &str) -> IceAktarmaOnizlemesi {
-    let s = h.c.ice_aktar(b.to_string(), None).unwrap();
+    let s = h.ice_aktar_onayla(b);
     assert!(s.uygulandi);
     s.plan
 }
@@ -106,9 +106,12 @@ fn zengin_telefon(ad: &str) -> (Hat, Vec<String>) {
 #[test]
 fn bicim_sabitleri_koprude() {
     let b = aktarma_bicimi();
-    assert_eq!((b.belge_adi.as_str(), b.ekler_dizini.as_str(), b.bicim_surumu), ("ajanda.json", "ekler/", 1));
-    assert_eq!(b.ek_azami_bayt, 4 * 1024 * 1024);
-    assert!(b.belge_azami_bayt >= 64 * 1024 * 1024);
+    // Okunabilen en yeni biçim 2 (`retler`); yazılan, içeriğin gerektirdiği en düşüğü.
+    assert_eq!((b.belge_adi.as_str(), b.ekler_dizini.as_str(), b.bicim_surumu), ("ajanda.json", "ekler/", 2));
+    assert_eq!((b.ek_azami_bayt, b.ek_azami_adet), (4 * 1024 * 1024, 10_000));
+    // Bellek koruması (gerçekçi en büyük yedek): belge 64 MiB, kaptaki ekler toplamı 16 MiB, açılmış toplam ikisi.
+    assert_eq!((b.belge_azami_bayt, b.ekler_toplam_azami_bayt), (64 << 20, 16 << 20));
+    assert_eq!(b.acilmis_toplam_azami_bayt, b.belge_azami_bayt + b.ekler_toplam_azami_bayt);
 }
 
 /// Dışa aktar -> boş telefona içe aktar: kayıtlar alan alan aynı (revizyon dışında), mezar taşı, örnek
@@ -289,7 +292,7 @@ fn gecersiz_belge_ve_daha_yeni_surum_reddedilir() {
         (degistir(|v| v["bicim"] = json!("baska")), "bicim", "ajanda yedeği değil"),
         (
             degistir(|v| {
-                v["bicim_surumu"] = json!(2);
+                v["bicim_surumu"] = json!(3);
                 v["yeni_alan"] = json!({"x": 1});
                 v["kayitlar"] = json!("başka biçim");
             }),
@@ -415,8 +418,8 @@ fn yerel_kipte_gecmis_ve_alarm() {
 }
 
 /// Bağlı kipte içe aktarma kuyruktan gider (servis yazar): yeni kayıt aynı kimlikle `ekle` + durumlar, daha
-/// yeni kayıt fark; eski kayıt ve telefonda olmayan mezar taşı gitmez. Kaybolanlar: kaynak izi, zamanlar,
-/// yeni kaydın taslak işareti.
+/// yeni kayıt fark; eski kayıt, telefonda olmayan mezar taşı ve telefonda olmayan taslak gitmez (servis
+/// taslağı onaylanmış kayıt yapardı). Kaybolanlar: kaynak izi, zamanlar.
 #[test]
 fn bagli_kipte_kuyruga_dokulur_sahte_pc_ile() {
     let mut p = Hat::yeni("bagli-p");
@@ -454,18 +457,20 @@ fn bagli_kipte_kuyruga_dokulur_sahte_pc_ile() {
 
     let on = p.c.ice_aktarma_onizlemesi(belge_a.clone()).unwrap();
     assert_eq!(on.kip, CalismaKipi::Bagli);
-    assert_eq!(sayilar(&on), (2, 1, 0, 1, 0, 0));
-    assert_eq!(on.gonderilmeyecek, 1);
-    // PC1: guncelle + durum + onayla; tekrar: ekle + örnek durumu; taslak: ekle.
-    assert_eq!(on.kuyruga_girecek_islem, 6);
+    assert_eq!(sayilar(&on), (1, 1, 0, 1, 0, 0));
+    assert_eq!((on.gonderilmeyecek, on.taslak_gonderilmeyecek), (1, 1));
+    assert_eq!(on.toplam, 5);
+    // PC1: guncelle + durum + onayla; tekrar: ekle + örnek durumu; taslak gitmez.
+    assert_eq!(on.kuyruga_girecek_islem, 5);
 
     // Bağlantı kopukken uygulanır: işlemler kuyrukta bekler, görünen kopya iyimser.
     p.kopar();
     p.gozlemci.al();
     let s = p.c.ice_aktar(belge_a.clone(), Some(on.iz.clone())).unwrap();
     assert!(s.uygulandi);
-    assert_eq!(kuyruk_uzunlugu(&p), 6);
-    assert_eq!(p.c.baglanti_durumu().unwrap().kuyrukta, 6);
+    assert_eq!(kuyruk_uzunlugu(&p), 5);
+    assert_eq!(p.c.baglanti_durumu().unwrap().kuyrukta, 5);
+    assert!(p.c.kayit("k_baska_taslak".into()).unwrap().is_none(), "taslak gönderilmez, telefona da yazılmaz");
     let g = p.c.kayit(spor.clone()).unwrap().unwrap();
     assert!(g.bekleyen);
     assert_eq!(g.kayit.ornekler.len(), 1);
@@ -487,14 +492,12 @@ fn bagli_kipte_kuyruga_dokulur_sahte_pc_ile() {
     // Kaybolanlar: kaynak izi bu telefonun yazması olur (yol korunur: sesli not), zamanlar servisin.
     assert_eq!((pc_spor.kaynak.yol, pc_spor.kaynak.device_id.as_deref()), (KaynakYolu::SesliNot, Some(CIHAZ)));
     assert_ne!(pc_spor.olusturma_ms, a_spor.olusturma_ms);
-    let baska = pc("k_baska_taslak");
-    assert!(!baska.taslak, "yeni kaydın taslak işareti servise gitmez");
-    assert_eq!((baska.kaynak.yol, baska.kaynak.tur_kokeni), (KaynakYolu::Elle, TurKokeni::Insan));
+    assert!(!p.pc.d.kayitlar.contains_key("k_baska_taslak"), "taslak onaylanmış kayıt olarak gitmedi");
     assert!(!p.pc.d.kayitlar.contains_key(&olu));
     // Telefonun görünen kopyası servisinkine yakınsadı; yeniden önizleme: hepsi aynı ya da atlanır.
     assert_eq!(kayit(&p, &spor), pc(&spor));
     let on = p.c.ice_aktarma_onizlemesi(belge_a).unwrap();
-    assert_eq!((on.yeni, on.guncellenecek, on.kuyruga_girecek_islem), (0, 0, 0));
+    assert_eq!((on.yeni, on.guncellenecek, on.kuyruga_girecek_islem, on.taslak_gonderilmeyecek), (0, 0, 0, 1));
 }
 
 /// Önizlemeden sonra telefon planı değiştirecek kadar değiştiyse eski izle hiçbir şey yazılmaz; plana
@@ -568,6 +571,7 @@ fn hata_mesajlarinda_icerik_sizmaz() {
     assert_eq!(on.gecersiz, 8);
     let mut metinler = vec![format!("{on:?}")];
     metinler.push(format!("{:?}", b.c.ice_aktar(v.to_string(), None).unwrap()));
+    metinler.push(format!("{:?}", b.ice_aktar_onayla(&v.to_string())));
     let ust = |f: fn(&mut Value)| degistir(&taban, f);
     let belgeler = vec![
         format!("{{\"bicim\": \"{GIZLI}"),
@@ -648,8 +652,10 @@ fn buyuk_kopyada_aktarma_sureleri() {
     let mut p = Hat::yeni("buyuk-aktarma-bagli");
     p.eslestir();
     p.kopar();
+    let on3 = p.c.ice_aktarma_onizlemesi(d.belge.clone()).unwrap();
     let t = Instant::now();
-    let s = p.c.ice_aktar(d.belge.clone(), None).unwrap();
+    let s = p.c.ice_aktar(d.belge.clone(), Some(on3.iz)).unwrap();
+    assert!(s.uygulandi);
     let bagli = t.elapsed();
     let canli = adet - adet.div_ceil(50);
     assert_eq!((s.plan.yeni as usize, s.plan.gonderilmeyecek as usize), (canli, adet.div_ceil(50)));

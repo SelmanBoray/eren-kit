@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.util.Log
 import dev.eren.ajanda.CekirdekErisimi
+import dev.eren.ajanda.aktarma.OtomatikYedek
 import dev.eren.ajanda.cekirdek.YenidenKurmaNedeni
 import java.util.TimeZone
 
@@ -22,7 +23,11 @@ class AcilisAlici : BroadcastReceiver() {
         AlarmIsParcacigi.calistir(
             bitir = { bekleyen.finish() },
             hata = { Log.w(AlarmAlici.ETIKET, "yeniden kurulamadı", it) },
-        ) { AlarmYenidenKurma.simdi(uygulama, neden) }
+        ) {
+            AlarmYenidenKurma.simdi(uygulama, neden)
+            // T3: silinmiş otomatik yedek işi yeniden kurulur (hata atmaz).
+            OtomatikYedek.isiDenetle(uygulama)
+        }
     }
 }
 
