@@ -1,6 +1,7 @@
 package dev.eren.ajanda.kimlik
 
 import dev.eren.ajanda.aktarma.OtomatikYedekMetinleri
+import dev.eren.ajanda.aktarma.YedekBildirimi
 import dev.eren.ajanda.aktarma.YedekDurumu
 import dev.eren.ajanda.aktarma.YedekSonucu
 import dev.eren.ajanda.aktarma.YedekSorunu
@@ -11,6 +12,8 @@ import dev.eren.ajanda.cekirdek.BirlestirmeOnizlemesi
 import dev.eren.ajanda.cekirdek.CakisanKayit
 import dev.eren.ajanda.cekirdek.CalismaKipi
 import dev.eren.ajanda.cekirdek.CekirdekHatasi
+import dev.eren.ajanda.cekirdek.GecisNedeni
+import dev.eren.ajanda.cekirdek.GecisOzeti
 import dev.eren.ajanda.cekirdek.KoparmaSonucu
 import dev.eren.ajanda.cekirdek.OlasiCift
 import org.junit.Assert.assertTrue
@@ -153,7 +156,20 @@ class KullaniciMetniTest {
                 add(m.sonuc(YedekSonucu.Basarisiz(it)))
             }
             add(m.sonuc(YedekSonucu.Gerekmedi))
-            add(m.sonuc(YedekSonucu.Yapildi("ajanda-yedegi-2026-11-28.zip", 5, 1)))
+            add(m.sonuc(YedekSonucu.Yapildi("ajanda-otomatik-yedek-2026-11-28-090000-0a1b2c3d.zip", 5, 1)))
+            add(m.sonuc(YedekSonucu.Yapildi("x.zip", 5, 1, retDisarida = 2, sinirAsiyor = true)))
+            listOf(null, 0, 1, 9).forEach { add(m.gunOnce(it)) }
+            addAll(m.uyarilar(YedekDurumu(sonBasariliMs = 1, sonRetDisarida = 2, sonSinirAsiyor = true)))
+            (YedekSorunu.entries.map { YedekBildirimi.Sorun(it) } + YedekBildirimi.SinirAsiyor).forEach {
+                val (b, t) = m.bildirim(it, 3)
+                add(b); add(t)
+            }
+            GecisNedeni.entries.forEach { n ->
+                listOf(true, false).forEach { bek ->
+                    val g = GecisMetinleri.duraklama(GecisOzeti(n, 1, KoparmaSonucu(CalismaKipi.BAGLI, 0, 0, 0, 0, false), null, null), bek)
+                    add(g.baslik); add(g.govde)
+                }
+            }
         }
     }
 

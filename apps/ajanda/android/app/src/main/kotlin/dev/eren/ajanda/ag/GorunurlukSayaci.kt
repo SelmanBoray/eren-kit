@@ -20,6 +20,8 @@ class GorunurlukSayaci(
     private val gorundu: () -> Unit,
     private val gizlendi: () -> Unit,
 ) {
+    // Yazan ana iş parçacığı; `gorunur`'u arka plan işi de okur.
+    @Volatile
     private var sayi = 0
 
     val gorunur: Boolean get() = sayi > 0

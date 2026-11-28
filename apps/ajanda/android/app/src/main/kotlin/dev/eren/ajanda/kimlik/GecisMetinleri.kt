@@ -65,6 +65,40 @@ object GecisMetinleri {
      */
     fun gosterilmeli(g: GecisOzeti?, gosterilenTsMs: Long?): Boolean = g != null && g.tsMs != gosterilenTsMs
 
+    private const val UYGULAMAYI_ACIN = "Uygulamayı açtığınızda yeniden bağlanır; gönderilecek bir şey varsa birleştirmeyi size sorar."
+
+    /**
+     * Arka plan eşitlemesi yerel kipte eşleşme varken durdu (`ArkaPlanSonucu.YEREL_KIP`): bildirim metni.
+     * [birlestirmeBekliyor]: `birlestirmeOnizlemesi()` dolu (onay gerçekten bekleniyor); yalnız o zaman "onayınızı
+     * bekliyor" denir. Öteki durumlarda arka planda bağlanılmadığı ve uygulama açılınca ne olacağı söylenir
+     * (D4: gidecek bir şey yoksa soru sorulmadan eşitlenir).
+     */
+    fun duraklama(g: GecisOzeti, birlestirmeBekliyor: Boolean): GecisMetni = when {
+        birlestirmeBekliyor -> GecisMetni(
+            "Birleştirme onayınızı bekliyor",
+            listOf(
+                "Eren servisiyle eşitleme, birleştirmeyi onaylayana ya da vazgeçene dek duruyor.",
+                "Kayıtlarınız bu telefonda duruyor; onaylamadan servise gönderilmez.",
+            ),
+        )
+        g.neden == GecisNedeni.DEPO_DEGISTI -> GecisMetni(
+            "Eşitleme durdu",
+            listOf(
+                "Bu telefonun bağlandığı Eren servisi değişti; arka planda eşitleme yapılmıyor.",
+                "Kayıtlarınız bu telefonda duruyor ve sorulmadan yeni servise gönderilmez.",
+                UYGULAMAYI_ACIN,
+            ),
+        )
+        else -> GecisMetni(
+            "Eşitleme durdu",
+            listOf(
+                "Eren servisine yeniden bağlanma tamamlanmadı; arka planda eşitleme yapılmıyor.",
+                "Kayıtlarınız bu telefonda duruyor.",
+                UYGULAMAYI_ACIN,
+            ),
+        )
+    }
+
     private fun ayrilmaSatirlari(s: KoparmaSonucu): List<String> = buildList {
         add(KAYITLAR_DURUYOR)
         gonderilmeyen(s)?.let { add("$it Eren servisine gönderilmeden ayrıldı ama bu telefonda duruyor.") }

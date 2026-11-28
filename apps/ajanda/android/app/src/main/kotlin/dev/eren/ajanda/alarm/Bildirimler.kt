@@ -27,6 +27,8 @@ interface Bildirici {
  * Üretim bildirimleri (platform API'si; AndroidX yok). İki kanal: hatırlatmalar (yüksek önem, sesli) ve
  * kaçırılanlar (varsayılan önem). Kilit ekranı: kanal ve bildirim `VISIBILITY_PRIVATE`, açık yüzde
  * başlık yok (`Icerik.gizli*`). Dokununca uygulamanın başlatıcı etkinliği açılır (`KAYIT_ID` ekstrasıyla).
+ * Ayrıca üçüncü, düşük önemli durum kanalı ([KANAL_DURUM]: duran eşitleme, alınamayan otomatik yedek;
+ * [durumGoster]); hatırlatma kanallarından bağımsızdır.
  */
 class Bildirimler(private val context: Context) : Bildirici {
     private val nm: NotificationManager by lazy { context.getSystemService(NotificationManager::class.java) }
@@ -152,6 +154,73 @@ class Bildirimler(private val context: Context) : Bildirici {
                 lockscreenVisibility = Notification.VISIBILITY_PRIVATE
             }
             nm.createNotificationChannels(listOf(hatirlatma, kacirilan))
+            durumKanaliniKur(context)
+        }
+
+        // --- Durum kanalı: arka planda duran eşitleme ve otomatik yedek (düşük önem, sessiz) ---------------
+
+        const val KANAL_DURUM = "ajanda_durum"
+        const val ETIKET_DURUM = "ajanda.durum"
+
+        /** Durum bildirimlerinin numaraları ([ETIKET_DURUM] altında). */
+        const val DURUM_YEDEK = 1
+        const val DURUM_ESITLEME = 2
+
+        private const val KANAL_DURUM_ADI = "Eşitleme ve yedek durumu"
+        private const val KANAL_DURUM_ACIKLAMA =
+            "Arka planda eşitleme durduğunda ya da otomatik yedek alınamadığında bir kez haber verir."
+
+        /** Durum kanalını kurar (tekrar çağrı zararsız; kullanıcının değiştirdiği önem korunur). */
+        fun durumKanaliniKur(context: Context) {
+            val nm = context.getSystemService(NotificationManager::class.java) ?: return
+            val k = NotificationChannel(KANAL_DURUM, KANAL_DURUM_ADI, NotificationManager.IMPORTANCE_LOW).apply {
+                description = KANAL_DURUM_ACIKLAMA
+                setShowBadge(true)
+            }
+            nm.createNotificationChannel(k)
+        }
+
+        /**
+         * Durum bildirimi (içerik taşımaz: yalnız durum metni; kilit ekranında da görünür). Dokununca `AnaEkran`
+         * açılır. Döner `false`: bildirim izni (Android 13+) ya da kanal kapalı, gösterilmedi.
+         */
+        fun durumGoster(context: Context, no: Int, baslik: String, metin: String): Boolean {
+            val nm = context.getSystemService(NotificationManager::class.java) ?: return false
+            if (!nm.areNotificationsEnabled()) return false
+            durumKanaliniKur(context)
+            if (nm.getNotificationChannel(KANAL_DURUM)?.importance == NotificationManager.IMPORTANCE_NONE) return false
+            val n = Notification.Builder(context, KANAL_DURUM)
+                .setSmallIcon(R.drawable.alarm_bildirim_simgesi)
+                .setContentTitle(baslik)
+                .setContentText(metin)
+                .setStyle(Notification.BigTextStyle().bigText(metin))
+                .setCategory(Notification.CATEGORY_STATUS)
+                .setVisibility(Notification.VISIBILITY_PUBLIC)
+                .setOnlyAlertOnce(true)
+                .setAutoCancel(true)
+                .setContentIntent(anaEkranNiyeti(context, istekKodu = DURUM_ISTEK_TABANI - no))
+                .build()
+            return try {
+                nm.notify(ETIKET_DURUM, no, n)
+                true
+            } catch (e: SecurityException) {
+                false
+            }
+        }
+
+        fun durumKaldir(context: Context, no: Int) {
+            context.getSystemService(NotificationManager::class.java)?.cancel(ETIKET_DURUM, no)
+        }
+
+        private const val DURUM_ISTEK_TABANI = -100
+
+        /** Açık niyetle `AnaEkran` (`ekran` paketine derleme bağımlılığı yok: sınıf adıyla). */
+        private fun anaEkranNiyeti(context: Context, istekKodu: Int): PendingIntent {
+            val i = Intent().setClassName(context, "dev.eren.ajanda.ekran.AnaEkran")
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            return PendingIntent.getActivity(
+                context, istekKodu, i, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
         }
 
         /**

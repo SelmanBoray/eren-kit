@@ -23,6 +23,12 @@ object BaglantiYoneticisi {
     @Volatile
     private var izleniyor = false
 
+    @Volatile
+    private var gorunurluk: GorunurlukSayaci? = null
+
+    /** Uygulamanın bir ekranı şu an görünür mü (arka plan bildirimi görünür arayüzde gösterilmez). */
+    val arayuzGorunur: Boolean get() = gorunurluk?.gorunur == true
+
     /** `AjandaUygulamasi.onCreate`: etkinliklerin görünürlüğünü bağlantı talebine bağlar (süreçte bir kez). */
     fun izle(uygulama: Application) {
         synchronized(this) {
@@ -30,6 +36,7 @@ object BaglantiYoneticisi {
             izleniyor = true
         }
         val sayac = GorunurlukSayaci(gorundu = { al(uygulama).basla() }, gizlendi = { denetci?.birak() })
+        gorunurluk = sayac
         uygulama.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
             override fun onActivityStarted(activity: Activity) = sayac.basladi()
             override fun onActivityStopped(activity: Activity) = sayac.durdu()

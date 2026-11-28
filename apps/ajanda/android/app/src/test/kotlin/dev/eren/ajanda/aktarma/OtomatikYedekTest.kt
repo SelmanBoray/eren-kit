@@ -16,10 +16,14 @@ import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.OutputStream
 import java.time.LocalDate
+import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.ZonedDateTime
 
-/** Otomatik yedek (D6): zaman kuralı, dosya adı, temizlik ve sahte klasörle deneme akışı ve hataları. */
+/**
+ * Otomatik yedek (D6): zaman kuralı ve geri çekilme, dosya adı ve sahiplik, temizlik, sahte klasörle deneme
+ * akışı (geri okuyup doğrulama, yarım yazım), hatalar ve bildirim kuralları.
+ */
 class OtomatikYedekTest {
     private val dilim = ZoneId.of("Europe/Istanbul")
     private fun an(gun: Int, saat: Int = 10, dk: Int = 0, ay: Int = 11) =
@@ -69,35 +73,141 @@ class OtomatikYedekTest {
         assertTrue(OtomatikYedekPlani.zamaniGeldiMi(d, h - 5 * dk, dilim))
     }
 
-    // --- Ad ve temizlik -----------------------------------------------------------------------
-
     @Test
-    fun dosyaAdiVeKalip() {
-        val g = LocalDate.of(2026, 11, 28)
-        assertEquals("ajanda-yedegi-2026-11-28.zip", OtomatikYedekPlani.dosyaAdi(g))
-        assertEquals("ajanda-yedegi-2026-11-28.zip.yaziliyor", OtomatikYedekPlani.geciciAd(g))
-        assertEquals(g, OtomatikYedekPlani.yedekGunu("ajanda-yedegi-2026-11-28.zip"))
-        for (ad in listOf(
-            "ajanda-yedegi-2026-11-28 (1).zip", "ajanda-yedegi-2026-02-30.zip", "ajanda-yedegi-2026-11-28.zip.bak",
-            "AJANDA-YEDEGI-2026-11-28.zip", "eski-ajanda-yedegi-2026-11-28.zip", "ajanda-yedegi-26-11-28.zip", "notlar.txt",
-        )) assertNull(ad, OtomatikYedekPlani.yedekGunu(ad))
-        assertTrue(OtomatikYedekPlani.geciciMi("ajanda-yedegi-2026-11-28.zip.yaziliyor"))
-        assertFalse(OtomatikYedekPlani.geciciMi("benim.yaziliyor"))
-        assertFalse(OtomatikYedekPlani.geciciMi("ajanda-yedegi-2026-11-28.zip"))
+    fun ardisikHatadaBeklemeArtar() {
+        assertEquals(30 * dk, OtomatikYedekPlani.bekleme(0))
+        assertEquals(30 * dk, OtomatikYedekPlani.bekleme(1))
+        assertEquals(60 * dk, OtomatikYedekPlani.bekleme(2))
+        assertEquals(120 * dk, OtomatikYedekPlani.bekleme(3))
+        assertEquals(240 * dk, OtomatikYedekPlani.bekleme(4))
+        assertEquals(360 * dk, OtomatikYedekPlani.bekleme(5))
+        assertEquals(360 * dk, OtomatikYedekPlani.bekleme(1000))
+        val h = an(28, 10)
+        val d = acik.copy(sonHata = YedekSorunu.BELLEK, sonHataMs = h, ardisikHata = 3)
+        assertFalse(OtomatikYedekPlani.zamaniGeldiMi(d, h + 119 * dk, dilim))
+        assertTrue(OtomatikYedekPlani.zamaniGeldiMi(d, h + 120 * dk, dilim))
+    }
+
+    /** Y10: iş saatte bir uyanmaz; bir sonraki gerekli ana kurulur. */
+    @Test
+    fun isBirSonrakiGerekliAnaKurulur() {
+        val p = OtomatikYedekPlani
+        assertNull(p.isGecikmesiMs(YedekDurumu(), an(28), dilim))
+        assertNull(p.isGecikmesiMs(YedekDurumu(acik = true), an(28), dilim))
+        // Zamanı geldi: en kısa gecikme.
+        assertEquals(p.ASGARI_GECIKME_MS, p.isGecikmesiMs(acik, an(28, 9), dilim))
+        // Bugün yedek alındı: yarının başına (cihaz diliminde).
+        val bugunAlindi = acik.copy(sonBasariliMs = an(28, 9))
+        assertEquals(an(29, 0) - an(28, 9), p.isGecikmesiMs(bugunAlindi, an(28, 9), dilim))
+        // Hata beklemesi sürüyor: kalan süre.
+        val hata = acik.copy(sonHata = YedekSorunu.BELLEK, sonHataMs = an(28, 10), ardisikHata = 3)
+        assertEquals(90 * dk, p.isGecikmesiMs(hata, an(28, 10, 30), dilim))
+        // Gecikme en çok bir gün (saat ya da dilim değişirse yeniden hesaplanır).
+        val gelecek = acik.copy(sonBasariliMs = an(28, 9))
+        assertTrue(p.isGecikmesiMs(gelecek, an(28, 0, 1), dilim)!! <= p.AZAMI_GECIKME_MS)
+    }
+
+    /** Y9: başka klasör seçilince o klasörün geçmişi yok; aynı klasörün yeniden seçimi yalnız hatayı siler. */
+    @Test
+    fun yeniKlasorSonYedegiSifirlar() {
+        val d = acik.copy(
+            sonBasariliMs = an(28, 9), sonDosya = "x", sonHata = YedekSorunu.ERISIM_YOK, sonHataMs = an(28, 10),
+            ardisikHata = 2, hataBasiMs = an(28, 10), bildirilenSorun = YedekSorunu.ERISIM_YOK, sonRetDisarida = 3,
+        )
+        val yeni = d.klasorle("agac://baska")
+        assertEquals(YedekDurumu(acik = true, klasor = "agac://baska"), yeni)
+        assertTrue(OtomatikYedekPlani.zamaniGeldiMi(yeni, an(28, 11), dilim))
+        val ayni = d.klasorle(d.klasor)
+        assertEquals(an(28, 9), ayni.sonBasariliMs)
+        assertNull(ayni.sonHata)
+        assertEquals(0, ayni.ardisikHata)
+        assertNull(ayni.bildirilenSorun)
     }
 
     @Test
-    fun enYeniYediKalirBaskaDosyayaDokunulmaz() {
-        val yedekler = (1..10).map { KlasorDosyasi(OtomatikYedekPlani.dosyaAdi(LocalDate.of(2026, 11, 18 + it)), "y$it") }
+    fun gunOnceCihazGunuyle() {
+        val p = OtomatikYedekPlani
+        assertNull(p.gunOnce(acik, an(28), dilim))
+        assertEquals(0, p.gunOnce(acik.copy(sonBasariliMs = an(28, 0, 1)), an(28, 23, 59), dilim))
+        assertEquals(1, p.gunOnce(acik.copy(sonBasariliMs = an(27, 23, 59)), an(28, 0, 1), dilim))
+        assertEquals(9, p.gunOnce(acik.copy(sonBasariliMs = an(19, 12)), an(28, 8), dilim))
+        // Saat geri alındı: eksi gün yok.
+        assertEquals(0, p.gunOnce(acik.copy(sonBasariliMs = an(30)), an(28), dilim))
+        val m = OtomatikYedekMetinleri(dilim)
+        assertEquals("Son başarılı yedek bugün alındı.", m.gunOnce(0))
+        assertEquals("Son başarılı yedek dün alındı.", m.gunOnce(1))
+        assertEquals("Son başarılı yedek 9 gün önce alındı.", m.gunOnce(9))
+        assertEquals("Henüz başarılı yedek yok.", m.gunOnce(null))
+    }
+
+    // --- Ad ve temizlik -----------------------------------------------------------------------
+
+    private val kurulum = "0a1b2c3d"
+    private val baskaKurulum = "ffff0000"
+    private val bugunGun = LocalDate.of(2026, 11, 28)
+
+    private fun ad(ms: Long, k: String = kurulum) = OtomatikYedekPlani.dosyaAdi(ms, dilim, k)
+
+    @Test
+    fun dosyaAdiVeKalip() {
+        val p = OtomatikYedekPlani
+        val a = an(28, 9, 5)
+        assertEquals("ajanda-otomatik-yedek-2026-11-28-090500-0a1b2c3d.zip", ad(a))
+        assertEquals(ad(a) + ".yaziliyor", p.geciciAd(ad(a)))
+        assertEquals(LocalDateTime.of(2026, 11, 28, 9, 5, 0), p.yedekAni(ad(a), kurulum))
+        // Elle dışa aktarmanın önerdiği ad otomatik kalıba hiç uymaz (Y1).
+        assertNull(p.yedekAni(AktarmaAkisi.onerilenAd(bugunGun), kurulum))
+        for (x in listOf(
+            ad(a, baskaKurulum), ad(a).replace(".zip", " (1).zip"), "ajanda-otomatik-yedek-2026-02-30-090500-0a1b2c3d.zip",
+            ad(a).uppercase(), "eski-" + ad(a), ad(a) + ".bak", "ajanda-yedegi-2026-11-28.zip", "notlar.txt",
+            "ajanda-otomatik-yedek-2026-11-28-0905-0a1b2c3d.zip",
+        )) assertNull(x, p.yedekAni(x, kurulum))
+        // Geçici: sağlayıcının eklediği ekle de bu kurulumun geçicisi (Y9); başkasınınki değil.
+        assertTrue(p.geciciMi(ad(a) + ".yaziliyor", kurulum))
+        assertTrue(p.geciciMi(ad(a) + " (1).yaziliyor", kurulum))
+        assertTrue(p.geciciMi(ad(a).replace(".zip", " (1).zip") + ".yaziliyor", kurulum))
+        assertTrue(p.geciciMi(ad(a) + ".yaziliyor (1)", kurulum))
+        assertFalse(p.geciciMi(ad(a, baskaKurulum) + ".yaziliyor", kurulum))
+        assertFalse(p.geciciMi("ajanda-yedegi-2026-11-28.zip.yaziliyor", kurulum))
+        assertFalse(p.geciciMi(ad(a), kurulum))
+        assertFalse(p.geciciMi("benim.yaziliyor", kurulum))
+        // Kurulum kimliği.
+        assertTrue(p.kurulumGecerli(p.yeniKurulum(java.util.Random(1))))
+        assertTrue(p.kurulumGecerli(p.yeniKurulum()))
+        assertFalse(p.kurulumGecerli("0A1B2C3D"))
+        assertFalse(p.kurulumGecerli("0a1b2c"))
+        // Aynı saniyede yedek varsa saniye ilerler.
+        assertEquals(ad(a + 1000), p.bosAd(a, dilim, kurulum, setOf(ad(a))))
+        assertEquals(ad(a + 2000), p.bosAd(a, dilim, kurulum, setOf(ad(a), p.geciciAd(ad(a + 1000)))))
+    }
+
+    @Test
+    fun gunBasinaEnYeniVeEnYeniYediGunKalirBaskasinaDokunulmaz() {
+        val bizim = (1..10).map { KlasorDosyasi(ad(an(18 + it, 9)), "y$it") } // 19..28 Kasım
+        val ayniGunEski = KlasorDosyasi(ad(an(28, 8)), "eski")
         val baska = listOf(
-            KlasorDosyasi("ajanda-yedegi-2026-01-01 (1).zip", "b1"),
+            KlasorDosyasi(ad(an(20, 9), baskaKurulum), "b0"),
+            KlasorDosyasi("ajanda-yedegi-2026-01-01.zip", "b1"),
             KlasorDosyasi("fotograf.jpg", "b2"),
-            KlasorDosyasi("ajanda-yedegi-2025-02-30.zip", "b3"),
+            KlasorDosyasi(ad(an(20, 9)).replace(".zip", " (1).zip"), "b3"),
+            KlasorDosyasi(ad(an(20, 9), baskaKurulum) + ".yaziliyor", "b4"),
         )
-        val gecici = KlasorDosyasi("ajanda-yedegi-2026-11-20.zip.yaziliyor", "g1")
-        val sil = OtomatikYedekPlani.silinecekler(baska + yedekler.shuffled(java.util.Random(3)) + gecici)
-        assertEquals(setOf("g1", "y1", "y2", "y3"), sil.map { it.kimlik }.toSet())
-        assertEquals(listOf("g1"), OtomatikYedekPlani.silinecekler(baska + yedekler.take(7) + gecici).map { it.kimlik })
+        val gecici = KlasorDosyasi(ad(an(20, 9)) + ".yaziliyor", "g1")
+        val hepsi = baska + (bizim + ayniGunEski).shuffled(java.util.Random(3)) + gecici
+        val sil = OtomatikYedekPlani.silinecekler(hepsi, kurulum, bugunGun, koru = ad(an(28, 9)))
+        assertEquals(setOf("g1", "y1", "y2", "y3", "eski"), sil.map { it.kimlik }.toSet())
+        assertEquals(listOf("g1"), OtomatikYedekPlani.silinecekler(baska + bizim.takeLast(7) + gecici, kurulum, bugunGun).map { it.kimlik })
+    }
+
+    /** Y8: saat ileri gitmişken yazılmış geleceğe tarihli yedekler yeni yedeği sildirmez. */
+    @Test
+    fun gelecegeTarihliYedeklerYeniyiSildirmez() {
+        val gelecek = (1..7).map { KlasorDosyasi(ad(an(it, 9, ay = 12)), "f$it") }
+        val yeni = KlasorDosyasi(ad(an(28, 9)), "n")
+        val sil = OtomatikYedekPlani.silinecekler(gelecek.shuffled(java.util.Random(5)) + yeni, kurulum, bugunGun, koru = yeni.ad)
+        assertEquals(listOf("f1"), sil.map { it.kimlik })
+        // Korunan verilmese bile bugünkü (gerçek) yedek geleceğe tarihlilerden önce gelir.
+        assertEquals(listOf("f1"), OtomatikYedekPlani.silinecekler(gelecek + yeni, kurulum, bugunGun).map { it.kimlik })
     }
 
     // --- Deneme akışı (sahte klasör) -------------------------------------------------------------
@@ -118,10 +228,19 @@ class OtomatikYedekTest {
 
     private class SahteAyarlar(var d: YedekDurumu) : YedekAyarDeposu {
         override fun oku() = d
-        override fun acikYap(acik: Boolean) { d = d.copy(acik = acik) }
-        override fun klasorYap(klasor: String?) { d = d.copy(klasor = klasor, sonHata = null, sonHataMs = null) }
-        override fun basarili(an: Long, dosya: String) { d = d.copy(sonBasariliMs = an, sonDosya = dosya, sonHata = null, sonHataMs = null) }
-        override fun basarisiz(an: Long, sorun: YedekSorunu) { d = d.copy(sonHata = sorun, sonHataMs = an) }
+        override fun degistir(f: (YedekDurumu) -> YedekDurumu) { d = f(d) }
+    }
+
+    private class SahteBildirici : YedekBildiricisi {
+        var izin = true
+        val gosterilen = mutableListOf<Pair<String, String>>()
+        var kaldirilan = 0
+        override fun goster(baslik: String, metin: String): Boolean {
+            if (!izin) return false
+            gosterilen += baslik to metin
+            return true
+        }
+        override fun kaldir() { kaldirilan++ }
     }
 
     private class ToplayanGunluk : Gunluk {
@@ -139,8 +258,15 @@ class OtomatikYedekTest {
         var erisim = true
         var adlandirmaVar = true
         var adlandirmaEkKoyar = false
-        /** Yazılan bayt sayısı bunu geçince atılacak hata. */
+        /** Yazılan bayt sayısı bunu geçince atılacak hata ([hataliAd]'a uyan dosyada). */
         var yazmaHatasi: Pair<Int, IOException>? = null
+        var hataliAd: (String) -> Boolean = { true }
+        /** Bu bayttan sonrası sessizce düşer (sağlayıcı dosyayı kesik yazdı). */
+        var sessizKes: Int? = null
+        /** Geri okumada bu konumdaki bayt bozulur (sağlayıcı bozuk döndürdü). */
+        var okurkenBoz: Int? = null
+        /** Bir dosya yazmaya açılınca (adıyla). */
+        var yazmaAcildi: (String) -> Unit = {}
 
         fun adlar() = dosyalar.values.map { it.ad }.sorted()
         fun ekle(ad: String, veri: ByteArray = byteArrayOf(1)) { dosyalar["d${sayac++}"] = Dosya(ad, veri) }
@@ -169,16 +295,26 @@ class OtomatikYedekTest {
         override fun yazmaAc(d: KlasorDosyasi): OutputStream {
             denetle()
             val hedef = dosyalar[d.kimlik] ?: throw IOException("yok")
+            yazmaAcildi(hedef.ad)
             val tampon = ByteArrayOutputStream()
-            val hata = yazmaHatasi
+            val hata = yazmaHatasi?.takeIf { hataliAd(hedef.ad) }
+            val kes = sessizKes
             return object : OutputStream() {
                 override fun write(b: Int) = write(byteArrayOf(b.toByte()), 0, 1)
                 override fun write(b: ByteArray, off: Int, len: Int) {
                     if (hata != null && tampon.size() + len > hata.first) throw hata.second
                     tampon.write(b, off, len)
-                    hedef.veri = tampon.toByteArray()
+                    val v = tampon.toByteArray()
+                    hedef.veri = if (kes != null && v.size > kes) v.copyOf(kes) else v
                 }
             }
+        }
+
+        override fun okumaAc(d: KlasorDosyasi): java.io.InputStream {
+            denetle()
+            val v = (dosyalar[d.kimlik] ?: throw IOException("yok")).veri.copyOf()
+            okurkenBoz?.let { i -> if (i < v.size) v[i] = (v[i].toInt() xor 0x5a).toByte() }
+            return ByteArrayInputStream(v)
         }
 
         override fun sil(d: KlasorDosyasi): Boolean = dosyalar.remove(d.kimlik) != null
@@ -198,15 +334,20 @@ class OtomatikYedekTest {
     private val klasor = SahteKlasor()
     private val ayarlar = SahteAyarlar(acik)
     private val gunluk = ToplayanGunluk()
+    private val bildirici = SahteBildirici()
     private var simdi = an(28, 9)
-    private val yedekci = OtomatikYedekci(kaynak, { klasor }, ayarlar, { simdi }, { dilim }, gunluk)
+    private val yedekci = OtomatikYedekci(kaynak, { klasor }, ayarlar, { simdi }, { dilim }, gunluk, { kurulum }, bildirici)
 
-    private val bugun = "ajanda-yedegi-2026-11-28.zip"
+    /** 28 Kasım 09:00'daki yedeğin adı (testlerin çoğu bu anda başlar). */
+    private val bugun = "ajanda-otomatik-yedek-2026-11-28-090000-0a1b2c3d.zip"
 
     private fun gecerliYedek(ad: String) {
         val o = YedekKabi.oku(ByteArrayInputStream(klasor.veri(ad)), bicim)
         assertTrue(o.belge.contains("eren_ajanda_yedegi"))
     }
+
+    /** Klasördeki bu kurulumun yedekleri (ad sırasıyla). */
+    private fun bizimkiler(k: String = kurulum) = klasor.adlar().filter { OtomatikYedekPlani.yedekAni(it, k) != null }
 
     private fun temizGunluk() {
         gunluk.satirlar.forEach { assertFalse(it, it.contains(gizli)) }
@@ -233,7 +374,7 @@ class OtomatikYedekTest {
         assertEquals(1, kaynak.cagri)
         simdi = an(29, 8)
         assertTrue(yedekci.gerekirseYedekle() is YedekSonucu.Yapildi)
-        assertEquals(listOf(bugun, "ajanda-yedegi-2026-11-29.zip"), klasor.adlar())
+        assertEquals(listOf(bugun, ad(an(29, 8))), klasor.adlar())
     }
 
     @Test
@@ -246,27 +387,61 @@ class OtomatikYedekTest {
 
     @Test
     fun yediYedekKalirKullaniciDosyasiKalir() {
-        for (g in 15..27) klasor.ekle(OtomatikYedekPlani.dosyaAdi(LocalDate.of(2026, 11, g)))
+        for (g in 15..27) klasor.ekle(ad(an(g, 9)))
         klasor.ekle("ajanda-yedegi-2026-11-01 (1).zip")
         klasor.ekle("tatil.pdf")
         val s = yedekci.gerekirseYedekle() as YedekSonucu.Yapildi
         assertEquals(7, s.silinen)
-        val beklenen = (22..28).map { OtomatikYedekPlani.dosyaAdi(LocalDate.of(2026, 11, it)) } +
-            listOf("ajanda-yedegi-2026-11-01 (1).zip", "tatil.pdf")
+        val beklenen = (22..28).map { ad(an(it, 9)) } + listOf("ajanda-yedegi-2026-11-01 (1).zip", "tatil.pdf")
         assertEquals(beklenen.sorted(), klasor.adlar())
     }
 
     @Test
-    fun simdiYedekleAyniGunYenisiniYazar() {
+    fun simdiYedekleAyniGunYenisiniYazarEskisiniSonraSiler() {
         yedekci.gerekirseYedekle()
-        val ilk = klasor.veri(bugun).size
         kaynak.disa = kaynak.disa.copy(kayit = 4, belge = kaynak.disa.belge + " ")
         simdi = an(28, 15)
-        assertEquals(YedekSonucu.Yapildi(bugun, 4, 0), yedekci.simdiYedekle())
-        // Aynı ad yerinde: " (1)" yok.
+        val ikinci = ad(an(28, 15))
+        assertEquals(YedekSonucu.Yapildi(ikinci, 4, 1), yedekci.simdiYedekle())
+        // Yeni ad; " (1)" yok, sabahki ancak yenisi doğrulandıktan sonra silindi.
+        assertEquals(listOf(ikinci), klasor.adlar())
+        gecerliYedek(ikinci)
+    }
+
+    /** Y6: aynı günün sağlam dosyası, yenisi yazılıp doğrulanmadan silinmez. */
+    @Test
+    fun ayniGununSaglamDosyasiYenisiOlmadanSilinmez() {
+        yedekci.gerekirseYedekle()
+        val sabah = klasor.veri(bugun).copyOf()
+        simdi = an(28, 15)
+        klasor.yazmaHatasi = 10 to IOException("write failed: EIO (I/O error)")
+        assertEquals(YedekSonucu.Basarisiz(YedekSorunu.YAZILAMADI), yedekci.simdiYedekle())
         assertEquals(listOf(bugun), klasor.adlar())
-        assertTrue(klasor.veri(bugun).size >= ilk)
+        assertTrue(sabah.contentEquals(klasor.veri(bugun)))
         gecerliYedek(bugun)
+        // Bugünün başarısı silinmedi: ertesi güne dek yeni deneme gerekmez, sabahki yedek yerinde.
+        assertEquals(an(28, 9), ayarlar.d.sonBasariliMs)
+    }
+
+    /** Y6: yazılan dosya geri okunup doğrulanır; kesik yazılmışsa silinir ve yedek sayılmaz. */
+    @Test
+    fun kesikYazilanDosyaDogrulanamazVeSilinir() {
+        klasor.ekle("notlar.txt")
+        klasor.sessizKes = 40
+        assertEquals(YedekSonucu.Basarisiz(YedekSorunu.DOGRULANAMADI), yedekci.gerekirseYedekle())
+        assertEquals(listOf("notlar.txt"), klasor.adlar())
+        assertEquals(YedekSorunu.DOGRULANAMADI, ayarlar.d.sonHata)
+        assertNull(ayarlar.d.sonBasariliMs)
+        // Bozuk içerik (sıkıştırılmış veride bir bayt; CRC ya da açma tutmaz) de yakalanır.
+        klasor.sessizKes = null
+        klasor.okurkenBoz = 45
+        simdi += 30 * dk
+        assertEquals(YedekSonucu.Basarisiz(YedekSorunu.DOGRULANAMADI), yedekci.gerekirseYedekle())
+        assertEquals(listOf("notlar.txt"), klasor.adlar())
+        klasor.okurkenBoz = null
+        simdi += 60 * dk
+        assertTrue(yedekci.gerekirseYedekle() is YedekSonucu.Yapildi)
+        assertEquals(1, bizimkiler().size)
     }
 
     @Test
@@ -334,11 +509,280 @@ class OtomatikYedekTest {
     }
 
     @Test
-    fun oncekiCokmeninGeciciDosyasiSilinir() {
-        klasor.ekle("ajanda-yedegi-2026-11-27.zip.yaziliyor")
+    fun oncekiCokmeninGeciciDosyasiSilinirBaskasininKalir() {
+        klasor.ekle(ad(an(27, 9)) + ".yaziliyor")
+        klasor.ekle(ad(an(28, 8)) + " (1).yaziliyor")
+        val baskasinin = ad(an(28, 8), baskaKurulum) + ".yaziliyor"
+        klasor.ekle(baskasinin)
         klasor.ekle("ajanda-yedegi-2026-11-28.zip.yaziliyor")
         yedekci.gerekirseYedekle()
+        assertEquals(listOf("ajanda-yedegi-2026-11-28.zip.yaziliyor", bugun, baskasinin).sorted(), klasor.adlar())
+    }
+
+    /** Y6: adlandırmasız sağlayıcıda sağlam geçici, son ada yazılan doğrulanana dek kalır; iz tutulur. */
+    @Test
+    fun adlandirmaYoksaGeciciSonYazimDogrulanincaSilinir() {
+        klasor.adlandirmaVar = false
+        val gorulen = mutableListOf<Pair<String, String?>>()
+        klasor.yazmaAcildi = { ad -> gorulen += ad to ayarlar.d.yarimYazim }
+        assertEquals(YedekSonucu.Yapildi(bugun, 3, 0), yedekci.gerekirseYedekle())
+        // Son ada yazmaya başlarken iz vardı, geçici hâlâ klasördeydi.
+        assertEquals(listOf(OtomatikYedekPlani.geciciAd(bugun) to null, bugun to bugun), gorulen)
+        assertNull(ayarlar.d.yarimYazim)
         assertEquals(listOf(bugun), klasor.adlar())
+        gecerliYedek(bugun)
+    }
+
+    /** Y6: son ada doğrudan yazım yarıda kalırsa (hata) sağlam geçici durur, yarım son dosya kalmaz. */
+    @Test
+    fun adlandirmaYoksaSonYazimHatasiYarimDosyaBirakmaz() {
+        klasor.adlandirmaVar = false
+        klasor.yazmaHatasi = 10 to IOException("write failed: EIO (I/O error)")
+        klasor.hataliAd = { !it.endsWith(OtomatikYedekPlani.GECICI_EK) }
+        assertEquals(YedekSonucu.Basarisiz(YedekSorunu.YAZILAMADI), yedekci.gerekirseYedekle())
+        assertEquals(listOf(OtomatikYedekPlani.geciciAd(bugun)), klasor.adlar())
+        assertTrue(bizimkiler().isEmpty())
+        // Sonraki deneme artık geçiciyi temizler ve yazar.
+        klasor.yazmaHatasi = null
+        simdi += 30 * dk
+        val s = yedekci.gerekirseYedekle() as YedekSonucu.Yapildi
+        assertEquals(listOf(s.dosya), klasor.adlar())
+        assertNull(ayarlar.d.yarimYazim)
+    }
+
+    /** Y6: süreç son ada yazarken öldüyse (iz kaldı) sonraki deneme o yarım dosyayı siler; yedek sayılmaz. */
+    @Test
+    fun surecOlunceYarimKalanSonDosyaSilinir() {
+        val yarim = ad(an(27, 9))
+        klasor.ekle(yarim, byteArrayOf(0x50, 0x4b))
+        klasor.ekle(OtomatikYedekPlani.geciciAd(yarim))
+        val elle = "ajanda-yedegi-2026-11-27.zip"
+        klasor.ekle(elle)
+        ayarlar.d = acik.copy(yarimYazim = yarim)
+        assertEquals(YedekSonucu.Yapildi(bugun, 3, 0), yedekci.gerekirseYedekle())
+        assertEquals(listOf(elle, bugun).sorted(), klasor.adlar())
+        assertNull(ayarlar.d.yarimYazim)
+        // İz başka kurulumun adını gösterse (bozuk tercih) ona dokunulmaz.
+        val baskasinin = ad(an(26, 9), baskaKurulum)
+        klasor.ekle(baskasinin)
+        ayarlar.d = ayarlar.d.copy(yarimYazim = baskasinin)
+        simdi = an(29, 9)
+        yedekci.gerekirseYedekle()
+        assertTrue(baskasinin in klasor.adlar())
+        assertNull(ayarlar.d.yarimYazim)
+    }
+
+    /** Y8: geleceğe tarihli yedekler varken yeni yedek yazılır ve kalır; en eski gelecek tarihli düşer. */
+    @Test
+    fun saatDuzelinceYeniYedekKalir() {
+        for (g in 1..7) klasor.ekle(ad(an(g, 9, ay = 12)))
+        val s = yedekci.gerekirseYedekle() as YedekSonucu.Yapildi
+        assertEquals(1, s.silinen)
+        assertTrue(bugun in klasor.adlar())
+        assertFalse(ad(an(1, 9, ay = 12)) in klasor.adlar())
+        assertEquals(7, bizimkiler().size)
+    }
+
+    /** Y10: geri çekilme sürerken arka plan denemesi belgeyi yeniden üretmez. */
+    @Test
+    fun geriCekilmeSurerkenBelgeUretilmez() {
+        kaynak.hata = CekirdekHatasi.Depo("kilitli")
+        assertTrue(yedekci.gerekirseYedekle() is YedekSonucu.Basarisiz)
+        simdi += 30 * dk
+        assertTrue(yedekci.gerekirseYedekle() is YedekSonucu.Basarisiz)
+        assertEquals(2, ayarlar.d.ardisikHata)
+        simdi += 59 * dk
+        assertEquals(YedekSonucu.Gerekmedi, yedekci.gerekirseYedekle())
+        assertEquals(2, kaynak.cagri)
+        simdi += 1 * dk
+        assertTrue(yedekci.gerekirseYedekle() is YedekSonucu.Basarisiz)
+        assertEquals(3, kaynak.cagri)
+        kaynak.hata = null
+        simdi += 120 * dk
+        assertTrue(yedekci.gerekirseYedekle() is YedekSonucu.Yapildi)
+        assertEquals(0, ayarlar.d.ardisikHata)
+        assertNull(ayarlar.d.hataBasiMs)
+    }
+
+    // --- Y1: kullanıcının ya da başka kurulumun dosyalarına dokunulmaz ------------------------------
+
+    /** Senaryo 1: İndirilenler'de önceki aylardan varsayılan adlı elle yedekler. */
+    @Test
+    fun elleAlinmisEskiYedeklerSilinmez() {
+        val elle = (1..11).map { "ajanda-yedegi-2026-${"%02d".format(it)}-15.zip" } +
+            listOf("ajanda-yedegi-2026-11-27.zip", "ajanda-yedegi-2026-11-27 (1).zip")
+        elle.forEachIndexed { i, a -> klasor.ekle(a, byteArrayOf(i.toByte(), 7)) }
+        val s = yedekci.gerekirseYedekle() as YedekSonucu.Yapildi
+        assertEquals(0, s.silinen)
+        // On gün daha: yalnız bu kurulumun yedekleri yediye iner.
+        for (g in 29..30) { simdi = an(g, 9); yedekci.gerekirseYedekle() }
+        for (g in 1..8) { simdi = an(g, 9, ay = 12); yedekci.gerekirseYedekle() }
+        assertEquals(7, bizimkiler().size)
+        elle.forEachIndexed { i, a -> assertTrue(a, byteArrayOf(i.toByte(), 7).contentEquals(klasor.veri(a))) }
+    }
+
+    /** Senaryo 2: aynı gün elle alınmış "riskli işlemden önceki" yedek ezilmez, silinmez. */
+    @Test
+    fun ayniGunElleAlinanYedekEzilmez() {
+        val elle = AktarmaAkisi.onerilenAd(bugunGun)
+        val oncesi = byteArrayOf(9, 9, 9)
+        klasor.ekle(elle, oncesi)
+        assertTrue(yedekci.gerekirseYedekle() is YedekSonucu.Yapildi)
+        simdi = an(28, 15)
+        assertTrue(yedekci.simdiYedekle() is YedekSonucu.Yapildi)
+        simdi = an(28, 15, 0) + 500
+        assertTrue(yedekci.simdiYedekle() is YedekSonucu.Yapildi)
+        assertTrue(oncesi.contentEquals(klasor.veri(elle)))
+        assertEquals(listOf(elle, ad(an(28, 15) + 1000)).sorted(), klasor.adlar())
+    }
+
+    /** Senaryo 3: aynı klasörü kullanan iki telefon birbirinin yedeğini (ve yazılmakta olanını) silmez. */
+    @Test
+    fun ikiTelefonBirbirininYedeginiSilmez() {
+        val ayarB = SahteAyarlar(acik)
+        val b = OtomatikYedekci(kaynak, { klasor }, ayarB, { simdi }, { dilim }, gunluk, { baskaKurulum })
+        for (g in 15..28) {
+            // B'nin yarıda kalmış (ya da o an yazılmakta olan) geçicisi A'nın denemesinde durur.
+            val bGecici = ad(an(g, 8), baskaKurulum) + ".yaziliyor"
+            klasor.ekle(bGecici)
+            simdi = an(g, 9)
+            assertTrue(yedekci.gerekirseYedekle() is YedekSonucu.Yapildi)
+            assertTrue(bGecici in klasor.adlar())
+            simdi = an(g, 9, 30)
+            assertTrue(b.gerekirseYedekle() is YedekSonucu.Yapildi)
+            // Kendi artık geçicisini B temizler.
+            assertFalse(bGecici in klasor.adlar())
+        }
+        assertEquals((22..28).map { ad(an(it, 9)) }, bizimkiler())
+        assertEquals((22..28).map { ad(an(it, 9, 30), baskaKurulum) }, bizimkiler(baskaKurulum))
+        assertEquals(14, klasor.adlar().size)
+    }
+
+    // --- Y4 ve Y5: uyarılar ve bildirim ------------------------------------------------------------
+
+    @Test
+    fun yedegeGirmeyenRetSonuctaVeDurumda() {
+        kaynak.disa = kaynak.disa.copy(retListesinde = 2)
+        val s = yedekci.gerekirseYedekle() as YedekSonucu.Yapildi
+        assertEquals(2, s.retDisarida)
+        assertEquals(2, ayarlar.d.sonRetDisarida)
+        val m = OtomatikYedekMetinleri(dilim)
+        val beklenen = "Gönderilemeyenler listesindeki 2 değişiklik yedeğe girmedi; önce onları düzeltin ya da atın."
+        assertTrue(m.sonuc(s).contains(beklenen))
+        assertEquals(listOf(beklenen), m.uyarilar(ayarlar.d))
+        // Ret kalmadıysa uyarı kalkar.
+        kaynak.disa = kaynak.disa.copy(retListesinde = 0)
+        simdi = an(29, 9)
+        yedekci.gerekirseYedekle()
+        assertTrue(m.uyarilar(ayarlar.d).isEmpty())
+        assertTrue(bildirici.gosterilen.isEmpty())
+    }
+
+    @Test
+    fun kaliciSorunBirKezBildirilirBasariIleSifirlanir() {
+        klasor.erisim = false
+        yedekci.gerekirseYedekle()
+        assertEquals(1, bildirici.gosterilen.size)
+        assertEquals("Otomatik yedek alınamıyor", bildirici.gosterilen[0].first)
+        assertTrue(bildirici.gosterilen[0].second.contains("Klasörü yeniden seçin"))
+        assertEquals(YedekSorunu.ERISIM_YOK, ayarlar.d.bildirilenSorun)
+        for (i in 1..5) { simdi += 6 * 60 * dk; yedekci.gerekirseYedekle() }
+        assertEquals(1, bildirici.gosterilen.size)
+        assertNull(OtomatikYedekPlani.soylenecek(ayarlar.d, simdi))
+        // Başka bir sorun yeniden bildirilir.
+        klasor.erisim = true
+        klasor.yazmaHatasi = 0 to IOException("write failed", IOException("ENOSPC (No space left on device)"))
+        simdi += 6 * 60 * dk
+        yedekci.gerekirseYedekle()
+        assertEquals(2, bildirici.gosterilen.size)
+        // Başarı bildirimi kaldırır, durumu sıfırlar; yeni dizide aynı sorun yeniden bildirilir.
+        klasor.yazmaHatasi = null
+        simdi = an(30, 9)
+        assertTrue(yedekci.gerekirseYedekle() is YedekSonucu.Yapildi)
+        assertEquals(1, bildirici.kaldirilan)
+        assertNull(ayarlar.d.bildirilenSorun)
+        klasor.erisim = false
+        simdi = an(1, 9, ay = 12)
+        yedekci.gerekirseYedekle()
+        assertEquals(3, bildirici.gosterilen.size)
+        assertTrue(bildirici.gosterilen[2].second.contains("Son başarılı yedek dün alındı."))
+    }
+
+    @Test
+    fun izinYoksaSessizAtlanirDurumSaklanir() {
+        bildirici.izin = false
+        klasor.erisim = false
+        yedekci.gerekirseYedekle()
+        assertTrue(bildirici.gosterilen.isEmpty())
+        assertNull(ayarlar.d.bildirilenSorun)
+        // Uygulama açılınca gösterilecek.
+        val b = OtomatikYedekPlani.soylenecek(ayarlar.d, simdi)
+        assertEquals(YedekBildirimi.Sorun(YedekSorunu.ERISIM_YOK), b)
+        ayarlar.d = ayarlar.d.bildirildi(b!!)
+        assertNull(OtomatikYedekPlani.soylenecek(ayarlar.d, simdi))
+        // İzin sonradan verilse de söylenen yinelenmez.
+        bildirici.izin = true
+        simdi += 60 * dk
+        yedekci.gerekirseYedekle()
+        assertTrue(bildirici.gosterilen.isEmpty())
+    }
+
+    @Test
+    fun geciciSorunBirGunSurerseBildirilir() {
+        kaynak.hata = CekirdekHatasi.Depo("kilitli")
+        val ilk = simdi
+        while (simdi - ilk < 24 * 60 * dk) {
+            yedekci.gerekirseYedekle()
+            if (simdi - (ayarlar.d.hataBasiMs ?: simdi) < OtomatikYedekPlani.GECICI_BILDIRIM_ESIGI_MS) {
+                assertTrue(bildirici.gosterilen.isEmpty())
+            }
+            simdi += 30 * dk
+        }
+        yedekci.gerekirseYedekle()
+        simdi += 6 * 60 * dk
+        yedekci.gerekirseYedekle()
+        assertEquals(1, bildirici.gosterilen.size)
+        assertEquals(YedekSorunu.CEKIRDEK, ayarlar.d.bildirilenSorun)
+    }
+
+    @Test
+    fun icerAktarmaSiniriBirKezSoylenir() {
+        kaynak.disa = kaynak.disa.copy(iceAktarmaSiniriniAsiyor = true)
+        val s = yedekci.gerekirseYedekle() as YedekSonucu.Yapildi
+        assertTrue(s.sinirAsiyor)
+        val m = OtomatikYedekMetinleri(dilim)
+        assertTrue(m.sonuc(s).contains("geri yüklenemez"))
+        assertTrue(m.uyarilar(ayarlar.d).single().contains("geri yüklenemez"))
+        assertEquals(listOf("Yedek geri yüklenemeyecek kadar büyük"), bildirici.gosterilen.map { it.first })
+        simdi = an(29, 9)
+        yedekci.gerekirseYedekle()
+        assertEquals(1, bildirici.gosterilen.size)
+        // Sınırın altına inince sıfırlanır, yeniden aşınca yeniden söylenir.
+        kaynak.disa = kaynak.disa.copy(iceAktarmaSiniriniAsiyor = false)
+        simdi = an(30, 9)
+        yedekci.gerekirseYedekle()
+        assertFalse(ayarlar.d.sinirBildirildi)
+        kaynak.disa = kaynak.disa.copy(iceAktarmaSiniriniAsiyor = true)
+        simdi = an(1, 9, ay = 12)
+        yedekci.gerekirseYedekle()
+        assertEquals(2, bildirici.gosterilen.size)
+    }
+
+    @Test
+    fun simdiYedekleSonucuSoylenmisSayilir() {
+        klasor.erisim = false
+        assertEquals(YedekSonucu.Basarisiz(YedekSorunu.ERISIM_YOK), yedekci.simdiYedekle())
+        assertTrue(bildirici.gosterilen.isEmpty())
+        assertEquals(YedekSorunu.ERISIM_YOK, ayarlar.d.bildirilenSorun)
+        simdi += 60 * dk
+        yedekci.gerekirseYedekle()
+        assertTrue(bildirici.gosterilen.isEmpty())
+    }
+
+    @Test
+    fun kapaliykenSoylenecekYok() {
+        val d = YedekDurumu(acik = false, klasor = "agac://yedek", sonHata = YedekSorunu.ERISIM_YOK, sonHataMs = an(28))
+        assertNull(OtomatikYedekPlani.soylenecek(d, an(28)))
     }
 
     @Test
