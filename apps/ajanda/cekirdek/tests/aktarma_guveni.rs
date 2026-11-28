@@ -816,3 +816,103 @@ fn bayt_esleri_metin_surumleriyle_ayni() {
     assert!(c.c.ice_aktar(gecerli.clone(), Some(on.iz)).unwrap().uygulandi);
     assert_eq!(c.c.disa_aktar().unwrap().kayit, 2);
 }
+
+/// Görünen satırdaki kaydı (yalnız `taslak` alanını) taslağa çevirir: önizlemeden sonra değişen telefon kaydı.
+fn goruneni_taslak_yap(h: &Hat, id: &str) {
+    let db = rusqlite::Connection::open(&h.yol).unwrap();
+    let json: String = db.query_row("SELECT json FROM gorunen WHERE kayit_id = ?1", [id], |s| s.get(0)).unwrap();
+    let mut v: Value = serde_json::from_str(&json).unwrap();
+    v["taslak"] = json!(true);
+    db.execute("UPDATE gorunen SET json = ?2 WHERE kayit_id = ?1", [id, &v.to_string()]).unwrap();
+}
+
+/// Taslağa dönüş (`taslak_onaylanacak`'ın tersi): yerel kipte telefondaki onaylı kayıt, dosyadaki daha yeni
+/// `taslak: true` halle taslağa döner (hatırlatması kalkar) ve önizlemede ayrı sayılır (`taslaga_donecek`).
+/// Dosyadaki hal eskiyse, onaylıysa ya da telefondaki zaten taslaksa 0. İz bu sınıflamayı kapsar: önizlemeden
+/// sonra telefondaki kayıt taslağa dönerse (sınıf yine `guncellenecek`) eski izle uygulanmaz. Okunamayan
+/// telefon satırı, metninin `taslak`'ı doğru değilse onaylı sayılır. Bağlı kipte hep 0: dökme kuralı taslağa
+/// döndürmeyi göndermez, kayıt telefonda da PC'de de onaylı kalır.
+#[test]
+fn taslaga_donus_ice_aktarmada_ayri_sayilir() {
+    let y = Hat::yeni("guven-taslaga-yerel");
+    let x = y.c.ekle(govde("X", Some(an("2026-11-27", "10:00"))), GirdiYolu::Elle).unwrap();
+    assert!(!kayit(&y, &x).taslak);
+    assert!(y.alarm.kurulular().iter().any(|(id, _)| id == &x), "onaylı kaydın alarmı kurulu");
+    let taban = json_belge(&y);
+    let dosya = |ms: i64, taslak: bool, baslik: &str| {
+        let mut v = taban.clone();
+        let k = kaydi_bul(&mut v, &x);
+        k["taslak"] = json!(taslak);
+        k["guncelleme_ms"] = json!(ms);
+        k["baslik"] = json!(baslik);
+        v.to_string()
+    };
+    // Sıfır durumları: dosyadaki taslak hal eski (telefon kalır); dosyadaki daha yeni hal onaylı.
+    let eski = onizle(&y, &dosya(kayit(&y, &x).guncelleme_ms, true, "X (dosya)"));
+    assert_eq!((eski.atlanacak, eski.guncellenecek, eski.taslaga_donecek), (1, 0, 0));
+    let onayli = onizle(&y, &dosya(SIMDI + DK, false, "X (dosya)"));
+    assert_eq!((onayli.guncellenecek, onayli.taslaga_donecek, onayli.taslak_onaylanacak), (1, 0, 0));
+    // Sayı ve uygulama.
+    let taslak = dosya(SIMDI + DK, true, "X (dosya)");
+    let p = onizle(&y, &taslak);
+    assert_eq!((p.kip, p.guncellenecek, p.taslaga_donecek, p.taslak_onaylanacak), (CalismaKipi::Yerel, 1, 1, 0));
+    assert!(y.c.ice_aktar(taslak.clone(), Some(p.iz.clone())).unwrap().uygulandi);
+    let k = kayit(&y, &x);
+    assert!(k.taslak && k.baslik == "X (dosya)");
+    assert!(!y.alarm.kurulular().iter().any(|(id, _)| id == &x), "taslağın alarmı yok");
+    // Telefondaki zaten taslak: dönüş yok.
+    let tekrar = onizle(&y, &dosya(SIMDI + 2 * DK, true, "X (yine)"));
+    assert_eq!((tekrar.guncellenecek, tekrar.taslaga_donecek), (1, 0));
+
+    // İz: önizlemeden sonra telefondaki kayıt taslağa döndü; sınıf aynı, sayı değişti, eski iz uygulanmaz.
+    let z = Hat::yeni("guven-taslaga-iz");
+    let x = z.c.ekle(govde("X", None), GirdiYolu::Elle).unwrap();
+    let mut v = json_belge(&z);
+    let k = kaydi_bul(&mut v, &x);
+    k["taslak"] = json!(true);
+    k["guncelleme_ms"] = json!(SIMDI + DK);
+    k["baslik"] = json!("X (dosya)");
+    let p = onizle(&z, &v.to_string());
+    assert_eq!((p.guncellenecek, p.taslaga_donecek), (1, 1));
+    goruneni_taslak_yap(&z, &x);
+    let s = z.c.ice_aktar(v.to_string(), Some(p.iz.clone())).unwrap();
+    assert!(!s.uygulandi, "eski izle uygulanmadı");
+    assert_eq!((s.plan.guncellenecek, s.plan.taslaga_donecek), (1, 0));
+    assert_ne!(s.plan.iz, p.iz);
+    assert_eq!(kayit(&z, &x).baslik, "X", "hiçbir şey yazılmadı");
+
+    // Okunamayan telefon satırı onaylı sayılır.
+    let mut b = Hat::yeni("guven-taslaga-okunamayan");
+    let x = b.c.ekle(govde("X", None), GirdiYolu::Elle).unwrap();
+    let mut v = json_belge(&b);
+    kaydi_bul(&mut v, &x)["taslak"] = json!(true);
+    goruneni_boz(&b, &x);
+    b.sureci_oldur_ve_ac();
+    let p = onizle(&b, &v.to_string());
+    assert_eq!((p.guncellenecek, p.okunamayan_ret_listesine, p.taslaga_donecek), (1, 1, 1));
+
+    // Bağlı kip: hep 0, kayıt onaylı kalır.
+    let mut h = Hat::yeni("guven-taslaga-bagli");
+    h.pc.disaridan_ekle("k_x", &govde("X", None), false);
+    h.eslestir();
+    assert!(!kayit(&h, "k_x").taslak);
+    let taban = json_belge(&h);
+    let dosya = |taslak: bool, baslik: &str| {
+        let mut v = taban.clone();
+        let k = kaydi_bul(&mut v, "k_x");
+        k["taslak"] = json!(taslak);
+        k["guncelleme_ms"] = json!(SIMDI + DK);
+        k["baslik"] = json!(baslik);
+        v.to_string()
+    };
+    let yalniz_taslak = onizle(&h, &dosya(true, "X"));
+    assert_eq!((yalniz_taslak.kip, yalniz_taslak.ayni, yalniz_taslak.taslaga_donecek), (CalismaKipi::Bagli, 1, 0));
+    let d = dosya(true, "X (dosya)");
+    let p = onizle(&h, &d);
+    assert_eq!((p.guncellenecek, p.kuyruga_girecek_islem, p.taslaga_donecek), (1, 1, 0));
+    assert!(h.c.ice_aktar(d, Some(p.iz)).unwrap().uygulandi);
+    h.pompala();
+    assert_eq!(h.pc.d.kayitlar["k_x"].baslik, "X (dosya)");
+    assert!(!h.pc.d.kayitlar["k_x"].taslak, "PC'de onaylı kaldı");
+    assert!(!kayit(&h, "k_x").taslak, "telefonda onaylı kaldı");
+}

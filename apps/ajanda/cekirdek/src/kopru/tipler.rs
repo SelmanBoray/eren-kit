@@ -482,6 +482,12 @@ pub struct IceAktarmaOnizlemesi {
     /// atılabilir). Bağlı kipte hep 0 (okunamayan satır atlanır: `atlanacak`).
     #[uniffi(default = 0)]
     pub okunamayan_ret_listesine: i32,
+    /// Yerel kipte: `guncellenecek`'lerden telefonda onaylı olup dosyadaki daha yeni `taslak: true` halle
+    /// taslağa dönecekler (onaylanmamış öneri olur; hatırlatması kurulmaz). Telefondaki satır okunamıyorsa
+    /// metnin `taslak`'ı doğru değilse onaylı sayılır. Kullanıcıya ayrıca söylenmeli. Bağlı kipte hep 0
+    /// (servis kaydı taslağa döndürmez; dökme kuralı bu farkı göndermez).
+    #[uniffi(default = 0)]
+    pub taslaga_donecek: i32,
 }
 
 /// `Cekirdek::ice_aktar`'ın sonucu.

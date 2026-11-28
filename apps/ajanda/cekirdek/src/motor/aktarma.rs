@@ -56,7 +56,10 @@
 //!   nedeni sürüm düşürmeyse eski metin oradan geri alınabilir); bağlı kipte atlanır. Güncellemenin
 //!   içindeki silme (`silinecek`: canlı kayıt yerine daha yeni mezar taşı; okunamayan satırda metnin
 //!   `silindi`'si doğru değilse canlı sayılır), geri yükleme (`geri_yuklenecek`) ve taslağın onaylanması
-//!   (`taslak_onaylanacak`: telefonda taslak, dosyada daha yeni ve onaylı) ayrıca sayılır.
+//!   (`taslak_onaylanacak`: telefonda taslak, dosyada daha yeni ve onaylı) ayrıca sayılır. Tersi de ayrı
+//!   sayılır (`taslaga_donecek`: yerel kipte telefonda onaylı, dosyada daha yeni ve taslak; okunamayan
+//!   satırda metnin `taslak`'ı doğru değilse onaylı sayılır). Bağlı kipte hep 0: dökme kuralı taslağa
+//!   döndürmeyi göndermez, servis de döndürmez (kayıt onaylı kalır).
 //!
 //! Taslağın içe aktarmayla onaylanması (karar): dosyadaki daha yeni onaylı hal uygulanır (bağlı kipte
 //! `onayla` işlemi, yerel kipte doğrudan). Aynı `kayit_id`'nin taslaktan çıkmasının tek yolu bir insanın
@@ -822,6 +825,7 @@ fn plan_kur(d: &Depo, o: &Ortam, belge: Belge, yerel: bool, kullanim: PlanKullan
         taslak_gonderilmeyecek: 0,
         taslak_onaylanacak: 0,
         okunamayan_ret_listesine: 0,
+        taslaga_donecek: 0,
     };
     let mut yazilacaklar = Vec::new();
     for (i, &(bas, son)) in belge.kayitlar.iter().enumerate() {
@@ -882,9 +886,13 @@ fn plan_kur(d: &Depo, o: &Ortam, belge: Belge, yerel: bool, kullanim: PlanKullan
                 // (`ice_aktar`); bağlı kipte servise ne gideceği bilinemez, dokunulmaz.
                 None if yerel => {
                     p.okunamayan_ret_listesine += 1;
-                    let silinmisti = serde_json::from_str::<Value>(json).ok().and_then(|v| v.get("silindi").and_then(Value::as_bool)) == Some(true);
-                    if k.silindi && !silinmisti {
+                    let ham_v = serde_json::from_str::<Value>(json).ok();
+                    let dogru = |alan: &str| ham_v.as_ref().and_then(|v| v.get(alan).and_then(Value::as_bool)) == Some(true);
+                    if k.silindi && !dogru("silindi") {
                         p.silinecek += 1;
+                    }
+                    if k.taslak && !dogru("taslak") {
+                        p.taslaga_donecek += 1;
                     }
                     (Sinif::Guncellenecek, Some(Yazilacak { kayit: k.clone(), onceki: None, islemler: Vec::new(), okunamayan: Some(json.clone()) }))
                 }
@@ -928,6 +936,11 @@ fn plan_kur(d: &Depo, o: &Ortam, belge: Belge, yerel: bool, kullanim: PlanKullan
             // Telefondaki taslak dosyadaki daha yeni onaylı halle onaylanır (bağlı kipte `onayla` işlemi).
             if y.onceki.as_ref().is_some_and(|t| t.taslak) && !k.taslak {
                 p.taslak_onaylanacak += 1;
+            }
+            // Telefondaki onaylı kayıt dosyadaki daha yeni taslak halle taslağa döner (yalnız yerel kipte:
+            // bağlı kipte dökme kuralı bu farkı göndermez, `kuyruga_islemler`).
+            if yerel && y.onceki.as_ref().is_some_and(|t| !t.taslak) && k.taslak {
+                p.taslaga_donecek += 1;
             }
             p.kuyruga_girecek_islem += sayi(y.islemler.len());
             if kullanim == PlanKullanimi::Uygulama {
