@@ -23,6 +23,11 @@ export interface SahteEkDiski {
   cagrilar: string[];
   /** Adı verilen yöntem bir sonraki çağrıda atar (bir kez). */
   atsin: Set<string>;
+  /**
+   * Okunamayan önek dizini taklidi: bu öneklerle başlayan tam dosyalar `tamListesi`'nde görünmez, her önek
+   * için `okunamadi` bir kez çağrılır (gerçek port gibi).
+   */
+  okunamayanOnekler: Set<string>;
 }
 
 const birlesik = (a: Uint8Array, b: Uint8Array): Uint8Array => {
@@ -38,6 +43,7 @@ export function sahteEkDiski(simdi: () => number): SahteEkDiski {
   const isaretler = new Map<string, AjandaEkIsareti>();
   const cagrilar: string[] = [];
   const atsin = new Set<string>();
+  const okunamayanOnekler = new Set<string>();
 
   const giris = (yontem: string, ozet?: string): void => {
     cagrilar.push(ozet === undefined ? yontem : `${yontem}:${ozet}`);
@@ -71,9 +77,12 @@ export function sahteEkDiski(simdi: () => number): SahteEkDiski {
       giris("tamSil", ozet);
       tamlar.delete(ozet);
     },
-    tamListesi: async () => {
+    tamListesi: async (okunamadi) => {
       giris("tamListesi");
-      return [...tamlar].map(([ozet, v]) => ({ ozet, bayt: v.length }));
+      for (const _ of okunamayanOnekler) okunamadi?.(Object.assign(new Error("EPERM"), { name: "Error" }));
+      return [...tamlar]
+        .filter(([ozet]) => !okunamayanOnekler.has(ozet.slice(0, 2)))
+        .map(([ozet, v]) => ({ ozet, bayt: v.length }));
     },
     yarimDurumu: async (ozet) => {
       giris("yarimDurumu", ozet);
@@ -131,5 +140,5 @@ export function sahteEkDiski(simdi: () => number): SahteEkDiski {
       for (const [k, v] of m) isaretler.set(k, { ...v });
     },
   };
-  return { disk, tamlar, yarimlar, isaretler, cagrilar, atsin };
+  return { disk, tamlar, yarimlar, isaretler, cagrilar, atsin, okunamayanOnekler };
 }

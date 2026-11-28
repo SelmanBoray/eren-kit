@@ -4,7 +4,8 @@
  * kapalıyken geçen süre ya da saat sıçraması (E2), turlar arasında kısa yeniden başvuru (E3).
  *
  * Disk bellekte sahtedir, kayıtlar sahte depodadır (her `kayitKoy` revizyonu tek sayaçtan artırır), saat
- * sahtedir; `kayma` duvar saatini sahte zamandan kaydırır (yanlış ayarlı saat taklidi). Servisin çalışırken
+ * sahtedir; `kayma` duvar saatini sahte zamandan kaydırır (yanlış ayarlı saat taklidi); tekdüze saat sahte
+ * zamanın kendisidir. Servisin çalışırken
  * geçirdiği süre `calis` ile saatlik turlarla taklit edilir.
  */
 import assert from "node:assert/strict";
@@ -92,6 +93,8 @@ function kur(sec: { kotaBayt?: number } = {}) {
       disk: sd.disk,
       depo,
       saat,
+      // Tekdüze saat sahte zamanın kendisi: `kayma` (duvar saati düzeltmesi) onu etkilemez.
+      tekduze: zaman.saat,
       zamanlayici: zaman.zamanlayici,
       gunluk,
       ...(sec.kotaBayt !== undefined && { kotaBayt: sec.kotaBayt }),
@@ -429,5 +432,94 @@ describe("İkinci tur (7): sahte disk gerçek port gibi geçersiz işareti redde
       await assert.rejects(t.sd.disk.isaretleriYaz(new Map([[a, i]])), /gecersiz_isaret/, JSON.stringify(i));
     }
     assert.equal(t.sd.isaretler.size, 0);
+  });
+});
+
+describe("Üçüncü tur A2: gözlenen süre tekdüze saatle sayılır", () => {
+  const DK = 60 * 1000;
+  const gozlenen = (t: Ortam, ozet: string): number | undefined => t.sd.isaretler.get(ozet)?.gozlenen_ms;
+
+  it("kapanış: tur geride kalmış saatte koştu, saat ileri düzeldi; yalnız gerçekten geçen süre eklenir", async () => {
+    const t = kur();
+    t.kayma.ms = -2 * SAAT; // CMOS pili bitmiş PC: açılışta saat geride
+    const g = await geriAlinabilir(t);
+    t.kayma.ms = 0; // NTP saati ileri aldı
+    t.zaman.ilerlet(10 * DK);
+    await t.ekler.kapat();
+    assert.equal(gozlenen(t, g.ozet), 10 * DK, "hayali 2 sa eklenmedi");
+  });
+
+  it("kapanış: saat geri düzeldi; çalışılan süre yine sayılır", async () => {
+    const t = kur();
+    const g = await geriAlinabilir(t);
+    t.kayma.ms = -5 * SAAT;
+    t.zaman.ilerlet(30 * DK);
+    await t.ekler.kapat();
+    assert.equal(gozlenen(t, g.ozet), 30 * DK);
+  });
+
+  it("turlar arası: saat ileri sıçradı; adım yalnız geçen süre", async () => {
+    const t = kur();
+    const g = await geriAlinabilir(t);
+    t.kayma.ms = 3 * SAAT;
+    t.zaman.ilerlet(SAAT);
+    await t.ekler.temizle();
+    assert.equal(gozlenen(t, g.ozet), SAAT);
+  });
+
+  it("senaryo: her gün 20 kısa açılış, her birinde saat 2 sa ileri düzelir; saklama kısalmaz", async () => {
+    const t = kur();
+    const g = await geriAlinabilir(t);
+    const OMUR = 5 * DK;
+    for (let i = 0; i < 20; i++) {
+      t.kayma.ms = -2 * SAAT;
+      await t.yenidenAc();
+      await t.ekler.temizle(); // açılış turu geride kalmış saatte
+      t.kayma.ms = 0;
+      t.zaman.ilerlet(OMUR);
+    }
+    await t.ekler.kapat();
+    assert.equal(gozlenen(t, g.ozet), 20 * OMUR);
+  });
+
+  it("kapat iki kez (art arda ve eşzamanlı): süre bir kez eklenir", async () => {
+    const t = kur();
+    const g = await geriAlinabilir(t);
+    t.zaman.ilerlet(20 * DK);
+    await Promise.all([t.ekler.kapat(), t.ekler.kapat()]);
+    t.zaman.ilerlet(20 * DK);
+    await t.ekler.kapat();
+    assert.equal(gozlenen(t, g.ozet), 20 * DK);
+  });
+
+  it("yerAc turlar arasında işareti sıfırladı: sonraki kapanış yalnız sıfırlamadan beri geçeni ekler", async () => {
+    const t = kur({ kotaBayt: 10 * BLOK });
+    const g = await geriAlinabilir(t, "ek_g", 6 * BLOK);
+    t.zaman.ilerlet(40 * DK);
+    // Tur arasında geri yükle ve yeniden sil: mezar taşı işaretten yeni.
+    t.kayitKoy(kayit("k_ek_g", [g]));
+    t.kayitKoy(kayit("k_ek_g", [g], { silindi: true }));
+    // Kota baskısı: yer açma işaretleri tazeler, `g`'ninki baştan başlar.
+    const n = ekUret("ek_n", 6 * BLOK, 2);
+    t.kayitKoy(kayit("k_n", [n]));
+    assert.deepEqual(await t.oturum().yukle("k_n", n), [ret("ek_n", "kota_asildi")]);
+    assert.equal(gozlenen(t, g.ozet), 0, "yer açma işareti sıfırladı");
+    t.zaman.ilerlet(10 * DK);
+    await t.ekler.kapat();
+    assert.equal(gozlenen(t, g.ozet), 10 * DK, "sıfırlamadan önceki 40 dk sayılmadı");
+  });
+
+  it("yerAc turlar arasında işareti sıfırladı: sonraki tur da yalnız sıfırlamadan beri geçeni ekler", async () => {
+    const t = kur({ kotaBayt: 10 * BLOK });
+    const g = await geriAlinabilir(t, "ek_g", 6 * BLOK);
+    t.zaman.ilerlet(40 * DK);
+    t.kayitKoy(kayit("k_ek_g", [g]));
+    t.kayitKoy(kayit("k_ek_g", [g], { silindi: true }));
+    const n = ekUret("ek_n", 6 * BLOK, 2);
+    t.kayitKoy(kayit("k_n", [n]));
+    await t.oturum().yukle("k_n", n);
+    t.zaman.ilerlet(20 * DK);
+    await t.ekler.temizle();
+    assert.equal(gozlenen(t, g.ozet), 20 * DK);
   });
 });
