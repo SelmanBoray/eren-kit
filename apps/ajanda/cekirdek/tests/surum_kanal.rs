@@ -7,8 +7,8 @@
 //! - v2 servis: ilk denemede kısa bir ret (durum yazılmaz), v2'ye düşüp eşitlenme; düşülen sürüm bir saat
 //!   (ya da süreç ölene dek) tutulur, sonra yeniden v3 denenir. Bugünkü canlı kurulum (eşleşmiş v1/v2
 //!   fikstürü): veri, kuyruk ve alarmlar korunur.
-//! - Çerçevesiz 1002: `welcome`'dan önce bir alt sürüme düşülür (en alttaysa yön bilinmez); sonra sıradan
-//!   kopmadır.
+//! - Çerçevesiz 1002: `auth_challenge`'dan önce bir alt sürüme düşülür (en alttaysa yön bilinmez); sonra
+//!   (`Yanit`, telafi, canlı: servis sürümü kabul etti) sıradan kopmadır.
 //! - Sürüm sabitlenmeden gelen başka sürümlü ret (`zaman_asimi`) kodun kendisidir, geri düşüş değil.
 //! - v2 bağlantıda v3 alanlı kuyruk işlemi: v2 kısmı gider, v3 kalanı ertelenir (`tests/erteleme.rs`).
 //! - v2 döneminin kopyası (v3 alanları süzülmüş temel) aynı revizyonlu v3 alanlı PC kaydıyla karşılaşınca
@@ -249,6 +249,56 @@ fn welcomedan_sonra_cercevesiz_1002_geri_dusus_degil() {
     assert!(h.canli_mi());
     let b = h.baglanti.take().unwrap();
     h.c.baglanti_kapandi(b.nesil, Some(1002)).unwrap();
+    assert_eq!(durum(&h), (BaglantiAsamasi::Kopuk, None, None));
+    let acilis = h.pc.acilislar.len();
+    h.baglan();
+    assert!(h.canli_mi());
+    assert_eq!(h.pc.acilislar[acilis..], [("hello", 3)], "v3'te kalındı");
+}
+
+/// Eksik test (R7): telafi aşamasında (`welcome` geldi, `esitlendi` gelmedi) çerçevesiz 1002 geri düşüş değildir:
+/// sıradan kopmadır, artımlı telafinin gelenleri kalır, sonraki bağlantı yine v3'tür ve telafi tamamlanır.
+#[test]
+fn telafide_cercevesiz_1002_geri_dusus_degil() {
+    let mut h = Hat::yeni("surum-1002-telafi");
+    h.eslestir();
+    let a = h.c.ekle(govde("A", None), GirdiYolu::Elle).unwrap();
+    h.pompala();
+    h.kopar();
+    h.pc.disaridan_degistir(&a, |k| k.baslik = "PC'de".into());
+    let telafi = h.pc.telafi_sayisi;
+    h.pc.telafi_kes = Some(0);
+    h.pc.kapanis_kodu = Some(1002);
+    h.baglan();
+    assert!(h.baglanti.is_none(), "telafide koptu");
+    assert_eq!((h.pc.telafi_sayisi, h.pc.son_welcome_tam), (telafi + 1, Some(false)), "welcome geldi, artımlı");
+    assert_eq!(durum(&h), (BaglantiAsamasi::Kopuk, None, None));
+    let acilis = h.pc.acilislar.len();
+    h.baglan();
+    assert!(h.canli_mi());
+    assert_eq!(h.pc.acilislar[acilis..], [("hello", 3)], "v3'te kalındı");
+    assert_eq!(kayit(&h, &a).baslik, "PC'de");
+}
+
+/// R7 (bulgu 7): `auth_challenge` geldikten sonra (`Yanit`: servis sürümü `hello`'dan sabitledi, o sürümle yazdı;
+/// telefon da her çerçeveyi o sürümle yazar) çerçevesiz 1002 sürüm uyuşmazlığı olamaz: geri düşüş değildir,
+/// sıradan kopmadır. Sonraki bağlantı yine v3'tür.
+#[test]
+fn yanit_asamasinda_cercevesiz_1002_geri_dusus_degil() {
+    let mut h = Hat::yeni("surum-1002-yanit");
+    h.eslestir();
+    h.kopar();
+    let t = Arc::new(SahteTasima::default());
+    let nesil = h.c.baglanti_acildi(t.clone()).unwrap();
+    let hello = t.giden.lock().unwrap().remove(0);
+    assert!(hello.contains(r#""v":3"#) && hello.contains(r#""hello""#), "{hello}");
+    let mut pc = PcAsama::HelloBekliyor;
+    for f in h.pc.isle(&mut pc, &hello).cerceveler {
+        h.c.cerceve_geldi(nesil, f).unwrap();
+    }
+    assert!(t.giden.lock().unwrap().iter().any(|f| f.contains(r#""auth_response""#)), "Yanit aşamasında");
+    assert_eq!(durum(&h).0, BaglantiAsamasi::ElSikisma);
+    h.c.baglanti_kapandi(nesil, Some(1002)).unwrap();
     assert_eq!(durum(&h), (BaglantiAsamasi::Kopuk, None, None));
     let acilis = h.pc.acilislar.len();
     h.baglan();

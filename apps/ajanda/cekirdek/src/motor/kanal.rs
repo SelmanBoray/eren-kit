@@ -15,7 +15,8 @@
 //! - Bağlantı kümenin en büyüğüyle (`Surum::EN_YENI`) açılır; `pair_request` ve `hello` aynı sürümdedir.
 //!   Bağlantının sürümü durumda tutulur, bütün çerçeveler onunla çözülür ve yazılır.
 //! - `protokol_uyumsuz` (bağlantının sürümüyle ya da dondurulmuş zarfla başka sürümden okunan ret çerçevesi;
-//!   ya da `welcome`'dan önce çerçevesiz kapanış 1002) kararı `ajanda_geri_dusus`'tür. `YenidenDene`:
+//!   ya da `auth_challenge`'dan önce çerçevesiz kapanış 1002: sonrasında servis sürümü kabul etmiştir, 1002
+//!   sıradan kopmadır) kararı `ajanda_geri_dusus`'tür. `YenidenDene`:
 //!   düşülen sürüm saklanır, bağlantı kapanır, `surum_uyusmazligi` yazılmaz, önceki `protokol_uyumsuz` kalkar (kabuk sıradan kopma
 //!   gibi kısa beklemeyle yeniden bağlanır; yeni bağlantı düşülen sürümle açılır). `UygulamaEski`/`ServisEski`/`Bilinmiyor`:
 //!   `son_hata = protokol_uyumsuz` ve `surum_uyusmazligi` (yeniden bağlanmayı geri çekmek kabuğun işidir).
@@ -36,8 +37,8 @@
 //!   v3 alanları değişmemiş kayıtlarda da gelir.
 //! - v2 bağlantıda kuyruğun v3 alanı taşıyan işlemi ertelenir ("Erteleme" aşağıda): v2'de gidebilen kısım
 //!   yerinde gider, v3 kalanı kuyrukta kalır ve servisle v3 konuşulan ilk bağlantıda kendiliğinden gider.
-//!   Hiçbiri kuyruğu tıkamaz, hiçbir alan sessizce düşmez, hiçbiri ret listesine gitmez (aynı kaydın
-//!   arkasındaki `sil` öne geçmez: "Sıra").
+//!   Hiçbiri kuyruğu tıkamaz, hiçbir alan sessizce düşmez, kullanıcı atmadıkça hiçbiri ret listesine gitmez
+//!   (aynı kaydın arkasındaki `sil` öne geçmez: "Sıra"; atma: "Serbest bırakma").
 //!
 //! Erteleme (v2 servis, v3 alanı). Bilinen servis sürümü `meta.servis_surumu`'dur (`SERVIS_SURUMU`: her
 //! `welcome`'da o bağlantının sürümü yazılır; göç gerekmez, yoksa bilinmiyor sayılır). Erteleme yalnız bağlı
@@ -60,15 +61,22 @@
 //!   alanlarına; aynı v3 alanına sonradan dokunan değişiklik de ertelenir ve sırada arkadadır: v3'te sırayla
 //!   gidince sonraki kazanır, ertelenen onun üstüne yazmaz. İyimser hal (görünen kopya) kuyruğun sırasıyla
 //!   hesaplanır; kayıt v3 alanlarıyla görünmeye devam eder.
-//! - Ertelenen satır yollanmaz: denemesi artmaz, `Kopma` sayılmaz, hiçbir zaman atılmaz. Telafiler (tam ya
-//!   da artımlı) onu taze kopya üstüne yeniden uygular. v3 bağlantının `welcome`'u bilinen sürümü 3 yapar;
+//! - Ertelenen satır yollanmaz: denemesi artmaz, `Kopma` sayılmaz, kendiliğinden hiç atılmaz. Telafiler (tam
+//!   ya da artımlı) onu taze kopya üstüne yeniden uygular. v3 bağlantının `welcome`'u bilinen sürümü 3 yapar;
 //!   `esitlendi`'den sonra ertelenenler sıradaki yerlerinden gider.
 //! - Kuyruk boşalması: `BaglantiDurumu.kuyrukta` bütünüyle ertelenmiş satırları saymaz (Kotlin'in "kuyruk
 //!   boşalana dek" beklemeleri v2 serviste sonsuza dek beklemesin); onlar `BaglantiDurumu.ertelenen_islem`'dir
 //!   (gönderilmemiş değişikliklerin toplamı `kuyrukta + ertelenen_islem`: kabuk "gönderilmemiş değişiklik
-//!   yok" demeden ikisine de bakar). Ertelenen v3 değişikliği taşıyanların (karma dahil) sayısı
-//!   `baglanti_yetenekleri().ertelenen`, kayıt başına `KayitGorunumu.ertelenen` (yalnız ertelenmiş satırı
-//!   olan kaydın `bekleyen`'i yanlıştır).
+//!   yok" demeden ikisine de bakar). Ertelenen v3 değişikliği taşıyanların (karma dahil; sırası tutulan v2
+//!   satırları, ör. bekleyen `sil`, sayılmaz) sayısı `baglanti_yetenekleri().ertelenen` (`ertelenenleri_at`'ın
+//!   ret listesine koyacağı sayı), kayıt başına `KayitGorunumu.ertelenen` (yalnız ertelenmiş satırı olan
+//!   kaydın `bekleyen`'i yanlıştır).
+//! - Süresiz bekleme ve serbest bırakma: servis hiç güncellenmezse ertelenenler ve kaydın arkasında sırası
+//!   tutulan satırlar (silme dahil) süresiz bekler. Kullanıcı `ertelenenleri_at` (kayıt ya da hepsi) ile
+//!   ertelenen v3 değişikliklerini atıp kaydı serbest bırakır: her v3 değişikliği
+//!   (yalnız v3 satırı bütünüyle, karma satırın v3 kalanı ayrı bir girdiyle) ret listesine `ertelenen_atildi`
+//!   işaretiyle geçer (sessizce kaybolmaz; neden `teslim_edilemedi`), v2 kısımları yerinde kalır ve sırası
+//!   tutulan satırlar bu serviste hemen gider; görünen kopya v3 değerini bırakır.
 //! - Koparma ve depo değişimi (`yerel.rs` `bagli_kipten_cik`): ertelenenler öteki bekleyen satırlar gibi
 //!   kuyrukla atılır; değerleri görünen kopyada (artık yerel gerçek) kalır, `KoparmaSonucu.gonderilmeyen_*`
 //!   onları sayar (`gonderilmeyen_islem` = koparma anındaki `kuyrukta + ertelenen_islem`).
@@ -107,6 +115,7 @@ use crate::kopru::tipler::{
 use crate::kural::esitleme::HelloAlanlari;
 use crate::kural::kuyruk::{KuyrukKarari, KuyrukOlayi, ajanda_kuyruk_karari};
 use crate::model::json::Yazici;
+use crate::model::metin::opak_id_mi;
 use crate::model::kanonik::{base64_coz, base64_yaz};
 use crate::model::{
     AJANDA_SURUMLERI, AjandaAsagi, AjandaEslestirmeQr, AjandaGecmisGirdisi, AjandaIslem, AjandaKanalHatasi, AjandaKaydi,
@@ -228,6 +237,17 @@ fn v3_alani_gecebilir(json: &str) -> bool {
     V3_ANAHTARLARI.iter().any(|a| json.contains(a))
 }
 
+/// Bölümün ertelenecek bir v3 değişikliği var mı: alt sürümde gidecek kısmı yok (yalnız v3 `guncelle`) ya da
+/// v3 kalanı var (karma). Sırası tutulan v2 satırında (ör. `sil`) yoktur.
+fn v3_degisikligi_var(b: &SurumBolumu) -> bool {
+    b.gidecek.is_none() || b.kalan.is_some()
+}
+
+/// Ret listesinde (`ret_listesi.neden`, yerel ad) kullanıcının attığı ertelenen v3 değişikliği
+/// (`Motor::ertelenenleri_at`). Köprüde `KuyrukRetNedeni::TeslimEdilemedi` ve `RetGirdisi.ertelenen_atildi`
+/// olarak görünür (`sorgu.rs`): kapalı neden listesi (TS `AJANDA_KUYRUK_RET_NEDENLERI` ile ortak) değişmez.
+pub(super) const ERTELENEN_ATILDI: &str = "ertelenen_atildi";
+
 /// Ertelemesi olabilecek satırlar: onaylanmamış bir satırının metninde v3 alan adı geçen kayıtların bütün
 /// satırları, sırayla (SQL'de süzülür). Öteki kayıtların her satırı `Yok`'tur (hal kayıt başınadır, v3 alanı
 /// taşımayan kayıtta bütünüyle ertelenmiş satır olmaz): sayım ve atlama bütün kuyruğu okumaz.
@@ -258,12 +278,28 @@ pub(crate) struct KanalSurumu {
     /// Bu bağlantının `welcome.yetenekler`'i (v3; istenenlerle sunulanların kesişimi). Bağlantı açılınca ve
     /// kapanınca boşalır.
     yetenekler: Vec<String>,
+    /// Alt sürümlü bağlantıda `kuyruk_ilerlet`'in atlama önbelleği (`Atlama`). Bağlantı açılınca ve kapanınca,
+    /// kuyruğun önekini değiştiren her yazımda (ertelenenleri atma) boşalır; izi tutmazsa kendiliğinden atılır.
+    atlama: Option<Atlama>,
 }
 
 impl KanalSurumu {
     pub(crate) fn yeni() -> Self {
-        KanalSurumu { baglanti: Surum::EN_YENI, dusulen: None, yetenekler: Vec::new() }
+        KanalSurumu { baglanti: Surum::EN_YENI, dusulen: None, yetenekler: Vec::new(), atlama: None }
     }
+}
+
+/// Kuyruğun başından `son`'a dek (dahil) onaylanmamış bütün satırların bütünüyle ertelenmiş (`Tam`) bulunduğu
+/// önek: alt sürümlü bağlantıda her gönderim baştaki ertelenmiş satırları yeniden yürüyüp çözmesin (bulgu 3:
+/// k ertelenmiş satırın arkasındaki N işlemin boşalması O(N·k) okuma ve çözme idi). Önekteki bir satırın hali
+/// yalnız kendi kaydının önceki satırlarına bağlıdır; onlar da önektedir (ya da onaylanmıştır: onaylanmış satır
+/// hali etkilemez). Yeni satır hep arkaya girer (`AUTOINCREMENT`), gönderim önekin arkasındaki satıra dokunur.
+/// Öneki değiştirebilecek tek yol satır silmek ya da yerinde yazmaktır: `iz` (`Depo::kuyruk_onek_izi`: adet,
+/// deneme ve bayt toplamı) her kullanımda denetlenir, tutmazsa önbellek atılıp baştan yürünür.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Atlama {
+    son: i64,
+    iz: (i64, i64, i64),
 }
 
 /// Bağlantının bellek içi aşaması.
@@ -443,6 +479,7 @@ impl Motor {
         self.kopmalari_isle(o, e)?;
         self.surum.baglanti = self.acilis_surumu(o.simdi_ms());
         self.surum.yetenekler.clear();
+        self.surum.atlama = None;
         if let Some(qr) = self.bekleyen_qr()? {
             let public_key = base64_yaz(&o.kimlik.acik_anahtar()?);
             let m = AjandaYukari::PairRequest { kod: qr.kod.clone(), public_key, etiket: None };
@@ -814,10 +851,15 @@ impl Motor {
         'bastan: loop {
             // v3'te her satır olduğu gibi gider: yalnız baş okunur. Alt sürümde kuyruk baştan birer satır, ilk
             // ertelenmemiş satıra dek yürünür; her satırın hali kendi kaydının satırlarıyla hesaplanır (hal kayıt
-            // başınadır; kayıt dizinle okunur). Uzun kuyruğun boşalması her gönderimde bütün kuyruğu okumaz (R6).
-            let mut satirlar = Vec::new();
+            // başınadır; kayıt dizinle okunur). Uzun kuyruğun boşalması her gönderimde bütün kuyruğu okumaz (R6);
+            // baştaki ertelenmiş önek de her gönderimde yeniden yürünüp çözülmez (`Atlama`, bulgu 3).
             let mut kayit_halleri: BTreeMap<String, BTreeMap<i64, SatirErtelemesi>> = BTreeMap::new();
-            let mut siradaki = self.depo.kuyruk_basi()?;
+            let mut atlama = if surum.v3_mu() { None } else { self.gecerli_atlama()? };
+            let mut siradaki = match atlama {
+                Some(a) => self.depo.kuyruk_sonraki(a.son)?,
+                None => self.depo.kuyruk_basi()?,
+            };
+            let mut bas = None;
             while let Some(s) = siradaki {
                 let hal = if surum.v3_mu() {
                     SatirErtelemesi::Yok
@@ -829,37 +871,49 @@ impl Motor {
                     }
                     kayit_halleri[&s.kayit_id].get(&s.sira).copied().unwrap_or(SatirErtelemesi::Yok)
                 };
-                let sira = s.sira;
-                satirlar.push((s, hal));
                 if hal != SatirErtelemesi::Tam {
+                    bas = Some(s);
                     break;
                 }
-                siradaki = self.depo.kuyruk_sonraki(sira)?;
+                // Bütünüyle ertelenmiş ya da sırası tutulan: yerinde kalır, önek uzar, arkasındaki satıra geçilir.
+                let (adet, deneme, bayt) = atlama.map_or((0, 0, 0), |a| a.iz);
+                let iz = (adet + 1, deneme + i64::from(s.deneme), bayt + s.islem_json.len() as i64);
+                atlama = Some(Atlama { son: s.sira, iz });
+                siradaki = self.depo.kuyruk_sonraki(s.sira)?;
             }
-            for (bas, hal) in satirlar {
-                let Some(islem) = islem_coz(&bas.islem_json) else {
-                    self.ret_listesine_tasi(o, e, &bas, KuyrukRetNedeni::GecersizIslem)?;
-                    continue 'bastan;
-                };
-                match (hal, islem.surume_bol(surum)) {
-                    // Bütünüyle ertelenmiş ya da sırası tutulan: yerinde kalır, arkasındaki satır gider.
-                    (SatirErtelemesi::Tam, _) => {}
-                    (_, SurumBolumu { gidecek: Some(gidecek), kalan: None }) => {
-                        self.depo.kuyruk_yollandi_yaz(bas.sira, true)?;
-                        e.gonderilecek.push(AjandaYukari::Islem { islem_id: bas.islem_id, islem: gidecek }.kodla_surum(surum));
-                        return Ok(());
-                    }
-                    // Satır gidecek kısmına döner, kalanı arkasına girer; döngü baştan okur ve onu yollar.
-                    (_, SurumBolumu { gidecek: Some(gidecek), kalan: Some(kalan) }) => {
-                        self.v3_kalanini_ertele(o, e, &bas, &gidecek, &kalan)?;
-                        continue 'bastan;
-                    }
-                    // `kuyruk_ertelemeleri` gidecek kısmı olmayanı `Tam` sayar.
-                    (_, SurumBolumu { gidecek: None, .. }) => {}
+            if !surum.v3_mu() {
+                self.surum.atlama = atlama;
+            }
+            let Some(bas) = bas else { return Ok(()) };
+            let Some(islem) = islem_coz(&bas.islem_json) else {
+                self.ret_listesine_tasi(o, e, &bas, KuyrukRetNedeni::GecersizIslem)?;
+                continue 'bastan;
+            };
+            match islem.surume_bol(surum) {
+                SurumBolumu { gidecek: Some(gidecek), kalan: None } => {
+                    self.depo.kuyruk_yollandi_yaz(bas.sira, true)?;
+                    e.gonderilecek.push(AjandaYukari::Islem { islem_id: bas.islem_id, islem: gidecek }.kodla_surum(surum));
                 }
+                // Satır gidecek kısmına döner, kalanı arkasına girer; döngü yeniden okur ve onu yollar.
+                SurumBolumu { gidecek: Some(gidecek), kalan: Some(kalan) } => {
+                    self.v3_kalanini_ertele(o, e, &bas, &gidecek, &kalan)?;
+                    continue 'bastan;
+                }
+                // `kuyruk_ertelemeleri` gidecek kısmı olmayanı `Tam` sayar: buraya gelmez.
+                SurumBolumu { gidecek: None, .. } => {}
             }
             return Ok(());
         }
+    }
+
+    /// Atlama önbelleği hâlâ geçerliyse o (`Atlama`): önekin izi depodakiyle aynı. Değilse atılır.
+    fn gecerli_atlama(&mut self) -> Result<Option<Atlama>, CekirdekHatasi> {
+        let Some(a) = self.surum.atlama else { return Ok(None) };
+        if self.depo.kuyruk_onek_izi(a.son)? == a.iz {
+            return Ok(Some(a));
+        }
+        self.surum.atlama = None;
+        Ok(None)
     }
 
     /// Alt sürümlü bağlantıda karma kuyruk satırını böler, tek işlemde: satır yerinde gidecek kısmına döner
@@ -1006,19 +1060,21 @@ impl Motor {
 
     /// Soket kapandı: süren tam telafi atılır, artımlı tampon yazılır (gelenler geçerli), yollanmış işlem
     /// `Kopma` sayılır (`kural::kuyruk`), bekleyen geçmiş istekleri düşer. `kapanis_kodu`: karşı tarafın
-    /// kapanış çerçevesinin kodu (biliniyorsa). `welcome`'dan önce 1002 `protokol_uyumsuz`'dur (servis
-    /// 1002'yi yalnız onda kullanır): ret çerçevesi gelmemişse karar çerçevesiz geri düşüştür
-    /// (`geri_dus(None)`). `welcome`'dan sonra (telafi, canlı) servis bağlantının sürümünü kabul etmiştir:
-    /// 1002 başka bir nedendir, sıradan kopma sayılır (yoksa telefon v3 serviste boşuna bir saat v2'de kalırdı).
+    /// kapanış çerçevesinin kodu (biliniyorsa). Servis 1002'yi yalnız `protokol_uyumsuz` ile kullanır; ret
+    /// çerçevesi gelmemişse karar çerçevesiz geri düşüştür (`geri_dus(None)`), ama yalnız servis bağlantının
+    /// sürümünü henüz kabul etmemişken: `pair_request` ya da `hello` yanıtsızken (`Eslestirme`, `Hello`).
+    /// `auth_challenge` geldikten sonra (`Yanit`, telafi, canlı) servis sürümü sabitlemiş ve o sürümle yazmıştır
+    /// (sürümü bağlantının ilk `hello`/`pair_request`'inden sabitler, uymayanı `auth_challenge`'dan önce reddeder);
+    /// telefon da her çerçeveyi o sürümle yazar: 1002 sürüm uyuşmazlığı olamaz, başka bir nedendir ve sıradan
+    /// kopma sayılır (R7; yoksa telefon v3 serviste boşuna bir saat v2'de kalırdı).
     pub(crate) fn baglanti_kapandi(&mut self, o: &Ortam, e: &mut Etkiler, kapanis_kodu: Option<i32>) -> Result<(), CekirdekHatasi> {
         // Motor bu bağlantıyı kendisi kapattıysa (`Kapaniyor`: çözülen ret çerçevesi kararı zaten verdi)
         // kapanış kodu yeni bilgi değildir; değilse bu bağlantının uyuşmazlığı yalnız koddan bilinir.
-        if kapanis_kodu == Some(KAPANIS_PROTOKOL_HATASI)
-            && !matches!(self.asama, Asama::Kapaniyor | Asama::Kopuk | Asama::Telafi(_) | Asama::Canli)
-        {
+        if kapanis_kodu == Some(KAPANIS_PROTOKOL_HATASI) && matches!(self.asama, Asama::Eslestirme { .. } | Asama::Hello { .. }) {
             self.geri_dus(o, e, None);
         }
         self.surum.yetenekler.clear();
+        self.surum.atlama = None;
         let eski = std::mem::replace(&mut self.asama, Asama::Kopuk);
         if eski.disari() != BaglantiAsamasi::Kopuk {
             e.degisim.baglanti = true;
@@ -1090,25 +1146,131 @@ impl Motor {
         if !self.depo.kuyruk_yollananlar()?.is_empty() {
             return Ok(());
         }
+        // Yanıtı beklenen geçmiş isteği varken de beklenir: kapatmak onu düşürür, kullanıcı hatasız boş geçmiş
+        // görürdü (bulgu 1). Yanıt gelince ya da bağlantı başka nedenle kapanınca istek listeden çıkar.
+        if !self.gecmis_istekleri.is_empty() {
+            return Ok(());
+        }
         self.kapat(e, "yukarı sürüm denemesi");
         Ok(())
     }
 
-    /// Ertelenen v3 değişikliği taşıyan satır sayısı ve bunların bütünüyle ertelenmiş (yollanmayan) olanları.
+    /// Ertelenen v3 değişikliği taşıyan satır sayısı ve bütünüyle ertelenmiş (yollanmayan) satır sayısı. İkincisi
+    /// sırası tutulan v2 satırlarını (ör. bekleyen `sil`) da sayar (gönderilmemiş iş), birincisi saymaz (bulgu 4:
+    /// `BaglantiYetenekleri.ertelenen` "v3 değişikliği taşıyan işlem sayısı"dır, `ertelenenleri_at`'ın sayısı).
     fn ertelenenler(&self) -> Result<(i64, i64), CekirdekHatasi> {
         let Some(surum) = erteleme_surumu(&self.depo)? else { return Ok((0, 0)) };
         let (mut ertelenen, mut tam) = (0, 0);
-        for hal in kuyruk_ertelemeleri(&erteleme_adaylari(&self.depo)?, Some(surum)) {
-            match hal {
-                SatirErtelemesi::Yok => {}
-                SatirErtelemesi::Kismen => ertelenen += 1,
-                SatirErtelemesi::Tam => {
-                    ertelenen += 1;
-                    tam += 1;
-                }
+        let adaylar = erteleme_adaylari(&self.depo)?;
+        for (s, hal) in adaylar.iter().zip(kuyruk_ertelemeleri(&adaylar, Some(surum))) {
+            if hal == SatirErtelemesi::Yok {
+                continue;
+            }
+            if hal == SatirErtelemesi::Tam {
+                tam += 1;
+            }
+            if islem_coz(&s.islem_json).is_some_and(|i| v3_degisikligi_var(&i.surume_bol(surum))) {
+                ertelenen += 1;
             }
         }
         Ok((ertelenen, tam))
+    }
+
+    /// Ertelenen v3 değişikliklerini atar, kayıtları serbest bırakır ("Serbest bırakma"; köprü
+    /// `ertelenenleri_at`). `kayit_id`: yalnız o kayıt; `None`: bütün kayıtlar. Erteleme yokken (v3 ya da
+    /// bilinmeyen servis, yerel kip) hiçbir şey yapmaz. Tek işlemde, kaydın her ertelenmiş satırı için
+    /// (`kuyruk_ertelemeleri` `Tam`/`Kismen`):
+    /// - yalnız v3 alanı değiştiren satır bütünüyle ret listesine geçer (aynı `islem_id`);
+    /// - karma satır (`ekle` ya da `guncelle`) yerinde v2 kısmına döner (aynı `islem_id`, sıra, deneme, an), v3
+    ///   kalanı yeni bir `islem_id`'yle ret listesine geçer;
+    /// - v3 alanı taşımayan, yalnız sırası tutulan satır (ör. `sil`) yerinde kalır: artık bekletilmez, bu
+    ///   serviste gider.
+    ///
+    /// Ret girdisi `ERTELENEN_ATILDI` nedeniyle yazılır (köprüde `neden` `teslim_edilemedi`,
+    /// `RetGirdisi.ertelenen_atildi`); gövdesi öteki retlerdeki gibi düzeltme formunun halidir (`istenen_govde`;
+    /// form v3 alanı taşımaz). Yollanmış ve onaylanmış satırlara dokunulmaz. Görünen kopya yeniden hesaplanır:
+    /// atılan v3 değeri gider, kayıt PC'deki (ya da kuyruğun önceki) haliyle görünür. Döner: ret listesine geçen
+    /// v3 değişikliği sayısı (önceki `BaglantiYetenekleri.ertelenen`'in atılan kısmı). Canlıysa kuyruk hemen ilerler.
+    pub(crate) fn ertelenenleri_at(&mut self, o: &Ortam, e: &mut Etkiler, kayit_id: Option<&str>) -> Result<i32, CekirdekHatasi> {
+        if kayit_id.is_some_and(|k| !opak_id_mi(k)) {
+            return Err(CekirdekHatasi::GecersizGirdi { alan: "kayit_id".into(), neden: "geçersiz kimlik".into() });
+        }
+        let Some(surum) = erteleme_surumu(&self.depo)? else { return Ok(0) };
+        let adaylar = match kayit_id {
+            Some(k) => self.depo.kuyruk_kaydin(k)?,
+            None => erteleme_adaylari(&self.depo)?,
+        };
+        let haller = kuyruk_ertelemeleri(&adaylar, Some(surum));
+        // (satır, işlemi, bölümü, v3 kalanının ret kimliği). Yalnız v3 değişikliği olanlar: sırası tutulan v2
+        // satırı yerinde kalır (önündeki v3 değişikliği gidince hali kendiliğinden `Yok` olur).
+        let mut atilacak = Vec::new();
+        for (s, hal) in adaylar.into_iter().zip(haller) {
+            if hal == SatirErtelemesi::Yok {
+                continue;
+            }
+            let Some(islem) = islem_coz(&s.islem_json) else { continue };
+            let bolum = islem.surume_bol(surum);
+            if !v3_degisikligi_var(&bolum) {
+                continue;
+            }
+            let kalan_id = match bolum.gidecek {
+                Some(_) => Some(Motor::yeni_kimlik(o, "i_")?),
+                None => None,
+            };
+            atilacak.push((s, islem, bolum, kalan_id));
+        }
+        if atilacak.is_empty() {
+            return Ok(0);
+        }
+        let cevirici = o.cevirici();
+        let b = self.iyimser_baglam(o, &cevirici)?;
+        let ts_ms = o.simdi_ms();
+        let kayitlar: BTreeSet<String> = atilacak.iter().map(|(s, ..)| s.kayit_id.clone()).collect();
+        let degisen = self.depo.yazma(|d| {
+            // Gövdeler kuyruk değişmeden hesaplanır: her biri satırın önceki haline göre.
+            let mut retler = Vec::new();
+            for (s, islem, bolum, kalan_id) in &atilacak {
+                let (islem_id, ret_islemi) = match (&bolum.kalan, kalan_id) {
+                    (Some(kalan), Some(id)) => (id.clone(), kalan),
+                    _ => (s.islem_id.clone(), islem),
+                };
+                let govde_json = istenen_govde(d, &b, &s.kayit_id, s.sira, Some(ret_islemi))?
+                    .map(|g| g.alanlari_yaz(Yazici::yeni()).bitir().to_string());
+                retler.push(RetSatiri {
+                    islem_id,
+                    kayit_id: s.kayit_id.clone(),
+                    islem_json: ret_islemi.json().to_string(),
+                    neden: ERTELENEN_ATILDI.to_string(),
+                    ts_ms,
+                    govde_json,
+                    sira: s.sira,
+                });
+            }
+            for ((s, _, bolum, _), r) in atilacak.iter().zip(&retler) {
+                d.ret_ekle(r)?;
+                match &bolum.gidecek {
+                    Some(gidecek) => d.kuyruk_islemini_yaz(s.sira, &gidecek.json().to_string())?,
+                    None => d.kuyruk_sil(s.sira)?,
+                }
+            }
+            let mut degisen = Vec::new();
+            for kayit_id in &kayitlar {
+                if gorunen_yenile(d, &b, kayit_id)? {
+                    degisen.push(kayit_id.clone());
+                }
+            }
+            Ok(degisen)
+        })?;
+        self.surum.atlama = None;
+        e.degisim.ret_listesi = true;
+        e.degisim.baglanti = true;
+        self.gorunenler_degisti(o, e, &degisen);
+        // Kayıt işareti (`KayitGorunumu.ertelenen`, `bekleyen`) görünen satır değişmese de değişti.
+        for kayit_id in &kayitlar {
+            e.kayit_degisti(kayit_id);
+        }
+        self.kuyruk_ilerlet(o, e)?;
+        Ok(i32::try_from(atilacak.len()).unwrap_or(i32::MAX))
     }
 
     /// Arayüzün bağlantıya göre neyi açacağı (`kopru::tipler::BaglantiYetenekleri`). `Bagli`: bağlı kipte
@@ -1236,6 +1398,35 @@ mod testler {
                 kuyruk.iter().cloned().zip(haller.iter().copied()).filter(|(s, _)| s.kayit_id == k).unzip();
             assert_eq!(kuyruk_ertelemeleri(&satirlar, Some(Surum::V2)), beklenen, "{k}");
         }
+    }
+
+    /// Atlama önbelleği (bulgu 3) önekin izi değişince atılır: önekte satır silinmesi ya da yerinde yazım; önekin
+    /// arkasına eklenen satır izi değiştirmez.
+    #[test]
+    fn atlama_onbellegi_onek_degisince_atilir() {
+        let mut m = Motor::ac(":memory:").unwrap();
+        for i in 1..=3 {
+            m.depo.kuyruga_ekle(&format!("i_{i}"), "k_a", &format!("islem-{i}"), 0).unwrap();
+        }
+        let kur = |m: &mut Motor| {
+            let a = Atlama { son: 2, iz: m.depo.kuyruk_onek_izi(2).unwrap() };
+            m.surum.atlama = Some(a);
+            a
+        };
+        let a = kur(&mut m);
+        assert_eq!(a.iz, (2, 0, 14));
+        m.depo.kuyruga_ekle("i_4", "k_a", "islem-4", 0).unwrap();
+        m.depo.kuyruk_deneme_yaz(3, 2).unwrap();
+        assert_eq!(m.gecerli_atlama().unwrap(), Some(a), "önekin arkası izi değiştirmez");
+        m.depo.kuyruk_islemini_yaz(1, "islem-1-uzun").unwrap();
+        assert_eq!(m.gecerli_atlama().unwrap(), None, "yerinde yazım");
+        assert!(m.surum.atlama.is_none());
+        kur(&mut m);
+        m.depo.kuyruk_sil(2).unwrap();
+        assert_eq!(m.gecerli_atlama().unwrap(), None, "silme");
+        kur(&mut m);
+        m.depo.kuyruk_deneme_yaz(1, 1).unwrap();
+        assert_eq!(m.gecerli_atlama().unwrap(), None, "deneme");
     }
 
     #[test]
