@@ -12,7 +12,7 @@
 //! Bu sorgular yalnız `Depo` okur: köprü onları motor kilidini almadan ayrı bir okuma bağlantısında da
 //! çalıştırabilir (`kopru::Cekirdek`), böylece uzun bir telafi yazması arayüzü bekletmez.
 
-use super::kanal::{SatirErtelemesi, erteleme_surumu, satir_ertelemesi};
+use super::kanal::{SatirErtelemesi, erteleme_surumu, kuyruk_ertelemeleri};
 use super::{Etkiler, Motor, Ortam};
 use crate::depo::{Depo, GorunenSuzgec};
 use crate::hata::CekirdekHatasi;
@@ -31,9 +31,10 @@ fn suzgec(sorgu: &ListeSorgusu) -> GorunenSuzgec {
 }
 
 /// Görünen satırları köprünün kayıt görünümüne çevirir (liste, kayıt, takvim günü): ertelemede ("Erteleme",
-/// `kanal.rs`) kayıt başına `ertelenen` (v3 değişikliği taşıyan bekleyen satırı var) ve `bekleyen` (bu
-/// serviste gidecek bekleyen satırı var). Erteleme yokken ya da kaydın bekleyen satırı yokken saklı
-/// `bekleyen` olduğu gibidir; kuyruk yalnız bekleyen kayıtlar için okunur.
+/// `kanal.rs`) kayıt başına `ertelenen` (bu serviste gitmeyen bekleyen satırı var: v3 değişikliği ya da
+/// arkasında sırası tutulan, `kuyruk_ertelemeleri`) ve `bekleyen` (bu serviste gidecek bekleyen satırı var).
+/// Erteleme yokken ya da kaydın bekleyen satırı yokken saklı `bekleyen` olduğu gibidir; kuyruk yalnız bekleyen
+/// kayıtlar için okunur.
 pub(crate) struct Gorunumcu(Option<Surum>);
 
 impl Gorunumcu {
@@ -46,8 +47,9 @@ impl Gorunumcu {
             return Ok(KayitGorunumu { kayit, bekleyen, ertelenen: false });
         }
         let (mut gidecek, mut ertelenen) = (false, false);
-        for s in d.kuyruk_kaydin(&kayit.kayit_id)? {
-            match satir_ertelemesi(&s, self.0) {
+        let satirlar = d.kuyruk_kaydin(&kayit.kayit_id)?;
+        for (s, hal) in satirlar.iter().zip(kuyruk_ertelemeleri(&satirlar, self.0)) {
+            match hal {
                 SatirErtelemesi::Tam => ertelenen = true,
                 SatirErtelemesi::Kismen => (gidecek, ertelenen) = (true, true),
                 SatirErtelemesi::Yok => gidecek |= s.bekledigi_rev.is_none(),

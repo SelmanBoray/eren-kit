@@ -7,7 +7,8 @@
 //! - v2 servis: ilk denemede kısa bir ret (durum yazılmaz), v2'ye düşüp eşitlenme; düşülen sürüm bir saat
 //!   (ya da süreç ölene dek) tutulur, sonra yeniden v3 denenir. Bugünkü canlı kurulum (eşleşmiş v1/v2
 //!   fikstürü): veri, kuyruk ve alarmlar korunur.
-//! - Çerçevesiz 1002: bir alt sürüme düşülür; en alttaysa yön bilinmez.
+//! - Çerçevesiz 1002: `welcome`'dan önce bir alt sürüme düşülür (en alttaysa yön bilinmez); sonra sıradan
+//!   kopmadır.
 //! - Sürüm sabitlenmeden gelen başka sürümlü ret (`zaman_asimi`) kodun kendisidir, geri düşüş değil.
 //! - v2 bağlantıda v3 alanlı kuyruk işlemi: v2 kısmı gider, v3 kalanı ertelenir (`tests/erteleme.rs`).
 //! - v2 döneminin kopyası (v3 alanları süzülmüş temel) aynı revizyonlu v3 alanlı PC kaydıyla karşılaşınca
@@ -236,6 +237,23 @@ fn cercevesiz_1002_alt_surume_duser_en_altta_bilinmiyor() {
     assert!(t.giden.lock().unwrap()[0].contains(r#""v":2"#));
     h.c.baglanti_kapandi(nesil, Some(1002)).unwrap();
     assert_eq!(durum(&h), (BaglantiAsamasi::Kopuk, Some(AjandaKanalHatasi::ProtokolUyumsuz), Some(SurumUyusmazligi::Bilinmiyor)));
+}
+
+/// R7: `welcome`'dan sonra (servis bağlantının sürümünü kabul etti) gelen çerçevesiz 1002 başka bir nedendir:
+/// geri düşüş değildir, sıradan kopmadır (hata ve uyuşmazlık yazılmaz). Sonraki bağlantı yine v3'tür (yoksa
+/// telefon v3 serviste boşuna bir saat v2'de kalırdı). `welcome`'dan önceki 1002 ise geri düşüştür (yukarıda).
+#[test]
+fn welcomedan_sonra_cercevesiz_1002_geri_dusus_degil() {
+    let mut h = Hat::yeni("surum-1002-canli");
+    h.eslestir();
+    assert!(h.canli_mi());
+    let b = h.baglanti.take().unwrap();
+    h.c.baglanti_kapandi(b.nesil, Some(1002)).unwrap();
+    assert_eq!(durum(&h), (BaglantiAsamasi::Kopuk, None, None));
+    let acilis = h.pc.acilislar.len();
+    h.baglan();
+    assert!(h.canli_mi());
+    assert_eq!(h.pc.acilislar[acilis..], [("hello", 3)], "v3'te kalındı");
 }
 
 /// Bir bağlantı açar, verilen çerçeveyi verir, kapanışı bildirir. Döner: açılış çerçevesinin `v`'si.

@@ -49,7 +49,7 @@ fn yerel_kipte_v3_guncellemesi_kisitsiz_uygulanir_erteleme_yok() {
 }
 
 #[test]
-#[ignore = "Kol B: yerel yazar (iyimser::eklenen_kayit) ekle'nin v3 alanlarını taşımıyor; düzeltme Kol B'nin dalında"]
+#[ignore = "R1, düzeltme Kol B'nin dalında: motor/iyimser.rs ~115 eklenen_kayit ekle'nin v3 alanlarını düşürüyor (v3: Default); kardeşleri yerel.rs ~316 kuyruga_islemler, islem.rs ~48 govde_farki, yerel.rs ~357 icerik_ayni. Yalnız yerel yazar değil: islem_uygula/iyimser_uygula üzerinden bağlı kipin iyimser hali ve D2 yolları da (onaylananlari_temele_kat: koparma/depo değişimi; geri_donenleri_kuyruga_koy: yedekten dönüş) aynı fonksiyonu kullanıyor"]
 fn yerel_kipte_v3_alanli_ekleme_kisitsiz_uygulanir() {
     let m = yerel_motor(|m, o, e| {
         let v3 = V3Alanlari { simge: Some("is".into()), ..Default::default() };

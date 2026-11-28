@@ -6,7 +6,10 @@
 //! - Sıra ve çakışma: v2 kısmı sonra gelen işlemin ardına geçmez; aynı v3 alanına sonradan dokunan
 //!   değişiklik kazanır; araya giren v2 işlemleri ertelenenleri bekletmez.
 //! - Ertelenen satırın denemesi artmaz, kopmada sayılmaz; tam telafi onu atmaz.
-//! - Kuyruk boşalması: `kuyrukta` bütünüyle ertelenmişleri saymaz (Kotlin beklemeleri biter).
+//! - Kuyruk boşalması: `kuyrukta` bütünüyle ertelenmişleri saymaz (Kotlin beklemeleri biter); onlar
+//!   `ertelenen_islem`'dir (gönderilmemiş: koparma onları sayar).
+//! - Sıra: ertelenmiş satırın arkasındaki `sil` öne geçmez; daha önce v3'te yollanmış karma satır bölünmez.
+//! - Bağlantı açıkken servis v3'e yükselirse düşüşten bir saat sonra v3'e geçilir.
 //! - Koparma: ertelenen değerler yerel gerçekte kalır.
 //! - Yerel kip: erteleme yok.
 //! - Köprü: `baglanti_yetenekleri` ve kayıt başına `ertelenen`.
@@ -14,6 +17,7 @@
 mod ortak;
 
 use ajanda_cekirdek::depo::Depo;
+use ajanda_cekirdek::kopru::kabuklar::ZamanKabugu;
 use ajanda_cekirdek::kopru::tipler::{BaglantiKipi, BaglantiYetenekleri, CalismaKipi, KayitGorunumu, ListeSorgusu, Sekme};
 use ajanda_cekirdek::model::{AjandaDegisiklik, AjandaIslem, AjandaKaydi, Alan, GirdiYolu, V3Alanlari, V3Degisikligi};
 use ortak::*;
@@ -259,7 +263,11 @@ fn koparmada_ertelenen_degerler_yerel_gercekte_kalir() {
     kuyruga_yaz(&h, "i_karma", &guncelle(&a, AjandaDegisiklik { baslik: Some("A2".into()), v3: simge("ev"), ..Default::default() }));
     v2de_baglan(&mut h);
     assert_eq!((h.pc.d.kayitlar[&a].baslik.as_str(), kayit(&h, &a).v3.simge.as_deref()), ("A2", Some("ev")));
+    // Koparma kararından önce: ertelenen kalan `kuyrukta`'da değil ama gönderilmemiş sayılır.
+    let d = h.c.baglanti_durumu().unwrap();
+    assert_eq!((d.kuyrukta, d.ertelenen_islem), (0, 1));
     let s = h.c.baglantiyi_kopar().unwrap();
+    assert_eq!(s.gonderilmeyen_islem, d.kuyrukta + d.ertelenen_islem, "koparmanın sayısı kararın sayısıyla aynı");
     h.pompala();
     assert_eq!((s.onceki_kip, s.gonderilmeyen_islem, s.gonderilmeyen_kayit, s.yanitsiz_islem), (CalismaKipi::Bagli, 1, 1, 0));
     assert_eq!(h.c.kip().unwrap(), CalismaKipi::Yerel);
@@ -278,7 +286,7 @@ fn koparmada_ertelenen_degerler_yerel_gercekte_kalir() {
 /// Koparmadan sonra v3 servisle yeniden bağlanma: yerel gerçekteki (ertelenmiş olan) v3 değeri PC'ye fark
 /// olarak gitmeli.
 #[test]
-#[ignore = "Kol B: yereli_kuyruga_dok (motor/yerel.rs kuyruga_islemler/govde_farki) v3 alanlarını farka katmıyor; düzeltme Kol B'nin dalında"]
+#[ignore = "R1, düzeltme Kol B'nin dalında: v3 alanları dört yerde düşüyor: motor/yerel.rs ~316 kuyruga_islemler (ekle hep v3: Default), motor/islem.rs ~48 govde_farki (v3 farkı yok), yerel.rs ~357 icerik_ayni (v3'ü saymıyor), motor/iyimser.rs ~115 eklenen_kayit (v3: Default). Yalnız yerel yazar değil: aynı fonksiyonlar bağlı kipin D2 yollarında da kullanılıyor (yereli_kuyruga_dok: koparma/depo değişimi sonrası bağlanma; geri_donenleri_kuyruga_koy: aynı depoda yedekten dönüş; ice_aktar bağlı kipte; iyimser ekle)"]
 fn koparmadan_sonra_v3_baglanmada_ertelenen_deger_pcye_gider() {
     let mut h = Hat::yeni("erteleme-kopar-baglan");
     let a = v2ye_inen_kurulum(&mut h);
@@ -349,4 +357,192 @@ fn ilk_v3_tam_telafisi_yedekten_donus_sayilmaz_pc_ilerlemesi_kalir() {
     assert_eq!(h.pc.d.kayitlar[&a].baslik, "PC'de");
     assert_eq!(&kayit(&h, &a), &h.pc.d.kayitlar[&a]);
     assert_eq!(h.c.baglanti_durumu().unwrap().kuyrukta, 0);
+}
+
+/// R2: ertelenmiş satırın arkasındaki `sil` (köprünün `sil`'i) v2'de öne geçmez: geçseydi ertelenen değişiklik
+/// v3'te silinmiş kayda gider, `kayit_silinmis` ile ret listesine düşer, kayıt geri yüklenince v3 değeri
+/// yalnız ret listesinde kalırdı. Sil beklerken `kuyrukta` onu saymaz (Kotlin beklemeleri biter). v3'te ikisi
+/// sırayla gider; geri yükleme v3 değerini geri getirir.
+#[test]
+fn ertelenmis_satirin_arkasindaki_sil_one_gecmez() {
+    let mut h = Hat::yeni("erteleme-sil");
+    let a = v2ye_inen_kurulum(&mut h);
+    kuyruga_yaz(&h, "i_v3", &yalniz_v3(&a, simge("ev")));
+    v2de_baglan(&mut h);
+    let once = h.pc.uygulanan.len();
+    h.c.sil(a.clone()).unwrap();
+    h.pompala();
+    assert_eq!(h.pc.uygulanan.len(), once, "sil ertelenenin önüne geçmedi");
+    assert!(!h.pc.d.kayitlar[&a].silindi);
+    assert!(kayit(&h, &a).silindi, "iyimser hal: silinmiş görünür");
+    let d = h.c.baglanti_durumu().unwrap();
+    assert_eq!((d.kuyrukta, d.ret_listesinde), (0, 0), "bekleyen sil kuyruk boşalmasını tıkamaz");
+    assert_eq!(depo(&h).kuyruk().unwrap().len(), 2);
+
+    v3e_gec(&mut h);
+    assert_eq!(h.pc.uygulanan[once..].first().map(String::as_str), Some("i_v3"), "ertelenen önce gitti");
+    assert_eq!(h.pc.uygulanan.len(), once + 2);
+    assert_eq!(h.c.baglanti_durumu().unwrap().ret_listesinde, 0, "ret listesine düşen yok");
+    let pc = &h.pc.d.kayitlar[&a];
+    assert!(pc.silindi);
+    assert_eq!(pc.v3.simge.as_deref(), Some("ev"));
+    h.c.geri_yukle(a.clone()).unwrap();
+    h.pompala();
+    let pc = &h.pc.d.kayitlar[&a];
+    assert_eq!((pc.silindi, pc.v3.simge.as_deref()), (false, Some("ev")), "geri yüklenen kayıt v3 değeriyle");
+    assert_eq!(&kayit(&h, &a), pc);
+}
+
+/// R2: sırası tutulan kaydın arkasındaki bütün satırlar (geri yükleme, düzenleme) bekler; başka kaydın
+/// işlemleri gider. v3'te kaydın satırları özgün sırayla gider.
+#[test]
+fn sirasi_tutulan_kaydin_arkasi_bekler_baska_kayit_gider() {
+    let mut h = Hat::yeni("erteleme-sil-zincir");
+    let a = v2ye_inen_kurulum(&mut h);
+    kuyruga_yaz(&h, "i_v3", &yalniz_v3(&a, simge("ev")));
+    v2de_baglan(&mut h);
+    let once = h.pc.uygulanan.len();
+    // Köprünün yolları: silme, geri yükleme, düzenleme; sonra başka bir kayıt.
+    h.c.sil(a.clone()).unwrap();
+    h.c.geri_yukle(a.clone()).unwrap();
+    h.c.duzenle(a.clone(), None, govde("A3", None)).unwrap();
+    let b = h.c.ekle(govde("B", None), GirdiYolu::Elle).unwrap();
+    h.pompala();
+    assert_eq!(h.pc.uygulanan.len(), once + 1, "başka kaydın işlemi gitti");
+    assert!(h.pc.d.kayitlar.contains_key(&b));
+    assert_eq!(h.pc.d.kayitlar[&a].baslik, "A", "tutulan kaydın düzenlemesi de bekler");
+    let d = h.c.baglanti_durumu().unwrap();
+    assert_eq!((d.kuyrukta, d.ertelenen_islem), (0, 4));
+    assert_eq!(yetenek(&h).ertelenen, 4);
+    let g = gorunum(&h, &a);
+    assert_eq!((g.kayit.baslik.as_str(), g.kayit.silindi, g.bekleyen, g.ertelenen), ("A3", false, false, true));
+    let bekleyenler: Vec<String> = depo(&h).kuyruk().unwrap().into_iter().map(|s| s.islem_id).collect();
+    assert_eq!((bekleyenler.len(), bekleyenler[0].as_str()), (4, "i_v3"));
+
+    v3e_gec(&mut h);
+    assert_eq!(h.pc.uygulanan[once + 1..], bekleyenler, "kaydın satırları özgün sırayla, birer kez");
+    let pc = &h.pc.d.kayitlar[&a];
+    assert_eq!((pc.baslik.as_str(), pc.silindi, pc.v3.simge.as_deref()), ("A3", false, Some("ev")));
+    assert_eq!(&kayit(&h, &a), pc);
+    assert_eq!(h.c.baglanti_durumu().unwrap().ret_listesinde, 0);
+}
+
+/// R4: v3'te bütün olarak yollanmış, sonucu gelmeden kopmuş karma satır (`deneme > 0`) servis v2'ye inince
+/// bölünmez: bölünseydi v2 kısmı aynı kimlikle servisin önbelleğinden döner, v3 kalanı yeni kimlikle v3'te
+/// ikinci kez uygulanır ve arada PC'de değişen alanı eski değerle ezerdi. Bütün satır bekler, v3'te aynı
+/// kimlikle gider (servis önbelleğinden döner), PC'nin değeri kalır.
+#[test]
+fn v3te_yollanmis_karma_satir_v2de_bolunmez() {
+    let mut h = Hat::yeni("erteleme-yollanmis-karma");
+    h.eslestir();
+    let a = h.c.ekle(govde("A", None), GirdiYolu::Elle).unwrap();
+    h.pompala();
+    h.kopar();
+    let karma = guncelle(&a, AjandaDegisiklik { baslik: Some("A2".into()), v3: simge("ev"), ..Default::default() });
+    kuyruga_yaz(&h, "i_karma", &karma);
+    h.sureci_oldur_ve_ac();
+    h.pc.yanitsiz_kopar = 1;
+    h.baglan();
+    assert_eq!(h.pc.uygulanan.last().map(String::as_str), Some("i_karma"), "v3'te bütün olarak uygulandı");
+    assert_eq!(h.pc.d.kayitlar[&a].v3.simge.as_deref(), Some("ev"));
+    assert_eq!(depo(&h).kuyruk().unwrap()[0].deneme, 1, "sonucu gelmedi: kopma");
+    // Servis v2'ye iner; PC aynı v3 alanını değiştirir.
+    h.pc.surum_kumesi(&[2]);
+    h.pc.disaridan_degistir(&a, |k| k.v3.simge = Some("pc".into()));
+    let uygulanan = h.pc.uygulanan.len();
+    h.baglan();
+    h.baglan();
+    assert!(h.canli_mi());
+    assert_eq!(h.pc.acilislar.last(), Some(&("hello", 2)));
+    let kuyruk = depo(&h).kuyruk().unwrap();
+    assert_eq!(kuyruk.iter().map(|s| s.islem_id.as_str()).collect::<Vec<_>>(), ["i_karma"], "bölünmedi");
+    assert_eq!(h.c.baglanti_durumu().unwrap().kuyrukta, 0, "bekleyen bütün satır kuyruk boşalmasını tıkamaz");
+
+    v3e_gec(&mut h);
+    assert_eq!(h.pc.uygulanan.len(), uygulanan, "ikinci kez uygulanmadı (önbellekten döndü)");
+    let pc = &h.pc.d.kayitlar[&a];
+    assert_eq!((pc.baslik.as_str(), pc.v3.simge.as_deref()), ("A2", Some("pc")), "PC'nin sonraki değeri kalır");
+    assert_eq!(&kayit(&h, &a), pc);
+    assert!(depo(&h).kuyruk().unwrap().is_empty());
+}
+
+/// R3: servis bağlantı kopmadan (telefon v2'ye düştükten sonra) v3'e yükselir. Düşüşten bir saat sonra ilk
+/// köprü çağrısında (boştaki bağlantıda durum okuma) çekirdek bağlantıyı kendisi kapatır; kabuğun yeniden
+/// bağlanması v3'le açılır, ertelenen gider. Süre dolmadan bağlantıya dokunulmaz.
+#[test]
+fn baglanti_acikken_servis_yukselirse_bir_saatte_v3e_gecilir() {
+    let mut h = Hat::yeni("erteleme-acik-yukselme");
+    let a = v2ye_inen_kurulum(&mut h);
+    kuyruga_yaz(&h, "i_v3", &yalniz_v3(&a, simge("ev")));
+    v2de_baglan(&mut h);
+    let acilis = h.pc.acilislar.len();
+    h.pc.surum_kumesi(&[2, 3]);
+    h.zaman.ilerlet(SAAT - DK);
+    assert!(h.canli_mi());
+    h.pompala();
+    assert!(h.baglanti.is_some() && h.canli_mi(), "süre dolmadan açık bağlantı kalır");
+    h.zaman.ilerlet(2 * DK);
+    h.c.baglanti_durumu().unwrap();
+    h.pompala();
+    assert!(h.baglanti.is_none(), "çekirdek alt sürümlü bağlantıyı kendisi kapattı");
+    assert_eq!(h.pc.acilislar.len(), acilis);
+    let d = h.c.baglanti_durumu().unwrap();
+    assert_eq!((d.son_hata, d.surum_uyusmazligi), (None, None), "kasıtlı kapanış hata değil");
+    h.baglan();
+    assert!(h.canli_mi());
+    assert_eq!(h.pc.acilislar[acilis..], [("hello", 3)], "tek açılış, en yeni sürümle");
+    assert_eq!(h.pc.uygulanan.last().map(String::as_str), Some("i_v3"));
+    assert_eq!(h.pc.d.kayitlar[&a].v3.simge.as_deref(), Some("ev"));
+    assert_eq!(&kayit(&h, &a), &h.pc.d.kayitlar[&a]);
+}
+
+/// R3: yukarı deneme yolda işlem varken bekler (sonuç gelmeden kapatmak `Kopma` sayılırdı). Kabuğa deneme
+/// anı `yukari_deneme_ms` ile görünür (boştaki bağlantıya yoklama kurmak için); v3 bağlantıda ve kopukken yok.
+#[test]
+fn yukari_denemesi_yoldaki_islemi_bekler_ani_durumda_gorunur() {
+    let mut h = Hat::yeni("erteleme-yukari-yolda");
+    let a = v2ye_inen_kurulum(&mut h);
+    v2de_baglan(&mut h);
+    let an = h.c.baglanti_durumu().unwrap().yukari_deneme_ms.expect("alt sürümde canlı: deneme anı var");
+    assert!(an > h.zaman.simdi_ms() && an <= h.zaman.simdi_ms() + SAAT, "{an}");
+    h.pc.islem_yut = 1;
+    h.c.duzenle(a.clone(), None, govde("Yolda", None)).unwrap();
+    h.pompala();
+    h.zaman.ayarla(an);
+    h.c.baglanti_durumu().unwrap();
+    h.pompala();
+    assert!(h.baglanti.is_some(), "yolda işlem varken kapatılmaz");
+    assert_eq!(depo(&h).kuyruk().unwrap()[0].deneme, 0);
+    h.kopar();
+    assert_eq!(h.c.baglanti_durumu().unwrap().yukari_deneme_ms, None);
+    h.pc.surum_kumesi(&[2, 3]);
+    h.baglan();
+    assert_eq!(h.pc.acilislar.last(), Some(&("hello", 3)));
+    assert_eq!(h.c.baglanti_durumu().unwrap().yukari_deneme_ms, None);
+    assert_eq!(h.pc.d.kayitlar[&a].baslik, "Yolda");
+}
+
+/// Gerçek üretici yol: bağlı kipte (v2 servis) v3 alanlı kaydın içe aktarılması kuyruğa v3 alanlı işlem
+/// koyar (`kuyruga_islemler`); v2 kısmı gider, v3 kalanı ertelenir, servis v3'e geçince gider.
+#[test]
+#[ignore = "R1, düzeltme Kol B'nin dalında: bağlı kipte içe aktarma motor/yerel.rs ~316 kuyruga_islemler (ekle hep v3: Default) ve ~357 icerik_ayni (v3'ü saymıyor) yüzünden v3 alanlarını düşürüyor"]
+fn ice_aktarilan_v3_alanli_kayit_v2_serviste_ertelenir() {
+    let mut h = Hat::yeni("erteleme-ice-aktar");
+    v2ye_inen_kurulum(&mut h);
+    v2de_baglan(&mut h);
+    let mut belge: serde_json::Value = serde_json::from_str(&h.c.disa_aktar().unwrap().belge).unwrap();
+    let mut k = belge["kayitlar"][0].clone();
+    k["kayit_id"] = serde_json::json!("k_iceden01");
+    k["simge"] = serde_json::json!("market");
+    belge["kayitlar"].as_array_mut().unwrap().push(k);
+    let s = h.c.ice_aktar(belge.to_string(), None).unwrap();
+    assert!(s.uygulandi);
+    h.pompala();
+    assert!(h.pc.d.kayitlar.contains_key("k_iceden01"), "v2 kısmı gitti");
+    assert!(h.pc.d.kayitlar["k_iceden01"].v3.bos_mu());
+    assert_eq!(yetenek(&h).ertelenen, 1);
+    assert_eq!(kayit(&h, "k_iceden01").v3.simge.as_deref(), Some("market"));
+    v3e_gec(&mut h);
+    assert_eq!(h.pc.d.kayitlar["k_iceden01"].v3.simge.as_deref(), Some("market"));
+    assert_eq!(h.c.baglanti_durumu().unwrap().ret_listesinde, 0);
 }

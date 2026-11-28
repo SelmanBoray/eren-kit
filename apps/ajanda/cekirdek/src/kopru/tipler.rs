@@ -28,7 +28,8 @@ pub struct KoparmaSonucu {
     /// PC'ye gönderilmeden ayrılan değişikliklerin dokunduğu kayıt sayısı (kuyrukta sonucu gelmemiş işlemi
     /// olan kayıtlar). Telefonda o haliyle duruyorlar; PC'de yoklar ya da eski halleriyle duruyorlar.
     pub gonderilmeyen_kayit: i32,
-    /// Aynı değişikliklerin işlem sayısı (`BaglantiDurumu.kuyrukta`'nın koparma anındaki değeri).
+    /// Aynı değişikliklerin işlem sayısı (koparma anındaki `BaglantiDurumu.kuyrukta + ertelenen_islem`:
+    /// eski serviste ertelenmiş işlemler de sayılır).
     pub gonderilmeyen_islem: i32,
     /// `gonderilmeyen_islem`'in yollanmış ama yanıtı gelmemiş olanları: PC'ye ulaşmış olabilir.
     pub yanitsiz_islem: i32,
@@ -186,7 +187,7 @@ pub enum BaglantiAsamasi {
 pub struct BaglantiDurumu {
     pub asama: BaglantiAsamasi,
     /// Kuyrukta sonucu gelmemiş işlem sayısı. Eski (v2) servise bağlıyken bütünüyle ertelenmiş (yalnız v3
-    /// alanı değiştiren) işlemler sayılmaz: bu serviste gitmezler (`BaglantiYetenekleri.ertelenen`).
+    /// alanı değiştiren) işlemler sayılmaz: bu serviste gitmezler (`ertelenen_islem`).
     pub kuyrukta: i32,
     pub ret_listesinde: i32,
     pub son_esitlenme_ms: Option<i64>,
@@ -196,6 +197,20 @@ pub struct BaglantiDurumu {
     /// olduğu. Doluyken kabuk yeniden bağlanmayı geri çeker ve "güncelle" durumunu gösterir; `CANLI`'da,
     /// başka bir kanal hatasında ve eşleşme değişiminde temizlenir. Bellek içidir (süreç ölünce yeniden denenir).
     pub surum_uyusmazligi: Option<SurumUyusmazligi>,
+    /// Kuyrukta bu serviste gitmeyen gönderilmemiş işlem sayısı: eski (v2) servise bağlıyken bütünüyle
+    /// ertelenmiş işlemler (yalnız v3 alanı değiştiren ya da aynı kaydın ertelenmiş işleminin arkasında sırası
+    /// tutulan). `kuyrukta`'ya girmez (kabuğun "kuyruk boşalana dek" beklemeleri eski serviste bitsin) ama
+    /// gönderilmemiş değişikliktir: gönderilmemişlerin toplamı `kuyrukta + ertelenen_islem`'dir
+    /// (`KoparmaSonucu.gonderilmeyen_islem` koparma anında budur). "Gönderilmemiş değişiklik yok" ancak ikisi
+    /// de sıfırken söylenir. Yerel kipte ve erteleme yokken 0.
+    #[uniffi(default)]
+    pub ertelenen_islem: i32,
+    /// Açık bağlantı düşülen alt sürümdeyken (`protokol_uyumsuz` sonrası) yukarı deneme anı (ms, kabuğun
+    /// saati): bu andan sonraki ilk köprü çağrısında, yolda işlem yokken çekirdek bağlantıyı kendisi kapatır
+    /// (`kapat`; hata yazılmaz), sonraki bağlantı en yeni sürümle açılır. Bağlantı boşta açık kalıyorsa kabuk bu
+    /// ana bir `baglanti_durumu` yoklaması kurmalı (yoksa deneme ilk olaya kalır). Öteki hallerde yok.
+    #[uniffi(default)]
+    pub yukari_deneme_ms: Option<i64>,
 }
 
 /// Sürüm uyuşmazlığının yönü (`AJANDA_SURUMU` karşılaştırması).

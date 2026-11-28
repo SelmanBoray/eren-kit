@@ -128,7 +128,14 @@ impl Cekirdek {
         let mut etkiler = Etkiler::default();
         let (sonuc, tasima, etki_kilidi) = {
             let mut motor = kilitle(&self.motor);
-            let sonuc = catch_unwind(AssertUnwindSafe(|| f(&mut motor, &ortam, &mut etkiler)));
+            let sonuc = catch_unwind(AssertUnwindSafe(|| {
+                let sonuc = f(&mut motor, &ortam, &mut etkiler);
+                // Her çağrının sonunda: alt sürümlü açık bağlantının yukarı denemesi zamanı geldiyse bağlantı
+                // kapanır (`kanal.rs` `YUKARI_DENEME_MS`). Hatası çağrının sonucunu değiştirmez (sonraki çağrı
+                // yeniden dener).
+                let _ = motor.yukari_denemesi(&ortam, &mut etkiler);
+                sonuc
+            }));
             let tasima = kilitle(&self.tasima).clone();
             (sonuc, tasima, kilitle(&self.etki))
         };
