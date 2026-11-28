@@ -288,7 +288,7 @@ Sözleşme: `docs/AJANDA.md` "Sürüm uyumu" ve "Sürüm 3". Model katmanı (`1a
 - **Erteleme (bağlı kip, sürüm < 3; yerel kipte yok).** Ayrı sütun yoktur: satırın hali işlemden, bilinen sürümden ve kaydın önceki satırlarından hesaplanır (`kuyruk_ertelemeleri`).
   - v2 kısmı da olan satır bölünür: v2 kısmı aynı `islem_id` ile gider, v3 kalanı yeni `islem_id`'yle hemen arkasına girer.
   - Yalnız v3 alanı değiştiren satır yerinde kalır, atlanır, denemesi artmaz, telafide atılmaz; arkasındaki başka kaydın satırı gider.
-  - R2: ertelenmiş satırın arkasındaki aynı kayda `sil`, `geri_yukle`, `ekle` öne geçmez; kaydın arkasındaki bütün satırlar bekler, v3'te özgün sırayla gider. Hiçbir ertelenen ret listesine gitmez.
+  - R2: ertelenmiş satırın arkasındaki aynı kayda `sil`, `geri_yukle`, `ekle` öne geçmez; kaydın arkasındaki bütün satırlar bekler, v3'te özgün sırayla gider. Ertelenen satır ret listesine gitmez; tek istisna R3 (aşağıdaki "v3 alanlarının taşınması (R1)"): bölünen `ekle` reddedilince v3 kalanı ret girdisine katılır. `kanal.rs` başındaki "kullanıcı atmadıkça ret listesine gitmez" cümlesi bu durumu kapsamaz; kod değişmedi (`kanal.rs` Kol C'nin).
   - R4: v3'te yollanıp yanıtı gelmeden kopan karma satır (`deneme > 0`) v2'de bölünmez; bütünüyle bekler, v3'te aynı `islem_id` ile gider.
   - R4 bölünmezlik kaydın sırasını da tutar: bütünüyle bekleyen karma satırın arkasındaki o kayda ait bütün satırlar (silme dahil) da servis v3'e yükselene ya da kullanıcı `ertelenenleriAt` ile atana dek bekler; başka kayıtların işlemleri gider.
   - Çıkış yolu: `Cekirdek.ertelenenleriAt(kayitId: String?): Int` (`None`: bütün kayıtlar) her ertelenen v3 değişikliğini ret listesine `RetGirdisi.ertelenenAtildi: Boolean = false` işaretiyle geçirir (`neden` `TeslimEdilemedi`, sessizce kaybolmaz); v2 kısımları ve bekleyen silme bu serviste hemen gider. `BaglantiYetenekleri.ertelenen` yalnız v3 değişikliği taşıyan satırları sayar (atılacak sayı); gönderilmeyen toplam `ertelenen_islem`'dir. Yukarı deneme yoldaki geçmiş isteğini bekler; `Yanit` aşamasındaki 1002 geri düşüş sayılmaz (yalnız `Eslestirme` ve `Hello`).
@@ -314,6 +314,7 @@ Sözleşme: `docs/AJANDA.md` "Sürüm uyumu" ve "Sürüm 3". Model katmanı (`1a
   - v2 servis bilinirken her durum okuması kuyrukta tam tarama yapar (5 000 satırda debug ~30–60 ms).
   - Ek yükleme ve indirme istemci tarafında yok; istemci `ek_yedegi` istemiyor.
   - Kotlin formu v3 alanlarını düzenleyemiyor (arayüz kolu).
+  - Liste alanları (`baglantilar`, `ekler`) `ret_duzelt`te öğe öğe birleşmez; Kol C'nin L1'ini bekliyor ve PC'de sonradan eklenen öğe ezilebilir. Bölge, konum ve varışın tek birim birleşmesi de L1/R2'ye kaldı.
 
 ## Takvim sekmesi (yerel salt okuma; sözleşme değişmedi)
 
@@ -473,6 +474,15 @@ Yerel yazar ve D2 yolları v3 alanlarını (`simge`, `bolge`, `bolge_konumu`, `v
 - Kol C'nin üç `#[ignore]` testi açıldı (`yerel_kipte_v3_alanli_ekleme_kisitsiz_uygulanir`, `koparmadan_sonra_v3_baglanmada_ertelenen_deger_pcye_gider`, `ice_aktarilan_v3_alanli_kayit_v2_serviste_ertelenir`).
 - `duzenle` ve `ekle` v2 olarak kaldı (v3 alanı olmayan işlem v2 baytlarıyla gider).
 - Ret düzeltmesi artık `retDuzelt(islemId, govde)`: hedefi (var olan kayıt ya da yeni kayıt) çekirdek seçer ve v3'ü korur; `ertelenen_atildi` girdisinde kullanılamaz (onun yolu `ertelenenGeriAl`).
+- R1b çekirdek (`0d2ed2b`):
+  - R3: bölünen `ekle` reddedilince v3 kalanı ret girdisine katılır ve kuyruktan düşer (`reddedilen_eklenin_kalani`, `kanal.rs`'te 7 satır).
+  - R4: `ret_duzelt` v3 yüzünden reddedilen düzeltmede döngüye girmez.
+  - R5: silinecek kaydın v3 farkı dökülmez.
+  - R6: sözleşme 2 yedeğinde v3 yokluğu "bilinmiyor" sayılır; telefondaki değer korunur.
+  - R8: gövdesiz ret girdisi (`sil`, durum, onayla, geri yükle) formla düzeltilmez, `GecersizGirdi` döner.
+  - R10: temelsiz birleşmede varış bölgesinden kopmaz.
+  - `ertelenenGeriAlDenetimli`: listede olmayan girdi için `bulundu=false`; atılmamış (`ertelenen_atildi` olmayan) girdi için `GecersizGirdi`.
+- R1b Kotlin (`1cb23af`): `BaglantiDenetcisi` `Degisim.gecmis`'te de durumu okur; yoklama bekleyişi `yukariTekrarMs` ile sınırlıdır; `RetSatiri`'na `ertelenenAtildi`, `geriAlinabilir`, `v3Ozeti` (`V3AlanMetni`) eklendi; plan bildirimi geçiş işaretine yazmaz.
 
 ## Dışa ve içe aktarma (D3)
 
