@@ -126,7 +126,8 @@ fun KucukResim(renk: LevhaRengi, cizim: LevhaCizimYuvasi?, boyut: Dp, modifier: 
 /**
  * Önceki günlerden kalan açık iş (Bugün'ün başındaki "kalanlar" şeridi): küçük kart; renkli resim, ad, ne
  * kadar geçtiği ve tamamlama dairesi. Kart ayrıntıyı açar, daire tamamlar. Yatay kaydırılan şeritte durduğu
- * için sağa çekme yok (§8.3: yatay kaydırmayla çakışır).
+ * için sağa çekme yok (§8.3: yatay kaydırmayla çakışır). Tamamlanınca solar (resim soluk, ad üstü çizili)
+ * ve şeritte kalır.
  */
 @Composable
 fun KalanKarti(
@@ -159,7 +160,7 @@ fun KalanKarti(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        KucukResim(renk, cizim, 40.dp)
+        KucukResim(renk, cizim, 40.dp, Modifier.then(if (tamam) Modifier.soldur() else Modifier))
         Column(Modifier.weight(1f)) {
             Metin(
                 baslik,
@@ -175,7 +176,8 @@ fun KalanKarti(
 
 /**
  * Biten hap'ı (SAHNE.md §3.4): renk dairesinde tik, üstü çizili ad. Dokununca ayrıntı açılır; "Yeniden aç"
- * özel eylem olarak ([erisim]) verilir.
+ * özel eylem olarak ([erisim]) verilir. [iptal]: iş tamamlanmadı, iptal edildi (PC'den); dairede tik yerine
+ * çarpı, TalkBack durumu "iptal edildi".
  */
 @Composable
 fun BitenHapi(
@@ -184,6 +186,7 @@ fun BitenHapi(
     onAc: () -> Unit,
     modifier: Modifier = Modifier,
     aciklama: String? = null,
+    iptal: Boolean = false,
     erisim: (SemanticsPropertyReceiver.() -> Unit)? = null,
 ) {
     val takim = Sahne.levha(renk)
@@ -195,7 +198,7 @@ fun BitenHapi(
             .clickable(role = Role.Button, onClickLabel = "Aç", onClick = onAc)
             .semantics(mergeDescendants = true) {
                 contentDescription = aciklama ?: ad
-                stateDescription = "tamamlandı"
+                stateDescription = if (iptal) "iptal edildi" else "tamamlandı"
                 erisim?.invoke(this)
             }
             .padding(start = 6.dp, end = 16.dp),
@@ -203,7 +206,7 @@ fun BitenHapi(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Box(Modifier.size(32.dp).clip(CircleShape).background(takim.zemin), contentAlignment = Alignment.Center) {
-            Simge(Simgeler.Tik, aciklama = null, modifier = Modifier.size(18.dp), renk = takim.yazi)
+            Simge(if (iptal) Simgeler.Kapat else Simgeler.Tik, aciklama = null, modifier = Modifier.size(if (iptal) 16.dp else 18.dp), renk = takim.yazi)
         }
         Metin(
             ad,

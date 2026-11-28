@@ -42,7 +42,16 @@ data class BugunKaydi(
     val tekrar: Boolean = false,
     val asistan: Boolean = false,
     val aciklama: String = baslik,
+    /** [LevhaHali.BITTI] ama tamamlanmadı, iptal edildi (PC'den): biten hap'ında ayrı durum; geri alma iptale döner. */
+    val iptal: Boolean = false,
 )
+
+/**
+ * Ayrıntının gösterdiği gerçek kayıt: Bugün'deki kaydı (renk ve çizim levhayla aynı) ve hangi günde
+ * olduğu ([yer]: "Bugün", "Yarın", "Önceki günlerden", gün başlığı; zaman metni günü zaten söylüyorsa `null`).
+ */
+@Immutable
+data class AyrintiOzeti(val kayit: BugunKaydi, val yer: String?)
 
 /** Yaklaşan günlerden biri ya da "Sonrası" / "Tekrarlayanlar" kümesi. */
 @Immutable
@@ -94,11 +103,25 @@ data class BugunModeli(
     val durum: DurumOzeti,
     /** Çekirdek okunamadıysa kısa neden (gösterge de söyler). */
     val okumaHatasi: String? = null,
+    /** Bugünün takvim günü okunamadı (elde bugüne ait veri yok): "boş gün" değil, hata gösterilir. */
+    val gunOkunamadi: Boolean = false,
 ) {
     /** Yoğun gün eşiğinin saydığı: açık iş + taslak (SAHNE.md §9). */
     val yogunlukSayisi: Int get() = acikler.size + taslaklar.size
 
     val bos: Boolean get() = kalanlar.isEmpty() && taslaklar.isEmpty() && acikler.isEmpty() && bitenler.isEmpty() && yaklasanlar.isEmpty()
+
+    /** [kayitId]'li kaydın ekrandaki hâli (ayrıntı için); tekrarın birden çok örneği varsa ilki. */
+    fun ayrintiOzeti(kayitId: String): AyrintiOzeti? {
+        fun List<BugunKaydi>.bul() = firstOrNull { it.kayitId == kayitId }
+        acikler.bul()?.let { return AyrintiOzeti(it, "Bugün") }
+        bitenler.bul()?.let { return AyrintiOzeti(it, "Bugün") }
+        taslaklar.bul()?.let { return AyrintiOzeti(it, null) }
+        kalanlar.bul()?.let { return AyrintiOzeti(it, "Önceki günlerden") }
+        // Gün grubunun başlığı günü söyler; "Sonrası" ve "Tekrarlayanlar"da zaman metni zaten tarihli.
+        for (g in yaklasanlar) g.kayitlar.bul()?.let { return AyrintiOzeti(it, g.baslik.takeIf { _ -> g.anahtar.first().isDigit() }) }
+        return null
+    }
 
     companion object {
         fun yukleniyor(bugun: LocalDate) = BugunModeli(

@@ -15,6 +15,7 @@ import dev.eren.ajanda.ekran.sahne.veri.Gorunus
 import dev.eren.ajanda.ekran.sahne.veri.LevhaHali
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -229,5 +230,131 @@ class BugunDenetleyiciTest {
     fun renkVeCizimKararli() {
         assertEquals(Gorunus.renk("k_1"), Gorunus.renk("k_1"))
         assertEquals(Gorunus.cizim(null, "Kahve molası"), Gorunus.cizim(null, "Kahve molası"))
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Gözden geçirme düzeltmeleri
+    // ---------------------------------------------------------------------------------------------
+
+    private fun degisim(vararg id: String) = Degisim(id.toList(), false, false, false, false, emptyList())
+
+    /** İptal edilmiş iş "Yeniden aç"tan sonra geri alınınca iptale döner; tamamlanmış olmaz. */
+    @Test
+    fun iptalEdilenYenidenAcilipGeriAlinincaIptaleDoner() {
+        c.ekle(kayit("i", "Toplantı", an(GUN.toString(), "16:00"), durum = KayitDurumu.IPTAL))
+        val biten = model().bitenler.single()
+        assertTrue(biten.aciklama.contains("iptal edildi"))
+        val s = d.tamamla(biten, tamam = false)
+        assertEquals(GeriAlma.Durum("i", KayitDurumu.IPTAL, null), s.geriAlma)
+        d.degisti(degisim("i"))
+        assertEquals(listOf("i"), d.model().acikler.map { it.kayitId })
+        d.geriAl(s.geriAlma!!)
+        assertEquals(KayitDurumu.IPTAL, c.sahte.kayitlar.getValue("i").durum)
+    }
+
+    /** Süren aralıklı iş "şimdi"dir: geçti sayılmaz, sıradaki odur; bitişi geçince geçti olur. */
+    @Test
+    fun surenAralikliIsSimdidirBitinceGecer() {
+        c.ekle(
+            kayit("t", "Toplantı", an(GUN.toString(), "10:00", sure = 120)),
+            kayit("o", "Öğle yemeği", an(GUN.toString(), "12:30")),
+        )
+        simdi = SIMDI.withHour(10).withMinute(1)
+        val m = model()
+        val t = m.acikler.single { it.kayitId == "t" }
+        assertFalse(t.gecti)
+        assertEquals("10:00–12:00", t.zaman)
+        assertEquals("t", m.siradaki)
+        assertEquals("Sırada toplantı var.", m.cumle)
+        assertEquals("Şimdi, 10:00–12:00", m.alt)
+
+        simdi = SIMDI.withHour(11).withMinute(59)
+        assertEquals("t", d.model().siradaki)
+
+        simdi = SIMDI.withHour(12).withMinute(0)
+        val sonra = d.model()
+        assertTrue(sonra.acikler.single { it.kayitId == "t" }.gecti)
+        assertEquals("o", sonra.siradaki)
+    }
+
+    /** Önceki günlerden kalan ya da yaklaşan iş tamamlanınca kaybolmaz: solup kendi sırasının sonuna iner. */
+    @Test
+    fun kalandanVeYaklasandanTamamlananSolupSonaIner() {
+        c.ekle(
+            kayit("eski", "Vergi", gun(gunSonra(-5))),
+            kayit("dun", "Kargo", an(gunSonra(-1), "10:00")),
+            kayit("y1", "Kitap", an(gunSonra(1), "11:00")),
+            kayit("y2", "Fırın", an(gunSonra(1), "12:00")),
+        )
+        val ilk = model()
+        d.tamamla(ilk.kalanlar.first { it.kayitId == "eski" })
+        d.tamamla(ilk.yaklasanlar[0].kayitlar.first { it.kayitId == "y1" })
+        d.degisti(degisim("eski", "y1"))
+        val m = d.model()
+        assertEquals(listOf("dun", "eski"), m.kalanlar.map { it.kayitId })
+        assertEquals(listOf(LevhaHali.ACIK, LevhaHali.BITTI), m.kalanlar.map { it.hal })
+        assertEquals(listOf("y2", "y1"), m.yaklasanlar[0].kayitlar.map { it.kayitId })
+        assertEquals(LevhaHali.BITTI, m.yaklasanlar[0].kayitlar.last().hal)
+        assertTrue(m.bitenler.isEmpty())
+
+        // Yeniden açılınca yerine döner (tek kopya).
+        val s = d.tamamla(m.kalanlar.last(), tamam = false)
+        assertEquals(GeriAlma.Durum("eski", KayitDurumu.TAMAM, null), s.geriAlma)
+        d.degisti(degisim("eski"))
+        val acildi = d.model()
+        assertEquals(listOf("eski", "dun"), acildi.kalanlar.map { it.kayitId })
+        assertTrue(acildi.kalanlar.all { it.hal == LevhaHali.ACIK })
+
+        // Ertesi gün tutulmaz.
+        simdi = SIMDI.plusDays(1)
+        assertTrue(d.model().yaklasanlar.flatMap { it.kayitlar }.none { it.kayitId == "y1" })
+    }
+
+    /** Bir kaynağın okuma hatasını başka bir kaynağın başarılı okuması silmez. */
+    @Test
+    fun okumaHatasiYalnizKendiOkumasiylaSilinir() {
+        c.ekle(kayit("a", "Kahve", an(GUN.toString(), "15:00")), kayit("y", "Kitap", an(gunSonra(1), "11:00")))
+        c.listeHatasi = IllegalStateException("liste")
+        val m = model()
+        assertNotNull("liste okunamadı", m.okumaHatasi)
+        // Takvim yine başarılı okunur: listenin hatası durur.
+        d.degisti(degisim("a"))
+        assertNotNull(d.model().okumaHatasi)
+        c.listeHatasi = null
+        d.degisti(degisim("y"))
+        assertNull(d.model().okumaHatasi)
+    }
+
+    /** Takvim okunamazsa ekran "yüklendi" kalır ve hatayı söyler; liste okuması bu hatayı silmez, dünün günü bugün diye gösterilmez. */
+    @Test
+    fun takvimHatasiListeOkumasiylaSilinmez() {
+        c.ekle(kayit("a", "Kahve", an(GUN.toString(), "15:00")), kayit("y", "Kitap", an(gunSonra(1), "11:00")))
+        model()
+        // Gün değişti, takvim okunamıyor; listeler okunuyor.
+        c.sahte.takvimHatasi = IllegalStateException("takvim")
+        simdi = SIMDI.plusDays(1).withHour(8)
+        val m = d.model()
+        assertTrue(m.yuklendi)
+        assertNotNull(m.okumaHatasi)
+        assertTrue("dünün işleri bugün diye gösterilmez", m.acikler.none { it.kayitId == "a" })
+        assertNotNull(d.model().okumaHatasi)
+        c.sahte.takvimHatasi = null
+        d.degisti(degisim("a"))
+        val duzeldi = d.model()
+        assertNull(duzeldi.okumaHatasi)
+        assertEquals(listOf("y"), duzeldi.acikler.map { it.kayitId })
+    }
+
+    /** Bugün'de olmayan kayıt (tarihsiz) ayrıntı için çekirdekten okunur: başlık, yer, levhanın renk kuralı. */
+    @Test
+    fun ayrintiOzetiCekirdektenOkunur() {
+        c.ekle(kayit("t", "Kitap oku"), kayit("s", "Silinmiş", silindi = true))
+        model()
+        val o = d.ayrintiOzeti("t")!!
+        assertEquals("Kitap oku", o.kayit.baslik)
+        assertEquals("Tarihsiz", o.yer)
+        assertEquals(Gorunus.renkAnahtardan(o.kayit.cizim!!), o.kayit.renk)
+        assertNull(d.ayrintiOzeti("s"))
+        assertNull(d.ayrintiOzeti("yok"))
     }
 }

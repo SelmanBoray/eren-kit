@@ -1,12 +1,15 @@
 package dev.eren.ajanda.ekran.sahne.bugun
 
 import dev.eren.ajanda.cekirdek.AjandaKaydi
+import dev.eren.ajanda.cekirdek.AjandaZamani
 import dev.eren.ajanda.cekirdek.BaglantiAsamasi
 import dev.eren.ajanda.cekirdek.BaglantiDurumu
 import dev.eren.ajanda.cekirdek.Degisim
 import dev.eren.ajanda.cekirdek.EslesmeDurumu
 import dev.eren.ajanda.cekirdek.Gozlemci
 import dev.eren.ajanda.cekirdek.KayitDurumu
+import dev.eren.ajanda.cekirdek.KayitGorunumu
+import dev.eren.ajanda.cekirdek.Sekme
 import dev.eren.ajanda.cekirdek.TakvimOgesi
 import dev.eren.ajanda.ekran.CekirdekYuzu
 import dev.eren.ajanda.ekran.Liste
@@ -14,6 +17,8 @@ import dev.eren.ajanda.ekran.SahteYuz
 import dev.eren.ajanda.ekran.gor
 import dev.eren.ajanda.ekran.sahne.veri.BugunDeposu
 import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.LocalTime
 import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.util.concurrent.Executor
@@ -40,6 +45,14 @@ class BugunCekirdegi(val sahte: SahteYuz = SahteYuz()) : CekirdekYuzu by sahte {
 
     fun ekle(vararg k: AjandaKaydi) = k.forEach { sahte.kayitlar[it.kayitId] = it }
 
+    /** Doluysa liste okumaları atar (takvim günü için [SahteYuz.takvimHatasi]). */
+    var listeHatasi: Exception? = null
+
+    override fun liste(sekme: Sekme, kapalilarDahil: Boolean): List<KayitGorunumu> {
+        listeHatasi?.let { throw it }
+        return sahte.liste(sekme, kapalilarDahil)
+    }
+
     private fun bildir(id: String) {
         gozlemci?.degisti(Degisim(listOf(id), false, false, false, false, emptyList()))
     }
@@ -50,23 +63,34 @@ class BugunCekirdegi(val sahte: SahteYuz = SahteYuz()) : CekirdekYuzu by sahte {
 
     override fun takvimGunu(tarih: String, kapalilarDahil: Boolean): List<TakvimOgesi> {
         sahte.cagrilar += "takvimGunu:$tarih"
+        sahte.takvimHatasi?.let { throw it }
         val t = LocalDate.parse(tarih)
         return sahte.kayitlar.values.mapNotNull { k ->
             if (k.silindi) return@mapNotNull null
             if (!kapalilarDahil && k.durum != KayitDurumu.ACIK) return@mapNotNull null
             val konum = Liste.konum(k.zaman, DILIM) ?: return@mapNotNull null
-            if (t < konum.ilkGun || t > konum.sonGun) return@mapNotNull null
+            // Süreli an: bitiş gerçek çekirdek gibi (son gün bitişin günü; tam gece yarısında biten önceki gün, "00:00").
+            val sure = (k.zaman as? AjandaZamani.An)?.sureDk
+            val bitis = if (sure != null && konum.saat != null) LocalDateTime.of(konum.ilkGun, konum.saat).plusMinutes(sure.toLong()) else null
+            val sonGun = when {
+                bitis == null -> konum.sonGun
+                bitis.toLocalTime() == LocalTime.MIDNIGHT -> bitis.toLocalDate().minusDays(1)
+                else -> bitis.toLocalDate()
+            }
+            if (t < konum.ilkGun || t > sonGun) return@mapNotNull null
             TakvimOgesi(
                 gorunum = gor(k),
                 ornekTarihi = ornekTarihleri[k.kayitId],
                 durum = k.durum,
                 ilkGun = konum.ilkGun.toString(),
-                sonGun = konum.sonGun.toString(),
-                saat = konum.saat?.let { String.format(java.util.Locale.ROOT, "%02d:%02d", it.hour, it.minute) },
-                bitisSaati = null,
+                sonGun = sonGun.toString(),
+                saat = konum.saat?.let { saatMetni(it) },
+                bitisSaati = bitis?.let { saatMetni(it.toLocalTime()) },
             )
         }
     }
+
+    private fun saatMetni(s: LocalTime) = String.format(java.util.Locale.ROOT, "%02d:%02d", s.hour, s.minute)
 
     override fun durumDegistir(kayitId: String, durum: KayitDurumu, ornekTarihi: String?) {
         sahte.durumDegistir(kayitId, durum, ornekTarihi)

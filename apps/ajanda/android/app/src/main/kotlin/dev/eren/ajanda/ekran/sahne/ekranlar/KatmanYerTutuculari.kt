@@ -52,7 +52,11 @@ import androidx.compose.ui.unit.dp
 import dev.eren.ajanda.R
 import dev.eren.ajanda.ekran.sahne.bilesen.AraBaslik
 import dev.eren.ajanda.ekran.sahne.bilesen.HapDugme
+import dev.eren.ajanda.ekran.sahne.bilesen.LevhaCizimi
 import dev.eren.ajanda.ekran.sahne.bilesen.LevhaFiguru
+import dev.eren.ajanda.ekran.sahne.bilesen.cizimYuvasiOnbellekli
+import dev.eren.ajanda.ekran.sahne.veri.AyrintiOzeti
+import dev.eren.ajanda.ekran.sahne.veri.LevhaHali
 import dev.eren.ajanda.ekran.sahne.bilesen.YuvarlakDugme
 import dev.eren.ajanda.ekran.sahne.gezinme.paylasilanLevha
 import dev.eren.ajanda.ekran.sahne.tema.LevhaRengi
@@ -63,16 +67,53 @@ import dev.eren.ajanda.ekran.sahne.tema.Simgeler
 import dev.eren.ajanda.ekran.sahne.tema.YaziRengi
 
 /**
+ * Ayrıntı yer tutucusunun kaynağı. Gerçek ekran sonraki dilimde; bu dilimde yer tutucu gerçek kaydı gösterir
+ * ve yanıltıcı eylem taşımaz.
+ */
+sealed interface AyrintiKaynagi {
+    /** Gerçek kayıt (Bugün modelinden ya da çekirdekten). [onTamamla] varsa alt düğme kaydı gerçekten tamamlar/açar. */
+    data class Gercek(val ozet: AyrintiOzeti, val onTamamla: ((Boolean) -> Unit)?) : AyrintiKaynagi
+
+    /** Kayıt çekirdekten okunuyor. */
+    data object Okunuyor : AyrintiKaynagi
+
+    /** Kayıt yok (silindi ya da kimlik bilinmiyor). */
+    data object Bulunamadi : AyrintiKaynagi
+}
+
+/** Ayrıntı kapağının ve sistem çubuklarının rengi: gerçek kayıtta levhanın rengi (komşu kuralı dahil), örnekte örneğin. */
+internal fun ayrintiRengi(kayitId: String, kaynak: AyrintiKaynagi?): LevhaRengi =
+    (kaynak as? AyrintiKaynagi.Gercek)?.ozet?.kayit?.renk ?: Ornekler.bul(kayitId)?.renk ?: LevhaRengi.KUM
+
+/**
  * Kayıt ayrıntısının yer tutucusu (SAHNE.md §3.7): renkli kapak, kapat düğmesi, başlık, zaman ve sabit alt
  * düğme. Kapak, Bugün'deki levhayla aynı paylaşılan öğe anahtarını taşır: levhadan büyüyerek açılır.
+ *
+ * [kaynak] `null`: kimlik yer tutucu örneklerinden ([Ornekler]; takvim ve tarihsiz yer tutucuları, vitrin);
+ * örnekte alt düğme yok (değiştirecek kayıt yok). Gerçek kayıtta başlık, zaman, renk ve çizim kaydın kendisi;
+ * alt düğme "Bitti" (bitmişse "Yeniden aç") kaydı çekirdekte değiştirir ve ayrıntıyı kapatır (tost Bugün'de).
  */
 @Composable
-fun AyrintiYerTutucu(kayitId: String, onKapat: () -> Unit, modifier: Modifier = Modifier) {
-    val k = Ornekler.bul(kayitId)
-    val renk = k?.renk ?: LevhaRengi.KUM
-    val takim = Sahne.levha(renk)
+fun AyrintiYerTutucu(kayitId: String, onKapat: () -> Unit, modifier: Modifier = Modifier, kaynak: AyrintiKaynagi? = null) {
+    val gercek = kaynak as? AyrintiKaynagi.Gercek
+    val g = gercek?.ozet?.kayit
+    val k = if (kaynak == null) Ornekler.bul(kayitId) else null
+    val takim = Sahne.levha(ayrintiRengi(kayitId, kaynak))
     val kapakSekli = RoundedCornerShape(bottomStart = Sahne.olcu.kapakYaricapi, bottomEnd = Sahne.olcu.kapakYaricapi)
-    var bitti by rememberSaveable { mutableStateOf(k?.bitti == true) }
+    val baslik = when {
+        g != null -> g.baslik
+        k != null -> k.baslik
+        kaynak == AyrintiKaynagi.Okunuyor -> "Kayıt okunuyor…"
+        else -> "Kayıt bulunamadı."
+    }
+    val zamanSatiri = when {
+        g != null -> listOfNotNull(gercek?.ozet?.yer, g.zaman).joinToString(", ") + if (g.hal == LevhaHali.TASLAK) ", asistan önerdi" else ""
+        k != null -> listOfNotNull(if (k.tarihsiz) "Tarihsiz" else "Bugün", k.zaman).joinToString(", ") + if (k.taslak) ", asistan önerdi" else ""
+        else -> ""
+    }
+    val onTamamla = gercek?.onTamamla?.takeIf { g != null && g.tamamlanabilir && g.hal != LevhaHali.TASLAK }
+    // Bir kez: kapanış hareketi sürerken ikinci dokunuş ikinci kez değiştirmez.
+    var gonderildi by remember(kayitId) { mutableStateOf(false) }
     BoxWithConstraints(modifier.fillMaxSize().background(Sahne.renk.zemin)) {
         val kapakBoyu = maxOf(260.dp, maxHeight * 0.46f)
         val genislik = maxWidth
@@ -88,22 +129,23 @@ fun AyrintiYerTutucu(kayitId: String, onKapat: () -> Unit, modifier: Modifier = 
                     .clip(kapakSekli)
                     .background(takim.zemin),
             ) {
-                LevhaFiguru(
-                    k?.figur ?: Simgeler.Yildiz, takim, taslak = false,
-                    modifier = Modifier.fillMaxSize().padding(top = kapakBoyu * 0.16f, bottom = kapakBoyu * 0.08f, start = genislik * 0.10f, end = genislik * 0.10f),
-                )
+                val cizimPayi = Modifier.fillMaxSize().padding(top = kapakBoyu * 0.16f, bottom = kapakBoyu * 0.08f, start = genislik * 0.10f, end = genislik * 0.10f)
+                if (g != null) {
+                    val yuva = cizimYuvasiOnbellekli(g.cizim)
+                    Box(cizimPayi) { yuva(LevhaCizimi(takim, if (g.hal == LevhaHali.TASLAK) 0f else 1f, canli = false)) }
+                } else if (k != null) {
+                    LevhaFiguru(k.figur, takim, taslak = false, modifier = cizimPayi)
+                }
             }
             Column(
                 Modifier.padding(start = pay.calculateStartPadding(yon), end = pay.calculateEndPadding(yon), top = 22.dp, bottom = 110.dp),
                 verticalArrangement = Arrangement.spacedBy(24.dp),
             ) {
                 Column {
-                    Metin(k?.baslik ?: "Kayıt", stil = Sahne.yazi.ayrintiBasligi, modifier = Modifier.semantics { heading() })
-                    Metin(
-                        listOfNotNull(if (k?.tarihsiz == true) "Tarihsiz" else "Bugün", k?.zaman).joinToString(", ") +
-                            if (k?.taslak == true) ", asistan önerdi" else "",
-                        stil = Sahne.yazi.zaman, renk = Sahne.renk.soluk, modifier = Modifier.padding(top = 8.dp),
-                    )
+                    Metin(baslik, stil = Sahne.yazi.ayrintiBasligi, modifier = Modifier.semantics { heading() })
+                    if (zamanSatiri.isNotEmpty()) {
+                        Metin(zamanSatiri, stil = Sahne.yazi.zaman, renk = Sahne.renk.soluk, modifier = Modifier.padding(top = 8.dp))
+                    }
                 }
                 Column {
                     AraBaslik("Not", modifier = Modifier.padding(top = 0.dp))
@@ -120,8 +162,9 @@ fun AyrintiYerTutucu(kayitId: String, onKapat: () -> Unit, modifier: Modifier = 
             zemin = Sahne.renk.zemin, renk = Sahne.renk.murekkep,
             modifier = Modifier.padding(koseDugmesiPayi(sag = false)),
         )
-        if (k?.taslak != true) {
+        if (g != null && onTamamla != null) {
             // Alt düğme ve arkasındaki zemine geçen degrade (SAHNE.md §3.7).
+            val bitti = g.hal == LevhaHali.BITTI
             val zemin = Sahne.renk.zemin
             Box(
                 Modifier
@@ -140,11 +183,14 @@ fun AyrintiYerTutucu(kayitId: String, onKapat: () -> Unit, modifier: Modifier = 
                         .heightIn(min = 56.dp)
                         .clip(Sahne.olcu.hap)
                         .background(if (dolu) Sahne.renk.murekkep else Sahne.renk.yuz)
-                        .clickable(role = Role.Button) { bitti = !bitti },
+                        .clickable(enabled = !gonderildi, role = Role.Button) {
+                            gonderildi = true
+                            onTamamla(!bitti)
+                        },
                     contentAlignment = Alignment.Center,
                 ) {
                     Metin(
-                        if (bitti) "Bitti, geri al" else "Bitti",
+                        if (bitti) "Yeniden aç" else "Bitti",
                         stil = Sahne.yazi.dugmeBuyuk,
                         renk = if (dolu) Sahne.renk.zemin else Sahne.renk.murekkep,
                     )

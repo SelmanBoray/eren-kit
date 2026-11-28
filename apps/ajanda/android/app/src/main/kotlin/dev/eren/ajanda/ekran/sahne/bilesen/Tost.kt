@@ -21,6 +21,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.AccessibilityManager
 import androidx.compose.ui.platform.LocalAccessibilityManager
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -34,9 +35,21 @@ import dev.eren.ajanda.ekran.sahne.tema.Sahne
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-/** Tostun içeriği. [no] her gösterimde farklı: aynı metin art arda gelse de süre yeniden başlar. */
+/**
+ * Tostun içeriği. [no] her gösterimde farklı: aynı metin art arda gelse de süre yeniden başlar.
+ * [sure]: ekranda kalacağı ms; `null` ise [TostDurumu.sure]. [onKalan]: kalan süre azaldıkça (en çok
+ * [TostDurumu.ADIM_MS]'de bir) çağrılır; ekran yeniden kurulunca tost kaldığı yerden sürsün diye.
+ */
 @Immutable
-data class TostIcerigi(val no: Long, val mesaj: String, val eylem: String?, val onEylem: () -> Unit, val hata: Boolean = false)
+data class TostIcerigi(
+    val no: Long,
+    val mesaj: String,
+    val eylem: String?,
+    val onEylem: () -> Unit,
+    val hata: Boolean = false,
+    val sure: Long? = null,
+    val onKalan: (Long) -> Unit = {},
+)
 
 /**
  * Tost durumu (SAHNE.md §5.13): aynı anda bir tost; yenisi eskisinin yerini alır.
@@ -48,8 +61,26 @@ class TostDurumu {
         private set
     private var sayac = 0L
 
-    fun goster(mesaj: String, eylem: String? = null, hata: Boolean = false, onEylem: () -> Unit = {}) {
-        gorunen = TostIcerigi(++sayac, mesaj, eylem, onEylem, hata)
+    fun goster(
+        mesaj: String,
+        eylem: String? = null,
+        hata: Boolean = false,
+        sure: Long? = null,
+        onKalan: (Long) -> Unit = {},
+        onEylem: () -> Unit = {},
+    ) {
+        gorunen = TostIcerigi(++sayac, mesaj, eylem, onEylem, hata, sure, onKalan)
+    }
+
+    /**
+     * Tostun eylemi ("Geri al"): yalnız [no]'lu tost hâlâ görünüyorsa ve bir kez. Tost hemen kapanır; sönerken
+     * (200 ms) ya da aynı karede gelen ikinci dokunuş bir şey yapmaz.
+     */
+    fun eylem(no: Long) {
+        val t = gorunen ?: return
+        if (t.no != no) return
+        gorunen = null
+        t.onEylem()
     }
 
     fun kapat(no: Long? = null) {
@@ -59,6 +90,15 @@ class TostDurumu {
     companion object {
         const val EYLEMLI_MS = 4200L
         const val EYLEMSIZ_MS = 2200L
+
+        /** Kalan sürenin bildirildiği adım. */
+        const val ADIM_MS = 100L
+
+        /** Tostun süresi: eylemliyse 4200, değilse 2200 ms; TalkBack açıksa sistemin önerdiği süre (§5.13). */
+        fun sure(eylemli: Boolean, erisim: AccessibilityManager?): Long {
+            val sure = if (eylemli) EYLEMLI_MS else EYLEMSIZ_MS
+            return erisim?.calculateRecommendedTimeoutMillis(sure, containsIcons = false, containsText = true, containsControls = eylemli) ?: sure
+        }
     }
 }
 
@@ -80,9 +120,15 @@ fun TostAlani(durum: TostDurumu, modifier: Modifier = Modifier) {
         if (hedef != null) {
             cizilen = hedef
             launch { gorunurluk.animateTo(1f, hareket.yumusak(220)) }
-            val sure = if (hedef.eylem != null) TostDurumu.EYLEMLI_MS else TostDurumu.EYLEMSIZ_MS
-            val onerilen = erisim?.calculateRecommendedTimeoutMillis(sure, containsIcons = false, containsText = true, containsControls = hedef.eylem != null) ?: sure
-            delay(onerilen)
+            // Süre adım adım sayılır (kare saatiyle aynı zaman): ekran giderse kalan süre bilinir.
+            var kalan = hedef.sure ?: TostDurumu.sure(hedef.eylem != null, erisim)
+            hedef.onKalan(kalan)
+            while (kalan > 0) {
+                val adim = minOf(kalan, TostDurumu.ADIM_MS)
+                delay(adim)
+                kalan -= adim
+                hedef.onKalan(kalan)
+            }
             durum.kapat(hedef.no)
         } else {
             gorunurluk.animateTo(0f, hareket.yumusak(200))
@@ -90,6 +136,8 @@ fun TostAlani(durum: TostDurumu, modifier: Modifier = Modifier) {
         }
     }
     val t = cizilen ?: return
+    // Sönen tost (artık görünen değil) dokunulmaz.
+    val etkin = durum.gorunen?.no == t.no
     Box(modifier, contentAlignment = Alignment.Center) {
         Row(
             Modifier
@@ -118,10 +166,7 @@ fun TostAlani(durum: TostDurumu, modifier: Modifier = Modifier) {
                     Modifier
                         .heightIn(min = 48.dp)
                         .clip(Sahne.olcu.hap)
-                        .clickable(role = Role.Button) {
-                            durum.kapat(t.no)
-                            t.onEylem()
-                        }
+                        .clickable(enabled = etkin, role = Role.Button) { durum.eylem(t.no) }
                         .padding(horizontal = 14.dp),
                     contentAlignment = Alignment.Center,
                 ) {

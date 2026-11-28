@@ -39,12 +39,13 @@ import dev.eren.ajanda.ekran.sahne.tema.Agirlik
 import dev.eren.ajanda.ekran.sahne.tema.LocalSahneMetinStili
 import dev.eren.ajanda.ekran.sahne.tema.Metin
 import dev.eren.ajanda.ekran.sahne.tema.Sahne
+import dev.eren.ajanda.ekran.sahne.tema.SahneOlculer
 import dev.eren.ajanda.ekran.sahne.tema.Simge
 
 /**
  * Yuvarlak simge düğmesi (kapat, ay değiştir, ayarlar). [aciklama] TalkBack'in okuduğu ad, zorunlu.
  *
- * [boyut] görünür dairedir (SAHNE.md §3.7, §3.8: 46 dp). Dokunma alanı dairenin çevresindeki kutudur ve en az
+ * [boyut] görünür dairedir (SAHNE.md §3.7, §3.8: 46 dp, [Sahne.olcu] `yuvarlakDugme`). Dokunma alanı dairenin çevresindeki kutudur ve en az
  * 48 dp ([HapDugme]'deki iç/dış ayrımı gibi): tıklama dış kutuda olduğu için Compose'un küçük öğe
  * genişletmesine güvenilmez (altta dokunma alan bir kardeş varsa genişletme ona kaybeder). Dış kutu görünür
  * daireden her yana 1 dp taşar; [modifier]'daki konum payı dış kutuya uygulanır.
@@ -58,7 +59,7 @@ fun YuvarlakDugme(
     zemin: Color = Sahne.renk.yuz,
     renk: Color = Sahne.renk.murekkep,
     cerceve: Boolean = false,
-    boyut: Dp = YUVARLAK_DUGME_GORUNUR,
+    boyut: Dp = Sahne.olcu.yuvarlakDugme,
 ) {
     val alan = if (boyut > Sahne.olcu.dokunma) boyut else Sahne.olcu.dokunma
     Box(
@@ -82,8 +83,11 @@ fun YuvarlakDugme(
     }
 }
 
-/** Yuvarlak düğmenin görünür boyu (prototipte 46 dp); dokunma alanı [Sahne.olcu] `dokunma` (48 dp). */
-val YUVARLAK_DUGME_GORUNUR: Dp = 46.dp
+/**
+ * Yuvarlak düğmenin görünür boyu (prototipte 46 dp); dokunma alanı [Sahne.olcu] `dokunma` (48 dp).
+ * Değer temanın varsayılan ölçüsünden ([SahneOlculer.yuvarlakDugme]) gelir: tek kaynak orası.
+ */
+val YUVARLAK_DUGME_GORUNUR: Dp = SahneOlculer().yuvarlakDugme
 
 /**
  * Hap biçimli yazılı düğme. [dolu]: mürekkep zemin; değilse içinde bulunduğu yüzeyin yazı rengiyle 2 dp

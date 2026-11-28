@@ -42,6 +42,12 @@ import java.time.temporal.ChronoUnit
  *
  * Değişiklikte ([degisti]) yalnız etkilenen liste yeniden sorgulanır ([Yenileme]); bugünün takvim günü kayıt
  * değişince her zaman yeniden okunur (tekrar örneği hangi kaydın değiştiğinden anlaşılmaz; sorgu ucuz).
+ *
+ * Okuma hataları kaynak başına tutulur (bugünün günü, her liste, durum): bir kaynağın hatası yalnız o kaynağın
+ * başarılı okumasıyla silinir; hatalı liste sonraki değişiklikte yeniden denenir.
+ *
+ * Tamamlanan iş görünür kalır (kullanıcı kararı): bugünün işi takvimden "bitenler"e iner; önceki günlerden
+ * kalan ya da yaklaşan iş bu ekrandan tamamlanınca gün boyu kendi sırasının sonunda, solmuş durur ([tutulanlar]).
  */
 class BugunDenetleyici(private val c: CekirdekYuzu, private val saat: () -> ZonedDateTime) {
     var bitenleriGizle: Boolean = false
@@ -56,9 +62,22 @@ class BugunDenetleyici(private val c: CekirdekYuzu, private val saat: () -> Zone
     private var eslesme: EslesmeDurumu? = null
     private var adresVar = false
     private var baglanti: BaglantiDurumu? = null
-    private var okumaHatasi: String? = null
+
+    // Kaynak başına okuma hatası.
+    private var bugunHatasi: String? = null
+    private val listeHatalari = mutableMapOf<Sekme, String>()
+    private var durumHatasi: String? = null
+    private val okumaHatasi: String? get() = bugunHatasi ?: listeHatalari.values.firstOrNull() ?: durumHatasi
 
     private val izlenen = setOf(Sekme.TARIHLI, Sekme.TASLAKLAR)
+
+    /** Bu ekrandan tamamlanıp listeden düşen kalan/yaklaşan iş: hangi gün, hangi sırada ([GunGrubu.anahtar] ya da [KALAN]). */
+    private class Tutulan(val gun: LocalDate, val yer: String, val kayit: BugunKaydi)
+
+    private val tutulanlar = LinkedHashMap<String, Tutulan>()
+
+    /** Son modelde kalanlar ve yaklaşanlardaki kayıtların yeri (tamamlanınca [tutulanlar]'a geçer). */
+    private var sonYerler: Map<String, Pair<String, BugunKaydi>> = emptyMap()
 
     /** Açılış ve öne geliş: her şeyi okur. */
     fun hepsiniOku() {
@@ -73,18 +92,20 @@ class BugunDenetleyici(private val c: CekirdekYuzu, private val saat: () -> Zone
         try {
             bugunOgeleri = c.takvimGunu(gun.toString(), true)
             okunanGun = gun
-            okumaHatasi = null
+            bugunHatasi = null
         } catch (e: Exception) {
-            okumaHatasi = KayitFormu.hataMesaji(e).mesaj
+            bugunHatasi = KayitFormu.hataMesaji(e).mesaj
+            // Başka günün öğeleri bugünün diye gösterilmez (gün değişti, yeni gün okunamadı).
+            if (okunanGun != gun) bugunOgeleri = null
         }
     }
 
     private fun listeyiOku(s: Sekme) {
         try {
             listeler[s] = c.liste(s, false)
-            okumaHatasi = null
+            listeHatalari.remove(s)
         } catch (e: Exception) {
-            okumaHatasi = KayitFormu.hataMesaji(e).mesaj
+            listeHatalari[s] = KayitFormu.hataMesaji(e).mesaj
         }
     }
 
@@ -103,8 +124,9 @@ class BugunDenetleyici(private val c: CekirdekYuzu, private val saat: () -> Zone
                 adresVar = c.baglantiAdresi() != null
             }
             baglanti = c.baglantiDurumu()
+            durumHatasi = null
         } catch (e: Exception) {
-            okumaHatasi = KayitFormu.hataMesaji(e).mesaj
+            durumHatasi = KayitFormu.hataMesaji(e).mesaj
         }
     }
 
@@ -122,7 +144,11 @@ class BugunDenetleyici(private val c: CekirdekYuzu, private val saat: () -> Zone
             }
             val uyeler = izlenen.associateWith { s -> listeler[s].orEmpty().mapTo(HashSet()) { it.kayit.kayitId } }
             sorgulanacak += Yenileme.etkilenenListeler(uyeler, yeniHaller, false)
+            // Silinen (ya da artık olmayan) kayıt solmuş da durmaz.
+            for ((id, k) in yeniHaller) if (k == null || k.silindi) tutulanlar.remove(id)
         }
+        // Okunamamış liste her değişiklikte yeniden denenir.
+        sorgulanacak += listeHatalari.keys.filter { it in izlenen }
         if (plan.eslesme || plan.baglanti) durumuOku(eslesmeDe = plan.eslesme)
         if (plan.ret) retiOku()
         for (s in sorgulanacak) listeyiOku(s)
@@ -134,10 +160,11 @@ class BugunDenetleyici(private val c: CekirdekYuzu, private val saat: () -> Zone
     fun model(): BugunModeli {
         val simdi = saat()
         val bugun = simdi.toLocalDate()
-        if (okunanGun != null && okunanGun != bugun) {
-            bugunuOku(bugun)
-            for (s in izlenen) listeyiOku(s)
-        }
+        val gunDegisti = okunanGun != null && okunanGun != bugun
+        // Gün değiştiyse ya da bugün hiç okunamadıysa yeniden dene (dakika sayacı da buraya gelir).
+        if (gunDegisti || (okunanGun == null && bugunHatasi != null)) bugunuOku(bugun)
+        if (gunDegisti) for (s in izlenen) listeyiOku(s)
+        tutulanlar.values.removeAll { it.gun != bugun }
         val gonderim = Liste.Gonderim.hesapla(adresVar, baglanti?.asama)
         val taslakKayitlari = listeler[Sekme.TASLAKLAR].orEmpty().filter { it.kayit.durum == KayitDurumu.ACIK && !it.kayit.silindi }
         val taslakIdleri = taslakKayitlari.mapTo(HashSet()) { it.kayit.kayitId }
@@ -147,7 +174,7 @@ class BugunDenetleyici(private val c: CekirdekYuzu, private val saat: () -> Zone
         val sirali = Siralama.gun(gunOgeleri.zip(bugunKayitlari))
         val acikler = sirali.filter { it.hal == LevhaHali.ACIK }
         val bitenler = sirali.filter { it.hal == LevhaHali.BITTI }
-        val siradaki = Siralama.siradaki(gunOgeleri.zip(bugunKayitlari).filter { it.second.hal == LevhaHali.ACIK }, simdi.toLocalTime())
+        val siradaki = Siralama.siradaki(gunOgeleri.zip(bugunKayitlari).filter { it.second.hal == LevhaHali.ACIK }, simdi.toLocalTime(), bugun)
         val acikSirali = if (siradaki == null) acikler else listOf(siradaki) + acikler.filter { it.anahtar != siradaki.anahtar }
 
         // Kalanlar ve yaklaşanlar.
@@ -156,41 +183,54 @@ class BugunDenetleyici(private val c: CekirdekYuzu, private val saat: () -> Zone
         val sonrasi = mutableListOf<Pair<Liste.Konum, BugunKaydi>>()
         val tekrarlayanlar = mutableListOf<BugunKaydi>()
         val haftaSiniri = bugun.plusDays(7)
+        val yerler = HashMap<String, Pair<String, BugunKaydi>>()
         for (g in listeler[Sekme.TARIHLI].orEmpty()) {
             val k = g.kayit
             if (k.taslak || k.kayitId in taslakIdleri || k.durum != KayitDurumu.ACIK) continue
             val konum = Liste.konum(k.zaman, simdi.zone) ?: continue
             val (grup, gun) = Liste.tarihliGrup(k, konum, bugun)
-            when (grup) {
-                Liste.Grup.GECIKMIS -> kalanlar += gun to listeKaydi(g, simdi, grup, konum, gonderim, gecikme = true)
+            val (yer, kayit) = when (grup) {
+                Liste.Grup.GECIKMIS -> KALAN to listeKaydi(g, simdi, grup, konum, gonderim, gecikme = true).also { kalanlar += gun to it }
                 Liste.Grup.YARIN, Liste.Grup.BU_HAFTA, Liste.Grup.SONRASI ->
                     if (gun < haftaSiniri) {
-                        gunler.getOrPut(gun) { mutableListOf() } += konum to listeKaydi(g, simdi, Liste.Grup.YARIN, konum, gonderim)
+                        gun.toString() to listeKaydi(g, simdi, Liste.Grup.YARIN, konum, gonderim).also { gunler.getOrPut(gun) { mutableListOf() } += konum to it }
                     } else {
-                        sonrasi += konum to listeKaydi(g, simdi, Liste.Grup.SONRASI, konum, gonderim)
+                        SONRASI to listeKaydi(g, simdi, Liste.Grup.SONRASI, konum, gonderim).also { sonrasi += konum to it }
                     }
-                Liste.Grup.TEKRARLAYAN -> tekrarlayanlar += listeKaydi(g, simdi, grup, konum, gonderim)
-                else -> Unit // Bugün takvimden; Geçmiş yalnız kapalılar dahilken.
+                Liste.Grup.TEKRARLAYAN -> TEKRARLAYANLAR to listeKaydi(g, simdi, grup, konum, gonderim).also { tekrarlayanlar += it }
+                else -> continue // Bugün takvimden; Geçmiş yalnız kapalılar dahilken.
             }
+            yerler[k.kayitId] = yer to kayit
         }
+        sonYerler = yerler
+        // Tamamlanıp listeden düşenler kendi sıralarının sonunda, solmuş (yeniden açılan listede zaten var).
+        val gorunenIdler = yerler.keys + gunOgeleri.mapTo(HashSet()) { it.gorunum.kayit.kayitId }
+        val solanlar = tutulanlar.filterKeys { it !in gorunenIdler }.values.groupBy({ it.yer }, { it.kayit })
+        fun solan(yer: String) = solanlar[yer].orEmpty()
+        for (yer in solanlar.keys) runCatching { LocalDate.parse(yer) }.getOrNull()?.let { gunler.getOrPut(it) { mutableListOf() } }
         val yaklasanlar = buildList {
-            for ((gun, l) in gunler) add(GunGrubu(gun.toString(), Gorunus.gunBasligi(gun, bugun), Siralama.konumla(l)))
-            if (sonrasi.isNotEmpty()) {
-                add(GunGrubu("sonrasi", "Sonrası", sonrasi.sortedWith(compareBy({ it.first.ilkGun }, { if (it.first.saat == null) 0 else 1 }, { it.first.gunBolumu?.ordinal ?: -1 }, { it.first.saat })).map { it.second }))
+            for ((gun, l) in gunler) add(GunGrubu(gun.toString(), Gorunus.gunBasligi(gun, bugun), Siralama.konumla(l) + solan(gun.toString())))
+            if (sonrasi.isNotEmpty() || solan(SONRASI).isNotEmpty()) {
+                add(GunGrubu(SONRASI, "Sonrası", sonrasi.sortedWith(compareBy({ it.first.ilkGun }, { if (it.first.saat == null) 0 else 1 }, { it.first.gunBolumu?.ordinal ?: -1 }, { it.first.saat })).map { it.second } + solan(SONRASI)))
             }
-            if (tekrarlayanlar.isNotEmpty()) add(GunGrubu("tekrarlayanlar", "Tekrarlayanlar", tekrarlayanlar))
+            if (tekrarlayanlar.isNotEmpty() || solan(TEKRARLAYANLAR).isNotEmpty()) add(GunGrubu(TEKRARLAYANLAR, "Tekrarlayanlar", tekrarlayanlar + solan(TEKRARLAYANLAR)))
         }
 
-        val (cumle, alt) = GunCumlesi.kur(acikSirali.firstOrNull(), siradaki != null, gunOgeleri, bitenler.size, simdi)
+        val gunOkunamadi = bugunOgeleri == null && bugunHatasi != null
+        val (cumle, alt) = if (gunOkunamadi) {
+            "Bugünün işleri okunamadı." to (bugunHatasi ?: "")
+        } else {
+            GunCumlesi.kur(acikSirali.firstOrNull(), siradaki != null, gunOgeleri, bitenler.size, simdi)
+        }
         val h = hatirlatma
         val uyarilar = h?.let { HatirlatmaUyarilari.uyarilar(it) }.orEmpty()
         return BugunModeli(
-            yuklendi = bugunOgeleri != null || okumaHatasi != null,
+            yuklendi = bugunOgeleri != null || bugunHatasi != null,
             bugun = bugun,
             tarih = Gorunus.uzunTarih(bugun),
             cumle = cumle,
             alt = alt,
-            kalanlar = kalanlar.sortedBy { it.first }.map { it.second },
+            kalanlar = kalanlar.sortedBy { it.first }.map { it.second } + solan(KALAN),
             taslaklar = taslakKayitlari.map { taslakKaydi(it, simdi, gonderim) },
             acikler = acikSirali,
             siradaki = siradaki?.anahtar,
@@ -211,7 +251,52 @@ class BugunDenetleyici(private val c: CekirdekYuzu, private val saat: () -> Zone
                 hatirlatmaSeritMetni = h?.let { HatirlatmaUyarilari.seritMetni(it) },
             ),
             okumaHatasi = okumaHatasi,
+            gunOkunamadi = gunOkunamadi,
         ).komsuRenkleriAyir()
+    }
+
+    /**
+     * Ayrıntı için kaydın kendisi, çekirdekten (Bugün modelinde olmayan kayıt: bildirimden açılan tarihsiz iş
+     * gibi). Yoksa ya da silindiyse `null`.
+     */
+    fun ayrintiOzeti(kayitId: String): AyrintiOzeti? {
+        val g = try {
+            c.kayit(kayitId)
+        } catch (_: Exception) {
+            null
+        } ?: return null
+        val k = g.kayit
+        if (k.silindi) return null
+        val simdi = saat()
+        val konum = Liste.konum(k.zaman, simdi.zone)
+        val grup = konum?.let { Liste.tarihliGrup(k, it, simdi.toLocalDate()).first }
+        val zaman = when {
+            konum == null -> (k.zaman as? AjandaZamani.Belirsiz)?.let { "“${it.ifade}”" }
+            else -> Liste.zamanMetni(k, konum, grup ?: Liste.Grup.SONRASI, simdi)
+        }
+        val hal = when {
+            k.taslak -> LevhaHali.TASLAK
+            k.durum == KayitDurumu.ACIK -> LevhaHali.ACIK
+            else -> LevhaHali.BITTI
+        }
+        val kayit = kaydet(
+            g, anahtar = k.kayitId, zaman = zaman, hal = hal, gecti = false, ornekTarihi = null,
+            gonderim = Liste.Gonderim.hesapla(adresVar, baglanti?.asama), durumMetni = durumMetni(k.durum),
+            iptal = k.durum == KayitDurumu.IPTAL,
+        )
+        val yer = when {
+            k.zaman == null -> "Tarihsiz"
+            grup == Liste.Grup.BUGUN -> "Bugün"
+            grup == Liste.Grup.YARIN -> "Yarın"
+            else -> null
+        }
+        return AyrintiOzeti(kayit, yer)
+    }
+
+    private fun durumMetni(d: KayitDurumu): String? = when (d) {
+        KayitDurumu.TAMAM -> "tamamlandı"
+        KayitDurumu.IPTAL -> "iptal edildi"
+        KayitDurumu.ACIK -> null
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -232,16 +317,12 @@ class BugunDenetleyici(private val c: CekirdekYuzu, private val saat: () -> Zone
             else -> "Tüm gün"
         }
         val acik = o.durum == KayitDurumu.ACIK
-        val gecti = acik && saatMetni != null && o.ilkGun == bugun.toString() &&
-            runCatching { LocalTime.parse(saatMetni) }.getOrNull()?.let { it < simdi.toLocalTime().withSecond(0).withNano(0) } == true
+        // Süreli iş bitişi geçince "geçti"; sürerken "şimdi"dir (sıradaki odur). Süresiz saatli iş başlayınca geçer.
+        val gecti = acik && o.bugunkuAralik(bugun)?.gectiMi(simdi.toLocalTime()) == true
         return kaydet(
             o.gorunum, anahtar = o.ornekTarihi?.let { "${k.kayitId}@$it" } ?: k.kayitId, zaman = zaman,
             hal = if (acik) LevhaHali.ACIK else LevhaHali.BITTI, gecti = gecti, ornekTarihi = o.ornekTarihi, gonderim = gonderim,
-            durumMetni = when (o.durum) {
-                KayitDurumu.TAMAM -> "tamamlandı"
-                KayitDurumu.IPTAL -> "iptal edildi"
-                KayitDurumu.ACIK -> null
-            },
+            durumMetni = durumMetni(o.durum), iptal = o.durum == KayitDurumu.IPTAL,
         )
     }
 
@@ -277,6 +358,7 @@ class BugunDenetleyici(private val c: CekirdekYuzu, private val saat: () -> Zone
         ornekTarihi: String?,
         gonderim: Liste.Gonderim,
         durumMetni: String?,
+        iptal: Boolean = false,
     ): BugunKaydi {
         val k = g.kayit
         val bekleyen = gonderim.okunus.takeIf { g.bekleyen }
@@ -296,6 +378,7 @@ class BugunDenetleyici(private val c: CekirdekYuzu, private val saat: () -> Zone
             bekleyen = bekleyen,
             tekrar = k.tekrar != null,
             asistan = Liste.otomatikMi(k.kaynak),
+            iptal = iptal,
         )
         val aciklama = buildString {
             append(k.baslik)
@@ -319,11 +402,24 @@ class BugunDenetleyici(private val c: CekirdekYuzu, private val saat: () -> Zone
         IslemSonucu(KayitFormu.hataMesaji(e).mesaj, hata = true)
     }
 
-    /** Tamamlar ([tamam]) ya da yeniden açar. Tost: "Bitti: ⟨başlık⟩" + Geri al. */
+    /**
+     * Tamamlar ([tamam]) ya da yeniden açar. Tost: "Bitti: ⟨başlık⟩" + Geri al; geri alma kaydın gerçek önceki
+     * durumuna döner (iptal edilmiş iş yeniden açılıp geri alınınca iptal kalır). Kalan ya da yaklaşan iş
+     * tamamlanınca gün boyu yerinde solmuş durur.
+     */
     fun tamamla(k: BugunKaydi, tamam: Boolean = true): IslemSonucu = yap {
         val yeni = if (tamam) KayitDurumu.TAMAM else KayitDurumu.ACIK
-        val onceki = if (k.hal == LevhaHali.BITTI) KayitDurumu.TAMAM else KayitDurumu.ACIK
+        val onceki = when {
+            k.hal != LevhaHali.BITTI -> KayitDurumu.ACIK
+            k.iptal -> KayitDurumu.IPTAL
+            else -> KayitDurumu.TAMAM
+        }
         c.durumDegistir(k.kayitId, yeni, k.ornekTarihi)
+        if (tamam) {
+            sonYerler[k.kayitId]?.takeIf { it.second.anahtar == k.anahtar }?.let { (yer, kayit) ->
+                tutulanlar[k.kayitId] = Tutulan(saat().toLocalDate(), yer, kayit.copy(hal = LevhaHali.BITTI))
+            }
+        }
         val b = kisalt(k.baslik)
         IslemSonucu(
             if (tamam) "Bitti: $b" else "Yeniden açıldı: $b",
@@ -364,6 +460,36 @@ class BugunDenetleyici(private val c: CekirdekYuzu, private val saat: () -> Zone
     }
 }
 
+private const val KALAN = "kalan"
+private const val SONRASI = "sonrasi"
+private const val TEKRARLAYANLAR = "tekrarlayanlar"
+
+/**
+ * Takvim öğesinin bugünkü saat aralığı. [bas]: başlangıç (dünden süren işte gün başı); [son]: bitiş (süresizde
+ * başlangıç; bugün bitmeyen ya da tam gece yarısı biten işte gün sonu). [sureli]: bitişi var.
+ */
+internal data class GunAraligi(val bas: LocalTime, val son: LocalTime, val sureli: Boolean) {
+    /** Dakika çözünürlüğünde [simdi] bu aralığın içinde mi (süreli iş sürüyor). */
+    fun suruyor(simdi: LocalTime): Boolean = sureli && simdi.dakika().let { bas <= it && it < son }
+
+    /** Süreli iş bitişinde, süresiz iş başlangıcından sonra geçer. */
+    fun gectiMi(simdi: LocalTime): Boolean = simdi.dakika().let { if (sureli) it >= son else bas < it }
+}
+
+private fun LocalTime.dakika(): LocalTime = withSecond(0).withNano(0)
+
+/** Saatli öğede bugünkü aralık; saatsiz ya da okunamayan öğede `null`. */
+internal fun TakvimOgesi.bugunkuAralik(bugun: LocalDate): GunAraligi? {
+    val s = saat?.let { runCatching { LocalTime.parse(it) }.getOrNull() } ?: return null
+    val ilk = runCatching { LocalDate.parse(ilkGun) }.getOrNull() ?: return null
+    val son = runCatching { LocalDate.parse(sonGun) }.getOrNull() ?: ilk
+    val bas = if (ilk < bugun) LocalTime.MIN else s
+    val b = bitisSaati?.let { runCatching { LocalTime.parse(it) }.getOrNull() } ?: return GunAraligi(bas, bas, sureli = false)
+    // Tam gece yarısında biten öğenin son günü önceki gündür, bitişi "00:00": o günün sonu.
+    val bitis = if (son > bugun || b == LocalTime.MIDNIGHT) LocalTime.MAX else b
+    return GunAraligi(bas, bitis, sureli = true)
+}
+
 /** Gün içi sıra ve sıradaki iş (saf; SAHNE.md §3.2). */
 object Siralama {
     /**
@@ -387,12 +513,23 @@ object Siralama {
             compareBy({ if (it.value.first.saat == null) 0 else 1 }, { it.value.first.gunBolumu?.ordinal ?: -1 }, { it.value.first.saat }, { it.index }),
         ).map { it.value.second }
 
-    /** Sıradaki iş: saati şimdiden sonra olan ilk açık kayıt; yoksa sıralamadaki ilk açık kayıt. */
-    fun siradaki(acikler: List<Pair<TakvimOgesi, BugunKaydi>>, simdi: LocalTime): BugunKaydi? {
+    /**
+     * Sıradaki iş: süren (süreli, şu an içinde olunan) ya da saati şimdiden sonra olan ilk açık kayıt; süren iş
+     * "şimdi" sayılır, sıradaki odur. Yoksa sıralamadaki ilk açık kayıt. [bugun] verilmezse her öğe kendi ilk
+     * gününde sayılır.
+     */
+    fun siradaki(acikler: List<Pair<TakvimOgesi, BugunKaydi>>, simdi: LocalTime, bugun: LocalDate? = null): BugunKaydi? {
         val sirali = gun(acikler)
-        val saatli = acikler.mapNotNull { (o, k) -> o.saat?.let { s -> runCatching { LocalTime.parse(s) }.getOrNull()?.let { it to k } } }
-            .filter { it.first >= simdi.withSecond(0).withNano(0) }
-            .minByOrNull { it.first }?.second
+        val n = simdi.dakika()
+        val saatli = acikler.mapNotNull { (o, k) ->
+            val gun = bugun ?: runCatching { LocalDate.parse(o.ilkGun) }.getOrNull() ?: return@mapNotNull null
+            val a = o.bugunkuAralik(gun) ?: return@mapNotNull null
+            when {
+                a.suruyor(n) -> Triple(n, a.bas, k)
+                a.bas >= n -> Triple(a.bas, a.bas, k)
+                else -> null
+            }
+        }.minWithOrNull(compareBy<Triple<LocalTime, LocalTime, BugunKaydi>>({ it.first }, { it.second }))?.third
         return saatli ?: sirali.firstOrNull()
     }
 }
@@ -413,8 +550,13 @@ object GunCumlesi {
         val oge = ogeler.firstOrNull { (it.ornekTarihi?.let { o -> "${it.gorunum.kayit.kayitId}@$o" } ?: it.gorunum.kayit.kayitId) == siradaki.anahtar }
         val saat = oge?.saat?.let { runCatching { LocalTime.parse(it) }.getOrNull() }
         val alt = if (saatliSiradakiVar && saat != null && !siradaki.gecti) {
-            val dk = ChronoUnit.MINUTES.between(simdi.toLocalTime().withSecond(0).withNano(0), saat)
-            "${Gorunus.kalanSure(dk)}, ${EkranMetinleri.saat(saat)}"
+            if (oge?.bugunkuAralik(simdi.toLocalDate())?.suruyor(simdi.toLocalTime()) == true) {
+                // Süren iş: "Şimdi, 10:00–12:00".
+                "Şimdi, ${siradaki.zaman ?: EkranMetinleri.saat(saat)}"
+            } else {
+                val dk = ChronoUnit.MINUTES.between(simdi.toLocalTime().withSecond(0).withNano(0), saat)
+                "${Gorunus.kalanSure(dk)}, ${EkranMetinleri.saat(saat)}"
+            }
         } else {
             "Bugün, ${Gorunus.kucuk(siradaki.zaman ?: "tüm gün")}"
         }

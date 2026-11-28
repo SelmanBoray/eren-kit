@@ -36,7 +36,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.Stable
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.platform.LocalAccessibilityManager
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -59,6 +62,7 @@ import dev.eren.ajanda.ekran.sahne.bilesen.BitenHapi
 import dev.eren.ajanda.ekran.sahne.bilesen.DurumSeridi
 import dev.eren.ajanda.ekran.sahne.bilesen.DurumTonu
 import dev.eren.ajanda.ekran.sahne.bilesen.GostergeHapi
+import dev.eren.ajanda.ekran.sahne.bilesen.HapDugme
 import dev.eren.ajanda.ekran.sahne.bilesen.KalanKarti
 import dev.eren.ajanda.ekran.sahne.bilesen.LevhaFiguru
 import dev.eren.ajanda.ekran.sahne.bilesen.TostAlani
@@ -73,6 +77,7 @@ import dev.eren.ajanda.ekran.sahne.tema.Simgeler
 import dev.eren.ajanda.ekran.sahne.veri.BugunDeposu
 import dev.eren.ajanda.ekran.sahne.veri.BugunKaydi
 import dev.eren.ajanda.ekran.sahne.veri.BugunModeli
+import dev.eren.ajanda.ekran.sahne.veri.LevhaHali
 import dev.eren.ajanda.ekran.sahne.veri.MozaikPlani
 import dev.eren.ajanda.ekran.sahne.veri.YogunGun
 import java.time.LocalDate
@@ -114,20 +119,27 @@ fun BugunEkrani(
     val hareketler = rememberBugunHareketleri(depo)
     val tost = remember { TostDurumu() }
 
-    // Depodan gelen tostlar (işlem sonucu, hata). Sekmeye dönüşte eskisi yeniden çıkmasın.
+    // Depodan gelen tostlar (işlem sonucu, hata). Süresini depo tutar: ekran yeniden kurulunca (döndürme,
+    // ayrıntıdan dönüş) tost kalan süresiyle döner; süresi dolan ya da eylemi kullanılan yeniden çıkmaz.
     if (depo != null) {
         val istek by depo.tost.collectAsState()
+        val erisim = LocalAccessibilityManager.current
         LaunchedEffect(istek) {
             val t = istek ?: return@LaunchedEffect
-            if (t.no <= depo.gosterilenTost) return@LaunchedEffect
-            depo.gosterilenTost = t.no
             val g = t.geriAlma
-            tost.goster(t.mesaj, eylem = if (g != null) "Geri al" else null, hata = t.hata) { if (g != null) depo.geriAl(g) }
+            val sure = depo.tostSuresi(t.no) { TostDurumu.sure(g != null, erisim) } ?: return@LaunchedEffect
+            tost.goster(
+                t.mesaj, eylem = if (g != null) "Geri al" else null, hata = t.hata, sure = sure,
+                onKalan = { depo.tostKalani(t.no, it) },
+            ) { depo.tostuGeriAl(t) }
         }
     }
 
-    // Açılış hareketi yalnız soğuk açılışta (§5.1 [A]); karar ilk çizimde.
-    val acilis = remember { depo != null && !depo.acilisOynadi && hareket.uzamsal }
+    // Açılış hareketi yalnız soğuk açılışta ve ekran başına bir kez (§5.1 [A]): baş ve mozaik ilk kuruluşta
+    // tüketir; kaydırıp ekrandan çıkan öğe dönünce, ekran dönünce yeniden oynamaz.
+    val acilis = rememberSaveable(saver = AcilisHareketi.Saklayici) {
+        (depo != null && !depo.acilisOynadi && hareket.uzamsal).let { AcilisHareketi(bas = it, mozaik = it) }
+    }
     if (model.yuklendi && depo != null) SideEffect { depo.acilisOynadi = true }
 
     // Yoğun gün (§9): eşikte sıkışır, iki altına inince açılır.
@@ -150,18 +162,20 @@ fun BugunEkrani(
             verticalArrangement = Arrangement.spacedBy(Sahne.olcu.aralik),
         ) {
             item(key = "bas") {
-                BugunBasi(model, acilis, onAyarlar, onDurum = { durumAcik = true })
+                BugunBasi(model, acilis.tuket(AcilisHareketi.Parca.BAS), onAyarlar, onDurum = { durumAcik = true })
             }
             durumSeritleri(model, eylemler, onDurum = { durumAcik = true })
             if (model.kalanlar.isNotEmpty()) {
                 item(key = "kalanlar") { Kalanlar(model.kalanlar, hareketler, onKayit, ogeHareketi()) }
             }
             if (model.yuklendi) {
-                if (parcalar.isEmpty()) {
+                if (model.gunOkunamadi) {
+                    item(key = "okunamadi") { GunOkunamadi({ depo?.yenile() }, ogeHareketi()) }
+                } else if (parcalar.isEmpty()) {
                     item(key = "bos") { BosGun(ogeHareketi()) }
                 } else {
                     item(key = "mozaik") {
-                        BugunMozaik(parcalar, model.siradaki, hareketler, acilis, onKayit, ogeHareketi())
+                        BugunMozaik(parcalar, model.siradaki, hareketler, acilis.tuket(AcilisHareketi.Parca.MOZAIK), onKayit, ogeHareketi())
                     }
                 }
             }
@@ -200,6 +214,33 @@ fun BugunEkrani(
 
     if (durumAcik) {
         BugunDurumPenceresi(model, depo, eylemler, onKapat = { durumAcik = false })
+    }
+}
+
+/**
+ * Açılış hareketi (§5.1) ekran başına bir kez. Baş ve mozaik LazyColumn öğesidir: kaydırınca ekrandan çıkan
+ * öğe atılır, dönünce baştan kurulur. Karar öğenin içinde hatırlansaydı her dönüşte açılış yeniden oynardı;
+ * burada her parça ilk kuruluşunda kararı alır ve tüketir. Ekran dönünce de korunur (kaydedilir).
+ */
+@Stable
+internal class AcilisHareketi(bas: Boolean, mozaik: Boolean) {
+    enum class Parca { BAS, MOZAIK }
+
+    private val bekleyen = BooleanArray(2).also { it[0] = bas; it[1] = mozaik }
+
+    /** Bu parça açılışı oynasın mı: ilk kuruluşta bekleyen karar; sonraki kuruluşlarda hep `false`. */
+    @Composable
+    fun tuket(p: Parca): Boolean {
+        val oyna = remember { bekleyen[p.ordinal] }
+        SideEffect { bekleyen[p.ordinal] = false }
+        return oyna
+    }
+
+    companion object {
+        val Saklayici: Saver<AcilisHareketi, List<Boolean>> = Saver(
+            save = { listOf(it.bekleyen[0], it.bekleyen[1]) },
+            restore = { AcilisHareketi(it[0], it[1]) },
+        )
     }
 }
 
@@ -301,8 +342,10 @@ private fun LazyListScope.durumSeritleri(model: BugunModeli, eylemler: BugunEyle
 @Composable
 private fun Kalanlar(kalanlar: List<BugunKaydi>, h: BugunHareketleri, onKayit: (String) -> Unit, modifier: Modifier = Modifier) {
     val kenar = Sahne.olcu.kenar
+    // Tamamlanan kalan şeritte solmuş durur (sonda); başlık açık olanları sayar.
+    val acik = kalanlar.count { it.hal == LevhaHali.ACIK }
     Column(modifier) {
-        AraBaslik(if (kalanlar.size == 1) "Önceki günlerden kalan" else "Önceki günlerden kalan ${kalanlar.size} iş", Modifier.padding(bottom = 0.dp))
+        AraBaslik(if (acik <= 1) "Önceki günlerden kalan" else "Önceki günlerden kalan $acik iş", Modifier.padding(bottom = 0.dp))
         Row(
             Modifier
                 .kenaraTas(kenar)
@@ -380,6 +423,7 @@ private fun Bitenler(
                     onAc = { onKayit(k.kayitId) },
                     modifier = Modifier.giris(if (!ilk[0] && k.anahtar !in gorulen) Giris.YENI else Giris.YOK, i),
                     aciklama = k.aciklama,
+                    iptal = k.iptal,
                     erisim = {
                         if (k.tamamlanabilir) {
                             customActions = listOf(CustomAccessibilityAction("Yeniden aç") { h.tamamla(k, false); true })
@@ -411,6 +455,27 @@ private fun BitenFazlasi(n: Int, onClick: () -> Unit) {
         contentAlignment = Alignment.Center,
     ) {
         Metin("ve $n iş daha", stil = Sahne.yazi.etiket.copy(fontWeight = FontWeight.SemiBold), renk = Sahne.renk.soluk)
+    }
+}
+
+/**
+ * Bugünün takvim günü okunamadı (çekirdek hatası): "boş gün" gösterilmez. Gün cümlesi ve gösterge nedeni
+ * söyler; burada yeniden deneme. Okuma düzelince (dakika sayacı, değişiklik, öne geliş) gün kendiliğinden gelir.
+ */
+@Composable
+private fun GunOkunamadi(onYenidenDene: () -> Unit, modifier: Modifier = Modifier) {
+    val renk = Sahne.renk
+    Row(
+        modifier
+            .fillMaxWidth()
+            .heightIn(min = 96.dp)
+            .kesikCerceve(renk.soluk.copy(alpha = 0.6f), Sahne.olcu.levhaYaricapi.value)
+            .padding(start = 18.dp, end = 12.dp, top = 14.dp, bottom = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Metin("Okuma düzelince bugünün işleri burada görünür.", stil = Sahne.yazi.levhaAlt, renk = renk.soluk, modifier = Modifier.weight(1f))
+        HapDugme("Yeniden dene", onClick = onYenidenDene, onayDugmesi = true)
     }
 }
 

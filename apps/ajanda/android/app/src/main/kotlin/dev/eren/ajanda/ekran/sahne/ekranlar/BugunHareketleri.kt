@@ -6,6 +6,7 @@ import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
@@ -34,14 +35,23 @@ enum class Surec { TAMAMLANIYOR, ONAYLANIYOR, VAZGECILIYOR }
  * çekirdeğe hemen gidilir, levha son hâline hemen geçer (§6). Depo yoksa (vitrin) hareket oynar, veri değişmez.
  *
  * Durum anahtarı kaydın [BugunKaydi.anahtar]'ıdır; değerler Compose durumu (çizim okur).
+ *
+ * Ekranda depo başına tek nesne yaşar ([rememberBugunHareketleri]); hareket ayarı ve titreşim değişince
+ * yalnız bu alanlar güncellenir. Ayar değişince yeni nesne kurulsaydı kilitler ([surec]) boşalır, süren
+ * hareketin eşyordamı işini yine yapar ve aynı levhaya ikinci dokunuş çift tamamlama ya da çift onay olurdu.
  */
 @Stable
 class BugunHareketleri internal constructor(
     private val kapsam: CoroutineScope,
-    private val hareket: SahneHareket,
+    hareket: SahneHareket,
     private val depo: BugunDeposu?,
-    private val titresim: HapticFeedback,
+    titresim: HapticFeedback,
 ) {
+    /** "Hareketi azalt" ayarı; her işlemin başında okunur (süren hareket kendi kararıyla biter). */
+    internal var hareket: SahneHareket = hareket
+
+    internal var titresim: HapticFeedback = titresim
+
     /** Sürmekte olan süreçler (kilit). */
     val surec = mutableStateMapOf<String, Surec>()
 
@@ -195,5 +205,10 @@ fun rememberBugunHareketleri(depo: BugunDeposu?): BugunHareketleri {
     val kapsam = rememberCoroutineScope()
     val hareket = Sahne.hareket
     val titresim = LocalHapticFeedback.current
-    return remember(depo, hareket) { BugunHareketleri(kapsam, hareket, depo, titresim) }
+    val h = remember(depo) { BugunHareketleri(kapsam, hareket, depo, titresim) }
+    SideEffect {
+        h.hareket = hareket
+        h.titresim = titresim
+    }
+    return h
 }

@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -42,7 +43,18 @@ import kotlin.math.roundToInt
  * hafif titreşim. Dikey kaydırmayla çakışmaz: yatay eşik aşılmadan sürükleme başlamaz.
  *
  * Parmağı doğrudan izlediği için "hareketi azalt"ta da çalışır (§6); yalnız bırakınca dönüş anlıktır.
- * Erişilebilirlik: tek yol değildir; daire ve özel eylem aynı işi yapar (§10.3). [etkin] yanlışsa düz içerik.
+ * Erişilebilirlik: tek yol değildir; daire ve özel eylem aynı işi yapar (§10.3).
+ *
+ * [etkin] yanlışsa (kayıt kilitli: tamamlama hareketi sürüyor) yalnız sürükleme kapanır; düzen aynı kalır.
+ * İçerik başka bir gruba taşınıp baştan kurulmasın diye: kurulsa içerideki tamamlama dairesi dolumunu ve
+ * yaylanmasını yitirir (§5.2) ve çekilmiş içerik yayla dönmek yerine yerine sıçrar.
+ *
+ * Sistemin geri hareketi: sol kenardan başlayan sürüklemeyi sistem alır (hareketli gezinmede kenar şeridi).
+ * Bilerek `Modifier.systemGestureExclusion` kullanılmaz: Android kenar başına yalnız 200 dp dikey
+ * dışlamayı dikkate alır; Bugün'ün mozaiği bundan uzun (büyük levha tek başına ≈300 dp), dışlama levhaların
+ * bir kısmında işleyip ötekinde işlemezdi. Üstelik ana ekranın sol kenarındaki geri hareketini (uygulamadan
+ * çıkış) elinden alırdı. Levha kenardan 16 dp içeride başlar; çekme levhanın her yerinden başlar ve tek
+ * yol değildir (daire, TalkBack eylemi).
  */
 @Composable
 fun SagaCek(
@@ -55,10 +67,6 @@ fun SagaCek(
     modifier: Modifier = Modifier,
     icerik: @Composable () -> Unit,
 ) {
-    if (!etkin) {
-        Box(modifier) { icerik() }
-        return
-    }
     val hareket = Sahne.hareket
     val d = LocalDensity.current
     val enCok = with(d) { 150.dp.toPx() }
@@ -68,10 +76,15 @@ fun SagaCek(
     val kapsam = rememberCoroutineScope()
     val titresim = LocalHapticFeedback.current
     val guncelTamamla = rememberUpdatedState(onTamamla)
+    // Sürükleme sürerken kilitlenirse (başka yoldan tamamlandı) yarım kalan kayma yerine döner.
+    LaunchedEffect(etkin) {
+        if (!etkin && kayma.value != 0f && !kayma.isRunning) kayma.animateTo(0f, hareket.yayHizli())
+    }
     // Sürükleme dış kutuda dinlenir (kaymayan koordinatlar: hız doğru ölçülür), içerik kayar.
     Box(
         modifier
-            .pointerInput(Unit) {
+            .pointerInput(etkin) {
+                if (!etkin) return@pointerInput
                 val izci = VelocityTracker()
                 var gecti = false
                 // Konum burada eşzamanlı tutulur; Animatable'a yazmak eşyordamla, bir kare geriden gelir.

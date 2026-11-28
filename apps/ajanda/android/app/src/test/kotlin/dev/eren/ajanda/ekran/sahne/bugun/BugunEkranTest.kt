@@ -2,6 +2,17 @@ package dev.eren.ajanda.ekran.sahne.bugun
 
 import android.app.Application
 import android.graphics.Bitmap
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasText
+import dev.eren.ajanda.cekirdek.KayitDurumu
+import dev.eren.ajanda.ekran.sahne.SahneKok
+import dev.eren.ajanda.ekran.sahne.gezinme.Hedef
+import dev.eren.ajanda.ekran.sahne.gezinme.rememberGezgin
+import dev.eren.ajanda.ekran.sahne.tema.LevhaRengi
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
@@ -298,5 +309,159 @@ class BugunEkranTest {
         ornekGun()
         ac(SahneHareket.Tam, acilis = true, saatDursun = true)
         assertFalse(hemenSonHalinde())
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Gözden geçirme düzeltmeleri
+    // ---------------------------------------------------------------------------------------------
+
+    /** Listeyi [i]. öğeye anında kaydırır (hareketsiz; saat dururken de). */
+    private fun listeyiKaydir(i: Int) {
+        val n = kural.onNode(DIKEY_LISTE).fetchSemanticsNode()
+        kural.runOnUiThread { n.config[SemanticsActions.ScrollToIndex].action!!.invoke(i) }
+    }
+
+    private fun listeBoyu() = kural.onNode(DIKEY_LISTE).fetchSemanticsNode().config[SemanticsProperties.CollectionInfo].rowCount
+
+    /** §5.1: açılış ekran başına bir kez; mozaik ve baş kaydırınca ekrandan çıkıp dönünce yeniden oynamaz. */
+    @Test
+    fun acilisKaydirincaYenidenOynamaz() {
+        c.ekle(
+            kayit("kargo", "Kargo teslimi", an(GUN.toString(), "15:00")),
+            kayit("kitap", "Kitap iadesi", an(GUN.toString(), "17:00")),
+        )
+        for (i in 1..20) c.ekle(kayit("y$i", "Fırın $i", an(gunSonra(1), String.format(java.util.Locale.ROOT, "%02d:00", 8 + i / 2))))
+        ac(SahneHareket.Tam, acilis = true)
+        listeyiKaydir(listeBoyu() - 1)
+        kural.waitForIdle()
+        assertTrue("mozaik ekrandan çıktı", kural.onAllNodes(hasContentDescription("Kargo teslimi", substring = true)).fetchSemanticsNodes().isEmpty())
+        kural.mainClock.autoAdvance = false
+        listeyiKaydir(0)
+        assertTrue("açılış yeniden oynamaz", hemenSonHalinde())
+        levha("Kargo teslimi").assertIsDisplayed()
+    }
+
+    /** §5.13: "Geri al" bir kez çalışır; sönen tosta ikinci dokunuş ikinci kez geri almaz. */
+    @Test
+    fun geriAlIkiKezCalismaz() {
+        ornekGun()
+        ac()
+        kural.onNodeWithContentDescription("Tamamla: Kahve molası").performClick()
+        kural.mainClock.advanceTimeBy(1000)
+        kural.waitForIdle()
+        kural.mainClock.autoAdvance = false
+        val g = kural.onNodeWithText("Geri al")
+        // İkinci dokunuş aynı karede (tost sönerken hâlâ çizili).
+        g.performClick()
+        g.performClick()
+        kural.mainClock.autoAdvance = true
+        kural.waitForIdle()
+        assertEquals(listOf("durum:kahve:TAMAM", "durum:kahve:ACIK"), durumCagrilari())
+    }
+
+    /** Tost, süresi dolana kadar ekrandan ayrılıp dönmekten (ayrıntı, döndürme) sağ çıkar; geri alma kaybolmaz. */
+    @Test
+    fun tostEkrandanAyrilipDonunceKalir() {
+        ornekGun()
+        depo = sahteDepo(c).also { it.acilisOynadi = true; it.basla() }
+        var goster by mutableStateOf(true)
+        kural.setContent {
+            SahneTema(koyu = false, hareket = SahneHareket.Tam) {
+                if (goster) BugunEkrani(depo, GUN, onKayit = {}, onAyarlar = {})
+            }
+        }
+        kural.waitForIdle()
+        kural.onNodeWithContentDescription("Tamamla: Kahve molası").performClick()
+        kural.mainClock.advanceTimeBy(1000)
+        kural.waitForIdle()
+        kural.onNodeWithText("Bitti: Kahve molası").assertIsDisplayed()
+        kural.runOnUiThread { goster = false }
+        kural.waitForIdle()
+        kural.runOnUiThread { goster = true }
+        kural.waitForIdle()
+        kural.onNodeWithText("Bitti: Kahve molası").assertIsDisplayed()
+        kural.onNodeWithText("Geri al").performClick()
+        kural.waitForIdle()
+        assertEquals(listOf("durum:kahve:TAMAM", "durum:kahve:ACIK"), durumCagrilari())
+        // Kullanılan ya da süresi dolan tost dönüşte yeniden çıkmaz.
+        kural.mainClock.advanceTimeBy(5000)
+        kural.runOnUiThread { goster = false }
+        kural.waitForIdle()
+        kural.runOnUiThread { goster = true }
+        kural.waitForIdle()
+        assertTrue(kural.onAllNodes(hasText("Geri al")).fetchSemanticsNodes().isEmpty())
+    }
+
+    /** Hareket ayarı hareket sürerken değişse de kilit korunur: ikinci dokunuş ikinci kez tamamlamaz. */
+    @Test
+    fun hareketAyariDegisinceKilitKorunur() {
+        ornekGun()
+        depo = sahteDepo(c).also { it.acilisOynadi = true; it.basla() }
+        var hareket by mutableStateOf(SahneHareket.Tam)
+        kural.setContent {
+            SahneTema(koyu = false, hareket = hareket) {
+                BugunEkrani(depo, GUN, onKayit = {}, onAyarlar = {})
+            }
+        }
+        kural.waitForIdle()
+        kural.mainClock.autoAdvance = false
+        kural.onNodeWithContentDescription("Tamamla: Kahve molası").performClick()
+        kural.mainClock.advanceTimeBy(100)
+        kural.runOnUiThread { hareket = SahneHareket.Azaltilmis }
+        kural.mainClock.advanceTimeByFrame()
+        kural.mainClock.advanceTimeByFrame()
+        kural.onNodeWithContentDescription("Tamamla: Kahve molası").performClick()
+        kural.mainClock.advanceTimeBy(1500)
+        kural.mainClock.autoAdvance = true
+        kural.waitForIdle()
+        assertEquals(listOf("durum:kahve:TAMAM"), durumCagrilari())
+    }
+
+    /** İptal edilmiş iş Bitenler'de "iptal edildi" durumunu okutur, "tamamlandı"yı değil. */
+    @Test
+    fun iptalEdilenHapIptalOlarakOkunur() {
+        ornekGun()
+        c.ekle(kayit("toplanti", "Toplantı", an(GUN.toString(), "10:00"), durum = KayitDurumu.IPTAL))
+        ac()
+        kural.onNode(DIKEY_LISTE).performScrollToNode(hasContentDescription("Toplantı", substring = true))
+        val n = kural.onNode(hasContentDescription("Toplantı", substring = true).and(hasClickAction())).fetchSemanticsNode().config
+        assertEquals("iptal edildi", n[SemanticsProperties.StateDescription])
+    }
+
+    /** Takvim okunamazsa "Boş bir gün" yerine hata görünür; yeniden denenince gün gelir. */
+    @Test
+    fun takvimOkunamazsaBosGunDegilHataGorunur() {
+        ornekGun()
+        c.sahte.takvimHatasi = IllegalStateException("okunamadı")
+        ac()
+        assertTrue(kural.onAllNodes(hasText("Boş bir gün.")).fetchSemanticsNodes().isEmpty())
+        kural.onNodeWithText("Bugünün işleri okunamadı.").assertIsDisplayed()
+        c.sahte.takvimHatasi = null
+        kural.onNodeWithText("Yeniden dene").performClick()
+        kural.waitForIdle()
+        levha("Kahve molası").assertIsDisplayed()
+    }
+
+    /** Ayrıntı yer tutucusu gerçek kaydı gösterir (başlık, zaman, levhanın rengi); "Bitti" kaydı gerçekten tamamlar. */
+    @Test
+    fun ayrintiGercekKaydiGosterirVeGercektenTamamlar() {
+        ornekGun()
+        depo = sahteDepo(c).also { it.acilisOynadi = true; it.basla() }
+        val k = depo.model.value.acikler.first { it.renk != LevhaRengi.KUM }
+        kural.setContent {
+            SahneTema(koyu = false, hareket = SahneHareket.Azaltilmis) {
+                SahneKok(bugun = GUN, gezgin = rememberGezgin(Hedef.Sekme.BUGUN, Hedef.Ayrinti(k.kayitId)), bugunDeposu = depo)
+            }
+        }
+        kural.waitForIdle()
+        kural.onNode(hasText(k.baslik).and(SemanticsMatcher.keyIsDefined(SemanticsProperties.Heading))).assertIsDisplayed()
+        kural.onNodeWithText("Bugün, ${k.zaman}").assertIsDisplayed()
+        // Kapağın sol kenarı (çizimin yan payı) levhanın takım zemini.
+        val resim = goruntu()
+        val beklenen = k.renk.takim(koyu = false).zemin.toArgb()
+        assertEquals(beklenen, resim.getPixel((resim.width * 0.04f).toInt(), (resim.height * 0.2f).toInt()))
+        kural.onNodeWithText("Bitti").performClick()
+        kural.waitForIdle()
+        assertEquals(listOf("durum:${k.kayitId}:TAMAM"), durumCagrilari())
     }
 }

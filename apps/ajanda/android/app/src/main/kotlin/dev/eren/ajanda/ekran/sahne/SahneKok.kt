@@ -22,8 +22,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import dev.eren.ajanda.ekran.sahne.ekranlar.AyrintiKaynagi
+import dev.eren.ajanda.ekran.sahne.ekranlar.ayrintiRengi
+import dev.eren.ajanda.ekran.sahne.veri.AyrintiOzeti
 import dev.eren.ajanda.ekran.sahne.veri.BugunDeposu
-import dev.eren.ajanda.ekran.sahne.veri.Gorunus
 import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -69,7 +75,7 @@ fun SahneKok(
     acilacakKayit: String? = null,
     kayitAcildi: () -> Unit = {},
 ) {
-    SistemCubuklari(gezgin.ust)
+    SistemCubuklari(gezgin.ust, bugunDeposu)
     LaunchedEffect(acilacakKayit) {
         if (acilacakKayit != null) {
             gezgin.ac(Hedef.Ayrinti(acilacakKayit))
@@ -122,7 +128,10 @@ fun SahneKok(
                 )
                 Hedef.Sekme.TAKVIM -> TakvimYerTutucu(bugun, onKayit = { gezgin.ac(Hedef.Ayrinti(it)) })
                 Hedef.Sekme.TARIHSIZ -> TarihsizYerTutucu(onKayit = { gezgin.ac(Hedef.Ayrinti(it)) })
-                is Hedef.Ayrinti -> AyrintiYerTutucu(h.kayitId, onKapat = { gezgin.geri() })
+                is Hedef.Ayrinti -> {
+                    val kapat = { gezgin.geri(); Unit }
+                    AyrintiYerTutucu(h.kayitId, onKapat = kapat, kaynak = ayrintiKaynagi(bugunDeposu, h.kayitId, kapat))
+                }
                 is Hedef.Duzenle -> DuzenleYerTutucu(h.kayitId, onKapat = { gezgin.geri() })
                 Hedef.Ayarlar -> AyarlarYerTutucu(onKapat = { gezgin.geri() })
             }
@@ -131,17 +140,43 @@ fun SahneKok(
 }
 
 /**
- * Durum ve gezinme çubuğu simgelerinin açık/koyu seçimi (SAHNE.md §1.3): zeminde temaya göre; ayrıntı ve
- * yeni kayıtta üst kenar renkli kapak olduğundan o takımın yazı rengine göre.
+ * Ayrıntının kaydı: Bugün modelinde varsa oradan (renk levhayla aynı: anahtardan ve komşu kuralından), yoksa
+ * çekirdekten okunur. Depo yoksa ya da kimlik yer tutucu örneğiyse `null` (örnek gösterilir).
  */
 @Composable
-private fun SistemCubuklari(ust: Hedef) {
+private fun ayrintiKaynagi(depo: BugunDeposu?, kayitId: String, onKapat: () -> Unit): AyrintiKaynagi? {
+    if (depo == null) return null
+    val model by depo.model.collectAsState()
+    val modelde = model.ayrintiOzeti(kayitId)
+    val ornek = Ornekler.bul(kayitId) != null
+    var okunan by remember(kayitId) { mutableStateOf<AyrintiOzeti?>(null) }
+    var okundu by remember(kayitId) { mutableStateOf(false) }
+    val oku = modelde == null && !ornek
+    LaunchedEffect(kayitId, oku) {
+        if (oku) depo.kayitOku(kayitId) { okunan = it; okundu = true }
+    }
+    val ozet = modelde ?: okunan
+    return when {
+        ozet != null -> AyrintiKaynagi.Gercek(ozet) { tamam -> depo.tamamla(ozet.kayit, tamam); onKapat() }
+        ornek -> null
+        okundu -> AyrintiKaynagi.Bulunamadi
+        else -> AyrintiKaynagi.Okunuyor
+    }
+}
+
+/**
+ * Durum ve gezinme çubuğu simgelerinin açık/koyu seçimi (SAHNE.md §1.3): zeminde temaya göre; ayrıntı ve
+ * yeni kayıtta üst kenar renkli kapak olduğundan o takımın yazı rengine göre (ayrıntıda kapağın rengi:
+ * [ayrintiRengi]).
+ */
+@Composable
+private fun SistemCubuklari(ust: Hedef, depo: BugunDeposu?) {
     if (LocalInspectionMode.current) return
     val view = LocalView.current
     val pencere = (view.context as? Activity)?.window ?: return
     val koyuZemin = Sahne.renk.koyu
     val ustRengi = when (ust) {
-        is Hedef.Ayrinti -> Ornekler.bul(ust.kayitId)?.renk ?: Gorunus.renk(ust.kayitId)
+        is Hedef.Ayrinti -> ayrintiRengi(ust.kayitId, ayrintiKaynagi(depo, ust.kayitId, onKapat = {}))
         is Hedef.Duzenle -> Ornekler.bul(ust.kayitId)?.renk ?: LevhaRengi.KUM
         else -> null
     }

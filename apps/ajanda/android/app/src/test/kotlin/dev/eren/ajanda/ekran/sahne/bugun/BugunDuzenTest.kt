@@ -132,4 +132,34 @@ class BugunDuzenTest {
         assertTrue(bitti)
         assertTrue(depo.tost.value!!.hata)
     }
+
+    /** Model kurulurken hata olsa da işlem sonrası kilit açılır (levha kalıcı kilitli kalmaz); hata tost olur. */
+    @Test
+    fun modelKurulamazsaKilitYineAcilir() {
+        val c = BugunCekirdegi()
+        c.ekle(kayit("a", "Kahve", an(GUN.toString(), "15:00")))
+        var bozuk = false
+        val depo = sahteDepo(c) { if (bozuk) throw IllegalStateException("saat okunamadı") else SIMDI }
+        depo.basla()
+        val k = depo.model.value.acikler.single()
+        bozuk = true
+        var bitti = false
+        depo.tamamla(k) { bitti = true }
+        assertTrue("kilit açıldı", bitti)
+        assertTrue(depo.tost.value!!.hata)
+    }
+
+    /** Tostun "Geri al"ı depoda da bir kez: aynı tost için ikinci çağrı çekirdeğe gitmez. */
+    @Test
+    fun ayniTostIkinciKezGeriAlinmaz() {
+        val c = BugunCekirdegi()
+        c.ekle(kayit("a", "Kahve", an(GUN.toString(), "15:00")))
+        val depo = sahteDepo(c)
+        depo.basla()
+        depo.tamamla(depo.model.value.acikler.single())
+        val t = depo.tost.value!!
+        depo.tostuGeriAl(t)
+        depo.tostuGeriAl(t)
+        assertEquals(listOf("durum:a:TAMAM", "durum:a:ACIK"), c.cagrilar.filter { it.startsWith("durum:") })
+    }
 }

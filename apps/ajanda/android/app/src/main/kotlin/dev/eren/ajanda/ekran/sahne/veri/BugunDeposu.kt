@@ -58,12 +58,41 @@ class BugunDeposu(
      */
     @Volatile var acilisOynadi: Boolean = false
 
-    /** Ekranın en son gösterdiği tostun numarası (sekmeye dönüşte aynı tost yeniden çıkmasın). */
-    @Volatile var gosterilenTost: Long = 0
-
     // Yalnız ana iş parçacığında (Compose).
     private var imzaGunu: java.time.LocalDate? = null
     private val imzaOynayanlar = HashSet<String>()
+
+    /** Ekranda gösterilen son tost ve kalan süresi (ms); eylemi kullanıldıysa kalan 0. */
+    private var gosterilenNo = 0L
+    private var gosterilenKalan = 0L
+    private var geriAlinanNo = 0L
+
+    /**
+     * Tostun ekranda kalacağı süre (SAHNE.md §5.13). Yeni tostta [ilkSure]'yi verir; ekran yeniden kurulunca
+     * (döndürme, ayrıntıdan dönüş) aynı tost kalan süresiyle döner (ekran yokken süre işlemez: kullanıcı
+     * dönünce geri alma hâlâ elindedir). Süresi dolmuş, eylemi kullanılmış ya da yerini yenisine bırakmış tost
+     * için `null`.
+     */
+    fun tostSuresi(no: Long, ilkSure: () -> Long): Long? {
+        if (no < gosterilenNo) return null
+        if (no == gosterilenNo) return gosterilenKalan.takeIf { it > 0 }
+        gosterilenNo = no
+        return ilkSure().also { gosterilenKalan = it }
+    }
+
+    /** Gösterilen tostun kalan süresi (ekran sayar, [TostDurumu]). */
+    fun tostKalani(no: Long, kalan: Long) {
+        if (no == gosterilenNo) gosterilenKalan = kalan
+    }
+
+    /** Tostun "Geri al"ı: her tost için bir kez (aynı tosta ikinci dokunuş, yeniden kurulan ekran) çekirdeğe gider. */
+    fun tostuGeriAl(t: TostIstegi) {
+        val g = t.geriAlma ?: return
+        if (t.no <= geriAlinanNo) return
+        geriAlinanNo = t.no
+        if (t.no == gosterilenNo) gosterilenKalan = 0
+        geriAl(g)
+    }
 
     /**
      * Bir kez oynayan imza ve kalem (SAHNE.md §5.15) bu gösterimde oynasın mı: kayıt başına **gün içinde bir
@@ -180,13 +209,23 @@ class BugunDeposu(
             val s = try {
                 f(denetleyici())
             } finally {
-                runCatching { denetleyici().degisti(etki) }
-                yayinla()
-                anaya(bitince)
+                // Model kurulamasa da kilit açılır (levha kalıcı kilitli kalmasın); hata tost olur ([arkada]).
+                try {
+                    runCatching { denetleyici().degisti(etki) }
+                    yayinla()
+                } finally {
+                    anaya(bitince)
+                }
             }
             if (s.mesaj != null) tostGoster(s.mesaj, s.geriAlma, s.hata)
         }
         arkada(is_)
+    }
+
+    /** Ayrıntı için kaydı çekirdekten okur (Bugün modelinde değilse); [sonuc] ana iş parçacığında. */
+    fun kayitOku(kayitId: String, sonuc: (AyrintiOzeti?) -> Unit) = arkada {
+        val o = denetleyici().ayrintiOzeti(kayitId)
+        anaya { sonuc(o) }
     }
 
     private fun kayitlar(vararg id: String) = Degisim(id.toList(), false, false, false, false, emptyList())

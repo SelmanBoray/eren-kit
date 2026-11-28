@@ -46,11 +46,10 @@ data class SahneOlculer(
     val kapakYaricapi: Dp = 34.dp,
     val dokunma: Dp = 48.dp,
     /**
-     * Yuvarlak simge düğmesi. Prototipte 46 dp; düğmenin tıklama alanı dairenin kendisi olduğundan 48 dp:
-     * Compose'un küçük öğe genişletmesi (48 dp'ye) altta dokunma alan bir kardeş varsa (ayrıntıdaki kaydırma
-     * sütunu gibi) o kardeşe kaybediyor.
+     * Yuvarlak simge düğmesinin görünür dairesi (SAHNE.md §3.7, §3.8: 46 dp). Dokunma alanı dairenin
+     * çevresindeki kutudur ve en az [dokunma] (`YuvarlakDugme`). Tek kaynak: `YUVARLAK_DUGME_GORUNUR` buradan okur.
      */
-    val yuvarlakDugme: Dp = 48.dp,
+    val yuvarlakDugme: Dp = 46.dp,
     /** Alt çubuğun yüksekliği (6 dp iç pay + 48 dp öğe + 6 dp); içerik altına bu kadar ve sistem çubuğu kadar pay bırakır. */
     val cubukYuksekligi: Dp = 60.dp,
     val cubukAltPayi: Dp = 14.dp,
