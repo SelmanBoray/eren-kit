@@ -189,11 +189,16 @@ class BirlestirmePenceresiTest {
         val soruPenceresi2 = Any()
         p.acildi(soruPenceresi2)
         assertNull(p.soruyaDon(soruPenceresi2))
-        // Yeniden "Eşleşmeyi kaldır", sonra arka plandan yeni plan: onay penceresinin yerine yeni soru geçer.
+        // Yeniden "Eşleşmeyi kaldır", sonra arka plandan yeni plan: onay penceresi yerinde kalır (Q1), "Geri dön"
+        // yeni soruyu açar.
         p.kaldirmaIstendi(soruPenceresi2)
-        p.acildi(Any())
+        val onayPenceresi2 = Any()
+        p.acildi(onayPenceresi2)
         cekirdek.plan = plan("iz2")
-        val yeni = goster(p.geldi(akis.denetle())) as BirlestirmeAkisi.Adim.Onay
+        val yeni = akis.denetle() as BirlestirmeAkisi.Adim.Onay
+        assertEquals(BirlestirmePenceresi.Is.Dokunma, p.geldi(yeni))
+        assertTrue(p.kaldirmaOnayinda)
+        assertEquals(yeni, p.soruyaDon(onayPenceresi2))
         assertEquals("Kayıtlar bu arada değişti", yeni.baslik)
         assertTrue(!p.kaldirmaOnayinda)
         // İkinci onayda "Eşleşmeyi kaldır": pencere kapanır (vazgeç görünümde, arka iş parçacığında).
@@ -205,6 +210,123 @@ class BirlestirmePenceresiTest {
         assertTrue(p.kapandi(o))
         assertNull(p.adim)
         assertTrue(cekirdek.onaylananIzler.isEmpty())
+    }
+
+    @Test
+    fun kaldirmaOnayiAcikkenYeniSoruPencereyiDegistirmezYalnizSaklanir() {
+        // Q1: onaydaki sağ düğme "Eşleşmeyi kaldır", sorudaki "Birleştir"; dokunuş yanlış düğmeye düşmesin.
+        val p = BirlestirmePenceresi()
+        cekirdek.plan = plan("iz1")
+        val ilk = goster(p.geldi(akis.denetle())) as BirlestirmeAkisi.Adim.Onay
+        val soruPenceresi = Any()
+        p.acildi(soruPenceresi)
+        assertEquals(ilk, p.kaldirmaIstendi(soruPenceresi))
+        val onayPenceresi = Any()
+        p.acildi(onayPenceresi)
+        // Plan iki kez değişti: pencere hiç değişmez, saklı soru son plana güncellenir.
+        cekirdek.plan = plan("iz2")
+        assertEquals(BirlestirmePenceresi.Is.Dokunma, p.geldi(akis.denetle()))
+        cekirdek.plan = plan("iz3")
+        val son = akis.denetle() as BirlestirmeAkisi.Adim.Onay
+        assertEquals(BirlestirmePenceresi.Is.Dokunma, p.geldi(son))
+        assertEquals(BirlestirmePenceresi.Is.Dokunma, p.geldi(son))
+        assertTrue(p.kaldirmaOnayinda)
+        assertEquals(son, p.soru)
+        // Onay penceresi hâlâ ekrandaki pencere: geri tuşu/iptal soruyu ertelemez, "Geri dön" son soruyu açar.
+        assertNull(p.geriBasildi(onayPenceresi))
+        assertEquals(son, p.soruyaDon(onayPenceresi))
+        assertEquals("iz3", p.soru!!.iz)
+        assertTrue(!p.kaldirmaOnayinda)
+
+        // Onay açıkken "Eşleşmeyi kaldır"a basıldıysa (soru güncellense de) kaldırma bir kez yapılır.
+        val s2 = Any()
+        p.acildi(s2)
+        p.kaldirmaIstendi(s2)
+        val o2 = Any()
+        p.acildi(o2)
+        cekirdek.plan = plan("iz4")
+        assertEquals(BirlestirmePenceresi.Is.Dokunma, p.geldi(akis.denetle()))
+        assertTrue(p.kapandi(o2))
+        assertEquals(false, p.kapandi(o2))
+        assertNull(p.adim)
+
+        // Bilgi ve hata onayın yerine geçer (tek "Tamam"; kaldırılacak bekleyen kalmamıştır); null onu kapatır.
+        cekirdek.plan = plan("iz5")
+        val s3 = Any()
+        goster(p.geldi(akis.denetle()))
+        p.acildi(s3)
+        p.kaldirmaIstendi(s3)
+        p.acildi(Any())
+        assertTrue(goster(p.geldi(BirlestirmeAkisi.Adim.Bilgi("b", "m"))) is BirlestirmeAkisi.Adim.Bilgi)
+        assertTrue(!p.kaldirmaOnayinda)
+        cekirdek.plan = plan("iz6")
+        val s4 = Any()
+        goster(p.geldi(akis.denetle()))
+        p.acildi(s4)
+        p.kaldirmaIstendi(s4)
+        p.acildi(Any())
+        assertEquals(BirlestirmePenceresi.Is.Kapat, p.geldi(null))
+        assertNull(p.adim)
+    }
+
+    @Test
+    fun yerDegistirenSoruBirlestiriBekletirIlkSoruBekletmez() {
+        // Q1: açık bir pencerenin yerine geçen soru "Birleştir"i kısa bir süre etkisiz açar.
+        val p = BirlestirmePenceresi()
+        cekirdek.plan = plan("iz1")
+        val ilk = p.geldi(akis.denetle()) as BirlestirmePenceresi.Is.Goster
+        assertEquals(false, ilk.onayBeklet)
+        p.acildi(Any())
+        // Soru açıkken plan değişti: aynı konumda yeni "Birleştir", eski sayılara giden dokunuş onaylamasın.
+        cekirdek.plan = plan("iz2")
+        val yeni = p.geldi(akis.denetle()) as BirlestirmePenceresi.Is.Goster
+        assertTrue(yeni.onayBeklet)
+        p.acildi(Any())
+        // Sonuç/hata penceresi ("Tamam" aynı konumda) yerine geçen soru da bekletilir.
+        val bilgi = p.geldi(BirlestirmeAkisi.Adim.Hata("h", "m")) as BirlestirmePenceresi.Is.Goster
+        assertEquals(false, bilgi.onayBeklet)
+        p.acildi(Any())
+        cekirdek.plan = plan("iz3")
+        assertTrue((p.geldi(akis.denetle(zorla = true)) as BirlestirmePenceresi.Is.Goster).onayBeklet)
+        // Pencere kapandıktan sonra gelen soru bekletilmez (değişen bir şey yok, kullanıcı ona dokunmuyordu).
+        val son = Any()
+        p.acildi(son)
+        assertTrue(p.geriBasildi(son) != null)
+        cekirdek.plan = plan("iz4")
+        assertEquals(false, (p.geldi(akis.denetle(zorla = true)) as BirlestirmePenceresi.Is.Goster).onayBeklet)
+        assertTrue(BirlestirmePenceresi.ONAY_BEKLEME_MS in 500L..2_000L)
+    }
+
+    @Test
+    fun sonucKutusuDoluncaCanliEtkinligeHaberVerir() {
+        // Q4: iş sürerken etkinlik yeniden yaratıldı; yenisi onStart'ta kaydoldu: yanıt kutuda beklemez.
+        val k = SonucKutusu<BirlestirmeAkisi.Adim>()
+        val gosterilen = mutableListOf<BirlestirmeAkisi.Adim>()
+        val yeniEtkinlik: () -> Unit = { k.al()?.let { gosterilen += it } }
+        val eskiEtkinlik: () -> Unit = { k.al()?.let { gosterilen += it } }
+        // Dinleyen yok (etkinlik durdu): yanıt kutuda kalır, sonraki onStart alır.
+        val a = BirlestirmeAkisi.Adim.Bilgi("a", "m")
+        k.koy(a)
+        assertTrue(gosterilen.isEmpty())
+        assertEquals(false, k.dinleniyor)
+        k.dinle(yeniEtkinlik)
+        assertTrue(k.dinleniyor)
+        assertEquals(a, k.al())
+        // Kayıtlıyken gelen yanıt hemen verilir, bir kez.
+        val b = BirlestirmeAkisi.Adim.Bilgi("b", "m")
+        k.koy(b)
+        assertEquals(listOf<BirlestirmeAkisi.Adim>(b), gosterilen)
+        assertNull(k.al())
+        assertEquals(false, k.teslimEt(b))
+        // Eski etkinliğin geç onStop'u yenisinin kaydını silmez; yenisinin onStop'u siler.
+        k.birak(eskiEtkinlik)
+        assertTrue(k.dinleniyor)
+        k.birak(yeniEtkinlik)
+        assertEquals(false, k.dinleniyor)
+        val c = BirlestirmeAkisi.Adim.Hata("c", "m")
+        k.koy(c)
+        assertEquals(1, gosterilen.size)
+        assertEquals(c, k.al())
     }
 
     @Test

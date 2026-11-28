@@ -94,8 +94,11 @@ class BirlestirmeAkisi(
         data class Hata(override val baslik: String, override val metin: String) : Adim()
     }
 
-    /** Ekranın sorguladığı bekleyen birleştirme ([bekleyen]); şerit metni ve düğmesi hazır. */
-    data class Bekleyen(val ertelendi: Boolean, val serit: String, val dugme: String)
+    /**
+     * Ekranın sorguladığı bekleyen birleştirme ([bekleyen]); şerit metni ve düğmesi hazır. [okunamadi]: önizleme
+     * okunamadı, bekleyen olup olmadığı bilinmiyor (şerit bunu söyler, düğmesi yeniden dener).
+     */
+    data class Bekleyen(val ertelendi: Boolean, val serit: String, val dugme: String, val okunamadi: Boolean = false)
 
     /** Akışın bildiği son hal (kilit altında değişir). */
     private sealed interface Hal {
@@ -105,6 +108,9 @@ class BirlestirmeAkisi(
         data class Soruldu(val iz: String, val kusak: Long, val degisti: Boolean = false) : Hal
 
         data class Ertelendi(val iz: String, val kusak: Long) : Hal
+
+        /** Önizleme okunamadı ve önceden bilinen bir soru yoktu: bekleyen olup olmadığı bilinmiyor. */
+        data object Okunamadi : Hal
 
         /** [izler]'den biriyle uygulandı; aynı izle gelen onay [sonuc]'u yeniden alır. */
         data class Uygulandi(val izler: Set<String>, val sonuc: Adim.Bilgi) : Hal
@@ -139,6 +145,8 @@ class BirlestirmeAkisi(
             if (!zorla && ayniErteleme()) return null
             onayAdimi(p, degisti = h is Hal.Soruldu && (h.iz != p.iz || h.degisti))
         } catch (e: Exception) {
+            // Bilinen soru ya da erteleme sürer; hiçbir şey bilinmiyorsa şerit "okunamadı" der (yeniden deneme yolu).
+            if (hal == Hal.Yok) hal = Hal.Okunamadi
             Adim.Hata(metinler.hataBaslik, metinler.hata(e))
         }
     }
@@ -171,6 +179,7 @@ class BirlestirmeAkisi(
         get() = when (val h = hal) {
             is Hal.Soruldu -> Bekleyen(false, metinler.bekleyenSeridi, metinler.bekleyenDugmesi)
             is Hal.Ertelendi -> Bekleyen(h.kusak == kusak(), metinler.bekleyenSeridi, metinler.bekleyenDugmesi)
+            Hal.Okunamadi -> Bekleyen(false, metinler.okunamadiSeridi, metinler.yenidenDeneDugmesi, okunamadi = true)
             else -> null
         }
 
@@ -196,14 +205,40 @@ class BirlestirmeAkisi(
         }
     }
 
-    /** Kullanıcı vazgeçti: bağlanma iptal edilir (eşleşme silinir; kayıtlar değişmez). */
+    /**
+     * Kullanıcı vazgeçti: bağlanma iptal edilir (eşleşme silinir; kayıtlar değişmez). Durum yalnız başarıda
+     * sıfırlanır; hata: [vazgecBasarisiz].
+     */
     fun vazgec(): Adim = synchronized(kilit) {
-        hal = Hal.Yok
-        try {
-            val k = c.birlestirmedenVazgec()
-            Adim.Bilgi(metinler.vazgecBaslik, metinler.vazgecSonucu(k))
+        val k = try {
+            c.birlestirmedenVazgec()
         } catch (e: Exception) {
-            Adim.Hata(metinler.hataBaslik, metinler.hata(e))
+            vazgecBasarisiz()
+            return Adim.Hata(metinler.hataBaslik, metinler.hata(e))
+        }
+        hal = Hal.Yok
+        Adim.Bilgi(metinler.vazgecBaslik, metinler.vazgecSonucu(k))
+    }
+
+    /**
+     * Çekirdek koparmadı: eşleşme ve bekleyen birleştirme sürebilir, durum silinmez (şerit kalır, gösterge
+     * "Eşitleniyor…"ya dönmez). Açık soru ertelenmiş sayılır: kullanıcı birleştirmek istemedi, pencere aynı
+     * bağlantıda kendiliğinden yeniden açılmaz (şeritten açılır). Bekleyen canlı okunur: kalktıysa (ör. zaten bağlı)
+     * şerit de kalkar; okunamazsa bilinen hal korunur.
+     */
+    private fun vazgecBasarisiz() {
+        val h = hal
+        val p = try {
+            c.birlestirmeOnizlemesi()
+        } catch (_: Exception) {
+            if (h is Hal.Soruldu) hal = Hal.Ertelendi(h.iz, h.kusak)
+            return
+        }
+        hal = when {
+            p == null -> if (h is Hal.Uygulandi) h else Hal.Yok
+            h is Hal.Soruldu -> Hal.Ertelendi(p.iz, h.kusak)
+            h is Hal.Ertelendi -> h
+            else -> Hal.Ertelendi(p.iz, kusak())
         }
     }
 

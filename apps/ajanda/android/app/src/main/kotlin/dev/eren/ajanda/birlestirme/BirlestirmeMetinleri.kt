@@ -24,7 +24,8 @@ open class BirlestirmeMetinleri {
     /** "Eşleşmeyi kaldır"ın ikinci onayı. */
     val vazgecOnayBaslik = "Eşleşme kaldırılsın mı?"
     val vazgecOnayMetni = "Hiçbir kayıt değişmez; kayıtlar bu telefonda olduğu gibi kalır. Bu telefonun Eren servisiyle " +
-        "eşleşmesi silinir. Yeniden bağlanmak için Eren servisinin QR kodunu yeniden okutmanız gerekir; bu geri alınamaz."
+        "eşleşmesi silinir. Eşleşmeyi kaldırmak geri alınamaz: yeniden bağlanmak için Eren servisinin QR kodunu yeniden " +
+        "okutmanız gerekir."
     val vazgecOnayDugmesi = "Eşleşmeyi kaldır"
     val geriDonDugmesi = "Geri dön"
 
@@ -45,6 +46,10 @@ open class BirlestirmeMetinleri {
     /** "Bekleyen birleştirme" şeridi (`BirlestirmeAkisi.bekleyen`); düğme `denetle(zorla = true)`. */
     val bekleyenSeridi = "Eren servisiyle birleştirme onayınızı bekliyor; onaylayana dek kayıtlar eşitlenmez."
     val bekleyenDugmesi = "Gözden geçir"
+
+    /** Önizleme okunamadı, bekleyen birleştirme bilinmiyor (`BirlestirmeAkisi.sonBekleyen`); düğme `denetle(zorla = true)`. */
+    val okunamadiSeridi = "Eren servisiyle birleştirmenin durumu okunamadı; birleştirme onayınızı bekliyor olabilir."
+    val yenidenDeneDugmesi = "Yeniden dene"
 
     fun onizleme(p: BirlestirmeOnizlemesi, degisti: Boolean): String = buildList {
         if (degisti) add("Önizlemeden sonra kayıtlar değişti; plan yenilendi. Aşağıdaki sayılar yeni plana göredir.")

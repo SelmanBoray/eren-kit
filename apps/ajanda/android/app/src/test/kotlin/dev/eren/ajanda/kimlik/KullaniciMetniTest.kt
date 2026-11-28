@@ -137,7 +137,7 @@ class KullaniciMetniTest {
             addAll(listOf(m.onayDugmesi, m.vazgecDugmesi, m.sonraDugmesi, m.koptu, m.sonucKisa, m.zatenBaslik, m.zaten))
             addAll(listOf(m.belirsizBaslik, m.belirsiz, m.bekleyenSeridi, m.bekleyenDugmesi))
             addAll(listOf(m.vazgecOnayBaslik, m.vazgecOnayMetni, m.vazgecOnayDugmesi, m.geriDonDugmesi, m.soruKapandi))
-            addAll(listOf(m.oncedenBaslik, m.onceden))
+            addAll(listOf(m.oncedenBaslik, m.onceden, m.okunamadiSeridi, m.yenidenDeneDugmesi))
             planlar.forEach { p -> add(m.onizleme(p, true)); add(m.onizleme(p, false)); add(m.sonuc(p)) }
             add(m.sonuc(null))
             listOf(true, false).forEach { add(m.vazgecSonucu(KoparmaSonucu(CalismaKipi.YEREL, 0, 0, 0, 0, it))) }
