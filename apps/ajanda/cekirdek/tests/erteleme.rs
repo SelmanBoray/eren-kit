@@ -14,7 +14,7 @@
 //! - Serbest bırakma: servis hiç güncellenmezse kullanıcı ertelenenleri atar (`ertelenenleri_at`): v3
 //!   değişiklikleri ret listesine işaretli geçer, v2 kısımları ve sırası tutulan silme gider. Atılanın ne olduğu
 //!   ret listesinde görünür (`v3_degisikligi`; daha önce yollanmışsa `ulasmis_olabilir`), `ertelenen_geri_al` onu
-//!   yeniden uygular. Yoldaki satıra dokunulmaz; yarıda kalan atma geri alınır; atmadan sonraki ilerleme hatası
+//!   (servis v3'te eşitlenince) yeniden uygular; atıldıktan sonra değişen alanı ezmez, listeleri birleştirir. Yoldaki satıra dokunulmaz; yarıda kalan atma geri alınır; atmadan sonraki ilerleme hatası
 //!   çağrıyı düşürmez. Yanıtsız geçmiş isteği yukarı denemeyi süresiz bekletmez.
 //! - Uzun kuyruk: baştaki ertelenmiş önek her gönderimde yeniden yürünmez.
 //! - Koparma: ertelenen değerler yerel gerçekte kalır.
@@ -27,7 +27,8 @@ use ajanda_cekirdek::depo::Depo;
 use ajanda_cekirdek::hata::CekirdekHatasi;
 use ajanda_cekirdek::kopru::kabuklar::ZamanKabugu;
 use ajanda_cekirdek::kopru::tipler::{
-    BaglantiAsamasi, BaglantiKipi, BaglantiYetenekleri, CalismaKipi, KayitGorunumu, ListeSorgusu, Sekme, V3DegisiklikOzeti,
+    BaglantiAsamasi, BaglantiKipi, BaglantiYetenekleri, CalismaKipi, ErtelenenGeriAlma, KayitGorunumu, ListeSorgusu, Sekme,
+    V3DegisiklikOzeti,
 };
 use ajanda_cekirdek::model::{
     AjandaBolgeKonumu, AjandaDegisiklik, AjandaEki, AjandaIslem, AjandaKaydi, AjandaRetNedeni, Alan, GirdiYolu, IslemTuru,
@@ -738,9 +739,9 @@ fn sql(h: &Hat, s: &str) {
 }
 
 /// A1: kullanıcı kayda konum ve fotoğraf ekler, servis v2 kalır, "hepsini at"a basar. Ret listesinde neyin
-/// atıldığı görünür (`v3_degisikligi`: konan alanlar ve kaldırılanlar) ve `ertelenen_geri_al` onu yeniden
-/// uygular: girdi listeden çıkar, değişiklik yeni bir işlem olarak kuyruğa girer, eski serviste yine ertelenir,
-/// kayıt v3 değeriyle görünür; servis güncellenince PC'ye gider.
+/// atıldığı görünür (`v3_degisikligi`: konan alanlar ve kaldırılanlar). Eski serviste yeniden uygulanmaz (C1:
+/// PC'nin v3 hali bilinmez); servis güncellenip v3'te eşitlenince `ertelenen_geri_al` onu yeniden uygular: girdi
+/// listeden çıkar, yalnız değişecek alanlar yeni bir işlemle PC'ye gider.
 #[test]
 fn atilan_ertelenen_degisiklik_gorunur_ve_yeniden_uygulanir() {
     let mut h = Hat::yeni("erteleme-geri-al");
@@ -768,30 +769,44 @@ fn atilan_ertelenen_degisiklik_gorunur_ve_yeniden_uygulanir() {
         "neyin atıldığı görünür"
     );
 
-    // Yeniden uygula: ret listesinden çıkar, eski serviste yine ertelenir, kayıt v3 değeriyle görünür.
+    // Eski serviste yeniden uygulanmaz (C1): telefon PC'nin v3 halini bilmez, değişiklik kuyrukta beklerken
+    // PC'de sonradan değişen alanı görmeden ezebilirdi. Girdi kalır, hiçbir şey değişmez.
+    assert!(matches!(h.c.ertelenen_geri_al("i_v3".into()), Err(CekirdekHatasi::GecersizDurum { .. })));
+    assert!(matches!(h.c.ertelenen_geri_al_denetimli("i_v3".into(), true), Err(CekirdekHatasi::GecersizDurum { .. })));
+    assert_eq!(h.c.ret_listesi().unwrap().len(), 1);
+    assert!(depo(&h).kuyruk().unwrap().is_empty());
+    assert!(kayit(&h, &a).v3.bos_mu());
+
+    // Servis güncellenip v3'te eşitlenince: ret listesinden çıkar, yeni bir işlem olarak kuyruğa girer ve gider.
+    v3e_gec(&mut h);
+    let uygulanan = h.pc.uygulanan.len();
     h.gozlemci.al();
-    assert!(h.c.ertelenen_geri_al("i_v3".into()).unwrap());
+    let s = h.c.ertelenen_geri_al_denetimli("i_v3".into(), false).unwrap();
+    let adlar = |l: &[&str]| l.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    assert_eq!(
+        s,
+        ErtelenenGeriAlma {
+            bulundu: true,
+            uygulandi: true,
+            degisen: adlar(&["bolge", "bolge_konumu", "ekler"]),
+            cakisan: vec![],
+            birlesen: vec![],
+        },
+        "varış zaten yoktu: kaldırılması değişen sayılmaz"
+    );
     let degisimler = h.gozlemci.al();
     assert!(degisimler.iter().any(|d| d.ret_listesi && d.baglanti && d.kayitlar.contains(&a)), "{degisimler:?}");
     h.pompala();
     assert!(h.c.ret_listesi().unwrap().is_empty());
-    let g = gorunum(&h, &a);
-    assert_eq!((g.kayit.v3.bolge.as_deref(), g.kayit.v3.ekler.len(), g.bekleyen, g.ertelenen), (Some("Ev"), 1, false, true));
-    let d = h.c.baglanti_durumu().unwrap();
-    assert_eq!((d.kuyrukta, d.ertelenen_islem, d.ret_listesinde), (0, 1, 0));
-    assert_eq!(yetenek(&h).ertelenen, 1);
-    let kuyruk = depo(&h).kuyruk().unwrap();
-    assert_eq!(kuyruk.len(), 1);
-    assert!(kuyruk[0].islem_id != "i_v3" && kuyruk[0].islem_id.starts_with("i_"), "yeni işlem: {}", kuyruk[0].islem_id);
-    assert!(h.pc.d.kayitlar[&a].v3.bos_mu(), "eski servise gitmedi");
+    let yeni = &h.pc.uygulanan[uygulanan..];
+    assert!(yeni.len() == 1 && yeni[0] != "i_v3" && yeni[0].starts_with("i_"), "yeni işlem: {yeni:?}");
     assert!(!h.c.ertelenen_geri_al("i_v3".into()).unwrap(), "listede yok: etkisiz");
-
-    // Servis güncellenince gider; ret listesine düşen yok.
-    v3e_gec(&mut h);
+    assert_eq!(h.c.ertelenen_geri_al_denetimli("i_v3".into(), false).unwrap(), ErtelenenGeriAlma::default());
     let pc = &h.pc.d.kayitlar[&a];
     assert_eq!((pc.v3.bolge.as_deref(), pc.v3.bolge_konumu, pc.v3.ekler.clone()), (Some("Ev"), Some(konum()), vec![foto()]));
     assert_eq!(&kayit(&h, &a), pc);
-    assert_eq!(h.c.baglanti_durumu().unwrap().ret_listesinde, 0);
+    let d = h.c.baglanti_durumu().unwrap();
+    assert_eq!((d.kuyrukta, d.ertelenen_islem, d.ret_listesinde), (0, 0, 0));
     assert!(depo(&h).kuyruk().unwrap().is_empty());
 }
 
@@ -1012,4 +1027,391 @@ fn yanitsiz_gecmis_istegi_yukari_denemesini_suresiz_bekletmez() {
     h.baglan();
     assert!(h.canli_mi());
     assert_eq!(h.pc.acilislar.last(), Some(&("hello", 3)));
+}
+
+// -------------------------------------------------------------------------------------------------
+// Yeniden uygulama ve atıldıktan sonraki değişiklikler (dördüncü tur C1, C2, C6)
+// -------------------------------------------------------------------------------------------------
+
+/// Asistanın PC'de eklediği ikinci fotoğraf (kapaksız: kayıtta en çok bir kapak).
+fn foto_b() -> AjandaEki {
+    AjandaEki { ek_id: "ek_02".into(), ozet: "b".repeat(64), kapak: false, ..foto() }
+}
+
+fn ekler(l: Vec<AjandaEki>) -> V3Degisikligi {
+    V3Degisikligi { ekler: Alan::Deger(l), ..Default::default() }
+}
+
+/// Eski yüzeyin çakışma hatası: `GecersizDurum`, mesajı çakışan alanı adıyla söyler.
+fn cakisma_hatasi(s: Result<bool, CekirdekHatasi>, alan: &str) {
+    match s {
+        Err(CekirdekHatasi::GecersizDurum { mesaj }) => assert!(mesaj.contains("atıldıktan sonra") && mesaj.contains(alan), "{mesaj}"),
+        s => panic!("{s:?}"),
+    }
+}
+
+/// v2 serviste `i_v3` (yalnız v3 değişikliği) ertelenir ve atılır; servis güncellenir, v3'te eşitlenilir.
+fn atilip_v3e_gecilen(h: &mut Hat, v3: V3Degisikligi) -> String {
+    let a = v2ye_inen_kurulum(h);
+    kuyruga_yaz(h, "i_v3", &yalniz_v3(&a, v3));
+    v2de_baglan(h);
+    assert_eq!(h.c.ertelenenleri_at(None).unwrap(), 1);
+    v3e_gec(h);
+    a
+}
+
+/// C1, fotoğraf senaryosu: kullanıcı A fotoğrafını ekler, servis v2 olduğu için ertelenir, kullanıcı atar; servis
+/// v3'e güncellenir, PC'de asistan B fotoğrafını ekler; kullanıcı "Yeniden uygula"ya basar. B düşmez: liste
+/// birleşir (atıldıktan sonra eklenen öğe kalır, değişikliğin eklediği arkasına girer).
+#[test]
+fn geri_alma_atildiktan_sonra_pcde_eklenen_fotografi_dusurmez() {
+    let mut h = Hat::yeni("erteleme-geri-al-foto");
+    let a = atilip_v3e_gecilen(&mut h, ekler(vec![foto()]));
+    let k = h.pc.disaridan_degistir(&a, |k| k.v3.ekler = vec![foto_b()]);
+    h.pc_degisti(k);
+    assert_eq!(kayit(&h, &a).v3.ekler, vec![foto_b()], "telefon PC'nin halini gördü");
+
+    assert!(h.c.ertelenen_geri_al("i_v3".into()).unwrap());
+    h.pompala();
+    assert!(h.c.ret_listesi().unwrap().is_empty());
+    let pc = &h.pc.d.kayitlar[&a];
+    assert_eq!(pc.v3.ekler, vec![foto_b(), foto()], "B kaldı, A eklendi");
+    assert_eq!(&kayit(&h, &a), pc);
+}
+
+/// C1: atıldıktan sonra kuyruğa giren ve hâlâ sonucu gelmemiş kullanıcı değişikliği de ezilmez: geri alma görünen
+/// hale (kuyruk dahil) göre birleştirir. Değişiklik yolda kalır (PC yanıtlamaz), bağlantı kopar, sonra sırayla gider.
+#[test]
+fn geri_alma_bekleyen_kullanici_degisikligini_ezmez() {
+    let mut h = Hat::yeni("erteleme-geri-al-bekleyen");
+    let a = atilip_v3e_gecilen(&mut h, ekler(vec![foto()]));
+    h.kopar();
+    kuyruga_yaz(&h, "i_sonra", &yalniz_v3(&a, ekler(vec![foto_b()])));
+    h.sureci_oldur_ve_ac();
+    // PC'de başka bir alan değişir: telafi kaydı getirir, görünen hal kuyrukla yeniden hesaplanır.
+    h.pc.disaridan_degistir(&a, |k| k.baslik = "A3".into());
+    h.pc.islem_yut = 1;
+    h.baglan();
+    assert!(h.canli_mi());
+    assert!(h.pc.d.kayitlar[&a].v3.ekler.is_empty(), "PC'ye ulaşmadı");
+    let g = gorunum(&h, &a);
+    assert_eq!((g.kayit.v3.ekler.clone(), g.bekleyen), (vec![foto_b()], true));
+
+    assert!(h.c.ertelenen_geri_al("i_v3".into()).unwrap());
+    assert_eq!(kayit(&h, &a).v3.ekler, vec![foto_b(), foto()]);
+    h.kopar();
+    h.baglan();
+    assert!(h.canli_mi());
+    let pc = &h.pc.d.kayitlar[&a];
+    assert_eq!(pc.v3.ekler, vec![foto_b(), foto()], "bekleyen değişiklik ezilmedi");
+    assert_eq!(&kayit(&h, &a), pc);
+}
+
+/// C1: atıldıktan sonra PC'de değişen tekil alan sessizce ezilmez: eski yüzey (`ertelenen_geri_al`) hiçbir şey
+/// yapmadan `GecersizDurum` döner, girdi kalır, PC'deki değer durur.
+#[test]
+fn geri_alma_atildiktan_sonra_degisen_alani_sessizce_ezmez() {
+    let mut h = Hat::yeni("erteleme-geri-al-simge");
+    let a = atilip_v3e_gecilen(&mut h, simge("ev"));
+    let k = h.pc.disaridan_degistir(&a, |k| k.v3.simge = Some("is".into()));
+    h.pc_degisti(k);
+    let uygulanan = h.pc.uygulanan.len();
+
+    cakisma_hatasi(h.c.ertelenen_geri_al("i_v3".into()), "simge");
+    h.pompala();
+    assert_eq!(h.pc.uygulanan.len(), uygulanan, "hiçbir işlem gitmedi");
+    assert_eq!(h.pc.d.kayitlar[&a].v3.simge.as_deref(), Some("is"));
+    assert_eq!(kayit(&h, &a).v3.simge.as_deref(), Some("is"));
+    assert!(depo(&h).kuyruk().unwrap().is_empty());
+    assert_eq!(h.c.ret_listesi().unwrap().len(), 1, "girdi kaldı");
+}
+
+/// C1, `ulasmis_olabilir`: v3'te yollanıp PC'de uygulanmış, sonra atılmış karma satır. PC'de o alan sonradan
+/// değiştiyse yeniden uygulama onu ezmez; değişmediyse değer zaten PC'dedir: hiçbir işlem gitmeden girdi çıkar.
+#[test]
+fn ulasmis_olabilir_girdisi_de_korunur() {
+    let kur = |ad: &str| {
+        let mut h = Hat::yeni(ad);
+        h.eslestir();
+        let a = h.c.ekle(govde("A", None), GirdiYolu::Elle).unwrap();
+        h.pompala();
+        h.kopar();
+        kuyruga_yaz(&h, "i_karma", &guncelle(&a, AjandaDegisiklik { baslik: Some("A2".into()), v3: simge("ev"), ..Default::default() }));
+        h.sureci_oldur_ve_ac();
+        h.pc.yanitsiz_kopar = 1;
+        h.baglan();
+        assert_eq!(h.pc.d.kayitlar[&a].v3.simge.as_deref(), Some("ev"));
+        h.pc.surum_kumesi(&[2]);
+        h.baglan();
+        h.baglan();
+        assert_eq!(h.c.ertelenenleri_at(Some(a.clone())).unwrap(), 1);
+        h.pompala();
+        let ret = h.c.ret_listesi().unwrap();
+        assert!(ret[0].ulasmis_olabilir);
+        let id = ret[0].islem_id.clone();
+        v3e_gec(&mut h);
+        (h, a, id)
+    };
+
+    // PC'de değişti: ezilmez.
+    let (mut h, a, id) = kur("erteleme-geri-al-ulasmis");
+    let k = h.pc.disaridan_degistir(&a, |k| k.v3.simge = Some("is".into()));
+    h.pc_degisti(k);
+    cakisma_hatasi(h.c.ertelenen_geri_al(id.clone()), "simge");
+    h.pompala();
+    assert_eq!(h.pc.d.kayitlar[&a].v3.simge.as_deref(), Some("is"));
+    assert_eq!(h.c.ret_listesi().unwrap().len(), 1);
+
+    // Değişmedi: değer zaten PC'de; yeni işlem yollanmaz, girdi çıkar.
+    let (mut h, a, id) = kur("erteleme-geri-al-ulasmis-ayni");
+    let uygulanan = h.pc.uygulanan.len();
+    assert!(h.c.ertelenen_geri_al(id).unwrap());
+    h.pompala();
+    assert_eq!(h.pc.uygulanan.len(), uygulanan, "işlem gitmedi");
+    assert!(depo(&h).kuyruk().unwrap().is_empty());
+    assert!(h.c.ret_listesi().unwrap().is_empty());
+    assert_eq!(h.pc.d.kayitlar[&a].v3.simge.as_deref(), Some("ev"));
+}
+
+/// C1, yerel kip: koparmadan önce PC'de eklenen fotoğraf yerel gerçekte durur; yeniden uygulama onu düşürmez.
+#[test]
+fn yerel_kipte_geri_alma_fotografi_dusurmez() {
+    let mut h = Hat::yeni("erteleme-geri-al-yerel-foto");
+    let a = atilip_v3e_gecilen(&mut h, ekler(vec![foto()]));
+    let k = h.pc.disaridan_degistir(&a, |k| k.v3.ekler = vec![foto_b()]);
+    h.pc_degisti(k);
+    h.c.baglantiyi_kopar().unwrap();
+    h.pompala();
+    assert_eq!(h.c.kip().unwrap(), CalismaKipi::Yerel);
+
+    assert!(h.c.ertelenen_geri_al("i_v3".into()).unwrap());
+    assert_eq!(kayit(&h, &a).v3.ekler, vec![foto_b(), foto()]);
+    assert!(h.c.ret_listesi().unwrap().is_empty());
+}
+
+/// C1, açık bildirim: atıldıktan sonra PC'de değişen tekil alanı `ertelenen_geri_al_denetimli` adıyla söyler,
+/// `zorla` yanlışken hiçbir şey yapmaz; kullanıcı yine de isterse (`zorla`) değişikliğin değeri yazılır.
+#[test]
+fn denetimli_geri_alma_cakismayi_bildirir_zorla_yazar() {
+    let mut h = Hat::yeni("erteleme-geri-al-denetimli");
+    let a = atilip_v3e_gecilen(&mut h, simge("ev"));
+    let k = h.pc.disaridan_degistir(&a, |k| k.v3.simge = Some("is".into()));
+    h.pc_degisti(k);
+    h.gozlemci.al();
+
+    let s = h.c.ertelenen_geri_al_denetimli("i_v3".into(), false).unwrap();
+    assert_eq!(
+        s,
+        ErtelenenGeriAlma { bulundu: true, uygulandi: false, degisen: vec![], cakisan: vec!["simge".into()], birlesen: vec![] }
+    );
+    assert!(h.gozlemci.al().is_empty(), "hiçbir şey değişmedi");
+    assert_eq!(h.c.ret_listesi().unwrap().len(), 1);
+
+    let s = h.c.ertelenen_geri_al_denetimli("i_v3".into(), true).unwrap();
+    assert_eq!((s.uygulandi, s.degisen, s.cakisan), (true, vec!["simge".to_string()], vec!["simge".to_string()]));
+    h.pompala();
+    assert_eq!(h.pc.d.kayitlar[&a].v3.simge.as_deref(), Some("ev"), "kullanıcı bile bile yazdı");
+    assert!(h.c.ret_listesi().unwrap().is_empty());
+}
+
+/// C1, atma anındaki taban: kullanıcı X fotoğrafını kaldırmıştı (ertelendi, atıldı). Atıldıktan sonra PC'de X
+/// değişti ve B eklendi: kaldırma, değişmiş X'i sessizce silmez (çakışma); zorlanırsa X çıkar, B yine kalır.
+/// Atıldıktan sonra değişmeyen öğenin kaldırılması çakışma değildir.
+#[test]
+fn listede_degisiklik_tabana_gore_birlesir() {
+    let kur = |ad: &str| {
+        let mut h = Hat::yeni(ad);
+        h.eslestir();
+        let a = h.c.ekle(govde("A", None), GirdiYolu::Elle).unwrap();
+        h.pompala();
+        let k = h.pc.disaridan_degistir(&a, |k| k.v3.ekler = vec![foto()]);
+        h.pc_degisti(k);
+        assert_eq!(kayit(&h, &a).v3.ekler, vec![foto()]);
+        h.kopar();
+        h.pc.surum_kumesi(&[2]);
+        kuyruga_yaz(&h, "i_v3", &yalniz_v3(&a, V3Degisikligi { ekler: Alan::Kaldir, ..Default::default() }));
+        v2de_baglan(&mut h);
+        assert_eq!(h.c.ertelenenleri_at(None).unwrap(), 1);
+        v3e_gec(&mut h);
+        (h, a)
+    };
+    let x_degisti = AjandaEki { genislik: Some(800), yukseklik: Some(600), ..foto() };
+
+    let (mut h, a) = kur("erteleme-geri-al-taban");
+    let k = h.pc.disaridan_degistir(&a, |k| k.v3.ekler = vec![x_degisti.clone(), foto_b()]);
+    h.pc_degisti(k);
+    let s = h.c.ertelenen_geri_al_denetimli("i_v3".into(), false).unwrap();
+    assert_eq!((s.uygulandi, s.cakisan.clone(), s.birlesen.clone()), (false, vec!["ekler".to_string()], vec!["ekler".to_string()]));
+    assert!(matches!(h.c.ertelenen_geri_al("i_v3".into()), Err(CekirdekHatasi::GecersizDurum { .. })));
+    let s = h.c.ertelenen_geri_al_denetimli("i_v3".into(), true).unwrap();
+    assert!(s.uygulandi && s.degisen == ["ekler"], "{s:?}");
+    h.pompala();
+    assert_eq!(h.pc.d.kayitlar[&a].v3.ekler, vec![foto_b()], "X çıktı, B kaldı");
+
+    // X değişmeden B eklendiyse kaldırma çakışmasız uygulanır.
+    let (mut h, a) = kur("erteleme-geri-al-taban-degismeyen");
+    let k = h.pc.disaridan_degistir(&a, |k| k.v3.ekler = vec![foto(), foto_b()]);
+    h.pc_degisti(k);
+    let s = h.c.ertelenen_geri_al_denetimli("i_v3".into(), false).unwrap();
+    assert_eq!((s.uygulandi, s.cakisan.is_empty(), s.birlesen.clone()), (true, true, vec!["ekler".to_string()]));
+    h.pompala();
+    assert_eq!(h.pc.d.kayitlar[&a].v3.ekler, vec![foto_b()]);
+    assert_eq!(&kayit(&h, &a), &h.pc.d.kayitlar[&a]);
+}
+
+/// C6: ret satırının işlemi başka bir kaydınsa (bozuk ya da elle değişmiş satır) yeniden uygulanmaz: hiçbir kayda
+/// yazılmaz, girdi kalır.
+#[test]
+fn geri_alma_islemin_kaydini_satirla_dogrular() {
+    let mut h = Hat::yeni("erteleme-geri-al-kimlik");
+    h.eslestir();
+    let a = h.c.ekle(govde("A", None), GirdiYolu::Elle).unwrap();
+    let b = h.c.ekle(govde("B", None), GirdiYolu::Elle).unwrap();
+    h.pompala();
+    let islem = yalniz_v3(&b, simge("ev")).json().to_string();
+    rusqlite::Connection::open(&h.yol)
+        .unwrap()
+        .execute(
+            "INSERT INTO ret_listesi (islem_id, kayit_id, islem_json, neden, ts_ms) VALUES ('i_tutarsiz', ?1, ?2, 'ertelenen_atildi', ?3)",
+            rusqlite::params![a, islem, SIMDI],
+        )
+        .unwrap();
+    match h.c.ertelenen_geri_al("i_tutarsiz".into()) {
+        Err(CekirdekHatasi::GecersizDurum { mesaj }) => assert!(mesaj.contains("tutarsız"), "{mesaj}"),
+        s => panic!("{s:?}"),
+    }
+    h.pompala();
+    assert!(depo(&h).kuyruk().unwrap().is_empty());
+    assert!(kayit(&h, &a).v3.bos_mu() && kayit(&h, &b).v3.bos_mu());
+    assert!(h.pc.d.kayitlar[&a].v3.bos_mu() && h.pc.d.kayitlar[&b].v3.bos_mu());
+    assert_eq!(h.c.ret_listesi().unwrap().len(), 1);
+}
+
+/// C2, bağlı kip: yeniden uygulama tek SQLite işlemidir. Kuyruğa yazım yarıda hata verirse hiçbir şey değişmez
+/// (girdi listede, kuyruk boş, kayıt aynı); hata kalkınca bütün olarak yapılır.
+#[test]
+fn bagli_kipte_yarida_kalan_geri_alma_geri_alinir() {
+    let mut h = Hat::yeni("erteleme-geri-al-yarida");
+    let a = atilip_v3e_gecilen(&mut h, simge("ev"));
+    let gorunen = gorunum(&h, &a);
+    sql(&h, "CREATE TRIGGER kuyruk_hatasi BEFORE INSERT ON kuyruk BEGIN SELECT RAISE(ABORT, 'deneme hatası'); END;");
+    assert!(h.c.ertelenen_geri_al("i_v3".into()).is_err());
+    h.pompala();
+    assert_eq!(h.c.ret_listesi().unwrap().len(), 1, "girdi silinmedi");
+    assert!(depo(&h).kuyruk().unwrap().is_empty());
+    assert_eq!(gorunum(&h, &a), gorunen);
+    assert!(h.pc.d.kayitlar[&a].v3.simge.is_none());
+
+    sql(&h, "DROP TRIGGER kuyruk_hatasi;");
+    assert!(h.c.ertelenen_geri_al("i_v3".into()).unwrap());
+    h.pompala();
+    assert!(h.c.ret_listesi().unwrap().is_empty());
+    assert!(depo(&h).kuyruk().unwrap().is_empty());
+    assert_eq!(h.pc.d.kayitlar[&a].v3.simge.as_deref(), Some("ev"));
+}
+
+/// C1: bağlantı yokken (telefonun bildiği hal eskimiş olabilir, değişiklik bağlanana dek beklerken PC'de değişen
+/// alanı ezebilirdi) yeniden uygulama yapılmaz; girdi kalır. Bağlanınca yapılır.
+#[test]
+fn bagli_kipte_baglanti_yokken_geri_alinmaz() {
+    let mut h = Hat::yeni("erteleme-geri-al-kopuk");
+    let a = atilip_v3e_gecilen(&mut h, simge("ev"));
+    h.kopar();
+    match h.c.ertelenen_geri_al("i_v3".into()) {
+        Err(CekirdekHatasi::GecersizDurum { mesaj }) => assert!(mesaj.contains("canlı değil"), "{mesaj}"),
+        s => panic!("{s:?}"),
+    }
+    assert!(depo(&h).kuyruk().unwrap().is_empty());
+    assert_eq!(h.c.ret_listesi().unwrap().len(), 1);
+    h.baglan();
+    assert!(h.c.ertelenen_geri_al("i_v3".into()).unwrap());
+    h.pompala();
+    assert_eq!(h.pc.d.kayitlar[&a].v3.simge.as_deref(), Some("ev"));
+}
+
+/// C2, yerel kip: yerel yazar kendi işlemini açtığı için yazım ve girdinin silinmesi iki adımdır. Silme hata
+/// verirse değişiklik yazılmış, girdi kalmıştır; yeniden denemek güvenlidir: aynı değer yeniden yazılmaz (yerel
+/// geçmişe ikinci satır girmez), yalnız girdi çıkar.
+#[test]
+fn yerel_kipte_yarida_kalan_geri_alma_yeniden_denenebilir() {
+    let mut h = Hat::yeni("erteleme-geri-al-yerel-yarida");
+    let a = atilip_v3e_gecilen(&mut h, simge("ev"));
+    h.c.baglantiyi_kopar().unwrap();
+    h.pompala();
+    let gecmis_sayisi = || -> i64 {
+        rusqlite::Connection::open(&h.yol)
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM yerel_gecmis WHERE kayit_id = ?1", [&a], |r| r.get(0))
+            .unwrap()
+    };
+    let once = gecmis_sayisi();
+    sql(&h, "CREATE TRIGGER ret_silme_hatasi BEFORE DELETE ON ret_listesi BEGIN SELECT RAISE(ABORT, 'deneme hatası'); END;");
+    assert!(h.c.ertelenen_geri_al("i_v3".into()).is_err());
+    assert_eq!(kayit(&h, &a).v3.simge.as_deref(), Some("ev"), "yazım kalıcı");
+    assert_eq!(h.c.ret_listesi().unwrap().len(), 1, "girdi kaldı");
+    assert_eq!(gecmis_sayisi(), once + 1);
+
+    sql(&h, "DROP TRIGGER ret_silme_hatasi;");
+    let s = h.c.ertelenen_geri_al_denetimli("i_v3".into(), false).unwrap();
+    assert_eq!((s.uygulandi, s.degisen.is_empty(), s.cakisan.is_empty()), (true, true, true), "{s:?}");
+    assert!(h.c.ret_listesi().unwrap().is_empty());
+    assert_eq!(gecmis_sayisi(), once + 1, "yeniden yazılmadı");
+    assert_eq!(kayit(&h, &a).v3.simge.as_deref(), Some("ev"));
+}
+
+/// C5: v3 bağlantıda (yukarı deneme yokken) yanıtı kaybolan geçmiş isteği sayfayı süresiz "yükleniyor"da
+/// bırakmaz: bir dakika sonra ilk köprü çağrısında `ic_hata` ile biter; bağlantı açık kalır. Kabuk o anı
+/// `gecmis_bekleme_ms`'ten bilir.
+#[test]
+fn v3_baglantida_kaybolan_gecmis_yaniti_yukleniyorda_kalmaz() {
+    let mut h = Hat::yeni("erteleme-gecmis-v3-kayip");
+    h.eslestir();
+    let a = h.c.ekle(govde("A", None), GirdiYolu::Elle).unwrap();
+    h.pompala();
+    let an = h.zaman.simdi_ms();
+    h.c.gecmis_iste(a.clone(), None).unwrap();
+    let b = h.baglanti.as_ref().expect("bağlantı");
+    let giden = std::mem::take(&mut *b.tasima.giden.lock().unwrap());
+    assert!(giden.iter().any(|f| f.contains("\"gecmis_iste\"")));
+    assert_eq!(h.c.baglanti_durumu().unwrap().gecmis_bekleme_ms, Some(an + DK));
+    h.zaman.ilerlet(DK - 1);
+    assert!(h.c.gecmis(a.clone()).unwrap().expect("sayfa").yukleniyor, "henüz bekleniyor");
+
+    h.zaman.ilerlet(1);
+    h.gozlemci.al();
+    let d = h.c.baglanti_durumu().unwrap();
+    assert_eq!((d.asama, d.gecmis_bekleme_ms), (BaglantiAsamasi::Canli, None), "v3'te bağlantı kapanmaz");
+    assert!(h.gozlemci.al().iter().any(|d| d.gecmis.contains(&a)), "ekran haber alır");
+    let sayfa = h.c.gecmis(a.clone()).unwrap().expect("sayfa");
+    assert_eq!((sayfa.yukleniyor, sayfa.hata), (false, Some(AjandaRetNedeni::IcHata)));
+    // Yeniden istenebilir; yanıt gelir.
+    h.c.gecmis_iste(a.clone(), None).unwrap();
+    h.pompala();
+    let sayfa = h.c.gecmis(a.clone()).unwrap().expect("sayfa");
+    assert_eq!((sayfa.yukleniyor, sayfa.hata), (false, None));
+    assert!(!sayfa.satirlar.is_empty());
+}
+
+/// C5: saat geri gidince bekleyen geçmiş isteği hemen yanıtsız sayılmaz (yukarı deneme onu düşürüp bağlantıyı
+/// kapatmaz); bekleme şimdiki saatten yeniden sayılır ve dolunca istek düşer.
+#[test]
+fn saat_geri_gidince_gecmis_istegi_hemen_dusmez() {
+    let mut h = Hat::yeni("erteleme-gecmis-saat-geri");
+    let a = v2ye_inen_kurulum(&mut h);
+    v2de_baglan(&mut h);
+    h.zaman.ilerlet(SAAT + DK);
+    h.c.gecmis_iste(a.clone(), None).unwrap();
+    let b = h.baglanti.as_ref().expect("bağlantı");
+    b.tasima.giden.lock().unwrap().clear();
+    h.zaman.ilerlet(-2 * SAAT);
+    let geri = h.zaman.simdi_ms();
+    let d = h.c.baglanti_durumu().unwrap();
+    assert_eq!(d.asama, BaglantiAsamasi::Canli, "istek beklenir: bağlantı kapanmadı");
+    assert_eq!(d.gecmis_bekleme_ms, Some(geri + DK), "bekleme şimdiki saatten");
+    assert!(h.c.gecmis(a.clone()).unwrap().expect("sayfa").yukleniyor);
+
+    h.zaman.ilerlet(DK);
+    assert_eq!(h.c.baglanti_durumu().unwrap().asama, BaglantiAsamasi::Kopuk, "istek düştü, yukarı deneme yapıldı");
+    let sayfa = h.c.gecmis(a.clone()).unwrap().expect("sayfa");
+    assert_eq!((sayfa.yukleniyor, sayfa.hata), (false, Some(AjandaRetNedeni::IcHata)));
 }

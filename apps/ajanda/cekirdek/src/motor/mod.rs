@@ -94,9 +94,10 @@ pub(crate) struct Motor {
     /// Bağlantının sürümü, düşülen sürüm, `welcome.yetenekler` (`kanal.rs` "Sürüm uyumu").
     surum: kanal::KanalSurumu,
     /// Geçmiş önbelleği (`kayit_id` -> sayfa) ve yanıt bekleyen istekler (`istek_id` -> (`kayit_id`, yollandığı
-    /// an ms); an yukarı denemenin bekleme süresi içindir: `kanal.rs` `GECMIS_BEKLEME_MS`).
+    /// an ms, yollandığı tekdüze an); anlar yanıtın bekleme süresi içindir: `kanal.rs` `GECMIS_BEKLEME_MS`,
+    /// `gecmis_beklemesi`).
     gecmis: BTreeMap<String, GecmisSayfasi>,
-    gecmis_istekleri: BTreeMap<String, (String, i64)>,
+    gecmis_istekleri: BTreeMap<String, (String, i64, std::time::Instant)>,
 }
 
 impl Motor {

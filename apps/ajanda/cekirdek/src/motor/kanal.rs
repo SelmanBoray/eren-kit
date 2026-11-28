@@ -80,8 +80,12 @@
 //!   listesinde görünür (`RetGirdisi.v3_degisikligi`: konan alanlar ve kaldırılanlar; içerik `islem_json`'da
 //!   durur). Daha önce (v3'te) yollanmış satırdan atılan `ERTELENEN_ATILDI_YOLLANMIS`'tır
 //!   (`RetGirdisi.ulasmis_olabilir`: servis onu uygulamış olabilir). Kullanıcı `ertelenen_geri_al` ile atılanı
-//!   yeniden uygular: girdi çıkar, değişiklik yeni kimlikle kuyruğun sonuna girer (eski serviste yine ertelenir,
-//!   v3'te gider); yerel kipte doğrudan uygulanır. Yolda olan satıra dokunulmaz; atma tek işlemdir.
+//!   yeniden uygular: girdi çıkar, değişiklik yeni kimlikle kuyruğun sonuna girer (v3'te gider); yerel kipte
+//!   doğrudan uygulanır. Yolda olan satıra dokunulmaz; atma tek işlemdir. Yeniden uygulama atıldıktan sonra
+//!   değişen alanı sessizce ezmez (C1): atma anındaki taban ret satırında durur (`ATMA_TABANI`), değişiklik
+//!   kaydın şimdiki haline (gönderilmemiş değişiklikler dahil) karşılaştırılarak uygulanır (`geri_alma_plani`:
+//!   tekil alanda çakışma bildirilir, listeler birleşir, hiçbir yeni öğe düşmez); bağlı kipte yalnız canlıyken
+//!   ve PC'nin v3 hali biliniyorken (servis v3, v3 eşitlemesi bitti) yapılır.
 //!   Ek dosyası: telefon bugün ek dosyası üretmez ve saklamaz (yalnız kayıttaki üstveri); ek deposu yazılınca
 //!   ret listesindeki girdilerin `ekler`'i de başvuru sayılmalı, yoksa yeniden uygulanan değişiklik silinmiş
 //!   dosyayı gösterir.
@@ -113,21 +117,23 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::eslesme::Eslesme;
-use super::iyimser::{gorunen_yenile, islem_coz, istenen_govde};
+use super::iyimser::{IyimserBaglam, Uygulama, gorunen_yenile, islem_coz, islem_uygula, istenen_govde, iyimser_hal};
 use super::{Etkiler, Motor, Ortam, TELAFI_TAMPONU};
 use crate::depo::{KopyaTablosu, KuyrukSatiri, RetSatiri, anahtar};
 use crate::hata::CekirdekHatasi;
 use crate::kopru::tipler::{
-    BaglantiAsamasi, BaglantiDurumu, BaglantiKipi, BaglantiYetenekleri, GecmisSatiri, GecmisSayfasi, SurumUyusmazligi,
+    BaglantiAsamasi, BaglantiDurumu, BaglantiKipi, BaglantiYetenekleri, ErtelenenGeriAlma, GecmisSatiri, GecmisSayfasi,
+    SurumUyusmazligi,
 };
 use crate::kural::esitleme::HelloAlanlari;
 use crate::kural::kuyruk::{KuyrukKarari, KuyrukOlayi, ajanda_kuyruk_karari};
-use crate::model::json::Yazici;
+use crate::model::json::{Nesne, Yazici};
 use crate::model::metin::opak_id_mi;
 use crate::model::kanonik::{base64_coz, base64_yaz};
 use crate::model::{
-    AJANDA_SURUMLERI, AjandaAsagi, AjandaEslestirmeQr, AjandaGecmisGirdisi, AjandaIslem, AjandaKanalHatasi, AjandaKaydi,
-    AjandaRetNedeni, AjandaYukari, CozumKodu, GeriDusus, ImzaRolu, KuyrukRetNedeni, Surum, SurumBolumu,
+    AJANDA_SURUMLERI, AjandaAlani, AjandaAsagi, AjandaDegisiklik, AjandaEslestirmeQr, AjandaGecmisGirdisi, AjandaIslem,
+    AjandaKanalHatasi, AjandaKaydi, AjandaRetNedeni, AjandaYukari, Alan, CozumKodu, GeriDusus, ImzaRolu, KuyrukRetNedeni,
+    Surum, SurumBolumu, V3Alanlari, V3Degisikligi,
     ajanda_asagi_coz_surum, ajanda_donmus_hata_oku, ajanda_geri_dusus, ajanda_kimlik_imza_metni,
 };
 
@@ -268,11 +274,245 @@ pub(super) fn ertelenen_atildi_mi(neden: &str) -> bool {
     neden == ERTELENEN_ATILDI || neden == ERTELENEN_ATILDI_YOLLANMIS
 }
 
-/// Yukarı denemenin yanıtını beklediği geçmiş isteğinin en uzun yaşı (A5): servis geçmişi tek okumayla yanıtlar;
-/// bundan eski (ya da saat geri gittiği için yaşı okunamayan) istek yanıtsız sayılır, sayfası `ic_hata` ile biter
-/// ve bağlantıyı açık tutmaz (yanıt hiç gelmezse ya da kayıt kimliği uymazsa yukarı deneme o bağlantı boyunca
-/// hiç yapılmazdı).
+/// Atılan değişikliğin ret satırındaki (`ret_listesi.islem_json`) ek anahtarı (C1): atma anındaki taban, kaydın o
+/// satırdan önceki halinin v3 alanları (`V3Alanlari`, sözleşme biçimi; yok alan yazılmaz). Göç gerekmez: işlem
+/// metninin içinde durur, okurken çıkarılır (`atilan_coz`). Yeniden uygulama atıldıktan sonra değişen alanı
+/// bununla bulur. Bu sürümden önce atılanlarda yoktur (boş sayılır).
+pub(super) const ATMA_TABANI: &str = "atma_tabani";
+
+/// Atılan değişikliğin ret satırı metni: işlemin JSON'u ve `ATMA_TABANI`.
+fn atilan_json(islem: &AjandaIslem, taban: &V3Alanlari) -> String {
+    let mut j = islem.json();
+    if let serde_json::Value::Object(n) = &mut j {
+        n.insert(ATMA_TABANI.into(), taban.alanlari_yaz(Yazici::yeni(), Surum::EN_YENI).bitir());
+    }
+    j.to_string()
+}
+
+/// Ret satırının işlemi ve (varsa) atma anındaki tabanı. `ATMA_TABANI`'sız metin (öteki retler, eski girdiler)
+/// `islem_coz` gibi okunur. Okunamayan işlem `None`; okunamayan taban yok sayılır (boş taban: tekil alanda şimdiki
+/// her değer çakışma, listede şimdiki öğelerin hepsi kalır).
+pub(super) fn atilan_coz(json: &str) -> Option<(AjandaIslem, Option<V3Alanlari>)> {
+    let mut v: serde_json::Value = serde_json::from_str(json).ok()?;
+    let taban = v.as_object_mut().and_then(|n| n.remove(ATMA_TABANI));
+    let islem = AjandaIslem::oku(&v, "").ok()?;
+    let taban = taban.and_then(|t| {
+        let mut n = Nesne::ac(&t, ATMA_TABANI).ok()?;
+        let a = V3Alanlari::alanlari_oku(&mut n, Surum::EN_YENI).ok()?;
+        n.bitir().ok()?;
+        Some(a)
+    });
+    Some((islem, taban))
+}
+
+/// v3 alanları, kanonik sırada.
+fn v3_alanlari() -> &'static [AjandaAlani] {
+    &AjandaAlani::HEPSI[AjandaAlani::V2_ADEDI..]
+}
+
+fn alan_adlari(l: &[AjandaAlani]) -> Vec<String> {
+    l.iter().map(|a| a.ad().to_string()).collect()
+}
+
+/// İki halin v3 alanı aynı mı.
+fn v3_alani_ayni(a: &V3Alanlari, b: &V3Alanlari, alan: AjandaAlani) -> bool {
+    match alan {
+        AjandaAlani::Simge => a.simge == b.simge,
+        AjandaAlani::Bolge => a.bolge == b.bolge,
+        AjandaAlani::BolgeKonumu => a.bolge_konumu == b.bolge_konumu,
+        AjandaAlani::Varis => a.varis == b.varis,
+        AjandaAlani::Baglantilar => a.baglantilar == b.baglantilar,
+        AjandaAlani::Ekler => a.ekler == b.ekler,
+        _ => true,
+    }
+}
+
+/// Değişikliğin yalnız `alanlar`'ı (ötekiler `Yok`).
+fn degisiklik_suz(d: &V3Degisikligi, alanlar: &[AjandaAlani]) -> V3Degisikligi {
+    fn al<T: Clone>(a: &Alan<T>, var: bool) -> Alan<T> {
+        if var { a.clone() } else { Alan::Yok }
+    }
+    let v = |a: AjandaAlani| alanlar.contains(&a);
+    V3Degisikligi {
+        simge: al(&d.simge, v(AjandaAlani::Simge)),
+        bolge: al(&d.bolge, v(AjandaAlani::Bolge)),
+        bolge_konumu: al(&d.bolge_konumu, v(AjandaAlani::BolgeKonumu)),
+        varis: al(&d.varis, v(AjandaAlani::Varis)),
+        baglantilar: al(&d.baglantilar, v(AjandaAlani::Baglantilar)),
+        ekler: al(&d.ekler, v(AjandaAlani::Ekler)),
+    }
+}
+
+/// Liste değişikliğinin istediği liste (`Kaldir`: boş); `Yok`: dokunmuyor.
+fn istenen_liste<T>(a: &Alan<Vec<T>>) -> Option<&[T]> {
+    match a {
+        Alan::Yok => None,
+        Alan::Kaldir => Some(&[]),
+        Alan::Deger(l) => Some(l),
+    }
+}
+
+/// Modelde boş liste "alan yok"tur.
+fn liste_alani<T>(l: Vec<T>) -> Alan<Vec<T>> {
+    if l.is_empty() { Alan::Kaldir } else { Alan::Deger(l) }
+}
+
+/// Üç yönlü liste birleşimi (C1): `taban` atma anındaki liste, `istenen` değişikliğin listesi, `simdiki` kaydın
+/// şimdiki listesi; öğeler `anahtar`la eşlenir (`ek_id`, `url`). Döner: yeni liste ve çakışma var mı.
+/// - Şimdiki öğeler sırasıyla kalır; değişiklik tabandaki halini değiştirdiyse yeni hali girer, çıkardıysa çıkar.
+///   O öğe atıldıktan sonra değiştiyse çakışmadır (`zorla`: değişikliğin hali; değilse şimdiki kalır).
+/// - Değişikliğin eklediği (tabanda olmayan) öğe şimdiki listede yoksa arkaya girer; aynı anahtarla başka
+///   içerikle varsa çakışmadır.
+/// - Değişikliğin değiştirdiği öğe atıldıktan sonra çıkarıldıysa çakışmadır (`zorla`: yeniden girer); dokunmadığı
+///   öğe çıkarıldıysa çıkmış kalır.
+/// - Tabanda ve değişiklikte olmayan şimdiki öğe (atıldıktan sonra eklenen) hep kalır: `zorla` da düşürmez.
+fn liste_birlestir<T: Clone + PartialEq>(
+    taban: &[T],
+    istenen: &[T],
+    simdiki: &[T],
+    anahtar: impl Fn(&T) -> &str,
+    zorla: bool,
+) -> (Vec<T>, bool) {
+    let bul = |l: &[T], k: &str| -> Option<usize> { l.iter().position(|x| anahtar(x) == k) };
+    let mut cakisma = false;
+    let mut sonuc = Vec::new();
+    for c in simdiki {
+        let k = anahtar(c);
+        let t = bul(taban, k).map(|i| &taban[i]);
+        let d = bul(istenen, k).map(|i| &istenen[i]);
+        match (t, d) {
+            (_, Some(d)) if d == c => sonuc.push(c.clone()),
+            (Some(t), Some(d)) => {
+                cakisma |= t != c;
+                sonuc.push(if t == c || zorla { d.clone() } else { c.clone() });
+            }
+            (Some(t), None) => {
+                if t != c {
+                    cakisma = true;
+                    if !zorla {
+                        sonuc.push(c.clone());
+                    }
+                }
+            }
+            (None, Some(d)) => {
+                cakisma = true;
+                sonuc.push(if zorla { d.clone() } else { c.clone() });
+            }
+            (None, None) => sonuc.push(c.clone()),
+        }
+    }
+    for d in istenen {
+        let k = anahtar(d);
+        if bul(simdiki, k).is_some() {
+            continue;
+        }
+        match bul(taban, k).map(|i| &taban[i]) {
+            None => sonuc.push(d.clone()),
+            Some(t) if t == d => {}
+            Some(_) => {
+                cakisma = true;
+                if zorla {
+                    sonuc.push(d.clone());
+                }
+            }
+        }
+    }
+    (sonuc, cakisma)
+}
+
+/// Yeniden uygulamanın planı (`geri_alma_plani`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GeriAlmaPlani {
+    /// Yazılacak değişiklik: yalnız `degisen` alanlar (listeler birleşmiş halleriyle).
+    degisiklik: V3Degisikligi,
+    /// Kanonik sırada (üçü de).
+    degisen: Vec<AjandaAlani>,
+    cakisan: Vec<AjandaAlani>,
+    birlesen: Vec<AjandaAlani>,
+}
+
+/// Atılan v3 değişikliğinin (`istenen`) kaydın şimdiki haline (`kayit`) güvenle uygulanması (C1; `taban`: atma
+/// anındaki v3 alanları). Listeler `liste_birlestir` ile birleşir; birleşmiş değişiklik kayda servis
+/// kurallarıyla (`islem_uygula`; bölge değişince konumun düşmesi dahil) uygulanır. Değeri değişecek tekil alan
+/// atma anındaki değerinden farklıysa çakışmadır (atıldıktan sonra değişti: PC'de ya da kuyrukta). Birleşen hal
+/// geçersizse (ör. iki kapak, ek sınırı) `GecersizDurum`.
+fn geri_alma_plani(
+    kayit: &AjandaKaydi,
+    istenen: &V3Degisikligi,
+    taban: &V3Alanlari,
+    zorla: bool,
+    b: &IyimserBaglam,
+) -> Result<GeriAlmaPlani, CekirdekHatasi> {
+    let simdiki = &kayit.v3;
+    let mut cakisan = Vec::new();
+    let mut birlesen = Vec::new();
+    let mut birlesik = istenen.clone();
+    if let Some(d) = istenen_liste(&istenen.baglantilar) {
+        let (l, c) = liste_birlestir(&taban.baglantilar, d, &simdiki.baglantilar, |x| x.url.as_str(), zorla);
+        if c {
+            cakisan.push(AjandaAlani::Baglantilar);
+        }
+        if l != d {
+            birlesen.push(AjandaAlani::Baglantilar);
+        }
+        birlesik.baglantilar = liste_alani(l);
+    }
+    if let Some(d) = istenen_liste(&istenen.ekler) {
+        let (l, c) = liste_birlestir(&taban.ekler, d, &simdiki.ekler, |x| x.ek_id.as_str(), zorla);
+        if c {
+            cakisan.push(AjandaAlani::Ekler);
+        }
+        if l != d {
+            birlesen.push(AjandaAlani::Ekler);
+        }
+        birlesik.ekler = liste_alani(l);
+    }
+    let uygula = |v3: &V3Degisikligi| -> Result<V3Alanlari, CekirdekHatasi> {
+        let islem = AjandaIslem::Guncelle {
+            kayit_id: kayit.kayit_id.clone(),
+            temel_revizyon: kayit.revizyon,
+            degisiklik: AjandaDegisiklik { v3: v3.clone(), ..Default::default() },
+        };
+        match islem_uygula(Some(kayit), &islem, b.simdi_ms, b) {
+            Uygulama::Yeni(k) => Ok(k.v3),
+            Uygulama::Etkisiz => Ok(simdiki.clone()),
+            Uygulama::Ret(n) => Err(CekirdekHatasi::GecersizDurum {
+                mesaj: format!("değişiklik kaydın şimdiki haline uygulanamıyor ({})", n.ad()),
+            }),
+        }
+    };
+    let yeni = uygula(&birlesik)?;
+    let degisen: Vec<AjandaAlani> = v3_alanlari().iter().copied().filter(|a| !v3_alani_ayni(&yeni, simdiki, *a)).collect();
+    for a in &degisen {
+        let liste = matches!(a, AjandaAlani::Baglantilar | AjandaAlani::Ekler);
+        if !liste && !v3_alani_ayni(simdiki, taban, *a) && !cakisan.contains(a) {
+            cakisan.push(*a);
+        }
+    }
+    cakisan.sort_by_key(|a| v3_alanlari().iter().position(|x| x == a));
+    // Yalnız değişecek alanlar gider (değişmeyen alan, gönderilene dek PC'de değişirse ezilmesin). Süzülmüş hal
+    // aynı sonucu vermiyorsa (alanlar birbirine bağlıysa) birleşik değişikliğin bütünü gider.
+    let mut degisiklik = degisiklik_suz(&birlesik, &degisen);
+    if uygula(&degisiklik)? != yeni {
+        degisiklik = birlesik;
+    }
+    Ok(GeriAlmaPlani { degisiklik, degisen, cakisan, birlesen })
+}
+
+/// Geçmiş isteğinin yanıtının en uzun beklenişi (A5, C5): servis geçmişi tek okumayla yanıtlar; bundan eski istek
+/// (yaş `gecmis_yasi`) yanıtsız sayılır, sayfası `ic_hata` ile biter, yukarı denemede bağlantıyı açık tutmaz (yanıt
+/// hiç gelmezse ya da kayıt kimliği uymazsa yukarı deneme o bağlantı boyunca hiç yapılmazdı). Her sürümde geçerli:
+/// v3 bağlantıda kaybolan yanıt da sayfayı süresiz "yükleniyor"da bırakmaz (`gecmis_beklemesi`).
 pub(crate) const GECMIS_BEKLEME_MS: i64 = 60 * 1000;
+
+/// Geçmiş isteğinin yaşı, ms (C5): duvar saatinin ilerlemesi (`simdi_ms - an_ms`; geri gidiş sıfır sayılır) ile
+/// tekdüze saatin (`std::time::Instant`, süreç içi) ilerlemesinin büyüğü. Saat geri giderse istek hemen yanıtsız
+/// sayılmaz, tekdüze saatle yine en geç `GECMIS_BEKLEME_MS`'te düşer; ileri sıçramada erken düşer (yalnız sayfa
+/// `ic_hata` olur, yeniden istenir). Duvar ölçüsü kabuğun saatini (testlerde sahte saat) izler.
+fn gecmis_yasi(simdi_ms: i64, an_ms: i64, tekduze: std::time::Duration) -> i64 {
+    let duvar = simdi_ms.saturating_sub(an_ms).max(0);
+    duvar.max(i64::try_from(tekduze.as_millis()).unwrap_or(i64::MAX))
+}
 
 /// Ertelemesi olabilecek satırlar: onaylanmamış bir satırının metninde v3 alan adı geçen kayıtların bütün
 /// satırları, sırayla (SQL'de süzülür). Öteki kayıtların her satırı `Yok`'tur (hal kayıt başınadır, v3 alanı
@@ -1142,6 +1382,7 @@ impl Motor {
             surum_uyusmazligi: self.surum_uyusmazligi,
             ertelenen_islem: i32::try_from(ertelenen).unwrap_or(i32::MAX),
             yukari_deneme_ms: self.yukari_deneme_ani(),
+            gecmis_bekleme_ms: self.gecmis_bekleme_ani(),
         })
     }
 
@@ -1163,6 +1404,9 @@ impl Motor {
     /// bağlanmadır, sonra yine düşülür). Hata ya da uyuşmazlık yazılmaz. Köprü her çağrının sonunda çağırır
     /// (`kopru::Cekirdek::calistir`): gelen çerçeve, yazma, durum okuma.
     pub(crate) fn yukari_denemesi(&mut self, o: &Ortam, e: &mut Etkiler) -> Result<(), CekirdekHatasi> {
+        // Yanıtsız geçmiş isteği her sürümde düşer (C5): v3 bağlantıda kaybolan yanıt da sayfayı sonsuza dek
+        // "yükleniyor"da bırakmaz.
+        let gecmis_bekliyor = self.gecmis_beklemesi(o, e);
         if !self.alt_surumde_canli() {
             return Ok(());
         }
@@ -1175,20 +1419,52 @@ impl Motor {
         }
         // Yanıtı beklenen geçmiş isteği varken de beklenir: kapatmak onu düşürür, kullanıcı hatasız boş geçmiş
         // görürdü (bulgu 1). Yanıt gelince ya da bağlantı başka nedenle kapanınca istek listeden çıkar. Ama en
-        // çok `GECMIS_BEKLEME_MS` (A5): daha eski istek yanıtsız sayılır, sayfası `ic_hata` ile biter (yeniden
-        // istenebilir), bağlantıyı açık tutmaz.
-        if self.gecmis_istekleri.values().any(|(_, an)| (0..GECMIS_BEKLEME_MS).contains(&simdi.saturating_sub(*an))) {
+        // çok `GECMIS_BEKLEME_MS` (A5, `gecmis_beklemesi`): daha eski istek yukarıda düştü, bağlantıyı açık tutmaz.
+        if gecmis_bekliyor {
             return Ok(());
         }
-        for (kayit_id, _) in std::mem::take(&mut self.gecmis_istekleri).into_values() {
+        self.kapat(e, "yukarı sürüm denemesi");
+        Ok(())
+    }
+
+    /// Yanıtı beklenen geçmiş isteklerinin süresi (A5, C5): `GECMIS_BEKLEME_MS`'i dolan istek yanıtsız sayılır,
+    /// listeden çıkar, sayfası (kaydın başka bekleyen isteği yoksa) `ic_hata` ile biter (yeniden istenebilir; geç
+    /// gelen yanıt yok sayılır). Bağlantının sürümünden bağımsızdır; köprü her çağrının sonunda çağırır
+    /// (`yukari_denemesi`). Yaş `gecmis_yasi`'dır: saat geri gidince istek hemen düşmez. Döner: süresi dolmamış
+    /// istek kaldı mı.
+    fn gecmis_beklemesi(&mut self, o: &Ortam, e: &mut Etkiler) -> bool {
+        if self.gecmis_istekleri.is_empty() {
+            return false;
+        }
+        let simdi = o.simdi_ms();
+        let mut dolan = Vec::new();
+        for (istek_id, (_, an, tekduze)) in self.gecmis_istekleri.iter_mut() {
+            // Saat geri gittiyse duvar ölçüsü şimdiden yeniden başlar (tekdüze ölçü sürer): `gecmis_bekleme_ms`
+            // kabuğun şimdiki saatinde kalır.
+            if simdi < *an {
+                *an = simdi;
+            }
+            if gecmis_yasi(simdi, *an, tekduze.elapsed()) >= GECMIS_BEKLEME_MS {
+                dolan.push(istek_id.clone());
+            }
+        }
+        for istek_id in dolan {
+            let Some((kayit_id, ..)) = self.gecmis_istekleri.remove(&istek_id) else { continue };
+            if self.gecmis_istekleri.values().any(|(k, ..)| *k == kayit_id) {
+                continue;
+            }
             if let Some(sayfa) = self.gecmis.get_mut(&kayit_id) {
                 sayfa.yukleniyor = false;
                 sayfa.hata = Some(AjandaRetNedeni::IcHata);
                 e.degisim.gecmis.push(kayit_id);
             }
         }
-        self.kapat(e, "yukarı sürüm denemesi");
-        Ok(())
+        !self.gecmis_istekleri.is_empty()
+    }
+
+    /// `BaglantiDurumu.gecmis_bekleme_ms`: en eski bekleyen geçmiş isteğinin duvar saatindeki son anı.
+    fn gecmis_bekleme_ani(&self) -> Option<i64> {
+        self.gecmis_istekleri.values().map(|(_, an, _)| an.saturating_add(GECMIS_BEKLEME_MS)).min()
     }
 
     /// Ertelenen v3 değişikliği taşıyan satır sayısı ve bütünüyle ertelenmiş (yollanmayan) satır sayısı. İkincisi
@@ -1274,10 +1550,12 @@ impl Motor {
                     .map(|g| g.alanlari_yaz(Yazici::yeni()).bitir().to_string());
                 // Daha önce yollanmış satır (v3'te, sonucu gelmedi): servis uygulamış olabilir (A4).
                 let neden = if s.deneme > 0 { ERTELENEN_ATILDI_YOLLANMIS } else { ERTELENEN_ATILDI };
+                // Atma anındaki taban (C1): kaydın bu satırdan önceki halinin v3 alanları.
+                let taban = iyimser_hal(d, &b, &s.kayit_id, Some(s.sira - 1))?.0.map(|k| k.v3).unwrap_or_default();
                 retler.push(RetSatiri {
                     islem_id,
                     kayit_id: s.kayit_id.clone(),
-                    islem_json: ret_islemi.json().to_string(),
+                    islem_json: atilan_json(ret_islemi, &taban),
                     neden: neden.to_string(),
                     ts_ms,
                     govde_json,
@@ -1313,49 +1591,110 @@ impl Motor {
         Ok(i32::try_from(atilacak.len()).unwrap_or(i32::MAX))
     }
 
-    /// Atılmış ertelenen v3 değişikliğini yeniden uygular (köprü `ertelenen_geri_al`; "Serbest bırakma"). Yalnız
-    /// `ertelenen_atildi_mi` girdisi (servisin reddettiği işlemin yolu düzeltme formudur: `GecersizGirdi`). Kayıt
-    /// görünen kopyada yoksa `KayitYok`, mezar taşıysa `GecersizDurum` (önce geri yükle; `islem.rs` kuralı); girdi
-    /// kalır. Değişiklik şimdi yapılmış bir kullanıcı işlemi gibi uygulanır:
+    /// Atılmış ertelenen v3 değişikliğini yeniden uygular (köprü `ertelenen_geri_al` ve
+    /// `ertelenen_geri_al_denetimli`; "Serbest bırakma"). Yalnız `ertelenen_atildi_mi` girdisi (servisin reddettiği
+    /// işlemin yolu düzeltme formudur: `GecersizGirdi`). Kayıt görünen kopyada yoksa `KayitYok`, mezar taşıysa
+    /// `GecersizDurum` (önce geri yükle; `islem.rs` kuralı); girdi kalır. İşlemin `kayit_id`'si ret satırınınkiyle
+    /// aynı olmalı (C6; değilse `GecersizDurum`).
+    ///
+    /// Atıldıktan sonra değişmiş alanı sessizce ezmez (C1, `geri_alma_plani`): değişiklik kaydın şimdiki haline
+    /// (bağlı kipte görünen kopya: PC'nin bilinen hali ve kuyruktaki gönderilmemiş değişiklikler; yerel kipte
+    /// yerel gerçek) uygulanır ve atma anındaki tabanla (ret satırında, `ATMA_TABANI`) karşılaştırılır. Çakışmada
+    /// `zorla` yanlışsa hiçbir şey değişmez. Bağlı kipte PC'nin v3 hali bilinmiyorsa (`v3_hali_bilinmiyor`) ya da
+    /// bağlantı canlı değilse karşılaştırma güvenilir değildir: `GecersizDurum`, girdi kalır. Yalnız değişecek alanlar yazılır; hiçbiri değişmiyorsa
+    /// (değişiklik zaten duruyor) girdi yalnızca silinir.
     /// - bağlı kipte tek işlemde girdi silinir, değişiklik yeni bir `islem_id`'yle (eski kimlik servisin
     ///   önbelleğinden dönüp uygulanmadan geçebilirdi) şimdiki anla kuyruğun sonuna girer, görünen kopya yeniden
-    ///   hesaplanır. Atılan hep yalnız v3 alanı değiştiren `guncelle`'dir: v2 serviste bütünüyle ertelenir, v3'te
-    ///   sırası gelince gider (kaydın sonraki değişikliklerinin ardından: aynı alanda bu kazanır);
-    /// - yerel kipte (koparmadan sonra) yerel yazarla doğrudan uygulanır, sonra girdi silinir (yerel yazar kendi
-    ///   işlemini açar: arada hata olursa girdi kalır, yinelemek aynı değeri yazar).
+    ///   hesaplanır;
+    /// - yerel kipte (koparmadan sonra) yerel yazarla uygulanır, sonra girdi silinir. Yerel yazar kendi işlemini
+    ///   açar (`yerel.rs`; iç içe işlem yok), iki adım tek işlem değildir (C2): arada çökme ya da silme hatası
+    ///   olursa değişiklik yazılmış, girdi kalmıştır. Yeniden denemek güvenlidir: değişiklik artık duruyor, plan
+    ///   hiçbir alanı değiştirmez, yalnız girdi silinir (aynı değer yeniden yazılmaz, geçmiş satırı eklenmez);
+    ///   arada alan yeniden değiştiyse çakışma olarak bildirilir.
     ///
-    /// Döner: `false` listede yoksa (hiçbir şey olmadı). Gözlemciye `ret_listesi`, `baglanti`, kaydın `kayitlar`'ı.
-    pub(crate) fn ertelenen_geri_al(&mut self, o: &Ortam, e: &mut Etkiler, islem_id: &str) -> Result<bool, CekirdekHatasi> {
+    /// Gözlemciye (uygulandıysa) `ret_listesi`, `baglanti`, kaydın `kayitlar`'ı.
+    pub(crate) fn ertelenen_geri_al(
+        &mut self,
+        o: &Ortam,
+        e: &mut Etkiler,
+        islem_id: &str,
+        zorla: bool,
+    ) -> Result<ErtelenenGeriAlma, CekirdekHatasi> {
         if !opak_id_mi(islem_id) {
             return Err(CekirdekHatasi::GecersizGirdi { alan: "islem_id".into(), neden: "geçersiz kimlik".into() });
         }
-        let Some(r) = self.depo.ret_girdisi(islem_id)? else { return Ok(false) };
+        let Some(r) = self.depo.ret_girdisi(islem_id)? else { return Ok(ErtelenenGeriAlma::default()) };
         if !ertelenen_atildi_mi(&r.neden) {
             return Err(CekirdekHatasi::GecersizGirdi {
                 alan: "islem_id".into(),
                 neden: "atılmış ertelenen değişiklik değil".into(),
             });
         }
-        let islem = islem_coz(&r.islem_json)
-            .ok_or_else(|| CekirdekHatasi::GecersizDurum { mesaj: "atılan değişiklik okunamıyor".into() })?;
+        let okunamiyor = || CekirdekHatasi::GecersizDurum { mesaj: "atılan değişiklik okunamıyor".into() };
+        let (islem, taban) = atilan_coz(&r.islem_json).ok_or_else(okunamiyor)?;
+        // Atılan hep yalnız v3 alanı değiştiren `guncelle`'dir (`ertelenenleri_at`).
+        let AjandaIslem::Guncelle { kayit_id, degisiklik, .. } = &islem else { return Err(okunamiyor()) };
+        if *kayit_id != r.kayit_id {
+            return Err(CekirdekHatasi::GecersizDurum { mesaj: "girdi tutarsız: işlemin kaydı satırınkinden farklı".into() });
+        }
         let kayit = self
             .depo
             .gorunen_kayit(&r.kayit_id)?
-            .ok_or_else(|| CekirdekHatasi::KayitYok { kayit_id: r.kayit_id.clone() })?;
-        if kayit.kayit.silindi {
+            .ok_or_else(|| CekirdekHatasi::KayitYok { kayit_id: r.kayit_id.clone() })?
+            .kayit;
+        if kayit.silindi {
             return Err(CekirdekHatasi::GecersizDurum { mesaj: "kayıt silinmiş; önce geri yükle".into() });
         }
-        if self.yerel_mi()? {
-            self.yerel_yaz(o, e, islem)?;
+        let yerel = self.yerel_mi()?;
+        if !yerel && self.v3_hali_bilinmiyor()? {
+            return Err(CekirdekHatasi::GecersizDurum {
+                mesaj: "PC'nin v3 hali bilinmiyor (servis eski ya da v3 eşitlemesi bitmedi): servis güncellenip eşitlenince yeniden dene"
+                    .into(),
+            });
+        }
+        // Bağlantı yokken telefonun bildiği hal eskimiş olabilir ve değişiklik bağlanana dek kuyrukta bekler: o
+        // arada PC'de değişen alanı görmeden ezebilirdi. Canlıyken görünen kopya PC'nin şimdiki halidir ve
+        // değişiklik hemen gider.
+        if !yerel && !self.canli_mi() {
+            return Err(CekirdekHatasi::GecersizDurum {
+                mesaj: "bağlantı canlı değil: geri alma PC'nin şimdiki haline göre yapılır; bağlanınca yeniden dene".into(),
+            });
+        }
+        let cevirici = o.cevirici();
+        let b = self.iyimser_baglam(o, &cevirici)?;
+        // Eski sürümün girdisinde taban yok: boş sayılır (tekil alanda şimdiki her değer çakışmadır; listede
+        // şimdiki öğelerin hepsi kalır).
+        let plan = geri_alma_plani(&kayit, &degisiklik.v3, &taban.unwrap_or_default(), zorla, &b)?;
+        let mut sonuc = ErtelenenGeriAlma {
+            bulundu: true,
+            uygulandi: false,
+            degisen: Vec::new(),
+            cakisan: alan_adlari(&plan.cakisan),
+            birlesen: alan_adlari(&plan.birlesen),
+        };
+        if !plan.cakisan.is_empty() && !zorla {
+            return Ok(sonuc);
+        }
+        let gidecek = (!plan.degisen.is_empty()).then(|| AjandaIslem::Guncelle {
+            kayit_id: r.kayit_id.clone(),
+            temel_revizyon: kayit.revizyon,
+            degisiklik: AjandaDegisiklik { v3: plan.degisiklik.clone(), ..Default::default() },
+        });
+        if yerel {
+            if let Some(g) = gidecek {
+                self.yerel_yaz(o, e, g)?;
+            }
             self.depo.ret_sil(islem_id)?;
         } else {
-            let cevirici = o.cevirici();
-            let b = self.iyimser_baglam(o, &cevirici)?;
-            let yeni_id = Motor::yeni_kimlik(o, "i_")?;
-            let json = islem.json().to_string();
+            let yeni_id = match gidecek {
+                Some(_) => Some(Motor::yeni_kimlik(o, "i_")?),
+                None => None,
+            };
             let degisti = self.depo.yazma(|d| {
                 d.ret_sil(islem_id)?;
-                d.kuyruga_ekle(&yeni_id, &r.kayit_id, &json, b.simdi_ms)?;
+                if let (Some(g), Some(id)) = (&gidecek, &yeni_id) {
+                    d.kuyruga_ekle(id, &r.kayit_id, &g.json().to_string(), b.simdi_ms)?;
+                }
                 gorunen_yenile(d, &b, &r.kayit_id)
             })?;
             if degisti {
@@ -1368,7 +1707,17 @@ impl Motor {
         }
         e.degisim.ret_listesi = true;
         e.degisim.baglanti = true;
-        Ok(true)
+        sonuc.uygulandi = true;
+        sonuc.degisen = alan_adlari(&plan.degisen);
+        Ok(sonuc)
+    }
+
+    /// Bağlı kipte telefonun PC'deki v3 alanlarını bilmediği hal (C1): bilinen servis v2 (erteleme var; v2 kopyası
+    /// v3 alanı taşımaz) ya da sunucu kopyası henüz v3 bağlantıyla dolmadı (`KOPYA_SURUMU`; üst sürümlü ilk
+    /// bağlantının tam telafisi bitmedi). Bu halde geri almanın karşılaştırması yapılamaz: değişiklik kuyrukta
+    /// beklerken PC'de değişen alanı görmeden ezebilirdi.
+    fn v3_hali_bilinmiyor(&self) -> Result<bool, CekirdekHatasi> {
+        Ok(erteleme_surumu(&self.depo)?.is_some() || !self.kopya_surumu()?.v3_mu())
     }
 
     /// Arayüzün bağlantıya göre neyi açacağı (`kopru::tipler::BaglantiYetenekleri`). `Bagli`: bağlı kipte
@@ -1418,7 +1767,7 @@ impl Motor {
         code: Option<AjandaRetNedeni>,
     ) {
         // Bilinmeyen ya da başka kayda ait yanıt yok sayılır.
-        if self.gecmis_istekleri.get(istek_id).is_none_or(|(k, _)| k != kayit_id) {
+        if self.gecmis_istekleri.get(istek_id).is_none_or(|(k, ..)| k != kayit_id) {
             return;
         }
         self.gecmis_istekleri.remove(istek_id);
@@ -1525,6 +1874,65 @@ mod testler {
         kur(&mut m);
         m.depo.kuyruk_deneme_yaz(1, 1).unwrap();
         assert_eq!(m.gecerli_atlama().unwrap(), None, "deneme");
+    }
+
+    /// C1: üç yönlü liste birleşimi. Atıldıktan sonra eklenen öğe hiçbir durumda (zorla da) düşmez; değişikliğin
+    /// eklediği arkaya girer, çıkardığı (değişmemişse) çıkar; değişmiş öğeye dokunmak çakışmadır.
+    #[test]
+    fn liste_birlestir_yeni_ogeyi_dusurmez() {
+        fn k<'a>(s: &'a &str) -> &'a str {
+            s.split(':').next().unwrap_or("")
+        }
+        let l = |x: &[&'static str]| x.to_vec();
+        let b = |t: &[&'static str], d: &[&'static str], c: &[&'static str], z: bool| liste_birlestir(t, d, c, k, z);
+        // Fotoğraf senaryosu: taban boş, değişiklik A ekler, PC'de B eklendi.
+        assert_eq!(b(&[], &["a:1"], &["b:1"], false), (l(&["b:1", "a:1"]), false));
+        // Değişiklik zaten duruyor.
+        assert_eq!(b(&[], &["a:1"], &["a:1", "b:1"], false), (l(&["a:1", "b:1"]), false));
+        // Değişmemiş öğenin kaldırılması ve değiştirilmesi.
+        assert_eq!(b(&["x:1", "y:1"], &["y:2"], &["x:1", "y:1", "b:1"], false), (l(&["y:2", "b:1"]), false));
+        // Atıldıktan sonra değişmiş öğeyi kaldırmak / değiştirmek çakışmadır; zorla değişikliğin hali, B kalır.
+        assert_eq!(b(&["x:1"], &[], &["x:2", "b:1"], false), (l(&["x:2", "b:1"]), true));
+        assert_eq!(b(&["x:1"], &[], &["x:2", "b:1"], true), (l(&["b:1"]), true));
+        assert_eq!(b(&["x:1"], &["x:3"], &["x:2"], false), (l(&["x:2"]), true));
+        assert_eq!(b(&["x:1"], &["x:3"], &["x:2"], true), (l(&["x:3"]), true));
+        // Aynı anahtar atıldıktan sonra başka içerikle eklendi.
+        assert_eq!(b(&[], &["a:1"], &["a:2"], false), (l(&["a:2"]), true));
+        // Değişikliğin dokunmadığı öğe sonradan çıkarıldı: çıkmış kalır; değiştirdiği çıkarıldı: çakışma.
+        assert_eq!(b(&["x:1"], &["x:1", "a:1"], &[], false), (l(&["a:1"]), false));
+        assert_eq!(b(&["x:1"], &["x:2"], &[], false), (l(&[]), true));
+        assert_eq!(b(&["x:1"], &["x:2"], &[], true), (l(&["x:2"]), true));
+        // Tabanı olmayan (eski) girdi: şimdiki öğelerin hepsi kalır.
+        assert_eq!(b(&[], &[], &["x:1"], true), (l(&["x:1"]), false));
+    }
+
+    /// C5: geçmiş isteğinin yaşı duvar ölçüsünün (geri gidiş sıfır) ve tekdüze ölçünün büyüğüdür.
+    #[test]
+    fn gecmis_yasi_saat_geri_gidince_tekduzeyle_sayar() {
+        use std::time::Duration;
+        assert_eq!(gecmis_yasi(1_000, 400, Duration::from_millis(5)), 600);
+        assert_eq!(gecmis_yasi(400, 1_000, Duration::from_millis(5)), 5, "saat geri gitti: tekdüze ölçü");
+        assert_eq!(gecmis_yasi(400, 1_000, Duration::from_secs(61)), 61_000, "tekdüze ölçü yine düşürür");
+        assert_eq!(gecmis_yasi(i64::MIN, i64::MAX, Duration::MAX), i64::MAX);
+    }
+
+    /// C1: ret satırındaki taban işlemle birlikte okunur; tabansız metin (öteki retler) `islem_coz` gibi.
+    #[test]
+    fn atilan_metni_tabaniyla_okunur() {
+        use crate::model::{AjandaDegisiklik, Alan, V3Alanlari, V3Degisikligi};
+        let islem = AjandaIslem::Guncelle {
+            kayit_id: "k_a".into(),
+            temel_revizyon: 1,
+            degisiklik: AjandaDegisiklik { v3: V3Degisikligi { simge: Alan::Deger("ev".into()), ..Default::default() }, ..Default::default() },
+        };
+        let taban = V3Alanlari { simge: Some("is".into()), ..Default::default() };
+        let j = atilan_json(&islem, &taban);
+        assert!(j.contains(ATMA_TABANI));
+        assert!(islem_coz(&j).is_none(), "işlem okuyucusu katıdır: taban yalnız `atilan_coz` ile");
+        assert_eq!(atilan_coz(&j), Some((islem.clone(), Some(taban))));
+        assert_eq!(atilan_coz(&islem.json().to_string()), Some((islem.clone(), None)));
+        let bozuk = j.replace("\"is\"", "7");
+        assert_eq!(atilan_coz(&bozuk), Some((islem, None)), "okunamayan taban yok sayılır");
     }
 
     #[test]
