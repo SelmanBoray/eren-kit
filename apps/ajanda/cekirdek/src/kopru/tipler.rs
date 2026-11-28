@@ -3,7 +3,7 @@
 
 use crate::model::{
     AjandaKanalHatasi, AjandaKaydi, AjandaRetNedeni, AjandaYazar, AjandaZamani, IslemTuru, KayitDurumu, KayitGovdesi,
-    KayitTuru, KuyrukRetNedeni,
+    KayitTuru, KuyrukRetNedeni, V3Alanlari,
 };
 
 /// Çalışma kipi (D1, göç 4). `Yerel`: doğruluk kaynağı telefondur, işlemler kuyruğa girmeden kalıcı
@@ -126,10 +126,31 @@ pub struct RetGirdisi {
     pub ts_ms: i64,
     /// Kullanıcının `Cekirdek::ertelenenleri_at` ile attığı ertelenen v3 değişikliği (eski servis hiç
     /// güncellenmediği için gönderilemedi; `neden` `TeslimEdilemedi`). Arayüz "PC'deki servis eski olduğu için
-    /// gönderilmeden atıldı" gibi kendi metnini gösterir ve düzeltme sunmaz: form v3 alanı taşımaz (`govde` yalnız
-    /// başlık içindir). Atmak (`ret_at`) girdiyi siler. Öteki retlerde yanlış.
+    /// atıldı" gibi kendi metnini gösterir; düzeltme formu sunmaz (form v3 alanı taşımaz, `govde` yalnız başlık
+    /// içindir). Atılan değişikliğin kendisi `v3_degisikligi`'ndedir; `Cekirdek::ertelenen_geri_al` onu yeniden
+    /// uygular. Atmak (`ret_at`) girdiyi siler. Öteki retlerde yanlış.
     #[uniffi(default)]
     pub ertelenen_atildi: bool,
+    /// İşlemin v3 alanlarındaki değişikliği (`guncelle`'de değişiklik, `ekle`'de konan v3 alanları): arayüz neyin
+    /// atıldığını (ya da reddedildiğini) bununla gösterir. İşlem v3 alanına dokunmuyorsa ya da okunamıyorsa yok.
+    #[uniffi(default)]
+    pub v3_degisikligi: Option<V3DegisiklikOzeti>,
+    /// Yalnız `ertelenen_atildi` girdisinde: atılan işlem daha önce (v3 bağlantıda, servis sonra v2'ye inmeden
+    /// önce) yollanmış ve sonucu gelmemişti. Servis onu uygulamış olabilir: değişiklik PC'de duruyor olabilir.
+    /// Arayüz "gönderilmeden atıldı" demez ("PC'ye ulaşmış olabilir"). Öteki girdilerde yanlış.
+    #[uniffi(default)]
+    pub ulasmis_olabilir: bool,
+}
+
+/// Bir işlemin v3 alanlarındaki değişikliği, okunur hali (`RetGirdisi.v3_degisikligi`). Alan adları kablodaki
+/// adlardır (`simge`, `bolge`, `bolge_konumu`, `varis`, `baglantilar`, `ekler`).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct V3DegisiklikOzeti {
+    /// Değer konan alanlar ve değerleri; değişiklikte yer almayan (ya da kaldırılan) alan boştur (`None`, boş
+    /// liste). `baglantilar` ve `ekler` konan listenin tamamıdır (değişiklik listeyi bütünüyle değiştirir).
+    pub konan: V3Alanlari,
+    /// Kaldırılan alanların adları, yukarıdaki sırayla.
+    pub kaldirilan: Vec<String>,
 }
 
 /// Geçmişin bir satırı (servisin `gecmis` çerçevesinden).

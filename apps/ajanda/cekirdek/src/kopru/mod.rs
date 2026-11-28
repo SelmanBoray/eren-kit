@@ -472,6 +472,18 @@ impl Cekirdek {
         self.calistir(|m, o, e| m.ertelenenleri_at(o, e, kayit_id.as_deref()))
     }
 
+    /// Ret listesindeki atılmış ertelenen v3 değişikliğini (`RetGirdisi.ertelenen_atildi`; ne olduğu
+    /// `RetGirdisi.v3_degisikligi`'nde) yeniden uygular: girdi listeden çıkar, değişiklik şimdi yapılmış gibi
+    /// uygulanır. Bağlı kipte kuyruğun sonuna yeni bir işlem olarak girer (eski v2 serviste yine ertelenir,
+    /// servis güncellenince gider; v3 serviste hemen gider), kayıt v3 değeriyle görünür. Yerel kipte (koparmadan
+    /// sonra) doğrudan uygulanır. Döner: `false`, listede bu `islem_id` yok (hiçbir şey olmadı). Hata (girdi
+    /// kalır): `GecersizGirdi{alan:"islem_id"}` (geçersiz kimlik ya da girdi ertelenen atılmış bir değişiklik
+    /// değil), `KayitYok` (kayıt telefonda yok), `GecersizDurum` (kayıt silinmiş; önce geri yükle). Gözlemciye
+    /// `ret_listesi`, `baglanti`, kaydın `kayitlar`'ı.
+    pub fn ertelenen_geri_al(&self, islem_id: String) -> Result<bool, CekirdekHatasi> {
+        self.calistir(|m, o, e| m.ertelenen_geri_al(o, e, &islem_id))
+    }
+
     // Dışa ve içe aktarma (D3; biçim ve kurallar `motor/aktarma.rs` başında, kap `aktarma_bicimi`)
 
     /// Bütün kayıtların (mezar taşları dahil) belgesi; iki kipte de çalışır (bağlı kipte görünen kopya,

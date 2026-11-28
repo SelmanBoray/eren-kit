@@ -15,7 +15,14 @@ import { AyarHatasi, ayarKur, medyaKapaliNedeni, yollariUret } from "./ayar.ts";
 import { bildirimKur } from "./bildirim.ts";
 import { cihazKur } from "./cihaz.ts";
 import { depoKur } from "./depo.ts";
-import { ajandaEkDiskiKur, disDunyaKur, dosyaPortuKur, medyaDosyaKur, veriKokuIzniHazirla } from "./dis-dunya.ts";
+import {
+  ajandaEkDiskiKur,
+  disDunyaKur,
+  dosyaPortuKur,
+  medyaDosyaKur,
+  tekduzeSaatKur,
+  veriKokuIzniHazirla,
+} from "./dis-dunya.ts";
 import { gatewayKur } from "./gateway.ts";
 import { ajandaEkliYuz } from "./gateway-ajanda.ts";
 import { gunlukKur } from "./gunluk.ts";
@@ -54,6 +61,7 @@ import type {
   MedyaYoneticisi,
   Ortam,
   PlanYoneticisi,
+  SaatPortu,
   SohbetYoneticisi,
   Sonuc,
   TakvimPortu,
@@ -101,6 +109,11 @@ export interface ServisGirdisi {
   ajandaEkDiski?: AjandaEkDiski;
   /** Ek yedeği kotası, bayt (`giris` `ayar.ts` `ajandaEkKotaBayt`'tan verir). Verilmezse `EK_TOPLAM_BAYT`. */
   ajandaEkKotaBayt?: number;
+  /**
+   * Ek yedeğinin gözlenen süresini ölçen tekdüze saat (`giris` `dis-dunya.ts` `tekduzeSaatKur` verir).
+   * Verilmezse `dunya.saat` (testler sahte zamanla sürer).
+   */
+  ajandaEkTekduzeSaat?: SaatPortu;
   /**
    * Asistan araçlarının sözleşme 3 alanları (`giris` `ayar.ts` `ajandaAracV3`'ten, ayar `ajanda_arac_v3`).
    * Verilmezse kapalı: araç yüzü (şema, tanım, çıktı) v3 öncesiyle aynı, araçla v3 alanlı kayıt doğmaz.
@@ -231,6 +244,7 @@ export function servisKur({
   ajanda: ajandaSecenegi,
   ajandaEkDiski,
   ajandaEkKotaBayt,
+  ajandaEkTekduzeSaat,
   ajandaAracV3 = false,
   medya: medyaSecenegi,
 }: ServisGirdisi): Servis {
@@ -295,6 +309,7 @@ export function servisKur({
           zamanlayici,
           gunluk,
           ...(ajandaEkKotaBayt !== undefined && { kotaBayt: ajandaEkKotaBayt }),
+          ...(ajandaEkTekduzeSaat !== undefined && { tekduze: ajandaEkTekduzeSaat }),
         });
   const ajanda =
     takvim === null
@@ -619,6 +634,7 @@ const giris = async (): Promise<void> => {
       depoYolu: vt,
       ajandaEkDiski: ajandaEkDiskiKur(win32.join(kok, AJANDA_EK_KLASORU)),
       ajandaEkKotaBayt: ayar.ajandaEkKotaBayt,
+      ajandaEkTekduzeSaat: tekduzeSaatKur(),
       ajandaAracV3: ayar.ajandaAracV3,
     });
     let kapaniyor = false;
