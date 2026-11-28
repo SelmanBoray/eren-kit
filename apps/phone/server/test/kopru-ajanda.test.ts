@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import type { Socket } from "node:net";
 import { tmpdir } from "node:os";
@@ -1147,7 +1147,8 @@ describe("kopru PC köprüsü: uyarlayıcı (--uyarlayici)", () => {
  * - d7bf303 (Kol H, T5): `{rol, jeton, surec_id?}`, katı; `surec_id` yalnız `pc_oturumu`'nda; `arac_v3` yok.
  * Hello reddi ikisinde de `ajanda-kopru-sunucu.ts` `helloIsle`'ninkidir: şemadan geçmeyen hello →
  * `kopru_ret{yetkisiz}` yazıp hemen kapatır (`reddet`; adlı boruda ret satırı kapanışla birlikte düşebilir, ölçüldü:
- * yaz + destroy yarı yarıya teslim). Son test bu olguları git'ten okuyarak denetler. Kanıtlanan: d7bf303'te süreç
+ * yaz + destroy yarı yarıya teslim). Temsil denetimi bu olguları sabit kopyadan (`sabit/kopru-eski-surumler.json`)
+ * denetler; kopyanın git'le aynılığı ayrı testte (git yoksa görünür atlanır). Kanıtlanan: d7bf303'te süreç
  * eşitliği korunur (yüz v2), `initialize`'da servis yokken de; 55948ea'da köprü düz hello'ya dek iner ve çalışır;
  * yeni serviste zengin hello ilk denemede geçer; her basamak döngüde en çok bir kez denenir, gerçek bir retle döngü
  * sıkışmaz; yeni alan hello dışında hiçbir çerçeveye (`cagri`) konmaz; eski köprünün düz hello'su yeni serviste geçer.
@@ -1449,41 +1450,67 @@ describe("kopru PC köprüsü: hello merdiveni (surec_id, arac_v3) ve sürüm uy
     assert.equal("surec_id" in ana.son.gelen[0]!, false);
   });
 
-  it("temsil denetimi (git): 55948ea ve d7bf303'ün hello şeması, AjandaPcCagri'si ve hello reddi bu testteki kopyalarla aynı", (t) => {
-    const goster = (yol: string, surum = "55948ea"): string | null => {
+  /**
+   * Eski sürümlerin sabit kopyası (`sabit/kopru-eski-surumler.json`: `git show <commit>:<yol>` kesitleri ve blob
+   * kimlikleri). Temsil denetimi git'e bağlı değildir, hep koşar; kopyanın git'le aynılığı ayrı testte denetlenir.
+   */
+  type SabitDosya = { yol: string; blob: string; arac_v3_geciyor?: boolean; kesitler: Record<string, string> };
+  const SABIT = JSON.parse(readFileSync(fileURLToPath(new URL("./sabit/kopru-eski-surumler.json", import.meta.url)), "utf8")) as {
+    surumler: Record<"55948ea" | "d7bf303", { commit: string; protokol: SabitDosya; sunucu: SabitDosya }>;
+  };
+  const RET_CAGRISI = '      reddet(bag, cozum.kod === "protokol_uyumsuz" ? "protokol_uyumsuz" : "yetkisiz", "cerceve_gecersiz");';
+  const REDDET = /^ {2}const reddet = [^\n]*\n[^\n]*el_sikisma_ret[^\n]*\n\s*yaz\(bag, \{ v: PROTOKOL_SURUMU, type: "kopru_ret", code \}\);\n\s*baglantiKapat\(bag\);$/;
+  const PC_CAGRI = "export const AjandaPcCagri = z.strictObject({ arac_cagri_id: AracCagriId.optional(), oturum_id: OpakId.optional() });";
+  const YUKARI = 'export const AjandaKopruYukari = z.discriminatedUnion("type", [AjandaKopruHello, AjandaKopruIstek, KopruIptal]);';
+
+  it("temsil denetimi (sabit kopya): 55948ea ve d7bf303'ün hello şeması, AjandaPcCagri'si ve hello reddi bu testteki kopyalarla aynı", () => {
+    const eski = SABIT.surumler["55948ea"];
+    assert.equal(eski.protokol.kesitler.hello, 'export const AjandaKopruHello = mesaj("kopru_hello", { rol: AjandaKopruRolu, jeton: Jeton });');
+    assert.equal(eski.protokol.kesitler.pc_cagri, PC_CAGRI);
+    assert.equal(eski.protokol.kesitler.yukari, YUKARI);
+    assert.equal(eski.protokol.arac_v3_geciyor, false);
+    // d7bf303 (Kol H T5): hello `surec_id`'yi tanır, `arac_v3`'ü tanımaz; ret aynı yoldan; cagri aynı.
+    const t5 = SABIT.surumler["d7bf303"];
+    assert.equal(t5.protokol.kesitler.hello, 'export const AjandaKopruHello = mesaj("kopru_hello", { rol: AjandaKopruRolu, jeton: Jeton, surec_id: OpakId.optional() }).superRefine((m, ctx) => {');
+    assert.equal(t5.protokol.kesitler.surec_id_kurali, `  if (m.surec_id !== undefined && m.rol !== "pc_oturumu") ctx.addIssue({ code: "custom", path: ["surec_id"], message: "surec_id yalnız pc_oturumu hello'sunda" });`);
+    assert.equal(t5.protokol.arac_v3_geciyor, false, "d7bf303 arac_v3'ü bilmez");
+    assert.equal(t5.protokol.kesitler.pc_cagri, PC_CAGRI);
+    assert.equal(t5.protokol.kesitler.yukari, YUKARI);
+    for (const { sunucu } of [eski, t5]) {
+      assert.equal(sunucu.kesitler.ret_cagrisi, RET_CAGRISI);
+      assert.match(sunucu.kesitler.reddet ?? "", REDDET);
+    }
+    // Bugünkü istek şeması 55948ea'dakiyle aynı alanları taşır (cagri katı: arac_cagri_id, oturum_id).
+    assert.deepEqual(Object.keys(AjandaPcCagri.shape).sort(), ["arac_cagri_id", "oturum_id"]);
+  });
+
+  it("sabit kopya git'teki sürümlerle aynı (blob kimliği ve kesitler); git ya da commit yoksa görünür atlanır", (t) => {
+    const cwd = fileURLToPath(new URL(".", import.meta.url));
+    const git = (...args: string[]): string | null => {
       try {
-        return execFileSync("git", ["show", `${surum}:${yol}`], { encoding: "utf8", cwd: fileURLToPath(new URL(".", import.meta.url)), stdio: ["ignore", "pipe", "ignore"] });
+        return execFileSync("git", args, { encoding: "utf8", cwd, stdio: ["ignore", "pipe", "ignore"] });
       } catch {
         return null;
       }
     };
-    const protokol = goster("apps/phone/protocol/src/ajanda-arac.ts");
-    const sunucu = goster("apps/phone/server/src/ajanda-kopru-sunucu.ts");
-    if (protokol === null || sunucu === null) {
-      t.skip("git ya da 55948ea yok");
+    const eksik = Object.values(SABIT.surumler).filter((s) => git("cat-file", "-e", `${s.commit}^{commit}`) === null);
+    if (eksik.length > 0) {
+      const not = `sabit kopya git'le doğrulanamadı (git ya da commit yok: ${eksik.map((s) => s.commit.slice(0, 7)).join(", ")}); temsil denetimi sabit kopyayla koştu`;
+      t.diagnostic(not);
+      console.warn(`UYARI kopru-ajanda: ${not}`);
+      t.skip(not);
       return;
     }
-    assert.ok(protokol.includes('export const AjandaKopruHello = mesaj("kopru_hello", { rol: AjandaKopruRolu, jeton: Jeton });'));
-    assert.ok(protokol.includes("export const AjandaPcCagri = z.strictObject({ arac_cagri_id: AracCagriId.optional(), oturum_id: OpakId.optional() });"));
-    assert.ok(protokol.includes('export const AjandaKopruYukari = z.discriminatedUnion("type", [AjandaKopruHello, AjandaKopruIstek, KopruIptal]);'));
-    assert.ok(sunucu.includes('reddet(bag, cozum.kod === "protokol_uyumsuz" ? "protokol_uyumsuz" : "yetkisiz", "cerceve_gecersiz");'));
-    assert.match(sunucu, /const reddet = [^\n]*\n[^\n]*el_sikisma_ret[^\n]*\n\s*yaz\(bag, \{ v: PROTOKOL_SURUMU, type: "kopru_ret", code \}\);\n\s*baglantiKapat\(bag\);/);
-    // Bugünkü istek şeması 55948ea'dakiyle aynı alanları taşır (cagri katı: arac_cagri_id, oturum_id).
-    assert.deepEqual(Object.keys(AjandaPcCagri.shape).sort(), ["arac_cagri_id", "oturum_id"]);
-    // d7bf303 (Kol H T5): hello `surec_id`'yi tanır, `arac_v3`'ü tanımaz; ret aynı yoldan; cagri aynı.
-    const t5Protokol = goster("apps/phone/protocol/src/ajanda-arac.ts", "d7bf303");
-    const t5Sunucu = goster("apps/phone/server/src/ajanda-kopru-sunucu.ts", "d7bf303");
-    if (t5Protokol === null || t5Sunucu === null) {
-      t.skip("d7bf303 yok");
-      return;
+    for (const s of Object.values(SABIT.surumler)) {
+      for (const d of [s.protokol, s.sunucu]) {
+        const ad = `${s.commit.slice(0, 7)}:${d.yol}`;
+        assert.equal(git("rev-parse", `${s.commit}:${d.yol}`)?.trim(), d.blob, `${ad} blob`);
+        const metin = git("show", `${s.commit}:${d.yol}`);
+        assert.ok(metin !== null, ad);
+        for (const [k, kesit] of Object.entries(d.kesitler)) assert.ok(metin.includes(kesit), `${ad} ${k}`);
+        if (d.arac_v3_geciyor !== undefined) assert.equal(metin.includes("arac_v3"), d.arac_v3_geciyor, `${ad} arac_v3`);
+      }
     }
-    assert.ok(t5Protokol.includes('export const AjandaKopruHello = mesaj("kopru_hello", { rol: AjandaKopruRolu, jeton: Jeton, surec_id: OpakId.optional() }).superRefine((m, ctx) => {'));
-    assert.ok(t5Protokol.includes(`if (m.surec_id !== undefined && m.rol !== "pc_oturumu") ctx.addIssue({ code: "custom", path: ["surec_id"], message: "surec_id yalnız pc_oturumu hello'sunda" });`));
-    assert.equal(t5Protokol.includes("arac_v3"), false, "d7bf303 arac_v3'ü bilmez");
-    assert.ok(t5Protokol.includes("export const AjandaPcCagri = z.strictObject({ arac_cagri_id: AracCagriId.optional(), oturum_id: OpakId.optional() });"));
-    assert.ok(t5Protokol.includes('export const AjandaKopruYukari = z.discriminatedUnion("type", [AjandaKopruHello, AjandaKopruIstek, KopruIptal]);'));
-    assert.ok(t5Sunucu.includes('reddet(bag, cozum.kod === "protokol_uyumsuz" ? "protokol_uyumsuz" : "yetkisiz", "cerceve_gecersiz");'));
-    assert.match(t5Sunucu, /const reddet = [^\n]*\n[^\n]*el_sikisma_ret[^\n]*\n\s*yaz\(bag, \{ v: PROTOKOL_SURUMU, type: "kopru_ret", code \}\);\n\s*baglantiKapat\(bag\);/);
   });
 
   /** Gerçek ajanda boru sunucusu (PC açık), bellek içi boru; ham yukarı satırlar ve bağlamlar kaydedilir. */
