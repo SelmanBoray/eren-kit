@@ -217,10 +217,10 @@ class SahteYuz : CekirdekYuzu {
     }
 
     /**
-     * Atılmış ertelenen girdisi geri alınırken çakışan alanlar (testte kurulur). Çekirdeğin kuralıyla: girdi
-     * yoksa ya da `ertelenenAtildi` değilse `bulundu` yanlış (gerçeği `GecersizGirdi` verir; sahte burada
-     * yalınlaştırır); çakışma varsa ve `zorla` yanlışsa hiçbir şey değişmez, girdi kalır; öteki halde girdi
-     * listeden çıkar. Çağrı kaydı `ertelenenGeriAl:<islemId>[:zorla]`.
+     * Atılmış ertelenen girdisi geri alınırken çakışan alanlar (testte kurulur). Çekirdeğin kuralıyla
+     * (`motor/kanal.rs` `ertelenen_geri_al`): girdi yoksa `bulundu` yanlış; girdi var ama `ertelenenAtildi` değilse
+     * `GecersizGirdi{alan:"islem_id"}` (girdi kalır); çakışma varsa ve `zorla` yanlışsa hiçbir şey değişmez, girdi
+     * kalır; öteki halde girdi listeden çıkar. Çağrı kaydı `ertelenenGeriAl:<islemId>[:zorla]`.
      */
     var geriAlCakisan: List<String> = emptyList()
 
@@ -229,7 +229,8 @@ class SahteYuz : CekirdekYuzu {
 
     override fun ertelenenGeriAlDenetimli(islemId: String, zorla: Boolean): ErtelenenGeriAlma {
         cagrilar += "ertelenenGeriAl:$islemId" + if (zorla) ":zorla" else ""
-        val r = ret.firstOrNull { it.islemId == islemId && it.ertelenenAtildi } ?: return ErtelenenGeriAlma()
+        val r = ret.firstOrNull { it.islemId == islemId } ?: return ErtelenenGeriAlma()
+        if (!r.ertelenenAtildi) throw CekirdekHatasi.GecersizGirdi("islem_id", "atılmış ertelenen değişiklik değil")
         if (geriAlCakisan.isNotEmpty() && !zorla) {
             return ErtelenenGeriAlma(bulundu = true, uygulandi = false, cakisan = geriAlCakisan)
         }

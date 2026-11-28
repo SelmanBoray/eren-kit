@@ -226,6 +226,18 @@ class SahteCekirdek : KanalCekirdegi {
         gozlemciler.toList().forEach { it.degisti(d) }
     }
 
+    /**
+     * Gerçek `gecmis_iste` (ve yanıtı, zaman aşımı) gibi: durumun `gecmisBeklemeMs`'i değişir, gözlemciye YALNIZ
+     * `Degisim.gecmis` gider (`baglanti` yanlış; `motor/sorgu.rs` `gecmis_iste`).
+     */
+    fun gecmisDegisti(gecmisBeklemeMs: Long?, kayitId: String = "k_ornek1") {
+        synchronized(this) {
+            durum = durum.copy(gecmisBeklemeMs = gecmisBeklemeMs)
+        }
+        val d = Degisim(emptyList(), false, false, false, false, listOf(kayitId))
+        gozlemciler.toList().forEach { it.degisti(d) }
+    }
+
     fun eslesmeDegisti() {
         val d = Degisim(emptyList(), true, true, true, true, emptyList())
         gozlemciler.toList().forEach { it.degisti(d) }

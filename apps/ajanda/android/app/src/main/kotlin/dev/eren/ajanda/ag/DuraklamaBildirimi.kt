@@ -13,7 +13,8 @@ import dev.eren.ajanda.kimlik.GecisMetni
  * kullanıcı uygulamayı açana dek eşitleme sessizce durur. Bu sınıf (saf; Android'e dokunan kısım arayüzlerin
  * arkasında) bunu duraklama başına **bir kez** bildirir. Duraklamanın kimliği, öncelik sırasıyla:
  * 1. **Onay bekleyen plan** (`birlestirmeOnizlemesi()?.iz`): her yeni plan bir kez ("onayınızı bekliyor"); geçiş
- *    olsun olmasın, geçiş gösterilmiş olsun olmasın.
+ *    olsun olmasın, geçiş gösterilmiş olsun olmasın. Geçişin bildirim işaretine yazmaz (K7): metin geçişi
+ *    anlatmaz; geçiş özeti uygulamada (ya da plan kalktıktan sonra 2. adımda) söylenir.
  * 2. **Henüz söylenmemiş geçiş** (`sonGecis()`; `GecisMetinleri.bildirimdeGosterilmeli` + saklı `tsMs`; arayüz
  *    [gecisGosterildi] ile işaretlediyse söylenmiş sayılır): geçiş başına bir kez, `GecisMetinleri.duraklama` metni.
  *    E3: bildirimin "söyledim" işareti ([gosterilen]) ile uygulamanın "gösterdim" işareti ([uygulamada]) iki ayrı
@@ -21,7 +22,8 @@ import dev.eren.ajanda.kimlik.GecisMetni
  *    (`GecisMetinleri.uygulamadaGosterilmeli`; `DEPO_DEGISTI` uygulamada hep bir kez gösterilir).
  * 3. **Eşleşme** (`eslesmeDurumu()`): geçiş yoksa (ilk eşleşme) ya da söylendiyse (arayüz gösterdi; koparmadan sonra
  *    yeniden eşleşme): eşleşme başına bir kez, genel metin ([ESITLEME_BEKLIYOR]).
- * Plan ya da geçiş bildirildiyse o eşleşmenin duraklaması da söylenmiş sayılır (plan düşünce yinelenmez).
+ * Plan ya da geçiş bildirildiyse o eşleşmenin duraklaması da söylenmiş sayılır (plan düşünce genel metin
+ * yinelenmez; söylenmemiş geçiş varsa onun metni bir kez gelir).
  * - Uygulama görünürken gösterilmez (arayüz durumu kendisi söyler; saklanmaz, uygulama gizlenince sonraki iş gösterir).
  * - Gösterilemediyse (bildirim izni ya da kanal kapalı) sessizce atlanır, saklanmaz.
  * - `ESITLENDI` ya da `ESLESME_YOK`: duraklama bitti, bildirim (varsa) kaldırılır.
@@ -59,9 +61,11 @@ class DuraklamaBildirimi(
             if (plan == duraklama.plan()) return
             val metin = if (g != null) GecisMetinleri.duraklama(g, birlestirmeBekliyor = true) else ONAY_BEKLIYOR
             if (bildirici.goster(metin)) {
+                // Geçişin işaretine yazılmaz (K7): plan metni geçişi anlatmaz ("onayınızı bekliyor"). Yazsaydı
+                // uygulama geçiş özetini (koparma, eşleşmeyi kaldırma) bir daha göstermezdi; uygulama onu
+                // işaretlemeden süreç öldüyse özet hiç görünmezdi.
                 duraklama.planYaz(plan)
                 eslesme?.let(duraklama::eslesmeYaz)
-                g?.let { gosterilen.yaz(it.tsMs) }
             }
             return
         }

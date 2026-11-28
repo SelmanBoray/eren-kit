@@ -265,6 +265,42 @@ class DuraklamaBildirimiTest {
         assertTrue(GecisMetinleri.uygulamadaGosterilmeli(k, null, null))
     }
 
+    /**
+     * K7: plan bildirimi geçişi anlatmaz, geçişin işaretine yazmaz. Uygulama geçişi işaretlemeden süreç öldüyse
+     * (koparma, eşleşmeyi kaldırma) özet uygulamada yine açılır; uygulama hiç açılmadan plan kalkarsa geçişin
+     * kendi metni bir kez bildirilir, sonra yinelenmez.
+     */
+    @Test
+    fun planBildirimiGecisIsaretineYazmaz() {
+        gecis = ozet(GecisNedeni.KOPARMA, 4_000)
+        bekliyor = true
+        repeat(2) { b.arkaPlanBitti(ArkaPlanSonucu.YEREL_KIP) }
+        assertEquals(listOf(DuraklamaBildirimi.ONAY_BEKLIYOR), gosterilen)
+        assertNull("plan bildirimi geçişi söylemiş sayılmaz", saklanan)
+        assertEquals(0, uygulamadaYazildi)
+        assertTrue("uygulama özeti yine gösterir", GecisMetinleri.uygulamadaGosterilmeli(gecis, uygulamadaSaklanan, saklanan))
+
+        // Plan kalktı, uygulama açılmadı: geçişin metni bir kez.
+        bekliyor = false
+        repeat(2) { b.arkaPlanBitti(ArkaPlanSonucu.YEREL_KIP) }
+        assertEquals(2, gosterilen.size)
+        assertTrue(gosterilen[1].govde, gosterilen[1].govde.contains("yeniden bağlanma tamamlanmadı"))
+        assertEquals(4_000L, saklanan)
+
+        // Uygulama geçişi gösterdiyse plan da sonrası da geçişi söylemez.
+        gosterilen.clear()
+        saklanan = null
+        saklananPlan = null
+        uygulamadaSaklanan = 4_000
+        bekliyor = true
+        planIzi = "plan-9"
+        b.arkaPlanBitti(ArkaPlanSonucu.YEREL_KIP)
+        bekliyor = false
+        b.arkaPlanBitti(ArkaPlanSonucu.YEREL_KIP)
+        assertEquals(listOf(DuraklamaBildirimi.ONAY_BEKLIYOR), gosterilen)
+        assertNull(saklanan)
+    }
+
     @Test
     fun cekirdekHatasiDisariCikmaz() {
         cekirdekHatasi = IllegalStateException("x")

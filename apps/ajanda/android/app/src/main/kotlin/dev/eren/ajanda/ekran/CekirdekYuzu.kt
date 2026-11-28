@@ -25,6 +25,7 @@ import dev.eren.ajanda.cekirdek.RetGirdisi
 import dev.eren.ajanda.cekirdek.Sekme
 import dev.eren.ajanda.cekirdek.TakvimAyi
 import dev.eren.ajanda.cekirdek.TakvimOgesi
+import dev.eren.ajanda.cekirdek.V3DegisiklikOzeti
 
 /**
  * Ekranların kullandığı çekirdek yüzü. Üretimde [Gercek] (UniFFI `Cekirdek`); testte sahtesi, böylece
@@ -68,7 +69,8 @@ interface CekirdekYuzu {
      * Ret listesindeki atılmış ertelenen değişikliği (`ertelenenAtildi` girdisi) kaydın şimdiki haline yeniden
      * uygular (çekirdek `ertelenen_geri_al_denetimli`, C1). Atıldıktan sonra değişmiş alan varsa ve [zorla]
      * yanlışsa hiçbir şey yapılmaz, `cakisan` dolu döner (girdi kalır); [zorla] doğruysa o alanlar da yazılır.
-     * Girdi listede yoksa `bulundu` yanlış. Ekrana bağlı değil.
+     * Girdi listede yoksa `bulundu` yanlış. Girdi listede ama atılmış ertelenen değişiklik değilse (sıradan ret)
+     * `GecersizGirdi{alan:"islem_id"}` atar (`bulundu` yanlış dönmez). Ekrana bağlı değil.
      */
     fun ertelenenGeriAlDenetimli(islemId: String, zorla: Boolean): ErtelenenGeriAlma
     fun gecmisIste(kayitId: String, onceRev: Long?)
@@ -198,10 +200,29 @@ object RetListesi {
         /** Düzeltme formu sunulur mu: gövdesi var ve atılmış ertelenen değişiklik değil. */
         val duzeltilebilir: Boolean,
         val aciklama: String,
-        /** Satırın alt yazısı: "Ekleme gönderilemedi" ya da (atılmış ertelenen değişiklikte) "Düzenleme atıldı". */
+        /**
+         * Satırın alt yazısı: "Ekleme gönderilemedi" ya da (atılmış ertelenen değişiklikte, [ertelenenDurumu])
+         * "Simge ve bölge değişikliği atıldı". Arayüz kendi "gönderilemedi" metnini kurmaz, bunu gösterir.
+         */
         val durum: String = "$islemMetni gönderilemedi",
         /** "Kayıt bu yedekten sonra değişti" uyarısı (`kayitSonraDegisti`); yoksa `null`. */
         val uyari: String? = null,
+        /**
+         * Atılmış ertelenen v3 değişikliği (`RetGirdisi.ertelenenAtildi`): atılan yalnız yeni alanlardaki kısımdır,
+         * aynı işlemin öteki değişiklikleri kuyrukta kalır ve gider. Düzeltme formu yok ([duzeltilebilir] yanlış).
+         */
+        val ertelenenAtildi: Boolean = false,
+        /**
+         * "Yeniden uygula" sunulur mu (`CekirdekYuzu.ertelenenGeriAlDenetimli`): atılmış ertelenen girdi ve atılan
+         * değişiklik okunabildi ([v3Ozeti] var). Çekirdek yine reddedebilir (bağlantı canlı değil, kayıt silinmiş);
+         * çakışan alan varsa `cakisan` döner, önce sorulur.
+         */
+        val geriAlinabilir: Boolean = false,
+        /**
+         * İşlemin yeni (v3) alanlarındaki değişikliğin kısa özeti (`RetGirdisi.v3Degisikligi`, [V3AlanMetni.ozet]):
+         * "Simge", "Simge ve bölge", "Bölge, varış ve bağlantı". İşlem yeni alana dokunmuyorsa `null`.
+         */
+        val v3Ozeti: String? = null,
     )
 
     /** Atılmış ertelenen değişikliğin nedeni (çekirdeğin `TeslimEdilemedi`'si bu girdide bağlantı kopması değil). */
@@ -210,12 +231,23 @@ object RetListesi {
         else "Eren servisi eski olduğu için gönderilmeden atıldı."
 
     /**
+     * Atılmış ertelenen girdinin alt yazısı. Atılan yalnız işlemin yeni alanlardaki kısmıdır (`ertelenenleri_at`:
+     * aynı işlemin öteki kısmı kuyrukta kalır ve gider), bu yüzden "Düzenleme atıldı" denmez. [v3Ozeti] yoksa genel.
+     */
+    fun ertelenenDurumu(v3Ozeti: String?): String =
+        if (v3Ozeti != null) "$v3Ozeti değişikliği atıldı" else "Simge, bölge, bağlantı gibi yeni alanlardaki değişiklik atıldı"
+
+    /** Atılmış ertelenen girdide atılmayanın cümlesi (açıklamada). */
+    const val ERTELENEN_KALAN = "Aynı düzenlemedeki öteki değişiklikler atılmadı; Eren servisine gönderilir."
+
+    /**
      * Yedekten gelen, kaydı sonra değişmiş girdinin uyarısı. Çekirdek böyle girdinin düzeltmesini var olan kayda
-     * uygulamaz, yeni kayıt ekler (`ret_duzelt`); atılmış ertelenen değişiklik geri alınırsa güncel kaydın üstüne gelir.
+     * uygulamaz, yeni kayıt ekler (`ret_duzelt`). Atılmış ertelenen değişiklik yeniden uygulanırken atıldıktan sonra
+     * değişen alan sessizce ezilmez: çekirdek `cakisan` döndürür, arayüz önce sorar (`ertelenen_geri_al_denetimli`).
      */
     fun sonraDegistiUyarisi(r: RetGirdisi): String? = when {
         !r.kayitSonraDegisti -> null
-        r.ertelenenAtildi -> "Kayıt bu yedekten sonra değişti; bu değişiklik yeniden uygulanırsa güncel kaydın üstüne gelir."
+        r.ertelenenAtildi -> "Kayıt bu yedekten sonra değişti; bu değişiklik yeniden uygulanırken çakışan alan varsa önce sorulur."
         r.govde != null -> "Kayıt bu yedekten sonra değişti; düzeltme güncel kaydın üstüne yazılmaz, yeni bir kayıt olarak eklenir."
         else -> "Kayıt bu yedekten sonra değişti."
     }
@@ -225,8 +257,10 @@ object RetListesi {
         val islem = EkranMetinleri.islem(r.islem)
         val neden = if (r.ertelenenAtildi) ertelenenNedeni(r.ulasmisOlabilir) else EkranMetinleri.retNedeni(r.neden)
         val zaman = EkranMetinleri.goreliAn(r.tsMs, simdiMs, dilim)
-        val durum = if (r.ertelenenAtildi) "$islem atıldı" else "$islem gönderilemedi"
+        val v3Ozeti = r.v3Degisikligi?.let { V3AlanMetni.ozet(V3AlanMetni.alanlar(it)) }
+        val durum = if (r.ertelenenAtildi) ertelenenDurumu(v3Ozeti) else "$islem gönderilemedi"
         val uyari = sonraDegistiUyarisi(r)
+        val kalan = if (r.ertelenenAtildi) " $ERTELENEN_KALAN" else ""
         return RetSatiri(
             islemId = r.islemId,
             baslik = baslik,
@@ -234,9 +268,12 @@ object RetListesi {
             neden = neden,
             zaman = zaman,
             duzeltilebilir = r.govde != null && !r.ertelenenAtildi,
-            aciklama = "$durum: $baslik. $neden" + (uyari?.let { " $it" } ?: ""),
+            aciklama = "$durum: $baslik. $neden$kalan" + (uyari?.let { " $it" } ?: ""),
             durum = durum,
             uyari = uyari,
+            ertelenenAtildi = r.ertelenenAtildi,
+            geriAlinabilir = r.ertelenenAtildi && v3Ozeti != null,
+            v3Ozeti = v3Ozeti,
         )
     }
 
@@ -245,4 +282,53 @@ object RetListesi {
      * girdi durur (kaybolmaz), hata çağırana gider. Döner: yazılan kaydın kimliği.
      */
     fun duzelt(c: CekirdekYuzu, islemId: String, govde: KayitGovdesi): String = c.retDuzelt(islemId, govde)
+}
+
+/**
+ * Yeni (v3) alanların çekirdekteki adlarının (`V3DegisiklikOzeti.kaldirilan`, `ErtelenenGeriAlma.degisen`,
+ * `cakisan`, `birlesen`) Türkçe karşılıkları ve kısa özet (saf). Ret satırı ([RetListesi.RetSatiri.v3Ozeti]) ve
+ * geri almanın çakışma sorusu aynı adları kullanır; arayüz durum dizesini ayrıştırmaz.
+ */
+object V3AlanMetni {
+    /** Çekirdeğin alan sırasıyla (`motor/sorgu.rs` `v3_ozeti`). */
+    private val ADLAR = linkedMapOf(
+        "simge" to "simge",
+        "bolge" to "bölge",
+        "bolge_konumu" to "bölge konumu",
+        "varis" to "varış",
+        "baglantilar" to "bağlantı",
+        "ekler" to "ek",
+    )
+
+    /** Bilinmeyen (sonraki sürümün) alan adı ham gösterilmez. */
+    const val BILINMEYEN = "yeni bir alan"
+
+    /** Tek alanın Türkçe adı (küçük harfle; cümle içinde). */
+    fun ad(alan: String): String = ADLAR[alan] ?: BILINMEYEN
+
+    /**
+     * Değişiklikte yer alan alanlar (konan ya da kaldırılan), çekirdeğin sırasıyla; bilinmeyen kaldırılan adlar
+     * sonda. Konan boş liste (`baglantilar`, `ekler`) çekirdeğin özetinde "yok"tan ayırt edilemez, sayılmaz.
+     */
+    fun alanlar(o: V3DegisiklikOzeti): List<String> {
+        val k = o.konan
+        val var_ = buildSet {
+            if (k.simge != null) add("simge")
+            if (k.bolge != null) add("bolge")
+            if (k.bolgeKonumu != null) add("bolge_konumu")
+            if (k.varis != null) add("varis")
+            if (k.baglantilar.isNotEmpty()) add("baglantilar")
+            if (k.ekler.isNotEmpty()) add("ekler")
+            addAll(o.kaldirilan)
+        }
+        return ADLAR.keys.filter { it in var_ } + o.kaldirilan.filter { it !in ADLAR }.distinct()
+    }
+
+    /** "Simge", "Simge ve bölge", "Bölge, varış ve bağlantı" (adlar tekilleşir); alan yoksa `null`. */
+    fun ozet(alanlar: List<String>): String? {
+        val adlar = alanlar.map(::ad).distinct()
+        if (adlar.isEmpty()) return null
+        val metin = if (adlar.size == 1) adlar[0] else adlar.dropLast(1).joinToString(", ") + " ve " + adlar.last()
+        return metin.replaceFirstChar { it.uppercaseChar() }
+    }
 }

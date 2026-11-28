@@ -117,6 +117,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::eslesme::Eslesme;
+use super::islem::reddedilen_eklenin_kalani;
 use super::iyimser::{IyimserBaglam, Uygulama, gorunen_yenile, islem_coz, islem_uygula, istenen_govde, iyimser_hal};
 use super::{Etkiler, Motor, Ortam, TELAFI_TAMPONU};
 use crate::depo::{KopyaTablosu, KuyrukSatiri, RetSatiri, anahtar};
@@ -1289,16 +1290,21 @@ impl Motor {
             let islem = islem_coz(&s.islem_json);
             let govde_json = istenen_govde(d, &b, &s.kayit_id, s.sira, islem.as_ref())?
                 .map(|g| g.alanlari_yaz(Yazici::yeni()).bitir().to_string());
+            // Bölünmüş `ekle`'nin v3 kalanı girdiye katılır ve kuyruktan çıkar (R3, `reddedilen_eklenin_kalani`).
+            let kalan = reddedilen_eklenin_kalani(d, s, islem.as_ref())?;
             d.ret_ekle(&RetSatiri {
                 islem_id: s.islem_id.clone(),
                 kayit_id: s.kayit_id.clone(),
-                islem_json: s.islem_json.clone(),
+                islem_json: kalan.as_ref().map_or_else(|| s.islem_json.clone(), |(j, _)| j.clone()),
                 neden: neden.ad().to_string(),
                 ts_ms,
                 govde_json,
                 sira: s.sira,
             })?;
             d.kuyruk_sil(s.sira)?;
+            if let Some((_, sira)) = kalan {
+                d.kuyruk_sil(sira)?;
+            }
             gorunen_yenile(d, &b, &s.kayit_id)
         })?;
         e.degisim.ret_listesi = true;

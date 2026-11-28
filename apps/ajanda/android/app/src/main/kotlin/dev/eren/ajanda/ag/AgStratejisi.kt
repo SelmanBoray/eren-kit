@@ -78,7 +78,8 @@ data class AgAyarlari(
     val surumBeklemeMs: Long = 30 * 60_000L,
     /**
      * Düşülen alt sürümde yukarı deneme anı geçtiği hâlde bağlantı kapanmadıysa (yolda işlem vardı) yeniden
-     * `baglantiDurumu()` yoklaması arası (`BaglantiDenetcisi.yukariDenemesiniKur`).
+     * `baglantiDurumu()` yoklaması arası (`BaglantiDenetcisi.yukariDenemesiniKur`). Aynı zamanda yoklama
+     * beklemesinin tavanı: duvar saatiyle ölçülen an saat geri gidince saatlerce uzağa düşmez.
      */
     val yukariTekrarMs: Long = 60_000,
     /** `/ajanda` çerçeve sınırı (UTF-16 birimi = Kotlin `String.length`): `AJANDA_AZAMI_CERCEVE.KANAL`. */

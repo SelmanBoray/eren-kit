@@ -14,10 +14,11 @@
 //! - Yerel kipte (`motor/yerel.rs`) işlem kuyruğa girmez: aynı denetimlerden sonra servis kurallarıyla
 //!   doğrudan ve kalıcı uygulanır (yerel revizyon, yerel geçmiş); yukarıdaki kurallar aynen geçerlidir.
 
-use super::iyimser::{gorunen_yenile, islem_coz, iyimser_uygula};
+use super::iyimser::{Uygulama, gorunen_yenile, islem_coz, islem_uygula, iyimser_uygula};
 use super::kanal::ertelenen_atildi_mi;
 use super::yerel::kayit_coz;
 use super::{Etkiler, Motor, Ortam};
+use crate::depo::{Depo, KuyrukSatiri};
 use crate::hata::CekirdekHatasi;
 use crate::kopru::tipler::DuzenlemeTemeli;
 use crate::kural::metin::govdeyi_hazirla;
@@ -134,6 +135,43 @@ fn v3_uygula(a: &V3Alanlari, d: &V3Degisikligi) -> V3Alanlari {
 /// (`yerel::kuyruga_islemler`).
 pub(super) fn kayit_farki(eski: &AjandaKaydi, yeni: &AjandaKaydi) -> AjandaDegisiklik {
     AjandaDegisiklik { v3: v3_farki(&eski.v3, &yeni.v3), ..govde_farki(&kaydin_govdesi(eski), &kaydin_govdesi(yeni)) }
+}
+
+/// Alt sürümlü bağlantıda bölünmüş (`kanal.rs` `v3_kalanini_ertele`) bir `ekle`'nin v2 kısmı ret listesine
+/// geçerken v3 kalanı (R3): kaydın satırlarında hemen arkasındaki, bölünmenin bıraktığı yalnız v3 `guncelle`
+/// (aynı an, `temel_revizyon` 1, denemesiz, yollanmamış, onaylanmamış). Kalan kuyrukta kalsaydı servisin
+/// hiç doğurmadığı kayda bağlı beklerdi: v3'te `kayit_bulunamadi` alır (kimlik çakışmasında başka bir kaydın v3
+/// alanlarını değiştirirdi), `ekle`'nin düzeltmesi yeni kimlikle v3'süz kayıt doğurur, kalanın düzeltmesi ikinci
+/// bir kopya. Bunun yerine ret girdisi özgün `ekle`'nin tamamıdır (v3 alanları kalanınkiler): kullanıcının v3
+/// değişikliği ret listesinde görünür (`RetGirdisi.v3_degisikligi`), `ret_duzelt` onu yeni kayda taşır; kalan
+/// kuyruktan çıkar. Döner: girdinin işlem metni ve silinecek kalanın sırası; işlem bölünmüş bir `ekle` değilse
+/// ya da kalan yoksa (ör. kullanıcı onu `ertelenenleri_at` ile zaten attı) `None`.
+pub(super) fn reddedilen_eklenin_kalani(
+    d: &Depo,
+    s: &KuyrukSatiri,
+    islem: Option<&AjandaIslem>,
+) -> Result<Option<(String, i64)>, CekirdekHatasi> {
+    // Bölünmüş `ekle`'nin v3'ü boştur (v3 alanları kalandadır).
+    let Some(AjandaIslem::Ekle { kayit_id, govde, v3, girdi_yolu }) = islem else { return Ok(None) };
+    if !v3.bos_mu() {
+        return Ok(None);
+    }
+    let Some(k) = d.kuyruk_kaydin(&s.kayit_id)?.into_iter().find(|k| k.sira > s.sira) else { return Ok(None) };
+    if k.yollandi || k.bekledigi_rev.is_some() || k.deneme != 0 || k.olusturma_ms != s.olusturma_ms {
+        return Ok(None);
+    }
+    let Some(AjandaIslem::Guncelle { temel_revizyon: 1, degisiklik, .. }) = islem_coz(&k.islem_json) else { return Ok(None) };
+    let v2_kismi = AjandaDegisiklik { v3: V3Degisikligi::default(), ..degisiklik.clone() };
+    if !v2_kismi.bos_mu() || degisiklik.v3.bos_mu() {
+        return Ok(None);
+    }
+    let butun = AjandaIslem::Ekle {
+        kayit_id: kayit_id.clone(),
+        govde: govde.clone(),
+        v3: v3_uygula(v3, &degisiklik.v3),
+        girdi_yolu: *girdi_yolu,
+    };
+    Ok(Some((butun.json().to_string(), k.sira)))
 }
 
 /// `d`'nin yalnız `maske`'de de değişen alanları (ikisi de aynı hedef gövdeye doğru olduğundan değerler
@@ -330,9 +368,13 @@ impl Motor {
     ///   (varsa) şimdiki v3 alanlarına uygulanmış hali, kayıt halinin v3 alanları. İşaretli girdide kaydın
     ///   şimdiki hali ezilmez, girdinin içeriği de kaybolmaz.
     ///
-    /// Hata (girdi kalır): `GecersizGirdi{alan:"islem_id"}` (geçersiz kimlik, listede yok ya da atılmış ertelenen
-    /// değişiklik: onun yolu `ertelenen_geri_al`), form hataları (`GecersizGirdi`). Gözlemciye kaydın
-    /// değişimi ve `ret_listesi`.
+    /// Var olan kayda giden v3 değişikliği kaydın şimdiki haline uygulanamıyorsa (ret v3 yüzünden) gitmez, gövde
+    /// yine gider (`dongusuz_v3`): aynı v3 girdiyi yeniden ret listesine düşürürdü. Listeler (`baglantilar`,
+    /// `ekler`) bugün bütünüyle gider (L1 bekliyor: öğe öğe birleşim).
+    ///
+    /// Hata (girdi kalır): `GecersizGirdi{alan:"islem_id"}` (geçersiz kimlik, listede yok, atılmış ertelenen
+    /// değişiklik: onun yolu `ertelenen_geri_al`; gövdesiz girdi: `sil`, `durum`, `onayla`, `geri_yukle`, yolu
+    /// `ret_at`), form hataları (`GecersizGirdi`). Gözlemciye kaydın değişimi ve `ret_listesi`.
     pub(crate) fn ret_duzelt(&mut self, o: &Ortam, e: &mut Etkiler, islem_id: &str, govde: KayitGovdesi) -> Result<String, CekirdekHatasi> {
         let gecersiz = |neden: &str| CekirdekHatasi::GecersizGirdi { alan: "islem_id".into(), neden: neden.into() };
         if !opak_id_mi(islem_id) {
@@ -348,15 +390,24 @@ impl Motor {
             serde_json::from_str::<serde_json::Value>(&r.islem_json).ok()?.get("islem")?.as_str().and_then(IslemTuru::coz)
         });
         let tur = tur.unwrap_or(IslemTuru::Guncelle);
+        // Gövdesiz girdi (R8): `sil`, `durum`, `onayla`, `geri_yukle` formla düzeltilemez (form bir gövde yazar;
+        // eskiden yeni kayıt olarak eklenirdi). Yolu `ret_at` ya da işlemin kendisini yeniden yapmaktır.
+        if !matches!(tur, IslemTuru::Ekle | IslemTuru::Guncelle) {
+            return Err(gecersiz("gövdesiz işlem (sil, durum, onayla, geri_yukle) formla düzeltilmez: ret_at ile atılır"));
+        }
         let sonra_degisti = self.depo.ret_sonra_degisenler()?.contains(islem_id);
         let mevcut = self.depo.gorunen_kayit(&r.kayit_id)?.map(|g| g.kayit);
         let kayit_id = match mevcut.as_ref().filter(|k| tur == IslemTuru::Guncelle && !k.silindi && !sonra_degisti) {
             Some(k) => {
+                // L1 bekliyor: `baglantilar` ve `ekler` değişikliğin listesiyle bütünüyle yeniden gider; ret ile
+                // düzeltme arasında PC'de eklenen bağlantı ya da ek ezilir. Öğe öğe birleşim (Kol C L1) gelince
+                // listeler kaydın şimdiki listesiyle birleşmeli (`ertelenen_geri_al`'ın `geri_alma_plani` gibi).
                 let v3 = match (&islem, &kayit_hali) {
                     (Some(AjandaIslem::Guncelle { degisiklik, .. }), _) => degisiklik.v3.clone(),
                     (_, Some(h)) => v3_farki(&k.v3, &v3_uygula(&k.v3, &h.v3.degisiklik())),
                     _ => V3Degisikligi::default(),
                 };
+                let v3 = self.dongusuz_v3(o, k, &govde, v3)?;
                 self.duzenle_v3(o, e, &r.kayit_id, None, govde, v3)?;
                 r.kayit_id.clone()
             }
@@ -376,6 +427,30 @@ impl Motor {
             e.degisim.baglanti = true;
         }
         Ok(kayit_id)
+    }
+
+    /// Düzeltmenin v3 kısmı (`ret_duzelt`, var olan kayda): formun gövde farkıyla birlikte kaydın şimdiki haline
+    /// servis kurallarıyla (`islem_uygula`) uygulanınca reddediliyorsa ve gövde farkı tek başına reddedilmiyorsa
+    /// gitmez (R4): ret v3 yüzündendir (ör. bölgesi kalkan kayıtta varış, `tutarsiz_kayit`), form v3 alanı
+    /// taşımadığından kullanıcı onu düzeltemez; aynı v3'ü yeniden yollamak girdiyi yeniden ret listesine
+    /// düşürürdü (yerel kipte de her düzeltme hata verirdi). Gövde farkı yine gider. Değişiklik o hale
+    /// uygulanabiliyorsa (PC arada bölge eklemiş olabilir) olduğu gibi döner. Formun hatasını `duzenle_v3` söyler.
+    fn dongusuz_v3(&self, o: &Ortam, k: &AjandaKaydi, govde: &KayitGovdesi, v3: V3Degisikligi) -> Result<V3Degisikligi, CekirdekHatasi> {
+        if v3.bos_mu() {
+            return Ok(v3);
+        }
+        let Ok(hazir) = govdeyi_hazirla(govde.clone()) else { return Ok(v3) };
+        let cevirici = o.cevirici();
+        let b = self.iyimser_baglam(o, &cevirici)?;
+        let gorunenden = govde_farki(&kaydin_govdesi(k), &hazir);
+        let reddedilir = |degisiklik: AjandaDegisiklik| {
+            let islem = AjandaIslem::Guncelle { kayit_id: k.kayit_id.clone(), temel_revizyon: k.revizyon, degisiklik };
+            matches!(islem_uygula(Some(k), &islem, b.simdi_ms, &b), Uygulama::Ret(_))
+        };
+        if reddedilir(AjandaDegisiklik { v3: v3.clone(), ..gorunenden.clone() }) && !reddedilir(gorunenden) {
+            return Ok(V3Degisikligi::default());
+        }
+        Ok(v3)
     }
 
     /// Ret listesinden atar (kullanıcı vazgeçti ya da düzeltip yeniden ekledi). Listede yoksa hiçbir şey.

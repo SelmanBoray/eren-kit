@@ -337,7 +337,8 @@ impl Motor {
 /// kayıt sınırını ölü kayıtla doldururdu) ve iki tarafta da silinmiş kayıt (alanlar farklı olsa da her
 /// işlem `kayit_silinmis` alırdı). `geri_yukle_izni` yanlışsa temelde silinmiş kayıt geri yüklenmez (temel
 /// servisin kendi kopyasıyken PC'nin silmesi meşrudur); öteki farklar yine gider ve servis onları
-/// `kayit_silinmis` ile reddeder: telefonun hali düzeltme gövdesiyle ret listesine düşer.
+/// `kayit_silinmis` ile reddeder: telefonun hali düzeltme gövdesiyle ret listesine düşer. Silinecek (temelde
+/// canlı, telefonda silinmiş) kaydın v3 farkı gönderilmez: v2 serviste ertelenip silmeyi bekletirdi.
 pub(super) fn kuyruga_islemler(temel: Option<&AjandaKaydi>, k: &AjandaKaydi, geri_yukle_izni: bool) -> Vec<(AjandaIslem, i64)> {
     let kayit_id = || k.kayit_id.clone();
     let mut l = Vec::new();
@@ -356,7 +357,12 @@ pub(super) fn kuyruga_islemler(temel: Option<&AjandaKaydi>, k: &AjandaKaydi, ger
     if t.silindi && !k.silindi && geri_yukle_izni {
         l.push((AjandaIslem::GeriYukle { kayit_id: kayit_id() }, ts));
     }
-    let degisiklik = kayit_farki(t, k);
+    let mut degisiklik = kayit_farki(t, k);
+    // Silinecek kaydın v3 farkı gitmez (R5): eski (v2) serviste ertelenir ve arkasındaki `sil`'in sırasını tutar
+    // (`kanal.rs` "Sıra"), silme servis güncellenene dek süresiz beklerdi. Gövde farkı gider.
+    if !t.silindi && k.silindi {
+        degisiklik.v3 = V3Degisikligi::default();
+    }
     if !degisiklik.bos_mu() {
         l.push((AjandaIslem::Guncelle { kayit_id: kayit_id(), temel_revizyon: t.revizyon, degisiklik }, ts));
     }
@@ -648,9 +654,11 @@ fn birlesme_islemleri(o: Option<&AjandaKaydi>, p: &AjandaKaydi, n: &AjandaKaydi,
 /// Temeli bilinmeyen kaydın (`birlesme_islemleri`) telefonda olmayıp PC'de olan v3 alanları PC'nin
 /// değişikliğidir, geri gönderilmez (yokluk hiçbir zaman "kaldırıldı" sayılmaz, Kol C kuralı): fark bu alanlarda
 /// PC'nin değeriyle hesaplanır. Telefonun bölgesi PC'ninkinden başka bir yerse PC'nin konumu alınmaz (o
-/// yerin konumudur; servis yer değişince konumu zaten düşürür). `varis` bölgesiz kalmaz: telefonda bölge
-/// yoksa PC'nin bölgesi de alınır.
-fn pc_v3_alanlariyla(p: &AjandaKaydi, n: &AjandaKaydi) -> AjandaKaydi {
+/// yerin konumudur; servis yer değişince konumu zaten düşürür). `varis` bölgeye bağlıdır, bölgesinden kopmaz
+/// (R10): PC'nin varışı yalnız bölge PC'den geliyorsa ya da aynı yerse alınır (telefonun başka bir bölgesine
+/// taşınmaz); telefonda bölge yoksa PC'nin bölgesi, konumu ve varışı birlikte alınır. Bölge, konum ve varışın
+/// tek birim olarak birleşmesi R2'dir (L1 ile).
+pub(super) fn pc_v3_alanlariyla(p: &AjandaKaydi, n: &AjandaKaydi) -> AjandaKaydi {
     fn doldur<T: Clone>(p: &mut Option<T>, n: &Option<T>) {
         if p.is_none() {
             p.clone_from(n);
@@ -662,8 +670,8 @@ fn pc_v3_alanlariyla(p: &AjandaKaydi, n: &AjandaKaydi) -> AjandaKaydi {
     if v.bolge.is_none() || !ajanda_bolge_yeri_degisir_mi(pc.bolge.as_deref(), v.bolge.as_deref()) {
         doldur(&mut v.bolge, &pc.bolge);
         doldur(&mut v.bolge_konumu, &pc.bolge_konumu);
+        doldur(&mut v.varis, &pc.varis);
     }
-    doldur(&mut v.varis, &pc.varis);
     if v.baglantilar.is_empty() {
         v.baglantilar.clone_from(&pc.baglantilar);
     }

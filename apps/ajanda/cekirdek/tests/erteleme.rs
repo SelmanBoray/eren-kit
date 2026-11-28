@@ -20,6 +20,8 @@
 //! - Koparma: ertelenen değerler yerel gerçekte kalır.
 //! - Yerel kip: erteleme yok.
 //! - Köprü: `baglanti_yetenekleri` ve kayıt başına `ertelenen`.
+//! - Bölünen `ekle`'nin v2 kısmı reddedilince ret girdisi v3 kalanını da kapsar (R3); yerelde silinen v3 farklı
+//!   kaydın `sil`'i v2 serviste beklemez (R5).
 
 mod ortak;
 
@@ -1512,4 +1514,78 @@ fn saat_geri_gidince_gecmis_istegi_hemen_dusmez() {
     assert_eq!(h.c.baglanti_durumu().unwrap().asama, BaglantiAsamasi::Kopuk, "istek düştü, yukarı deneme yapıldı");
     let sayfa = h.c.gecmis(a.clone()).unwrap().expect("sayfa");
     assert_eq!((sayfa.yukleniyor, sayfa.hata), (false, Some(AjandaRetNedeni::IcHata)));
+}
+
+/// R3: v2 serviste bölünen `ekle`'nin v2 kısmı reddedilirse v3 kalanı servisin hiç doğurmadığı kayda bağlı
+/// beklemez: ret girdisi `ekle`'nin tamamıdır (kullanıcının v3 değişikliği ret listesinde görünür), kalan kuyruktan
+/// çıkar. Düzeltme v3 alanlarıyla tek bir yeni kayıt doğurur; v3'te `kayit_bulunamadi` ya da kopya kayıt olmaz.
+#[test]
+fn bolunen_eklenin_reddi_v3_kalanini_da_kapsar() {
+    let mut h = Hat::yeni("erteleme-ekle-reddi");
+    v2ye_inen_kurulum(&mut h);
+    let ekle = AjandaIslem::Ekle {
+        kayit_id: "k_yeni".into(),
+        govde: govde("Yeni", None),
+        v3: V3Alanlari { simge: Some("is".into()), ..Default::default() },
+        girdi_yolu: GirdiYolu::Elle,
+    };
+    kuyruga_yaz(&h, "i_ekle", &ekle);
+    h.pc.ekle_reddi = Some(AjandaRetNedeni::KayitSiniri);
+    v2de_baglan(&mut h);
+    h.pc.ekle_reddi = None;
+    assert!(!h.pc.d.kayitlar.contains_key("k_yeni"));
+    assert!(depo(&h).kuyruk().unwrap().is_empty(), "v3 kalanı var olmayan kayda bağlı beklemiyor");
+    assert_eq!(yetenek(&h).ertelenen, 0);
+    let ret = h.c.ret_listesi().unwrap();
+    assert_eq!(ret.len(), 1, "{ret:?}");
+    assert_eq!(
+        (ret[0].islem_id.as_str(), ret[0].kayit_id.as_str(), ret[0].islem, ret[0].neden),
+        ("i_ekle", "k_yeni", IslemTuru::Ekle, KuyrukRetNedeni::KayitSiniri)
+    );
+    let ozet = ret[0].v3_degisikligi.as_ref().expect("v3 değişikliği görünür");
+    assert_eq!(ozet.konan.simge.as_deref(), Some("is"));
+    assert!(h.c.kayit("k_yeni".into()).unwrap().is_none(), "reddedilen kayıt görünmez");
+
+    let yeni = h.c.ret_duzelt("i_ekle".into(), govde("Yeni", None)).unwrap();
+    h.pompala();
+    assert_ne!(yeni, "k_yeni");
+    assert_eq!(kayit(&h, &yeni).v3.simge.as_deref(), Some("is"), "düzeltme v3 alanlarını korudu");
+    assert!(h.c.ret_listesi().unwrap().is_empty());
+    v3e_gec(&mut h);
+    let yeniler: Vec<&AjandaKaydi> = h.pc.d.kayitlar.values().filter(|k| k.baslik == "Yeni").collect();
+    assert_eq!(yeniler.len(), 1, "tek kayıt: {yeniler:?}");
+    assert_eq!((yeniler[0].kayit_id.as_str(), yeniler[0].v3.simge.as_deref()), (yeni.as_str(), Some("is")));
+    assert_eq!(&kayit(&h, &yeni), yeniler[0]);
+    let d = h.c.baglanti_durumu().unwrap();
+    assert_eq!((d.kuyrukta, d.ertelenen_islem, d.ret_listesinde), (0, 0, 0), "kayit_bulunamadi yok");
+}
+
+/// R5: yerel kipte silinen ve v3 farkı olan kayıt v2 servise dökülünce `sil` ertelenmiş bir v3 güncellemesinin
+/// arkasında süresiz beklemez: silinecek kaydın v3 farkı dökülmez, `sil` bu serviste hemen gider.
+#[test]
+fn yerelde_silinen_v3_farkli_kayit_v2_serviste_hemen_silinir() {
+    let mut h = Hat::yeni("erteleme-yerel-sil");
+    let a = v2ye_inen_kurulum(&mut h);
+    kuyruga_yaz(&h, "i_karma", &guncelle(&a, AjandaDegisiklik { baslik: Some("A2".into()), v3: simge("ev"), ..Default::default() }));
+    v2de_baglan(&mut h);
+    h.c.baglantiyi_kopar().unwrap();
+    h.pompala();
+    assert_eq!(h.c.kip().unwrap(), CalismaKipi::Yerel);
+    assert_eq!(kayit(&h, &a).v3.simge.as_deref(), Some("ev"), "v3 değeri yerel gerçekte, PC'de yok");
+    assert!(h.pc.d.kayitlar[&a].v3.bos_mu());
+    h.c.sil(a.clone()).unwrap();
+
+    // Aynı servise (hâlâ v2) yeniden eşleşir: yerel kayıtlar dökülür.
+    h.eslestir();
+    if !h.canli_mi() {
+        h.baglan();
+    }
+    assert!(h.canli_mi());
+    assert_eq!(h.c.kip().unwrap(), CalismaKipi::Bagli);
+    assert_eq!(yetenek(&h).surum, Some(2));
+    assert!(h.pc.d.kayitlar[&a].silindi, "sil v2 serviste gitti");
+    let d = h.c.baglanti_durumu().unwrap();
+    assert_eq!((d.kuyrukta, d.ertelenen_islem, d.ret_listesinde), (0, 0, 0), "bekleyen yok");
+    assert!(depo(&h).kuyruk().unwrap().is_empty());
+    assert!(kayit(&h, &a).silindi);
 }

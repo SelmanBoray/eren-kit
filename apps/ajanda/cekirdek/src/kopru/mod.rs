@@ -468,6 +468,11 @@ impl Cekirdek {
     /// (işaretli girdide kaydın şimdiki hali ezilmez). Döner: yazılan kaydın kimliği. Hata:
     /// `GecersizGirdi{alan:"islem_id"}` (geçersiz kimlik, listede yok ya da `ertelenen_atildi` girdisi: onun yolu
     /// `ertelenen_geri_al`), formun `GecersizGirdi`'leri. Gözlemciye kaydın değişimi ve `ret_listesi`.
+    ///
+    /// Gövdesiz girdi (`sil`, `durum`, `onayla`, `geri_yukle`) düzeltilmez: `GecersizGirdi{alan:"islem_id"}`, yolu
+    /// `ret_at`. Var olan kayda giden v3 değişikliği kaydın şimdiki haline uygulanamıyorsa (ret v3 yüzünden; form
+    /// v3 taşımaz) gitmez, gövde gider: girdi yeniden ret listesine düşmez. `baglantilar` ve `ekler` bugün
+    /// bütünüyle gider (L1 bekliyor: öğe öğe birleşim).
     pub fn ret_duzelt(&self, islem_id: String, govde: KayitGovdesi) -> Result<String, CekirdekHatasi> {
         self.calistir(|m, o, e| m.ret_duzelt(o, e, &islem_id, govde))
     }
