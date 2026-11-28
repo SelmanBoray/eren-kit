@@ -45,7 +45,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde_json::{Map, Value};
 
 use super::iyimser::{IyimserBaglam, Uygulama, gorunen_yenile, islem_coz, islem_uygula, iyimser_uygula, kayittan_govde, yazar};
-use super::islem::govde_farki;
+use super::islem::kayit_farki;
 use super::kanal::gecmis_satiri;
 use super::{Asama, Etkiler, Motor, Ortam};
 use crate::depo::{Depo, KopyaSatiri, KopyaTablosu, KuyrukSatiri, RetSatiri, anahtar};
@@ -54,7 +54,8 @@ use crate::kopru::tipler::{CalismaKipi, GecisNedeni, GecisOzeti, GecmisSayfasi, 
 use crate::model::sinirlar::ajanda::{GECMIS_SAYFA, KAYIT_ADET};
 use crate::model::{
     AjandaGecmisGirdisi, AjandaIslem, AjandaKaydi, AjandaParca, AjandaRetNedeni, AjandaYazar, AjandaZamani, Alan,
-    GirdiYolu, Hatirlatma, KayitDurumu, KaynakYolu, KuyrukRetNedeni, OrnekDurumu, TurKokeni,
+    GirdiYolu, Hatirlatma, KayitDurumu, KaynakYolu, KuyrukRetNedeni, OrnekDurumu, TurKokeni, V3Alanlari, V3Degisikligi,
+    ajanda_bolge_yeri_degisir_mi,
 };
 
 /// Servis retlerinin köprü hatası (yerelde kuyruk ve ret listesi yoktur: çağrı hata döner).
@@ -109,8 +110,38 @@ fn parca_alani<T: Clone>(v: &Option<T>) -> Alan<T> {
     v.clone().map_or(Alan::Kaldir, Alan::Deger)
 }
 
-/// Servisin `fark`'ı: izlenen alanlardan (kayıt alanları, `taslak`, `silindi`) yalnız değişenlerin öncesi ve
-/// sonrası; `ornekler` değiştiyse iki tam liste.
+/// Liste alanın geçmiş parçası: boş liste alan yoktur, `null` (`Kaldir`).
+fn parca_listesi<T: Clone>(l: &[T]) -> Alan<Vec<T>> {
+    if l.is_empty() { Alan::Kaldir } else { Alan::Deger(l.to_vec()) }
+}
+
+/// v3 alanlarının `fark` parçaları: yalnız değişenler, olmayan alan `null`.
+fn v3_parcalari(o: &V3Alanlari, s: &V3Alanlari) -> (V3Degisikligi, V3Degisikligi) {
+    let mut a = V3Degisikligi::default();
+    let mut b = V3Degisikligi::default();
+    if o.simge != s.simge {
+        (a.simge, b.simge) = (parca_alani(&o.simge), parca_alani(&s.simge));
+    }
+    if o.bolge != s.bolge {
+        (a.bolge, b.bolge) = (parca_alani(&o.bolge), parca_alani(&s.bolge));
+    }
+    if o.bolge_konumu != s.bolge_konumu {
+        (a.bolge_konumu, b.bolge_konumu) = (parca_alani(&o.bolge_konumu), parca_alani(&s.bolge_konumu));
+    }
+    if o.varis != s.varis {
+        (a.varis, b.varis) = (parca_alani(&o.varis), parca_alani(&s.varis));
+    }
+    if o.baglantilar != s.baglantilar {
+        (a.baglantilar, b.baglantilar) = (parca_listesi(&o.baglantilar), parca_listesi(&s.baglantilar));
+    }
+    if o.ekler != s.ekler {
+        (a.ekler, b.ekler) = (parca_listesi(&o.ekler), parca_listesi(&s.ekler));
+    }
+    (a, b)
+}
+
+/// Servisin `fark`'ı: izlenen alanlardan (kayıt alanları, v3 dahil, `taslak`, `silindi`) yalnız değişenlerin
+/// öncesi ve sonrası; `ornekler` değiştiyse iki tam liste.
 pub(super) fn fark(o: &AjandaKaydi, s: &AjandaKaydi) -> (AjandaParca, AjandaParca) {
     let mut a = AjandaParca::default();
     let mut b = AjandaParca::default();
@@ -144,10 +175,11 @@ pub(super) fn fark(o: &AjandaKaydi, s: &AjandaKaydi) -> (AjandaParca, AjandaParc
     if o.ornekler != s.ornekler {
         (a.ornekler, b.ornekler) = (Some(o.ornekler.clone()), Some(s.ornekler.clone()));
     }
+    (a.v3, b.v3) = v3_parcalari(&o.v3, &s.v3);
     (a, b)
 }
 
-/// Servisin `dogumParcasi`'ı: kaydın var olan alanları, durum ve taslak.
+/// Servisin `dogumParcasi`'ı: kaydın var olan alanları (v3 dahil), durum ve taslak.
 pub(super) fn dogum_parcasi(k: &AjandaKaydi) -> AjandaParca {
     AjandaParca {
         tur: Some(k.tur),
@@ -158,6 +190,7 @@ pub(super) fn dogum_parcasi(k: &AjandaKaydi) -> AjandaParca {
         tekrar: k.tekrar.clone().map_or(Alan::Yok, Alan::Deger),
         durum: Some(k.durum),
         taslak: Some(k.taslak),
+        v3: k.v3.degisiklik(),
         ..Default::default()
     }
 }
@@ -314,7 +347,7 @@ pub(super) fn kuyruga_islemler(temel: Option<&AjandaKaydi>, k: &AjandaKaydi, ger
         None if k.silindi => return l,
         None => {
             let girdi_yolu = if k.kaynak.yol == KaynakYolu::SesliNot { GirdiYolu::SesliNot } else { GirdiYolu::Elle };
-            l.push((AjandaIslem::Ekle { kayit_id: kayit_id(), govde: kayittan_govde(k), v3: Default::default(), girdi_yolu }, k.olusturma_ms));
+            l.push((AjandaIslem::Ekle { kayit_id: kayit_id(), govde: kayittan_govde(k), v3: k.v3.clone(), girdi_yolu }, k.olusturma_ms));
             &bos
         }
         Some(t) if t.silindi && k.silindi => return l,
@@ -323,7 +356,7 @@ pub(super) fn kuyruga_islemler(temel: Option<&AjandaKaydi>, k: &AjandaKaydi, ger
     if t.silindi && !k.silindi && geri_yukle_izni {
         l.push((AjandaIslem::GeriYukle { kayit_id: kayit_id() }, ts));
     }
-    let degisiklik = govde_farki(&kayittan_govde(t), &kayittan_govde(k));
+    let degisiklik = kayit_farki(t, k);
     if !degisiklik.bos_mu() {
         l.push((AjandaIslem::Guncelle { kayit_id: kayit_id(), temel_revizyon: t.revizyon, degisiklik }, ts));
     }
@@ -353,10 +386,11 @@ pub(super) fn kuyruga_islemler(temel: Option<&AjandaKaydi>, k: &AjandaKaydi, ger
     l
 }
 
-/// İki hal PC'ye gidecek her alanda aynı mı (gövde, durum, örnekler, taslak, silindi; revizyon, zaman
-/// damgaları ve kaynak sayılmaz).
+/// İki hal PC'ye gidecek her alanda aynı mı (gövde, v3 alanları, durum, örnekler, taslak, silindi; revizyon,
+/// zaman damgaları ve kaynak sayılmaz).
 pub(super) fn icerik_ayni(a: &AjandaKaydi, b: &AjandaKaydi) -> bool {
     kayittan_govde(a) == kayittan_govde(b)
+        && a.v3 == b.v3
         && a.durum == b.durum
         && a.ornekler == b.ornekler
         && a.taslak == b.taslak
@@ -588,7 +622,7 @@ fn birlesme_islemleri(o: Option<&AjandaKaydi>, p: &AjandaKaydi, n: &AjandaKaydi,
     if p.silindi && n.silindi {
         return Birlesme::Islemler(Vec::new());
     }
-    let Some(o) = o else { return Birlesme::Islemler(kuyruga_islemler(Some(n), p, false)) };
+    let Some(o) = o else { return Birlesme::Islemler(kuyruga_islemler(Some(n), &pc_v3_alanlariyla(p, n), false)) };
     // Aynı depoda PC eski temeli taşıyorsa fark ona göredir; başka depoda ya da PC yitirmişse yeni kopyaya.
     let temel_rev = if ayni_depo && !pc.eksik { o.revizyon } else { n.revizyon };
     let mut l = match hedef_hal(o, p, n, pc) {
@@ -609,6 +643,34 @@ fn birlesme_islemleri(o: Option<&AjandaKaydi>, p: &AjandaKaydi, n: &AjandaKaydi,
         }
     }
     Birlesme::Islemler(l)
+}
+
+/// Temeli bilinmeyen kaydın (`birlesme_islemleri`) telefonda olmayıp PC'de olan v3 alanları PC'nin
+/// değişikliğidir, geri gönderilmez (yokluk hiçbir zaman "kaldırıldı" sayılmaz, Kol C kuralı): fark bu alanlarda
+/// PC'nin değeriyle hesaplanır. Telefonun bölgesi PC'ninkinden başka bir yerse PC'nin konumu alınmaz (o
+/// yerin konumudur; servis yer değişince konumu zaten düşürür). `varis` bölgesiz kalmaz: telefonda bölge
+/// yoksa PC'nin bölgesi de alınır.
+fn pc_v3_alanlariyla(p: &AjandaKaydi, n: &AjandaKaydi) -> AjandaKaydi {
+    fn doldur<T: Clone>(p: &mut Option<T>, n: &Option<T>) {
+        if p.is_none() {
+            p.clone_from(n);
+        }
+    }
+    let mut k = p.clone();
+    let (v, pc) = (&mut k.v3, &n.v3);
+    doldur(&mut v.simge, &pc.simge);
+    if v.bolge.is_none() || !ajanda_bolge_yeri_degisir_mi(pc.bolge.as_deref(), v.bolge.as_deref()) {
+        doldur(&mut v.bolge, &pc.bolge);
+        doldur(&mut v.bolge_konumu, &pc.bolge_konumu);
+    }
+    doldur(&mut v.varis, &pc.varis);
+    if v.baglantilar.is_empty() {
+        v.baglantilar.clone_from(&pc.baglantilar);
+    }
+    if v.ekler.is_empty() {
+        v.ekler.clone_from(&pc.ekler);
+    }
+    k
 }
 
 /// PC temelindeki kaydın hali. Satırı okunamayan temel (bozuk satır) bilinmiyor sayılır (`Err(())`, çağıran
@@ -1541,5 +1603,37 @@ mod testler {
                 r#"{"ornek_durumu":"iptal","ornekler":[{"durum":"iptal","tarih":"2026-11-24"}]}"#.to_string()
             )
         );
+    }
+
+    /// R1: temeli bilinmeyen kayıtta PC'de olup telefonda olmayan v3 alanı PC'nin değişikliğidir, kaldırılmaz;
+    /// telefonun v3 alanları gider. Başka bir yere değişen telefon bölgesine PC'nin konumu eklenmez.
+    #[test]
+    fn temelsiz_kayitta_pc_nin_v3_alani_kaldirilmaz() {
+        let n = kayit(|v| {
+            v["simge"] = json!("is");
+            v["bolge"] = json!("Market");
+            v["bolge_konumu"] = json!({"enlem_e6": 41_008_240, "boylam_e6": 28_978_359, "yaricap_m": 150});
+        });
+        let p = kayit(|v| v["baglantilar"] = json!([{"url": "https://ornek.com/a"}]));
+        let l = islemler(birlesme_islemleri(None, &p, &n, PcDurumu::default(), true));
+        let [(AjandaIslem::Guncelle { degisiklik, .. }, _)] = l.as_slice() else { panic!("tek guncelle: {l:?}") };
+        let beklenen = V3Degisikligi { baglantilar: Alan::Deger(p.v3.baglantilar.clone()), ..Default::default() };
+        assert_eq!(degisiklik.v3, beklenen);
+        let p = kayit(|v| v["bolge"] = json!("Bakkal"));
+        let l = islemler(birlesme_islemleri(None, &p, &n, PcDurumu::default(), true));
+        let [(AjandaIslem::Guncelle { degisiklik, .. }, _)] = l.as_slice() else { panic!("tek guncelle: {l:?}") };
+        assert_eq!((&degisiklik.v3.simge, &degisiklik.v3.bolge), (&Alan::Yok, &Alan::Deger("Bakkal".into())));
+        assert_eq!(degisiklik.v3.bolge_konumu, Alan::Kaldir, "başka yerin konumu: PC'ninki düşer");
+    }
+
+    /// R1: yerel geçmiş servisin `fark`/`dogumParcasi`'ı gibi v3 alanlarını da yazar.
+    #[test]
+    fn yerel_gecmis_v3_alanlarini_yazar() {
+        let o = kayit(|_| {});
+        let s = kayit(|v| v["simge"] = json!("is"));
+        let (a, b) = fark(&o, &s);
+        assert_eq!((a.v3.simge, b.v3.simge), (Alan::Kaldir, Alan::Deger("is".into())));
+        assert_eq!(dogum_parcasi(&s).v3.simge, Alan::Deger("is".into()));
+        assert_eq!(dogum_parcasi(&o).v3, V3Degisikligi::default());
     }
 }

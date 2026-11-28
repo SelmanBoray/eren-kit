@@ -43,11 +43,9 @@ open class AktarmaMetinleri(private val dilim: ZoneId) {
         if (d.retYedekte > 0) {
             add("Gönderilemeyenler listesindeki ${d.retYedekte} değişiklik de yedekte; içe aktarılınca o listeye geri gelir.")
         }
-        if (d.retListesinde > 0) {
-            add("Gönderilemeyenler listesindeki ${d.retListesinde} değişiklik yedeğe girmedi; önce onları düzeltin ya da atın.")
-        }
+        if (d.retListesinde > 0) add(retListesinde(d.retListesinde))
         if (d.iceAktarmaSiniriniAsiyor) add(SINIR_ASIYOR) else if (bellekAsiyor) add(BELLEK_YETMEYEBILIR)
-        if (d.bicimSurumu == 2L) add(ESKI_SURUM_ACAMAZ)
+        if (d.bicimSurumu >= 2L) add(ESKI_SURUM_ACAMAZ)
     }.joinToString("\n")
 
     fun onizleme(p: IceAktarmaOnizlemesi, degisti: Boolean): String = buildList {
@@ -91,10 +89,17 @@ open class AktarmaMetinleri(private val dilim: ZoneId) {
             if (p.gonderilmeyecek > 0) add("• ${p.gonderilmeyecek} silinmiş kayıt Eren servisine gönderilmeyecek")
             if (p.retListesineGelecek > 0) {
                 add("• Yedekteki ${p.retListesineGelecek} gönderilemeyen değişiklik gönderilemeyenler listesine eklenecek")
+                // Sonra değişenler eklenecekler içindedir: alt madde, ayrıca sayılmaz.
+                if (p.retSonraDegisen > 0) {
+                    add(
+                        "   – bunlardan ${p.retSonraDegisen} değişikliğin kaydı bu telefonda yedekten sonra değişmiş; " +
+                            "listede uyarıyla görünür, düzeltmesi güncel kaydın üstüne yazılmaz",
+                    )
+                }
             }
             if (p.retGecersiz > 0) add("• Yedekteki ${p.retGecersiz} gönderilemeyen değişiklik okunamadı, alınmayacak")
-            if (p.retBayat > 0) {
-                add("• Yedekteki ${p.retBayat} gönderilemeyen değişiklik alınmayacak (kaydı bu telefonda yedekten sonra değişmiş)")
+            if (p.retSinirAsan > 0) {
+                add("• Yedekteki ${p.retSinirAsan} gönderilemeyen değişiklik alınmayacak: gönderilemeyenler listesi dolu (önce listedekileri düzeltin ya da atın)")
             }
         }
         addAll(satirlar)
@@ -129,12 +134,17 @@ open class AktarmaMetinleri(private val dilim: ZoneId) {
         if (p.okunamayanRetListesine > 0) {
             add("Telefonda okunamayan ${p.okunamayanRetListesine} kaydın eski hali gönderilemeyenler listesine kondu.")
         }
-        if (p.retListesineGelecek > 0) add("${p.retListesineGelecek} değişiklik gönderilemeyenler listesine eklendi.")
+        if (p.retListesineGelecek > 0) {
+            add("${p.retListesineGelecek} değişiklik gönderilemeyenler listesine eklendi.")
+            if (p.retSonraDegisen > 0) {
+                add("Bunlardan ${p.retSonraDegisen} değişikliğin kaydı yedekten sonra değişmişti; listede uyarıyla görünür.")
+            }
+        }
         if (p.gecersiz > 0) add("${p.gecersiz} kayıt okunamadığı için alınmadı.")
         if (p.sinirAsan > 0) add("${p.sinirAsan} kayıt sınır dolduğu için eklenmedi.")
         if (p.taslakGonderilmeyecek > 0) add("${p.taslakGonderilmeyecek} taslak alınmadı; Eren servisi taslak kabul etmez.")
         if (p.retGecersiz > 0) add("${p.retGecersiz} gönderilemeyen değişiklik okunamadığı için alınmadı.")
-        if (p.retBayat > 0) add("${p.retBayat} gönderilemeyen değişiklik alınmadı; kaydı bu telefonda yedekten sonra değişmişti.")
+        if (p.retSinirAsan > 0) add("${p.retSinirAsan} gönderilemeyen değişiklik alınmadı; gönderilemeyenler listesi dolu.")
     }.joinToString("\n")
 
     fun hata(e: Throwable, yazarken: Boolean): String = when (sorunu(e, yazarken)) {
@@ -158,7 +168,7 @@ open class AktarmaMetinleri(private val dilim: ZoneId) {
         const val BELLEK_YETMEYEBILIR = "Yedek yazıldı, ancak bu telefonda geri yüklemeye uygulamanın belleği yetmeyebilir; " +
             "daha çok belleği olan bir cihazda açılabilir."
 
-        /** Belge biçim 2 (`DisaAktarma.bicimSurumu`): biçim 1 okuyan eski uygulama dosyayı bütünüyle reddeder. */
+        /** Belge biçim 2 ya da 3 (`DisaAktarma.bicimSurumu`): daha düşük biçim okuyan eski uygulama dosyayı bütünüyle reddeder. */
         const val ESKI_SURUM_ACAMAZ = "Bu yedek uygulamanın eski sürümleriyle açılamaz; bu ya da daha yeni bir sürümle geri yüklenir."
 
         /**
@@ -174,9 +184,18 @@ open class AktarmaMetinleri(private val dilim: ZoneId) {
 
         /**
          * Uygulanınca bir şey yazılacak mı: kayıt (yeni ya da güncellenecek) ya da ret listesine gelecek girdi
-         * (`retListesineGelecek`: kayıtlar aynı olsa da yazılır). Yoksa onay istenmez. Bayat ret girdileri
-         * (`retBayat`) yazılmaz: yalnız onlar varsa onay sorulmaz.
+         * (`retListesineGelecek`: kayıtlar aynı olsa da yazılır; kaydı sonra değişenler, `retSonraDegisen`, de
+         * içindedir). Yoksa onay istenmez. Listenin sınırını aşan ret girdileri (`retSinirAsan`) yazılmaz: yalnız
+         * onlar varsa onay sorulmaz.
          */
         fun yapilacakVar(p: IceAktarmaOnizlemesi): Boolean = p.yeni + p.guncellenecek + p.retListesineGelecek > 0
+
+        /**
+         * Yedeğe girmeyen ret girdileri (`DisaAktarma.retListesinde`): biçim 3'ten beri yalnız kimliği ya da anı
+         * okunamayanlar ve öğe sınırını aşanlar (gövdesizler de yedeğe girer). Elle ve otomatik yedek ortak kullanır.
+         */
+        fun retListesinde(n: Int): String =
+            "Gönderilemeyenler listesindeki $n değişiklik okunamadığı ya da yedeğin sınırını aştığı için yedeğe girmedi; " +
+                "telefondaki listede duruyor."
     }
 }

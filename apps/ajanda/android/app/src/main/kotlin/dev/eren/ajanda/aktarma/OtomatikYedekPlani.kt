@@ -227,6 +227,9 @@ data class KlasorDosyasi(val ad: String, val kimlik: String)
  * [sonSinirAsiyor], [sonBellekAsiyor], [sonRetDisarida]: son başarılı yedeğin uyarıları ([bellekBildirildi]: bellek
  * uyarısı söylendi). [yarimYazim]: yeniden adlandırmayı desteklemeyen sağlayıcıda son ada doğrudan yazılan
  * dosyanın adı (süreç ölürse sonraki deneme onu bütünse tutar, yarımsa siler; bozuk dosya yedek sayılmaz).
+ * [sonKimlikler]: bu klasörde son doğrulanan yedeğin sağlayıcı kimlikleri (geçici ve son ad); sonraki denemenin
+ * başındaki geçici temizliği onları silmez (önbellekli liste az önceki yedeği geçici adıyla gösterebilir; V3).
+ * Başka klasör seçilince kalkar ([klasorle]).
  *
  * Geçişler saftır ([klasorle], [basariliOldu], [basarisizOldu], [bildirildi]); depo yalnız saklar.
  */
@@ -246,6 +249,7 @@ data class YedekDurumu(
     val yarimYazim: String? = null,
     val sonBellekAsiyor: Boolean = false,
     val bellekBildirildi: Boolean = false,
+    val sonKimlikler: Set<String> = emptySet(),
 ) {
     /**
      * Klasör seçildi. Başka klasörse o klasörün geçmişi yoktur: son yedek, hata ve bildirim durumu sıfırlanır
@@ -307,10 +311,10 @@ sealed class YedekSonucu {
     object Gerekmedi : YedekSonucu()
 
     /**
-     * [retDisarida]: yedeğe girmeyen gövdesiz ret girdileri (`DisaAktarma.retListesinde`). [sinirAsiyor]: yedek
+     * [retDisarida]: yedeğe girmeyen (okunamayan ya da sınırı aşan) ret girdileri (`DisaAktarma.retListesinde`). [sinirAsiyor]: yedek
      * yazıldı ama bu sürümün içe aktarma sınırını aşıyor, bu sürümde geri yüklenemez. [bellekAsiyor]: sınırın
      * altında ama bu telefonda açmaya bellek yetmeyebilir (sınır aşılıyorsa hep yanlış). [eskiSurumAcamaz]: belge
-     * biçim 2 (`DisaAktarma.bicimSurumu`), uygulamanın eski sürümleri bu dosyayı bütünüyle reddeder.
+     * biçim 2 ya da üstü (`DisaAktarma.bicimSurumu`), uygulamanın eski sürümleri bu dosyayı bütünüyle reddeder.
      */
     data class Yapildi(
         val dosya: String,
@@ -360,8 +364,7 @@ class OtomatikYedekMetinleri(private val dilim: ZoneId) {
         YedekBildirimi.BellekAsiyor -> "Yedek bu telefonda açılamayabilir" to AktarmaMetinleri.BELLEK_YETMEYEBILIR
     }
 
-    private fun retDisarida(n: Int) =
-        "Gönderilemeyenler listesindeki $n değişiklik yedeğe girmedi; önce onları düzeltin ya da atın."
+    private fun retDisarida(n: Int) = AktarmaMetinleri.retListesinde(n)
 
     private val sinirMetni = AktarmaMetinleri.SINIR_ASIYOR
 

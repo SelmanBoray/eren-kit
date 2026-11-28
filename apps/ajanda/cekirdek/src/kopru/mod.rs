@@ -461,6 +461,17 @@ impl Cekirdek {
         self.calistir(|m, o, e| m.ret_at(o, e, &islem_id))
     }
 
+    /// Ret listesinden "düzelt": formun gövdesini yazar ve girdiyi listeden çıkarır (yazım hata verirse girdi
+    /// kalır), reddedilen işlemin v3 kısmını (simge, bölge, ekler...) korur: form v3 alanı taşımaz, eskiden
+    /// `ekle`/`duzenle` + `ret_at` onu yitirirdi. Hedef çekirdekte seçilir: `guncelle` girdisi, kaydı canlıysa ve
+    /// `RetGirdisi.kayit_sonra_degisti` yanlışsa var olan kayda (gövde istenen tam haldir), yoksa yeni kayıt
+    /// (işaretli girdide kaydın şimdiki hali ezilmez). Döner: yazılan kaydın kimliği. Hata:
+    /// `GecersizGirdi{alan:"islem_id"}` (geçersiz kimlik, listede yok ya da `ertelenen_atildi` girdisi: onun yolu
+    /// `ertelenen_geri_al`), formun `GecersizGirdi`'leri. Gözlemciye kaydın değişimi ve `ret_listesi`.
+    pub fn ret_duzelt(&self, islem_id: String, govde: KayitGovdesi) -> Result<String, CekirdekHatasi> {
+        self.calistir(|m, o, e| m.ret_duzelt(o, e, &islem_id, govde))
+    }
+
     /// Eski (v2) servise bağlıyken ertelenen v3 değişikliklerini atıp kayıtları serbest bırakır (`kayit_id`: o
     /// kayıt; `None`: bütün kayıtlar). Servis hiç güncellenmezse ertelenenler ve kaydın arkasında sırası tutulan
     /// işlemler (silme dahil) süresiz bekler; bu çağrı kullanıcının çıkış yoludur. Her ertelenen v3 değişikliği

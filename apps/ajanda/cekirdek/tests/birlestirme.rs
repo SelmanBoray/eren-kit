@@ -413,3 +413,42 @@ fn olasi_cift_kurali_yanlis_pozitif_vermez() {
     assert_eq!(kalan, ciftler);
     assert!(h.c.olasi_ciftleri("k_7".into()).unwrap().is_empty());
 }
+
+/// V5: iki ekibin özelliği birlikte. Yerel kipteki telefon yalnız v2 konuşan servise eşleşir: v2 bağlantıda da
+/// birleştirme kullanıcının onayını bekler (hiçbir işlem gitmez); onaydan sonra kopya v2 döneminindir
+/// (`kopya_surumu` 2). Servis v3'e yükselince ilk v3 bağlantı bir kez tam telafi ister, kopya v3 olur; sonraki
+/// bağlantı artımlıdır.
+#[test]
+fn v2_baglantida_onay_beklenir_sonra_bir_kez_tam_telafi() {
+    let mut h = Hat::yeni("birlestir-v2");
+    h.otomatik_onay = false;
+    h.pc.disaridan_ekle("k_pc", &govde("PC", None), false);
+    let a = h.c.ekle(govde("A", None), GirdiYolu::Elle).unwrap();
+    h.pc.surum_kumesi(&[2]);
+    h.eslestir();
+    h.baglan();
+    assert_eq!(h.pc.acilislar, vec![("pair_request", 3), ("pair_request", 2), ("hello", 2)]);
+    bekliyor(&h);
+    let p = onizleme(&h);
+    assert!(h.c.birlestirmeyi_onayla(Some(p.iz)).unwrap().uygulandi);
+    h.pompala();
+    assert_eq!(h.c.kip().unwrap(), CalismaKipi::Bagli);
+    assert!(h.canli_mi() && h.pc.d.kayitlar.contains_key(&a), "onaydan sonra gitti");
+    assert_eq!(depo(&h).meta_oku("kopya_surumu").unwrap().as_deref(), Some("2"));
+
+    h.kopar();
+    h.pc.surum_kumesi(&[2, 3]);
+    h.zaman.ilerlet(SAAT);
+    let telafi = h.pc.telafi_sayisi;
+    h.baglan();
+    assert!(h.canli_mi());
+    assert_eq!((h.pc.acilislar.last(), h.pc.son_welcome_tam, h.pc.telafi_sayisi), (Some(&("hello", 3)), Some(true), telafi + 1));
+    assert_eq!(depo(&h).meta_oku("kopya_surumu").unwrap().as_deref(), Some("3"));
+    assert_eq!(&kayit(&h, &a), &h.pc.d.kayitlar[&a]);
+
+    h.kopar();
+    h.baglan();
+    assert!(h.canli_mi());
+    assert_eq!((h.pc.acilislar.last(), h.pc.son_welcome_tam), (Some(&("hello", 3)), Some(false)), "sonra artımlı");
+    assert!(h.c.birlestirme_onizlemesi().unwrap().is_none());
+}

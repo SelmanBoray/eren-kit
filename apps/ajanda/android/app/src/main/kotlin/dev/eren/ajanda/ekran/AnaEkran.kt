@@ -742,7 +742,7 @@ class AnaEkran : Activity() {
     private fun retMenusu(r: RetListesi.RetSatiri) {
         val b = AlertDialog.Builder(this)
             .setTitle(r.baslik)
-            .setMessage("${r.islemMetni} gönderilemedi (${r.zaman}).\n${r.neden}")
+            .setMessage("${r.durum} (${r.zaman}).\n${r.neden}" + (r.uyari?.let { "\n$it" } ?: ""))
             .setNegativeButton("Vazgeç", null)
             .setNeutralButton("At") { _, _ -> retAtOnayi(r) }
         if (r.duzeltilebilir) b.setPositiveButton("Düzelt") { _, _ -> KayitEkrani.retDuzelt(this, ISTEK_KAYIT, r.islemId) }
@@ -1309,8 +1309,8 @@ class AnaEkran : Activity() {
         v.contentDescription = r.aciklama
         v.setOnClickListener { retMenusu(r) }
         v.baslik.text = r.baslik
-        v.alt.text = "${r.islemMetni} gönderilemedi · ${r.zaman}"
-        v.neden.text = r.neden
+        v.alt.text = "${r.durum} · ${r.zaman}"
+        v.neden.text = r.uyari?.let { "${r.neden}\n$it" } ?: r.neden
         v.dugmeler.removeAllViews()
         if (r.duzeltilebilir) {
             v.dugmeler.addView(t.metinDugmesi("Düzelt ve yeniden ekle") { KayitEkrani.retDuzelt(this, ISTEK_KAYIT, r.islemId) }.apply {

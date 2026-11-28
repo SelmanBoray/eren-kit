@@ -197,6 +197,22 @@ class GercekCekirdekTest {
         }
     }
 
+    /** Yüz çağrıyı gerçek çekirdeğe iletir: bozuk kimlik çekirdeğin `GecersizGirdi{islem_id}`'si, girdi yok. */
+    @Test
+    fun ertelenenGeriAlDenetimliGercekCekirdegeGider() {
+        val yol = gecici.newFile("geri-al.sqlite3").absolutePath
+        ac(yol).use { c ->
+            val yuz = CekirdekYuzu.Gercek(c)
+            try {
+                yuz.ertelenenGeriAlDenetimli("bozuk kimlik!", false)
+                org.junit.Assert.fail("bozuk kimlik kabul edildi")
+            } catch (e: dev.eren.ajanda.cekirdek.CekirdekHatasi.GecersizGirdi) {
+                assertEquals("islem_id", e.alan)
+            }
+            assertTrue(yuz.retListesi().isEmpty())
+        }
+    }
+
     @Test
     fun formNotuGercekCekirdeginGunHatirlatmasindanGelir() {
         val yol = gecici.newFile("onizleme.sqlite3").absolutePath

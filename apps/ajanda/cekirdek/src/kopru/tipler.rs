@@ -145,6 +145,16 @@ pub struct RetGirdisi {
     /// Arayüz "gönderilmeden atıldı" demez ("PC'ye ulaşmış olabilir"). Öteki girdilerde yanlış.
     #[uniffi(default)]
     pub ulasmis_olabilir: bool,
+    /// Girdi bir yedekten içe aktarıldı ve kaydı telefonda yedekten sonra değişmiş (ya da bu bilinemedi): girdi
+    /// kaydın eski bir hali için yazılmıştı (çoğunlukla kullanıcının başka yerde çözdüğü ya da PC'nin sonra
+    /// düzenlediği kayıt). Arayüz "Kayıt bu yedekten sonra değişti" uyarısını gösterir; `Cekirdek::ret_duzelt`
+    /// düzeltmeyi var olan kayda uygulamaz, yeni kayıt olarak ekler (kaydın şimdiki hali ezilmez, girdinin
+    /// içeriği de kaybolmaz). `ertelenen_atildi` girdisinde `ertelenen_geri_al` yine uygulanabilir: atılan v3
+    /// değişikliği kaydın şimdiki haline uygulanır, atma anındaki taban (`islem_json`'da, yedekle taşınır) ile
+    /// atıldıktan sonra değişen alan sessizce ezilmez (`ertelenen_geri_al_denetimli`). Yedekle başka telefonlara
+    /// da taşınır.
+    #[uniffi(default)]
+    pub kayit_sonra_degisti: bool,
 }
 
 /// Bir işlemin v3 alanlarındaki değişikliği, okunur hali (`RetGirdisi.v3_degisikligi`). Alan adları kablodaki
@@ -536,15 +546,15 @@ pub struct DisaAktarma {
     pub silinmis: i32,
     /// Telefonda okunamayan satırlar: belgeye olduğu gibi kondu, içe aktarmada geçersiz sayılırlar.
     pub okunamayan: i32,
-    /// Belgeye girmeyen, yalnız telefonun ret listesinde kalan girdiler: düzeltme gövdesi olmayanlar (yalnız
-    /// atılabilir: `sil`, `durum`, okunamayan metin), gövdesi, kimliği ya da anı okunamayanlar ve öğe sınırını
-    /// (50 000 girdi, `KAYIT_ADET`) aşanlar. Kullanıcı önce düzeltmeli ya da atmalı.
+    /// Belgeye girmeyen, yalnız telefonun ret listesinde kalan girdiler: kimliği ya da anı okunamayanlar ve öğe
+    /// sınırını (50 000 girdi, `KAYIT_ADET`; bir girdi 256 KiB) aşanlar. Biçim 3'ten beri gövdesiz girdi
+    /// (`sil`, `durum` reddi, okunamayan metin) de satırıyla birlikte girer. Kullanıcı önce düzeltmeli ya da atmalı.
     pub ret_listesinde: i32,
     /// Aktarmanın yapıldığı kip (bağlı kipte görünen kopya, gönderilmemiş değişiklikler dahil).
     pub kip: CalismaKipi,
     /// Kaba `yol`'larıyla konacak ek dosyaları (bugün hep boş).
     pub ekler: Vec<EkDosyasi>,
-    /// Belgeye giren ret listesi girdileri (düzeltme gövdesiyle; içe aktarmada ret listesine geri yazılır).
+    /// Belgeye giren ret listesi girdileri (satırlarıyla; içe aktarmada ret listesine geri yazılır).
     #[uniffi(default = 0)]
     pub ret_yedekte: i32,
     /// Belge bu sürümün içe aktarma sınırlarını aşıyor (`AktarmaBicimi.belge_azami_bayt` ya da kayıt öğesi
@@ -552,10 +562,13 @@ pub struct DisaAktarma {
     /// söylenmeli.
     #[uniffi(default = false)]
     pub ice_aktarma_sinirini_asiyor: bool,
-    /// Belgenin biçim sürümü (`bicim_surumu`): 1 ya da 2. 2 yalnız ret girdisi yedeğe girdiyse (`ret_yedekte`
-    /// sıfırdan büyük): biçim 1 okuyan eski uygulama bu dosyayı bütünüyle reddeder ("daha yeni bir biçim"),
-    /// kayıtlarını da alamaz. Kullanıcıya söylenmeli (yedek yalnız bu sürüm ve sonrasıyla geri yüklenir; ret girdileri
-    /// düzeltilir ya da atılırsa biçim 1 yazılır).
+    /// Belgenin biçim sürümü (`bicim_surumu`): 1, 2 ya da 3. 2 yalnız ret girdisi yedeğe girdiyse (`ret_yedekte`
+    /// sıfırdan büyük), 3 ret girdilerinden biri biçim 2'nin taşıyamadığını taşıyorsa (işlemin kendisi: v3
+    /// değişikliği, atılmış ertelenen değişiklik; okunamayan metin; yerel neden; gövdesiz girdi; "kayıt sonra
+    /// değişti" işareti; pratikte servisin reddettiği her işlem): daha düşük biçim okuyan
+    /// eski uygulama bu dosyayı bütünüyle reddeder ("daha yeni bir biçim"), kayıtlarını da alamaz. 2 ve üstünde
+    /// kullanıcıya söylenmeli (yedek yalnız bu sürüm ve sonrasıyla geri yüklenir; ret girdileri düzeltilir ya da
+    /// atılırsa biçim 1 yazılır).
     #[uniffi(default = 0)]
     pub bicim_surumu: i64,
 }
@@ -638,20 +651,27 @@ pub struct IceAktarmaOnizlemesi {
     #[uniffi(default = 0)]
     pub taslaga_donecek: i32,
     /// Biçim 2: dosyadan ret listesine eklenecek girdiler (iki kipte de; telefonun ret listesinde aynı
-    /// `islem_id`'li olanlar sayılmaz, yinelenmez; bayatlar `ret_bayat`'tadır). Kayıt sayılarının (`toplam`)
-    /// dışındadır.
+    /// `islem_id`'li olanlar sayılmaz, yinelenmez; kaydı sonra değişenler dahildir, ayrıca `ret_sonra_degisen`'de
+    /// sayılır; sınırı aşanlar `ret_sinir_asan`'dadır). Kayıt sayılarının (`toplam`) dışındadır.
     #[uniffi(default = 0)]
     pub ret_listesine_gelecek: i32,
     /// Biçim 2: okunamayan ya da dosyada `islem_id`'si yinelenen ret girdileri (uygulanmaz).
     #[uniffi(default = 0)]
     pub ret_gecersiz: i32,
-    /// Biçim 2: bayat ret girdileri, ret listesine yazılmaz (`ret_listesine_gelecek`'in dışında). Kaydı
-    /// telefonda dosyadan sonra değişmiştir (dosyadaki hali atlanır; dosyada geçerli hali yoksa telefondaki
-    /// kayıt girdinin anından sonra güncellenmiştir): girdi çoğunlukla kullanıcının bu telefonda düzeltip
-    /// attığıdır, düzeltilseydi kaydın yeni hali yedekteki eski istekle ezilirdi. Bilgi içindir; yalnız
-    /// bunlar varsa yazılacak bir şey yoktur.
+    /// Eski köprü uyumu için duruyor, hep 0. Eskiden kaydı yedekten sonra değişmiş ret girdisi alınmazdı;
+    /// artık alınır ve işaretlenir (`ret_sonra_degisen`): girdinin içeriği (D4'ün telefon hali gibi) yalnız
+    /// yedekte olabilir, alınmasaydı ona ulaşmanın yolu kalmazdı.
     #[uniffi(default = 0)]
     pub ret_bayat: i32,
+    /// `ret_listesine_gelecek`'lerden kaydı telefonda yedekten sonra değişmiş olanlar (ya da bu bilinemeyenler:
+    /// kayıt dosyada geçerli değil ama telefonda var): `RetGirdisi.kayit_sonra_degisti` işaretiyle yazılır,
+    /// düzeltmesi var olan kaydı ezmez (`Cekirdek::ret_duzelt` yeni kayıt ekler). Kullanıcıya söylenmeli.
+    #[uniffi(default = 0)]
+    pub ret_sonra_degisen: i32,
+    /// Ret listesinin sınırı (`AktarmaBicimi`'nin yedeğe aldığı en çok girdi, 50 000) dolduğu için alınmayacak
+    /// ret girdileri (`ret_listesine_gelecek`'in dışında). Kullanıcı önce listedekileri düzeltmeli ya da atmalı.
+    #[uniffi(default = 0)]
+    pub ret_sinir_asan: i32,
 }
 
 /// `Cekirdek::ice_aktar`'ın sonucu.

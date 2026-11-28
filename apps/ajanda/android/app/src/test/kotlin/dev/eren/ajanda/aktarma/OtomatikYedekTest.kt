@@ -272,7 +272,10 @@ class OtomatikYedekTest {
          * gelir (dosya eski adıyla görünür).
          */
         var listeOnbellekli = false
+        /** Önbellek yalnız ilk listede değil, sonraki denemelerde de sürer (V3); [onbellegiYenile] temizler. */
+        var onbellekKalici = false
         private val bayatAdlar = HashMap<String, String>()
+        fun onbellegiYenile() = bayatAdlar.clear()
 
         fun adlar() = dosyalar.values.map { it.ad }.sorted()
         fun ekle(ad: String, veri: ByteArray = byteArrayOf(1)) { dosyalar["d${sayac++}"] = Dosya(ad, veri) }
@@ -288,7 +291,7 @@ class OtomatikYedekTest {
 
         override fun listele(): List<KlasorDosyasi> {
             denetle()
-            return dosyalar.map { (k, d) -> KlasorDosyasi(bayatAdlar[k] ?: d.ad, k) }.also { bayatAdlar.clear() }
+            return dosyalar.map { (k, d) -> KlasorDosyasi(bayatAdlar[k] ?: d.ad, k) }.also { if (!onbellekKalici) bayatAdlar.clear() }
         }
 
         override fun olustur(ad: String, mime: String): KlasorDosyasi {
@@ -674,7 +677,8 @@ class OtomatikYedekTest {
         assertEquals(2, s.retDisarida)
         assertEquals(2, ayarlar.d.sonRetDisarida)
         val m = OtomatikYedekMetinleri(dilim)
-        val beklenen = "Gönderilemeyenler listesindeki 2 değişiklik yedeğe girmedi; önce onları düzeltin ya da atın."
+        val beklenen = AktarmaMetinleri.retListesinde(2)
+        assertTrue(beklenen, beklenen.contains("okunamadığı ya da yedeğin sınırını aştığı"))
         assertTrue(m.sonuc(s).contains(beklenen))
         assertEquals(listOf(beklenen), m.uyarilar(ayarlar.d))
         // Ret kalmadıysa uyarı kalkar.
@@ -1039,6 +1043,42 @@ class OtomatikYedekTest {
         }
         assertEquals((22..28).map { ad(an(it, 9)) }, bizimkiler())
         assertTrue(klasor.adlar().none { it.endsWith(OtomatikYedekPlani.GECICI_EK) })
+    }
+
+    /**
+     * V3: önbellekli sağlayıcıda başarılı denemeden kısa süre sonra ikinci deneme ("Şimdi yedekle" ya da 30 dakikalık
+     * yeniden deneme): liste az önce doğrulanan yedeği hâlâ geçici adıyla gösterir. Eskiden deneme başındaki geçici
+     * temizliği onu, yenisi yazılmadan silerdi; şimdi son doğrulanan dosyanın kimliği saklanır ve korunur.
+     */
+    @Test
+    fun ikinciDenemeBasindaOnbellektekiDogrulananYedekSilinmez() {
+        klasor.listeOnbellekli = true
+        klasor.onbellekKalici = true
+        val ilk = yedekci.simdiYedekle()
+        assertTrue("$ilk", ilk is YedekSonucu.Yapildi)
+        val ilkAd = ad(an(28, 9))
+        assertTrue(ilkAd in klasor.adlar())
+        assertTrue(ayarlar.d.sonKimlikler.isNotEmpty())
+        // Liste hâlâ eski (geçici) adı veriyor; ikinci deneme yeni dosya yazılmadan önce temizlik yapar.
+        val ilkKimlik = klasor.listele().single { it.ad.endsWith(OtomatikYedekPlani.GECICI_EK) }.kimlik
+        assertTrue(ilkKimlik in ayarlar.d.sonKimlikler)
+        var ikinciYazilirkenIlkVar = false
+        klasor.yazmaAcildi = { if (it.startsWith(ad(an(28, 9, 1)))) ikinciYazilirkenIlkVar = ilkAd in klasor.adlar() }
+        simdi = an(28, 9, 1)
+        val ikinci = yedekci.simdiYedekle()
+        assertTrue("$ikinci", ikinci is YedekSonucu.Yapildi)
+        assertTrue("ikinci yazılırken ilk yedek yerinde", ikinciYazilirkenIlkVar)
+        assertTrue(ad(an(28, 9, 1)) in klasor.adlar())
+        gecerliYedek(ad(an(28, 9, 1)))
+        assertFalse("korunan kimlik yeni yedeğinki", ilkKimlik in ayarlar.d.sonKimlikler)
+        // Önbellek yenilenince ilk yedek gerçek adıyla görünür; sonraki temizlik onu aynı günün eskisi diye siler.
+        klasor.onbellegiYenile()
+        simdi = an(28, 9, 2)
+        assertTrue(yedekci.simdiYedekle() is YedekSonucu.Yapildi)
+        assertFalse(ilkAd in klasor.adlar())
+        assertEquals(listOf(ad(an(28, 9, 2))), bizimkiler())
+        // Başka klasör seçilince korunan kimlikler kalkar.
+        assertTrue(ayarlar.d.klasorle("baska").sonKimlikler.isEmpty())
     }
 
     @Test

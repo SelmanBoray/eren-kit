@@ -15,7 +15,13 @@ import dev.eren.ajanda.cekirdek.CekirdekHatasi
 import dev.eren.ajanda.cekirdek.GecisNedeni
 import dev.eren.ajanda.cekirdek.GecisOzeti
 import dev.eren.ajanda.cekirdek.KoparmaSonucu
+import dev.eren.ajanda.cekirdek.IslemTuru
+import dev.eren.ajanda.cekirdek.KayitGovdesi
+import dev.eren.ajanda.cekirdek.KayitTuru
+import dev.eren.ajanda.cekirdek.KuyrukRetNedeni
 import dev.eren.ajanda.cekirdek.OlasiCift
+import dev.eren.ajanda.cekirdek.RetGirdisi
+import dev.eren.ajanda.ekran.RetListesi
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -23,6 +29,7 @@ import java.time.ZoneId
 
 /**
  * D6: kullanıcıya görünen metinlerde "PC" sözcüğü geçmez (servis "Eren servisi", makine "bilgisayar").
+ * `aktarma/` metinleri (yeni ret sayıları dahil) kaynak taramasıyla; ret satırının yeni dalları çıktıdan.
  * İki yoldan: (1) `kimlik/`, `aktarma/` (otomatik yedek dahil), `birlestirme/` ve D6'nın yeni dosyalarının kaynağındaki bütün dize sabitleri
  * (yorumlar ve `${...}` içindeki kod hariç; `EslestirmeEkrani` gibi JVM'de çalışmayan ekranlar da
  * böylece kapsanır), (2) metin işlevlerinin her dalının çıktısı. `ekran/` Kol U'nundur, kapsam dışı.
@@ -113,12 +120,31 @@ class KullaniciMetniTest {
             add(m.PARMAK_IZI_ACIKLAMASI)
             add(m.KALDIRMA_BASLIGI)
             add(m.KALDIRMA_ONAYI)
+            listOf(0 to 0, 2 to 0, 0 to 3, 2 to 3).forEach { (k, e) -> add(m.kaldirmaOnayi(k, e)) }
             addAll(GecisMetinleriTest.ornekMetinler())
             addAll(birlestirmeMetinleri())
             addAll(otomatikYedekMetinleri())
+            addAll(retMetinleri())
         }
         val bulunan = metinler.filter { pc.containsMatchIn(it) }
         assertTrue("\"PC\" geçen metinler:\n" + bulunan.joinToString("\n"), bulunan.isEmpty())
+    }
+
+    /** Ret satırının yeni dalları (atılmış ertelenen, sonra değişen); öteki nedenler `ekran/`'ındır. */
+    private fun retMetinleri(): List<String> {
+        val g = KayitGovdesi(KayitTuru.GOREV, "Başlık", null, null, emptyList(), null)
+        val r = RetGirdisi("i_1", "k_1", IslemTuru.GUNCELLE, KuyrukRetNedeni.TESLIM_EDILEMEDI, g, 0)
+        return buildList {
+            listOf(true, false).forEach { add(RetListesi.ertelenenNedeni(it)) }
+            for (atildi in listOf(true, false)) for (ulasmis in listOf(true, false)) for (govde in listOf(g, null)) {
+                val s = RetListesi.satir(
+                    r.copy(ertelenenAtildi = atildi, ulasmisOlabilir = ulasmis, kayitSonraDegisti = true, govde = govde),
+                    0, ZoneId.of("Europe/Istanbul"),
+                )
+                if (atildi) { add(s.neden); add(s.aciklama) }
+                add(s.durum); add(s.uyari.orEmpty())
+            }
+        }
     }
 
     /** `BirlestirmeMetinleri`'nin her dalı: bütün sayılar sıfır ve sıfırdan büyük, aynı ve farklı depo. */

@@ -1,5 +1,6 @@
 package dev.eren.ajanda.kimlik
 
+import dev.eren.ajanda.cekirdek.BaglantiDurumu
 import dev.eren.ajanda.cekirdek.CalismaKipi
 import dev.eren.ajanda.cekirdek.GecisNedeni
 import dev.eren.ajanda.cekirdek.GecisOzeti
@@ -26,20 +27,33 @@ object GecisMetinleri {
         "gönderilmez; birleştirmeyi onaylarsanız (Eren servisinde olmayan taslaklar hariç) oraya gider."
 
     /**
-     * Koparmadan önceki onay. `kuyrukta`: `baglantiDurumu().kuyrukta` (henüz gönderilmemiş işlem); okunamadıysa
-     * `null` (sayısız genel cümle).
+     * Koparmadan önceki onay. `kuyrukta`: `baglantiDurumu().kuyrukta`; `ertelenen`: `baglantiDurumu().ertelenenIslem`
+     * (eski servise bağlıyken bekletilen, `kuyrukta`'ya girmeyen işlemler). Gönderilmemişlerin toplamı ikisidir.
+     * Okunamadıysa `kuyrukta` `null` (sayısız genel cümle).
      */
-    fun koparmaOnayi(kuyrukta: Int?): GecisMetni = GecisMetni(
+    fun koparmaOnayi(kuyrukta: Int?, ertelenen: Int = 0): GecisMetni = GecisMetni(
         KOPARMA_BASLIGI,
         buildList {
             add("Kayıtlarınız bu telefonda kalır; uygulama Eren servisi olmadan çalışmayı sürdürür.")
-            when {
-                kuyrukta == null -> add("Henüz gönderilmemiş değişiklikler telefonda kalır ama Eren servisine gitmez.")
-                kuyrukta > 0 -> add("$kuyrukta değişiklik henüz Eren servisine gitmedi; telefonda kalır ama servise gönderilmez.")
-            }
+            gonderilmeyenler(kuyrukta, ertelenen)?.let(::add)
             add("Eren servisindeki kopya yedek olarak durur. Yeniden bağlanmak için bilgisayarda yeni kod gerekir.")
         },
     )
+
+    /** [koparmaOnayi]'nın `baglantiDurumu()`'ndan kurulanı (okunamadıysa `koparmaOnayi(null)`). */
+    fun koparmaOnayi(d: BaglantiDurumu): GecisMetni = koparmaOnayi(d.kuyrukta, d.ertelenenIslem)
+
+    /**
+     * Ayrılınca Eren servisine gitmeyecek değişikliklerin cümlesi (koparma ve eşleşmeyi kaldırma onayı):
+     * toplam `kuyrukta + ertelenen`; ertelenenler ayrıca anılır. Toplam sıfırsa `null`; `kuyrukta` `null`'sa sayısız.
+     */
+    fun gonderilmeyenler(kuyrukta: Int?, ertelenen: Int): String? {
+        if (kuyrukta == null) return "Henüz gönderilmemiş değişiklikler telefonda kalır ama Eren servisine gitmez."
+        val toplam = kuyrukta + ertelenen.coerceAtLeast(0)
+        if (toplam <= 0) return null
+        val ana = "$toplam değişiklik henüz Eren servisine gitmedi; telefonda kalır ama servise gönderilmez."
+        return if (ertelenen > 0) "$ana Bunlardan $ertelenen değişiklik Eren servisi güncellenince gönderilecekti." else ana
+    }
 
     /** `baglantiyiKopar()` döndükten hemen sonra gösterilecek sonuç. */
     fun koparma(s: KoparmaSonucu): GecisMetni = when (s.oncekiKip) {
@@ -64,6 +78,25 @@ object GecisMetinleri {
      * gösterdiği geçişin `tsMs`'ini saklar ve yalnız yenisini gösterir.
      */
     fun gosterilmeli(g: GecisOzeti?, gosterilenTsMs: Long?): Boolean = g != null && g.tsMs != gosterilenTsMs
+
+    /**
+     * E3: iki ayrı işaret. Arka plan bildiriminin "söyledim" işareti ([bildirimdeTsMs]) ile uygulamanın "gösterdim"
+     * işareti ([uygulamadaTsMs]) ayrı saklanır; biri ötekini susturmaz.
+     *
+     * Uygulama içi geçiş penceresi açılmalı mı: uygulama bu geçişi göstermediyse. `DEPO_DEGISTI` uygulama içinde
+     * mutlaka bir kez gösterilir (bildirim söylemiş olsa da: bildirim kısa bir "eşitleme durdu"dur, bağlanılan
+     * servisin değiştiğini ve neyin nerede durduğunu ancak pencere anlatır). Öteki geçişleri (koparma, eşleşmeyi
+     * kaldırma: kullanıcının uygulamada yaptığı, sonucu o an gösterilen) bildirim söylediyse uygulama yinelemez.
+     */
+    fun uygulamadaGosterilmeli(g: GecisOzeti?, uygulamadaTsMs: Long?, bildirimdeTsMs: Long?): Boolean = when {
+        !gosterilmeli(g, uygulamadaTsMs) -> false
+        g!!.neden == GecisNedeni.DEPO_DEGISTI -> true
+        else -> gosterilmeli(g, bildirimdeTsMs)
+    }
+
+    /** Arka plan bildirimi geçişi söylemeli mi: ne kendisi söyledi ne uygulama gösterdi. */
+    fun bildirimdeGosterilmeli(g: GecisOzeti?, bildirimdeTsMs: Long?, uygulamadaTsMs: Long?): Boolean =
+        gosterilmeli(g, bildirimdeTsMs) && gosterilmeli(g, uygulamadaTsMs)
 
     private const val UYGULAMAYI_ACIN = "Uygulamayı açtığınızda yeniden bağlanır; gönderilecek bir şey varsa birleştirmeyi size sorar."
 

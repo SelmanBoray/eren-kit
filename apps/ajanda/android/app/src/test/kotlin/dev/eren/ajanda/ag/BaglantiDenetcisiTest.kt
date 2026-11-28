@@ -502,6 +502,177 @@ class BaglantiDenetcisiTest {
         d.birak()
     }
 
+    /**
+     * Düşülen alt sürümde boşta açık kalan canlı bağlantı: `yukariDenemeMs` anına bir `baglantiDurumu()`
+     * yoklaması kurulur (duvar saatiyle ölçülür); o çağrıda çekirdek kapatır, sıradan kopma gibi yeniden bağlanılır.
+     * An geçmiş ama kapatılmamışsa (yolda işlem) `yukariTekrarMs` sonra yeniden yoklanır, döngü dönmez.
+     */
+    @Test
+    fun yukariDenemeAninaDurumYoklamasiKurulur() {
+        var duvar = 5_000_000L
+        val d = BaglantiDenetcisi({ cekirdek }, acici, zaman, ag, isler, gunluk, ayar, rastgele = { 0.5 }, duvarSaati = { duvar })
+        d.basla()
+        zaman.bosalt()
+        val h = acici.son
+        h.ac()
+        zaman.bosalt()
+        val an = duvar + 3_600_000
+        cekirdek.durumYaz(BaglantiAsamasi.CANLI, 0, yukariDenemeMs = an)
+        zaman.bosalt()
+        assertTrue(zaman.bekleyenler().toString(), 3_600_000L in zaman.bekleyenler())
+        // Aynı an yeniden okununca ikinci yoklama kurulmaz.
+        cekirdek.durumYaz(BaglantiAsamasi.CANLI, 0, yukariDenemeMs = an)
+        zaman.bosalt()
+        assertEquals(1, zaman.bekleyenler().count { it == 3_600_000L })
+
+        // An gelince tek okuma; çekirdek o çağrıda bağlantıyı kapatır.
+        cekirdek.durumOkunurken = {
+            if (duvar >= an) {
+                cekirdek.durum = SahteCekirdek.durumOlustur(BaglantiAsamasi.KOPUK, 0)
+                cekirdek.kendisiKapat()
+            }
+        }
+        val once = cekirdek.durumOkuma
+        duvar += 3_599_999
+        zaman.ilerle(3_599_999)
+        assertEquals("erken yoklanmaz", once, cekirdek.durumOkuma)
+        assertFalse(h.bitti)
+        duvar += 1
+        zaman.ilerle(1)
+        assertTrue("yoklama çekirdeği çağırdı", cekirdek.durumOkuma > once)
+        assertTrue("bağlantı kapandı", h.bitti)
+        h.karsiKapatti()
+        zaman.bosalt()
+        assertTrue("sıradan kopma gibi yeniden bağlanır: ${zaman.bekleyenler()}", 1_000L in zaman.bekleyenler())
+        zaman.ilerle(1_000)
+        assertEquals(2, acici.acilanlar.size)
+        d.birak()
+    }
+
+    @Test
+    fun yukariDenemeAniGecmisseTekrarAraligiylaYoklanirKopuncaIptal() {
+        var duvar = 9_000_000L
+        val d = BaglantiDenetcisi({ cekirdek }, acici, zaman, ag, isler, gunluk, ayar, rastgele = { 0.5 }, duvarSaati = { duvar })
+        d.basla()
+        zaman.bosalt()
+        acici.son.ac()
+        zaman.bosalt()
+        // Yolda işlem var: çekirdek an geçtiği hâlde kapatmaz, an durumda kalır.
+        cekirdek.durumYaz(BaglantiAsamasi.CANLI, 0, yukariDenemeMs = duvar - 10)
+        zaman.bosalt()
+        assertTrue(zaman.bekleyenler().toString(), ayar.yukariTekrarMs in zaman.bekleyenler())
+        val once = cekirdek.durumOkuma
+        zaman.ilerle(ayar.yukariTekrarMs)
+        assertEquals(once + 1, cekirdek.durumOkuma)
+        assertTrue("yeniden kuruldu, sıfır gecikmeli döngü yok", ayar.yukariTekrarMs in zaman.bekleyenler())
+        assertFalse(0L in zaman.bekleyenler())
+        // An kalkınca (v3'e çıkıldı ya da yeniden bağlanıldı) yoklama iptal.
+        cekirdek.durumYaz(BaglantiAsamasi.CANLI, 0)
+        zaman.bosalt()
+        assertFalse(ayar.yukariTekrarMs in zaman.bekleyenler())
+        // Yeniden kurulup soket kopunca da iptal; CANLI değilken kurulmaz.
+        cekirdek.durumYaz(BaglantiAsamasi.CANLI, 0, yukariDenemeMs = duvar + 500)
+        zaman.bosalt()
+        assertTrue(500L in zaman.bekleyenler())
+        cekirdek.durum = SahteCekirdek.durumOlustur(BaglantiAsamasi.KOPUK, 0)
+        acici.son.hata()
+        zaman.bosalt()
+        assertFalse(500L in zaman.bekleyenler())
+        cekirdek.durumYaz(BaglantiAsamasi.TELAFI, 0, yukariDenemeMs = duvar + 700)
+        zaman.bosalt()
+        assertFalse(700L in zaman.bekleyenler())
+        d.birak()
+    }
+
+    /**
+     * Geçmiş isteğinin zaman aşımı (`gecmisBeklemeMs`): o ana bir `baglantiDurumu()` yoklaması kurulur (aşamadan
+     * bağımsız, soket açıkken); an geçtiyse çekirdek isteği düşürür ve an durumdan kalkar.
+     */
+    @Test
+    fun gecmisBeklemeAninaDurumYoklamasiKurulur() {
+        var duvar = 7_000_000L
+        val d = BaglantiDenetcisi({ cekirdek }, acici, zaman, ag, isler, gunluk, ayar, rastgele = { 0.5 }, duvarSaati = { duvar })
+        d.basla()
+        zaman.bosalt()
+        acici.son.ac()
+        zaman.bosalt()
+        val an = duvar + 30_000
+        cekirdek.durumYaz(BaglantiAsamasi.TELAFI, 0, gecmisBeklemeMs = an)
+        zaman.bosalt()
+        assertTrue(zaman.bekleyenler().toString(), 30_000L in zaman.bekleyenler())
+        // Aynı an yeniden okununca ikinci yoklama kurulmaz.
+        cekirdek.durumYaz(BaglantiAsamasi.TELAFI, 0, gecmisBeklemeMs = an)
+        zaman.bosalt()
+        assertEquals(1, zaman.bekleyenler().count { it == 30_000L })
+
+        // An gelince tek okuma; çekirdek o çağrıda isteği düşürür, an kalkar, yeni yoklama kurulmaz.
+        cekirdek.durumOkunurken = {
+            if (duvar >= an) cekirdek.durum = SahteCekirdek.durumOlustur(BaglantiAsamasi.TELAFI, 0)
+        }
+        val once = cekirdek.durumOkuma
+        duvar += 29_999
+        zaman.ilerle(29_999)
+        assertEquals("erken yoklanmaz", once, cekirdek.durumOkuma)
+        duvar += 1
+        zaman.ilerle(1)
+        assertEquals("yoklama çekirdeği bir kez çağırdı", once + 1, cekirdek.durumOkuma)
+        assertFalse(zaman.bekleyenler().toString(), zaman.bekleyenler().any { it == ayar.yukariTekrarMs || it == 0L })
+        assertFalse(acici.son.bitti)
+
+        // Düşürme kancası kalkar: yoksa sonraki her okumada yazılan durumu (yeni `gecmisBeklemeMs`) ezerdi.
+        cekirdek.durumOkunurken = {}
+        // Soket kapanınca kurulu geçmiş yoklaması iptal; kopukken kurulmaz.
+        cekirdek.durumYaz(BaglantiAsamasi.CANLI, 0, gecmisBeklemeMs = duvar + 800)
+        zaman.bosalt()
+        assertTrue(800L in zaman.bekleyenler())
+        cekirdek.durum = SahteCekirdek.durumOlustur(BaglantiAsamasi.KOPUK, 0)
+        acici.son.hata()
+        zaman.bosalt()
+        assertFalse(800L in zaman.bekleyenler())
+        d.birak()
+    }
+
+    /** İki an tek zamanlayıcıda birleşir: en yakın olan kurulur, sonra öteki; ayrı ayrı yarışmazlar. */
+    @Test
+    fun yukariVeGecmisAnlariTekYoklamadaBirlesir() {
+        var duvar = 11_000_000L
+        val d = BaglantiDenetcisi({ cekirdek }, acici, zaman, ag, isler, gunluk, ayar, rastgele = { 0.5 }, duvarSaati = { duvar })
+        d.basla()
+        zaman.bosalt()
+        acici.son.ac()
+        zaman.bosalt()
+        val yukari = duvar + 3_600_000
+        val gecmis = duvar + 30_000
+        val dinlenen = zaman.bekleyenler()
+        cekirdek.durumYaz(BaglantiAsamasi.CANLI, 0, yukariDenemeMs = yukari, gecmisBeklemeMs = gecmis)
+        zaman.bosalt()
+        val yeni = zaman.bekleyenler() - dinlenen.toSet()
+        assertEquals("tek yoklama, en yakın an: $yeni", listOf(30_000L), yeni)
+
+        // Geçmiş anı gelince yoklanır; istek düştü, yukarı anı kalır: yalnız o kurulur.
+        cekirdek.durumOkunurken = {
+            if (duvar >= gecmis) cekirdek.durum = SahteCekirdek.durumOlustur(BaglantiAsamasi.CANLI, 0).copy(yukariDenemeMs = yukari)
+        }
+        val once = cekirdek.durumOkuma
+        duvar += 30_000
+        zaman.ilerle(30_000)
+        assertEquals(once + 1, cekirdek.durumOkuma)
+        val kalan = zaman.bekleyenler()
+        assertTrue(kalan.toString(), (3_600_000L - 30_000L) in kalan)
+        assertEquals(1, kalan.count { it == 3_600_000L - 30_000L })
+        assertFalse("geçmiş için ayrı yoklama kalmadı", kalan.any { it in 1L..30_000L })
+
+        // Ters sıra: yukarı anı daha yakınsa o kurulur.
+        cekirdek.durumOkunurken = {}
+        cekirdek.durumYaz(BaglantiAsamasi.CANLI, 0, yukariDenemeMs = duvar + 2_000, gecmisBeklemeMs = duvar + 9_000)
+        zaman.bosalt()
+        val ters = zaman.bekleyenler()
+        assertTrue(ters.toString(), 2_000L in ters)
+        assertFalse(ters.toString(), 9_000L in ters)
+        assertFalse("önceki yoklama iptal edildi", (3_600_000L - 30_000L) in ters)
+        d.birak()
+    }
+
     @Test
     fun surumUyusmazligindaArkaPlanOturumuHemenBiter() {
         val d = denetci()

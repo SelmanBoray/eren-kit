@@ -180,8 +180,25 @@ class SahteCekirdek : KanalCekirdegi {
         if (guncel?.first == nesil) guncel = null
     }
 
+    /** `baglantiDurumu()` çağrı sayısı. */
+    var durumOkuma = 0
+        private set
+
+    /** `baglantiDurumu()` içinde, durum dönmeden önce (çekirdeğin yukarı denemesi gibi). */
+    var durumOkunurken: () -> Unit = {}
+
     @Synchronized
-    override fun baglantiDurumu(): BaglantiDurumu = durum
+    override fun baglantiDurumu(): BaglantiDurumu {
+        durumOkuma++
+        durumOkunurken()
+        return durum
+    }
+
+    /** Çekirdeğin şimdiki bağlantıyı kendisi kapatması (`Tasima.kapat`). */
+    @Synchronized
+    fun kendisiKapat() {
+        guncel?.second?.kapat("test")
+    }
 
     var calismaKipi = CalismaKipi.BAGLI
 
@@ -195,8 +212,16 @@ class SahteCekirdek : KanalCekirdegi {
     }
 
     /** Durumu değiştirip gözlemcilere `baglanti` değişimi bildirir (motorun yapacağı gibi). */
-    fun durumYaz(asama: BaglantiAsamasi, kuyrukta: Int, surum: SurumUyusmazligi? = null) {
-        synchronized(this) { durum = durumOlustur(asama, kuyrukta, surum) }
+    fun durumYaz(
+        asama: BaglantiAsamasi,
+        kuyrukta: Int,
+        surum: SurumUyusmazligi? = null,
+        yukariDenemeMs: Long? = null,
+        gecmisBeklemeMs: Long? = null,
+    ) {
+        synchronized(this) {
+            durum = durumOlustur(asama, kuyrukta, surum).copy(yukariDenemeMs = yukariDenemeMs, gecmisBeklemeMs = gecmisBeklemeMs)
+        }
         val d = Degisim(emptyList(), false, false, true, false, emptyList())
         gozlemciler.toList().forEach { it.degisti(d) }
     }

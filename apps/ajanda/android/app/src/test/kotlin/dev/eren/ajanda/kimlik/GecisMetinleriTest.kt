@@ -1,5 +1,7 @@
 package dev.eren.ajanda.kimlik
 
+import dev.eren.ajanda.cekirdek.BaglantiAsamasi
+import dev.eren.ajanda.cekirdek.BaglantiDurumu
 import dev.eren.ajanda.cekirdek.CalismaKipi
 import dev.eren.ajanda.cekirdek.GecisNedeni
 import dev.eren.ajanda.cekirdek.GecisOzeti
@@ -124,6 +126,26 @@ class GecisMetinleriTest {
         assertTrue(GecisMetinleri.koparmaOnayi(null).govde.contains("Henüz gönderilmemiş"))
     }
 
+    /** Eski serviste ertelenen işlemler `kuyrukta`'ya girmez: onayda toplam söylenir, ertelenenler ayrıca anılır. */
+    @Test
+    fun koparmaVeKaldirmaOnayiErtelenenleriSayar() {
+        val d = BaglantiDurumu(BaglantiAsamasi.CANLI, 2, 0, null, null, null, ertelenenIslem = 3)
+        val o = GecisMetinleri.koparmaOnayi(d)
+        assertTrue(o.govde, o.govde.contains("5 değişiklik henüz Eren servisine gitmedi"))
+        assertTrue(o.govde, o.govde.contains("Bunlardan 3 değişiklik Eren servisi güncellenince gönderilecekti."))
+        // Yalnız ertelenen varsa da söylenir ("gönderilmemiş yok" ancak ikisi sıfırken).
+        assertTrue(GecisMetinleri.koparmaOnayi(0, 1).govde.contains("1 değişiklik henüz Eren servisine gitmedi"))
+        assertEquals(2, GecisMetinleri.koparmaOnayi(0, 0).satirlar.size)
+        assertFalse(GecisMetinleri.koparmaOnayi(4).govde.contains("Bunlardan"))
+        val k = EslestirmeMetinleri.kaldirmaOnayi(2, 3)
+        assertTrue(k, k.contains("5 değişiklik henüz Eren servisine gitmedi"))
+        assertTrue(k, k.contains("güncellenince gönderilecekti"))
+        assertTrue(k, k.contains("bu telefonda kalır") && k.contains("komut gösterilir") && k.contains("yedek olarak durur"))
+        assertFalse(EslestirmeMetinleri.kaldirmaOnayi(0, 0).contains("gönderilmemiş"))
+        assertFalse(EslestirmeMetinleri.kaldirmaOnayi(0, 0).contains("gitmedi"))
+        assertEquals(EslestirmeMetinleri.KALDIRMA_ONAYI, EslestirmeMetinleri.kaldirmaOnayi(null, 3))
+    }
+
     @Test
     fun gecisBirKezGosterilir() {
         val g = ozet(GecisNedeni.KOPARMA, ts = 42)
@@ -131,6 +153,30 @@ class GecisMetinleriTest {
         assertTrue(GecisMetinleri.gosterilmeli(g, null))
         assertFalse(GecisMetinleri.gosterilmeli(g, 42))
         assertTrue(GecisMetinleri.gosterilmeli(g, 41))
+    }
+
+    /** E3: bildirim işareti ile uygulama işareti ayrı; `DEPO_DEGISTI` uygulamada bildirime rağmen bir kez. */
+    @Test
+    fun uygulamaVeBildirimIsaretleriAyri() {
+        val d = ozet(GecisNedeni.DEPO_DEGISTI, ts = 50)
+        assertFalse(GecisMetinleri.uygulamadaGosterilmeli(null, null, null))
+        assertTrue(GecisMetinleri.uygulamadaGosterilmeli(d, null, null))
+        assertTrue("bildirim söylemiş olsa da", GecisMetinleri.uygulamadaGosterilmeli(d, null, 50))
+        assertTrue("eski geçişin uygulama işareti", GecisMetinleri.uygulamadaGosterilmeli(d, 49, 50))
+        assertFalse("uygulama gösterdi: bir kez", GecisMetinleri.uygulamadaGosterilmeli(d, 50, 50))
+        assertFalse(GecisMetinleri.uygulamadaGosterilmeli(d, 50, null))
+        for (n in listOf(GecisNedeni.KOPARMA, GecisNedeni.ESLESME_KALDIRILDI)) {
+            val g = ozet(n, ts = 60)
+            assertTrue(GecisMetinleri.uygulamadaGosterilmeli(g, null, null))
+            assertFalse("$n: bildirim söylediyse yinelenmez", GecisMetinleri.uygulamadaGosterilmeli(g, null, 60))
+            assertFalse(GecisMetinleri.uygulamadaGosterilmeli(g, 60, null))
+        }
+        // Bildirim: ne kendisi ne uygulama söylediyse.
+        assertTrue(GecisMetinleri.bildirimdeGosterilmeli(d, null, null))
+        assertFalse(GecisMetinleri.bildirimdeGosterilmeli(d, 50, null))
+        assertFalse(GecisMetinleri.bildirimdeGosterilmeli(d, null, 50))
+        assertTrue(GecisMetinleri.bildirimdeGosterilmeli(d, 49, 49))
+        assertFalse(GecisMetinleri.bildirimdeGosterilmeli(null, null, null))
     }
 
     /** Bütün dallar; `KullaniciMetniTest` bunları "PC" için tarar. */
@@ -144,7 +190,8 @@ class GecisMetinleriTest {
             )
             val metinler = sonuclar.map(GecisMetinleri::koparma) +
                 GecisNedeni.entries.flatMap { n -> sonuclar.map { GecisMetinleri.gecis(t.ozet(n, it)) } } +
-                listOf(null, 0, 5).map(GecisMetinleri::koparmaOnayi)
+                listOf(null, 0, 5).map { GecisMetinleri.koparmaOnayi(it) } +
+                listOf(0, 5).map { GecisMetinleri.koparmaOnayi(it, 2) }
             return metinler.map { it.baslik + "\n" + it.govde } + listOf(GecisMetinleri.KOPAR_DUGMESI, GecisMetinleri.VAZGEC_DUGMESI)
         }
     }

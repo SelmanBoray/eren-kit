@@ -61,6 +61,9 @@ pub mod anahtar {
     /// En son uygulanan birleştirmenin izi (D4, `motor/birlestirme.rs`): dökmeyle aynı işlemde yazılır;
     /// bekleyen yokken aynı izle gelen onay "zaten uygulandı"dır, "bağlantı koptu" değil.
     pub const SON_BIRLESTIRME_IZI: &str = "son_birlestirme_izi";
+    /// İçe aktarmada "kayıt sonra değişti" işaretlenen ret girdileri (D3, JSON `islem_id` dizisi;
+    /// `depo/kuyruk.rs` `ret_sonra_degisenler`).
+    pub const RET_SONRA_DEGISEN: &str = "ret_sonra_degisen";
 }
 
 pub struct Depo {

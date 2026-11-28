@@ -3,10 +3,11 @@
 //! koyar (`AktarmaBicimi`: kökte `ajanda.json`, ekler `ekler/<ozet>`). Çekirdek dosya sistemine dokunmaz:
 //! belge metni girer ve çıkar.
 //!
-//! Belge (biçim sürümü 1 ya da 2), anahtarlar sıralı, UTF-8:
+//! Belge (biçim sürümü 1, 2 ya da 3), anahtarlar sıralı, UTF-8:
 //! - `bicim`: `"eren_ajanda_yedegi"` (başka bir JSON'u ajanda yedeği sanmamak için);
 //! - `bicim_surumu`: kabın ve üst düzey alanların sürümü. Yazıcı içeriğin gerektirdiği en düşük sürümü yazar:
-//!   ret girdisi yoksa 1 (eski uygulama da okur), varsa 2 (`retler`). Okuyucu 2'ye dek okur (`BICIM_SURUMU`);
+//!   ret girdisi yoksa 1 (eski uygulama da okur), varsa 2 (`retler`), bir ret öğesi biçim 2'nin taşıyamadığını
+//!   taşıyorsa 3 (`ret_oku`). Okuyucu 3'e dek okur (`BICIM_SURUMU`);
 //! - `sozlesme_surumu`: kayıtların sözleşme sürümü (`AJANDA_SURUMU`);
 //! - `uygulama_surumu`: yazan çekirdeğin sürümü (yalnız tanı);
 //! - `olusturma_ms`: dışa aktarma anı; `kip`: `yerel` ya da `bagli`;
@@ -16,10 +17,13 @@
 //!   `ekler/<ozet>`). Ek üstverisi kaydın içindedir (v3 `ekler` alanı); bu dizi kaydın başvurduğu dosyaların
 //!   tekil listesidir. Bugün hep boştur (`kayit_ekleri`: v3 alanları gelince doldurulacak bağlantı noktası);
 //! - `bolgeler`: bölge tanımlarının yeri; hep boştur (öğesi tanımsız: dolu dizi reddedilir). Bölgeler gelince
-//!   öğe şeması tanımlanır ve yeni bir biçim sürümü (3) ayrılır;
-//! - `retler` (yalnız biçim 2, orada zorunlu): ret listesinin düzeltme gövdesi olan girdileri,
+//!   öğe şeması tanımlanır ve yeni bir biçim sürümü (4) ayrılır;
+//! - `retler` (biçim 2 ve 3, orada zorunlu): ret listesinin girdileri. Biçim 2:
 //!   `{govde, islem, islem_id, kayit_id, neden, ts_ms}` (`govde` `KayitGovdesi`; `islem` ve `neden` kapalı
-//!   listelerin adları, ret listesinin gösterdiği gibi). Biçim 1'de alan yoktur (katı okuyucu reddeder).
+//!   listelerin adları, ret listesinin gösterdiği gibi). Biçim 3 ret listesi satırını bütünüyle taşır: ayrıca
+//!   `islem_json` (satırın metni bayt bayt: işlemin kendisi, atılmış ertelenen değişikliğin taban bilgili hali,
+//!   okunamayan metin ya da kaydın hali; varsa `govde` isteğe bağlı) ve `kayit_sonra_degisti`; `neden` yerel ad
+//!   da olabilir (`ertelenen_atildi` gibi; `ret_oku`). Biçim 1'de alan yoktur (katı okuyucu reddeder).
 //!
 //! Sürüm kuralı: `bicim` ve iki sürüm alanı katı okumadan önce bakılır. `bicim_surumu > BICIM_SURUMU` ya da
 //! `sozlesme_surumu > AJANDA_SURUMU` ise belge bütünüyle reddedilir (`GecersizGirdi{alan:"bicim_surumu" |
@@ -88,14 +92,18 @@
 //! `onayla` gönderilmez (ardındaki `sil` reddedilirse kayıt kullanıcının görmediği bir onayla canlı ve onaylı
 //! kalmasın). Geri yüklenirse yine taslaktır.
 //!
-//! Ret girdileri (biçim 2 `retler`): her öğe ayrı okunur; geçersiz ya da dosyada yinelenen `islem_id`
-//! `ret_gecersiz` sayılır, telefonun ret listesinde aynı `islem_id` varsa yinelenmez, kaydı dosyadan sonra
-//! değişmiş olan bayattır (`ret_bayat`, `ret_bayat_mi`: yazılmaz; kullanıcının çözüp attığı girdi eski yedekle
-//! geri gelip düzeltmesi kaydın yeni halini ezmesin), kalanlar (`ret_listesine_gelecek`) iki kipte de ret
-//! listesine `islem_id`, an, neden ve gövdeleriyle yazılır (`islem_json` yalnız işlemin türünü taşır:
-//! `{"islem": ...}`; ret listesi türü oradan okur). Çözülmüş `ekle` reddi ayırt edilemez (düzeltmesi yeni
-//! kimlikle eklenir, girdinin `kayit_id`'si hiçbir kayda bağlanmaz): geri gelirse yeniden düzeltilmesi
-//! kopya kayıt doğurur, bir şey ezmez.
+//! Ret girdileri (biçim 2 ve 3 `retler`): her öğe ayrı okunur; geçersiz ya da dosyada yinelenen `islem_id`
+//! `ret_gecersiz` sayılır, telefonun ret listesinde aynı `islem_id` varsa yinelenmez, ret listesi
+//! `RET_DIZISI_AZAMI`'ya ulaşınca kalanlar alınmaz (`ret_sinir_asan`: liste içe aktarmalarla sınırsız
+//! büyümesin, yedeği hep tam yazılabilsin). Kalanlar (`ret_listesine_gelecek`) iki kipte de ret listesine
+//! `islem_id`, an, neden, gövde ve `islem_json`'la (biçim 2'de yalnız tür, biçim 3'te olduğu gibi) yazılır. Kaydı
+//! dosyadan sonra değişmiş (ya da bu bilinemeyen: `kayit_sonra_degisti_mi`) girdi de alınır ama
+//! `kayit_sonra_degisti` işaretiyle (`ret_sonra_degisen`; işaret yedekle taşınır): içeriği yalnız yedekte
+//! olabilir, düzeltmesi (`ret_duzelt`) kaydın şimdiki halini ezmez, yeni kayıt ekler. Eskiden bayat girdi
+//! alınmazdı (`ret_bayat`, artık hep 0): bağlı kipte servisin sonradan düzenlediği kaydın tek kopyası yedekteki
+//! girdiyse ona ulaşmanın yolu kalmıyordu. Çözülmüş `ekle` reddi ayırt edilemez (düzeltmesi yeni kimlikle
+//! eklenir, girdinin `kayit_id`'si hiçbir kayda bağlanmaz): geri gelirse yeniden düzeltilmesi kopya kayıt
+//! doğurur, bir şey ezmez.
 //!
 //! Uygulama (`ice_aktar`) tek SQLite işlemidir: plan işlemin içinde yeniden kurulur, `iz` zorunludur: yoksa
 //! ya da şimdiki planınkiyle tutmazsa hiçbir şey yazılmaz (`uygulandi` yanlış, şimdiki plan döner). İz: kip, ek
@@ -116,14 +124,15 @@
 //!   onaylanmış kayıt doğurur, kullanıcının onaylamadığı öneri onaylanmış gibi gitmesin (dosyada kalır,
 //!   yerel kipte taslak olarak alınabilir). Servisin reddettiği işlem bugünkü gibi ret listesine düşer.
 //!
-//! Kuyruk belgeye girmez: etkisi görünen kopyadadır (bağlı kipte iyimser hal aktarılır). Ret listesinin
-//! düzeltme gövdesi olan girdileri girer (karar, D3 gözden geçirmesi Y4): birleştirmeden (D4) ya da içe
-//! aktarmadan sonra taslaklar, okunamayan satırların okunabilen hali ve servisin silip telefonun düzenlediği
-//! kayıtlar yalnız orada yaşar; yedeğe girmeselerdi telefonla birlikte giderlerdi. Gövdesi olmayan girdi
-//! (düzeltilemez, yalnız atılabilir: `sil`, `durum`, okunamayan metin) ve gövdesi okunamayan girmez, öğe
-//! sınırını (`RET_DIZISI_AZAMI`) aşan da; girmeyenlerin sayısı `DisaAktarma.ret_listesinde`'dir, girenlerinki
-//! `ret_yedekte` (belgenin biçim sürümü `bicim_surumu`). Yerel geçmiş de girmez (yeni telefonda içe aktarma
-//! satırıyla başlar).
+//! Kuyruk belgeye girmez: etkisi görünen kopyadadır (bağlı kipte iyimser hal aktarılır). Ret listesi girer
+//! (karar, D3 gözden geçirmesi Y4; tam taşıma V1): birleştirmeden (D4) ya da içe aktarmadan sonra taslaklar,
+//! okunamayan satırların metni ve servisin silip telefonun düzenlediği kayıtlar yalnız orada yaşar; yedeğe
+//! girmeselerdi telefonla birlikte giderlerdi. Satır olduğu gibi gider (`islem_json` ve yerel neden bayt bayt;
+//! v3 değişikliği, atılmış ertelenen değişiklik ve onu geri almanın bilgisi, okunamayan kaydın durumu,
+//! örnekleri ve ileri sürüm alanları kaybolmaz); biçim 2 yalnız hiçbir şey kaybolmayacaksa yazılır
+//! (`ret_ogesi`). Kimliği ya da anı okunamayan ve öğe sınırını (`RET_DIZISI_AZAMI`, `KAYIT_AZAMI_BAYT`) aşan
+//! girmez; girmeyenlerin sayısı `DisaAktarma.ret_listesinde`'dir, girenlerinki `ret_yedekte` (belgenin biçim
+//! sürümü `bicim_surumu`). Yerel geçmiş de girmez (yeni telefonda içe aktarma satırıyla başlar).
 //!
 //! Mahremiyet: belge içeriği (başlık, açıklama, ileride bölge) hata mesajına, `GecersizKayit`'e ya da
 //! günlüğe girmez. Hatalar yalnız konum (şemanın alan adları ve sıra numaraları: `guvenli_yol`) ve sabit
@@ -142,7 +151,7 @@ use crate::hata::CekirdekHatasi;
 use crate::kopru::tipler::{
     AktarmaBicimi, CalismaKipi, DisaAktarma, EkDosyasi, GecersizKayit, IceAktarmaOnizlemesi, IceAktarmaSonucu,
 };
-use crate::model::json::{GUVENLI_TAM_SAYI, Nesne, SemaHatasi, Sonuc, Yazici, hata, metin, tam_sayi};
+use crate::model::json::{GUVENLI_TAM_SAYI, Nesne, SemaHatasi, Sonuc, Yazici, alt_yol, hata, mantik, metin, tam_sayi};
 use crate::model::kayit::zaman_ms_oku;
 use crate::model::metin::opak_id_oku;
 use crate::model::{KayitGovdesi, KuyrukRetNedeni};
@@ -157,10 +166,14 @@ pub(crate) const BELGE_ADI: &str = "ajanda.json";
 pub(crate) const EKLER_DIZINI: &str = "ekler/";
 pub(crate) const BICIM: &str = "eren_ajanda_yedegi";
 /// Okunabilen en yeni biçim sürümü. 1: ilk biçim. 2: `retler` (ret listesinin düzeltme gövdesi olan
-/// girdileri). Yazıcı içeriğin gerektirdiği en düşüğünü yazar (`BICIM_RETLI` yalnız ret öğesi varsa).
-pub(crate) const BICIM_SURUMU: i64 = 2;
+/// girdileri). 3: genişlemiş ret öğesi (`ret_oku`: işlemin kendisi, ham metin, atılmış ertelenen değişiklik,
+/// "kayıt sonra değişti"). Yazıcı içeriğin gerektirdiği en düşüğünü yazar (`BICIM_RETLI` yalnız ret öğesi
+/// varsa, `BICIM_GENIS_RET` yalnız bir öğe onu gerektiriyorsa).
+pub(crate) const BICIM_SURUMU: i64 = 3;
 /// `retler` alanının geldiği biçim sürümü.
 const BICIM_RETLI: i64 = 2;
+/// Genişlemiş ret öğesinin geldiği biçim sürümü.
+const BICIM_GENIS_RET: i64 = 3;
 /// Serbest metnin bir UTF-16 biriminin sıkışık JSON'daki en çok baytı. BMP karakteri UTF-8'de en çok 3
 /// bayttır, vekil çifti 2 birimde 4 bayt; serde_json yalnız `"`, `\` ve U+0020 altını kaçışlar: ilk ikisi 2
 /// bayt, U+0020 altından modelin kabul ettikleri (sekme, satır sonu, satır başı) 2 bayt. `\u00XX` (6 bayt)
@@ -330,6 +343,8 @@ struct Belge<'a> {
     /// `retler` öğelerinin aralıkları (biçim 1'de boş).
     retler: Vec<(usize, usize)>,
     ekler: Vec<EkDosyasi>,
+    /// `bicim_surumu` (ret öğesinin şeması ona bağlıdır: `ret_oku`).
+    bicim: i64,
 }
 
 /// `ofset`'teki konum, serde_json'un sayışıyla (satır 1'den, sütun satırdaki bayt sayısı).
@@ -847,53 +862,121 @@ fn belge_coz(metin_: &str) -> Result<Belge<'_>, CekirdekHatasi> {
     })
     .map_err(sema_hatasi)?;
     n.bitir().map_err(sema_hatasi)?;
-    Ok(Belge { metin: metin_, olusturma_ms, kayitlar: std::mem::take(&mut tarama.ogeler[KAYITLAR]), retler, ekler })
+    Ok(Belge {
+        metin: metin_,
+        olusturma_ms,
+        kayitlar: std::mem::take(&mut tarama.ogeler[KAYITLAR]),
+        retler,
+        ekler,
+        bicim: bicim_surumu,
+    })
 }
 
-/// Bir ret öğesi (`retler`, biçim 2): `{govde, islem, islem_id, kayit_id, neden, ts_ms}`, katı. Döner: ret
-/// listesine yazılacak satır (`islem_json` yalnız işlemin türü; gövde modelin yazımıyla).
-fn ret_oku(v: &Value, yol: &str) -> Sonuc<RetSatiri> {
+/// Ret öğesinin `neden`'i biçim 3'te kapalı listenin dışında da olabilir: ret listesinin yerel adları
+/// (`ertelenen_atildi`, `ertelenen_atildi_yollanmis` ve ileride eklenecekler) olduğu gibi taşınır. İçerik
+/// taşımasın diye yalnız 1-64 küçük harf, rakam ve alt çizgi.
+fn yerel_neden_mi(s: &str) -> bool {
+    (1..=64).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+}
+
+/// Yalnız türü taşıyan `islem_json` (biçim 2 içe aktarmasının yazdığı).
+fn tur_ozeti(tur: IslemTuru) -> String {
+    serde_json::json!({ "islem": tur.ad() }).to_string()
+}
+
+/// Bir ret öğesi (`retler`), katı. Biçim 2: `{govde, islem, islem_id, kayit_id, neden, ts_ms}`, `neden` kapalı
+/// listenin adı; ret listesine `islem_json` olarak yalnız türü (`{"islem": tür}`) yazılır. Biçim 3 ret listesi
+/// satırını bütünüyle taşır: ayrıca `islem_json` (satırın metni, bayt bayt: işlemin kendisi, kullanıcının
+/// attığı ertelenen değişikliğin taban bilgisiyle hali, okunamayan kuyruk satırı ya da kaydın hali; v3
+/// değişikliği, durum, örnekler ve ileri sürüm alanları kaybolmaz) ve `kayit_sonra_degisti` (yalnız `true`);
+/// `neden` yerel ad da olabilir (`yerel_neden_mi`); `islem_json` varsa `govde` isteğe bağlıdır. `islem`
+/// ret listesinin gösterdiği türdür. Döner: ret listesine yazılacak satır (gövde modelin yazımıyla) ve
+/// "kayıt sonra değişti" işareti.
+fn ret_oku(v: &Value, yol: &str, bicim: i64) -> Sonuc<(RetSatiri, bool)> {
+    let genis = bicim >= BICIM_GENIS_RET;
     let mut n = Nesne::ac(v, yol)?;
-    let govde = n.zorunlu("govde", |v, y| {
+    let govde_oku = |v: &Value, y: &str| -> Sonuc<KayitGovdesi> {
         let mut g = Nesne::ac(v, y)?;
         let govde = KayitGovdesi::alanlari_oku(&mut g)?;
         g.bitir()?;
         Ok(govde)
-    })?;
+    };
+    let govde = if genis { n.istege_bagli("govde", govde_oku)? } else { Some(n.zorunlu("govde", govde_oku)?) };
     let islem = n.zorunlu("islem", IslemTuru::oku)?;
     let islem_id = n.zorunlu("islem_id", opak_id_oku)?;
     let kayit_id = n.zorunlu("kayit_id", opak_id_oku)?;
-    let neden = n.zorunlu("neden", KuyrukRetNedeni::oku)?;
+    let neden = n.zorunlu("neden", |v, y| match metin(v, y)? {
+        s if genis && yerel_neden_mi(s) => Ok(s.to_string()),
+        _ => KuyrukRetNedeni::oku(v, y).map(|k| k.ad().to_string()),
+    })?;
     let ts_ms = n.zorunlu("ts_ms", zaman_ms_oku)?;
+    let (islem_json, sonra) = if genis {
+        (
+            n.istege_bagli("islem_json", |v, y| metin(v, y).map(str::to_string))?,
+            n.istege_bagli("kayit_sonra_degisti", |v, y| if mantik(v, y)? { Ok(()) } else { hata(y, "yalnız true") })?.is_some(),
+        )
+    } else {
+        (None, false)
+    };
     n.bitir()?;
-    Ok(RetSatiri {
+    if govde.is_none() && islem_json.is_none() {
+        return hata(&alt_yol(yol, "govde"), "zorunlu alan yok");
+    }
+    let satir = RetSatiri {
         islem_id,
         kayit_id,
-        islem_json: serde_json::json!({ "islem": islem.ad() }).to_string(),
-        neden: neden.ad().to_string(),
+        islem_json: islem_json.unwrap_or_else(|| tur_ozeti(islem)),
+        neden,
         ts_ms,
-        govde_json: Some(govde.alanlari_yaz(Yazici::yeni()).bitir().to_string()),
+        govde_json: govde.map(|g| g.alanlari_yaz(Yazici::yeni()).bitir().to_string()),
         sira: 0,
-    })
+    };
+    Ok((satir, sonra))
 }
 
-/// Dışa aktarmanın ret öğesi (sıkışık JSON) ya da `None`: gövdesi yok ya da okunamıyor, kimliği ya da anı
-/// şemadan geçmiyor. Tür ve neden ret listesinin gösterdiği gibidir (`sorgu::ret_listesi`: okunamayan tür
-/// `guncelle`, neden `gecersiz_islem`). Öğe yazılmadan içe aktarmanın okuyucusundan (`ret_oku`) ve öğe
+/// Dışa aktarmanın ret öğesi (sıkışık JSON) ve gerektirdiği biçim sürümü, ya da `None` (yedeğe girmez,
+/// `ret_listesinde` sayılır): kimliği ya da anı şemadan geçmiyor, ne gövdesi ne taşınacak işlem metni var, öğe
+/// sınırını (`KAYIT_AZAMI_BAYT`) aşıyor. `sonra`: girdinin "kayıt sonra değişti" işareti
+/// (`Depo::ret_sonra_degisenler`; yedekle taşınır). Biçim 2 yalnız hiçbir şey kaybolmayacaksa yazılır (gövde
+/// var, neden kapalı listede, `islem_json` yalnız türü taşıyor, işaret yok); yoksa biçim 3: satırın
+/// `islem_json`'u ve nedeni olduğu gibi (`ret_oku`). Tür ret listesinin gösterdiği gibidir
+/// (`sorgu::ret_listesi`: okunamayan tür `guncelle`). Öğe yazılmadan içe aktarmanın okuyucusundan ve öğe
 /// sınırından geçer: yazılan her ret öğesi geri okunur.
-fn ret_ogesi(r: &RetSatiri) -> Option<String> {
-    let govde: Value = serde_json::from_str(r.govde_json.as_deref()?).ok()?;
-    let islem = serde_json::from_str::<Value>(&r.islem_json)
+fn ret_ogesi(r: &RetSatiri, sonra: bool) -> Option<(String, i64)> {
+    let govde: Option<Value> = r.govde_json.as_deref().and_then(|g| serde_json::from_str(g).ok());
+    let tur = serde_json::from_str::<Value>(&r.islem_json)
         .ok()
         .and_then(|v| v.get("islem").and_then(Value::as_str).and_then(IslemTuru::coz))
         .unwrap_or(IslemTuru::Guncelle);
-    let neden = KuyrukRetNedeni::coz(&r.neden).unwrap_or(KuyrukRetNedeni::GecersizIslem);
-    let v = serde_json::json!({
-        "govde": govde, "islem": islem.ad(), "islem_id": r.islem_id, "kayit_id": r.kayit_id, "neden": neden.ad(), "ts_ms": r.ts_ms,
-    });
-    ret_oku(&v, "").ok()?;
-    let m = v.to_string();
-    (m.len() <= KAYIT_AZAMI_BAYT).then_some(m)
+    let kapali = KuyrukRetNedeni::coz(&r.neden);
+    let ozet = r.islem_json == tur_ozeti(tur);
+    let genis = govde.is_none() || kapali.is_none() || !ozet || sonra;
+    let mut m = Map::new();
+    if let Some(g) = govde {
+        m.insert("govde".into(), g);
+    }
+    m.insert("islem".into(), tur.ad().into());
+    m.insert("islem_id".into(), r.islem_id.clone().into());
+    m.insert("kayit_id".into(), r.kayit_id.clone().into());
+    m.insert("ts_ms".into(), r.ts_ms.into());
+    if genis {
+        // Taşınamayan (biçimsiz) neden ret listesinin gösterdiği gibi.
+        let neden = if yerel_neden_mi(&r.neden) { r.neden.as_str() } else { KuyrukRetNedeni::GecersizIslem.ad() };
+        m.insert("neden".into(), neden.into());
+        if !ozet {
+            m.insert("islem_json".into(), r.islem_json.clone().into());
+        }
+        if sonra {
+            m.insert("kayit_sonra_degisti".into(), true.into());
+        }
+    } else {
+        m.insert("neden".into(), kapali.unwrap_or(KuyrukRetNedeni::GecersizIslem).ad().into());
+    }
+    let bicim = if genis { BICIM_GENIS_RET } else { BICIM_RETLI };
+    let v = Value::Object(m);
+    ret_oku(&v, "", bicim).ok()?;
+    let metin_ = v.to_string();
+    (metin_.len() <= KAYIT_AZAMI_BAYT).then_some((metin_, bicim))
 }
 
 /// Değerin iç içeliği (kap sayısı: sayı ve metin 0, boş dizi 1).
@@ -932,8 +1015,8 @@ struct Yazilacak {
 /// Planın bir yazımı (uygulamanın ikinci geçişinde, sınıflandığı anda).
 enum Yazim {
     Kayit(Box<Yazilacak>),
-    /// Ret listesine geri yazılacak girdi (`retler`).
-    Ret(RetSatiri),
+    /// Ret listesine geri yazılacak girdi (`retler`) ve "kayıt sonra değişti" işareti.
+    Ret(RetSatiri, bool),
 }
 
 /// Bir ret öğesinin sınıfı (ize girer; kayıt sınıflarından ayrı değerler).
@@ -943,8 +1026,10 @@ enum RetSinifi {
     /// Telefonun ret listesinde aynı `islem_id` var: yinelenmez.
     Var = 0x41,
     Gecersiz = 0x42,
-    /// Kaydı yedekten sonra değişmiş: düzeltmesi kaydın yeni halini ezerdi, alınmaz (`ret_bayat`).
-    Bayat = 0x43,
+    /// Kaydı yedekten sonra değişmiş (ya da bilinemiyor): işaretle gelir (`ret_sonra_degisen`).
+    SonraDegisti = 0x43,
+    /// Ret listesinin sınırı dolu: alınmaz (`ret_sinir_asan`).
+    SinirAsan = 0x44,
 }
 
 /// FNV-1a 64: planın izi (aynı süreçte ve sürümde karşılaştırılır; güvenlik değil, tutarlılık içindir).
@@ -1058,6 +1143,8 @@ fn plan_kur(
         ret_listesine_gelecek: 0,
         ret_gecersiz: 0,
         ret_bayat: 0,
+        ret_sonra_degisen: 0,
+        ret_sinir_asan: 0,
     };
     for (i, &(bas, son)) in belge.kayitlar.iter().enumerate() {
         // Dosyadaki içerik ize girer: aynı sınıflı başka bir dosya eski izle uygulanmaz.
@@ -1120,7 +1207,13 @@ fn plan_kur(
                     let kayit = taslagi_koru(&k, dogru("taslak"));
                     (Sinif::Guncellenecek, Some(Yazilacak { kayit, onceki: None, islemler: Vec::new(), okunamayan: Some(json.clone()) }))
                 }
-                None => (Sinif::Atlanacak, None),
+                None => {
+                    // Bağlı kipte okunamayan telefon satırı: ret girdisi için kaydın sonraki hali bilinemez.
+                    if retler_var {
+                        sonra_degisen.insert(k.kayit_id.clone());
+                    }
+                    (Sinif::Atlanacak, None)
+                }
                 Some(t) if ayni(&t) => (Sinif::Ayni, None),
                 Some(t) if k.guncelleme_ms <= t.guncelleme_ms => {
                     if retler_var {
@@ -1182,28 +1275,35 @@ fn plan_kur(
         }
     }
     // Ret girdileri: telefonda aynı `islem_id` varsa yinelenmez; dosyada yinelenen ve okunamayan geçersizdir;
-    // kaydı dosyadan (dosyada geçerli hali yoksa girdiden) sonra değişmiş olan bayattır.
+    // kaydı dosyadan sonra değişmiş (ya da bu bilinemeyen) girdi işaretle gelir; ret listesi sınırı dolunca
+    // kalanlar alınmaz.
     if retler_var {
         let telefondaki_retler: HashSet<String> = d.ret_islem_idleri()?.into_iter().collect();
+        let mut ret_yeri = RET_DIZISI_AZAMI.saturating_sub(telefondaki_retler.len());
         let mut dosyadaki_retler: HashSet<String> = HashSet::new();
         for (i, &(bas, son)) in belge.retler.iter().enumerate() {
             iz.kat(&belge.metin.as_bytes()[bas..son]);
-            let satir = oge_agaci(belge.metin, bas, son)?.and_then(|v| ret_oku(&v, &format!("retler.{i}")).ok());
+            let satir = oge_agaci(belge.metin, bas, son)?.and_then(|v| ret_oku(&v, &format!("retler.{i}"), belge.bicim).ok());
             let sinif = match satir {
                 None => RetSinifi::Gecersiz,
-                Some(r) if !dosyadaki_retler.insert(r.islem_id.clone()) => RetSinifi::Gecersiz,
-                Some(r) if telefondaki_retler.contains(&r.islem_id) => RetSinifi::Var,
-                Some(r) if ret_bayat_mi(&r, &sonra_degisen, &gorulen, &telefondaki) => RetSinifi::Bayat,
-                Some(r) => {
+                Some((r, _)) if !dosyadaki_retler.insert(r.islem_id.clone()) => RetSinifi::Gecersiz,
+                Some((r, _)) if telefondaki_retler.contains(&r.islem_id) => RetSinifi::Var,
+                Some(_) if ret_yeri == 0 => RetSinifi::SinirAsan,
+                Some((r, dosyada_isaretli)) => {
+                    ret_yeri -= 1;
+                    let sonra = dosyada_isaretli || kayit_sonra_degisti_mi(&r, &sonra_degisen, &gorulen, &telefondaki);
                     p.ret_listesine_gelecek += 1;
-                    yaz(Yazim::Ret(r))?;
-                    RetSinifi::Gelecek
+                    if sonra {
+                        p.ret_sonra_degisen += 1;
+                    }
+                    yaz(Yazim::Ret(r, sonra))?;
+                    if sonra { RetSinifi::SonraDegisti } else { RetSinifi::Gelecek }
                 }
             };
             match sinif {
                 RetSinifi::Gecersiz => p.ret_gecersiz += 1,
-                RetSinifi::Bayat => p.ret_bayat += 1,
-                RetSinifi::Gelecek | RetSinifi::Var => {}
+                RetSinifi::SinirAsan => p.ret_sinir_asan += 1,
+                RetSinifi::Gelecek | RetSinifi::Var | RetSinifi::SonraDegisti => {}
             }
             iz.kat(&[sinif as u8]);
         }
@@ -1212,18 +1312,23 @@ fn plan_kur(
     Ok(p)
 }
 
-/// Ret girdisi bayat mı: telefondaki kaydı girdiden sonra değişti, düzeltmesi (Kotlin: gövde kaydın istenen
-/// tam hali, `duzenle(kayit_id, None, govde)`) kaydın yeni halini eskisiyle ezerdi. Girdi dosya yazılırken ret
-/// listesindeydi: kayıt dosyada geçerliyse telefondaki hali dosyadakinden farklı olup kalıyorsa (`atlanacak`,
+/// Ret girdisinin kaydı telefonda yedekten sonra değişmiş mi (ya da bu bilinemiyor mu): girdi kaydın eski bir
+/// hali için yazılmıştı, düzeltmesi (gövde kaydın istenen tam hali) kaydın şimdiki halini ezerdi. Girdi yine
+/// alınır (içeriği yalnız yedekte olabilir: D4'ün telefon hali, okunamayan satırın metni; bağlı kipte servis
+/// kaydı yedekten sonra düzenlemiş olabilir), `kayit_sonra_degisti` işaretiyle: `ret_duzelt` onu var olan kayda
+/// uygulamaz, yeni kayıt ekler. Girdi dosya yazılırken ret listesindeydi: kayıt dosyada geçerliyse telefondaki
+/// hali dosyadakinden farklı olup kalıyorsa (`atlanacak`, bağlı kipte okunamayan telefon satırı da;
 /// `sonra_degisen`) kayıt dosyadan, dolayısıyla girdiden sonra değişmiştir (iki an aynı kaydın anıdır: saat
-/// kayması yanıltmaz). Dosyada geçerli hali yoksa telefondaki okunabilen kaydın `guncelleme_ms`'i girdinin
-/// `ts_ms`'iyle karşılaştırılır. Kayıt telefonda yoksa ya da dosyadaki halle yazılacaksa (yeni, güncellenecek,
-/// aynı) girdi taze sayılır: düzeltmesi girdinin yazıldığı halin üstüne gelir.
-fn ret_bayat_mi(r: &RetSatiri, sonra_degisen: &HashSet<String>, dosyada: &HashSet<String>, telefondaki: &HashMap<String, String>) -> bool {
+/// kayması yanıltmaz). Dosyada geçerli hali yoksa ama kayıt telefonda varsa bilinemez (girdinin anı başka bir
+/// telefonun, kaydınki servisin ya da bu telefonun saatindedir; ikisini karşılaştırmak saat kaymasıyla iki
+/// yönde de yanılırdı): değişmiş sayılır, en kötü durumda yersiz bir uyarı ve kopya kayıt doğar, hiçbir şey
+/// ezilmez. Kayıt telefonda yoksa ya da dosyadaki halle yazılacaksa (yeni, güncellenecek, aynı) girdi taze
+/// sayılır: düzeltmesi girdinin yazıldığı halin üstüne gelir.
+fn kayit_sonra_degisti_mi(r: &RetSatiri, sonra_degisen: &HashSet<String>, dosyada: &HashSet<String>, telefondaki: &HashMap<String, String>) -> bool {
     if dosyada.contains(&r.kayit_id) {
         return sonra_degisen.contains(&r.kayit_id);
     }
-    telefondaki.get(&r.kayit_id).and_then(|j| kayit_coz(j)).is_some_and(|t| t.guncelleme_ms > r.ts_ms)
+    telefondaki.contains_key(&r.kayit_id)
 }
 
 /// İçe aktarmanın yerel geçmiş satırı: yeni kayıtta doğum parçası (mezar taşı ve örnekler dahil), var olanda
@@ -1274,16 +1379,18 @@ impl Motor {
     }
 
     /// Dışa aktarma: görünen kopyanın bütün satırları (mezar taşları dahil; bağlı kipte gönderilmemiş
-    /// değişiklikler dahil) ve ret listesinin düzeltme gövdesi olan girdileri (varsa biçim 2). Okunamayan
-    /// satır kaybolmaz: JSON'u olduğu gibi (o da değilse ya da belgenin iç içelik sınırını aşacaksa metni)
+    /// değişiklikler dahil) ve ret listesinin düzeltme gövdesi ya da ham metni olan girdileri (varsa biçim 2,
+    /// genişlemiş öğe varsa 3: `ret_ogesi`). Okunamayan satır kaybolmaz: JSON'u bayt bayt olduğu gibi (o da
+    /// değilse ya da belgenin iç içelik sınırını aşacaksa metni)
     /// belgeye girer ve sayılır. Belge içe aktarmanın sınırlarını aşıyorsa yine yazılır ve söylenir
     /// (`ice_aktarma_sinirini_asiyor`). Hiçbir şey yazmaz.
     pub(crate) fn disa_aktar(&self, o: &Ortam) -> Result<DisaAktarma, CekirdekHatasi> {
         let yerel = self.yerel_mi()?;
         let satirlar = self.depo.gorunen_ham_hepsi()?;
         // Belge ağaç kurulmadan yazılır: her kaydın sıkışık metni satırın yerine geçer (bellek: satırlar +
-        // belge + o anki kaydın ağacı), üst düzey sonra sıralı anahtarlarla eklenir. Çıktı `json!` ağacının
-        // `to_string`'iyle bayt bayt aynıdır (sıkışık yazım bileşimlidir).
+        // belge + o anki kaydın ağacı), üst düzey sonra sıralı anahtarlarla eklenir. Okunamayan JSON satırı
+        // yoksa çıktı `json!` ağacının `to_string`'iyle bayt bayt aynıdır (sıkışık yazım bileşimlidir);
+        // okunamayan JSON satırı olduğu gibi girer.
         let mut kayitlar: Vec<String> = Vec::with_capacity(satirlar.len());
         let mut ekler: BTreeMap<String, EkDosyasi> = BTreeMap::new();
         let (mut silinmis, mut okunamayan) = (0, 0);
@@ -1298,20 +1405,29 @@ impl Motor {
                 }
                 None => {
                     okunamayan += 1;
-                    // Kök nesne ve `kayitlar` dizisi iki düzeydir: daha derin öğe bütün belgeyi reddettirirdi.
-                    let deger = serde_json::from_str::<Value>(&json)
-                        .ok()
-                        .filter(|v| derinlik(v) <= DERINLIK_AZAMI - 2)
-                        .unwrap_or(Value::String(json));
-                    kayitlar.push(deger.to_string());
+                    // JSON'sa metin olduğu gibi (bayt bayt: yeniden yazım yinelenen anahtarı tekleştirir, büyük
+                    // tam sayıyı yuvarlardı; JSON metni dizinin öğesi olarak olduğu gibi geçerlidir), değilse
+                    // ya da belgenin iç içelik sınırını aşacaksa metin olarak. Kök nesne ve `kayitlar` dizisi iki
+                    // düzeydir: daha derin öğe bütün belgeyi reddettirirdi.
+                    let json_mu = serde_json::from_str::<Value>(&json).is_ok_and(|v| derinlik(&v) <= DERINLIK_AZAMI - 2);
+                    kayitlar.push(if json_mu { json } else { Value::String(json).to_string() });
                 }
             }
         }
         let ret_satirlari = self.depo.ret_listesi()?;
         let ret_toplam = ret_satirlari.len();
-        let retler: Vec<String> = ret_satirlari.iter().filter_map(ret_ogesi).take(RET_DIZISI_AZAMI).collect();
+        let sonra_degisenler = self.depo.ret_sonra_degisenler()?;
+        let mut bicim_surumu = 1;
+        let retler: Vec<String> = ret_satirlari
+            .iter()
+            .filter_map(|r| ret_ogesi(r, sonra_degisenler.contains(&r.islem_id)))
+            .take(RET_DIZISI_AZAMI)
+            .map(|(m, b)| {
+                bicim_surumu = bicim_surumu.max(b);
+                m
+            })
+            .collect();
         drop(ret_satirlari);
-        let bicim_surumu = if retler.is_empty() { 1 } else { BICIM_RETLI };
         let ekler: Vec<EkDosyasi> = ekler.into_values().collect();
         let kayit = kayitlar.len();
         let alan = |ad: &str, deger: Value| format!("{}:{deger}", Value::from(ad));
@@ -1392,11 +1508,17 @@ impl Motor {
             }
             let mut degisenler = Vec::new();
             let mut girdiler = Vec::new();
+            let mut isaretli: Vec<String> = Vec::new();
             // İkinci geçiş: aynı işlemde aynı girdiyle aynı plan; telefonun satırları geçişin başında okunur,
             // yazımlar sınıflamayı değiştirmez.
             let plan = plan_kur(d, o, &belge, yerel, &mut |yazim| {
                 let y = match yazim {
-                    Yazim::Ret(r) => return d.ret_ekle(&r),
+                    Yazim::Ret(r, sonra) => {
+                        if sonra {
+                            isaretli.push(r.islem_id.clone());
+                        }
+                        return d.ret_ekle(&r);
+                    }
                     Yazim::Kayit(y) => *y,
                 };
                 let kayit_id = y.kayit.kayit_id.clone();
@@ -1424,6 +1546,7 @@ impl Motor {
                 }
                 Ok(())
             })?;
+            d.ret_sonra_degisti_isaretle(&isaretli)?;
             debug_assert_eq!(plan, onizleme, "iki geçiş aynı planı kurar");
             Ok((IceAktarmaSonucu { uygulandi: true, plan }, degisenler, girdiler))
         })?;
@@ -1504,7 +1627,7 @@ mod testler {
         assert_eq!(BELGE_AZAMI_BAYT / KAYIT_ADET, 1342);
         let b = aktarma_bicimi();
         assert_eq!((b.belge_azami_bayt, b.ekler_toplam_azami_bayt), (BELGE_AZAMI_BAYT as u64, 16 * 1024 * 1024));
-        assert_eq!((b.acilmis_toplam_azami_bayt, b.ek_azami_adet, b.bicim_surumu), (80 * 1024 * 1024, 10_000, 2));
+        assert_eq!((b.acilmis_toplam_azami_bayt, b.ek_azami_adet, b.bicim_surumu), (80 * 1024 * 1024, 10_000, 3));
     }
 
     /// En büyük ret öğesi (gövdenin her serbest metni sınırında, 8 mutlak hatırlatma, en uzun kimlikler) öğe
@@ -1526,19 +1649,38 @@ mod testler {
             govde_json: Some(Value::Object(govde).to_string()),
             sira: 3,
         };
-        let m = ret_ogesi(&r).expect("yazılır");
+        // Yalnız türü taşıyan, gövdeli, kapalı nedenli girdi biçim 2 öğesidir.
+        let iki = RetSatiri { islem_json: tur_ozeti(IslemTuru::Guncelle), ..r.clone() };
+        let (m, bicim) = ret_ogesi(&iki, false).expect("yazılır");
         assert!(m.len() < KAYIT_EN_BUYUK_BAYT, "{}", m.len());
-        let geri = ret_oku(&serde_json::from_str(&m).unwrap(), "").unwrap();
-        assert_eq!((geri.islem_json.as_str(), geri.neden.as_str(), geri.ts_ms), (r#"{"islem":"guncelle"}"#, "tutarsiz_kayit", GUVENLI_TAM_SAYI));
+        assert_eq!(bicim, BICIM_RETLI);
+        let (geri, sonra) = ret_oku(&serde_json::from_str(&m).unwrap(), "", BICIM_RETLI).unwrap();
+        assert_eq!((geri.islem_json.as_str(), geri.neden.as_str(), geri.ts_ms, sonra), (r#"{"islem":"guncelle"}"#, "tutarsiz_kayit", GUVENLI_TAM_SAYI, false));
         assert_eq!(geri.govde_json, r.govde_json);
-        // Gövdesi olmayan, kimliği ya da anı şemadan geçmeyen girdi yazılmaz.
+        // Öteki her satır biçim 3: `islem_json` ve yerel neden bayt bayt, gövdesiz de, işaretiyle.
+        for (satir, sonra) in [
+            (r.clone(), false),
+            (RetSatiri { govde_json: None, ..r.clone() }, false),
+            (RetSatiri { neden: "ertelenen_atildi_yollanmis".into(), islem_json: r#"{"islem":"guncelle","x" : 1}"#.into(), ..r.clone() }, true),
+            (RetSatiri { neden: "yeni_bir_yerel_ad".into(), ..iki.clone() }, false),
+        ] {
+            let (m, bicim) = ret_ogesi(&satir, sonra).expect("yazılır");
+            assert_eq!(bicim, BICIM_GENIS_RET);
+            assert!(ret_oku(&serde_json::from_str(&m).unwrap(), "", BICIM_RETLI).is_err(), "biçim 2 taşıyamaz");
+            let (geri, geri_sonra) = ret_oku(&serde_json::from_str(&m).unwrap(), "", BICIM_GENIS_RET).unwrap();
+            assert_eq!((&geri.islem_json, &geri.neden, &geri.govde_json, geri_sonra), (&satir.islem_json, &satir.neden, &satir.govde_json, sonra));
+        }
+        // Biçimsiz neden ret listesinin gösterdiği gibi (`gecersiz_islem`); içerik hiçbir yola girmez.
+        let (m, _) = ret_ogesi(&RetSatiri { neden: "Gizli Başlık".into(), ..r.clone() }, false).unwrap();
+        assert!(m.contains(r#""neden":"gecersiz_islem""#) && !m.contains("Gizli"));
+        // Ne gövdesi ne taşınacak işlem metni olan, kimliği ya da anı şemadan geçmeyen girdi yazılmaz.
         for bozuk in [
-            RetSatiri { govde_json: None, ..r.clone() },
-            RetSatiri { govde_json: Some("{}".into()), ..r.clone() },
+            RetSatiri { govde_json: None, ..iki.clone() },
+            RetSatiri { govde_json: Some("{}".into()), ..iki.clone() },
             RetSatiri { kayit_id: "gizli başlık".into(), ..r.clone() },
             RetSatiri { ts_ms: -1, ..r.clone() },
         ] {
-            assert!(ret_ogesi(&bozuk).is_none());
+            assert!(ret_ogesi(&bozuk, false).is_none());
         }
     }
 

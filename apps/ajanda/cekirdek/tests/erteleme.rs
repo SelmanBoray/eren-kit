@@ -300,7 +300,6 @@ fn koparmada_ertelenen_degerler_yerel_gercekte_kalir() {
 /// Koparmadan sonra v3 servisle yeniden bağlanma: yerel gerçekteki (ertelenmiş olan) v3 değeri PC'ye fark
 /// olarak gitmeli.
 #[test]
-#[ignore = "R1, düzeltme Kol B'nin dalında: v3 alanları dört yerde düşüyor: motor/yerel.rs ~316 kuyruga_islemler (ekle hep v3: Default), motor/islem.rs ~48 govde_farki (v3 farkı yok), yerel.rs ~357 icerik_ayni (v3'ü saymıyor), motor/iyimser.rs ~115 eklenen_kayit (v3: Default). Yalnız yerel yazar değil: aynı fonksiyonlar bağlı kipin D2 yollarında da kullanılıyor (yereli_kuyruga_dok: koparma/depo değişimi sonrası bağlanma; geri_donenleri_kuyruga_koy: aynı depoda yedekten dönüş; ice_aktar bağlı kipte; iyimser ekle)"]
 fn koparmadan_sonra_v3_baglanmada_ertelenen_deger_pcye_gider() {
     let mut h = Hat::yeni("erteleme-kopar-baglan");
     let a = v2ye_inen_kurulum(&mut h);
@@ -689,7 +688,6 @@ fn ertelenenlerin_arkasindaki_uzun_kuyruk_her_gonderimde_bastan_yurunmez() {
 /// Gerçek üretici yol: bağlı kipte (v2 servis) v3 alanlı kaydın içe aktarılması kuyruğa v3 alanlı işlem
 /// koyar (`kuyruga_islemler`); v2 kısmı gider, v3 kalanı ertelenir, servis v3'e geçince gider.
 #[test]
-#[ignore = "R1, düzeltme Kol B'nin dalında: bağlı kipte içe aktarma motor/yerel.rs ~316 kuyruga_islemler (ekle hep v3: Default) ve ~357 icerik_ayni (v3'ü saymıyor) yüzünden v3 alanlarını düşürüyor"]
 fn ice_aktarilan_v3_alanli_kayit_v2_serviste_ertelenir() {
     let mut h = Hat::yeni("erteleme-ice-aktar");
     v2ye_inen_kurulum(&mut h);
@@ -699,7 +697,7 @@ fn ice_aktarilan_v3_alanli_kayit_v2_serviste_ertelenir() {
     k["kayit_id"] = serde_json::json!("k_iceden01");
     k["simge"] = serde_json::json!("market");
     belge["kayitlar"].as_array_mut().unwrap().push(k);
-    let s = h.c.ice_aktar(belge.to_string(), None).unwrap();
+    let s = h.ice_aktar_onayla(&belge.to_string());
     assert!(s.uygulandi);
     h.pompala();
     assert!(h.pc.d.kayitlar.contains_key("k_iceden01"), "v2 kısmı gitti");
@@ -1027,6 +1025,106 @@ fn yanitsiz_gecmis_istegi_yukari_denemesini_suresiz_bekletmez() {
     h.baglan();
     assert!(h.canli_mi());
     assert_eq!(h.pc.acilislar.last(), Some(&("hello", 3)));
+}
+
+/// V1 (Kol C ile kesişim): v2 serviste ertelenen simge değişikliği atılır, kullanıcı sonra başlığı değiştirir,
+/// dışa aktarır, yeni telefona içe aktarır. Atılan değişiklik ret listesinde aynı haliyle gelir (neden, işaret,
+/// v3 özeti, gövde; yedek biçim 3), "yeniden uygula" çalışır ve başlığı eskiye döndürmez; düzeltme formu bu
+/// girdiye uygulanmaz (`ret_duzelt` `GecersizGirdi`).
+#[test]
+fn atilan_ertelenen_degisiklik_yedekten_gecer_ve_geri_alinir() {
+    let mut h = Hat::yeni("erteleme-yedek");
+    let a = v2ye_inen_kurulum(&mut h);
+    kuyruga_yaz(&h, "i_v3", &yalniz_v3(&a, simge("ev")));
+    v2de_baglan(&mut h);
+    assert_eq!(h.c.ertelenenleri_at(None).unwrap(), 1);
+    h.c.duzenle(a.clone(), None, govde("A (yeni başlık)", None)).unwrap();
+    h.pompala();
+    assert_eq!(h.pc.d.kayitlar[&a].baslik, "A (yeni başlık)");
+    let once = h.c.ret_listesi().unwrap();
+    assert!(once.len() == 1 && once[0].ertelenen_atildi && once[0].v3_degisikligi.is_some(), "{once:?}");
+    let d = h.c.disa_aktar().unwrap();
+    assert_eq!((d.ret_yedekte, d.ret_listesinde, d.bicim_surumu), (1, 0, 3));
+
+    let b = Hat::yeni("erteleme-yedek-b");
+    let p = b.c.ice_aktarma_onizlemesi(d.belge.clone()).unwrap();
+    assert_eq!((p.yeni, p.ret_listesine_gelecek, p.ret_gecersiz, p.ret_sonra_degisen), (1, 1, 0, 0));
+    assert!(b.c.ice_aktar(d.belge, Some(p.iz)).unwrap().uygulandi);
+    assert_eq!(b.c.ret_listesi().unwrap(), once, "girdi bütünüyle geldi");
+    assert!(matches!(b.c.ret_duzelt("i_v3".into(), govde("A (eski)", None)), Err(CekirdekHatasi::GecersizGirdi { .. })));
+    assert!(b.c.ertelenen_geri_al("i_v3".into()).unwrap());
+    let k = kayit(&b, &a);
+    assert_eq!((k.baslik.as_str(), k.v3.simge.as_deref()), ("A (yeni başlık)", Some("ev")));
+    assert!(b.c.ret_listesi().unwrap().is_empty());
+}
+
+/// Kol C ile R1 kesişimi: atılan girdinin atma anındaki tabanı (`islem_json`'daki `atma_tabani`) yedekten
+/// bütünüyle geçer ve yeni telefonda geri almada kullanılır. Kayıtta iki simge değişikliği ertelenip atılır
+/// (`is`, sonra `ev`): ikincisinin tabanı `is`'tir. Yeni telefonda kaydın simgesi yok (atılanlar PC'ye hiç
+/// gitmedi): ikinci girdi tabanı taşıdığı için çakışma bildirir (taban yitseydi sessizce yazardı); birinci
+/// uygulanınca ikincisi çakışmasız uygulanır. İki kipte de: yeni (yerel kipteki) telefonda ve v3 servise
+/// eşleşmiş (bağlı, canlı) telefonda.
+#[test]
+fn ice_aktarilan_atilan_girdinin_tabani_geri_almada_kullanilir() {
+    let mut h = Hat::yeni("erteleme-yedek-taban");
+    let a = v2ye_inen_kurulum(&mut h);
+    kuyruga_yaz(&h, "i_is", &yalniz_v3(&a, simge("is")));
+    kuyruga_yaz(&h, "i_ev", &yalniz_v3(&a, simge("ev")));
+    v2de_baglan(&mut h);
+    assert_eq!(h.c.ertelenenleri_at(None).unwrap(), 2);
+    let d = h.c.disa_aktar().unwrap();
+    assert_eq!((d.ret_yedekte, d.ret_listesinde, d.bicim_surumu), (2, 0, 3));
+    let ret_metni = |belge: &str, id: &str| -> String {
+        let v: serde_json::Value = serde_json::from_str(belge).unwrap();
+        let o = v["retler"].as_array().unwrap().iter().find(|o| o["islem_id"] == id).expect("ret öğesi").clone();
+        o["islem_json"].as_str().expect("islem_json").to_string()
+    };
+    let ev_metni = ret_metni(&d.belge, "i_ev");
+    let ev: serde_json::Value = serde_json::from_str(&ev_metni).unwrap();
+    assert_eq!(ev["atma_tabani"]["simge"], "is", "{ev_metni}");
+
+    // Yeni telefon (yerel kip): taban yerel gerçekte de kullanılır; çakışmada hiçbir şey yazılmaz.
+    let c = Hat::yeni("erteleme-yedek-taban-c");
+    assert_eq!(c.c.kip().unwrap(), CalismaKipi::Yerel);
+    assert!(c.ice_aktar_onayla(&d.belge).uygulandi);
+    cakisma_hatasi(c.c.ertelenen_geri_al("i_ev".into()), "simge");
+    assert!(kayit(&c, &a).v3.simge.is_none());
+    assert!(c.c.ertelenen_geri_al("i_is".into()).unwrap());
+    assert!(c.c.ertelenen_geri_al("i_ev".into()).unwrap());
+    assert_eq!(kayit(&c, &a).v3.simge.as_deref(), Some("ev"));
+    assert!(c.c.ret_listesi().unwrap().is_empty());
+
+    let mut b = Hat::yeni("erteleme-yedek-taban-b");
+    b.eslestir();
+    assert!(b.ice_aktar_onayla(&d.belge).uygulandi);
+    b.pompala();
+    assert!(b.canli_mi());
+    // Aynı anda atılan girdilerin sırası yedekten sonra değişebilir (aynı `ts_ms`); içerik aynı.
+    let sirali = |mut l: Vec<_>| {
+        l.sort_by(|x: &ajanda_cekirdek::kopru::tipler::RetGirdisi, y| x.islem_id.cmp(&y.islem_id));
+        l
+    };
+    assert_eq!(sirali(b.c.ret_listesi().unwrap()), sirali(h.c.ret_listesi().unwrap()), "girdiler bütünüyle geldi");
+    let yeniden = b.c.disa_aktar().unwrap();
+    assert_eq!(ret_metni(&yeniden.belge, "i_ev"), ev_metni, "taban bayt bayt taşındı");
+    assert!(kayit(&b, &a).v3.simge.is_none());
+
+    let s = b.c.ertelenen_geri_al_denetimli("i_ev".into(), false).unwrap();
+    assert_eq!(
+        s,
+        ErtelenenGeriAlma { bulundu: true, uygulandi: false, degisen: vec![], cakisan: vec!["simge".into()], birlesen: vec![] },
+        "taban `is`, şimdiki simge yok: çakışma"
+    );
+    let s = b.c.ertelenen_geri_al_denetimli("i_is".into(), false).unwrap();
+    assert_eq!((s.uygulandi, s.degisen.clone(), s.cakisan.is_empty()), (true, vec!["simge".to_string()], true), "{s:?}");
+    b.pompala();
+    assert_eq!(b.pc.d.kayitlar[&a].v3.simge.as_deref(), Some("is"));
+    let s = b.c.ertelenen_geri_al_denetimli("i_ev".into(), false).unwrap();
+    assert_eq!((s.uygulandi, s.degisen.clone(), s.cakisan.is_empty()), (true, vec!["simge".to_string()], true), "{s:?}");
+    b.pompala();
+    assert_eq!(b.pc.d.kayitlar[&a].v3.simge.as_deref(), Some("ev"));
+    assert_eq!(&kayit(&b, &a), &b.pc.d.kayitlar[&a]);
+    assert!(b.c.ret_listesi().unwrap().is_empty());
 }
 
 // -------------------------------------------------------------------------------------------------

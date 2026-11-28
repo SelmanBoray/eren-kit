@@ -362,6 +362,7 @@ internal class TercihYedekAyarlari(private val p: SharedPreferences) : YedekAyar
             yarimYazim = p.getString(YARIM, null),
             sonBellekAsiyor = p.getBoolean(BELLEK, false),
             bellekBildirildi = p.getBoolean(BELLEK_BILDIRILDI, false),
+            sonKimlikler = p.getStringSet(SON_KIMLIKLER, null)?.toSet().orEmpty(),
         )
     }
 
@@ -384,6 +385,7 @@ internal class TercihYedekAyarlari(private val p: SharedPreferences) : YedekAyar
                 .koy(YARIM, d.yarimYazim)
                 .putBoolean(BELLEK, d.sonBellekAsiyor)
                 .putBoolean(BELLEK_BILDIRILDI, d.bellekBildirildi)
+                .let { if (d.sonKimlikler.isEmpty()) it.remove(SON_KIMLIKLER) else it.putStringSet(SON_KIMLIKLER, HashSet(d.sonKimlikler)) }
                 .commit()
             // `commit` yanlış: diske geçmedi (iç bellek dolu). Bellekteki değer bu süreçte durur, soğuk başlayan
             // süreç bilmez: iş en az `AYAR_YAZILAMADI_BEKLEMESI_MS` sonraya kurulur (k2), çağıran öğrenir.
@@ -423,6 +425,7 @@ internal class TercihYedekAyarlari(private val p: SharedPreferences) : YedekAyar
         const val SINIR_BILDIRILDI = "sinir_bildirildi"
         const val RET = "son_ret_disarida"
         const val YARIM = "yarim_yazim"
+        const val SON_KIMLIKLER = "son_kimlikler"
     }
 }
 

@@ -11,6 +11,7 @@ import dev.eren.ajanda.cekirdek.CalismaKipi
 import dev.eren.ajanda.cekirdek.CekirdekHatasi
 import dev.eren.ajanda.cekirdek.DisaAktarma
 import dev.eren.ajanda.cekirdek.DuzenlemeTemeli
+import dev.eren.ajanda.cekirdek.ErtelenenGeriAlma
 import dev.eren.ajanda.cekirdek.EslesmeDurumu
 import dev.eren.ajanda.cekirdek.GecmisSayfasi
 import dev.eren.ajanda.cekirdek.GunBolumu
@@ -18,6 +19,7 @@ import dev.eren.ajanda.cekirdek.Hatirlatma
 import dev.eren.ajanda.cekirdek.HatirlatmaOnizlemesi
 import dev.eren.ajanda.cekirdek.IceAktarmaOnizlemesi
 import dev.eren.ajanda.cekirdek.IceAktarmaSonucu
+import dev.eren.ajanda.cekirdek.IslemTuru
 import dev.eren.ajanda.cekirdek.KacirilanBildirimi
 import dev.eren.ajanda.cekirdek.KayitDurumu
 import dev.eren.ajanda.cekirdek.KayitGorunumu
@@ -185,6 +187,54 @@ class SahteYuz : CekirdekYuzu {
     override fun retAt(islemId: String) {
         cagrilar += "retAt:$islemId"
         ret.removeAll { it.islemId == islemId }
+    }
+
+    /** Çekirdeğin `ret_duzelt` hedef kuralı: duran kaydın işaretsiz düzenleme reddi o kayda, öteki yeni kayıt. */
+    override fun retDuzelt(islemId: String, govde: KayitGovdesi): String {
+        cagrilar += "retDuzelt:$islemId"
+        val r = ret.firstOrNull { it.islemId == islemId }
+            ?: throw CekirdekHatasi.GecersizGirdi("islem_id", "ret listesinde yok")
+        if (r.ertelenenAtildi) throw CekirdekHatasi.GecersizGirdi("islem_id", "atılmış ertelenen değişiklik")
+        val mevcut = kayitlar[r.kayitId]
+        val id = if (r.islem == IslemTuru.GUNCELLE && mevcut != null && !mevcut.silindi && !r.kayitSonraDegisti) {
+            kayitlar[r.kayitId] = mevcut.copy(baslik = govde.baslik, zaman = govde.zaman)
+            r.kayitId
+        } else {
+            ekleHatasi?.let { throw it }
+            "k_y${++sayac}".also { kayitlar[it] = kayit(it, govde.baslik, govde.zaman, govde.tur) }
+        }
+        ret.removeAll { it.islemId == islemId }
+        return id
+    }
+
+    /** `ertelenenleriAt` dönüşü (testte kurulur); çağrı kaydı `ertelenenleriAt:<kayitId|*>`. */
+    var atilanErtelenen = 0
+
+    override fun ertelenenleriAt(kayitId: String?): Int {
+        cagrilar += "ertelenenleriAt:${kayitId ?: "*"}"
+        if (kayitId == null) ertelenenler.clear() else ertelenenler.remove(kayitId)
+        return atilanErtelenen
+    }
+
+    /**
+     * Atılmış ertelenen girdisi geri alınırken çakışan alanlar (testte kurulur). Çekirdeğin kuralıyla: girdi
+     * yoksa ya da `ertelenenAtildi` değilse `bulundu` yanlış (gerçeği `GecersizGirdi` verir; sahte burada
+     * yalınlaştırır); çakışma varsa ve `zorla` yanlışsa hiçbir şey değişmez, girdi kalır; öteki halde girdi
+     * listeden çıkar. Çağrı kaydı `ertelenenGeriAl:<islemId>[:zorla]`.
+     */
+    var geriAlCakisan: List<String> = emptyList()
+
+    /** Geri almada değişen alanlar (testte kurulur). */
+    var geriAlDegisen: List<String> = listOf("simge")
+
+    override fun ertelenenGeriAlDenetimli(islemId: String, zorla: Boolean): ErtelenenGeriAlma {
+        cagrilar += "ertelenenGeriAl:$islemId" + if (zorla) ":zorla" else ""
+        val r = ret.firstOrNull { it.islemId == islemId && it.ertelenenAtildi } ?: return ErtelenenGeriAlma()
+        if (geriAlCakisan.isNotEmpty() && !zorla) {
+            return ErtelenenGeriAlma(bulundu = true, uygulandi = false, cakisan = geriAlCakisan)
+        }
+        ret.remove(r)
+        return ErtelenenGeriAlma(bulundu = true, uygulandi = true, degisen = geriAlDegisen, cakisan = geriAlCakisan)
     }
 
     override fun gecmisIste(kayitId: String, onceRev: Long?) {

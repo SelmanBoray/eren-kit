@@ -64,6 +64,8 @@ class BaglantiDenetcisi(
     private val gunluk: Gunluk,
     private val ayar: AgAyarlari = AgAyarlari.VARSAYILAN,
     private val rastgele: () -> Double = { Math.random() },
+    /** Çekirdeğe verilen saat (`JavaZaman.simdiMs`, duvar saati): `BaglantiDurumu.yukariDenemeMs` bununla ölçülür. */
+    private val duvarSaati: () -> Long = { System.currentTimeMillis() },
 ) {
     // ---------------------------------------------------------------------------------------------
     // Dış yüz (her iş parçacığı)
@@ -133,6 +135,13 @@ class BaglantiDenetcisi(
     private var acilisZamani: Iptal? = null
     private var bekleme: Iptal? = null
 
+    /**
+     * Durum yoklaması ([yukariDenemesiniKur]): düşülen alt sürümdeki canlı bağlantının yukarı deneme anı ve
+     * yanıtı beklenen geçmiş isteğinin zaman aşımı anı, tek zamanlayıcıda; [yukariAni] kurulduğu (yukarı, geçmiş) çifti.
+     */
+    private var yukariZamani: Iptal? = null
+    private var yukariAni: Pair<Long?, Long?>? = null
+
     /** Art arda başarısız bağlantı sayısı; `CANLI`'da ve yeni ağda sıfırlanır. */
     private var deneme = 0
 
@@ -172,6 +181,7 @@ class BaglantiDenetcisi(
             this@BaglantiDenetcisi.soket = null
             acilisZamani?.iptal()
             acilisZamani = null
+            yukariDenemesiniIptal()
             gunluk.bilgi("bağlantı bitti: $tur")
             if (tur == KapanisTuru.BIZ_KAPATTIK) return@korumali
             if (surumUyusmazligiOku()) {
@@ -297,7 +307,51 @@ class BaglantiDenetcisi(
         soket = null
         acilisZamani?.iptal()
         acilisZamani = null
+        yukariDenemesiniIptal()
         s.birak(KapanisTuru.BIZ_KAPATTIK)
+    }
+
+    /**
+     * Düşülen alt sürümde (`protokol_uyumsuz` sonrası) canlı bağlantıda çekirdek yukarı denemeyi ancak bir köprü
+     * çağrısında yapar: bağlantı boşta açık kalırsa deneme ilk olaya kalırdı. `yukariDenemeMs` anına bir
+     * `baglantiDurumu()` yoklaması kurulur (o çağrıda çekirdek, yolda işlem yoksa, bağlantıyı kapatır; kapanış
+     * sıradan kopma gibi yeniden bağlanır). An geçmişse (yolda işlem vardı, kapatılmadı) [AgAyarlari.yukariTekrarMs]
+     * sonra yeniden yoklanır: döngü dönmez. An kalkınca ya da soket kapanınca yoklama iptal edilir.
+     */
+    /**
+     * Aynı kalıpla geçmiş isteğinin zaman aşımı: `gecmisBeklemeMs` doluysa (soket açıkken, aşamadan bağımsız;
+     * kapanışta çekirdek istekleri temizler) o ana da yoklama gerekir. İki an tek zamanlayıcıda birleşir: en
+     * yakın olan kurulur, yoklamadan sonra okunan durum bir sonrakini kurar (ikisi ayrı ayrı yarışmaz).
+     */
+    private fun yukariDenemesiniKur(d: BaglantiDurumu) {
+        val yukari = d.yukariDenemeMs.takeIf { d.asama == BaglantiAsamasi.CANLI && soket != null }
+        val gecmis = d.gecmisBeklemeMs.takeIf { soket != null }
+        if (yukari == null && gecmis == null) {
+            yukariDenemesiniIptal()
+            return
+        }
+        val anlar = Pair(yukari, gecmis)
+        if (anlar == yukariAni && yukariZamani != null) return
+        yukariZamani?.iptal()
+        yukariAni = anlar
+        val simdi = duvarSaati()
+        val ms = listOfNotNull(yukari, gecmis).minOf { an ->
+            val kalan = an - simdi
+            if (kalan > 0) kalan else ayar.yukariTekrarMs
+        }
+        yukariZamani = zaman.sonra(ms) {
+            korumali {
+                yukariZamani = null
+                yukariAni = null
+                if (soket != null) durumuOku()
+            }
+        }
+    }
+
+    private fun yukariDenemesiniIptal() {
+        yukariZamani?.iptal()
+        yukariZamani = null
+        yukariAni = null
     }
 
     private fun beklemeyiIptal() {
@@ -313,6 +367,7 @@ class BaglantiDenetcisi(
             gunluk.uyari("bağlantı durumu okunamadı", e)
             return null
         }
+        yukariDenemesiniKur(d)
         if (d.asama == BaglantiAsamasi.CANLI) {
             deneme = 0
             surumUyusmaz = false

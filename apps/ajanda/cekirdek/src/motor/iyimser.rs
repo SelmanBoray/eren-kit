@@ -18,7 +18,7 @@ use crate::kural::birlesim::ajanda_degisikligi_uygula;
 use crate::kural::ornek::{OrnekDurumuSonucu, ajanda_ornek_durumu_uygula};
 use crate::model::{
     AjandaAlani, AjandaIslem, AjandaRetNedeni, AjandaKaydi, AjandaKaynagi, AjandaZamani, AlanDegisikligi, KayitDurumu, KayitGovdesi,
-    KaynakYolu, TurKokeni, YazarKimligi,
+    KaynakYolu, TurKokeni, V3Alanlari, YazarKimligi,
 };
 
 /// İyimser uygulamanın dış bilgisi.
@@ -73,8 +73,9 @@ pub(crate) fn yazar(islem: &AjandaIslem) -> YazarKimligi {
     YazarKimligi { yol, tur_kokeni: TurKokeni::Insan }
 }
 
-/// Servisin elle eklemede kurduğu kayıt (revizyon 1; `elle_alanlar` verilen alanlar, `durum` hariç).
-fn eklenen_kayit(kayit_id: &str, govde: &KayitGovdesi, yol: KaynakYolu, ts: i64, b: &IyimserBaglam) -> AjandaKaydi {
+/// Servisin elle eklemede kurduğu kayıt (revizyon 1; `elle_alanlar` verilen alanlar, `durum` hariç, kanonik
+/// sırada: servisin `verilenAlanlar`'ı). v3 alanları da kayda ve `elle_alanlar`'a girer (servis `ekle`).
+fn eklenen_kayit(kayit_id: &str, govde: &KayitGovdesi, v3: &V3Alanlari, yol: KaynakYolu, ts: i64, b: &IyimserBaglam) -> AjandaKaydi {
     let mut elle_alanlar = vec![AjandaAlani::Tur, AjandaAlani::Baslik];
     if govde.aciklama.is_some() {
         elle_alanlar.push(AjandaAlani::Aciklama);
@@ -86,6 +87,15 @@ fn eklenen_kayit(kayit_id: &str, govde: &KayitGovdesi, yol: KaynakYolu, ts: i64,
     if govde.tekrar.is_some() {
         elle_alanlar.push(AjandaAlani::Tekrar);
     }
+    let v3_verilen = [
+        (AjandaAlani::Simge, v3.simge.is_some()),
+        (AjandaAlani::Bolge, v3.bolge.is_some()),
+        (AjandaAlani::BolgeKonumu, v3.bolge_konumu.is_some()),
+        (AjandaAlani::Varis, v3.varis.is_some()),
+        (AjandaAlani::Baglantilar, !v3.baglantilar.is_empty()),
+        (AjandaAlani::Ekler, !v3.ekler.is_empty()),
+    ];
+    elle_alanlar.extend(v3_verilen.into_iter().filter(|(_, var)| *var).map(|(a, _)| a));
     AjandaKaydi {
         kayit_id: kayit_id.to_string(),
         revizyon: 1,
@@ -112,7 +122,7 @@ fn eklenen_kayit(kayit_id: &str, govde: &KayitGovdesi, yol: KaynakYolu, ts: i64,
         },
         olusturma_ms: ts,
         guncelleme_ms: ts,
-        v3: Default::default(),
+        v3: v3.clone(),
     }
 }
 
@@ -130,12 +140,12 @@ pub(crate) enum Uygulama {
 /// İşlemi `onceki` hale servis kurallarıyla uygular (`ts`: işlemin anı). Yeni halin revizyonu değişmez
 /// (servis ya da yerel yazar verir); `guncelleme_ms` `degisiklikAni` kuralıyla ilerler.
 pub(crate) fn islem_uygula(onceki: Option<&AjandaKaydi>, islem: &AjandaIslem, ts: i64, b: &IyimserBaglam) -> Uygulama {
-    if let AjandaIslem::Ekle { kayit_id, govde, girdi_yolu, .. } = islem {
+    if let AjandaIslem::Ekle { kayit_id, govde, v3, girdi_yolu } = islem {
         return match onceki {
             // Servis zaten uyguladı (kayıt sonuçtan önce geldi) ya da kimlik çakışıyor: gerçek olan kalır.
             Some(_) => Uygulama::Ret(AjandaRetNedeni::KimlikCakisiyor),
             None => {
-                let k = eklenen_kayit(kayit_id, govde, girdi_yolu.yol(), ts, b);
+                let k = eklenen_kayit(kayit_id, govde, v3, girdi_yolu.yol(), ts, b);
                 if k.gecerli_mi().is_ok() { Uygulama::Yeni(Box::new(k)) } else { Uygulama::Ret(AjandaRetNedeni::TutarsizKayit) }
             }
         };
