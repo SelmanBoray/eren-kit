@@ -23,9 +23,10 @@ use crate::motor::{Etkiler, Motor, Ortam};
 
 use kabuklar::{AlarmKabugu, Gozlemci, KimlikKabugu, Tasima, ZamanKabugu};
 use tipler::{
-    AktarmaBicimi, BaglantiDurumu, BaglantiYetenekleri, BirlestirmeOnizlemesi, BirlestirmeSonucu, OlasiCift, CalismaKipi, DisaAktarma,
-    DuzenlemeTemeli, EslesmeDurumu, GecisOzeti, GecmisSayfasi, HatirlatmaBildirimi, HatirlatmaOnizlemesi, IceAktarmaOnizlemesi,
-    IceAktarmaSonucu, KayitGorunumu, KoparmaSonucu, ListeSorgusu, RetGirdisi, TakvimAyi, TakvimOgesi, YenidenKurmaNedeni,
+    AktarmaBicimi, BaglantiDurumu, BaglantiYetenekleri, BirlestirmeOnizlemesi, BirlestirmeSonucu, CalismaKipi, DisaAktarma,
+    DuzenlemeTemeli, ErtelenenGeriAlma, EslesmeDurumu, GecisOzeti, GecmisSayfasi, HatirlatmaBildirimi, HatirlatmaOnizlemesi,
+    IceAktarmaOnizlemesi, IceAktarmaSonucu, KayitGorunumu, KoparmaSonucu, ListeSorgusu, OlasiCift, RetGirdisi, TakvimAyi,
+    TakvimOgesi, YenidenKurmaNedeni,
 };
 
 fn kilitle<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -474,14 +475,47 @@ impl Cekirdek {
 
     /// Ret listesindeki atılmış ertelenen v3 değişikliğini (`RetGirdisi.ertelenen_atildi`; ne olduğu
     /// `RetGirdisi.v3_degisikligi`'nde) yeniden uygular: girdi listeden çıkar, değişiklik şimdi yapılmış gibi
-    /// uygulanır. Bağlı kipte kuyruğun sonuna yeni bir işlem olarak girer (eski v2 serviste yine ertelenir,
-    /// servis güncellenince gider; v3 serviste hemen gider), kayıt v3 değeriyle görünür. Yerel kipte (koparmadan
-    /// sonra) doğrudan uygulanır. Döner: `false`, listede bu `islem_id` yok (hiçbir şey olmadı). Hata (girdi
+    /// uygulanır. Bağlı kipte kuyruğun sonuna yeni bir işlem olarak girer (yalnız değişecek alanlar; v3 serviste
+    /// hemen gider), kayıt v3 değeriyle görünür; bağlantı canlı değilken, eski (v2) serviste ya da v3 eşitlemesi
+    /// bitmeden yapılmaz (aşağıda).
+    /// Yerel kipte (koparmadan sonra) doğrudan uygulanır. Döner: `false`, listede bu `islem_id` yok (hiçbir şey olmadı). Hata (girdi
     /// kalır): `GecersizGirdi{alan:"islem_id"}` (geçersiz kimlik ya da girdi ertelenen atılmış bir değişiklik
     /// değil), `KayitYok` (kayıt telefonda yok), `GecersizDurum` (kayıt silinmiş; önce geri yükle). Gözlemciye
     /// `ret_listesi`, `baglanti`, kaydın `kayitlar`'ı.
+    ///
+    /// Atıldıktan sonra değişmiş alanı sessizce ezmez (C1; kural `ertelenen_geri_al_denetimli`'de): çakışmada
+    /// hiçbir şey yapmadan `GecersizDurum` döner (mesaj çakışan alanları adlarıyla söyler; ayrıntı ve zorlama
+    /// için `ertelenen_geri_al_denetimli`). Bağlı kipte bağlantı canlı değilse ya da PC'nin v3 hali bilinmiyorsa
+    /// (servis eski ya da v3 eşitlemesi bitmedi) de `GecersizDurum`.
     pub fn ertelenen_geri_al(&self, islem_id: String) -> Result<bool, CekirdekHatasi> {
-        self.calistir(|m, o, e| m.ertelenen_geri_al(o, e, &islem_id))
+        let s = self.calistir(|m, o, e| m.ertelenen_geri_al(o, e, &islem_id, false))?;
+        if s.bulundu && !s.uygulandi {
+            return Err(CekirdekHatasi::GecersizDurum {
+                mesaj: format!("atıldıktan sonra değişti: {}", s.cakisan.join(", ")),
+            });
+        }
+        Ok(s.bulundu)
+    }
+
+    /// `ertelenen_geri_al`'ın çakışmayı açıkça bildiren biçimi (C1). Değişiklik kaydın şimdiki haline (bağlı
+    /// kipte görünen kopya: PC'nin bilinen hali ve gönderilmemiş değişiklikler) uygulanır:
+    /// - tekil alan (`simge`, `bolge`, `bolge_konumu`, `varis`) atma anındaki değerinden (ret satırında saklı)
+    ///   farklıysa ve değişiklik onu değiştirecekse çakışmadır;
+    /// - listeler (`baglantilar` `url`'ye, `ekler` `ek_id`'ye göre) birleşir: atıldıktan sonra eklenen öğeler
+    ///   kalır, değişikliğin eklediği arkalarına girer, çıkardığı çıkar; değişikliğin değiştirdiği ya da
+    ///   çıkardığı öğe o andan beri değiştiyse çakışmadır;
+    /// - değişiklik zaten duruyorsa hiçbir şey yazılmaz (yeniden denemek güvenlidir).
+    ///
+    /// Çakışma varken `zorla` yanlışsa hiçbir şey değişmez (`uygulandi` yanlış, girdi kalır, `cakisan` dolu);
+    /// doğruysa çakışan alanlara değişikliğin değeri yazılır (listelerde yine hiçbir yeni öğe düşmez). Yalnız
+    /// değişecek alanlar gider. Hata (girdi kalır): `ertelenen_geri_al`'ınkiler; `GecersizDurum` ayrıca girdi
+    /// tutarsızsa (işlemin kaydı satırınkinden farklı), birleşen hal geçersizse (ör. iki kapak, ek sınırı) ve
+    /// bağlı kipte bağlantı canlı değilse (telefonun bildiği hal eskimiş olabilir, değişiklik bağlanana dek
+    /// beklerken PC'de değişen alanı ezebilirdi) ya da PC'nin v3 hali bilinmiyorsa (bilinen servis v2 ya da
+    /// sunucu kopyası v3 ile dolmadı; servis güncellenip v3'te eşitlenince yeniden denenir). Döner: `bulundu` yanlışsa
+    /// listede bu `islem_id` yok. Gözlemciye (uygulandıysa) `ret_listesi`, `baglanti`, kaydın `kayitlar`'ı.
+    pub fn ertelenen_geri_al_denetimli(&self, islem_id: String, zorla: bool) -> Result<ErtelenenGeriAlma, CekirdekHatasi> {
+        self.calistir(|m, o, e| m.ertelenen_geri_al(o, e, &islem_id, zorla))
     }
 
     // Dışa ve içe aktarma (D3; biçim ve kurallar `motor/aktarma.rs` başında, kap `aktarma_bicimi`)

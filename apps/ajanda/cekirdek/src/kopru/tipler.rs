@@ -158,6 +158,33 @@ pub struct V3DegisiklikOzeti {
     pub kaldirilan: Vec<String>,
 }
 
+/// `Cekirdek::ertelenen_geri_al_denetimli`'nin sonucu (C1): atılmış ertelenen v3 değişikliği, atıldıktan sonra
+/// (PC'de ya da telefonda, gönderilmemiş değişiklikler dahil) değişmiş bir alanı sessizce ezmez. Alan adları
+/// kablodaki adlardır (`simge`, `bolge`, `bolge_konumu`, `varis`, `baglantilar`, `ekler`), bu sırayla.
+#[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
+pub struct ErtelenenGeriAlma {
+    /// Girdi ret listesindeydi. Yanlışsa hiçbir şey olmadı (öteki alanlar boş).
+    #[uniffi(default)]
+    pub bulundu: bool,
+    /// Girdi listeden çıktı: değişiklik uygulandı ya da kayıtta zaten duruyordu (`degisen` boş: hiçbir şey
+    /// yazılmadı, işlem gitmedi). Yanlışsa (çakışma, `zorla` yanlış) hiçbir şey değişmedi, girdi kalır.
+    #[uniffi(default)]
+    pub uygulandi: bool,
+    /// Değeri değişen (bağlı kipte kuyruğa, yerel kipte yerel gerçeğe yazılan) alanlar.
+    #[uniffi(default)]
+    pub degisen: Vec<String>,
+    /// Atıldıktan sonra değişmiş ve değişikliğin üzerine yazacağı alanlar: tekil alanda (`simge`, `bolge`,
+    /// `bolge_konumu`, `varis`) şimdiki değer atma anındakinden farklı; listede (`baglantilar`, `ekler`)
+    /// değişikliğin değiştirdiği ya da çıkardığı bir öğe o andan beri değişmiş. `zorla` yanlışken doluysa
+    /// hiçbir şey yapılmadı; doğruyken bu alanlara değişikliğin değeri yazıldı.
+    #[uniffi(default)]
+    pub cakisan: Vec<String>,
+    /// Birleştirilen listeler: yazılan liste değişikliğin listesinden farklıdır, çünkü atıldıktan sonra eklenen
+    /// öğeler korundu (listeden hiçbir öğe `zorla` ile de sessizce düşmez; yalnız değişikliğin çıkardığı düşer).
+    #[uniffi(default)]
+    pub birlesen: Vec<String>,
+}
+
 /// Geçmişin bir satırı (servisin `gecmis` çerçevesinden).
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct GecmisSatiri {
@@ -244,6 +271,13 @@ pub struct BaglantiDurumu {
     /// ana bir `baglanti_durumu` yoklaması kurmalı (yoksa deneme ilk olaya kalır). Öteki hallerde yok.
     #[uniffi(default)]
     pub yukari_deneme_ms: Option<i64>,
+    /// Yanıtı beklenen geçmiş isteği varken en eskisinin yanıtsız sayılacağı an (ms, kabuğun saati; C5): bu
+    /// andan sonraki ilk köprü çağrısında istek düşer, sayfası `ic_hata` ile biter (`Degisim.gecmis`; yeniden
+    /// istenebilir). Bağlantının sürümünden bağımsızdır. Geçmiş ekranı boşta açıksa kabuk bu ana bir yoklama
+    /// (`baglanti_durumu` ya da `gecmis`) kurmalı; yoksa düşme ilk olaya kalır. Saat geri giderse istek yine
+    /// en geç bir dakikada (tekdüze saatle) düşer. İstek yoksa yok.
+    #[uniffi(default)]
+    pub gecmis_bekleme_ms: Option<i64>,
 }
 
 /// Sürüm uyuşmazlığının yönü (`AJANDA_SURUMU` karşılaştırması).
@@ -419,6 +453,10 @@ pub struct TakvimSeridi {
     /// İlk ve son gün (`YYYY-MM-DD`, ikisi dahil, cihaz diliminde; kırpılmamış).
     pub ilk_gun: String,
     pub son_gun: String,
+    /// Kaydın simge anahtarı (`V3Alanlari.simge`; açık küme, bilinmeyen anahtar olduğu gibi gelir). Simgesiz ve
+    /// v2 kayıtta yok: arayüz rengi ve çizimi başlıktan tahmin etmek yerine bunu kullanır.
+    #[uniffi(default)]
+    pub simge: Option<String>,
 }
 
 /// Seçili günün bir öğesi (`takvim_gunu`). Sıra çekirdektedir (ürün kuralı, `motor/takvim.rs`).
