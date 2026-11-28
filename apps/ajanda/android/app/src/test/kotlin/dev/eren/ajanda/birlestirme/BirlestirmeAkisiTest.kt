@@ -303,6 +303,43 @@ class BirlestirmeAkisiTest {
     }
 
     @Test
+    fun zatenUygulandiKoparmadanSonraGecikmisOnaydaKoptuDenmez() {
+        // Y7: birleştirme (iz7) başka bir yoldan uygulandı, sonra bağlantı koparıldı (kip yerel); eski adımla
+        // gecikmiş onay gelir. Çekirdek "zaten uygulandı" der: "bağlantı koptu; hiçbir kayıt değişmedi" denmez.
+        yuz.onizlemeler += plan(iz = "iz7")
+        val o = onay(akis.denetle())
+        yuz.onaySonuclari += BirlestirmeSonucu(false, null, zatenUygulandi = true)
+        yuz.kipYaniti = CalismaKipi.YEREL
+        val a = akis.onayla(o)
+        assertTrue(a is BirlestirmeAkisi.Adim.Bilgi)
+        assertEquals("Birleştirme daha önce yapıldı", a.baslik)
+        assertEquals("Bu birleştirme daha önce tamamlanmıştı; bu onay hiçbir kaydı değiştirmedi.", a.metin)
+        assertFalse(a.metin, a.metin.contains("koptu"))
+        assertFalse(a.metin, a.metin.contains("bağlı"))
+        assertFalse(akis.onayBekliyor)
+        // Aynı adımla yeniden onay çekirdeğe gitmez.
+        assertEquals(a, akis.onayla(o))
+        assertEquals(1, yuz.cagrilar.count { it.startsWith("onayla") })
+        temiz(a)
+
+        // Zaten uygulandı ve kip bağlı: "zaten bağlı".
+        val ikinci = BirlestirmeAkisi(yuz, kusak = { kusakNo })
+        yuz.onizlemeler += plan(iz = "iz8")
+        val o2 = onay(ikinci.denetle())
+        yuz.onaySonuclari += BirlestirmeSonucu(false, null, zatenUygulandi = true)
+        yuz.kipYaniti = CalismaKipi.BAGLI
+        assertEquals("Zaten bağlı", ikinci.onayla(o2).baslik)
+
+        // Zaten uygulandı, kip okunamadı: belirsiz değil, "daha önce yapıldı".
+        val ucuncu = BirlestirmeAkisi(yuz, kusak = { kusakNo })
+        yuz.onizlemeler += plan(iz = "iz9")
+        val o3 = onay(ucuncu.denetle())
+        yuz.onaySonuclari += BirlestirmeSonucu(false, null, zatenUygulandi = true)
+        yuz.kipYaniti = CekirdekHatasi.Depo("k_gizli")
+        assertEquals("Birleştirme daha önce yapıldı", ucuncu.onayla(o3).baslik)
+    }
+
+    @Test
     fun metinKurulamazsaDaUygulandiDenir() {
         val bozukMetin = object : BirlestirmeMetinleri() {
             override fun sonuc(p: BirlestirmeOnizlemesi?): String = throw IllegalStateException("biçim")

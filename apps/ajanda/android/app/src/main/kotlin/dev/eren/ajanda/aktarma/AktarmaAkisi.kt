@@ -26,6 +26,9 @@ import java.time.LocalDate
  * (ör. `StackOverflowError`, `LinkageError`) yakalanmaz, çağırana çıkar.
  * Mahremiyet: dosya içeriği hiçbir günlüğe yazılmaz; metinler yalnız sayı ve tarih taşır.
  * Bellek: belge baştan sona UTF-8 baytı olarak tutulur ve çekirdeğin bayt API'sine verilir ([AktarmaCekirdegi]).
+ * Kap, çekirdeğin sınırları ve yığının o an ayırabildiği bütçeyle okunur ([YedekKabi.bellekButcesi]): asıl koruma
+ * budur; `OutOfMemoryError`'ı yakalamak yalnız son çaredir (o sırada başka iş parçacığı da düşebilir).
+ * Dışa aktarma içe aktarma sınırını aşan belgeyi de yazar; sonuç metni bunu söyler ([AktarmaMetinleri.disaSonucu]).
  */
 class AktarmaAkisi(
     private val c: AktarmaCekirdegi,
@@ -88,8 +91,10 @@ class AktarmaAkisi(
             val bicim = c.aktarmaBicimi()
             val okunan = ac().use { YedekKabi.oku(it, bicim) }
             val plan = c.iceAktarmaOnizlemesiBayt(okunan.baytlar)
-            // Kaptaki ekler planınkilerle birebir tutmalı (fazlası beklenmeyen girdidir).
-            if (okunan.ekler.keys.any { o -> plan.ekler.none { it.ozet == o } }) throw YedekHatasi.GecersizDosya("belgede olmayan ek")
+            // Kaptaki ekler planınkilerle birebir tutmalı (fazlası beklenmeyen girdidir). Ekler okunurken
+            // belleğe alınır (planı belge verir); sınırları `eklerToplamAzamiBayt` ve `ekAzamiAdet`.
+            val plandaki = plan.ekler.mapTo(HashSet()) { it.ozet }
+            if (okunan.ekler.keys.any { it !in plandaki }) throw YedekHatasi.GecersizDosya("belgede olmayan ek")
             onizlemeAdimi(okunan, plan, degisti = false)
         } catch (e: Exception) {
             Adim.Hata(metinler.iceHataBaslik, metinler.hata(e, yazarken = false))
@@ -146,7 +151,7 @@ class AktarmaAkisi(
 
     private fun onizlemeAdimi(okunan: YedekKabi.Okunan, plan: IceAktarmaOnizlemesi, degisti: Boolean): Adim {
         val metin = metinler.onizleme(plan, degisti)
-        return if (plan.yeni + plan.guncellenecek == 0) {
+        return if (!AktarmaMetinleri.yapilacakVar(plan)) {
             bekleyen = null
             Adim.Bilgi(metinler.iceBaslik, metin)
         } else {
@@ -164,16 +169,25 @@ class AktarmaAkisi(
 }
 
 /** Hata sınıfının kullanıcı metnine eşlemi için ara sınıf (saf). */
-internal enum class AktarmaSorunu { GECERSIZ, DAHA_YENI, COK_BUYUK, BELLEK, EK_BOZUK, OKUNAMADI, YAZILAMADI, DEPO, BEKLENMEYEN }
+internal enum class AktarmaSorunu {
+    GECERSIZ, DAHA_YENI, COK_BUYUK, BELLEK, BELLEK_BUTCESI, EK_BOZUK, OKUNAMADI, YAZILAMADI, DEPO, BEKLENMEYEN,
+}
+
+/**
+ * Çekirdeğin belge sınırı nedenlerinin öneki: "çok büyük (en çok N MiB)", "çok büyük (kayıtlar dışı en çok N MiB)"
+ * (`motor/aktarma.rs`). Sayı sürüme göre değişir; yalnız önek karşılaştırılır.
+ */
+internal const val COK_BUYUK_ONEKI = "çok büyük"
 
 internal fun sorunu(e: Throwable, yazarken: Boolean): AktarmaSorunu = when (e) {
     is OutOfMemoryError -> AktarmaSorunu.BELLEK
     is YedekHatasi.CokBuyuk -> AktarmaSorunu.COK_BUYUK
+    is YedekHatasi.BellekYetmez -> AktarmaSorunu.BELLEK_BUTCESI
     is YedekHatasi.EkBozuk -> AktarmaSorunu.EK_BOZUK
     is YedekHatasi.GecersizDosya -> AktarmaSorunu.GECERSIZ
     is CekirdekHatasi.GecersizGirdi -> when {
         e.alan == "bicim_surumu" || e.alan == "sozlesme_surumu" -> AktarmaSorunu.DAHA_YENI
-        e.alan == "belge" && e.neden == "çok büyük" -> AktarmaSorunu.COK_BUYUK
+        e.alan == "belge" && e.neden.startsWith(COK_BUYUK_ONEKI) -> AktarmaSorunu.COK_BUYUK
         else -> AktarmaSorunu.GECERSIZ
     }
     is CekirdekHatasi.Depo -> AktarmaSorunu.DEPO

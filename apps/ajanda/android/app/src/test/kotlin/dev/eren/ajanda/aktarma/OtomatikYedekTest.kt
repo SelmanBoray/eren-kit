@@ -769,6 +769,30 @@ class OtomatikYedekTest {
     }
 
     @Test
+    fun icerAktarmaSiniriniAsanBelgeYineYazilir() {
+        // Y2: belge içe aktarma sınırını (sahte biçimde 1 MiB) aşıyor. Eskiden `YedekKabi.yaz` "çok büyük" atardı,
+        // otomatik yedek COK_BUYUK dönerdi ve veri yalnız telefonda kalırdı. Şimdi yazılır, geri okunup doğrulanır,
+        // sınır uyarısı söylenir.
+        val iri = """{"bicim":"eren_ajanda_yedegi","kayitlar":[""" + "x".repeat(bicim.belgeAzamiBayt.toInt() + 512 * 1024) + "]}"
+        kaynak.disa = kaynak.disa.copy(belge = iri, iceAktarmaSiniriniAsiyor = true)
+        val s = yedekci.gerekirseYedekle()
+        assertTrue("$s", s is YedekSonucu.Yapildi)
+        assertTrue((s as YedekSonucu.Yapildi).sinirAsiyor)
+        assertNull(ayarlar.d.sonHata)
+        assertTrue(ayarlar.d.sonSinirAsiyor)
+        assertEquals(listOf("Yedek geri yüklenemeyecek kadar büyük"), bildirici.gosterilen.map { it.first })
+        // Dosya tam: belge girdisi birebir (bu sürüm onu içe aktaramaz; sınır okurken uygulanır).
+        val z = java.util.zip.ZipInputStream(ByteArrayInputStream(klasor.veri(bugun)))
+        assertEquals(bicim.belgeAdi, z.nextEntry!!.name)
+        assertEquals(iri, String(z.readBytes(), Charsets.UTF_8))
+        try {
+            YedekKabi.oku(ByteArrayInputStream(klasor.veri(bugun)), bicim)
+            org.junit.Assert.fail("çok büyük bekleniyordu")
+        } catch (_: YedekHatasi.CokBuyuk) {
+        }
+    }
+
+    @Test
     fun simdiYedekleSonucuSoylenmisSayilir() {
         klasor.erisim = false
         assertEquals(YedekSonucu.Basarisiz(YedekSorunu.ERISIM_YOK), yedekci.simdiYedekle())

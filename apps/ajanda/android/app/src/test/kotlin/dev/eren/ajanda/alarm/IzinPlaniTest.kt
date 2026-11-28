@@ -18,7 +18,8 @@ class IzinPlaniTest {
         acik: Boolean = true,
         kanal: Boolean = true,
         kacirilan: Boolean = true,
-    ) = IzinGirdisi(an, hatirlatma, sdk, bildirim, soruldu, gerekce, kesin, aciklandi, acik, kanal, kacirilan)
+        guvenilir: Boolean = true,
+    ) = IzinGirdisi(an, hatirlatma, sdk, bildirim, soruldu, gerekce, kesin, aciklandi, acik, kanal, kacirilan, guvenilir)
 
     private fun karar(g: IzinGirdisi) = IzinPlani.karar(g)
 
@@ -92,6 +93,58 @@ class IzinPlaniTest {
         assertTrue(!girdi(soruldu = false).bildirimKaliciReddedildi)
         assertTrue(!girdi(soruldu = true, gerekce = true).bildirimKaliciReddedildi)
         assertTrue(!girdi(soruldu = true, bildirim = true).bildirimKaliciReddedildi)
+        // İşaret güvenilmezse işaretsiz de "sorulmuş olabilir".
+        assertTrue(girdi(soruldu = false, guvenilir = false).bildirimKaliciReddedildi)
+        assertTrue(!girdi(soruldu = false, gerekce = true, guvenilir = false).bildirimKaliciReddedildi)
+    }
+
+    @Test
+    fun acilistaIkiKezReddedenIsaretsizKullanicidaOluDugmeYok() {
+        // K7: eski sürüm açılışta işaretsiz istedi, kullanıcı iki kez reddetti. Android'in hali: izin yok, gerekçe
+        // bayrağı yanlış (kalıcı ret), işaret yok. Kurulum eski sürümle başladığı için işaret güvenilmez.
+        val u = IzinAni.UYARIYA_DOKUNULDU
+        val g = girdi(an = u, soruldu = false, gerekce = false, guvenilir = false)
+        assertTrue(g.bildirimKaliciReddedildi)
+        // Dokunuş sessiz kalan izin isteğini değil, ayar ekranını açar.
+        assertEquals(HatirlatmaSorunu.BILDIRIM_IZNI_YOK, ayar(karar(g)))
+        // Kayıtta da sessiz istek yapılmaz.
+        assertEquals(IzinKarari.Hicbiri, karar(g.copy(an = IzinAni.KAYIT_KAYDEDILDI)))
+        // Bir kez reddetmişse Android gerekçe der: pencere yine açılır (işaret olmasa da).
+        assertEquals(IzinKarari.BildirimIzniIste, karar(g.copy(gerekceGosterilebilir = true)))
+        // İzin sonradan ayardan verildiyse sorun yok.
+        assertEquals(IzinKarari.Hicbiri, karar(g.copy(bildirimIzni = true)))
+    }
+
+    @Test
+    fun yeniKurulumdaIsaretGuvenilirIlkDokunusPencereAcar() {
+        val u = IzinAni.UYARIYA_DOKUNULDU
+        // Bu sürümle başlayan kurulum: işaret yoksa kesin hiç sorulmadı.
+        assertEquals(IzinKarari.BildirimIzniIste, karar(girdi(an = u, soruldu = false, gerekce = false, guvenilir = true)))
+        assertEquals(IzinKarari.BildirimIzniIste, karar(girdi(soruldu = false, gerekce = false, guvenilir = true)))
+        // Sorulduktan sonra gerekçe yoksa (kalıcı ret ya da pencere kapatıldı) ayar ekranı.
+        assertEquals(HatirlatmaSorunu.BILDIRIM_IZNI_YOK, ayar(karar(girdi(an = u, soruldu = true, gerekce = false, guvenilir = true))))
+    }
+
+    @Test
+    fun varsayilanGirdiGuvenliYanda() {
+        // `soruldusuGuvenilir` verilmezse yanlış: bilinmeyen hal kalıcı ret sayılır (ayar ekranı çalışır, sessiz istek çalışmaz).
+        val g = IzinGirdisi(IzinAni.UYARIYA_DOKUNULDU, true, 34, false, false, false, true, false)
+        assertTrue(g.bildirimSorulmusOlabilir)
+        assertEquals(HatirlatmaSorunu.BILDIRIM_IZNI_YOK, ayar(karar(g)))
+    }
+
+    @Test
+    fun isaretGuvenilirlikKarari() {
+        // Hiç güncellenmemiş kurulum: bu sürümle başladı.
+        assertTrue(IzinPlani.guvenilirlikKarari(null, 1_000, 1_000))
+        // Güncellenmiş kurulum: eski sürüm açılışta işaretsiz istemiş olabilir.
+        assertTrue(!IzinPlani.guvenilirlikKarari(null, 1_000, 2_000))
+        // Ölçülemedi: güvenilmez.
+        assertTrue(!IzinPlani.guvenilirlikKarari(null, 0, -1))
+        assertTrue(!IzinPlani.guvenilirlikKarari(null, 0, 0))
+        // Saklı karar değişmez (sonraki güncellemeler onu bozmaz).
+        assertTrue(IzinPlani.guvenilirlikKarari(true, 1_000, 9_000))
+        assertTrue(!IzinPlani.guvenilirlikKarari(false, 5, 5))
     }
 
     @Test

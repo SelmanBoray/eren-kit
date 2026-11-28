@@ -22,15 +22,74 @@ import java.util.zip.ZipOutputStream
  *
  * Okurken: her girdinin adı beyaz listeden geçer (belge, ek dizini, `ekler/<64 hex>`), yol kaçışı
  * (`..`, mutlak yol, ters bölü) ve beklenmeyen ya da yinelenen girdi reddedilir. Boyutlar başlığa
- * güvenilmeden açılırken sayılır: belge, her ek ve açılmış toplam ayrı sınırlıdır (şişirme saldırısı).
- * Toplama her girdinin açılmış baytı girer, saklanmayanlarınki (dizin girdisi) de; aşan okuma ilk
- * fazla tamponda kesilir. Sınırlar yalnız çekirdekten okunur (`aktarmaBicimi()`); burada sabit yok.
+ * güvenilmeden açılırken sayılır: belge (`belgeAzamiBayt`), her ek (`ekAzamiBayt`), eklerin toplamı
+ * (`eklerToplamAzamiBayt`), ek adedi (`ekAzamiAdet`) ve açılmış toplam (`acilmisToplamAzamiBayt`) ayrı
+ * sınırlıdır (şişirme saldırısı). Toplama her girdinin açılmış baytı girer, saklanmayanlarınki (dizin
+ * girdisi) de; aşan okuma ilk fazla tamponda kesilir. Biçim sınırları yalnız çekirdekten okunur
+ * (`aktarmaBicimi()`); burada sabit yok ([Sinirlar]).
+ *
+ * Bellek: biçim sınırlarının üstüne okuma, yığının o an ayırabileceğiyle de sınırlıdır ([bellekButcesi]):
+ * güvenilmeyen dosya ancak bütçenin içinde belleğe alınır, aşan okuma [YedekHatasi.BellekYetmez]'le kesilir
+ * (başka bir iş parçacığı `OutOfMemoryError` almasın; tek koruma o hatayı yakalamak olmasın).
+ *
+ * Yazarken sınır yok: uygulamanın kendi belgesi içe aktarma sınırını aşsa da yazılır (veri yalnız telefonda
+ * kalmasın); bunu söylemek çağıranın işidir (`DisaAktarma.iceAktarmaSiniriniAsiyor`).
  *
  * Mahremiyet: hata mesajları dosya içeriği ya da girdi adı taşımaz.
  */
 object YedekKabi {
-    /** Kaptaki ek dosyası sayısının üst sınırı (bugün ek yok; kötü dosyaya karşı bekçi). */
-    const val AZAMI_EK_SAYISI = 10_000
+    /**
+     * Okumanın yığından ayırabileceği bütçe: `maxMemory - kullanılan - pay`. Pay en az [BELLEK_PAYI_EN_AZ], büyük
+     * yığında yığının dörtte biri: arayüz, eşitleme ve alarm iş parçacıkları okuma sürerken de bellek ister.
+     * Kullanılan çöpü de sayar (yukarı yuvarlar); bütçe gerekenden azsa bir kez `gc` istenip yeniden bakılır.
+     * Ölçüm (K6, `YedekBellekTest`): 25 MB belgenin okunması en az ~2 x belge yığınla sığar; bütçe belgeyi 2 kat
+     * sayar ([oku]).
+     */
+    const val BELLEK_PAYI_EN_AZ = 32L shl 20
+
+    /** Pay, yığının bu kesri (1/4) ile [BELLEK_PAYI_EN_AZ]'ın büyüğüdür. */
+    private const val BELLEK_PAYI_BOLEN = 4
+
+    /**
+     * Okurken geçici çarpan: belge parçalarda toplanıp sonunda tek diziye kopyalanır (tepe 2 x belge); ek dizisi
+     * 1,5 katla büyür (tepe ~2,5 x ek; ek en çok 4 MiB, fark payın içinde kalır).
+     */
+    private const val GECICI_CARPAN = 2L
+
+    /**
+     * Çekirdeğin [AktarmaBicimi]'nden okuma sınırları. Sürümler arası köprüde yeni alanlar 0 gelebilir (eski
+     * kurulum ya da sahte): eklerin toplamı ve adedi 0 ise ek kabul edilmez (en dar), açılmış toplam 0 ise
+     * köprü belgesindeki tanımından (`belge + ekler toplamı`) türetilir.
+     */
+    class Sinirlar(bicim: AktarmaBicimi) {
+        val belge = bicim.belgeAzamiBayt.sinir()
+        val ek = bicim.ekAzamiBayt.sinir()
+        val eklerToplam = bicim.eklerToplamAzamiBayt.sinir()
+        val acilmisToplam = bicim.acilmisToplamAzamiBayt.sinir().takeIf { it > 0 } ?: (belge + eklerToplam)
+        val ekAdet = bicim.ekAzamiAdet.toLong().coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+
+        /** Biçimin izin verdiği en büyük kabın okunurken isteyebileceği yığın (bütçenin karşılaştırıldığı). */
+        val enCokBellek: Long get() = GECICI_CARPAN * minOf(belge, acilmisToplam) + minOf(eklerToplam, acilmisToplam)
+
+        private fun ULong.sinir(): Long = if (this > Long.MAX_VALUE.toULong()) Long.MAX_VALUE else toLong()
+    }
+
+    /**
+     * Şu an okumaya ayrılabilecek yığın baytı (bkz. [BELLEK_PAYI_EN_AZ]). [gereken]'den azsa bir kez çöp
+     * toplanması istenip yeniden ölçülür. `maxMemory` sınırsızsa sınırsız.
+     */
+    fun bellekButcesi(gereken: Long, r: Runtime = Runtime.getRuntime()): Long {
+        val azami = r.maxMemory()
+        if (azami == Long.MAX_VALUE) return Long.MAX_VALUE
+        val pay = maxOf(BELLEK_PAYI_EN_AZ, azami / BELLEK_PAYI_BOLEN)
+        fun bos() = azami - (r.totalMemory() - r.freeMemory()) - pay
+        var b = bos()
+        if (b < gereken) {
+            r.gc()
+            b = bos()
+        }
+        return b.coerceAtLeast(0)
+    }
 
     /**
      * Ham (sıkıştırılmış) dosyanın açılmış toplamı aşabileceği sabit pay: sıkışmayan verinin deflate ek yükü
@@ -59,12 +118,12 @@ object YedekKabi {
     }
 
     /**
-     * Dışa aktarmayı kaba yazar. Her ekin baytı [depo]'dan okunur, özeti ve boyu denetlenir.
+     * Dışa aktarmayı kaba yazar. Her ekin baytı [depo]'dan okunur, özeti ve boyu denetlenir. Belge boyu
+     * sınırlanmaz: içe aktarma sınırını aşan belge de yazılır (bkz. sınıf belgesi).
      * @throws YedekHatasi ek eksik ya da bozuksa; [IOException] yazılamazsa.
      */
     fun yaz(cikis: OutputStream, bicim: AktarmaBicimi, disa: DisaAktarma, depo: EkDeposu) {
-        // Belgenin UTF-8 kopyası tutulmaz: boy önce sayılır, metin parça parça kodlanıp yazılır.
-        if (utf8Boyu(disa.belge) > bicim.belgeAzamiBayt.toLong()) throw YedekHatasi.CokBuyuk()
+        // Belgenin UTF-8 kopyası tutulmaz: metin parça parça kodlanıp yazılır.
         val z = ZipOutputStream(cikis)
         z.putNextEntry(ZipEntry(bicim.belgeAdi))
         utf8Yaz(disa.belge, z)
@@ -85,24 +144,28 @@ object YedekKabi {
     }
 
     /**
-     * Kabı okur ve doğrular (belgenin içeriğine bakmaz: o çekirdeğin işi).
-     * @param toplamAzamiBayt açılmış bütün girdilerin toplam sınırı (varsayılan: çekirdeğin belge sınırı; ekler
-     *   gelince ve depolamaya akıtılınca yeniden bakılır).
-     * @throws YedekHatasi geçersiz kap, çok büyük, bozuk ek; [IOException] okunamazsa.
+     * Kabı okur ve doğrular (belgenin içeriğine bakmaz: o çekirdeğin işi). Sınırlar [bicim]'dendir ([Sinirlar]).
+     * @param bellekButcesi okumanın yığından ayırabileceği bayt (varsayılan: [bellekButcesi]). Belge okunurken
+     *   2 kat sayılır (geçici kopya), ekler okunurken 2 kat, sonra 1 kat; aşan okuma [YedekHatasi.BellekYetmez].
+     * @throws YedekHatasi geçersiz kap, çok büyük, bellek yetmez, bozuk ek; [IOException] okunamazsa.
      */
     fun oku(
         giris: InputStream,
         bicim: AktarmaBicimi,
-        toplamAzamiBayt: Long = bicim.belgeAzamiBayt.toLong(),
+        bellekButcesi: Long = bellekButcesi(Sinirlar(bicim).enCokBellek),
     ): Okunan {
-        val belgeAzami = bicim.belgeAzamiBayt.toLong()
-        val ekAzami = bicim.ekAzamiBayt.toLong()
+        val s = Sinirlar(bicim)
+        val toplamAzamiBayt = s.acilmisToplam
         // Sıkıştırılmış girdi de sayılır: açılmış toplamdan büyük ham dosya okunmaz.
         val ham = SinirliGiris(giris, toplamAzamiBayt + HAM_PAYI)
         var belge: ByteArray? = null
         val ekler = LinkedHashMap<String, ByteArray>()
         var toplam = 0L
+        var eklerToplam = 0L
+        /** Okunup tutulan baytlar (belge + ekler): bütçeden düşülür. */
+        var tutulan = 0L
         var dizinGoruldu = false
+        fun bellekKalani() = ((bellekButcesi - tutulan) / GECICI_CARPAN).coerceAtLeast(0)
         try {
             ZipInputStream(ham).use { z ->
                 while (true) {
@@ -113,9 +176,10 @@ object YedekKabi {
                     when {
                         ad == bicim.belgeAdi -> {
                             if (g.isDirectory || belge != null) throw YedekHatasi.GecersizDosya("belge yinelenmiş")
-                            val (b, okunanBoy) = belgeyiOku(z, minOf(belgeAzami, toplamAzamiBayt - toplam))
+                            val (b, okunanBoy) = belgeyiOku(z, minOf(s.belge, toplamAzamiBayt - toplam), bellekKalani())
                             belge = b
                             toplam += okunanBoy
+                            tutulan += b.size
                         }
                         ad == bicim.eklerDizini && g.isDirectory -> {
                             if (dizinGoruldu) throw YedekHatasi.GecersizDosya("dizin yinelenmiş")
@@ -125,9 +189,12 @@ object YedekKabi {
                             OZET.matches(ad.substring(bicim.eklerDizini.length)) -> {
                             val ozet = ad.substring(bicim.eklerDizini.length)
                             if (ozet in ekler) throw YedekHatasi.GecersizDosya("ek yinelenmiş")
-                            if (ekler.size >= AZAMI_EK_SAYISI) throw YedekHatasi.CokBuyuk()
-                            val b = sinirliOku(z, minOf(ekAzami, toplamAzamiBayt - toplam), g.size).tam()
+                            if (ekler.size >= s.ekAdet) throw YedekHatasi.CokBuyuk()
+                            val azami = minOf(s.ek, s.eklerToplam - eklerToplam, toplamAzamiBayt - toplam)
+                            val b = sinirliOku(z, azami, bellekKalani(), g.size).tam()
                             toplam += b.size
+                            eklerToplam += b.size
+                            tutulan += b.size
                             if (EkDenetimi.ozet(b) != ozet) throw YedekHatasi.EkBozuk("ek özeti tutmuyor")
                             ekler[ozet] = b
                         }
@@ -187,13 +254,20 @@ object YedekKabi {
         fun tam(): ByteArray = if (boy == dizi.size) dizi else dizi.copyOf(boy)
     }
 
+    /** Okunan bayt [n] sınırı aştıysa: biçim sınırı ([azami]) [YedekHatasi.CokBuyuk], bellek ([bellek]) [YedekHatasi.BellekYetmez]. */
+    private fun asildiysa(n: Long, azami: Long, bellek: Long) {
+        if (n > azami) throw YedekHatasi.CokBuyuk()
+        if (n > bellek) throw YedekHatasi.BellekYetmez()
+    }
+
     /**
-     * Girdiyi en çok [azami] bayta dek okur; fazlası [YedekHatasi.CokBuyuk]. Bellek: tek dizi, kopyasız döner.
-     * [bildirilen] başlıktaki açılmış boy (bilinmiyorsa -1; zip'i bizim yazdığımız gibi akışla yazılmışsa hep
-     * bilinmez): güvenilmez, yalnız ilk dizi boyu için ve [azami]'yle sınırlı. Bilinmiyorsa dizi 1,5 katla büyür.
+     * Girdiyi en çok [azami] bayta (biçim) ve [bellek] bayta (bütçe) dek okur; fazlası [asildiysa]. Bellek: tek dizi,
+     * kopyasız döner. [bildirilen] başlıktaki açılmış boy (bilinmiyorsa -1; zip'i bizim yazdığımız gibi akışla
+     * yazılmışsa hep bilinmez): güvenilmez, yalnız ilk dizi boyu için ve sınırla kırpılır. Bilinmiyorsa dizi 1,5
+     * katla büyür.
      */
-    private fun sinirliOku(z: InputStream, azami: Long, bildirilen: Long): Bayt {
-        val ust = minOf(azami, (Int.MAX_VALUE - 16).toLong()).toInt().coerceAtLeast(0)
+    private fun sinirliOku(z: InputStream, azami: Long, bellek: Long, bildirilen: Long): Bayt {
+        val ust = minOf(azami, bellek, (Int.MAX_VALUE - 16).toLong()).toInt().coerceAtLeast(0)
         var dizi = ByteArray(if (bildirilen in 0..ust.toLong()) bildirilen.toInt() + 1 else minOf(ust + 1, 64 * 1024))
         var n = 0
         while (true) {
@@ -205,7 +279,7 @@ object YedekKabi {
             val r = z.read(dizi, n, dizi.size - n)
             if (r < 0) break
             n += r
-            if (n > ust) throw YedekHatasi.CokBuyuk()
+            if (n > ust) asildiysa(n.toLong(), azami, bellek)
         }
         return Bayt(dizi, n)
     }
@@ -223,13 +297,13 @@ object YedekKabi {
     }
 
     /**
-     * Belge girdisini en çok [azami] bayta dek okur; fazlası [YedekHatasi.CokBuyuk]. Baytlar büyüyen parçalarda
-     * (64 KiB'ten 4 MiB'e) toplanır, sonunda tam boylu tek diziye bir kez kopyalanır: tepe ~2 x belge (büyüyen tek
-     * dizinin 1,5 kat payı ve son kesme kopyası yok). Baştaki UTF-8 BOM'u atılır (BOM'suz yazılır; elle düzenlenmiş
-     * dosyada olabilir). Dönen: (BOM'suz dizi, okunan bayt sayısı BOM dahil).
+     * Belge girdisini en çok [azami] bayta (biçim) ve [bellek] bayta (bütçe) dek okur; fazlası [asildiysa]. Baytlar
+     * büyüyen parçalarda (64 KiB'ten 4 MiB'e) toplanır, sonunda tam boylu tek diziye bir kez kopyalanır: tepe
+     * ~2 x belge (büyüyen tek dizinin 1,5 kat payı ve son kesme kopyası yok). Baştaki UTF-8 BOM'u atılır (BOM'suz
+     * yazılır; elle düzenlenmiş dosyada olabilir). Dönen: (BOM'suz dizi, okunan bayt sayısı BOM dahil).
      */
-    private fun belgeyiOku(z: InputStream, azami: Long): Pair<ByteArray, Long> {
-        val ust = minOf(azami, (Int.MAX_VALUE - 16).toLong()).coerceAtLeast(0)
+    private fun belgeyiOku(z: InputStream, azami: Long, bellek: Long): Pair<ByteArray, Long> {
+        val ust = minOf(azami, bellek, (Int.MAX_VALUE - 16).toLong()).coerceAtLeast(0)
         val parcalar = ArrayList<ByteArray>()
         var son = ByteArray(minOf(ust + 1, 64L * 1024).toInt().coerceAtLeast(1))
         var sondaki = 0
@@ -244,7 +318,7 @@ object YedekKabi {
             if (r < 0) break
             sondaki += r
             n += r
-            if (n > ust) throw YedekHatasi.CokBuyuk()
+            if (n > ust) asildiysa(n, azami, bellek)
         }
         parcalar += son
         val bom = n >= 3 && bayt(parcalar, 0) == 0xEF.toByte() && bayt(parcalar, 1) == 0xBB.toByte() &&
@@ -295,23 +369,6 @@ object YedekKabi {
             tampon.clear()
             if (r.isUnderflow) break
         }
-    }
-
-    /** UTF-8 boyu (yalnız sınır denetimi için; eşsiz vekil `?` yerine 3 sayılır, yukarı yuvarlar). */
-    private fun utf8Boyu(s: String): Long {
-        var n = 0L
-        var i = 0
-        while (i < s.length) {
-            val c = s[i]
-            n += when {
-                c.code < 0x80 -> 1
-                c.code < 0x800 -> 2
-                Character.isHighSurrogate(c) && i + 1 < s.length && Character.isLowSurrogate(s[i + 1]) -> { i++; 4 }
-                else -> 3
-            }
-            i++
-        }
-        return n
     }
 
     /** [s]'yi 64 Ki karakterlik parçalarla UTF-8 yazar (eşsiz vekil `?` olur: `toByteArray` ile aynı). */
@@ -368,8 +425,11 @@ sealed class YedekHatasi(mesaj: String) : IOException(mesaj) {
     /** Zip değil, belge yok, beklenmeyen ya da yinelenen girdi, yol kaçışı, UTF-8 değil. */
     class GecersizDosya(neden: String) : YedekHatasi(neden)
 
-    /** Belge, bir ek, açılmış toplam ya da ek sayısı sınırı aşıyor. */
+    /** Belge, bir ek, eklerin toplamı, açılmış toplam ya da ek sayısı biçim sınırını aşıyor. */
     class CokBuyuk : YedekHatasi("çok büyük")
+
+    /** Biçim sınırının altında ama okuma yığının o an ayırabileceği bütçeyi aşıyor ([YedekKabi.bellekButcesi]). */
+    class BellekYetmez : YedekHatasi("bellek yetmez")
 
     /** Ekin baytı, boyu ya da özeti tutmuyor; ya da ek bulunamadı. */
     class EkBozuk(neden: String) : YedekHatasi(neden)

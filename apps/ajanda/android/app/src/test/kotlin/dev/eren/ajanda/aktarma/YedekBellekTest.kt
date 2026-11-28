@@ -28,6 +28,7 @@ class YedekBellekTest {
         val belge = belge(HEDEF_BAYT)
         val boy = belge.toByteArray(Charsets.UTF_8).size
         val kap = ByteArrayOutputStream().also { YedekKabi.yaz(it, BICIM, disa(belge), EkDeposu.Yok) }.toByteArray()
+        // Varsayılan bellek bütçesiyle: uygulamanın kendi yaptığı büyük yedek kuralla reddedilmez.
         val (tepe, okunan) = surecIciTepe { YedekKabi.oku(ByteArrayInputStream(kap), BICIM) }
         assertEquals(belge, okunan.belge)
         println("BELLEK süreç içi: belge ${mb(boy)} MB (${belge.length} karakter), kap ${mb(kap.size)} MB, oku tepesi ~${mb(tepe)} MB (çöp dahil)")
@@ -36,24 +37,35 @@ class YedekBellekTest {
     @Test
     fun enAzYiginAranir() {
         assumeTrue("AJANDA_BELLEK_OLC=1 ile koşar", System.getenv("AJANDA_BELLEK_OLC") == "1")
-        val belge = belge(HEDEF_BAYT)
-        val boy = belge.toByteArray(Charsets.UTF_8).size
-        val dosya = File.createTempFile("ajanda-bellek", ".zip").apply { deleteOnExit() }
-        dosya.outputStream().use { YedekKabi.yaz(it, BICIM, disa(belge), EkDeposu.Yok) }
-        val sonuc = listOf("oku", "oku+indir").associateWith { kip -> enAzYigin(dosya, kip) }
-        println("BELLEK en az yığın: belge ${mb(boy)} MB; " + sonuc.entries.joinToString("; ") { "${it.key} ${it.value} MB" })
-        // Kaba tavan: belgenin 8 katı (String'li uygulama ~5 katıydı: 123 MB; bayt tutan ~2-3 katı).
-        assertTrue("$sonuc", sonuc.getValue("oku") <= 8 * boy / (1 shl 20) + 16)
+        // 25 MB (gerçekçi büyük yedek) ve belge sınırına yakın (60 MiB) iki belge; gerçek sınırlarla.
+        for (hedef in listOf(HEDEF_BAYT, SINIRA_YAKIN_BAYT)) {
+            val dosya = File.createTempFile("ajanda-bellek", ".zip").apply { deleteOnExit() }
+            val boy = run {
+                val belge = belge(hedef)
+                dosya.outputStream().use { YedekKabi.yaz(it, BICIM, disa(belge), EkDeposu.Yok) }
+                OtomatikYedekci.utf8Boyu(belge)
+            }
+            // oku: bütçesiz (gerçek tepe); oku+butce: varsayılan bütçe kuralıyla (kuralın kabul ettiği en küçük
+            // yığın); oku+indir: bütçesiz okuma + UniFFI'nin yerel belleğe indirişi.
+            val sonuc = listOf("oku", "oku+butce", "oku+indir").associateWith { kip -> enAzYigin(dosya, kip) }
+            println("BELLEK en az yığın: belge ${mb(boy)} MB; " + sonuc.entries.joinToString("; ") { "${it.key} ${it.value} MB" })
+            // Kaba tavan: belgenin 8 katı (String'li uygulama ~5 katıydı: 123 MB; bayt tutan ~2-3 katı).
+            assertTrue("$sonuc", sonuc.getValue("oku") <= 8 * boy / (1 shl 20) + 16)
+            dosya.delete()
+        }
     }
 
     /** Alt JVM'de [kip] işini `-Xmx` ile koşar; sığdığı en küçük MB (4 MB adımlı). */
     private fun enAzYigin(dosya: File, kip: String): Int {
         val java = File(System.getProperty("java.home"), "bin/java").path
         val cp = System.getProperty("java.class.path")
+        val b = BICIM
         fun sigar(mb: Int): Boolean {
             val p = ProcessBuilder(
                 java, "-Xmx${mb}m", "-Xms${mb}m", "-XX:+UseSerialGC", "-XX:MaxNewSize=4m", "-XX:NewSize=2m",
                 "-cp", cp, BellekOlcumu::class.java.name, dosya.path, kip,
+                b.belgeAzamiBayt.toString(), b.ekAzamiBayt.toString(), b.eklerToplamAzamiBayt.toString(),
+                b.acilmisToplamAzamiBayt.toString(), b.ekAzamiAdet.toString(),
             ).redirectErrorStream(true).start()
             val cikti = p.inputStream.bufferedReader().readText()
             check(p.waitFor(120, TimeUnit.SECONDS)) { "alt JVM bitmedi" }
@@ -92,7 +104,12 @@ class YedekBellekTest {
 
     internal companion object {
         const val HEDEF_BAYT = 25_000_000
-        val BICIM = AktarmaBicimi("ajanda.json", "ekler/", 1, 32uL shl 20, 4uL shl 20)
+
+        /** Belge sınırının (64 MiB) biraz altı. */
+        const val SINIRA_YAKIN_BAYT = 60 * (1 shl 20)
+
+        /** Gerçek sınırlar (çekirdekten, JNA). Alt JVM bunları argümanla alır (orada yerel kitaplık yüklenmez). */
+        val BICIM: AktarmaBicimi by lazy { dev.eren.ajanda.cekirdek.aktarmaBicimi() }
 
         fun mb(b: Number) = "%.1f".format(b.toDouble() / (1 shl 20))
 
@@ -133,14 +150,22 @@ class YedekBellekTest {
 }
 
 /**
- * Alt JVM işi: kabı okur ([args] 1 `oku+indir` ise UniFFI'nin belgeyi çekirdeğe indirişini de taklit eder).
- * Belge bayt olarak tutulur ve bayt API'sine gider: UniFFI `FfiConverterByteArray.lower` `RustBuffer`'ı yerel
- * bellekte ayırıp baytları oraya yazar (yığında kopya yok); burada JNA `Memory` ile aynısı yapılır.
+ * Alt JVM işi: kabı okur. [args]: dosya, kip, sonra biçim sınırları (belge, ek, ekler toplamı, açılmış toplam, ek
+ * adedi; üst JVM çekirdekten okur). Kip `oku`: bütçesiz (gerçek tepe); `oku+butce`: varsayılan bellek bütçesiyle
+ * ([YedekKabi.bellekButcesi]; reddederse sığmadı sayılır); `oku+indir`: bütçesiz okuma ve UniFFI'nin belgeyi
+ * çekirdeğe indirişinin taklidi. Belge bayt olarak tutulur ve bayt API'sine gider: UniFFI
+ * `FfiConverterByteArray.lower` `RustBuffer`'ı yerel bellekte ayırıp baytları oraya yazar (yığında kopya yok);
+ * burada JNA `Memory` ile aynısı yapılır.
  */
 object BellekOlcumu {
     @JvmStatic
     fun main(args: Array<String>) {
-        val okunan = File(args[0]).inputStream().use { YedekKabi.oku(it, YedekBellekTest.BICIM) }
+        val bicim = AktarmaBicimi(
+            "ajanda.json", "ekler/", 1, args[2].toULong(), args[3].toULong(), args[4].toULong(), args[5].toULong(), args[6].toUInt(),
+        )
+        val okunan = File(args[0]).inputStream().use {
+            if (args[1] == "oku+butce") YedekKabi.oku(it, bicim) else YedekKabi.oku(it, bicim, Long.MAX_VALUE)
+        }
         var n = okunan.baytlar.size.toLong()
         if (args[1] == "oku+indir") {
             val yerel = com.sun.jna.Memory(4L + okunan.baytlar.size)

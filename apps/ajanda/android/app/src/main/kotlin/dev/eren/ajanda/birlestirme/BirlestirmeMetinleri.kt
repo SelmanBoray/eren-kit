@@ -23,6 +23,9 @@ open class BirlestirmeMetinleri {
     val sonucKisa = "Bu telefon artık Eren servisine bağlı."
     val zatenBaslik = "Zaten bağlı"
     val zaten = "Bu telefon Eren servisine bağlı; birleştirme bu arada tamamlanmış. Kayıtları artık Eren servisi tutar."
+    /** Bu onayın planı daha önce uygulanmış, ama telefon şimdi bağlı değil (ör. sonradan bağlantı koparıldı). */
+    val oncedenBaslik = "Birleştirme daha önce yapıldı"
+    val onceden = "Bu birleştirme daha önce tamamlanmıştı; bu onay hiçbir kaydı değiştirmedi."
     val belirsizBaslik = "Birleştirmenin sonucu okunamadı"
     val belirsiz = "Birleştirmenin uygulanıp uygulanmadığı şu an okunamadı. Kayıtlar yenilenince durum görünür; " +
         "birleştirme hâlâ bekliyorsa yeniden sorulur."

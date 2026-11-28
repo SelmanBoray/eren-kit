@@ -46,11 +46,18 @@ class AktarmaAkisiTest {
         silinecek: Int = 0,
         geriYuklenecek: Int = 0,
         taslak: Int = 0,
+        onaylanacak: Int = 0,
+        okunamayanRet: Int = 0,
+        taslagaDonecek: Int = 0,
+        retGelecek: Int = 0,
+        retGecersiz: Int = 0,
     ) = IceAktarmaOnizlemesi(
         kip = kip, disaAktarmaMs = anMs, toplam = 10, silinmis = 1, yeni = yeni, guncellenecek = guncellenecek,
         ayni = 4, atlanacak = 1, gecersiz = 1, sinirAsan = 0, gonderilmeyecek = gonderilmeyecek,
         kuyrugaGirecekIslem = islem, gecersizler = emptyList(), ekler = emptyList(), iz = iz,
         silinecek = silinecek, geriYuklenecek = geriYuklenecek, taslakGonderilmeyecek = taslak,
+        taslakOnaylanacak = onaylanacak, okunamayanRetListesine = okunamayanRet, taslagaDonecek = taslagaDonecek,
+        retListesineGelecek = retGelecek, retGecersiz = retGecersiz,
     )
 
     private fun kap(b: String = belge): ByteArray {
@@ -414,6 +421,146 @@ class AktarmaAkisiTest {
         assertEquals("Dışa aktarılamadı", d.baslik)
         assertEquals(beklenen, d.metin)
         assertTrue(silindi)
+    }
+
+    @Test
+    fun yerelKipteTaslakOnayiTaslagaDonusVeOkunamayanAltMaddeler() {
+        yuz.onizlemeler += plan(guncellenecek = 6, onaylanacak = 2, taslagaDonecek = 1, okunamayanRet = 3)
+        yuz.iceSonuclari += IceAktarmaSonucu(true, plan(guncellenecek = 6, onaylanacak = 2, taslagaDonecek = 1, okunamayanRet = 3))
+        val o = akis.dosyaOku { ByteArrayInputStream(kap()) } as AktarmaAkisi.Adim.Onay
+        assertTrue(
+            o.metin,
+            o.metin.contains(
+                "• 6 kayıt güncellenecek (yedekteki daha yeni)\n" +
+                    "   – bunlardan 2 taslak onaylanacak (yedekteki hali onaylı; hatırlatması varsa kurulur)\n" +
+                    "   – bunlardan 1 kayıt taslağa dönecek (yedekteki hali onaylanmamış öneri; hatırlatmaları kalkar)\n" +
+                    "   – bunlardan 3 kayıt telefonda okunamıyor: yedekteki hali yazılacak, telefondaki eski hali " +
+                    "gönderilemeyenler listesine düşecek (oradan düzeltilebilir ya da atılabilir)\n",
+            ),
+        )
+        assertFalse(o.metin, o.metin.contains("Eren servisine gönderilir"))
+        temiz(o)
+        val s = akis.onayla(o)
+        assertEquals(
+            "2 yeni kayıt eklendi, 6 kayıt güncellendi.\n" +
+                "2 taslak onaylandı.\n" +
+                "1 kayıt taslağa döndü; hatırlatmaları kalktı.\n" +
+                "Telefonda okunamayan 3 kaydın eski hali gönderilemeyenler listesine kondu.\n" +
+                "1 kayıt okunamadığı için alınmadı.",
+            s.metin,
+        )
+        temiz(s)
+    }
+
+    @Test
+    fun bagliKipteTaslakOnayiServiseGittigiSoylenir() {
+        yuz.onizlemeler += plan(kip = CalismaKipi.BAGLI, islem = 4, guncellenecek = 3, onaylanacak = 2)
+        yuz.iceSonuclari += IceAktarmaSonucu(true, plan(kip = CalismaKipi.BAGLI, islem = 4, guncellenecek = 3, onaylanacak = 2))
+        val o = akis.dosyaOku { ByteArrayInputStream(kap()) } as AktarmaAkisi.Adim.Onay
+        assertTrue(
+            o.metin,
+            o.metin.contains("   – bunlardan 2 taslak onaylanacak (yedekteki hali onaylı; onay Eren servisine gönderilir, hatırlatması varsa kurulur)\n"),
+        )
+        temiz(o)
+        val s = akis.onayla(o)
+        assertTrue(s.metin, s.metin.contains("2 taslağın onayı Eren servisine gönderilmek üzere sıraya alındı."))
+        temiz(s)
+    }
+
+    @Test
+    fun retGirdileriSayilirYalnizRetVarsaDaOnaySorulur() {
+        yuz.onizlemeler += plan(retGelecek = 3, retGecersiz = 1)
+        val o = akis.dosyaOku { ByteArrayInputStream(kap()) }
+        assertTrue(o.metin, o.metin.contains("• Yedekteki 3 gönderilemeyen değişiklik gönderilemeyenler listesine eklenecek\n"))
+        assertTrue(o.metin, o.metin.contains("• Yedekteki 1 gönderilemeyen değişiklik okunamadı, alınmayacak\n"))
+        temiz(o)
+
+        // Kayıtlar aynı ama ret girdisi gelecek: çekirdek onu yazar, onay sorulur.
+        val y2 = SahteYuz()
+        val a2 = AktarmaAkisi(y2, metinler)
+        y2.onizlemeler += plan(yeni = 0, guncellenecek = 0, retGelecek = 2, iz = "izr")
+        y2.iceSonuclari += IceAktarmaSonucu(true, plan(yeni = 0, guncellenecek = 0, retGelecek = 2, iz = "izr"))
+        val o2 = a2.dosyaOku { ByteArrayInputStream(kap()) }
+        assertTrue(o2.metin, o2 is AktarmaAkisi.Adim.Onay)
+        assertTrue(o2.metin, o2.metin.endsWith("Kayıtlar değişmeyecek; yalnız gönderilemeyenler listesine eklenecek."))
+        val s2 = a2.onayla(o2 as AktarmaAkisi.Adim.Onay)
+        assertEquals(
+            "Değişen kayıt olmadı.\n2 değişiklik gönderilemeyenler listesine eklendi.\n1 kayıt okunamadığı için alınmadı.",
+            s2.metin,
+        )
+        assertEquals(listOf("iceAktarmaOnizlemesi", "iceAktar:izr"), y2.cagrilar)
+
+        // Yalnız geçersiz ret girdisi: yapılacak bir şey yok.
+        val y3 = SahteYuz()
+        y3.onizlemeler += plan(yeni = 0, guncellenecek = 0, retGecersiz = 2)
+        assertTrue(AktarmaAkisi(y3, metinler).dosyaOku { ByteArrayInputStream(kap()) } is AktarmaAkisi.Adim.Bilgi)
+    }
+
+    @Test
+    fun sifirsaYeniSayilarinCumlesiYok() {
+        yuz.onizlemeler += plan()
+        yuz.iceSonuclari += IceAktarmaSonucu(true, plan())
+        val o = akis.dosyaOku { ByteArrayInputStream(kap()) } as AktarmaAkisi.Adim.Onay
+        val s = akis.onayla(o)
+        for (t in listOf(o.metin, s.metin)) {
+            for (parca in listOf("onaylan", "taslağa", "telefonda okunamayan", "telefonda okunamıyor", "gönderilemeyen")) {
+                assertFalse("$parca: $t", t.contains(parca))
+            }
+        }
+    }
+
+    @Test
+    fun disaAktarRetYedekteVeSinirAsimiSoylenir() {
+        yuz.disa = DisaAktarma(belge, 3, 0, 0, 1, CalismaKipi.YEREL, emptyList(), retYedekte = 4, iceAktarmaSiniriniAsiyor = true)
+        val a = akis.disaAktar({ ByteArrayOutputStream() })
+        assertTrue(a.metin, a is AktarmaAkisi.Adim.Bilgi)
+        assertEquals(
+            "3 kayıt yedeğe yazıldı.\n" +
+                "Gönderilemeyenler listesindeki 4 değişiklik de yedekte; içe aktarılınca o listeye geri gelir.\n" +
+                "Gönderilemeyenler listesindeki 1 değişiklik yedeğe girmedi; önce onları düzeltin ya da atın.\n" +
+                "Yedek yazıldı, ancak bu uygulama sürümünün içe aktarma sınırını aşıyor; bu sürümle geri yüklenemez.",
+            a.metin,
+        )
+        temiz(a)
+        // Sıfır ve yanlışsa cümle yok.
+        yuz.disa = DisaAktarma(belge, 3, 0, 0, 0, CalismaKipi.YEREL, emptyList())
+        assertEquals("3 kayıt yedeğe yazıldı.", akis.disaAktar({ ByteArrayOutputStream() }).metin)
+    }
+
+    @Test
+    fun icAktarmaSiniriniAsanBelgeDeYazilir() {
+        // Sahte biçimin belge sınırı 1 MiB; 2 MiB'lik belge yazılır (eskiden "çok büyük" hatasıydı).
+        val iri = "x".repeat(2 shl 20)
+        yuz.disa = DisaAktarma(iri, 1, 0, 0, 0, CalismaKipi.YEREL, emptyList(), iceAktarmaSiniriniAsiyor = true)
+        val cikti = ByteArrayOutputStream()
+        val a = akis.disaAktar({ cikti })
+        assertTrue(a.metin, a is AktarmaAkisi.Adim.Bilgi)
+        assertTrue(a.metin, a.metin.contains("geri yüklenemez"))
+        // Aynı sürümde geri okunmaz: biçim sınırı.
+        assertEquals("Dosya çok büyük; bir ajanda yedeği bu kadar büyük olamaz.", akis.dosyaOku { ByteArrayInputStream(cikti.toByteArray()) }.metin)
+    }
+
+    @Test
+    fun cekirdeginCokBuyukNedeniOnekleTaninir() {
+        val buyuk = "Dosya çok büyük; bir ajanda yedeği bu kadar büyük olamaz."
+        // Çekirdeğin gerçek nedenleri (`motor/aktarma.rs`): sayı taşır, önekle karşılaştırılır.
+        for (neden in listOf("çok büyük (en çok 64 MiB)", "çok büyük (kayıtlar dışı en çok 4 MiB)")) {
+            assertEquals(neden, buyuk, metinler.hata(CekirdekHatasi.GecersizGirdi("belge", neden), yazarken = false))
+            yuz.onizlemeler += CekirdekHatasi.GecersizGirdi("belge", neden)
+            assertEquals(buyuk, akis.dosyaOku { ByteArrayInputStream(kap()) }.metin)
+        }
+        // Başka alanın "çok büyük"ü belge sınırı değildir.
+        assertEquals("Bu dosya bir ajanda yedeği değil ya da bozuk.", metinler.hata(CekirdekHatasi.GecersizGirdi("kayitlar.3", "çok büyük"), false))
+    }
+
+    @Test
+    fun bellekButcesiAsilincaAyriMetin() {
+        val m = metinler.hata(YedekHatasi.BellekYetmez(), yazarken = false)
+        assertEquals(
+            "Dosya, telefonun şu an ayırabildiği bellek için çok büyük; açılmadı. Uygulamayı kapatıp yeniden açarak deneyin.",
+            m,
+        )
+        assertFalse(Regex("\\bPC\\b").containsMatchIn(m))
     }
 
     @Test

@@ -41,9 +41,10 @@ class CekirdekBirlestirmesi(private val c: Cekirdek) : BirlestirmeCekirdegi {
  *   eski plan kaldıysa (arada [denetle] yeni plan getirdi, görünüm yenilemedi) çekirdek uygulamaz, yeni planla
  *   yeniden [Adim.Onay] döner.
  * - [onayla]: plan önizlemeden sonra değiştiyse yeni planla yeniden [Adim.Onay]; uygulandıysa sonuç [Adim.Bilgi];
- *   çekirdek "bekleyen yok" derse kip okunur: `YEREL` ise bağlantı kopmuştur, hiçbir şey yazılmamıştır
- *   ("yeniden bağlanınca sorulacak"); `BAGLI` ise birleştirme başka bir çağrıyla uygulanmıştır ("zaten bağlı");
- *   kip de okunamazsa durum belirsizdir ve öyle söylenir. Aynı adımla ikinci onay (çift dokunma, iki iş
+ *   çekirdek "bekleyen yok" derse kip okunur: `BAGLI` ise birleştirme uygulanmıştır ("zaten bağlı"); çekirdek bu
+ *   izin daha önce uygulandığını söylediyse (`zatenUygulandi`; ör. birleştirme, sonra koparma, sonra gecikmiş onay)
+ *   kip yerel olsa da "daha önce tamamlanmıştı" denir; değilse `YEREL` bağlantı kopmuştur, hiçbir şey yazılmamıştır
+ *   ("yeniden bağlanınca sorulacak"); kip de okunamazsa durum belirsizdir ve öyle söylenir. Aynı adımla ikinci onay (çift dokunma, iki iş
  *   parçacığı) çekirdeğe gitmez, ilk onayın sonucunu yeniden döner.
  * - [vazgec]: bağlanmayı iptal eder (eşleşme silinir, kayıtlar değişmez; yeniden bağlanmak için QR).
  * - [simdiDegil]: çekirdeğe gitmez; birleştirme onay beklemeyi sürdürür ([bekleyen], [ertelendi]: görünüm
@@ -169,7 +170,7 @@ class BirlestirmeAkisi(
                 // Hiçbir şey yazılmadı (uygulandi yanlış); soru sürer, görünüm denetle ile yeniden alır.
                 Adim.Hata(metinler.hataBaslik, metinler.hata(e))
             }
-            else -> bekleyenYok(adim.iz)
+            else -> bekleyenYok(adim.iz, s.zatenUygulandi)
         }
     }
 
@@ -227,20 +228,24 @@ class BirlestirmeAkisi(
     }
 
     /**
-     * Çekirdek "onay bekleyen birleştirme yok" dedi (`uygulandi` yanlış, `plan` yok): ya bağlantı koptu (hiçbir şey
-     * yazılmadı) ya da birleştirme başka bir çağrıyla uygulandı (kip bağlı). Bugünkü köprü ikisini ayırmaz; kip
-     * okunarak ayrılır. Çekirdek "zaten uygulandı" bilgisini verince bu okuma o alanla değişir.
+     * Çekirdek "onay bekleyen birleştirme yok" dedi (`uygulandi` yanlış, `plan` yok).
+     * - [zatenUygulandi] (köprünün `BirlestirmeSonucu.zatenUygulandi`): bu iz daha önce uygulandı (gecikmiş ya da
+     *   ikinci onay). Birleştirme yapılmıştır; "koptu" denmez. Kip yine okunur: bağlıysa "zaten bağlı", değilse
+     *   (birleştirmeden sonra bağlantı koparılmış, kip yerel) ya da okunamazsa yalnız "daha önce tamamlanmıştı".
+     * - Değilse ya bağlantı koptu (hiçbir şey yazılmadı; kip yerel) ya da birleştirme başka bir izle uygulandı
+     *   (kip bağlı); kip okunamazsa durum belirsizdir.
      */
-    private fun bekleyenYok(iz: String): Adim.Bilgi {
+    private fun bekleyenYok(iz: String, zatenUygulandi: Boolean): Adim.Bilgi {
         val kip = try {
             c.kip()
         } catch (_: Exception) {
             null
         }
-        return when (kip) {
-            CalismaKipi.BAGLI -> Adim.Bilgi(metinler.zatenBaslik, metinler.zaten).also { hal = Hal.Uygulandi(setOf(iz), it) }
-            CalismaKipi.YEREL -> Adim.Bilgi(metinler.koptuBaslik, metinler.koptu).also { hal = Hal.Yok }
-            null -> Adim.Bilgi(metinler.belirsizBaslik, metinler.belirsiz).also { hal = Hal.Yok }
+        return when {
+            kip == CalismaKipi.BAGLI -> Adim.Bilgi(metinler.zatenBaslik, metinler.zaten).also { hal = Hal.Uygulandi(setOf(iz), it) }
+            zatenUygulandi -> Adim.Bilgi(metinler.oncedenBaslik, metinler.onceden).also { hal = Hal.Uygulandi(setOf(iz), it) }
+            kip == CalismaKipi.YEREL -> Adim.Bilgi(metinler.koptuBaslik, metinler.koptu).also { hal = Hal.Yok }
+            else -> Adim.Bilgi(metinler.belirsizBaslik, metinler.belirsiz).also { hal = Hal.Yok }
         }
     }
 
