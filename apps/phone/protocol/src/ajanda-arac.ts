@@ -938,8 +938,9 @@ export type AjandaKopruIstek = z.infer<typeof AjandaKopruIstek>;
 /**
 /**
  * İlk mesaj. Rol, sohbet ve nesil yalnız jetondan türer. İki isteğe bağlı alan "zengin hello"dur; alanı tanımayan
- * eski servis zengin hello'yu katı şemasıyla reddeder, köprü BİR KEZ alansız (düz) hello'ya düşer (tek düşüş yolu:
- * `server/src/kopru.ts` `helloEki`). Düz hello'da ikisi de yoktur.
+ * eski servis zengin hello'yu katı şemasıyla reddeder, köprü basamak basamak iner (`server/src/kopru.ts` `helloEki`): `pc_oturumu`
+ * `{surec_id, arac_v3}` → `{surec_id}` → `{}`, `ana_oturum` `{arac_v3}` → `{}`; her basamak döngü başına en çok bir kez.
+ * `surec_id`'yi tanıyan servis T5'i korur. Son basamak düz hello'dur: ikisi de yoktur.
  * - `surec_id` (YALNIZ `pc_oturumu`): köprünün harness süreci (Claude: köprünün `process.ppid`'i); servis onu
  *   bağlantıya yazar, T5 tasdikin `surec_id`'siyle karşılaştırır. Öbür rollerde alan şemadan geçmez.
  * - `arac_v3` (yalnız `true`): köprü v3 araç yüzünü ister ve `kopru_welcome.arac_v3`'ü çözebilir. Bunu yollamayan
