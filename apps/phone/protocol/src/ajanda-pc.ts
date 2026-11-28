@@ -158,9 +158,9 @@ export const pcKancaYukariCoz = (ham: string) => cozumle(PcKancaYukari, ham, AJA
  *   değil ya da çalışmadı; servise ulaşamadı ya da süresi doldu; tasdik `TASDIK_OMRU_DK`'dan eski, zaten
  *   kullanıldı ya da servis arada yeniden başladı). Tasdik var ama bu köprünün oturumuna bağlanamıyorsa
  *   (T5: başka bir köprüye bağlı harness sürecinin ya da oturumun tasdiki; tasdik tüketilmez, sahibi
- *   kullanabilir) ya da insan turu için yeterli değilse (bilinmeyen uyarlayıcı ya da sürüm, `aktor` ya da
- *   `etkilesim` `bilinmiyor`) de budur: yeni karar değeri eski köprünün şemasından geçmezdi. Neden
- *   günlükte ayrıdır (`pc_oturum_uyusmuyor`, `pc_tasdik_yetersiz`).
+ *   kullanabilir; süreç eşitliği tutmaz) ya da insan turu için yeterli değilse (bilinmeyen uyarlayıcı ya da
+ *   sürüm, `aktor` ya da `etkilesim` `bilinmiyor`) de budur: yeni karar değeri eski köprünün şemasından
+ *   geçmezdi. Neden günlükte ayrıdır (`pc_surec_uyusmuyor`, `pc_tasdik_yetersiz`).
  * - `alt_agent`: tasdik çağrının bir alt agent'tan geldiğini söylüyor.
  * - `etkilesimsiz`: tasdik çağrının etkileşimsiz bir oturumdan (`-p`, Agent SDK) geldiğini söylüyor.
  * - `insan`: tasdikli, ana ajanın, etkileşimli oturumun çağrısı.
