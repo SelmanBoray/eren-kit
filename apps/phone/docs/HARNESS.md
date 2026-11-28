@@ -285,14 +285,34 @@ eşleşiyor (T5) ∧ `aktor = ana` ∧ `etkilesim = etkilesimli`. Diğer her şe
       `rol_fiil_izinsiz`'dir, alanla ilgili değildir, basamak indirmez.
     - Üst basamak yoklaması: alt basamağa yanıtsız kapanışla inilip bağlantı kurulduysa iniş belirsizdir (servis o an
       kapanıyor olabilir). PC köprüsü bu bağlantıyı boştayken bir kez kapatıp en üst basamaktan yeniden dener
-      (`zengin_hello_yoklamasi`). Yoklama en üst basamak karşılanana dek yinelenmez. Köprü günlüğünde ayrıca
-      `el_sikisma_zaman_asimi` ve `zengin_hello_gec_bitti` olayları vardır.
-    - Kilit koşulu (ölçülen): MCP `initialize` ilk denemenin karşılamasını en çok 3 sn bekler. Daraltmadan sonra yüzün
-      süreç boyu v2'ye kilitlenmesi için bu 3 sn içinde iki ardışık yanıtsız kapanış ve ardından `{surec_id}`'nin
-      kabulü gerekir; tek yanıtsız kapanış kilitlemez. Bu kilitte süreç eşitliği korunur (bağlantı `{surec_id}` ile
-      kurulmuştur). Süreçsiz bağlantı ancak en alt basamağa (`{}`) inilirse oluşur; PC köprüsünde yoklama onu düzeltir. 3600780 servisinde ret satırı kapanışla düşerse
-      tek bir kapanış anı yanıtsızlığı yeter. Kilit oluşursa yoklama `surec_id`'yi ve `uyarlayici`'yı geri getirir; v3
-      yüzü süreç boyu v2 kalır.
+      (`zengin_hello_yoklamasi`). Köprü günlüğünde ayrıca `el_sikisma_zaman_asimi` ve `zengin_hello_gec_bitti` olayları
+      vardır.
+      - Yoklama kapattığı bağlantıyı hemen bırakır (deneme sürer). Node'da `destroy`'un `close` olayı olay döngüsünün
+        kapanış evresinde gelir (gerçek adlı boruda ölçüldü: mikro görev, `nextTick` ve `setImmediate`'ten sonra).
+        Eskiden bu arada gelen çağrı yok edilmiş sokete gidiyor, istek hiç yazılmadığı hâlde "belirsiz" dönüyordu;
+        şimdi yeni bağlantıyı bekler ve doğru sonucu alır (gerçek soketli test). Köprünün kendi kapattığı her bağlantı
+        (ret, geçersiz çerçeve, anahtar iptali) aynı biçimde bırakılır.
+      - Yoklama hakkı en üst basamak karşılanınca ya da döngü olağan beklemeye düşünce geri gelir. Olağan bekleme
+        yalnız bağlantı köprünün yoklaması dışında bir nedenle bittiğinde ya da hiç kurulamadığında gelir; servisin
+        yeniden başlaması (güncelleme dahil) bağlantıyı her zaman böyle bitirir. Böylece eski serviste harcanan hak,
+        servis güncellenince geri gelir: yeniden başlama anındaki tek yanıtsız kapanış bağlantıyı alt basamakta
+        bırakmaz. Döngü olmaz: her yoklama bir dış bitişle ödenir; ret satırı düşen eski serviste dış bitiş başına en
+        çok bir yoklama (iki ek bağlantı) olur. Servis kimliği ölçütü seçilmedi, çünkü eski servisler kimlik bildirmez.
+        Süre ölçütü de seçilmedi: eski serviste dış olay olmadan dönemsel yeniden bağlanma üretir, güncellemeyi de geç
+        fark eder.
+    - Kilit koşulu (ölçülen): MCP `initialize` ilk denemenin karşılamasını en çok 3 sn bekler. Yüz süreç boyu v2'ye
+      ancak bu 3 sn içindeki ilk karşılama `arac_v3`'süz bir basamakta (`{surec_id}` ya da `{}`) gelirse kilitlenir.
+      Bunun için `arac_v3` taşıyan iki basamağın ikisi de hello'dan 5 sn içinde gerçek bitişle bitmelidir; bitişin
+      açık `yetkisiz` mi yanıtsız kapanış mı olduğu fark etmez. Servise göre:
+      - Yeni servis iki basamağın alanlarını da tanır; ikisi de ancak geçici yanıtsız kapanışla biter. Kilit için iki
+        ardışık yanıtsız kapanış ve ardından `{surec_id}`'nin kabulü gerekir; tek yanıtsız kapanış kilitlemez.
+      - 3600780 `uyarlayici`'yı tanımaz, en üst basamağı her zaman bitirir: açık retle de, ret satırı kapanışla
+        düşerek de. `{surec_id, arac_v3}`'ün tek bir geçici yanıtsız kapanışı yeter.
+      - d7bf303 ve 5c6759f `arac_v3`'ü hiç tanımaz: yüz orada zaten v2'dir, kilit servisin gerçeğidir. Servis sonra
+        güncellense de yüz süreç boyu v2 kalır.
+      - Hepsinde süreç eşitliği korunur (bağlantı `{surec_id}` ile kurulur). Süreçsiz bağlantı ancak `{}`'e inilirse
+        oluşur; yanıtsız kapanışla inildiyse yoklama onu düzeltir. Kilit oluşursa yoklama `surec_id`'yi, yeni
+        serviste `uyarlayici`'yı da geri getirir; v3 yüzü süreç boyu v2 kalır.
     - Yeni alan `cagri`'ya konmaz: eski servisin `AjandaPcCagri`'sı katıdır. Eski köprünün düz hello'su yeni serviste geçer.
   - Sarmalayıcı: köprüyü `cmd /c`, `npx` ya da `sh -c` başlatırsa ebeveyn harness olmaz ve o pencerenin kayıtları hep
     taslak doğar. Bu güvenli yöndür. `--teshis` bunu `pc_surec_uyusmuyor` adıyla "köprünün ebeveyni harness süreci
@@ -325,8 +345,16 @@ eşleşiyor (T5) ∧ `aktor = ana` ∧ `etkilesim = etkilesimli`. Diğer her şe
     oturum", eski köprü dalı bunu kabul olarak sabitler). Dürüst köprü başka sürecin çağrı kimliğini bilemez, bu yüzden
     durum güven modelinin içinde kalır. Güncellemeden önce açılmış oturumlarla sınırlı değildir. Güncel köprü de
     yukarıdaki kilit koşulunda süreç bildirmeden bağlanabilir. Yoklama o bağlantıyı bir kez kapatıp `surec_id`'yi
-    geri getirir; yoklama da yanıtsız kalırsa bağlantı yoklanmadan alt basamakta kalır. Pencereyi yeniden açmak ya da
-    `/mcp` yeni bağlantı açar, ama düşüş orada da yinelenebilir. Süreç bildiren bağlantıda bu açık yoktur.
+    geri getirir. Yoklama da yanıtsız kalırsa bağlantı, servis onu bitirene dek yoklanmadan alt basamakta kalır;
+    servisin yeniden başlaması hakkı geri verir. Pencereyi yeniden açmak ya da `/mcp` yeni bağlantı açar, ama düşüş
+    orada da yinelenebilir. Süreç bildiren bağlantıda bu açık yoktur.
+  - Güncellemede eski servis hâlâ çalışıyorken açılan köprü (5c6759f) açık retlerle `{}`'e iner. Bu iniş belirsiz
+    değildir (servis alanları gerçekten tanımıyor), yoklama yapılmaz. Bağlantı eski servis çalıştığı sürece
+    süreçsizdir, T5 yalnız bağlantı içinde geçerlidir (yukarıdaki madde). Bu `initialize`'da olduysa yüz süreç boyu
+    v2'ye kilitlenir. Eski servis güncelleme için durunca bağlantı biter, olağan beklemeyle yoklama hakkı ve merdiven
+    baştan gelir. Yeni servis kilitli merdivenin en üstünü (`{surec_id, uyarlayici}`) kabul eder; süreç ve uyarlayıcı
+    geri gelir, yüz v2 kalır. Yeniden başlama anında yanıtsız kapanışla alt basamağa inilirse geri gelen yoklama
+    bunu düzeltir. d7bf303 ise `{surec_id}`'ye iner, süreç eşitliği orada da korunur.
   - Süreç beyanı köprünündür. Anahtarı olan bir istemci başka bir süreci beyan edebilir. Bu, bugünkü güven modelinin
     (sınır işletim sistemi kullanıcısı, `GUVENLIK.md`) içindedir. T5 kötü niyetli anahtar sahibine karşı değil,
     süreçler arası karışmaya karşı bir bağdır. Aynı süreçteki oturumlar (aynı `CLAUDE_PID`) birbirinden ayrılmaz.

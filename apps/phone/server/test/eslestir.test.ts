@@ -29,6 +29,7 @@ import {
   pcTeshisMetni,
   pcYonergeMetni,
   TESHIS_KARAR_METNI,
+  CLAUDE_CAGRI_KIMLIGI_YOK_NEDENLERI,
   VARSAYILAN_PC_AJANI,
 } from "../src/eslestir.ts";
 import type { PcAjaniModulu, PcAjanKaydi } from "../src/eslestir.ts";
@@ -778,10 +779,26 @@ describe("eslestir --pc-ajan: uyarlayıcı seçimi", () => {
       }
     });
 
-    it("Claude'un kendi cagri_kimligi_yok'u kesin söylenir; ayrımsız (eski) günlükte başka PC ajanı ihtimali anılır", () => {
-      const kesin = ozetBolumu(pcTeshisMetni([arac("cagri_kimligi_yok", "claude-code")], z, kurulu));
-      assert.match(kesin, /son PC araç kararı: cagri_kimligi_yok \(kayıtlar TASLAK doğuyor: Claude Code çağrı kimliğini MCP isteğinde göndermiyor \(sürüm farkı\); kanca bunu düzeltemez/);
-      assert.equal(kesin.includes("başka bir PC ajanından"), false);
+    it("claude-code diye bildirilen cagri_kimligi_yok beyana dayanır: kesin hüküm yok, olası nedenler sırayla; ayrımsız (eski) günlükte başka PC ajanı ihtimali anılır", () => {
+      // Codex'i --uyarlayici'sız kaydedilmiş köprü de claude-code der: teşhis "sürüm farkı"nı kesin söyleyemez.
+      const beyan = ozetBolumu(pcTeshisMetni([arac("cagri_kimligi_yok", "claude-code")], z, kurulu));
+      assert.ok(
+        beyan.endsWith(
+          "  son PC araç kararı: cagri_kimligi_yok (kayıtlar TASLAK doğuyor; nedeni kesin değil, olası nedenler aşağıda)\n" +
+            "Olası nedenler (ajan köprünün kendi beyanı: uyarlayici=claude-code, doğrulanmadı; olasıdan başlayarak):\n" +
+            "  - Claude Code çağrı kimliğini MCP isteğinde göndermiyor (sürüm farkı); kanca bunu düzeltemez, kayıtları uygulamadan onaylayın.\n" +
+            "  - köprü başka bir harness (ör. Codex CLI) için --uyarlayici bayrağı olmadan kaydedilmiş: bayraksız köprü kendini claude-code " +
+            "diye bildirir. O harness'in kaydını yönergesiyle karşılaştırın (eslestir --pc-ajan <ad> --yonerge).\n" +
+            "  - başka bir neden; günlük bunları ayırt edemez.\n",
+        ),
+        beyan,
+      );
+      // Kesin dil yok: "sürüm farkı" yalnız ilk olası neden olarak, karar satırında değil.
+      assert.equal(/cagri_kimligi_yok \([^\n]*sürüm farkı/.test(beyan), false, beyan);
+      assert.deepEqual(CLAUDE_CAGRI_KIMLIGI_YOK_NEDENLERI.length, 3);
+      // Kurulum bilinmese de aynı; öteki ajan satırları nedenlerden sonra.
+      const karisik = ozetBolumu(pcTeshisMetni([arac("cagri_kimligi_yok", "codex"), arac("cagri_kimligi_yok", "claude-code")]));
+      assert.match(karisik, /- başka bir neden; günlük bunları ayırt edemez\.\nÖteki PC ajanlarının çağrıları/);
       const eski = ozetBolumu(pcTeshisMetni([arac("cagri_kimligi_yok")], z, kurulu));
       assert.match(eski, /^Sınama \(AJANDA\.md "Kurulumdan sonra sınama"\):\n/);
       assert.ok(eski.includes(`son PC araç kararı: cagri_kimligi_yok (${TESHIS_KARAR_METNI.cagri_kimligi_yok})\n`), eski);
@@ -806,6 +823,41 @@ describe("eslestir --pc-ajan: uyarlayıcı seçimi", () => {
         }
         assert.match(m, /^Kurulum \(Codex CLI\): yalnız taslak\. Araç öncesi kanca yok ve kurulmaz/);
       }
+    });
+
+    it("codex diye bildirilen çağrı insan aldıysa Codex teşhisi yumuşatmadan uyarır: doğru kurulmuş Codex köprüsü bunu üretemez", async () => {
+      const g = await codex();
+      const m = pcTeshisMetni([tasdik, arac("insan", "codex"), arac("insan", "claude-code")], z, undefined, g);
+      const o = ozetBolumu(m);
+      assert.ok(
+        o.includes(
+          "  Codex CLI çağrısı: 1\n" +
+            "  son PC araç kararı: insan (UYARI: kayıt DOĞRUDAN, taslaksız yazıldı; Codex CLI köprüsü çağrı kimliği okumaz, bu kararı üretemez)\n" +
+            "UYARI (Codex CLI): codex diye bildirilen 1 çağrı kaydı DOĞRUDAN (taslaksız) yazdı.\n" +
+            "  Doğru kurulmuş bir Codex CLI köprüsü çağrı kimliği okumaz; bu kaydı üretemez. Bu bir kurulum ayrıntısı değil, denetlenmeli:\n" +
+            "  - --uyarlayici codex ile kaydedilmiş köprüler: Codex CLI dışında bir harness'te (ör. Claude Code) bu bayrakla kayıt\n" +
+            "    var mı; Codex CLI'nin kaydını yönergesiyle karşılaştırın (eslestir --pc-ajan codex --yonerge).\n" +
+            "  - ajanda anahtarını kullanan başka bir süreç (anahtar bütün PC ajanlarında ortaktır). Şüphe varsa anahtarı\n" +
+            "    yenileyin (eslestir --pc-ajan codex) ve doğrudan yazılan kayıtları telefonda gözden geçirin.\n" +
+            "Öteki PC ajanlarının çağrıları (yukarıdaki özete girmedi):\n",
+        ),
+        o,
+      );
+      assert.equal(/sürümden olabilir|olabilir\)/.test(o), false, o);
+      // Son karar cagri_kimligi_yok olsa da daha önceki doğrudan kayıt uyarıyı korur (sayı bütün codex çağrılarından).
+      const sonra = ozetBolumu(pcTeshisMetni([arac("insan", "codex"), arac("insan", "codex"), arac("cagri_kimligi_yok", "codex")], z, undefined, g));
+      assert.match(sonra, /son PC araç kararı: cagri_kimligi_yok \(kayıt TASLAK doğdu: beklenen, telefondan onaylayın\)\nUYARI \(Codex CLI\): codex diye bildirilen 2 çağrı kaydı DOĞRUDAN/);
+      // Öteki beklenmeyen kararlar (taslak doğar) da yumuşatılmaz, ama UYARI bloğu yalnız doğrudan kayıtta.
+      const tasdiksiz = ozetBolumu(pcTeshisMetni([arac("tasdik_yok", "codex")], z, undefined, g));
+      assert.match(tasdiksiz, /son PC araç kararı: tasdik_yok \(beklenmeyen: Codex CLI köprüsü çağrı kimliği okumaz; bu karar doğru kurulmuş bir Codex CLI köprüsünden gelemez, köprünün kaydını denetleyin\)\n/);
+      assert.equal(tasdiksiz.includes("UYARI"), false, tasdiksiz);
+      // Metin ve kimlik sızmaz: oturum kimliği yalnız olay satırlarında kısaltılmış.
+      assert.equal(m.includes(OTURUM), false);
+      assert.equal(o.includes("3f2a1b"), false, o);
+      // Ayrımsız (eski) günlükte bugünkü metin: UYARI yok, ajan bilinmediğinden başka ajana yönlendirir.
+      const eski = ozetBolumu(pcTeshisMetni([arac("insan")], z, undefined, g));
+      assert.equal(eski.includes("UYARI"), false, eski);
+      assert.match(eski, /son PC araç kararı: insan \(bir Codex CLI çağrısının kararı değil:/);
     });
 
     it("ajanı bilinmeyen çağrı (alan yok) ayrımlı günlükte ayrı söylenir, kesin neden yok; Claude özetine girmez", () => {

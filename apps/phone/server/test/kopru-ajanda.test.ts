@@ -55,6 +55,7 @@ import { pcDefteriKur } from "../src/ajanda-pc.ts";
 import { depoKur } from "../src/depo.ts";
 import {
   ajandaKopruCalistir,
+  boruyaBaglan,
   CLAUDE_CODE_ARAC_KIMLIGI,
   kopruCalistir,
   PC_ANAHTAR_GECERSIZ_METNI,
@@ -1270,7 +1271,8 @@ describe("kopru PC köprüsü: hello merdiveni (surec_id, arac_v3, uyarlayici) v
    * ret; `v3Acik` (3600780 ve yeni): `arac_v3` isteyene `kopru_welcome{arac_v3:true}`. Geçici hatalar: ilk `asili`
    * bağlantının hello'su hiç yanıt almaz (servis takıldı; `s.retVer` o bağlantıya geç ret yazıp kapatır), ilk
    * `yanitsiz` bağlantı hello'dan sonra yanıtsız kapanır (servis kapanıyor). `istekTut`: yanıtlar `s.tutulan`'da
-   * bekler. `s.yok`: boru yok (bağlantı açılamaz).
+   * bekler. `s.yok`: boru yok (bağlantı açılamaz). `s.yanitsizSonraki`: sıradaki bu kadar bağlantı hello'dan sonra
+   * yanıtsız kapanır. `sec` canlıdır: test servisi "günceller" (ör. `sec.sema` değişir, `s.kapat` ile yeniden başlar).
    */
   const pcServisi = (sec: {
     sema: Sema;
@@ -1279,15 +1281,18 @@ describe("kopru PC köprüsü: hello merdiveni (surec_id, arac_v3, uyarlayici) v
     v3Acik?: boolean;
     asili?: number;
     yanitsiz?: number;
+    /** Bu sıradaki bağlantılar hello'dan sonra yanıtsız kapanır (ör. `[2]`: yalnız ikinci). */
+    yanitsizSiralar?: readonly number[];
     istekTut?: boolean;
   }) => {
-    const coz = semaCoz(sec.sema);
+    const coz = (x: string) => semaCoz(sec.sema)(x);
     const s = {
       olaylar: [] as Olay[],
       hamHellolar: [] as string[],
       hamIstekler: [] as string[],
       baglantiSayisi: 0,
       yok: false,
+      yanitsizSonraki: 0,
       kapat: (): void => {},
       retVer: (_code: string): void => {},
       tutulan: [] as Array<() => void>,
@@ -1326,7 +1331,11 @@ describe("kopru PC köprüsü: hello merdiveni (surec_id, arac_v3, uyarlayici) v
               s.hamHellolar.push(x);
               s.olaylar.push({ hello: basamak(ham) });
               if (sira <= (sec.asili ?? 0)) return;
-              if (sira <= (sec.yanitsiz ?? 0)) return kapat();
+              if (sira <= (sec.yanitsiz ?? 0) || sec.yanitsizSiralar?.includes(sira) === true) return kapat();
+              if (s.yanitsizSonraki > 0) {
+                s.yanitsizSonraki -= 1;
+                return kapat();
+              }
               const c = coz(x);
               const red = !c.ok || c.mesaj.type !== "kopru_hello" ? "yetkisiz" : (sec.hepsiniReddet ?? null);
               if (red !== null) {
@@ -1622,6 +1631,25 @@ describe("kopru PC köprüsü: hello merdiveni (surec_id, arac_v3, uyarlayici) v
     assert.ok(!hataMi(await istemci.callTool({ name: "ajanda_listele", arguments: {} })));
   });
 
+  it("geç bitiş, ret satırsız (takılan servis hello'dan 5 sn sonra yanıtsız kapanır): iniş yok, yoklama kurulmaz; olağan bekleme, sonraki hello yine en üstten", async () => {
+    const z = elleZamanlayici();
+    const g = sahteGunluk();
+    const { s, baglan } = pcServisi({ sema: "yeni", v3Acik: true, asili: 1 });
+    const ac = pcKopruAc(baglan, s.olaylar, SUREC, undefined, { gunluk: g, zamanla: z.zamanla });
+    await sureyleBekle(() => s.hamHellolar.length === 1 && z.acik(GEC).length === 1, "takılan hello");
+    z.tetikle(GEC);
+    s.kapat();
+    const istemci = await ac;
+    await sureyleBekle(() => g.bul("boru_baglandi").length === 1, "yeniden bağlanma");
+    assert.deepEqual(helloSirasi(s.olaylar), ["s+v3+u", "B", "s+v3+u"]);
+    assert.equal(g.bul("zengin_hello_reddedildi").length, 0);
+    assert.deepEqual(g.bul("zengin_hello_gec_bitti").map((x) => x.alanlar), [{ code: "yanitsiz", basamak: "arac_v3+surec_id+uyarlayici" }]);
+    assert.equal(g.bul("boru_reddedildi").length, 0, "ret satırı yoktu");
+    assert.equal(z.acik(YOKLAMA).length, 0, "geç bitiş belirsiz iniş değildir");
+    assert.deepEqual(istemci.getServerCapabilities()?.tools, { listChanged: true }, "yüz kilitlenmedi");
+    assert.ok(!hataMi(await istemci.callTool({ name: "ajanda_listele", arguments: {} })));
+  });
+
   it("yanıtsız kapanış yeni serviste (servis kapanırken): bir basamak inilir; bağlantı boştayken bir kez kapatılıp en üst basamak yeniden denenir, uyarlayıcı geri gelir; yoklama yinelenmez", async () => {
     const z = elleZamanlayici();
     const g = sahteGunluk();
@@ -1662,7 +1690,21 @@ describe("kopru PC köprüsü: hello merdiveni (surec_id, arac_v3, uyarlayici) v
     assert.equal(z.acik(YOKLAMA).length, 0);
   });
 
-  it("eski servis (5c6759f, ret satırı düştü): belirsiz inişin yoklaması tek seferlik; ikinci düz bağlantı açık kalır, servis yeniden başlasa da döngü yok", async () => {
+  for (const retDuser of [false, true]) {
+    it(`ölçüm (v2 kilidi, 3600780, ${retDuser ? "ret satırı düştü" : "açık ret"}): en üst basamak her hâlde biter; {surec_id, arac_v3}'ün tek yanıtsız kapanışı ve {surec_id} kabulü yüzü kilitler, süreç korunur, yoklama kurulur`, async () => {
+      const z = elleZamanlayici();
+      const g = sahteGunluk();
+      const { s, baglan } = pcServisi({ sema: "3600780", v3Acik: true, retDuser, yanitsizSiralar: [2] });
+      const istemci = await pcKopruAc(baglan, s.olaylar, SUREC, undefined, { gunluk: g, zamanla: z.zamanla });
+      await sureyleBekle(() => s.baglantiSayisi === 3 && g.bul("boru_baglandi").length === 1 && z.acik(YOKLAMA).length === 1, "iniş");
+      assert.deepEqual(helloSirasi(s.olaylar), ["s+v3+u", "s+v3", "s"]);
+      assert.deepEqual(g.bul("zengin_hello_reddedildi").map((x) => x.alanlar?.["code"]), [retDuser ? "yanitsiz" : "yetkisiz", "yanitsiz"]);
+      assert.deepEqual(istemci.getServerCapabilities()?.tools, {}, "kilit: arac_v3'süz basamak initialize'da karşılandı");
+      assert.equal(hamAlan(s.hamHellolar[2]!, "surec_id"), SUREC);
+    });
+  }
+
+  it("eski servis (5c6759f, ret satırı düştü): belirsiz inişin yoklaması dış bitiş başına tek seferlik; ikinci düz bağlantı açık kalır; servis yeniden başlayınca hak bir kez geri gelir, döngü yok", async () => {
     const z = elleZamanlayici();
     const g = sahteGunluk();
     const { s, baglan } = pcServisi({ sema: "5c6759f", retDuser: true });
@@ -1676,11 +1718,47 @@ describe("kopru PC köprüsü: hello merdiveni (surec_id, arac_v3, uyarlayici) v
     assert.equal(z.acik(YOKLAMA).length, 0);
     assert.equal(g.bul("zengin_hello_yoklamasi").length, 1);
     assert.ok(!hataMi(await istemci.callTool({ name: "ajanda_listele", arguments: {} })));
-    // Servis yeniden başladı: olağan döngü, yoklama yine yok (en üst basamak hiç karşılanmadı).
+    // Servis yeniden başladı (yine eski): olağan bekleme yoklama hakkını geri verir (servis güncellenmiş olabilir).
+    // Dış bitiş başına en çok bir yoklama; sonra bağlantı açık kalır, döngü yok.
     s.kapat();
-    await sureyleBekle(() => s.baglantiSayisi === 10 && g.bul("boru_baglandi").length === 3, "yeniden bağlanma");
+    await sureyleBekle(() => s.baglantiSayisi === 10 && g.bul("boru_baglandi").length === 3 && z.acik(YOKLAMA).length === 1, "yeniden bağlanma");
     assert.deepEqual(helloSirasi(s.olaylar).slice(7), ["B", "s+u", "s", "duz"]);
+    z.tetikle(YOKLAMA);
+    await sureyleBekle(() => s.baglantiSayisi === 13 && g.bul("boru_baglandi").length === 4, "ikinci yoklama");
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal(s.baglantiSayisi, 13, "yoklama yinelenmez");
+    assert.deepEqual(helloSirasi(s.olaylar).slice(7), ["B", "s+u", "s", "duz", "s+u", "s", "duz"]);
     assert.equal(z.acik(YOKLAMA).length, 0);
+    assert.equal(g.bul("zengin_hello_yoklamasi").length, 2, "dış bitiş başına bir yoklama");
+    assert.equal(g.bul("boru_koptu").length, 1, "kopuş yalnız servisin yeniden başlaması");
+  });
+
+  it("eski servisten yeni servise güncelleme: eski serviste harcanan yoklama hakkı servisin yeniden başlamasıyla geri gelir; yeniden başlama anındaki tek yanıtsız kapanıştan sonra bağlantı yine yoklanır, uyarlayıcı geri gelir", async () => {
+    const z = elleZamanlayici();
+    const g = sahteGunluk();
+    const sec: Parameters<typeof pcServisi>[0] = { sema: "5c6759f", retDuser: true };
+    const { s, baglan } = pcServisi(sec);
+    const istemci = await pcKopruAc(baglan, s.olaylar, SUREC, undefined, { gunluk: g, zamanla: z.zamanla });
+    await sureyleBekle(() => s.baglantiSayisi === 4 && z.acik(YOKLAMA).length === 1, "iniş");
+    z.tetikle(YOKLAMA);
+    await sureyleBekle(() => s.baglantiSayisi === 7 && g.bul("boru_baglandi").length === 2, "yoklama harcandı");
+    await bosalt(10);
+    assert.equal(z.acik(YOKLAMA).length, 0, "eski serviste yoklama yinelenmez");
+    // Kullanıcı servisi günceller: eski servis kapanır (bağlantı biter); yeni servis açılırken ilk hello yanıtsız kapanır.
+    sec.sema = "yeni";
+    sec.retDuser = false;
+    sec.v3Acik = true;
+    s.yanitsizSonraki = 1;
+    s.kapat();
+    await sureyleBekle(() => s.baglantiSayisi === 9 && g.bul("boru_baglandi").length === 3 && z.acik(YOKLAMA).length === 1, "yeni serviste belirsiz iniş ve yoklama");
+    assert.deepEqual(helloSirasi(s.olaylar).slice(7), ["B", "s+u", "s"], "yüz initialize'da v2'ye kilitlendi: merdiven {surec_id, uyarlayici}'dan");
+    z.tetikle(YOKLAMA);
+    await sureyleBekle(() => s.baglantiSayisi === 10 && g.bul("boru_baglandi").length === 4, "yoklama");
+    assert.deepEqual(helloSirasi(s.olaylar).slice(7), ["B", "s+u", "s", "s+u"]);
+    assert.equal(hamAlan(s.hamHellolar[9]!, "uyarlayici"), "claude-code");
+    assert.equal(hamAlan(s.hamHellolar[9]!, "surec_id"), SUREC);
+    assert.equal(z.acik(YOKLAMA).length, 0, "en üst basamak karşılandı");
+    assert.ok(!hataMi(await istemci.callTool({ name: "ajanda_listele", arguments: {} })));
   });
 
   for (const sema of ["5c6759f", "d7bf303", "3600780"] as const) {
@@ -1758,6 +1836,82 @@ describe("kopru PC köprüsü: hello merdiveni (surec_id, arac_v3, uyarlayici) v
     z.tetikle(YOKLAMA);
     await sureyleBekle(() => s.baglantiSayisi === 3 && g.bul("boru_baglandi").length === 2, "yoklama");
     assert.equal(hamAlan(s.hamHellolar[2]!, "uyarlayici"), "claude-code");
+  });
+
+  /**
+   * Gerçek soket (`boruyaBaglan`) ve yalıtılmış sahte boru sunucusu. Ölçüldü (Node 24.22.1, Windows adlı boru, 20/20):
+   * `destroy`'dan sonra `close` olayı mikro görevden, `nextTick`'ten ve `setImmediate`'ten sonra, kapanış evresinde
+   * gelir; arada `write` yazmaz (`ERR_STREAM_DESTROYED`). Bellek içi sahte boru kapanışı mikro görevle verdiği için bu
+   * aralığı göremez. Yoklama bu aralıkta "hazır" bağlantıyı bırakmazsa çağrı yok edilmiş sokete gider, hiç yazılmadığı
+   * hâlde "belirsiz" döner.
+   */
+  it("gerçek soket: yoklama bağlantıyı kapatırken gelen çağrı yeni bağlantıyı bekler ve doğru sonucu alır (belirsiz değil); istek yalnız yeni bağlantıya yazılır", async () => {
+    const z = elleZamanlayici();
+    const g = sahteGunluk();
+    const kimlik = randomBytes(8).toString("hex");
+    const ad = process.platform === "win32" ? `\\\\.\\pipe\\eren-ajanda-yoklama-${kimlik}` : join(tmpdir(), `eren-ajanda-yoklama-${kimlik}.sock`);
+    assert.notEqual(ad, AJANDA_BORU_ADI);
+    const baglantilar: Array<{ hello: Basamak | null; istekler: number; gecersiz: number; soket: Socket }> = [];
+    const sunucu = createServer((soket) => {
+      const b = { hello: null as Basamak | null, istekler: 0, gecersiz: 0, soket };
+      baglantilar.push(b);
+      const sira = baglantilar.length;
+      soket.on("error", () => {});
+      const yolla = (m: Record<string, unknown>): void => void soket.write(JSON.stringify({ v: PROTOKOL_SURUMU, ...m }) + "\n");
+      let tampon = "";
+      soket.on("data", (v: Buffer) => {
+        tampon += v.toString("utf8");
+        for (let i = tampon.indexOf("\n"); i !== -1; i = tampon.indexOf("\n")) {
+          const satir = tampon.slice(0, i);
+          tampon = tampon.slice(i + 1);
+          const c = ajandaKopruYukariCoz(satir);
+          if (!c.ok) {
+            b.gecersiz += 1;
+            continue;
+          }
+          const m = c.mesaj;
+          if (m.type === "kopru_hello") {
+            b.hello = basamak(JSON.parse(satir) as Record<string, unknown>);
+            // İlk bağlantı: servis kapanıyor (hello'dan sonra yanıtsız kapanış).
+            if (sira === 1) return void soket.destroy();
+            yolla({ type: "kopru_welcome", rol: "pc_oturumu", ...(m.arac_v3 === true ? { arac_v3: true } : {}) });
+          } else if (m.type === "istek") {
+            b.istekler += 1;
+            yolla({ type: "yanit", istek_id: m.istek_id, ok: true, sonuc: PC_LISTE });
+          }
+        }
+      });
+    });
+    await new Promise<void>((c, r) => {
+      sunucu.once("error", r);
+      sunucu.listen(ad, () => c());
+    });
+    const olaylar: Olay[] = [];
+    const istemci = await pcKopruAc(
+      async (x) => {
+        assert.equal(x, AJANDA_BORU_ADI);
+        return boruyaBaglan(ad, AJANDA_AZAMI_CERCEVE.BORU);
+      },
+      olaylar,
+      SUREC,
+      undefined,
+      { gunluk: g, zamanla: z.zamanla },
+    );
+    acik.push(async () => {
+      for (const b of baglantilar) b.soket.destroy();
+      await new Promise<void>((c) => sunucu.close(() => c()));
+    });
+    await sureyleBekle(() => baglantilar.length === 2 && g.bul("boru_baglandi").length === 1 && z.acik(YOKLAMA).length === 1, "belirsiz iniş ve yoklama");
+    assert.deepEqual(baglantilar.map((b) => b.hello), ["s+v3+u", "s+v3"]);
+    // Yoklama `destroy` eder; kapanış olayı ancak kapanış evresinde gelir. Çağrı aynı döngü turunda, ondan önce gelir.
+    z.tetikle(YOKLAMA);
+    const r = await istemci.callTool({ name: "ajanda_listele", arguments: {}, _meta: { [CLAUDE_CODE_ARAC_KIMLIGI]: "toolu_y1" } });
+    assert.ok(!hataMi(r), metin(r));
+    assert.deepEqual(baglantilar.map((b) => b.hello), ["s+v3+u", "s+v3", "s+v3+u"], "yoklama en üstten");
+    assert.deepEqual(baglantilar.map((b) => b.istekler), [0, 0, 1], "istek yalnız yeni bağlantıda");
+    assert.deepEqual(baglantilar.map((b) => b.gecersiz), [0, 0, 0]);
+    assert.equal(g.bul("zengin_hello_yoklamasi").length, 1);
+    assert.equal(g.bul("boru_koptu").length, 0, "yoklama kopuş sayılmaz");
   });
 
   it("kapalı PC rolü, gerçek yeni servis: ret rol_fiil_izinsiz; iniş yok, döngü başına tek bağlantı, yanıltıcı günlük yok; model 'ulaşılamıyor' metnini görür", async () => {
@@ -2236,6 +2390,29 @@ describe("kopru PC köprüsü: ebeveyn kapanınca köprü çıkar, boru bağlant
     devral: { stdio: ["soket", "ignore", "ignore"], ayri: true },
     sarmalayici: { stdio: ["pipe", "pipe", "pipe"], ayri: false, ara: true },
   } as const;
+  /**
+   * Süre sınırları. Ölçülen (tek başına ve 16 çekirdekte tam koşuda): açılış (köprü hello'su) ~0,5–2 sn, öldürmeden
+   * sonra çıkış 30–80 ms. `acilis` kurulumdur, kanıt değildir: yük altındaki tam koşuda süreç açılışı katlanabilir,
+   * bu yüzden cömerttir. `olay` kanıtın kendisidir (ebeveyn öldü → köprü çıktı, boru kapandı), değişmedi. Her bekleme
+   * kendi sınırıyla ve adıyla düşer: test süresine (`SINIR`) sessizce takılan adım kalmaz; temizlik de bağlantıları
+   * kapatıp sınırlı bekler (kapanmayan bağlantı `server.close`'u sonsuza dek bekletmesin).
+   */
+  const SURE = { acilis: 60_000, olay: 10_000, temizlik: 10_000 } as const;
+  const SINIR = SURE.acilis + 2 * SURE.olay + 3_000 + 2 * SURE.temizlik + 20_000;
+  const sinirli = <T,>(p: Promise<T>, ms: number, ad: string): Promise<T> =>
+    new Promise<T>((c, r) => {
+      const t = setTimeout(() => r(new Error(`${ad}: ${ms} ms içinde olmadı`)), ms);
+      p.then(
+        (v) => {
+          clearTimeout(t);
+          c(v);
+        },
+        (e: unknown) => {
+          clearTimeout(t);
+          r(e);
+        },
+      );
+    });
   const olc = async (kip: keyof typeof STDIO) => {
     const kok = mkdtempSync(join(tmpdir(), "eren-kopru-olcum-"));
     const anahtar = randomBytes(32).toString("base64url");
@@ -2261,7 +2438,9 @@ describe("kopru PC köprüsü: ebeveyn kapanınca köprü çıkar, boru bağlant
     ].join("\n");
 
     const bag = { hello: null as Record<string, unknown> | null, acik: false, kapandi: false };
+    const sunucuSoketleri: Socket[] = [];
     const sunucu = createServer((s) => {
+      sunucuSoketleri.push(s);
       bag.acik = true;
       let tampon = "";
       s.on("data", (v) => {
@@ -2306,8 +2485,9 @@ describe("kopru PC köprüsü: ebeveyn kapanınca köprü çıkar, boru bağlant
     ];
     const ebeveyn = spawn(process.execPath, ["-e", EBEVEYN, "--", JSON.stringify(STDIO[kip]), ...kopruArg], { stdio: ["pipe", "pipe", "ignore"], env: ortam, cwd: kok, windowsHide: true });
     let kopruPid = 0;
+    const bas = Date.now();
     try {
-      kopruPid = await new Promise<number>((c, r) => {
+      kopruPid = await sinirli(new Promise<number>((c, r) => {
         let t = "";
         ebeveyn.stdout.on("data", (v: Buffer) => {
           t += v.toString("utf8");
@@ -2315,8 +2495,9 @@ describe("kopru PC köprüsü: ebeveyn kapanınca köprü çıkar, boru bağlant
           if (i !== -1) c((JSON.parse(t.slice(0, i)) as { kopru: number }).kopru);
         });
         ebeveyn.once("exit", () => r(new Error("ebeveyn erken çıktı")));
-      });
-      assert.notEqual(await bekle(() => bag.hello !== null, 30_000), null, "köprü sahte boruya bağlanmadı");
+      }), SURE.acilis, "ebeveyn köprüyü açmadı");
+      assert.notEqual(await bekle(() => bag.hello !== null, Math.max(0, SURE.acilis - (Date.now() - bas))), null, `köprü ${SURE.acilis} ms içinde sahte boruya bağlanmadı`);
+      const acilis = Date.now() - bas;
       assert.equal(bag.hello?.["rol"], "pc_oturumu");
       assert.equal(bag.hello?.["jeton"], anahtar, "köprü yalnız sahte kökün anahtarını okudu");
       // T5: köprü hello'da ebeveyninin kimliğini (`process.ppid`) bildirir. Sarmalayıcıda ebeveyn sarmalayıcıdır
@@ -2325,69 +2506,71 @@ describe("kopru PC köprüsü: ebeveyn kapanınca köprü çıkar, boru bağlant
       assert.equal(bag.hello?.["surec_id"], String(sarmali ? kopruPid : ebeveyn.pid), "hello'daki süreç köprünün doğrudan ebeveyni");
       if (sarmali) {
         assert.notEqual(bag.hello?.["surec_id"], String(ebeveyn.pid));
-        return { yetim: null, kapanma: null, surec: bag.hello?.["surec_id"] };
+        return { yetim: null, kapanma: null, surec: bag.hello?.["surec_id"], acilis };
       }
       // Denetim: ebeveyn yaşarken bağlantı açık kalır (el sıkışma süresi de dolmaz: welcome geldi).
       await new Promise((c) => setTimeout(c, 500));
       assert.equal(bag.kapandi, false);
       assert.equal(yasiyor(kopruPid), true);
 
-      execFileSync("taskkill", ["/F", "/PID", String(ebeveyn.pid)], { stdio: "ignore" });
-      assert.notEqual(await bekle(() => !yasiyor(ebeveyn.pid ?? 0), 10_000), null, "ebeveyn ölmedi");
+      execFileSync("taskkill", ["/F", "/PID", String(ebeveyn.pid)], { stdio: "ignore", timeout: SURE.olay });
+      assert.notEqual(await bekle(() => !yasiyor(ebeveyn.pid ?? 0), SURE.olay), null, "ebeveyn ölmedi");
       if (STDIO[kip].stdio[0] === "soket") {
         // stdin'in yazma ucu testte açık: ebeveyn ölse de köprü yetim kalır, bağlantı açık durur.
         await new Promise((c) => setTimeout(c, 3_000));
         const yetim = { yasiyor: yasiyor(kopruPid), bagliMi: !bag.kapandi };
         // Windows adlı borusunda yarım kapanış yoktur (`end` karşıya bitiş göndermez); uç kapatılır.
         stdinUcu.s?.destroy();
-        const kapanma = await bekle(() => bag.kapandi && !yasiyor(kopruPid), 10_000);
-        return { yetim, kapanma, surec: bag.hello?.["surec_id"] };
+        const kapanma = await bekle(() => bag.kapandi && !yasiyor(kopruPid), SURE.olay);
+        return { yetim, kapanma, surec: bag.hello?.["surec_id"], acilis };
       }
-      const kapanma = await bekle(() => bag.kapandi && !yasiyor(kopruPid), 10_000);
-      return { yetim: null, kapanma, surec: bag.hello?.["surec_id"] };
+      const kapanma = await bekle(() => bag.kapandi && !yasiyor(kopruPid), SURE.olay);
+      return { yetim: null, kapanma, surec: bag.hello?.["surec_id"], acilis };
     } finally {
       for (const pid of [kopruPid, ebeveyn.pid ?? 0]) {
         if (pid === 0 || !yasiyor(pid)) continue;
         process.kill(pid);
-        await bekle(() => !yasiyor(pid), 5_000);
+        await bekle(() => !yasiyor(pid), SURE.temizlik);
       }
       stdinUcu.s?.destroy();
-      await new Promise<void>((c) => stdinSunucu.close(() => c()));
-      await new Promise<void>((c) => sunucu.close(() => c()));
+      for (const x of sunucuSoketleri) x.destroy();
+      await sinirli(new Promise<void>((c) => stdinSunucu.close(() => c())), SURE.temizlik, "stdin sunucusu kapanmadı");
+      await sinirli(new Promise<void>((c) => sunucu.close(() => c())), SURE.temizlik, "sahte boru sunucusu kapanmadı");
       assert.deepEqual(readdirSync(kok), [win32.basename(ajandaPcAnahtarYolu(kok))], "köprü sahte köke bir şey yazmadı");
       // Ölen sürecin çalışma dizini kolu bir an daha açık kalabilir (EPERM).
       rmSync(kok, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
     }
   };
 
-  it("libuv ebeveyni (iş nesnesi): ebeveyn öldürülünce köprüyü işletim sistemi sonlandırır, boru bağlantısı kapanır", { timeout: 60_000 }, async (t) => {
+  it("libuv ebeveyni (iş nesnesi): ebeveyn öldürülünce köprüyü işletim sistemi sonlandırır, boru bağlantısı kapanır", { timeout: SINIR }, async (t) => {
     const r = await olc("isNesnesi");
     assert.notEqual(r.kapanma, null, "köprü 10 sn içinde çıkmadı ya da boru kapanmadı");
-    t.diagnostic(`öldürmeden sonra köprü çıkışı ve boru kapanışı: ${r.kapanma} ms`);
+    t.diagnostic(`açılış ${r.acilis} ms; öldürmeden sonra köprü çıkışı ve boru kapanışı: ${r.kapanma} ms`);
   });
 
-  it("iş nesnesi yok, Claude Code gibi üç stdio borusu: ebeveyn öldürülünce köprü kendisi çıkar, boru bağlantısı kapanır", { timeout: 60_000 }, async (t) => {
+  it("iş nesnesi yok, Claude Code gibi üç stdio borusu: ebeveyn öldürülünce köprü kendisi çıkar, boru bağlantısı kapanır", { timeout: SINIR }, async (t) => {
     const r = await olc("claude");
     assert.notEqual(r.kapanma, null, "köprü 10 sn içinde çıkmadı ya da boru kapanmadı");
-    t.diagnostic(`öldürmeden sonra: ${r.kapanma} ms`);
+    t.diagnostic(`açılış ${r.acilis} ms; öldürmeden sonra: ${r.kapanma} ms`);
   });
 
-  it("iş nesnesi yok, yalnız stdin borusu: çıkışı stdin'in bitişi sağlar", { timeout: 60_000 }, async (t) => {
+  it("iş nesnesi yok, yalnız stdin borusu: çıkışı stdin'in bitişi sağlar", { timeout: SINIR }, async (t) => {
     const r = await olc("stdin");
     assert.notEqual(r.kapanma, null);
-    t.diagnostic(`öldürmeden sonra: ${r.kapanma} ms`);
+    t.diagnostic(`açılış ${r.acilis} ms; öldürmeden sonra: ${r.kapanma} ms`);
   });
 
-  it("açık kalan yol: iş nesnesi yok ve stdin'in yazma ucu başka süreçte açık; ebeveyn ölse de köprü yetim kalır, bağlantı açık durur; uç kapanınca çıkar", { timeout: 60_000 }, async (t) => {
+  it("açık kalan yol: iş nesnesi yok ve stdin'in yazma ucu başka süreçte açık; ebeveyn ölse de köprü yetim kalır, bağlantı açık durur; uç kapanınca çıkar", { timeout: SINIR }, async (t) => {
     const r = await olc("devral");
     assert.deepEqual(r.yetim, { yasiyor: true, bagliMi: true }, "köprünün ebeveyn denetimi yok: yalnız stdin'in bitişine bakar");
     assert.notEqual(r.kapanma, null, "yazma ucu kapandıktan sonra 10 sn içinde çıkmadı");
-    t.diagnostic(`yetim 3 sn yaşadı; yazma ucu kapanınca: ${r.kapanma} ms`);
+    t.diagnostic(`açılış ${r.acilis} ms; yetim 3 sn yaşadı; yazma ucu kapanınca: ${r.kapanma} ms`);
   });
 
-  it("sarmalayıcı (npx gibi ara süreç): hello'daki süreç sarmalayıcının, harness'ın değil; o pencere T5'te taslak kalır (güvenli yön)", { timeout: 60_000 }, async () => {
+  it("sarmalayıcı (npx gibi ara süreç): hello'daki süreç sarmalayıcının, harness'ın değil; o pencere T5'te taslak kalır (güvenli yön)", { timeout: SINIR }, async (t) => {
     const r = await olc("sarmalayici");
     assert.match(String(r.surec), /^\d+$/);
+    t.diagnostic(`açılış ${r.acilis} ms`);
   });
 });
 

@@ -224,8 +224,12 @@ const basamakImzasi = (ek: HelloEki): string => Object.keys(ek).sort().join("+")
  * `ustYoklama` (yalnız PC köprüsü) — belirsiz iniş (alt basamağın hemen üstündeki bitiş `yanitsiz`): servis yeni ama o an kapanıyor olabilir, bağlantı
  * ömrü boyunca alt basamakta (ör. `surec_id`'siz) kalmasın diye bağlantı `ZENGIN_YOKLAMA_MS` sonra, süren istek
  * yoksa (varsa yine o kadar sonra) BİR KEZ kapatılır ve merdiven beklemeden en üst basamaktan yeniden denenir
- * (`zengin_hello_yoklamasi`; kopuş sayılmaz). Yoklama en üst basamak karşılanana dek bir daha yapılmaz: ret satırı
- * kapanışla düşen eski servis yine iner, ikinci yoklama olmaz, döngü oluşmaz. Açık `yetkisiz` ardından kurulan
+ * (`zengin_hello_yoklamasi`; kopuş sayılmaz). Kapatılan bağlantı hemen bırakılır (`hazir` boşalır, deneme sürer):
+ * arada gelen çağrı yeni bağlantıyı bekler. Yoklama en üst basamak karşılanana ya da döngü olağan beklemeye düşene
+ * dek bir daha yapılmaz: ret satırı kapanışla düşen eski servis yine iner, ikinci yoklama olmaz, döngü oluşmaz.
+ * Olağan bekleme yalnız bağlantı köprünün yoklaması dışında bir nedenle bittiğinde ya da kurulamadığında gelir
+ * (servisin yeniden başlaması, güncelleme dahil): yoklama hakkı orada geri gelir, her yoklama böyle bir dış bitişle
+ * ödenir. Açık `yetkisiz` ardından kurulan
  * bağlantı (servis alanı gerçekten tanımıyor) yoklanmaz. `ana_oturum` köprüsü yoklamaz: kaybı yalnız yüzdür, ve
  * köprünün kendi kapattığı bağlantıdan hemen sonraki hello, servis eski bağlantının kapanışını işlemeden gelirse tek
  * bağlantı kuralına (`jeton_kullanimda`) takılır; o kipte `jeton_gecersiz` kalıcıdır.
@@ -264,7 +268,7 @@ function boruIstemciKur(
   const zamanla = b.zamanla ?? gercekZamanla;
   /** Bu döngünün son inişi yanıtsız kapanıştandı (belirsiz); açık ret ya da olağan bekleme sıfırlar. */
   let belirsizInis = false;
-  /** Üst basamak yoklaması yapıldı; en üst basamak karşılanınca sıfırlanır. */
+  /** Üst basamak yoklaması yapıldı; en üst basamak karşılanınca ya da olağan beklemede sıfırlanır. */
   let yoklandi = false;
   /** Bağlantı yoklama için kapatıldı: merdiven beklemeden en üstten. */
   let yoklamaKapatti = false;
@@ -335,6 +339,16 @@ function boruIstemciKur(
       /** Zengin hello'ya gelen ret kodu (yoksa `null`: hiç ret gelmedi). */
       let ret: HataKodu | null = null;
 
+      /**
+       * Köprünün kendi kapattığı bağlantı hemen bırakılır: `destroy`'un `close` olayı olay döngüsünün kapanış
+       * evresinde gelir (gerçek adlı boruda ölçüldü: mikro görev, `nextTick` ve `setImmediate`'ten sonra), arada
+       * gelen çağrı yok edilmiş sokete yazılamayan isteği "belirsiz" sanmasın.
+       */
+      const birak = (): void => {
+        if (hazir === bag) hazir = null;
+        bag.kapat();
+      };
+
       /** Belirsiz inişin üst basamak yoklaması: boştaysa kapatır, süren istek varsa yine `ZENGIN_YOKLAMA_MS` sonra. */
       const yoklamaKur = (): void => {
         yoklamaIptal = zamanla(ZENGIN_YOKLAMA_MS, () => {
@@ -344,7 +358,9 @@ function boruIstemciKur(
           yoklandi = true;
           yoklamaKapatti = true;
           gunluk.bilgi(MODUL, "zengin_hello_yoklamasi", { basamak: imza });
-          bag.kapat();
+          // Yoklama yeni bağlantıyı hemen kurar: arada gelen çağrı (`hazirBekle`, `denemeBekle`) onu bekler.
+          denemede = true;
+          birak();
         });
       };
 
@@ -355,7 +371,7 @@ function boruIstemciKur(
             kod: cozum.kod,
             yollar: cozum.yollar.join(","),
           });
-          bag.kapat();
+          birak();
           return;
         }
         const m = cozum.mesaj;
@@ -380,7 +396,7 @@ function boruIstemciKur(
           // Jeton yalnız iş bitince silinir, bir daha geçerli olmaz: denemeye değmez. PC anahtarı
           // dosyadan yenilenebilir: kalıcı değil, sonraki deneme dosyayı yeniden okur.
           if (m.code === "jeton_gecersiz" && jetonOku === undefined) kaliciHata = m.code;
-          bag.kapat();
+          birak();
         } else {
           const bekleyen = bekleyenler.get(m.istek_id);
           if (bekleyen === undefined) return;
@@ -393,7 +409,7 @@ function boruIstemciKur(
           // PC: anahtar bağlantı açıkken iptal edildi. Bağlantı bırakılır; yeniden bağlanma dosyayı yeniden okur.
           if (!m.ok && m.code === "jeton_gecersiz" && jetonOku !== undefined) {
             sonEngel = "jeton_gecersiz";
-            bag.kapat();
+            birak();
           }
         }
       });
@@ -502,6 +518,10 @@ function boruIstemciKur(
         hemenYeniden = false;
         belirsizInis = false;
         denenenBasamaklar.clear();
+        // Olağan bekleme: bağlantı köprünün yoklaması dışında bir nedenle bitti ya da hiç kurulamadı (servis
+        // yeniden başlarken bağlantı hep böyle biter). Servis değişmiş olabilir: yoklama hakkı geri gelir. Döngü
+        // olmaz: her yoklama bir olağan beklemeyle (dış bir bitişle) ödenir.
+        yoklandi = false;
         denemede = false;
         denemeBitti();
         if (durdu || kaliciHata !== null) break;
@@ -1309,7 +1329,8 @@ function soketBaglantisi(soket: Socket, azamiSatir: number = AZAMI_CERCEVE.KOPRU
   };
 }
 
-function boruyaBaglan(ad: string, azamiSatir: number = AZAMI_CERCEVE.KOPRU): Promise<BoruBaglantisi> {
+/** Adlı boruya gerçek soketle bağlanır (`giris`; testte yalıtılmış sahte boruya, gerçek kapanış zamanlamasıyla). */
+export function boruyaBaglan(ad: string, azamiSatir: number = AZAMI_CERCEVE.KOPRU): Promise<BoruBaglantisi> {
   return new Promise((coz, reddet) => {
     const soket = connect(ad);
     soket.once("error", reddet);
