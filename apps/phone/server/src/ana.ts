@@ -6,15 +6,18 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import win32 from "node:path/win32";
 import { VARSAYILAN_IS_PROFILI } from "@eren/protocol";
 import type { CmdAdi, CmdSonucu } from "@eren/protocol";
+import { AJANDA_EK_KLASORU, AJANDA_EK_YETENEGI, ajandaEkleriKur } from "./ajanda-ekler.ts";
+import type { AjandaEkDiski, AjandaEkleri } from "./ajanda-ekler.ts";
 import { ajandaKopruSunucuKur } from "./ajanda-kopru-sunucu.ts";
-import { ajandaKur } from "./ajanda.ts";
+import { AJANDA_SUNULAN_YETENEKLER, ajandaKur } from "./ajanda.ts";
 import { akisKur } from "./akis.ts";
 import { AyarHatasi, ayarKur, medyaKapaliNedeni, yollariUret } from "./ayar.ts";
 import { bildirimKur } from "./bildirim.ts";
 import { cihazKur } from "./cihaz.ts";
 import { depoKur } from "./depo.ts";
-import { disDunyaKur, dosyaPortuKur, medyaDosyaKur, veriKokuIzniHazirla } from "./dis-dunya.ts";
+import { ajandaEkDiskiKur, disDunyaKur, dosyaPortuKur, medyaDosyaKur, veriKokuIzniHazirla } from "./dis-dunya.ts";
 import { gatewayKur } from "./gateway.ts";
+import { ajandaEkliYuz } from "./gateway-ajanda.ts";
 import { gunlukKur } from "./gunluk.ts";
 import { islerKur } from "./isler.ts";
 import { kilitKur } from "./kilit.ts";
@@ -91,6 +94,20 @@ export interface ServisGirdisi {
    */
   ajanda?: false | { sistemDilimi: () => string };
   /**
+   * Ek yedeği (`ek_yedegi`; AJANDA.md "Sürüm 3" > "Ek yedeği"): ek dosyalarının deposu (`giris`
+   * `<veri kökü>\ajanda-ekler` ile kurar). Verilmezse ya da ajanda kapalıysa ek modülü kurulmaz, yetenek
+   * sunulmaz, ek çerçeveleri bugünkü gibi reddedilir (testler ve eski çağıranlar değişmez).
+   */
+  ajandaEkDiski?: AjandaEkDiski;
+  /** Ek yedeği kotası, bayt (`giris` `ayar.ts` `ajandaEkKotaBayt`'tan verir). Verilmezse `EK_TOPLAM_BAYT`. */
+  ajandaEkKotaBayt?: number;
+  /**
+   * Asistan araçlarının sözleşme 3 alanları (`giris` `ayar.ts` `ajandaAracV3`'ten, ayar `ajanda_arac_v3`).
+   * Verilmezse kapalı: araç yüzü (şema, tanım, çıktı) v3 öncesiyle aynı, araçla v3 alanlı kayıt doğmaz.
+   * Telefon sohbeti ve PC oturumu aynı değeri alır; kanal (`/ajanda`) etkilenmez.
+   */
+  ajandaAracV3?: boolean;
+  /**
    * Medya dalgası (MODULLER.md "Medya dalgası" > S9). Yalnız `ayar.medya` doluyken okunur; `ayar.medya`
    * `null`/yoksa medya hiç kurulmaz, bu alan yok sayılır. Verilmezse (`giris` hep böyle) gerçekleri kurulur:
    * `medyaDosyaKur({kok: ayar.medya.kok})` ve `dunya.surec` ile `medyaIsleyiciKur`. Testler sahte ya da
@@ -119,6 +136,8 @@ export interface Servis {
   takvim: TakvimPortu | null;
   ajanda: AjandaYoneticisi | null;
   ajandaKopru: AjandaKopruSunucu | null;
+  /** Ek yedeği; `ServisGirdisi.ajandaEkDiski` yoksa ya da ajanda kapalıysa `null`. */
+  ajandaEkleri: AjandaEkleri | null;
   /** Medya dalgası; `ayar.medya` `null` ise `null` (yüzler hiçbir modüle verilmez). */
   medya: MedyaYoneticisi | null;
   baslat(): Promise<void>;
@@ -205,7 +224,16 @@ const fiilleriKur = ({ ayar, planlar, isler, cihaz, sohbetler }: FiilModulleri):
   };
 };
 
-export function servisKur({ dunya, ayar, depoYolu, ajanda: ajandaSecenegi, medya: medyaSecenegi }: ServisGirdisi): Servis {
+export function servisKur({
+  dunya,
+  ayar,
+  depoYolu,
+  ajanda: ajandaSecenegi,
+  ajandaEkDiski,
+  ajandaEkKotaBayt,
+  ajandaAracV3 = false,
+  medya: medyaSecenegi,
+}: ServisGirdisi): Servis {
   const { saat, zamanlayici, rastgele, dosya, surec, sistem, ws, boru, http, anahtar, transkript } = dunya;
   const gunluk = gunlukYap(dunya);
 
@@ -256,6 +284,18 @@ export function servisKur({ dunya, ayar, depoYolu, ajanda: ajandaSecenegi, medya
   // kurulur: bağ geç çözülür (yalnız araç çağrısı anında, `baslat`'tan sonra), kurulum sırası değişmez.
   const ajandaAcik = ajandaSecenegi !== false;
   const takvim = ajandaAcik ? takvimKur({ sistemDilimi: ajandaSecenegi?.sistemDilimi ?? sistemDilimi }) : null;
+  // Ek yedeği: modül kuruluysa `ek_yedegi` sunulur ve `/ajanda` yüzüne ek modülü eklenir; ikisi birlikte.
+  const ajandaEkleri =
+    takvim === null || ajandaEkDiski === undefined
+      ? null
+      : ajandaEkleriKur({
+          disk: ajandaEkDiski,
+          depo,
+          saat,
+          zamanlayici,
+          gunluk,
+          ...(ajandaEkKotaBayt !== undefined && { kotaBayt: ajandaEkKotaBayt }),
+        });
   const ajanda =
     takvim === null
       ? null
@@ -266,8 +306,14 @@ export function servisKur({ dunya, ayar, depoYolu, ajanda: ajandaSecenegi, medya
           rastgele,
           gunluk,
           turBaglami: (sohbet, nesil) => sohbetler.konusma(sohbet)?.turBaglami?.(nesil) ?? null,
+          // `/ajanda` yetenekleri: motordan bağımsız, servisin uyguladığı davranışlar (ek modülü kuruluysa `ek_yedegi`).
+          yetenekler: ajandaEkleri === null ? AJANDA_SUNULAN_YETENEKLER : [...AJANDA_SUNULAN_YETENEKLER, AJANDA_EK_YETENEGI],
+          aracV3: ajandaAracV3,
         });
-  const ajandaKopru = ajanda === null ? null : ajandaKopruSunucuKur({ boru, depo, rastgele, anahtar, zamanlayici, gunluk });
+  // Araç yüzü (v2 ya da v3) iki yerde aynı değerden: işleyiciler (girdi ve çıktı) ve boru (welcome, çıktı denetimi).
+  const ajandaKopru =
+    ajanda === null ? null : ajandaKopruSunucuKur({ boru, depo, rastgele, anahtar, zamanlayici, gunluk, aracV3: ajandaAracV3 });
+  if (ajanda !== null) gunluk.bilgi(MODUL, "ajanda_arac_yuzu", { arac_v3: ajandaAracV3 });
   const cihaz = cihazKur({ ayar, saat, zamanlayici, rastgele, veriyolu, depo, gunluk });
   const isler = islerKur({
     ayar,
@@ -355,7 +401,7 @@ export function servisKur({ dunya, ayar, depoYolu, ajanda: ajandaSecenegi, medya
     veriyolu,
     gunluk,
     // `/ajanda` yolu, dinleme sınırı, kayıt yayını aboneliği, yetki yoklaması ve kanal kapanışı gateway'de.
-    ...(ajanda !== null && { ajanda }),
+    ...(ajanda !== null && { ajanda: ajandaEkleri === null ? ajanda : ajandaEkliYuz(ajanda, ajandaEkleri) }),
     // Medya dalgası (S5): `medya1` bağlantılarında `media_*`, `ekler` ön denetimi, `media_state` yayını.
     ...(medya !== null && { medya }),
   });
@@ -399,6 +445,7 @@ export function servisKur({ dunya, ayar, depoYolu, ajanda: ajandaSecenegi, medya
     takvim,
     ajanda,
     ajandaKopru,
+    ajandaEkleri,
     medya,
 
     async baslat() {
@@ -408,6 +455,8 @@ export function servisKur({ dunya, ayar, depoYolu, ajanda: ajandaSecenegi, medya
         () => kilit.baslat(),
         // Ajanda dalgası: depo kimliği gateway ve köprüden önce kurulur (`karsila` ve araçlar onu okur).
         () => ajanda?.baslat(),
+        // Ek yedeğinin periyodik temizliği (ilk tur arkada; açılışı bekletmez).
+        () => ajandaEkleri?.baslat(),
         // Önceki ömrün ajanda jetonları ve açık bağlantıları: `sohbetler.baslat()` yenilerini üretmeden
         // önce (`eren` jetonlarını `sohbetler` kendisi siler). Silinen sayı ajanda borusunun günlüğünde.
         () => ajandaKopru?.jetonlariniSil(),
@@ -470,6 +519,8 @@ export function servisKur({ dunya, ayar, depoYolu, ajanda: ajandaSecenegi, medya
           ["cihaz", () => cihaz.kapat()],
           // `/ajanda` bağlantıları ve kayıt yayını aboneliği burada kapanır.
           ["gateway", () => gateway.kapat()],
+          // Bağlantılar kapandıktan sonra, depodan önce: süren ek yazımı ve temizlik turu bitsin.
+          ["ajandaEkleri", () => ajandaEkleri?.kapat()],
           // `gateway`'den sonra: kapanan yönetici `media_*`'ya `reddedildi{medya_yok}` döner, telefon bunu
           // kalıcı ret sayar; bağlantılar önce kapanmalı. `depo`'dan önce. Bekleme sınırlıdır (yukarıdaki not).
           ["medya", () => medyaKapat()],
@@ -561,7 +612,15 @@ const giris = async (): Promise<void> => {
       process.exit(0);
     }
 
-    const servis = servisKur({ dunya, ayar, depoYolu: vt });
+    // Ek yedeği deposu veri kökünün altında: kökün izni (yukarıda denetlendi) alt klasöre geçer.
+    const servis = servisKur({
+      dunya,
+      ayar,
+      depoYolu: vt,
+      ajandaEkDiski: ajandaEkDiskiKur(win32.join(kok, AJANDA_EK_KLASORU)),
+      ajandaEkKotaBayt: ayar.ajandaEkKotaBayt,
+      ajandaAracV3: ayar.ajandaAracV3,
+    });
     let kapaniyor = false;
     // Sinyal ve IPC aynı nazik yolu kullanır: 30 sn sınırı, kapanış sonrası `exit(0)`, takılırsa `exit(1)`.
     const kapat = (alanlar: GunlukAlanlari): void => {

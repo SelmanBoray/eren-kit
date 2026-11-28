@@ -23,9 +23,9 @@ use crate::motor::{Etkiler, Motor, Ortam};
 
 use kabuklar::{AlarmKabugu, Gozlemci, KimlikKabugu, Tasima, ZamanKabugu};
 use tipler::{
-    AktarmaBicimi, BaglantiDurumu, CalismaKipi, DisaAktarma, DuzenlemeTemeli, EslesmeDurumu, GecisOzeti, GecmisSayfasi, HatirlatmaBildirimi,
-    HatirlatmaOnizlemesi, IceAktarmaOnizlemesi, IceAktarmaSonucu, KayitGorunumu, KoparmaSonucu, ListeSorgusu, RetGirdisi, TakvimAyi, TakvimOgesi,
-    YenidenKurmaNedeni,
+    AktarmaBicimi, BaglantiDurumu, BaglantiYetenekleri, CalismaKipi, DisaAktarma, DuzenlemeTemeli, EslesmeDurumu, GecisOzeti, GecmisSayfasi,
+    HatirlatmaBildirimi, HatirlatmaOnizlemesi, IceAktarmaOnizlemesi, IceAktarmaSonucu, KayitGorunumu, KoparmaSonucu, ListeSorgusu, RetGirdisi,
+    TakvimAyi, TakvimOgesi, YenidenKurmaNedeni,
 };
 
 fn kilitle<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -128,7 +128,14 @@ impl Cekirdek {
         let mut etkiler = Etkiler::default();
         let (sonuc, tasima, etki_kilidi) = {
             let mut motor = kilitle(&self.motor);
-            let sonuc = catch_unwind(AssertUnwindSafe(|| f(&mut motor, &ortam, &mut etkiler)));
+            let sonuc = catch_unwind(AssertUnwindSafe(|| {
+                let sonuc = f(&mut motor, &ortam, &mut etkiler);
+                // Her çağrının sonunda: alt sürümlü açık bağlantının yukarı denemesi zamanı geldiyse bağlantı
+                // kapanır (`kanal.rs` `YUKARI_DENEME_MS`). Hatası çağrının sonucunu değiştirmez (sonraki çağrı
+                // yeniden dener).
+                let _ = motor.yukari_denemesi(&ortam, &mut etkiler);
+                sonuc
+            }));
             let tasima = kilitle(&self.tasima).clone();
             (sonuc, tasima, kilitle(&self.etki))
         };
@@ -345,6 +352,14 @@ impl Cekirdek {
 
     pub fn baglanti_durumu(&self) -> Result<BaglantiDurumu, CekirdekHatasi> {
         self.calistir(|m, _, _| m.baglanti_durumu())
+    }
+
+    /// Arayüzün bağlantıya göre açacakları (`BaglantiYetenekleri`): kip (yerel / bağlı değil / bağlı),
+    /// bağlantının sürümü, v3 alanlarının servise hemen gidip gitmediği, `welcome` yetenekleri ve ertelenen v3
+    /// değişikliği sayısı (eski servise bağlıyken; "servis güncellenince eşitlenecek"). Değişince gözlemciye
+    /// `Degisim.baglanti`.
+    pub fn baglanti_yetenekleri(&self) -> Result<BaglantiYetenekleri, CekirdekHatasi> {
+        self.calistir(|m, _, _| m.baglanti_yetenekleri())
     }
 
     /// Gövdenin hatırlatmaları şimdi kaydedilse ne zaman çalar (v2; form ve ayrıntı): saatsiz gün kaydında

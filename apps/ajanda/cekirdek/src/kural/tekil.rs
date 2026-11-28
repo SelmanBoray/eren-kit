@@ -5,14 +5,26 @@
 
 use crate::model::kanonik::{kanonik_json, sha256_hex};
 use crate::model::{
-    Alan, AjandaZamani, AlanDegisikligi, Hatirlatma, KayitDurumu, KayitTuru, YazarKimligi, kullanici_emri_mi,
+    Alan, AjandaZamani, AlanDegisikligi, Hatirlatma, KayitDurumu, KayitTuru, YazarKimligi, ajanda_bolge_anahtari,
+    kullanici_emri_mi,
 };
 use serde_json::{Value, json};
 
-/// `"t1:" + sha256(kanonik JSON {kapsam, tur, baslik, zaman: çekirdek | null})`.
-pub fn ajanda_tekil_anahtari(kapsam: &str, tur: KayitTuru, baslik: &str, zaman: Option<&AjandaZamani>) -> String {
+/// `"t1:" + sha256(kanonik JSON {kapsam, tur, baslik, zaman: çekirdek | null[, bolge]})`. v3: `bolge` yalnız
+/// verilmişse, eşleşme anahtarıyla (`ajanda_bolge_anahtari`) girer; yoksa baytlar v2 ile aynıdır. Öteki v3
+/// alanları girmez.
+pub fn ajanda_tekil_anahtari(
+    kapsam: &str,
+    tur: KayitTuru,
+    baslik: &str,
+    zaman: Option<&AjandaZamani>,
+    bolge: Option<&str>,
+) -> String {
     let zaman = zaman.map_or(Value::Null, AjandaZamani::cekirdek_json);
-    let govde = json!({ "kapsam": kapsam, "tur": tur.json(), "baslik": baslik, "zaman": zaman });
+    let mut govde = json!({ "kapsam": kapsam, "tur": tur.json(), "baslik": baslik, "zaman": zaman });
+    if let Some(b) = bolge {
+        govde["bolge"] = Value::String(ajanda_bolge_anahtari(b));
+    }
     format!("t1:{}", sha256_hex(kanonik_json(&govde).as_bytes()))
 }
 
@@ -101,12 +113,12 @@ mod testler {
 
     #[test]
     fn anahtar_ifade_ve_sureyi_saymaz_saati_sayar() {
-        let a = ajanda_tekil_anahtari("sohbet:ana", KayitTuru::Randevu, "Dişçi", Some(&an("15:00", None, "yarın 3'te")));
+        let a = ajanda_tekil_anahtari("sohbet:ana", KayitTuru::Randevu, "Dişçi", Some(&an("15:00", None, "yarın 3'te")), None);
         assert!(a.starts_with("t1:") && a.len() == 67);
-        assert_eq!(a, ajanda_tekil_anahtari("sohbet:ana", KayitTuru::Randevu, "Dişçi", Some(&an("15:00", Some(30), "bugün 3'te"))));
-        assert_ne!(a, ajanda_tekil_anahtari("sohbet:ana", KayitTuru::Randevu, "Dişçi", Some(&an("16:00", None, "x"))));
-        assert_ne!(a, ajanda_tekil_anahtari("sohbet:ana", KayitTuru::Randevu, "Dişçi", None));
-        assert_ne!(a, ajanda_tekil_anahtari("sohbet:baska", KayitTuru::Randevu, "Dişçi", Some(&an("15:00", None, "x"))));
+        assert_eq!(a, ajanda_tekil_anahtari("sohbet:ana", KayitTuru::Randevu, "Dişçi", Some(&an("15:00", Some(30), "bugün 3'te")), None));
+        assert_ne!(a, ajanda_tekil_anahtari("sohbet:ana", KayitTuru::Randevu, "Dişçi", Some(&an("16:00", None, "x")), None));
+        assert_ne!(a, ajanda_tekil_anahtari("sohbet:ana", KayitTuru::Randevu, "Dişçi", None, None));
+        assert_ne!(a, ajanda_tekil_anahtari("sohbet:baska", KayitTuru::Randevu, "Dişçi", Some(&an("15:00", None, "x")), None));
     }
 
     #[test]

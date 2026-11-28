@@ -12,6 +12,7 @@ export * from "./mcp.ts";
 export * from "./kopru.ts";
 export * from "./cozumle.ts";
 export * from "./ajanda-zaman.ts";
+export * from "./ajanda-alan.ts";
 export * from "./ajanda.ts";
 export * from "./ajanda-arac.ts";
 export * from "./ajanda-pc.ts";

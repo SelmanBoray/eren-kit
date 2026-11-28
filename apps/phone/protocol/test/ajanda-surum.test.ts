@@ -14,7 +14,10 @@ import {
   AjandaEslestirmeQr,
   ajandaGeriDusus,
   type AjandaGeriDususu,
+  ajandaDonmusHataOku,
   ajandaRetSurumuOku,
+  AJANDA_KANAL_HATALARI,
+  AJANDA_RET_NEDENLERI,
   type AjandaSurumNo,
   ajandaSurumuMu,
   ajandaYukariCoz,
@@ -30,6 +33,7 @@ const surum = oku("ajanda-surum.json") as {
   cozum: { ad: string; yon: "yukari" | "asagi"; baglanti: number | null; ham: string; gecerli: boolean; tur?: string; kod?: string }[];
   ret_surumu: { ad: string; ham: string; surum: number | null }[];
   geri_dusus: { ad: string; denenen: number; ret: number | null; kume: number[]; karar: AjandaGeriDususu }[];
+  donmus_hata: { ad: string; ham: string; hata: { v: number; code: string; detail?: string } | null }[];
 };
 const mesajlar = oku("ajanda-mesaj.json") as { asagi: { ad: string; ham: string; gecerli: boolean }[] };
 const kurallar = oku("ajanda-kurallar.json") as { qr: { gecerli: { v: number }[] } };
@@ -38,7 +42,7 @@ const NONCE = "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVowMTIzNA==";
 const hello = (v: unknown) => JSON.stringify({ v, type: "hello", device_id: "d1", son_rev: 0, client_nonce: NONCE });
 
 test("sürüm kümesi: artan, bitişik, en büyüğü AJANDA_SURUMU; tablo kümeyle birebir", () => {
-  assert.deepEqual([...AJANDA_SURUMLERI], [2], "bu dilimde kablo değişmez");
+  assert.deepEqual([...AJANDA_SURUMLERI], [2, 3]);
   assert.equal(AJANDA_SURUMLERI.at(-1), AJANDA_SURUMU);
   for (let i = 1; i < AJANDA_SURUMLERI.length; i++) assert.equal(AJANDA_SURUMLERI[i], AJANDA_SURUMLERI[i - 1]! + 1);
   assert.deepEqual(Object.keys(AJANDA_CERCEVE_SEMALARI).map(Number), [...AJANDA_SURUMLERI]);
@@ -52,14 +56,15 @@ test("sürüm kümesi: artan, bitişik, en büyüğü AJANDA_SURUMU; tablo küme
 
 test("ajandaSurumuMu yalnız kümedeki sayıyı tanır (tablo güvenilmez anahtarla indekslenmez)", () => {
   assert.equal(ajandaSurumuMu(2), true);
-  for (const v of [1, 3, 2.5, "2", "__proto__", "toString", null, undefined, {}]) assert.equal(ajandaSurumuMu(v), false, String(v));
+  assert.equal(ajandaSurumuMu(3), true);
+  for (const v of [1, 4, 2.5, "2", "3", "__proto__", "toString", null, undefined, {}]) assert.equal(ajandaSurumuMu(v), false, String(v));
 });
 
 test("sürüm vektörü: küme ve QR sürümü sabitlerle aynı, adlar tekil", () => {
   assert.deepEqual(surum.surumler, [...AJANDA_SURUMLERI]);
   assert.equal(surum.qr_surumu, AJANDA_QR_SURUMU);
   for (const q of kurallar.qr.gecerli) assert.equal(q.v, surum.qr_surumu);
-  for (const bolum of [surum.cozum, surum.ret_surumu, surum.geri_dusus]) {
+  for (const bolum of [surum.cozum, surum.ret_surumu, surum.geri_dusus, surum.donmus_hata]) {
     assert.equal(new Set(bolum.map((o) => o.ad)).size, bolum.length);
   }
 });
@@ -80,13 +85,17 @@ test("çözüm vektörü: bağlantı sürümüyle ve sürüm sabitlenmeden", () 
 });
 
 test("çözücü: kümedeki sürüm kabul edilir, sabitlenecek sürüm mesaj.v; kümede olmayan sürüm protokol_uyumsuz", () => {
-  for (const baglanti of [undefined, 2 as const]) {
-    const s = ajandaYukariCoz(hello(2), baglanti);
-    assert.equal(s.ok && s.mesaj.v, 2);
+  for (const v of AJANDA_SURUMLERI) {
+    for (const baglanti of [undefined, v]) {
+      const s = ajandaYukariCoz(hello(v), baglanti);
+      assert.equal(s.ok && s.mesaj.v, v);
+    }
   }
-  for (const v of [0, 1, 3, 2.5, -2]) {
+  for (const v of [0, 1, 4, 2.5, -2]) {
     assert.deepEqual(ajandaYukariCoz(hello(v)), { ok: false, kod: "protokol_uyumsuz", yollar: ["v"] }, String(v));
-    assert.deepEqual(ajandaYukariCoz(hello(v), 2), { ok: false, kod: "protokol_uyumsuz", yollar: ["v"] }, String(v));
+    for (const b of AJANDA_SURUMLERI) {
+      assert.deepEqual(ajandaYukariCoz(hello(v), b), { ok: false, kod: "protokol_uyumsuz", yollar: ["v"] }, `${v} @${b}`);
+    }
   }
   for (const v of ["2", null, true]) {
     const s = ajandaYukariCoz(hello(v));
@@ -143,7 +152,7 @@ test("surumluCozumle düzeneği: iki sürümlü tabloda her sürüm kendi şemas
   assert.equal(kod(surumluCozumle(" ".repeat(1001), 1000, [2], (v) => semalar[v as 2])), "mesaj_cok_buyuk");
 });
 
-test("ajandaAsagiSurume: v2'de kimlik, baytlar değişmez, sonuç v2 şemasından geçer", () => {
+test("ajandaAsagiSurume: v2 biçimli çerçevenin v2 baytları değişmez, sonuç v2 şemasından geçer", () => {
   const gecerli = mesajlar.asagi.filter((o) => o.gecerli);
   assert.equal(new Set(gecerli.map((o) => (JSON.parse(o.ham) as { type: string }).type)).size, 8, "her aşağı tür");
   for (const o of gecerli) {
@@ -166,7 +175,7 @@ test("ajandaAsagiSurume: şemaya uymayan çerçeve yollanmaz, değer yankılanma
   const fazla = { v: 2, type: "esitlendi", rev: 1, bolge: {} } as unknown as AjandaAsagi;
   assert.equal(ajandaAsagiSurume(fazla, 2).ok, false, "fazla alan");
   const dogru: AjandaAsagi = { v: AJANDA_SURUMU, type: "esitlendi", rev: 1 };
-  assert.deepEqual(ajandaAsagiSurume(dogru, 3 as AjandaSurumNo), { ok: false, kod: "protokol_uyumsuz", yollar: ["v"] });
+  assert.deepEqual(ajandaAsagiSurume(dogru, 4 as AjandaSurumNo), { ok: false, kod: "protokol_uyumsuz", yollar: ["v"] });
 });
 
 test("ret sürümü vektörü: dondurulmuş error zarfı", () => {
@@ -199,10 +208,14 @@ test("geri düşüş vektörü", () => {
 });
 
 test("geri düşüş: varsayılan küme bugünkü küme, boş küme bilinmiyor", () => {
+  // v3 uygulama v2 servise: ret v2 (ya da yalnız 1002) -> v2 ile yeniden.
+  assert.deepEqual(ajandaGeriDusus(3, 2), { karar: "yeniden_dene", surum: 2 });
+  assert.deepEqual(ajandaGeriDusus(3, null), { karar: "yeniden_dene", surum: 2 });
   assert.deepEqual(ajandaGeriDusus(2, null), { karar: "bilinmiyor" });
-  assert.deepEqual(ajandaGeriDusus(2, 3), { karar: "uygulama_eski" });
-  assert.deepEqual(ajandaGeriDusus(2, 1), { karar: "servis_eski" });
+  assert.deepEqual(ajandaGeriDusus(3, 4), { karar: "uygulama_eski" });
+  assert.deepEqual(ajandaGeriDusus(3, 1), { karar: "servis_eski" });
   assert.deepEqual(ajandaGeriDusus(2, 2), { karar: "bilinmiyor" });
+  assert.deepEqual(ajandaGeriDusus(2, 3), { karar: "bilinmiyor" });
   assert.deepEqual(ajandaGeriDusus(3, 2, []), { karar: "bilinmiyor" });
 });
 
@@ -240,3 +253,93 @@ function kurallarQrGovdesi(): Record<string, unknown> {
   const { v: _v, ...govde } = kurallar.qr.gecerli[0] as Record<string, unknown>;
   return govde;
 }
+
+test("dondurulmuş hata vektörü: ajandaDonmusHataOku; ret sürümü onun üstüne kuruludur", () => {
+  assert.ok(surum.donmus_hata.length >= 12);
+  for (const o of surum.donmus_hata) {
+    assert.deepEqual(ajandaDonmusHataOku(o.ham), o.hata, o.ad);
+    const beklenen = o.hata !== null && o.hata.code === "protokol_uyumsuz" ? o.hata.v : null;
+    assert.equal(ajandaRetSurumuOku(o.ham), beklenen, `${o.ad}: ret sürümü`);
+  }
+  for (const o of surum.ret_surumu) {
+    const h = ajandaDonmusHataOku(o.ham);
+    assert.equal(h !== null && h.code === "protokol_uyumsuz" ? h.v : null, o.surum, o.ad);
+  }
+  assert.equal(ajandaDonmusHataOku(" ".repeat(AJANDA_AZAMI_CERCEVE.KANAL + 1)), null);
+  // Sürümü sabitlenmemiş istemci: başka sürümden zaman_asimi geri düşüş değildir.
+  const zaman = JSON.stringify({ v: 4, type: "error", code: "zaman_asimi" });
+  assert.equal(ajandaRetSurumuOku(zaman), null);
+  assert.deepEqual(ajandaDonmusHataOku(zaman), { v: 4, code: "zaman_asimi" });
+});
+
+test("iki sürüm: bağlantı sabitse öteki sürüm küme içinde olsa da protokol_uyumsuz; küme dışı her halde", () => {
+  const kod = (s: { ok: boolean; kod?: string }) => (s.ok ? "ok" : s.kod);
+  assert.equal(kod(ajandaYukariCoz(hello(3), 2)), "protokol_uyumsuz");
+  assert.equal(kod(ajandaYukariCoz(hello(2), 3)), "protokol_uyumsuz");
+  assert.equal(kod(ajandaYukariCoz(hello(3))), "ok");
+  assert.equal(kod(ajandaYukariCoz(hello(4))), "protokol_uyumsuz");
+  const esitlendi = (v: number) => JSON.stringify({ v, type: "esitlendi", rev: 1 });
+  assert.equal(kod(ajandaAsagiCoz(esitlendi(3), 2)), "protokol_uyumsuz");
+  assert.equal(kod(ajandaAsagiCoz(esitlendi(2), 3)), "protokol_uyumsuz");
+  assert.equal(kod(ajandaAsagiCoz(esitlendi(2))), "ok");
+});
+
+test("v2 bağlantıda v3 alanlı çerçeve reddedilir; işlem gövdesi reddinde islem_id döner", () => {
+  const yetenekli = JSON.stringify({ ...JSON.parse(hello(2)), yetenekler: [] });
+  for (const b of [undefined, 2 as const]) assert.equal(!ajandaYukariCoz(yetenekli, b).ok, true);
+  const guncelle = (v: number) =>
+    JSON.stringify({ v, type: "islem", islem_id: "i_b", islem: { islem: "guncelle", kayit_id: "k1", temel_revizyon: 1, degisiklik: { bolge: "Market" } } });
+  const s2 = ajandaYukariCoz(guncelle(2), 2);
+  assert.equal(!s2.ok && s2.kod, "gecersiz_mesaj");
+  assert.equal(s2.islem_id, "i_b", "gövde reddi: kuyruk tıkanmaz");
+  assert.equal(ajandaYukariCoz(guncelle(3), 3).ok, true);
+  const ekIste = (v: number) => JSON.stringify({ v, type: "ek_iste", istek_id: "y", ek_id: "e", ozet: "0".repeat(64), ofset: 0 });
+  assert.equal(!ajandaYukariCoz(ekIste(2), 2).ok, true, "v2'de ek çerçevesi yok");
+  assert.equal(ajandaYukariCoz(ekIste(3), 3).ok, true);
+});
+
+test("en yeni sürümün her ret nedeni ve kanal hata kodu eski her sürüme uyarlanır ve o sürümün şemasından geçer", () => {
+  const eskiler = AJANDA_SURUMLERI.filter((s) => s < AJANDA_SURUMU);
+  assert.ok(eskiler.length > 0);
+  const cerceveler: AjandaAsagi[] = [];
+  for (const code of AJANDA_RET_NEDENLERI) {
+    cerceveler.push({ v: AJANDA_SURUMU, type: "islem_sonucu", islem_id: "i1", ok: false, kayit_id: "k1", code });
+    cerceveler.push({ v: AJANDA_SURUMU, type: "gecmis", istek_id: "g1", kayit_id: "k1", girdiler: [], devami: false, code });
+  }
+  for (const code of AJANDA_KANAL_HATALARI) {
+    cerceveler.push({ v: AJANDA_SURUMU, type: "error", code });
+    cerceveler.push({ v: AJANDA_SURUMU, type: "pair_result", ok: false, code });
+  }
+  for (const v of eskiler) {
+    for (const m of cerceveler) {
+      const s = ajandaAsagiSurume(m, v);
+      assert.equal(s.ok, true, `${m.type} ${"code" in m ? m.code : ""} -> v${v}`);
+      assert.equal(ajandaAsagiCoz(JSON.stringify(s.ok && s.mesaj), v).ok, true);
+    }
+  }
+});
+
+test("uyarlama: v3 modeli v2'ye süzülür ve v2 şemasından geçer; ek çerçevesi uyarlanamaz; v3'te kimlik", () => {
+  const v3 = oku("ajanda-mesaj-v3.json") as { asagi: { ad: string; ham: string; gecerli: boolean }[] };
+  let uyarlanan = 0;
+  for (const o of v3.asagi.filter((x) => x.gecerli)) {
+    const m = JSON.parse(o.ham) as AjandaAsagi;
+    const once = JSON.stringify(m);
+    const kimlik = ajandaAsagiSurume(m, 3);
+    assert.equal(kimlik.ok && JSON.stringify(kimlik.mesaj), once, `${o.ad}: v3 kimlik`);
+    const s = ajandaAsagiSurume(m, 2);
+    assert.equal(JSON.stringify(m), once, `${o.ad}: girdi değişmemeli`);
+    if (m.type === "ek_durum" || m.type === "ek_parca" || m.type === "ek_ret") {
+      assert.deepEqual(s, { ok: false, kod: "protokol_uyumsuz", yollar: ["type"] }, o.ad);
+      continue;
+    }
+    assert.equal(s.ok, true, o.ad);
+    const ham = JSON.stringify(s.ok && s.mesaj);
+    assert.equal(ajandaAsagiCoz(ham, 2).ok, true, `${o.ad}: v2 şeması`);
+    for (const alan of ["yetenekler", "simge", "bolge", "bolge_konumu", "varis", "baglantilar", "ekler"]) {
+      assert.equal(ham.includes(`"${alan}"`), false, `${o.ad}: ${alan}`);
+    }
+    uyarlanan++;
+  }
+  assert.ok(uyarlanan >= 10);
+});

@@ -125,7 +125,7 @@ class GercekCekirdekTest {
         override fun kapat(neden: String) {}
     }
 
-    private fun cerceve(tur: String, govde: String) = """{"v":2,"type":"$tur"$govde}"""
+    private fun cerceve(tur: String, govde: String) = """{"v":3,"type":"$tur"$govde}"""
 
     @Test
     fun servisReddiRetListesindeGorunurDuzeltilipYenidenEklenir() {
@@ -144,7 +144,7 @@ class GercekCekirdekTest {
             assertTrue(soket.giden.last(), soket.giden.last().contains("\"type\":\"hello\""))
             c.cerceveGeldi(nesil, cerceve("auth_challenge", ""","server_nonce":"QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFB","server_signature":"MEUCIQCq""""))
             assertTrue(soket.giden.last().contains("\"type\":\"auth_response\""))
-            c.cerceveGeldi(nesil, cerceve("welcome", ""","depo_id":"d_depo1","bas_rev":0,"tam":true,"server_time_ms":1"""))
+            c.cerceveGeldi(nesil, cerceve("welcome", ""","depo_id":"d_depo1","bas_rev":0,"tam":true,"server_time_ms":1,"yetenekler":[]"""))
             c.cerceveGeldi(nesil, cerceve("esitlendi", ""","rev":0"""))
             assertEquals(BaglantiAsamasi.CANLI, c.baglantiDurumu().asama)
             a.hepsiniOku()

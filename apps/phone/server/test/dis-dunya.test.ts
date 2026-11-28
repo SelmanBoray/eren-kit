@@ -23,7 +23,7 @@ import {
   wsKur,
   yetenekleriCoz,
 } from "../src/dis-dunya.ts";
-import type { KimlikCocugu } from "../src/dis-dunya.ts";
+import type { GercekWsBaglantisi, KimlikCocugu } from "../src/dis-dunya.ts";
 import { sahteZaman } from "./sahte.ts";
 
 const win = process.platform === "win32";
@@ -1377,6 +1377,44 @@ describe("ws.dinle /ajanda (Ajanda dalgası: yol isteğe bağlı)", () => {
       assert.equal(await ik, 1003);
       // Yabancı kaynak /ajanda'da da 403.
       await assert.rejects(ac(port, "/ajanda", { headers: { Origin: "https://kotu.ornek" } }), /yanit:403/);
+    } finally {
+      await sunucu.kapat();
+    }
+  });
+
+  test("bekleyenBayt: okumayan istemcide gönderim tamponu büyür, okuyunca boşalır (ek indirmesinin sınırı buna bakar)", async () => {
+    const zaman = sahteZaman();
+    const port = await rastgeleYerelPort();
+    let sb: GercekWsBaglantisi | null = null;
+    const sunucu = await wsKur({ aralikMs: ARALIK, herAralik: zaman.zamanlayici.herAralik }).dinle({
+      host: "127.0.0.1",
+      port,
+      azamiCerceve: { "/sohbet": 1024, "/cihaz": 1024, "/ajanda": 1024 },
+      kimlikOncesiAzamiBayt: Number.MAX_SAFE_INTEGER,
+      ipBasinaAzamiBaglanti: 1_000,
+      baglanti: (b) => {
+        sb = b as GercekWsBaglantisi;
+      },
+    });
+    try {
+      const w = await ac(port, "/ajanda");
+      assert.ok(await kosulBekle(() => sb !== null));
+      const b = sb as unknown as GercekWsBaglantisi;
+      assert.equal(b.bekleyenBayt(), 0);
+      // İstemci soketten okumayı bırakır: çekirdek tamponları dolunca gönderim Node'da birikir.
+      const alt = (w as unknown as { _socket: { pause(): void; resume(): void } })._socket;
+      alt.pause();
+      const MB = 1024 * 1024;
+      const parca = "x".repeat(MB);
+      for (let i = 0; i < 64; i++) assert.equal(b.gonder(parca), true);
+      assert.ok(b.bekleyenBayt() > 8 * MB, String(b.bekleyenBayt()));
+      let alinan = 0;
+      w.on("message", (m: Buffer) => {
+        alinan += m.length;
+      });
+      alt.resume();
+      assert.ok(await kosulBekle(() => b.bekleyenBayt() === 0 && alinan === 64 * MB, 20_000));
+      w.close();
     } finally {
       await sunucu.kapat();
     }

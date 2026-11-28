@@ -166,7 +166,7 @@ fn bagli_kipte_ayni_depo_tam_telafisinde_onayli_hal_geri_gider() {
     let k = h.pc.disaridan_degistir("k_c", |k| k.baslik = "C (telefon)".into());
     let sonuc = AjandaAsagi::IslemSonucu { islem_id: yolda.islem_id, ok: true, kayit_id: Some("k_c".into()), rev: Some(k.revizyon), korunan_alanlar: None, code: None };
     let nesil = h.baglanti.as_ref().unwrap().nesil;
-    h.c.cerceve_geldi(nesil, sonuc.kodla()).unwrap();
+    h.c.cerceve_geldi(nesil, sonuc.kodla_surum(ajanda_cekirdek::model::Surum::V3)).unwrap();
     assert!(depo(&h).kuyruk().unwrap()[0].bekledigi_rev.is_some());
     h.kopar();
     // Çevrimdışı: B2 üstüne zaman (bekleyen).

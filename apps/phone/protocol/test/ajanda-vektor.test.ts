@@ -34,7 +34,9 @@ import {
   ajandaYukariCoz,
   AJANDA_ARACLARI,
   type AjandaFiili,
+  AJANDA_SURUMLERI,
   AJANDA_SURUMU,
+  type AjandaSurumNo,
   GUN_BOLUMLERI,
   GUN_HATIRLATMA_SAATLERI,
   GUN_HATIRLATMA_VARSAYILAN_SAATI,
@@ -178,15 +180,23 @@ function kopyaAc(v: KopyaVektoru): AjandaKopya<AjandaKopyaKaydi> {
   return k;
 }
 
-test("ajanda vektör dosyaları AJANDA_SURUMU (2), adlar tekil", () => {
-  assert.equal(AJANDA_SURUMU, 2);
-  assert.equal(mesajlar.surum, AJANDA_SURUMU);
-  assert.equal(kurallar.surum, AJANDA_SURUMU);
+/**
+ * `ajanda-mesaj.json` ve `ajanda-kurallar.json` v2 dosyalarıdır (`surum` 2): v2 çerçeveleri v2 bağlantıda
+ * çözülür, kurallar v3'te de aynen geçerlidir (v3 alanı taşımayan kayıtta v3 kuralları boş geçer, tekil
+ * anahtar baytları aynı). v3'ün yeni vektörleri ayrı dosyalardadır (`ajanda-mesaj-v3.json`,
+ * `ajanda-v3.json`): uygulamanın düzeneği bilmediği bölüm görünce kırılmasın.
+ */
+test("ajanda v2 vektör dosyaları: sürüm 2, kümede, adlar tekil", () => {
+  assert.equal(AJANDA_SURUMU, 3);
+  assert.equal(mesajlar.surum, 2);
+  assert.equal(kurallar.surum, 2);
+  assert.ok((AJANDA_SURUMLERI as readonly number[]).includes(mesajlar.surum));
   for (const yon of [mesajlar.asagi, mesajlar.yukari]) assert.equal(new Set(yon.map((o) => o.ad)).size, yon.length);
 });
 
-test("/ajanda aşağı vektörleri çözücüyle aynı sonucu verir", () => dene(mesajlar.asagi, ajandaAsagiCoz));
-test("/ajanda yukarı vektörleri çözücüyle aynı sonucu verir", () => dene(mesajlar.yukari, ajandaYukariCoz));
+const baglanti = mesajlar.surum as AjandaSurumNo;
+test("/ajanda aşağı vektörleri v2 bağlantıda çözücüyle aynı sonucu verir", () => dene(mesajlar.asagi, (h) => ajandaAsagiCoz(h, baglanti)));
+test("/ajanda yukarı vektörleri v2 bağlantıda çözücüyle aynı sonucu verir", () => dene(mesajlar.yukari, (h) => ajandaYukariCoz(h, baglanti)));
 
 test("her /ajanda çerçeve türünden ve her işlemden geçerli örnek var", () => {
   const tur = (yon: Oge[]) => new Set(yon.filter((o) => o.gecerli).map((o) => o.tur));
