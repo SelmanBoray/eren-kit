@@ -65,19 +65,27 @@ test("yönerge dürüst: taslak doğar ve telefondan onaylanır, nedeni, kanca y
   assert.match(m, /ölçüldü: Codex 0\.172\.0/);
   assert.match(m, /Bu kurulum oraya yazmaz; komutu kendiniz çalıştırın/);
   assert.match(m, /2\. Kanca yok: kurmayın\./);
-  assert.match(m, /codex exec \(etkileşimsiz\)[\s\S]*approval_mode = "approve" gerekir/);
-  // exec maddesi: ölçülen gereklilik ile bilinmeyen yer ayrı; taslak cümlesi tek anlamlı (onaylanıp çalışan çağrı).
-  assert.match(m, /Ölçülen yalnız bu gerekliliktir \(Codex 0\.172\.0,\n\s+docs\/HARNESS-H3-OLCUM\.md Ö10\)/);
-  assert.match(m, /config\.toml'daki tam yeri[\s\S]*ölçülmedi, bilinmiyor/);
+  // exec maddesi: ölçülen iki yol tam yeriyle; kök reddi; yönerge yazmaz; taslak cümlesi tek anlamlı.
+  assert.match(m, /codex exec \(etkileşimsiz\)[\s\S]*approval_policy = "never" iken ajanda araçları onay isteyip\n\s+düşer \("MCP tool call requires approval, but approval policy is never"\)/);
+  assert.match(m, /Ölçülen \(Codex 0\.172\.0,\n\s+docs\/HARNESS-H3-OLCUM\.md bölüm 6\) iki yol/);
+  assert.match(m, /bu kurulum hiçbirini yazmaz, siz eklersiniz/);
+  assert.match(m, /\[mcp_servers\.eren-ajanda\.tools\.ajanda_ekle\]\n\s+approval_mode = "approve"/);
+  assert.match(m, /\[mcp_servers\.eren-ajanda\]\n\s+default_tools_approval_mode = "approve"/);
+  assert.match(m, /kök düzeye yazılırsa Codex "unknown configuration field" ile reddeder/);
+  assert.match(m, /"approve" dışındaki değerler denenmedi/);
+  assert.equal(/bilinmiyor|yeri bilinmiyor|tam yeri \(hangi tablo/.test(m), false, "eski 'yeri bilinmiyor' ifadesi yok");
   assert.match(m, /Ayarla exec'te çalışan çağrının kaydı da, etkileşimli oturumdaki gibi, taslak doğar\./);
   assert.equal(/Onaysız çalışan/.test(m), false, "iki türlü okunan eski cümle yok");
   // Sentetik tur onaylanmış kayda dokunamaz: yönerge bunu ve örneğini söyler.
   assert.match(m, /Codex onaylanmış \(taslak olmayan\) kayda dokunamaz: "dişçiyi 11'e al" gibi bir değişiklik, kayıt telefonda\n\s+onaylandıysa reddedilir/);
   assert.match(m, /--teshis[\s\S]*cagri_kimligi_yok/);
   assert.match(m, /Kaldırma: codex mcp remove eren-ajanda;/);
-  // Ölçülmemiş olan "çalışır" diye vaat edilmez: uçtan uca kayıt ölçülmedi diye işaretli.
+  // Ölçülen ile ölçülmeyen ayrı yazılı; "çalışır" vaadi yok, eski "uçtan uca ölçülmedi" ifadesi yok.
   assert.equal(/Kayıtlar yine çalışır/.test(m), false, "ölçülmemiş iddia");
-  assert.match(m, /Ölçülmedi: bu köprünün Codex altında servise bağlanıp kayıt\n\s+yazması uçtan uca denenmedi/);
+  assert.equal(/uçtan uca denenmedi/.test(m), false, "eski 'ölçülmedi' ifadesi yok");
+  assert.match(m, /Ölçüldü \(Codex 0\.172\.0, gerçek köprü, test servisine karşı;\n\s+docs\/HARNESS-H3-OLCUM\.md bölüm 6, "Uçtan uca"\): kayıt taslak doğdu, araç çıktısındaki not ve teşhis doğru/);
+  assert.match(m, /Ölçülmedi: tam servis ve telefondan onay akışı, etkileşimli arayüz/);
+  assert.match(m, /PowerShell 7 satırı çalıştı[\s\S]*Ölçülmedi: PowerShell 5\.1 ve Git Bash satırları/);
   // "Onaylanmış kayda dokunamaz" dürüst köprü varsayımına dayanır; varsayım ve güven sınırı yazılı.
   assert.match(m, /köprülerin dürüst olduğu varsayımına dayanır\. Güven sınırı Windows kullanıcısıdır: kabuk erişimi olan bir\n\s+model \(sandbox izin verirse\) kancaya sahte girdi verip/);
   // Yönergeyi yeniden görmek anahtarı yenilemez: önerilen komut --yonerge.

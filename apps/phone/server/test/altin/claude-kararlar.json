@@ -1,0 +1,80 @@
+{
+  "kayit": "claude-kararlar",
+  "aciklama": "Claude'a özgü kararların girdi → sonuç tabloları (H4.1, H4.4).",
+  "yeniden_uret": "apps/phone/server içinde: PowerShell `$env:EREN_ALTIN_YAZ='1'; node --disable-warning=ExperimentalWarning --test test/surucu-altin.test.ts; Remove-Item Env:EREN_ALTIN_YAZ` (bash: `EREN_ALTIN_YAZ=1 node --disable-warning=ExperimentalWarning --test test/surucu-altin.test.ts`)",
+  "senaryolar": {
+    "kimlik_kabulu": [
+      {"apiKeySource":"none","kabul":true,"durum":"hazir"},
+      {"apiKeySource":"ANTHROPIC_API_KEY","kabul":false,"durum":"kapali"},
+      {"apiKeySource":"apiKeyHelper","kabul":false,"durum":"kapali"},
+      {"apiKeySource":"/login managed key","kabul":false,"durum":"kapali"},
+      {"apiKeySource":"","kabul":false,"durum":"kapali"},
+      {"apiKeySource":null,"kabul":false,"durum":"kapali"},
+      {"apiKeySource":"<alan yok>","kabul":false,"durum":"kapali"}
+    ],
+    "tur_sinifi": [
+      {"girdi":{"terminal_reason":"completed","is_error":false},"sinif":"tamam","is_error":false},
+      {"girdi":{"terminal_reason":"completed","is_error":true},"sinif":"hata","is_error":true},
+      {"girdi":{"terminal_reason":"aborted_streaming","is_error":false},"sinif":"kesildi","is_error":false},
+      {"girdi":{"terminal_reason":"aborted_tools","is_error":true},"sinif":"kesildi","is_error":true},
+      {"girdi":{"terminal_reason":"max_turns","is_error":true},"sinif":"hata","is_error":true},
+      {"girdi":{"terminal_reason":null,"is_error":false},"sinif":"tamam","is_error":false},
+      {"girdi":{"terminal_reason":null,"is_error":true},"sinif":"hata","is_error":true},
+      {"girdi":{"terminal_reason":"completed","is_error":"evet"},"sinif":"hata","is_error":true},
+      {"girdi":{"terminal_reason":"completed"},"sinif":"hata","is_error":true}
+    ],
+    "devir_esigi": [
+      {"pencere":1,"esik":0.5},
+      {"pencere":100000,"esik":50000},
+      {"pencere":200000,"esik":100000},
+      {"pencere":399999,"esik":199999.5},
+      {"pencere":400000,"esik":200000},
+      {"pencere":1000000,"esik":200000}
+    ],
+    "doluluk": [
+      {
+        "kullanim": {"input_tokens":150000,"cache_creation_input_tokens":30000,"cache_read_input_tokens":20000},
+        "dolu": 200000
+      },
+      {"kullanim":{"input_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0},"dolu":0}
+    ],
+    "pencere_secimi": [
+      {"pencereler":{},"model":"claude-opus-ornek","secilen":null},
+      {"pencereler":{"claude-opus-ornek":200000},"model":"claude-opus-ornek","secilen":200000},
+      {
+        "pencereler": {"claude-opus-ornek[1m]":1000000,"claude-haiku-ornek":200000},
+        "model": "claude-opus-ornek",
+        "secilen": 1000000
+      },
+      {"pencereler":{"claude-opus":500000},"model":"claude-opus-ornek-uzun","secilen":500000},
+      {"pencereler":{"a":300000,"b":100000},"model":null,"secilen":100000},
+      {"pencereler":{"a":300000,"b":100000},"model":"","secilen":100000},
+      {"pencereler":{"a":300000,"b":100000},"model":"c","secilen":100000},
+      {"pencereler":{"a":0,"b":-5,"c":50000},"model":"a","secilen":50000}
+    ],
+    "arac_kategorisi": [
+      {"ad":"PowerShell","kategori":"komut"},
+      {"ad":"Bash","kategori":"komut"},
+      {"ad":"Read","kategori":"dosya_okuma"},
+      {"ad":"Edit","kategori":"dosya_yazma"},
+      {"ad":"Write","kategori":"dosya_yazma"},
+      {"ad":"Glob","kategori":"dosya_okuma"},
+      {"ad":"Grep","kategori":"dosya_okuma"},
+      {"ad":"WebFetch","kategori":"web"},
+      {"ad":"WebSearch","kategori":"web"},
+      {"ad":"NotebookEdit","kategori":"dosya_yazma"},
+      {"ad":"Task","kategori":"arac"},
+      {"ad":"mcp__eren__plan_oner","kategori":"plan"},
+      {"ad":"mcp__eren__rapor_oku","kategori":"is_bilgisi"},
+      {"ad":"mcp__eren-ajanda__ajanda_ekle","kategori":"arac"},
+      {"ad":"mcp__computer-use-windows__screenshot","kategori":"ekran"},
+      {"ad":"","kategori":"arac"}
+    ],
+    "gorsel_butcesi": [
+      {"onceki":58,"adet":3,"sinir":60,"devir_istegi":true,"ekli_satir_yazildi":false,"nesil_gorsel":58},
+      {"onceki":58,"adet":2,"sinir":60,"devir_istegi":false,"ekli_satir_yazildi":true,"nesil_gorsel":60},
+      {"onceki":0,"adet":61,"sinir":60,"devir_istegi":false,"ekli_satir_yazildi":true,"nesil_gorsel":61},
+      {"onceki":60,"adet":1,"sinir":60,"devir_istegi":true,"ekli_satir_yazildi":false,"nesil_gorsel":60}
+    ]
+  }
+}

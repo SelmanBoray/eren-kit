@@ -1,0 +1,10 @@
+<!-- Ajanda / Sahne çizimi "kutu". Kaynak: parca/50-ortak.js RESIM.kutu.
+     Varsayılan takım: domates (levha zemini b=#C93A22; çizimin kendisi zemin içermez).
+     data-rol: f=figür, l=açık ayrıntı, d=koyu ayrıntı, b=zemin rengi; renk çalışma anında takımdan gelir.
+     Karakalem ve canlanan parçalar için SAHNE.md "Çizimler" bölümüne bakın. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 160" width="240" height="160">
+  <path id="pf_1" data-rol="f" d="M64 62l56-24 56 24v60l-56 24-56-24z" fill="#F3D3A0" />
+  <path id="pd_1" data-rol="d" d="M120 86v60l56-24V62z" fill="#5B140A" fill-opacity=".28" />
+  <path id="pl_1" data-rol="l" d="M64 62l56 24 56-24-56-24z" fill="#FFE8D6" />
+  <path id="pd_2" data-rol="d" d="M88 51.700l56 24v18l8-3.400v-18l-56-24z" fill="#5B140A" fill-opacity=".5" />
+</svg>

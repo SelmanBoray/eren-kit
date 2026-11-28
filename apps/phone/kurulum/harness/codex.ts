@@ -46,7 +46,7 @@ export const mcpEkleArgumanlari = (y: Pick<Yollar, "nodeExe" | "kopruBetigi">, k
 
 export const MCP_KALDIR_KOMUTU = `codex mcp remove ${MCP_ADI}`;
 
-/** Ölçülen kabuklar (Ö10: PowerShell 7 ve 5.1, Git Bash); cmd satırı tırnak kuralıyla yazılır, Codex'te ölçülmedi. */
+/** Codex'te yalnız PowerShell 7 satırı ölçüldü (bölüm 6 "Uçtan uca"); cmd satırı tırnak kuralıyla yazılır, ölçülmedi. */
 const OLCULMEYEN: ReadonlySet<Kabuk> = new Set(["cmd"]);
 
 /** `codex mcp add` satırı, verilen kabuğa yapıştırılacak hali; yazılamıyorsa `KabukHatasi`. */
@@ -73,7 +73,7 @@ export function mcpKaydiSatirlari(y: Pick<Yollar, "nodeExe" | "kopruBetigi">, ko
 /**
  * `eren eslestir --pc-ajan codex`'in anahtardan sonra yazdığı yönerge (`--yonerge` anahtarsız yazar). Hiçbir şey
  * değiştirmez, dosya okumaz. "Onaylanmış kayda dokunamaz" dürüst köprü varsayımıyladır ve metin bunu söyler; gerçek
- * köprünün Codex altında uçtan uca kayıt yazması ölçülmedi, metin bunu da söyler.
+ * köprünün Codex 0.172.0 altında kayıt yazması test servisine karşı ölçüldü; ölçülmeyenler metinde açıkça yazılı.
  */
 export function gosterMetni(y: Yollar, kok: string): string {
   return [
@@ -88,9 +88,13 @@ export function gosterMetni(y: Yollar, kok: string): string {
     "   Bu kurulum oraya yazmaz; komutu kendiniz çalıştırın. Yapıştıracağınız kabuğa göre seçin:",
     ...mcpKaydiSatirlari(y, kok),
     "   Köprü sarmalayıcısız başlar (cmd /c, npx yok). --env veri kökünü verir: köprü anahtarı oradan okur.",
+    "   Ölçüldü (Codex 0.172.0): PowerShell 7 satırı çalıştı (\"Added global MCP server\"; config.toml'a",
+    "   [mcp_servers.eren-ajanda] ve .env yazıldı). Ölçülmedi: PowerShell 5.1 ve Git Bash satırları.",
     "",
-    "2. Kanca yok: kurmayın. Kayıtlar taslak doğar. Ölçülmedi: bu köprünün Codex altında servise bağlanıp kayıt",
-    "   yazması uçtan uca denenmedi (docs/HARNESS-H3-OLCUM.md bölüm 6); 4. adımdaki sınama bunu gösterir.",
+    "2. Kanca yok: kurmayın. Kayıtlar taslak doğar. Ölçüldü (Codex 0.172.0, gerçek köprü, test servisine karşı;",
+    "   docs/HARNESS-H3-OLCUM.md bölüm 6, \"Uçtan uca\"): kayıt taslak doğdu, araç çıktısındaki not ve teşhis doğru",
+    "   çıktı. Ölçülmedi: tam servis ve telefondan onay akışı, etkileşimli arayüz; 4. adımdaki sınama gerçek",
+    "   kurulumda bunu gösterir.",
     "   Codex onaylanmış (taslak olmayan) kayda dokunamaz: \"dişçiyi 11'e al\" gibi bir değişiklik, kayıt telefonda",
     "   onaylandıysa reddedilir (sentetik_turda_izinsiz). Yalnız hâlâ taslak olan kayıt değiştirilebilir;",
     "   onaylanmış kaydı telefondan değiştirin.",
@@ -98,10 +102,17 @@ export function gosterMetni(y: Yollar, kok: string): string {
     "   model (sandbox izin verirse) kancaya sahte girdi verip kendi başlattığı Claude Code köprüsüyle insan turu",
     "   üretebilir.",
     "",
-    "3. codex exec (etkileşimsiz) ile kullanılacaksa: exec'te ajanda araçlarının çalışması için bu sunucunun",
-    '   araçlarına approval_mode = "approve" gerekir. Ölçülen yalnız bu gerekliliktir (Codex 0.172.0,',
-    "   docs/HARNESS-H3-OLCUM.md Ö10); ayarın config.toml'daki tam yeri (hangi tablo, hangi anahtar altında)",
-    "   ölçülmedi, bilinmiyor: Codex'in kendi belgesine bakın. Bu kurulum onu da yazmaz.",
+    '3. codex exec (etkileşimsiz) ile kullanılacaksa: approval_policy = "never" iken ajanda araçları onay isteyip',
+    '   düşer ("MCP tool call requires approval, but approval policy is never"). Ölçülen (Codex 0.172.0,',
+    "   docs/HARNESS-H3-OLCUM.md bölüm 6) iki yol, config.toml'da; bu kurulum hiçbirini yazmaz, siz eklersiniz:",
+    "   - Araç başına, her araç için (ajanda_ekle, ajanda_listele, ajanda_guncelle):",
+    "       [mcp_servers.eren-ajanda.tools.ajanda_ekle]",
+    '       approval_mode = "approve"',
+    "   - Sunucu geneli:",
+    "       [mcp_servers.eren-ajanda]",
+    '       default_tools_approval_mode = "approve"',
+    '   default_tools_approval_mode kök düzeye yazılırsa Codex "unknown configuration field" ile reddeder; yeri',
+    '   sunucu tablosudur. "approve" dışındaki değerler denenmedi.',
     "   Ayarla exec'te çalışan çağrının kaydı da, etkileşimli oturumdaki gibi, taslak doğar.",
     "",
     "4. Sınama: yeni bir Codex oturumu açın, bir kayıt isteyin (\"yarın 10'da dişçi, ajandaya ekle\"); kayıt telefonda",

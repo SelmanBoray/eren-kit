@@ -604,7 +604,7 @@ const TESHIS_ALANLARI: Readonly<Record<string, readonly string[]>> = {
  * doğar; alt agent ve etkileşimsiz oturum için bu beklenen davranıştır, öteki ikisi kurulum sorunudur.
  * Çağrının ajanı bilinmediği (günlük ajanı ayırmıyor) Claude Code görünümünün metinleridir: `cagri_kimligi_yok`
  * başka bir PC ajanından (yalnız taslak ajanın köprüsü çağrı kimliği hiç göndermez) da gelebilir. Ajanı
- * `claude-code` diye bilinen çağrıda o karar `CLAUDE_CAGRI_KIMLIGI_YOK_METNI` ile söylenir.
+ * `claude-code` diye bildirilen çağrıda o karar `CLAUDE_CAGRI_KIMLIGI_YOK_METNI` ve olası nedenleriyle söylenir (beyan, kesin değil).
  */
 export const TESHIS_KARAR_METNI: Readonly<Record<PcTurKarari, string>> = {
   insan: "ana oturumun çağrısı; kayıt doğrudan (taslaksız) yazıldı. Kurulum doğru.",
@@ -620,10 +620,18 @@ export const TESHIS_KARAR_METNI: Readonly<Record<PcTurKarari, string>> = {
   etkilesimsiz: "son çağrı -p ya da Agent SDK oturumundandı; kaydı taslaktır (beklenen).",
 };
 
-/** Ajanı `claude-code` diye bilinen çağrının `cagri_kimligi_yok`'u (köprü hello'da `uyarlayici` bildirdi). */
-export const CLAUDE_CAGRI_KIMLIGI_YOK_METNI =
-  "kayıtlar TASLAK doğuyor: Claude Code çağrı kimliğini MCP isteğinde göndermiyor (sürüm farkı); kanca bunu düzeltemez, " +
-  "kayıtları uygulamadan onaylayın.";
+/**
+ * Ajanı `claude-code` diye bildirilen çağrının `cagri_kimligi_yok`'u. Ajan köprünün hello'daki kendi beyanıdır
+ * (`--uyarlayici`; bayraksız köprü `claude-code` der), doğrulanmaz: neden kesin söylenmez, olasılık sırasıyla yazılır.
+ */
+export const CLAUDE_CAGRI_KIMLIGI_YOK_METNI = "kayıtlar TASLAK doğuyor; nedeni kesin değil, olası nedenler aşağıda";
+/** `CLAUDE_CAGRI_KIMLIGI_YOK_METNI`'nin olası nedenleri, en olasıdan başlayarak. */
+export const CLAUDE_CAGRI_KIMLIGI_YOK_NEDENLERI: readonly string[] = [
+  "Claude Code çağrı kimliğini MCP isteğinde göndermiyor (sürüm farkı); kanca bunu düzeltemez, kayıtları uygulamadan onaylayın.",
+  `köprü başka bir harness (ör. Codex CLI) için --uyarlayici bayrağı olmadan kaydedilmiş: bayraksız köprü kendini claude-code ` +
+    `diye bildirir. O harness'in kaydını yönergesiyle karşılaştırın (eslestir ${PC_AJAN_SECENEGI} <ad> --yonerge).`,
+  "başka bir neden; günlük bunları ayırt edemez.",
+];
 const TESHIS_MODULLERI: ReadonlySet<string> = new Set(["ajanda", "ajanda-kopru-sunucu"]);
 const TESHIS_SATIR = 40;
 /** Alan değerleri kapalı listelerden gelir; yine de yalnız bu kalıba uyan değer yazılır. */
@@ -926,7 +934,8 @@ function otekiAjanSatirlari(araclar: readonly TeshisOlayi[], ajan: PcAjanGorunum
 /**
  * Yalnız taslak ajanın sınama özeti. Kanca ve çağrı kimliği bu ajanda bilerek yoktur: "HAYIR" diye alarm verilmez.
  * Köprüsü çağrı kimliği okumadığından çağrısı her zaman `cagri_kimligi_yok`'tur; başka karar bu ajanın değildir
- * (ayrımsız günlükte) ya da beklenmeyendir (ajanı bu diye bilinen çağrıda). Kanca kurulumu ve tasdik nedenleri yazılmaz.
+ * (ayrımsız günlükte) ya da beklenmeyendir (ajanı bu diye bildirilen çağrıda; `insan` ise açık UYARI, `dogrudanKayitUyarisi`).
+ * Kanca kurulumu ve tasdik nedenleri yazılmaz.
  */
 function taslakOzeti(ajan: PcAjanGorunumu, araclar: readonly TeshisOlayi[], ayrim: boolean): string[] {
   const sonKarar = araclar.at(-1)?.alanlar["pc_karar"];
@@ -938,7 +947,12 @@ function taslakOzeti(ajan: PcAjanGorunumu, araclar: readonly TeshisOlayi[], ayri
           ? " (kayıt TASLAK doğdu: beklenen, telefondan onaylayın)"
           : ` (kayıt TASLAK doğdu: ${ajan.gorunenAd} çağrısıysa beklenen, telefondan onaylayın)`
         : ayrim
-          ? ` (beklenmeyen: ${ajan.gorunenAd} köprüsü çağrı kimliği göndermez; köprü başka bir sürümden olabilir)`
+          ? sonKarar === "insan"
+            ? okumaMi(araclar.at(-1))
+              ? ` (UYARI: okuma çağrısı insan kararı aldı; ${ajan.gorunenAd} köprüsü bunu üretmez)`
+              : ` (UYARI: kayıt DOĞRUDAN, taslaksız yazıldı; ${ajan.gorunenAd} köprüsü çağrı kimliği okumaz, bu kararı üretemez)`
+            : ` (beklenmeyen: ${ajan.gorunenAd} köprüsü çağrı kimliği okumaz; bu karar doğru kurulmuş bir ${ajan.gorunenAd} ` +
+              "köprüsünden gelemez, köprünün kaydını denetleyin)"
           : ` (bir ${ajan.gorunenAd} çağrısının kararı değil: köprüsü çağrı kimliği göndermez, çağrıları hep cagri_kimligi_yok olur; ` +
             `başka bir PC ajanının, ör. Claude Code: eslestir ${CLAUDE_CODE_SECENEGI} --teshis)`;
   return [
@@ -947,7 +961,40 @@ function taslakOzeti(ajan: PcAjanGorunumu, araclar: readonly TeshisOlayi[], ayri
     "  çağrı kimliği: köprü okumaz (beklenen; çağrıların kararı cagri_kimligi_yok)",
     ...(ayrim ? [`  ${ajan.gorunenAd} çağrısı: ${araclar.length === 0 ? "olay yok" : String(araclar.length)}`] : []),
     `  son PC araç kararı: ${sonKarar ?? "olay yok"}${anlam}`,
+    ...(ayrim ? dogrudanKayitUyarisi(ajan, araclar) : []),
   ];
+}
+
+/**
+ * Ajanı yalnız taslak ajan diye bildirilen çağrılardan doğrudan (`insan`) yazılanlar. Bu ajanın doğru kurulmuş
+ * köprüsü çağrı kimliği okumaz, bu kararı üretemez: yumuşatılmadan söylenir, nereye bakılacağıyla.
+ */
+function dogrudanKayitUyarisi(ajan: PcAjanGorunumu, araclar: readonly TeshisOlayi[]): string[] {
+  const insanlar = araclar.filter((o) => o.alanlar["pc_karar"] === "insan");
+  const sayi = insanlar.filter((o) => !okumaMi(o)).length;
+  const okuma = insanlar.length - sayi;
+  const okumaSatiri =
+    okuma === 0
+      ? []
+      : [
+          `UYARI (${ajan.gorunenAd}): ${ajan.ad} diye bildirilen ${okuma} okuma çağrısı insan kararı aldı; ${ajan.gorunenAd} köprüsü bunu üretmez.`,
+          "  Ortak ajanda anahtarını kullanan, köprü olmayan ya da değiştirilmiş bir istemci olabilir; anahtarı yenilemeyi düşünün.",
+        ];
+  if (sayi === 0) return okumaSatiri;
+  return [
+    `UYARI (${ajan.gorunenAd}): ${ajan.ad} diye bildirilen ${sayi} çağrı kaydı DOĞRUDAN (taslaksız) yazdı.`,
+    `  Doğru kurulmuş bir ${ajan.gorunenAd} köprüsü çağrı kimliği okumaz; bu kaydı üretemez. Bu bir kurulum ayrıntısı değil, denetlenmeli:`,
+    `  - ortak ajanda anahtarını kullanan, köprü olmayan ya da değiştirilmiş bir istemci kendini ${ajan.ad} diye tanıtıyor olabilir`,
+    "    (anahtar bütün PC ajanlarında ortaktır; bu bayrakla kaydedilmiş bir köprü de çağrı kimliğini okumaz, bu kararı üretemez).",
+    `  - Anahtarı yenileyin (eslestir ${pcSecenegi(ajan)}) ve doğrudan yazılan kayıtları telefonda gözden geçirin.`,
+    ...okumaSatiri,
+  ];
+}
+
+/** Okuma çağrısı: `fiil` yazan fiillerden (`ajanda_ekle`, `ajanda_guncelle`) biri değil. `fiil` alanı yoksa (eski günlük) yazma sayılır. */
+function okumaMi(o: TeshisOlayi | undefined): boolean {
+  const f = o?.alanlar["fiil"];
+  return f !== undefined && f !== "ajanda_ekle" && f !== "ajanda_guncelle";
 }
 
 /**
@@ -1037,13 +1084,14 @@ export function pcTeshisMetni(
   // Ayarda kurulu ama tasdik gelmedi: genel metin ("kurulu değilse kurun") yanlış yere yollar; nedenler ayrı.
   const kuruluAmaTasdiksiz =
     reddiNedenleri.length === 0 && sonKarar === "tasdik_yok" && kurulum !== undefined && kurulum !== null && kurulum.arac === true;
-  // Ajanı `claude-code` diye bilinen çağrının çağrı kimliksizliği kesindir; ayrımsız günlükte başka ajan ihtimali anılır.
-  const kesinKimliksiz = ayrim && claudeCodeMu(ajan) && sonKarar === "cagri_kimligi_yok";
+  // Ajanı `claude-code` diye bildirilen çağrının çağrı kimliksizliği: ajan köprünün beyanıdır, nedenler olasılık sırasıyla
+  // ayrı satırda. Ayrımsız günlükte başka ajan ihtimali karar metninde anılır (bugünkü çıktı).
+  const beyanliKimliksiz = ayrim && claudeCodeMu(ajan) && sonKarar === "cagri_kimligi_yok";
   const anlam = reddiNedenleri.length > 0
     ? " (kayıtlar TASLAK doğuyor: kanca bu çağrıyı bildirdi ama servis tasdiki kullanmadı; neden aşağıda)"
     : kuruluAmaTasdiksiz
     ? " (kayıtlar TASLAK doğuyor: kanca ayarda kurulu görünüyor ama bu çağrıda tasdik gelmedi; olası nedenler aşağıda)"
-    : kesinKimliksiz
+    : beyanliKimliksiz
     ? ` (${CLAUDE_CAGRI_KIMLIGI_YOK_METNI})`
     : sonKarar !== undefined && Object.hasOwn(TESHIS_KARAR_METNI, sonKarar)
       ? ` (${TESHIS_KARAR_METNI[sonKarar as PcTurKarari]})`
@@ -1063,6 +1111,9 @@ export function pcTeshisMetni(
   } else if (kuruluAmaTasdiksiz) {
     ozet.push("Olası nedenler (kurulu görünüyor ama tasdik gelmedi):");
     for (const n of tasdikYokNedenleri(son, kurulum)) ozet.push(`  - ${n}`);
+  } else if (beyanliKimliksiz) {
+    ozet.push("Olası nedenler (ajan köprünün kendi beyanı: uyarlayici=claude-code, doğrulanmadı; olasıdan başlayarak):");
+    for (const n of CLAUDE_CAGRI_KIMLIGI_YOK_NEDENLERI) ozet.push(`  - ${n}`);
   } else if (sonKarar === "tasdik_yok" && kancaRetNedenleri(son).length > 0) {
     // Kurulum bilinmese de günlükteki ret nedeni söylenir ("kancayı kurun"dan önce).
     ozet.push("Günlükte görülen neden:");

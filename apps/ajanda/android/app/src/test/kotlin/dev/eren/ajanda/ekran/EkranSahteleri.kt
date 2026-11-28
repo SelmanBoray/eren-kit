@@ -74,7 +74,7 @@ fun kayit(
     guncellemeMs = olusturma,
 )
 
-fun gor(k: AjandaKaydi, bekleyen: Boolean = false) = KayitGorunumu(k, bekleyen)
+fun gor(k: AjandaKaydi, bekleyen: Boolean = false, ertelenen: Boolean = false) = KayitGorunumu(k, bekleyen, ertelenen)
 
 fun an(tarih: String, saat: String, dilim: String = "Europe/Istanbul", sure: Int? = null, ifade: String? = null) =
     AjandaZamani.An(tarih, saat, sure, dilim, ifade)
@@ -86,6 +86,8 @@ class SahteYuz : CekirdekYuzu {
     val kayitlar = linkedMapOf<String, AjandaKaydi>()
     val ret = mutableListOf<RetGirdisi>()
     val cagrilar = mutableListOf<String>()
+    /** v3 değişikliği ertelenen kayıtlar (`KayitGorunumu.ertelenen`). */
+    val ertelenenler = mutableSetOf<String>()
     var ekleHatasi: Exception? = null
     private var sayac = 0
 
@@ -93,12 +95,12 @@ class SahteYuz : CekirdekYuzu {
 
     override fun liste(sekme: Sekme, kapalilarDahil: Boolean): List<KayitGorunumu> {
         cagrilar += "liste:$sekme"
-        return kayitlar.values.filter { Yenileme.uyeMi(sekme, it, kapalilarDahil) }.map { gor(it) }
+        return kayitlar.values.filter { Yenileme.uyeMi(sekme, it, kapalilarDahil) }.map { gor(it, ertelenen = it.kayitId in ertelenenler) }
     }
 
     override fun kayit(kayitId: String): KayitGorunumu? {
         cagrilar += "kayit:$kayitId"
-        return kayitlar[kayitId]?.let { gor(it) }
+        return kayitlar[kayitId]?.let { gor(it, ertelenen = it.kayitId in ertelenenler) }
     }
 
     override fun retListesi(): List<RetGirdisi> {

@@ -10,6 +10,7 @@ import dev.eren.ajanda.cekirdek.BaglantiDurumu
 import dev.eren.ajanda.cekirdek.EslesmeDurumu
 import dev.eren.ajanda.cekirdek.SurumUyusmazligi
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -21,8 +22,14 @@ class DurumGostergesiTest {
     private val simdi = ZonedDateTime.of(2026, 11, 26, 10, 0, 0, 0, dilim).toInstant().toEpochMilli()
     private val eslesti = EslesmeDurumu.Eslesti("d_ornek", "100.101.102.103", 8765)
 
-    private fun b(asama: BaglantiAsamasi, kuyrukta: Int = 0, son: Long? = null, hata: AjandaKanalHatasi? = null, surum: SurumUyusmazligi? = null) =
-        BaglantiDurumu(asama, kuyrukta, 0, son, hata, surum)
+    private fun b(
+        asama: BaglantiAsamasi,
+        kuyrukta: Int = 0,
+        son: Long? = null,
+        hata: AjandaKanalHatasi? = null,
+        surum: SurumUyusmazligi? = null,
+        ertelenen: Int = 0,
+    ) = BaglantiDurumu(asama, kuyrukta, 0, son, hata, surum, ertelenenIslem = ertelenen)
 
     private fun g(e: EslesmeDurumu?, bd: BaglantiDurumu?, adres: Boolean = true, hata: String? = null) =
         DurumGostergesi.hesapla(e, bd, adres, simdi, dilim, hata)
@@ -66,6 +73,49 @@ class DurumGostergesiTest {
         assertTrue(hic.ayrinti.contains("Gönderilmeyi bekleyen değişiklik yok."))
         val dun = g(eslesti, b(BaglantiAsamasi.KOPUK, son = simdi - 20 * 3_600_000L))
         assertTrue(dun.ayrinti, dun.ayrinti.contains("Son eşitleme: dün 14:00."))
+    }
+
+    /**
+     * "Bekleyen yok" yalnız `kuyrukta == 0 && ertelenenIslem == 0` iken (köprü `BaglantiDurumu.ertelenen_islem`):
+     * eski (v2) servise bağlıyken ertelenen v3 değişiklikleri ve arkalarında sırası tutulan sil/güncelle satırları
+     * `kuyrukta`'ya girmez ama gönderilmemiştir.
+     */
+    @Test
+    fun ertelenenVarkenBekleyenYokDenmez() {
+        val yok = "Gönderilmeyi bekleyen değişiklik yok."
+        // Canlı, kuyruk boş ama 2 işlem servis güncellenmeyi bekliyor.
+        val canli = g(eslesti, b(BaglantiAsamasi.CANLI, ertelenen = 2))
+        assertFalse(canli.ayrinti, canli.ayrinti.contains(yok))
+        assertFalse("kayıtlar PC'de güncel değil", canli.ayrinti.contains("kayıtlar güncel"))
+        assertTrue(canli.ayrinti, canli.ayrinti.contains("2 değişiklik PC'deki servis güncellenince gidecek"))
+        // Metin tutulan silme/düzenleme satırlarını da kapsar, yalnız yeni alanları değil.
+        assertTrue(canli.ayrinti, canli.ayrinti.contains("silme ya da düzenleme"))
+        assertEquals("Bağlı · 2 bekliyor" to DurumGostergesi.Ton.IYI, canli.kisa to canli.ton)
+        // Kuyruk da doluysa iki satır; kısa metin gönderilmekte olanı söyler.
+        val ikisi = g(eslesti, b(BaglantiAsamasi.CANLI, kuyrukta = 1, ertelenen = 3))
+        assertEquals("Bağlı · 1 gönderiliyor", ikisi.kisa)
+        assertTrue(ikisi.ayrinti, ikisi.ayrinti.contains("1 değişiklik PC'ye gönderilmeyi bekliyor."))
+        assertTrue(ikisi.ayrinti, ikisi.ayrinti.contains("3 değişiklik PC'deki servis güncellenince gidecek"))
+        assertFalse(ikisi.ayrinti.contains(yok))
+        // Çevrimdışı: kısa metin gönderilmemişlerin toplamını sayar.
+        val kopuk = g(eslesti, b(BaglantiAsamasi.KOPUK, kuyrukta = 1, ertelenen = 2))
+        assertEquals("Çevrimdışı · 3 bekliyor", kopuk.kisa)
+        assertFalse(kopuk.ayrinti.contains(yok))
+        assertEquals("Çevrimdışı · 2 bekliyor", g(eslesti, b(BaglantiAsamasi.KOPUK, ertelenen = 2)).kisa)
+        // Bağlanırken, eşleşmesizken ve sürüm uyuşmazlığında da aynı kural.
+        listOf(
+            g(eslesti, b(BaglantiAsamasi.EL_SIKISMA, ertelenen = 1)),
+            g(EslesmeDurumu.Yok, b(BaglantiAsamasi.KOPUK, ertelenen = 1), adres = false),
+            g(eslesti, b(BaglantiAsamasi.KOPUK, ertelenen = 1, hata = AjandaKanalHatasi.PROTOKOL_UYUMSUZ, surum = SurumUyusmazligi.SERVIS_ESKI)),
+        ).forEach {
+            assertFalse(it.ayrinti, it.ayrinti.contains(yok))
+            assertTrue(it.ayrinti, it.ayrinti.contains("1 değişiklik PC'deki servis güncellenince gidecek"))
+        }
+        // İkisi de sıfırken "bekleyen yok" ve eski metin.
+        val bos = g(eslesti, b(BaglantiAsamasi.CANLI))
+        assertTrue(bos.ayrinti.contains(yok))
+        assertTrue(bos.ayrinti.contains("PC'ye bağlı, kayıtlar güncel."))
+        assertEquals(yok, bekleyenMetni(0, 0))
     }
 
     @Test

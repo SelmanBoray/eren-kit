@@ -1,0 +1,10 @@
+<!-- Ajanda / Sahne çizimi "dis". Kaynak: parca/50-ortak.js RESIM.dis.
+     Varsayılan takım: pembe (levha zemini b=#F4A9BC; çizimin kendisi zemin içermez).
+     data-rol: f=figür, l=açık ayrıntı, d=koyu ayrıntı, b=zemin rengi; renk çalışma anında takımdan gelir.
+     Karakalem ve canlanan parçalar için SAHNE.md "Çizimler" bölümüne bakın. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 160" width="240" height="160">
+  <path id="pf_1" data-rol="f" d="M84 36q18-14 36-2 18-12 36 2 16 14 6 46-6 18-9 40-3 16-12 2-6-22-21-22t-21 22q-9 14-12-2-3-22-9-40-10-32 6-46z" fill="#FFFFFF" />
+  <path id="ps_1" data-rol="d" d="M97 54q-7 9-3 24" fill="none" stroke="#5C1730" stroke-width="4" stroke-linecap="round" stroke-opacity=".22" />
+  <path id="pirilti_1" data-rol="f" d="M192 28q2 11 13 13-11 2-13 13-2-11-13-13 11-2 13-13z" fill="#FFFFFF" />
+  <path id="pirilti_2" data-rol="f" d="M50 88q1.500 7 8 8-6.500 1-8 8-1.500-7-8-8 6.500-1 8-8z" fill="#FFFFFF" />
+</svg>

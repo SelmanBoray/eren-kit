@@ -1,0 +1,30 @@
+<!-- Ajanda / Sahne çizimi "araba". Kaynak: parca/50-ortak.js RESIM.araba.
+     Varsayılan takım: kobalt (levha zemini b=#2B50E0; çizimin kendisi zemin içermez).
+     data-rol: f=figür, l=açık ayrıntı, d=koyu ayrıntı, b=zemin rengi; renk çalışma anında takımdan gelir.
+     Karakalem ve canlanan parçalar için SAHNE.md "Çizimler" bölümüne bakın. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 160" width="240" height="160">
+  <path id="zemin_1" data-rol="d" d="M22.5 137h195a2.5 2.5 0 0 1 2.5 2.5v0a2.5 2.5 0 0 1 -2.5 2.5h-195a2.5 2.5 0 0 1 -2.5 -2.5v-0a2.5 2.5 0 0 1 2.5 -2.5z" fill="#0F1E5E" fill-opacity=".28" />
+  <g id="kopuk_1">
+    <path id="kopuk_2" data-rol="l" d="M41 52a9 9 0 1 0 18 0a9 9 0 1 0 -18 0z" fill="#DDE7FF" fill-opacity=".92" />
+    <path id="kopuk_3" data-rol="l" d="M63 34a5 5 0 1 0 10 0a5 5 0 1 0 -10 0z" fill="#DDE7FF" fill-opacity=".92" />
+    <path id="kopuk_4" data-rol="l" d="M183 42a7 7 0 1 0 14 0a7 7 0 1 0 -14 0z" fill="#DDE7FF" fill-opacity=".92" />
+    <path id="kopuk_5" data-rol="l" d="M202 62a4 4 0 1 0 8 0a4 4 0 1 0 -8 0z" fill="#DDE7FF" fill-opacity=".92" />
+    <path id="kopuk_6" data-rol="l" d="M116 24a6 6 0 1 0 12 0a6 6 0 1 0 -12 0z" fill="#DDE7FF" fill-opacity=".92" />
+  </g>
+  <g id="govde_1">
+    <path id="govde_2" data-rol="f" d="M28 118v-16q0-11 11-13l24-5 21-27q6-8 16-8h46q10 0 16 8l20 27 21 5q11 3 11 14v15q0 6-6 6H34q-6 0-6-6z" fill="#FFC83D" />
+    <path id="govde_3" data-rol="l" d="M93 82l14-19q3-4 8-4h11v23z" fill="#DDE7FF" />
+    <path id="govde_4" data-rol="l" d="M134 59h10q5 0 8 4l14 19h-32z" fill="#DDE7FF" />
+    <path id="govde_5" data-rol="d" d="M140 92h10a2 2 0 0 1 2 2v0a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2v-0a2 2 0 0 1 2 -2z" fill="#0F1E5E" />
+    <path id="govde_6" data-rol="l" d="M204 94h4a3 3 0 0 1 3 3v3a3 3 0 0 1 -3 3h-4a3 3 0 0 1 -3 -3v-3a3 3 0 0 1 3 -3z" fill="#DDE7FF" />
+    <path id="govde_7" data-rol="d" d="M30 96h2a2 2 0 0 1 2 2v6a2 2 0 0 1 -2 2h-2a2 2 0 0 1 -2 -2v-6a2 2 0 0 1 2 -2z" fill="#0F1E5E" />
+  </g>
+  <g>
+    <path id="pd_1" data-rol="d" d="M61 122a17 17 0 1 0 34 0a17 17 0 1 0 -34 0z" fill="#0F1E5E" />
+    <path id="pl_1" data-rol="l" d="M71.5 122a6.5 6.5 0 1 0 13 0a6.5 6.5 0 1 0 -13 0z" fill="#DDE7FF" />
+  </g>
+  <g>
+    <path id="pd_2" data-rol="d" d="M153 122a17 17 0 1 0 34 0a17 17 0 1 0 -34 0z" fill="#0F1E5E" />
+    <path id="pl_2" data-rol="l" d="M163.5 122a6.5 6.5 0 1 0 13 0a6.5 6.5 0 1 0 -13 0z" fill="#DDE7FF" />
+  </g>
+</svg>

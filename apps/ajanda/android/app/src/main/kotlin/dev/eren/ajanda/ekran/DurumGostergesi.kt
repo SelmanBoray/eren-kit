@@ -37,7 +37,11 @@ object DurumGostergesi {
         }
         if (eslesme == null) return Gosterge("…", "Durum okunuyor.", Ton.SURUYOR, Eylem.YOK)
         val bekleyen = baglanti?.kuyrukta ?: 0
-        val bekleyenMetni = if (bekleyen > 0) "$bekleyen değişiklik PC'ye gönderilmeyi bekliyor." else "Gönderilmeyi bekleyen değişiklik yok."
+        // Eski (v2) servise bağlıyken bu serviste gitmeyen işlemler: v3 değişiklikleri ve aynı kayıtta onların
+        // arkasında sırası tutulan sil/güncelle satırları. `kuyrukta`'ya girmezler ama gönderilmemişlerdir.
+        val ertelenen = baglanti?.ertelenenIslem ?: 0
+        val gonderilmemis = bekleyen + ertelenen
+        val bekleyenMetni = bekleyenMetni(bekleyen, ertelenen)
         val sonEsitleme = baglanti?.sonEsitlenmeMs?.let { "Son eşitleme: ${EkranMetinleri.goreliAn(it, simdiMs, dilim)}." }
             ?: "Henüz hiç eşitlenmedi."
 
@@ -84,8 +88,13 @@ object DurumGostergesi {
         }
         return when (b.asama) {
             BaglantiAsamasi.CANLI -> Gosterge(
-                if (bekleyen > 0) "Bağlı · $bekleyen gönderiliyor" else "Bağlı",
-                "PC'ye bağlı, kayıtlar güncel.\n$bekleyenMetni$reddedildiNotu",
+                when {
+                    bekleyen > 0 -> "Bağlı · $bekleyen gönderiliyor"
+                    ertelenen > 0 -> "Bağlı · $ertelenen bekliyor"
+                    else -> "Bağlı"
+                },
+                // Ertelenen değişiklik varken PC'deki kayıtlar güncel değildir (servis güncellenince gider).
+                (if (ertelenen > 0) "PC'ye bağlı." else "PC'ye bağlı, kayıtlar güncel.") + "\n$bekleyenMetni$reddedildiNotu",
                 Ton.IYI, Eylem.YOK,
             )
             BaglantiAsamasi.TELAFI -> Gosterge(
@@ -102,7 +111,7 @@ object DurumGostergesi {
                 val yenidenEslestir = hata?.second == true
                 val kisa = when {
                     yenidenEslestir -> "PC tanımıyor"
-                    bekleyen > 0 -> "Çevrimdışı · $bekleyen bekliyor"
+                    gonderilmemis > 0 -> "Çevrimdışı · $gonderilmemis bekliyor"
                     else -> "Çevrimdışı"
                 }
                 Gosterge(
@@ -115,6 +124,21 @@ object DurumGostergesi {
             }
         }
     }
+}
+
+/**
+ * Gönderilmemiş değişikliklerin ayrıntı satırı. "Bekleyen yok" ancak [kuyrukta] ve [ertelenenIslem] ikisi de
+ * sıfırken söylenir (`BaglantiDurumu.ertelenen_islem`: gönderilmemişlerin toplamı ikisinindir).
+ */
+fun bekleyenMetni(kuyrukta: Int, ertelenenIslem: Int): String {
+    if (kuyrukta <= 0 && ertelenenIslem <= 0) return "Gönderilmeyi bekleyen değişiklik yok."
+    return listOfNotNull(
+        "$kuyrukta değişiklik PC'ye gönderilmeyi bekliyor.".takeIf { kuyrukta > 0 },
+        (
+            "$ertelenenIslem değişiklik PC'deki servis güncellenince gidecek: servisin henüz tanımadığı alanlara " +
+                "yapılanlar ve aynı kayıtta onların arkasında sırasını bekleyen silme ya da düzenlemeler."
+            ).takeIf { ertelenenIslem > 0 },
+    ).joinToString("\n")
 }
 
 /** Sürüm uyuşmazlığının kısa ve uzun metni (yön çekirdekten: karşı tarafın konuştuğu sürüm). */
