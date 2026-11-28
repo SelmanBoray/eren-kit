@@ -42,6 +42,7 @@ import dev.eren.ajanda.alarm.IzinAni
 import dev.eren.ajanda.alarm.IzinKarari
 import dev.eren.ajanda.alarm.IzinPlani
 import dev.eren.ajanda.birlestirme.BirlestirmeAkisi
+import dev.eren.ajanda.birlestirme.BirlestirmeMetinleri
 import dev.eren.ajanda.birlestirme.CekirdekBirlestirmesi
 import dev.eren.ajanda.cekirdek.Degisim
 import dev.eren.ajanda.cekirdek.Gozlemci
@@ -74,8 +75,6 @@ class AnaEkran : Activity() {
 
     /** Yalnız [arka]'da erişilir. */
     private var denetleyici: AnaDenetleyici? = null
-    /** Yalnız [arka]'da erişilir (dışa ve içe aktarma, D3). */
-    private var aktarma: AktarmaAkisi? = null
     private var gozlemciNo: ULong? = null
 
     private val bekleyenKilit = Any()
@@ -112,9 +111,15 @@ class AnaEkran : Activity() {
     /** Birleştirme sorusu (D4): açık pencere ve gösterdiği adım; gözlemciden gelen denetimler birikmez. */
     private val birlestirmePenceresi = BirlestirmePenceresi()
     private var birlestirmeDiyalogu: AlertDialog? = null
-    /** Son bilinen: onay bekleyen birleştirme var (⋮ menüsü yeniden açma öğesini gösterir). */
-    private var birlestirmeBekliyor = false
+    /**
+     * Son bilinen onay bekleyen birleştirme (`BirlestirmeAkisi.sonBekleyen`; yoksa `null`): ana ekranda şerit,
+     * göstergede "Onay bekliyor" ve ⋮ menüsünde yeniden açma öğesi.
+     */
+    private var birlestirmeSeridi: BirlestirmeAkisi.Bekleyen? = null
     private val birlestirmeSirada = AtomicBoolean(false)
+    /** Ekrandaki aktarma penceresi ve adımı (etkinlik yeniden yaratılırken [aktarmaKutusu]'na taşınır). */
+    private var aktarmaDiyalogu: AlertDialog? = null
+    private var aktarmaAcik: AktarmaAkisi.Adim? = null
 
     private lateinit var kok: FrameLayout
     private lateinit var gunAdi: TextView
@@ -196,6 +201,9 @@ class AnaEkran : Activity() {
         // Arada kaçırılan bildirim ya da yeniden yaratılan etkinlik (döndürme): açık soru yeniden gösterilir;
         // "Şimdi değil" denmiş plan aynı bağlantıda yeniden sorulmaz (akış süreç boyunca tek).
         // Duraklama bildirimine dokunuş da buradan gelir (niyeti ekstra taşımaz).
+        // Önceki etkinlik yok edilirken süren işin (onay, vazgeç, içe aktarma) gösterilemeyen sonucu burada.
+        birlestirmeKutusu.al()?.let { birlestirmeGoster(it) }
+        aktarmaKutusu.al()?.let { aktarmaGoster(it) }
         birlestirmeDenetle()
     }
 
@@ -211,6 +219,11 @@ class AnaEkran : Activity() {
 
     override fun onDestroy() {
         ana.removeCallbacksAndMessages(null)
+        // Ekrandaki yanıtlanmamış pencere yeni etkinliğe taşınır (döndürme, bildirimden yeniden kurulma). Birleştirme
+        // sorusu taşınmaz: yeni etkinliğin denetle'si onu aynı adımla yeniden kurar.
+        birlestirmePenceresi.adim?.takeIf { it !is BirlestirmeAkisi.Adim.Onay }?.let { birlestirmeKutusu.koy(it) }
+        aktarmaAcik?.let { aktarmaKutusu.koy(it) }
+        aktarmaDiyalogu?.dismiss()
         birlestirmeDiyalogu?.dismiss()
         arka.shutdown()
         super.onDestroy()
@@ -240,13 +253,13 @@ class AnaEkran : Activity() {
                         ac = { contentResolver.openOutputStream(uri, "wt") ?: throw java.io.IOException("akış yok") },
                         basarisizsa = { DocumentsContract.deleteDocument(contentResolver, uri) },
                     )
-                    anada { aktarmaGoster(adim) }
+                    aktarmaYanit(adim)
                 }
             }
             ISTEK_ICE_AKTAR -> data?.data?.takeIf { resultCode == RESULT_OK }?.let { uri ->
                 arkada {
                     val adim = aktarmaAl().dosyaOku { contentResolver.openInputStream(uri) ?: throw java.io.IOException("akış yok") }
-                    anada { aktarmaGoster(adim) }
+                    aktarmaYanit(adim)
                 }
             }
             ISTEK_ESLESTIRME -> {
@@ -292,10 +305,22 @@ class AnaEkran : Activity() {
         CekirdekYuzu.Gercek(CekirdekErisimi.al(applicationContext)),
     ) { ZonedDateTime.now() }.also { denetleyici = it }
 
-    private fun aktarmaAl(): AktarmaAkisi = aktarma ?: AktarmaAkisi(
-        AktarmaCekirdegi.Gercek(CekirdekErisimi.al(applicationContext)),
-        AktarmaMetinleri(ZoneId.systemDefault()),
-    ).also { aktarma = it }
+    /**
+     * Süreç boyunca tek aktarma akışı (D3): içe aktarma onayı etkinlik yeniden yaratılınca da aynı akışla sürer
+     * (taşınan onay penceresi [aktarmaKutusu]'ndan yeniden açılır).
+     */
+    private fun aktarmaAl(): AktarmaAkisi = aktarma ?: synchronized(AnaEkran) {
+        aktarma ?: AktarmaAkisi(
+            AktarmaCekirdegi.Gercek(CekirdekErisimi.al(applicationContext)),
+            AktarmaMetinleri(ZoneId.systemDefault()),
+        ).also { aktarma = it }
+    }
+
+    /** Arka iş parçacığında: aktarma yanıtını kutuya koyar, etkinlik yaşıyorsa gösterir (bir kez). */
+    private fun aktarmaYanit(adim: AktarmaAkisi.Adim) {
+        aktarmaKutusu.koy(adim)
+        anada { if (aktarmaKutusu.teslimEt(adim)) aktarmaGoster(adim) }
+    }
 
     /** Süreç boyunca tek akış: "Şimdi değil" ve açık soru etkinlik yeniden yaratılınca da bilinir. */
     private fun birlestirmeAl(): BirlestirmeAkisi = birlestirme ?: synchronized(AnaEkran) {
@@ -311,12 +336,28 @@ class AnaEkran : Activity() {
         }
     }
 
-    /** Arka iş parçacığında: adımı ve bekleyen birleştirmenin varlığını ana iş parçacığına verir. */
+    /**
+     * Arka iş parçacığında: adımı ve bekleyen birleştirmeyi ana iş parçacığına verir. Bekleyen akışın son halinden
+     * okunur (önizleme yeniden kurulmaz). Sonuç ve hata (soru değil) önce [birlestirmeKutusu]'na girer: etkinlik bu
+     * arada yeniden yaratıldıysa yenisi onStart'ta gösterir. Soru kutuya girmez; denetle onu yeniden kurar.
+     */
     private fun birlestirmeSonucu(adim: BirlestirmeAkisi.Adim?) {
-        val bekliyor = birlestirmeAl().bekleyen() != null
+        val tasinir = adim != null && adim !is BirlestirmeAkisi.Adim.Onay
+        if (tasinir) birlestirmeKutusu.koy(adim!!)
+        val bekleyen = birlestirmeAl().sonBekleyen
         anada {
-            birlestirmeBekliyor = bekliyor
-            birlestirmeGoster(adim)
+            birlestirmeBekleyenCiz(bekleyen)
+            if (!tasinir || birlestirmeKutusu.teslimEt(adim!!)) birlestirmeGoster(adim)
+        }
+    }
+
+    /** Ana iş parçacığında: şerit, gösterge ve menü durumu. */
+    private fun birlestirmeBekleyenCiz(b: BirlestirmeAkisi.Bekleyen?) {
+        if (b == birlestirmeSeridi) return
+        birlestirmeSeridi = b
+        model?.let {
+            gostergeyiCiz(it.gosterge)
+            seritleriCiz(it)
         }
     }
 
@@ -569,7 +610,9 @@ class AnaEkran : Activity() {
         } ?: "Yeni kayıt ekle"
     }
 
-    private fun gostergeyiCiz(g: DurumGostergesi.Gosterge) {
+    private fun gostergeyiCiz(ham: DurumGostergesi.Gosterge) {
+        // Onay bekleyen birleştirme: çekirdek TELAFI'de ama hiçbir şey eşitlenmiyor ("Eşitleniyor…" denmez).
+        val g = DurumGostergesi.birlestirmeyle(ham, birlestirmeSeridi != null)
         val renk = when (g.ton) {
             DurumGostergesi.Ton.IYI -> t.iyi
             DurumGostergesi.Ton.SURUYOR -> t.soluk
@@ -584,7 +627,8 @@ class AnaEkran : Activity() {
             setSize(t.dp(9), t.dp(9))
         }
         gosterge.setCompoundDrawablesRelativeWithIntrinsicBounds(nokta, null, null, null)
-        gosterge.contentDescription = "PC bağlantısı: ${g.kisa}. Ayrıntı için dokunun."
+        val ad = if (g === DurumGostergesi.BIRLESTIRME_BEKLIYOR) "Eren servisi" else "PC bağlantısı"
+        gosterge.contentDescription = "$ad: ${g.kisa}. Ayrıntı için dokunun."
     }
 
     private fun seritleriCiz(m: AnaModel) {
@@ -592,6 +636,11 @@ class AnaEkran : Activity() {
         if (!m.gorunum.anaSekme) return
         if (!m.eslesmeVar) {
             seritler.addView(serit("PC ile eşleşmedi; kayıtlar yalnız bu telefonda.", "Eşleştir", t.bilgiZemin, t.bilgiYazi) { eslestir() })
+        }
+        // Onay bekleyen birleştirme ("Şimdi değil"den sonra da): soru buradan yeniden açılır.
+        birlestirmeSeridi?.let { b ->
+            val ac = { birlestirmeDenetle(zorla = true) }
+            seritler.addView(serit(b.serit, b.dugme, t.uyariZemin, t.uyariYazi, govdeTik = ac) { ac() })
         }
         val h = hatirlatma
         if (h != null) {
@@ -703,7 +752,7 @@ class AnaEkran : Activity() {
         eylemler += "Hatırlatma durumu" to { hatirlatmaPenceresi() }
         eylemler += "PC eşleştirmesi" to { eslestir() }
         // "Şimdi değil"den sonra soruyu yeniden açmanın yolu.
-        if (birlestirmeBekliyor) eylemler += "Eren servisiyle birleştir…" to { birlestirmeDenetle(zorla = true) }
+        if (birlestirmeSeridi != null) eylemler += "Eren servisiyle birleştir…" to { birlestirmeDenetle(zorla = true) }
         eylemler += "Dışa aktar" to { dosyaSec(ISTEK_DISA_AKTAR) }
         eylemler += "İçe aktar" to { dosyaSec(ISTEK_ICE_AKTAR) }
         eylemler.forEachIndexed { i, (ad, _) -> p.menu.add(0, i, i, ad) }
@@ -729,25 +778,39 @@ class AnaEkran : Activity() {
     /** Aktarma adımını gösterir; onay arka iş parçacığında, pencerenin gösterdiği adımla ([adim]) sürer. */
     private fun aktarmaGoster(adim: AktarmaAkisi.Adim) {
         val b = AlertDialog.Builder(this).setTitle(adim.baslik).setMessage(adim.metin)
-        if (adim is AktarmaAkisi.Adim.Onay) {
-            b.setPositiveButton(adim.dugme) { _, _ ->
-                arkada {
-                    val s = aktarmaAl().onayla(adim)
-                    anada { aktarmaGoster(s) }
-                }
+        // Yalnız hâlâ ekrandaki pencere için durumu siler (yenisi yerine geçtiyse dokunmaz).
+        fun kapandi(d: android.content.DialogInterface) {
+            if (aktarmaDiyalogu === d) {
+                aktarmaDiyalogu = null
+                aktarmaAcik = null
             }
-            b.setNegativeButton("Vazgeç") { _, _ -> arkada { aktarmaAl().vazgec() } }
-            b.setOnCancelListener { arkada { aktarmaAl().vazgec() } }
-        } else {
-            b.setPositiveButton("Tamam", null)
         }
-        b.show()
+        if (adim is AktarmaAkisi.Adim.Onay) {
+            b.setPositiveButton(adim.dugme) { d, _ ->
+                kapandi(d)
+                arkada { aktarmaYanit(aktarmaAl().onayla(adim)) }
+            }
+            b.setNegativeButton("Vazgeç") { d, _ ->
+                kapandi(d)
+                arkada { aktarmaAl().vazgec() }
+            }
+            b.setOnCancelListener { d ->
+                kapandi(d)
+                arkada { aktarmaAl().vazgec() }
+            }
+        } else {
+            b.setPositiveButton("Tamam") { d, _ -> kapandi(d) }
+            b.setOnCancelListener { d -> kapandi(d) }
+        }
+        aktarmaDiyalogu?.dismiss()
+        aktarmaAcik = adim
+        aktarmaDiyalogu = b.show()
     }
 
     /**
-     * Birleştirme adımını gösterir ([BirlestirmePenceresi] kararıyla: yeni soru açık pencerenin yerine geçer, `null`
-     * açık soruyu kapatır). Düğmeler pencerenin gösterdiği adımı akışa geri verir; iş arka iş parçacığında.
-     * Geri tuşu "Şimdi değil" sayılır.
+     * Birleştirme adımını gösterir ([BirlestirmePenceresi] kararıyla: yeni soru açık pencerenin ya da "Eşleşmeyi
+     * kaldır" onayının yerine geçer; akış soru açıkken plan değiştiyse bunu adımın metninde söyler). `null` açık soruyu
+     * kısa bir notla kapatır. Düğmeler pencerenin gösterdiği adımı akışa geri verir; iş arka iş parçacığında.
      */
     private fun birlestirmeGoster(adim: BirlestirmeAkisi.Adim?) {
         when (val is_ = birlestirmePenceresi.geldi(adim)) {
@@ -755,59 +818,82 @@ class AnaEkran : Activity() {
             BirlestirmePenceresi.Is.Kapat -> {
                 birlestirmeDiyalogu?.dismiss()
                 birlestirmeDiyalogu = null
-                return
+                cubukGoster(BIRLESTIRME_METINLERI.soruKapandi, null)
             }
-            is BirlestirmePenceresi.Is.Goster -> {
-                birlestirmeDiyalogu?.dismiss()
-                // Dışına yanlışlıkla dokunmak soruyu ertelemesin.
-                birlestirmeDiyalogu = birlestirmePenceresiKur(is_.adim).create().also {
-                    it.setCanceledOnTouchOutside(false)
-                    it.show()
-                }
-            }
+            is BirlestirmePenceresi.Is.Goster -> birlestirmeAc(birlestirmePenceresiKur(is_.adim))
         }
     }
 
+    /** Pencereyi açar ve [BirlestirmePenceresi]'ne kimliğini verir (eskisi kapanır; dismiss iptal dinleyicisini çağırmaz). */
+    private fun birlestirmeAc(b: AlertDialog.Builder) {
+        birlestirmeDiyalogu?.dismiss()
+        birlestirmeDiyalogu = b.create().also {
+            // Dışına yanlışlıkla dokunmak soruyu ertelemesin.
+            it.setCanceledOnTouchOutside(false)
+            birlestirmePenceresi.acildi(it)
+            it.show()
+        }
+    }
+
+    /** Kapanış dinleyicileri iletiyle (sonradan) gelir: yalnız hâlâ ekrandaki pencere için durumu siler. */
+    private fun birlestirmeKapandi(d: android.content.DialogInterface) {
+        if (birlestirmePenceresi.kapandi(d)) birlestirmeDiyalogu = null
+    }
+
+    /**
+     * Soru: "Birleştir" (olumlu), "Şimdi değil" (olumsuz: "Birleştir"in yanında, güvenli kapatma), "Eşleşmeyi kaldır"
+     * (nötr: ayrı köşede, ikinci onay ister). Geri tuşu "Şimdi değil" sayılır.
+     */
     private fun birlestirmePenceresiKur(adim: BirlestirmeAkisi.Adim): AlertDialog.Builder {
         val b = AlertDialog.Builder(this).setTitle(adim.baslik).setMessage(adim.metin)
-        // Kapanış dinleyicileri iletiyle (sonradan) gelir: yalnız hâlâ ekrandaki pencere için durumu siler.
-        fun kapandi(d: android.content.DialogInterface) {
-            if (birlestirmeDiyalogu === d) {
-                birlestirmeDiyalogu = null
-                birlestirmePenceresi.kapandi()
-            }
-        }
         if (adim is BirlestirmeAkisi.Adim.Onay) {
             b.setPositiveButton(adim.onayDugmesi) { d, _ ->
-                kapandi(d)
+                birlestirmeKapandi(d)
                 arkada { birlestirmeSonucu(birlestirmeAl().onayla(adim)) }
             }
-            b.setNegativeButton(adim.vazgecDugmesi) { d, _ ->
-                kapandi(d)
-                arkada { birlestirmeSonucu(birlestirmeAl().vazgec()) }
-            }
-            b.setNeutralButton(adim.sonraDugmesi) { d, _ ->
-                kapandi(d)
+            b.setNegativeButton(adim.sonraDugmesi) { d, _ ->
+                birlestirmeKapandi(d)
                 birlestirmeErtele(adim)
+            }
+            b.setNeutralButton(adim.vazgecDugmesi) { d, _ ->
+                birlestirmePenceresi.kaldirmaIstendi(d)?.let { birlestirmeAc(kaldirmaOnayiKur()) }
             }
             b.setOnCancelListener { d ->
-                if (birlestirmeDiyalogu !== d) return@setOnCancelListener
-                kapandi(d)
-                birlestirmeErtele(adim)
+                birlestirmePenceresi.geriBasildi(d)?.let {
+                    birlestirmeDiyalogu = null
+                    birlestirmeErtele(it)
+                }
             }
         } else {
-            b.setPositiveButton("Tamam") { d, _ -> kapandi(d) }
-            b.setOnCancelListener { d -> kapandi(d) }
+            b.setPositiveButton("Tamam") { d, _ -> birlestirmeKapandi(d) }
+            b.setOnCancelListener { d -> birlestirmeKapandi(d) }
         }
         return b
     }
 
-    /** "Şimdi değil": pencere açmaz, kapatmaz (arada gelmiş yeni soru ekranda kalır); yalnız menü durumu. */
+    /** "Eşleşmeyi kaldır"ın ikinci onayı: geri alınamaz olanı söyler; "Geri dön" ve geri tuşu soruya döner. */
+    private fun kaldirmaOnayiKur(): AlertDialog.Builder {
+        val m = BIRLESTIRME_METINLERI
+        fun don(d: android.content.DialogInterface) {
+            birlestirmePenceresi.soruyaDon(d)?.let { birlestirmeAc(birlestirmePenceresiKur(it)) }
+        }
+        return AlertDialog.Builder(this)
+            .setTitle(m.vazgecOnayBaslik)
+            .setMessage(m.vazgecOnayMetni)
+            .setPositiveButton(m.vazgecOnayDugmesi) { d, _ ->
+                birlestirmeKapandi(d)
+                arkada { birlestirmeSonucu(birlestirmeAl().vazgec()) }
+            }
+            .setNegativeButton(m.geriDonDugmesi) { d, _ -> don(d) }
+            .setOnCancelListener { d -> don(d) }
+    }
+
+    /** "Şimdi değil": pencere açmaz, kapatmaz (arada gelmiş yeni soru ekranda kalır); şerit ve menü durumu. */
     private fun birlestirmeErtele(adim: BirlestirmeAkisi.Adim.Onay) = arkada {
         val a = birlestirmeAl()
         a.simdiDegil(adim)
-        val bekliyor = a.bekleyen() != null
-        anada { birlestirmeBekliyor = bekliyor }
+        val b = a.sonBekleyen
+        anada { birlestirmeBekleyenCiz(b) }
     }
 
     private fun kapalilariGoster(b: Boolean) {
@@ -830,7 +916,18 @@ class AnaEkran : Activity() {
     }
 
     private fun durumPenceresi() {
-        val g = model?.gosterge ?: return
+        val g = DurumGostergesi.birlestirmeyle(model?.gosterge ?: return, birlestirmeSeridi != null)
+        if (g === DurumGostergesi.BIRLESTIRME_BEKLIYOR) {
+            AlertDialog.Builder(this)
+                .setTitle("Eren servisi: ${g.kisa}")
+                .setMessage(g.ayrinti)
+                .setPositiveButton(birlestirmeSeridi?.dugme ?: BIRLESTIRME_METINLERI.bekleyenDugmesi) { _, _ ->
+                    birlestirmeDenetle(zorla = true)
+                }
+                .setNegativeButton("Kapat", null)
+                .show()
+            return
+        }
         val b = AlertDialog.Builder(this)
             .setTitle("PC bağlantısı: ${g.kisa}")
             .setMessage(g.ayrinti)
@@ -1205,13 +1302,45 @@ class AnaEkran : Activity() {
         /** Süreç boyunca tek birleştirme akışı ([birlestirmeAl]); süreç ölünce erteleme de kalmaz (`BaglantiKusagi`). */
         @Volatile
         private var birlestirme: BirlestirmeAkisi? = null
+
+        /** Süreç boyunca tek aktarma akışı ([aktarmaAl]). */
+        @Volatile
+        private var aktarma: AktarmaAkisi? = null
+
+        private val BIRLESTIRME_METINLERI = BirlestirmeMetinleri()
+
+        /** Süreç boyunca: gösterilemeyen son birleştirme sonucu ve aktarma adımı (etkinlik yeniden yaratılınca). */
+        private val birlestirmeKutusu = SonucKutusu<BirlestirmeAkisi.Adim>()
+        private val aktarmaKutusu = SonucKutusu<AktarmaAkisi.Adim>()
     }
 }
 
 /**
+ * Süren işin (arka iş parçacığı) yanıtını etkinlikler arasında taşıyan tek gözlü kutu (saf). Arka iş parçacığı
+ * yanıtı önce [koy]ar, sonra ana iş parçacığına iletir; orada [teslimEt] doğruysa gösterilir. Etkinlik o arada yok
+ * edildiyse ileti düşer, yanıt kutuda kalır; yeni etkinlik onStart'ta [al]ır. Her yanıt bir kez gösterilir; yeni
+ * yanıt gösterilmemiş eskisinin yerine geçer (son sonuç yeter). Kimlikle karşılaştırır (aynı metinli iki hata ayrı).
+ */
+internal class SonucKutusu<T : Any> {
+    private val son = java.util.concurrent.atomic.AtomicReference<T?>(null)
+
+    fun koy(x: T) = son.set(x)
+
+    /** [x] hâlâ kutudaysa alır ve `true` (gösterilmeli); yoksa (başkası aldı ya da yenisi geldi) `false`. */
+    fun teslimEt(x: T): Boolean = son.compareAndSet(x, null)
+
+    /** Gösterilmemiş yanıt (varsa) ve kutuyu boşaltır. */
+    fun al(): T? = son.getAndSet(null)
+}
+
+/**
  * Birleştirme penceresinin ana iş parçacığı kuralı (saf; [AnaEkran] çizer): gelen adımla açık pencereye ne
- * yapılacağı. Yeni soru (başka iz ya da metin) açık pencerenin yerine geçer; aynı soru yeniden açılmaz; `null`
- * (sorulacak bir şey yok) yalnız açık soruyu kapatır, sonuç/hata penceresine dokunmaz. Bilgi ve hata gösterilir.
+ * yapılacağı. Yeni soru (başka iz ya da metin) açık pencerenin (ya da "Eşleşmeyi kaldır" onayının) yerine geçer;
+ * aynı soru yeniden açılmaz; `null` (sorulacak bir şey yok) yalnız açık soruyu kapatır (görünüm kısa bir not
+ * gösterir), sonuç/hata penceresine dokunmaz. Bilgi ve hata gösterilir.
+ *
+ * Pencere kimliği ([acildi]): kapanış dinleyicileri iletiyle sonradan gelir; yalnız hâlâ ekrandaki pencereninki
+ * durumu değiştirir (yerine yenisi geçmiş eski pencerenin iptali yeni soruyu silmez, ertelemez).
  */
 internal class BirlestirmePenceresi {
     sealed interface Is {
@@ -1223,17 +1352,72 @@ internal class BirlestirmePenceresi {
     /** Açık pencerenin adımı (yoksa `null`). Aynısı yeniden gelirse pencere yerinde kalır (yinelenen hata dahil). */
     private var acik: BirlestirmeAkisi.Adim? = null
 
+    /** Ekrandaki pencerenin kimliği (görünüm verir). */
+    private var pencere: Any? = null
+
+    /** Açık soru için "Eşleşmeyi kaldır" onayı ekranda (soru açık sayılır). */
+    var kaldirmaOnayinda = false
+        private set
+
     /** Ekranda açık soru (pencere yoksa ya da sonuç/hata gösteriyorsa `null`). */
     val soru: BirlestirmeAkisi.Adim.Onay? get() = acik as? BirlestirmeAkisi.Adim.Onay
 
+    /** Ekrandaki adım (soru, sonuç ya da hata; yoksa `null`). */
+    val adim: BirlestirmeAkisi.Adim? get() = acik
+
     fun geldi(adim: BirlestirmeAkisi.Adim?): Is = when {
-        adim == null -> if (soru != null) Is.Kapat.also { acik = null } else Is.Dokunma
+        adim == null -> if (soru != null) Is.Kapat.also { sifirla() } else Is.Dokunma
         adim == acik -> Is.Dokunma
-        else -> Is.Goster(adim).also { acik = adim }
+        else -> Is.Goster(adim).also {
+            acik = adim
+            pencere = null
+            kaldirmaOnayinda = false
+        }
     }
 
-    /** Kullanıcı pencereyi kapattı (düğme ya da geri). */
-    fun kapandi() {
+    /** Görünüm [p]'yi ([geldi]'nin ya da [soruyaDon]'un adımı için) açtı. */
+    fun acildi(p: Any) {
+        pencere = p
+    }
+
+    /** Kullanıcı [p]'yi bir düğmeyle kapattı. Döner: [p] ekrandaki pencereydi (durum silindi). */
+    fun kapandi(p: Any): Boolean {
+        if (p !== pencere) return false
+        sifirla()
+        return true
+    }
+
+    /** Sorudaki "Eşleşmeyi kaldır": ikinci onaya geçilir. Döner: soru (onay penceresi açılmalı) ya da `null`. */
+    fun kaldirmaIstendi(p: Any): BirlestirmeAkisi.Adim.Onay? {
+        if (p !== pencere || kaldirmaOnayinda) return null
+        val s = soru ?: return null
+        pencere = null
+        kaldirmaOnayinda = true
+        return s
+    }
+
+    /** İkinci onaydan "Geri dön" ya da geri tuşu. Döner: yeniden açılacak soru ya da `null`. */
+    fun soruyaDon(p: Any): BirlestirmeAkisi.Adim.Onay? {
+        if (p !== pencere || !kaldirmaOnayinda) return null
+        kaldirmaOnayinda = false
+        pencere = null
+        return soru
+    }
+
+    /**
+     * Soru penceresinde geri tuşu ya da iptal. Döner: ertelenecek soru ("Şimdi değil" sayılır) ya da `null`
+     * ([p] artık ekranda değil: yerine yenisi geçti).
+     */
+    fun geriBasildi(p: Any): BirlestirmeAkisi.Adim.Onay? {
+        if (p !== pencere || kaldirmaOnayinda) return null
+        val s = soru
+        sifirla()
+        return s
+    }
+
+    private fun sifirla() {
         acik = null
+        pencere = null
+        kaldirmaOnayinda = false
     }
 }

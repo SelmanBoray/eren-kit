@@ -16,8 +16,20 @@ open class BirlestirmeMetinleri {
     val vazgecBaslik = "Bağlanma iptal edildi"
     val hataBaslik = "Birleştirme yapılamadı"
     val onayDugmesi = "Birleştir"
-    val vazgecDugmesi = "Vazgeç"
+    /** Geri alınamaz (eşleşme ve cihaz anahtarı silinir): adı sonucu söyler, ikinci onay ister ([vazgecOnayBaslik]). */
+    val vazgecDugmesi = "Eşleşmeyi kaldır"
+    /** Güvenli kapatma: hiçbir şey değişmez; ana ekranda şerit kalır. */
     val sonraDugmesi = "Şimdi değil"
+
+    /** "Eşleşmeyi kaldır"ın ikinci onayı. */
+    val vazgecOnayBaslik = "Eşleşme kaldırılsın mı?"
+    val vazgecOnayMetni = "Hiçbir kayıt değişmez; kayıtlar bu telefonda olduğu gibi kalır. Bu telefonun Eren servisiyle " +
+        "eşleşmesi silinir. Yeniden bağlanmak için Eren servisinin QR kodunu yeniden okutmanız gerekir; bu geri alınamaz."
+    val vazgecOnayDugmesi = "Eşleşmeyi kaldır"
+    val geriDonDugmesi = "Geri dön"
+
+    /** Açık soru, görünümün yorumlayamadığı bir nedenle kapandı (akış açıklamasını vermedi). */
+    val soruKapandi = "Birleştirme sorusu kapandı; durum üst çubuktaki göstergede."
     val koptu = "Eren servisiyle bağlantı koptu; hiçbir kayıt değişmedi. Yeniden bağlanınca yeniden sorulacak."
     /** Sonuç metninin ilk cümlesi; sayılar kurulamazsa tek başına. */
     val sonucKisa = "Bu telefon artık Eren servisine bağlı."
@@ -31,11 +43,11 @@ open class BirlestirmeMetinleri {
         "birleştirme hâlâ bekliyorsa yeniden sorulur."
 
     /** "Bekleyen birleştirme" şeridi (`BirlestirmeAkisi.bekleyen`); düğme `denetle(zorla = true)`. */
-    val bekleyenSeridi = "Kayıtların Eren servisiyle birleştirilmesi onayınızı bekliyor."
+    val bekleyenSeridi = "Eren servisiyle birleştirme onayınızı bekliyor; onaylayana dek kayıtlar eşitlenmez."
     val bekleyenDugmesi = "Gözden geçir"
 
     fun onizleme(p: BirlestirmeOnizlemesi, degisti: Boolean): String = buildList {
-        if (degisti) add("Önizlemeden sonra kayıtlar değişti; plan yenilendi.")
+        if (degisti) add("Önizlemeden sonra kayıtlar değişti; plan yenilendi. Aşağıdaki sayılar yeni plana göredir.")
         add(
             if (p.ayniDepo) "Bu telefon daha önce bu Eren servisine bağlıydı. Aradaki değişiklikler birleştirilecek."
             else "Bu telefondaki kayıtlar Eren servisindekilerle birleştirilecek.",
@@ -81,8 +93,9 @@ open class BirlestirmeMetinleri {
         satirlar.forEach { add("• $it") }
         if (p.islem > 0) add("Onaylarsanız değişiklikler Eren servisine ${p.islem} işlem olarak gönderilir.")
         add("Bundan sonra kayıtları Eren servisi tutar; bu telefon ona bağlı çalışır.")
-        add("Vazgeçerseniz hiçbir kayıt değişmez; eşleşme silinir, yeniden bağlanmak için QR kodu yeniden okutulur.")
-        add("Şimdi değil derseniz hiçbir kayıt değişmez; bağlantı yeniden kurulunca ya da kayıtlar değişince yeniden sorulur.")
+        add("Şimdi değil derseniz hiçbir kayıt değişmez; onay bekleyen birleştirme ana ekranda görünür, oradan istediğiniz " +
+            "zaman açabilirsiniz. Bağlantı yeniden kurulunca yeniden sorulur.")
+        add("Eşleşmeyi kaldırırsanız hiçbir kayıt değişmez; eşleşme silinir, yeniden bağlanmak için QR kodu yeniden okutulur.")
     }.joinToString("\n")
 
     /**

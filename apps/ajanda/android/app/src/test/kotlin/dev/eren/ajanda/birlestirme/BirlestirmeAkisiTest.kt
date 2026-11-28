@@ -165,11 +165,13 @@ class BirlestirmeAkisiTest {
                 "• 1 kayıt Eren servisindeki bir kayda benziyor (aynı tür, başlık ve zaman): ikisi de tutulacak, listede işaretlenecek\n" +
                 "Onaylarsanız değişiklikler Eren servisine 5 işlem olarak gönderilir.\n" +
                 "Bundan sonra kayıtları Eren servisi tutar; bu telefon ona bağlı çalışır.\n" +
-                "Vazgeçerseniz hiçbir kayıt değişmez; eşleşme silinir, yeniden bağlanmak için QR kodu yeniden okutulur.\n" +
-                "Şimdi değil derseniz hiçbir kayıt değişmez; bağlantı yeniden kurulunca ya da kayıtlar değişince yeniden sorulur.",
+                "Şimdi değil derseniz hiçbir kayıt değişmez; onay bekleyen birleştirme ana ekranda görünür, oradan " +
+                "istediğiniz zaman açabilirsiniz. Bağlantı yeniden kurulunca yeniden sorulur.\n" +
+                "Eşleşmeyi kaldırırsanız hiçbir kayıt değişmez; eşleşme silinir, yeniden bağlanmak için QR kodu yeniden okutulur.",
             o.metin,
         )
-        assertEquals(listOf("Birleştir", "Vazgeç", "Şimdi değil"), listOf(o.onayDugmesi, o.vazgecDugmesi, o.sonraDugmesi))
+        // Geri alınamaz düğmenin adı sonucu söyler ("Vazgeç" değil); güvenli kapatma "Şimdi değil".
+        assertEquals(listOf("Birleştir", "Eşleşmeyi kaldır", "Şimdi değil"), listOf(o.onayDugmesi, o.vazgecDugmesi, o.sonraDugmesi))
         assertEquals("iz1", o.iz)
         assertTrue(akis.onayBekliyor)
         temiz(o)
@@ -223,7 +225,10 @@ class BirlestirmeAkisiTest {
         val yeniden = onay(akis.onayla(ilk))
         assertEquals("Kayıtlar bu arada değişti", yeniden.baslik)
         assertEquals("iz2", yeniden.iz)
-        assertTrue(yeniden.metin, yeniden.metin.startsWith("Önizlemeden sonra kayıtlar değişti; plan yenilendi.\n"))
+        assertTrue(
+            yeniden.metin,
+            yeniden.metin.startsWith("Önizlemeden sonra kayıtlar değişti; plan yenilendi. Aşağıdaki sayılar yeni plana göredir.\n"),
+        )
         assertTrue(yeniden.metin, yeniden.metin.contains("• 4 kayıt Eren servisine yeni kayıt olarak gidecek"))
         assertTrue(akis.onayla(yeniden) is BirlestirmeAkisi.Adim.Bilgi)
         assertEquals(listOf("onizleme", "onayla:iz1", "onayla:iz2"), yuz.cagrilar)
@@ -374,31 +379,129 @@ class BirlestirmeAkisiTest {
     }
 
     @Test
-    fun simdiDegilAyniPlanVeBaglantidaSormazDegisinceSorar() {
+    fun simdiDegilAyniBaglantidaPlanDegisseDeSormazSeritKalir() {
         yuz.onizlemeler += plan(iz = "iz1")
         val o = onay(akis.denetle())
         akis.simdiDegil(o)
-        // Birleştirme hâlâ onay bekliyor; ekran şerit gösterebilir.
+        // Birleştirme hâlâ onay bekliyor; ekran şerit gösterir.
         assertTrue(akis.onayBekliyor)
         assertTrue(akis.ertelendi)
         yuz.onizlemeler += plan(iz = "iz1")
         val b = akis.bekleyen()!!
         assertTrue(b.ertelendi)
-        assertEquals("Kayıtların Eren servisiyle birleştirilmesi onayınızı bekliyor.", b.serit)
+        assertEquals("Eren servisiyle birleştirme onayınızı bekliyor; onaylayana dek kayıtlar eşitlenmez.", b.serit)
         assertEquals("Gözden geçir", b.dugme)
+        assertEquals(b, akis.sonBekleyen)
         // Aynı plan, aynı bağlantı: sorulmaz.
         yuz.onizlemeler += plan(iz = "iz1")
         assertNull(akis.denetle())
-        // Şeride dokunuldu: sorulur.
-        yuz.onizlemeler += plan(iz = "iz1")
-        val zorla = onay(akis.denetle(zorla = true))
-        assertFalse(akis.ertelendi)
-        akis.simdiDegil(zorla)
-        // Plan değişti (aynı bağlantı): yeniden sorulur.
+        // P6: kullanıcı bir kayıt kaydetti, plan yenilendi (aynı bağlantı): pencere yeniden açılmaz, şerit kalır.
         yuz.onizlemeler += plan(iz = "iz2")
-        val degisen = onay(akis.denetle())
-        assertEquals("iz2", degisen.iz)
+        assertNull(akis.denetle())
+        assertTrue(akis.sonBekleyen!!.ertelendi)
+        // Şeride dokunuldu: güncel planla sorulur ("değişti" denmez: kullanıcı okurken değişmedi).
+        yuz.onizlemeler += plan(iz = "iz2")
+        val zorla = onay(akis.denetle(zorla = true))
+        assertEquals("iz2", zorla.iz)
+        assertEquals("Kayıtlar Eren servisiyle birleştirilsin mi?", zorla.baslik)
+        assertFalse(akis.ertelendi)
+        assertFalse(akis.sonBekleyen!!.ertelendi)
+        akis.simdiDegil(zorla)
+        // Yeni bağlantı: yeniden sorulur.
+        kusakNo++
+        yuz.onizlemeler += plan(iz = "iz3")
+        assertEquals("iz3", onay(akis.denetle()).iz)
         assertFalse(yuz.cagrilar.any { it.startsWith("onayla") || it == "vazgec" })
+    }
+
+    @Test
+    fun soruAcikkenPlanDegisirseDegistiDenirVeIsaretKalir() {
+        // P3: A ekranda, arka plandan gelen denetle B'yi getirdi: aynı başlıkla sessizce değişmez.
+        yuz.onizlemeler += plan(iz = "iz1", yeni = 3)
+        val a = onay(akis.denetle())
+        assertEquals("Kayıtlar Eren servisiyle birleştirilsin mi?", a.baslik)
+        yuz.onizlemeler += plan(iz = "iz2", yeni = 9)
+        val b = onay(akis.denetle())
+        assertEquals("iz2", b.iz)
+        assertEquals("Kayıtlar bu arada değişti", b.baslik)
+        assertTrue(b.metin, b.metin.startsWith("Önizlemeden sonra kayıtlar değişti; plan yenilendi."))
+        assertTrue(b.metin, b.metin.contains("• 9 kayıt Eren servisine yeni kayıt olarak gidecek"))
+        // Aynı plan yeniden denetlenince (yeni bildirim, döndürme) adım aynı kalır: pencere yerinde, işaret düşmez.
+        yuz.onizlemeler += plan(iz = "iz2", yeni = 9)
+        assertEquals(b, akis.denetle())
+        // Onayın döndürdüğü yeni plan da işaretli kalır.
+        yuz.onaySonuclari += BirlestirmeSonucu(false, plan(iz = "iz3", yeni = 4))
+        val c = onay(akis.onayla(b))
+        assertEquals("Kayıtlar bu arada değişti", c.baslik)
+        yuz.onizlemeler += plan(iz = "iz3", yeni = 4)
+        assertEquals(c, akis.denetle())
+    }
+
+    @Test
+    fun soruAcikkenBekleyenKalkarsaAciklanir() {
+        // P5: soru ekrandayken bağlantı koptu: pencere sessizce kapanmaz, ne olduğu söylenir.
+        yuz.onizlemeler += plan(iz = "iz1")
+        onay(akis.denetle())
+        yuz.onizlemeler += null
+        yuz.kipYaniti = CalismaKipi.YEREL
+        val koptu = akis.denetle()!!
+        assertEquals("Birleştirilemedi", koptu.baslik)
+        assertEquals("Eren servisiyle bağlantı koptu; hiçbir kayıt değişmedi. Yeniden bağlanınca yeniden sorulacak.", koptu.metin)
+        assertFalse(akis.onayBekliyor)
+        assertNull(akis.sonBekleyen)
+        // Bir kez söylenir.
+        yuz.onizlemeler += null
+        assertNull(akis.denetle())
+        temiz(koptu)
+
+        // Kip bağlı: bu arada tamamlanmış; aynı adımla gecikmiş onay çekirdeğe gitmez.
+        yuz.onizlemeler += plan(iz = "iz2")
+        val o = onay(akis.denetle())
+        yuz.onizlemeler += null
+        yuz.kipYaniti = CalismaKipi.BAGLI
+        assertEquals("Zaten bağlı", akis.denetle()!!.baslik)
+        assertEquals("Zaten bağlı", akis.onayla(o).baslik)
+        assertFalse(yuz.cagrilar.any { it.startsWith("onayla") })
+
+        // Kip okunamadı: belirsiz.
+        val ikinci = BirlestirmeAkisi(yuz, kusak = { kusakNo })
+        yuz.onizlemeler += plan(iz = "iz3")
+        onay(ikinci.denetle())
+        yuz.onizlemeler += null
+        yuz.kipYaniti = CekirdekHatasi.Depo("k_gizli")
+        assertEquals("Birleştirmenin sonucu okunamadı", ikinci.denetle()!!.baslik)
+
+        // Ertelenmiş soru (pencere kapalı) kalkarsa açıklama yok: şerit kalkar.
+        val ucuncu = BirlestirmeAkisi(yuz, kusak = { kusakNo })
+        yuz.onizlemeler += plan(iz = "iz4")
+        ucuncu.simdiDegil(onay(ucuncu.denetle()))
+        yuz.onizlemeler += null
+        assertNull(ucuncu.denetle())
+        assertNull(ucuncu.sonBekleyen)
+    }
+
+    @Test
+    fun sonBekleyenOnizlemeyiYenidenKurmaz() {
+        // P7: her çağrıdan sonra görünüm sonBekleyen okur; çekirdeğe ikinci önizleme gitmez.
+        assertNull(akis.sonBekleyen)
+        yuz.onizlemeler += plan(iz = "iz1")
+        val o = onay(akis.denetle())
+        assertEquals(BirlestirmeAkisi.Bekleyen(false, akis.sonBekleyen!!.serit, "Gözden geçir"), akis.sonBekleyen)
+        akis.simdiDegil(o)
+        assertTrue(akis.sonBekleyen!!.ertelendi)
+        // Bağlantı yenilendi: erteleme bu bağlantı için değil.
+        kusakNo++
+        assertFalse(akis.sonBekleyen!!.ertelendi)
+        yuz.onaySonuclari += BirlestirmeSonucu(true, plan(iz = "iz1"))
+        akis.onayla(o)
+        assertNull(akis.sonBekleyen)
+        assertEquals(listOf("onizleme", "onayla:iz1"), yuz.cagrilar)
+        // Vazgeç de bekleyeni kaldırır.
+        val ikinci = BirlestirmeAkisi(yuz, kusak = { kusakNo })
+        yuz.onizlemeler += plan(iz = "iz2")
+        onay(ikinci.denetle())
+        ikinci.vazgec()
+        assertNull(ikinci.sonBekleyen)
     }
 
     @Test
