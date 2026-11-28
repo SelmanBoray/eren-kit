@@ -212,7 +212,9 @@ class YenilemeTest {
         val s = RetListesi.satir(atilan, 0, simdi.zone)
         assertFalse(s.duzeltilebilir)
         assertEquals("Eren servisi eski olduğu için gönderilmeden atıldı.", s.neden)
-        assertEquals("Düzenleme atıldı", s.durum)
+        // K3: atılan yalnız yeni alanlardaki kısım (v3 özeti yoksa genel metin); öteki değişiklikler gider.
+        assertEquals(RetListesi.ertelenenDurumu(null), s.durum)
+        assertTrue(s.aciklama, s.aciklama.contains(RetListesi.ERTELENEN_KALAN))
         assertFalse(s.aciklama, s.aciklama.contains("Bağlantı koptuğu"))
         assertEquals(null, s.uyari)
         val ulasmis = RetListesi.satir(atilan.copy(ulasmisOlabilir = true), 0, simdi.zone)
@@ -243,10 +245,12 @@ class YenilemeTest {
         val id = RetListesi.duzelt(y, r.islemId, govde)
         assertFalse(id == "k4")
         assertEquals("Güncel", y.kayitlar.getValue("k4").baslik)
-        // İşaretsiz girdide uyarı yok; atılmış ertelenende "geri uygulanırsa üstüne gelir".
+        // İşaretsiz girdide uyarı yok; atılmış ertelenende ezme değil, çakışmada soru (K5: çekirdek `cakisan` döner).
         assertEquals(null, RetListesi.satir(ret(IslemTuru.GUNCELLE, "k4"), 0, simdi.zone).uyari)
         val atilan = r.copy(ertelenenAtildi = true)
-        assertTrue(RetListesi.sonraDegistiUyarisi(atilan)!!.contains("güncel kaydın üstüne gelir"))
+        val uyari = RetListesi.sonraDegistiUyarisi(atilan)!!
+        assertTrue(uyari, uyari.contains("çakışan alan varsa önce sorulur"))
+        assertFalse(uyari, uyari.contains("üstüne gelir"))
         assertEquals("Kayıt bu yedekten sonra değişti.", RetListesi.sonraDegistiUyarisi(r.copy(islem = IslemTuru.SIL, govde = null)))
     }
 
@@ -300,10 +304,73 @@ class YenilemeTest {
         assertEquals(listOf("simge"), zorlu.degisen)
         assertTrue(y.ret.isEmpty())
         assertEquals(listOf("ertelenenGeriAl:i_yok", "ertelenenGeriAl:i_k7", "ertelenenGeriAl:i_k7:zorla"), y.cagrilar)
-        // Atılmış ertelenen olmayan girdi geri alınmaz.
+        // Atılmış ertelenen olmayan girdi geri alınmaz: gerçek çekirdek gibi `GecersizGirdi{islem_id}`, girdi kalır.
         y.ret += ret(IslemTuru.GUNCELLE, "k8")
-        assertFalse(y.ertelenenGeriAlDenetimli("i_k8", false).bulundu)
+        try {
+            y.ertelenenGeriAlDenetimli("i_k8", false)
+            fail("sıradan ret geri alındı")
+        } catch (e: dev.eren.ajanda.cekirdek.CekirdekHatasi.GecersizGirdi) {
+            assertEquals("islem_id", e.alan)
+        }
         assertEquals(1, y.ret.size)
+    }
+
+    /** K4: v3 alan adlarının Türkçe karşılıkları ve kısa özet (saf). */
+    @Test
+    fun v3AlanMetniAdlarVeOzet() {
+        assertEquals(
+            listOf("simge", "bölge", "bölge konumu", "varış", "bağlantı", "ek"),
+            listOf("simge", "bolge", "bolge_konumu", "varis", "baglantilar", "ekler").map(V3AlanMetni::ad),
+        )
+        assertEquals(V3AlanMetni.BILINMEYEN, V3AlanMetni.ad("gelecek_alan"))
+        assertEquals(null, V3AlanMetni.ozet(emptyList()))
+        assertEquals("Simge", V3AlanMetni.ozet(listOf("simge")))
+        assertEquals("Simge ve bölge", V3AlanMetni.ozet(listOf("simge", "bolge")))
+        assertEquals("Bölge, varış ve bağlantı", V3AlanMetni.ozet(listOf("bolge", "varis", "baglantilar")))
+        // Konan ve kaldırılan birlikte, çekirdeğin sırasıyla; bilinmeyen kaldırılan sonda.
+        val o = dev.eren.ajanda.cekirdek.V3DegisiklikOzeti(
+            dev.eren.ajanda.cekirdek.V3Alanlari(simge = "ev"),
+            listOf("ekler", "bolge", "gelecek_alan"),
+        )
+        assertEquals(listOf("simge", "bolge", "ekler", "gelecek_alan"), V3AlanMetni.alanlar(o))
+        assertEquals("Simge, bölge, ek ve yeni bir alan", V3AlanMetni.ozet(V3AlanMetni.alanlar(o)))
+        // Hiçbir metinde "PC" yok.
+        assertFalse(V3AlanMetni.ozet(V3AlanMetni.alanlar(o))!!.contains("PC"))
+    }
+
+    /** K3, K4: atılmış ertelenen satırı açık bayraklar ve v3 özetiyle; atılan yalnız yeni alanlar. */
+    @Test
+    fun ertelenenSatiriBayraklarVeV3Ozeti() {
+        val v3 = dev.eren.ajanda.cekirdek.V3DegisiklikOzeti(
+            dev.eren.ajanda.cekirdek.V3Alanlari(simge = "ev", bolge = "Market"),
+            emptyList(),
+        )
+        val atilan = ret(IslemTuru.GUNCELLE, "k10").copy(
+            neden = KuyrukRetNedeni.TESLIM_EDILEMEDI, ertelenenAtildi = true, v3Degisikligi = v3,
+        )
+        val s = RetListesi.satir(atilan, 0, simdi.zone)
+        assertTrue(s.ertelenenAtildi)
+        assertTrue(s.geriAlinabilir)
+        assertFalse(s.duzeltilebilir)
+        assertEquals("Simge ve bölge", s.v3Ozeti)
+        assertEquals("Simge ve bölge değişikliği atıldı", s.durum)
+        assertFalse("bütün düzenleme atılmadı", s.durum.contains("Düzenleme"))
+        assertTrue(s.aciklama, s.aciklama.contains(RetListesi.ERTELENEN_KALAN))
+        // Okunamayan değişiklik: genel metin, yeniden uygulanamaz.
+        val okunamayan = RetListesi.satir(atilan.copy(v3Degisikligi = null), 0, simdi.zone)
+        assertTrue(okunamayan.ertelenenAtildi)
+        assertFalse(okunamayan.geriAlinabilir)
+        assertEquals(null, okunamayan.v3Ozeti)
+        assertEquals(RetListesi.ertelenenDurumu(null), okunamayan.durum)
+        assertTrue(okunamayan.durum.contains("yeni alanlardaki değişiklik atıldı"))
+        // Sıradan ret: bayraklar yanlış; v3 özeti yine gösterilir (reddedilen yeni alanlar), durum eski metin.
+        val sirali = RetListesi.satir(ret(IslemTuru.EKLE, "k11").copy(v3Degisikligi = v3), 0, simdi.zone)
+        assertFalse(sirali.ertelenenAtildi)
+        assertFalse(sirali.geriAlinabilir)
+        assertEquals("Simge ve bölge", sirali.v3Ozeti)
+        assertEquals("Ekleme gönderilemedi", sirali.durum)
+        assertFalse(sirali.aciklama.contains(RetListesi.ERTELENEN_KALAN))
+        for (m in listOf(s.durum, s.aciklama, okunamayan.durum, RetListesi.ERTELENEN_KALAN)) assertFalse(m, m.contains("PC"))
     }
 
     @Test

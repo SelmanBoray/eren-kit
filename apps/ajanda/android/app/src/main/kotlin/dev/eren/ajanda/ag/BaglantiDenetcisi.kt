@@ -153,11 +153,16 @@ class BaglantiDenetcisi(
     private val okumaBekliyor = AtomicBoolean(false)
     private val eslesmeDegisti = AtomicBoolean(false)
 
-    /** Çekirdeğin etki kilidi altında çağrılır: yalnız iş bırakır. */
+    /**
+     * Çekirdeğin etki kilidi altında çağrılır: yalnız iş bırakır. `gecmis` de durumu yeniden okutur: çekirdek
+     * `gecmis_iste`'de (ve yanıtta, zaman aşımında) yalnız `Degisim.gecmis` yayar, `baglanti` yaymaz; oysa
+     * `BaglantiDurumu.gecmisBeklemeMs` o an doğar (ya da kalkar) ve yoklaması ([yukariDenemesiniKur]) ancak
+     * durum okununca kurulur.
+     */
     private val gozlemci = object : Gozlemci {
         override fun degisti(degisim: Degisim) {
             if (degisim.eslesme) eslesmeDegisti.set(true)
-            if (!(degisim.baglanti || degisim.eslesme || degisim.tumu)) return
+            if (!(degisim.baglanti || degisim.eslesme || degisim.tumu || degisim.gecmis.isNotEmpty())) return
             if (okumaBekliyor.compareAndSet(false, true)) {
                 isle {
                     okumaBekliyor.set(false)
@@ -322,6 +327,10 @@ class BaglantiDenetcisi(
      * Aynı kalıpla geçmiş isteğinin zaman aşımı: `gecmisBeklemeMs` doluysa (soket açıkken, aşamadan bağımsız;
      * kapanışta çekirdek istekleri temizler) o ana da yoklama gerekir. İki an tek zamanlayıcıda birleşir: en
      * yakın olan kurulur, yoklamadan sonra okunan durum bir sonrakini kurar (ikisi ayrı ayrı yarışmaz).
+     *
+     * Tavan: bekleme en çok [AgAyarlari.yukariTekrarMs]'dir. Anlar duvar saatiyle ölçülür, zamanlayıcı tekdüzedir:
+     * saat geri gittiyse `an - simdi` saatler olabilir (çekirdek ise o çağrıda hemen davranır). Uzak an da böylece
+     * en çok bu aralıkla yoklanır (yoklama yerel ve ucuz: `baglantiDurumu()`).
      */
     private fun yukariDenemesiniKur(d: BaglantiDurumu) {
         val yukari = d.yukariDenemeMs.takeIf { d.asama == BaglantiAsamasi.CANLI && soket != null }
@@ -337,7 +346,8 @@ class BaglantiDenetcisi(
         val simdi = duvarSaati()
         val ms = listOfNotNull(yukari, gecmis).minOf { an ->
             val kalan = an - simdi
-            if (kalan > 0) kalan else ayar.yukariTekrarMs
+            // Geçmiş an (yolda işlem vardı) ve tavanı aşan uzak an (saat geri gitti) tekrar aralığıyla.
+            if (kalan in 1..ayar.yukariTekrarMs) kalan else ayar.yukariTekrarMs
         }
         yukariZamani = zaman.sonra(ms) {
             korumali {

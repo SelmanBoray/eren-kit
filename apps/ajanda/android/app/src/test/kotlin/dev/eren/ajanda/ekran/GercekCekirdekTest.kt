@@ -1,6 +1,13 @@
 package dev.eren.ajanda.ekran
 
 import dev.eren.ajanda.KopruKaniti
+import dev.eren.ajanda.ag.BaglantiDenetcisi
+import dev.eren.ajanda.ag.CekirdekKanali
+import dev.eren.ajanda.ag.SahteAcici
+import dev.eren.ajanda.ag.SahteAg
+import dev.eren.ajanda.ag.SahteIsler
+import dev.eren.ajanda.ag.SahteZamanlayici
+import dev.eren.ajanda.ag.ToplayanGunluk
 import dev.eren.ajanda.cekirdek.BaglantiAsamasi
 import dev.eren.ajanda.cekirdek.CalismaKipi
 import dev.eren.ajanda.cekirdek.Cekirdek
@@ -126,6 +133,127 @@ class GercekCekirdekTest {
     }
 
     private fun cerceve(tur: String, govde: String) = """{"v":3,"type":"$tur"$govde}"""
+
+    /**
+     * Eşleştirme sonrası el sıkışma ve telafi (v3): [gelen] çerçeveyi çekirdeğe verir, [sonGiden] çekirdeğin son
+     * yolladığı çerçeve. Çağıran sonra `CANLI`'yı denetler.
+     */
+    private fun elSikis(serverPublicKey: String, gelen: (String) -> Unit, sonGiden: () -> String) {
+        gelen(cerceve("pair_result", ""","ok":true,"device_id":"c_cihaz1","server_public_key":"$serverPublicKey","kapsam":"ajanda""""))
+        assertTrue(sonGiden(), sonGiden().contains("\"type\":\"hello\""))
+        gelen(cerceve("auth_challenge", ""","server_nonce":"QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFB","server_signature":"MEUCIQCq""""))
+        assertTrue(sonGiden(), sonGiden().contains("\"type\":\"auth_response\""))
+        gelen(cerceve("welcome", ""","depo_id":"d_depo1","bas_rev":0,"tam":true,"server_time_ms":1,"yetenekler":[]"""))
+        gelen(cerceve("esitlendi", ""","rev":0"""))
+    }
+
+    /**
+     * K1, gerçek çekirdekle: `gecmisIste` gözlemciye yalnız `Degisim.gecmis` yayar (`baglanti` yok). Bağlantı
+     * denetçisi yine de durumu okur ve `BaglantiDurumu.gecmisBeklemeMs` anına yoklama kurar (zaman aşımı yanıtsız
+     * isteği düşürsün, geçmiş sayfası "yükleniyor"da kalmasın).
+     */
+    @Test
+    fun gecmisIstegiBaglantiDenetcisindeYoklamaKurar() {
+        ac(gecici.newFile("gecmis.sqlite3").absolutePath).use { c ->
+            val qr = eslestirmeQrCoz(KopruKaniti.ORNEK_QR)
+            c.eslestirmeBaslat(qr)
+            val zaman = SahteZamanlayici()
+            val acici = SahteAcici()
+            val d = BaglantiDenetcisi({ CekirdekKanali(c) }, acici, zaman, SahteAg(true), SahteIsler(), ToplayanGunluk(), rastgele = { 0.5 })
+            d.basla()
+            zaman.bosalt()
+            val h = acici.son
+            h.ac()
+            zaman.bosalt()
+            elSikis(qr.serverPublicKey, { h.gelen(it) }, { h.gonderilen.last() })
+            zaman.bosalt()
+            assertEquals(BaglantiAsamasi.CANLI, c.baglantiDurumu().asama)
+            assertEquals(null, c.baglantiDurumu().gecmisBeklemeMs)
+
+            val yuz = CekirdekYuzu.Gercek(c)
+            val f = KayitFormu.yeni(KayitTuru.GOREV, null, "Europe/Istanbul", emptyList()).copy(baslik = "Geçmişli")
+            val id = yuz.ekle(yuz.govdeyiHazirla(f.govde()))
+            zaman.bosalt()
+            val g = Toplayan()
+            c.gozlemciEkle(g)
+            val once = zaman.bekleyenler()
+            c.gecmisIste(id, null)
+            assertTrue(g.gelen.toString(), g.gelen.any { id in it.gecmis })
+            assertFalse("gerçek çekirdek baglanti yaymaz: ${g.gelen}", g.gelen.any { it.baglanti || it.tumu })
+            assertNotNull(c.baglantiDurumu().gecmisBeklemeMs)
+            zaman.bosalt()
+            val yeni = zaman.bekleyenler() - once.toSet()
+            assertEquals("tek yoklama: $yeni", 1, yeni.size)
+            assertTrue("geçmiş anına (en çok GECMIS_BEKLEME_MS): $yeni", yeni.single() in 1L..60_000L)
+            d.birak()
+        }
+    }
+
+    /**
+     * K6, gerçek çekirdekle: yeni alanlı (simge) `ekle` servisçe reddedilir. Ret satırı v3 özetini gösterir; sıradan
+     * ret `ertelenenGeriAlDenetimli`'de `GecersizGirdi{islem_id}` verir (girdi kalır); "düzelt" formu v3 alanı
+     * taşımadığı hâlde yazılan kayıt simgeyi korur (`ret_duzelt`) ve servise simgesiyle gider.
+     */
+    @Test
+    fun retDuzeltYeniAlanlariKorurSiradanRetGeriAlinmaz() {
+        // Kotlin formu v3 alanı taşımaz: simgeli kayıt bağımsız kipteki bir telefonun yedeğine elle konur ve bağlı
+        // kipte içe aktarılır (yeni kayıt: v3 alanlı `ekle` kuyruğa girer).
+        val belge = ac(gecici.newFile("kaynak.sqlite3").absolutePath).use { k ->
+            val y = CekirdekYuzu.Gercek(k)
+            val f = KayitFormu.yeni(KayitTuru.GOREV, null, "Europe/Istanbul", emptyList()).copy(baslik = "Simgeli")
+            y.ekle(y.govdeyiHazirla(f.govde()))
+            val ham = k.disaAktar().belge
+            val baslik = Regex("\"baslik\"\\s*:\\s*\"Simgeli\"")
+            assertTrue(ham, baslik.containsMatchIn(ham))
+            baslik.replace(ham, "\"baslik\":\"Simgeli\",\"simge\":\"is\"")
+        }
+        ac(gecici.newFile("v3-ret.sqlite3").absolutePath).use { c ->
+            val yuz = CekirdekYuzu.Gercek(c)
+            val qr = eslestirmeQrCoz(KopruKaniti.ORNEK_QR)
+            c.eslestirmeBaslat(qr)
+            val soket = SahteSoket()
+            val nesil = c.baglantiAcildi(soket)
+            elSikis(qr.serverPublicKey, { c.cerceveGeldi(nesil, it) }, { soket.giden.last() })
+            assertEquals(BaglantiAsamasi.CANLI, c.baglantiDurumu().asama)
+
+            val o = c.iceAktarmaOnizlemesi(belge)
+            assertEquals(1, o.yeni)
+            assertTrue(c.iceAktar(belge, o.iz).uygulandi)
+            val giden = soket.giden.last()
+            assertTrue(giden, giden.contains("\"simge\":\"is\""))
+            val islemId = Regex("\"islem_id\":\"([^\"]+)\"").find(giden)!!.groupValues[1]
+            c.cerceveGeldi(nesil, cerceve("islem_sonucu", ""","islem_id":"$islemId","ok":false,"code":"saat_dilimi_bilinmiyor""""))
+
+            val r = c.retListesi().single()
+            assertEquals(IslemTuru.EKLE, r.islem)
+            assertFalse(r.ertelenenAtildi)
+            assertEquals("is", r.v3Degisikligi?.konan?.simge)
+            val satir = RetListesi.satir(r, 0, java.time.ZoneId.of("Europe/Istanbul"))
+            assertEquals("Simge", satir.v3Ozeti)
+            assertTrue(satir.duzeltilebilir)
+            assertFalse(satir.ertelenenAtildi || satir.geriAlinabilir)
+
+            // Sıradan ret yeniden uygulanmaz: çekirdek `GecersizGirdi{islem_id}` atar, girdi kalır.
+            try {
+                yuz.ertelenenGeriAlDenetimli(r.islemId, false)
+                org.junit.Assert.fail("sıradan ret geri alındı")
+            } catch (e: dev.eren.ajanda.cekirdek.CekirdekHatasi.GecersizGirdi) {
+                assertEquals("islem_id", e.alan)
+            }
+            assertEquals(1, c.retListesi().size)
+
+            // Düzelt: form v3 taşımaz, çekirdek işlemin v3 kısmını korur.
+            val form = KayitFormu.govdeden(r.govde!!, "Europe/Istanbul").copy(baslik = "Düzeltildi")
+            val yeniId = RetListesi.duzelt(yuz, r.islemId, yuz.govdeyiHazirla(form.govde()))
+            assertTrue(c.retListesi().isEmpty())
+            val k = c.kayit(yeniId)!!.kayit
+            assertEquals("Düzeltildi", k.baslik)
+            assertEquals("is", k.v3.simge)
+            val yeniden = soket.giden.last()
+            assertFalse("yeni ekle gitti", yeniden == giden)
+            assertTrue(yeniden, yeniden.contains("\"simge\":\"is\""))
+        }
+    }
 
     @Test
     fun servisReddiRetListesindeGorunurDuzeltilipYenidenEklenir() {
