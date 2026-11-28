@@ -241,6 +241,28 @@ impl Depo {
         Ok(satirlar.collect::<rusqlite::Result<_>>()?)
     }
 
+    /// Ret listesinin tek girdisi (`motor/kanal.rs` `ertelenen_geri_al`).
+    pub fn ret_girdisi(&self, islem_id: &str) -> Result<Option<RetSatiri>, CekirdekHatasi> {
+        Ok(self
+            .baglanti
+            .query_row(
+                "SELECT islem_id, kayit_id, islem_json, neden, ts_ms, govde_json, sira FROM ret_listesi WHERE islem_id = ?1",
+                [islem_id],
+                |r| {
+                    Ok(RetSatiri {
+                        islem_id: r.get(0)?,
+                        kayit_id: r.get(1)?,
+                        islem_json: r.get(2)?,
+                        neden: r.get(3)?,
+                        ts_ms: r.get(4)?,
+                        govde_json: r.get(5)?,
+                        sira: r.get(6)?,
+                    })
+                },
+            )
+            .optional()?)
+    }
+
     /// Döner: silindi mi.
     pub fn ret_sil(&self, islem_id: &str) -> Result<bool, CekirdekHatasi> {
         Ok(self.baglanti.execute("DELETE FROM ret_listesi WHERE islem_id = ?1", [islem_id])? > 0)

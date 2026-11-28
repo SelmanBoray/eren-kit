@@ -14,6 +14,7 @@ import type {
   AjandaIslemSonucu,
   AjandaKaydi,
   AjandaKopruRolu,
+  AjandaKopruUyarlayici,
   PcKancaCiktisi,
   PcKancaFiili,
   PcKancaGirdisi,
@@ -2461,6 +2462,12 @@ export interface AjandaPcBaglami {
    * karşılaştırır.
    */
   kopru_surec_id?: string;
+  /**
+   * Köprünün hello'da bildirdiği PC ajanı (`kopru_hello.uyarlayici`; yalnız kapalı listeden, bilinmeyen değer yazılmaz),
+   * bağlantının ömrü boyunca sabit. Yoksa alanı bildirmeyen köprü. YALNIZ teşhis içindir (`arac` günlük olayı): tur
+   * kararına (`ajanda-pc`) girmez; köprünün beyanıdır, doğrulanmaz.
+   */
+  uyarlayici?: AjandaKopruUyarlayici;
 }
 
 /** `ana_oturum` bağlamı bugünkü gibi yalnız jetonun kapsamıdır (ek alan yok); PC çağrısınınki ayrıdır. */
@@ -2475,8 +2482,9 @@ export type PcKancaIsleyicileri = {
 } & {
   /**
    * `pc_oturumu` bağlantısı kapandı (`AjandaPcBaglami.baglanti_id`): boru sunucusu her kapanış yolunda
-   * (uzak uç, kendi kapatması, süre, hata) bir kez çağırır; PC defteri o köprünün T5 bağını bırakır
-   * (`ajanda-pc` `kopruKapandi`). Eşzamanlıdır, atmamalıdır. Yoksa bağ servis yeniden başlayana dek kalır.
+   * (uzak uç, kendi kapatması, süre, hata) bir kez çağırır; PC defteri o bağlantının durumunu (yalnız süreç
+   * bildirmeyen köprünün ilk görüşü) siler (`ajanda-pc` `kopruKapandi`). Eşzamanlıdır, atmamalıdır. Yoksa kayıt
+   * kalır ve zararsızdır (bağlantı kimliği bir daha verilmez; sınırlı sayıda tutulur).
    */
   kopruKapandi?(baglanti_id: string): void;
 };

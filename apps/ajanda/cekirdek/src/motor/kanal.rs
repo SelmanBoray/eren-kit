@@ -76,7 +76,15 @@
 //!   ertelenen v3 değişikliklerini atıp kaydı serbest bırakır: her v3 değişikliği
 //!   (yalnız v3 satırı bütünüyle, karma satırın v3 kalanı ayrı bir girdiyle) ret listesine `ertelenen_atildi`
 //!   işaretiyle geçer (sessizce kaybolmaz; neden `teslim_edilemedi`), v2 kısımları yerinde kalır ve sırası
-//!   tutulan satırlar bu serviste hemen gider; görünen kopya v3 değerini bırakır.
+//!   tutulan satırlar bu serviste hemen gider; görünen kopya v3 değerini bırakır. Atılanın ne olduğu ret
+//!   listesinde görünür (`RetGirdisi.v3_degisikligi`: konan alanlar ve kaldırılanlar; içerik `islem_json`'da
+//!   durur). Daha önce (v3'te) yollanmış satırdan atılan `ERTELENEN_ATILDI_YOLLANMIS`'tır
+//!   (`RetGirdisi.ulasmis_olabilir`: servis onu uygulamış olabilir). Kullanıcı `ertelenen_geri_al` ile atılanı
+//!   yeniden uygular: girdi çıkar, değişiklik yeni kimlikle kuyruğun sonuna girer (eski serviste yine ertelenir,
+//!   v3'te gider); yerel kipte doğrudan uygulanır. Yolda olan satıra dokunulmaz; atma tek işlemdir.
+//!   Ek dosyası: telefon bugün ek dosyası üretmez ve saklamaz (yalnız kayıttaki üstveri); ek deposu yazılınca
+//!   ret listesindeki girdilerin `ekler`'i de başvuru sayılmalı, yoksa yeniden uygulanan değişiklik silinmiş
+//!   dosyayı gösterir.
 //! - Koparma ve depo değişimi (`yerel.rs` `bagli_kipten_cik`): ertelenenler öteki bekleyen satırlar gibi
 //!   kuyrukla atılır; değerleri görünen kopyada (artık yerel gerçek) kalır, `KoparmaSonucu.gonderilmeyen_*`
 //!   onları sayar (`gonderilmeyen_islem` = koparma anındaki `kuyrukta + ertelenen_islem`).
@@ -129,8 +137,9 @@ const KAPANIS_PROTOKOL_HATASI: i32 = 1002;
 /// Düşülen sürümden yukarı yeniden deneme aralığı: bundan eski bir geri düşüşten sonraki ilk bağlantı yeniden
 /// kümenin en büyüğüyle açılır; düşülen sürümle açık kalan bağlantı da bu süre dolunca, sonraki ilk köprü
 /// çağrısında (gelen çerçeve, yazma, durum okuma; kabuk boştaki bağlantı için `BaglantiDurumu.yukari_deneme_ms`
-/// anına yoklama kurar) yolda işlem yokken kasıtlı kapatılır (`yukari_denemesi`). Böylece servis güncellenince
-/// uygulama düşüşten bir saat sonra (bağlantı açık olsa da) üst sürüme geçer: alt sürümde kalmak pahalıdır (v2
+/// anına yoklama kurar) yolda işlem ve yanıtı beklenen geçmiş isteği (en çok `GECMIS_BEKLEME_MS`) yokken kasıtlı
+/// kapatılır (`yukari_denemesi`). Böylece servis güncellenince uygulama düşüşten bir saat sonra (bağlantı açık
+/// olsa da) üst sürüme geçer: alt sürümde kalmak pahalıdır (v2
 /// bağlantıda v3 alanlı işlemler ertelenir, PC'nin v3 alanları gelmez). Eski serviste bedeli saatte en çok bir
 /// kısa ret ve bir yeniden bağlanmadır. Yolda işlem varken beklenir (sonucu gelmeden kapatmak `Kopma` sayılırdı).
 pub(crate) const YUKARI_DENEME_MS: i64 = 60 * 60 * 1000;
@@ -247,6 +256,23 @@ fn v3_degisikligi_var(b: &SurumBolumu) -> bool {
 /// (`Motor::ertelenenleri_at`). Köprüde `KuyrukRetNedeni::TeslimEdilemedi` ve `RetGirdisi.ertelenen_atildi`
 /// olarak görünür (`sorgu.rs`): kapalı neden listesi (TS `AJANDA_KUYRUK_RET_NEDENLERI` ile ortak) değişmez.
 pub(super) const ERTELENEN_ATILDI: &str = "ertelenen_atildi";
+
+/// `ERTELENEN_ATILDI`'nın daha önce yollanmış (`deneme > 0`) satırdan atılanı (A4): satır bir v3 bağlantıda
+/// yollanmış, sonucu gelmemişti; servis onu uygulamış olabilir (karma satırın v2 kısmı aynı `islem_id`'yle
+/// gider ve servisin önbelleğinden dönebilir). Köprüde ayrıca `RetGirdisi.ulasmis_olabilir`. Ayrı ad: göç
+/// gerekmez (`neden` serbest metindir).
+pub(super) const ERTELENEN_ATILDI_YOLLANMIS: &str = "ertelenen_atildi_yollanmis";
+
+/// Ret girdisinin nedeni kullanıcının attığı ertelenen v3 değişikliği mi (iki ad).
+pub(super) fn ertelenen_atildi_mi(neden: &str) -> bool {
+    neden == ERTELENEN_ATILDI || neden == ERTELENEN_ATILDI_YOLLANMIS
+}
+
+/// Yukarı denemenin yanıtını beklediği geçmiş isteğinin en uzun yaşı (A5): servis geçmişi tek okumayla yanıtlar;
+/// bundan eski (ya da saat geri gittiği için yaşı okunamayan) istek yanıtsız sayılır, sayfası `ic_hata` ile biter
+/// ve bağlantıyı açık tutmaz (yanıt hiç gelmezse ya da kayıt kimliği uymazsa yukarı deneme o bağlantı boyunca
+/// hiç yapılmazdı).
+pub(crate) const GECMIS_BEKLEME_MS: i64 = 60 * 1000;
 
 /// Ertelemesi olabilecek satırlar: onaylanmamış bir satırının metninde v3 alan adı geçen kayıtların bütün
 /// satırları, sırayla (SQL'de süzülür). Öteki kayıtların her satırı `Yok`'tur (hal kayıt başınadır, v3 alanı
@@ -916,8 +942,9 @@ impl Motor {
 
     /// Alt sürümlü bağlantıda karma kuyruk satırını böler, tek işlemde: satır yerinde gidecek kısmına döner
     /// (`islem_id`, deneme, an aynı), kalan (`kalan`, v3 alanlarının `guncelle`'si) yeni bir `islem_id`'yle,
-    /// denemesiz ve aynı anla hemen arkasına girer; arkasındakiler aynı sırayla yeniden dizilir (kuyrukta
-    /// satır işlemini değiştiren bir depo yöntemi yok; yolda satır yokken çağrılır, onaylanmışların
+    /// denemesiz ve aynı anla hemen arkasına girer; arkasındakiler aynı sırayla yeniden dizilir (satırın
+    /// işlemini yerinde yazmak `kuyruk_islemini_yaz` ile olur ama kalanın araya girmesi olmaz: `sira`
+    /// `AUTOINCREMENT`'tır, yeni satır yalnız sona girer; yolda satır yokken çağrılır, onaylanmışların
     /// `bekledigi_rev`'i geri yazılır). İki satırın etkisi özgün satırınkiyle aynıdır: görünen kopya yine de
     /// yeniden hesaplanır.
     fn v3_kalanini_ertele(
@@ -1145,9 +1172,18 @@ impl Motor {
             return Ok(());
         }
         // Yanıtı beklenen geçmiş isteği varken de beklenir: kapatmak onu düşürür, kullanıcı hatasız boş geçmiş
-        // görürdü (bulgu 1). Yanıt gelince ya da bağlantı başka nedenle kapanınca istek listeden çıkar.
-        if !self.gecmis_istekleri.is_empty() {
+        // görürdü (bulgu 1). Yanıt gelince ya da bağlantı başka nedenle kapanınca istek listeden çıkar. Ama en
+        // çok `GECMIS_BEKLEME_MS` (A5): daha eski istek yanıtsız sayılır, sayfası `ic_hata` ile biter (yeniden
+        // istenebilir), bağlantıyı açık tutmaz.
+        if self.gecmis_istekleri.values().any(|(_, an)| (0..GECMIS_BEKLEME_MS).contains(&simdi.saturating_sub(*an))) {
             return Ok(());
+        }
+        for (kayit_id, _) in std::mem::take(&mut self.gecmis_istekleri).into_values() {
+            if let Some(sayfa) = self.gecmis.get_mut(&kayit_id) {
+                sayfa.yukleniyor = false;
+                sayfa.hata = Some(AjandaRetNedeni::IcHata);
+                e.degisim.gecmis.push(kayit_id);
+            }
         }
         self.kapat(e, "yukarı sürüm denemesi");
         Ok(())
@@ -1184,9 +1220,9 @@ impl Motor {
     /// - v3 alanı taşımayan, yalnız sırası tutulan satır (ör. `sil`) yerinde kalır: artık bekletilmez, bu
     ///   serviste gider.
     ///
-    /// Ret girdisi `ERTELENEN_ATILDI` nedeniyle yazılır (köprüde `neden` `teslim_edilemedi`,
-    /// `RetGirdisi.ertelenen_atildi`); gövdesi öteki retlerdeki gibi düzeltme formunun halidir (`istenen_govde`;
-    /// form v3 alanı taşımaz). Yollanmış ve onaylanmış satırlara dokunulmaz. Görünen kopya yeniden hesaplanır:
+    /// Ret girdisi `ERTELENEN_ATILDI` nedeniyle (daha önce yollanmış satırdan atılan `ERTELENEN_ATILDI_YOLLANMIS`)
+    /// yazılır (köprüde `neden` `teslim_edilemedi`, `RetGirdisi.ertelenen_atildi`, `v3_degisikligi`); gövdesi
+    /// öteki retlerdeki gibi düzeltme formunun halidir (`istenen_govde`; form v3 alanı taşımaz). Yollanmış ve onaylanmış satırlara dokunulmaz. Görünen kopya yeniden hesaplanır:
     /// atılan v3 değeri gider, kayıt PC'deki (ya da kuyruğun önceki) haliyle görünür. Döner: ret listesine geçen
     /// v3 değişikliği sayısı (önceki `BaglantiYetenekleri.ertelenen`'in atılan kısmı). Canlıysa kuyruk hemen ilerler.
     pub(crate) fn ertelenenleri_at(&mut self, o: &Ortam, e: &mut Etkiler, kayit_id: Option<&str>) -> Result<i32, CekirdekHatasi> {
@@ -1234,11 +1270,13 @@ impl Motor {
                 };
                 let govde_json = istenen_govde(d, &b, &s.kayit_id, s.sira, Some(ret_islemi))?
                     .map(|g| g.alanlari_yaz(Yazici::yeni()).bitir().to_string());
+                // Daha önce yollanmış satır (v3'te, sonucu gelmedi): servis uygulamış olabilir (A4).
+                let neden = if s.deneme > 0 { ERTELENEN_ATILDI_YOLLANMIS } else { ERTELENEN_ATILDI };
                 retler.push(RetSatiri {
                     islem_id,
                     kayit_id: s.kayit_id.clone(),
                     islem_json: ret_islemi.json().to_string(),
-                    neden: ERTELENEN_ATILDI.to_string(),
+                    neden: neden.to_string(),
                     ts_ms,
                     govde_json,
                     sira: s.sira,
@@ -1267,8 +1305,68 @@ impl Motor {
         for kayit_id in &kayitlar {
             e.kayit_degisti(kayit_id);
         }
-        self.kuyruk_ilerlet(o, e)?;
+        // Atma kalıcıdır: ilerlemenin hatası çağrıyı başarısız yapmaz (A6; `islem.rs` kuralı: hata dönseydi kabuk
+        // yeniden dener, ikinci çağrı atılacak bulmaz). Kuyruk sonraki olayda (sonuç, işlem, bağlantı) ilerler.
+        let _ = self.kuyruk_ilerlet(o, e);
         Ok(i32::try_from(atilacak.len()).unwrap_or(i32::MAX))
+    }
+
+    /// Atılmış ertelenen v3 değişikliğini yeniden uygular (köprü `ertelenen_geri_al`; "Serbest bırakma"). Yalnız
+    /// `ertelenen_atildi_mi` girdisi (servisin reddettiği işlemin yolu düzeltme formudur: `GecersizGirdi`). Kayıt
+    /// görünen kopyada yoksa `KayitYok`, mezar taşıysa `GecersizDurum` (önce geri yükle; `islem.rs` kuralı); girdi
+    /// kalır. Değişiklik şimdi yapılmış bir kullanıcı işlemi gibi uygulanır:
+    /// - bağlı kipte tek işlemde girdi silinir, değişiklik yeni bir `islem_id`'yle (eski kimlik servisin
+    ///   önbelleğinden dönüp uygulanmadan geçebilirdi) şimdiki anla kuyruğun sonuna girer, görünen kopya yeniden
+    ///   hesaplanır. Atılan hep yalnız v3 alanı değiştiren `guncelle`'dir: v2 serviste bütünüyle ertelenir, v3'te
+    ///   sırası gelince gider (kaydın sonraki değişikliklerinin ardından: aynı alanda bu kazanır);
+    /// - yerel kipte (koparmadan sonra) yerel yazarla doğrudan uygulanır, sonra girdi silinir (yerel yazar kendi
+    ///   işlemini açar: arada hata olursa girdi kalır, yinelemek aynı değeri yazar).
+    ///
+    /// Döner: `false` listede yoksa (hiçbir şey olmadı). Gözlemciye `ret_listesi`, `baglanti`, kaydın `kayitlar`'ı.
+    pub(crate) fn ertelenen_geri_al(&mut self, o: &Ortam, e: &mut Etkiler, islem_id: &str) -> Result<bool, CekirdekHatasi> {
+        if !opak_id_mi(islem_id) {
+            return Err(CekirdekHatasi::GecersizGirdi { alan: "islem_id".into(), neden: "geçersiz kimlik".into() });
+        }
+        let Some(r) = self.depo.ret_girdisi(islem_id)? else { return Ok(false) };
+        if !ertelenen_atildi_mi(&r.neden) {
+            return Err(CekirdekHatasi::GecersizGirdi {
+                alan: "islem_id".into(),
+                neden: "atılmış ertelenen değişiklik değil".into(),
+            });
+        }
+        let islem = islem_coz(&r.islem_json)
+            .ok_or_else(|| CekirdekHatasi::GecersizDurum { mesaj: "atılan değişiklik okunamıyor".into() })?;
+        let kayit = self
+            .depo
+            .gorunen_kayit(&r.kayit_id)?
+            .ok_or_else(|| CekirdekHatasi::KayitYok { kayit_id: r.kayit_id.clone() })?;
+        if kayit.kayit.silindi {
+            return Err(CekirdekHatasi::GecersizDurum { mesaj: "kayıt silinmiş; önce geri yükle".into() });
+        }
+        if self.yerel_mi()? {
+            self.yerel_yaz(o, e, islem)?;
+            self.depo.ret_sil(islem_id)?;
+        } else {
+            let cevirici = o.cevirici();
+            let b = self.iyimser_baglam(o, &cevirici)?;
+            let yeni_id = Motor::yeni_kimlik(o, "i_")?;
+            let json = islem.json().to_string();
+            let degisti = self.depo.yazma(|d| {
+                d.ret_sil(islem_id)?;
+                d.kuyruga_ekle(&yeni_id, &r.kayit_id, &json, b.simdi_ms)?;
+                gorunen_yenile(d, &b, &r.kayit_id)
+            })?;
+            if degisti {
+                self.gorunenler_degisti(o, e, std::slice::from_ref(&r.kayit_id));
+            }
+            // Kayıt işareti (`ertelenen`) görünen satır değişmese de değişti.
+            e.kayit_degisti(&r.kayit_id);
+            // Girdi kalıcı olarak çıktı: ilerlemenin hatası çağrıyı başarısız yapmaz (`ertelenenleri_at` gibi).
+            let _ = self.kuyruk_ilerlet(o, e);
+        }
+        e.degisim.ret_listesi = true;
+        e.degisim.baglanti = true;
+        Ok(true)
     }
 
     /// Arayüzün bağlantıya göre neyi açacağı (`kopru::tipler::BaglantiYetenekleri`). `Bagli`: bağlı kipte
@@ -1318,7 +1416,7 @@ impl Motor {
         code: Option<AjandaRetNedeni>,
     ) {
         // Bilinmeyen ya da başka kayda ait yanıt yok sayılır.
-        if self.gecmis_istekleri.get(istek_id).is_none_or(|k| k != kayit_id) {
+        if self.gecmis_istekleri.get(istek_id).is_none_or(|(k, _)| k != kayit_id) {
             return;
         }
         self.gecmis_istekleri.remove(istek_id);

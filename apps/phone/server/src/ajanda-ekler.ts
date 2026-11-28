@@ -35,10 +35,10 @@
  *   taramayla izlenir (`temizle`): kayıtlarda geçmeyen dosya ilk görüldüğü an işaretlenir (portun kalıcı
  *   işaret kümesi). Silme için iki koşul birlikte gerekir: servisin işaretten beri ÇALIŞIRKEN gözlediği süre
  *   (`gozlenen_ms`: ardışık turlar arası ve son turdan nazik kapanışa, adım başına en çok
- *   `GOZLEM_ADIMI_MS`) ve duvar saatinde geçen süre
- *   en az `EK_SAKLAMA_GUN`. PC kapalıyken, uykudayken ya da saat sıçradığında geçen süre sayılmaz: telefonun
- *   çevrimdışı kuyruğundaki `geri_yukle`'nin PC açıldıktan sonra gelmesine yer kalır. Geleceğe düşen işaret
- *   anı şimdiye kırpılır. Yeniden başvurulursa işaret kalkar; turlar arasında yeniden başvurulup yine
+ *   `GOZLEM_ADIMI_MS`; tekdüze saatle ölçülür, duvar saati düzeltmesi hayali süre eklemez) ve duvar saatinde
+ *   geçen süre en az `EK_SAKLAMA_GUN`. PC kapalıyken, uykudayken ya da saat sıçradığında geçen süre
+ *   sayılmaz: telefonun çevrimdışı kuyruğundaki `geri_yukle`'nin PC açıldıktan sonra gelmesine yer kalır.
+ *   Geleceğe düşen işaret anı şimdiye kırpılır. Yeniden başvurulursa işaret kalkar; turlar arasında yeniden başvurulup yine
  *   silinen kayıt da (mezar taşının revizyonu işaretinkinden büyük) süreyi baştan başlatır. Tarama kaydın
  *   değiştiği yoldan (araç, uygulama, geri yükleme) bağımsızdır, göç gerektirmez.
  * - Bozuk tam dosya kendini onarır: tam dosyanın sha256'sı süreç başına bir kez (yüklemede ya da indirmede)
@@ -182,7 +182,11 @@ export interface AjandaEkDiski {
   tamOzeti(ozet: string): Promise<{ bayt: number; ozet: string }>;
   /** Yoksa sessizce döner. */
   tamSil(ozet: string): Promise<void>;
-  tamListesi(): Promise<AjandaEkDosyasi[]>;
+  /**
+   * Okunamayan önek dizini (izin, paylaşım ihlali) taramayı düşürmez: atlanır, `okunamadi` her biri için
+   * hatayla bir kez çağrılır (o dizinin dosyaları listede yoktur: kota eksik sayılır).
+   */
+  tamListesi(okunamadi?: (e: unknown) => void): Promise<AjandaEkDosyasi[]>;
   /**
    * Yarımın (`yarim\<ozet>`) kalıcı olarak onaylanmış uzunluğu; yarım yoksa `null`. Onaylanmamış kuyruğu
    * (çökmede yarım kalan yazım) keser: dönen değer diskte doğru ve kalıcı bayttır.
@@ -245,6 +249,8 @@ export interface AjandaEkTemizlikSonucu {
   tutulan: number;
   /** Silinemeyen dosya (tam ya da yarım); sonraki turda yeniden denenir. */
   hatali: number;
+  /** Turun taramasında okunamayan önek dizini: o dizinin dosyaları sayılmadı (kota eksik sayıldı). */
+  eksik_onek: number;
 }
 
 /** Bellekteki kullanım (gözlem ve test için; özet içermez). */
@@ -260,6 +266,8 @@ export interface AjandaEkOlcumu {
   /** Son temizlik turundan beri dokunulan özet (temizlik koruması). */
   dokunulan_adet: number;
   kota_bayt: number;
+  /** Son taramada okunamayan önek dizini; 0 değilse kullanım eksik sayılıyor (sonraki taramaya dek). */
+  eksik_onek: number;
 }
 
 export interface AjandaEkleri {
@@ -288,6 +296,11 @@ export interface AjandaEkleriBagimliliklari {
    */
   depo: Pick<Depo, "ajandaKaydiGetir" | "ajandaKayitlari" | "ajandaBasRev"> & Partial<Pick<Depo, "ajandaRevAraligi">>;
   saat: SaatPortu;
+  /**
+   * Tekdüze saat (gerçeği `dis-dunya.ts` `tekduzeSaatKur`, `performance.now`): gözlenen süre yalnız bununla
+   * ölçülür; duvar saati düzeltmesi (NTP, elle) adıma girmez. Verilmezse `saat` (eski çağıranlar ve testler).
+   */
+  tekduze?: SaatPortu;
   zamanlayici: Pick<ZamanlayiciPortu, "herAralik">;
   gunluk: Gunluk;
   /** Bütün eklere ayrılan alan (tam + yarım + ayrılan). Verilmezse `EK_TOPLAM_BAYT` (`ayar.ts` `ajanda_ek_kota_mb`). */
@@ -346,6 +359,7 @@ const toplam = (l: ReadonlyArray<{ bayt: number }>): number => l.reduce((a, f) =
 
 export const ajandaEkleriKur = (d: AjandaEkleriBagimliliklari): AjandaEkleri => {
   const { disk, depo, saat, gunluk } = d;
+  const tekduze = d.tekduze ?? saat;
   const kota = d.kotaBayt ?? AJANDA_SINIRLARI.EK_TOPLAM_BAYT;
   const S = AJANDA_EK_SINIRLARI;
 
@@ -364,8 +378,20 @@ export const ajandaEkleriKur = (d: AjandaEkleriBagimliliklari): AjandaEkleri => 
   /** Süren taramalar: tarama sürerken değişen özetler (bellekteki değer taramadan tazedir). */
   const taramalar = new Set<Set<string>>();
   let ilkTarama: Promise<unknown> | null = null;
-  /** Son başarılı temizlik turunun başı (duvar saati): gözlenen süre bundan sayılır. Süreç başında yok. */
+  /**
+   * Son başarılı temizlik turunun başı ya da son kapanış kaydı (tekdüze saat): gözlenen süre bundan sayılır.
+   * Süreç başında yok.
+   */
   let sonGozlem: number | null = null;
+  /**
+   * `sonGozlem`'den sonra baştan başlatılan işaretler (yer açmada ya da silme öncesi denetimde yeniden
+   * başvuru, depo değişimi): özet → sıfırlandığı an (tekdüze). Sonraki adım bunlara yalnız o andan beri
+   * geçeni ekler; adım yazılınca boşalır. Boyu işaret sayısıyla sınırlı.
+   */
+  const sifirlanan = new Map<string, number>();
+  /** Son taramada okunamayan önek dizini (`olcum`, tur sonucu). */
+  let eksikOnek = 0;
+  let kapanis: Promise<void> | null = null;
   /** Mezar taşları bu revizyona kadar işaretlerle karşılaştırıldı (süreç başında yok: en eski işaretten). */
   let sonTaranRev: number | null = null;
   /** Bu süreçte sha256'sı adıyla tutan tam dosyalar (silinince düşer; boyu dosya sayısıyla sınırlı). */
@@ -475,7 +501,16 @@ export const ajandaEkleriKur = (d: AjandaEkleriBagimliliklari): AjandaEkleri => 
     taramalar.add(degisen);
     try {
       const yarimlar = await disk.yarimListesi();
-      const tamlar = await disk.tamListesi();
+      let okunamayan = 0;
+      let ilkHata: unknown = null;
+      const tamlar = await disk.tamListesi((e) => {
+        if (okunamayan === 0) ilkHata = e;
+        okunamayan += 1;
+      });
+      eksikOnek = okunamayan;
+      // Yalnız sayı ve hata türü (önek özetin parçasıdır, yazılmaz). Sonraki taramaya dek kota bu dizinin
+      // dosyaları kadar eksik sayılır.
+      if (okunamayan > 0) yaz("uyari", "ek_onek_okunamadi", { adet: okunamayan, hata_turu: hataTuru(ilkHata) });
       const tazeTam = new Map(tamlar.map((f) => [f.ozet, f.bayt]));
       const tazeYarim = new Map(yarimlar.map((y) => [y.ozet, y.bayt]));
       if (k.hazir) {
@@ -632,6 +667,12 @@ ${ozet}`;
   // İşaretler (saklama)
   // ------------------------------------------------------------------------------------------
 
+  /** İşaret baştan başlar; sıfırlandığı an sonraki gözlem adımı için tutulur (`sifirlanan`). */
+  const sifirla = (isaretler: Map<string, AjandaEkIsareti>, ozet: string, yeni: AjandaEkIsareti): void => {
+    isaretler.set(ozet, yeni);
+    sifirlanan.set(ozet, tekduze.simdiMs());
+  };
+
   /** Saklama süresi doldu mu: hem gözlenen süre hem duvar saati (`ilk_ms` tazelemede kırpılmıştır). */
   const suresiDoldu = (i: AjandaEkIsareti, simdi: number): boolean =>
     i.gozlenen_ms >= S.SAKLAMA_MS && simdi - i.ilk_ms >= S.SAKLAMA_MS;
@@ -658,7 +699,7 @@ ${ozet}`;
     let enEski = Infinity;
     for (const [ozet, i] of isaretler) {
       if (i.rev === null || i.rev > basRev) {
-        isaretler.set(ozet, yeni);
+        sifirla(isaretler, ozet, yeni);
         degisti = true;
         continue;
       }
@@ -697,7 +738,7 @@ ${ozet}`;
         for (const e of kayit.ekler ?? []) {
           const i = isaretler.get(e.ozet);
           if (i === undefined || i.rev === null || kayit.revizyon <= i.rev) continue;
-          isaretler.set(e.ozet, yeni);
+          sifirla(isaretler, e.ozet, yeni);
           degisti = true;
         }
       }
@@ -1114,12 +1155,18 @@ ${ozet}`;
   };
 
   /**
-   * Önceki başarılı turdan (ya da kapanış kaydından) beri gözlenen süre: süreçte henüz tur yoksa 0, geri
-   * giden saatte 0, uzun boşlukta en çok `GOZLEM_ADIMI_MS` (PC kapalı, uyku, saat sıçraması saklamaya
-   * sayılmaz).
+   * Önceki başarılı turdan (ya da kapanış kaydından) beri gözlenen süre, tekdüze saatle (`simdiT`): süreçte
+   * henüz tur yoksa 0, uzun boşlukta en çok `GOZLEM_ADIMI_MS` (uyku, zamanlayıcı gecikmesi). Duvar saati
+   * düzeltmesi adıma girmez: geride kalmış saatte koşan turdan sonra saat ileri alınsa da hayali süre eklenmez.
    */
-  const gozlemAdimi = (simdi: number): number =>
-    sonGozlem === null ? 0 : Math.min(Math.max(simdi - sonGozlem, 0), S.GOZLEM_ADIMI_MS);
+  const gozlemAdimi = (simdiT: number): number =>
+    sonGozlem === null ? 0 : Math.min(Math.max(simdiT - sonGozlem, 0), S.GOZLEM_ADIMI_MS);
+
+  /** Bir işaretin bu adımdaki payı: `sonGozlem`'den sonra sıfırlandıysa yalnız sıfırlamadan beri geçen. */
+  const isaretAdimi = (ozet: string, adim: number, simdiT: number): number => {
+    const t = sifirlanan.get(ozet);
+    return t === undefined ? adim : Math.min(adim, Math.max(simdiT - t, 0));
+  };
 
   /**
    * Kapanışta (`BAKIM` sırasında): son turdan beri gözlenen süre işaretlere yazılır. Yoksa hep bir turdan
@@ -1129,26 +1176,39 @@ ${ozet}`;
    * kaybolur: saklama uzar, kısalmaz.
    */
   const gozlemiKaydet = async (): Promise<void> => {
-    const simdi = saat.simdiMs();
-    const adim = gozlemAdimi(simdi);
+    const simdiT = tekduze.simdiMs();
+    const adim = gozlemAdimi(simdiT);
     if (adim === 0) return;
     const isaretler = await disk.isaretleriOku();
     if (isaretler.size > 0) {
-      for (const [ozet, i] of [...isaretler]) isaretler.set(ozet, { ...i, gozlenen_ms: i.gozlenen_ms + adim });
+      for (const [ozet, i] of [...isaretler]) {
+        isaretler.set(ozet, { ...i, gozlenen_ms: i.gozlenen_ms + isaretAdimi(ozet, adim, simdiT) });
+      }
       await disk.isaretleriYaz(isaretler);
     }
-    sonGozlem = simdi;
+    sonGozlem = simdiT;
+    sifirlanan.clear();
   };
 
   const temizlikTuru = async (): Promise<AjandaEkTemizlikSonucu> => {
     const bas = saat.simdiMs();
-    const adim = gozlemAdimi(bas);
-    const sonuc: AjandaEkTemizlikSonucu = { silinen: 0, silinen_bayt: 0, yarim_silinen: 0, isaretlenen: 0, tutulan: 0, hatali: 0 };
+    const basT = tekduze.simdiMs();
+    const adim = gozlemAdimi(basT);
+    const sonuc: AjandaEkTemizlikSonucu = {
+      silinen: 0,
+      silinen_bayt: 0,
+      yarim_silinen: 0,
+      isaretlenen: 0,
+      tutulan: 0,
+      hatali: 0,
+      eksik_onek: 0,
+    };
     // Tur başından sonra bir çerçevenin dokunduğu özet bu turda silinmez.
     const dokunuldu = (ozet: string): boolean => (dokunulan.get(ozet) ?? -Infinity) >= bas;
     try {
       // Turun tek taraması; kullanım da bundan tazelenir.
       const { tamlar, yarimlar } = await tara();
+      sonuc.eksik_onek = eksikOnek;
 
       for (const y of yarimlar) {
         // Boş yarım (sahipsiz onay, baytsız dosya) korunacak bir şey taşımaz: süresi beklenmez.
@@ -1173,7 +1233,7 @@ ${ozet}`;
           isaretler.delete(ozet);
           degisti = true;
         } else if (adim > 0) {
-          isaretler.set(ozet, { ...i, gozlenen_ms: i.gozlenen_ms + adim });
+          isaretler.set(ozet, { ...i, gozlenen_ms: i.gozlenen_ms + isaretAdimi(ozet, adim, basT) });
           degisti = true;
         }
       }
@@ -1204,7 +1264,9 @@ ${ozet}`;
       // İşaretler silmeden önce yazılır: çökme olursa silinmemiş dosyanın işareti kalır, sonraki tur siler.
       // Gözlenen süre ve taranan revizyon yalnız yazıldıktan sonra ilerler.
       if (degisti) await disk.isaretleriYaz(isaretler);
-      sonGozlem = bas;
+      // Bu turda sıfırlananlar tur başında (adımdan sonra) sıfırlandı: sonraki adım `basT`'den sayılır.
+      sonGozlem = basT;
+      sifirlanan.clear();
       sonTaranRev = taranan.rev;
       degisti = false;
       for (const f of silinecek) {
@@ -1330,6 +1392,7 @@ ${ozet}`;
       ayrilan_adet: k.ayrilan.size,
       dokunulan_adet: dokunulan.size,
       kota_bayt: kota,
+      eksik_onek: eksikOnek,
     }),
     temizle,
     baslat: () => {
@@ -1338,16 +1401,18 @@ ${ozet}`;
       temizleArkada();
     },
     bekle,
-    kapat: async () => {
-      kapali = true;
-      periyot?.();
-      periyot = null;
-      await bekle();
-      try {
-        await sirada(BAKIM, gozlemiKaydet);
-      } catch (e) {
-        yaz("hata", "ek_gozlem_hatasi", { hata_turu: hataTuru(e) });
-      }
-    },
+    // Yinelenen `kapat` aynı kapanışı bekler: gözlenen süre bir kez yazılır.
+    kapat: () =>
+      (kapanis ??= (async (): Promise<void> => {
+        kapali = true;
+        periyot?.();
+        periyot = null;
+        await bekle();
+        try {
+          await sirada(BAKIM, gozlemiKaydet);
+        } catch (e) {
+          yaz("hata", "ek_gozlem_hatasi", { hata_turu: hataTuru(e) });
+        }
+      })()),
   };
 };

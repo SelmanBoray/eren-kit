@@ -36,6 +36,7 @@ import {
   ajandaAracCiktisiV2,
   ajandaAraclari,
   ajandaFiilRoldeIzinliMi,
+  ajandaKopruUyarlayiciMi,
   ajandaKopruYukariCoz,
   ajandaPcRoluMu,
   cozumle,
@@ -49,6 +50,7 @@ import type {
   AjandaKopruAsagi,
   AjandaKopruIstek,
   AjandaKopruRolu,
+  AjandaKopruUyarlayici,
   AjandaPcRolu,
   HataKodu,
   KopruYanit,
@@ -98,7 +100,7 @@ type Kimlik =
   /** Telefon sohbetinin ana oturumu: bağlam yalnız jetonun kapsamı. */
   | { tur: "ana"; baglam: Readonly<AjandaJetonKapsami> }
   /** PC: anahtarın özeti (her istekte yeniden denetlenir) ve servisin verdiği bağlantı kimliği. */
-  | { tur: "pc"; rol: AjandaPcRolu; ozet: string; baglanti_id: string; kopru_surec_id?: string };
+  | { tur: "pc"; rol: AjandaPcRolu; ozet: string; baglanti_id: string; kopru_surec_id?: string; uyarlayici?: AjandaKopruUyarlayici };
 
 interface Baglanti {
   readonly port: BoruBaglantisi;
@@ -193,7 +195,7 @@ export const ajandaKopruSunucuKur: AjandaKopruSunucuFabrikasi = ({
       denetleyici.abort("baglanti_koptu" satisfies KopruIptalNedeni);
     }
     bag.suren.clear();
-    // Köprü kapandı (her kapanış yolu buradan, bir kez geçer): PC defteri bu bağlantının T5 bağını bırakır.
+    // Köprü kapandı (her kapanış yolu buradan, bir kez geçer): PC defteri bu bağlantının durumunu (süreç bildirmeyen köprünün ilk görüşü) siler.
     if (bag.kimlik?.tur === "pc" && bag.kimlik.rol === "pc_oturumu") {
       try {
         bag.pcKanca?.kopruKapandi?.(bag.kimlik.baglanti_id);
@@ -263,7 +265,10 @@ export const ajandaKopruSunucuKur: AjandaKopruSunucuFabrikasi = ({
     const ozet = jetonOzeti(m.jeton);
     if (ajandaPcRoluMu(m.rol)) {
       if (pcKanca === undefined) {
-        pcReddet(bag, "yetkisiz", "pc_kapali", { rol: m.rol });
+        // `yetkisiz` değil: köprü `yetkisiz`i katı şemanın reddi sayıp hello merdiveninden iner (kopru.ts
+        // `ZenginBitis`). Bu ret alanla ilgili değildir; başka kod köprüyü indirmez, eski köprü ve kanca her
+        // ret kodunu aynı işler (engel metni "ulaşılamıyor"). Neden günlükte (`pc_kapali`).
+        pcReddet(bag, "rol_fiil_izinsiz", "pc_kapali", { rol: m.rol });
         return;
       }
       if (!pcAnahtariGecerli(ozet)) {
@@ -283,7 +288,9 @@ export const ajandaKopruSunucuKur: AjandaKopruSunucuFabrikasi = ({
       const baglanti_id = rastgele.opakId("pcb");
       // Köprünün bildirdiği harness süreci (yalnız `pc_oturumu`; şema öbür rollerde geçirmez): bağlantı boyunca sabit (T5).
       const surec = m.rol === "pc_oturumu" && m.surec_id !== undefined ? { kopru_surec_id: m.surec_id } : {};
-      bag.kimlik = { tur: "pc", rol: m.rol, ozet, baglanti_id, ...surec };
+      // Köprünün PC ajanı (yalnız teşhis; tur kararına girmez): yalnız kapalı listedeki değer, bilinmeyen sessizce düşer.
+      const uyarlayici = m.rol === "pc_oturumu" && ajandaKopruUyarlayiciMi(m.uyarlayici) ? { uyarlayici: m.uyarlayici } : {};
+      bag.kimlik = { tur: "pc", rol: m.rol, ozet, baglanti_id, ...surec, ...uyarlayici };
       bag.v3 = baglantiV3(m.rol, m.arac_v3 === true);
       gunluk.bilgi(MODUL, "el_sikisma", { rol: m.rol, baglanti_id, ...(aracV3 && !kanca && !bag.v3 ? { arac_v3_istenmedi: true } : {}) });
       yaz(bag, karsilama(m.rol, bag.v3));
@@ -357,15 +364,16 @@ export const ajandaKopruSunucuKur: AjandaKopruSunucuFabrikasi = ({
     });
   };
 
-  /** `pc_oturumu` çağrısının bağlamı: rol, bağlantı kimliği ve hello'nun süreci servisten, `cagri` köprüden (doğrulanmamış). */
+  /** `pc_oturumu` çağrısının bağlamı: rol, bağlantı kimliği, hello'nun süreci ve uyarlayıcısı servisten, `cagri` köprüden (doğrulanmamış). */
   const pcBaglami = (k: Extract<Kimlik, { tur: "pc" }>, istek: AjandaKopruIstek): AjandaKopruBaglami => {
-    const b: { rol: "pc_oturumu"; baglanti_id: string; arac_cagri_id?: string; oturum_id?: string; kopru_surec_id?: string } = {
+    const b: { rol: "pc_oturumu"; baglanti_id: string; arac_cagri_id?: string; oturum_id?: string; kopru_surec_id?: string; uyarlayici?: AjandaKopruUyarlayici } = {
       rol: "pc_oturumu",
       baglanti_id: k.baglanti_id,
     };
     if (istek.cagri?.arac_cagri_id !== undefined) b.arac_cagri_id = istek.cagri.arac_cagri_id;
     if (istek.cagri?.oturum_id !== undefined) b.oturum_id = istek.cagri.oturum_id;
     if (k.kopru_surec_id !== undefined) b.kopru_surec_id = k.kopru_surec_id;
+    if (k.uyarlayici !== undefined) b.uyarlayici = k.uyarlayici;
     return Object.freeze(b);
   };
 

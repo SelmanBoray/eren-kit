@@ -1,0 +1,269 @@
+{
+  "kayit": "claude-cozucu",
+  "aciklama": "akis.satirCoz ve satirAyirici; H4.1 olayCoz eşlemesinin girdisi.",
+  "yeniden_uret": "apps/phone/server içinde: PowerShell `$env:EREN_ALTIN_YAZ='1'; node --disable-warning=ExperimentalWarning --test test/surucu-altin.test.ts; Remove-Item Env:EREN_ALTIN_YAZ` (bash: `EREN_ALTIN_YAZ=1 node --disable-warning=ExperimentalWarning --test test/surucu-altin.test.ts`)",
+  "senaryolar": {
+    "satirlar": [
+      {
+        "etiket": "init_tam",
+        "satir": "{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"s1\",\"tools\":[\"Read\",5,\"mcp__eren__plan_oner\"],\"mcp_servers\":[{\"name\":\"eren\",\"status\":\"connected\"},{\"name\":\"x\"},{\"status\":\"y\"},3],\"apiKeySource\":\"none\",\"model\":\"claude-opus-ornek\"}",
+        "olay": {
+          "tur": "init",
+          "session_id": "s1",
+          "tools": ["Read","mcp__eren__plan_oner"],
+          "mcp_servers": [{"name":"eren","status":"connected"},{"name":"x","status":""}],
+          "apiKeySource": "none",
+          "model": "claude-opus-ornek"
+        }
+      },
+      {
+        "etiket": "init_eksik",
+        "satir": "{\"type\":\"system\",\"subtype\":\"init\"}",
+        "olay": {"tur":"init","session_id":"","tools":[],"mcp_servers":[],"apiKeySource":null,"model":null}
+      },
+      {
+        "etiket": "hook_response",
+        "satir": "{\"type\":\"system\",\"subtype\":\"hook_response\",\"output\":\"çıktı\"}",
+        "olay": {"tur":"hook_response","cikti":"çıktı"}
+      },
+      {
+        "etiket": "hook_response_ciktisiz",
+        "satir": "{\"type\":\"system\",\"subtype\":\"hook_response\"}",
+        "olay": {"tur":"hook_response","cikti":""}
+      },
+      {
+        "etiket": "system_diger",
+        "satir": "{\"type\":\"system\",\"subtype\":\"compact_boundary\"}",
+        "olay": {"tur":"diger","type":"system"}
+      },
+      {
+        "etiket": "assistant_tam",
+        "satir": "{\"type\":\"assistant\",\"parent_tool_use_id\":null,\"message\":{\"id\":\"m1\",\"model\":\"claude-opus-ornek\",\"content\":[{\"type\":\"text\",\"text\":\"a\"},{\"type\":\"tool_use\",\"id\":\"t1\",\"name\":\"Read\"},{\"type\":\"tool_use\",\"id\":5,\"name\":\"X\"}],\"usage\":{\"input_tokens\":10,\"cache_creation_input_tokens\":2,\"cache_read_input_tokens\":3,\"output_tokens\":10}}}",
+        "olay": {
+          "tur": "assistant",
+          "message_id": "m1",
+          "model": "claude-opus-ornek",
+          "kullanim": {"input_tokens":10,"cache_creation_input_tokens":2,"cache_read_input_tokens":3},
+          "araclar": [{"id":"t1","ad":"Read"}]
+        }
+      },
+      {
+        "etiket": "assistant_alt_ajan",
+        "satir": "{\"type\":\"assistant\",\"parent_tool_use_id\":\"t1\",\"message\":{\"id\":\"m2\",\"model\":\"claude-opus-ornek\",\"content\":[{\"type\":\"tool_use\",\"id\":\"t2\",\"name\":\"Read\"}],\"usage\":{\"input_tokens\":10,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"output_tokens\":10}}}",
+        "olay": {
+          "tur": "assistant",
+          "message_id": "m2",
+          "model": "claude-opus-ornek",
+          "kullanim": {"input_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":0},
+          "araclar": []
+        }
+      },
+      {
+        "etiket": "assistant_mesajsiz",
+        "satir": "{\"type\":\"assistant\"}",
+        "olay": {"tur":"assistant","message_id":"","model":null,"kullanim":null,"araclar":[]}
+      },
+      {
+        "etiket": "assistant_kullanimsiz",
+        "satir": "{\"type\":\"assistant\",\"message\":{\"id\":\"m3\",\"model\":\"claude-opus-ornek\",\"usage\":{\"input_tokens\":\"x\"}}}",
+        "olay": {
+          "tur": "assistant",
+          "message_id": "m3",
+          "model": "claude-opus-ornek",
+          "kullanim": {"input_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0},
+          "araclar": []
+        }
+      },
+      {
+        "etiket": "user_tool_result",
+        "satir": "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"t1\"},{\"type\":\"tool_result\"},{\"type\":\"text\",\"text\":\"x\"}]}}",
+        "olay": {"tur":"arac_sonucu","arac_idler":["t1"]}
+      },
+      {
+        "etiket": "user_replay",
+        "satir": "{\"type\":\"user\",\"isReplay\":true,\"message\":{\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"t1\"}]}}",
+        "olay": {"tur":"diger","type":"user"}
+      },
+      {
+        "etiket": "user_alt_ajan",
+        "satir": "{\"type\":\"user\",\"parent_tool_use_id\":\"t9\",\"message\":{\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"t1\"}]}}",
+        "olay": {"tur":"diger","type":"user"}
+      },
+      {
+        "etiket": "user_duz_metin",
+        "satir": "{\"type\":\"user\",\"message\":{\"content\":\"merhaba\"}}",
+        "olay": {"tur":"diger","type":"user"}
+      },
+      {
+        "etiket": "stream_text_delta",
+        "satir": "{\"type\":\"stream_event\",\"parent_tool_use_id\":null,\"event\":{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"parça\"}}}",
+        "olay": {"tur":"metin_parcasi","text":"parça"}
+      },
+      {
+        "etiket": "stream_alt_ajan",
+        "satir": "{\"type\":\"stream_event\",\"parent_tool_use_id\":\"t1\",\"event\":{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"x\"}}}",
+        "olay": {"tur":"diger","type":"stream_event"}
+      },
+      {
+        "etiket": "stream_message_start",
+        "satir": "{\"type\":\"stream_event\",\"event\":{\"type\":\"message_start\"}}",
+        "olay": {"tur":"model_basladi"}
+      },
+      {
+        "etiket": "stream_blok_thinking",
+        "satir": "{\"type\":\"stream_event\",\"event\":{\"type\":\"content_block_start\",\"content_block\":{\"type\":\"thinking\"}}}",
+        "olay": {"tur":"blok_basladi","blok":"dusunme"}
+      },
+      {
+        "etiket": "stream_blok_redacted",
+        "satir": "{\"type\":\"stream_event\",\"event\":{\"type\":\"content_block_start\",\"content_block\":{\"type\":\"redacted_thinking\"}}}",
+        "olay": {"tur":"blok_basladi","blok":"dusunme"}
+      },
+      {
+        "etiket": "stream_blok_text",
+        "satir": "{\"type\":\"stream_event\",\"event\":{\"type\":\"content_block_start\",\"content_block\":{\"type\":\"text\"}}}",
+        "olay": {"tur":"blok_basladi","blok":"metin"}
+      },
+      {
+        "etiket": "stream_blok_tool_use",
+        "satir": "{\"type\":\"stream_event\",\"event\":{\"type\":\"content_block_start\",\"content_block\":{\"type\":\"tool_use\",\"id\":\"t1\",\"name\":\"Bash\"}}}",
+        "olay": {"tur":"blok_basladi","blok":"arac","arac_id":"t1","arac_adi":"Bash"}
+      },
+      {
+        "etiket": "stream_blok_tool_use_bozuk",
+        "satir": "{\"type\":\"stream_event\",\"event\":{\"type\":\"content_block_start\",\"content_block\":{\"type\":\"tool_use\",\"id\":\"t1\"}}}",
+        "olay": {"tur":"diger","type":"stream_event"}
+      },
+      {
+        "etiket": "stream_blok_bilinmeyen",
+        "satir": "{\"type\":\"stream_event\",\"event\":{\"type\":\"content_block_start\",\"content_block\":{\"type\":\"server_tool_use\"}}}",
+        "olay": {"tur":"diger","type":"stream_event"}
+      },
+      {
+        "etiket": "stream_input_json_delta",
+        "satir": "{\"type\":\"stream_event\",\"event\":{\"type\":\"content_block_delta\",\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\"}}}",
+        "olay": {"tur":"diger","type":"stream_event"}
+      },
+      {
+        "etiket": "stream_message_stop",
+        "satir": "{\"type\":\"stream_event\",\"event\":{\"type\":\"message_stop\"}}",
+        "olay": {"tur":"diger","type":"stream_event"}
+      },
+      {
+        "etiket": "rate_limit_tam",
+        "satir": "{\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"unifiedWindows\":{\"five_hour\":{\"utilization\":0.25,\"resetsAt\":1795600800},\"seven_day\":{\"utilization\":1}}}}",
+        "olay": {
+          "tur": "rate_limit",
+          "besSaat": {"yuzde":25,"sifirlanmaMs":"<t+3600000>"},
+          "yediGun": {"yuzde":100,"sifirlanmaMs":0}
+        }
+      },
+      {
+        "etiket": "rate_limit_bos",
+        "satir": "{\"type\":\"rate_limit_event\"}",
+        "olay": {"tur":"rate_limit","besSaat":null,"yediGun":null}
+      },
+      {
+        "etiket": "rate_limit_bozuk",
+        "satir": "{\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"unifiedWindows\":{\"five_hour\":{\"utilization\":\"%50\"}}}}",
+        "olay": {"tur":"rate_limit","besSaat":null,"yediGun":null}
+      },
+      {
+        "etiket": "result_tam",
+        "satir": "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"terminal_reason\":\"completed\",\"stop_reason\":\"end_turn\",\"result\":\"tamam\",\"session_id\":\"ornek\",\"modelUsage\":{\"claude-opus-ornek[1m]\":{\"contextWindow\":1000000}},\"usage\":{\"input_tokens\":3,\"cache_creation_input_tokens\":2,\"cache_read_input_tokens\":1,\"output_tokens\":4},\"structured_output\":{\"yapildi\":[\"Birinci is yapildi\"],\"yapilmadi\":[],\"dosyalar\":[\"C:\\\\ornek\\\\proje\\\\a.txt\"],\"acik_noktalar\":[]},\"model_usage_since_last_result\":{\"claude-opus-ornek\":{\"inputTokens\":5.7,\"outputTokens\":-1,\"cacheReadInputTokens\":1e+300,\"cacheCreationInputTokens\":\"x\",\"costUSD\":-1},\"bozuk\":3}}",
+        "olay": {
+          "tur": "result",
+          "session_id": "ornek",
+          "is_error": false,
+          "terminal_reason": "completed",
+          "stop_reason": "end_turn",
+          "metin": "tamam",
+          "structured_output": {
+            "yapildi": ["Birinci is yapildi"],
+            "yapilmadi": [],
+            "dosyalar": ["C:\\ornek\\proje\\a.txt"],
+            "acik_noktalar": []
+          },
+          "pencereler": {"claude-opus-ornek[1m]":1000000},
+          "model_kullanimlari": [
+            {
+              "model": "claude-opus-ornek",
+              "girdi": 5,
+              "cache_yazma": 0,
+              "cache_okuma": 0,
+              "cikti": 0,
+              "maliyet_usd": null
+            }
+          ],
+          "ana_kullanim": {"girdi":3,"cache_yazma":2,"cache_okuma":1,"cikti":4}
+        }
+      },
+      {
+        "etiket": "result_is_error_yok",
+        "satir": "{\"type\":\"result\",\"result\":5,\"modelUsage\":{\"a\":{\"contextWindow\":0},\"b\":3}}",
+        "olay": {
+          "tur": "result",
+          "session_id": null,
+          "is_error": true,
+          "terminal_reason": null,
+          "stop_reason": null,
+          "metin": "",
+          "pencereler": {},
+          "model_kullanimlari": null,
+          "ana_kullanim": null
+        }
+      },
+      {
+        "etiket": "result_usage_bos",
+        "satir": "{\"type\":\"result\",\"is_error\":false,\"model_usage_since_last_result\":{},\"usage\":null}",
+        "olay": {
+          "tur": "result",
+          "session_id": null,
+          "is_error": false,
+          "terminal_reason": null,
+          "stop_reason": null,
+          "metin": "",
+          "pencereler": {},
+          "model_kullanimlari": [],
+          "ana_kullanim": null
+        }
+      },
+      {
+        "etiket": "control_response",
+        "satir": "{\"type\":\"control_response\",\"response\":{\"subtype\":\"success\",\"request_id\":\"r1\"}}",
+        "olay": {"tur":"control_response","request_id":"r1","basarili":true}
+      },
+      {
+        "etiket": "control_response_hata",
+        "satir": "{\"type\":\"control_response\",\"response\":{\"subtype\":\"error\"}}",
+        "olay": {"tur":"control_response","request_id":"","basarili":false}
+      },
+      {
+        "etiket": "control_response_bos",
+        "satir": "{\"type\":\"control_response\"}",
+        "olay": {"tur":"control_response","request_id":"","basarili":false}
+      },
+      {
+        "etiket": "bilinmeyen_tur",
+        "satir": "{\"type\":\"keep_alive\"}",
+        "olay": {"tur":"diger","type":"keep_alive"}
+      },
+      {"etiket":"tursuz","satir":"{\"x\":1}","olay":{"tur":"diger","type":""}},
+      {
+        "etiket": "bom_ve_bosluk",
+        "satir": "﻿  {\"type\":\"keep_alive\"}  ",
+        "olay": {"tur":"diger","type":"keep_alive"}
+      },
+      {"etiket":"bos","satir":"   ","olay":null},
+      {"etiket":"bozuk_json","satir":"{\"type\":","olay":null},
+      {"etiket":"dizi","satir":"[1,2]","olay":null},
+      {"etiket":"sayi","satir":"5","olay":null}
+    ],
+    "satir_ayirici": [
+      {"girdi":"a\nb\r\nc","satirlar":["a","b"],"tuketilen":5},
+      {"girdi":"\n\nş\n","satirlar":["ş"],"tuketilen":5},
+      {"girdi":"yarım","satirlar":[],"tuketilen":0},
+      {"girdi":"x\r\n\r\ny\n","satirlar":["x","y"],"tuketilen":7}
+    ]
+  }
+}

@@ -1,6 +1,6 @@
 //! Yerel kipte erteleme yoktur (`kanal.rs` "Erteleme"): servis yok, v3 alanları yerel yazarda kısıtsız
 //! uygulanır, kuyruk ve ertelenen sayısı sıfırdır. Bugün v3 alanlı işlem köprü yüzeyinden gelemez (Kotlin
-//! formu v2 gövdesidir): yerel yazar (`yerel_yaz`) doğrudan çağrılır.
+//! formu v2 gövdesidir): yerel yazar (`yerel_yaz`) doğrudan çağrılır. Ayrıca ret girdisinin v3 özeti (`sorgu::v3_ozeti`).
 
 use super::*;
 use crate::kopru::sahte::{SahteKimlik, SahteZaman};
@@ -60,4 +60,24 @@ fn yerel_kipte_v3_alanli_ekleme_kisitsiz_uygulanir() {
     assert_eq!(g.kayit.v3.simge.as_deref(), Some("is"));
     assert!(!g.ertelenen);
     yerel_yetenekler(&m);
+}
+
+/// Ret girdisinin v3 özeti (`sorgu::v3_ozeti`, A1): `ekle`'de konan v3 alanları, `guncelle`'de konanlar ve
+/// kaldırılanlar (kablo adlarıyla, alan sırasıyla); v3 alanına dokunmayan işlemde yok.
+#[test]
+fn ret_girdisinin_v3_ozeti() {
+    use super::sorgu::v3_ozeti;
+    use crate::kopru::tipler::V3DegisiklikOzeti;
+    let v3 = V3Alanlari { simge: Some("is".into()), bolge: Some("Ofis".into()), ..Default::default() };
+    let ekle = AjandaIslem::Ekle { kayit_id: "k_a".into(), govde: govde("A"), v3: v3.clone(), girdi_yolu: GirdiYolu::Elle };
+    assert_eq!(v3_ozeti(&ekle), Some(V3DegisiklikOzeti { konan: v3, kaldirilan: vec![] }));
+    let bos = AjandaIslem::Ekle { kayit_id: "k_a".into(), govde: govde("A"), v3: V3Alanlari::default(), girdi_yolu: GirdiYolu::Elle };
+    assert_eq!(v3_ozeti(&bos), None);
+    let d = V3Degisikligi { simge: Alan::Deger("ev".into()), ekler: Alan::Kaldir, bolge: Alan::Kaldir, ..Default::default() };
+    let g = AjandaIslem::Guncelle { kayit_id: "k_a".into(), temel_revizyon: 1, degisiklik: AjandaDegisiklik { v3: d, ..Default::default() } };
+    let o = v3_ozeti(&g).expect("özet");
+    assert_eq!((o.konan.simge.as_deref(), o.konan.bolge.as_deref(), o.kaldirilan), (Some("ev"), None, vec!["bolge".to_string(), "ekler".to_string()]));
+    let duz = AjandaIslem::Guncelle { kayit_id: "k_a".into(), temel_revizyon: 1, degisiklik: AjandaDegisiklik { baslik: Some("B".into()), ..Default::default() } };
+    assert_eq!(v3_ozeti(&duz), None);
+    assert_eq!(v3_ozeti(&AjandaIslem::Sil { kayit_id: "k_a".into() }), None);
 }
